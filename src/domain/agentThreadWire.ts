@@ -1,0 +1,494 @@
+import {
+  AGENT_TASK_ID_PATTERN,
+  MAX_AGENT_TASK_FAILURE_BYTES,
+  MAX_AGENT_TASK_ID_BYTES,
+  MAX_AGENT_TASK_PATH_BYTES,
+  MAX_AGENT_TASK_PROMPT_BYTES,
+  MAX_AGENT_TASK_WORKSPACE_ID_BYTES,
+  isAgentSessionId,
+  type AgentCliKind,
+  type AgentTaskIsolation,
+  type AgentTaskOutputStream,
+} from "./agentTask";
+import {
+  MAX_AGENT_EVENTS_PER_TURN,
+  MAX_AGENT_EVENT_TEXT_BYTES,
+  MAX_AGENT_THREAD_TITLE_BYTES,
+  MAX_AGENT_TOOL_ID_BYTES,
+  MAX_AGENT_TOOL_NAME_BYTES,
+  MAX_AGENT_TOOL_SUMMARY_BYTES,
+  MAX_AGENT_TURNS_PER_THREAD,
+  isTerminalAgentTurnStatus,
+  type AgentProviderSession,
+  type AgentThread,
+  type AgentThreadOwner,
+  type AgentThreadTarget,
+  type AgentTurn,
+  type AgentTurnEvent,
+  type AgentTurnStatus,
+  type AgentTurnUsage,
+} from "./agentThread";
+
+const UTF8_ENCODER = new TextEncoder();
+
+export function serializeAgentThread(thread: AgentThread): Record<string, unknown> {
+  return {
+    threadId: thread.threadId,
+    owner: {
+      rootKey: thread.owner.rootKey,
+      ownerId: thread.owner.ownerId,
+      repositoryRoot: thread.owner.repositoryRoot,
+    },
+    target: { isolation: thread.target.isolation, worktreePath: thread.target.worktreePath },
+    provider: { kind: thread.provider.kind, sessionId: thread.provider.sessionId },
+    title: thread.title,
+    pinned: thread.pinned,
+    archived: thread.archived,
+    createdAtEpochMs: thread.createdAtEpochMs,
+    updatedAtEpochMs: thread.updatedAtEpochMs,
+    turns: thread.turns.map(serializeTurn),
+    turnsTruncated: thread.turnsTruncated,
+  };
+}
+
+function serializeTurn(turn: AgentTurn): Record<string, unknown> {
+  return {
+    turnId: turn.turnId,
+    prompt: turn.prompt,
+    status: serializeTurnStatus(turn.status),
+    startedAtEpochMs: turn.startedAtEpochMs,
+    endedAtEpochMs: turn.endedAtEpochMs,
+    events: turn.events.map(serializeTurnEvent),
+    eventsTruncated: turn.eventsTruncated,
+    lastStatusSequence: turn.lastStatusSequence,
+    lastOutputSequence: turn.lastOutputSequence,
+  };
+}
+
+function serializeTurnStatus(status: AgentTurnStatus): Record<string, unknown> {
+  switch (status.kind) {
+    case "exited":
+      return { kind: status.kind, exitCode: status.exitCode };
+    case "failed":
+      return { kind: status.kind, message: status.message };
+    case "pending":
+    case "running":
+    case "stopped":
+    case "interrupted":
+      return { kind: status.kind };
+    default:
+      return unsupportedTurnStatus(status);
+  }
+}
+
+function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
+  switch (event.kind) {
+    case "assistantText":
+    case "reasoning":
+      return { kind: event.kind, text: event.text };
+    case "toolCall":
+      return {
+        kind: event.kind,
+        toolId: event.toolId,
+        name: event.name,
+        inputSummary: event.inputSummary,
+      };
+    case "toolResult":
+      return {
+        kind: event.kind,
+        toolId: event.toolId,
+        outputSummary: event.outputSummary,
+        isError: event.isError,
+      };
+    case "result":
+      return {
+        kind: event.kind,
+        text: event.text,
+        isError: event.isError,
+        usage:
+          event.usage === null
+            ? null
+            : { inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens },
+      };
+    case "error":
+      return { kind: event.kind, message: event.message };
+    case "unknownLine":
+      return { kind: event.kind, stream: event.stream, raw: event.raw, clipped: event.clipped };
+    default:
+      return unsupportedTurnEvent(event);
+  }
+}
+
+export function parseAgentThread(value: unknown): AgentThread {
+  const thread = record(value, "thread");
+  exactKeys(
+    thread,
+    [
+      "threadId",
+      "owner",
+      "target",
+      "provider",
+      "title",
+      "pinned",
+      "archived",
+      "createdAtEpochMs",
+      "updatedAtEpochMs",
+      "turns",
+      "turnsTruncated",
+    ],
+    "thread",
+  );
+  return {
+    threadId: agentId(thread.threadId, "thread.threadId"),
+    owner: parseOwner(thread.owner, "thread.owner"),
+    target: parseTarget(thread.target, "thread.target"),
+    provider: parseProvider(thread.provider, "thread.provider"),
+    title: boundedText(thread.title, "thread.title", MAX_AGENT_THREAD_TITLE_BYTES, false),
+    pinned: booleanFlag(thread.pinned, "thread.pinned"),
+    archived: booleanFlag(thread.archived, "thread.archived"),
+    createdAtEpochMs: unsignedSafeInteger(thread.createdAtEpochMs, "thread.createdAtEpochMs"),
+    updatedAtEpochMs: unsignedSafeInteger(thread.updatedAtEpochMs, "thread.updatedAtEpochMs"),
+    turns: parseTurns(thread.turns, "thread.turns"),
+    turnsTruncated: booleanFlag(thread.turnsTruncated, "thread.turnsTruncated"),
+  };
+}
+
+function parseOwner(value: unknown, path: string): AgentThreadOwner {
+  const owner = record(value, path);
+  exactKeys(owner, ["rootKey", "ownerId", "repositoryRoot"], path);
+  return {
+    rootKey: boundedText(owner.rootKey, `${path}.rootKey`, MAX_AGENT_TASK_PATH_BYTES, false, true),
+    ownerId: boundedText(
+      owner.ownerId,
+      `${path}.ownerId`,
+      MAX_AGENT_TASK_WORKSPACE_ID_BYTES,
+      false,
+      true,
+    ),
+    repositoryRoot: agentPath(owner.repositoryRoot, `${path}.repositoryRoot`),
+  };
+}
+
+function parseTarget(value: unknown, path: string): AgentThreadTarget {
+  const target = record(value, path);
+  exactKeys(target, ["isolation", "worktreePath"], path);
+  const isolation = agentTaskIsolation(target.isolation, `${path}.isolation`);
+  return {
+    isolation,
+    worktreePath: worktreePath(target.worktreePath, isolation, `${path}.worktreePath`),
+  };
+}
+
+function parseProvider(value: unknown, path: string): AgentProviderSession {
+  const provider = record(value, path);
+  exactKeys(provider, ["kind", "sessionId"], path);
+  return {
+    kind: agentCliKind(provider.kind, `${path}.kind`),
+    sessionId: optionalSessionId(provider.sessionId, `${path}.sessionId`),
+  };
+}
+
+function parseTurns(value: unknown, path: string): ReadonlyArray<AgentTurn> {
+  const turns = boundedArray(value, path, MAX_AGENT_TURNS_PER_THREAD);
+  const parsed = turns.map((turn, index) => parseTurn(turn, `${path}[${index}]`));
+  const seen = new Set<string>();
+  for (const turn of parsed) {
+    if (seen.has(turn.turnId)) invalid(path, "unique turn ids");
+    seen.add(turn.turnId);
+  }
+  parsed.forEach((turn, index) => {
+    if (index < parsed.length - 1 && !isTerminalAgentTurnStatus(turn.status)) {
+      invalid(`${path}[${index}].status`, "a terminal status for every turn but the last");
+    }
+  });
+  return parsed;
+}
+
+function parseTurn(value: unknown, path: string): AgentTurn {
+  const turn = record(value, path);
+  exactKeys(
+    turn,
+    [
+      "turnId",
+      "prompt",
+      "status",
+      "startedAtEpochMs",
+      "endedAtEpochMs",
+      "events",
+      "eventsTruncated",
+      "lastStatusSequence",
+      "lastOutputSequence",
+    ],
+    path,
+  );
+  return {
+    turnId: agentId(turn.turnId, `${path}.turnId`),
+    prompt: boundedText(turn.prompt, `${path}.prompt`, MAX_AGENT_TASK_PROMPT_BYTES, false),
+    status: parseTurnStatus(turn.status, `${path}.status`),
+    startedAtEpochMs: unsignedSafeInteger(turn.startedAtEpochMs, `${path}.startedAtEpochMs`),
+    endedAtEpochMs: optionalUnsignedSafeInteger(turn.endedAtEpochMs, `${path}.endedAtEpochMs`),
+    events: boundedArray(turn.events, `${path}.events`, MAX_AGENT_EVENTS_PER_TURN).map(
+      (event, index) => parseTurnEvent(event, `${path}.events[${index}]`),
+    ),
+    eventsTruncated: booleanFlag(turn.eventsTruncated, `${path}.eventsTruncated`),
+    lastStatusSequence: unsignedSafeInteger(turn.lastStatusSequence, `${path}.lastStatusSequence`),
+    lastOutputSequence: unsignedSafeInteger(turn.lastOutputSequence, `${path}.lastOutputSequence`),
+  };
+}
+
+function parseTurnStatus(value: unknown, path: string): AgentTurnStatus {
+  const status = record(value, path);
+  const kind = turnStatusKind(status.kind, `${path}.kind`);
+  switch (kind) {
+    case "exited":
+      exactKeys(status, ["kind", "exitCode"], path);
+      return { kind, exitCode: signedExitCode(status.exitCode, `${path}.exitCode`) };
+    case "failed":
+      exactKeys(status, ["kind", "message"], path);
+      return {
+        kind,
+        message: boundedText(
+          status.message,
+          `${path}.message`,
+          MAX_AGENT_TASK_FAILURE_BYTES,
+          false,
+        ),
+      };
+    case "pending":
+    case "running":
+    case "stopped":
+    case "interrupted":
+      exactKeys(status, ["kind"], path);
+      return { kind };
+    default:
+      return unsupportedTurnStatusKind(kind);
+  }
+}
+
+function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
+  const event = record(value, path);
+  const kind = turnEventKind(event.kind, `${path}.kind`);
+  switch (kind) {
+    case "assistantText":
+    case "reasoning":
+      exactKeys(event, ["kind", "text"], path);
+      return { kind, text: eventText(event.text, `${path}.text`) };
+    case "toolCall":
+      exactKeys(event, ["kind", "toolId", "name", "inputSummary"], path);
+      return {
+        kind,
+        toolId: boundedText(event.toolId, `${path}.toolId`, MAX_AGENT_TOOL_ID_BYTES, false, true),
+        name: boundedText(event.name, `${path}.name`, MAX_AGENT_TOOL_NAME_BYTES, false, true),
+        inputSummary: toolSummary(event.inputSummary, `${path}.inputSummary`),
+      };
+    case "toolResult":
+      exactKeys(event, ["kind", "toolId", "outputSummary", "isError"], path);
+      return {
+        kind,
+        toolId: boundedText(event.toolId, `${path}.toolId`, MAX_AGENT_TOOL_ID_BYTES, false, true),
+        outputSummary: toolSummary(event.outputSummary, `${path}.outputSummary`),
+        isError: booleanFlag(event.isError, `${path}.isError`),
+      };
+    case "result":
+      exactKeys(event, ["kind", "text", "isError", "usage"], path);
+      return {
+        kind,
+        text: eventText(event.text, `${path}.text`),
+        isError: booleanFlag(event.isError, `${path}.isError`),
+        usage: parseUsage(event.usage, `${path}.usage`),
+      };
+    case "error":
+      exactKeys(event, ["kind", "message"], path);
+      return { kind, message: eventText(event.message, `${path}.message`) };
+    case "unknownLine":
+      exactKeys(event, ["kind", "stream", "raw", "clipped"], path);
+      return {
+        kind,
+        stream: outputStream(event.stream, `${path}.stream`),
+        raw: eventText(event.raw, `${path}.raw`),
+        clipped: booleanFlag(event.clipped, `${path}.clipped`),
+      };
+    default:
+      return unsupportedTurnEventKind(kind);
+  }
+}
+
+function parseUsage(value: unknown, path: string): AgentTurnUsage | null {
+  if (value === null) return null;
+  const usage = record(value, path);
+  exactKeys(usage, ["inputTokens", "outputTokens"], path);
+  return {
+    inputTokens: unsignedSafeInteger(usage.inputTokens, `${path}.inputTokens`),
+    outputTokens: unsignedSafeInteger(usage.outputTokens, `${path}.outputTokens`),
+  };
+}
+
+function turnStatusKind(value: unknown, path: string): AgentTurnStatus["kind"] {
+  if (
+    value !== "pending" &&
+    value !== "running" &&
+    value !== "exited" &&
+    value !== "failed" &&
+    value !== "stopped" &&
+    value !== "interrupted"
+  ) {
+    invalid(path, "pending, running, exited, failed, stopped, or interrupted");
+  }
+  return value;
+}
+
+function turnEventKind(value: unknown, path: string): AgentTurnEvent["kind"] {
+  if (
+    value !== "assistantText" &&
+    value !== "reasoning" &&
+    value !== "toolCall" &&
+    value !== "toolResult" &&
+    value !== "result" &&
+    value !== "error" &&
+    value !== "unknownLine"
+  ) {
+    invalid(path, "a supported agent turn event kind");
+  }
+  return value;
+}
+
+function agentTaskIsolation(value: unknown, path: string): AgentTaskIsolation {
+  if (value !== "worktree" && value !== "in-place") invalid(path, "worktree or in-place");
+  return value;
+}
+
+function agentCliKind(value: unknown, path: string): AgentCliKind {
+  if (value !== "claudeCode" && value !== "codex") invalid(path, "claudeCode or codex");
+  return value;
+}
+
+function outputStream(value: unknown, path: string): AgentTaskOutputStream {
+  if (value !== "stdout" && value !== "stderr") invalid(path, "stdout or stderr");
+  return value;
+}
+
+function worktreePath(value: unknown, isolation: AgentTaskIsolation, path: string): string | null {
+  if (isolation === "in-place") {
+    if (value !== null) invalid(path, "null for an in-place agent thread");
+    return null;
+  }
+  return agentPath(value, path);
+}
+
+function optionalSessionId(value: unknown, path: string): string | null {
+  if (value === null) return null;
+  if (!isAgentSessionId(value)) invalid(path, "null or a safe agent session id");
+  return value;
+}
+
+function agentPath(value: unknown, path: string): string {
+  const candidate = boundedText(value, path, MAX_AGENT_TASK_PATH_BYTES, false);
+  if (candidate.trim() === "") invalid(path, "a non-blank bounded path");
+  return candidate;
+}
+
+function agentId(value: unknown, path: string): string {
+  const candidate = boundedText(value, path, MAX_AGENT_TASK_ID_BYTES, false, true);
+  if (!AGENT_TASK_ID_PATTERN.test(candidate)) invalid(path, "a safe agent id");
+  return candidate;
+}
+
+function eventText(value: unknown, path: string): string {
+  return boundedText(value, path, MAX_AGENT_EVENT_TEXT_BYTES, true);
+}
+
+function toolSummary(value: unknown, path: string): string {
+  return boundedText(value, path, MAX_AGENT_TOOL_SUMMARY_BYTES, true);
+}
+
+function boundedArray(value: unknown, path: string, maxItems: number): ReadonlyArray<unknown> {
+  if (!Array.isArray(value) || value.length > maxItems) {
+    invalid(path, `an array of at most ${maxItems} items`);
+  }
+  return value;
+}
+
+function boundedText(
+  value: unknown,
+  path: string,
+  maxBytes: number,
+  allowEmpty: boolean,
+  rejectControls = false,
+): string {
+  if (
+    typeof value !== "string" ||
+    (!allowEmpty && value.length === 0) ||
+    value.includes("\0") ||
+    (rejectControls && /\p{Cc}/u.test(value)) ||
+    UTF8_ENCODER.encode(value).byteLength > maxBytes
+  ) {
+    invalid(path, `${allowEmpty ? "a" : "a non-empty"} bounded UTF-8 string`);
+  }
+  return value;
+}
+
+function booleanFlag(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") invalid(path, "a boolean");
+  return value;
+}
+
+function unsignedSafeInteger(value: unknown, path: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    invalid(path, "a non-negative safe integer");
+  }
+  return value as number;
+}
+
+function optionalUnsignedSafeInteger(value: unknown, path: string): number | null {
+  if (value === null) return null;
+  return unsignedSafeInteger(value, path);
+}
+
+function signedExitCode(value: unknown, path: string): number {
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < -2_147_483_648 ||
+    (value as number) > 2_147_483_647
+  ) {
+    invalid(path, "a signed 32-bit integer");
+  }
+  return value as number;
+}
+
+function exactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  path: string,
+): void {
+  const actual = Object.keys(value);
+  if (actual.length !== expected.length || actual.some((key) => !expected.includes(key))) {
+    invalid(path, `exactly the fields ${expected.join(", ")}`);
+  }
+}
+
+function record(value: unknown, path: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    invalid(path, "an object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function unsupportedTurnStatus(status: never): never {
+  throw new TypeError(`Unsupported agent turn status: ${JSON.stringify(status)}.`);
+}
+
+function unsupportedTurnStatusKind(kind: never): never {
+  throw new TypeError(`Unsupported agent turn status kind: ${String(kind)}.`);
+}
+
+function unsupportedTurnEvent(event: never): never {
+  throw new TypeError(`Unsupported agent turn event: ${JSON.stringify(event)}.`);
+}
+
+function unsupportedTurnEventKind(kind: never): never {
+  throw new TypeError(`Unsupported agent turn event kind: ${String(kind)}.`);
+}
+
+function invalid(path: string, expectation: string): never {
+  throw new TypeError(`Invalid agent thread value at ${path}: expected ${expectation}.`);
+}

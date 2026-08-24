@@ -1,27 +1,30 @@
+import { memo } from "react";
 import { RefreshCw, X } from "lucide-react";
-import {
-  MAX_AGENT_TASK_CHANGE_ROWS,
-  type AgentTaskChangeSummary,
-  type AgentTaskView,
-} from "../../application/useAgentTasks";
+import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentTurn } from "../../domain/agentThread";
 import type { GitChangedFile } from "../../domain/git";
 import {
   agentChangeStatusLetter,
   agentIsolationBadgeLabel,
-  agentThreadStatusLabel,
+  agentThreadDisplayTitle,
+  agentThreadLifecycleLabel,
   agentThreadTimeLabel,
-  agentThreadTitle,
   agentThreadTone,
+  agentTurnProjection,
+  agentTurnStatusLabel,
+  lastAgentTurnStatus,
+  type AgentTurnItem,
 } from "./agentModePresentation";
 
 export interface AgentThreadSessionProps {
-  readonly thread: AgentTaskView | null;
+  readonly thread: AgentThreadView | null;
   readonly composerRepositoryLabel: string | null;
   readonly now: number;
-  onHideChanges(taskId: string): void;
-  onHideFileDiff(taskId: string): void;
-  onRefreshChanges(taskId: string): void;
-  onShowFileDiff(taskId: string, change: GitChangedFile): void;
+  readonly turnRenderProbe?: (turnId: string) => void;
+  onHideChanges(threadId: string): void;
+  onHideFileDiff(threadId: string): void;
+  onRefreshChanges(threadId: string): void;
+  onShowFileDiff(threadId: string, change: GitChangedFile): void;
 }
 
 export function AgentThreadSession({
@@ -32,63 +35,50 @@ export function AgentThreadSession({
   onRefreshChanges,
   onShowFileDiff,
   thread,
+  turnRenderProbe,
 }: AgentThreadSessionProps) {
   if (thread === null) {
     return <AgentThreadSessionEmpty repositoryLabel={composerRepositoryLabel} />;
   }
 
-  const { record } = thread;
-  const taskId = record.owner.taskId;
-  const tone = agentThreadTone(record.status);
-  const running = !thread.terminal;
+  const record = thread.thread;
+  const threadId = record.threadId;
+  const tone = agentThreadTone(thread.lifecycle, lastAgentTurnStatus(record));
 
   return (
-    <section aria-label={`Agent thread ${taskId}`} className="agent-session">
+    <section aria-label={`Agent thread ${threadId}`} className="agent-session">
       <header className="agent-session__head">
         <span className="agent-session__repo">{thread.repositoryLabel}</span>
-        <span className="agent-session__title">{agentThreadTitle(record.prompt)}</span>
+        <span className="agent-session__title">{agentThreadDisplayTitle(record)}</span>
         <span className="agent-session__spacer" />
         <span className={`agent-session__status agent-session__status--${tone}`}>
           <span aria-hidden="true" className={`agent-dot agent-dot--${tone}`} />
-          {agentThreadStatusLabel(record.status)}
+          {agentThreadLifecycleLabel(thread.lifecycle)}
         </span>
       </header>
 
       <div className="agent-session__scroll">
         <div className="agent-session__body">
-          <article className="agent-prompt">
-            <div className="agent-prompt__body">{record.prompt}</div>
-            <div className="agent-prompt__meta agent-num">
-              <span>you</span>
-              <span aria-hidden="true" className="agent-prompt__sep" />
-              <span>{agentThreadTimeLabel(record.startedAtEpochMs, now)}</span>
-              <span aria-hidden="true" className="agent-prompt__sep" />
-              <span>{agentIsolationBadgeLabel(record.isolation).toLowerCase()}</span>
-            </div>
-          </article>
-
-          <section className="agent-well">
-            <header className="agent-well__head">
-              <span className="agent-microlabel">agent output</span>
-              <span className="agent-well__task agent-num">{taskId}</span>
-            </header>
-            <pre aria-label={`Agent output ${taskId}`} className="agent-well__stream">
-              {record.outputTail === "" ? "Waiting for output…" : record.outputTail}
-              {running && <span aria-hidden="true" className="agent-well__caret" />}
-            </pre>
-          </section>
-
-          {record.outputTruncated && (
+          {record.turnsTruncated && (
             <p className="agent-note agent-note--warning">
-              Earlier output was dropped to bound memory.
+              Earlier turns were dropped to bound memory.
             </p>
           )}
 
-          {record.status.kind === "failed" && (
-            <section className="agent-finale agent-finale--bad">
-              <span className="agent-microlabel agent-microlabel--bad">run failed</span>
-              <p className="agent-finale__body">{record.status.message}</p>
-            </section>
+          {record.turns.map((turn) => (
+            <AgentTurnView
+              isolationLabel={record.target.isolation}
+              key={turn.turnId}
+              renderProbe={turnRenderProbe}
+              startedLabel={agentThreadTimeLabel(turn.startedAtEpochMs, now)}
+              turn={turn}
+            />
+          ))}
+
+          {thread.worktreeMissing && (
+            <p className="agent-note agent-note--warning">
+              The worktree for this thread no longer exists.
+            </p>
           )}
 
           {thread.worktreeRemoved && (
@@ -102,12 +92,150 @@ export function AgentThreadSession({
               onRefreshChanges={onRefreshChanges}
               onShowFileDiff={onShowFileDiff}
               summary={thread.changeSummary}
-              taskId={taskId}
+              threadId={threadId}
             />
           )}
         </div>
       </div>
     </section>
+  );
+}
+
+const AgentTurnView = memo(function AgentTurnView({
+  isolationLabel,
+  renderProbe,
+  startedLabel,
+  turn,
+}: {
+  readonly isolationLabel: AgentThreadView["thread"]["target"]["isolation"];
+  readonly renderProbe?: (turnId: string) => void;
+  readonly startedLabel: string;
+  readonly turn: AgentTurn;
+}) {
+  renderProbe?.(turn.turnId);
+  const projection = agentTurnProjection(turn.events);
+  const running = turn.status.kind === "pending" || turn.status.kind === "running";
+  const empty = projection.items.length === 0 && projection.rawLines.length === 0;
+
+  return (
+    <article aria-label={`Agent turn ${turn.turnId}`} className="agent-turn">
+      <article className="agent-prompt">
+        <div className="agent-prompt__body">{turn.prompt}</div>
+        <div className="agent-prompt__meta agent-num">
+          <span>you</span>
+          <span aria-hidden="true" className="agent-prompt__sep" />
+          <span>{startedLabel}</span>
+          <span aria-hidden="true" className="agent-prompt__sep" />
+          <span>{agentIsolationBadgeLabel(isolationLabel).toLowerCase()}</span>
+          <span aria-hidden="true" className="agent-prompt__sep" />
+          <span>{agentTurnStatusLabel(turn.status).toLowerCase()}</span>
+        </div>
+      </article>
+
+      {projection.hiddenCount > 0 && (
+        <p className="agent-note">{projection.hiddenCount} earlier events hidden</p>
+      )}
+
+      <div className="agent-turn__events">
+        {projection.items.map((item) => (
+          <AgentTurnItemView item={item} key={item.key} />
+        ))}
+        {empty && running && (
+          <p className="agent-note">
+            Waiting for output…
+            <span aria-hidden="true" className="agent-well__caret" />
+          </p>
+        )}
+      </div>
+
+      {projection.rawLines.length > 0 && (
+        <details className="agent-raw">
+          <summary className="agent-microlabel">raw output</summary>
+          <pre className="agent-raw__lines">
+            {projection.rawLines.map((line) => line.raw).join("\n")}
+          </pre>
+        </details>
+      )}
+
+      {turn.eventsTruncated && (
+        <p className="agent-note agent-note--warning">Later output was dropped to bound memory.</p>
+      )}
+
+      {turn.status.kind === "interrupted" && (
+        <p className="agent-note agent-note--warning">Interrupted by app restart</p>
+      )}
+
+      {turn.status.kind === "failed" && (
+        <section className="agent-finale agent-finale--bad">
+          <span className="agent-microlabel agent-microlabel--bad">run failed</span>
+          <p className="agent-finale__body">{turn.status.message}</p>
+        </section>
+      )}
+    </article>
+  );
+});
+
+function AgentTurnItemView({ item }: { readonly item: AgentTurnItem }) {
+  if (item.kind === "assistantText") {
+    return (
+      <div className="agent-text">
+        {item.paragraphs.map((paragraph, index) => (
+          <p className="agent-text__paragraph" key={`${item.key}p${index}`}>
+            {paragraph}
+          </p>
+        ))}
+      </div>
+    );
+  }
+
+  if (item.kind === "reasoning") {
+    return (
+      <details className="agent-reasoning">
+        <summary className="agent-microlabel">reasoning</summary>
+        <p className="agent-reasoning__body">{item.text}</p>
+      </details>
+    );
+  }
+
+  if (item.kind === "tool") {
+    return <AgentToolRow item={item} />;
+  }
+
+  if (item.kind === "result") {
+    return (
+      <section className={item.isError ? "agent-finale agent-finale--bad" : "agent-finale"}>
+        <span
+          className={item.isError ? "agent-microlabel agent-microlabel--bad" : "agent-microlabel"}
+        >
+          {item.isError ? "run failed" : "result"}
+        </span>
+        {item.text !== "" && <p className="agent-finale__body">{item.text}</p>}
+      </section>
+    );
+  }
+
+  return (
+    <section className="agent-finale agent-finale--bad">
+      <span className="agent-microlabel agent-microlabel--bad">error</span>
+      <p className="agent-finale__body">{item.message}</p>
+    </section>
+  );
+}
+
+function AgentToolRow({ item }: { readonly item: Extract<AgentTurnItem, { kind: "tool" }> }) {
+  const outcome = item.outcome;
+  const statusClassName =
+    outcome === null
+      ? "agent-tool__status"
+      : `agent-tool__status agent-tool__status--${outcome.isError ? "bad" : "ok"}`;
+  const statusLabel = outcome === null ? "running" : outcome.isError ? "error" : "ok";
+
+  return (
+    <div className="agent-tool" title={outcome?.outputSummary ?? undefined}>
+      <span className="agent-tool__name">{item.name}</span>
+      <span className="agent-tool__input">{item.inputSummary}</span>
+      <span className={statusClassName}>{statusLabel}</span>
+    </div>
   );
 }
 
@@ -195,34 +323,34 @@ function AgentThreadChanges({
   onRefreshChanges,
   onShowFileDiff,
   summary,
-  taskId,
+  threadId,
 }: {
   readonly summary: AgentTaskChangeSummary;
-  readonly taskId: string;
-  onHideChanges(taskId: string): void;
-  onHideFileDiff(taskId: string): void;
-  onRefreshChanges(taskId: string): void;
-  onShowFileDiff(taskId: string, change: GitChangedFile): void;
+  readonly threadId: string;
+  onHideChanges(threadId: string): void;
+  onHideFileDiff(threadId: string): void;
+  onRefreshChanges(threadId: string): void;
+  onShowFileDiff(threadId: string, change: GitChangedFile): void;
 }) {
   return (
-    <section aria-label={`Changes for agent ${taskId}`} className="agent-changes">
+    <section aria-label={`Changes for agent ${threadId}`} className="agent-changes">
       <header className="agent-changes__head">
         <span className="agent-microlabel">changes</span>
         <span className="agent-session__spacer" />
         <button
-          aria-label={`Refresh changes for agent ${taskId}`}
+          aria-label={`Refresh changes for agent ${threadId}`}
           className="agent-linkbutton"
           disabled={summary.loading}
-          onClick={() => onRefreshChanges(taskId)}
+          onClick={() => onRefreshChanges(threadId)}
           type="button"
         >
           <RefreshCw aria-hidden="true" size={11} /> Refresh
         </button>
         <button
           aria-expanded
-          aria-label={`Hide changes for agent ${taskId}`}
+          aria-label={`Hide changes for agent ${threadId}`}
           className="agent-linkbutton"
-          onClick={() => onHideChanges(taskId)}
+          onClick={() => onHideChanges(threadId)}
           type="button"
         >
           Hide
@@ -237,7 +365,7 @@ function AgentThreadChanges({
       )}
 
       {summary.files.length > 0 && (
-        <ul aria-label={`Changed files for agent ${taskId}`} className="agent-files">
+        <ul aria-label={`Changed files for agent ${threadId}`} className="agent-files">
           {summary.files.map((file) => (
             <li className="agent-files__row" key={`${file.relativePath} ${file.isStaged}`}>
               <span
@@ -248,7 +376,7 @@ function AgentThreadChanges({
               </span>
               <button
                 className="agent-files__path"
-                onClick={() => onShowFileDiff(taskId, file)}
+                onClick={() => onShowFileDiff(threadId, file)}
                 type="button"
               >
                 {file.relativePath}
@@ -260,12 +388,12 @@ function AgentThreadChanges({
 
       {summary.truncated && (
         <p className="agent-note agent-note--warning">
-          Only the first {MAX_AGENT_TASK_CHANGE_ROWS} changed files are listed.
+          More changed files exist than are listed here.
         </p>
       )}
 
       {summary.diff && (
-        <AgentThreadDiff diff={summary.diff} onClose={() => onHideFileDiff(taskId)} />
+        <AgentThreadDiff diff={summary.diff} onClose={() => onHideFileDiff(threadId)} />
       )}
     </section>
   );

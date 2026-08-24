@@ -12,6 +12,7 @@ import type {
 } from "../domain/agentTask";
 import type { GitStatus } from "../domain/git";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
+import type { AgentThreadStoreGateway } from "./agentThreadPorts";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
@@ -44,7 +45,7 @@ describe("useWorkbenchAgents composition", () => {
 
     await act(async () => {
       expect(
-        await harness.hook().dispatch({
+        await harness.hook().startThread({
           projectRootKey: ACTIVE_ROOT,
           repositoryRoot: ACTIVE_ROOT,
           prompt: "Fix the failing test",
@@ -82,7 +83,7 @@ describe("useWorkbenchAgents composition", () => {
 
     await act(async () => {
       expect(
-        await harness.hook().dispatch({
+        await harness.hook().startThread({
           projectRootKey: BACKGROUND_ROOT,
           repositoryRoot: BACKGROUND_ROOT,
           prompt: "Refactor the API",
@@ -93,7 +94,7 @@ describe("useWorkbenchAgents composition", () => {
     });
 
     expect(harness.startedRequests[0]?.workspaceId).toBe(agentRootOwnerId(BACKGROUND_ROOT));
-    expect(harness.hook().tasks).toHaveLength(1);
+    expect(harness.hook().threads).toHaveLength(1);
     harness.unmount();
   });
 
@@ -115,7 +116,7 @@ describe("useWorkbenchAgents composition", () => {
 
     await act(async () => {
       expect(
-        await harness.hook().dispatch({
+        await harness.hook().startThread({
           projectRootKey: BACKGROUND_ROOT,
           repositoryRoot: BACKGROUND_ROOT,
           prompt: "Refactor the API",
@@ -151,7 +152,7 @@ describe("useWorkbenchAgents composition", () => {
 
     await act(async () => {
       expect(
-        await harness.hook().dispatch({
+        await harness.hook().startThread({
           projectRootKey: BACKGROUND_ROOT,
           repositoryRoot: BACKGROUND_ROOT,
           prompt: "Refactor the API",
@@ -186,7 +187,7 @@ describe("useWorkbenchAgents composition", () => {
 
     await act(async () => {
       expect(
-        await harness.hook().dispatch({
+        await harness.hook().startThread({
           projectRootKey: BACKGROUND_ROOT,
           repositoryRoot: BACKGROUND_ROOT,
           prompt: "Refactor the API",
@@ -207,7 +208,7 @@ describe("useWorkbenchAgents composition", () => {
         .agentProjects.projects.find((project) => project.rootKey === BACKGROUND_ROOT);
       expect(background?.leaseToken).not.toBeNull();
     });
-    expect(harness.hook().tasks).toHaveLength(1);
+    expect(harness.hook().threads).toHaveLength(1);
 
     harness.appSettings.workspaceTabs = [ACTIVE_ROOT];
     harness.rerender();
@@ -218,7 +219,7 @@ describe("useWorkbenchAgents composition", () => {
         .agentProjects.projects.find((project) => project.rootKey === BACKGROUND_ROOT);
       expect(background?.origin).toBe("closed-tab-live-tasks");
     });
-    expect(harness.hook().tasks).toHaveLength(1);
+    expect(harness.hook().threads).toHaveLength(1);
     expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
     expect(harness.agent.stopAgentTasksForRoot).not.toHaveBeenCalled();
     expect(harness.lease.releaseAgentRootLease).not.toHaveBeenCalled();
@@ -238,7 +239,7 @@ describe("useWorkbenchAgents composition", () => {
     });
 
     await act(async () => {
-      await harness.hook().dispatch({
+      await harness.hook().startThread({
         projectRootKey: BACKGROUND_ROOT,
         repositoryRoot: BACKGROUND_ROOT,
         prompt: "Refactor the API",
@@ -247,13 +248,14 @@ describe("useWorkbenchAgents composition", () => {
       });
     });
     const taskId = harness.startedRequests[0]?.taskId ?? "";
+    const worktreePath = harness.startedRequests[0]?.cwd ?? "";
     await act(async () => {
       harness.emitStatus({
         taskId,
         workspaceId: agentRootOwnerId(BACKGROUND_ROOT),
         repositoryRoot: BACKGROUND_ROOT,
         isolation: "worktree",
-        worktreePath: `${BACKGROUND_ROOT}/.worktrees/${taskId}`,
+        worktreePath,
         sequence: 1,
         status: { kind: "exited", exitCode: 0 },
       });
@@ -274,7 +276,7 @@ describe("useWorkbenchAgents composition", () => {
           .hook()
           .agentProjects.projects.find((project) => project.rootKey === BACKGROUND_ROOT),
       ).toBeUndefined();
-      expect(harness.hook().tasks).toHaveLength(0);
+      expect(harness.hook().threads).toHaveLength(0);
     });
     harness.unmount();
   });
@@ -324,6 +326,12 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     pruneWorktrees: vi.fn(async () => []),
   };
 
+  const threadStore: AgentThreadStoreGateway = {
+    loadAgentThreads: vi.fn(async () => ({ threads: [], unreadable: [], evicted: 0 })),
+    saveAgentThread: vi.fn(async () => undefined),
+    deleteAgentThread: vi.fn(async () => undefined),
+  };
+
   const git = {
     getStatus: vi.fn(async (rootPath: string): Promise<GitStatus> => ({
       branch: "main",
@@ -360,7 +368,9 @@ function renderWorkbenchAgents(options: HarnessOptions) {
   const reportError = vi.fn();
   const workbenchOptions: WorkbenchAgentsOptions = {
     agentTaskGateway: agent as unknown as AgentTaskGateway,
+    agentThreadStoreGateway: threadStore,
     gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
+    agentModeActive: true,
     agentProjectGateways: options.withProjectGateways
       ? {
           settingsGateway,

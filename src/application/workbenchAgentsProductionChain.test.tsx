@@ -90,11 +90,16 @@ describe("workbench agents production chain", () => {
     expect(started?.repositoryRoot).toBe("/workspace-a");
     expect(started?.workspaceId).toBe("workspace-a");
     expect(started?.isolation).toBe("worktree");
-    expect(started?.cwd).toBe(`/workspace-a/.worktrees/${started?.taskId}`);
+    const threadId = gitWorktreeGateway.added[0]?.taskId ?? "";
+    expect(started?.taskId).not.toBe(threadId);
+    expect(started?.cwd).toBe(`/workspace-a/.worktrees/${threadId}`);
+    expect(started?.resumeSessionId).toBeNull();
     expect(started?.prompt).toBe("Fix the failing unit test.");
     expect(agentTaskGateway.acknowledged).toEqual([started?.taskId]);
-    expect(getWorkbench().agents.tasks).toHaveLength(1);
-    expect(getWorkbench().agents.tasks[0]?.record.owner.taskId).toBe(started?.taskId);
+    expect(getWorkbench().agents.threads).toHaveLength(1);
+    expect(getWorkbench().agents.threads[0]?.thread.threadId).toBe(threadId);
+    expect(getWorkbench().agents.threads[0]?.thread.turns[0]?.turnId).toBe(started?.taskId);
+    expect(getWorkbench().agents.threads[0]?.lifecycle).toBe("running");
 
     renderAgentMode(getWorkbench());
     expect(host.textContent).toContain("Fix the failing unit test.");

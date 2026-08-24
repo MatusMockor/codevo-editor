@@ -1,27 +1,30 @@
-import { Eye, Pin, Square, Trash2, X } from "lucide-react";
-import type { AgentTaskView } from "../../application/useAgentTasks";
+import { Archive, Eye, Pin, Square, Trash, Trash2 } from "lucide-react";
+import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
   agentIsolationBadgeLabel,
   agentIsolationBadgeReason,
-  agentThreadStatusLabel,
+  agentRunningTurnCount,
+  agentThreadLifecycleLabel,
   agentThreadTimeLabel,
   agentThreadTone,
+  agentTurnStatusLabel,
+  lastAgentTurnStatus,
 } from "./agentModePresentation";
 
 export interface AgentThreadInfoColumnProps {
-  readonly thread: AgentTaskView | null;
-  readonly pinned: boolean;
+  readonly thread: AgentThreadView | null;
   readonly now: number;
   readonly liveTaskCount: number;
   readonly maxConcurrentAgentTasks: number;
   readonly composerRepositoryLabel: string | null;
   readonly composerRepositoryRoot: string | null;
   readonly composerIsolationReason: string | null;
-  onStop(taskId: string): void;
-  onDismiss(taskId: string): void;
-  onShowChanges(taskId: string): void;
-  onRemoveWorktree(taskId: string): void;
-  onTogglePin(taskId: string): void;
+  onStop(threadId: string): void;
+  onArchive(threadId: string): void;
+  onRemove(threadId: string): void;
+  onShowChanges(threadId: string): void;
+  onRemoveWorktree(threadId: string): void;
+  onTogglePin(threadId: string): void;
 }
 
 export function AgentThreadInfoColumn({
@@ -31,12 +34,12 @@ export function AgentThreadInfoColumn({
   liveTaskCount,
   maxConcurrentAgentTasks,
   now,
-  onDismiss,
+  onArchive,
+  onRemove,
   onRemoveWorktree,
   onShowChanges,
   onStop,
   onTogglePin,
-  pinned,
   thread,
 }: AgentThreadInfoColumnProps) {
   if (thread === null) {
@@ -65,11 +68,15 @@ export function AgentThreadInfoColumn({
     );
   }
 
-  const { record } = thread;
-  const taskId = record.owner.taskId;
-  const tone = agentThreadTone(record.status);
+  const record = thread.thread;
+  const threadId = record.threadId;
+  const lastStatus = lastAgentTurnStatus(record);
+  const tone = agentThreadTone(thread.lifecycle, lastStatus);
+  const pinned = record.pinned;
+  const running = thread.lifecycle === "running";
   const changedFiles = thread.changeSummary?.files.length ?? null;
-  const reviewable = thread.terminal && record.isolation === "worktree" && !thread.worktreeRemoved;
+  const isolation = record.target.isolation;
+  const reviewable = !running && isolation === "worktree" && !thread.worktreeRemoved;
 
   return (
     <aside aria-label="Agent thread details" className="agent-info">
@@ -78,24 +85,40 @@ export function AgentThreadInfoColumn({
         <div className="agent-info__status">
           <span aria-hidden="true" className={`agent-dot agent-dot--${tone}`} />
           <span className={`agent-info__word agent-info__word--${tone}`}>
-            {agentThreadStatusLabel(record.status)}
+            {agentThreadLifecycleLabel(thread.lifecycle)}
           </span>
           <span className="agent-info__since agent-num">
-            {agentThreadTimeLabel(record.startedAtEpochMs, now)}
+            {agentThreadTimeLabel(record.updatedAtEpochMs, now)}
           </span>
         </div>
+        {lastStatus && (
+          <p className="agent-info__prose">Last turn: {agentTurnStatusLabel(lastStatus)}.</p>
+        )}
+      </section>
+
+      <section className="agent-info__section">
+        <span className="agent-microlabel">turns</span>
+        <p className="agent-info__value agent-num">
+          {record.turns.length}
+          {record.turnsTruncated ? "+" : ""} · {agentRunningTurnCount(record)} running
+        </p>
       </section>
 
       <section className="agent-info__section">
         <span className="agent-microlabel">isolation</span>
-        <p className="agent-info__value">{agentIsolationBadgeLabel(record.isolation)}</p>
-        <p className="agent-info__prose">{agentIsolationBadgeReason(record.isolation)}</p>
+        <p className="agent-info__value">{agentIsolationBadgeLabel(isolation)}</p>
+        <p className="agent-info__prose">{agentIsolationBadgeReason(isolation)}</p>
       </section>
 
-      {record.worktreePath && (
+      {record.target.worktreePath && (
         <section className="agent-info__section">
           <span className="agent-microlabel">worktree</span>
-          <p className="agent-info__value agent-info__value--dim">{record.worktreePath}</p>
+          <p className="agent-info__value agent-info__value--dim">{record.target.worktreePath}</p>
+          {thread.worktreeMissing && (
+            <p className="agent-note agent-note--warning">
+              The worktree for this thread no longer exists.
+            </p>
+          )}
         </section>
       )}
 
@@ -113,18 +136,18 @@ export function AgentThreadInfoColumn({
         <span className="agent-microlabel">actions</span>
         <div className="agent-info__actions">
           <button
-            aria-label={pinned ? `Unpin agent ${taskId}` : `Pin agent ${taskId}`}
+            aria-label={pinned ? `Unpin thread ${threadId}` : `Pin thread ${threadId}`}
             aria-pressed={pinned}
             className={pinned ? "agent-info__action--pinned" : undefined}
-            onClick={() => onTogglePin(taskId)}
+            onClick={() => onTogglePin(threadId)}
             type="button"
           >
             <Pin aria-hidden="true" size={12} /> {pinned ? "Unpin thread" : "Pin thread"}
           </button>
-          {!thread.terminal && (
+          {running && (
             <button
-              aria-label={`Stop agent ${taskId}`}
-              onClick={() => onStop(taskId)}
+              aria-label={`Stop agent ${threadId}`}
+              onClick={() => onStop(threadId)}
               type="button"
             >
               <Square aria-hidden="true" size={12} /> Stop
@@ -132,9 +155,9 @@ export function AgentThreadInfoColumn({
           )}
           {reviewable && thread.changeSummary === null && (
             <button
-              aria-label={`Show changes for agent ${taskId}`}
+              aria-label={`Show changes for agent ${threadId}`}
               className="agent-info__action--main"
-              onClick={() => onShowChanges(taskId)}
+              onClick={() => onShowChanges(threadId)}
               type="button"
             >
               <Eye aria-hidden="true" size={12} /> Show changes
@@ -142,23 +165,33 @@ export function AgentThreadInfoColumn({
           )}
           {reviewable && (
             <button
-              aria-label={`Remove worktree for agent ${taskId}`}
+              aria-label={`Remove worktree for agent ${threadId}`}
               className="agent-info__action--danger"
               disabled={thread.changeSummary?.removing ?? false}
-              onClick={() => onRemoveWorktree(taskId)}
+              onClick={() => onRemoveWorktree(threadId)}
               type="button"
             >
               <Trash2 aria-hidden="true" size={12} />{" "}
               {thread.changeSummary?.removing ? "Removing…" : "Remove worktree"}
             </button>
           )}
-          {thread.terminal && (
+          {!running && thread.lifecycle !== "archived" && (
             <button
-              aria-label={`Dismiss agent ${taskId}`}
-              onClick={() => onDismiss(taskId)}
+              aria-label={`Archive thread ${threadId}`}
+              onClick={() => onArchive(threadId)}
               type="button"
             >
-              <X aria-hidden="true" size={12} /> Dismiss
+              <Archive aria-hidden="true" size={12} /> Archive
+            </button>
+          )}
+          {!running && (
+            <button
+              aria-label={`Remove thread ${threadId}`}
+              className="agent-info__action--danger"
+              onClick={() => onRemove(threadId)}
+              type="button"
+            >
+              <Trash aria-hidden="true" size={12} /> Remove thread
             </button>
           )}
         </div>

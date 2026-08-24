@@ -125,6 +125,11 @@ pub fn run() {
             app.manage(Arc::new(
                 agent_task_commands::agent_root_lease::AgentRootLeaseRegistry::new(),
             ));
+            app.manage(Arc::new(
+                agent_thread_store_commands::agent_thread_store::AgentThreadStore::new(
+                    app.path().app_data_dir()?,
+                ),
+            ));
             app.manage(agent_task_supervisor::AgentTaskRegistry::new(
                 agent_task_admission,
                 Arc::new(agent_task_spawner::StdAgentProcessSpawner),
@@ -453,6 +458,9 @@ pub fn run() {
             agent_task_commands::stop_agent_tasks_for_root,
             agent_task_commands::acquire_agent_root_lease,
             agent_task_commands::release_agent_root_lease,
+            agent_thread_store_commands::load_agent_threads,
+            agent_thread_store_commands::save_agent_thread,
+            agent_thread_store_commands::delete_agent_thread,
             git_worktree_commands::list_git_worktrees,
             git_worktree_commands::add_git_worktree,
             git_worktree_commands::remove_git_worktree,

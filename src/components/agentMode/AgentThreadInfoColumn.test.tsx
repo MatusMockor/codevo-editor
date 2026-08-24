@@ -3,8 +3,9 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentTaskChangeSummary, AgentTaskView } from "../../application/useAgentTasks";
-import type { AgentTaskIsolation, AgentTaskRecord } from "../../domain/agentTask";
+import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentTaskIsolation } from "../../domain/agentTask";
+import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import { AgentThreadInfoColumn, type AgentThreadInfoColumnProps } from "./AgentThreadInfoColumn";
 
 const ROOT = "/workspace/app";
@@ -41,30 +42,37 @@ describe("AgentThreadInfoColumn", () => {
     expect(host.textContent).toContain("1 of 4 running");
   });
 
-  it("shows status, isolation, worktree path and changed file count of a thread", () => {
+  it("shows lifecycle, last turn status, isolation, worktree path and changed files", () => {
     render({
       thread: threadView({
         status: { kind: "exited", exitCode: 0 },
-        terminal: true,
         changeSummary: summary({ files: [changedFile("a.ts"), changedFile("b.ts")] }),
       }),
     });
 
-    expect(host.textContent).toContain("Finished");
+    expect(host.textContent).toContain("Idle");
+    expect(host.textContent).toContain("Last turn: Finished.");
     expect(host.textContent).toContain("Worktree");
     expect(host.textContent).toContain(WORKTREE);
     expect(host.textContent).toContain("5 minutes ago");
     expect(host.querySelector(".agent-info__word--done")).not.toBeNull();
   });
 
-  it("stops a live thread", () => {
+  it("counts the turns of the thread and how many run", () => {
+    render({ thread: threadView({ status: { kind: "running" }, turnCount: 3 }) });
+
+    expect(host.textContent).toContain("3 · 1 running");
+  });
+
+  it("stops a live thread and offers no archive or remove while it runs", () => {
     const onStop = vi.fn();
     render({ onStop, thread: threadView({ status: { kind: "running" } }) });
 
     click('[aria-label="Stop agent agt-1"]');
 
     expect(onStop).toHaveBeenCalledWith("agt-1");
-    expect(host.querySelector('[aria-label="Dismiss agent agt-1"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Archive thread agt-1"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Remove thread agt-1"]')).toBeNull();
   });
 
   it("offers show changes and remove worktree for a reviewable thread", () => {
@@ -73,7 +81,7 @@ describe("AgentThreadInfoColumn", () => {
     render({
       onRemoveWorktree,
       onShowChanges,
-      thread: threadView({ status: { kind: "exited", exitCode: 0 }, terminal: true }),
+      thread: threadView({ status: { kind: "exited", exitCode: 0 } }),
     });
 
     click('[aria-label="Show changes for agent agt-1"]');
@@ -87,7 +95,6 @@ describe("AgentThreadInfoColumn", () => {
     render({
       thread: threadView({
         status: { kind: "exited", exitCode: 0 },
-        terminal: true,
         changeSummary: summary({ removing: true }),
       }),
     });
@@ -102,11 +109,7 @@ describe("AgentThreadInfoColumn", () => {
 
   it("hides worktree review actions for an in-place thread", () => {
     render({
-      thread: threadView({
-        status: { kind: "exited", exitCode: 0 },
-        terminal: true,
-        isolation: "in-place",
-      }),
+      thread: threadView({ status: { kind: "exited", exitCode: 0 }, isolation: "in-place" }),
     });
 
     expect(host.querySelector('[aria-label="Remove worktree for agent agt-1"]')).toBeNull();
@@ -115,46 +118,61 @@ describe("AgentThreadInfoColumn", () => {
 
   it("hides review actions once the worktree was removed", () => {
     render({
-      thread: threadView({
-        status: { kind: "exited", exitCode: 0 },
-        terminal: true,
-        worktreeRemoved: true,
-      }),
+      thread: threadView({ status: { kind: "exited", exitCode: 0 }, worktreeRemoved: true }),
     });
 
     expect(host.querySelector('[aria-label="Remove worktree for agent agt-1"]')).toBeNull();
   });
 
-  it("dismisses a terminal thread", () => {
-    const onDismiss = vi.fn();
+  it("warns when the worktree of the thread disappeared", () => {
     render({
-      onDismiss,
-      thread: threadView({ status: { kind: "failed", message: "boom" }, terminal: true }),
+      thread: threadView({ status: { kind: "exited", exitCode: 0 }, worktreeMissing: true }),
     });
 
-    click('[aria-label="Dismiss agent agt-1"]');
-
-    expect(onDismiss).toHaveBeenCalledWith("agt-1");
+    expect(host.textContent).toContain("The worktree for this thread no longer exists.");
   });
 
-  it("pins a running thread and unpins a pinned terminal thread", () => {
+  it("archives and removes a settled thread", () => {
+    const onArchive = vi.fn();
+    const onRemove = vi.fn();
+    render({
+      onArchive,
+      onRemove,
+      thread: threadView({ status: { kind: "failed", message: "boom" } }),
+    });
+
+    click('[aria-label="Archive thread agt-1"]');
+    click('[aria-label="Remove thread agt-1"]');
+
+    expect(onArchive).toHaveBeenCalledWith("agt-1");
+    expect(onRemove).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("offers no second archive for an already archived thread", () => {
+    render({ thread: threadView({ status: { kind: "stopped" }, archived: true }) });
+
+    expect(host.textContent).toContain("Archived");
+    expect(host.querySelector('[aria-label="Archive thread agt-1"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Remove thread agt-1"]')).not.toBeNull();
+  });
+
+  it("pins a running thread and unpins a pinned settled thread", () => {
     const onTogglePin = vi.fn();
     render({ onTogglePin, thread: threadView({ status: { kind: "running" } }) });
 
-    click('[aria-label="Pin agent agt-1"]');
+    click('[aria-label="Pin thread agt-1"]');
 
     expect(onTogglePin).toHaveBeenCalledWith("agt-1");
     expect(host.textContent).toContain("Pin thread");
 
     render({
       onTogglePin,
-      pinned: true,
-      thread: threadView({ status: { kind: "stopped" }, terminal: true }),
+      thread: threadView({ status: { kind: "stopped" }, pinned: true }),
     });
 
-    const unpin = host.querySelector('[aria-label="Unpin agent agt-1"]');
+    const unpin = host.querySelector('[aria-label="Unpin thread agt-1"]');
     expect(unpin?.getAttribute("aria-pressed")).toBe("true");
-    click('[aria-label="Unpin agent agt-1"]');
+    click('[aria-label="Unpin thread agt-1"]');
 
     expect(onTogglePin).toHaveBeenCalledTimes(2);
   });
@@ -162,7 +180,7 @@ describe("AgentThreadInfoColumn", () => {
   it("offers no pin action while no thread is selected", () => {
     render({ thread: null });
 
-    expect(host.querySelector('[aria-label^="Pin agent"]')).toBeNull();
+    expect(host.querySelector('[aria-label^="Pin thread"]')).toBeNull();
   });
 
   function render(overrides: Partial<AgentThreadInfoColumnProps> = {}): void {
@@ -179,7 +197,6 @@ describe("AgentThreadInfoColumn", () => {
 function defaultProps(): AgentThreadInfoColumnProps {
   return {
     thread: threadView({}),
-    pinned: false,
     now: NOW,
     liveTaskCount: 0,
     maxConcurrentAgentTasks: 4,
@@ -187,37 +204,62 @@ function defaultProps(): AgentThreadInfoColumnProps {
     composerRepositoryRoot: ROOT,
     composerIsolationReason: null,
     onStop: () => undefined,
-    onDismiss: () => undefined,
+    onArchive: () => undefined,
+    onRemove: () => undefined,
     onShowChanges: () => undefined,
     onRemoveWorktree: () => undefined,
     onTogglePin: () => undefined,
   };
 }
 
-function threadView(overrides: {
-  readonly status?: AgentTaskRecord["status"];
-  readonly terminal?: boolean;
+interface ThreadViewOptions {
+  readonly status?: AgentTurnStatus;
   readonly isolation?: AgentTaskIsolation;
   readonly worktreeRemoved?: boolean;
+  readonly worktreeMissing?: boolean;
   readonly changeSummary?: AgentTaskChangeSummary | null;
-}): AgentTaskView {
+  readonly pinned?: boolean;
+  readonly archived?: boolean;
+  readonly turnCount?: number;
+}
+
+function threadView(overrides: ThreadViewOptions): AgentThreadView {
   const isolation = overrides.isolation ?? "worktree";
-  return {
-    record: {
-      owner: { taskId: "agt-1", workspaceId: "workspace-a", repositoryRoot: ROOT },
-      isolation,
-      worktreePath: isolation === "worktree" ? WORKTREE : null,
+  const status = overrides.status ?? { kind: "running" };
+  const archived = overrides.archived ?? false;
+  const running = status.kind === "pending" || status.kind === "running";
+  const turnCount = overrides.turnCount ?? 1;
+  const thread: AgentThread = {
+    threadId: "agt-1",
+    owner: { rootKey: ROOT, ownerId: "agent-root:app", repositoryRoot: ROOT },
+    target: { isolation, worktreePath: isolation === "worktree" ? WORKTREE : null },
+    provider: { kind: "claudeCode", sessionId: "session-abcdefgh" },
+    title: "Refactor the parser",
+    pinned: overrides.pinned ?? false,
+    archived,
+    createdAtEpochMs: NOW - 5 * 60_000,
+    updatedAtEpochMs: NOW - 5 * 60_000,
+    turns: Array.from({ length: turnCount }, (_unused, index) => ({
+      turnId: `agt-1-t${index}`,
       prompt: "Refactor the parser",
-      status: overrides.status ?? { kind: "running" },
-      outputTail: "",
-      outputTruncated: false,
+      status: index === turnCount - 1 ? status : ({ kind: "exited", exitCode: 0 } as const),
+      startedAtEpochMs: NOW - 5 * 60_000,
+      endedAtEpochMs: null,
+      events: [],
+      eventsTruncated: false,
       lastStatusSequence: 0,
       lastOutputSequence: 0,
-      startedAtEpochMs: NOW - 5 * 60_000,
-    },
+    })),
+    turnsTruncated: false,
+  };
+
+  return {
+    thread,
+    lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: "app",
-    terminal: overrides.terminal ?? false,
+    projectOrigin: "active-tab",
     worktreeRemoved: overrides.worktreeRemoved ?? false,
+    worktreeMissing: overrides.worktreeMissing ?? false,
     changeSummary: overrides.changeSummary ?? null,
   };
 }

@@ -23,14 +23,19 @@ import {
   type AgentProjectsSurface,
   type AgentRepositoryDiscoveryGateway,
 } from "./useAgentProjects";
-import {
-  useAgentTasks,
-  type AgentRepositoryStatusSnapshot,
-  type AgentTasksSurface,
-} from "./useAgentTasks";
+import type {
+  AgentRepositoryStatusSnapshot,
+  AgentThreadStoreGateway,
+  AgentThreadsSurface,
+} from "./agentThreadPorts";
+import { useAgentThreads } from "./useAgentThreads";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-import { defaultAgentTaskGateway, defaultGitWorktreeGateway } from "./workbenchDefaultGateways";
+import {
+  defaultAgentTaskGateway,
+  defaultAgentThreadStoreGateway,
+  defaultGitWorktreeGateway,
+} from "./workbenchDefaultGateways";
 
 export interface WorkbenchAgentProjectGateways {
   readonly settingsGateway: Pick<SettingsGateway, "loadWorkspaceSettings">;
@@ -42,8 +47,10 @@ export interface WorkbenchAgentProjectGateways {
 
 export interface WorkbenchAgentsOptions {
   readonly agentTaskGateway?: AgentTaskGateway;
+  readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly gitWorktreeGateway?: GitWorktreeGateway;
   readonly agentProjectGateways?: WorkbenchAgentProjectGateways;
+  readonly agentModeActive: boolean;
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly workspaceSettingsRef: { readonly current: WorkspaceSettings };
   readonly gitGateway: Pick<GitGateway, "getStatus" | "getDiff">;
@@ -58,7 +65,7 @@ export interface WorkbenchAgentsOptions {
   readonly workspaceRoot: string | null;
 }
 
-export interface WorkbenchAgentsSurface extends AgentTasksSurface {
+export interface WorkbenchAgentsSurface extends AgentThreadsSurface {
   readonly agentProjects: AgentProjectsSurface;
 }
 
@@ -147,20 +154,20 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     setSettingsOpen(true);
   }, [setSettingsInitialSection, setSettingsOpen]);
 
-  const tasksSurfaceRef = useRef<AgentTasksSurface | null>(null);
+  const threadsSurfaceRef = useRef<AgentThreadsSurface | null>(null);
   const projectGateways = options.agentProjectGateways;
 
   const hasLiveTasksForOwner = useCallback(
-    (ownerId: string): boolean => tasksSurfaceRef.current?.hasLiveTasksForOwner(ownerId) ?? false,
+    (ownerId: string): boolean => threadsSurfaceRef.current?.hasLiveTasksForOwner(ownerId) ?? false,
     [],
   );
   const stopProjectTasks = useCallback(
     (ownerId: string, repositoryRoots: ReadonlyArray<string>): Promise<void> =>
-      tasksSurfaceRef.current?.stopProjectTasks(ownerId, repositoryRoots) ?? Promise.resolve(),
+      threadsSurfaceRef.current?.stopProjectTasks(ownerId, repositoryRoots) ?? Promise.resolve(),
     [],
   );
   const releaseProjectTasks = useCallback((ownerId: string): void => {
-    tasksSurfaceRef.current?.releaseProjectTasks(ownerId);
+    threadsSurfaceRef.current?.releaseProjectTasks(ownerId);
   }, []);
   const descriptorForRoot = useCallback(
     (rootPath: string): WorkspaceIdentityDescriptor | null =>
@@ -188,12 +195,14 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     reportError: options.reportError,
   });
 
-  const tasks = useAgentTasks({
+  const threads = useAgentThreads({
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
+    agentThreadStoreGateway: options.agentThreadStoreGateway ?? defaultAgentThreadStoreGateway,
     gitWorktreeGateway: options.gitWorktreeGateway ?? defaultGitWorktreeGateway,
     gitGateway: options.gitGateway,
     prompter: options.prompter,
     projects: agentProjects.projects,
+    agentModeActive: options.agentModeActive,
     getAgentCliPath: () => options.appSettingsRef.current.agentCliPath,
     getAgentCliKind: () => options.appSettingsRef.current.agentCliKind,
     getMaxConcurrentAgentTasks: () => options.appSettingsRef.current.maxConcurrentAgentTasks,
@@ -206,8 +215,8 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   });
 
   useLayoutEffect(() => {
-    tasksSurfaceRef.current = tasks;
+    threadsSurfaceRef.current = threads;
   });
 
-  return useMemo(() => ({ ...tasks, agentProjects }), [agentProjects, tasks]);
+  return useMemo(() => ({ ...threads, agentProjects }), [agentProjects, threads]);
 }

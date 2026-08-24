@@ -1,11 +1,11 @@
 import { type FormEvent, type KeyboardEvent } from "react";
-import { Play, TriangleAlert } from "lucide-react";
+import { Play, Plus, Send, TriangleAlert } from "lucide-react";
 import {
   MAX_AGENT_TASK_PROMPT_BYTES,
   type AgentTaskIsolation,
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
-import { inPlaceGuardReasonLabel } from "../../application/useAgentTasks";
+import { inPlaceGuardReasonLabel } from "./agentModePresentation";
 
 export interface AgentComposerRepositoryOption {
   readonly repositoryRoot: string;
@@ -18,7 +18,16 @@ export interface AgentComposerProjectOption {
   readonly repositories: ReadonlyArray<AgentComposerRepositoryOption>;
 }
 
+export type AgentComposerMode =
+  | { readonly kind: "new" }
+  | {
+      readonly kind: "followUp";
+      readonly threadTitle: string;
+      readonly blockedReason: string | null;
+    };
+
 export interface AgentComposerProps {
+  readonly mode: AgentComposerMode;
   readonly projects: ReadonlyArray<AgentComposerProjectOption>;
   readonly selectedProjectRootKey: string | null;
   readonly selectedRepositoryRoot: string | null;
@@ -37,6 +46,7 @@ export interface AgentComposerProps {
   onPromptChange(prompt: string): void;
   onIsolationChange(isolation: AgentTaskIsolation): void;
   onUnsafeConfirmedChange(confirmed: boolean): void;
+  onNewThread(): void;
   onSubmit(): void;
 }
 
@@ -45,7 +55,9 @@ export function AgentComposer({
   guard,
   isolation,
   isolationReason,
+  mode,
   onIsolationChange,
+  onNewThread,
   onPromptChange,
   onSelectProject,
   onSelectRepository,
@@ -61,17 +73,26 @@ export function AgentComposer({
   worktreeOnly,
   worktreeOnlyReason,
 }: AgentComposerProps) {
+  const followUp = mode.kind === "followUp";
+  const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const promptTooLong = promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
-  const unsafeInPlace = isolation === "in-place" && guard.kind === "unsafe";
+  const unsafeInPlace = !followUp && isolation === "in-place" && guard.kind === "unsafe";
   const selectedProject =
     projects.find((project) => project.projectRootKey === selectedProjectRootKey) ?? null;
   const repositories = selectedProject?.repositories ?? [];
   const selectedRepository =
     repositories.find((repository) => repository.repositoryRoot === selectedRepositoryRoot) ?? null;
-  const caption = worktreeOnly ? worktreeOnlyReason : isolationReason;
+  const blocked = submitBlocked || blockedReason !== null;
+  const caption = composerCaption({
+    blockedReason,
+    isolationReason,
+    worktreeOnly,
+    worktreeOnlyReason,
+  });
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
+    if (blocked) return;
     onSubmit();
   };
 
@@ -79,12 +100,16 @@ export function AgentComposer({
     if (event.key !== "Enter") return;
     if (!event.metaKey && !event.ctrlKey) return;
     event.preventDefault();
-    if (submitBlocked) return;
+    if (blocked) return;
     onSubmit();
   };
 
   return (
-    <form aria-label="New agent thread" className="agent-composer" onSubmit={submit}>
+    <form
+      aria-label={followUp ? "Follow up on agent thread" : "New agent thread"}
+      className="agent-composer"
+      onSubmit={submit}
+    >
       <div className="agent-composer__box">
         <label className="agent-visually-hidden" htmlFor="agent-prompt">
           Prompt
@@ -94,7 +119,11 @@ export function AgentComposer({
           id="agent-prompt"
           onChange={(event) => onPromptChange(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Describe the change you want the agent to make"
+          placeholder={
+            followUp
+              ? "Reply to the agent in this thread"
+              : "Describe the change you want the agent to make"
+          }
           value={prompt}
         />
 
@@ -122,15 +151,23 @@ export function AgentComposer({
         )}
 
         <div className="agent-composer__row">
-          <AgentComposerTarget
-            project={selectedProject}
-            projectPicked={projects.length > 1}
-            repositories={repositories}
-            repository={selectedRepository}
-            repositoryPicked={repositories.length > 1}
-          />
+          {followUp && (
+            <span className="agent-composer__chip agent-composer__chip--thread">
+              {mode.threadTitle}
+            </span>
+          )}
 
-          {projects.length > 1 && (
+          {!followUp && (
+            <AgentComposerTarget
+              project={selectedProject}
+              projectPicked={projects.length > 1}
+              repositories={repositories}
+              repository={selectedRepository}
+              repositoryPicked={repositories.length > 1}
+            />
+          )}
+
+          {!followUp && projects.length > 1 && (
             <>
               <label className="agent-visually-hidden" htmlFor="agent-project">
                 Project
@@ -150,7 +187,7 @@ export function AgentComposer({
             </>
           )}
 
-          {repositories.length > 1 && (
+          {!followUp && repositories.length > 1 && (
             <>
               <label className="agent-visually-hidden" htmlFor="agent-repository">
                 Repository
@@ -170,22 +207,30 @@ export function AgentComposer({
             </>
           )}
 
-          <span aria-hidden="true" className="agent-composer__vsep" />
+          {!followUp && <span aria-hidden="true" className="agent-composer__vsep" />}
 
-          <label className="agent-composer__isolation" htmlFor="agent-isolation">
-            <input
-              checked={isolation === "worktree"}
-              disabled={worktreeOnly}
-              id="agent-isolation"
-              onChange={(event) =>
-                onIsolationChange(event.target.checked ? "worktree" : "in-place")
-              }
-              type="checkbox"
-            />
-            <span className="agent-composer__isolation-label">
-              {isolation === "worktree" ? "Isolated worktree" : "In place"}
-            </span>
-          </label>
+          {!followUp && (
+            <label className="agent-composer__isolation" htmlFor="agent-isolation">
+              <input
+                checked={isolation === "worktree"}
+                disabled={worktreeOnly}
+                id="agent-isolation"
+                onChange={(event) =>
+                  onIsolationChange(event.target.checked ? "worktree" : "in-place")
+                }
+                type="checkbox"
+              />
+              <span className="agent-composer__isolation-label">
+                {isolation === "worktree" ? "Isolated worktree" : "In place"}
+              </span>
+            </label>
+          )}
+
+          {followUp && (
+            <button className="agent-composer__new" onClick={onNewThread} type="button">
+              <Plus aria-hidden="true" size={12} /> New thread
+            </button>
+          )}
 
           <span className="agent-composer__spacer" />
 
@@ -199,9 +244,13 @@ export function AgentComposer({
             {promptBytes} / {MAX_AGENT_TASK_PROMPT_BYTES} bytes
           </span>
 
-          <button className="agent-composer__send" disabled={submitBlocked} type="submit">
-            <Play aria-hidden="true" size={12} />
-            {dispatching ? "Starting…" : "Start agent"}
+          <button className="agent-composer__send" disabled={blocked} type="submit">
+            {followUp ? (
+              <Send aria-hidden="true" size={12} />
+            ) : (
+              <Play aria-hidden="true" size={12} />
+            )}
+            {submitLabel(dispatching, followUp)}
           </button>
         </div>
 
@@ -209,6 +258,27 @@ export function AgentComposer({
       </div>
     </form>
   );
+}
+
+function submitLabel(dispatching: boolean, followUp: boolean): string {
+  if (followUp) return dispatching ? "Sending…" : "Send";
+  return dispatching ? "Starting…" : "Start agent";
+}
+
+function composerCaption({
+  blockedReason,
+  isolationReason,
+  worktreeOnly,
+  worktreeOnlyReason,
+}: {
+  readonly blockedReason: string | null;
+  readonly isolationReason: string | null;
+  readonly worktreeOnly: boolean;
+  readonly worktreeOnlyReason: string | null;
+}): string | null {
+  if (blockedReason !== null) return blockedReason;
+  if (worktreeOnly) return worktreeOnlyReason;
+  return isolationReason;
 }
 
 function AgentComposerTarget({

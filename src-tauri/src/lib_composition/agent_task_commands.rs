@@ -38,6 +38,7 @@ pub(crate) struct StartAgentTaskRequest {
     prompt: String,
     agent_cli_path: String,
     agent_cli_kind: AgentCliInvocation,
+    resume_session_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -166,6 +167,7 @@ fn prepare_agent_task_start(
         request.agent_cli_kind,
         &request.prompt,
         &cwd,
+        request.resume_session_id.as_deref(),
     )?;
 
     Ok(PreparedAgentTaskStart {
@@ -391,6 +393,7 @@ mod tests {
             prompt: "Fix the failing test.".to_string(),
             agent_cli_path: workspace.executable_cli().to_string_lossy().into_owned(),
             agent_cli_kind: AgentCliInvocation::ClaudeCode,
+            resume_session_id: None,
         }
     }
 
@@ -500,8 +503,65 @@ mod tests {
         );
         assert_eq!(
             prepared.plan.args(),
-            ["-p".to_string(), "--".to_string(), request.prompt.clone()]
+            [
+                "-p".to_string(),
+                "--output-format".to_string(),
+                "stream-json".to_string(),
+                "--verbose".to_string(),
+                "--".to_string(),
+                request.prompt.clone()
+            ]
         );
+    }
+
+    #[test]
+    fn prepare_forwards_a_validated_resume_session_id_to_the_argv() {
+        let workspace = TempWorkspace::create("resume-plan");
+        let worktree = workspace.worktree("agt-test-0001");
+        let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
+        request.resume_session_id = Some("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string());
+
+        let prepared = prepare_agent_task_start(&request).expect("prepare resumed start");
+
+        assert_eq!(
+            prepared.plan.args(),
+            [
+                "-p".to_string(),
+                "--output-format".to_string(),
+                "stream-json".to_string(),
+                "--verbose".to_string(),
+                "--resume".to_string(),
+                "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string(),
+                "--".to_string(),
+                request.prompt.clone()
+            ]
+        );
+    }
+
+    #[test]
+    fn prepare_rejects_a_flag_like_resume_session_id() {
+        let workspace = TempWorkspace::create("resume-flag");
+        let worktree = workspace.worktree("agt-test-0001");
+        let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
+        request.resume_session_id = Some("--dangerously-skip-permissions".to_string());
+
+        let error = prepare_agent_task_start(&request).expect_err("flag-like resume id");
+
+        assert!(error.contains("session id"), "got: {error}");
+    }
+
+    #[test]
+    fn start_requests_reject_unknown_fields_and_accept_a_null_resume_session_id() {
+        let unknown = serde_json::from_str::<StartAgentTaskRequest>(
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"extra\":1}",
+        );
+        let accepted = serde_json::from_str::<StartAgentTaskRequest>(
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null}",
+        )
+        .expect("deserialize start request");
+
+        assert!(unknown.is_err(), "unknown start field must be rejected");
+        assert_eq!(accepted.resume_session_id, None);
     }
 
     #[test]

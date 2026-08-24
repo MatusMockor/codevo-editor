@@ -8,10 +8,12 @@ use std::{
 
 pub const MAX_AGENT_PROMPT_BYTES: usize = 32 * 1024;
 pub const MAX_AGENT_CLI_PATH_BYTES: usize = 4 * 1024;
+pub const MIN_AGENT_SESSION_ID_BYTES: usize = 8;
+pub const MAX_AGENT_SESSION_ID_BYTES: usize = 128;
 pub const AGENT_TASK_INHERITED_ENV: [&str; 7] =
     ["HOME", "PATH", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG"];
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum AgentCliInvocation {
     ClaudeCode,
@@ -65,7 +67,11 @@ pub fn plan_agent_invocation(
     invocation: AgentCliInvocation,
     prompt: &str,
     cwd: &Path,
+    resume_session_id: Option<&str>,
 ) -> Result<AgentTaskSpawnPlan, String> {
+    if let Some(candidate) = resume_session_id {
+        validate_resume_session_id(candidate)?;
+    }
     if cli_path.is_empty() {
         return Err("Agent CLI path is not configured.".to_string());
     }
@@ -91,20 +97,68 @@ pub fn plan_agent_invocation(
     if !cwd.is_absolute() {
         return Err("Agent working directory must be absolute.".to_string());
     }
-    let args = match invocation {
-        AgentCliInvocation::ClaudeCode => {
-            vec!["-p".to_string(), "--".to_string(), prompt.to_string()]
-        }
-        AgentCliInvocation::CodexExec => {
-            vec!["exec".to_string(), "--".to_string(), prompt.to_string()]
-        }
-    };
+    let args = agent_invocation_args(invocation, prompt, resume_session_id);
     Ok(AgentTaskSpawnPlan {
         program: program.to_path_buf(),
         args,
         cwd: cwd.to_path_buf(),
         env: inherited_environment(),
     })
+}
+
+fn agent_invocation_args(
+    invocation: AgentCliInvocation,
+    prompt: &str,
+    resume_session_id: Option<&str>,
+) -> Vec<String> {
+    let template: Vec<&str> = match (invocation, resume_session_id) {
+        (AgentCliInvocation::ClaudeCode, None) => {
+            vec!["-p", "--output-format", "stream-json", "--verbose", "--"]
+        }
+        (AgentCliInvocation::ClaudeCode, Some(session_id)) => vec![
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--resume",
+            session_id,
+            "--",
+        ],
+        (AgentCliInvocation::CodexExec, None) => vec!["exec", "--json", "--"],
+        (AgentCliInvocation::CodexExec, Some(session_id)) => {
+            vec!["exec", "resume", "--json", session_id, "--"]
+        }
+    };
+    template
+        .into_iter()
+        .map(str::to_string)
+        .chain(std::iter::once(prompt.to_string()))
+        .collect()
+}
+
+pub fn validate_resume_session_id(candidate: &str) -> Result<&str, String> {
+    if candidate.len() < MIN_AGENT_SESSION_ID_BYTES {
+        return Err("Agent session id is too short.".to_string());
+    }
+    if candidate.len() > MAX_AGENT_SESSION_ID_BYTES {
+        return Err("Agent session id exceeds the supported length.".to_string());
+    }
+    let mut characters = candidate.chars();
+    let Some(first) = characters.next() else {
+        return Err("Agent session id is required.".to_string());
+    };
+    if !first.is_ascii_alphanumeric() {
+        return Err("Agent session id must start with a letter or digit.".to_string());
+    }
+    if !characters
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err(
+            "Agent session id may contain only letters, digits, dashes, and underscores."
+                .to_string(),
+        );
+    }
+    Ok(candidate)
 }
 
 fn inherited_environment() -> Vec<(String, String)> {
@@ -273,4 +327,104 @@ fn exit_code_of(status: std::process::ExitStatus) -> i32 {
 #[cfg(not(unix))]
 fn exit_code_of(status: std::process::ExitStatus) -> i32 {
     status.code().unwrap_or(-1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SESSION_ID: &str = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
+
+    #[test]
+    fn claude_first_turn_uses_the_stream_json_argv_template() {
+        assert_eq!(
+            agent_invocation_args(AgentCliInvocation::ClaudeCode, "do it", None),
+            [
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--",
+                "do it"
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_follow_up_turn_passes_resume_before_the_prompt_separator() {
+        assert_eq!(
+            agent_invocation_args(AgentCliInvocation::ClaudeCode, "do it", Some(SESSION_ID)),
+            [
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--resume",
+                SESSION_ID,
+                "--",
+                "do it"
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_first_turn_uses_the_json_exec_argv_template() {
+        assert_eq!(
+            agent_invocation_args(AgentCliInvocation::CodexExec, "do it", None),
+            ["exec", "--json", "--", "do it"]
+        );
+    }
+
+    #[test]
+    fn codex_follow_up_turn_uses_the_exec_resume_argv_template() {
+        assert_eq!(
+            agent_invocation_args(AgentCliInvocation::CodexExec, "do it", Some(SESSION_ID)),
+            ["exec", "resume", "--json", SESSION_ID, "--", "do it"]
+        );
+    }
+
+    #[test]
+    fn accepts_session_ids_within_the_safe_pattern() {
+        assert_eq!(
+            validate_resume_session_id("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"),
+            Ok("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b")
+        );
+        assert!(validate_resume_session_id("abcd_efg").is_ok());
+        assert!(validate_resume_session_id(&"a".repeat(MAX_AGENT_SESSION_ID_BYTES)).is_ok());
+    }
+
+    #[test]
+    fn rejects_flag_like_short_oversize_and_non_ascii_session_ids() {
+        assert!(validate_resume_session_id("-resume-me").is_err());
+        assert!(validate_resume_session_id("--flag123").is_err());
+        assert!(validate_resume_session_id("short").is_err());
+        assert!(validate_resume_session_id("").is_err());
+        assert!(validate_resume_session_id(&"a".repeat(MAX_AGENT_SESSION_ID_BYTES + 1)).is_err());
+        assert!(validate_resume_session_id("has space").is_err());
+        assert!(validate_resume_session_id("sess/ion1").is_err());
+        assert!(validate_resume_session_id("sessión01").is_err());
+    }
+
+    #[test]
+    fn planning_rejects_unsafe_resume_session_ids_before_any_other_work() {
+        let flag_like = plan_agent_invocation(
+            "",
+            AgentCliInvocation::ClaudeCode,
+            "do it",
+            Path::new("/workspace"),
+            Some("--dangerously-skip-permissions"),
+        )
+        .expect_err("flag-like resume id must be refused");
+        let oversize = plan_agent_invocation(
+            "",
+            AgentCliInvocation::CodexExec,
+            "do it",
+            Path::new("/workspace"),
+            Some(&"a".repeat(MAX_AGENT_SESSION_ID_BYTES + 1)),
+        )
+        .expect_err("oversize resume id must be refused");
+
+        assert!(flag_like.contains("session id"), "got: {flag_like}");
+        assert!(oversize.contains("session id"), "got: {oversize}");
+    }
 }

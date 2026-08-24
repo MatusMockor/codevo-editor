@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { StartAgentTaskRequest } from "../domain/agentTask";
+import { AgentTaskStartRejectedError, type StartAgentTaskRequest } from "../domain/agentTask";
 import {
   TauriAgentTaskGateway,
   type AgentTaskRuntimeDetector,
@@ -16,6 +16,7 @@ const START_REQUEST: StartAgentTaskRequest = {
   prompt: "do the thing",
   agentCliPath: "/usr/local/bin/claude",
   agentCliKind: "claudeCode",
+  resumeSessionId: null,
 };
 
 const available: AgentTaskRuntimeDetector = () => true;
@@ -40,6 +41,34 @@ describe("TauriAgentTaskGateway", () => {
       "stop_agent_task",
       "stop_agent_tasks_for_root",
     ]);
+  });
+
+  it("classifies known backend admission and trust rejections as definite start failures", async () => {
+    const invokeCommand = vi
+      .fn<InvokeAgentTaskCommand>()
+      .mockRejectedValueOnce("Too many agent tasks are starting or running.")
+      .mockRejectedValueOnce("Agent tasks require a trusted repository.")
+      .mockRejectedValueOnce("Failed to spawn the agent process.");
+    const gateway = new TauriAgentTaskGateway(invokeCommand, vi.fn(), available);
+
+    await expect(gateway.startAgentTask(START_REQUEST)).rejects.toBeInstanceOf(
+      AgentTaskStartRejectedError,
+    );
+    await expect(gateway.startAgentTask(START_REQUEST)).rejects.toMatchObject({
+      name: "AgentTaskStartRejectedError",
+      message: "Agent tasks require a trusted repository.",
+    });
+    await expect(gateway.startAgentTask(START_REQUEST)).rejects.toSatisfy(
+      (error: unknown) => !(error instanceof AgentTaskStartRejectedError),
+    );
+  });
+
+  it("treats a missing native runtime as a definite start rejection", async () => {
+    const gateway = new TauriAgentTaskGateway(vi.fn(), vi.fn(), unavailable);
+
+    await expect(gateway.startAgentTask(START_REQUEST)).rejects.toBeInstanceOf(
+      AgentTaskStartRejectedError,
+    );
   });
 
   it("subscribes to the exact status channel and drops malformed payloads", async () => {

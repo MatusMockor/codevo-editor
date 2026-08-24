@@ -1,13 +1,14 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type {
-  AgentTaskGateway,
-  AgentTaskOutputEvent,
-  AgentTaskReferenceRequest,
-  AgentTaskStatusEvent,
-  StartAgentTaskRequest,
-  StartAgentTaskResult,
-  StopAgentTasksForRootRequest,
+import {
+  AgentTaskStartRejectedError,
+  type AgentTaskGateway,
+  type AgentTaskOutputEvent,
+  type AgentTaskReferenceRequest,
+  type AgentTaskStatusEvent,
+  type StartAgentTaskRequest,
+  type StartAgentTaskResult,
+  type StopAgentTasksForRootRequest,
 } from "../domain/agentTask";
 import {
   AGENT_TASK_OUTPUT_EVENT,
@@ -44,7 +45,7 @@ export class TauriAgentTaskGateway implements AgentTaskGateway {
 
   async startAgentTask(request: StartAgentTaskRequest): Promise<StartAgentTaskResult> {
     if (!this.isRuntimeAvailable()) {
-      throw new Error("Agent tasks require the native runtime.");
+      throw new AgentTaskStartRejectedError("Agent tasks require the native runtime.");
     }
     return invokeStartAgentTaskIpc(this.invokeCommand, request);
   }

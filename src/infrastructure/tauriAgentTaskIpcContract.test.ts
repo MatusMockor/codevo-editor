@@ -25,6 +25,7 @@ const START_REQUEST: StartAgentTaskRequest = {
   prompt: "do the thing",
   agentCliPath: "/usr/local/bin/claude",
   agentCliKind: "claudeCode",
+  resumeSessionId: null,
 };
 
 describe("agent task IPC command names", () => {

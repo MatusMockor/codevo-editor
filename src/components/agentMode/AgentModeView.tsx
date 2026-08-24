@@ -2,25 +2,31 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Settings, X } from "lucide-react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { MAX_AGENT_TASK_PROMPT_BYTES, type AgentTaskIsolation } from "../../domain/agentTask";
+import type {
+  AgentTasksNotice,
+  AgentThreadsSurface,
+  AgentThreadView,
+} from "../../application/agentThreadPorts";
 import {
-  agentIsolationReasonLabel,
-  agentPromptByteLength,
-  type AgentTasksNotice,
-  type AgentTasksSurface,
-} from "../../application/useAgentTasks";
-import { useAgentThreadPins } from "../../application/useAgentThreadPins";
-import { AgentComposer, type AgentComposerProjectOption } from "./AgentComposer";
+  AgentComposer,
+  type AgentComposerMode,
+  type AgentComposerProjectOption,
+} from "./AgentComposer";
 import { AgentThreadInfoColumn } from "./AgentThreadInfoColumn";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
 import {
+  agentFollowUpBlockedReason,
+  agentIsolationReasonLabel,
   agentProjectGroups,
   agentProjectWorktreeOnly,
   agentProjectWorktreeOnlyReason,
+  agentPromptByteLength,
+  agentThreadDisplayTitle,
 } from "./agentModePresentation";
 
 export interface AgentModeViewProps {
-  readonly agents: AgentTasksSurface;
+  readonly agents: AgentThreadsSurface;
   readonly workspaceRoot: string | null;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly overflowRootPaths: ReadonlyArray<string>;
@@ -43,13 +49,15 @@ export function AgentModeView({
   onTrustProject,
   overflowRootPaths,
   projects,
-  workspaceRoot,
 }: AgentModeViewProps) {
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [collapsedProjectRootKeys, setCollapsedProjectRootKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [collapsedRepositoryRoots, setCollapsedRepositoryRoots] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [expandedArchivedRoots, setExpandedArchivedRoots] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [selection, setSelection] = useState<ComposerTarget | null>(null);
@@ -63,24 +71,9 @@ export function AgentModeView({
     return () => clearInterval(timer);
   }, [nowTickMs]);
 
-  const pinnableTaskIds = useMemo(
-    () => agents.tasks.map((task) => task.record.owner.taskId),
-    [agents.tasks],
-  );
-  const pins = useAgentThreadPins(workspaceRoot, pinnableTaskIds);
-  const pinnedTaskIds = pins.pinnedTaskIds;
-  const pinnedTaskIdSet = useMemo(() => new Set(pinnedTaskIds), [pinnedTaskIds]);
-  const togglePin = pins.toggle;
-  const onTogglePin = useCallback(
-    (taskId: string) => {
-      togglePin(taskId);
-    },
-    [togglePin],
-  );
-
   const groups = useMemo(
-    () => agentProjectGroups(projects, agents.tasks, agents.orphanedWorktrees, pinnedTaskIds),
-    [projects, agents.orphanedWorktrees, agents.tasks, pinnedTaskIds],
+    () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
+    [projects, agents.orphanedWorktrees, agents.threads],
   );
 
   const composerProjects = useMemo<ReadonlyArray<AgentComposerProjectOption>>(
@@ -117,6 +110,9 @@ export function AgentModeView({
   const worktreeOnlyReason =
     composerProject === null ? null : agentProjectWorktreeOnlyReason(composerProject.origin);
 
+  const selectedThread =
+    agents.threads.find((view) => view.thread.threadId === selectedThreadId) ?? null;
+
   const preview = composerRoot === null ? null : agents.isolationPreview(composerRoot);
   const refreshIsolationStatus = agents.refreshIsolationStatus;
   useEffect(() => {
@@ -134,12 +130,13 @@ export function AgentModeView({
   const confirmed =
     preview?.confirmationKey !== null && unsafeConfirmed === preview?.confirmationKey;
   const promptBytes = agentPromptByteLength(prompt);
+  const promptEmpty = prompt.trim() === "" || promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
+  const composerMode = useComposerMode(selectedThread, agents);
   const submitBlocked =
     agents.dispatching ||
-    target === null ||
-    prompt.trim() === "" ||
-    promptBytes > MAX_AGENT_TASK_PROMPT_BYTES ||
-    (isolation === "in-place" && guard.kind === "unsafe" && !confirmed);
+    promptEmpty ||
+    (selectedThread === null &&
+      (target === null || (isolation === "in-place" && guard.kind === "unsafe" && !confirmed)));
 
   const toggleProject = useCallback((projectRootKey: string) => {
     setCollapsedProjectRootKeys((current) => toggled(current, projectRootKey));
@@ -149,32 +146,64 @@ export function AgentModeView({
     setCollapsedRepositoryRoots((current) => toggled(current, repositoryRoot));
   }, []);
 
+  const toggleArchived = useCallback((repositoryRoot: string) => {
+    setExpandedArchivedRoots((current) => toggled(current, repositoryRoot));
+  }, []);
+
   const startNewThread = useCallback((projectRootKey: string, repositoryRoot: string) => {
-    setSelectedTaskId(null);
+    setSelectedThreadId(null);
     setSelection({ projectRootKey, repositoryRoot });
     setUnsafeConfirmed(null);
   }, []);
 
-  const submit = useCallback(() => {
-    if (target === null) return;
-    void agents
-      .dispatch({
-        projectRootKey: target.projectRootKey,
-        repositoryRoot: target.repositoryRoot,
-        prompt,
-        isolation,
-        unsafeInPlaceConfirmationKey: confirmed ? (preview?.confirmationKey ?? null) : null,
-      })
-      .then((dispatched) => {
-        if (!dispatched) return;
-        setPrompt("");
-        setUnsafeConfirmed(null);
-        setSelectedTaskId(dispatched.taskId);
-      });
-  }, [agents, confirmed, isolation, preview?.confirmationKey, prompt, target]);
+  const clearSelection = useCallback(() => {
+    setSelectedThreadId(null);
+    setUnsafeConfirmed(null);
+  }, []);
 
-  const selectedThread =
-    agents.tasks.find((task) => task.record.owner.taskId === selectedTaskId) ?? null;
+  const sendFollowUp = agents.sendFollowUp;
+  const startThread = agents.startThread;
+  const followUpThreadId = selectedThread?.thread.threadId ?? null;
+
+  const submit = useCallback(() => {
+    if (followUpThreadId !== null) {
+      void sendFollowUp({ threadId: followUpThreadId, prompt }).then((sent) => {
+        if (!sent) return;
+        setPrompt("");
+      });
+      return;
+    }
+    if (target === null) return;
+    void startThread({
+      projectRootKey: target.projectRootKey,
+      repositoryRoot: target.repositoryRoot,
+      prompt,
+      isolation,
+      unsafeInPlaceConfirmationKey: confirmed ? (preview?.confirmationKey ?? null) : null,
+    }).then((started) => {
+      if (started === null) return;
+      setPrompt("");
+      setUnsafeConfirmed(null);
+      setSelectedThreadId(started.threadId);
+    });
+  }, [
+    confirmed,
+    followUpThreadId,
+    isolation,
+    preview?.confirmationKey,
+    prompt,
+    sendFollowUp,
+    startThread,
+    target,
+  ]);
+
+  const remove = useCallback(
+    (threadId: string) => {
+      agents.remove(threadId);
+      setSelectedThreadId((current) => (current === threadId ? null : current));
+    },
+    [agents],
+  );
 
   return (
     <section aria-label="Agent mode" className="agent-mode">
@@ -189,6 +218,7 @@ export function AgentModeView({
         <AgentThreadsSidebar
           collapsedProjectRootKeys={collapsedProjectRootKeys}
           collapsedRepositoryRoots={collapsedRepositoryRoots}
+          expandedArchivedRoots={expandedArchivedRoots}
           groups={groups}
           liveTaskCount={agents.liveTaskCount}
           maxConcurrentAgentTasks={agents.maxConcurrentAgentTasks}
@@ -197,24 +227,24 @@ export function AgentModeView({
           onPruneOrphans={(root) => void agents.pruneOrphanedWorktrees(root)}
           onReleaseProject={onReleaseProject}
           onRemoveOrphan={(worktreePath) => void agents.removeOrphanedWorktree(worktreePath)}
-          onSelectThread={setSelectedTaskId}
+          onSelectThread={setSelectedThreadId}
+          onToggleArchived={toggleArchived}
           onToggleGroup={toggleGroup}
           onToggleProject={toggleProject}
-          onTogglePin={onTogglePin}
+          onTogglePin={(threadId) => agents.togglePin(threadId)}
           onTrustProject={onTrustProject}
           overflowRootPaths={overflowRootPaths}
-          pinnedTaskIds={pinnedTaskIdSet}
-          selectedTaskId={selectedThread?.record.owner.taskId ?? null}
+          selectedThreadId={selectedThread?.thread.threadId ?? null}
         />
 
         <div className="agent-mode__center">
           <AgentThreadSession
             composerRepositoryLabel={composerLabel}
             now={now}
-            onHideChanges={(taskId) => agents.hideChanges(taskId)}
-            onHideFileDiff={(taskId) => agents.hideFileDiff(taskId)}
-            onRefreshChanges={(taskId) => void agents.showChanges(taskId)}
-            onShowFileDiff={(taskId, change) => void agents.showFileDiff(taskId, change)}
+            onHideChanges={(threadId) => agents.hideChanges(threadId)}
+            onHideFileDiff={(threadId) => agents.hideFileDiff(threadId)}
+            onRefreshChanges={(threadId) => void agents.showChanges(threadId)}
+            onShowFileDiff={(threadId, change) => void agents.showFileDiff(threadId, change)}
             thread={selectedThread}
           />
           <AgentComposer
@@ -224,11 +254,13 @@ export function AgentModeView({
             isolationReason={
               preview === null ? null : agentIsolationReasonLabel(preview.recommended)
             }
+            mode={composerMode}
             onIsolationChange={(next) => {
               if (composerRoot === null) return;
               setIsolationChoice({ repositoryRoot: composerRoot, isolation: next });
               setUnsafeConfirmed(null);
             }}
+            onNewThread={clearSelection}
             onPromptChange={setPrompt}
             onSelectProject={(projectRootKey) => {
               setSelection({ projectRootKey, repositoryRoot: "" });
@@ -264,19 +296,37 @@ export function AgentModeView({
           liveTaskCount={agents.liveTaskCount}
           maxConcurrentAgentTasks={agents.maxConcurrentAgentTasks}
           now={now}
-          onDismiss={(taskId) => agents.dismiss(taskId)}
-          onRemoveWorktree={(taskId) => void agents.removeWorktree(taskId)}
-          onShowChanges={(taskId) => void agents.showChanges(taskId)}
-          onStop={(taskId) => void agents.stop(taskId)}
-          onTogglePin={onTogglePin}
-          pinned={
-            selectedThread !== null && pinnedTaskIdSet.has(selectedThread.record.owner.taskId)
-          }
+          onArchive={(threadId) => agents.archive(threadId)}
+          onRemove={remove}
+          onRemoveWorktree={(threadId) => void agents.removeWorktree(threadId)}
+          onShowChanges={(threadId) => void agents.showChanges(threadId)}
+          onStop={(threadId) => void agents.stop(threadId)}
+          onTogglePin={(threadId) => agents.togglePin(threadId)}
           thread={selectedThread}
         />
       </div>
     </section>
   );
+}
+
+function useComposerMode(
+  selectedThread: AgentThreadView | null,
+  agents: AgentThreadsSurface,
+): AgentComposerMode {
+  const { agentCliConfigured, agentCliKind, liveTaskCount, maxConcurrentAgentTasks } = agents;
+  return useMemo<AgentComposerMode>(() => {
+    if (selectedThread === null) return { kind: "new" };
+    return {
+      kind: "followUp",
+      threadTitle: agentThreadDisplayTitle(selectedThread.thread),
+      blockedReason: agentFollowUpBlockedReason(selectedThread, {
+        agentCliConfigured,
+        agentCliKind,
+        liveTaskCount,
+        maxConcurrentAgentTasks,
+      }),
+    };
+  }, [agentCliConfigured, agentCliKind, liveTaskCount, maxConcurrentAgentTasks, selectedThread]);
 }
 
 interface IsolationChoice {

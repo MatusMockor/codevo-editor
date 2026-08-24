@@ -16,9 +16,9 @@ mod agent_task_admission;
 mod agent_task_supervisor;
 
 use agent_task_admission::{
-    AgentTaskAdmissionRegistry, AGENT_TASK_GLOBAL_LIMIT, AGENT_TASK_GLOBAL_LIMIT_ERROR,
-    AGENT_TASK_IN_PLACE_EXCLUSIVE_ERROR, AGENT_TASK_REPOSITORY_LIMIT,
-    AGENT_TASK_REPOSITORY_LIMIT_ERROR,
+    AgentTaskAdmissionRegistry, AGENT_TASK_CWD_EXCLUSIVE_ERROR, AGENT_TASK_GLOBAL_LIMIT,
+    AGENT_TASK_GLOBAL_LIMIT_ERROR, AGENT_TASK_IN_PLACE_EXCLUSIVE_ERROR,
+    AGENT_TASK_REPOSITORY_LIMIT, AGENT_TASK_REPOSITORY_LIMIT_ERROR,
 };
 use agent_task_spawner::{
     plan_agent_invocation, AgentChild, AgentCliInvocation, AgentProcessSpawner, AgentTaskSpawnPlan,
@@ -582,6 +582,7 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
         AgentCliInvocation::ClaudeCode,
         "do the task",
         &directory,
+        None,
     )
     .expect("claude plan");
     assert_eq!(claude.program(), cli.as_path());
@@ -589,6 +590,9 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
         claude.args(),
         [
             "-p".to_string(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--verbose".to_string(),
             "--".to_string(),
             "do the task".to_string()
         ]
@@ -604,12 +608,76 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
         .env()
         .iter()
         .any(|(key, value)| key == "PATH" && !value.is_empty()));
-    let codex = plan_agent_invocation(&cli_path, AgentCliInvocation::CodexExec, "ship", &directory)
-        .expect("codex plan");
+    let codex = plan_agent_invocation(
+        &cli_path,
+        AgentCliInvocation::CodexExec,
+        "ship",
+        &directory,
+        None,
+    )
+    .expect("codex plan");
     assert_eq!(
         codex.args(),
-        ["exec".to_string(), "--".to_string(), "ship".to_string()]
+        [
+            "exec".to_string(),
+            "--json".to_string(),
+            "--".to_string(),
+            "ship".to_string()
+        ]
     );
+    let resumed_claude = plan_agent_invocation(
+        &cli_path,
+        AgentCliInvocation::ClaudeCode,
+        "do the task",
+        &directory,
+        Some("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"),
+    )
+    .expect("resumed claude plan");
+    assert_eq!(
+        resumed_claude.args(),
+        [
+            "-p".to_string(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--verbose".to_string(),
+            "--resume".to_string(),
+            "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string(),
+            "--".to_string(),
+            "do the task".to_string()
+        ]
+    );
+    let resumed_codex = plan_agent_invocation(
+        &cli_path,
+        AgentCliInvocation::CodexExec,
+        "ship",
+        &directory,
+        Some("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"),
+    )
+    .expect("resumed codex plan");
+    assert_eq!(
+        resumed_codex.args(),
+        [
+            "exec".to_string(),
+            "resume".to_string(),
+            "--json".to_string(),
+            "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string(),
+            "--".to_string(),
+            "ship".to_string()
+        ]
+    );
+    for candidate in ["-injected", "--resume", "short", &"a".repeat(129)] {
+        assert!(
+            plan_agent_invocation(
+                &cli_path,
+                AgentCliInvocation::ClaudeCode,
+                "do the task",
+                &directory,
+                Some(candidate),
+            )
+            .is_err(),
+            "resume session id {candidate} must be refused"
+        );
+    }
 }
 
 #[test]
@@ -638,7 +706,8 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
                 &candidate,
                 AgentCliInvocation::ClaudeCode,
                 prompt,
-                &directory
+                &directory,
+                None
             )
             .is_err(),
             "expected rejection for {label}"
@@ -650,14 +719,22 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
             &cli_path,
             AgentCliInvocation::ClaudeCode,
             prompt,
-            &directory
+            &directory,
+            None
         )
         .is_err(),
         "expected rejection for non-executable file"
     );
     fs::set_permissions(&cli, plain).expect("restore exec bit");
     assert!(
-        plan_agent_invocation(&cli_path, AgentCliInvocation::ClaudeCode, "", &directory).is_err(),
+        plan_agent_invocation(
+            &cli_path,
+            AgentCliInvocation::ClaudeCode,
+            "",
+            &directory,
+            None
+        )
+        .is_err(),
         "expected rejection for empty prompt"
     );
     let oversized_prompt = "p".repeat(MAX_AGENT_PROMPT_BYTES + 1);
@@ -666,7 +743,8 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
             &cli_path,
             AgentCliInvocation::ClaudeCode,
             &oversized_prompt,
-            &directory
+            &directory,
+            None
         )
         .is_err(),
         "expected rejection for oversized prompt"
@@ -676,10 +754,33 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
             &cli_path,
             AgentCliInvocation::ClaudeCode,
             prompt,
-            Path::new("relative/cwd")
+            Path::new("relative/cwd"),
+            None
         )
         .is_err(),
         "expected rejection for relative cwd"
+    );
+    assert!(
+        plan_agent_invocation(
+            &cli_path,
+            AgentCliInvocation::ClaudeCode,
+            prompt,
+            &directory,
+            Some("-not-a-session")
+        )
+        .is_err(),
+        "expected rejection for a flag-like resume session id"
+    );
+    assert!(
+        plan_agent_invocation(
+            &cli_path,
+            AgentCliInvocation::ClaudeCode,
+            prompt,
+            &directory,
+            Some("session-0001")
+        )
+        .is_ok(),
+        "expected a safe resume session id to be accepted"
     );
 }
 
@@ -827,6 +928,64 @@ fn admission_in_place_exclusivity_covers_worktree_tasks_in_the_working_tree() {
             AgentTaskIsolation::InPlace
         )
         .is_ok());
+}
+
+#[test]
+fn admission_enforces_cwd_exclusivity_across_live_admissions() {
+    let registry = Arc::new(AgentTaskAdmissionRegistry::new());
+    let root = unique_path("cwd-exclusive");
+    let worktree = root.join(".worktrees/agt-thread-0001");
+    let first = registry
+        .reserve(
+            &workspace("ws-a"),
+            &root,
+            &worktree,
+            AgentTaskIsolation::Worktree,
+        )
+        .expect("first turn admission");
+
+    let second = registry.reserve(
+        &workspace("ws-a"),
+        &root,
+        &worktree,
+        AgentTaskIsolation::Worktree,
+    );
+    let foreign = registry.reserve(
+        &workspace("ws-b"),
+        &root,
+        &worktree,
+        AgentTaskIsolation::Worktree,
+    );
+
+    assert_eq!(
+        second.err().as_deref(),
+        Some(AGENT_TASK_CWD_EXCLUSIVE_ERROR)
+    );
+    assert_eq!(
+        foreign.err().as_deref(),
+        Some(AGENT_TASK_CWD_EXCLUSIVE_ERROR)
+    );
+
+    let sibling = registry
+        .reserve(
+            &workspace("ws-a"),
+            &root,
+            &root.join(".worktrees/agt-thread-0002"),
+            AgentTaskIsolation::Worktree,
+        )
+        .expect("sibling worktree keeps its own cwd");
+
+    drop(first);
+    drop(sibling);
+
+    registry
+        .reserve(
+            &workspace("ws-a"),
+            &root,
+            &worktree,
+            AgentTaskIsolation::Worktree,
+        )
+        .expect("cwd is admissible again once the turn settles");
 }
 
 #[test]
@@ -1504,7 +1663,12 @@ fn duplicate_task_id_is_rejected() {
         FakeChildSpec::new(&process, 9112).build(),
     ));
     dispatch(&fixture, "agt-dup", &root, &cwd).expect("first start");
-    let duplicate = dispatch(&fixture, "agt-dup", &root, &cwd);
+    let duplicate = dispatch(
+        &fixture,
+        "agt-dup",
+        &root,
+        &root.join(".worktrees/agt-dup-2"),
+    );
     assert_eq!(
         duplicate.err().as_deref(),
         Some("An agent task with this taskId already exists.")

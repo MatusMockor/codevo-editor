@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  agentTasksReducer,
-  clipAgentTaskOutputTail,
   defaultAgentTaskIsolation,
-  emptyAgentTasksState,
   inPlaceDispatchGuard,
   isTerminalAgentTaskStatus,
   mintAgentTaskId,
@@ -13,53 +10,9 @@ import {
   validateAgentTaskReferenceRequest,
   validateStartAgentTaskRequest,
   validateStopAgentTasksForRootRequest,
-  MAX_AGENT_TASK_RETAINED_OUTPUT_BYTES,
-  MAX_RETAINED_AGENT_TASKS,
   type AgentTaskIsolationContext,
-  type AgentTaskRecord,
   type AgentTaskStatus,
-  type AgentTaskStatusEvent,
-  type AgentTasksAction,
-  type AgentTasksState,
 } from "./agentTask";
-
-const ENCODER = new TextEncoder();
-
-function taskRecord(overrides: Partial<AgentTaskRecord> = {}): AgentTaskRecord {
-  return {
-    owner: { taskId: "agt-1-0a1b", workspaceId: "ws-1", repositoryRoot: "/repo" },
-    isolation: "in-place",
-    worktreePath: null,
-    prompt: "do the thing",
-    status: { kind: "pending" },
-    outputTail: "",
-    outputTruncated: false,
-    lastStatusSequence: 0,
-    lastOutputSequence: 0,
-    startedAtEpochMs: 1_000,
-    ...overrides,
-  };
-}
-
-function statusEvent(overrides: Partial<AgentTaskStatusEvent> = {}): AgentTaskStatusEvent {
-  return {
-    taskId: "agt-1-0a1b",
-    workspaceId: "ws-1",
-    repositoryRoot: "/repo",
-    isolation: "in-place",
-    worktreePath: null,
-    sequence: 1,
-    status: { kind: "running" },
-    ...overrides,
-  };
-}
-
-function stateWith(...records: readonly AgentTaskRecord[]): AgentTasksState {
-  return records.reduce(
-    (state, record) => agentTasksReducer(state, { kind: "started", record }),
-    emptyAgentTasksState(),
-  );
-}
 
 function isolationContext(
   overrides: Partial<AgentTaskIsolationContext> = {},
@@ -98,302 +51,10 @@ function startRequest(overrides: Record<string, unknown> = {}): Record<string, u
     prompt: "do the thing",
     agentCliPath: "/usr/local/bin/claude",
     agentCliKind: "claudeCode",
+    resumeSessionId: null,
     ...overrides,
   };
 }
-
-describe("agentTasksReducer", () => {
-  it("registers a started task and ignores a duplicate start", () => {
-    const record = taskRecord();
-    const started = agentTasksReducer(emptyAgentTasksState(), { kind: "started", record });
-    expect(started.tasks.get("agt-1-0a1b")).toEqual(record);
-
-    const duplicate = agentTasksReducer(started, {
-      kind: "started",
-      record: taskRecord({ prompt: "replaced" }),
-    });
-    expect(duplicate).toBe(started);
-  });
-
-  it("advances pending to running to exited and then freezes the terminal status", () => {
-    const running = agentTasksReducer(stateWith(taskRecord()), {
-      kind: "statusEvent",
-      event: statusEvent({ sequence: 1, status: { kind: "running" } }),
-    });
-    expect(running.tasks.get("agt-1-0a1b")?.status).toEqual({ kind: "running" });
-
-    const exited = agentTasksReducer(running, {
-      kind: "statusEvent",
-      event: statusEvent({ sequence: 2, status: { kind: "exited", exitCode: 0 } }),
-    });
-    expect(exited.tasks.get("agt-1-0a1b")?.status).toEqual({ kind: "exited", exitCode: 0 });
-
-    const afterTerminal = agentTasksReducer(exited, {
-      kind: "statusEvent",
-      event: statusEvent({ sequence: 3, status: { kind: "running" } }),
-    });
-    expect(afterTerminal).toBe(exited);
-  });
-
-  it("drops stale, duplicate, unknown, and foreign status events", () => {
-    const state = agentTasksReducer(stateWith(taskRecord()), {
-      kind: "statusEvent",
-      event: statusEvent({ sequence: 5, status: { kind: "running" } }),
-    });
-
-    const dropped: readonly AgentTaskStatusEvent[] = [
-      statusEvent({ sequence: 4, status: { kind: "stopped" } }),
-      statusEvent({ sequence: 5, status: { kind: "stopped" } }),
-      statusEvent({ sequence: 6, taskId: "agt-9-9999" }),
-      statusEvent({ sequence: 6, workspaceId: "ws-2" }),
-      statusEvent({ sequence: 6, repositoryRoot: "/other" }),
-      statusEvent({ sequence: 6, isolation: "worktree", worktreePath: "/repo/.worktrees/a" }),
-    ];
-    for (const event of dropped) {
-      expect(agentTasksReducer(state, { kind: "statusEvent", event })).toBe(state);
-    }
-  });
-
-  it("drops a worktree status event that reports a different worktree path", () => {
-    const state = stateWith(
-      taskRecord({ isolation: "worktree", worktreePath: "/repo/.worktrees/agt-1-0a1b" }),
-    );
-    const event = statusEvent({
-      isolation: "worktree",
-      worktreePath: "/repo/.worktrees/other",
-      status: { kind: "running" },
-    });
-    expect(agentTasksReducer(state, { kind: "statusEvent", event })).toBe(state);
-  });
-
-  it("appends output in sequence order and drops stale, unknown, and post-terminal chunks", () => {
-    const first = agentTasksReducer(stateWith(taskRecord()), {
-      kind: "outputEvent",
-      event: { taskId: "agt-1-0a1b", sequence: 1, stream: "stdout", chunk: "a", truncated: false },
-    });
-    const second = agentTasksReducer(first, {
-      kind: "outputEvent",
-      event: { taskId: "agt-1-0a1b", sequence: 2, stream: "stderr", chunk: "b", truncated: false },
-    });
-    expect(second.tasks.get("agt-1-0a1b")?.outputTail).toBe("ab");
-    expect(second.tasks.get("agt-1-0a1b")?.outputTruncated).toBe(false);
-
-    const stale = agentTasksReducer(second, {
-      kind: "outputEvent",
-      event: { taskId: "agt-1-0a1b", sequence: 2, stream: "stdout", chunk: "x", truncated: false },
-    });
-    expect(stale).toBe(second);
-
-    const unknown = agentTasksReducer(second, {
-      kind: "outputEvent",
-      event: { taskId: "agt-9-9999", sequence: 9, stream: "stdout", chunk: "x", truncated: false },
-    });
-    expect(unknown).toBe(second);
-
-    const stopped = agentTasksReducer(second, {
-      kind: "statusEvent",
-      event: statusEvent({ sequence: 1, status: { kind: "stopped" } }),
-    });
-    const afterTerminal = agentTasksReducer(stopped, {
-      kind: "outputEvent",
-      event: { taskId: "agt-1-0a1b", sequence: 3, stream: "stdout", chunk: "c", truncated: false },
-    });
-    expect(afterTerminal).toBe(stopped);
-  });
-
-  it("keeps the truncation marker sticky once the backend reports truncation", () => {
-    const truncated = agentTasksReducer(stateWith(taskRecord()), {
-      kind: "outputEvent",
-      event: { taskId: "agt-1-0a1b", sequence: 1, stream: "stdout", chunk: "a", truncated: true },
-    });
-    const later = agentTasksReducer(truncated, {
-      kind: "outputEvent",
-      event: { taskId: "agt-1-0a1b", sequence: 2, stream: "stdout", chunk: "b", truncated: false },
-    });
-    expect(later.tasks.get("agt-1-0a1b")?.outputTruncated).toBe(true);
-  });
-
-  it("clips the retained output tail on a UTF-8 boundary", () => {
-    const chunk = "☃".repeat(2_730);
-    const state = Array.from({ length: 33 }).reduce<AgentTasksState>(
-      (current, _value, index) =>
-        agentTasksReducer(current, {
-          kind: "outputEvent",
-          event: {
-            taskId: "agt-1-0a1b",
-            sequence: index + 1,
-            stream: "stdout",
-            chunk,
-            truncated: false,
-          },
-        }),
-      stateWith(taskRecord()),
-    );
-
-    const task = state.tasks.get("agt-1-0a1b");
-    expect(task?.outputTruncated).toBe(true);
-    expect(ENCODER.encode(task?.outputTail ?? "").byteLength).toBeLessThanOrEqual(
-      MAX_AGENT_TASK_RETAINED_OUTPUT_BYTES,
-    );
-    expect(task?.outputTail.includes("�")).toBe(false);
-    expect(task?.outputTail.startsWith("☃")).toBe(true);
-  });
-
-  it("dismisses a known task and leaves the state untouched for an unknown one", () => {
-    const state = stateWith(taskRecord());
-    expect(agentTasksReducer(state, { kind: "dismissed", taskId: "agt-9-9999" })).toBe(state);
-    expect(agentTasksReducer(state, { kind: "dismissed", taskId: "agt-1-0a1b" }).tasks.size).toBe(
-      0,
-    );
-  });
-
-  it("keeps live foreign tasks on workspace replacement and drops terminal foreign history", () => {
-    const state = stateWith(
-      taskRecord(),
-      taskRecord({
-        owner: { taskId: "agt-2-0a1b", workspaceId: "ws-2", repositoryRoot: "/repo" },
-        status: { kind: "running" },
-      }),
-      taskRecord({
-        owner: { taskId: "agt-3-0a1b", workspaceId: "ws-2", repositoryRoot: "/repo" },
-        status: { kind: "exited", exitCode: 0 },
-      }),
-    );
-    const replaced = agentTasksReducer(state, { kind: "workspaceReplaced", workspaceId: "ws-1" });
-    expect([...replaced.tasks.keys()]).toEqual(["agt-1-0a1b", "agt-2-0a1b"]);
-    expect(agentTasksReducer(replaced, { kind: "workspaceReplaced", workspaceId: "ws-1" })).toBe(
-      replaced,
-    );
-  });
-
-  it("drops terminal tasks owned by a released project", () => {
-    const state = stateWith(
-      taskRecord({ status: { kind: "exited", exitCode: 0 } }),
-      taskRecord({
-        owner: { taskId: "agt-2-0a1b", workspaceId: "ws-1", repositoryRoot: "/repo" },
-        status: { kind: "failed", message: "boom" },
-      }),
-    );
-
-    expect(agentTasksReducer(state, { kind: "projectReleased", ownerId: "ws-1" }).tasks.size).toBe(
-      0,
-    );
-  });
-
-  it("retains live tasks owned by a released project", () => {
-    const state = stateWith(
-      taskRecord({ status: { kind: "running" } }),
-      taskRecord({
-        owner: { taskId: "agt-2-0a1b", workspaceId: "ws-1", repositoryRoot: "/repo" },
-        status: { kind: "stopped" },
-      }),
-    );
-    const released = agentTasksReducer(state, { kind: "projectReleased", ownerId: "ws-1" });
-
-    expect([...released.tasks.keys()]).toEqual(["agt-1-0a1b"]);
-  });
-
-  it("leaves tasks owned by other projects untouched on project release", () => {
-    const state = stateWith(
-      taskRecord({ status: { kind: "exited", exitCode: 0 } }),
-      taskRecord({
-        owner: { taskId: "agt-2-0a1b", workspaceId: "ws-2", repositoryRoot: "/repo" },
-        status: { kind: "stopped" },
-      }),
-    );
-    const released = agentTasksReducer(state, { kind: "projectReleased", ownerId: "ws-1" });
-
-    expect([...released.tasks.keys()]).toEqual(["agt-2-0a1b"]);
-    expect(released.tasks.get("agt-2-0a1b")).toBe(state.tasks.get("agt-2-0a1b"));
-  });
-
-  it("leaves the state untouched when a released project owns no tasks", () => {
-    const state = stateWith(taskRecord());
-    expect(agentTasksReducer(state, { kind: "projectReleased", ownerId: "ws-2" })).toBe(state);
-  });
-
-  it("evicts the oldest terminal task first and never a live one", () => {
-    const terminal = (index: number, startedAtEpochMs: number): AgentTaskRecord =>
-      taskRecord({
-        owner: {
-          taskId: `agt-t${index}-0a1b`,
-          workspaceId: "ws-1",
-          repositoryRoot: "/repo",
-        },
-        status: { kind: "exited", exitCode: 0 },
-        startedAtEpochMs,
-      });
-    const live = (index: number): AgentTaskRecord =>
-      taskRecord({
-        owner: {
-          taskId: `agt-l${index}-0a1b`,
-          workspaceId: "ws-1",
-          repositoryRoot: "/repo",
-        },
-        status: { kind: "running" },
-        startedAtEpochMs: 1,
-      });
-
-    const records = [
-      ...Array.from({ length: MAX_RETAINED_AGENT_TASKS - 1 }, (_value, index) => live(index)),
-      terminal(0, 10),
-      terminal(1, 20),
-    ];
-    const state = stateWith(...records);
-
-    expect(state.tasks.size).toBe(MAX_RETAINED_AGENT_TASKS);
-    expect(state.tasks.has("agt-t0-0a1b")).toBe(false);
-    expect(state.tasks.has("agt-t1-0a1b")).toBe(true);
-    expect(state.tasks.has("agt-l0-0a1b")).toBe(true);
-  });
-
-  it("keeps every live task even when the retention cap is exceeded", () => {
-    const records = Array.from({ length: MAX_RETAINED_AGENT_TASKS + 2 }, (_value, index) =>
-      taskRecord({
-        owner: {
-          taskId: `agt-l${index}-0a1b`,
-          workspaceId: "ws-1",
-          repositoryRoot: "/repo",
-        },
-        status: { kind: "running" },
-      }),
-    );
-    expect(stateWith(...records).tasks.size).toBe(MAX_RETAINED_AGENT_TASKS + 2);
-  });
-
-  it("breaks eviction ties by task id", () => {
-    const terminalAt = (taskId: string): AgentTaskRecord =>
-      taskRecord({
-        owner: { taskId, workspaceId: "ws-1", repositoryRoot: "/repo" },
-        status: { kind: "stopped" },
-        startedAtEpochMs: 5,
-      });
-    const records = [
-      ...Array.from({ length: MAX_RETAINED_AGENT_TASKS - 1 }, (_value, index) =>
-        taskRecord({
-          owner: {
-            taskId: `agt-l${index}-0a1b`,
-            workspaceId: "ws-1",
-            repositoryRoot: "/repo",
-          },
-          status: { kind: "running" },
-        }),
-      ),
-      terminalAt("agt-zz-0a1b"),
-      terminalAt("agt-aa-0a1b"),
-    ];
-    const state = stateWith(...records);
-    expect(state.tasks.has("agt-aa-0a1b")).toBe(false);
-    expect(state.tasks.has("agt-zz-0a1b")).toBe(true);
-  });
-
-  it("rejects an unsupported action kind fail closed", () => {
-    const action = { kind: "unknown" } as unknown as AgentTasksAction;
-    expect(() => agentTasksReducer(emptyAgentTasksState(), action)).toThrow(
-      "Unsupported agent task action",
-    );
-  });
-});
 
 describe("isTerminalAgentTaskStatus", () => {
   it("classifies every status of the closed union", () => {
@@ -407,21 +68,6 @@ describe("isTerminalAgentTaskStatus", () => {
     for (const [status, terminal] of table) {
       expect(isTerminalAgentTaskStatus(status)).toBe(terminal);
     }
-  });
-});
-
-describe("clipAgentTaskOutputTail", () => {
-  it("keeps short text untouched", () => {
-    expect(clipAgentTaskOutputTail("hello")).toEqual({ text: "hello", clipped: false });
-  });
-
-  it("never splits a multi-byte character when clipping to the tail", () => {
-    const text = "☃".repeat(87_382);
-    const clip = clipAgentTaskOutputTail(text);
-    expect(clip.clipped).toBe(true);
-    expect(clip.text.includes("�")).toBe(false);
-    expect(ENCODER.encode(clip.text).byteLength).toBe(MAX_AGENT_TASK_RETAINED_OUTPUT_BYTES - 1);
-    expect([...clip.text].every((character) => character === "☃")).toBe(true);
   });
 });
 
@@ -613,8 +259,18 @@ describe("validateStartAgentTaskRequest", () => {
     expect(validateStartAgentTaskRequest(request)).toEqual(request);
   });
 
+  it("accepts a resume session id within the safe pattern", () => {
+    const request = startRequest({ resumeSessionId: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b" });
+    expect(validateStartAgentTaskRequest(request)).toEqual(request);
+  });
+
   it("rejects out-of-bounds and inconsistent requests", () => {
     const rejected: readonly unknown[] = [
+      startRequest({ resumeSessionId: "-flag-looking-id" }),
+      startRequest({ resumeSessionId: "short" }),
+      startRequest({ resumeSessionId: "a".repeat(129) }),
+      startRequest({ resumeSessionId: undefined }),
+      startRequest({ resumeSessionId: "has space in it" }),
       startRequest({ cwd: "/repo/.worktrees/agt-1-0a1b" }),
       startRequest({ prompt: "" }),
       startRequest({ prompt: "x".repeat(32 * 1_024 + 1) }),

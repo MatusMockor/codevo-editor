@@ -10,6 +10,7 @@ import type {
 } from "../domain/settings";
 import type { WorkspaceTrustGateway } from "../domain/trust";
 import type { EditorDocument } from "../domain/workspace";
+import type { AgentThreadStoreGateway } from "./agentThreadPorts";
 import {
   useWorkbenchAgents,
   type WorkbenchAgentProjectGateways,
@@ -51,6 +52,8 @@ export function useAgentProjectGateways(
 }
 
 export interface WorkbenchControllerAgentsOptions {
+  readonly agentModeActive: boolean;
+  readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly controllerOptions: Pick<
     WorkbenchControllerOptions,
@@ -87,8 +90,10 @@ export function useWorkbenchControllerAgents(
 
   return useWorkbenchAgents({
     agentTaskGateway: options.controllerOptions.agentTaskGateway,
+    agentThreadStoreGateway: options.agentThreadStoreGateway,
     gitWorktreeGateway: options.controllerOptions.gitWorktreeGateway,
     agentProjectGateways,
+    agentModeActive: options.agentModeActive,
     appSettingsRef: options.appSettingsRef,
     workspaceSettingsRef: options.workspaceSettingsRef,
     gitGateway: options.gitGateway,

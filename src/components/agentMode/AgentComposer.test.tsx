@@ -257,6 +257,78 @@ describe("AgentComposer", () => {
     expect(submitButton().disabled).toBe(true);
   });
 
+  it("hides the target and isolation controls in follow-up mode", () => {
+    render({
+      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+    });
+
+    expect(host.querySelector('form[aria-label="Follow up on agent thread"]')).not.toBeNull();
+    expect(host.querySelector("select#agent-project")).toBeNull();
+    expect(host.querySelector("select#agent-repository")).toBeNull();
+    expect(host.querySelector("input#agent-isolation")).toBeNull();
+    expect(host.querySelector(".agent-composer__chip--thread")?.textContent).toBe(
+      "Refactor the parser",
+    );
+    expect(submitButton().textContent).toContain("Send");
+  });
+
+  it("keeps the unsafe in-place confirmation out of follow-up mode", () => {
+    render({
+      guard: { kind: "unsafe", reasons: ["dirty-tree"] },
+      isolation: "in-place",
+      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+    });
+
+    expect(host.textContent).not.toContain("Running in place can overwrite your work");
+  });
+
+  it("escapes back to a new thread from follow-up mode", () => {
+    const onNewThread = vi.fn();
+    render({
+      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+      onNewThread,
+    });
+
+    const escape = host.querySelector<HTMLButtonElement>(".agent-composer__new");
+    expect(escape).not.toBeNull();
+    act(() => escape?.click());
+
+    expect(onNewThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the follow-up and states the blocking reason", () => {
+    const onSubmit = vi.fn();
+    render({
+      mode: {
+        kind: "followUp",
+        threadTitle: "Refactor the parser",
+        blockedReason: "This thread has no resumable session; start a new thread.",
+      },
+      onSubmit,
+      prompt: "Also update the tests",
+    });
+
+    expect(submitButton().disabled).toBe(true);
+    expect(host.querySelector(".agent-composer__reason")?.textContent).toBe(
+      "This thread has no resumable session; start a new thread.",
+    );
+
+    submitForm();
+    pressAccelerator();
+
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("reports the follow-up in flight", () => {
+    render({
+      dispatching: true,
+      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+      submitBlocked: true,
+    });
+
+    expect(submitButton().textContent).toContain("Sending…");
+  });
+
   function render(overrides: Partial<AgentComposerProps> = {}): void {
     act(() => root.render(<AgentComposer {...defaultProps()} {...overrides} />));
   }
@@ -348,11 +420,13 @@ function defaultProps(): AgentComposerProps {
     unsafeConfirmed: false,
     dispatching: false,
     submitBlocked: false,
+    mode: { kind: "new" },
     onSelectProject: () => undefined,
     onSelectRepository: () => undefined,
     onPromptChange: () => undefined,
     onIsolationChange: () => undefined,
     onUnsafeConfirmedChange: () => undefined,
+    onNewThread: () => undefined,
     onSubmit: () => undefined,
   };
 }

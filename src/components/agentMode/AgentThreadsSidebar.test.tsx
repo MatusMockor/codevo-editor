@@ -3,8 +3,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentTaskView, OrphanedWorktreeView } from "../../application/useAgentTasks";
-import type { AgentTaskStatus } from "../../domain/agentTask";
+import type { AgentThreadView, OrphanedWorktreeView } from "../../application/agentThreadPorts";
+import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import { AgentThreadsSidebar, type AgentThreadsSidebarProps } from "./AgentThreadsSidebar";
 import {
   DETACHED_AGENT_PROJECT_LABEL,
@@ -142,7 +142,7 @@ describe("AgentThreadsSidebar", () => {
   });
 
   it("marks the selected thread for assistive technology", () => {
-    render({ selectedTaskId: "agt-1" });
+    render({ selectedThreadId: "agt-1" });
 
     const selected = host.querySelector('[aria-current="true"]');
 
@@ -263,7 +263,10 @@ describe("AgentThreadsSidebar", () => {
       host.querySelector('[aria-label="Pin thread agt-1"]')?.getAttribute("aria-pressed"),
     ).toBe("false");
 
-    render({ onTogglePin, pinnedTaskIds: new Set(["agt-1"]) });
+    render({
+      onTogglePin,
+      groups: [project({ repos: [repositoryGroup({ threads: [threadView({ pinned: true })] })] })],
+    });
 
     const pinned = host.querySelector('[aria-label="Unpin thread agt-1"]');
     expect(pinned?.getAttribute("aria-pressed")).toBe("true");
@@ -291,6 +294,51 @@ describe("AgentThreadsSidebar", () => {
 
     expect(host.textContent).toContain("Orphaned worktrees");
     expect(host.querySelector(".agent-thread__pin")).toBeNull();
+  });
+
+  it("keeps archived threads behind a collapsed group per repository", () => {
+    const onToggleArchived = vi.fn();
+    render({
+      groups: [
+        project({
+          repos: [
+            repositoryGroup({
+              archived: [threadView({ threadId: "agt-old", title: "Old work", archived: true })],
+            }),
+          ],
+        }),
+      ],
+      onToggleArchived,
+    });
+
+    expect(host.querySelector('section[aria-label="Archived threads in app"]')).not.toBeNull();
+    expect(host.textContent).not.toContain("Old work");
+
+    click('.agent-archived__head[aria-expanded="false"]');
+
+    expect(onToggleArchived).toHaveBeenCalledWith(ROOT);
+
+    render({
+      expandedArchivedRoots: new Set([ROOT]),
+      groups: [
+        project({
+          repos: [
+            repositoryGroup({
+              archived: [threadView({ threadId: "agt-old", title: "Old work", archived: true })],
+            }),
+          ],
+        }),
+      ],
+    });
+
+    expect(host.textContent).toContain("Old work");
+    expect(host.textContent).toContain("Archived");
+  });
+
+  it("hides the archived group when no thread is archived", () => {
+    render();
+
+    expect(host.querySelector(".agent-archived")).toBeNull();
   });
 
   it("explains a project without a Git repository", () => {
@@ -333,14 +381,15 @@ function defaultProps(): AgentThreadsSidebarProps {
     groups: [project({})],
     collapsedProjectRootKeys: new Set(),
     collapsedRepositoryRoots: new Set(),
+    expandedArchivedRoots: new Set(),
     overflowRootPaths: [],
-    selectedTaskId: null,
-    pinnedTaskIds: new Set(),
+    selectedThreadId: null,
     liveTaskCount: 1,
     maxConcurrentAgentTasks: 4,
     now: NOW,
     onToggleProject: () => undefined,
     onToggleGroup: () => undefined,
+    onToggleArchived: () => undefined,
     onSelectThread: () => undefined,
     onTogglePin: () => undefined,
     onNewThread: () => undefined,
@@ -375,6 +424,7 @@ function multiRepoProject(): AgentProjectGroup {
         repositoryRoot: NESTED,
         label: "packages/api",
         threads: [],
+        archived: [],
         liveCount: 0,
       }),
     ],
@@ -407,30 +457,63 @@ function repositoryGroup(overrides: Partial<AgentRepositoryGroup>): AgentReposit
     repositoryRoot: ROOT,
     label: "app",
     repositoryResolved: true,
-    threads: [thread({ kind: "running" })],
+    threads: [threadView({ status: { kind: "running" } })],
+    archived: [],
     orphans: [],
     liveCount: 1,
     ...overrides,
   };
 }
 
-function thread(status: AgentTaskStatus): AgentTaskView {
+interface ThreadViewOptions {
+  readonly threadId?: string;
+  readonly title?: string;
+  readonly status?: AgentTurnStatus;
+  readonly pinned?: boolean;
+  readonly archived?: boolean;
+}
+
+function threadView({
+  archived = false,
+  pinned = false,
+  status = { kind: "running" },
+  threadId = "agt-1",
+  title = "Fix the parser",
+}: ThreadViewOptions): AgentThreadView {
+  const running = status.kind === "pending" || status.kind === "running";
+  const thread: AgentThread = {
+    threadId,
+    owner: { rootKey: ROOT, ownerId: "agent-root:app", repositoryRoot: ROOT },
+    target: { isolation: "worktree", worktreePath: `${ROOT}/.worktrees/${threadId}` },
+    provider: { kind: "claudeCode", sessionId: "session-abcdefgh" },
+    title,
+    pinned,
+    archived,
+    createdAtEpochMs: NOW - 10 * 60_000,
+    updatedAtEpochMs: NOW - 10 * 60_000,
+    turns: [
+      {
+        turnId: `${threadId}-t1`,
+        prompt: title,
+        status,
+        startedAtEpochMs: NOW - 10 * 60_000,
+        endedAtEpochMs: null,
+        events: [],
+        eventsTruncated: false,
+        lastStatusSequence: 0,
+        lastOutputSequence: 0,
+      },
+    ],
+    turnsTruncated: false,
+  };
+
   return {
-    record: {
-      owner: { taskId: "agt-1", workspaceId: "workspace-a", repositoryRoot: ROOT },
-      isolation: "worktree",
-      worktreePath: `${ROOT}/.worktrees/agt-1`,
-      prompt: "Fix the parser",
-      status,
-      outputTail: "",
-      outputTruncated: false,
-      lastStatusSequence: 0,
-      lastOutputSequence: 0,
-      startedAtEpochMs: NOW - 10 * 60_000,
-    },
+    thread,
+    lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: "app",
-    terminal: false,
+    projectOrigin: "active-tab",
     worktreeRemoved: false,
+    worktreeMissing: false,
     changeSummary: null,
   };
 }

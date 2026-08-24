@@ -1,4 +1,5 @@
 import { TauriAgentTaskGateway } from "../infrastructure/tauriAgentTaskGateway";
+import { TauriAgentThreadStoreGateway } from "../infrastructure/tauriAgentThreadStoreGateway";
 import { TauriDebugGateway } from "../infrastructure/tauriDebugGateway";
 import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiagnosticsGateway";
 import { TauriGitWorktreeGateway } from "../infrastructure/tauriGitWorktreeGateway";
@@ -8,6 +9,7 @@ import { TauriPintGateway } from "../infrastructure/tauriPintGateway";
 import { TauriPrettierGateway } from "../infrastructure/tauriPrettierGateway";
 
 export const defaultAgentTaskGateway = new TauriAgentTaskGateway();
+export const defaultAgentThreadStoreGateway = new TauriAgentThreadStoreGateway();
 export const defaultDebugGateway = new TauriDebugGateway();
 export const defaultGitWorktreeGateway = new TauriGitWorktreeGateway();
 export const defaultPrettierFormattingGateway = new TauriPrettierGateway();

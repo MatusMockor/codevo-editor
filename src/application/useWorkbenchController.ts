@@ -1686,6 +1686,7 @@ export function useWorkbenchController(
   });
 
   const agents = useWorkbenchControllerAgents({
+    agentModeActive,
     appSettingsRef,
     controllerOptions: options,
     gitGateway,

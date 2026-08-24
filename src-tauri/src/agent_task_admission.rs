@@ -14,6 +14,8 @@ pub const AGENT_TASK_REPOSITORY_LIMIT_ERROR: &str =
     "Too many agent tasks are starting or running in this repository.";
 pub const AGENT_TASK_IN_PLACE_EXCLUSIVE_ERROR: &str =
     "An agent task is already using this repository's working tree.";
+pub const AGENT_TASK_CWD_EXCLUSIVE_ERROR: &str =
+    "An agent task is already running in this working directory.";
 
 struct AdmissionOwner {
     workspace_id: WorkspaceId,
@@ -73,6 +75,7 @@ impl AgentTaskAdmissionRegistry {
         if isolation == AgentTaskIsolation::InPlace {
             ensure_in_place_exclusive(&state, repository_root)?;
         }
+        ensure_cwd_exclusive(&state, cwd)?;
         state.next_id = state.next_id.wrapping_add(1).max(1);
         let id = state.next_id;
         state.entries.insert(
@@ -113,6 +116,14 @@ fn ensure_in_place_exclusive(state: &AdmissionState, repository_root: &Path) -> 
     {
         return Err(AGENT_TASK_IN_PLACE_EXCLUSIVE_ERROR.to_string());
     }
+    Ok(())
+}
+
+fn ensure_cwd_exclusive(state: &AdmissionState, cwd: &Path) -> Result<(), String> {
+    if state.entries.values().any(|entry| entry.cwd == cwd) {
+        return Err(AGENT_TASK_CWD_EXCLUSIVE_ERROR.to_string());
+    }
+
     Ok(())
 }
 

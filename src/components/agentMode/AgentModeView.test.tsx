@@ -3,11 +3,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentTaskView, AgentTasksSurface } from "../../application/useAgentTasks";
-import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import type { AgentTaskRecord } from "../../domain/agentTask";
+import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/agentProject";
+import type { AgentCliKind } from "../../domain/agentTask";
+import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
-import { agentThreadPinStorageKey } from "../../application/useAgentThreadPins";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
 
 const ROOT = "/workspace/app";
@@ -21,7 +21,6 @@ describe("AgentModeView", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-    window.localStorage.clear();
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -86,11 +85,11 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(false);
   });
 
-  it("dispatches the prompt with the recommended isolation of the selected repository", () => {
-    const dispatch = vi.fn(async () => ({ taskId: "agt-new" }));
+  it("starts a thread with the recommended isolation of the selected repository", () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({
       agents: surface({
-        dispatch,
+        startThread,
         isolationPreview: (repositoryRoot: string) => ({
           repositoryRoot,
           recommended: { kind: "worktree", reason: "dirty-tree" },
@@ -106,7 +105,7 @@ describe("AgentModeView", () => {
     typePrompt("Fix the parser");
     submitForm();
 
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(startThread).toHaveBeenCalledWith({
       projectRootKey: ROOT,
       repositoryRoot: ROOT,
       prompt: "Fix the parser",
@@ -115,11 +114,11 @@ describe("AgentModeView", () => {
     });
   });
 
-  it("blocks an unsafe in-place dispatch until it is confirmed", () => {
-    const dispatch = vi.fn(async () => ({ taskId: "agt-new" }));
+  it("blocks an unsafe in-place start until it is confirmed", () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({
       agents: surface({
-        dispatch,
+        startThread,
         isolationPreview: (repositoryRoot: string) => ({
           repositoryRoot,
           recommended: { kind: "worktree", reason: "dirty-tree" },
@@ -141,7 +140,7 @@ describe("AgentModeView", () => {
 
     submitForm();
 
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(startThread).toHaveBeenCalledWith({
       projectRootKey: ROOT,
       repositoryRoot: ROOT,
       prompt: "Fix the parser",
@@ -150,15 +149,15 @@ describe("AgentModeView", () => {
     });
   });
 
-  it("dispatches into the repository chosen in the composer", () => {
-    const dispatch = vi.fn(async () => ({ taskId: "agt-new" }));
-    render({ agents: surface({ dispatch }) });
+  it("starts a thread in the repository chosen in the composer", () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    render({ agents: surface({ startThread }) });
 
     selectRepository(NESTED);
     typePrompt("Update the router");
     submitForm();
 
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(startThread).toHaveBeenCalledWith({
       projectRootKey: ROOT,
       repositoryRoot: NESTED,
       prompt: "Update the router",
@@ -167,24 +166,24 @@ describe("AgentModeView", () => {
     });
   });
 
-  it("clears the prompt and opens the created thread after a dispatch", async () => {
-    const dispatch = vi.fn(async () => ({ taskId: "agt-1" }));
-    render({ agents: surface({ dispatch }) });
+  it("clears the prompt and opens the created thread after a start", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-1" }));
+    render({ agents: surface({ startThread }) });
 
     typePrompt("Fix the parser");
     await submitFormAsync();
 
     expect(promptField().value).toBe("");
 
-    render({ agents: surface({ dispatch, tasks: [taskView("agt-1", ROOT)] }) });
+    render({ agents: surface({ startThread, threads: [threadView({ threadId: "agt-1" })] }) });
 
     expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).not.toBeNull();
     expect(host.querySelector('[aria-current="true"]')).not.toBeNull();
   });
 
-  it("keeps the prompt when the dispatch is refused", async () => {
-    const dispatch = vi.fn(async () => null);
-    render({ agents: surface({ dispatch }) });
+  it("keeps the prompt when the start is refused", async () => {
+    const startThread = vi.fn(async () => null);
+    render({ agents: surface({ startThread }) });
 
     typePrompt("Fix the parser");
     await submitFormAsync();
@@ -192,49 +191,158 @@ describe("AgentModeView", () => {
     expect(promptField().value).toBe("Fix the parser");
   });
 
-  it("opens only the exact dispatched thread when another unknown thread arrives concurrently", async () => {
-    let resolveDispatch: ((result: { readonly taskId: string }) => void) | null = null;
-    const dispatch = vi.fn(
+  it("opens only the exact started thread when another unknown thread arrives concurrently", async () => {
+    let resolveStart: ((result: { readonly threadId: string }) => void) | null = null;
+    const startThread = vi.fn(
       () =>
-        new Promise<{ readonly taskId: string }>((resolve) => {
-          resolveDispatch = resolve;
+        new Promise<{ readonly threadId: string } | null>((resolve) => {
+          resolveStart = resolve;
         }),
     );
-    render({ agents: surface({ dispatch, tasks: [taskView("agt-existing", ROOT)] }) });
+    render({
+      agents: surface({ startThread, threads: [threadView({ threadId: "agt-existing" })] }),
+    });
 
     typePrompt("Fix the parser");
     submitForm();
     render({
       agents: surface({
-        dispatch,
-        tasks: [
-          taskView("agt-existing", ROOT),
-          taskView("agt-recovered-foreign", ROOT),
-          taskView("agt-dispatched", ROOT),
+        startThread,
+        threads: [
+          threadView({ threadId: "agt-existing" }),
+          threadView({ threadId: "agt-recovered-foreign" }),
+          threadView({ threadId: "agt-started" }),
         ],
       }),
     });
 
     await act(async () => {
-      resolveDispatch?.({ taskId: "agt-dispatched" });
+      resolveStart?.({ threadId: "agt-started" });
       await Promise.resolve();
     });
 
-    expect(host.querySelector('section[aria-label="Agent thread agt-dispatched"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Agent thread agt-started"]')).not.toBeNull();
     expect(
       host.querySelector('section[aria-label="Agent thread agt-recovered-foreign"]'),
     ).toBeNull();
   });
 
-  it("opens a selected thread and returns to a new thread from the group affordance", () => {
-    render({ agents: surface({ tasks: [taskView("agt-1", ROOT)] }) });
+  it("puts the composer in follow-up mode for the selected thread", () => {
+    render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
 
     clickText("Refactor the parser");
 
-    expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).not.toBeNull();
+    expect(host.querySelector('form[aria-label="Follow up on agent thread"]')).not.toBeNull();
+    expect(host.querySelector("select#agent-repository")).toBeNull();
+    expect(host.querySelector("input#agent-isolation")).toBeNull();
+    expect(submitButton().textContent).toContain("Send");
+  });
 
-    clickText("+ New thread");
+  it("sends a follow-up into the selected thread and clears the prompt", async () => {
+    const sendFollowUp = vi.fn(async () => true);
+    render({ agents: surface({ sendFollowUp, threads: [threadView({ threadId: "agt-1" })] }) });
 
+    clickText("Refactor the parser");
+    typePrompt("Also update the tests");
+    await submitFormAsync();
+
+    expect(sendFollowUp).toHaveBeenCalledWith({
+      threadId: "agt-1",
+      prompt: "Also update the tests",
+    });
+    expect(promptField().value).toBe("");
+  });
+
+  it("keeps the prompt when the follow-up is refused", async () => {
+    const sendFollowUp = vi.fn(async () => false);
+    render({ agents: surface({ sendFollowUp, threads: [threadView({ threadId: "agt-1" })] }) });
+
+    clickText("Refactor the parser");
+    typePrompt("Also update the tests");
+    await submitFormAsync();
+
+    expect(promptField().value).toBe("Also update the tests");
+  });
+
+  it("blocks a follow-up into a thread without a resumable session", () => {
+    render({
+      agents: surface({
+        threads: [threadView({ threadId: "agt-1", sessionId: null })],
+      }),
+    });
+
+    clickText("Refactor the parser");
+    typePrompt("Also update the tests");
+
+    expect(host.textContent).toContain("This thread has no resumable session");
+    expect(submitButton().disabled).toBe(true);
+  });
+
+  it("blocks a follow-up while the thread is still running", () => {
+    render({
+      agents: surface({
+        threads: [threadView({ threadId: "agt-1", status: { kind: "running" } })],
+      }),
+    });
+
+    clickText("Refactor the parser");
+    typePrompt("Also update the tests");
+
+    expect(host.textContent).toContain("This thread is still running");
+    expect(submitButton().disabled).toBe(true);
+  });
+
+  it("blocks a follow-up when the worktree is gone", () => {
+    render({
+      agents: surface({
+        threads: [threadView({ threadId: "agt-1", worktreeMissing: true })],
+      }),
+    });
+
+    clickText("Refactor the parser");
+
+    expect(host.textContent).toContain("The worktree for this thread no longer exists.");
+    expect(submitButton().disabled).toBe(true);
+  });
+
+  it("blocks a follow-up whose provider no longer matches the configured CLI", () => {
+    render({
+      agents: surface({
+        agentCliKind: "codex",
+        threads: [threadView({ threadId: "agt-1", providerKind: "claudeCode" })],
+      }),
+    });
+
+    clickText("Refactor the parser");
+    typePrompt("Also update the tests");
+
+    expect(host.textContent).toContain("This thread was started with Claude Code");
+    expect(submitButton().disabled).toBe(true);
+  });
+
+  it("blocks a follow-up while the concurrent agent limit is reached", () => {
+    render({
+      agents: surface({
+        liveTaskCount: 2,
+        maxConcurrentAgentTasks: 2,
+        threads: [threadView({ threadId: "agt-1" })],
+      }),
+    });
+
+    clickText("Refactor the parser");
+    typePrompt("Also update the tests");
+
+    expect(host.textContent).toContain("The concurrent agent limit is reached");
+    expect(submitButton().disabled).toBe(true);
+  });
+
+  it("escapes back to a new thread from the composer", () => {
+    render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
+
+    clickText("Refactor the parser");
+    click(".agent-composer__new");
+
+    expect(host.querySelector('form[aria-label="New agent thread"]')).not.toBeNull();
     expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();
   });
 
@@ -260,66 +368,92 @@ describe("AgentModeView", () => {
     expect(removeOrphanedWorktree).toHaveBeenCalledWith(`${ROOT}/.worktrees/agt-9`);
   });
 
-  it("routes thread actions to the surface", () => {
+  it("routes stop, archive and remove to the surface", () => {
     const stop = vi.fn(async () => undefined);
-    render({ agents: surface({ stop, tasks: [taskView("agt-1", ROOT, { kind: "running" })] }) });
+    const archive = vi.fn();
+    const remove = vi.fn();
+    render({
+      agents: surface({
+        archive,
+        remove,
+        stop,
+        threads: [threadView({ threadId: "agt-1", status: { kind: "running" } })],
+      }),
+    });
 
     clickText("Refactor the parser");
     click('[aria-label="Stop agent agt-1"]');
 
     expect(stop).toHaveBeenCalledWith("agt-1");
-  });
 
-  it("drops the selection when the thread is dismissed elsewhere", () => {
-    render({ agents: surface({ tasks: [taskView("agt-1", ROOT)] }) });
+    render({ agents: surface({ archive, remove, stop, threads: [threadView({})] }) });
 
     clickText("Refactor the parser");
-    render({ agents: surface({ tasks: [] }) });
+    click('[aria-label="Archive thread agt-1"]');
+    click('[aria-label="Remove thread agt-1"]');
+
+    expect(archive).toHaveBeenCalledWith("agt-1");
+    expect(remove).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("drops the selection when the thread disappears from the surface", () => {
+    render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
+
+    clickText("Refactor the parser");
+    render({ agents: surface({ threads: [] }) });
 
     expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).toBeNull();
     expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();
   });
 
-  it("pins a thread to the top of its repository group and restores it after a remount", () => {
-    const tasks = [taskView("agt-1", ROOT), taskView("agt-2", ROOT), taskView("agt-3", NESTED)];
-    render({ agents: surface({ tasks }) });
+  it("routes the pin toggle to the surface and orders pinned threads first", () => {
+    const togglePin = vi.fn();
+    render({
+      agents: surface({
+        togglePin,
+        threads: [
+          threadView({ threadId: "agt-1" }),
+          threadView({ threadId: "agt-2" }),
+          threadView({ threadId: "agt-3", repositoryRoot: NESTED }),
+        ],
+      }),
+    });
 
     expect(threadOrder()).toEqual(["agt-1", "agt-2", "agt-3"]);
 
     click('[aria-label="Pin thread agt-2"]');
 
-    expect(threadOrder()).toEqual(["agt-2", "agt-1", "agt-3"]);
-    expect(window.localStorage.getItem(agentThreadPinStorageKey(ROOT))).toBe('["agt-2"]');
+    expect(togglePin).toHaveBeenCalledWith("agt-2");
 
-    act(() => root.unmount());
-    root = createRoot(host);
-    render({ agents: surface({ tasks }) });
+    render({
+      agents: surface({
+        togglePin,
+        threads: [
+          threadView({ threadId: "agt-1" }),
+          threadView({ threadId: "agt-2", pinned: true }),
+          threadView({ threadId: "agt-3", repositoryRoot: NESTED }),
+        ],
+      }),
+    });
 
     expect(threadOrder()).toEqual(["agt-2", "agt-1", "agt-3"]);
   });
 
-  it("shares the pin state between the thread row and the details column", () => {
-    render({ agents: surface({ tasks: [taskView("agt-1", ROOT)] }) });
+  it("hides archived threads behind a collapsed group", () => {
+    render({
+      agents: surface({
+        threads: [
+          threadView({ threadId: "agt-1" }),
+          threadView({ threadId: "agt-2", archived: true, title: "Archived work" }),
+        ],
+      }),
+    });
 
-    clickText("Refactor the parser");
-    click('[aria-label="Pin agent agt-1"]');
+    expect(host.textContent).not.toContain("Archived work");
 
-    expect(host.querySelector('[aria-label="Unpin thread agt-1"]')).not.toBeNull();
+    clickText("Archived");
 
-    click('[aria-label="Unpin thread agt-1"]');
-
-    expect(host.querySelector('[aria-label="Pin agent agt-1"]')).not.toBeNull();
-    expect(window.localStorage.getItem(agentThreadPinStorageKey(ROOT))).toBeNull();
-  });
-
-  it("forgets the pin of a thread that was dismissed elsewhere", () => {
-    render({ agents: surface({ tasks: [taskView("agt-1", ROOT), taskView("agt-2", ROOT)] }) });
-
-    click('[aria-label="Pin thread agt-1"]');
-    render({ agents: surface({ tasks: [taskView("agt-2", ROOT)] }) });
-
-    expect(window.localStorage.getItem(agentThreadPinStorageKey(ROOT))).toBeNull();
-    expect(threadOrder()).toEqual(["agt-2"]);
+    expect(host.textContent).toContain("Archived work");
   });
 
   it("renders one project section per registered root and keeps the active tab first", () => {
@@ -332,9 +466,9 @@ describe("AgentModeView", () => {
     ).toEqual(["app", "api-service"]);
   });
 
-  it("dispatches into the project chosen in the composer and forces its worktree rule", async () => {
-    const dispatch = vi.fn(async () => ({ taskId: "agt-new" }));
-    render({ agents: surface({ dispatch }), projects: [activeProject(), backgroundProject()] });
+  it("starts in the project chosen in the composer and forces its worktree rule", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    render({ agents: surface({ startThread }), projects: [activeProject(), backgroundProject()] });
 
     selectProject(OTHER_ROOT);
 
@@ -344,7 +478,7 @@ describe("AgentModeView", () => {
     typePrompt("Fix the parser");
     await submitFormAsync();
 
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(startThread).toHaveBeenCalledWith({
       projectRootKey: OTHER_ROOT,
       repositoryRoot: OTHER_ROOT,
       prompt: "Fix the parser",
@@ -353,16 +487,16 @@ describe("AgentModeView", () => {
     });
   });
 
-  it("dispatches the active project without a project-level picker", async () => {
-    const dispatch = vi.fn(async () => ({ taskId: "agt-new" }));
-    render({ agents: surface({ dispatch }), projects: [activeProject()] });
+  it("starts in the active project without a project-level picker", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    render({ agents: surface({ startThread }), projects: [activeProject()] });
 
     expect(host.querySelector("select#agent-project")).toBeNull();
 
     typePrompt("Fix the parser");
     await submitFormAsync();
 
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(startThread).toHaveBeenCalledWith({
       projectRootKey: ROOT,
       repositoryRoot: ROOT,
       prompt: "Fix the parser",
@@ -396,7 +530,7 @@ describe("AgentModeView", () => {
     expect(host.querySelector('section[aria-label="Project api-service"]')).not.toBeNull();
   });
 
-  it("shows no dispatch target when only a closed-tab draining project remains", () => {
+  it("shows no start target when only a closed-tab draining project remains", () => {
     render({ projects: [{ ...backgroundProject(), origin: "closed-tab-live-tasks" }] });
 
     expect(host.querySelector(".agent-composer__chip--empty")?.textContent).toBe("No project");
@@ -587,14 +721,15 @@ function backgroundProject(): AgentProjectDescriptor {
   };
 }
 
-function surface(overrides: Partial<AgentTasksSurface>): AgentTasksSurface {
+function surface(overrides: Partial<AgentThreadsSurface>): AgentThreadsSurface {
   return {
-    tasks: [],
+    threads: [],
     repositories: [repository(ROOT, ""), repository(NESTED, "packages/api")],
     orphanedWorktrees: [],
     notice: null,
     dispatching: false,
     agentCliConfigured: true,
+    agentCliKind: "claudeCode",
     liveTaskCount: 0,
     maxConcurrentAgentTasks: 4,
     isolationPreview: (repositoryRoot: string) => ({
@@ -605,9 +740,12 @@ function surface(overrides: Partial<AgentTasksSurface>): AgentTasksSurface {
       confirmationKey: null,
     }),
     refreshIsolationStatus: async () => undefined,
-    dispatch: async () => ({ taskId: "agt-default" }),
+    startThread: async () => ({ threadId: "agt-default" }),
+    sendFollowUp: async () => true,
     stop: async () => undefined,
-    dismiss: () => undefined,
+    togglePin: () => undefined,
+    archive: () => undefined,
+    remove: () => undefined,
     hasLiveTasksForOwner: () => false,
     stopProjectTasks: async () => undefined,
     releaseProjectTasks: () => undefined,
@@ -628,27 +766,67 @@ function repository(repositoryRoot: string, rootRelativePath: string): ResolvedG
   return { mapping: { rootRelativePath }, repositoryRoot, repositoryRelativePath: "" };
 }
 
-function taskView(
-  taskId: string,
-  repositoryRoot: string,
-  status: AgentTaskRecord["status"] = { kind: "exited", exitCode: 0 },
-): AgentTaskView {
+interface ThreadViewOptions {
+  readonly threadId?: string;
+  readonly repositoryRoot?: string;
+  readonly status?: AgentTurnStatus;
+  readonly pinned?: boolean;
+  readonly archived?: boolean;
+  readonly providerKind?: AgentCliKind;
+  readonly projectOrigin?: AgentProjectOrigin;
+  readonly sessionId?: string | null;
+  readonly title?: string;
+  readonly worktreeMissing?: boolean;
+}
+
+function threadView({
+  archived = false,
+  pinned = false,
+  projectOrigin = "active-tab",
+  providerKind = "claudeCode",
+  repositoryRoot = ROOT,
+  sessionId = "session-abcdefgh",
+  status = { kind: "exited", exitCode: 0 },
+  threadId = "agt-1",
+  title = "Refactor the parser",
+  worktreeMissing = false,
+}: ThreadViewOptions): AgentThreadView {
+  const running = status.kind === "pending" || status.kind === "running";
+  const thread: AgentThread = {
+    threadId,
+    owner: { rootKey: ROOT, ownerId: "agent-root:app", repositoryRoot },
+    target: { isolation: "worktree", worktreePath: `${repositoryRoot}/.worktrees/${threadId}` },
+    provider: { kind: providerKind, sessionId },
+    title,
+    pinned,
+    archived,
+    createdAtEpochMs: 1_700_000_000_000,
+    updatedAtEpochMs: 1_700_000_000_000,
+    turns: [turn(threadId, title, status)],
+    turnsTruncated: false,
+  };
+
   return {
-    record: {
-      owner: { taskId, workspaceId: "agent-root:app", repositoryRoot },
-      isolation: "worktree",
-      worktreePath: `${repositoryRoot}/.worktrees/${taskId}`,
-      prompt: "Refactor the parser",
-      status,
-      outputTail: "",
-      outputTruncated: false,
-      lastStatusSequence: 0,
-      lastOutputSequence: 0,
-      startedAtEpochMs: 1_700_000_000_000,
-    },
+    thread,
+    lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: "app",
-    terminal: status.kind !== "running" && status.kind !== "pending",
+    projectOrigin,
     worktreeRemoved: false,
+    worktreeMissing,
     changeSummary: null,
+  };
+}
+
+function turn(threadId: string, prompt: string, status: AgentTurnStatus): AgentTurn {
+  return {
+    turnId: `${threadId}-t1`,
+    prompt,
+    status,
+    startedAtEpochMs: 1_700_000_000_000,
+    endedAtEpochMs: null,
+    events: [],
+    eventsTruncated: false,
+    lastStatusSequence: 0,
+    lastOutputSequence: 0,
   };
 }

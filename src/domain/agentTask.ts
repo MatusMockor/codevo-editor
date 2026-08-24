@@ -3,11 +3,11 @@ export const MAX_AGENT_TASK_WORKSPACE_ID_BYTES = 1_024;
 export const MAX_AGENT_TASK_PATH_BYTES = 4_096;
 export const MAX_AGENT_TASK_PROMPT_BYTES = 32 * 1_024;
 export const MAX_AGENT_TASK_OUTPUT_CHUNK_BYTES = 8 * 1_024;
-export const MAX_AGENT_TASK_RETAINED_OUTPUT_BYTES = 256 * 1_024;
 export const MAX_AGENT_TASK_FAILURE_BYTES = 4_096;
-export const MAX_RETAINED_AGENT_TASKS = 32;
+export const MAX_AGENT_SESSION_ID_BYTES = 128;
 
 export const AGENT_TASK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{2,63}$/;
+export const AGENT_SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
 
 export type AgentTaskIsolation = "worktree" | "in-place";
 export type AgentCliKind = "claudeCode" | "codex";
@@ -25,19 +25,6 @@ export type AgentTaskStatus =
   | { readonly kind: "exited"; readonly exitCode: number }
   | { readonly kind: "failed"; readonly message: string }
   | { readonly kind: "stopped" };
-
-export interface AgentTaskRecord {
-  readonly owner: AgentTaskOwner;
-  readonly isolation: AgentTaskIsolation;
-  readonly worktreePath: string | null;
-  readonly prompt: string;
-  readonly status: AgentTaskStatus;
-  readonly outputTail: string;
-  readonly outputTruncated: boolean;
-  readonly lastStatusSequence: number;
-  readonly lastOutputSequence: number;
-  readonly startedAtEpochMs: number;
-}
 
 export type AgentTaskStatusEvent = AgentTaskOwner & {
   readonly isolation: AgentTaskIsolation;
@@ -63,6 +50,7 @@ export interface StartAgentTaskRequest {
   readonly prompt: string;
   readonly agentCliPath: string;
   readonly agentCliKind: AgentCliKind;
+  readonly resumeSessionId: string | null;
 }
 
 export interface StartAgentTaskResult {
@@ -86,18 +74,6 @@ export interface AgentTaskGateway {
   stopAgentTasksForRoot(request: StopAgentTasksForRootRequest): Promise<void>;
   subscribeAgentTaskStatus(handler: (event: AgentTaskStatusEvent) => void): Promise<() => void>;
   subscribeAgentTaskOutput(handler: (event: AgentTaskOutputEvent) => void): Promise<() => void>;
-}
-
-export type AgentTasksAction =
-  | { readonly kind: "started"; readonly record: AgentTaskRecord }
-  | { readonly kind: "statusEvent"; readonly event: AgentTaskStatusEvent }
-  | { readonly kind: "outputEvent"; readonly event: AgentTaskOutputEvent }
-  | { readonly kind: "dismissed"; readonly taskId: string }
-  | { readonly kind: "workspaceReplaced"; readonly workspaceId: string }
-  | { readonly kind: "projectReleased"; readonly ownerId: string };
-
-export interface AgentTasksState {
-  readonly tasks: ReadonlyMap<string, AgentTaskRecord>;
 }
 
 export type AgentIsolationPolicy = "auto" | "worktree" | "in-place";
@@ -130,18 +106,20 @@ export type InPlaceDispatchGuard =
   | { readonly kind: "safe" }
   | { readonly kind: "unsafe"; readonly reasons: ReadonlyArray<InPlaceDispatchUnsafeReason> };
 
-export interface AgentTaskOutputTailClip {
-  readonly text: string;
-  readonly clipped: boolean;
+const UTF8_ENCODER = new TextEncoder();
+
+export class AgentTaskStartRejectedError extends Error {
+  override readonly name = "AgentTaskStartRejectedError";
+
+  constructor(message: string) {
+    super(message);
+  }
 }
 
-const UTF8_ENCODER = new TextEncoder();
-const UTF8_DECODER = new TextDecoder("utf-8");
-const UTF8_CONTINUATION_MASK = 0b1100_0000;
-const UTF8_CONTINUATION_MARKER = 0b1000_0000;
-
-export function emptyAgentTasksState(): AgentTasksState {
-  return { tasks: new Map() };
+export function isDefiniteAgentTaskStartRejection(
+  error: unknown,
+): error is AgentTaskStartRejectedError {
+  return error instanceof AgentTaskStartRejectedError;
 }
 
 export function isTerminalAgentTaskStatus(status: AgentTaskStatus): boolean {
@@ -170,43 +148,6 @@ export function mintAgentTaskId(nowEpochMs: number, entropyHex4: string): string
     invalid("mintAgentTaskId", "a task id within the safe agent task id pattern");
   }
   return taskId;
-}
-
-export function clipAgentTaskOutputTail(text: string): AgentTaskOutputTailClip {
-  const bytes = UTF8_ENCODER.encode(text);
-  if (bytes.byteLength <= MAX_AGENT_TASK_RETAINED_OUTPUT_BYTES) {
-    return { text, clipped: false };
-  }
-  let start = bytes.byteLength - MAX_AGENT_TASK_RETAINED_OUTPUT_BYTES;
-  while (
-    start < bytes.byteLength &&
-    (bytes[start] & UTF8_CONTINUATION_MASK) === UTF8_CONTINUATION_MARKER
-  ) {
-    start += 1;
-  }
-  return { text: UTF8_DECODER.decode(bytes.subarray(start)), clipped: true };
-}
-
-export function agentTasksReducer(
-  state: AgentTasksState,
-  action: AgentTasksAction,
-): AgentTasksState {
-  switch (action.kind) {
-    case "started":
-      return startAgentTask(state, action.record);
-    case "statusEvent":
-      return applyAgentTaskStatusEvent(state, action.event);
-    case "outputEvent":
-      return applyAgentTaskOutputEvent(state, action.event);
-    case "dismissed":
-      return dismissAgentTask(state, action.taskId);
-    case "workspaceReplaced":
-      return retainWorkspaceAgentTasks(state, action.workspaceId);
-    case "projectReleased":
-      return releaseProjectAgentTasks(state, action.ownerId);
-    default:
-      return unsupportedAction(action);
-  }
 }
 
 export function defaultAgentTaskIsolation(
@@ -280,6 +221,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
       "prompt",
       "agentCliPath",
       "agentCliKind",
+      "resumeSessionId",
     ],
     "request",
   );
@@ -298,7 +240,16 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
     prompt: boundedText(request.prompt, "request.prompt", MAX_AGENT_TASK_PROMPT_BYTES, false),
     agentCliPath: agentPath(request.agentCliPath, "request.agentCliPath"),
     agentCliKind: agentCliKind(request.agentCliKind, "request.agentCliKind"),
+    resumeSessionId: optionalAgentSessionId(request.resumeSessionId, "request.resumeSessionId"),
   };
+}
+
+export function isAgentSessionId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    UTF8_ENCODER.encode(value).byteLength <= MAX_AGENT_SESSION_ID_BYTES &&
+    AGENT_SESSION_ID_PATTERN.test(value)
+  );
 }
 
 export function validateAgentTaskReferenceRequest(value: unknown): AgentTaskReferenceRequest {
@@ -317,108 +268,6 @@ export function validateStopAgentTasksForRootRequest(value: unknown): StopAgentT
     workspaceId: agentWorkspaceId(request.workspaceId, "request.workspaceId"),
     repositoryRoot: agentPath(request.repositoryRoot, "request.repositoryRoot"),
   };
-}
-
-function startAgentTask(state: AgentTasksState, task: AgentTaskRecord): AgentTasksState {
-  if (state.tasks.has(task.owner.taskId)) return state;
-  const tasks = new Map(state.tasks);
-  tasks.set(task.owner.taskId, task);
-  evictRetainedAgentTasks(tasks);
-  return { tasks };
-}
-
-function applyAgentTaskStatusEvent(
-  state: AgentTasksState,
-  event: AgentTaskStatusEvent,
-): AgentTasksState {
-  const task = state.tasks.get(event.taskId);
-  if (task === undefined) return state;
-  if (event.workspaceId !== task.owner.workspaceId) return state;
-  if (event.repositoryRoot !== task.owner.repositoryRoot) return state;
-  if (event.isolation !== task.isolation) return state;
-  if (task.worktreePath !== null && event.worktreePath !== task.worktreePath) return state;
-  if (isTerminalAgentTaskStatus(task.status)) return state;
-  if (event.sequence <= task.lastStatusSequence) return state;
-  return replaceAgentTask(state, {
-    ...task,
-    worktreePath: event.worktreePath,
-    status: event.status,
-    lastStatusSequence: event.sequence,
-  });
-}
-
-function applyAgentTaskOutputEvent(
-  state: AgentTasksState,
-  event: AgentTaskOutputEvent,
-): AgentTasksState {
-  const task = state.tasks.get(event.taskId);
-  if (task === undefined) return state;
-  if (isTerminalAgentTaskStatus(task.status)) return state;
-  if (event.sequence <= task.lastOutputSequence) return state;
-  const tail = clipAgentTaskOutputTail(task.outputTail + event.chunk);
-  return replaceAgentTask(state, {
-    ...task,
-    outputTail: tail.text,
-    outputTruncated: task.outputTruncated || event.truncated || tail.clipped,
-    lastOutputSequence: event.sequence,
-  });
-}
-
-function dismissAgentTask(state: AgentTasksState, taskId: string): AgentTasksState {
-  if (!state.tasks.has(taskId)) return state;
-  const tasks = new Map(state.tasks);
-  tasks.delete(taskId);
-  return { tasks };
-}
-
-function retainWorkspaceAgentTasks(state: AgentTasksState, workspaceId: string): AgentTasksState {
-  const retained = new Map<string, AgentTaskRecord>();
-  for (const [taskId, task] of state.tasks) {
-    if (task.owner.workspaceId !== workspaceId && isTerminalAgentTaskStatus(task.status)) {
-      continue;
-    }
-    retained.set(taskId, task);
-  }
-  if (retained.size === state.tasks.size) return state;
-  return { tasks: retained };
-}
-
-function releaseProjectAgentTasks(state: AgentTasksState, ownerId: string): AgentTasksState {
-  const retained = new Map<string, AgentTaskRecord>();
-  for (const [taskId, task] of state.tasks) {
-    if (task.owner.workspaceId === ownerId && isTerminalAgentTaskStatus(task.status)) {
-      continue;
-    }
-    retained.set(taskId, task);
-  }
-  if (retained.size === state.tasks.size) return state;
-  return { tasks: retained };
-}
-
-function replaceAgentTask(state: AgentTasksState, task: AgentTaskRecord): AgentTasksState {
-  const tasks = new Map(state.tasks);
-  tasks.set(task.owner.taskId, task);
-  return { tasks };
-}
-
-function evictRetainedAgentTasks(tasks: Map<string, AgentTaskRecord>): void {
-  if (tasks.size <= MAX_RETAINED_AGENT_TASKS) return;
-  const evictable = [...tasks.values()]
-    .filter((task) => isTerminalAgentTaskStatus(task.status))
-    .sort(compareEvictionOrder);
-  for (const task of evictable) {
-    if (tasks.size <= MAX_RETAINED_AGENT_TASKS) return;
-    tasks.delete(task.owner.taskId);
-  }
-}
-
-function compareEvictionOrder(left: AgentTaskRecord, right: AgentTaskRecord): number {
-  if (left.startedAtEpochMs !== right.startedAtEpochMs) {
-    return left.startedAtEpochMs - right.startedAtEpochMs;
-  }
-  if (left.owner.taskId < right.owner.taskId) return -1;
-  if (left.owner.taskId > right.owner.taskId) return 1;
-  return 0;
 }
 
 function parseAgentTaskStatus(event: Record<string, unknown>, path: string): AgentTaskStatus {
@@ -492,6 +341,12 @@ function agentTaskId(value: unknown, path: string): string {
   return candidate;
 }
 
+function optionalAgentSessionId(value: unknown, path: string): string | null {
+  if (value === null) return null;
+  if (!isAgentSessionId(value)) invalid(path, "null or a safe agent session id");
+  return value;
+}
+
 function agentWorkspaceId(value: unknown, path: string): string {
   return boundedText(value, path, MAX_AGENT_TASK_WORKSPACE_ID_BYTES, false, true);
 }
@@ -554,10 +409,6 @@ function record(value: unknown, path: string): Record<string, unknown> {
     invalid(path, "an object");
   }
   return value as Record<string, unknown>;
-}
-
-function unsupportedAction(action: never): never {
-  throw new TypeError(`Unsupported agent task action: ${JSON.stringify(action)}.`);
 }
 
 function unsupportedStatus(status: never): never {

@@ -1,4 +1,5 @@
 import {
+  AgentTaskStartRejectedError,
   parseAgentTaskOutputEvent,
   parseAgentTaskStatusEvent,
   parseStartAgentTaskResult,
@@ -26,13 +27,30 @@ export type InvokeAgentTaskCommand = (
   args: Record<string, unknown>,
 ) => Promise<unknown>;
 
+export const DEFINITE_AGENT_TASK_START_REJECTIONS: ReadonlySet<string> = new Set([
+  "Agent tasks require a trusted repository.",
+  "Agent tasks require a trusted agent worktree.",
+  "In-place agent tasks must run at the repository root.",
+  "Too many agent tasks are starting or running.",
+  "Too many agent tasks are starting or running in this repository.",
+  "An agent task is already using this repository's working tree.",
+  "An agent task is already running in this working directory.",
+  "An agent task with this taskId already exists.",
+]);
+
+export function classifyAgentTaskStartFailure(error: unknown): unknown {
+  const message = failureMessageOf(error);
+  if (!DEFINITE_AGENT_TASK_START_REJECTIONS.has(message)) return error;
+  return new AgentTaskStartRejectedError(message);
+}
+
 export async function invokeStartAgentTaskIpc(
   invokeCommand: InvokeAgentTaskCommand,
   request: StartAgentTaskRequest,
 ): Promise<StartAgentTaskResult> {
   const validated = validateStartAgentTaskRequest(request);
   const result = parseStartAgentTaskResult(
-    await invokeCommand(START_AGENT_TASK_IPC_COMMAND, { request: validated }),
+    await invokeStartCommand(invokeCommand, { request: validated }),
   );
   if (result.taskId !== validated.taskId) {
     throw new TypeError(
@@ -92,4 +110,21 @@ async function invokeUnit(
   if (value !== null) {
     throw new TypeError("Invalid agent task value at result: expected null.");
   }
+}
+
+async function invokeStartCommand(
+  invokeCommand: InvokeAgentTaskCommand,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  try {
+    return await invokeCommand(START_AGENT_TASK_IPC_COMMAND, args);
+  } catch (error) {
+    throw classifyAgentTaskStartFailure(error);
+  }
+}
+
+function failureMessageOf(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  return "";
 }

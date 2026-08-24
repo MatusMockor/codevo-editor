@@ -1,13 +1,14 @@
 import { ChevronDown, Pin, ShieldAlert } from "lucide-react";
 import { MAX_AGENT_PROJECT_ROOTS } from "../../domain/agentProject";
-import type { AgentTaskView } from "../../application/useAgentTasks";
+import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
   agentProjectOriginBadge,
   agentProjectTrustNotice,
-  agentThreadStatusLabel,
+  agentThreadDisplayTitle,
+  agentThreadLifecycleLabel,
   agentThreadTimeLabel,
-  agentThreadTitle,
   agentThreadTone,
+  lastAgentTurnStatus,
   type AgentProjectGroup,
   type AgentRepositoryGroup,
 } from "./agentModePresentation";
@@ -16,16 +17,17 @@ export interface AgentThreadsSidebarProps {
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly collapsedProjectRootKeys: ReadonlySet<string>;
   readonly collapsedRepositoryRoots: ReadonlySet<string>;
+  readonly expandedArchivedRoots: ReadonlySet<string>;
   readonly overflowRootPaths: ReadonlyArray<string>;
-  readonly selectedTaskId: string | null;
-  readonly pinnedTaskIds: ReadonlySet<string>;
+  readonly selectedThreadId: string | null;
   readonly liveTaskCount: number;
   readonly maxConcurrentAgentTasks: number;
   readonly now: number;
   onToggleProject(projectRootKey: string): void;
   onToggleGroup(repositoryRoot: string): void;
-  onSelectThread(taskId: string): void;
-  onTogglePin(taskId: string): void;
+  onToggleArchived(repositoryRoot: string): void;
+  onSelectThread(threadId: string): void;
+  onTogglePin(threadId: string): void;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onTrustProject(projectRootKey: string): void;
   onReleaseProject(projectRootKey: string): void;
@@ -35,10 +37,11 @@ export interface AgentThreadsSidebarProps {
 
 interface ThreadListHandlers {
   readonly now: number;
-  readonly pinnedTaskIds: ReadonlySet<string>;
-  readonly selectedTaskId: string | null;
-  onSelectThread(taskId: string): void;
-  onTogglePin(taskId: string): void;
+  readonly expandedArchivedRoots: ReadonlySet<string>;
+  readonly selectedThreadId: string | null;
+  onSelectThread(threadId: string): void;
+  onTogglePin(threadId: string): void;
+  onToggleArchived(repositoryRoot: string): void;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onRemoveOrphan(worktreePath: string): void;
   onPruneOrphans(repositoryRoot: string): void;
@@ -47,6 +50,7 @@ interface ThreadListHandlers {
 export function AgentThreadsSidebar({
   collapsedProjectRootKeys,
   collapsedRepositoryRoots,
+  expandedArchivedRoots,
   groups,
   liveTaskCount,
   maxConcurrentAgentTasks,
@@ -56,23 +60,24 @@ export function AgentThreadsSidebar({
   onReleaseProject,
   onRemoveOrphan,
   onSelectThread,
+  onToggleArchived,
   onToggleGroup,
   onToggleProject,
   onTogglePin,
   onTrustProject,
   overflowRootPaths,
-  pinnedTaskIds,
-  selectedTaskId,
+  selectedThreadId,
 }: AgentThreadsSidebarProps) {
   const handlers: ThreadListHandlers = {
+    expandedArchivedRoots,
     now,
     onNewThread,
     onPruneOrphans,
     onRemoveOrphan,
     onSelectThread,
+    onToggleArchived,
     onTogglePin,
-    pinnedTaskIds,
-    selectedTaskId,
+    selectedThreadId,
   };
 
   return (
@@ -279,17 +284,23 @@ function AgentRepositoryThreads({
 }) {
   return (
     <div className="agent-group__threads">
-      {group.threads.map((thread) => (
+      {group.threads.map((view) => (
         <AgentThreadRow
-          key={thread.record.owner.taskId}
+          key={view.thread.threadId}
           now={handlers.now}
           onSelect={handlers.onSelectThread}
           onTogglePin={handlers.onTogglePin}
-          pinned={handlers.pinnedTaskIds.has(thread.record.owner.taskId)}
-          selected={handlers.selectedTaskId === thread.record.owner.taskId}
-          thread={thread}
+          selected={handlers.selectedThreadId === view.thread.threadId}
+          view={view}
         />
       ))}
+      {group.archived.length > 0 && (
+        <AgentArchivedGroup
+          expanded={handlers.expandedArchivedRoots.has(group.repositoryRoot)}
+          group={group}
+          handlers={handlers}
+        />
+      )}
       {!group.repositoryResolved && (
         <p className="agent-rail__empty">
           This repository is no longer available in the current workspace.
@@ -315,23 +326,62 @@ function AgentRepositoryThreads({
   );
 }
 
+function AgentArchivedGroup({
+  expanded,
+  group,
+  handlers,
+}: {
+  readonly expanded: boolean;
+  readonly group: AgentRepositoryGroup;
+  readonly handlers: ThreadListHandlers;
+}) {
+  return (
+    <section
+      aria-label={`Archived threads in ${group.label}`}
+      className={expanded ? "agent-archived" : "agent-archived agent-archived--closed"}
+    >
+      <button
+        aria-expanded={expanded}
+        className="agent-archived__head"
+        onClick={() => handlers.onToggleArchived(group.repositoryRoot)}
+        type="button"
+      >
+        <ChevronDown aria-hidden="true" className="agent-archived__chevron" size={11} />
+        <span className="agent-archived__name">Archived</span>
+        <span className="agent-archived__count agent-num">{group.archived.length}</span>
+      </button>
+      {expanded &&
+        group.archived.map((view) => (
+          <AgentThreadRow
+            key={view.thread.threadId}
+            now={handlers.now}
+            onSelect={handlers.onSelectThread}
+            onTogglePin={handlers.onTogglePin}
+            selected={handlers.selectedThreadId === view.thread.threadId}
+            view={view}
+          />
+        ))}
+    </section>
+  );
+}
+
 function AgentThreadRow({
   now,
   onSelect,
   onTogglePin,
-  pinned,
   selected,
-  thread,
+  view,
 }: {
   readonly now: number;
-  readonly pinned: boolean;
   readonly selected: boolean;
-  readonly thread: AgentTaskView;
-  onSelect(taskId: string): void;
-  onTogglePin(taskId: string): void;
+  readonly view: AgentThreadView;
+  onSelect(threadId: string): void;
+  onTogglePin(threadId: string): void;
 }) {
-  const tone = agentThreadTone(thread.record.status);
-  const taskId = thread.record.owner.taskId;
+  const thread = view.thread;
+  const threadId = thread.threadId;
+  const tone = agentThreadTone(view.lifecycle, lastAgentTurnStatus(thread));
+  const pinned = thread.pinned;
   const className = selected ? "agent-thread agent-thread--on" : "agent-thread";
   const pinClassName = pinned ? "agent-thread__pin agent-thread__pin--on" : "agent-thread__pin";
 
@@ -340,23 +390,26 @@ function AgentThreadRow({
       <button
         aria-current={selected}
         className={className}
-        onClick={() => onSelect(taskId)}
+        onClick={() => onSelect(threadId)}
         type="button"
       >
         <span aria-hidden="true" className={`agent-dot agent-dot--${tone}`} />
         <span className="agent-thread__text">
-          <span className="agent-thread__title">{agentThreadTitle(thread.record.prompt)}</span>
+          <span className="agent-thread__title">{agentThreadDisplayTitle(thread)}</span>
           <span className="agent-thread__meta agent-num">
-            {agentThreadStatusLabel(thread.record.status)} ·{" "}
-            {agentThreadTimeLabel(thread.record.startedAtEpochMs, now)}
+            {agentThreadLifecycleLabel(view.lifecycle)} ·{" "}
+            {agentThreadTimeLabel(thread.updatedAtEpochMs, now)}
           </span>
         </span>
+        {view.lifecycle === "running" && (
+          <span aria-label="Turn running" className="agent-thread__live" role="img" />
+        )}
       </button>
       <button
-        aria-label={pinned ? `Unpin thread ${taskId}` : `Pin thread ${taskId}`}
+        aria-label={pinned ? `Unpin thread ${threadId}` : `Pin thread ${threadId}`}
         aria-pressed={pinned}
         className={pinClassName}
-        onClick={() => onTogglePin(taskId)}
+        onClick={() => onTogglePin(threadId)}
         title={pinned ? "Unpin thread" : "Pin thread"}
         type="button"
       >
