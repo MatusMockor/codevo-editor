@@ -34,6 +34,7 @@ describe("domain dependency direction", () => {
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentThreadStoreGateway",
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriDebugGateway",
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriEslintDiagnosticsGateway",
+      "workbenchDefaultGateways.ts -> ../infrastructure/tauriGitIntegrationGateway",
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriGitWorktreeGateway",
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriPhpSyntaxDiagnosticsGateway",
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriPhpstanDiagnosticsGateway",

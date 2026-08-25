@@ -1,10 +1,10 @@
 import { memo } from "react";
-import { RefreshCw, X } from "lucide-react";
-import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentTurn } from "../../domain/agentThread";
 import type { GitChangedFile } from "../../domain/git";
+import { AgentShipPanel, type AgentShipActions } from "./AgentShipPanel";
+import { AgentThreadChanges } from "./AgentThreadChanges";
 import {
-  agentChangeStatusLetter,
   agentIsolationBadgeLabel,
   agentThreadDisplayTitle,
   agentThreadLifecycleLabel,
@@ -20,11 +20,14 @@ export interface AgentThreadSessionProps {
   readonly thread: AgentThreadView | null;
   readonly composerRepositoryLabel: string | null;
   readonly now: number;
+  readonly shipActions: AgentShipActions;
   readonly turnRenderProbe?: (turnId: string) => void;
   onHideChanges(threadId: string): void;
   onHideFileDiff(threadId: string): void;
   onRefreshChanges(threadId: string): void;
   onShowFileDiff(threadId: string, change: GitChangedFile): void;
+  onOpenChangedFile(threadId: string, change: GitChangedFile): void;
+  onOpenChangedFileDiff(threadId: string, change: GitChangedFile): void;
 }
 
 export function AgentThreadSession({
@@ -32,8 +35,11 @@ export function AgentThreadSession({
   now,
   onHideChanges,
   onHideFileDiff,
+  onOpenChangedFile,
+  onOpenChangedFileDiff,
   onRefreshChanges,
   onShowFileDiff,
+  shipActions,
   thread,
   turnRenderProbe,
 }: AgentThreadSessionProps) {
@@ -89,12 +95,16 @@ export function AgentThreadSession({
             <AgentThreadChanges
               onHideChanges={onHideChanges}
               onHideFileDiff={onHideFileDiff}
+              onOpenChangedFile={onOpenChangedFile}
+              onOpenChangedFileDiff={onOpenChangedFileDiff}
               onRefreshChanges={onRefreshChanges}
               onShowFileDiff={onShowFileDiff}
               summary={thread.changeSummary}
-              threadId={threadId}
+              thread={thread}
             />
           )}
+
+          {shippable(thread) && <AgentShipPanel actions={shipActions} thread={thread} />}
         </div>
       </div>
     </section>
@@ -317,144 +327,7 @@ function AgentEmptyFigure() {
   );
 }
 
-function AgentThreadChanges({
-  onHideChanges,
-  onHideFileDiff,
-  onRefreshChanges,
-  onShowFileDiff,
-  summary,
-  threadId,
-}: {
-  readonly summary: AgentTaskChangeSummary;
-  readonly threadId: string;
-  onHideChanges(threadId: string): void;
-  onHideFileDiff(threadId: string): void;
-  onRefreshChanges(threadId: string): void;
-  onShowFileDiff(threadId: string, change: GitChangedFile): void;
-}) {
-  return (
-    <section aria-label={`Changes for agent ${threadId}`} className="agent-changes">
-      <header className="agent-changes__head">
-        <span className="agent-microlabel">changes</span>
-        <span className="agent-session__spacer" />
-        <button
-          aria-label={`Refresh changes for agent ${threadId}`}
-          className="agent-linkbutton"
-          disabled={summary.loading}
-          onClick={() => onRefreshChanges(threadId)}
-          type="button"
-        >
-          <RefreshCw aria-hidden="true" size={11} /> Refresh
-        </button>
-        <button
-          aria-expanded
-          aria-label={`Hide changes for agent ${threadId}`}
-          className="agent-linkbutton"
-          onClick={() => onHideChanges(threadId)}
-          type="button"
-        >
-          Hide
-        </button>
-      </header>
-
-      {summary.loading && <p className="agent-note">Reading the worktree changes…</p>}
-      {summary.error && <p className="agent-note agent-note--bad">{summary.error}</p>}
-
-      {!summary.loading && summary.error === null && summary.files.length === 0 && (
-        <p className="agent-note">The agent left no uncommitted changes.</p>
-      )}
-
-      {summary.files.length > 0 && (
-        <ul aria-label={`Changed files for agent ${threadId}`} className="agent-files">
-          {summary.files.map((file) => (
-            <li className="agent-files__row" key={`${file.relativePath} ${file.isStaged}`}>
-              <span
-                className={`agent-files__status agent-files__status--${file.status}`}
-                title={file.status}
-              >
-                {agentChangeStatusLetter(file.status)}
-              </span>
-              <button
-                className="agent-files__path"
-                onClick={() => onShowFileDiff(threadId, file)}
-                type="button"
-              >
-                {file.relativePath}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {summary.truncated && (
-        <p className="agent-note agent-note--warning">
-          More changed files exist than are listed here.
-        </p>
-      )}
-
-      {summary.diff && (
-        <AgentThreadDiff diff={summary.diff} onClose={() => onHideFileDiff(threadId)} />
-      )}
-    </section>
-  );
-}
-
-function AgentThreadDiff({
-  diff,
-  onClose,
-}: {
-  readonly diff: NonNullable<AgentTaskChangeSummary["diff"]>;
-  onClose(): void;
-}) {
-  return (
-    <section aria-label={`Diff for ${diff.relativePath}`} className="agent-diff">
-      <header className="agent-diff__head">
-        <span className="agent-diff__path">{diff.relativePath}</span>
-        <span className="agent-session__spacer" />
-        <button
-          aria-label="Close file diff"
-          className="agent-linkbutton"
-          onClick={onClose}
-          type="button"
-        >
-          <X aria-hidden="true" size={11} />
-        </button>
-      </header>
-      {diff.loading && <p className="agent-note">Reading the file diff…</p>}
-      {diff.error && <p className="agent-note agent-note--bad">{diff.error}</p>}
-      {diff.unavailableReason && (
-        <p className="agent-note agent-note--warning">
-          {diff.unavailableReason === "binary"
-            ? "This file is binary, so no text diff is shown."
-            : "This file is too large to preview."}
-        </p>
-      )}
-      {!diff.loading && diff.error === null && diff.unavailableReason === null && (
-        <div className="agent-diff__grid">
-          <AgentDiffPane label="Before" side={diff.original} />
-          <AgentDiffPane label="After" side={diff.modified} />
-        </div>
-      )}
-    </section>
-  );
-}
-
-function AgentDiffPane({
-  label,
-  side,
-}: {
-  readonly label: string;
-  readonly side: { readonly text: string; readonly truncated: boolean };
-}) {
-  return (
-    <div className="agent-diff__pane">
-      <span className="agent-microlabel">{label}</span>
-      <pre aria-label={`${label} content`} className="agent-diff__text">
-        {side.text === "" ? "Empty file." : side.text}
-      </pre>
-      {side.truncated && (
-        <p className="agent-note agent-note--warning">This side was truncated to stay bounded.</p>
-      )}
-    </div>
-  );
+function shippable(thread: AgentThreadView): boolean {
+  if (thread.worktreeMissing || thread.worktreeRemoved) return false;
+  return thread.lifecycle === "settled";
 }

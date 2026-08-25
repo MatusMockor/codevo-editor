@@ -26,6 +26,12 @@ pub const MAX_AGENT_THREAD_TITLE_BYTES: usize = 256;
 pub const MAX_AGENT_THREAD_FILE_BYTES: usize = 1024 * 1024;
 pub const MAX_AGENT_THREAD_ROOT_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_UNREADABLE_REPORTS: usize = 16;
+pub const MAX_AGENT_INTEGRATION_REF_BYTES: usize = 512;
+
+pub const AGENT_THREAD_INTEGRATION_OBJECT_ID_ERROR: &str =
+    "Agent thread integration object ids must be 40 lowercase hexadecimal characters.";
+pub const AGENT_THREAD_INTEGRATION_REF_ERROR: &str =
+    "Agent thread integration remote or branch name is out of bounds.";
 
 const FNV1A_64_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A_64_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -51,6 +57,39 @@ pub struct AgentThread {
     pub updated_at_epoch_ms: u64,
     pub turns: Vec<AgentTurn>,
     pub turns_truncated: bool,
+    #[serde(default)]
+    pub integration: Option<AgentThreadIntegration>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentIntegrationMode {
+    FastForward,
+    Merge,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentThreadPushReceipt {
+    pub remote: String,
+    pub branch: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentThreadIntegrationReceipt {
+    pub into_branch: String,
+    pub merge_sha: String,
+    pub mode: AgentIntegrationMode,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentThreadIntegration {
+    pub last_commit_sha: Option<String>,
+    pub pushed: Option<AgentThreadPushReceipt>,
+    pub integrated: Option<AgentThreadIntegrationReceipt>,
+    pub branch_deleted: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -395,9 +434,50 @@ pub fn validate_agent_thread_document(
             "Agent thread exceeds the maximum of {MAX_AGENT_TURNS_PER_THREAD} turns."
         ));
     }
+    if let Some(integration) = thread.integration.as_ref() {
+        validate_agent_thread_integration(integration)?;
+    }
     for turn in &thread.turns {
         validate_agent_turn(turn)?;
     }
+    Ok(())
+}
+
+fn validate_agent_thread_integration(integration: &AgentThreadIntegration) -> Result<(), String> {
+    if let Some(sha) = integration.last_commit_sha.as_deref() {
+        ensure_agent_object_id(sha)?;
+    }
+    if let Some(pushed) = integration.pushed.as_ref() {
+        ensure_agent_integration_ref(&pushed.remote)?;
+        ensure_agent_integration_ref(&pushed.branch)?;
+    }
+    if let Some(integrated) = integration.integrated.as_ref() {
+        ensure_agent_integration_ref(&integrated.into_branch)?;
+        ensure_agent_object_id(&integrated.merge_sha)?;
+    }
+    Ok(())
+}
+
+fn ensure_agent_object_id(candidate: &str) -> Result<(), String> {
+    if candidate.len() != 40
+        || !candidate
+            .chars()
+            .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character))
+    {
+        return Err(AGENT_THREAD_INTEGRATION_OBJECT_ID_ERROR.to_string());
+    }
+
+    Ok(())
+}
+
+fn ensure_agent_integration_ref(candidate: &str) -> Result<(), String> {
+    if candidate.is_empty()
+        || candidate.len() > MAX_AGENT_INTEGRATION_REF_BYTES
+        || candidate.chars().any(char::is_control)
+    {
+        return Err(AGENT_THREAD_INTEGRATION_REF_ERROR.to_string());
+    }
+
     Ok(())
 }
 
@@ -793,6 +873,7 @@ mod tests {
                 updated_at_epoch_ms,
                 turns: vec![settled_turn("agt-turn-0001")],
                 turns_truncated: false,
+                integration: None,
             },
         }
     }
@@ -1240,7 +1321,8 @@ mod tests {
                         "lastOutputSequence": 0
                     }
                 ],
-                "turnsTruncated": false
+                "turnsTruncated": false,
+                "integration": null
             }
         })
     }
@@ -1271,6 +1353,58 @@ mod tests {
         ));
         let reserialized = serde_json::to_value(&document).expect("serialize document");
         assert_eq!(reserialized, source);
+    }
+
+    #[test]
+    fn an_absent_integration_receipt_parses_as_none() {
+        let mut without_integration = document_json();
+        without_integration["thread"]
+            .as_object_mut()
+            .expect("thread object")
+            .remove("integration");
+
+        let document: AgentThreadDocument =
+            serde_json::from_value(without_integration).expect("deserialize document");
+
+        assert_eq!(document.thread.integration, None);
+    }
+
+    #[test]
+    fn a_populated_integration_receipt_round_trips_and_is_bounds_checked() {
+        let mut source = document_json();
+        source["thread"]["owner"]["ownerId"] = json!(agent_root_owner_id("/workspace"));
+        source["thread"]["integration"] = json!({
+            "lastCommitSha": "0123456789abcdef0123456789abcdef01234567",
+            "pushed": { "remote": "origin", "branch": "agent/agt-t1-0001" },
+            "integrated": {
+                "intoBranch": "main",
+                "mergeSha": "89abcdef0123456789abcdef0123456789abcdef",
+                "mode": "fastForward"
+            },
+            "branchDeleted": true
+        });
+        let document: AgentThreadDocument =
+            serde_json::from_value(source.clone()).expect("deserialize document");
+        let reserialized = serde_json::to_value(&document).expect("serialize document");
+
+        assert_eq!(reserialized, source);
+        validate_agent_thread_document("/workspace", &document).expect("bounded receipt");
+
+        let mut bad_sha = source.clone();
+        bad_sha["thread"]["integration"]["lastCommitSha"] = json!("nope");
+        let bad_document: AgentThreadDocument =
+            serde_json::from_value(bad_sha).expect("deserialize document");
+
+        assert_eq!(
+            validate_agent_thread_document("/workspace", &bad_document)
+                .expect_err("malformed object id must be refused"),
+            AGENT_THREAD_INTEGRATION_OBJECT_ID_ERROR
+        );
+
+        let mut unknown_field = source;
+        unknown_field["thread"]["integration"]["extra"] = json!(1);
+
+        assert!(serde_json::from_value::<AgentThreadDocument>(unknown_field).is_err());
     }
 
     #[test]

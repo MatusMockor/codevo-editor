@@ -11,6 +11,11 @@ import type {
   AgentThreadsAction,
   AgentThreadsState,
 } from "../domain/agentThread";
+import type {
+  AgentShipAvailability,
+  AgentShipIntegrationMode,
+  AgentShipState,
+} from "../domain/agentShip";
 import type { GitChangedFile } from "../domain/git";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 
@@ -114,6 +119,8 @@ export interface AgentThreadView {
   readonly worktreeRemoved: boolean;
   readonly worktreeMissing: boolean;
   readonly changeSummary: AgentTaskChangeSummary | null;
+  readonly ship: AgentShipState;
+  readonly editorAvailability: AgentShipAvailability;
 }
 
 export interface AgentThreadStartRequest {
@@ -161,6 +168,18 @@ export interface AgentThreadsSurface {
   showFileDiff(threadId: string, change: GitChangedFile): Promise<void>;
   hideFileDiff(threadId: string): void;
   removeWorktree(threadId: string): Promise<void>;
+  refreshShipStatus(threadId: string): Promise<void>;
+  commitThreadChanges(threadId: string, message: string): Promise<void>;
+  pushThreadBranch(threadId: string): Promise<void>;
+  openThreadCompareUrl(threadId: string): Promise<void>;
+  integrateThreadBranch(threadId: string, mode: AgentShipIntegrationMode): Promise<void>;
+  removeThreadWorktree(
+    threadId: string,
+    options: { readonly deleteBranch: boolean },
+  ): Promise<void>;
+  resetThreadShip(threadId: string): void;
+  openChangedFile(threadId: string, change: GitChangedFile): Promise<void>;
+  openChangedFileDiff(threadId: string, change: GitChangedFile): Promise<void>;
   configureAgentCli(): void;
   dismissNotice(): void;
 }

@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
-import type { GitGateway } from "../domain/git";
+import type { GitChangedFile, GitGateway } from "../domain/git";
 import type { GitRepositoryMapping, GitRepositoryStatus } from "../domain/gitRepositoryMapping";
 import type {
   AppSettings,
@@ -9,8 +9,10 @@ import type {
   WorkspaceSettings,
 } from "../domain/settings";
 import type { WorkspaceTrustGateway } from "../domain/trust";
-import type { EditorDocument } from "../domain/workspace";
+import type { EditorDocument, FileEntry } from "../domain/workspace";
 import type { AgentThreadStoreGateway } from "./agentThreadPorts";
+import type { AgentEditorBridgePort } from "./useAgentEditorBridge";
+import { useAgentModeState, type AgentModeState } from "./useAgentModeState";
 import {
   useWorkbenchAgents,
   type WorkbenchAgentProjectGateways,
@@ -51,15 +53,32 @@ export function useAgentProjectGateways(
   );
 }
 
+export type WorkbenchControllerOpenFileRef = {
+  readonly current: (
+    entry: FileEntry,
+    options?: { pin?: boolean; readOnly?: boolean; recordNavigation?: boolean },
+  ) => Promise<boolean>;
+};
+
+export type WorkbenchControllerOpenGitChange = (
+  change: GitChangedFile,
+  repositoryRoot?: string,
+) => Promise<void>;
+
 export interface WorkbenchControllerAgentsOptions {
-  readonly agentModeActive: boolean;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly appSettingsRef: { readonly current: AppSettings };
-  readonly controllerOptions: Pick<
+  readonly editorSessionOwnerKey: string | null;
+  readonly options: Pick<
     WorkbenchControllerOptions,
     "agentRootLeaseGateway" | "agentTaskGateway" | "gitWorktreeGateway"
   >;
-  readonly gitGateway: Pick<GitGateway, "getStatus" | "getDiff" | "detectRepositories">;
+  readonly openFileRef: WorkbenchControllerOpenFileRef;
+  readonly openGitChange: WorkbenchControllerOpenGitChange;
+  readonly gitGateway: Pick<
+    GitGateway,
+    "getStatus" | "getDiff" | "detectRepositories" | "stageFiles" | "commit" | "deleteBranch"
+  >;
   readonly gitRepositoryMappings: ReadonlyArray<GitRepositoryMapping>;
   readonly gitRepositoryStatuses: ReadonlyArray<GitRepositoryStatus>;
   readonly openDocuments: ReadonlyArray<EditorDocument>;
@@ -77,23 +96,37 @@ export interface WorkbenchControllerAgentsOptions {
   readonly workspaceTrustGateway: WorkspaceTrustGateway;
 }
 
+export interface WorkbenchControllerAgentsSurface extends WorkbenchAgentsSurface, AgentModeState {}
+
 export function useWorkbenchControllerAgents(
   options: WorkbenchControllerAgentsOptions,
-): WorkbenchAgentsSurface {
+): WorkbenchControllerAgentsSurface {
+  const agentMode = useAgentModeState(
+    options.editorSessionOwnerKey,
+    options.workspaceRoot !== null,
+  );
+  const { agentModeActive, setAgentModeActive, toggleAgentMode } = agentMode;
   const agentProjectGateways = useAgentProjectGateways(
-    options.controllerOptions.agentRootLeaseGateway,
+    options.options.agentRootLeaseGateway,
     options.workspaceIdentityByRootRef,
     options.gitGateway,
     options.settingsGateway,
     options.workspaceTrustGateway,
   );
 
-  return useWorkbenchAgents({
-    agentTaskGateway: options.controllerOptions.agentTaskGateway,
+  const editorBridge = useAgentEditorBridgePort(
+    options.openFileRef,
+    options.openGitChange,
+    setAgentModeActive,
+  );
+
+  const agents = useWorkbenchAgents({
+    agentTaskGateway: options.options.agentTaskGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway,
-    gitWorktreeGateway: options.controllerOptions.gitWorktreeGateway,
+    gitWorktreeGateway: options.options.gitWorktreeGateway,
+    editorBridge,
     agentProjectGateways,
-    agentModeActive: options.agentModeActive,
+    agentModeActive,
     appSettingsRef: options.appSettingsRef,
     workspaceSettingsRef: options.workspaceSettingsRef,
     gitGateway: options.gitGateway,
@@ -107,4 +140,24 @@ export function useWorkbenchControllerAgents(
     workspaceId: options.workspaceIdentityDescriptor?.workspaceId ?? null,
     workspaceRoot: options.workspaceRoot,
   });
+
+  return useMemo(
+    () => ({ ...agents, agentModeActive, setAgentModeActive, toggleAgentMode }),
+    [agentModeActive, agents, setAgentModeActive, toggleAgentMode],
+  );
+}
+
+function useAgentEditorBridgePort(
+  openFileRef: WorkbenchControllerOpenFileRef,
+  openGitChange: WorkbenchControllerOpenGitChange,
+  setAgentModeActive: AgentModeState["setAgentModeActive"],
+): AgentEditorBridgePort {
+  return useMemo(
+    () => ({
+      openFile: (entry, options) => openFileRef.current(entry, options),
+      openGitChange: (change, repositoryRoot) => openGitChange(change, repositoryRoot),
+      leaveAgentMode: () => setAgentModeActive(false),
+    }),
+    [openFileRef, openGitChange, setAgentModeActive],
+  );
 }

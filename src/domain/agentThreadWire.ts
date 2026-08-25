@@ -21,13 +21,22 @@ import {
   isTerminalAgentTurnStatus,
   type AgentProviderSession,
   type AgentThread,
+  type AgentThreadIntegration,
+  type AgentThreadIntegrationReceipt,
   type AgentThreadOwner,
+  type AgentThreadPushReceipt,
   type AgentThreadTarget,
   type AgentTurn,
   type AgentTurnEvent,
   type AgentTurnStatus,
   type AgentTurnUsage,
 } from "./agentThread";
+import {
+  GIT_REMOTE_NAME_PATTERN,
+  GIT_SHA_PATTERN,
+  MAX_GIT_INTEGRATION_BRANCH_BYTES,
+  type GitIntegrationMode,
+} from "./gitIntegration";
 
 const UTF8_ENCODER = new TextEncoder();
 
@@ -48,6 +57,29 @@ export function serializeAgentThread(thread: AgentThread): Record<string, unknow
     updatedAtEpochMs: thread.updatedAtEpochMs,
     turns: thread.turns.map(serializeTurn),
     turnsTruncated: thread.turnsTruncated,
+    integration: serializeIntegration(thread.integration),
+  };
+}
+
+function serializeIntegration(
+  integration: AgentThreadIntegration | null,
+): Record<string, unknown> | null {
+  if (integration === null) return null;
+  return {
+    lastCommitSha: integration.lastCommitSha,
+    pushed:
+      integration.pushed === null
+        ? null
+        : { remote: integration.pushed.remote, branch: integration.pushed.branch },
+    integrated:
+      integration.integrated === null
+        ? null
+        : {
+            intoBranch: integration.integrated.intoBranch,
+            mergeSha: integration.integrated.mergeSha,
+            mode: integration.integrated.mode,
+          },
+    branchDeleted: integration.branchDeleted,
   };
 }
 
@@ -121,7 +153,7 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
 
 export function parseAgentThread(value: unknown): AgentThread {
   const thread = record(value, "thread");
-  exactKeys(
+  boundedKeys(
     thread,
     [
       "threadId",
@@ -136,6 +168,7 @@ export function parseAgentThread(value: unknown): AgentThread {
       "turns",
       "turnsTruncated",
     ],
+    ["integration"],
     "thread",
   );
   return {
@@ -150,7 +183,73 @@ export function parseAgentThread(value: unknown): AgentThread {
     updatedAtEpochMs: unsignedSafeInteger(thread.updatedAtEpochMs, "thread.updatedAtEpochMs"),
     turns: parseTurns(thread.turns, "thread.turns"),
     turnsTruncated: booleanFlag(thread.turnsTruncated, "thread.turnsTruncated"),
+    integration: parseIntegration(thread.integration, "thread.integration"),
   };
+}
+
+function parseIntegration(value: unknown, path: string): AgentThreadIntegration | null {
+  if (value === undefined || value === null) return null;
+  const integration = record(value, path);
+  exactKeys(integration, ["lastCommitSha", "pushed", "integrated", "branchDeleted"], path);
+  return {
+    lastCommitSha: optionalGitSha(integration.lastCommitSha, `${path}.lastCommitSha`),
+    pushed: parseIntegrationPush(integration.pushed, `${path}.pushed`),
+    integrated: parseIntegrationMerge(integration.integrated, `${path}.integrated`),
+    branchDeleted: booleanFlag(integration.branchDeleted, `${path}.branchDeleted`),
+  };
+}
+
+function parseIntegrationPush(value: unknown, path: string): AgentThreadPushReceipt | null {
+  if (value === null) return null;
+  const pushed = record(value, path);
+  exactKeys(pushed, ["remote", "branch"], path);
+  return {
+    remote: gitRemoteName(pushed.remote, `${path}.remote`),
+    branch: gitBranchName(pushed.branch, `${path}.branch`),
+  };
+}
+
+function parseIntegrationMerge(value: unknown, path: string): AgentThreadIntegrationReceipt | null {
+  if (value === null) return null;
+  const integrated = record(value, path);
+  exactKeys(integrated, ["intoBranch", "mergeSha", "mode"], path);
+  return {
+    intoBranch: gitBranchName(integrated.intoBranch, `${path}.intoBranch`),
+    mergeSha: gitSha(integrated.mergeSha, `${path}.mergeSha`),
+    mode: gitIntegrationMode(integrated.mode, `${path}.mode`),
+  };
+}
+
+function optionalGitSha(value: unknown, path: string): string | null {
+  if (value === null) return null;
+  return gitSha(value, path);
+}
+
+function gitSha(value: unknown, path: string): string {
+  if (typeof value !== "string" || !GIT_SHA_PATTERN.test(value)) {
+    invalid(path, "a 40 character lowercase hexadecimal object id");
+  }
+  return value;
+}
+
+function gitRemoteName(value: unknown, path: string): string {
+  if (typeof value !== "string" || !GIT_REMOTE_NAME_PATTERN.test(value)) {
+    invalid(path, "a safe git remote name");
+  }
+  return value;
+}
+
+function gitBranchName(value: unknown, path: string): string {
+  const branch = boundedText(value, path, MAX_GIT_INTEGRATION_BRANCH_BYTES, false, true);
+  if (branch.startsWith("-") || branch.includes("@{") || branch.includes("..")) {
+    invalid(path, "a branch name without option or revision syntax");
+  }
+  return branch;
+}
+
+function gitIntegrationMode(value: unknown, path: string): GitIntegrationMode {
+  if (value !== "fastForward" && value !== "merge") invalid(path, "fastForward or merge");
+  return value;
 }
 
 function parseOwner(value: unknown, path: string): AgentThreadOwner {
@@ -463,6 +562,20 @@ function exactKeys(
   const actual = Object.keys(value);
   if (actual.length !== expected.length || actual.some((key) => !expected.includes(key))) {
     invalid(path, `exactly the fields ${expected.join(", ")}`);
+  }
+}
+
+function boundedKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  path: string,
+): void {
+  const actual = Object.keys(value);
+  const unexpected = actual.some((key) => !required.includes(key) && !optional.includes(key));
+  const missing = required.some((key) => !actual.includes(key));
+  if (unexpected || missing) {
+    invalid(path, `the fields ${required.join(", ")} and optionally ${optional.join(", ")}`);
   }
 }
 

@@ -40,6 +40,7 @@ export interface AgentWorktreeLifecycleSurface {
   readonly removedWorktreeThreadIds: ReadonlySet<string>;
   refreshOrphanedWorktrees(): Promise<void>;
   retainUncertainWorktree(worktreePath: string): void;
+  markWorktreeRemoved(threadId: string): void;
   removeWorktree(threadId: string): Promise<void>;
   removeOrphanedWorktree(worktreePath: string): Promise<void>;
   pruneOrphanedWorktrees(repositoryRoot: string): Promise<void>;
@@ -142,6 +143,16 @@ export function useAgentWorktreeLifecycle(
       worktreePath,
     );
   }, []);
+
+  const markWorktreeRemoved = useCallback(
+    (threadId: string): void => {
+      if (!mountedRef.current) return;
+      dependenciesRef.current.onWorktreeRemoved(threadId);
+      setRemovedWorktreeThreadIds((current) => new Set(current).add(threadId));
+      void refreshOrphanedWorktrees();
+    },
+    [refreshOrphanedWorktrees],
+  );
 
   const removeWorktree = useCallback(
     async (threadId: string): Promise<void> => {
@@ -281,6 +292,7 @@ export function useAgentWorktreeLifecycle(
     removedWorktreeThreadIds,
     refreshOrphanedWorktrees,
     retainUncertainWorktree,
+    markWorktreeRemoved,
     removeWorktree,
     removeOrphanedWorktree,
     pruneOrphanedWorktrees,

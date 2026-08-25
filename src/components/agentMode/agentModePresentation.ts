@@ -19,7 +19,16 @@ import {
   type AgentTurnEvent,
   type AgentTurnStatus,
 } from "../../domain/agentThread";
-import type { GitChangeStatus } from "../../domain/git";
+import {
+  MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES,
+  agentShipStatus,
+  type AgentShipAvailability,
+  type AgentShipFailure,
+  type AgentShipIntegrationMode,
+  type AgentShipState,
+} from "../../domain/agentShip";
+import type { GitChangeStatus, GitChangedFile } from "../../domain/git";
+import type { GitShipStatus } from "../../domain/gitIntegration";
 import { gitRepositoryDisplayName } from "../../domain/gitRepositoryMapping";
 import { localHistoryRelativeTime } from "../../domain/localHistory";
 import type { AgentThreadView, OrphanedWorktreeView } from "../../application/agentThreadPorts";
@@ -655,6 +664,367 @@ export function orderPinnedThreadsFirst(
 
 function pinRank(view: AgentThreadView): number {
   return view.thread.pinned ? 0 : 1;
+}
+
+export const MAX_RENDERED_SHIP_CONFLICT_FILES = 12;
+
+export const AGENT_SHIP_BLOCKED_RUNNING = "Stop the agent first.";
+export const AGENT_SHIP_BLOCKED_NO_WORKTREE = "The worktree no longer exists.";
+export const AGENT_SHIP_BLOCKED_NOTHING_TO_COMMIT = "Nothing to commit.";
+export const AGENT_SHIP_BLOCKED_COMMIT_FIRST = "Commit before pushing.";
+export const AGENT_SHIP_BLOCKED_NO_REMOTE = "No remote is configured for this repository.";
+export const AGENT_SHIP_BLOCKED_PRIMARY_DIRTY = "The main checkout has uncommitted changes.";
+export const AGENT_SHIP_BLOCKED_PRIMARY_DETACHED = "The main checkout is detached.";
+export const AGENT_SHIP_BLOCKED_NOT_FAST_FORWARDABLE =
+  "The branch is behind the main checkout; use Merge instead of Fast-forward.";
+export const AGENT_SHIP_BLOCKED_IN_PLACE = "In-place threads have nothing to integrate.";
+export const AGENT_SHIP_BLOCKED_IN_PLACE_WORKTREE = "In-place threads have no worktree to remove.";
+export const AGENT_SHIP_BLOCKED_DELETE_BRANCH = "Integrate the branch before deleting it.";
+export const AGENT_SHIP_BLOCKED_EMPTY_MESSAGE = "Write a commit message first.";
+export const AGENT_SHIP_BLOCKED_LONG_MESSAGE = "The commit message is too long.";
+export const AGENT_SHIP_AUTHORITY_LOST =
+  "The project changed while the step was running, so nothing was published.";
+
+const AVAILABLE: AgentShipAvailability = { kind: "available" };
+
+export interface AgentShipAvailabilityMap {
+  readonly commit: AgentShipAvailability;
+  readonly push: AgentShipAvailability;
+  readonly fastForward: AgentShipAvailability;
+  readonly merge: AgentShipAvailability;
+  readonly removeWorktree: AgentShipAvailability;
+  readonly deleteBranch: AgentShipAvailability;
+}
+
+export function agentShipStepLabel(state: AgentShipState): string | null {
+  switch (state.kind) {
+    case "idle":
+      return state.loadingStatus ? "Reading the branch status…" : null;
+    case "committing":
+      return "Committing the worktree changes…";
+    case "pushing":
+      return "Pushing the branch…";
+    case "integrating":
+      return state.mode === "fastForward"
+        ? "Fast-forwarding the main checkout…"
+        : "Merging into the main checkout…";
+    case "removingWorktree":
+      return state.deleteBranch
+        ? "Removing the worktree and its branch…"
+        : "Removing the worktree…";
+    default:
+      return null;
+  }
+}
+
+export function agentShipFailureLabel(failure: AgentShipFailure): string {
+  if (isAuthorityLostFailure(failure)) return AGENT_SHIP_AUTHORITY_LOST;
+  switch (failure.step) {
+    case "commit":
+      return failure.reason === "nothingToCommit"
+        ? AGENT_SHIP_BLOCKED_NOTHING_TO_COMMIT
+        : failure.message;
+    case "push":
+      return agentShipPushFailureLabel(failure.reason, failure.message);
+    case "integrate":
+      return agentShipIntegrateFailureLabel(failure);
+    case "removeWorktree":
+      return failure.reason === "branchNotMerged"
+        ? "The branch was not merged, so it was kept."
+        : failure.message;
+    default:
+      return unsupportedShipFailureStep(failure);
+  }
+}
+
+export function agentShipFailureStepLabel(failure: AgentShipFailure): string {
+  switch (failure.step) {
+    case "commit":
+      return "commit failed";
+    case "push":
+      return "push failed";
+    case "integrate":
+      return "integration failed";
+    case "removeWorktree":
+      return "cleanup failed";
+    default:
+      return unsupportedShipFailureStep(failure);
+  }
+}
+
+export function agentShipRetryLabel(failure: AgentShipFailure): string {
+  switch (failure.step) {
+    case "commit":
+      return "Retry commit";
+    case "push":
+      return "Retry push";
+    case "integrate":
+      return "Retry integrate";
+    case "removeWorktree":
+      return "Retry removal";
+    default:
+      return unsupportedShipFailureStep(failure);
+  }
+}
+
+export const AGENT_SHIP_ABORT_FAILED_GUIDANCE =
+  "Resolve the merge in the Git panel, then refresh the branch status.";
+export const AGENT_SHIP_BRANCH_KEPT_GUIDANCE =
+  "The worktree is already removed. Delete the branch in the Git panel if you no longer need it.";
+
+export interface AgentShipFailureActions {
+  readonly retryLabel: string | null;
+  readonly guidance: string | null;
+}
+
+export function agentShipFailureActions(failure: AgentShipFailure): AgentShipFailureActions {
+  if (isAbortFailedIntegration(failure)) {
+    return { retryLabel: null, guidance: AGENT_SHIP_ABORT_FAILED_GUIDANCE };
+  }
+  if (isBranchKeptRemoval(failure)) {
+    return { retryLabel: null, guidance: AGENT_SHIP_BRANCH_KEPT_GUIDANCE };
+  }
+  return { retryLabel: agentShipRetryLabel(failure), guidance: null };
+}
+
+function isAbortFailedIntegration(failure: AgentShipFailure): boolean {
+  if (failure.step !== "integrate") return false;
+  if (!("outcome" in failure)) return false;
+  return failure.outcome.kind === "abortFailed";
+}
+
+function isBranchKeptRemoval(failure: AgentShipFailure): boolean {
+  if (failure.step !== "removeWorktree") return false;
+  if (!("reason" in failure)) return false;
+  return failure.reason === "branchNotMerged";
+}
+
+export interface AgentShipConflictProjection {
+  readonly files: ReadonlyArray<string>;
+  readonly hiddenCount: number;
+  readonly truncated: boolean;
+}
+
+const NO_CONFLICTS: AgentShipConflictProjection = {
+  files: [],
+  hiddenCount: 0,
+  truncated: false,
+};
+
+export function agentShipConflictFiles(failure: AgentShipFailure): AgentShipConflictProjection {
+  if (isAuthorityLostFailure(failure) || failure.step !== "integrate") return NO_CONFLICTS;
+  if (!("outcome" in failure)) return NO_CONFLICTS;
+  if (failure.outcome.kind !== "conflicted") return NO_CONFLICTS;
+  const all = failure.outcome.files;
+  const files = all.slice(0, MAX_RENDERED_SHIP_CONFLICT_FILES);
+  return { files, hiddenCount: all.length - files.length, truncated: failure.outcome.truncated };
+}
+
+export function compareHostLabel(url: string): string | null {
+  const host = compareUrlHost(url);
+  switch (host) {
+    case "github.com":
+      return "GitHub";
+    case "gitlab.com":
+      return "GitLab";
+    case "bitbucket.org":
+      return "Bitbucket";
+    default:
+      return null;
+  }
+}
+
+export function agentShipBranchLabel(state: AgentShipState): string | null {
+  const status = agentShipStatus(state);
+  if (status !== null) return status.worktree.branch;
+  if (state.kind === "pushed") return state.receipt.branch;
+  return null;
+}
+
+export function agentShipRelationLabel(status: GitShipStatus): string {
+  const primary = status.primary.branch ?? "detached HEAD";
+  return `${status.relation.aheadOfPrimary} ahead · ${status.relation.behindPrimary} behind ${primary}`;
+}
+
+export function agentShipRemoteLabel(status: GitShipStatus): string {
+  if (status.remote === null) return "No remote";
+  const upstream = status.remote.upstream;
+  if (upstream === null) return `${status.remote.name} · no upstream`;
+  return `${status.remote.name} · ${upstream.ahead} ahead · ${upstream.behind} behind`;
+}
+
+export function agentShipDefaultCommitMessage(thread: AgentThread): string {
+  return truncateUtf8(agentThreadDisplayTitle(thread), MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES);
+}
+
+export function agentShipDefaultIntegrationMode(
+  status: GitShipStatus | null,
+): AgentShipIntegrationMode {
+  if (status === null) return "merge";
+  return status.relation.fastForwardable ? "fastForward" : "merge";
+}
+
+export function agentShipCommitMessageAvailability(message: string): AgentShipAvailability {
+  if (message.trim() === "") return blocked(AGENT_SHIP_BLOCKED_EMPTY_MESSAGE);
+  if (agentPromptByteLength(message) > MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES) {
+    return blocked(AGENT_SHIP_BLOCKED_LONG_MESSAGE);
+  }
+  return AVAILABLE;
+}
+
+export function agentShipAvailability(view: AgentThreadView): AgentShipAvailabilityMap {
+  const gate = agentShipGate(view);
+  const worktree = view.thread.target.isolation === "worktree";
+  const status = agentShipStatus(view.ship);
+  return {
+    commit: gate ?? commitAvailability(status),
+    push: gate ?? pushAvailability(status),
+    fastForward: gate ?? integrateAvailability(worktree, status, "fastForward"),
+    merge: gate ?? integrateAvailability(worktree, status, "merge"),
+    removeWorktree: gate ?? (worktree ? AVAILABLE : blocked(AGENT_SHIP_BLOCKED_IN_PLACE_WORKTREE)),
+    deleteBranch:
+      view.ship.kind === "integrated" ? AVAILABLE : blocked(AGENT_SHIP_BLOCKED_DELETE_BRANCH),
+  };
+}
+
+export function agentShipStatusUnread(view: AgentThreadView): boolean {
+  if (view.lifecycle !== "settled") return false;
+  if (view.thread.target.isolation !== "worktree") return false;
+  if (view.worktreeMissing || view.worktreeRemoved) return false;
+  if (view.ship.kind === "worktreeRemoved") return false;
+  return agentShipStatus(view.ship) === null;
+}
+
+export function agentChangeOpenAvailability(
+  view: AgentThreadView,
+  change: GitChangedFile,
+): AgentShipAvailability {
+  if (change.status === "deleted") return blocked("This file was deleted in the worktree.");
+  return view.editorAvailability;
+}
+
+function agentShipGate(view: AgentThreadView): AgentShipAvailability | null {
+  if (view.lifecycle === "running") return blocked(AGENT_SHIP_BLOCKED_RUNNING);
+  const gone = view.worktreeMissing || view.worktreeRemoved || view.ship.kind === "worktreeRemoved";
+  if (gone) return blocked(AGENT_SHIP_BLOCKED_NO_WORKTREE);
+  const busyLabel = agentShipStepLabel(view.ship);
+  if (busyLabel !== null) return blocked(busyLabel);
+  return null;
+}
+
+function commitAvailability(status: GitShipStatus | null): AgentShipAvailability {
+  if (status === null) return AVAILABLE;
+  if (status.worktree.dirty) return AVAILABLE;
+  return blocked(AGENT_SHIP_BLOCKED_NOTHING_TO_COMMIT);
+}
+
+function pushAvailability(status: GitShipStatus | null): AgentShipAvailability {
+  if (status === null) return AVAILABLE;
+  if (status.remote === null) return blocked(AGENT_SHIP_BLOCKED_NO_REMOTE);
+  if (status.relation.aheadOfPrimary === 0 && status.worktree.dirty) {
+    return blocked(AGENT_SHIP_BLOCKED_COMMIT_FIRST);
+  }
+  return AVAILABLE;
+}
+
+function integrateAvailability(
+  worktree: boolean,
+  status: GitShipStatus | null,
+  mode: AgentShipIntegrationMode,
+): AgentShipAvailability {
+  if (!worktree) return blocked(AGENT_SHIP_BLOCKED_IN_PLACE);
+  if (status === null) return AVAILABLE;
+  if (status.primary.branch === null) return blocked(AGENT_SHIP_BLOCKED_PRIMARY_DETACHED);
+  if (status.primary.dirty) return blocked(AGENT_SHIP_BLOCKED_PRIMARY_DIRTY);
+  if (mode === "fastForward" && !status.relation.fastForwardable) {
+    return blocked(AGENT_SHIP_BLOCKED_NOT_FAST_FORWARDABLE);
+  }
+  return AVAILABLE;
+}
+
+function agentShipPushFailureLabel(
+  reason: "noRemote" | "rejected" | "authRequired" | "gitError",
+  message: string,
+): string {
+  switch (reason) {
+    case "noRemote":
+      return AGENT_SHIP_BLOCKED_NO_REMOTE;
+    case "rejected":
+      return "The remote branch has newer commits. Pull them in the Git panel, then retry.";
+    case "authRequired":
+      return "Git could not authenticate. Configure a credential helper or SSH key, then retry.";
+    case "gitError":
+      return message;
+    default:
+      return unsupportedPushFailureReason(reason);
+  }
+}
+
+function agentShipIntegrateFailureLabel(
+  failure: Extract<AgentShipFailure, { step: "integrate" }>,
+): string {
+  if ("outcome" in failure) return agentShipIntegrationFailureLabel(failure.outcome);
+  return `Integration failed: ${failure.message}`;
+}
+
+function agentShipIntegrationFailureLabel(
+  outcome: Extract<AgentShipFailure, { step: "integrate"; outcome: unknown }>["outcome"],
+): string {
+  switch (outcome.kind) {
+    case "conflicted":
+      return "The merge conflicted and was aborted. The main checkout is unchanged.";
+    case "primaryDirty":
+      return AGENT_SHIP_BLOCKED_PRIMARY_DIRTY;
+    case "primaryDetached":
+      return AGENT_SHIP_BLOCKED_PRIMARY_DETACHED;
+    case "staleExpectation":
+      return "The branches moved since the status was read. Refresh the status, then retry.";
+    case "notFastForward":
+      return "A fast-forward is no longer possible. Use a merge commit instead.";
+    case "abortFailed":
+      return `The main checkout is in a conflicted merge. Resolve it in the Git panel. ${outcome.message}`;
+    default:
+      return unsupportedIntegrationOutcome(outcome);
+  }
+}
+
+function compareUrlHost(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (agentPromptByteLength(value) <= maxBytes) return value;
+  let truncated = value;
+  while (truncated.length > 0 && agentPromptByteLength(truncated) > maxBytes) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated;
+}
+
+function blocked(reason: string): AgentShipAvailability {
+  return { kind: "blocked", reason };
+}
+
+function isAuthorityLostFailure(
+  failure: AgentShipFailure,
+): failure is Extract<AgentShipFailure, { reason: "authorityLost" }> {
+  return "reason" in failure && failure.reason === "authorityLost";
+}
+
+function unsupportedShipFailureStep(failure: never): never {
+  throw new TypeError(`Unsupported agent ship failure: ${JSON.stringify(failure)}.`);
+}
+
+function unsupportedPushFailureReason(reason: never): never {
+  throw new TypeError(`Unsupported agent ship push failure reason: ${String(reason)}.`);
+}
+
+function unsupportedIntegrationOutcome(outcome: never): never {
+  throw new TypeError(`Unsupported git integration outcome: ${JSON.stringify(outcome)}.`);
 }
 
 function unsupportedCliKind(kind: never): never {

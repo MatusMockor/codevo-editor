@@ -77,6 +77,11 @@ export function AgentThreadInfoColumn({
   const changedFiles = thread.changeSummary?.files.length ?? null;
   const isolation = record.target.isolation;
   const reviewable = !running && isolation === "worktree" && !thread.worktreeRemoved;
+  const integrated = thread.ship.kind === "integrated";
+  const worktreeActionLabel = integrated ? "Remove worktree" : "Discard worktree";
+  const worktreeActionReason = integrated
+    ? "The branch was integrated, so removing the worktree loses nothing."
+    : "The branch is kept; only the worktree directory is discarded.";
 
   return (
     <aside aria-label="Agent thread details" className="agent-info">
@@ -165,14 +170,15 @@ export function AgentThreadInfoColumn({
           )}
           {reviewable && (
             <button
-              aria-label={`Remove worktree for agent ${threadId}`}
+              aria-label={`${worktreeActionLabel} for agent ${threadId}`}
               className="agent-info__action--danger"
               disabled={thread.changeSummary?.removing ?? false}
               onClick={() => onRemoveWorktree(threadId)}
+              title={worktreeActionReason}
               type="button"
             >
               <Trash2 aria-hidden="true" size={12} />{" "}
-              {thread.changeSummary?.removing ? "Removing…" : "Remove worktree"}
+              {thread.changeSummary?.removing ? "Removing…" : worktreeActionLabel}
             </button>
           )}
           {!running && thread.lifecycle !== "archived" && (

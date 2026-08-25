@@ -8584,6 +8584,7 @@ kbd {
 .agent-files__row {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: 9px;
   min-width: 0;
   padding: 4px 0;
@@ -9389,4 +9390,158 @@ kbd {
 .agent-composer__new:hover {
   border-color: var(--agent-live);
   color: var(--color-text-strong);
+}
+
+/* Ship panel: the post-turn git flow, styled as an inline continuation of the session. */
+.agent-ship {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--agent-well-bg);
+  box-shadow: 0 0 0 1px var(--agent-hairline);
+}
+
+.agent-ship__row {
+  padding: 12px 14px 13px;
+}
+
+.agent-ship__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.agent-ship__facts {
+  display: grid;
+  gap: 3px;
+}
+
+.agent-ship__busy {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-top: 1px solid var(--agent-hairline);
+  color: var(--agent-live);
+  font-family: var(--agent-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  margin: 0;
+  padding: 9px 14px;
+}
+
+.agent-ship__failure {
+  border-top: 1px solid var(--agent-hairline);
+  border-radius: 0;
+  max-width: none;
+}
+
+.agent-ship__failure-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.agent-ship__conflicts {
+  display: grid;
+  gap: 2px;
+  list-style: none;
+  color: var(--color-text-muted);
+  font-family: var(--agent-mono);
+  font-size: 11px;
+  margin: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.agent-ship__message {
+  border: 1px solid var(--agent-hairline-strong);
+  border-radius: 7px;
+  background: var(--agent-raised);
+  color: var(--color-text-strong);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 120px;
+  outline: none;
+  padding: 8px 10px;
+  resize: vertical;
+  transition: box-shadow 160ms var(--ease-standard);
+}
+
+.agent-ship__message:focus {
+  box-shadow:
+    0 0 0 1px var(--agent-live),
+    0 0 0 3px var(--agent-live-soft);
+}
+
+.agent-ship__count {
+  color: var(--color-text-subtle);
+  font-size: 10.5px;
+  margin: 0;
+  text-align: right;
+}
+
+.agent-ship__action {
+  display: grid;
+  gap: 3px;
+}
+
+.agent-ship__reason {
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  padding-inline: 10px;
+}
+
+.agent-ship__modes {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.agent-ship__mode,
+.agent-ship__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 11.5px;
+}
+
+.agent-ship__check input:disabled {
+  cursor: not-allowed;
+}
+
+.agent-ship__receipt {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.agent-files__actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-files__reason {
+  flex-basis: 100%;
+  color: var(--color-text-subtle);
+  font-size: 10.5px;
+}
+
+.agent-ship .agent-info__section + .agent-info__section {
+  border-top: 1px solid var(--agent-hairline);
+}
+
+.agent-ship .agent-info__actions {
+  margin: 0 -10px;
 }

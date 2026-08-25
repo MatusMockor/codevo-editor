@@ -5,6 +5,8 @@ import type { AgentThread, AgentTurnEvent, AgentTurnStatus } from "../../domain/
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import type { AgentThreadView, OrphanedWorktreeView } from "../../application/agentThreadPorts";
 import {
+  AGENT_SHIP_ABORT_FAILED_GUIDANCE,
+  AGENT_SHIP_BRANCH_KEPT_GUIDANCE,
   DETACHED_AGENT_PROJECT_LABEL,
   DETACHED_AGENT_PROJECT_ROOT_KEY,
   MAX_RENDERED_EVENTS_PER_TURN,
@@ -26,6 +28,18 @@ import {
   agentThreadTone,
   agentTurnProjection,
   agentTurnStatusLabel,
+  agentShipConflictFiles,
+  agentShipDefaultCommitMessage,
+  agentShipDefaultIntegrationMode,
+  agentShipFailureActions,
+  agentShipFailureLabel,
+  agentShipFailureStepLabel,
+  agentShipStatusUnread,
+  agentShipRelationLabel,
+  agentShipRetryLabel,
+  agentShipRemoteLabel,
+  agentShipStepLabel,
+  compareHostLabel,
   inPlaceGuardReasonLabel,
   type AgentFollowUpContext,
 } from "./agentModePresentation";
@@ -598,9 +612,12 @@ function thread({
       },
     ],
     turnsTruncated: false,
+    integration: null,
   };
 
   return {
+    ship: { kind: "idle", status: null, loadingStatus: false },
+    editorAvailability: { kind: "available" },
     thread: record,
     lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: repositoryRoot,
@@ -618,5 +635,247 @@ function orphan(repositoryRoot: string, worktreePath: string): OrphanedWorktreeV
     branch: "agent/agt-9",
     prunable: false,
     removing: false,
+  };
+}
+
+describe("agent ship presentation", () => {
+  it("names the step that is running and stays silent otherwise", () => {
+    expect(agentShipStepLabel({ kind: "idle", status: null, loadingStatus: true })).toBe(
+      "Reading the branch status…",
+    );
+    expect(agentShipStepLabel({ kind: "idle", status: null, loadingStatus: false })).toBeNull();
+    expect(
+      agentShipStepLabel({
+        kind: "committing",
+        status: null,
+        message: "m",
+        resumeFrom: "idle",
+      }),
+    ).toBe("Committing the worktree changes…");
+    expect(
+      agentShipStepLabel({
+        kind: "integrating",
+        status: null,
+        mode: "fastForward",
+        resumeFrom: "committed",
+      }),
+    ).toBe("Fast-forwarding the main checkout…");
+    expect(
+      agentShipStepLabel({
+        kind: "removingWorktree",
+        status: null,
+        deleteBranch: true,
+        resumeFrom: "integrated",
+      }),
+    ).toBe("Removing the worktree and its branch…");
+    expect(agentShipStepLabel({ kind: "worktreeRemoved", branchDeleted: false })).toBeNull();
+  });
+
+  it("turns every failure into a bounded truthful sentence", () => {
+    expect(
+      agentShipFailureLabel({ step: "commit", reason: "nothingToCommit", message: "ignored" }),
+    ).toBe("Nothing to commit.");
+    expect(
+      agentShipFailureLabel({ step: "commit", reason: "gitError", message: "index.lock" }),
+    ).toBe("index.lock");
+    expect(agentShipFailureLabel({ step: "push", reason: "noRemote", message: "x" })).toBe(
+      "No remote is configured for this repository.",
+    );
+    expect(agentShipFailureLabel({ step: "push", reason: "authRequired", message: "x" })).toContain(
+      "Git could not authenticate.",
+    );
+    expect(agentShipFailureLabel({ step: "integrate", outcome: { kind: "primaryDirty" } })).toBe(
+      "The main checkout has uncommitted changes.",
+    );
+    expect(
+      agentShipFailureLabel({
+        step: "integrate",
+        outcome: { kind: "abortFailed", message: "merge in progress" },
+      }),
+    ).toContain("merge in progress");
+    expect(
+      agentShipFailureLabel({ step: "removeWorktree", reason: "branchNotMerged", message: "x" }),
+    ).toBe("The branch was not merged, so it was kept.");
+    expect(agentShipFailureLabel({ step: "integrate", reason: "authorityLost" })).toContain(
+      "The project changed while the step was running",
+    );
+  });
+
+  it("reports an integrate git error without claiming a merge abort failed", () => {
+    const label = agentShipFailureLabel({
+      step: "integrate",
+      reason: "gitError",
+      message: "Another integration is already running for this repository.",
+    });
+
+    expect(label).toBe(
+      "Integration failed: Another integration is already running for this repository.",
+    );
+    expect(label).not.toContain("conflicted merge");
+    expect(
+      agentShipConflictFiles({ step: "integrate", reason: "gitError", message: "locked" }),
+    ).toEqual({ files: [], hiddenCount: 0, truncated: false });
+    expect(
+      agentShipFailureStepLabel({ step: "integrate", reason: "gitError", message: "locked" }),
+    ).toBe("integration failed");
+    expect(agentShipRetryLabel({ step: "integrate", reason: "gitError", message: "locked" })).toBe(
+      "Retry integrate",
+    );
+  });
+
+  it("bounds the conflicted file list and keeps the truncation truthful", () => {
+    const files = Array.from({ length: 30 }, (_unused, index) => `src/f${index}.ts`);
+    const projection = agentShipConflictFiles({
+      step: "integrate",
+      outcome: { kind: "conflicted", files, truncated: true },
+    });
+
+    expect(projection.files).toHaveLength(12);
+    expect(projection.hiddenCount).toBe(18);
+    expect(projection.truncated).toBe(true);
+    expect(
+      agentShipConflictFiles({ step: "push", reason: "rejected", message: "x" }).files,
+    ).toEqual([]);
+  });
+
+  it("asks for a branch status only for a settled worktree thread that has none", () => {
+    const view = thread({});
+
+    expect(agentShipStatusUnread(view)).toBe(true);
+    expect(
+      agentShipStatusUnread({
+        ...view,
+        ship: { kind: "idle", status: shipStatus(), loadingStatus: false },
+      }),
+    ).toBe(false);
+    expect(agentShipStatusUnread({ ...view, lifecycle: "running" })).toBe(false);
+    expect(agentShipStatusUnread({ ...view, worktreeMissing: true })).toBe(false);
+    expect(agentShipStatusUnread({ ...view, worktreeRemoved: true })).toBe(false);
+    expect(
+      agentShipStatusUnread({ ...view, ship: { kind: "worktreeRemoved", branchDeleted: true } }),
+    ).toBe(false);
+    expect(
+      agentShipStatusUnread({
+        ...view,
+        thread: { ...view.thread, target: { isolation: "in-place", worktreePath: null } },
+      }),
+    ).toBe(false);
+  });
+
+  it("treats a receipt-derived state as unread so it can be reconciled", () => {
+    const view = thread({});
+
+    expect(
+      agentShipStatusUnread({
+        ...view,
+        ship: {
+          kind: "integrated",
+          status: null,
+          mergeSha: "b".repeat(40),
+          intoBranch: "main",
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("withholds a retry that cannot succeed and says what to do instead", () => {
+    expect(agentShipFailureActions({ step: "push", reason: "rejected", message: "x" })).toEqual({
+      retryLabel: "Retry push",
+      guidance: null,
+    });
+    expect(
+      agentShipFailureActions({
+        step: "integrate",
+        outcome: { kind: "abortFailed", message: "merge in progress" },
+      }),
+    ).toEqual({ retryLabel: null, guidance: AGENT_SHIP_ABORT_FAILED_GUIDANCE });
+    expect(
+      agentShipFailureActions({
+        step: "integrate",
+        outcome: { kind: "conflicted", files: [], truncated: false },
+      }),
+    ).toEqual({ retryLabel: "Retry integrate", guidance: null });
+    expect(
+      agentShipFailureActions({ step: "removeWorktree", reason: "branchNotMerged", message: "x" }),
+    ).toEqual({ retryLabel: null, guidance: AGENT_SHIP_BRANCH_KEPT_GUIDANCE });
+    expect(
+      agentShipFailureActions({ step: "removeWorktree", reason: "gitError", message: "locked" }),
+    ).toEqual({ retryLabel: "Retry removal", guidance: null });
+  });
+
+  it("labels only the hosting sites the compare URL parser accepts", () => {
+    expect(compareHostLabel("https://github.com/acme/app/compare/main...b")).toBe("GitHub");
+    expect(compareHostLabel("https://gitlab.com/acme/app/-/merge_requests/new")).toBe("GitLab");
+    expect(compareHostLabel("https://bitbucket.org/acme/app/pull-requests/new")).toBe("Bitbucket");
+    expect(compareHostLabel("https://git.example.com/acme/app")).toBeNull();
+    expect(compareHostLabel("not a url")).toBeNull();
+  });
+
+  it("describes the branch relation and the remote without inventing one", () => {
+    const status = shipStatus();
+
+    expect(agentShipRelationLabel(status)).toBe("2 ahead · 1 behind main");
+    expect(agentShipRemoteLabel(status)).toBe("origin · 0 ahead · 3 behind");
+    expect(agentShipRemoteLabel({ ...status, remote: null })).toBe("No remote");
+    expect(
+      agentShipRemoteLabel({
+        ...status,
+        remote: { name: "origin", upstream: null, compareUrl: null },
+      }),
+    ).toBe("origin · no upstream");
+    expect(
+      agentShipRelationLabel({
+        ...status,
+        primary: { ...status.primary, branch: null },
+      }),
+    ).toContain("detached HEAD");
+  });
+
+  it("defaults the integration mode to what git can actually do", () => {
+    const status = shipStatus();
+
+    expect(agentShipDefaultIntegrationMode(status)).toBe("fastForward");
+    expect(
+      agentShipDefaultIntegrationMode({
+        ...status,
+        relation: { ...status.relation, fastForwardable: false },
+      }),
+    ).toBe("merge");
+    expect(agentShipDefaultIntegrationMode(null)).toBe("merge");
+  });
+
+  it("prefills the commit message from the thread title", () => {
+    expect(agentShipDefaultCommitMessage(shipThread("Refactor the parser"))).toBe(
+      "Refactor the parser",
+    );
+    expect(
+      agentPromptByteLength(agentShipDefaultCommitMessage(shipThread("é".repeat(4000)))),
+    ).toBeLessThanOrEqual(4096);
+  });
+});
+
+function shipStatus() {
+  return {
+    worktree: { branch: "agent/agt-1", head: "a".repeat(40), dirty: true, changeCount: 2 },
+    primary: { branch: "main", head: "b".repeat(40), dirty: false },
+    relation: { aheadOfPrimary: 2, behindPrimary: 1, fastForwardable: true },
+    remote: { name: "origin", upstream: { ahead: 0, behind: 3 }, compareUrl: null },
+  } as const;
+}
+
+function shipThread(title: string): AgentThread {
+  return {
+    threadId: "agt-1",
+    owner: { rootKey: "/root", ownerId: "agent-root:root", repositoryRoot: "/root" },
+    target: { isolation: "worktree", worktreePath: "/root/.worktrees/agt-1" },
+    provider: { kind: "claudeCode", sessionId: null },
+    title,
+    pinned: false,
+    archived: false,
+    createdAtEpochMs: 0,
+    updatedAtEpochMs: 0,
+    turns: [],
+    turnsTruncated: false,
+    integration: null,
   };
 }

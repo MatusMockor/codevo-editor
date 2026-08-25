@@ -7,6 +7,7 @@ import {
   type AgentTaskStatus,
   type AgentTaskStatusEvent,
 } from "./agentTask";
+import type { GitIntegrationMode } from "./gitIntegration";
 
 export { AGENT_SESSION_ID_PATTERN, MAX_AGENT_SESSION_ID_BYTES } from "./agentTask";
 export { parseAgentThread, serializeAgentThread } from "./agentThreadWire";
@@ -90,6 +91,24 @@ export interface AgentTurn {
   readonly lastOutputSequence: number;
 }
 
+export interface AgentThreadPushReceipt {
+  readonly remote: string;
+  readonly branch: string;
+}
+
+export interface AgentThreadIntegrationReceipt {
+  readonly intoBranch: string;
+  readonly mergeSha: string;
+  readonly mode: GitIntegrationMode;
+}
+
+export interface AgentThreadIntegration {
+  readonly lastCommitSha: string | null;
+  readonly pushed: AgentThreadPushReceipt | null;
+  readonly integrated: AgentThreadIntegrationReceipt | null;
+  readonly branchDeleted: boolean;
+}
+
 export interface AgentThread {
   readonly threadId: string;
   readonly owner: AgentThreadOwner;
@@ -102,6 +121,7 @@ export interface AgentThread {
   readonly updatedAtEpochMs: number;
   readonly turns: ReadonlyArray<AgentTurn>;
   readonly turnsTruncated: boolean;
+  readonly integration: AgentThreadIntegration | null;
 }
 
 export interface AgentThreadsState {
@@ -135,6 +155,11 @@ export type AgentThreadsAction =
       readonly supervisorTruncated: boolean;
     }
   | { readonly kind: "turnInterrupted"; readonly turnId: string; readonly nowEpochMs: number }
+  | {
+      readonly kind: "integrationRecorded";
+      readonly threadId: string;
+      readonly integration: AgentThreadIntegration;
+    }
   | { readonly kind: "pinToggled"; readonly threadId: string }
   | { readonly kind: "archived"; readonly threadId: string }
   | { readonly kind: "deleted"; readonly threadId: string }
@@ -203,6 +228,8 @@ export function agentThreadsReducer(
       return appendTurnEvents(state, action);
     case "turnInterrupted":
       return interruptTurn(state, action.turnId, action.nowEpochMs);
+    case "integrationRecorded":
+      return recordIntegration(state, action.threadId, action.integration);
     case "pinToggled":
       return togglePin(state, action.threadId);
     case "archived":
@@ -406,6 +433,21 @@ function interruptTurn(
     },
     nowEpochMs,
   );
+}
+
+function recordIntegration(
+  state: AgentThreadsState,
+  threadId: string,
+  integration: AgentThreadIntegration,
+): AgentThreadsState {
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return state;
+  if (thread.archived) return state;
+  return replaceThread(state, {
+    ...thread,
+    integration,
+    updatedAtEpochMs: thread.updatedAtEpochMs + 1,
+  });
 }
 
 function togglePin(state: AgentThreadsState, threadId: string): AgentThreadsState {

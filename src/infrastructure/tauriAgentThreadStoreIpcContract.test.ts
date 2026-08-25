@@ -27,6 +27,7 @@ const THREAD: AgentThread = {
   updatedAtEpochMs: 2_000,
   turns: [],
   turnsTruncated: false,
+  integration: null,
 };
 
 const OWNER_REQUEST = { rootKey: ROOT_KEY, ownerId: OWNER_ID };

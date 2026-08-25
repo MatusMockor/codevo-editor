@@ -68,6 +68,7 @@ function thread(overrides: Partial<AgentThread> = {}): AgentThread {
     updatedAtEpochMs: 10,
     turns: [],
     turnsTruncated: false,
+    integration: null,
     ...overrides,
   };
 }
@@ -362,6 +363,25 @@ describe("useAgentWorktreeLifecycle removeWorktree", () => {
 
     expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
     expect(harness.onWorktreeRemovalChanged).toHaveBeenLastCalledWith("agt-1-0a1b", false);
+    harness.unmount();
+  });
+});
+
+describe("useAgentWorktreeLifecycle markWorktreeRemoved", () => {
+  it("marks a thread's worktree removed without touching git and refreshes orphans", async () => {
+    const harness = renderLifecycle();
+    await waitForReact(() => {
+      expect(harness.gitWorktreeGateway.listWorktrees).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => harness.hook().markWorktreeRemoved("agt-1-0a1b"));
+
+    expect(harness.hook().removedWorktreeThreadIds.has("agt-1-0a1b")).toBe(true);
+    expect(harness.onWorktreeRemoved).toHaveBeenCalledWith("agt-1-0a1b");
+    expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
+    await waitForReact(() => {
+      expect(harness.gitWorktreeGateway.listWorktrees).toHaveBeenCalledTimes(2);
+    });
     harness.unmount();
   });
 });

@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import { AgentThreadInfoColumn, type AgentThreadInfoColumnProps } from "./AgentThreadInfoColumn";
@@ -75,7 +76,7 @@ describe("AgentThreadInfoColumn", () => {
     expect(host.querySelector('[aria-label="Remove thread agt-1"]')).toBeNull();
   });
 
-  it("offers show changes and remove worktree for a reviewable thread", () => {
+  it("offers show changes and a truthful discard for a thread that was not integrated", () => {
     const onShowChanges = vi.fn();
     const onRemoveWorktree = vi.fn();
     render({
@@ -85,13 +86,33 @@ describe("AgentThreadInfoColumn", () => {
     });
 
     click('[aria-label="Show changes for agent agt-1"]');
-    click('[aria-label="Remove worktree for agent agt-1"]');
+    click('[aria-label="Discard worktree for agent agt-1"]');
 
     expect(onShowChanges).toHaveBeenCalledWith("agt-1");
     expect(onRemoveWorktree).toHaveBeenCalledWith("agt-1");
+    expect(
+      host.querySelector('[aria-label="Discard worktree for agent agt-1"]')?.getAttribute("title"),
+    ).toBe("The branch is kept; only the worktree directory is discarded.");
   });
 
-  it("keeps remove worktree disabled while a removal is in flight", () => {
+  it("calls the worktree a removal once the branch was integrated", () => {
+    render({
+      thread: threadView({
+        status: { kind: "exited", exitCode: 0 },
+        ship: {
+          kind: "integrated",
+          status: null,
+          mergeSha: "a".repeat(40),
+          intoBranch: "main",
+        },
+      }),
+    });
+
+    expect(host.querySelector('[aria-label="Remove worktree for agent agt-1"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Discard worktree for agent agt-1"]')).toBeNull();
+  });
+
+  it("keeps the worktree action disabled while a removal is in flight", () => {
     render({
       thread: threadView({
         status: { kind: "exited", exitCode: 0 },
@@ -100,7 +121,7 @@ describe("AgentThreadInfoColumn", () => {
     });
 
     const button = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Remove worktree for agent agt-1"]',
+      '[aria-label="Discard worktree for agent agt-1"]',
     );
 
     expect(button?.disabled).toBe(true);
@@ -112,7 +133,7 @@ describe("AgentThreadInfoColumn", () => {
       thread: threadView({ status: { kind: "exited", exitCode: 0 }, isolation: "in-place" }),
     });
 
-    expect(host.querySelector('[aria-label="Remove worktree for agent agt-1"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Discard worktree for agent agt-1"]')).toBeNull();
     expect(host.textContent).toContain("In place");
   });
 
@@ -121,7 +142,7 @@ describe("AgentThreadInfoColumn", () => {
       thread: threadView({ status: { kind: "exited", exitCode: 0 }, worktreeRemoved: true }),
     });
 
-    expect(host.querySelector('[aria-label="Remove worktree for agent agt-1"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Discard worktree for agent agt-1"]')).toBeNull();
   });
 
   it("warns when the worktree of the thread disappeared", () => {
@@ -221,6 +242,7 @@ interface ThreadViewOptions {
   readonly pinned?: boolean;
   readonly archived?: boolean;
   readonly turnCount?: number;
+  readonly ship?: AgentShipState;
 }
 
 function threadView(overrides: ThreadViewOptions): AgentThreadView {
@@ -251,9 +273,12 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
       lastOutputSequence: 0,
     })),
     turnsTruncated: false,
+    integration: null,
   };
 
   return {
+    ship: overrides.ship ?? { kind: "idle", status: null, loadingStatus: false },
+    editorAvailability: { kind: "available" },
     thread,
     lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: "app",

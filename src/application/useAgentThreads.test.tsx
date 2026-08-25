@@ -14,6 +14,7 @@ import type {
 } from "../domain/agentTask";
 import type { AgentThread } from "../domain/agentThread";
 import type { GitStatus } from "../domain/git";
+import type { GitIntegrationOutcome, GitShipStatus } from "../domain/gitIntegration";
 import type { GitWorktreeDescriptor, GitWorktreeGateway } from "../domain/gitWorktree";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type { AgentThreadStoreGateway, AgentThreadsSurface } from "./agentThreadPorts";
@@ -29,6 +30,37 @@ interface Environment {
   agentModeActive: boolean;
   worktrees: ReadonlyArray<GitWorktreeDescriptor>;
   storedThreads: ReadonlyArray<AgentThread>;
+  shipStatus: GitShipStatus;
+  withEditor: boolean;
+}
+
+const SHA_A = "a".repeat(40);
+const SHA_B = "b".repeat(40);
+
+function shipStatus(): GitShipStatus {
+  return {
+    worktree: { branch: "agent/x", head: SHA_A, dirty: false, changeCount: 1 },
+    primary: { branch: "main", head: SHA_B, dirty: false },
+    relation: { aheadOfPrimary: 1, behindPrimary: 0, fastForwardable: true },
+    remote: null,
+  };
+}
+
+function gitStatusOf(rootPath: string, changeCount: number): GitStatus {
+  return {
+    branch: "main",
+    changes: Array.from({ length: changeCount }, (_unused, index) => ({
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: null,
+      oldRelativePath: null,
+      path: `${rootPath}/src/file-${index}.ts`,
+      relativePath: `src/file-${index}.ts`,
+      status: "modified" as const,
+    })),
+    isRepository: true,
+    rootPath,
+  };
 }
 
 describe("useAgentThreads facade", () => {
@@ -130,6 +162,17 @@ describe("useAgentThreads facade", () => {
   });
 });
 
+function worktreeOf(threadId: string): GitWorktreeDescriptor {
+  return {
+    worktreePath: `${ROOT}/.worktrees/${threadId}`,
+    branch: `agent/${threadId}`,
+    head: "abc",
+    isPrimary: false,
+    locked: false,
+    prunable: false,
+  };
+}
+
 function startRequest() {
   return {
     projectRootKey: ROOT,
@@ -140,7 +183,11 @@ function startRequest() {
   };
 }
 
-function storedThread(threadId: string, turnId: string): AgentThread {
+function storedThread(
+  threadId: string,
+  turnId: string,
+  integration: AgentThread["integration"] = null,
+): AgentThread {
   return {
     threadId,
     owner: { rootKey: ROOT, ownerId: PERSISTENT_OWNER, repositoryRoot: ROOT },
@@ -165,6 +212,7 @@ function storedThread(threadId: string, turnId: string): AgentThread {
       },
     ],
     turnsTruncated: false,
+    integration,
   };
 }
 
@@ -174,6 +222,8 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     agentModeActive: true,
     worktrees: [],
     storedThreads: [],
+    shipStatus: shipStatus(),
+    withEditor: true,
     ...overrides,
   };
   const startedRequests: StartAgentTaskRequest[] = [];
@@ -223,6 +273,27 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       rootPath,
     })),
     getDiff: vi.fn(async () => Promise.reject(new Error("diff not stubbed"))),
+    stageFiles: vi.fn(async (rootPath: string): Promise<GitStatus> => gitStatusOf(rootPath, 0)),
+    commit: vi.fn(async (rootPath: string): Promise<GitStatus> => gitStatusOf(rootPath, 0)),
+    deleteBranch: vi.fn(async () => undefined),
+  };
+  const gitIntegration = {
+    getShipStatus: vi.fn(async (): Promise<GitShipStatus> => environment.shipStatus),
+    pushBranchUpstream: vi.fn(async () => ({
+      remote: "origin",
+      branch: "agent/x",
+      compareUrl: null,
+    })),
+    integrateWorktreeBranch: vi.fn(async (): Promise<GitIntegrationOutcome> => ({
+      kind: "integrated",
+      mergeSha: SHA_B,
+      intoBranch: "main",
+    })),
+  };
+  const editor = {
+    openFile: vi.fn(async () => true),
+    openGitChange: vi.fn(async () => undefined),
+    leaveAgentMode: vi.fn(),
   };
   const reportError = vi.fn();
   const openAgentSettings = vi.fn();
@@ -250,6 +321,9 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       agentThreadStoreGateway: store as unknown as AgentThreadStoreGateway,
       gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
       gitGateway: git,
+      gitIntegrationGateway: gitIntegration,
+      externalUrlOpener: null,
+      editorBridge: environment.withEditor ? editor : null,
       prompter: { confirm: () => true, prompt: () => null },
       projects: [project()],
       agentModeActive: environment.agentModeActive,
@@ -278,6 +352,9 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   return {
     agent,
     store,
+    git,
+    gitIntegration,
+    editor,
     startedRequests,
     hook(): AgentThreadsSurface {
       expect(current).not.toBeNull();
@@ -305,3 +382,121 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     },
   };
 }
+
+describe("useAgentThreads ship and editor wiring", () => {
+  it("exposes ship state per thread and refreshes it on demand", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const harness = renderThreads({
+      storedThreads: [stored],
+      worktrees: [worktreeOf(stored.threadId)],
+    });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(1));
+    await waitForReact(() => expect(harness.hook().threads[0]?.worktreeMissing).toBe(false));
+
+    expect(harness.hook().threads[0]?.ship).toEqual({
+      kind: "idle",
+      status: null,
+      loadingStatus: false,
+    });
+    expect(harness.hook().threads[0]?.editorAvailability).toEqual({ kind: "available" });
+
+    await act(() => harness.hook().refreshShipStatus(stored.threadId));
+    expect(harness.hook().threads[0]?.ship).toMatchObject({ kind: "idle", status: shipStatus() });
+    expect(harness.gitIntegration.getShipStatus).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("reconciles the ship status when a turn ends on a thread with no ship state yet", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const harness = renderThreads({
+      storedThreads: [stored],
+      worktrees: [worktreeOf(stored.threadId)],
+    });
+    await waitForReact(() => expect(harness.hook().threads[0]?.worktreeMissing).toBe(false));
+    expect(harness.gitIntegration.getShipStatus).not.toHaveBeenCalled();
+
+    const sent = await act(() =>
+      harness.hook().sendFollowUp({ threadId: stored.threadId, prompt: "Keep going" }),
+    );
+    expect(sent).toBe(true);
+
+    await act(async () => {
+      harness.emitStatus(stored.threadId, 2, { kind: "exited", exitCode: 0 });
+    });
+
+    await waitForReact(() => expect(harness.gitIntegration.getShipStatus).toHaveBeenCalledTimes(1));
+    expect(harness.hook().threads[0]?.ship).toMatchObject({ kind: "idle", status: shipStatus() });
+    harness.unmount();
+  });
+
+  it("demotes a rehydrated integrated receipt that the branch status contradicts", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002", {
+      lastCommitSha: SHA_A,
+      pushed: null,
+      integrated: { intoBranch: "main", mergeSha: SHA_B, mode: "merge" },
+      branchDeleted: false,
+    });
+    const harness = renderThreads({
+      storedThreads: [stored],
+      worktrees: [worktreeOf(stored.threadId)],
+    });
+    await waitForReact(() => expect(harness.hook().threads[0]?.worktreeMissing).toBe(false));
+
+    expect(harness.hook().threads[0]?.ship).toMatchObject({
+      kind: "integrated",
+      status: null,
+      intoBranch: "main",
+    });
+
+    await act(() => harness.hook().refreshShipStatus(stored.threadId));
+
+    expect(harness.hook().threads[0]?.ship).toMatchObject({
+      kind: "committed",
+      status: shipStatus(),
+      commitSha: SHA_A,
+    });
+    harness.unmount();
+  });
+
+  it("commits through the ship flow, persists the receipt and opens files via the bridge", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const worktreePath = `${ROOT}/.worktrees/${stored.threadId}`;
+    const harness = renderThreads({
+      storedThreads: [stored],
+      worktrees: [
+        {
+          worktreePath,
+          branch: `agent/${stored.threadId}`,
+          head: "abc",
+          isPrimary: false,
+          locked: false,
+          prunable: false,
+        },
+      ],
+    });
+    await waitForReact(() => expect(harness.hook().threads[0]?.worktreeMissing).toBe(false));
+    harness.git.getStatus.mockImplementationOnce(async (rootPath: string) =>
+      gitStatusOf(rootPath, 1),
+    );
+    harness.store.saveAgentThread.mockClear();
+
+    await act(() => harness.hook().commitThreadChanges(stored.threadId, "Ship it"));
+
+    expect(harness.git.commit).toHaveBeenCalledWith(
+      worktreePath,
+      "Ship it",
+      gitStatusOf(worktreePath, 1).changes,
+    );
+    expect(harness.hook().threads[0]?.ship).toMatchObject({ kind: "committed", commitSha: SHA_A });
+    expect(harness.hook().threads[0]?.thread.integration).toMatchObject({ lastCommitSha: SHA_A });
+    await waitForReact(() => expect(harness.store.saveAgentThread).toHaveBeenCalledTimes(1));
+
+    const changed = gitStatusOf(worktreePath, 1).changes[0];
+    expect(changed).toBeDefined();
+    if (changed === undefined) return;
+    await act(() => harness.hook().openChangedFile(stored.threadId, changed));
+    expect(harness.editor.openFile).toHaveBeenCalledTimes(1);
+    expect(harness.editor.leaveAgentMode).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+});

@@ -12,6 +12,7 @@ import {
   type AgentComposerMode,
   type AgentComposerProjectOption,
 } from "./AgentComposer";
+import type { AgentShipActions } from "./AgentShipPanel";
 import { AgentThreadInfoColumn } from "./AgentThreadInfoColumn";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
@@ -22,6 +23,7 @@ import {
   agentProjectWorktreeOnly,
   agentProjectWorktreeOnlyReason,
   agentPromptByteLength,
+  agentShipStatusUnread,
   agentThreadDisplayTitle,
 } from "./agentModePresentation";
 
@@ -113,6 +115,16 @@ export function AgentModeView({
   const selectedThread =
     agents.threads.find((view) => view.thread.threadId === selectedThreadId) ?? null;
 
+  const unreadShipThreadId =
+    selectedThread !== null && agentShipStatusUnread(selectedThread)
+      ? selectedThread.thread.threadId
+      : null;
+  const refreshShipStatus = agents.refreshShipStatus;
+  useEffect(() => {
+    if (unreadShipThreadId === null) return;
+    void refreshShipStatus(unreadShipThreadId);
+  }, [refreshShipStatus, unreadShipThreadId]);
+
   const preview = composerRoot === null ? null : agents.isolationPreview(composerRoot);
   const refreshIsolationStatus = agents.refreshIsolationStatus;
   useEffect(() => {
@@ -197,6 +209,8 @@ export function AgentModeView({
     target,
   ]);
 
+  const shipActions = useAgentShipActions(agents);
+
   const remove = useCallback(
     (threadId: string) => {
       agents.remove(threadId);
@@ -243,8 +257,13 @@ export function AgentModeView({
             now={now}
             onHideChanges={(threadId) => agents.hideChanges(threadId)}
             onHideFileDiff={(threadId) => agents.hideFileDiff(threadId)}
+            onOpenChangedFile={(threadId, change) => void agents.openChangedFile(threadId, change)}
+            onOpenChangedFileDiff={(threadId, change) =>
+              void agents.openChangedFileDiff(threadId, change)
+            }
             onRefreshChanges={(threadId) => void agents.showChanges(threadId)}
             onShowFileDiff={(threadId, change) => void agents.showFileDiff(threadId, change)}
+            shipActions={shipActions}
             thread={selectedThread}
           />
           <AgentComposer
@@ -306,6 +325,22 @@ export function AgentModeView({
         />
       </div>
     </section>
+  );
+}
+
+function useAgentShipActions(agents: AgentThreadsSurface): AgentShipActions {
+  return useMemo<AgentShipActions>(
+    () => ({
+      onRefreshShipStatus: (threadId) => void agents.refreshShipStatus(threadId),
+      onCommit: (threadId, message) => void agents.commitThreadChanges(threadId, message),
+      onPush: (threadId) => void agents.pushThreadBranch(threadId),
+      onOpenCompareUrl: (threadId) => void agents.openThreadCompareUrl(threadId),
+      onIntegrate: (threadId, mode) => void agents.integrateThreadBranch(threadId, mode),
+      onRemoveWorktree: (threadId, options) => void agents.removeThreadWorktree(threadId, options),
+      onDiscardWorktree: (threadId) => void agents.removeWorktree(threadId),
+      onDismissFailure: (threadId) => agents.resetThreadShip(threadId),
+    }),
+    [agents],
   );
 }
 

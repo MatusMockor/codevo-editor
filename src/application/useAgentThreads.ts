@@ -1,13 +1,15 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentCliKind, AgentTaskGateway, AgentTaskStatusEvent } from "../domain/agentTask";
 import { agentThreadLifecycle, runningTurn, type AgentThread } from "../domain/agentThread";
+import { initialAgentShipState, type AgentShipState } from "../domain/agentShip";
 import {
   normalizeAgentCliKind,
   normalizeAgentCliPath,
   normalizeMaxConcurrentAgentTasks,
 } from "../domain/agentSettings";
 import type { GitGateway } from "../domain/git";
+import type { GitIntegrationGateway } from "../domain/gitIntegration";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import type {
@@ -20,17 +22,31 @@ import type {
 } from "./agentThreadPorts";
 import { countRunningTurns, countRunningTurnsInRepository } from "./agentTurnAdmission";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
+import {
+  useAgentEditorBridge,
+  type AgentEditorBridgePort,
+  type AgentEditorBridgeSurface,
+} from "./useAgentEditorBridge";
 import { useAgentIsolationPreview } from "./useAgentIsolationPreview";
+import { useAgentShipFlow, type ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import { useAgentThreadStore } from "./useAgentThreadStore";
 import { useAgentTurnDispatch } from "./useAgentTurnDispatch";
 import { useAgentWorktreeLifecycle } from "./useAgentWorktreeLifecycle";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 
+export type AgentThreadsGitGateway = Pick<
+  GitGateway,
+  "getStatus" | "getDiff" | "stageFiles" | "commit" | "deleteBranch"
+>;
+
 export interface AgentThreadsDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
   readonly agentThreadStoreGateway: AgentThreadStoreGateway;
   readonly gitWorktreeGateway: GitWorktreeGateway;
-  readonly gitGateway: Pick<GitGateway, "getStatus" | "getDiff">;
+  readonly gitGateway: AgentThreadsGitGateway;
+  readonly gitIntegrationGateway: GitIntegrationGateway;
+  readonly externalUrlOpener: ExternalUrlOpenerPort | null;
+  readonly editorBridge: AgentEditorBridgePort | null;
   readonly prompter: WorkbenchPrompter;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly agentModeActive: boolean;
@@ -47,8 +63,13 @@ export interface AgentThreadsDependencies {
   readonly createEntropyHex4?: () => string;
 }
 
+const NO_PENDING_SHIP_RECONCILE: ReadonlySet<string> = Object.freeze(new Set<string>());
+
 export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentThreadsSurface {
   const [notice, setNotice] = useState<AgentTasksNotice | null>(null);
+  const [pendingShipReconcile, setPendingShipReconcile] = useState<ReadonlySet<string>>(
+    () => NO_PENDING_SHIP_RECONCILE,
+  );
   const { projects, reportError, gitGateway } = dependencies;
 
   const store = useAgentThreadStore({
@@ -90,22 +111,62 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     reportError,
   });
 
-  const { refreshOrphanedWorktrees, missingWorktreeThreadIds } = worktrees;
+  const { refreshOrphanedWorktrees, missingWorktreeThreadIds, markWorktreeRemoved } = worktrees;
   const { refreshVisibleChanges } = changes;
+  const { dispatchAction, remove: removeFromStore } = store;
+
+  const ship = useAgentShipFlow({
+    gitGateway,
+    gitIntegrationGateway: dependencies.gitIntegrationGateway,
+    gitWorktreeGateway: dependencies.gitWorktreeGateway,
+    externalUrlOpener: dependencies.externalUrlOpener,
+    prompter: dependencies.prompter,
+    projects,
+    threads,
+    missingWorktreeThreadIds,
+    dispatchThreadAction: dispatchAction,
+    reportError,
+    setNotice,
+    onWorktreeRemoved: markWorktreeRemoved,
+    onShipStepCompleted: (threadId) => void refreshVisibleChanges(threadId),
+    now: dependencies.now,
+  });
+
+  const editor = useAgentEditorBridge({
+    projects,
+    threads,
+    editor: dependencies.editorBridge,
+    reportError,
+  });
 
   const isWorktreeMissing = useCallback(
     (threadId: string): boolean => missingWorktreeThreadIds.has(threadId),
     [missingWorktreeThreadIds],
   );
 
+  const { states: shipStates, refreshShipStatus, clear: clearShip } = ship;
+
   const onTurnTerminal = useCallback(
     (event: AgentTaskStatusEvent): void => {
       if (event.isolation !== "worktree") return;
       void refreshOrphanedWorktrees();
-      void refreshVisibleChanges(threadIdForTurn(threads, event.taskId));
+      const threadId = threadIdForTurn(threads, event.taskId);
+      void refreshVisibleChanges(threadId);
+      setPendingShipReconcile((current) => {
+        if (current.has(threadId)) return current;
+        return new Set(current).add(threadId);
+      });
     },
     [refreshOrphanedWorktrees, refreshVisibleChanges, threads],
   );
+
+  useEffect(() => {
+    if (pendingShipReconcile.size === 0) return;
+    for (const threadId of pendingShipReconcile) {
+      void refreshShipStatus(threadId);
+    }
+    setPendingShipReconcile(NO_PENDING_SHIP_RECONCILE);
+  }, [pendingShipReconcile, refreshShipStatus]);
 
   const onWorktreeDispatchFailed = useCallback((): void => {
     void refreshOrphanedWorktrees();
@@ -132,7 +193,6 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     createEntropyHex4: dependencies.createEntropyHex4,
   });
 
-  const { dispatchAction, remove: removeFromStore } = store;
   const { clear: clearSummary } = changes;
 
   const remove = useCallback(
@@ -149,9 +209,10 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
       }
       removeFromStore(threadId);
       clearSummary(threadId);
+      clearShip(threadId);
       void refreshOrphanedWorktrees();
     },
-    [clearSummary, refreshOrphanedWorktrees, removeFromStore, threads],
+    [clearShip, clearSummary, refreshOrphanedWorktrees, removeFromStore, threads],
   );
 
   const releaseProjectTasks = useCallback(
@@ -173,12 +234,16 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
         changes.summaries,
         worktrees.removedWorktreeThreadIds,
         missingWorktreeThreadIds,
+        shipStates,
+        editor,
         projects,
       ),
     [
       changes.summaries,
+      editor,
       missingWorktreeThreadIds,
       projects,
+      shipStates,
       threads,
       worktrees.removedWorktreeThreadIds,
     ],
@@ -218,6 +283,15 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     showFileDiff: changes.showFileDiff,
     hideFileDiff: changes.hideFileDiff,
     removeWorktree: worktrees.removeWorktree,
+    refreshShipStatus,
+    commitThreadChanges: ship.commit,
+    pushThreadBranch: ship.push,
+    openThreadCompareUrl: ship.openCompareUrl,
+    integrateThreadBranch: ship.integrate,
+    removeThreadWorktree: ship.removeWorktree,
+    resetThreadShip: ship.resetShip,
+    openChangedFile: editor.openChangedFile,
+    openChangedFileDiff: editor.openChangedFileDiff,
     configureAgentCli,
     dismissNotice,
   };
@@ -235,6 +309,8 @@ function agentThreadViews(
   summaries: ReadonlyMap<string, AgentTaskChangeSummary>,
   removedWorktrees: ReadonlySet<string>,
   missingWorktrees: ReadonlySet<string>,
+  shipStates: ReadonlyMap<string, AgentShipState>,
+  editor: AgentEditorBridgeSurface,
   projects: ReadonlyArray<AgentProjectDescriptor>,
 ): ReadonlyArray<AgentThreadView> {
   const projectsByOwnerId = new Map<string, AgentProjectDescriptor>();
@@ -254,6 +330,8 @@ function agentThreadViews(
       worktreeRemoved: removedWorktrees.has(thread.threadId),
       worktreeMissing: missingWorktrees.has(thread.threadId),
       changeSummary: summaries.get(thread.threadId) ?? null,
+      ship: shipStates.get(thread.threadId) ?? initialAgentShipState(thread.integration),
+      editorAvailability: editor.canOpenInEditor(thread.threadId),
     });
   }
   return views.sort(compareThreadViews);

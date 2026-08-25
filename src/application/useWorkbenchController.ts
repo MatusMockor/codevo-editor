@@ -101,7 +101,6 @@ import { useGitStatusSurface } from "./useGitStatusSurface";
 import { useGitOperationCurrency } from "./useGitOperationCurrency";
 import { runEslintDisableAtCursor } from "./workbenchEslintDisableCommand";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
-import { useAgentModeState } from "./useAgentModeState";
 import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
 import { useWorkbenchCommandContext } from "./useWorkbenchCommandContext";
 import { useWorkbenchDebugOrchestration } from "./useWorkbenchDebugOrchestration";
@@ -612,10 +611,6 @@ export function useWorkbenchController(
     Record<string, LanguageServerDiagnostic[]>
   >({});
   const [sidebarView, setSidebarView] = useState<SidebarView>("files");
-  const { agentModeActive, setAgentModeActive, toggleAgentMode } = useAgentModeState(
-    editorSessionOwnerKey,
-    workspaceRoot !== null,
-  );
   const [bottomPanelView, setBottomPanelView] = useState<BottomPanelView>("problems");
   const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
   const bottomPanelViewRef = useRef(bottomPanelView);
@@ -1686,9 +1681,11 @@ export function useWorkbenchController(
   });
 
   const agents = useWorkbenchControllerAgents({
-    agentModeActive,
     appSettingsRef,
-    controllerOptions: options,
+    options,
+    openFileRef,
+    openGitChange,
+    editorSessionOwnerKey,
     gitGateway,
     gitRepositoryMappings,
     gitRepositoryStatuses,
@@ -1704,6 +1701,7 @@ export function useWorkbenchController(
     workspaceSettingsRef,
     workspaceTrustGateway,
   });
+  const { agentModeActive, setAgentModeActive, toggleAgentMode } = agents;
 
   const isLanguageServerSessionCurrentForRoot = useCallback(
     (rootPath: string, sessionId: number) =>

@@ -342,6 +342,8 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     getDiff: vi.fn(async () => {
       return Promise.reject(new Error("diff not stubbed"));
     }),
+    stageFiles: vi.fn(async () => Promise.reject(new Error("stage not stubbed"))),
+    commit: vi.fn(async () => Promise.reject(new Error("commit not stubbed"))),
   };
 
   const trust = {
@@ -383,6 +385,14 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     appSettingsRef: { current: appSettings },
     workspaceSettingsRef: { current: workspaceSettings },
     gitGateway: git,
+    gitIntegrationGateway: {
+      getShipStatus: vi.fn(async () => Promise.reject(new Error("ship status not stubbed"))),
+      pushBranchUpstream: vi.fn(async () => Promise.reject(new Error("push not stubbed"))),
+      integrateWorktreeBranch: vi.fn(async () =>
+        Promise.reject(new Error("integrate not stubbed")),
+      ),
+    },
+    externalUrlOpener: null,
     gitRepositoryMappings: [{ rootRelativePath: "" }],
     gitRepositoryStatuses: [],
     openDocuments: [],

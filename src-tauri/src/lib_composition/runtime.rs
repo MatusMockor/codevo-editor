@@ -130,6 +130,9 @@ pub fn run() {
                     app.path().app_data_dir()?,
                 ),
             ));
+            app.manage(Arc::new(
+                git_integration_commands::IntegrationLocks::default(),
+            ));
             app.manage(agent_task_supervisor::AgentTaskRegistry::new(
                 agent_task_admission,
                 Arc::new(agent_task_spawner::StdAgentProcessSpawner),
@@ -461,6 +464,9 @@ pub fn run() {
             agent_thread_store_commands::load_agent_threads,
             agent_thread_store_commands::save_agent_thread,
             agent_thread_store_commands::delete_agent_thread,
+            git_integration_commands::get_git_ship_status,
+            git_integration_commands::push_git_branch_upstream,
+            git_integration_commands::integrate_git_worktree_branch,
             git_worktree_commands::list_git_worktrees,
             git_worktree_commands::add_git_worktree,
             git_worktree_commands::remove_git_worktree,

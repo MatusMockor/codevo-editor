@@ -49,6 +49,12 @@ describe("agent mode responsive layout contract", () => {
     );
   });
 
+  it("keeps the ship panel bounded inside the session column", () => {
+    expect(rule(".agent-ship__message")).toContain("max-height: 120px");
+    expect(rule(".agent-ship__conflicts")).toContain("overflow-y: auto");
+    expect(rule(".agent-files__row")).toContain("flex-wrap: wrap");
+  });
+
   it("preserves the Code escape and wraps secondary toolbar controls", () => {
     const narrow = block(appCss, "@media (max-width: 720px)");
 

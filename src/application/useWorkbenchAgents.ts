@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
-import type { GitGateway } from "../domain/git";
+import type { GitIntegrationGateway } from "../domain/gitIntegration";
 import {
   repositoryRootForMapping,
   resolveGitRepositoryForPath,
@@ -28,12 +28,16 @@ import type {
   AgentThreadStoreGateway,
   AgentThreadsSurface,
 } from "./agentThreadPorts";
-import { useAgentThreads } from "./useAgentThreads";
+import type { AgentEditorBridgePort } from "./useAgentEditorBridge";
+import type { ExternalUrlOpenerPort } from "./useAgentShipFlow";
+import { useAgentThreads, type AgentThreadsGitGateway } from "./useAgentThreads";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import {
   defaultAgentTaskGateway,
   defaultAgentThreadStoreGateway,
+  defaultCompareUrlOpener,
+  defaultGitIntegrationGateway,
   defaultGitWorktreeGateway,
 } from "./workbenchDefaultGateways";
 
@@ -49,11 +53,14 @@ export interface WorkbenchAgentsOptions {
   readonly agentTaskGateway?: AgentTaskGateway;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly gitWorktreeGateway?: GitWorktreeGateway;
+  readonly gitIntegrationGateway?: GitIntegrationGateway;
+  readonly externalUrlOpener?: ExternalUrlOpenerPort | null;
+  readonly editorBridge?: AgentEditorBridgePort | null;
   readonly agentProjectGateways?: WorkbenchAgentProjectGateways;
   readonly agentModeActive: boolean;
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly workspaceSettingsRef: { readonly current: WorkspaceSettings };
-  readonly gitGateway: Pick<GitGateway, "getStatus" | "getDiff">;
+  readonly gitGateway: AgentThreadsGitGateway;
   readonly gitRepositoryMappings: ReadonlyArray<GitRepositoryMapping>;
   readonly gitRepositoryStatuses: ReadonlyArray<GitRepositoryStatus>;
   readonly openDocuments: ReadonlyArray<EditorDocument>;
@@ -200,6 +207,10 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     agentThreadStoreGateway: options.agentThreadStoreGateway ?? defaultAgentThreadStoreGateway,
     gitWorktreeGateway: options.gitWorktreeGateway ?? defaultGitWorktreeGateway,
     gitGateway: options.gitGateway,
+    gitIntegrationGateway: options.gitIntegrationGateway ?? defaultGitIntegrationGateway,
+    externalUrlOpener:
+      options.externalUrlOpener === undefined ? defaultCompareUrlOpener : options.externalUrlOpener,
+    editorBridge: options.editorBridge ?? null,
     prompter: options.prompter,
     projects: agentProjects.projects,
     agentModeActive: options.agentModeActive,

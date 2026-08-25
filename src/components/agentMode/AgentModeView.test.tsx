@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/agentProject";
 import type { AgentCliKind } from "../../domain/agentTask";
+import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
@@ -227,6 +228,44 @@ describe("AgentModeView", () => {
     ).toBeNull();
   });
 
+  it("reads the branch status once for a selected thread whose status is unread", () => {
+    const refreshShipStatus = vi.fn(async () => undefined);
+    render({
+      agents: surface({ refreshShipStatus, threads: [threadView({ threadId: "agt-1" })] }),
+    });
+
+    expect(refreshShipStatus).not.toHaveBeenCalled();
+
+    clickText("Refactor the parser");
+    typePrompt("Also update the tests");
+
+    expect(refreshShipStatus).toHaveBeenCalledTimes(1);
+    expect(refreshShipStatus).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("leaves a selected thread with a loaded status and a gone worktree alone", () => {
+    const refreshShipStatus = vi.fn(async () => undefined);
+    render({
+      agents: surface({
+        refreshShipStatus,
+        threads: [threadView({ threadId: "agt-1", ship: loadedShip() })],
+      }),
+    });
+    clickText("Refactor the parser");
+    expect(refreshShipStatus).not.toHaveBeenCalled();
+
+    render({
+      agents: surface({
+        refreshShipStatus,
+        threads: [
+          threadView({ threadId: "agt-2", title: "Rename the lexer", worktreeMissing: true }),
+        ],
+      }),
+    });
+    clickText("Rename the lexer");
+    expect(refreshShipStatus).not.toHaveBeenCalled();
+  });
+
   it("puts the composer in follow-up mode for the selected thread", () => {
     render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
 
@@ -394,6 +433,80 @@ describe("AgentModeView", () => {
 
     expect(archive).toHaveBeenCalledWith("agt-1");
     expect(remove).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("routes every ship action of the selected thread to the surface", () => {
+    const refreshShipStatus = vi.fn(async () => undefined);
+    const commitThreadChanges = vi.fn(async () => undefined);
+    const pushThreadBranch = vi.fn(async () => undefined);
+    const removeThreadWorktree = vi.fn(async () => undefined);
+    const removeWorktree = vi.fn(async () => undefined);
+    const resetThreadShip = vi.fn();
+    render({
+      agents: surface({
+        commitThreadChanges,
+        pushThreadBranch,
+        refreshShipStatus,
+        removeThreadWorktree,
+        removeWorktree,
+        resetThreadShip,
+        threads: [threadView({ threadId: "agt-1" })],
+      }),
+    });
+
+    clickText("Refactor the parser");
+    click('[aria-label="Refresh the branch status of agent agt-1"]');
+    click('[aria-label="Commit changes"]');
+    click('[aria-label="Push branch"]');
+    click('[aria-label="Remove worktree"]');
+    click('[aria-label="Discard the worktree of agent agt-1"]');
+
+    expect(refreshShipStatus).toHaveBeenCalledWith("agt-1");
+    expect(commitThreadChanges).toHaveBeenCalledWith("agt-1", "Refactor the parser");
+    expect(pushThreadBranch).toHaveBeenCalledWith("agt-1");
+    expect(removeThreadWorktree).toHaveBeenCalledWith("agt-1", { deleteBranch: false });
+    expect(removeWorktree).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("opens a changed file and its diff document through the surface", () => {
+    const openChangedFile = vi.fn(async () => undefined);
+    const openChangedFileDiff = vi.fn(async () => undefined);
+    const view = threadView({ threadId: "agt-1" });
+    const file = {
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: null,
+      oldRelativePath: null,
+      path: `${ROOT}/.worktrees/agt-1/a.ts`,
+      relativePath: "a.ts",
+      status: "modified" as const,
+    };
+    render({
+      agents: surface({
+        openChangedFile,
+        openChangedFileDiff,
+        threads: [
+          {
+            ...view,
+            changeSummary: {
+              loading: false,
+              error: null,
+              files: [file],
+              truncated: false,
+              removing: false,
+              diff: null,
+            },
+          },
+        ],
+      }),
+    });
+
+    clickText("Refactor the parser");
+    click('[aria-label="Open a.ts in the editor"]');
+    click('[aria-label="Open a diff document for a.ts"]');
+
+    expect(openChangedFile).toHaveBeenCalledWith("agt-1", file);
+    expect(openChangedFileDiff).toHaveBeenCalledWith("agt-1", file);
   });
 
   it("drops the selection when the thread disappears from the surface", () => {
@@ -756,6 +869,15 @@ function surface(overrides: Partial<AgentThreadsSurface>): AgentThreadsSurface {
     showFileDiff: async () => undefined,
     hideFileDiff: () => undefined,
     removeWorktree: async () => undefined,
+    refreshShipStatus: async () => undefined,
+    commitThreadChanges: async () => undefined,
+    pushThreadBranch: async () => undefined,
+    openThreadCompareUrl: async () => undefined,
+    integrateThreadBranch: async () => undefined,
+    removeThreadWorktree: async () => undefined,
+    resetThreadShip: () => undefined,
+    openChangedFile: async () => undefined,
+    openChangedFileDiff: async () => undefined,
     configureAgentCli: () => undefined,
     dismissNotice: () => undefined,
     ...overrides,
@@ -777,10 +899,12 @@ interface ThreadViewOptions {
   readonly sessionId?: string | null;
   readonly title?: string;
   readonly worktreeMissing?: boolean;
+  readonly ship?: AgentShipState;
 }
 
 function threadView({
   archived = false,
+  ship = { kind: "idle", status: null, loadingStatus: false },
   pinned = false,
   projectOrigin = "active-tab",
   providerKind = "claudeCode",
@@ -804,9 +928,12 @@ function threadView({
     updatedAtEpochMs: 1_700_000_000_000,
     turns: [turn(threadId, title, status)],
     turnsTruncated: false,
+    integration: null,
   };
 
   return {
+    ship,
+    editorAvailability: { kind: "available" },
     thread,
     lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: "app",
@@ -814,6 +941,19 @@ function threadView({
     worktreeRemoved: false,
     worktreeMissing,
     changeSummary: null,
+  };
+}
+
+function loadedShip(): AgentShipState {
+  return {
+    kind: "idle",
+    loadingStatus: false,
+    status: {
+      worktree: { branch: "agent/agt-1", head: "a".repeat(40), dirty: true, changeCount: 2 },
+      primary: { branch: "main", head: "b".repeat(40), dirty: false },
+      relation: { aheadOfPrimary: 1, behindPrimary: 0, fastForwardable: true },
+      remote: null,
+    },
   };
 }
 

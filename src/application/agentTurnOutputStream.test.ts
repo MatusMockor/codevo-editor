@@ -85,6 +85,7 @@ function stateWithRunningTurn(): AgentThreadsState {
       },
     ],
     turnsTruncated: false,
+    integration: null,
   };
   return agentThreadsReducer(emptyAgentThreadsState(), { kind: "threadCreated", thread });
 }

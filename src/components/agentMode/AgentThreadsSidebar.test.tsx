@@ -505,9 +505,12 @@ function threadView({
       },
     ],
     turnsTruncated: false,
+    integration: null,
   };
 
   return {
+    ship: { kind: "idle", status: null, loadingStatus: false },
+    editorAvailability: { kind: "available" },
     thread,
     lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: "app",

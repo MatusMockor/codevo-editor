@@ -342,6 +342,7 @@ function persistIntent(state: AgentThreadsState, action: AgentThreadsAction): Pe
       return liveTurnIntent(state, action.turnId, "immediate");
     case "pinToggled":
     case "archived":
+    case "integrationRecorded":
       return state.threads.has(action.threadId)
         ? saveIntent(action.threadId, "immediate")
         : NO_PERSIST;

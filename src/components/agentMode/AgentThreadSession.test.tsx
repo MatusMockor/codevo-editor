@@ -11,6 +11,7 @@ import type {
   AgentTurnStatus,
 } from "../../domain/agentThread";
 import type { GitChangedFile } from "../../domain/git";
+import type { AgentShipActions } from "./AgentShipPanel";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
 
@@ -317,6 +318,43 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("This file is binary, so no text diff is shown.");
   });
 
+  it("offers the ship panel once the thread settled and hides it otherwise", () => {
+    render({ thread: threadView({}) });
+    expect(host.querySelector('section[aria-label="Ship agent agt-1"]')).not.toBeNull();
+
+    render({ thread: threadView({ status: { kind: "running" } }) });
+    expect(host.querySelector('section[aria-label="Ship agent agt-1"]')).toBeNull();
+
+    render({ thread: threadView({ worktreeMissing: true }) });
+    expect(host.querySelector('section[aria-label="Ship agent agt-1"]')).toBeNull();
+  });
+
+  it("forwards the ship actions of the selected thread", () => {
+    const shipActions = { ...noopShipActions(), onPush: vi.fn() };
+    render({ shipActions, thread: threadView({}) });
+
+    click('[aria-label="Push branch"]');
+
+    expect(shipActions.onPush).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("opens a changed file and its diff document from the changes list", () => {
+    const onOpenChangedFile = vi.fn();
+    const onOpenChangedFileDiff = vi.fn();
+    const file = changedFile("a.ts");
+    render({
+      onOpenChangedFile,
+      onOpenChangedFileDiff,
+      thread: threadView({ changeSummary: summary({ files: [file] }) }),
+    });
+
+    click('[aria-label="Open a.ts in the editor"]');
+    click('[aria-label="Open a diff document for a.ts"]');
+
+    expect(onOpenChangedFile).toHaveBeenCalledWith("agt-1", file);
+    expect(onOpenChangedFileDiff).toHaveBeenCalledWith("agt-1", file);
+  });
+
   it("re-renders no turn body when only the clock ticks", () => {
     const renders: string[] = [];
     const probe = (turnId: string): void => {
@@ -391,8 +429,24 @@ function defaultProps(): AgentThreadSessionProps {
     now: NOW,
     onHideChanges: () => undefined,
     onHideFileDiff: () => undefined,
+    onOpenChangedFile: () => undefined,
+    onOpenChangedFileDiff: () => undefined,
     onRefreshChanges: () => undefined,
     onShowFileDiff: () => undefined,
+    shipActions: noopShipActions(),
+  };
+}
+
+function noopShipActions(): AgentShipActions {
+  return {
+    onRefreshShipStatus: () => undefined,
+    onCommit: () => undefined,
+    onPush: () => undefined,
+    onOpenCompareUrl: () => undefined,
+    onIntegrate: () => undefined,
+    onRemoveWorktree: () => undefined,
+    onDiscardWorktree: () => undefined,
+    onDismissFailure: () => undefined,
   };
 }
 
@@ -422,9 +476,12 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
     updatedAtEpochMs: NOW - 5 * 60_000,
     turns,
     turnsTruncated: overrides.turnsTruncated ?? false,
+    integration: null,
   };
 
   return {
+    ship: { kind: "idle", status: null, loadingStatus: false },
+    editorAvailability: { kind: "available" },
     thread,
     lifecycle: running ? "running" : "settled",
     repositoryLabel: "app",

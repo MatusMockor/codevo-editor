@@ -81,6 +81,7 @@ function thread(overrides: Partial<AgentThread> = {}): AgentThread {
     updatedAtEpochMs: 10,
     turns: [],
     turnsTruncated: false,
+    integration: null,
     ...overrides,
   };
 }
@@ -316,6 +317,38 @@ describe("useAgentThreadStore persistence", () => {
     await waitForReact(() => {
       expect(harness.saved).toEqual([{ rootKey: ROOT_KEY, ownerId: OWNER_ID, thread: created }]);
     });
+    harness.unmount();
+  });
+
+  it("saves an integration receipt immediately", async () => {
+    const harness = renderStore();
+    await waitForReact(() => expect(harness.gateway.loadAgentThreads).toHaveBeenCalled());
+    const created = thread();
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => {
+      expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1);
+    });
+    harness.gateway.saveAgentThread.mockClear();
+
+    const integration = {
+      lastCommitSha: "a".repeat(40),
+      pushed: null,
+      integrated: null,
+      branchDeleted: false,
+    };
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "integrationRecorded",
+        threadId: created.threadId,
+        integration,
+      }),
+    );
+    await waitForReact(() => {
+      expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1);
+    });
+    expect(harness.gateway.saveAgentThread.mock.calls[0]?.[0].thread.integration).toEqual(
+      integration,
+    );
     harness.unmount();
   });
 
