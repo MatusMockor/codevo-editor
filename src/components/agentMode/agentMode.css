@@ -977,8 +977,6 @@
 .agent-session__body {
   display: grid;
   gap: var(--agent-turn-gap);
-  margin: 0 auto;
-  max-width: 760px;
   padding: var(--agent-session-gutter);
 }
 
@@ -1338,8 +1336,6 @@
 
 .agent-composer__box {
   display: grid;
-  margin: 0 auto;
-  max-width: 760px;
   border-radius: var(--agent-radius-xl);
   background: var(--agent-raised);
   box-shadow:
