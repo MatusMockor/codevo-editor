@@ -17,22 +17,30 @@ import {
 export interface AgentCommitMenuProps {
   readonly thread: AgentThreadView;
   readonly actions: AgentShipActions;
+  readonly openSignal?: number;
 }
 
 export const MAX_AGENT_COMMIT_DRAFTS = 32;
 
-export function AgentCommitMenu({ actions, thread }: AgentCommitMenuProps) {
+export function AgentCommitMenu({ actions, openSignal = 0, thread }: AgentCommitMenuProps) {
   const popoverId = useId();
   const threadId = thread.thread.threadId;
   const quick = agentShipQuickAction(thread);
   const blocked = quick.availability.kind === "blocked" ? quick.availability.reason : null;
   const popover = useAgentPopover("end");
-  const { hide, open, popoverRef } = popover;
+  const { hide, open, popoverRef, show } = popover;
   const drafts = useRef<Map<string, string>>(new Map());
+  const handledOpenSignal = useRef(openSignal);
 
   useEffect(() => {
     hide(false);
   }, [hide, threadId]);
+
+  useEffect(() => {
+    if (openSignal === handledOpenSignal.current) return;
+    handledOpenSignal.current = openSignal;
+    show();
+  }, [openSignal, show]);
 
   useLayoutEffect(() => {
     if (!open) return;

@@ -135,6 +135,7 @@ export function AgentModeView({
   const [unsafeConfirmed, setUnsafeConfirmed] = useState<string | null>(null);
   const [launchChoice, setLaunchChoice] = useState<LaunchChoice | null>(null);
   const [dangerousConfirmed, setDangerousConfirmed] = useState(false);
+  const [commitMenuOpenSignal, setCommitMenuOpenSignal] = useState(0);
   const centerRef = useRef<HTMLDivElement | null>(null);
 
   const groups = useMemo(
@@ -490,9 +491,8 @@ export function AgentModeView({
         scripts.runScript(scripts.preferred.key);
       },
       openCommitMenu: () => {
-        centerRef.current
-          ?.querySelector<HTMLButtonElement>("[data-agent-commit-menu-trigger]")
-          ?.click();
+        if (selectedThreadId === null) return;
+        setCommitMenuOpenSignal((current) => current + 1);
       },
       threadSelected: () => selectedThreadId !== null,
       surfaceBlocked,
@@ -583,6 +583,7 @@ export function AgentModeView({
               style={find.open ? FIND_BAR_ROWS : undefined}
             >
               <AgentThreadHeader
+                commitMenuOpenSignal={commitMenuOpenSignal}
                 layout={layout}
                 onExpandEditor={expandEditor}
                 onNewThread={startNewThread}

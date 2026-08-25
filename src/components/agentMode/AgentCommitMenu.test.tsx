@@ -150,6 +150,25 @@ describe("AgentCommitMenu", () => {
     expect(actions.onCommit).toHaveBeenCalledWith("agt-1", "Ship the parser fix");
   });
 
+  it("opens the popover on every new open signal and never on a repeated one", () => {
+    const actions = mockedShipActions();
+    const view = threadView({ ship: idle(status({ changeCount: 2 })) });
+    render(view, actions, 3);
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+
+    render(view, actions, 4);
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    render(view, actions, 4);
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+
+    render(view, actions, 5);
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
   it("keeps the popover open while a ship step completes", () => {
     const actions = mockedShipActions();
     const view = threadView({ ship: idle(status({ changeCount: 2 })) });
@@ -164,9 +183,9 @@ describe("AgentCommitMenu", () => {
     expect(host.querySelector('[role="dialog"]')?.textContent).toContain("Committed");
   });
 
-  function render(thread: AgentThreadView, actions: AgentShipActions): void {
+  function render(thread: AgentThreadView, actions: AgentShipActions, openSignal?: number): void {
     act(() => {
-      root.render(<AgentCommitMenu actions={actions} thread={thread} />);
+      root.render(<AgentCommitMenu actions={actions} openSignal={openSignal} thread={thread} />);
     });
   }
 

@@ -8,7 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/agentProject";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import type { AgentCliKind } from "../../domain/agentTask";
+import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
+import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
+import type { NodePackageScript } from "../../domain/nodePackageScripts";
 import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { GitChangedFile } from "../../domain/git";
@@ -1449,6 +1451,70 @@ describe("AgentModeView", () => {
     expect(host.querySelector('form[aria-label="New agent thread"]')).not.toBeNull();
   });
 
+  it("runs the preferred script of the selected thread from the view command", () => {
+    const bridge = createAgentViewCommandBridge();
+    const run = vi.fn(() => true);
+    const onShowTerminalPanel = vi.fn();
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1", isolation: "in-place" })] }),
+      chrome: chromeFixture({ onShowTerminalPanel, scripts: scriptRunner(run) }),
+      viewCommands: bridge,
+    });
+
+    act(() => bridge.run("agent.runPreferredScript"));
+    expect(run).not.toHaveBeenCalled();
+
+    clickText("Refactor the parser");
+    act(() => bridge.run("agent.runPreferredScript"));
+
+    expect(onShowTerminalPanel).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ scriptName: "dev" }));
+  });
+
+  it("opens the ship popover of the selected thread from the view command", () => {
+    const bridge = createAgentViewCommandBridge();
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      viewCommands: bridge,
+    });
+
+    act(() => bridge.run("agent.openCommitMenu"));
+    expect(host.querySelector('[aria-label="Ship Refactor the parser"]')).toBeNull();
+
+    clickText("Refactor the parser");
+    expect(host.querySelector('[aria-label="Ship Refactor the parser"]')).toBeNull();
+
+    act(() => bridge.run("agent.openCommitMenu"));
+
+    const popover = host.querySelector('[aria-label="Ship Refactor the parser"]');
+    expect(popover).not.toBeNull();
+    expect(popover?.getAttribute("role")).toBe("dialog");
+    expect(
+      host.querySelector<HTMLButtonElement>('button[aria-label="Ship options"]')?.ariaExpanded,
+    ).toBe("true");
+  });
+
+  it("keeps the script and commit commands disabled until a thread is selected", () => {
+    const bridge = createAgentViewCommandBridge();
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      viewCommands: bridge,
+    });
+    const commands = workbenchAgentCommands({ viewCommands: bridge }).filter(
+      (command) =>
+        command.id === "agent.runPreferredScript" || command.id === "agent.openCommitMenu",
+    );
+    const context = { hasWorkspace: true } as Parameters<
+      NonNullable<(typeof commands)[number]["isEnabled"]>
+    >[0];
+
+    expect(commands.map((command) => command.isEnabled?.(context))).toEqual([false, false]);
+
+    clickText("Refactor the parser");
+
+    expect(commands.map((command) => command.isEnabled?.(context))).toEqual([true, true]);
+  });
+
   it("unbinds the view commands on unmount", () => {
     const bridge = createAgentViewCommandBridge();
     render({ viewCommands: bridge });
@@ -1761,6 +1827,27 @@ describe("AgentModeView", () => {
   }
 });
 
+function scriptRunner(run: (script: NodePackageScript) => boolean): AgentThreadScriptRunner {
+  return {
+    scripts: [
+      {
+        key: "package.json:dev",
+        manifestRelativePath: "package.json",
+        packageName: "app",
+        packageManager: "npm",
+        packageRootRelativePath: "",
+        scriptName: "dev",
+      },
+    ],
+    truncated: false,
+    available: true,
+    unavailableReason: null,
+    active: null,
+    run,
+    stop: () => undefined,
+  };
+}
+
 function changedFile(relativePath: string): GitChangedFile {
   return {
     isStaged: false,
@@ -1906,11 +1993,13 @@ interface ThreadViewOptions {
   readonly events?: ReadonlyArray<AgentTurnEvent>;
   readonly worktreeMissing?: boolean;
   readonly ship?: AgentShipState;
+  readonly isolation?: AgentTaskIsolation;
 }
 
 function threadView({
   archived = false,
   events = [],
+  isolation = "worktree",
   launch = null,
   prompt,
   ship = { kind: "idle", status: null, loadingStatus: false },
@@ -1929,7 +2018,10 @@ function threadView({
   const thread: AgentThread = {
     threadId,
     owner: { rootKey, ownerId: ownerIdFor(rootKey), repositoryRoot },
-    target: { isolation: "worktree", worktreePath: `${repositoryRoot}/.worktrees/${threadId}` },
+    target: {
+      isolation,
+      worktreePath: isolation === "worktree" ? `${repositoryRoot}/.worktrees/${threadId}` : null,
+    },
     provider: { kind: providerKind, sessionId },
     title,
     pinned,

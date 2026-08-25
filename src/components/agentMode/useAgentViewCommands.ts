@@ -23,6 +23,8 @@ export function useAgentViewCommands(
       jumpToThread: (slot) => ref.current.jumpToThread(slot),
       searchThreads: () => ref.current.searchThreads(),
       findInThread: () => ref.current.findInThread(),
+      runPreferredScript: () => ref.current.runPreferredScript?.(),
+      openCommitMenu: () => ref.current.openCommitMenu?.(),
       threadSelected: () => ref.current.threadSelected(),
       surfaceBlocked: (surface) => ref.current.surfaceBlocked(surface),
     });

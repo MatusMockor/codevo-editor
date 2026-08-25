@@ -34,6 +34,7 @@ export interface AgentThreadHeaderProps {
   readonly scripts: AgentThreadScriptsSurface;
   readonly shipActions: AgentShipActions;
   readonly shortcuts: AgentPanelLayoutShortcuts | null;
+  readonly commitMenuOpenSignal?: number;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onRenameThread(threadId: string, title: string): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
@@ -152,7 +153,11 @@ export function AgentThreadHeader(props: AgentThreadHeaderProps) {
                 missing: thread.worktreeMissing,
               }}
             />
-            <AgentCommitMenu actions={props.shipActions} thread={thread} />
+            <AgentCommitMenu
+              actions={props.shipActions}
+              openSignal={props.commitMenuOpenSignal}
+              thread={thread}
+            />
           </>
         )}
         {layout.rightPanel === "closed" && (
