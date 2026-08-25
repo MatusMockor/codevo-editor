@@ -739,6 +739,29 @@ export function agentThreadStatusFilterLabel(filter: AgentThreadStatusFilter): s
   return agentThreadAttentionLabel(filter);
 }
 
+export function formatAgentPromptBytes(value: number): string {
+  return value.toLocaleString("en-US").replace(/,/g, "\u202f");
+}
+
+export type AgentThreadStatusCounts = Readonly<Record<AgentThreadStatusFilter, number>>;
+
+export function agentThreadStatusCounts(
+  groups: ReadonlyArray<AgentProjectGroup>,
+): AgentThreadStatusCounts {
+  const counts = { all: 0, running: 0, attention: 0, settled: 0, archived: 0 };
+  for (const group of groups) {
+    for (const repo of group.repos) {
+      for (const view of repo.threads) {
+        counts.all += 1;
+        counts[view.attention] += 1;
+      }
+      counts.all += repo.archived.length;
+      counts.archived += repo.archived.length;
+    }
+  }
+  return counts;
+}
+
 export function agentAttentionCount(threads: ReadonlyArray<AgentThreadView>): number {
   return threads.filter((view) => view.attention === "attention").length;
 }

@@ -1055,21 +1055,21 @@ describe("AgentModeView", () => {
     });
   }
 
-  function launchSelect(id: string): HTMLSelectElement {
-    const element = host.querySelector<HTMLSelectElement>(`select#${id}`);
+  function launchSelect(id: string): { readonly value: string } {
+    const element = host.querySelector<HTMLButtonElement>(`button#${id}`);
     expect(element).not.toBeNull();
-    return element ?? document.createElement("select");
+    return { value: element?.dataset.value ?? "" };
   }
 
   function chooseLaunch(id: string, value: string): void {
-    const element = launchSelect(id);
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(
-        element,
-        value,
-      );
-      element.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    const trigger = host.querySelector<HTMLButtonElement>(`button#${id}`);
+    expect(trigger).not.toBeNull();
+    act(() => trigger?.click());
+    const option = host.querySelector<HTMLElement>(
+      `#${id}-list [role="option"][data-value="${value}"]`,
+    );
+    expect(option).not.toBeNull();
+    act(() => option?.click());
   }
 
   function selectRepository(value: string): void {

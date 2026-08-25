@@ -12,7 +12,8 @@ import {
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
 import { AgentLaunchControls, AgentLaunchWarning } from "./AgentLaunchControls";
-import { inPlaceGuardReasonLabel } from "./agentModePresentation";
+import { formatAgentPromptBytes, inPlaceGuardReasonLabel } from "./agentModePresentation";
+import { agentSubmitShortcut } from "./agentSubmitShortcut";
 
 export interface AgentComposerRepositoryOption {
   readonly repositoryRoot: string;
@@ -97,7 +98,6 @@ export function AgentComposer({
 }: AgentComposerProps) {
   const followUp = mode.kind === "followUp";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
-  const promptTooLong = promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
   const unsafeInPlace = !followUp && isolation === "in-place" && guard.kind === "unsafe";
   const selectedProject =
     projects.find((project) => project.projectRootKey === selectedProjectRootKey) ?? null;
@@ -110,6 +110,7 @@ export function AgentComposer({
   const dangerousLaunchConfirmed = dangerousLaunch && dangerousConfirmed;
   const blocked =
     submitBlocked || blockedReason !== null || (dangerousLaunch && !dangerousLaunchConfirmed);
+  const shortcut = agentSubmitShortcut();
   const caption = composerCaption({
     blockedReason,
     isolationReason,
@@ -142,6 +143,87 @@ export function AgentComposer({
       onSubmit={submit}
     >
       <div className="agent-composer__box">
+        <div className="agent-composer__context">
+          {followUp && (
+            <>
+              <span className="agent-composer__context-label">Replying in</span>
+              <span className="agent-composer__chip agent-composer__chip--thread">
+                {mode.threadTitle}
+              </span>
+              <span className="agent-composer__spacer" />
+              <button className="agent-composer__new" onClick={onNewThread} type="button">
+                <Plus aria-hidden="true" size={12} /> New thread
+              </button>
+            </>
+          )}
+
+          {!followUp && (
+            <>
+              <span className="agent-composer__context-label">Starting in</span>
+              <AgentComposerTarget
+                project={selectedProject}
+                projectPicked={projects.length > 1}
+                repositories={repositories}
+                repository={selectedRepository}
+                repositoryPicked={repositories.length > 1}
+              />
+              {projects.length > 1 && (
+                <>
+                  <label className="agent-visually-hidden" htmlFor="agent-project">
+                    Project
+                  </label>
+                  <select
+                    className="agent-composer__repo"
+                    id="agent-project"
+                    onChange={(event) => onSelectProject(event.target.value)}
+                    value={selectedProject?.projectRootKey ?? ""}
+                  >
+                    {projects.map((project) => (
+                      <option key={project.projectRootKey} value={project.projectRootKey}>
+                        {project.label}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+              {repositories.length > 1 && (
+                <>
+                  <label className="agent-visually-hidden" htmlFor="agent-repository">
+                    Repository
+                  </label>
+                  <select
+                    className="agent-composer__repo"
+                    id="agent-repository"
+                    onChange={(event) => onSelectRepository(event.target.value)}
+                    value={selectedRepository?.repositoryRoot ?? ""}
+                  >
+                    {repositories.map((repository) => (
+                      <option key={repository.repositoryRoot} value={repository.repositoryRoot}>
+                        {repository.label}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+              <span className="agent-composer__spacer" />
+              <label className="agent-composer__isolation" htmlFor="agent-isolation">
+                <input
+                  checked={isolation === "worktree"}
+                  disabled={worktreeOnly}
+                  id="agent-isolation"
+                  onChange={(event) =>
+                    onIsolationChange(event.target.checked ? "worktree" : "in-place")
+                  }
+                  type="checkbox"
+                />
+                <span className="agent-composer__isolation-label">
+                  {isolation === "worktree" ? "Isolated worktree" : "In place"}
+                </span>
+              </label>
+            </>
+          )}
+        </div>
+
         <label className="agent-visually-hidden" htmlFor="agent-prompt">
           Prompt
         </label>
@@ -194,112 +276,50 @@ export function AgentComposer({
             onLaunchChange={onLaunchChange}
           />
 
-          {followUp && (
-            <span className="agent-composer__chip agent-composer__chip--thread">
-              {mode.threadTitle}
-            </span>
-          )}
-
-          {!followUp && (
-            <AgentComposerTarget
-              project={selectedProject}
-              projectPicked={projects.length > 1}
-              repositories={repositories}
-              repository={selectedRepository}
-              repositoryPicked={repositories.length > 1}
-            />
-          )}
-
-          {!followUp && projects.length > 1 && (
-            <>
-              <label className="agent-visually-hidden" htmlFor="agent-project">
-                Project
-              </label>
-              <select
-                className="agent-composer__repo"
-                id="agent-project"
-                onChange={(event) => onSelectProject(event.target.value)}
-                value={selectedProject?.projectRootKey ?? ""}
-              >
-                {projects.map((project) => (
-                  <option key={project.projectRootKey} value={project.projectRootKey}>
-                    {project.label}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-
-          {!followUp && repositories.length > 1 && (
-            <>
-              <label className="agent-visually-hidden" htmlFor="agent-repository">
-                Repository
-              </label>
-              <select
-                className="agent-composer__repo"
-                id="agent-repository"
-                onChange={(event) => onSelectRepository(event.target.value)}
-                value={selectedRepository?.repositoryRoot ?? ""}
-              >
-                {repositories.map((repository) => (
-                  <option key={repository.repositoryRoot} value={repository.repositoryRoot}>
-                    {repository.label}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-
-          {!followUp && <span aria-hidden="true" className="agent-composer__vsep" />}
-
-          {!followUp && (
-            <label className="agent-composer__isolation" htmlFor="agent-isolation">
-              <input
-                checked={isolation === "worktree"}
-                disabled={worktreeOnly}
-                id="agent-isolation"
-                onChange={(event) =>
-                  onIsolationChange(event.target.checked ? "worktree" : "in-place")
-                }
-                type="checkbox"
-              />
-              <span className="agent-composer__isolation-label">
-                {isolation === "worktree" ? "Isolated worktree" : "In place"}
-              </span>
-            </label>
-          )}
-
-          {followUp && (
-            <button className="agent-composer__new" onClick={onNewThread} type="button">
-              <Plus aria-hidden="true" size={12} /> New thread
-            </button>
-          )}
-
           <span className="agent-composer__spacer" />
 
-          <span
-            className={
-              promptTooLong
-                ? "agent-composer__bytes agent-composer__bytes--over agent-num"
-                : "agent-composer__bytes agent-num"
-            }
-          >
-            {promptBytes} / {MAX_AGENT_TASK_PROMPT_BYTES} bytes
-          </span>
+          <AgentComposerBytes promptBytes={promptBytes} />
 
-          <button className="agent-composer__send" disabled={blocked} type="submit">
+          <button
+            aria-keyshortcuts={shortcut.keys}
+            className="agent-composer__send"
+            disabled={blocked}
+            type="submit"
+          >
             {followUp ? (
               <Send aria-hidden="true" size={12} />
             ) : (
               <Play aria-hidden="true" size={12} />
             )}
             {submitLabel(dispatching, followUp)}
+            <kbd aria-hidden="true" className="agent-composer__kbd">
+              {shortcut.glyphs}
+            </kbd>
           </button>
         </div>
 
         {caption && <p className="agent-composer__reason">{caption}</p>}
       </div>
     </form>
+  );
+}
+
+const BYTES_WARN_RATIO = 0.8;
+
+function AgentComposerBytes({ promptBytes }: { readonly promptBytes: number }) {
+  if (promptBytes < MAX_AGENT_TASK_PROMPT_BYTES * BYTES_WARN_RATIO) return null;
+  const over = promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
+  return (
+    <span
+      aria-label={`${promptBytes} of ${MAX_AGENT_TASK_PROMPT_BYTES} bytes`}
+      className={
+        over
+          ? "agent-composer__bytes agent-composer__bytes--over agent-num"
+          : "agent-composer__bytes agent-num"
+      }
+    >
+      {formatAgentPromptBytes(promptBytes)} / {formatAgentPromptBytes(MAX_AGENT_TASK_PROMPT_BYTES)}
+    </span>
   );
 }
 

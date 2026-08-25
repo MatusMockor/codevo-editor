@@ -12,11 +12,14 @@ import {
   AgentProjectSection,
   type ThreadListHandlers,
 } from "./AgentThreadsSidebarGroups";
+import { AgentPickerMenu } from "./AgentPickerMenu";
+import { agentPickerOption } from "./agentPickerOption";
 import {
   AGENT_THREAD_STATUS_FILTERS,
   MAX_AGENT_THREAD_FILTER_CHARS,
   agentThreadListQuery,
   agentThreadListQueryActive,
+  agentThreadStatusCounts,
   agentThreadStatusFilterLabel,
   applyAgentThreadListQuery,
   clipAgentThreadFilterText,
@@ -82,6 +85,13 @@ export function AgentThreadsSidebar({
   );
   const filtering = agentThreadListQueryActive(query);
   const visibleGroups = useMemo(() => applyAgentThreadListQuery(groups, query), [groups, query]);
+  const statusOptions = useMemo(() => {
+    const matched = applyAgentThreadListQuery(groups, agentThreadListQuery(deferredText, "all"));
+    const counts = agentThreadStatusCounts(matched);
+    return AGENT_THREAD_STATUS_FILTERS.map((filter) =>
+      agentPickerOption(filter, agentThreadStatusFilterLabel(filter), null, null, counts[filter]),
+    );
+  }, [deferredText, groups]);
   const visibleThreadIds = useMemo(
     () =>
       visibleAgentThreadIds(
@@ -188,19 +198,18 @@ export function AgentThreadsSidebar({
           type="text"
           value={filterText}
         />
-        <div aria-label="Filter threads by status" className="agent-rail__status" role="group">
-          {AGENT_THREAD_STATUS_FILTERS.map((filter) => (
-            <button
-              aria-pressed={statusFilter === filter}
-              className={statusClassName(statusFilter === filter)}
-              key={filter}
-              onClick={() => setStatusFilter(filter)}
-              type="button"
-            >
-              {agentThreadStatusFilterLabel(filter)}
-            </button>
-          ))}
-        </div>
+        <AgentPickerMenu
+          align="end"
+          describedBy={null}
+          disabled={false}
+          id="agent-rail-status"
+          label="Filter threads by status"
+          onChange={(value) => setStatusFilter(parseStatusFilter(value))}
+          options={statusOptions}
+          prefix="Status"
+          tone={null}
+          value={statusFilter}
+        />
       </div>
 
       <div
@@ -279,8 +288,7 @@ function focusRow(list: HTMLDivElement | null, threadId: string): void {
   }
 }
 
-function statusClassName(active: boolean): string {
-  return active
-    ? "agent-rail__status-option agent-rail__status-option--on"
-    : "agent-rail__status-option";
+function parseStatusFilter(value: string): AgentThreadStatusFilter {
+  const match = AGENT_THREAD_STATUS_FILTERS.find((filter) => filter === value);
+  return match ?? "all";
 }

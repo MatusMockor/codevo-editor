@@ -409,18 +409,56 @@ describe("AgentThreadsSidebar", () => {
   it("filters threads by attention status", () => {
     render({ groups: [busyProject()] });
 
-    clickText("Needs attention");
+    pickStatus("attention");
 
     expect(threadOrder()).toEqual(["agt-2"]);
+  });
+
+  it("offers every status with its thread count in a single picker", () => {
+    render({ groups: [busyProject()] });
+
+    const trigger = host.querySelector<HTMLButtonElement>("button#agent-rail-status");
+    expect(trigger?.getAttribute("aria-haspopup")).toBe("listbox");
+    expect(trigger?.textContent).toContain("All");
+
+    act(() => trigger?.click());
+
+    const options = [...host.querySelectorAll<HTMLElement>('[role="option"]')].map(
+      (option) => option.textContent,
+    );
+    expect(options).toEqual(["All3", "Running1", "Needs attention1", "Idle1", "Archived0"]);
+    expect(host.querySelectorAll(".agent-rail__status-option")).toHaveLength(0);
+  });
+
+  it("names the picked status on the closed trigger", () => {
+    render({ groups: [busyProject()] });
+
+    expect(host.querySelector("button#agent-rail-status")?.textContent).toBe("Status:All");
+
+    pickStatus("running");
+
+    expect(host.querySelector("button#agent-rail-status")?.textContent).toBe("Status:Running");
+  });
+
+  it("counts only the threads the text filter still matches", () => {
+    render({ groups: [busyProject()] });
+
+    typeFilter("Fix the parser");
+    act(() => host.querySelector<HTMLButtonElement>("button#agent-rail-status")?.click());
+
+    const options = [...host.querySelectorAll<HTMLElement>('[role="option"]')].map(
+      (option) => option.textContent,
+    );
+    expect(options).toEqual(["All1", "Running1", "Needs attention0", "Idle0", "Archived0"]);
   });
 
   it("keeps archived threads out of every status filter but all and archived", () => {
     render({ groups: [archivedProject()] });
 
-    clickText("Running");
+    pickStatus("running");
     expect(host.querySelector('section[aria-label="Archived threads in app"]')).toBeNull();
 
-    clickText("Archived");
+    pickStatus("archived");
     expect(host.querySelector('section[aria-label="Archived threads in app"]')).not.toBeNull();
   });
 
@@ -640,6 +678,11 @@ describe("AgentThreadsSidebar", () => {
     const element = host.querySelector<HTMLElement>(selector);
     expect(element).not.toBeNull();
     act(() => element?.click());
+  }
+
+  function pickStatus(value: string): void {
+    click("button#agent-rail-status");
+    click(`#agent-rail-status-list [role="option"][data-value="${value}"]`);
   }
 
   function clickText(text: string): void {

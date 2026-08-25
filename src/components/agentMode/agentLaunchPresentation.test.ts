@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
   CLAUDE_MODEL_CHOICES,
   CLAUDE_PERMISSION_MODES,
@@ -15,9 +16,40 @@ import {
   agentLaunchModelChoices,
   agentLaunchModelLabel,
   agentLaunchTone,
+  agentLaunchWithMode,
+  agentLaunchWithModel,
 } from "./agentLaunchPresentation";
 
 describe("agentLaunchPresentation", () => {
+  it("ignores a value that is not a choice of the current provider", () => {
+    const codex: AgentLaunchOptions = { provider: "codex", model: "default", mode: "default" };
+    const claude: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "default",
+      mode: "default",
+    };
+
+    expect(agentLaunchWithModel(codex, "opus")).toEqual(codex);
+    expect(agentLaunchWithMode(codex, "bypassPermissions")).toEqual(codex);
+    expect(agentLaunchWithModel(claude, "gpt-5.5")).toEqual(claude);
+    expect(agentLaunchWithMode(claude, "dangerFullAccess")).toEqual(claude);
+    expect(agentLaunchWithModel(codex, "")).toEqual(codex);
+  });
+
+  it("keeps a value that is a choice of the current provider", () => {
+    const codex: AgentLaunchOptions = { provider: "codex", model: "default", mode: "default" };
+    const claude: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "default",
+      mode: "default",
+    };
+
+    expect(agentLaunchWithModel(codex, "gpt-5.5")).toEqual({ ...codex, model: "gpt-5.5" });
+    expect(agentLaunchWithMode(codex, "readOnly")).toEqual({ ...codex, mode: "readOnly" });
+    expect(agentLaunchWithModel(claude, "opus")).toEqual({ ...claude, model: "opus" });
+    expect(agentLaunchWithMode(claude, "plan")).toEqual({ ...claude, mode: "plan" });
+  });
+
   it("offers exactly the closed domain choices per provider", () => {
     expect(agentLaunchModelChoices("claudeCode").map((choice) => choice.value)).toEqual([
       ...CLAUDE_MODEL_CHOICES,

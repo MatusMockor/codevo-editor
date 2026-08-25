@@ -16,6 +16,7 @@ export interface AgentLaunchChoice {
   readonly value: string;
   readonly label: string;
   readonly hint: string;
+  readonly tone: AgentLaunchTone;
 }
 
 export type AgentLaunchTone = "plan" | "danger" | null;
@@ -119,13 +120,20 @@ const CODEX_MODE_TEXT: Record<CodexExecutionMode, LaunchText> = {
 };
 
 export function agentLaunchModelChoices(provider: AgentCliKind): ReadonlyArray<AgentLaunchChoice> {
-  if (provider === "claudeCode") return choices(CLAUDE_MODEL_CHOICES, CLAUDE_MODEL_TEXT);
-  return choices(CODEX_MODEL_CHOICES, CODEX_MODEL_TEXT);
+  if (provider === "claudeCode")
+    return choices(CLAUDE_MODEL_CHOICES, CLAUDE_MODEL_TEXT, () => null);
+  return choices(CODEX_MODEL_CHOICES, CODEX_MODEL_TEXT, () => null);
 }
 
 export function agentLaunchModeChoices(provider: AgentCliKind): ReadonlyArray<AgentLaunchChoice> {
-  if (provider === "claudeCode") return choices(CLAUDE_PERMISSION_MODES, CLAUDE_MODE_TEXT);
-  return choices(CODEX_EXECUTION_MODES, CODEX_MODE_TEXT);
+  if (provider === "claudeCode") {
+    return choices(CLAUDE_PERMISSION_MODES, CLAUDE_MODE_TEXT, (mode) =>
+      agentLaunchTone({ provider, model: "default", mode }),
+    );
+  }
+  return choices(CODEX_EXECUTION_MODES, CODEX_MODE_TEXT, (mode) =>
+    agentLaunchTone({ provider, model: "default", mode }),
+  );
 }
 
 export function agentLaunchModelLabel(launch: AgentLaunchOptions): string {
@@ -154,6 +162,31 @@ export function agentLaunchModeMeta(launch: AgentLaunchOptions): string {
 
 export function agentLaunchMetaLabel(launch: AgentLaunchOptions): string {
   return `${agentLaunchModelMeta(launch)} · ${agentLaunchModeMeta(launch)}`;
+}
+
+export function agentLaunchWithModel(
+  launch: AgentLaunchOptions,
+  value: string,
+): AgentLaunchOptions {
+  if (launch.provider === "claudeCode") {
+    const model = pick(CLAUDE_MODEL_CHOICES, value);
+    if (model === null) return launch;
+    return { ...launch, model };
+  }
+  const model = pick(CODEX_MODEL_CHOICES, value);
+  if (model === null) return launch;
+  return { ...launch, model };
+}
+
+export function agentLaunchWithMode(launch: AgentLaunchOptions, value: string): AgentLaunchOptions {
+  if (launch.provider === "claudeCode") {
+    const mode = pick(CLAUDE_PERMISSION_MODES, value);
+    if (mode === null) return launch;
+    return { ...launch, mode };
+  }
+  const mode = pick(CODEX_EXECUTION_MODES, value);
+  if (mode === null) return launch;
+  return { ...launch, mode };
 }
 
 export function agentLaunchTone(launch: AgentLaunchOptions): AgentLaunchTone {
@@ -190,10 +223,17 @@ function modeText(launch: AgentLaunchOptions): LaunchText {
 function choices<Value extends string>(
   values: ReadonlyArray<Value>,
   text: Record<Value, LaunchText>,
+  tone: (value: Value) => AgentLaunchTone,
 ): ReadonlyArray<AgentLaunchChoice> {
   return values.map((value) => ({
     value,
     label: text[value].label,
     hint: text[value].hint,
+    tone: tone(value),
   }));
+}
+
+function pick<Value extends string>(values: ReadonlyArray<Value>, value: string): Value | null {
+  const match = values.find((candidate) => candidate === value);
+  return match ?? null;
 }

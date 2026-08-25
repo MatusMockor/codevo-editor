@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "../../domain/agentTask";
 import { AgentComposer, type AgentComposerProps } from "./AgentComposer";
+import { formatAgentPromptBytes } from "./agentModePresentation";
 
 describe("AgentComposer", () => {
   let host: HTMLDivElement;
@@ -170,14 +171,41 @@ describe("AgentComposer", () => {
     expect(host.textContent).toContain("The working tree is clean.");
   });
 
-  it("reports the prompt size in UTF-8 bytes and warns above the cap", () => {
+  it("keeps the byte counter quiet until the prompt nears the cap", () => {
     render({ promptBytes: 6 });
 
-    expect(host.textContent).toContain(`6 / ${MAX_AGENT_TASK_PROMPT_BYTES} bytes`);
+    expect(host.querySelector(".agent-composer__bytes")).toBeNull();
+
+    const near = Math.ceil(MAX_AGENT_TASK_PROMPT_BYTES * 0.8);
+    render({ promptBytes: near });
+
+    const counter = host.querySelector(".agent-composer__bytes");
+    expect(counter?.textContent).toBe(
+      `${formatAgentPromptBytes(near)} / ${formatAgentPromptBytes(MAX_AGENT_TASK_PROMPT_BYTES)}`,
+    );
+    expect(counter?.getAttribute("aria-label")).toBe(
+      `${near} of ${MAX_AGENT_TASK_PROMPT_BYTES} bytes`,
+    );
+    expect(host.querySelector(".agent-composer__bytes--over")).toBeNull();
 
     render({ promptBytes: MAX_AGENT_TASK_PROMPT_BYTES + 1 });
 
     expect(host.querySelector(".agent-composer__bytes--over")).not.toBeNull();
+  });
+
+  it("formats the byte counter with thin-space groups on one line", () => {
+    expect(formatAgentPromptBytes(32768)).toBe("32\u202f768");
+    expect(formatAgentPromptBytes(999)).toBe("999");
+  });
+
+  it("shows the submit shortcut on the primary button without naming the button after it", () => {
+    render({});
+
+    const kbd = submitButton().querySelector("kbd.agent-composer__kbd");
+    expect(kbd?.textContent).toMatch(/↩$/);
+    expect(kbd?.getAttribute("aria-hidden")).toBe("true");
+    expect(kbd?.getAttribute("aria-label")).toBeNull();
+    expect(submitButton().getAttribute("aria-keyshortcuts")).toMatch(/\+Enter$/);
   });
 
   it("pre-sets the isolation toggle and shows the reason behind the default", () => {
@@ -257,6 +285,15 @@ describe("AgentComposer", () => {
     expect(submitButton().disabled).toBe(true);
   });
 
+  it("names the target above the prompt for a new thread", () => {
+    render({});
+
+    const context = host.querySelector(".agent-composer__context");
+    expect(context?.textContent).toContain("Starting in");
+    expect(context?.querySelector("input#agent-isolation")).not.toBeNull();
+    expect(context?.nextElementSibling?.nextElementSibling?.id).toBe("agent-prompt");
+  });
+
   it("hides the target and isolation controls in follow-up mode", () => {
     render({
       mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
@@ -269,6 +306,8 @@ describe("AgentComposer", () => {
     expect(host.querySelector(".agent-composer__chip--thread")?.textContent).toBe(
       "Refactor the parser",
     );
+    expect(host.querySelector(".agent-composer__context")?.textContent).toContain("Replying in");
+    expect(host.querySelector(".agent-composer__context .agent-composer__new")).not.toBeNull();
     expect(submitButton().textContent).toContain("Send");
   });
 
@@ -332,8 +371,12 @@ describe("AgentComposer", () => {
   it("keeps the model and mode pickers in both composer modes", () => {
     render({ launch: { provider: "claudeCode", model: "opus", mode: "plan" } });
 
-    expect(host.querySelector<HTMLSelectElement>("select#agent-launch-model")?.value).toBe("opus");
-    expect(host.querySelector<HTMLSelectElement>("select#agent-launch-mode")?.value).toBe("plan");
+    expect(pickerValue("agent-launch-model")).toBe("opus");
+    expect(pickerValue("agent-launch-mode")).toBe("plan");
+    expect(host.querySelector("#agent-launch-mode")?.textContent).toContain("Plan only");
+    expect(
+      host.querySelector("#agent-launch-mode")?.classList.contains("agent-picker__trigger--plan"),
+    ).toBe(true);
 
     render({
       launch: { provider: "codex", model: "gpt-5.5", mode: "readOnly" },
@@ -341,19 +384,15 @@ describe("AgentComposer", () => {
       mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
     });
 
-    expect(host.querySelector<HTMLSelectElement>("select#agent-launch-model")?.value).toBe(
-      "gpt-5.5",
-    );
-    expect(host.querySelector<HTMLSelectElement>("select#agent-launch-mode")?.value).toBe(
-      "readOnly",
-    );
+    expect(pickerValue("agent-launch-model")).toBe("gpt-5.5");
+    expect(pickerValue("agent-launch-mode")).toBe("readOnly");
   });
 
   it("reports a picked model as a whole launch value", () => {
     const onLaunchChange = vi.fn();
     render({ onLaunchChange });
 
-    selectValue("select#agent-launch-model", "sonnet");
+    pickOption("agent-launch-model", "sonnet");
 
     expect(onLaunchChange).toHaveBeenCalledWith({
       provider: "claudeCode",
@@ -371,11 +410,12 @@ describe("AgentComposer", () => {
       prompt: "Fix it",
     });
 
-    expect(
-      [...(host.querySelector<HTMLSelectElement>("select#agent-launch-mode")?.options ?? [])].map(
-        (option) => option.value,
-      ),
-    ).toEqual(["default", "readOnly", "workspaceWrite", "dangerFullAccess"]);
+    expect(pickerOptionValues("agent-launch-mode")).toEqual([
+      "default",
+      "readOnly",
+      "workspaceWrite",
+      "dangerFullAccess",
+    ]);
     expect(host.querySelector(".agent-composer__danger")).toBeNull();
     expect(submitButton().disabled).toBe(false);
 
@@ -500,6 +540,36 @@ describe("AgentComposer", () => {
       );
       element?.dispatchEvent(new Event("change", { bubbles: true }));
     });
+  }
+
+  function pickerValue(id: string): string {
+    const trigger = host.querySelector<HTMLButtonElement>(`button#${id}`);
+    expect(trigger).not.toBeNull();
+    return trigger?.dataset.value ?? "";
+  }
+
+  function openPicker(id: string): void {
+    const trigger = host.querySelector<HTMLButtonElement>(`button#${id}`);
+    expect(trigger).not.toBeNull();
+    act(() => trigger?.click());
+  }
+
+  function pickerOptionValues(id: string): ReadonlyArray<string> {
+    openPicker(id);
+    const values = [...host.querySelectorAll<HTMLElement>(`#${id}-list [role="option"]`)].map(
+      (option) => option.dataset.value ?? "",
+    );
+    act(() => host.querySelector<HTMLButtonElement>(`button#${id}`)?.click());
+    return values;
+  }
+
+  function pickOption(id: string, value: string): void {
+    openPicker(id);
+    const option = host.querySelector<HTMLElement>(
+      `#${id}-list [role="option"][data-value="${value}"]`,
+    );
+    expect(option).not.toBeNull();
+    act(() => option?.click());
   }
 
   function submitForm(): void {

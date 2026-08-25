@@ -22,39 +22,44 @@ describe("AgentLaunchControls", () => {
     host.remove();
   });
 
-  it("lists the Claude models and permission modes with hints on every option", () => {
+  it("lists the Claude models and permission modes with a description on every option", () => {
     renderControls({ provider: "claudeCode", model: "opus", mode: "acceptEdits" });
 
-    const models = select("#agent-launch-model");
-    const modes = select("#agent-launch-mode");
+    expect(trigger("agent-launch-model").textContent).toContain("Opus");
+    expect(trigger("agent-launch-mode").textContent).toContain("Accept edits");
 
-    expect([...models.options].map((option) => option.value)).toEqual([
-      "default",
-      "fable",
-      "opus",
-      "sonnet",
-    ]);
-    expect([...modes.options].map((option) => option.textContent)).toEqual([
+    open("agent-launch-model");
+    expect(optionValues("agent-launch-model")).toEqual(["default", "fable", "opus", "sonnet"]);
+    expect(selectedOption("agent-launch-model")?.dataset.value).toBe("opus");
+
+    open("agent-launch-mode");
+    expect(options("agent-launch-mode").map((option) => optionLabel(option))).toEqual([
       "Default permissions",
       "Plan only",
       "Accept edits",
       "Bypass permissions",
     ]);
-    expect(models.value).toBe("opus");
-    expect(modes.value).toBe("acceptEdits");
-    expect([...modes.options].every((option) => option.title.length > 0)).toBe(true);
+    expect(
+      options("agent-launch-mode").every(
+        (option) => (option.querySelector(".agent-picker__description")?.textContent ?? "") !== "",
+      ),
+    ).toBe(true);
+    expect(host.querySelectorAll('[role="listbox"]')).toHaveLength(1);
   });
 
   it("lists the Codex models and execution modes", () => {
     renderControls({ provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" });
 
-    expect([...select("#agent-launch-model").options].map((option) => option.textContent)).toEqual([
+    open("agent-launch-model");
+    expect(options("agent-launch-model").map((option) => optionLabel(option))).toEqual([
       "Default model",
       "GPT-5.6 Sol",
       "GPT-5.5",
       "GPT-5.4",
     ]);
-    expect([...select("#agent-launch-mode").options].map((option) => option.value)).toEqual([
+
+    open("agent-launch-mode");
+    expect(optionValues("agent-launch-mode")).toEqual([
       "default",
       "readOnly",
       "workspaceWrite",
@@ -62,25 +67,27 @@ describe("AgentLaunchControls", () => {
     ]);
   });
 
-  it("labels and describes both selects for assistive technology", () => {
+  it("labels both pickers and describes the current choice for assistive technology", () => {
     renderControls({ provider: "claudeCode", model: "default", mode: "plan" });
 
-    const modes = select("#agent-launch-mode");
-    const describedBy = modes.getAttribute("aria-describedby") ?? "";
+    expect(trigger("agent-launch-model").getAttribute("aria-label")).toBe("Agent model");
+    expect(trigger("agent-launch-mode").getAttribute("aria-label")).toBe("Agent permission mode");
+    expect(trigger("agent-launch-mode").getAttribute("aria-haspopup")).toBe("listbox");
+    expect(trigger("agent-launch-mode").title).toContain("plans the work");
 
-    expect(host.querySelector("label[for='agent-launch-model']")?.textContent).toBe("Agent model");
-    expect(host.querySelector("label[for='agent-launch-mode']")?.textContent).toBe(
-      "Agent permission mode",
-    );
-    expect(host.querySelector(`#${describedBy}`)?.textContent).toContain("plans the work");
+    const modelHint = trigger("agent-launch-model").getAttribute("aria-describedby") ?? "";
+    const modeHint = trigger("agent-launch-mode").getAttribute("aria-describedby") ?? "";
+    expect(host.querySelector(`#${modelHint}`)?.textContent).toContain("Claude CLI");
+    expect(host.querySelector(`#${modeHint}`)?.textContent).toContain("plans the work");
+    expect(host.querySelector(`#${modeHint}`)?.className).toBe("agent-visually-hidden");
   });
 
   it("reports the picked model and mode as a whole launch value", () => {
     const onLaunchChange = vi.fn();
     renderControls({ provider: "claudeCode", model: "default", mode: "default" }, onLaunchChange);
 
-    change("#agent-launch-model", "sonnet");
-    change("#agent-launch-mode", "bypassPermissions");
+    pick("agent-launch-model", "sonnet");
+    pick("agent-launch-mode", "bypassPermissions");
 
     expect(onLaunchChange.mock.calls.map(([value]) => value)).toEqual([
       { provider: "claudeCode", model: "sonnet", mode: "default" },
@@ -88,17 +95,35 @@ describe("AgentLaunchControls", () => {
     ]);
   });
 
-  it("ignores a value that is not a choice of the current provider", () => {
-    const onLaunchChange = vi.fn();
-    renderControls({ provider: "codex", model: "default", mode: "default" }, onLaunchChange);
+  it("tones the mode trigger and flags dangerous options in the list", () => {
+    renderControls({ provider: "claudeCode", model: "default", mode: "plan" });
+    expect(trigger("agent-launch-mode").classList.contains("agent-picker__trigger--plan")).toBe(
+      true,
+    );
 
-    change("#agent-launch-model", "opus");
+    renderControls({ provider: "codex", model: "default", mode: "dangerFullAccess" });
+    expect(trigger("agent-launch-mode").classList.contains("agent-picker__trigger--danger")).toBe(
+      true,
+    );
 
-    expect(onLaunchChange).toHaveBeenCalledWith({
-      provider: "codex",
-      model: "default",
-      mode: "default",
-    });
+    open("agent-launch-mode");
+    const danger = options("agent-launch-mode").filter((option) =>
+      option.classList.contains("agent-picker__option--danger"),
+    );
+    expect(danger.map((option) => option.dataset.value)).toEqual(["dangerFullAccess"]);
+    expect(danger[0]?.querySelector(".agent-picker__warn")).not.toBeNull();
+  });
+
+  it("disables both pickers while a turn is dispatching", () => {
+    renderControls(
+      { provider: "claudeCode", model: "default", mode: "default" },
+      () => undefined,
+      true,
+    );
+
+    expect(trigger("agent-launch-model").disabled).toBe(true);
+    open("agent-launch-model");
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
   });
 
   it("stays silent for a safe mode and warns for a dangerous one", () => {
@@ -126,10 +151,11 @@ describe("AgentLaunchControls", () => {
   function renderControls(
     launch: AgentLaunchOptions,
     onLaunchChange: (next: AgentLaunchOptions) => void = () => undefined,
+    disabled = false,
   ): void {
     act(() =>
       root.render(
-        <AgentLaunchControls disabled={false} launch={launch} onLaunchChange={onLaunchChange} />,
+        <AgentLaunchControls disabled={disabled} launch={launch} onLaunchChange={onLaunchChange} />,
       ),
     );
   }
@@ -150,20 +176,38 @@ describe("AgentLaunchControls", () => {
     );
   }
 
-  function select(selector: string): HTMLSelectElement {
-    const element = host.querySelector<HTMLSelectElement>(selector);
+  function trigger(id: string): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>(`button#${id}`);
     expect(element).not.toBeNull();
-    return element ?? document.createElement("select");
+    return element ?? document.createElement("button");
   }
 
-  function change(selector: string, value: string): void {
-    const element = select(selector);
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(
-        element,
-        value,
-      );
-      element.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+  function open(id: string): void {
+    act(() => trigger(id).click());
+  }
+
+  function options(id: string): ReadonlyArray<HTMLElement> {
+    return [...host.querySelectorAll<HTMLElement>(`#${id}-list [role="option"]`)];
+  }
+
+  function optionValues(id: string): ReadonlyArray<string> {
+    return options(id).map((option) => option.dataset.value ?? "");
+  }
+
+  function optionLabel(option: HTMLElement): string {
+    return option.querySelector(".agent-picker__label")?.textContent ?? "";
+  }
+
+  function selectedOption(id: string): HTMLElement | null {
+    return host.querySelector<HTMLElement>(`#${id}-list [role="option"][aria-selected="true"]`);
+  }
+
+  function pick(id: string, value: string): void {
+    open(id);
+    const option = host.querySelector<HTMLElement>(
+      `#${id}-list [role="option"][data-value="${value}"]`,
+    );
+    expect(option).not.toBeNull();
+    act(() => option?.click());
   }
 });

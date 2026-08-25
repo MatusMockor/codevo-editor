@@ -1,11 +1,5 @@
 import { TriangleAlert } from "lucide-react";
-import {
-  CLAUDE_MODEL_CHOICES,
-  CLAUDE_PERMISSION_MODES,
-  CODEX_EXECUTION_MODES,
-  CODEX_MODEL_CHOICES,
-  type AgentLaunchOptions,
-} from "../../domain/agentLaunch";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
   agentLaunchDangerConfirmLabel,
   agentLaunchDangerNotice,
@@ -14,7 +8,13 @@ import {
   agentLaunchModeLabel,
   agentLaunchModelChoices,
   agentLaunchModelHint,
+  agentLaunchTone,
+  agentLaunchWithMode,
+  agentLaunchWithModel,
+  type AgentLaunchChoice,
 } from "./agentLaunchPresentation";
+import { AgentPickerMenu } from "./AgentPickerMenu";
+import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
 
 const MODEL_ID = "agent-launch-model";
 const MODE_ID = "agent-launch-mode";
@@ -31,53 +31,38 @@ export function AgentLaunchControls({
   launch,
   onLaunchChange,
 }: AgentLaunchControlsProps) {
-  const modelHint = agentLaunchModelHint(launch);
-  const modeHint = agentLaunchModeHint(launch);
-
   return (
     <div className="agent-composer__launch">
-      <label className="agent-visually-hidden" htmlFor={MODEL_ID}>
-        Agent model
-      </label>
-      <select
-        aria-describedby={`${MODEL_ID}-hint`}
-        className="agent-composer__launch-select"
+      <AgentPickerMenu
+        align="start"
+        describedBy={`${MODEL_ID}-hint`}
         disabled={disabled}
         id={MODEL_ID}
-        onChange={(event) => onLaunchChange(withModel(launch, event.target.value))}
-        title={modelHint}
+        label="Agent model"
+        onChange={(value) => onLaunchChange(agentLaunchWithModel(launch, value))}
+        options={agentLaunchModelChoices(launch.provider).map(toOption)}
+        prefix={null}
+        tone={null}
         value={launch.model}
-      >
-        {agentLaunchModelChoices(launch.provider).map((choice) => (
-          <option key={choice.value} title={choice.hint} value={choice.value}>
-            {choice.label}
-          </option>
-        ))}
-      </select>
+      />
       <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
-        {modelHint}
+        {agentLaunchModelHint(launch)}
       </span>
 
-      <label className="agent-visually-hidden" htmlFor={MODE_ID}>
-        Agent permission mode
-      </label>
-      <select
-        aria-describedby={`${MODE_ID}-hint`}
-        className="agent-composer__launch-select"
+      <AgentPickerMenu
+        align="start"
+        describedBy={`${MODE_ID}-hint`}
         disabled={disabled}
         id={MODE_ID}
-        onChange={(event) => onLaunchChange(withMode(launch, event.target.value))}
-        title={modeHint}
+        label="Agent permission mode"
+        onChange={(value) => onLaunchChange(agentLaunchWithMode(launch, value))}
+        options={agentLaunchModeChoices(launch.provider).map(toOption)}
+        prefix={null}
+        tone={agentLaunchTone(launch)}
         value={launch.mode}
-      >
-        {agentLaunchModeChoices(launch.provider).map((choice) => (
-          <option key={choice.value} title={choice.hint} value={choice.value}>
-            {choice.label}
-          </option>
-        ))}
-      </select>
+      />
       <span className="agent-visually-hidden" id={`${MODE_ID}-hint`}>
-        {modeHint}
+        {agentLaunchModeHint(launch)}
       </span>
     </div>
   );
@@ -115,29 +100,6 @@ export function AgentLaunchWarning({
   );
 }
 
-function withModel(launch: AgentLaunchOptions, value: string): AgentLaunchOptions {
-  if (launch.provider === "claudeCode") {
-    const model = pick(CLAUDE_MODEL_CHOICES, value);
-    if (model === null) return launch;
-    return { ...launch, model };
-  }
-  const model = pick(CODEX_MODEL_CHOICES, value);
-  if (model === null) return launch;
-  return { ...launch, model };
-}
-
-function withMode(launch: AgentLaunchOptions, value: string): AgentLaunchOptions {
-  if (launch.provider === "claudeCode") {
-    const mode = pick(CLAUDE_PERMISSION_MODES, value);
-    if (mode === null) return launch;
-    return { ...launch, mode };
-  }
-  const mode = pick(CODEX_EXECUTION_MODES, value);
-  if (mode === null) return launch;
-  return { ...launch, mode };
-}
-
-function pick<Value extends string>(values: ReadonlyArray<Value>, value: string): Value | null {
-  const match = values.find((candidate) => candidate === value);
-  return match ?? null;
+function toOption(choice: AgentLaunchChoice): AgentPickerOption {
+  return agentPickerOption(choice.value, choice.label, choice.hint, choice.tone);
 }
