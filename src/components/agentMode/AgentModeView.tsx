@@ -525,7 +525,7 @@ export function AgentModeView({
   const layoutControls = (
     <AgentPanelLayoutControls
       bottomPanelOpen={layout.bottomPanel}
-      onExpandEditor={expandEditor}
+      onExpandEditor={layout.rightSurface === null ? null : expandEditor}
       onToggleBottomPanel={chrome.onToggleBottomPanel}
       onToggleRightPanel={toggleRightPanel}
       rightPanelOpen

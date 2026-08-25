@@ -1127,7 +1127,7 @@ function createWorkbench() {
       activeDocument: null,
       activeFrameworkActivityLabel: null,
       agentModeActive: false,
-      agentWorkbench: agentLayoutState("editor-expanded"),
+      agentWorkbench: agentLayoutState("editor-expanded", { lastSurface: "files" }),
       agents: {
         liveTaskCount: 0,
         maxConcurrentAgentTasks: 4,

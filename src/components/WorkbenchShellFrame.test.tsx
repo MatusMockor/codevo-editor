@@ -113,6 +113,13 @@ describe("WorkbenchShellFrame", () => {
     expect(host.querySelector(".editor-workbench > #chrome")).not.toBeNull();
   });
 
+  it("keeps the tree column collapsed while the Files surface reports no tree", () => {
+    render(placement("agent", "files"), <TreeReporter visible={false} />);
+
+    expect(host.querySelector(".workbench-frame")?.getAttribute("data-tree")).toBe("hidden");
+    expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(false);
+  });
+
   it("stamps data-tree from the reporting surface and clears it when the surface unmounts", () => {
     render(placement("agent", "files"));
     const frame = () => host.querySelector(".workbench-frame")?.getAttribute("data-tree");

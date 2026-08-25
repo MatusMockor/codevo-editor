@@ -124,6 +124,26 @@ describe("useAgentWorkbenchLayout", () => {
     harness.unmount();
   });
 
+  it("rehydrates an open panel without a surface as the chooser", async () => {
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      hydration: {
+        ownerKey: "workspace-a",
+        layout: { ...diffLayout, rightSurface: null },
+      },
+    });
+
+    await harness.settle();
+
+    expect(harness.result().agentWorkbench.layout).toMatchObject({
+      rightPanel: "open",
+      rightSurface: null,
+      lastSurface: null,
+    });
+    harness.unmount();
+  });
+
   it("ignores hydration addressed to another owner", async () => {
     const harness = renderLayout({
       workspaceOwnerKey: "workspace-a",

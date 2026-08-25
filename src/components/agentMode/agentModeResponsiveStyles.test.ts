@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const appCss = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
+const shellCss = readFileSync(resolve(import.meta.dirname, "../../App.css"), "utf8");
 
 function block(source: string, marker: string): string {
   const start = source.indexOf(marker);
@@ -48,6 +49,17 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-mode__grid", narrow)).toContain(
       "grid-template-rows: minmax(112px, 28vh) minmax(0, 1fr)",
     );
+  });
+
+  it("collapses the file tree column when the surface reports no tree", () => {
+    expect(rule('.workbench-frame[data-tree="hidden"]')).toContain(
+      "--agent-surface-tree-width: 0px",
+    );
+    expect(rule(".agent-surface-tree")).toContain("width: var(--agent-surface-tree-width)");
+    expect(rule(".agent-surface__editor-slot")).toContain("flex: 1 1 auto");
+    expect(
+      rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss),
+    ).toContain("padding-left: var(--agent-surface-tree-width)");
   });
 
   it("keeps the ship panel bounded inside the session column", () => {

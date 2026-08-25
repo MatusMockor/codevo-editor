@@ -12,8 +12,6 @@ export const MIN_AGENT_BOTTOM_PANEL_HEIGHT = 120;
 export const MAX_AGENT_BOTTOM_PANEL_HEIGHT = 900;
 export const DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT = 280;
 
-export const DEFAULT_AGENT_SURFACE_KIND: AgentSurfaceKind = "files";
-
 export const AGENT_RIGHT_PANEL_STATES = ["open", "closed"] as const;
 export type AgentRightPanelState = (typeof AGENT_RIGHT_PANEL_STATES)[number];
 
@@ -21,7 +19,7 @@ export interface AgentWorkbenchLayout {
   readonly layout: AgentWorkbenchLayoutMode;
   readonly rightPanel: AgentRightPanelState;
   readonly rightSurface: AgentSurfaceKind | null;
-  readonly lastSurface: AgentSurfaceKind;
+  readonly lastSurface: AgentSurfaceKind | null;
   readonly bottomPanel: boolean;
   readonly rightPanelWidth: number;
   readonly bottomPanelHeight: number;
@@ -54,7 +52,7 @@ export const initialAgentWorkbenchLayout: AgentWorkbenchLayout = {
   layout: "agent",
   rightPanel: "closed",
   rightSurface: null,
-  lastSurface: DEFAULT_AGENT_SURFACE_KIND,
+  lastSurface: null,
   bottomPanel: false,
   rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
   bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
@@ -132,7 +130,7 @@ export function rightPanelToggleAction(
 ): AgentWorkbenchLayoutAction {
   if (state.layout === "editor-expanded") return collapseEditorAction(state, isSurfaceBlocked);
   if (state.rightPanel === "open") return { kind: "closeSurface" };
-  if (isSurfaceBlocked(state.lastSurface)) return { kind: "showRightPanel" };
+  if (rememberedSurfaceUnavailable(state, isSurfaceBlocked)) return { kind: "showRightPanel" };
   return { kind: "toggleRightPanel" };
 }
 
@@ -148,10 +146,18 @@ export function collapseEditorAction(
   state: AgentWorkbenchLayout,
   isSurfaceBlocked: AgentSurfaceBlockedPredicate,
 ): AgentWorkbenchLayoutAction {
-  if (state.layout === "editor-expanded" && isSurfaceBlocked(state.lastSurface)) {
+  if (state.layout === "editor-expanded" && rememberedSurfaceUnavailable(state, isSurfaceBlocked)) {
     return { kind: "showRightPanel" };
   }
   return { kind: "collapseEditor" };
+}
+
+function rememberedSurfaceUnavailable(
+  state: AgentWorkbenchLayout,
+  isSurfaceBlocked: AgentSurfaceBlockedPredicate,
+): boolean {
+  if (state.lastSurface === null) return true;
+  return isSurfaceBlocked(state.lastSurface);
 }
 
 export function parseAgentWorkbenchLayout(value: unknown): AgentWorkbenchLayout {
@@ -169,7 +175,7 @@ export function parseAgentWorkbenchLayout(value: unknown): AgentWorkbenchLayout 
     layout,
     rightPanel: parseRightPanel(value.rightPanel, layout, rightSurface),
     rightSurface,
-    lastSurface: surface ?? DEFAULT_AGENT_SURFACE_KIND,
+    lastSurface: surface,
     bottomPanel:
       typeof value.bottomPanel === "boolean"
         ? value.bottomPanel

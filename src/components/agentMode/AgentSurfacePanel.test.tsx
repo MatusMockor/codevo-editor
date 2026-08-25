@@ -118,6 +118,10 @@ describe("AgentSurfacePanel", () => {
     expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
     expect(host.querySelector(`[${AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE}]`)).not.toBeNull();
 
+    const files = host.querySelector(".agent-surface__files");
+    expect(files?.childElementCount).toBe(1);
+    expect(files?.firstElementChild?.className).toBe("agent-surface__editor-slot");
+
     render({ layout: { rightSurface: "diff" } });
     expect(host.querySelector("aside.agent-surface")?.getAttribute("data-tree")).toBe("hidden");
   });

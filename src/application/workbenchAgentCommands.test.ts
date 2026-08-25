@@ -197,7 +197,7 @@ describe("workbenchAgentCommands", () => {
     }
 
     expect(agentLayout.actions).toEqual([
-      { kind: "toggleRightPanel" },
+      { kind: "showRightPanel" },
       { kind: "openSurface", surface: "files" },
       { kind: "openSurface", surface: "diff" },
       { kind: "openSurface", surface: "terminal" },
@@ -211,6 +211,9 @@ describe("workbenchAgentCommands", () => {
       lastSurface: "diff",
     };
 
+    expect(await toggleRightPanel(initialAgentWorkbenchLayout, [])).toEqual([
+      { kind: "showRightPanel" },
+    ]);
     expect(await toggleRightPanel(closedWithDiff, [])).toEqual([{ kind: "toggleRightPanel" }]);
     expect(await toggleRightPanel(closedWithDiff, ["diff"])).toEqual([{ kind: "showRightPanel" }]);
     expect(

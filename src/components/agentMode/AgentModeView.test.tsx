@@ -19,7 +19,11 @@ import type { AgentTurnEvent } from "../../domain/agentThread";
 import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import { workbenchAgentCommands } from "../../application/workbenchAgentCommands";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
-import { chromeFixture, recordedLayoutState } from "./agentWorkbenchChromeTestFixtures";
+import {
+  chromeFixture,
+  recordedLayoutState,
+  reduceRecordedLayout,
+} from "./agentWorkbenchChromeTestFixtures";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { agentCompactTimeLabel, agentRailScopeValue } from "./agentSidebarPresentation";
 import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
@@ -556,7 +560,7 @@ describe("AgentModeView", () => {
     expect(layout.actions).toEqual([{ kind: "showRightPanel" }, { kind: "toggleRightPanel" }]);
   });
 
-  it("restores the remembered Files surface from the header toggle without a thread", () => {
+  it("opens the chooser on the first header toggle with and without a thread", () => {
     const layout = recordedLayoutState();
     render({
       chrome: chromeFixture({ layout }),
@@ -564,8 +568,48 @@ describe("AgentModeView", () => {
     });
 
     click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
+    clickText("Refactor the parser");
+    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
 
-    expect(layout.actions).toEqual([{ kind: "toggleRightPanel" }]);
+    expect(layout.actions).toEqual([{ kind: "showRightPanel" }, { kind: "showRightPanel" }]);
+    expect(reduceRecordedLayout(layout)).toMatchObject({
+      rightPanel: "open",
+      rightSurface: null,
+      lastSurface: null,
+    });
+  });
+
+  it("remembers the surface picked in the chooser when the panel is closed and reopened", async () => {
+    const threads = [threadView({ threadId: "agt-1" })];
+    let layout = recordedLayoutState();
+    const rerender = (): void => {
+      layout = recordedLayoutState(reduceRecordedLayout(layout));
+      render({ chrome: chromeFixture({ layout }), agents: surface({ threads }) });
+    };
+    render({ chrome: chromeFixture({ layout }), agents: surface({ threads }) });
+
+    clickText("Refactor the parser");
+    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
+    rerender();
+
+    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
+    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(3);
+    expect(host.querySelector('[aria-label^="Expand to editor"]')).toBeNull();
+
+    click('[aria-label="Open Diff surface"]');
+    rerender();
+    await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).not.toBeNull());
+    expect(activeSurfaceTab()).toBe("Diff");
+    expect(host.querySelector('[aria-label^="Expand to editor"]')).not.toBeNull();
+
+    click('[aria-label="Close surface"]');
+    rerender();
+    expect(host.querySelector(".agent-surface")).toBeNull();
+
+    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
+    rerender();
+    await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).not.toBeNull());
+    expect(activeSurfaceTab()).toBe("Diff");
   });
 
   it("applies the same right panel policy to the ⌥⌘R command", async () => {
@@ -1605,6 +1649,13 @@ describe("AgentModeView", () => {
 
   function render(overrides: Partial<AgentModeViewProps> = {}): void {
     act(() => root.render(<AgentModeView {...defaultProps()} {...overrides} />));
+  }
+
+  function activeSurfaceTab(): string {
+    return (
+      host.querySelector('.agent-surface__tabs [role="tab"][aria-selected="true"]')?.textContent ??
+      ""
+    );
   }
 
   function checkbox(id: string): HTMLInputElement {
