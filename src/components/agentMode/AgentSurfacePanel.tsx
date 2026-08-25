@@ -86,31 +86,38 @@ export function AgentSurfacePanel({
         role="separator"
       />
       <header className="agent-surface__head" data-agent-surface-head>
-        <div aria-label="Surfaces" className="agent-surface__tabs" role="tablist">
-          {AGENT_SURFACE_KINDS.map((kind) => {
-            const tab = TABS.find((candidate) => candidate.kind === kind) ?? TABS[0];
-            const reason = agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot);
-            const Icon = tab.icon;
-            const active = surface === kind;
-            return (
-              <button
-                aria-selected={active}
-                className={
-                  active ? "agent-surface__tab agent-surface__tab--active" : "agent-surface__tab"
-                }
-                disabled={reason !== null}
-                key={kind}
-                onClick={() => onChooseSurface(kind)}
-                role="tab"
-                title={reason ?? undefined}
-                type="button"
-              >
-                <Icon aria-hidden="true" size={12} />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        {surface !== null && (
+          <div aria-label="Surfaces" className="agent-surface__tabs" role="tablist">
+            {AGENT_SURFACE_KINDS.map((kind) => {
+              const tab = TABS.find((candidate) => candidate.kind === kind) ?? TABS[0];
+              const reason = agentSurfaceBlockedReason(
+                kind,
+                thread,
+                workspaceTrusted,
+                workspaceRoot,
+              );
+              const Icon = tab.icon;
+              const active = surface === kind;
+              return (
+                <button
+                  aria-selected={active}
+                  className={
+                    active ? "agent-surface__tab agent-surface__tab--active" : "agent-surface__tab"
+                  }
+                  disabled={reason !== null}
+                  key={kind}
+                  onClick={() => onChooseSurface(kind)}
+                  role="tab"
+                  title={reason ?? undefined}
+                  type="button"
+                >
+                  <Icon aria-hidden="true" size={12} />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         <span className="agent-session__spacer" />
         {surface === "files" && fileTree !== null && (
           <button

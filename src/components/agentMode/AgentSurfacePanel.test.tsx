@@ -68,7 +68,7 @@ describe("AgentSurfacePanel", () => {
   it("disables cards with reasons: no thread, worktree gone, untrusted terminal", () => {
     render({ thread: null });
     expect(reasons()).toEqual([SURFACE_NO_THREAD_REASON, SURFACE_NO_THREAD_REASON]);
-    expect(host.querySelectorAll<HTMLButtonElement>('[role="tab"]:disabled')).toHaveLength(2);
+    expect(host.querySelector('[role="tablist"][aria-label="Surfaces"]')).toBeNull();
     expect(
       host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]')?.disabled,
     ).toBe(false);
@@ -153,6 +153,8 @@ describe("AgentSurfacePanel", () => {
   it("blocks the Terminal tab and card for a thread outside the workspace root", () => {
     render({ workspaceRoot: "/workspace/other" });
     expect(reasons()).toEqual([SURFACE_FOREIGN_ROOT_TERMINAL_REASON]);
+
+    render({ layout: { rightSurface: "files" }, workspaceRoot: "/workspace/other" });
     const tab = host.querySelector<HTMLButtonElement>('[role="tab"]:nth-child(3)');
     expect(tab?.disabled).toBe(true);
     expect(tab?.title).toBe(SURFACE_FOREIGN_ROOT_TERMINAL_REASON);
