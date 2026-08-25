@@ -48,6 +48,21 @@ pub struct SpawnedTerminal {
     pub writer: Box<dyn Write + Send>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TerminalLaunchRoots {
+    pub(crate) workspace_root: PathBuf,
+    pub(crate) cwd: PathBuf,
+}
+
+impl TerminalLaunchRoots {
+    pub(crate) fn workspace_root(root: PathBuf) -> Self {
+        Self {
+            cwd: root.clone(),
+            workspace_root: root,
+        }
+    }
+}
+
 pub(crate) struct TerminalStartOptions {
     #[cfg(test)]
     pub(crate) fault: Option<TerminalStartFault>,
@@ -122,6 +137,7 @@ const DEFAULT_TERMINAL_PROFILE_ID: &str = "default";
 
 struct RunningTerminalSession {
     cwd: PathBuf,
+    workspace_root: PathBuf,
     start_gate: Arc<TerminalStartGate>,
     process_tree_terminator: ProcessTreeTerminator,
     reader: Option<JoinHandle<()>>,
@@ -132,6 +148,16 @@ struct RunningTerminalSession {
     waiter: Option<JoinHandle<()>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     workspace_authority: Option<DebugWorkspaceAuthority>,
+}
+
+fn ensure_workspace_root_terminal(
+    session: &RunningTerminalSession,
+    expected_workspace_root: &Path,
+) -> Result<(), String> {
+    if session.workspace_root != expected_workspace_root || session.cwd != session.workspace_root {
+        return Err("The target terminal does not belong to this workspace.".to_string());
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -188,7 +214,7 @@ impl TerminalSupervisor {
             let session_ids = sessions
                 .iter()
                 .filter_map(|(session_id, session)| {
-                    if session.cwd == root {
+                    if session.workspace_root == root {
                         Some(*session_id)
                     } else {
                         None
@@ -239,9 +265,7 @@ impl TerminalSupervisor {
         let session = sessions
             .get(&session_id)
             .ok_or_else(|| "The target terminal session is no longer running.".to_string())?;
-        if session.cwd != expected_workspace_root {
-            return Err("The target terminal does not belong to this workspace.".to_string());
-        }
+        ensure_workspace_root_terminal(session, expected_workspace_root)?;
         Ok(Arc::clone(&session.sink))
     }
 
@@ -258,9 +282,7 @@ impl TerminalSupervisor {
         let session = sessions
             .get_mut(&session_id)
             .ok_or_else(|| "The target terminal session is no longer running.".to_string())?;
-        if session.cwd != expected_workspace_root {
-            return Err("The target terminal does not belong to this workspace.".to_string());
-        }
+        ensure_workspace_root_terminal(session, expected_workspace_root)?;
         let task_id = self.next_task_id.fetch_add(1, Ordering::SeqCst);
         let ownership = TerminalTaskOwnership::new(session_id, task_id, process_group_id);
         session
@@ -291,7 +313,7 @@ impl TerminalSupervisor {
         let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
         let mut groups = Vec::new();
         for (session_id, session) in sessions.iter() {
-            if session.cwd != expected_workspace_root {
+            if session.workspace_root != expected_workspace_root {
                 continue;
             }
             if let Some(process_group_id) =

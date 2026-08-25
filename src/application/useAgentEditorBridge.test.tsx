@@ -92,7 +92,7 @@ function renderBridge(overrides: Partial<Environment> = {}) {
   const editor = {
     openFile: vi.fn(async () => true),
     openGitChange: vi.fn(async () => undefined),
-    leaveAgentMode: vi.fn(),
+    openSurface: vi.fn(),
   } satisfies AgentEditorBridgePort;
   const reportError = vi.fn();
 
@@ -128,7 +128,7 @@ function renderBridge(overrides: Partial<Environment> = {}) {
 }
 
 describe("useAgentEditorBridge", () => {
-  it("opens a changed file pinned in the editor and leaves agent mode", async () => {
+  it("opens a changed file pinned in the editor and shows the Files surface", async () => {
     const harness = renderBridge();
     expect(harness.hook().canOpenInEditor(THREAD_ID)).toEqual({ kind: "available" });
 
@@ -138,18 +138,19 @@ describe("useAgentEditorBridge", () => {
       { name: "parser.ts", path: `${WORKTREE}/src/parser.ts`, kind: "file" },
       { pin: true, recordNavigation: true },
     );
-    expect(harness.editor.leaveAgentMode).toHaveBeenCalledTimes(1);
+    expect(harness.editor.openSurface).toHaveBeenCalledTimes(1);
+    expect(harness.editor.openSurface).toHaveBeenCalledWith("files");
     harness.unmount();
   });
 
-  it("opens the diff against the worktree root and leaves agent mode", async () => {
+  it("opens the diff against the worktree root and shows the Files surface", async () => {
     const harness = renderBridge();
     await act(() => harness.hook().openChangedFileDiff(THREAD_ID, change({ status: "deleted" })));
     expect(harness.editor.openGitChange).toHaveBeenCalledWith(
       change({ status: "deleted" }),
       WORKTREE,
     );
-    expect(harness.editor.leaveAgentMode).toHaveBeenCalledTimes(1);
+    expect(harness.editor.openSurface).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 
@@ -201,11 +202,11 @@ describe("useAgentEditorBridge", () => {
       harness.hook().openChangedFile(THREAD_ID, change({ path: `${WORKTREE}/../secret.ts` })),
     );
     expect(harness.editor.openFile).not.toHaveBeenCalled();
-    expect(harness.editor.leaveAgentMode).not.toHaveBeenCalled();
+    expect(harness.editor.openSurface).not.toHaveBeenCalled();
     harness.unmount();
   });
 
-  it("stays in agent mode when the owner changed while the file was opening", async () => {
+  it("opens no surface when the owner changed while the file was opening", async () => {
     let release: (value: boolean) => void = () => undefined;
     const harness = renderBridge();
     harness.editor.openFile.mockImplementationOnce(
@@ -221,17 +222,17 @@ describe("useAgentEditorBridge", () => {
       release(true);
       await pending;
     });
-    expect(harness.editor.leaveAgentMode).not.toHaveBeenCalled();
+    expect(harness.editor.openSurface).not.toHaveBeenCalled();
     harness.unmount();
   });
 
-  it("stays in agent mode when the editor refused the file or threw", async () => {
+  it("opens no surface when the editor refused the file or threw", async () => {
     const harness = renderBridge();
     harness.editor.openFile.mockResolvedValueOnce(false);
     await act(() => harness.hook().openChangedFile(THREAD_ID, change()));
     harness.editor.openFile.mockRejectedValueOnce(new Error("boom"));
     await act(() => harness.hook().openChangedFile(THREAD_ID, change()));
-    expect(harness.editor.leaveAgentMode).not.toHaveBeenCalled();
+    expect(harness.editor.openSurface).not.toHaveBeenCalled();
     expect(harness.reportError).toHaveBeenCalledTimes(1);
     harness.unmount();
   });

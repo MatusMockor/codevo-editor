@@ -625,7 +625,12 @@ describe("useAgentThreadStore thread viewed", () => {
       return { threads: [...files.values()], unreadable: [], evicted: 0 };
     };
     const gateway = new TauriAgentThreadStoreGateway(invokeCommand, () => true);
-    const launch = { provider: "claudeCode", model: "sonnet", mode: "acceptEdits" } as const;
+    const launch = {
+      provider: "claudeCode",
+      model: "sonnet",
+      mode: "acceptEdits",
+      effort: "default",
+    } as const;
     const created = thread({
       turns: [{ ...turn("agt-1-0a1c"), launch }],
       viewedAtEpochMs: 42,

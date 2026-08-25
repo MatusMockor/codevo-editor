@@ -236,13 +236,14 @@ describe("AgentThreadsSidebar", () => {
       "Copy path",
       "Copy branch",
       "Copy thread ID",
+      "Stop",
       "Archive",
       "Delete",
     ]);
-    expect((items[7] as HTMLButtonElement).disabled).toBe(true);
+    expect((items[8] as HTMLButtonElement).disabled).toBe(true);
 
     act(() => {
-      (items[8] as HTMLButtonElement).click();
+      (items[9] as HTMLButtonElement).click();
     });
 
     expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "delete" });

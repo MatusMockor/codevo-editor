@@ -1,3 +1,4 @@
+import type { AgentSurfaceKind, AgentWorkbenchLayoutAction } from "../domain/agentWorkbenchLayout";
 import type { KeymapCommandId } from "../domain/keymap";
 import {
   AGENT_JUMP_SLOTS,
@@ -8,19 +9,35 @@ import {
 } from "./agentViewCommandBridge";
 import type { Command, CommandContext } from "./commandRegistry";
 
+export interface AgentWorkbenchLayoutCommandPort {
+  dispatch(action: AgentWorkbenchLayoutAction): void;
+}
+
 export interface WorkbenchAgentCommandsOptions {
-  toggleAgentMode: Command["run"];
+  agentLayout?: AgentWorkbenchLayoutCommandPort;
   viewCommands?: AgentViewCommandBridge;
   shortcut?: (commandId: KeymapCommandId) => string;
 }
 
+const SURFACE_COMMANDS: ReadonlyArray<{
+  readonly id: KeymapCommandId;
+  readonly surface: AgentSurfaceKind;
+  readonly title: string;
+}> = [
+  { id: "agent.openFilesSurface", surface: "files", title: "Show Files Surface" },
+  { id: "agent.openDiffSurface", surface: "diff", title: "Show Diff Surface" },
+  { id: "agent.openTerminalSurface", surface: "terminal", title: "Show Terminal Surface" },
+];
+
 export function workbenchAgentCommands({
+  agentLayout,
   shortcut,
-  toggleAgentMode,
   viewCommands = createAgentViewCommandBridge(),
 }: WorkbenchAgentCommandsOptions): Command[] {
   const inAgentMode = (context: CommandContext): boolean =>
     context.hasWorkspace && viewCommands.bound();
+  const withThread = (context: CommandContext): boolean =>
+    inAgentMode(context) && viewCommands.threadSelected();
   const viewCommand = (
     id: AgentViewCommandId,
     title: string,
@@ -33,15 +50,20 @@ export function workbenchAgentCommands({
     isEnabled,
     run: () => viewCommands.run(id),
   });
+  const layoutCommand = (
+    id: KeymapCommandId,
+    title: string,
+    action: AgentWorkbenchLayoutAction,
+  ): Command => ({
+    id,
+    title,
+    category: "Agents",
+    shortcut: shortcut?.(id),
+    isEnabled: (context) => context.hasWorkspace,
+    run: () => agentLayout?.dispatch(action),
+  });
 
   return [
-    {
-      id: "panel.showAgents",
-      title: "Toggle Agent Mode",
-      category: "Agents",
-      isEnabled: (context) => context.hasWorkspace,
-      run: toggleAgentMode,
-    },
     viewCommand("agent.newThread", "New Thread"),
     viewCommand("agent.previousThread", "Previous Thread"),
     viewCommand("agent.nextThread", "Next Thread"),
@@ -49,10 +71,18 @@ export function workbenchAgentCommands({
       viewCommand(agentJumpCommandId(slot), `Jump to Thread ${slot}`),
     ),
     viewCommand("agent.searchThreads", "Search Threads"),
-    viewCommand(
-      "agent.findInThread",
-      "Find in Thread",
-      (context) => inAgentMode(context) && viewCommands.threadSelected(),
+    viewCommand("agent.findInThread", "Find in Thread", withThread),
+    viewCommand("agent.runPreferredScript", "Run Thread Script", withThread),
+    viewCommand("agent.openCommitMenu", "Commit Thread Changes", withThread),
+    layoutCommand("agent.toggleRightPanel", "Toggle Right Panel", { kind: "toggleRightPanel" }),
+    ...SURFACE_COMMANDS.map((surfaceCommand) =>
+      layoutCommand(surfaceCommand.id, surfaceCommand.title, {
+        kind: "openSurface",
+        surface: surfaceCommand.surface,
+      }),
     ),
+    layoutCommand("agent.toggleEditorExpanded", "Expand or Collapse Editor", {
+      kind: "toggleEditorExpanded",
+    }),
   ];
 }

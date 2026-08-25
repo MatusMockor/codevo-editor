@@ -1700,8 +1700,8 @@ export function useWorkbenchController(
     workspaceRoot,
     workspaceSettingsRef,
     workspaceTrustGateway,
+    persistWorkspaceSettings,
   });
-  const { agentModeActive, setAgentModeActive, toggleAgentMode } = agents;
 
   const isLanguageServerSessionCurrentForRoot = useCallback(
     (rootPath: string, sessionId: number) =>
@@ -7379,7 +7379,7 @@ export function useWorkbenchController(
     startLanguageServer,
     startPhpReindex,
     stopLanguageServer,
-    toggleAgentMode,
+    agents,
     toggleBookmarkAtCursor,
     toggleBookmarksPanel,
     toggleBottomPanel,
@@ -8169,9 +8169,8 @@ export function useWorkbenchController(
     togglePhpFileOutline,
     togglePhpFileOutlineNode,
     togglePhpTreeNode,
-    toggleAgentMode,
-    agentModeActive,
-    setAgentModeActive,
+    agentModeActive: agents.agentModeActive,
+    agentWorkbench: agents.agentWorkbench,
     toggleSmartMode,
     toggleWorkspaceTrust,
     updateActiveDocument,

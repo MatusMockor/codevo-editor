@@ -316,7 +316,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   const editor = {
     openFile: vi.fn(async () => true),
     openGitChange: vi.fn(async () => undefined),
-    leaveAgentMode: vi.fn(),
+    openSurface: vi.fn(),
   };
   const reportError = vi.fn();
   const openAgentSettings = vi.fn();
@@ -579,7 +579,12 @@ describe("useAgentThreads views and viewed marks", () => {
   it("reports the last used launch of the root after a turn", async () => {
     const harness = renderThreads();
     await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
-    const launch = { provider: "claudeCode", model: "sonnet", mode: "plan" } as const;
+    const launch = {
+      provider: "claudeCode",
+      model: "sonnet",
+      mode: "plan",
+      effort: "default",
+    } as const;
 
     await act(() => harness.hook().startThread(startRequest({ launch })));
 
@@ -741,7 +746,7 @@ describe("useAgentThreads ship and editor wiring", () => {
     if (changed === undefined) return;
     await act(() => harness.hook().openChangedFile(stored.threadId, changed));
     expect(harness.editor.openFile).toHaveBeenCalledTimes(1);
-    expect(harness.editor.leaveAgentMode).toHaveBeenCalledTimes(1);
+    expect(harness.editor.openSurface).toHaveBeenCalledWith("files");
     harness.unmount();
   });
 });

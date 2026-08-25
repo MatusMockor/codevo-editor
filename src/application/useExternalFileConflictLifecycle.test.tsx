@@ -18,7 +18,9 @@ function editorDocument(content = "local", savedContent = "base"): EditorDocumen
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
   return { promise, resolve };
 }
 
@@ -108,9 +110,7 @@ describe("useExternalFileConflictLifecycle", () => {
     expect(test.lifecycle().activeState.conflict?.baseline.path).toBe(PATH);
     const unreadable = test.lifecycle().activeState.conflict;
     expect(unreadable?.kind).toBe("unreadable");
-    expect(unreadable?.kind === "unreadable" && unreadable.attemptedPath).toBe(
-      aliasPath,
-    );
+    expect(unreadable?.kind === "unreadable" && unreadable.attemptedPath).toBe(aliasPath);
 
     await act(async () => test.lifecycle().action("retryRead"));
     expect(test.lifecycle().activeState.conflict?.disk).toMatchObject({
@@ -126,17 +126,16 @@ describe("useExternalFileConflictLifecycle", () => {
   it("isolates equal relative paths owned by distinct canonical workspaces", async () => {
     const test = await createHarness();
     act(() => {
-      test.lifecycle().detectSaveConflict(
-        ROOT,
-        test.refs.documentsRef.current[PATH],
-        { content: "disk", revision: revision(2) },
-      );
+      test.lifecycle().detectSaveConflict(ROOT, test.refs.documentsRef.current[PATH], {
+        content: "disk",
+        revision: revision(2),
+      });
     });
 
     expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(true);
-    expect(
-      test.lifecycle().hasConflict("/other-workspace", "/other-workspace/file.php"),
-    ).toBe(false);
+    expect(test.lifecycle().hasConflict("/other-workspace", "/other-workspace/file.php")).toBe(
+      false,
+    );
     act(() => test.root.unmount());
   });
 
@@ -153,11 +152,10 @@ describe("useExternalFileConflictLifecycle", () => {
     expect(test.lifecycle().hasConflict(ROOT, outside.path)).toBe(false);
 
     act(() => {
-      test.lifecycle().detectSaveConflict(
-        ROOT,
-        test.refs.documentsRef.current[PATH],
-        { content: "legacy disk", revision: revision(3) },
-      );
+      test.lifecycle().detectSaveConflict(ROOT, test.refs.documentsRef.current[PATH], {
+        content: "legacy disk",
+        revision: revision(3),
+      });
     });
     expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(true);
     act(() => test.root.unmount());
@@ -168,11 +166,10 @@ describe("useExternalFileConflictLifecycle", () => {
     const test = await createHarness(undefined, {}, rejectOwnership);
 
     act(() => {
-      test.lifecycle().detectSaveConflict(
-        ROOT,
-        test.refs.documentsRef.current[PATH],
-        { content: "disk", revision: revision(2) },
-      );
+      test.lifecycle().detectSaveConflict(ROOT, test.refs.documentsRef.current[PATH], {
+        content: "disk",
+        revision: revision(2),
+      });
     });
 
     expect(rejectOwnership).toHaveBeenCalledWith(ROOT, PATH);
@@ -203,9 +200,7 @@ describe("useExternalFileConflictLifecycle", () => {
 
     await act(async () => test.lifecycle().action("reload"));
     expect(test.refs.documentsRef.current[PATH].revision).toEqual(diskRevision);
-    expect(test.refs.documentsRef.current[PATH].savedContent).toBe(
-      "disk after save race",
-    );
+    expect(test.refs.documentsRef.current[PATH].savedContent).toBe("disk after save race");
     act(() => test.root.unmount());
   });
 
@@ -237,7 +232,9 @@ describe("useExternalFileConflictLifecycle", () => {
 
   it("retains dirty local text and records modified, deleted, and renamed conflicts", async () => {
     const test = await createHarness();
-    await act(async () => { await test.lifecycle().handleFileChange(modified()); });
+    await act(async () => {
+      await test.lifecycle().handleFileChange(modified());
+    });
     expect(test.refs.documentsRef.current[PATH].content).toBe("local");
     expect(test.lifecycle().activeState.conflict?.kind).toBe("modified");
 
@@ -248,7 +245,10 @@ describe("useExternalFileConflictLifecycle", () => {
 
     await act(async () => {
       await test.lifecycle().handleFileChange({
-        ...modified(), kind: "renamed", path: `${ROOT}/renamed.php`, previousPath: PATH,
+        ...modified(),
+        kind: "renamed",
+        path: `${ROOT}/renamed.php`,
+        previousPath: PATH,
       });
     });
     expect(test.lifecycle().activeState.conflict?.kind).toBe("renamed");
@@ -297,19 +297,11 @@ describe("useExternalFileConflictLifecycle", () => {
       content: "new saved content",
       revision: diskRevision,
     }));
-    const test = await createHarness(
-      undefined,
-      { readTextFileSnapshot },
-      undefined,
-      selfWrites,
-    );
+    const test = await createHarness(undefined, { readTextFileSnapshot }, undefined, selfWrites);
     const edited = editorDocument("new saved content", "");
     test.refs.documentsRef.current[PATH] = edited;
     test.refs.activeDocumentRef.current = edited;
-    const lease = selfWrites.begin(
-      { rootPath: ROOT, path: PATH },
-      edited.content,
-    );
+    const lease = selfWrites.begin({ rootPath: ROOT, path: PATH }, edited.content);
 
     const handling = test.lifecycle().handleFileChange(modified());
     await Promise.resolve();
@@ -343,10 +335,7 @@ describe("useExternalFileConflictLifecycle", () => {
     const edited = editorDocument("new saved content", "");
     test.refs.documentsRef.current[PATH] = edited;
     test.refs.activeDocumentRef.current = edited;
-    const lease = selfWrites.begin(
-      { rootPath: ROOT, path: PATH },
-      edited.content,
-    );
+    const lease = selfWrites.begin({ rootPath: ROOT, path: PATH }, edited.content);
 
     const handling = test.lifecycle().handleFileChange(modified());
     lease?.complete(revision(12));
@@ -374,10 +363,7 @@ describe("useExternalFileConflictLifecycle", () => {
     const edited = editorDocument("new saved content", "");
     test.refs.documentsRef.current[PATH] = edited;
     test.refs.activeDocumentRef.current = edited;
-    const lease = selfWrites.begin(
-      { rootPath: ROOT, path: PATH },
-      edited.content,
-    );
+    const lease = selfWrites.begin({ rootPath: ROOT, path: PATH }, edited.content);
 
     const handling = test.lifecycle().handleFileChange(modified());
     lease?.complete(null);
@@ -399,22 +385,15 @@ describe("useExternalFileConflictLifecycle", () => {
       content: string;
       revision: ReturnType<typeof revision>;
     }>();
-    const readTextFileSnapshot = vi.fn()
+    const readTextFileSnapshot = vi
+      .fn()
       .mockReturnValueOnce(firstRead.promise)
       .mockReturnValueOnce(secondRead.promise);
-    const test = await createHarness(
-      undefined,
-      { readTextFileSnapshot },
-      undefined,
-      selfWrites,
-    );
+    const test = await createHarness(undefined, { readTextFileSnapshot }, undefined, selfWrites);
     const firstDocument = editorDocument("first saved", "base");
     test.refs.documentsRef.current[PATH] = firstDocument;
     test.refs.activeDocumentRef.current = firstDocument;
-    const firstLease = selfWrites.begin(
-      { rootPath: ROOT, path: PATH },
-      firstDocument.content,
-    );
+    const firstLease = selfWrites.begin({ rootPath: ROOT, path: PATH }, firstDocument.content);
     const firstHandling = test.lifecycle().handleFileChange(modified());
     firstLease?.complete(revision(21));
     await vi.waitFor(() => {
@@ -424,10 +403,7 @@ describe("useExternalFileConflictLifecycle", () => {
     const secondDocument = editorDocument("second saved", "first saved");
     test.refs.documentsRef.current[PATH] = secondDocument;
     test.refs.activeDocumentRef.current = secondDocument;
-    const secondLease = selfWrites.begin(
-      { rootPath: ROOT, path: PATH },
-      secondDocument.content,
-    );
+    const secondLease = selfWrites.begin({ rootPath: ROOT, path: PATH }, secondDocument.content);
     const secondHandling = test.lifecycle().handleFileChange(modified());
     secondLease?.complete(revision(22));
     await vi.waitFor(() => {
@@ -454,12 +430,7 @@ describe("useExternalFileConflictLifecycle", () => {
       content: "external",
       revision: revision(30),
     }));
-    const test = await createHarness(
-      undefined,
-      { readTextFileSnapshot },
-      undefined,
-      selfWrites,
-    );
+    const test = await createHarness(undefined, { readTextFileSnapshot }, undefined, selfWrites);
     selfWrites.begin({ rootPath: ROOT, path: PATH }, "pending");
     const handling = test.lifecycle().handleFileChange(modified());
 
@@ -479,12 +450,7 @@ describe("useExternalFileConflictLifecycle", () => {
       content: "external",
       revision: revision(31),
     }));
-    const test = await createHarness(
-      undefined,
-      { readTextFileSnapshot },
-      undefined,
-      selfWrites,
-    );
+    const test = await createHarness(undefined, { readTextFileSnapshot }, undefined, selfWrites);
     selfWrites.begin({ rootPath: ROOT, path: PATH }, "pending");
     const handling = test.lifecycle().handleFileChange(modified());
 
@@ -544,8 +510,7 @@ describe("useExternalFileConflictLifecycle", () => {
       resolveEditorConfigForFile: async () => ({}),
       syncSavedDocument: async () => {},
       syncSavedJavaScriptTypeScriptDocument: async () => {},
-      hasExternalFileConflict: () =>
-        test.lifecycle().hasConflict(ROOT, PATH),
+      hasExternalFileConflict: () => test.lifecycle().hasConflict(ROOT, PATH),
       beginDocumentSelfWrite: () => null,
     });
     await saveService.saveDocument({
@@ -558,11 +523,7 @@ describe("useExternalFileConflictLifecycle", () => {
       },
     });
 
-    expect(writeTextFile).toHaveBeenCalledWith(
-      PATH,
-      "local edit",
-      diskRevision,
-    );
+    expect(writeTextFile).toHaveBeenCalledWith(PATH, "local edit", diskRevision);
     act(() => test.root.unmount());
   });
 
@@ -596,8 +557,14 @@ describe("useExternalFileConflictLifecycle", () => {
     const test = await createHarness(read);
     const old = test.lifecycle().handleFileChange(modified());
     const fresh = test.lifecycle().handleFileChange(modified());
-    await act(async () => { second.resolve("fresh disk"); await fresh; });
-    await act(async () => { first.resolve("stale disk"); await old; });
+    await act(async () => {
+      second.resolve("fresh disk");
+      await fresh;
+    });
+    await act(async () => {
+      first.resolve("stale disk");
+      await old;
+    });
     expect(test.lifecycle().activeState.conflict?.disk?.content).toBe("fresh disk");
     act(() => test.root.unmount());
   });
@@ -626,7 +593,9 @@ describe("useExternalFileConflictLifecycle", () => {
   it("reloads from captured disk content and never writes", async () => {
     const read = vi.fn(async () => "captured disk");
     const test = await createHarness(read);
-    await act(async () => { await test.lifecycle().handleFileChange(modified()); });
+    await act(async () => {
+      await test.lifecycle().handleFileChange(modified());
+    });
     await act(async () => {
       await test.lifecycle().action("reload");
     });
@@ -887,9 +856,7 @@ describe("useExternalFileConflictLifecycle", () => {
       await test.lifecycle().action("retryRead");
     });
     expect(test.lifecycle().activeState.conflict?.kind).toBe("modified");
-    expect(test.lifecycle().activeState.conflict?.disk?.content).toBe(
-      "recovered disk",
-    );
+    expect(test.lifecycle().activeState.conflict?.disk?.content).toBe("recovered disk");
     act(() => test.root.unmount());
   });
 
@@ -911,7 +878,9 @@ describe("useExternalFileConflictLifecycle", () => {
   });
 
   it("keeps the conflict unresolved when a manual retry is still unreadable", async () => {
-    const read = vi.fn(async () => { throw new Error("still unreadable"); });
+    const read = vi.fn(async () => {
+      throw new Error("still unreadable");
+    });
     const test = await createHarness(read);
     expect(await test.lifecycle().handleFileChange(modified())).toBe("unreadable");
 
@@ -961,7 +930,10 @@ describe("useExternalFileConflictLifecycle", () => {
 
     act(() => test.lifecycle().clearConflict(ROOT, PATH));
     expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(false);
-    await act(async () => { read.resolve("late disk"); await pending; });
+    await act(async () => {
+      read.resolve("late disk");
+      await pending;
+    });
     expect(test.lifecycle().activeState.conflict).toBeNull();
     act(() => test.root.unmount());
   });
@@ -987,7 +959,10 @@ describe("useExternalFileConflictLifecycle", () => {
     const test = await createHarness();
     await act(async () => {
       await test.lifecycle().handleFileChange({
-        ...modified(), kind: "renamed", path: targetPath, previousPath: PATH,
+        ...modified(),
+        kind: "renamed",
+        path: targetPath,
+        previousPath: PATH,
       });
     });
     const target = { ...editorDocument("target local", "target base"), path: targetPath };
@@ -1008,11 +983,15 @@ describe("useExternalFileConflictLifecycle", () => {
     const test = await createHarness();
     await act(async () => {
       await test.lifecycle().handleFileChange({
-        ...modified(), kind: "renamed", path: targetPath, previousPath: PATH,
+        ...modified(),
+        kind: "renamed",
+        path: targetPath,
+        previousPath: PATH,
       });
     });
     test.refs.documentsRef.current[targetPath] = {
-      ...editorDocument("disk", "disk"), path: targetPath,
+      ...editorDocument("disk", "disk"),
+      path: targetPath,
     };
     test.refs.openPathsRef.current.push(targetPath);
 

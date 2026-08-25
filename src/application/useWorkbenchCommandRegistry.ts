@@ -36,7 +36,10 @@ import {
   workbenchDebugCommands,
 } from "./workbenchDebugCommands";
 import { workbenchAgentViewCommandBridge } from "./agentViewCommandBridge";
-import { workbenchAgentCommands } from "./workbenchAgentCommands";
+import {
+  workbenchAgentCommands,
+  type AgentWorkbenchLayoutCommandPort,
+} from "./workbenchAgentCommands";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchAppLifecycleCommands } from "./workbenchAppLifecycleCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
@@ -343,7 +346,7 @@ interface UseWorkbenchCommandRegistryOptions {
   setQuickOpenOpen(open: boolean): void;
   setRecentFilesSwitcherOpen(open: boolean): void;
   setSidebarView(view: "git" | "php" | "scripts"): void;
-  toggleAgentMode(): void;
+  agents: { readonly agentWorkbench: AgentWorkbenchLayoutCommandPort };
   setTextSearchOpen(open: boolean): void;
   setWorkspaceSymbolsOpen(open: boolean): void;
   showBottomPanelView: Parameters<typeof workbenchPanelCommands>[0]["showBottomPanelView"];
@@ -525,7 +528,7 @@ export function useWorkbenchCommandRegistry(
     toggleBookmarkAtCursor,
     toggleBookmarksPanel,
     toggleBottomPanel,
-    toggleAgentMode,
+    agents,
     toggleEditorFontLigatures,
     toggleGitBlame,
     toggleSmartMode,
@@ -1000,8 +1003,8 @@ export function useWorkbenchCommandRegistry(
     }).forEach((command) => registry.register(command));
 
     workbenchAgentCommands({
+      agentLayout: agents.agentWorkbench,
       shortcut,
-      toggleAgentMode,
       viewCommands: workbenchAgentViewCommandBridge,
     }).forEach((command) => registry.register(command));
 
@@ -1145,7 +1148,7 @@ export function useWorkbenchCommandRegistry(
     toggleBookmarkAtCursor,
     goToNextBookmark,
     goToPreviousBookmark,
-    toggleAgentMode,
+    agents.agentWorkbench,
     toggleBookmarksPanel,
     toggleSmartMode,
     toggleWorkspaceTrust,

@@ -131,6 +131,7 @@ fn agent_invocation_args(
     };
     template.extend_from_slice(launch.model_args());
     template.extend_from_slice(launch.mode_args(resumed));
+    template.extend_from_slice(launch.effort_args());
     if let Some(session_id) = resume_session_id {
         match invocation {
             AgentCliInvocation::ClaudeCode => template.extend_from_slice(&["--resume", session_id]),
@@ -341,7 +342,8 @@ fn exit_code_of(status: std::process::ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::agent_launch::{
-        ClaudeModelChoice, ClaudePermissionMode, CodexExecutionMode, CodexModelChoice,
+        ClaudeEffortChoice, ClaudeModelChoice, ClaudePermissionMode, CodexExecutionMode,
+        CodexModelChoice,
     };
     use super::*;
 
@@ -372,10 +374,20 @@ mod tests {
         CodexExecutionMode::DangerFullAccess,
     ];
 
+    const CLAUDE_EFFORTS: [ClaudeEffortChoice; 6] = [
+        ClaudeEffortChoice::Default,
+        ClaudeEffortChoice::Low,
+        ClaudeEffortChoice::Medium,
+        ClaudeEffortChoice::High,
+        ClaudeEffortChoice::Xhigh,
+        ClaudeEffortChoice::Max,
+    ];
+
     fn claude_default() -> AgentLaunchOptions {
         AgentLaunchOptions::ClaudeCode {
             model: ClaudeModelChoice::Default,
             mode: ClaudePermissionMode::Default,
+            effort: ClaudeEffortChoice::Default,
         }
     }
 
@@ -464,6 +476,7 @@ mod tests {
                 AgentLaunchOptions::ClaudeCode {
                     model: ClaudeModelChoice::Opus,
                     mode: ClaudePermissionMode::AcceptEdits,
+                    effort: ClaudeEffortChoice::Default,
                 }
             ),
             [
@@ -514,37 +527,44 @@ mod tests {
     fn claude_argv_table_covers_every_model_mode_and_resume_combination() {
         for model in CLAUDE_MODELS {
             for mode in CLAUDE_MODES {
-                let launch = AgentLaunchOptions::ClaudeCode { model, mode };
-                for resume in [None, Some(SESSION_ID)] {
-                    let mut expected: Vec<String> =
-                        ["-p", "--output-format", "stream-json", "--verbose"]
-                            .into_iter()
-                            .map(str::to_string)
-                            .collect();
-                    expected.extend(launch.model_args().iter().map(|arg| (*arg).to_string()));
-                    expected.extend(
-                        launch
-                            .mode_args(resume.is_some())
-                            .iter()
-                            .map(|arg| (*arg).to_string()),
-                    );
-                    if let Some(session_id) = resume {
-                        expected.push("--resume".to_string());
-                        expected.push(session_id.to_string());
-                    }
-                    expected.push("--".to_string());
-                    expected.push("do it".to_string());
-                    assert_eq!(
-                        agent_invocation_args(
-                            AgentCliInvocation::ClaudeCode,
-                            "do it",
-                            resume,
+                for effort in CLAUDE_EFFORTS {
+                    let launch = AgentLaunchOptions::ClaudeCode {
+                        model,
+                        mode,
+                        effort,
+                    };
+                    for resume in [None, Some(SESSION_ID)] {
+                        let mut expected: Vec<String> =
+                            ["-p", "--output-format", "stream-json", "--verbose"]
+                                .into_iter()
+                                .map(str::to_string)
+                                .collect();
+                        expected.extend(launch.model_args().iter().map(|arg| (*arg).to_string()));
+                        expected.extend(
                             launch
-                        ),
-                        expected,
-                        "claude {model:?}/{mode:?} resume={}",
-                        resume.is_some()
-                    );
+                                .mode_args(resume.is_some())
+                                .iter()
+                                .map(|arg| (*arg).to_string()),
+                        );
+                        expected.extend(launch.effort_args().iter().map(|arg| (*arg).to_string()));
+                        if let Some(session_id) = resume {
+                            expected.push("--resume".to_string());
+                            expected.push(session_id.to_string());
+                        }
+                        expected.push("--".to_string());
+                        expected.push("do it".to_string());
+                        assert_eq!(
+                            agent_invocation_args(
+                                AgentCliInvocation::ClaudeCode,
+                                "do it",
+                                resume,
+                                launch
+                            ),
+                            expected,
+                            "claude {model:?}/{mode:?}/{effort:?} resume={}",
+                            resume.is_some()
+                        );
+                    }
                 }
             }
         }

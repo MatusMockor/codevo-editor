@@ -4,7 +4,7 @@ import { act, useCallback, useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetKeymapPlatformCacheForTests } from "./domain/keymap";
-import { defaultAppSettings } from "./domain/settings";
+import { defaultAppSettings, defaultWorkspaceSettings } from "./domain/settings";
 import type { EditorSessionOwnerKey } from "./domain/editorSessionOwnerKey";
 import type { EditorCursorStorePort } from "./application/editorCursorStore";
 import { useActiveEditorCursorSnapshot } from "./application/useEditorCursorSnapshot";
@@ -156,6 +156,10 @@ describe("App Quick Open integration", () => {
         workspaceTabs: ["/workspace"],
       }),
     );
+    localStorage.setItem(
+      "editor.settings.workspace:canonical:%2Fworkspace",
+      JSON.stringify(expandedEditorWorkspaceSettings()),
+    );
     mocks.invoke.mockImplementation((command, args) => {
       if (command === "register_workspace_path") {
         return Promise.resolve({
@@ -226,8 +230,9 @@ describe("App Quick Open integration", () => {
     const largeContent = "x".repeat(3 * 1024 * 1024);
     mocks.largeFileContent.current = largeContent;
     localStorage.setItem(
-      "editor.settings.workspace:canonical:workspace-1",
+      "editor.settings.workspace:canonical:%2Fworkspace",
       JSON.stringify({
+        ...expandedEditorWorkspaceSettings(),
         largeFileMode: { characterLimit: 10 * 1024 * 1024, lineLimit: 200_000 },
       }),
     );
@@ -536,4 +541,21 @@ async function waitForElement<T extends Element>(
   }
 
   return element;
+}
+
+function expandedEditorWorkspaceSettings() {
+  const settings = defaultWorkspaceSettings();
+  return {
+    ...settings,
+    session: {
+      ...settings.session,
+      agentWorkbench: {
+        layout: "editor-expanded",
+        rightSurface: null,
+        bottomPanel: false,
+        rightPanelWidth: 540,
+        bottomPanelHeight: 280,
+      },
+    },
+  };
 }

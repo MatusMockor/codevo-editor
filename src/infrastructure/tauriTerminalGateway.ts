@@ -1,12 +1,15 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type {
-  TerminalGateway,
-  TerminalOutputEvent,
-  TerminalProfile,
-  TerminalRuntimeStatus,
-  TerminalSize,
-  TerminalUnsubscribeFn,
+import {
+  DEFAULT_TERMINAL_LAUNCH_TARGET,
+  serializeTerminalLaunchTarget,
+  type TerminalGateway,
+  type TerminalLaunchTarget,
+  type TerminalOutputEvent,
+  type TerminalProfile,
+  type TerminalRuntimeStatus,
+  type TerminalSize,
+  type TerminalUnsubscribeFn,
 } from "../domain/terminal";
 
 const OUTPUT_EVENT = "terminal://output";
@@ -53,7 +56,9 @@ export class TauriTerminalGateway implements TerminalGateway {
     size: TerminalSize,
     profileId?: string,
     shellIntegrationEnabled = false,
+    target: TerminalLaunchTarget = DEFAULT_TERMINAL_LAUNCH_TARGET,
   ): Promise<TerminalRuntimeStatus> {
+    const launchTarget = serializeTerminalLaunchTarget(target);
     if (!this.isRuntimeAvailable()) {
       return Promise.reject(new Error(DESKTOP_RUNTIME_REQUIRED));
     }
@@ -61,6 +66,7 @@ export class TauriTerminalGateway implements TerminalGateway {
     return this.invokeCommand("start_terminal_session", {
       profileId,
       rootPath,
+      target: launchTarget,
       terminalShellIntegrationEnabled: shellIntegrationEnabled,
       size,
     }) as Promise<TerminalRuntimeStatus>;

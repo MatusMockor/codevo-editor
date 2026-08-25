@@ -20,7 +20,9 @@ import {
   settingsIgnorePatternsFromText,
   settingsIgnorePatternsText,
   terminalThemeForAppTheme,
+  WORKSPACE_SESSION_VERSION,
 } from "./settings";
+import { initialAgentWorkbenchLayout, serializeAgentWorkbenchLayout } from "./agentWorkbenchLayout";
 import { defaultKeymapSettings } from "./keymap";
 import {
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
@@ -1108,6 +1110,80 @@ describe("normalizeWorkspaceSession", () => {
     expect(normalizeWorkspaceSession({ version: 2, sidebarView: "git" })).toEqual(
       defaultWorkspaceSessionState(),
     );
+  });
+
+  it("omits the agent workbench layout when it is absent", () => {
+    const normalized = normalizeWorkspaceSession(defaultWorkspaceSessionState());
+
+    expect(normalized.version).toBe(WORKSPACE_SESSION_VERSION);
+    expect("agentWorkbench" in normalized).toBe(false);
+  });
+
+  it("restores a valid agent workbench layout without a version bump", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      agentWorkbench: {
+        layout: "agent",
+        rightSurface: "diff",
+        bottomPanel: true,
+        rightPanelWidth: 640,
+        bottomPanelHeight: 320,
+      },
+    });
+
+    expect(normalized.version).toBe(WORKSPACE_SESSION_VERSION);
+    expect(normalized.agentWorkbench).toEqual({
+      layout: "agent",
+      rightSurface: "diff",
+      bottomPanel: true,
+      rightPanelWidth: 640,
+      bottomPanelHeight: 320,
+    });
+  });
+
+  it("drops a non-record agent workbench layout", () => {
+    [null, "agent", 7, [], true].forEach((agentWorkbench) => {
+      const normalized = normalizeWorkspaceSession({
+        ...defaultWorkspaceSessionState(),
+        agentWorkbench,
+      });
+
+      expect("agentWorkbench" in normalized).toBe(false);
+    });
+  });
+
+  it("fails closed to the layout defaults for invalid agent workbench values", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      agentWorkbench: {
+        layout: "browser",
+        rightSurface: "preview",
+        bottomPanel: "yes",
+        rightPanelWidth: "wide",
+        bottomPanelHeight: "tall",
+      },
+    });
+
+    expect(normalized.agentWorkbench).toEqual(
+      serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout),
+    );
+  });
+
+  it("never persists the remembered surface", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      agentWorkbench: {
+        layout: "agent",
+        rightSurface: null,
+        lastSurface: "terminal",
+        bottomPanel: false,
+        rightPanelWidth: 540,
+        bottomPanelHeight: 280,
+      },
+    });
+
+    expect(normalized.agentWorkbench).toBeDefined();
+    expect("lastSurface" in (normalized.agentWorkbench ?? {})).toBe(false);
   });
 });
 

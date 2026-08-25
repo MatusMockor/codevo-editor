@@ -4,7 +4,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialIndexProgress } from "../domain/indexProgress";
-import { WorkbenchToolbar, type WorkbenchToolbarProps } from "./WorkbenchToolbar";
+import {
+  COLLAPSE_EDITOR_LABEL,
+  WorkbenchToolbar,
+  type WorkbenchToolbarProps,
+} from "./WorkbenchToolbar";
 
 describe("WorkbenchToolbar", () => {
   let host: HTMLDivElement;
@@ -22,73 +26,59 @@ describe("WorkbenchToolbar", () => {
     host.remove();
   });
 
-  it("marks Code as the active mode by default", () => {
+  it("has no Code or Agents mode switch", () => {
     render();
 
-    expect(modeButton("Code").getAttribute("aria-pressed")).toBe("true");
-    expect(modeButton("Agents").getAttribute("aria-pressed")).toBe("false");
+    expect(host.querySelector(".workbench-mode-switch")).toBeNull();
+    expect(host.querySelector('[aria-label="Workbench mode"]')).toBeNull();
+    expect(host.textContent).not.toContain("Agents");
   });
 
-  it("marks Agents as the active mode when agent mode runs", () => {
-    render({ agentModeActive: true });
+  it("offers to collapse the expanded editor back to the threads", () => {
+    const onCollapseEditor = vi.fn();
+    render({ onCollapseEditor });
 
-    expect(modeButton("Agents").getAttribute("aria-pressed")).toBe("true");
-    expect(modeButton("Code").getAttribute("aria-pressed")).toBe("false");
+    act(() => collapseButton()?.click());
+
+    expect(collapseButton()?.getAttribute("title")).toBe(COLLAPSE_EDITOR_LABEL);
+    expect(onCollapseEditor).toHaveBeenCalledTimes(1);
   });
 
-  it("switches between the two modes", () => {
-    const onSelectAgentMode = vi.fn();
-    render({ onSelectAgentMode });
+  it("hides the collapse button when the agent layout is unavailable", () => {
+    render({ collapseAvailable: false });
 
-    act(() => modeButton("Agents").click());
-    act(() => modeButton("Code").click());
-
-    expect(onSelectAgentMode.mock.calls).toEqual([[true], [false]]);
+    expect(collapseButton()).toBeNull();
   });
 
-  it("keeps agent mode unreachable without a workspace", () => {
-    render({ workspaceRoot: null });
-
-    expect(modeButton("Agents").disabled).toBe(true);
-  });
-
-  it("keeps the IDE Mode switch and the workspace status next to the mode switch", () => {
+  it("keeps the IDE Mode switch and the workspace status in the expanded layout", () => {
     const onToggleSmartMode = vi.fn();
-    render();
+    render({ onToggleSmartMode });
 
     expect(host.textContent).toContain("IDE Mode");
-    act(() => host.querySelector<HTMLButtonElement>(".smart-mode-switch")?.click());
-
-    render({ onToggleSmartMode });
     act(() => host.querySelector<HTMLButtonElement>(".smart-mode-switch")?.click());
 
     expect(onToggleSmartMode).toHaveBeenCalledTimes(1);
   });
 
-  it("strips editor-only toolbar content in agent mode", () => {
-    render({
-      agentModeActive: true,
-      ideProgress: { busy: true, state: "active", text: "Indexing" },
-    });
+  it("renders nothing in the agent layout of a trusted workspace", () => {
+    render({ layout: "agent", ideProgress: { busy: true, state: "active", text: "Indexing" } });
+
+    expect(host.querySelector(".workbench-toolbar")).toBeNull();
+  });
+
+  it("keeps only the trust affordance reachable in the agent layout", () => {
+    const onTrustWorkspace = vi.fn();
+    render({ layout: "agent", onTrustWorkspace, workspaceTrusted: false });
 
     expect(host.querySelector(".workbench-toolbar--agent")).not.toBeNull();
     expect(host.querySelector(".smart-mode-switch")).toBeNull();
     expect(host.querySelector(".toolbar-status")).toBeNull();
-    expect(host.querySelector(".toolbar-progress")).toBeNull();
-    expect(modeButton("Agents").getAttribute("aria-pressed")).toBe("true");
-    expect(modeButton("Code").getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("keeps the trust affordance reachable in agent mode", () => {
-    const onTrustWorkspace = vi.fn();
-    render({ agentModeActive: true, onTrustWorkspace, workspaceTrusted: false });
-
     act(() => host.querySelector<HTMLButtonElement>(".toolbar-action")?.click());
 
     expect(onTrustWorkspace).toHaveBeenCalledTimes(1);
   });
 
-  it("offers to trust an untrusted workspace", () => {
+  it("offers to trust an untrusted workspace in the expanded layout", () => {
     const onTrustWorkspace = vi.fn();
     render({ onTrustWorkspace, workspaceTrusted: false });
 
@@ -101,26 +91,23 @@ describe("WorkbenchToolbar", () => {
     act(() => root.render(<WorkbenchToolbar {...defaultProps()} {...overrides} />));
   }
 
-  function modeButton(label: string): HTMLButtonElement {
-    const element = [
-      ...host.querySelectorAll<HTMLButtonElement>(".workbench-mode-switch button"),
-    ].find((candidate) => candidate.textContent === label);
-    expect(element).toBeDefined();
-    return element ?? document.createElement("button");
+  function collapseButton(): HTMLButtonElement | null {
+    return host.querySelector<HTMLButtonElement>(`button[aria-label="${COLLAPSE_EDITOR_LABEL}"]`);
   }
 });
 
 function defaultProps(): WorkbenchToolbarProps {
   return {
-    agentModeActive: false,
+    collapseAvailable: true,
     ideProgress: { busy: false, state: "idle", text: null },
     indexProgress: initialIndexProgress(),
     intelligenceMode: "fullSmart",
     languageServerPlan: null,
     languageServerRuntimeStatus: null,
+    layout: "editor-expanded",
     workspaceRoot: "/workspace/app",
     workspaceTrusted: true,
-    onSelectAgentMode: () => undefined,
+    onCollapseEditor: () => undefined,
     onShowProgressPanel: () => undefined,
     onToggleSmartMode: () => undefined,
     onTrustWorkspace: () => undefined,

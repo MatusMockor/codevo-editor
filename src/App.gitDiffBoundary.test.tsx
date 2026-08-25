@@ -3,11 +3,16 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { initialAgentWorkbenchLayout } from "./domain/agentWorkbenchLayout";
 import type { GitFileDiff } from "./domain/git";
 import { createEmptyDebugWatches } from "./test/debugWatchMocks";
 
 vi.mock("./application/useWorkbenchController", () => ({
   useWorkbenchController: () => createWorkbench(),
+}));
+
+vi.mock("./components/agentMode/AgentWorkbenchScreen", () => ({
+  AgentWorkbenchScreen: () => null,
 }));
 
 vi.mock("./components/useNoticeToastRenderers", () => ({
@@ -148,6 +153,11 @@ function createWorkbench() {
     {
       activeDocument: gitDiffBoundaryMockState.activeDocument,
       agentModeActive: false,
+      agentWorkbench: {
+        layout: { ...initialAgentWorkbenchLayout, layout: "editor-expanded" },
+        effectiveLayout: "editor-expanded",
+        dispatch: noop,
+      },
       activeDocumentGitBaseline: null,
       activePath: "mockor-git-diff:worktree:/workspace/README.md",
       appSettings: {

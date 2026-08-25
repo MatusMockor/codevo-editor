@@ -1,0 +1,259 @@
+import { useCallback, useEffect, useMemo, useRef, type PointerEvent } from "react";
+import { workbenchAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
+import type { AgentSurfaceFileTreeDependencies } from "../../application/useAgentSurfaceFileTree";
+import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
+import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
+import type { useWorkbenchController } from "../../application/useWorkbenchController";
+import type { GitChangeStatus } from "../../domain/git";
+import { shortcutForCommand, type KeymapSettings } from "../../domain/keymap";
+import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
+import type { TerminalGateway } from "../../domain/terminal";
+import {
+  TauriRevealPathGateway,
+  type RevealPathGateway,
+} from "../../infrastructure/tauriRevealPathGateway";
+import { AgentModeView } from "./AgentModeView";
+import {
+  AGENT_REVEAL_BLOCKED_REASON,
+  agentRevealRootForPath,
+  type AgentPanelLayoutShortcuts,
+} from "./agentThreadHeaderPresentation";
+import {
+  agentBottomPanelSync,
+  initialAgentBottomPanelSyncState,
+  type AgentWorkbenchChrome,
+} from "./agentWorkbenchChrome";
+
+type Workbench = ReturnType<typeof useWorkbenchController>;
+
+export type AgentWorkbenchScreenWorkbench = Pick<
+  Workbench,
+  | "activePath"
+  | "agentWorkbench"
+  | "appSettings"
+  | "bottomPanelView"
+  | "bottomPanelVisible"
+  | "hideBottomPanel"
+  | "nodePackageScripts"
+  | "openPinnedFile"
+  | "openProblemNotice"
+  | "previewFile"
+  | "setSidebarView"
+  | "showBottomPanelView"
+  | "workspaceIdentityDescriptor"
+  | "workspaceRoot"
+> & { readonly agents: WorkbenchAgentsSurface };
+
+export interface AgentWorkbenchScreenProps {
+  readonly workbench: AgentWorkbenchScreenWorkbench;
+  readonly activeFileRevealSignal: number;
+  readonly fileStatusesByPath: Record<string, GitChangeStatus>;
+  readonly files: AgentSurfaceFileTreeDependencies["files"];
+  readonly fileChanges: AgentSurfaceFileTreeDependencies["fileChanges"];
+  readonly terminalGateway: TerminalGateway;
+  readonly monacoTheme: MonacoAppTheme;
+  readonly terminalTheme: TerminalTheme;
+  readonly workspaceTrusted: boolean;
+  readonly revealPathGateway?: RevealPathGateway;
+  onTrustWorkspace(): void;
+  onResizeRightPanelStart(event: PointerEvent<HTMLDivElement>): void;
+}
+
+const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGateway();
+
+export function AgentWorkbenchScreen({
+  activeFileRevealSignal,
+  fileChanges,
+  fileStatusesByPath,
+  files,
+  monacoTheme,
+  onResizeRightPanelStart,
+  onTrustWorkspace,
+  revealPathGateway = DEFAULT_REVEAL_PATH_GATEWAY,
+  terminalGateway,
+  terminalTheme,
+  workbench,
+  workspaceTrusted,
+}: AgentWorkbenchScreenProps) {
+  const projects = workbench.agents.agentProjects;
+  const { agentWorkbench, appSettings, nodePackageScripts, workspaceRoot } = workbench;
+  const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
+  const { bottomPanelView, bottomPanelVisible, hideBottomPanel, showBottomPanelView } = workbench;
+  const workspaceId = workbench.workspaceIdentityDescriptor?.workspaceId ?? null;
+
+  const scripts = useMemo<AgentThreadScriptRunner>(
+    () => ({
+      scripts: nodePackageScripts.scripts,
+      truncated: nodePackageScripts.truncated,
+      available: nodePackageScripts.available,
+      unavailableReason: nodePackageScripts.error,
+      active: nodePackageScripts.pending ? nodePackageScripts.task : null,
+      run: (script) => nodePackageScripts.run(script),
+      stop: () => nodePackageScripts.stop(),
+    }),
+    [nodePackageScripts],
+  );
+
+  const openScriptsView = useCallback(() => {
+    agentWorkbench.dispatch({ kind: "expandEditor" });
+    setSidebarView("scripts");
+  }, [agentWorkbench, setSidebarView]);
+
+  const showTerminalPanel = useCallback(() => {
+    showBottomPanelView("terminal");
+  }, [showBottomPanelView]);
+
+  const onToggleBottomPanel = useCallback(() => {
+    if (bottomPanelVisible) {
+      hideBottomPanel();
+      return;
+    }
+    showTerminalPanel();
+  }, [bottomPanelVisible, hideBottomPanel, showTerminalPanel]);
+
+  const syncRef = useRef(initialAgentBottomPanelSyncState);
+  const persistedBottomPanel = agentWorkbench.layout.bottomPanel;
+  const agentLayoutActive = agentWorkbench.effectiveLayout === "agent";
+  const dispatchLayout = agentWorkbench.dispatch;
+  useEffect(() => {
+    const result = agentBottomPanelSync(syncRef.current, {
+      owner: workspaceRoot,
+      active: agentLayoutActive,
+      visible: bottomPanelVisible,
+      view: bottomPanelView,
+      persisted: persistedBottomPanel,
+    });
+    syncRef.current = result.state;
+    if (result.mirror !== null) {
+      dispatchLayout({ kind: result.mirror === "show" ? "showBottomPanel" : "hideBottomPanel" });
+    }
+    if (result.showTerminal) {
+      showBottomPanelView("terminal");
+    }
+  }, [
+    agentLayoutActive,
+    bottomPanelView,
+    bottomPanelVisible,
+    dispatchLayout,
+    persistedBottomPanel,
+    showBottomPanelView,
+    workspaceRoot,
+  ]);
+
+  const revealRoots = useMemo(
+    () => [...projects.projects.map((project) => project.rootPath), workspaceRoot ?? ""],
+    [projects.projects, workspaceRoot],
+  );
+  const revealPath = useCallback(
+    async (path: string): Promise<void> => {
+      const rootPath = agentRevealRootForPath(path, revealRoots);
+      if (rootPath === null) throw new Error(AGENT_REVEAL_BLOCKED_REASON);
+      await revealPathGateway.revealPath({ rootPath, path });
+    },
+    [revealPathGateway, revealRoots],
+  );
+
+  const openTerminalLink = useCallback(
+    (path: string, line?: number, column?: number) => {
+      const position = { column: column ?? 1, lineNumber: line ?? 1 };
+      void openProblemNotice({
+        id: `agent-terminal:${path}:${position.lineNumber}:${position.column}`,
+        message: path,
+        navigationTarget: { path, range: { end: position, start: position } },
+        severity: "info",
+        source: "Terminal",
+      });
+    },
+    [openProblemNotice],
+  );
+
+  const shortcuts = useMemo(() => layoutShortcuts(appSettings.keymap), [appSettings.keymap]);
+  const chrome = useMemo<AgentWorkbenchChrome>(
+    () => ({
+      layout: agentWorkbench,
+      bottomPanelVisible,
+      shortcuts,
+      scripts,
+      workspaceId,
+      workspaceTrusted,
+      fileTree: {
+        files,
+        fileChanges,
+        activePath: workbench.activePath,
+        revealActivePathSignal: activeFileRevealSignal,
+        fileStatusesByPath,
+        onOpenFile: openPinnedFile,
+        onPreviewFile: previewFile,
+      },
+      diff: {
+        monacoTheme,
+        editorFontFamily: appSettings.editorFontFamily,
+        editorFontLigatures: appSettings.editorFontLigatures,
+        editorFontSize: appSettings.editorFontSize,
+      },
+      terminal: {
+        terminalGateway,
+        terminalTheme,
+        shellIntegrationEnabled: appSettings.terminalShellIntegrationEnabled,
+        onOpenLink: openTerminalLink,
+      },
+      onToggleBottomPanel,
+      onShowTerminalPanel: showTerminalPanel,
+      onOpenScriptsView: openScriptsView,
+      revealPath,
+      onTrustWorkspace,
+      onResizeRightPanelStart,
+    }),
+    [
+      activeFileRevealSignal,
+      agentWorkbench,
+      appSettings.editorFontFamily,
+      appSettings.editorFontLigatures,
+      appSettings.editorFontSize,
+      appSettings.terminalShellIntegrationEnabled,
+      fileChanges,
+      fileStatusesByPath,
+      files,
+      monacoTheme,
+      onResizeRightPanelStart,
+      onToggleBottomPanel,
+      onTrustWorkspace,
+      openPinnedFile,
+      openScriptsView,
+      openTerminalLink,
+      previewFile,
+      revealPath,
+      scripts,
+      shortcuts,
+      showTerminalPanel,
+      terminalGateway,
+      terminalTheme,
+      workbench.activePath,
+      bottomPanelVisible,
+      workspaceId,
+      workspaceTrusted,
+    ],
+  );
+
+  return (
+    <AgentModeView
+      agents={workbench.agents}
+      chrome={chrome}
+      key={workspaceRoot ?? ""}
+      onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
+      onTrustProject={(projectRootKey) => void projects.trustProject(projectRootKey)}
+      overflowRootPaths={projects.overflowRootPaths}
+      projects={projects.projects}
+      viewCommands={workbenchAgentViewCommandBridge}
+      workspaceRoot={workspaceRoot}
+    />
+  );
+}
+
+function layoutShortcuts(keymap: KeymapSettings): AgentPanelLayoutShortcuts {
+  return {
+    bottomPanel: shortcutForCommand(keymap, "panel.toggle") ?? "",
+    rightPanel: shortcutForCommand(keymap, "agent.toggleRightPanel") ?? "",
+    expandEditor: shortcutForCommand(keymap, "agent.toggleEditorExpanded") ?? "",
+  };
+}

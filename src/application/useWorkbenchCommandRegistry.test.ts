@@ -133,7 +133,7 @@ describe("debug command registration", () => {
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     expect(registration).toContain("shortcut,");
-    expect(registration).toContain("toggleAgentMode,");
+    expect(registration).toContain("agentLayout: agents.agentWorkbench,");
     expect(registration).toContain("viewCommands: workbenchAgentViewCommandBridge,");
   });
 });

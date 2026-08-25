@@ -1,4 +1,4 @@
-import { ExternalLink, GitCompare, RefreshCw, X } from "lucide-react";
+import { ExternalLink, GitCompare } from "lucide-react";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentShipAvailability } from "../../domain/agentShip";
 import type { GitChangedFile } from "../../domain/git";
@@ -7,51 +7,24 @@ import { agentChangeOpenAvailability, agentChangeStatusLetter } from "./agentMod
 export interface AgentThreadChangesProps {
   readonly thread: AgentThreadView;
   readonly summary: AgentTaskChangeSummary;
-  onHideChanges(threadId: string): void;
-  onHideFileDiff(threadId: string): void;
-  onRefreshChanges(threadId: string): void;
+  readonly selectedRelativePath: string | null;
   onShowFileDiff(threadId: string, change: GitChangedFile): void;
   onOpenChangedFile(threadId: string, change: GitChangedFile): void;
   onOpenChangedFileDiff(threadId: string, change: GitChangedFile): void;
 }
 
 export function AgentThreadChanges({
-  onHideChanges,
-  onHideFileDiff,
   onOpenChangedFile,
   onOpenChangedFileDiff,
-  onRefreshChanges,
   onShowFileDiff,
+  selectedRelativePath,
   summary,
   thread,
 }: AgentThreadChangesProps) {
   const threadId = thread.thread.threadId;
 
   return (
-    <section aria-label={`Changes for agent ${threadId}`} className="agent-changes">
-      <header className="agent-changes__head">
-        <span className="agent-microlabel">changes</span>
-        <span className="agent-session__spacer" />
-        <button
-          aria-label={`Refresh changes for agent ${threadId}`}
-          className="agent-linkbutton"
-          disabled={summary.loading}
-          onClick={() => onRefreshChanges(threadId)}
-          type="button"
-        >
-          <RefreshCw aria-hidden="true" size={11} /> Refresh
-        </button>
-        <button
-          aria-expanded
-          aria-label={`Hide changes for agent ${threadId}`}
-          className="agent-linkbutton"
-          onClick={() => onHideChanges(threadId)}
-          type="button"
-        >
-          Hide
-        </button>
-      </header>
-
+    <div aria-label={`Changes for agent ${threadId}`} className="agent-changes" role="group">
       {summary.loading && <p className="agent-note">Reading the worktree changes…</p>}
       {summary.error && <p className="agent-note agent-note--bad">{summary.error}</p>}
 
@@ -68,6 +41,7 @@ export function AgentThreadChanges({
               onOpenChangedFile={onOpenChangedFile}
               onOpenChangedFileDiff={onOpenChangedFileDiff}
               onShowFileDiff={onShowFileDiff}
+              selected={file.relativePath === selectedRelativePath}
               thread={thread}
             />
           ))}
@@ -79,11 +53,7 @@ export function AgentThreadChanges({
           More changed files exist than are listed here.
         </p>
       )}
-
-      {summary.diff && (
-        <AgentThreadDiff diff={summary.diff} onClose={() => onHideFileDiff(threadId)} />
-      )}
-    </section>
+    </div>
   );
 }
 
@@ -92,9 +62,11 @@ function AgentChangedFileRow({
   onOpenChangedFile,
   onOpenChangedFileDiff,
   onShowFileDiff,
+  selected,
   thread,
 }: {
   readonly file: GitChangedFile;
+  readonly selected: boolean;
   readonly thread: AgentThreadView;
   onShowFileDiff(threadId: string, change: GitChangedFile): void;
   onOpenChangedFile(threadId: string, change: GitChangedFile): void;
@@ -108,7 +80,10 @@ function AgentChangedFileRow({
   const blockedReason = rowBlockedReason(openAvailability, diffAvailability);
 
   return (
-    <li className="agent-files__row">
+    <li
+      aria-current={selected ? "true" : undefined}
+      className={selected ? "agent-files__row agent-files__row--selected" : "agent-files__row"}
+    >
       <span
         className={`agent-files__status agent-files__status--${file.status}`}
         title={file.status}
@@ -153,64 +128,4 @@ function rowBlockedReason(open: AgentShipAvailability, diff: AgentShipAvailabili
   if (diff.kind === "blocked") return diff.reason;
   if (open.kind === "blocked") return open.reason;
   return null;
-}
-
-function AgentThreadDiff({
-  diff,
-  onClose,
-}: {
-  readonly diff: NonNullable<AgentTaskChangeSummary["diff"]>;
-  onClose(): void;
-}) {
-  return (
-    <section aria-label={`Diff for ${diff.relativePath}`} className="agent-diff">
-      <header className="agent-diff__head">
-        <span className="agent-diff__path">{diff.relativePath}</span>
-        <span className="agent-session__spacer" />
-        <button
-          aria-label="Close file diff"
-          className="agent-linkbutton"
-          onClick={onClose}
-          type="button"
-        >
-          <X aria-hidden="true" size={11} />
-        </button>
-      </header>
-      {diff.loading && <p className="agent-note">Reading the file diff…</p>}
-      {diff.error && <p className="agent-note agent-note--bad">{diff.error}</p>}
-      {diff.unavailableReason && (
-        <p className="agent-note agent-note--warning">
-          {diff.unavailableReason === "binary"
-            ? "This file is binary, so no text diff is shown."
-            : "This file is too large to preview."}
-        </p>
-      )}
-      {!diff.loading && diff.error === null && diff.unavailableReason === null && (
-        <div className="agent-diff__grid">
-          <AgentDiffPane label="Before" side={diff.original} />
-          <AgentDiffPane label="After" side={diff.modified} />
-        </div>
-      )}
-    </section>
-  );
-}
-
-function AgentDiffPane({
-  label,
-  side,
-}: {
-  readonly label: string;
-  readonly side: { readonly text: string; readonly truncated: boolean };
-}) {
-  return (
-    <div className="agent-diff__pane">
-      <span className="agent-microlabel">{label}</span>
-      <pre aria-label={`${label} content`} className="agent-diff__text">
-        {side.text === "" ? "Empty file." : side.text}
-      </pre>
-      {side.truncated && (
-        <p className="agent-note agent-note--warning">This side was truncated to stay bounded.</p>
-      )}
-    </div>
-  );
 }

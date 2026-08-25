@@ -1999,6 +1999,78 @@ button {
   flex-direction: column;
 }
 
+/* Agent workbench frame */
+.workbench-frame {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.workbench-frame__bottom {
+  display: flex;
+  min-height: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+}
+
+.editor-workbench {
+  --agent-right-panel-committed: 0px;
+  --agent-bottom-panel-committed: 0px;
+  --agent-right-panel-width: var(--agent-right-panel-committed);
+  --agent-bottom-panel-height: var(--agent-bottom-panel-committed);
+}
+
+.workbench-frame[data-layout="agent"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--agent-right-panel-width);
+  grid-template-rows: minmax(0, 1fr) var(--agent-bottom-panel-height);
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="agent"] {
+  min-width: 0;
+  min-height: 0;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="bottom"] {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="surface"] {
+  min-width: 0;
+  min-height: 0;
+  grid-column: 2;
+  grid-row: 1 / -1;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="editor"] {
+  z-index: 1;
+  padding-top: var(--agent-surface-header-height);
+  padding-left: var(--agent-surface-tree-width);
+  grid-column: 2;
+  grid-row: 1 / -1;
+  pointer-events: none;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="editor"] > * {
+  pointer-events: auto;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="bottom"] .bottom-panel {
+  height: 100%;
+  max-height: none;
+  flex: 1 1 auto;
+}
+
+.workbench-frame[data-layout="editor-expanded"] > [data-slot="agent"],
+.workbench-frame[data-layout="editor-expanded"] > [data-slot="surface"] {
+  display: none;
+}
+
 .project-tabs {
   display: flex;
   min-height: 34px;

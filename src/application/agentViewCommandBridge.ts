@@ -8,6 +8,8 @@ export type AgentViewCommandId =
   | "agent.nextThread"
   | "agent.searchThreads"
   | "agent.findInThread"
+  | "agent.runPreferredScript"
+  | "agent.openCommitMenu"
   | `agent.jumpToThread.${AgentJumpSlot}`;
 
 export interface AgentViewCommandHandlers {
@@ -17,6 +19,8 @@ export interface AgentViewCommandHandlers {
   jumpToThread(slot: AgentJumpSlot): void;
   searchThreads(): void;
   findInThread(): void;
+  runPreferredScript?(): void;
+  openCommitMenu?(): void;
   threadSelected(): boolean;
 }
 
@@ -70,6 +74,12 @@ function dispatch(handlers: AgentViewCommandHandlers, commandId: AgentViewComman
       return;
     case "agent.findInThread":
       handlers.findInThread();
+      return;
+    case "agent.runPreferredScript":
+      handlers.runPreferredScript?.();
+      return;
+    case "agent.openCommitMenu":
+      handlers.openCommitMenu?.();
       return;
     default:
       handlers.jumpToThread(jumpSlotOf(commandId));

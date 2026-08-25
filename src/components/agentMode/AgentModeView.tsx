@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { PanelLeftOpen, Settings, X } from "lucide-react";
-import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import { defaultAgentLaunchOptions, type AgentLaunchOptions } from "../../domain/agentLaunch";
-import { isTerminalAgentTurnStatus, type AgentThread } from "../../domain/agentThread";
+import { PanelLeftOpen } from "lucide-react";
 import {
-  MAX_AGENT_TASK_PROMPT_BYTES,
-  type AgentCliKind,
-  type AgentTaskIsolation,
-} from "../../domain/agentTask";
+  useAgentThreadScripts,
+  type AgentThreadScriptTarget,
+} from "../../application/useAgentThreadScripts";
+import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
+import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { MAX_AGENT_TASK_PROMPT_BYTES, type AgentTaskIsolation } from "../../domain/agentTask";
 import type {
   AgentTasksNotice,
   AgentThreadsSurface,
@@ -22,15 +21,37 @@ import { useAgentThreadSearch } from "../../application/useAgentThreadSearch";
 import {
   AgentComposer,
   type AgentComposerMode,
-  type AgentComposerProjectOption,
   type AgentComposerSubmission,
 } from "./AgentComposer";
+import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
 import type { AgentShipActions } from "./AgentShipPanel";
+import { AgentSurfaceHost } from "./AgentSurfaceHost";
+import { agentSurfaceBlockedReason } from "./agentSurfacePolicy";
+import { AgentNoticeBar } from "./AgentNoticeBar";
+import {
+  agentLaunchKey,
+  resolveComposerLaunch,
+  resolveLaunchScope,
+  terminalTurnKey,
+  type IsolationChoice,
+  type LaunchChoice,
+} from "./agentComposerLaunch";
 import { AgentThreadFindBar } from "./AgentThreadFindBar";
-import { AgentThreadInfoColumn } from "./AgentThreadInfoColumn";
+import { AgentThreadHeader } from "./AgentThreadHeader";
 import { AgentThreadSearchPalette } from "./AgentThreadSearchPalette";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
+import {
+  agentThreadHeaderProject,
+  agentWorkbenchLayoutProjection,
+  type AgentWorkbenchChrome,
+} from "./agentWorkbenchChrome";
+import {
+  composerTargetView,
+  resolveComposerTarget,
+  type AgentComposerProjectOption,
+  type ComposerTarget,
+} from "./agentComposerTarget";
 import {
   agentRailNewThreadTarget,
   agentRailScopeEntries,
@@ -49,7 +70,6 @@ import {
   agentPromptByteLength,
   agentShipStatusUnread,
   agentThreadDisplayTitle,
-  lastAgentTurn,
   type AgentProjectGroup,
 } from "./agentModePresentation";
 import { adjacentThreadId, agentThreadsInScope, orderedRailThreadIds } from "./agentModeNavigation";
@@ -63,22 +83,16 @@ export interface AgentModeViewProps {
   readonly overflowRootPaths: ReadonlyArray<string>;
   readonly nowTickMs?: number;
   readonly viewCommands?: AgentViewCommandBridge | null;
+  readonly chrome: AgentWorkbenchChrome;
   onTrustProject(projectRootKey: string): void;
   onReleaseProject(projectRootKey: string): void;
-}
-
-interface ComposerTarget {
-  readonly projectRootKey: string;
-  readonly repositoryRoot: string;
 }
 
 const DEFAULT_NOW_TICK_MS = 30_000;
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
 const EMPTY_IDS: ReadonlySet<string> = new Set();
-const COLLAPSED_RAIL_GRID: CSSProperties = {
-  gridTemplateColumns: "auto minmax(0, 1fr) var(--agent-info-width)",
-};
-const FIND_BAR_ROWS: CSSProperties = { gridTemplateRows: "auto minmax(0, 1fr) auto" };
+const COLLAPSED_RAIL_GRID: CSSProperties = { gridTemplateColumns: "auto minmax(0, 1fr)" };
+const FIND_BAR_ROWS: CSSProperties = { gridTemplateRows: "auto auto minmax(0, 1fr) auto" };
 const CLIPBOARD_UNAVAILABLE_NOTICE: AgentTasksNotice = {
   kind: "warning",
   message: "The clipboard is not available, nothing was copied.",
@@ -89,15 +103,22 @@ const NOTHING_TO_COPY_NOTICE: AgentTasksNotice = {
   message: "This thread has nothing to copy for that detail.",
   action: null,
 };
+const REVEAL_FAILED_NOTICE: AgentTasksNotice = {
+  kind: "warning",
+  message: "Unable to reveal that path in the file manager.",
+  action: null,
+};
 
 export function AgentModeView({
   agents,
+  chrome,
   nowTickMs = DEFAULT_NOW_TICK_MS,
   onReleaseProject,
   onTrustProject,
   overflowRootPaths,
   projects,
   viewCommands = null,
+  workspaceRoot,
 }: AgentModeViewProps) {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [railScope, setRailScope] = useState<AgentRailScope>({ kind: "all" });
@@ -155,6 +176,7 @@ export function AgentModeView({
         .map((group) => ({
           projectRootKey: group.projectRootKey,
           label: group.label,
+          origin: group.origin,
           repositories: group.repos
             .filter((repo) => repo.repositoryResolved)
             .map((repo) => ({
@@ -166,7 +188,9 @@ export function AgentModeView({
     [groups],
   );
 
-  const target = resolveComposerTarget(composerProjects, selection);
+  const selectedThread =
+    agents.threads.find((view) => view.thread.threadId === selectedThreadId) ?? null;
+  const target = resolveComposerTarget(composerProjects, selection, selectedThread, railScope);
   const composerRoot = target?.repositoryRoot ?? null;
   const composerProject =
     projects.find((project) => project.rootKey === target?.projectRootKey) ?? null;
@@ -177,8 +201,6 @@ export function AgentModeView({
   const worktreeOnlyReason =
     composerProject === null ? null : agentProjectWorktreeOnlyReason(composerProject.origin);
 
-  const selectedThread =
-    agents.threads.find((view) => view.thread.threadId === selectedThreadId) ?? null;
   const find = useAgentThreadFind(selectedThread?.thread ?? null);
 
   const unreadShipThreadId =
@@ -331,6 +353,34 @@ export function AgentModeView({
   );
 
   const shipActions = useAgentShipActions(agents);
+  const layout = agentWorkbenchLayoutProjection(chrome);
+  const dispatchLayout = chrome.layout.dispatch;
+  const openSurface = useCallback(
+    (surface: AgentSurfaceKind) => dispatchLayout({ kind: "openSurface", surface }),
+    [dispatchLayout],
+  );
+  const expandEditor = useCallback(
+    () => dispatchLayout({ kind: "expandEditor" }),
+    [dispatchLayout],
+  );
+  const toggleRightPanel = useCallback(
+    () => dispatchLayout({ kind: "toggleRightPanel" }),
+    [dispatchLayout],
+  );
+  const onShowTerminalPanel = chrome.onShowTerminalPanel;
+  const scripts = useAgentThreadScripts({
+    target: selectedThread === null ? null : scriptTarget(selectedThread),
+    workspaceRoot,
+    runner: chrome.scripts,
+    onBeforeRun: onShowTerminalPanel,
+  });
+  const reviewInDiff = useCallback(
+    (threadId: string) => {
+      void agents.showChanges(threadId);
+      openSurface("diff");
+    },
+    [agents, openSurface],
+  );
 
   const remove = useCallback(
     (threadId: string) => {
@@ -362,6 +412,9 @@ export function AgentModeView({
       switch (command.kind) {
         case "togglePin":
           agents.togglePin(threadId);
+          return;
+        case "stop":
+          void agents.stop(threadId);
           return;
         case "archive":
           agents.archive(threadId);
@@ -422,10 +475,20 @@ export function AgentModeView({
         if (selectedThreadId === null) return;
         openFind();
       },
+      runPreferredScript: () => {
+        if (scripts.preferred === null) return;
+        scripts.runScript(scripts.preferred.key);
+      },
+      openCommitMenu: () => {
+        centerRef.current
+          ?.querySelector<HTMLButtonElement>("[data-agent-commit-menu-trigger]")
+          ?.click();
+      },
       threadSelected: () => selectedThreadId !== null,
     }),
     [
       openFind,
+      scripts,
       orderedThreadIds,
       railScope,
       scopeEntries,
@@ -446,163 +509,180 @@ export function AgentModeView({
   }, [agents, localNotice]);
 
   const findHitIndex = find.open && find.hitIndex >= 0 ? find.hitIndex : undefined;
+  const headerProject = agentThreadHeaderProject(selectedThread, groups, projects, target);
+  const layoutControls = (
+    <AgentPanelLayoutControls
+      bottomPanelOpen={layout.bottomPanel}
+      onExpandEditor={expandEditor}
+      onToggleBottomPanel={chrome.onToggleBottomPanel}
+      onToggleRightPanel={toggleRightPanel}
+      rightPanelDisabledReason={null}
+      rightPanelOpen
+      shortcuts={chrome.shortcuts}
+    />
+  );
 
   return (
-    <section aria-label="Agent mode" className="agent-mode">
-      {notice && (
-        <AgentNoticeBar
-          notice={notice}
-          onConfigure={() => agents.configureAgentCli()}
-          onDismiss={dismissNotice}
-        />
-      )}
-      <AgentClockProvider nowTickMs={nowTickMs}>
-        <div className="agent-mode__grid" style={railCollapsed ? COLLAPSED_RAIL_GRID : undefined}>
-          {railCollapsed ? (
-            <div className="agent-rail__chrome">
-              <button
-                aria-expanded="false"
-                aria-label="Expand sidebar"
-                className="agent-iconbutton"
-                onClick={() => setRailCollapsed(false)}
-                title="Expand sidebar"
-                type="button"
-              >
-                <PanelLeftOpen aria-hidden="true" size={16} />
-              </button>
-            </div>
-          ) : (
-            <AgentThreadsSidebar
-              groups={groups}
-              onChangeScope={setRailScope}
-              onCollapseSidebar={() => setRailCollapsed(true)}
-              onNewThread={startNewThread}
-              onReleaseProject={onReleaseProject}
-              onSelectThread={selectThread}
-              onThreadMenuCommand={handleThreadMenuCommand}
-              onTogglePin={(threadId) => agents.togglePin(threadId)}
-              onTrustProject={onTrustProject}
-              overflowRootPaths={overflowRootPaths}
-              scope={railScope}
-              scopeEntries={scopeEntries}
-              search={search}
-              selectedThreadId={selectedThread?.thread.threadId ?? null}
-            />
-          )}
-
-          <div
-            className="agent-mode__center"
-            ref={centerRef}
-            style={find.open ? FIND_BAR_ROWS : undefined}
-          >
-            {find.open && (
-              <AgentThreadFindBar
-                currentIndex={find.hitIndex}
-                hitCount={find.hits.length}
-                onChangeQuery={find.setQuery}
-                onClose={closeFindBar}
-                onNavigate={find.navigate}
-                query={find.query}
+    <>
+      <section aria-label="Agent mode" className="agent-mode" data-slot="agent">
+        {notice && (
+          <AgentNoticeBar
+            notice={notice}
+            onConfigure={() => agents.configureAgentCli()}
+            onDismiss={dismissNotice}
+          />
+        )}
+        <AgentClockProvider nowTickMs={nowTickMs}>
+          <div className="agent-mode__grid" style={railCollapsed ? COLLAPSED_RAIL_GRID : undefined}>
+            {railCollapsed ? (
+              <div className="agent-rail__chrome">
+                <button
+                  aria-expanded="false"
+                  aria-label="Expand sidebar"
+                  className="agent-iconbutton"
+                  onClick={() => setRailCollapsed(false)}
+                  title="Expand sidebar"
+                  type="button"
+                >
+                  <PanelLeftOpen aria-hidden="true" size={16} />
+                </button>
+              </div>
+            ) : (
+              <AgentThreadsSidebar
+                groups={groups}
+                onChangeScope={setRailScope}
+                onCollapseSidebar={() => setRailCollapsed(true)}
+                onNewThread={startNewThread}
+                onReleaseProject={onReleaseProject}
+                onSelectThread={selectThread}
+                onThreadMenuCommand={handleThreadMenuCommand}
+                onTogglePin={(threadId) => agents.togglePin(threadId)}
+                onTrustProject={onTrustProject}
+                overflowRootPaths={overflowRootPaths}
+                scope={railScope}
+                scopeEntries={scopeEntries}
+                search={search}
+                selectedThreadId={selectedThread?.thread.threadId ?? null}
               />
             )}
-            <AgentThreadSession
-              composerRepositoryLabel={composerLabel}
-              findHitIndex={findHitIndex}
-              findHits={find.open ? find.hits : undefined}
-              findQuery={find.open ? find.query : undefined}
-              onHideChanges={(threadId) => agents.hideChanges(threadId)}
-              onHideFileDiff={(threadId) => agents.hideFileDiff(threadId)}
-              onOpenChangedFile={(threadId, change) =>
-                void agents.openChangedFile(threadId, change)
-              }
-              onOpenChangedFileDiff={(threadId, change) =>
-                void agents.openChangedFileDiff(threadId, change)
-              }
-              onRefreshChanges={(threadId) => void agents.showChanges(threadId)}
-              onShowFileDiff={(threadId, change) => void agents.showFileDiff(threadId, change)}
-              reveal={find.reveal}
-              shipActions={shipActions}
-              thread={selectedThread}
-            />
-            <AgentComposer
-              dangerousConfirmed={dangerousConfirmed}
-              dispatching={agents.dispatching}
-              guard={guard}
-              isolation={isolation}
-              isolationReason={
-                preview === null ? null : agentIsolationReasonLabel(preview.recommended)
-              }
-              launch={composerLaunch}
-              launchProvider={agentCliKind}
-              mode={composerMode}
-              onDangerousConfirmedChange={setDangerousConfirmed}
-              onIsolationChange={(next) => {
-                if (composerRoot === null) return;
-                setIsolationChoice({ repositoryRoot: composerRoot, isolation: next });
-                setUnsafeConfirmed(null);
-              }}
-              onLaunchChange={(next) => {
-                if (launchScope === null) return;
-                setLaunchChoice({ key: launchScope.key, launch: next });
-              }}
-              onNewThread={clearSelection}
-              onPromptChange={setPrompt}
-              onSelectProject={(projectRootKey) => {
-                setSelection({ projectRootKey, repositoryRoot: "" });
-                setUnsafeConfirmed(null);
-              }}
-              onSelectRepository={(repositoryRoot) => {
-                if (target === null) return;
-                setSelection({ projectRootKey: target.projectRootKey, repositoryRoot });
-                setUnsafeConfirmed(null);
-              }}
-              onSubmit={submit}
-              onUnsafeConfirmedChange={(next) =>
-                setUnsafeConfirmed(next ? (preview?.confirmationKey ?? null) : null)
-              }
-              projects={composerProjects}
-              prompt={prompt}
-              promptBytes={promptBytes}
-              selectedProjectRootKey={target?.projectRootKey ?? null}
-              selectedRepositoryRoot={composerRoot}
-              submitBlocked={submitBlocked}
-              unsafeConfirmed={confirmed}
-              worktreeOnly={worktreeOnly}
-              worktreeOnlyReason={worktreeOnlyReason}
-            />
-          </div>
 
-          <AgentThreadInfoColumn
-            composerIsolationReason={
-              preview === null ? null : agentIsolationReasonLabel(preview.recommended)
-            }
-            composerLaunch={composerLaunch}
-            composerRepositoryLabel={composerLabel}
-            composerRepositoryRoot={composerRoot}
-            liveTaskCount={agents.liveTaskCount}
-            maxConcurrentAgentTasks={agents.maxConcurrentAgentTasks}
-            onArchive={(threadId) => agents.archive(threadId)}
-            onRemove={remove}
-            onRemoveWorktree={(threadId) => void agents.removeWorktree(threadId)}
-            onShowChanges={(threadId) => void agents.showChanges(threadId)}
-            onStop={(threadId) => void agents.stop(threadId)}
-            onTogglePin={(threadId) => agents.togglePin(threadId)}
-            thread={selectedThread}
-          />
-        </div>
-      </AgentClockProvider>
-      <AgentThreadSearchPalette
-        archivedThreadIds={archivedThreadIds}
-        isOpen={paletteOpen}
-        onActivate={activatePaletteResult}
-        onChangeQuery={search.setQuery}
-        onClose={closePalette}
-        pending={search.pending}
-        query={search.query}
-        result={search.result}
-        titles={paletteTitles}
-      />
-    </section>
+            <div
+              className="agent-mode__center"
+              ref={centerRef}
+              style={find.open ? FIND_BAR_ROWS : undefined}
+            >
+              <AgentThreadHeader
+                layout={layout}
+                onExpandEditor={expandEditor}
+                onNewThread={startNewThread}
+                onOpenScriptsView={chrome.onOpenScriptsView}
+                onOpenSurface={openSurface}
+                onRenameThread={(threadId, title) => agents.renameThread(threadId, title)}
+                onRevealFailed={() => setLocalNotice(REVEAL_FAILED_NOTICE)}
+                onRevealPath={chrome.revealPath}
+                onThreadMenuCommand={handleThreadMenuCommand}
+                onToggleBottomPanel={chrome.onToggleBottomPanel}
+                onToggleRightPanel={toggleRightPanel}
+                project={headerProject}
+                rightPanelDisabledReason={agentSurfaceBlockedReason(
+                  layout.lastSurface,
+                  selectedThread,
+                  chrome.workspaceTrusted,
+                  workspaceRoot,
+                )}
+                scripts={scripts}
+                shipActions={shipActions}
+                shortcuts={chrome.shortcuts}
+                thread={selectedThread}
+              />
+              {find.open && (
+                <AgentThreadFindBar
+                  currentIndex={find.hitIndex}
+                  hitCount={find.hits.length}
+                  onChangeQuery={find.setQuery}
+                  onClose={closeFindBar}
+                  onNavigate={find.navigate}
+                  query={find.query}
+                />
+              )}
+              <AgentThreadSession
+                composerRepositoryLabel={composerLabel}
+                findHitIndex={findHitIndex}
+                findHits={find.open ? find.hits : undefined}
+                findQuery={find.open ? find.query : undefined}
+                onReviewInDiff={reviewInDiff}
+                reveal={find.reveal}
+                thread={selectedThread}
+              />
+              <AgentComposer
+                dangerousConfirmed={dangerousConfirmed}
+                dispatching={agents.dispatching}
+                guard={guard}
+                isolation={isolation}
+                isolationReason={
+                  preview === null ? null : agentIsolationReasonLabel(preview.recommended)
+                }
+                launch={composerLaunch}
+                launchProvider={agentCliKind}
+                mode={composerMode}
+                onDangerousConfirmedChange={setDangerousConfirmed}
+                onIsolationChange={(next) => {
+                  if (composerRoot === null) return;
+                  setIsolationChoice({ repositoryRoot: composerRoot, isolation: next });
+                  setUnsafeConfirmed(null);
+                }}
+                onLaunchChange={(next) => {
+                  if (launchScope === null) return;
+                  setLaunchChoice({ key: launchScope.key, launch: next });
+                }}
+                onNewThread={clearSelection}
+                onPromptChange={setPrompt}
+                onSelectRepository={(repositoryRoot) => {
+                  if (target === null) return;
+                  setSelection({ projectRootKey: target.projectRootKey, repositoryRoot });
+                  setUnsafeConfirmed(null);
+                }}
+                onSubmit={submit}
+                onUnsafeConfirmedChange={(next) =>
+                  setUnsafeConfirmed(next ? (preview?.confirmationKey ?? null) : null)
+                }
+                prompt={prompt}
+                promptBytes={promptBytes}
+                submitBlocked={submitBlocked}
+                target={composerTargetView(composerProjects, target)}
+                unsafeConfirmed={confirmed}
+                worktreeOnly={worktreeOnly}
+                worktreeOnlyReason={worktreeOnlyReason}
+              />
+            </div>
+          </div>
+        </AgentClockProvider>
+        <AgentThreadSearchPalette
+          archivedThreadIds={archivedThreadIds}
+          isOpen={paletteOpen}
+          onActivate={activatePaletteResult}
+          onChangeQuery={search.setQuery}
+          onClose={closePalette}
+          pending={search.pending}
+          query={search.query}
+          result={search.result}
+          titles={paletteTitles}
+        />
+      </section>
+      {layout.layout === "agent" && layout.rightSurface !== null && (
+        <AgentSurfaceHost
+          agents={agents}
+          chrome={chrome}
+          layout={layout}
+          layoutControls={layoutControls}
+          onChooseSurface={openSurface}
+          onCloseSurface={() => dispatchLayout({ kind: "closeSurface" })}
+          onExpandEditor={expandEditor}
+          thread={selectedThread}
+          workspaceRoot={workspaceRoot}
+        />
+      )}
+    </>
   );
 }
 
@@ -649,91 +729,6 @@ function useComposerMode(
   }, [agentCliConfigured, agentCliKind, liveTaskCount, maxConcurrentAgentTasks, selectedThread]);
 }
 
-interface IsolationChoice {
-  readonly repositoryRoot: string;
-  readonly isolation: AgentTaskIsolation;
-}
-
-interface LaunchChoice {
-  readonly key: string;
-  readonly launch: AgentLaunchOptions;
-}
-
-interface LaunchScope {
-  readonly key: string;
-  readonly rootKey: string;
-  readonly seed: AgentLaunchOptions | null;
-}
-
-function resolveLaunchScope(
-  selectedThread: AgentThreadView | null,
-  targetRootKey: string | null,
-): LaunchScope | null {
-  if (selectedThread !== null) {
-    const thread = selectedThread.thread;
-    return {
-      key: `thread:${thread.threadId}`,
-      rootKey: thread.owner.rootKey,
-      seed: lastAgentTurn(thread)?.launch ?? null,
-    };
-  }
-  if (targetRootKey === null) return null;
-  return { key: `root:${targetRootKey}`, rootKey: targetRootKey, seed: null };
-}
-
-function resolveComposerLaunch(
-  choice: LaunchChoice | null,
-  scope: LaunchScope | null,
-  provider: AgentCliKind,
-  lastUsedLaunch: (projectRootKey: string) => AgentLaunchOptions | null,
-): AgentLaunchOptions {
-  if (scope === null) return defaultAgentLaunchOptions(provider);
-  if (choice !== null && choice.key === scope.key && choice.launch.provider === provider) {
-    return choice.launch;
-  }
-  if (scope.seed !== null && scope.seed.provider === provider) return scope.seed;
-  const remembered = lastUsedLaunch(scope.rootKey);
-  if (remembered !== null && remembered.provider === provider) return remembered;
-  return defaultAgentLaunchOptions(provider);
-}
-
-function agentLaunchKey(launch: AgentLaunchOptions): string {
-  return `${launch.provider}:${launch.model}:${launch.mode}`;
-}
-
-function terminalTurnKey(thread: AgentThread | null): string | null {
-  if (thread === null) return null;
-  const turn = lastAgentTurn(thread);
-  if (turn === null) return null;
-  if (!isTerminalAgentTurnStatus(turn.status)) return null;
-  return `${turn.turnId}:${turn.status.kind}:${turn.endedAtEpochMs ?? 0}`;
-}
-
-function resolveComposerTarget(
-  projects: ReadonlyArray<AgentComposerProjectOption>,
-  selection: ComposerTarget | null,
-): ComposerTarget | null {
-  const project =
-    projects.find((candidate) => candidate.projectRootKey === selection?.projectRootKey) ??
-    projects[0] ??
-    null;
-  if (project === null) {
-    return null;
-  }
-
-  const repository =
-    project.repositories.find(
-      (candidate) => candidate.repositoryRoot === selection?.repositoryRoot,
-    ) ??
-    project.repositories[0] ??
-    null;
-  if (repository === null) {
-    return null;
-  }
-
-  return { projectRootKey: project.projectRootKey, repositoryRoot: repository.repositoryRoot };
-}
-
 function threadRepositoryRoot(
   views: ReadonlyArray<AgentThreadView>,
   threadId: string,
@@ -752,41 +747,17 @@ function projectRootKeyForRepository(
   return group?.projectRootKey ?? null;
 }
 
-function unsupportedThreadMenuCommand(command: never): never {
-  throw new TypeError(`Unsupported agent thread menu command: ${JSON.stringify(command)}.`);
+function scriptTarget(view: AgentThreadView): AgentThreadScriptTarget {
+  const record = view.thread;
+  return {
+    threadId: record.threadId,
+    repositoryRoot: record.owner.repositoryRoot,
+    isolation: record.target.isolation,
+    worktreePath: record.target.worktreePath,
+    worktreeMissing: view.worktreeMissing,
+  };
 }
 
-function AgentNoticeBar({
-  notice,
-  onConfigure,
-  onDismiss,
-}: {
-  readonly notice: AgentTasksNotice;
-  onConfigure(): void;
-  onDismiss(): void;
-}) {
-  return (
-    <div aria-live="polite" className={`agent-notice agent-notice--${notice.kind}`} role="status">
-      <span>{notice.message}</span>
-      <span className="agent-notice__spacer" />
-      {notice.action === "configure-agent-cli" && (
-        <button
-          aria-label="Open agent settings"
-          className="agent-linkbutton"
-          onClick={onConfigure}
-          type="button"
-        >
-          <Settings aria-hidden="true" size={12} /> Settings
-        </button>
-      )}
-      <button
-        aria-label="Dismiss agent notice"
-        className="agent-linkbutton"
-        onClick={onDismiss}
-        type="button"
-      >
-        <X aria-hidden="true" size={12} />
-      </button>
-    </div>
-  );
+function unsupportedThreadMenuCommand(command: never): never {
+  throw new TypeError(`Unsupported agent thread menu command: ${JSON.stringify(command)}.`);
 }

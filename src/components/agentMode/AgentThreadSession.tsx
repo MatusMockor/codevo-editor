@@ -7,7 +7,6 @@ import {
   type AgentThreadFindHit,
   type AgentThreadSearchRange,
 } from "../../domain/agentThreadSearch";
-import type { GitChangedFile } from "../../domain/git";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import {
   agentLaunchModeHint,
@@ -15,17 +14,12 @@ import {
   agentLaunchModelMeta,
   agentLaunchTone,
 } from "./agentLaunchPresentation";
-import { AgentShipPanel, type AgentShipActions } from "./AgentShipPanel";
-import { AgentThreadChanges } from "./AgentThreadChanges";
 import { AgentRelativeTime } from "./agentClock";
+import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 import {
   agentIsolationBadgeLabel,
-  agentThreadDisplayTitle,
-  agentThreadLifecycleLabel,
-  agentThreadTone,
   agentTurnProjection,
   agentTurnStatusLabel,
-  lastAgentTurnStatus,
   type AgentTurnItem,
 } from "./agentModePresentation";
 
@@ -53,18 +47,12 @@ interface AgentParagraphRun {
 export interface AgentThreadSessionProps {
   readonly thread: AgentThreadView | null;
   readonly composerRepositoryLabel: string | null;
-  readonly shipActions: AgentShipActions;
   readonly turnRenderProbe?: (turnId: string) => void;
   readonly findQuery?: string;
   readonly findHits?: ReadonlyArray<AgentThreadFindHit>;
   readonly findHitIndex?: number;
   readonly reveal?: AgentThreadRevealRequest | null;
-  onHideChanges(threadId: string): void;
-  onHideFileDiff(threadId: string): void;
-  onRefreshChanges(threadId: string): void;
-  onShowFileDiff(threadId: string, change: GitChangedFile): void;
-  onOpenChangedFile(threadId: string, change: GitChangedFile): void;
-  onOpenChangedFileDiff(threadId: string, change: GitChangedFile): void;
+  onReviewInDiff(threadId: string): void;
 }
 
 export function AgentThreadSession(props: AgentThreadSessionProps) {
@@ -84,20 +72,13 @@ function AgentThreadSessionBody({
   findHitIndex,
   findHits,
   findQuery,
-  onHideChanges,
-  onHideFileDiff,
-  onOpenChangedFile,
-  onOpenChangedFileDiff,
-  onRefreshChanges,
-  onShowFileDiff,
+  onReviewInDiff,
   reveal = null,
-  shipActions,
   thread,
   turnRenderProbe,
 }: AgentThreadSessionBodyProps) {
   const record = thread.thread;
   const threadId = record.threadId;
-  const tone = agentThreadTone(thread.lifecycle, lastAgentTurnStatus(record));
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const hits = findHits ?? NO_FIND_HITS;
   const query = findQuery ?? "";
@@ -128,17 +109,7 @@ function AgentThreadSessionBody({
 
   return (
     <section aria-label={`Agent thread ${threadId}`} className="agent-session">
-      <header className="agent-session__head">
-        <span className="agent-session__repo">{thread.repositoryLabel}</span>
-        <span className="agent-session__title">{agentThreadDisplayTitle(record)}</span>
-        <span className="agent-session__spacer" />
-        <span className={`agent-session__status agent-session__status--${tone}`}>
-          <span aria-hidden="true" className={`agent-dot agent-dot--${tone}`} />
-          {agentThreadLifecycleLabel(thread.lifecycle)}
-        </span>
-      </header>
-
-      <div className="agent-session__scroll" ref={scrollRef}>
+      <div className="agent-session__scroll" ref={scrollRef} tabIndex={-1}>
         <div className="agent-session__body">
           {record.turnsTruncated && (
             <p className="agent-note agent-note--warning">
@@ -167,19 +138,12 @@ function AgentThreadSessionBody({
           )}
 
           {thread.changeSummary && (
-            <AgentThreadChanges
-              onHideChanges={onHideChanges}
-              onHideFileDiff={onHideFileDiff}
-              onOpenChangedFile={onOpenChangedFile}
-              onOpenChangedFileDiff={onOpenChangedFileDiff}
-              onRefreshChanges={onRefreshChanges}
-              onShowFileDiff={onShowFileDiff}
+            <AgentThreadChangesCue
+              onReviewInDiff={onReviewInDiff}
               summary={thread.changeSummary}
-              thread={thread}
+              threadId={threadId}
             />
           )}
-
-          {shippable(thread) && <AgentShipPanel actions={shipActions} thread={thread} />}
         </div>
       </div>
     </section>
@@ -376,11 +340,6 @@ function AgentToolRow({ item }: { readonly item: Extract<AgentTurnItem, { kind: 
 function AgentThreadSessionEmpty({ repositoryLabel }: { readonly repositoryLabel: string | null }) {
   return (
     <section aria-label="New agent thread" className="agent-session">
-      <header className="agent-session__head">
-        <span className="agent-session__repo">{repositoryLabel ?? "No repository"}</span>
-        <span className="agent-session__title">New thread</span>
-        <span className="agent-session__spacer" />
-      </header>
       <div className="agent-session__scroll">
         <div className="agent-session__body agent-session__body--empty">
           <AgentEmptyFigure />
@@ -449,11 +408,6 @@ function AgentEmptyFigure() {
       />
     </svg>
   );
-}
-
-function shippable(thread: AgentThreadView): boolean {
-  if (thread.worktreeMissing || thread.worktreeRemoved) return false;
-  return thread.lifecycle === "settled";
 }
 
 function HighlightRun({

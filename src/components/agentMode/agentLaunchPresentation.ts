@@ -1,10 +1,12 @@
 import {
+  CLAUDE_EFFORT_CHOICES,
   CLAUDE_MODEL_CHOICES,
   CLAUDE_PERMISSION_MODES,
   CODEX_EXECUTION_MODES,
   CODEX_MODEL_CHOICES,
   agentLaunchIsDangerous,
   type AgentLaunchOptions,
+  type ClaudeEffortChoice,
   type ClaudeModelChoice,
   type ClaudePermissionMode,
   type CodexExecutionMode,
@@ -73,6 +75,39 @@ const CLAUDE_MODE_TEXT: Record<ClaudePermissionMode, LaunchText> = {
   },
 };
 
+const CLAUDE_EFFORT_TEXT: Record<ClaudeEffortChoice, LaunchText> = {
+  default: {
+    label: "Default",
+    meta: "default effort",
+    hint: "Uses the effort level your Claude CLI is configured to run.",
+  },
+  low: {
+    label: "Low",
+    meta: "low",
+    hint: "Answers fastest and reasons the least.",
+  },
+  medium: {
+    label: "Medium",
+    meta: "medium",
+    hint: "Balances reasoning depth against turnaround time.",
+  },
+  high: {
+    label: "High",
+    meta: "high",
+    hint: "Reasons longer before acting on harder changes.",
+  },
+  xhigh: {
+    label: "Extra high",
+    meta: "xhigh",
+    hint: "Reasons noticeably longer than high and costs more.",
+  },
+  max: {
+    label: "Max",
+    meta: "max",
+    hint: "Reasons the longest; slowest and most thorough.",
+  },
+};
+
 const CODEX_MODEL_TEXT: Record<CodexModelChoice, LaunchText> = {
   default: {
     label: "Default model",
@@ -128,12 +163,47 @@ export function agentLaunchModelChoices(provider: AgentCliKind): ReadonlyArray<A
 export function agentLaunchModeChoices(provider: AgentCliKind): ReadonlyArray<AgentLaunchChoice> {
   if (provider === "claudeCode") {
     return choices(CLAUDE_PERMISSION_MODES, CLAUDE_MODE_TEXT, (mode) =>
-      agentLaunchTone({ provider, model: "default", mode }),
+      agentLaunchTone({ provider, model: "default", mode, effort: "default" }),
     );
   }
   return choices(CODEX_EXECUTION_MODES, CODEX_MODE_TEXT, (mode) =>
     agentLaunchTone({ provider, model: "default", mode }),
   );
+}
+
+export function agentLaunchEffortChoices(): ReadonlyArray<AgentLaunchChoice> {
+  return choices(CLAUDE_EFFORT_CHOICES, CLAUDE_EFFORT_TEXT, () => null);
+}
+
+export function agentLaunchSupportsEffort(launch: AgentLaunchOptions): boolean {
+  return launch.provider === "claudeCode";
+}
+
+export function agentLaunchEffortValue(launch: AgentLaunchOptions): ClaudeEffortChoice {
+  if (launch.provider === "claudeCode") return launch.effort;
+  return "default";
+}
+
+export function agentLaunchEffortLabel(launch: AgentLaunchOptions): string {
+  return effortText(launch).label;
+}
+
+export function agentLaunchEffortHint(launch: AgentLaunchOptions): string {
+  return effortText(launch).hint;
+}
+
+export function agentLaunchEffortMeta(launch: AgentLaunchOptions): string {
+  return effortText(launch).meta;
+}
+
+export function agentLaunchWithEffort(
+  launch: AgentLaunchOptions,
+  value: string,
+): AgentLaunchOptions {
+  if (launch.provider !== "claudeCode") return launch;
+  const effort = pick(CLAUDE_EFFORT_CHOICES, value);
+  if (effort === null) return launch;
+  return { ...launch, effort };
 }
 
 export function agentLaunchModelLabel(launch: AgentLaunchOptions): string {
@@ -161,7 +231,9 @@ export function agentLaunchModeMeta(launch: AgentLaunchOptions): string {
 }
 
 export function agentLaunchMetaLabel(launch: AgentLaunchOptions): string {
-  return `${agentLaunchModelMeta(launch)} · ${agentLaunchModeMeta(launch)}`;
+  const base = `${agentLaunchModelMeta(launch)} · ${agentLaunchModeMeta(launch)}`;
+  if (agentLaunchEffortValue(launch) === "default") return base;
+  return `${base} · ${agentLaunchEffortMeta(launch)}`;
 }
 
 export function agentLaunchWithModel(
@@ -218,6 +290,10 @@ function modelText(launch: AgentLaunchOptions): LaunchText {
 function modeText(launch: AgentLaunchOptions): LaunchText {
   if (launch.provider === "claudeCode") return CLAUDE_MODE_TEXT[launch.mode];
   return CODEX_MODE_TEXT[launch.mode];
+}
+
+function effortText(launch: AgentLaunchOptions): LaunchText {
+  return CLAUDE_EFFORT_TEXT[agentLaunchEffortValue(launch)];
 }
 
 function choices<Value extends string>(

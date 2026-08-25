@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetKeymapPlatformCacheForTests } from "./domain/keymap";
-import { defaultAppSettings } from "./domain/settings";
+import { defaultAppSettings, defaultWorkspaceSettings } from "./domain/settings";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(),
@@ -83,6 +83,10 @@ describe("App docked text search integration", () => {
         recentWorkspacePath: "/workspace",
         workspaceTabs: ["/workspace"],
       }),
+    );
+    localStorage.setItem(
+      "editor.settings.workspace:canonical:%2Fworkspace",
+      JSON.stringify(expandedEditorWorkspaceSettings()),
     );
     mocks.invoke.mockImplementation((command, args) => {
       if (command === "register_workspace_path") {
@@ -396,4 +400,21 @@ async function waitForElement<T extends Element>(host: HTMLElement, selector: st
     throw new Error(`Missing element: ${selector}`);
   }
   return element;
+}
+
+function expandedEditorWorkspaceSettings() {
+  const settings = defaultWorkspaceSettings();
+  return {
+    ...settings,
+    session: {
+      ...settings.session,
+      agentWorkbench: {
+        layout: "editor-expanded",
+        rightSurface: null,
+        bottomPanel: false,
+        rightPanelWidth: 540,
+        bottomPanelHeight: 280,
+      },
+    },
+  };
 }

@@ -954,6 +954,48 @@ export const keymapCommands = [
     id: "agent.findInThread",
     label: "Find in Thread",
   },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+Alt+R",
+    id: "agent.toggleRightPanel",
+    label: "Toggle Right Panel",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+Alt+F",
+    id: "agent.openFilesSurface",
+    label: "Show Files Surface",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+Alt+D",
+    id: "agent.openDiffSurface",
+    label: "Show Diff Surface",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+Alt+J",
+    id: "agent.openTerminalSurface",
+    label: "Show Terminal Surface",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+Alt+E",
+    id: "agent.toggleEditorExpanded",
+    label: "Expand or Collapse Editor",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "",
+    id: "agent.runPreferredScript",
+    label: "Run Thread Script",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "",
+    id: "agent.openCommitMenu",
+    label: "Commit Thread Changes",
+  },
 ] as const;
 
 export type KeymapCommand = (typeof keymapCommands)[number];

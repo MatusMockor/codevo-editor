@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { TauriTerminalGateway } from "./tauriTerminalGateway";
-import type { TerminalOutputEvent } from "../domain/terminal";
+import {
+  DEFAULT_TERMINAL_LAUNCH_TARGET,
+  terminalLaunchTargetForThread,
+  type TerminalLaunchTarget,
+  type TerminalOutputEvent,
+} from "../domain/terminal";
 
 type TerminalGatewayConstructor = ConstructorParameters<typeof TauriTerminalGateway>;
 type InvokeCommand = NonNullable<TerminalGatewayConstructor[0]>;
@@ -94,6 +99,7 @@ describe("TauriTerminalGateway", () => {
       profileId: "default",
       rootPath: "/workspace",
       size: { cols: 80, rows: 24 },
+      target: { kind: "workspaceRoot" },
       terminalShellIntegrationEnabled: false,
     });
     expect(invokeCommand).toHaveBeenCalledWith("write_terminal_input", {
@@ -118,5 +124,67 @@ describe("TauriTerminalGateway", () => {
     expect(listener).toHaveBeenCalledWith(output);
     expect(listenToEvent).toHaveBeenCalledWith("terminal://status", expect.any(Function));
     expect(statusListener).toHaveBeenCalledWith(running);
+  });
+
+  it("forwards the agent worktree launch target for a thread", async () => {
+    const running = {
+      cols: 80,
+      cwd: "/workspace/.worktrees/agt-0001",
+      kind: "running",
+      rows: 24,
+      sessionId: 3,
+    };
+    const invokeCommand = vi.fn<InvokeCommand>(async () => running);
+    const gateway = new TauriTerminalGateway(invokeCommand, vi.fn<ListenToEvent>(), () => true);
+
+    expect(terminalLaunchTargetForThread("agt-0001")).toEqual({
+      kind: "agentWorktree",
+      threadId: "agt-0001",
+    });
+    expect(DEFAULT_TERMINAL_LAUNCH_TARGET).toEqual({ kind: "workspaceRoot" });
+
+    await gateway.start(
+      "/workspace",
+      { cols: 80, rows: 24 },
+      "default",
+      false,
+      terminalLaunchTargetForThread("agt-0001"),
+    );
+
+    expect(invokeCommand).toHaveBeenCalledWith("start_terminal_session", {
+      profileId: "default",
+      rootPath: "/workspace",
+      size: { cols: 80, rows: 24 },
+      target: { kind: "agentWorktree", threadId: "agt-0001" },
+      terminalShellIntegrationEnabled: false,
+    });
+  });
+
+  it("rejects an unknown launch target before it reaches the backend", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>();
+    const gateway = new TauriTerminalGateway(invokeCommand, vi.fn<ListenToEvent>(), () => true);
+    const rejected: ReadonlyArray<unknown> = [
+      { kind: "anywhere" },
+      { kind: "agentWorktree" },
+      { kind: "agentWorktree", threadId: "agt-0001", cwd: "/etc" },
+      { kind: "agentWorktree", threadId: "../escape" },
+      { kind: "agentWorktree", threadId: "--effort" },
+      { kind: "agentWorktree", threadId: "Agt-0001" },
+      { kind: "workspaceRoot", threadId: "agt-0001" },
+      null,
+    ];
+
+    for (const target of rejected) {
+      expect(() =>
+        gateway.start(
+          "/workspace",
+          { cols: 80, rows: 24 },
+          "default",
+          false,
+          target as TerminalLaunchTarget,
+        ),
+      ).toThrow(TypeError);
+    }
+    expect(invokeCommand).not.toHaveBeenCalled();
   });
 });

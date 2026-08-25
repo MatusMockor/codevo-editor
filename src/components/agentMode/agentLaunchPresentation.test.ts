@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
+  CLAUDE_EFFORT_CHOICES,
   CLAUDE_MODEL_CHOICES,
   CLAUDE_PERMISSION_MODES,
   CODEX_EXECUTION_MODES,
@@ -9,13 +10,20 @@ import {
 import {
   agentLaunchDangerConfirmLabel,
   agentLaunchDangerNotice,
+  agentLaunchEffortChoices,
+  agentLaunchEffortHint,
+  agentLaunchEffortLabel,
+  agentLaunchEffortMeta,
+  agentLaunchEffortValue,
   agentLaunchMetaLabel,
   agentLaunchModeChoices,
   agentLaunchModeHint,
   agentLaunchModeLabel,
   agentLaunchModelChoices,
   agentLaunchModelLabel,
+  agentLaunchSupportsEffort,
   agentLaunchTone,
+  agentLaunchWithEffort,
   agentLaunchWithMode,
   agentLaunchWithModel,
 } from "./agentLaunchPresentation";
@@ -27,6 +35,7 @@ describe("agentLaunchPresentation", () => {
       provider: "claudeCode",
       model: "default",
       mode: "default",
+      effort: "default",
     };
 
     expect(agentLaunchWithModel(codex, "opus")).toEqual(codex);
@@ -42,6 +51,7 @@ describe("agentLaunchPresentation", () => {
       provider: "claudeCode",
       model: "default",
       mode: "default",
+      effort: "default",
     };
 
     expect(agentLaunchWithModel(codex, "gpt-5.5")).toEqual({ ...codex, model: "gpt-5.5" });
@@ -82,10 +92,20 @@ describe("agentLaunchPresentation", () => {
 
   it("names the provider default without inventing a model name", () => {
     expect(
-      agentLaunchModelLabel({ provider: "claudeCode", model: "default", mode: "default" }),
+      agentLaunchModelLabel({
+        provider: "claudeCode",
+        model: "default",
+        mode: "default",
+        effort: "default",
+      }),
     ).toBe("Default model");
     expect(
-      agentLaunchModeLabel({ provider: "claudeCode", model: "default", mode: "default" }),
+      agentLaunchModeLabel({
+        provider: "claudeCode",
+        model: "default",
+        mode: "default",
+        effort: "default",
+      }),
     ).toBe("Default permissions");
     expect(agentLaunchModeLabel({ provider: "codex", model: "default", mode: "default" })).toBe(
       "Default sandbox",
@@ -97,7 +117,12 @@ describe("agentLaunchPresentation", () => {
 
   it("renders a compact meta label for a turn record", () => {
     expect(
-      agentLaunchMetaLabel({ provider: "claudeCode", model: "opus", mode: "acceptEdits" }),
+      agentLaunchMetaLabel({
+        provider: "claudeCode",
+        model: "opus",
+        mode: "acceptEdits",
+        effort: "default",
+      }),
     ).toBe("opus · accept edits");
     expect(
       agentLaunchMetaLabel({ provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" }),
@@ -105,9 +130,16 @@ describe("agentLaunchPresentation", () => {
   });
 
   it("tones plan and dangerous modes apart from the ordinary ones", () => {
-    expect(agentLaunchTone({ provider: "claudeCode", model: "opus", mode: "plan" })).toBe("plan");
     expect(
-      agentLaunchTone({ provider: "claudeCode", model: "opus", mode: "bypassPermissions" }),
+      agentLaunchTone({ provider: "claudeCode", model: "opus", mode: "plan", effort: "default" }),
+    ).toBe("plan");
+    expect(
+      agentLaunchTone({
+        provider: "claudeCode",
+        model: "opus",
+        mode: "bypassPermissions",
+        effort: "default",
+      }),
     ).toBe("danger");
     expect(agentLaunchTone({ provider: "codex", model: "default", mode: "dangerFullAccess" })).toBe(
       "danger",
@@ -117,13 +149,23 @@ describe("agentLaunchPresentation", () => {
 
   it("warns truthfully about each dangerous mode and stays silent otherwise", () => {
     expect(
-      agentLaunchDangerNotice({ provider: "claudeCode", model: "opus", mode: "bypassPermissions" }),
+      agentLaunchDangerNotice({
+        provider: "claudeCode",
+        model: "opus",
+        mode: "bypassPermissions",
+        effort: "default",
+      }),
     ).toContain("Bypasses permission checks");
     expect(
       agentLaunchDangerNotice({ provider: "codex", model: "default", mode: "dangerFullAccess" }),
     ).toContain("sandbox");
     expect(
-      agentLaunchDangerNotice({ provider: "claudeCode", model: "opus", mode: "acceptEdits" }),
+      agentLaunchDangerNotice({
+        provider: "claudeCode",
+        model: "opus",
+        mode: "acceptEdits",
+        effort: "default",
+      }),
     ).toBeNull();
   });
 
@@ -133,6 +175,7 @@ describe("agentLaunchPresentation", () => {
         provider: "claudeCode",
         model: "opus",
         mode: "bypassPermissions",
+        effort: "default",
       }),
     ).toContain("permission checks");
     expect(
@@ -142,5 +185,86 @@ describe("agentLaunchPresentation", () => {
         mode: "dangerFullAccess",
       }),
     ).toContain("sandbox");
+  });
+
+  it("names every claude effort level exactly once with a one line hint", () => {
+    const effortChoices = agentLaunchEffortChoices();
+
+    expect(effortChoices.map((choice) => choice.value)).toEqual([...CLAUDE_EFFORT_CHOICES]);
+    expect(effortChoices.map((choice) => choice.label)).toEqual([
+      "Default",
+      "Low",
+      "Medium",
+      "High",
+      "Extra high",
+      "Max",
+    ]);
+    for (const choice of effortChoices) {
+      expect(choice.tone).toBeNull();
+      expect(choice.hint.length).toBeGreaterThan(0);
+      expect(choice.hint).not.toContain("\n");
+    }
+    expect(new Set(effortChoices.map((choice) => choice.hint)).size).toBe(
+      CLAUDE_EFFORT_CHOICES.length,
+    );
+  });
+
+  it("reads the effort of a claude launch and falls back to the default for codex", () => {
+    const claude: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "plan",
+      effort: "xhigh",
+    };
+    const codex: AgentLaunchOptions = { provider: "codex", model: "default", mode: "default" };
+
+    expect(agentLaunchSupportsEffort(claude)).toBe(true);
+    expect(agentLaunchSupportsEffort(codex)).toBe(false);
+    expect(agentLaunchEffortValue(claude)).toBe("xhigh");
+    expect(agentLaunchEffortValue(codex)).toBe("default");
+    expect(agentLaunchEffortLabel(claude)).toBe("Extra high");
+    expect(agentLaunchEffortLabel(codex)).toBe("Default");
+    expect(agentLaunchEffortMeta(claude)).toBe("xhigh");
+    expect(agentLaunchEffortHint(claude)).toBe(
+      agentLaunchEffortChoices().find((choice) => choice.value === "xhigh")?.hint,
+    );
+  });
+
+  it("changes the effort only for claude and only for a known level", () => {
+    const claude: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "plan",
+      effort: "default",
+    };
+    const codex: AgentLaunchOptions = { provider: "codex", model: "default", mode: "default" };
+
+    for (const effort of CLAUDE_EFFORT_CHOICES) {
+      expect(agentLaunchWithEffort(claude, effort)).toEqual({ ...claude, effort });
+    }
+    expect(agentLaunchWithEffort(claude, "ultra")).toEqual(claude);
+    expect(agentLaunchWithEffort(codex, "high")).toEqual(codex);
+  });
+
+  it("appends the effort to the meta label only when it is not the default", () => {
+    expect(
+      agentLaunchMetaLabel({
+        provider: "claudeCode",
+        model: "opus",
+        mode: "acceptEdits",
+        effort: "default",
+      }),
+    ).toBe("opus · accept edits");
+    expect(
+      agentLaunchMetaLabel({
+        provider: "claudeCode",
+        model: "opus",
+        mode: "acceptEdits",
+        effort: "xhigh",
+      }),
+    ).toBe("opus · accept edits · xhigh");
+    expect(
+      agentLaunchMetaLabel({ provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" }),
+    ).toBe("gpt-5.5 · workspace write");
   });
 });

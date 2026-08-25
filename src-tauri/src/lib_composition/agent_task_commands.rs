@@ -336,7 +336,8 @@ pub(crate) fn stop_agent_tasks_on_dispose(app: &AppHandle, root: &Path) {
 mod tests {
     use super::*;
     use crate::agent_task_spawner::agent_launch::{
-        ClaudeModelChoice, ClaudePermissionMode, CodexExecutionMode, CodexModelChoice,
+        ClaudeEffortChoice, ClaudeModelChoice, ClaudePermissionMode, CodexExecutionMode,
+        CodexModelChoice,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -610,6 +611,7 @@ mod tests {
         request.launch = AgentLaunchOptions::ClaudeCode {
             model: ClaudeModelChoice::Default,
             mode: ClaudePermissionMode::BypassPermissions,
+            effort: ClaudeEffortChoice::Default,
         };
 
         let refused = ensure_agent_task_trust(false, false, request.isolation)
@@ -658,6 +660,7 @@ mod tests {
         request.launch = AgentLaunchOptions::ClaudeCode {
             model: ClaudeModelChoice::Sonnet,
             mode: ClaudePermissionMode::AcceptEdits,
+            effort: ClaudeEffortChoice::High,
         };
 
         let prepared = prepare_agent_task_start(&request).expect("prepare launch start");
@@ -673,6 +676,8 @@ mod tests {
                 "sonnet".to_string(),
                 "--permission-mode".to_string(),
                 "acceptEdits".to_string(),
+                "--effort".to_string(),
+                "high".to_string(),
                 "--".to_string(),
                 request.prompt.clone()
             ]
@@ -689,6 +694,7 @@ mod tests {
             AgentLaunchOptions::ClaudeCode {
                 model: ClaudeModelChoice::Opus,
                 mode: ClaudePermissionMode::Plan,
+                effort: ClaudeEffortChoice::Default,
             }
         );
 

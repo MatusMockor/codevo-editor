@@ -4,7 +4,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "../../domain/agentTask";
-import { AgentComposer, type AgentComposerProps } from "./AgentComposer";
+import {
+  AgentComposer,
+  type AgentComposerProps,
+  type AgentComposerRepositoryOption,
+  type AgentComposerTarget,
+} from "./AgentComposer";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 
 describe("AgentComposer", () => {
@@ -21,132 +26,89 @@ describe("AgentComposer", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    Reflect.deleteProperty(window, "matchMedia");
   });
 
-  it("lists every repository of the selected project and reflects the selection", () => {
+  it("never names the target project above the prompt", () => {
     render();
 
-    const select = host.querySelector<HTMLSelectElement>("select#agent-repository");
-
-    expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
-      "app",
-      "packages/api",
-    ]);
-    expect(select?.value).toBe("/workspace/app");
-    expect(host.querySelector(".agent-composer__chip")?.textContent).toContain("app");
+    expect(host.textContent).not.toContain("Starting in");
+    expect(host.querySelector(".agent-composer__context")).toBeNull();
+    expect(host.querySelector("select")).toBeNull();
+    expect(host.querySelector("textarea#agent-prompt")).not.toBeNull();
   });
 
-  it("keeps the picker one level deep while a single project holds a single repository", () => {
-    render({
-      projects: [{ projectRootKey: "/workspace/app", label: "app", repositories: [repo("app")] }],
-      selectedRepositoryRoot: "/workspace/app",
-    });
+  it("offers the repositories of the target project only when there is a choice", () => {
+    render();
 
-    expect(host.querySelector("select#agent-project")).toBeNull();
-    expect(host.querySelector("select#agent-repository")).toBeNull();
-    expect(host.querySelector(".agent-composer__chip")?.textContent).toBe("app");
-  });
+    expect(pickerOptionLabels(REPOSITORY_ID)).toEqual(["app", "packages/api"]);
+    expect(pickerValue(REPOSITORY_ID)).toBe("/workspace/app");
+    expect(trigger(REPOSITORY_ID).getAttribute("aria-label")).toBe("Repository in app");
 
-  it("offers a project level as soon as a second project is dispatchable", () => {
-    render({
-      projects: [
-        { projectRootKey: "/workspace/app", label: "app", repositories: [repo("app")] },
-        {
-          projectRootKey: "/workspace/api",
-          label: "api-service",
-          repositories: [{ repositoryRoot: "/workspace/api", label: "api-service" }],
-        },
-      ],
-      selectedRepositoryRoot: "/workspace/app",
-    });
+    render({ target: { ...target(), repositoryOptions: [repo("/workspace/app", "app")] } });
 
-    const select = host.querySelector<HTMLSelectElement>("select#agent-project");
-
-    expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
-      "app",
-      "api-service",
-    ]);
-    expect(select?.value).toBe("/workspace/app");
-    expect(host.querySelector("select#agent-repository")).toBeNull();
-  });
-
-  it("names both levels in the chip when neither level has a picker", () => {
-    render({
-      projects: [
-        {
-          projectRootKey: "/workspace/app",
-          label: "monorepo",
-          repositories: [{ repositoryRoot: "/workspace/app/packages/api", label: "packages/api" }],
-        },
-      ],
-      selectedRepositoryRoot: "/workspace/app/packages/api",
-    });
-
-    expect(host.querySelector(".agent-composer__chip")?.textContent).toBe("monorepo/packages/api");
-  });
-
-  it("drops the chip once both levels are already visible as pickers", () => {
-    render({
-      projects: [
-        {
-          projectRootKey: "/workspace/app",
-          label: "app",
-          repositories: [
-            { repositoryRoot: "/workspace/app", label: "app" },
-            { repositoryRoot: "/workspace/app/packages/api", label: "packages/api" },
-          ],
-        },
-        {
-          projectRootKey: "/workspace/api",
-          label: "api-service",
-          repositories: [{ repositoryRoot: "/workspace/api", label: "api-service" }],
-        },
-      ],
-      selectedRepositoryRoot: "/workspace/app",
-    });
-
-    expect(host.querySelector("select#agent-project")).not.toBeNull();
-    expect(host.querySelector("select#agent-repository")).not.toBeNull();
-    expect(host.querySelector(".agent-composer__chip")).toBeNull();
-  });
-
-  it("explains an empty repository list instead of offering a blank picker", () => {
-    render({
-      projects: [{ projectRootKey: "/workspace/app", label: "app", repositories: [] }],
-      selectedRepositoryRoot: null,
-    });
-
-    expect(host.textContent).toContain("No Git repository detected");
-    expect(host.querySelector("select#agent-repository")).toBeNull();
+    expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
   });
 
   it("changes the repository of the next thread", () => {
     const onSelectRepository = vi.fn();
     render({ onSelectRepository });
 
-    selectValue("select#agent-repository", "/workspace/app/packages/api");
+    pickOption(REPOSITORY_ID, "/workspace/app/packages/api");
 
     expect(onSelectRepository).toHaveBeenCalledWith("/workspace/app/packages/api");
   });
 
-  it("changes the project of the next thread", () => {
-    const onSelectProject = vi.fn();
+  it("blocks a new thread while no project owns the composer", () => {
+    const onSubmit = vi.fn();
+    render({ onSubmit, prompt: "Fix it", target: null });
+
+    expect(submitButton().disabled).toBe(true);
+    expect(host.querySelector(".agent-composer__reason")?.textContent).toBe(
+      "Choose a project in the rail to start a thread.",
+    );
+
+    submitForm();
+    pressAccelerator();
+
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("blocks a project that has no repository and names it", () => {
+    render({ prompt: "Fix it", target: { ...target(), repositoryOptions: [] } });
+
+    expect(submitButton().disabled).toBe(true);
+    expect(host.querySelector(".agent-composer__reason")?.textContent).toBe(
+      "No Git repository detected in app.",
+    );
+    expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
+  });
+
+  it("picks the checkout in the footer under the box", () => {
+    const onIsolationChange = vi.fn();
+    render({ onIsolationChange });
+
+    const footer = host.querySelector(".agent-composer__footer");
+    expect(footer?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
+    expect(host.querySelector(".agent-composer__box")?.nextElementSibling).toBe(footer);
+    expect(pickerValue(CHECKOUT_ID)).toBe("in-place");
+    expect(trigger(CHECKOUT_ID).textContent).toContain("Local checkout");
+    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Local checkout", "Isolated worktree"]);
+
+    pickOption(CHECKOUT_ID, "worktree");
+
+    expect(onIsolationChange).toHaveBeenCalledWith("worktree");
+  });
+
+  it("pre-sets the checkout and shows the reason behind the default", () => {
     render({
-      onSelectProject,
-      projects: [
-        { projectRootKey: "/workspace/app", label: "app", repositories: [repo("app")] },
-        {
-          projectRootKey: "/workspace/api",
-          label: "api-service",
-          repositories: [{ repositoryRoot: "/workspace/api", label: "api-service" }],
-        },
-      ],
-      selectedRepositoryRoot: "/workspace/app",
+      isolation: "worktree",
+      isolationReason: "The working tree has uncommitted changes.",
     });
 
-    selectValue("select#agent-project", "/workspace/api");
-
-    expect(onSelectProject).toHaveBeenCalledWith("/workspace/api");
+    expect(pickerValue(CHECKOUT_ID)).toBe("worktree");
+    expect(trigger(CHECKOUT_ID).textContent).toContain("Isolated worktree");
+    expect(host.textContent).toContain("The working tree has uncommitted changes.");
   });
 
   it("locks a background project to an isolated worktree and says why", () => {
@@ -158,17 +120,78 @@ describe("AgentComposer", () => {
         "This project is not the active tab, so the agent only runs in an isolated worktree.",
     });
 
-    expect(checkbox("agent-isolation").disabled).toBe(true);
-    expect(checkbox("agent-isolation").checked).toBe(true);
+    expect(trigger(CHECKOUT_ID).disabled).toBe(true);
+    expect(pickerValue(CHECKOUT_ID)).toBe("worktree");
     expect(host.textContent).toContain("only runs in an isolated worktree");
     expect(host.textContent).not.toContain("The working tree is clean.");
   });
 
-  it("keeps the isolation toggle usable for the active project", () => {
-    render({ isolation: "worktree", isolationReason: "The working tree is clean." });
+  it("shows the thread's checkout as a locked chip in follow-up mode", () => {
+    render({
+      isolation: "worktree",
+      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+    });
 
-    expect(checkbox("agent-isolation").disabled).toBe(false);
-    expect(host.textContent).toContain("The working tree is clean.");
+    expect(host.querySelector(`#${CHECKOUT_ID}`)).toBeNull();
+    expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
+    const lock = host.querySelector(".agent-composer__lock");
+    expect(lock?.textContent).toContain("Isolated worktree");
+    expect(lock?.querySelector("button")).toBeNull();
+  });
+
+  it("keeps the reply context line and the escape to a new thread", () => {
+    const onNewThread = vi.fn();
+    render({
+      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+      onNewThread,
+    });
+
+    const context = host.querySelector(".agent-composer__context");
+    expect(host.querySelector('form[aria-label="Follow up on agent thread"]')).not.toBeNull();
+    expect(context?.textContent).toContain("Replying in");
+    expect(context?.querySelector(".agent-composer__chip--thread")?.textContent).toBe(
+      "Refactor the parser",
+    );
+    expect(submitButton().textContent).toContain("Send");
+
+    const escape = context?.querySelector<HTMLButtonElement>(".agent-composer__new");
+    expect(escape).not.toBeNull();
+    act(() => escape?.click());
+
+    expect(onNewThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("collapses every picker into one menu below 620px", () => {
+    stubMatchMedia(true);
+    render();
+
+    expect(host.querySelector(".agent-composer__footer")).toBeNull();
+    expect(host.querySelector(`#${CHECKOUT_ID}`)).toBeNull();
+    expect(host.querySelector("#agent-launch-model")).toBeNull();
+
+    const menu = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="More composer controls"]',
+    );
+    expect(menu).not.toBeNull();
+    act(() => menu?.click());
+
+    const panel = host.querySelector(".agent-composer__compact-panel");
+    expect(panel?.querySelector("#agent-launch-model")).not.toBeNull();
+    expect(panel?.querySelector("#agent-launch-effort")).not.toBeNull();
+    expect(panel?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
+    expect(panel?.querySelector(`#${REPOSITORY_ID}`)).not.toBeNull();
+    expect(submitButton()).not.toBeNull();
+  });
+
+  it("keeps the locked checkout visible while the compact menu holds the pickers", () => {
+    stubMatchMedia(true);
+    render({
+      isolation: "worktree",
+      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+    });
+
+    expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Isolated worktree");
+    expect(host.querySelector("#agent-launch-model")).toBeNull();
   });
 
   it("keeps the byte counter quiet until the prompt nears the cap", () => {
@@ -208,25 +231,6 @@ describe("AgentComposer", () => {
     expect(submitButton().getAttribute("aria-keyshortcuts")).toMatch(/\+Enter$/);
   });
 
-  it("pre-sets the isolation toggle and shows the reason behind the default", () => {
-    render({
-      isolation: "worktree",
-      isolationReason: "The working tree has uncommitted changes.",
-    });
-
-    expect(checkbox("agent-isolation").checked).toBe(true);
-    expect(host.textContent).toContain("The working tree has uncommitted changes.");
-  });
-
-  it("switches isolation when the toggle is used", () => {
-    const onIsolationChange = vi.fn();
-    render({ isolation: "worktree", onIsolationChange });
-
-    toggleCheckbox("agent-isolation", false);
-
-    expect(onIsolationChange).toHaveBeenCalledWith("in-place");
-  });
-
   it("requires an explicit confirmation for an unsafe in-place run", () => {
     const onUnsafeConfirmedChange = vi.fn();
     render({
@@ -246,72 +250,11 @@ describe("AgentComposer", () => {
     expect(onUnsafeConfirmedChange).toHaveBeenCalledWith(true);
   });
 
-  it("hides the unsafe confirmation for a worktree run", () => {
-    render({
-      isolation: "worktree",
-      guard: { kind: "unsafe", reasons: ["dirty-tree"] },
-    });
+  it("hides the unsafe confirmation for a worktree run and in follow-up mode", () => {
+    render({ isolation: "worktree", guard: { kind: "unsafe", reasons: ["dirty-tree"] } });
 
     expect(host.textContent).not.toContain("Running in place can overwrite your work");
-  });
 
-  it("submits the prompt from the form", () => {
-    const onSubmit = vi.fn();
-    render({ onSubmit, prompt: "Fix it" });
-
-    submitForm();
-
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-  });
-
-  it("submits with the platform accelerator and never while blocked", () => {
-    const onSubmit = vi.fn();
-    render({ onSubmit, prompt: "Fix it" });
-
-    pressAccelerator();
-
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-
-    render({ onSubmit, prompt: "Fix it", submitBlocked: true });
-    pressAccelerator();
-
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-  });
-
-  it("reports the dispatch in flight", () => {
-    render({ dispatching: true, submitBlocked: true });
-
-    expect(submitButton().textContent).toContain("Starting…");
-    expect(submitButton().disabled).toBe(true);
-  });
-
-  it("names the target above the prompt for a new thread", () => {
-    render({});
-
-    const context = host.querySelector(".agent-composer__context");
-    expect(context?.textContent).toContain("Starting in");
-    expect(context?.querySelector("input#agent-isolation")).not.toBeNull();
-    expect(context?.nextElementSibling?.nextElementSibling?.id).toBe("agent-prompt");
-  });
-
-  it("hides the target and isolation controls in follow-up mode", () => {
-    render({
-      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
-    });
-
-    expect(host.querySelector('form[aria-label="Follow up on agent thread"]')).not.toBeNull();
-    expect(host.querySelector("select#agent-project")).toBeNull();
-    expect(host.querySelector("select#agent-repository")).toBeNull();
-    expect(host.querySelector("input#agent-isolation")).toBeNull();
-    expect(host.querySelector(".agent-composer__chip--thread")?.textContent).toBe(
-      "Refactor the parser",
-    );
-    expect(host.querySelector(".agent-composer__context")?.textContent).toContain("Replying in");
-    expect(host.querySelector(".agent-composer__context .agent-composer__new")).not.toBeNull();
-    expect(submitButton().textContent).toContain("Send");
-  });
-
-  it("keeps the unsafe in-place confirmation out of follow-up mode", () => {
     render({
       guard: { kind: "unsafe", reasons: ["dirty-tree"] },
       isolation: "in-place",
@@ -321,18 +264,35 @@ describe("AgentComposer", () => {
     expect(host.textContent).not.toContain("Running in place can overwrite your work");
   });
 
-  it("escapes back to a new thread from follow-up mode", () => {
-    const onNewThread = vi.fn();
+  it("submits the prompt from the form and with the platform accelerator", () => {
+    const onSubmit = vi.fn();
+    render({ onSubmit, prompt: "Fix it" });
+
+    submitForm();
+    pressAccelerator();
+
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+
+    render({ onSubmit, prompt: "Fix it", submitBlocked: true });
+    pressAccelerator();
+
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports the dispatch in flight", () => {
+    render({ dispatching: true, submitBlocked: true });
+
+    expect(submitButton().textContent).toContain("Starting…");
+    expect(submitButton().disabled).toBe(true);
+    expect(trigger(CHECKOUT_ID).disabled).toBe(true);
+
     render({
+      dispatching: true,
       mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
-      onNewThread,
+      submitBlocked: true,
     });
 
-    const escape = host.querySelector<HTMLButtonElement>(".agent-composer__new");
-    expect(escape).not.toBeNull();
-    act(() => escape?.click());
-
-    expect(onNewThread).toHaveBeenCalledTimes(1);
+    expect(submitButton().textContent).toContain("Sending…");
   });
 
   it("disables the follow-up and states the blocking reason", () => {
@@ -358,20 +318,11 @@ describe("AgentComposer", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("reports the follow-up in flight", () => {
-    render({
-      dispatching: true,
-      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
-      submitBlocked: true,
-    });
-
-    expect(submitButton().textContent).toContain("Sending…");
-  });
-
-  it("keeps the model and mode pickers in both composer modes", () => {
-    render({ launch: { provider: "claudeCode", model: "opus", mode: "plan" } });
+  it("keeps the model, effort and mode pickers in both composer modes", () => {
+    render({ launch: { provider: "claudeCode", model: "opus", mode: "plan", effort: "high" } });
 
     expect(pickerValue("agent-launch-model")).toBe("opus");
+    expect(pickerValue("agent-launch-effort")).toBe("high");
     expect(pickerValue("agent-launch-mode")).toBe("plan");
     expect(host.querySelector("#agent-launch-mode")?.textContent).toContain("Plan only");
     expect(
@@ -386,6 +337,7 @@ describe("AgentComposer", () => {
 
     expect(pickerValue("agent-launch-model")).toBe("gpt-5.5");
     expect(pickerValue("agent-launch-mode")).toBe("readOnly");
+    expect(host.querySelector("#agent-launch-effort")).toBeNull();
   });
 
   it("reports a picked model as a whole launch value", () => {
@@ -398,13 +350,19 @@ describe("AgentComposer", () => {
       provider: "claudeCode",
       model: "sonnet",
       mode: "default",
+      effort: "default",
     });
   });
 
   it("falls back to the defaults of the configured provider when the launch is stale", () => {
     const onSubmit = vi.fn();
     render({
-      launch: { provider: "claudeCode", model: "opus", mode: "bypassPermissions" },
+      launch: {
+        provider: "claudeCode",
+        model: "opus",
+        mode: "bypassPermissions",
+        effort: "default",
+      },
       launchProvider: "codex",
       onSubmit,
       prompt: "Fix it",
@@ -430,12 +388,13 @@ describe("AgentComposer", () => {
   it("blocks a dangerous launch until it is confirmed for this submission", () => {
     const onSubmit = vi.fn();
     const onDangerousConfirmedChange = vi.fn();
-    render({
-      launch: { provider: "claudeCode", model: "opus", mode: "bypassPermissions" },
-      onDangerousConfirmedChange,
-      onSubmit,
-      prompt: "Fix it",
-    });
+    const dangerous = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "bypassPermissions",
+      effort: "default",
+    } as const;
+    render({ launch: dangerous, onDangerousConfirmedChange, onSubmit, prompt: "Fix it" });
 
     expect(host.querySelector(".agent-composer__danger")?.textContent).toContain(
       "Bypasses permission checks",
@@ -451,19 +410,14 @@ describe("AgentComposer", () => {
 
     expect(onDangerousConfirmedChange).toHaveBeenCalledWith(true);
 
-    render({
-      dangerousConfirmed: true,
-      launch: { provider: "claudeCode", model: "opus", mode: "bypassPermissions" },
-      onSubmit,
-      prompt: "Fix it",
-    });
+    render({ dangerousConfirmed: true, launch: dangerous, onSubmit, prompt: "Fix it" });
 
     expect(submitButton().disabled).toBe(false);
 
     submitForm();
 
     expect(onSubmit).toHaveBeenCalledWith({
-      launch: { provider: "claudeCode", model: "opus", mode: "bypassPermissions" },
+      launch: dangerous,
       dangerousLaunchConfirmed: true,
     });
   });
@@ -489,7 +443,7 @@ describe("AgentComposer", () => {
   it("carries the newly chosen launch into a follow-up submission", () => {
     const onSubmit = vi.fn();
     render({
-      launch: { provider: "claudeCode", model: "sonnet", mode: "acceptEdits" },
+      launch: { provider: "claudeCode", model: "sonnet", mode: "acceptEdits", effort: "max" },
       mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
       onSubmit,
       prompt: "Also update the tests",
@@ -498,7 +452,7 @@ describe("AgentComposer", () => {
     pressAccelerator();
 
     expect(onSubmit).toHaveBeenCalledWith({
-      launch: { provider: "claudeCode", model: "sonnet", mode: "acceptEdits" },
+      launch: { provider: "claudeCode", model: "sonnet", mode: "acceptEdits", effort: "max" },
       dangerousLaunchConfirmed: false,
     });
   });
@@ -530,37 +484,35 @@ describe("AgentComposer", () => {
     });
   }
 
-  function selectValue(selector: string, value: string): void {
-    const element = host.querySelector<HTMLSelectElement>(selector);
+  function trigger(id: string): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>(`button#${id}`);
     expect(element).not.toBeNull();
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(
-        element,
-        value,
-      );
-      element?.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    return element ?? document.createElement("button");
   }
 
   function pickerValue(id: string): string {
-    const trigger = host.querySelector<HTMLButtonElement>(`button#${id}`);
-    expect(trigger).not.toBeNull();
-    return trigger?.dataset.value ?? "";
+    return trigger(id).dataset.value ?? "";
   }
 
   function openPicker(id: string): void {
-    const trigger = host.querySelector<HTMLButtonElement>(`button#${id}`);
-    expect(trigger).not.toBeNull();
-    act(() => trigger?.click());
+    act(() => trigger(id).click());
+  }
+
+  function pickerOptions(id: string): ReadonlyArray<HTMLElement> {
+    openPicker(id);
+    const options = [...host.querySelectorAll<HTMLElement>(`#${id}-list [role="option"]`)];
+    act(() => trigger(id).click());
+    return options;
   }
 
   function pickerOptionValues(id: string): ReadonlyArray<string> {
-    openPicker(id);
-    const values = [...host.querySelectorAll<HTMLElement>(`#${id}-list [role="option"]`)].map(
-      (option) => option.dataset.value ?? "",
+    return pickerOptions(id).map((option) => option.dataset.value ?? "");
+  }
+
+  function pickerOptionLabels(id: string): ReadonlyArray<string> {
+    return pickerOptions(id).map(
+      (option) => option.querySelector(".agent-picker__label")?.textContent ?? "",
     );
-    act(() => host.querySelector<HTMLButtonElement>(`button#${id}`)?.click());
-    return values;
   }
 
   function pickOption(id: string, value: string): void {
@@ -596,24 +548,44 @@ describe("AgentComposer", () => {
   }
 });
 
-function repo(label: string): { readonly repositoryRoot: string; readonly label: string } {
-  return { repositoryRoot: "/workspace/app", label };
+const CHECKOUT_ID = "agent-checkout";
+const REPOSITORY_ID = "agent-repository";
+
+function stubMatchMedia(matches: boolean): void {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
+function repo(repositoryRoot: string, label: string): AgentComposerRepositoryOption {
+  return { repositoryRoot, label };
+}
+
+function target(): AgentComposerTarget {
+  return {
+    projectLabel: "app",
+    repositoryOptions: [
+      repo("/workspace/app", "app"),
+      repo("/workspace/app/packages/api", "packages/api"),
+    ],
+    selectedRepositoryRoot: "/workspace/app",
+  };
 }
 
 function defaultProps(): AgentComposerProps {
   return {
-    projects: [
-      {
-        projectRootKey: "/workspace/app",
-        label: "app",
-        repositories: [
-          { repositoryRoot: "/workspace/app", label: "app" },
-          { repositoryRoot: "/workspace/app/packages/api", label: "packages/api" },
-        ],
-      },
-    ],
-    selectedProjectRootKey: "/workspace/app",
-    selectedRepositoryRoot: "/workspace/app",
+    target: target(),
     prompt: "",
     promptBytes: 0,
     isolation: "in-place",
@@ -622,13 +594,12 @@ function defaultProps(): AgentComposerProps {
     worktreeOnlyReason: null,
     guard: { kind: "safe" },
     unsafeConfirmed: false,
-    launch: { provider: "claudeCode", model: "default", mode: "default" },
+    launch: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
     launchProvider: "claudeCode",
     dangerousConfirmed: false,
     dispatching: false,
     submitBlocked: false,
     mode: { kind: "new" },
-    onSelectProject: () => undefined,
     onSelectRepository: () => undefined,
     onPromptChange: () => undefined,
     onIsolationChange: () => undefined,

@@ -236,6 +236,7 @@ fn a_launch_stamped_thread_survives_a_save_and_load_round_trip() {
     document.thread.turns[0].launch = Some(AgentLaunchOptions::ClaudeCode {
         model: crate::agent_task_spawner::agent_launch::ClaudeModelChoice::Sonnet,
         mode: crate::agent_task_spawner::agent_launch::ClaudePermissionMode::AcceptEdits,
+        effort: crate::agent_task_spawner::agent_launch::ClaudeEffortChoice::Xhigh,
     });
 
     store

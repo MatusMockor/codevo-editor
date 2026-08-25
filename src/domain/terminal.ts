@@ -1,3 +1,5 @@
+import { AGENT_TASK_ID_PATTERN } from "./agentTask";
+
 export interface TerminalSize {
   cols: number;
   rows: number;
@@ -29,6 +31,59 @@ export interface TerminalProfile {
 
 export type TerminalUnsubscribeFn = () => void;
 
+export type TerminalLaunchTarget =
+  | { readonly kind: "workspaceRoot" }
+  | { readonly kind: "agentWorktree"; readonly threadId: string };
+
+export const TERMINAL_LAUNCH_TARGET_KINDS = ["workspaceRoot", "agentWorktree"] as const;
+
+export const DEFAULT_TERMINAL_LAUNCH_TARGET: TerminalLaunchTarget = { kind: "workspaceRoot" };
+
+export function terminalLaunchTargetForThread(threadId: string): TerminalLaunchTarget {
+  return { kind: "agentWorktree", threadId };
+}
+
+export function serializeTerminalLaunchTarget(
+  target: TerminalLaunchTarget,
+): Record<string, unknown> {
+  if (target === null || typeof target !== "object") {
+    invalidTerminalLaunchTarget("target", "an object");
+  }
+  if (target.kind === "workspaceRoot") {
+    exactTerminalTargetKeys(target, ["kind"]);
+    return { kind: target.kind };
+  }
+  if (target.kind === "agentWorktree") {
+    exactTerminalTargetKeys(target, ["kind", "threadId"]);
+    return { kind: target.kind, threadId: terminalTargetThreadId(target.threadId) };
+  }
+  return invalidTerminalLaunchTarget(
+    "target.kind",
+    `one of ${TERMINAL_LAUNCH_TARGET_KINDS.join(", ")}`,
+  );
+}
+
+function terminalTargetThreadId(value: unknown): string {
+  if (typeof value !== "string" || !AGENT_TASK_ID_PATTERN.test(value)) {
+    invalidTerminalLaunchTarget("target.threadId", "a safe agent thread id");
+  }
+  return value;
+}
+
+function exactTerminalTargetKeys(
+  target: TerminalLaunchTarget,
+  expected: ReadonlyArray<string>,
+): void {
+  const actual = Object.keys(target);
+  if (actual.length !== expected.length || actual.some((key) => !expected.includes(key))) {
+    invalidTerminalLaunchTarget("target", `exactly the fields ${expected.join(", ")}`);
+  }
+}
+
+function invalidTerminalLaunchTarget(path: string, expectation: string): never {
+  throw new TypeError(`Invalid terminal launch target at ${path}: expected ${expectation}.`);
+}
+
 export interface TerminalGateway {
   acknowledgeStart(sessionId: number): Promise<void>;
   listProfiles(): Promise<TerminalProfile[]>;
@@ -38,6 +93,7 @@ export interface TerminalGateway {
     size: TerminalSize,
     profileId?: string,
     shellIntegrationEnabled?: boolean,
+    target?: TerminalLaunchTarget,
   ): Promise<TerminalRuntimeStatus>;
   stop(sessionId: number): Promise<TerminalRuntimeStatus>;
   stopRoot(rootPath: string): Promise<void>;

@@ -1,5 +1,5 @@
 import {
-  parseAgentLaunchOptions,
+  parseStoredAgentLaunchOptions,
   serializeAgentLaunchOptions,
   type AgentLaunchOptions,
 } from "./agentLaunch";
@@ -202,7 +202,7 @@ function parseViewedAt(value: unknown, path: string): number | null {
 
 function parseLaunch(value: unknown, path: string): AgentLaunchOptions | null {
   if (value === undefined || value === null) return null;
-  return parseAgentLaunchOptions(value, path);
+  return parseStoredAgentLaunchOptions(value, path);
 }
 
 function parseIntegration(value: unknown, path: string): AgentThreadIntegration | null {

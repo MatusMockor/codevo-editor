@@ -11,8 +11,11 @@ import {
   agentLaunchOptionsEqual,
   defaultAgentLaunchOptions,
   parseAgentLaunchOptions,
+  parseStoredAgentLaunchOptions,
   serializeAgentLaunchOptions,
+  CLAUDE_EFFORT_CHOICES,
   type AgentLaunchOptions,
+  type ClaudeLaunchOptions,
 } from "./agentLaunch";
 
 describe("agentLaunch", () => {
@@ -21,6 +24,7 @@ describe("agentLaunch", () => {
       provider: "claudeCode",
       model: "default",
       mode: "default",
+      effort: "default",
     });
     expect(defaultAgentLaunchOptions("codex")).toEqual({
       provider: "codex",
@@ -36,7 +40,7 @@ describe("agentLaunch", () => {
   it("accepts every claude model and permission mode pair", () => {
     for (const model of CLAUDE_MODEL_CHOICES) {
       for (const mode of CLAUDE_PERMISSION_MODES) {
-        const value = { provider: "claudeCode", model, mode };
+        const value = { provider: "claudeCode", model, mode, effort: "default" };
         expect(parseAgentLaunchOptions(value, "launch")).toEqual(value);
       }
     }
@@ -54,12 +58,18 @@ describe("agentLaunch", () => {
   it("rejects every model and mode taken from the other provider", () => {
     for (const model of CODEX_MODEL_CHOICES.filter((choice) => choice !== "default")) {
       expect(() =>
-        parseAgentLaunchOptions({ provider: "claudeCode", model, mode: "default" }, "launch"),
+        parseAgentLaunchOptions(
+          { provider: "claudeCode", model, mode: "default", effort: "default" },
+          "launch",
+        ),
       ).toThrow(/launch\.model/);
     }
     for (const mode of CODEX_EXECUTION_MODES.filter((choice) => choice !== "default")) {
       expect(() =>
-        parseAgentLaunchOptions({ provider: "claudeCode", model: "default", mode }, "launch"),
+        parseAgentLaunchOptions(
+          { provider: "claudeCode", model: "default", mode, effort: "default" },
+          "launch",
+        ),
       ).toThrow(/launch\.mode/);
     }
     for (const model of CLAUDE_MODEL_CHOICES.filter((choice) => choice !== "default")) {
@@ -81,6 +91,7 @@ describe("agentLaunch", () => {
           provider: "claudeCode",
           model,
           mode,
+          effort: "default",
         })),
       ),
       ...CODEX_MODEL_CHOICES.flatMap((model) =>
@@ -101,7 +112,10 @@ describe("agentLaunch", () => {
 
   it("rejects non-string and casing variants of a known choice", () => {
     expect(() =>
-      parseAgentLaunchOptions({ provider: "claudeCode", model: "Opus", mode: "default" }, "launch"),
+      parseAgentLaunchOptions(
+        { provider: "claudeCode", model: "Opus", mode: "default", effort: "default" },
+        "launch",
+      ),
     ).toThrow(/launch\.model/);
     expect(() =>
       parseAgentLaunchOptions({ provider: "codex", model: "default", mode: 0 }, "launch"),
@@ -128,7 +142,7 @@ describe("agentLaunch", () => {
     ).toThrow(TypeError);
     expect(() =>
       parseAgentLaunchOptions(
-        { provider: "claudeCode", model: "claude-opus-4", mode: "default" },
+        { provider: "claudeCode", model: "claude-opus-4", mode: "default", effort: "default" },
         "launch",
       ),
     ).toThrow(TypeError);
@@ -140,7 +154,7 @@ describe("agentLaunch", () => {
   it("rejects cross-provider model and mode pairs", () => {
     expect(() =>
       parseAgentLaunchOptions(
-        { provider: "claudeCode", model: "gpt-5.5", mode: "default" },
+        { provider: "claudeCode", model: "gpt-5.5", mode: "default", effort: "default" },
         "launch",
       ),
     ).toThrow(TypeError);
@@ -152,7 +166,7 @@ describe("agentLaunch", () => {
     ).toThrow(TypeError);
     expect(() =>
       parseAgentLaunchOptions(
-        { provider: "claudeCode", model: "default", mode: "readOnly" },
+        { provider: "claudeCode", model: "default", mode: "readOnly", effort: "default" },
         "launch",
       ),
     ).toThrow(TypeError);
@@ -182,13 +196,23 @@ describe("agentLaunch", () => {
 
   it("classifies only the permission bypassing modes as dangerous", () => {
     expect(
-      agentLaunchIsDangerous({ provider: "claudeCode", model: "opus", mode: "bypassPermissions" }),
+      agentLaunchIsDangerous({
+        provider: "claudeCode",
+        model: "opus",
+        mode: "bypassPermissions",
+        effort: "default",
+      }),
     ).toBe(true);
     expect(
       agentLaunchIsDangerous({ provider: "codex", model: "gpt-5.5", mode: "dangerFullAccess" }),
     ).toBe(true);
     expect(
-      agentLaunchIsDangerous({ provider: "claudeCode", model: "opus", mode: "acceptEdits" }),
+      agentLaunchIsDangerous({
+        provider: "claudeCode",
+        model: "opus",
+        mode: "acceptEdits",
+        effort: "default",
+      }),
     ).toBe(false);
     expect(
       agentLaunchIsDangerous({ provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" }),
@@ -198,10 +222,56 @@ describe("agentLaunch", () => {
   });
 
   it("compares launch options field by field", () => {
-    const options: AgentLaunchOptions = { provider: "claudeCode", model: "opus", mode: "plan" };
+    const options: ClaudeLaunchOptions = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "plan",
+      effort: "default",
+    };
     expect(agentLaunchOptionsEqual(options, { ...options })).toBe(true);
     expect(agentLaunchOptionsEqual(options, { ...options, model: "sonnet" })).toBe(false);
     expect(agentLaunchOptionsEqual(options, { ...options, mode: "default" })).toBe(false);
     expect(agentLaunchOptionsEqual(options, defaultAgentLaunchOptions("codex"))).toBe(false);
+    expect(agentLaunchOptionsEqual(options, { ...options, effort: "xhigh" })).toBe(false);
+  });
+
+  it("accepts every claude effort choice and keeps it out of the codex shape", () => {
+    for (const effort of CLAUDE_EFFORT_CHOICES) {
+      const value = { provider: "claudeCode", model: "opus", mode: "plan", effort };
+      expect(parseAgentLaunchOptions(value, "launch")).toEqual(value);
+      expect(serializeAgentLaunchOptions(parseAgentLaunchOptions(value, "launch"))).toEqual(value);
+    }
+
+    expect(serializeAgentLaunchOptions(defaultAgentLaunchOptions("codex"))).toEqual({
+      provider: "codex",
+      model: "default",
+      mode: "default",
+    });
+    expect(() =>
+      parseAgentLaunchOptions(
+        { provider: "claudeCode", model: "opus", mode: "plan", effort: "ultra" },
+        "launch",
+      ),
+    ).toThrow(/launch\.effort/);
+  });
+
+  it("accepts stored claude launches without an effort field and fills the default", () => {
+    expect(
+      parseStoredAgentLaunchOptions(
+        { provider: "claudeCode", model: "sonnet", mode: "plan" },
+        "launch",
+      ),
+    ).toEqual({ provider: "claudeCode", model: "sonnet", mode: "plan", effort: "default" });
+
+    expect(() =>
+      parseAgentLaunchOptions({ provider: "claudeCode", model: "sonnet", mode: "plan" }, "launch"),
+    ).toThrow(TypeError);
+
+    expect(() =>
+      parseStoredAgentLaunchOptions(
+        { provider: "codex", model: "default", mode: "default", effort: "high" },
+        "launch",
+      ),
+    ).toThrow(TypeError);
   });
 });

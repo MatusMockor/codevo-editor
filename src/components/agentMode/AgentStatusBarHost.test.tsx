@@ -52,7 +52,12 @@ describe("AgentStatusBarHost", () => {
           threadView({
             threadId: "agt-1",
             rootKey: OTHER_ROOT,
-            launch: { provider: "claudeCode", model: "opus", mode: "acceptEdits" },
+            launch: {
+              provider: "claudeCode",
+              model: "opus",
+              mode: "acceptEdits",
+              effort: "default",
+            },
           }),
         ],
         lastUsedLaunch: (projectRootKey: string) =>
@@ -73,7 +78,7 @@ describe("AgentStatusBarHost", () => {
         threads: [threadView({ threadId: "agt-1", launch: null })],
         lastUsedLaunch: (projectRootKey: string) =>
           projectRootKey === ROOT
-            ? { provider: "claudeCode", model: "sonnet", mode: "plan" }
+            ? { provider: "claudeCode", model: "sonnet", mode: "plan", effort: "default" }
             : null,
       }),
     });

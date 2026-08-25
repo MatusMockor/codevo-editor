@@ -1,4 +1,4 @@
-import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
+import { CLAUDE_EFFORT_CHOICES, defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import { describe, expect, it, vi } from "vitest";
 import {
   AgentTaskStartRejectedError,
@@ -93,17 +93,72 @@ describe("invokeStartAgentTaskIpc", () => {
     await expect(
       invokeStartAgentTaskIpc(invokeCommand, {
         ...START_REQUEST,
-        launch: { provider: "claudeCode", model: "claude-opus-4", mode: "default" },
+        launch: {
+          provider: "claudeCode",
+          model: "claude-opus-4",
+          mode: "default",
+          effort: "default",
+        },
       } as unknown as StartAgentTaskRequest),
     ).rejects.toThrow(TypeError);
     expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects an effort that the launch provider does not accept", async () => {
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>();
+
+    await expect(
+      invokeStartAgentTaskIpc(invokeCommand, {
+        ...START_REQUEST,
+        agentCliKind: "codex",
+        launch: { provider: "codex", model: "default", mode: "default", effort: "low" },
+      } as unknown as StartAgentTaskRequest),
+    ).rejects.toThrow(/request\.launch/);
+    await expect(
+      invokeStartAgentTaskIpc(invokeCommand, {
+        ...START_REQUEST,
+        launch: { provider: "claudeCode", model: "opus", mode: "plan", effort: "ultra" },
+      } as unknown as StartAgentTaskRequest),
+    ).rejects.toThrow(/request\.launch\.effort/);
+    await expect(
+      invokeStartAgentTaskIpc(invokeCommand, {
+        ...START_REQUEST,
+        launch: { provider: "claudeCode", model: "opus", mode: "plan" },
+      } as unknown as StartAgentTaskRequest),
+    ).rejects.toThrow(/request\.launch/);
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it("forwards every claude effort level in the request payload", async () => {
+    for (const effort of CLAUDE_EFFORT_CHOICES) {
+      const invokeCommand = vi
+        .fn<InvokeAgentTaskCommand>()
+        .mockResolvedValue({ taskId: START_REQUEST.taskId });
+      const launch = {
+        provider: "claudeCode",
+        model: "opus",
+        mode: "acceptEdits",
+        effort,
+      } as const;
+
+      await invokeStartAgentTaskIpc(invokeCommand, { ...START_REQUEST, launch });
+
+      expect(invokeCommand).toHaveBeenCalledWith(START_AGENT_TASK_IPC_COMMAND, {
+        request: { ...START_REQUEST, launch },
+      });
+    }
   });
 
   it("forwards the validated launch options in the request payload", async () => {
     const invokeCommand = vi
       .fn<InvokeAgentTaskCommand>()
       .mockResolvedValue({ taskId: START_REQUEST.taskId });
-    const launch = { provider: "claudeCode", model: "opus", mode: "acceptEdits" } as const;
+    const launch = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "acceptEdits",
+      effort: "default",
+    } as const;
 
     await invokeStartAgentTaskIpc(invokeCommand, { ...START_REQUEST, launch });
 

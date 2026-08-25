@@ -381,7 +381,7 @@ export function useWorkspaceStateCache(
           : buildWorkspaceNavigationSnapshot(navigationInputs);
       navigationSnapshotRef.current = { inputs: navigationInputs, snapshot: navigation };
       const snapshot = buildWorkspaceSessionSnapshot(
-        session,
+        withCarriedAgentWorkbench(session, previousSession),
         previousSession.navigation,
         navigation,
       );
@@ -467,4 +467,14 @@ function cachedStateHasWorkspaceId(
     workspaceIdentityStateCacheKey(cachedIdentity.workspaceId, cachedIdentity.canonicalRoot) ===
     workspaceIdentityStateCacheKey(identity.workspaceId, identity.canonicalRoot)
   );
+}
+
+function withCarriedAgentWorkbench(
+  session: WorkspaceSessionState,
+  previousSession: WorkspaceSessionState,
+): WorkspaceSessionState {
+  if (session.agentWorkbench !== undefined || previousSession.agentWorkbench === undefined) {
+    return session;
+  }
+  return { ...session, agentWorkbench: previousSession.agentWorkbench };
 }

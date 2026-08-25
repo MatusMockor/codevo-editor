@@ -23,7 +23,12 @@ describe("AgentLaunchControls", () => {
   });
 
   it("lists the Claude models and permission modes with a description on every option", () => {
-    renderControls({ provider: "claudeCode", model: "opus", mode: "acceptEdits" });
+    renderControls({
+      provider: "claudeCode",
+      model: "opus",
+      mode: "acceptEdits",
+      effort: "default",
+    });
 
     expect(trigger("agent-launch-model").textContent).toContain("Opus");
     expect(trigger("agent-launch-mode").textContent).toContain("Accept edits");
@@ -47,6 +52,55 @@ describe("AgentLaunchControls", () => {
     expect(host.querySelectorAll('[role="listbox"]')).toHaveLength(1);
   });
 
+  it("offers the reasoning effort for Claude only and reports the picked level", () => {
+    const onLaunchChange = vi.fn();
+    renderControls(
+      { provider: "claudeCode", model: "opus", mode: "default", effort: "high" },
+      onLaunchChange,
+    );
+
+    expect(trigger("agent-launch-effort").textContent).toContain("High");
+    expect(trigger("agent-launch-effort").getAttribute("aria-label")).toBe(
+      "Agent reasoning effort",
+    );
+    open("agent-launch-effort");
+    expect(optionValues("agent-launch-effort")).toEqual([
+      "default",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    open("agent-launch-effort");
+
+    pick("agent-launch-effort", "max");
+
+    expect(onLaunchChange).toHaveBeenCalledWith({
+      provider: "claudeCode",
+      model: "opus",
+      mode: "default",
+      effort: "max",
+    });
+
+    renderControls({ provider: "codex", model: "default", mode: "default" });
+
+    expect(host.querySelector("#agent-launch-effort")).toBeNull();
+  });
+
+  it("marks the model trigger with the provider glyph without repeating it to readers", () => {
+    renderControls({ provider: "claudeCode", model: "opus", mode: "default", effort: "default" });
+
+    const glyph = host.querySelector(".agent-composer__glyph");
+    expect(glyph?.getAttribute("aria-hidden")).toBe("true");
+    expect(glyph?.querySelector(".agent-row__provider--claude")).not.toBeNull();
+    expect(glyph?.parentElement?.querySelector("button")?.id).toBe("agent-launch-model");
+
+    renderControls({ provider: "codex", model: "default", mode: "default" });
+
+    expect(host.querySelector(".agent-composer__glyph .agent-row__provider--codex")).not.toBeNull();
+  });
+
   it("lists the Codex models and execution modes", () => {
     renderControls({ provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" });
 
@@ -68,7 +122,7 @@ describe("AgentLaunchControls", () => {
   });
 
   it("labels both pickers and describes the current choice for assistive technology", () => {
-    renderControls({ provider: "claudeCode", model: "default", mode: "plan" });
+    renderControls({ provider: "claudeCode", model: "default", mode: "plan", effort: "default" });
 
     expect(trigger("agent-launch-model").getAttribute("aria-label")).toBe("Agent model");
     expect(trigger("agent-launch-mode").getAttribute("aria-label")).toBe("Agent permission mode");
@@ -84,19 +138,22 @@ describe("AgentLaunchControls", () => {
 
   it("reports the picked model and mode as a whole launch value", () => {
     const onLaunchChange = vi.fn();
-    renderControls({ provider: "claudeCode", model: "default", mode: "default" }, onLaunchChange);
+    renderControls(
+      { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
+      onLaunchChange,
+    );
 
     pick("agent-launch-model", "sonnet");
     pick("agent-launch-mode", "bypassPermissions");
 
     expect(onLaunchChange.mock.calls.map(([value]) => value)).toEqual([
-      { provider: "claudeCode", model: "sonnet", mode: "default" },
-      { provider: "claudeCode", model: "default", mode: "bypassPermissions" },
+      { provider: "claudeCode", model: "sonnet", mode: "default", effort: "default" },
+      { provider: "claudeCode", model: "default", mode: "bypassPermissions", effort: "default" },
     ]);
   });
 
   it("tones the mode trigger and flags dangerous options in the list", () => {
-    renderControls({ provider: "claudeCode", model: "default", mode: "plan" });
+    renderControls({ provider: "claudeCode", model: "default", mode: "plan", effort: "default" });
     expect(trigger("agent-launch-mode").classList.contains("agent-picker__trigger--plan")).toBe(
       true,
     );
@@ -116,12 +173,14 @@ describe("AgentLaunchControls", () => {
 
   it("disables both pickers while a turn is dispatching", () => {
     renderControls(
-      { provider: "claudeCode", model: "default", mode: "default" },
+      { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
       () => undefined,
       true,
     );
 
     expect(trigger("agent-launch-model").disabled).toBe(true);
+    expect(trigger("agent-launch-effort").disabled).toBe(true);
+    expect(trigger("agent-launch-mode").disabled).toBe(true);
     open("agent-launch-model");
     expect(host.querySelector('[role="listbox"]')).toBeNull();
   });
@@ -129,7 +188,7 @@ describe("AgentLaunchControls", () => {
   it("stays silent for a safe mode and warns for a dangerous one", () => {
     const onConfirmedChange = vi.fn();
     renderWarning(
-      { provider: "claudeCode", model: "opus", mode: "acceptEdits" },
+      { provider: "claudeCode", model: "opus", mode: "acceptEdits", effort: "default" },
       false,
       onConfirmedChange,
     );
@@ -137,7 +196,7 @@ describe("AgentLaunchControls", () => {
     expect(host.querySelector(".agent-composer__danger")).toBeNull();
 
     renderWarning(
-      { provider: "claudeCode", model: "opus", mode: "bypassPermissions" },
+      { provider: "claudeCode", model: "opus", mode: "bypassPermissions", effort: "default" },
       false,
       onConfirmedChange,
     );

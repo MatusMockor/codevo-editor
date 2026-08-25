@@ -9,6 +9,7 @@ import type { AgentShipAvailability } from "../../domain/agentShip";
 import type { AgentThread } from "../../domain/agentThread";
 import type { GitChangeStatus, GitChangedFile } from "../../domain/git";
 import { AgentThreadChanges, type AgentThreadChangesProps } from "./AgentThreadChanges";
+import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 
 const ROOT = "/workspace/app";
 const WORKTREE = `${ROOT}/.worktrees/agt-1`;
@@ -47,14 +48,22 @@ describe("AgentThreadChanges", () => {
     expect(onOpenChangedFileDiff).toHaveBeenCalledWith("agt-1", file);
   });
 
-  it("keeps the inline preview on the file path itself", () => {
+  it("selects the preview on the file path and marks the selected row", () => {
     const onShowFileDiff = vi.fn();
     const file = changedFile("src/parser.ts");
-    render({ onShowFileDiff, summary: summary({ files: [file] }) });
+    render({
+      onShowFileDiff,
+      selectedRelativePath: "src/parser.ts",
+      summary: summary({ files: [file, changedFile("src/other.ts")] }),
+    });
 
     click(".agent-files__path");
 
     expect(onShowFileDiff).toHaveBeenCalledWith("agt-1", file);
+    expect(host.querySelectorAll(".agent-files__row--selected")).toHaveLength(1);
+    expect(host.querySelector('[aria-current="true"]')?.textContent).toContain("src/parser.ts");
+    expect(host.querySelector(".agent-changes__head")).toBeNull();
+    expect(host.querySelector(".agent-diff")).toBeNull();
   });
 
   it("disables both editor actions with the reason of a background project", () => {
@@ -88,6 +97,35 @@ describe("AgentThreadChanges", () => {
     expect(diff("src/gone.ts").disabled).toBe(false);
   });
 
+  it("renders the cue line only when files changed and routes to the Diff surface", () => {
+    const onReviewInDiff = vi.fn();
+    act(() =>
+      root.render(
+        <AgentThreadChangesCue
+          onReviewInDiff={onReviewInDiff}
+          summary={summary({ files: [changedFile("a.ts"), changedFile("b.ts")], truncated: true })}
+          threadId="agt-1"
+        />,
+      ),
+    );
+    expect(host.querySelector("[data-agent-changes-cue]")?.textContent).toContain(
+      "2+ files changed",
+    );
+    click('[aria-label="Review changes for agent agt-1 in the Diff surface"]');
+    expect(onReviewInDiff).toHaveBeenCalledWith("agt-1");
+
+    act(() =>
+      root.render(
+        <AgentThreadChangesCue
+          onReviewInDiff={onReviewInDiff}
+          summary={summary({})}
+          threadId="agt-1"
+        />,
+      ),
+    );
+    expect(host.querySelector("[data-agent-changes-cue]")).toBeNull();
+  });
+
   function render(overrides: Partial<AgentThreadChangesProps> = {}): void {
     act(() => root.render(<AgentThreadChanges {...defaultProps()} {...overrides} />));
   }
@@ -117,11 +155,9 @@ function defaultProps(): AgentThreadChangesProps {
   return {
     thread: threadView({}),
     summary: summary({}),
-    onHideChanges: () => undefined,
-    onHideFileDiff: () => undefined,
+    selectedRelativePath: null,
     onOpenChangedFile: () => undefined,
     onOpenChangedFileDiff: () => undefined,
-    onRefreshChanges: () => undefined,
     onShowFileDiff: () => undefined,
   };
 }

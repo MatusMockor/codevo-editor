@@ -23,7 +23,9 @@ fn every_post_spawn_fault_reaps_child_without_publication() {
         let supervisor = TerminalSupervisor::new();
 
         let result = supervisor.start_with_options(
-            PathBuf::from("/workspace"),
+            crate::terminal_session::TerminalLaunchRoots::workspace_root(PathBuf::from(
+                "/workspace",
+            )),
             None,
             None,
             crate::terminal_session::TerminalStartOptions {
@@ -166,7 +168,7 @@ fn descriptor_bound_start_publishes_retained_workspace_authority() {
     let supervisor = TerminalSupervisor::new();
     supervisor
         .start_descriptor_bound(
-            root.clone(),
+            crate::terminal_session::TerminalLaunchRoots::workspace_root(root.clone()),
             fs::File::open(&root).expect("retain workspace"),
             authority.clone(),
             crate::terminal_session::TerminalStartOptions {
@@ -194,6 +196,82 @@ fn descriptor_bound_start_publishes_retained_workspace_authority() {
 
     supervisor.stop(1).expect("stop terminal");
     fs::remove_dir_all(&root).expect("remove fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_worktree_terminal_records_its_own_cwd_and_keeps_the_workspace_identity() {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let fixture = std::env::temp_dir().join(format!(
+        "codevo-terminal-worktree-session-{}-{nonce}",
+        std::process::id()
+    ));
+    let root = fixture.join("workspace");
+    let worktree = root.join(".worktrees").join("agt-0001");
+    fs::create_dir_all(&worktree).expect("create worktree");
+    let authority = crate::debug_session_registry::DebugWorkspaceAuthority::RetainedWorkspace {
+        workspace_id: "workspace-id".to_string(),
+        canonical_root: root.to_string_lossy().into_owned(),
+    };
+    let supervisor = TerminalSupervisor::new();
+
+    let status = supervisor
+        .start_descriptor_bound(
+            crate::terminal_session::TerminalLaunchRoots {
+                workspace_root: root.clone(),
+                cwd: worktree.clone(),
+            },
+            fs::File::open(&worktree).expect("retain worktree"),
+            authority,
+            crate::terminal_session::TerminalStartOptions {
+                fault: None,
+                profile: default_test_profile(),
+                shell_integration_base_dir: None,
+                size: TerminalSize::default(),
+            },
+            &FakeTerminalSpawner::new(Box::new(BlockingReader), Box::new(SharedWriter::default())),
+            Arc::new(RecordingTerminalSink::default()),
+        )
+        .expect("start worktree terminal");
+
+    assert_eq!(
+        status,
+        TerminalRuntimeStatus::Running {
+            cols: TerminalSize::default().normalized().cols,
+            cwd: worktree.to_string_lossy().to_string(),
+            rows: TerminalSize::default().normalized().rows,
+            session_id: 1,
+        }
+    );
+    assert!(
+        supervisor.task_sink(1, &root).is_err(),
+        "typed tasks must not bind to a terminal outside the workspace root"
+    );
+    assert!(supervisor
+        .register_task_process_group(1, &root, 1_001)
+        .is_err());
+    assert!(supervisor
+        .owned_process_groups(&worktree)
+        .expect("worktree snapshot")
+        .is_empty());
+    assert!(
+        supervisor.acknowledge_start(1).is_ok(),
+        "the worktree terminal must still be registered"
+    );
+
+    supervisor.stop_root(&root).expect("stop workspace root");
+    assert!(
+        supervisor.acknowledge_start(1).is_err(),
+        "stopping the workspace root must reap its worktree terminals"
+    );
+
+    fs::remove_dir_all(&fixture).expect("remove fixture");
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -307,6 +385,7 @@ fn shell_process_group_is_included_without_platform_io() {
             7,
             crate::terminal_session::RunningTerminalSession {
                 cwd: PathBuf::from("/workspace"),
+                workspace_root: PathBuf::from("/workspace"),
                 start_gate: Arc::new(crate::terminal_session_events::TerminalStartGate::new()),
                 process_tree_terminator: ProcessTreeTerminator::new(
                     Some(3_001),

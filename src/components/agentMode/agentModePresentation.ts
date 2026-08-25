@@ -28,11 +28,17 @@ import {
   type AgentShipIntegrationMode,
   type AgentShipState,
 } from "../../domain/agentShip";
-import type { GitChangeStatus, GitChangedFile } from "../../domain/git";
+import type { GitChangeStatus, GitChangedFile, GitFileDiff } from "../../domain/git";
 import type { GitShipStatus } from "../../domain/gitIntegration";
 import { gitRepositoryDisplayName } from "../../domain/gitRepositoryMapping";
 import { localHistoryRelativeTime } from "../../domain/localHistory";
-import type { AgentThreadView, OrphanedWorktreeView } from "../../application/agentThreadPorts";
+import { detectLanguage } from "../../domain/workspace";
+import type {
+  AgentTaskChangeSummary,
+  AgentTaskFileDiff,
+  AgentThreadView,
+  OrphanedWorktreeView,
+} from "../../application/agentThreadPorts";
 
 export const MAX_RENDERED_EVENTS_PER_TURN = 200;
 
@@ -1077,4 +1083,38 @@ function unsupportedGuardReason(reason: never): never {
 
 function unsupportedChangeStatus(status: never): never {
   throw new TypeError(`Unsupported Git change status: ${String(status)}.`);
+}
+
+export function agentSurfaceTargetPath(view: AgentThreadView): string {
+  return view.thread.target.worktreePath ?? view.thread.owner.repositoryRoot;
+}
+
+export function agentSurfaceTargetGone(view: AgentThreadView): boolean {
+  return view.worktreeMissing || view.worktreeRemoved || view.ship.kind === "worktreeRemoved";
+}
+
+export function agentChangedFilesCueLabel(summary: AgentTaskChangeSummary): string | null {
+  if (summary.loading || summary.error !== null) return null;
+  const count = summary.files.length;
+  if (count === 0) return null;
+  const suffix = summary.truncated ? "+" : "";
+  if (count === 1 && !summary.truncated) return "1 file changed";
+  return `${count}${suffix} files changed`;
+}
+
+export function agentFileDiffToGitFileDiff(
+  diff: AgentTaskFileDiff,
+  change: GitChangedFile,
+): GitFileDiff {
+  return {
+    change,
+    language: detectLanguage(change.path),
+    originalContent: diff.original.text,
+    modifiedContent: diff.modified.text,
+    previewUnavailableReason: diff.unavailableReason,
+  };
+}
+
+export function agentFileDiffTruncated(diff: AgentTaskFileDiff): boolean {
+  return diff.original.truncated || diff.modified.truncated;
 }

@@ -64,6 +64,7 @@ export type AgentThreadMenuCommand =
   | { readonly kind: "rename"; readonly title: string }
   | { readonly kind: "markUnread" }
   | { readonly kind: "copy"; readonly detail: AgentThreadCopyDetail }
+  | { readonly kind: "stop" }
   | { readonly kind: "archive" }
   | { readonly kind: "delete" };
 
@@ -101,6 +102,7 @@ export function agentThreadMenuEntries(
     menuItem("copy-id", "Copy thread ID", { kind: "copy", detail: "threadId" }),
     { kind: "separator", id: "s3" },
   ];
+  if (props.running) entries.push(menuItem("stop", "Stop", { kind: "stop" }));
   if (!props.archived)
     entries.push(menuItem("archive", "Archive", { kind: "archive" }, props.running));
   entries.push(menuItem("delete", "Delete", { kind: "delete" }, false, true));

@@ -40,6 +40,18 @@ pub enum CodexModelChoice {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum ClaudeEffortChoice {
+    #[default]
+    Default,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum CodexExecutionMode {
     #[default]
     Default,
@@ -55,6 +67,8 @@ pub enum AgentLaunchOptions {
     ClaudeCode {
         model: ClaudeModelChoice,
         mode: ClaudePermissionMode,
+        #[serde(default)]
+        effort: ClaudeEffortChoice,
     },
     #[serde(rename_all = "camelCase")]
     Codex {
@@ -68,6 +82,7 @@ impl Default for AgentLaunchOptions {
         Self::ClaudeCode {
             model: ClaudeModelChoice::Default,
             mode: ClaudePermissionMode::Default,
+            effort: ClaudeEffortChoice::Default,
         }
     }
 }
@@ -103,6 +118,24 @@ impl AgentLaunchOptions {
             Self::ClaudeCode { mode, .. } => claude_mode_args(*mode),
             Self::Codex { mode, .. } => codex_mode_args(*mode, resumed),
         }
+    }
+
+    pub fn effort_args(&self) -> &'static [&'static str] {
+        match self {
+            Self::ClaudeCode { effort, .. } => claude_effort_args(*effort),
+            Self::Codex { .. } => &[],
+        }
+    }
+}
+
+fn claude_effort_args(effort: ClaudeEffortChoice) -> &'static [&'static str] {
+    match effort {
+        ClaudeEffortChoice::Default => &[],
+        ClaudeEffortChoice::Low => &["--effort", "low"],
+        ClaudeEffortChoice::Medium => &["--effort", "medium"],
+        ClaudeEffortChoice::High => &["--effort", "high"],
+        ClaudeEffortChoice::Xhigh => &["--effort", "xhigh"],
+        ClaudeEffortChoice::Max => &["--effort", "max"],
     }
 }
 
@@ -175,8 +208,29 @@ mod tests {
         CodexExecutionMode::DangerFullAccess,
     ];
 
+    const CLAUDE_EFFORTS: [ClaudeEffortChoice; 6] = [
+        ClaudeEffortChoice::Default,
+        ClaudeEffortChoice::Low,
+        ClaudeEffortChoice::Medium,
+        ClaudeEffortChoice::High,
+        ClaudeEffortChoice::Xhigh,
+        ClaudeEffortChoice::Max,
+    ];
+
     fn claude(model: ClaudeModelChoice, mode: ClaudePermissionMode) -> AgentLaunchOptions {
-        AgentLaunchOptions::ClaudeCode { model, mode }
+        claude_with_effort(model, mode, ClaudeEffortChoice::Default)
+    }
+
+    fn claude_with_effort(
+        model: ClaudeModelChoice,
+        mode: ClaudePermissionMode,
+        effort: ClaudeEffortChoice,
+    ) -> AgentLaunchOptions {
+        AgentLaunchOptions::ClaudeCode {
+            model,
+            mode,
+            effort,
+        }
     }
 
     fn codex(model: CodexModelChoice, mode: CodexExecutionMode) -> AgentLaunchOptions {
@@ -213,6 +267,51 @@ mod tests {
             assert_eq!(options.mode_args(false), expected[index], "mode {mode:?}");
             assert_eq!(options.mode_args(true), expected[index], "mode {mode:?}");
         }
+    }
+
+    #[test]
+    fn claude_effort_table_is_exhaustive_and_flagless_by_default() {
+        let expected: [&[&str]; 6] = [
+            &[],
+            &["--effort", "low"],
+            &["--effort", "medium"],
+            &["--effort", "high"],
+            &["--effort", "xhigh"],
+            &["--effort", "max"],
+        ];
+        for (index, effort) in CLAUDE_EFFORTS.into_iter().enumerate() {
+            let options = claude_with_effort(
+                ClaudeModelChoice::Default,
+                ClaudePermissionMode::Default,
+                effort,
+            );
+            assert_eq!(options.effort_args(), expected[index], "effort {effort:?}");
+        }
+    }
+
+    #[test]
+    fn codex_never_carries_effort_args() {
+        for model in CODEX_MODELS {
+            for mode in CODEX_MODES {
+                assert!(codex(model, mode).effort_args().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn claude_launch_defaults_effort_when_the_stored_document_omits_it() {
+        let decoded: AgentLaunchOptions =
+            serde_json::from_str(r#"{"provider":"claudeCode","model":"sonnet","mode":"plan"}"#)
+                .expect("schema 1 claude launch decodes");
+        assert_eq!(
+            decoded,
+            claude_with_effort(
+                ClaudeModelChoice::Sonnet,
+                ClaudePermissionMode::Plan,
+                ClaudeEffortChoice::Default
+            )
+        );
+        assert!(decoded.effort_args().is_empty());
     }
 
     #[test]
@@ -332,7 +431,17 @@ mod tests {
         .expect("claude launch encodes");
         assert_eq!(
             encoded,
-            r#"{"provider":"claudeCode","model":"sonnet","mode":"bypassPermissions"}"#
+            r#"{"provider":"claudeCode","model":"sonnet","mode":"bypassPermissions","effort":"default"}"#
+        );
+        let encoded = serde_json::to_string(&claude_with_effort(
+            ClaudeModelChoice::Sonnet,
+            ClaudePermissionMode::BypassPermissions,
+            ClaudeEffortChoice::Xhigh,
+        ))
+        .expect("claude launch encodes");
+        assert_eq!(
+            encoded,
+            r#"{"provider":"claudeCode","model":"sonnet","mode":"bypassPermissions","effort":"xhigh"}"#
         );
     }
 
@@ -360,6 +469,22 @@ mod tests {
         .is_err());
         assert!(serde_json::from_str::<AgentLaunchOptions>(
             r#"{"provider":"codex","model":"default"}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<AgentLaunchOptions>(
+            r#"{"provider":"claudeCode","model":"default","mode":"default","effort":"ultra"}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<AgentLaunchOptions>(
+            r#"{"provider":"codex","model":"default","mode":"default","effort":"low"}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<AgentLaunchOptions>(
+            r#"{"provider":"codex","model":"default","mode":"default","effort":"default"}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<AgentLaunchOptions>(
+            r#"{"provider":"claudeCode","model":"default","mode":"default","effort":"Xhigh"}"#
         )
         .is_err());
     }

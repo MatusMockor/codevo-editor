@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { initialAgentWorkbenchLayout } from "./domain/agentWorkbenchLayout";
 import type { GitChangedFile, GitFileDiff } from "./domain/git";
 import { createEmptyDebugWatches } from "./test/debugWatchMocks";
 
@@ -177,6 +178,10 @@ vi.mock("./application/useWorkbenchController", async () => {
   };
 });
 
+vi.mock("./components/agentMode/AgentWorkbenchScreen", () => ({
+  AgentWorkbenchScreen: () => null,
+}));
+
 vi.mock("./components/useNoticeToastRenderers", () => ({
   useNoticeToastRenderers: () => (notice: unknown) => {
     if (notice && typeof notice === "object" && "message" in notice) {
@@ -318,6 +323,11 @@ function createWorkbench(overrides: Record<string, unknown>) {
       activeDocument: null,
       activeDocumentGitBaseline: null,
       agentModeActive: false,
+      agentWorkbench: {
+        layout: { ...initialAgentWorkbenchLayout, layout: "editor-expanded" },
+        effectiveLayout: "editor-expanded",
+        dispatch: noop,
+      },
       activePath: null,
       appSettings: {
         editorFontFamily: "Menlo, monospace",

@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
 import {
   EMPTY_EDITOR_CHANGE_HUNKS,
@@ -32,8 +31,10 @@ import type { EditorGroupFocusRunner } from "./application/editorGroupFocusPort"
 import { isGitDiffDocumentPath } from "./application/useGitDiffWorkspace";
 import { ArtisanMakePalette } from "./components/ArtisanMakePalette";
 import { BookmarksPanel } from "./components/BookmarksPanel";
-import { BottomPanel } from "./components/BottomPanel";
-import { dockedTextSearchProps } from "./components/dockedTextSearchProps";
+import { WorkbenchBottomPanelHost } from "./components/WorkbenchBottomPanelHost";
+import { WorkbenchShellFrame } from "./components/WorkbenchShellFrame";
+import { workbenchShellPlacement } from "./components/workbenchShellPlacement";
+import { useWorkbenchResizeHandles } from "./application/useWorkbenchResizeHandles";
 import { commandPaletteProps } from "./components/commandPaletteProps";
 import { editorChangeHunksStatus } from "./components/editorChangeHunksStatus";
 import { phpTestBottomPanelProps } from "./components/phpTestBottomPanelProps";
@@ -41,12 +42,7 @@ import { useAppTestDebugPanels } from "./components/useAppTestDebugPanels";
 import { usePhpCoverageEditorSurfaceProps } from "./components/usePhpCoverageEditorSurfaceProps";
 import { quickOpenProps } from "./components/quickOpenProps";
 import { jsTestEditorSurfaceProps } from "./components/jsTestEditorSurfaceProps";
-import {
-  areFileStatusesByPathEqual,
-  clamp,
-  maxBottomPanelHeight,
-  workspaceInfoLabel,
-} from "./components/appPresentation";
+import { areFileStatusesByPathEqual, workspaceInfoLabel } from "./components/appPresentation";
 import { useOwnedWorkspaceExpressRoutesWorkbenchPanel } from "./components/useWorkspaceExpressRoutesWorkbenchPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
@@ -85,7 +81,6 @@ import { SearchEverywhere } from "./components/SearchEverywhere";
 import { WorkbenchSettingsDialogHost } from "./components/WorkbenchSettingsDialogHost";
 import { WorkbenchOverlayHosts } from "./components/WorkbenchOverlayHosts";
 import { StatusBar } from "./components/StatusBar";
-import { TextSearch } from "./components/TextSearch";
 import { ReferencesPanel } from "./components/ReferencesPanel";
 import { TodoPanel } from "./components/TodoPanel";
 import { TypeHierarchy } from "./components/TypeHierarchy";
@@ -111,7 +106,7 @@ import { createInitialEditorGroupsState, type EditorGroupId } from "./domain/edi
 import { isGitHistoryDiffDocumentPath } from "./domain/editorDocumentSchemes";
 import { formatWindowTitle } from "./domain/windowTitle";
 import type { BottomPanelView } from "./domain/bottomPanel";
-import { AgentModeScreen } from "./components/agentMode/AgentModeScreen";
+import { AgentWorkbenchScreen } from "./components/agentMode/AgentWorkbenchScreen";
 import { AgentStatusBarHost } from "./components/agentMode/AgentStatusBarHost";
 import { WorkbenchToolbar } from "./components/WorkbenchToolbar";
 import { workbenchComposition } from "./workbenchComposition";
@@ -190,8 +185,6 @@ function App() {
   const debugCommandBridges = useDebugCommandBridges();
   const prefersLightTheme = usePrefersLightTheme();
   useAppSyntaxHighlighterPreload(createAppHighlighter);
-  const [sidebarWidth, setSidebarWidth] = useState(300);
-  const [bottomPanelHeight, setBottomPanelHeight] = useState(152);
   const editorGroupFocusRunnerRef = useRef<EditorGroupFocusRunner | null>(null);
   const editorGroupFocusRunner = useCallback<EditorGroupFocusRunner>(
     (groupId) => editorGroupFocusRunnerRef.current?.(groupId) ?? false,
@@ -696,64 +689,36 @@ function App() {
     () => terminalThemeForAppTheme(workbench.appSettings.theme, prefersLightTheme),
     [prefersLightTheme, workbench.appSettings.theme],
   );
-  const shellStyle = useMemo(
-    () =>
-      ({
-        "--bottom-panel-height": `${bottomPanelHeight}px`,
-        "--sidebar-width": `${sidebarWidth}px`,
-      }) as CSSProperties,
-    [bottomPanelHeight, sidebarWidth],
+  const agentLayout = workbench.agentWorkbench;
+  const resizeAgentRightPanel = useCallback(
+    (width: number) => agentLayout.dispatch({ kind: "resizeRightPanel", width }),
+    [agentLayout],
   );
-  const startSidebarResize = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      const startX = event.clientX;
-      const startWidth = sidebarWidth;
-      const handlePointerMove = (moveEvent: PointerEvent) => {
-        setSidebarWidth(clamp(startWidth + moveEvent.clientX - startX, 180, 520));
-      };
-      const stopResize = () => {
-        window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", stopResize);
-        window.removeEventListener("pointercancel", stopResize);
-        window.removeEventListener("blur", stopResize);
-      };
-
-      window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", stopResize);
-      window.addEventListener("pointercancel", stopResize);
-      window.addEventListener("blur", stopResize);
-    },
-    [sidebarWidth],
+  const resizeAgentBottomPanel = useCallback(
+    (height: number) => agentLayout.dispatch({ kind: "resizeBottomPanel", height }),
+    [agentLayout],
   );
-  const startBottomPanelResize = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      const startY = event.clientY;
-      const startHeight = bottomPanelHeight;
-      const handlePointerMove = (moveEvent: PointerEvent) => {
-        setBottomPanelHeight(
-          clamp(
-            startHeight + startY - moveEvent.clientY,
-            96,
-            maxBottomPanelHeight(window.innerHeight),
-          ),
-        );
-      };
-      const stopResize = () => {
-        window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", stopResize);
-        window.removeEventListener("pointercancel", stopResize);
-        window.removeEventListener("blur", stopResize);
-      };
-
-      window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", stopResize);
-      window.addEventListener("pointercancel", stopResize);
-      window.addEventListener("blur", stopResize);
-    },
-    [bottomPanelHeight],
+  const {
+    shellStyle,
+    startAgentBottomPanelResize,
+    startAgentRightPanelResize,
+    startBottomPanelResize,
+    startSidebarResize,
+  } = useWorkbenchResizeHandles({
+    rightPanelWidth: agentLayout.layout.rightPanelWidth,
+    bottomPanelHeight: agentLayout.layout.bottomPanelHeight,
+    onResizeRightPanel: resizeAgentRightPanel,
+    onResizeBottomPanel: resizeAgentBottomPanel,
+  });
+  const collapseEditor = useCallback(
+    () => agentLayout.dispatch({ kind: "collapseEditor" }),
+    [agentLayout],
   );
+  const shellPlacement = workbenchShellPlacement({
+    bottomPanelVisible: workbench.bottomPanelVisible,
+    effectiveLayout: agentLayout.effectiveLayout,
+    layout: agentLayout.layout,
+  });
   const showProblemsPanel = useCallback(() => {
     void runCommand("panel.showProblems");
   }, [runCommand]);
@@ -1153,53 +1118,95 @@ function App() {
         workbench={workbench}
       />
 
-      <section className="editor-workbench">
-        {workbench.agentModeActive ? null : (
-          <ProjectTabs
-            activeRoot={workbench.workspaceRoot}
-            dirtyCount={workbench.dirtyCount}
-            onActivate={workbench.activateWorkspaceTab}
-            onClose={workbench.closeWorkspaceTab}
-            workspaceTabs={workbench.workspaceTabs}
-          />
-        )}
-        <WorkbenchToolbar
-          agentModeActive={workbench.agentModeActive}
-          ideProgress={ideProgress}
-          indexProgress={workbench.indexProgress}
-          intelligenceMode={workbench.intelligenceMode}
-          languageServerPlan={workbench.languageServerPlan}
-          languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
-          onSelectAgentMode={workbench.setAgentModeActive}
-          onShowProgressPanel={showProgressPanel}
-          onToggleSmartMode={toggleSmartMode}
-          onTrustWorkspace={trustWorkspace}
-          workspaceRoot={workbench.workspaceRoot}
-          workspaceTrusted={workspaceTrusted}
-        />
-        {workbench.externalFileConflictState.conflict ? (
-          <ExternalFileConflictBar
-            busyAction={
-              workbench.externalFileConflictState.status === "resolving"
-                ? workbench.externalFileConflictState.action
-                : null
-            }
-            conflict={workbench.externalFileConflictState.conflict}
-            disabledActions={
-              workbench.externalFileConflictState.conflict.kind === "renamed" ? ["overwrite"] : []
-            }
-            error={workbench.externalFileConflictState.error}
-            onAction={workbench.handleExternalFileConflictAction}
-          />
-        ) : null}
-        {workbench.agentModeActive ? (
-          <AgentModeScreen agents={workbench.agents} workspaceRoot={workbench.workspaceRoot} />
-        ) : null}
-        <div
-          aria-hidden={workbench.agentModeActive || undefined}
-          className="editor-mode-surface"
-          hidden={workbench.agentModeActive}
-        >
+      <WorkbenchShellFrame
+        agent={
+          workbench.workspaceRoot ? (
+            <AgentWorkbenchScreen
+              activeFileRevealSignal={activeFileRevealSignal}
+              fileChanges={workspaceGateways.fileChanges}
+              fileStatusesByPath={fileStatusesByPath}
+              files={workspaceGateways.files}
+              monacoTheme={monacoTheme}
+              onResizeRightPanelStart={startAgentRightPanelResize}
+              onTrustWorkspace={trustWorkspace}
+              terminalGateway={terminalGateway}
+              terminalTheme={terminalTheme}
+              workbench={workbench}
+              workspaceTrusted={workspaceTrusted}
+            />
+          ) : null
+        }
+        bottom={
+          workbench.bottomPanelVisible ? (
+            <WorkbenchBottomPanelHost
+              artisanRoutes={artisanRoutes}
+              debugPanel={debugPanel}
+              expressRoutesPanel={expressRoutesPanel}
+              frameworkBottomPanels={frameworkBottomPanels}
+              gateways={{ gitHistoryGateway, runtimeObservabilityGateway, terminalGateway }}
+              jsTestExplorerPanel={jsTestExplorerPanel}
+              onOpenCommitFileDiff={gitHistoryDiffDocuments.openCommitDiff}
+              onResizeStart={
+                workbench.agentModeActive ? startAgentBottomPanelResize : startBottomPanelResize
+              }
+              onSelectView={selectBottomPanelView}
+              onSetDockedTextSearchOpen={setDockedTextSearchOpen}
+              onTrustWorkspace={trustWorkspace}
+              phpTestPanel={phpTestPanel}
+              phpTestResults={phpTestResults}
+              terminalOwnerKey={workspaceId}
+              terminalTheme={terminalTheme}
+              workbench={workbench}
+              workspaceTrusted={workspaceTrusted}
+            />
+          ) : null
+        }
+        chrome={
+          <>
+            {workbench.agentModeActive ? null : (
+              <ProjectTabs
+                activeRoot={workbench.workspaceRoot}
+                dirtyCount={workbench.dirtyCount}
+                onActivate={workbench.activateWorkspaceTab}
+                onClose={workbench.closeWorkspaceTab}
+                workspaceTabs={workbench.workspaceTabs}
+              />
+            )}
+            <WorkbenchToolbar
+              collapseAvailable={workbench.workspaceRoot !== null}
+              ideProgress={ideProgress}
+              indexProgress={workbench.indexProgress}
+              intelligenceMode={workbench.intelligenceMode}
+              languageServerPlan={workbench.languageServerPlan}
+              languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
+              layout={shellPlacement.layout}
+              onCollapseEditor={collapseEditor}
+              onShowProgressPanel={showProgressPanel}
+              onToggleSmartMode={toggleSmartMode}
+              onTrustWorkspace={trustWorkspace}
+              workspaceRoot={workbench.workspaceRoot}
+              workspaceTrusted={workspaceTrusted}
+            />
+            {workbench.externalFileConflictState.conflict ? (
+              <ExternalFileConflictBar
+                busyAction={
+                  workbench.externalFileConflictState.status === "resolving"
+                    ? workbench.externalFileConflictState.action
+                    : null
+                }
+                conflict={workbench.externalFileConflictState.conflict}
+                disabledActions={
+                  workbench.externalFileConflictState.conflict.kind === "renamed"
+                    ? ["overwrite"]
+                    : []
+                }
+                error={workbench.externalFileConflictState.error}
+                onAction={workbench.handleExternalFileConflictAction}
+              />
+            ) : null}
+          </>
+        }
+        editor={
           <WorkbenchEditorHost
             {...workbenchEditorHostProps({
               activeGroupId: editorGroupsState.activeGroupId,
@@ -1215,75 +1222,9 @@ function App() {
               state: editorGroupsState,
             })}
           />
-          {workbench.bottomPanelVisible ? (
-            <BottomPanel
-              {...frameworkBottomPanels}
-              {...phpTestPanel}
-              activeView={workbench.bottomPanelView}
-              artisanRoutes={artisanRoutes.filteredRoutes}
-              artisanRoutesError={artisanRoutes.error}
-              artisanRoutesLoading={artisanRoutes.loading}
-              artisanRoutesQuery={artisanRoutes.query}
-              artisanRoutesTotal={artisanRoutes.total}
-              artisanRoutesUnavailable={artisanRoutes.unavailable}
-              debug={debugPanel}
-              expressRoutesPanel={expressRoutesPanel}
-              hasArtisan={workbench.hasArtisan}
-              hasPhpWorkspace={!!workbench.workspaceDescriptor?.php}
-              indexHealthLogs={workbench.indexHealthLogs}
-              indexProgress={workbench.indexProgress}
-              notices={workbench.notices}
-              search={
-                <TextSearch
-                  {...dockedTextSearchProps({
-                    setOpen: setDockedTextSearchOpen,
-                    workbench,
-                  })}
-                />
-              }
-              onClearProblems={workbench.clearNotices}
-              onClose={() => {
-                artisanRoutes.clear();
-                phpTestResults.clear();
-                if (workbench.bottomPanelView === "search") {
-                  setDockedTextSearchOpen(false);
-                  return;
-                }
-                workbench.hideBottomPanel();
-              }}
-              onHardReindex={workbench.startHardReindex}
-              onArtisanRoutesQueryChange={artisanRoutes.setQuery}
-              onOpenArtisanController={(action) => {
-                void workbench.openArtisanController(action);
-              }}
-              onRefreshArtisanRoutes={artisanRoutes.refresh}
-              jsTestExplorer={jsTestExplorerPanel}
-              onOpenProblem={workbench.openProblemNotice}
-              onPhpReindex={workbench.startPhpReindex}
-              onRevealDirectoryInTree={workbench.revealDirectoryInTree}
-              onResizeStart={startBottomPanelResize}
-              onSelectView={selectBottomPanelView}
-              onSoftReindex={workbench.startIndexScan}
-              workspacePackageDiscovery={workbench.workspacePackageDiscovery}
-              gitHistoryGateway={gitHistoryGateway}
-              runtimeObservabilityGateway={runtimeObservabilityGateway}
-              runtimeMode={workbench.intelligenceMode}
-              getLatencySnapshot={workbench.getLatencySnapshot}
-              onOpenCommitFileDiff={gitHistoryDiffDocuments.openCommitDiff}
-              onTerminalSessionReady={workbench.registerActiveTerminalSession}
-              onTrustWorkspace={trustWorkspace}
-              terminalGateway={terminalGateway}
-              terminalOwnerKey={workspaceId}
-              terminalShellIntegrationEnabled={
-                workbench.appSettings.terminalShellIntegrationEnabled
-              }
-              terminalTheme={terminalTheme}
-              workspaceTrusted={workspaceTrusted}
-              workspaceRoot={workbench.workspaceRoot}
-            />
-          ) : null}
-        </div>
-      </section>
+        }
+        placement={shellPlacement}
+      />
 
       {workbench.agentModeActive ? (
         <AgentStatusBarHost

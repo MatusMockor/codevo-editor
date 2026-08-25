@@ -12,7 +12,7 @@ impl TerminalSupervisor {
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
         self.start_with_options(
-            cwd,
+            TerminalLaunchRoots::workspace_root(cwd),
             None,
             None,
             TerminalStartOptions {
@@ -30,7 +30,7 @@ impl TerminalSupervisor {
     #[cfg(unix)]
     pub(crate) fn start_descriptor_bound(
         &self,
-        cwd: PathBuf,
+        roots: TerminalLaunchRoots,
         cwd_directory: fs::File,
         workspace_authority: DebugWorkspaceAuthority,
         options: TerminalStartOptions,
@@ -38,7 +38,7 @@ impl TerminalSupervisor {
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
         self.start_with_options(
-            cwd,
+            roots,
             Some(Arc::new(cwd_directory)),
             Some(workspace_authority),
             options,
@@ -52,25 +52,29 @@ impl TerminalSupervisor {
     /// but never publish retained workspace authority for that weaker launch.
     pub(crate) fn start_descriptor_bound(
         &self,
-        cwd: PathBuf,
+        roots: TerminalLaunchRoots,
         _cwd_directory: fs::File,
         _workspace_authority: DebugWorkspaceAuthority,
         options: TerminalStartOptions,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
-        self.start_with_options(cwd, None, None, options, spawner, sink)
+        self.start_with_options(roots, None, None, options, spawner, sink)
     }
 
     pub(super) fn start_with_options(
         &self,
-        cwd: PathBuf,
+        roots: TerminalLaunchRoots,
         cwd_directory: Option<Arc<fs::File>>,
         workspace_authority: Option<DebugWorkspaceAuthority>,
         options: TerminalStartOptions,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
+        let TerminalLaunchRoots {
+            cwd,
+            workspace_root,
+        } = roots;
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
         #[cfg(test)]
         let fault = options.fault;
@@ -161,6 +165,7 @@ impl TerminalSupervisor {
         }
         let session = RunningTerminalSession {
             cwd,
+            workspace_root,
             start_gate: Arc::clone(&start_gate),
             process_tree_terminator: ProcessTreeTerminator::new(process_id, killer),
             reader: Some(reader),

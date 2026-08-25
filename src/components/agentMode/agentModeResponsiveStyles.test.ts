@@ -29,20 +29,21 @@ function rule(selector: string, source = appCss): string {
 
 describe("agent mode responsive layout contract", () => {
   it("keeps the composer in a real non-overlapping center layout row", () => {
-    expect(rule(".agent-mode__center")).toContain("grid-template-rows: minmax(0, 1fr) auto");
+    expect(rule(".agent-mode__center")).toContain("grid-template-rows: auto minmax(0, 1fr) auto");
     expect(rule(".agent-composer")).not.toMatch(/position:\s*absolute/);
     expect(rule(".agent-composer")).toContain("max-height: min(44vh, 320px)");
     expect(rule(".agent-session__body")).not.toMatch(/padding:[^;]*148px/);
   });
 
-  it("drops the supplementary info rail before adapting thread navigation", () => {
+  it("narrows the thread rail before adapting thread navigation", () => {
     const tablet = block(appCss, "@media (max-width: 1180px)");
     const narrow = block(appCss, "@media (max-width: 720px)");
 
     expect(rule(".agent-mode__grid", tablet)).toContain(
       "grid-template-columns: 248px minmax(0, 1fr)",
     );
-    expect(rule(".agent-info", tablet)).toContain("display: none");
+    expect(appCss).not.toContain(".agent-info");
+    expect(appCss).not.toContain("--agent-info-width");
     expect(rule(".agent-mode__grid", narrow)).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(rule(".agent-mode__grid", narrow)).toContain(
       "grid-template-rows: minmax(112px, 28vh) minmax(0, 1fr)",

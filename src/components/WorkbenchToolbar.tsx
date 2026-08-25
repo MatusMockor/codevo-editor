@@ -1,4 +1,5 @@
-import { LoaderCircle, TriangleAlert } from "lucide-react";
+import { LoaderCircle, Minimize2, TriangleAlert } from "lucide-react";
+import type { AgentWorkbenchLayoutMode } from "../domain/agentWorkbenchLayout";
 import type { IdeProgressIndicator } from "../domain/ideProgress";
 import type { IndexProgressState } from "../domain/indexProgress";
 import type { LanguageServerPlan } from "../domain/languageServer";
@@ -7,8 +8,11 @@ import type { IntelligenceMode } from "../domain/workspace";
 import { indexToolbarLabel } from "./appPresentation";
 import { smartModeSummary } from "./appSmartModeSummary";
 
+export const COLLAPSE_EDITOR_LABEL = "Collapse editor (⌥⌘E)";
+
 export interface WorkbenchToolbarProps {
-  readonly agentModeActive: boolean;
+  readonly layout: AgentWorkbenchLayoutMode;
+  readonly collapseAvailable: boolean;
   readonly ideProgress: IdeProgressIndicator;
   readonly indexProgress: IndexProgressState;
   readonly intelligenceMode: IntelligenceMode;
@@ -16,50 +20,52 @@ export interface WorkbenchToolbarProps {
   readonly languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   readonly workspaceRoot: string | null;
   readonly workspaceTrusted: boolean;
-  onSelectAgentMode(active: boolean): void;
+  onCollapseEditor(): void;
   onShowProgressPanel(): void;
   onToggleSmartMode(): void;
   onTrustWorkspace(): void;
 }
 
 export function WorkbenchToolbar({
-  agentModeActive,
+  collapseAvailable,
   ideProgress,
   indexProgress,
   intelligenceMode,
   languageServerPlan,
   languageServerRuntimeStatus,
-  onSelectAgentMode,
+  layout,
+  onCollapseEditor,
   onShowProgressPanel,
   onToggleSmartMode,
   onTrustWorkspace,
   workspaceRoot,
   workspaceTrusted,
 }: WorkbenchToolbarProps) {
-  if (agentModeActive) {
-    return (
-      <header className="workbench-toolbar workbench-toolbar--agent">
-        <WorkbenchModeSwitch
-          agentModeActive={agentModeActive}
-          onSelectAgentMode={onSelectAgentMode}
-          workspaceRoot={workspaceRoot}
-        />
-        {workspaceRoot && !workspaceTrusted ? (
-          <button className="toolbar-action" onClick={onTrustWorkspace} type="button">
-            Trust
-          </button>
-        ) : null}
-      </header>
-    );
+  const trustNeeded = workspaceRoot !== null && !workspaceTrusted;
+  const trustButton = trustNeeded ? (
+    <button className="toolbar-action" onClick={onTrustWorkspace} type="button">
+      Trust
+    </button>
+  ) : null;
+
+  if (layout === "agent") {
+    if (!trustNeeded) return null;
+    return <header className="workbench-toolbar workbench-toolbar--agent">{trustButton}</header>;
   }
 
   return (
     <header className="workbench-toolbar">
-      <WorkbenchModeSwitch
-        agentModeActive={agentModeActive}
-        onSelectAgentMode={onSelectAgentMode}
-        workspaceRoot={workspaceRoot}
-      />
+      {collapseAvailable ? (
+        <button
+          aria-label={COLLAPSE_EDITOR_LABEL}
+          className="toolbar-icon-action"
+          onClick={onCollapseEditor}
+          title={COLLAPSE_EDITOR_LABEL}
+          type="button"
+        >
+          <Minimize2 aria-hidden="true" size={14} />
+        </button>
+      ) : null}
       <button
         aria-pressed={intelligenceMode === "fullSmart"}
         className={
@@ -102,41 +108,7 @@ export function WorkbenchToolbar({
       {workspaceRoot ? (
         <span className="toolbar-status">{indexToolbarLabel(indexProgress)}</span>
       ) : null}
-      {workspaceRoot && !workspaceTrusted ? (
-        <button className="toolbar-action" onClick={onTrustWorkspace} type="button">
-          Trust
-        </button>
-      ) : null}
+      {trustButton}
     </header>
-  );
-}
-
-function WorkbenchModeSwitch({
-  agentModeActive,
-  onSelectAgentMode,
-  workspaceRoot,
-}: {
-  readonly agentModeActive: boolean;
-  readonly workspaceRoot: string | null;
-  onSelectAgentMode(active: boolean): void;
-}) {
-  return (
-    <div aria-label="Workbench mode" className="workbench-mode-switch" role="group">
-      <button
-        aria-pressed={!agentModeActive}
-        onClick={() => onSelectAgentMode(false)}
-        type="button"
-      >
-        Code
-      </button>
-      <button
-        aria-pressed={agentModeActive}
-        disabled={!workspaceRoot}
-        onClick={() => onSelectAgentMode(true)}
-        type="button"
-      >
-        Agents
-      </button>
-    </div>
   );
 }

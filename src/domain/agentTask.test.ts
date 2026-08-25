@@ -52,7 +52,7 @@ function startRequest(overrides: Record<string, unknown> = {}): Record<string, u
     agentCliPath: "/usr/local/bin/claude",
     agentCliKind: "claudeCode",
     resumeSessionId: null,
-    launch: { provider: "claudeCode", model: "default", mode: "default" },
+    launch: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
     ...overrides,
   };
 }
@@ -60,10 +60,17 @@ function startRequest(overrides: Record<string, unknown> = {}): Record<string, u
 describe("validateStartAgentTaskRequest launch", () => {
   it("accepts a matching provider and returns the parsed launch options", () => {
     const request = validateStartAgentTaskRequest(
-      startRequest({ launch: { provider: "claudeCode", model: "opus", mode: "plan" } }),
+      startRequest({
+        launch: { provider: "claudeCode", model: "opus", mode: "plan", effort: "high" },
+      }),
     );
 
-    expect(request.launch).toEqual({ provider: "claudeCode", model: "opus", mode: "plan" });
+    expect(request.launch).toEqual({
+      provider: "claudeCode",
+      model: "opus",
+      mode: "plan",
+      effort: "high",
+    });
   });
 
   it("rejects a launch whose provider differs from the agent CLI kind", () => {
@@ -71,7 +78,7 @@ describe("validateStartAgentTaskRequest launch", () => {
       validateStartAgentTaskRequest(
         startRequest({
           agentCliKind: "codex",
-          launch: { provider: "claudeCode", model: "default", mode: "default" },
+          launch: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
         }),
       ),
     ).toThrow("Invalid agent task value at request.launch.provider: expected the agent CLI kind.");
@@ -103,13 +110,20 @@ describe("validateStartAgentTaskRequest launch", () => {
     expect(() => validateStartAgentTaskRequest(withoutLaunch)).toThrow(TypeError);
     expect(() =>
       validateStartAgentTaskRequest(
-        startRequest({ launch: { provider: "claudeCode", model: "gpt-5.5", mode: "default" } }),
+        startRequest({
+          launch: {
+            provider: "claudeCode",
+            model: "gpt-5.5",
+            mode: "default",
+            effort: "default",
+          },
+        }),
       ),
     ).toThrow(TypeError);
     expect(() =>
       validateStartAgentTaskRequest(
         startRequest({
-          launch: { provider: "claudeCode", model: "default", mode: "default", effort: "high" },
+          launch: { provider: "claudeCode", model: "default", mode: "default", effort: "ultra" },
         }),
       ),
     ).toThrow(TypeError);

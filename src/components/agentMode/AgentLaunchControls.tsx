@@ -3,20 +3,27 @@ import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
   agentLaunchDangerConfirmLabel,
   agentLaunchDangerNotice,
+  agentLaunchEffortChoices,
+  agentLaunchEffortHint,
+  agentLaunchEffortValue,
   agentLaunchModeChoices,
   agentLaunchModeHint,
   agentLaunchModeLabel,
   agentLaunchModelChoices,
   agentLaunchModelHint,
+  agentLaunchSupportsEffort,
   agentLaunchTone,
+  agentLaunchWithEffort,
   agentLaunchWithMode,
   agentLaunchWithModel,
   type AgentLaunchChoice,
 } from "./agentLaunchPresentation";
 import { AgentPickerMenu } from "./AgentPickerMenu";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
+import { AgentProviderGlyph } from "./AgentProviderGlyph";
 
 const MODEL_ID = "agent-launch-model";
+const EFFORT_ID = "agent-launch-effort";
 const MODE_ID = "agent-launch-mode";
 const DANGER_ID = "agent-launch-danger-confirm";
 
@@ -33,21 +40,46 @@ export function AgentLaunchControls({
 }: AgentLaunchControlsProps) {
   return (
     <div className="agent-composer__launch">
-      <AgentPickerMenu
-        align="start"
-        describedBy={`${MODEL_ID}-hint`}
-        disabled={disabled}
-        id={MODEL_ID}
-        label="Agent model"
-        onChange={(value) => onLaunchChange(agentLaunchWithModel(launch, value))}
-        options={agentLaunchModelChoices(launch.provider).map(toOption)}
-        prefix={null}
-        tone={null}
-        value={launch.model}
-      />
+      <span className="agent-composer__glyphed">
+        <span aria-hidden="true" className="agent-composer__glyph">
+          <AgentProviderGlyph kind={launch.provider} />
+        </span>
+        <AgentPickerMenu
+          align="start"
+          describedBy={`${MODEL_ID}-hint`}
+          disabled={disabled}
+          id={MODEL_ID}
+          label="Agent model"
+          onChange={(value) => onLaunchChange(agentLaunchWithModel(launch, value))}
+          options={agentLaunchModelChoices(launch.provider).map(toOption)}
+          prefix={null}
+          tone={null}
+          value={launch.model}
+        />
+      </span>
       <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
         {agentLaunchModelHint(launch)}
       </span>
+
+      {agentLaunchSupportsEffort(launch) && (
+        <>
+          <AgentPickerMenu
+            align="start"
+            describedBy={`${EFFORT_ID}-hint`}
+            disabled={disabled}
+            id={EFFORT_ID}
+            label="Agent reasoning effort"
+            onChange={(value) => onLaunchChange(agentLaunchWithEffort(launch, value))}
+            options={agentLaunchEffortChoices().map(toOption)}
+            prefix="Effort"
+            tone={null}
+            value={agentLaunchEffortValue(launch)}
+          />
+          <span className="agent-visually-hidden" id={`${EFFORT_ID}-hint`}>
+            {agentLaunchEffortHint(launch)}
+          </span>
+        </>
+      )}
 
       <AgentPickerMenu
         align="start"

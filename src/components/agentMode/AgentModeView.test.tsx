@@ -11,10 +11,13 @@ import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
+import type { GitChangedFile } from "../../domain/git";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import type { AgentTurnEvent } from "../../domain/agentThread";
 import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
+import { chromeFixture, recordedLayoutState } from "./agentWorkbenchChromeTestFixtures";
+import { waitForReact } from "../../test/reactTestLifecycle";
 import { agentCompactTimeLabel, agentRailScopeValue } from "./agentSidebarPresentation";
 import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
@@ -25,8 +28,34 @@ const OTHER_ROOT = "/workspace/api-service";
 const NOW_TICK_MS = 3_600_000;
 const NOW = 1_700_000_600_000;
 
-const columnRenders = vi.hoisted(() => ({ session: 0, info: 0 }));
+const columnRenders = vi.hoisted(() => ({ session: 0 }));
 const sessionReveals = vi.hoisted((): Array<AgentThreadRevealRequest | null> => []);
+
+vi.mock("./AgentSurfaceDiff", () => ({
+  AgentSurfaceDiff: (props: {
+    readonly thread: { readonly thread: { readonly threadId: string } };
+    readonly summary: { readonly files: ReadonlyArray<unknown> } | null;
+    onOpenChangedFile(threadId: string, change: unknown): void;
+    onOpenChangedFileDiff(threadId: string, change: unknown): void;
+  }) => {
+    const threadId = props.thread.thread.threadId;
+    const change = props.summary?.files[0];
+    return (
+      <div data-mock-diff={threadId}>
+        <button
+          data-open-file
+          onClick={() => props.onOpenChangedFile(threadId, change)}
+          type="button"
+        />
+        <button
+          data-open-diff
+          onClick={() => props.onOpenChangedFileDiff(threadId, change)}
+          type="button"
+        />
+      </div>
+    );
+  },
+}));
 
 vi.mock("./AgentThreadSession", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./AgentThreadSession")>();
@@ -36,17 +65,6 @@ vi.mock("./AgentThreadSession", async (importOriginal) => {
       columnRenders.session += 1;
       sessionReveals.push(props.reveal ?? null);
       return <actual.AgentThreadSession {...props} />;
-    },
-  };
-});
-
-vi.mock("./AgentThreadInfoColumn", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./AgentThreadInfoColumn")>();
-  return {
-    ...actual,
-    AgentThreadInfoColumn: (props: Parameters<typeof actual.AgentThreadInfoColumn>[0]) => {
-      columnRenders.info += 1;
-      return <actual.AgentThreadInfoColumn {...props} />;
     },
   };
 });
@@ -75,7 +93,8 @@ describe("AgentModeView", () => {
     expect(host.querySelector('section[aria-label="Agent mode"]')).not.toBeNull();
     expect(host.querySelector('aside[aria-label="Agent threads"]')).not.toBeNull();
     expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();
-    expect(host.querySelector('aside[aria-label="Agent thread details"]')).not.toBeNull();
+    expect(host.querySelector("[data-agent-thread-head]")).not.toBeNull();
+    expect(host.querySelector(".agent-info")).toBeNull();
     expect(host.querySelector('form[aria-label="New agent thread"]')).not.toBeNull();
   });
 
@@ -170,7 +189,7 @@ describe("AgentModeView", () => {
     });
 
     typePrompt("Fix the parser");
-    toggleCheckbox("agent-isolation", false);
+    pickOption("agent-checkout", "in-place");
 
     expect(submitButton().disabled).toBe(true);
 
@@ -195,7 +214,7 @@ describe("AgentModeView", () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({ agents: surface({ startThread }) });
 
-    selectRepository(NESTED);
+    pickOption("agent-repository", NESTED);
     typePrompt("Update the router");
     submitForm();
 
@@ -315,8 +334,8 @@ describe("AgentModeView", () => {
     clickText("Refactor the parser");
 
     expect(host.querySelector('form[aria-label="Follow up on agent thread"]')).not.toBeNull();
-    expect(host.querySelector("select#agent-repository")).toBeNull();
-    expect(host.querySelector("input#agent-isolation")).toBeNull();
+    expect(host.querySelector("button#agent-repository")).toBeNull();
+    expect(host.querySelector("button#agent-checkout")).toBeNull();
     expect(submitButton().textContent).toContain("Send");
   });
 
@@ -449,7 +468,7 @@ describe("AgentModeView", () => {
     expect(host.querySelector("[data-thread-id]")).toBeNull();
   });
 
-  it("routes stop, archive and remove to the surface", () => {
+  it("routes stop, archive and remove through the thread title menu", () => {
     const stop = vi.fn(async () => undefined);
     const archive = vi.fn();
     const remove = vi.fn();
@@ -463,15 +482,18 @@ describe("AgentModeView", () => {
     });
 
     clickText("Refactor the parser");
-    click('[aria-label="Stop agent agt-1"]');
+    click('[aria-label="Thread actions for Refactor the parser"]');
+    clickMenuItem("Stop");
 
     expect(stop).toHaveBeenCalledWith("agt-1");
 
     render({ agents: surface({ archive, remove, stop, threads: [threadView({})] }) });
 
     clickText("Refactor the parser");
-    click('[aria-label="Archive thread agt-1"]');
-    click('[aria-label="Remove thread agt-1"]');
+    click('[aria-label="Thread actions for Refactor the parser"]');
+    clickMenuItem("Archive");
+    click('[aria-label="Thread actions for Refactor the parser"]');
+    clickMenuItem("Delete");
 
     expect(archive).toHaveBeenCalledWith("agt-1");
     expect(remove).toHaveBeenCalledWith("agt-1");
@@ -497,6 +519,7 @@ describe("AgentModeView", () => {
     });
 
     clickText("Refactor the parser");
+    click('button[aria-label="Ship options"]');
     click('[aria-label="Refresh the branch status of agent agt-1"]');
     click('[aria-label="Commit changes"]');
     click('[aria-label="Push branch"]');
@@ -510,20 +533,45 @@ describe("AgentModeView", () => {
     expect(removeWorktree).toHaveBeenCalledWith("agt-1");
   });
 
-  it("opens a changed file and its diff document through the surface", () => {
+  it("offers the changed files as a review cue that opens the Diff surface", () => {
+    const showChanges = vi.fn(async () => undefined);
+    const layout = recordedLayoutState();
+    const view = threadView({ threadId: "agt-1" });
+    render({
+      chrome: chromeFixture({ layout }),
+      agents: surface({
+        showChanges,
+        threads: [
+          {
+            ...view,
+            changeSummary: {
+              loading: false,
+              error: null,
+              files: [changedFile("a.ts")],
+              truncated: false,
+              removing: false,
+              diff: null,
+            },
+          },
+        ],
+      }),
+    });
+
+    clickText("Refactor the parser");
+    expect(host.querySelector(".agent-changes")).toBeNull();
+    clickText("Review in Diff");
+
+    expect(showChanges).toHaveBeenCalledWith("agt-1");
+    expect(layout.actions).toEqual([{ kind: "openSurface", surface: "diff" }]);
+  });
+
+  it("opens a changed file and its diff document through the Diff surface", async () => {
     const openChangedFile = vi.fn(async () => undefined);
     const openChangedFileDiff = vi.fn(async () => undefined);
+    const file = changedFile("a.ts");
     const view = threadView({ threadId: "agt-1" });
-    const file = {
-      isStaged: false,
-      isUnversioned: false,
-      oldPath: null,
-      oldRelativePath: null,
-      path: `${ROOT}/.worktrees/agt-1/a.ts`,
-      relativePath: "a.ts",
-      status: "modified" as const,
-    };
     render({
+      chrome: chromeFixture({ layout: recordedLayoutState({ rightSurface: "diff" }) }),
       agents: surface({
         openChangedFile,
         openChangedFileDiff,
@@ -544,8 +592,9 @@ describe("AgentModeView", () => {
     });
 
     clickText("Refactor the parser");
-    click('[aria-label="Open a.ts in the editor"]');
-    click('[aria-label="Open a diff document for a.ts"]');
+    await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).not.toBeNull());
+    click("[data-mock-diff] [data-open-file]");
+    click("[data-mock-diff] [data-open-diff]");
 
     expect(openChangedFile).toHaveBeenCalledWith("agt-1", file);
     expect(openChangedFileDiff).toHaveBeenCalledWith("agt-1", file);
@@ -630,9 +679,9 @@ describe("AgentModeView", () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({ agents: surface({ startThread }), projects: [activeProject(), backgroundProject()] });
 
-    selectProject(OTHER_ROOT);
+    chooseScope(OTHER_ROOT, OTHER_ROOT);
 
-    expect(checkbox("agent-isolation").disabled).toBe(true);
+    expect(pickerTrigger("agent-checkout").disabled).toBe(true);
     expect(host.textContent).toContain("not the active tab");
 
     typePrompt("Fix the parser");
@@ -676,7 +725,7 @@ describe("AgentModeView", () => {
       projects: [{ ...backgroundProject(), trust: "untrusted" }],
     });
 
-    expect(host.querySelector(".agent-composer__chip--empty")?.textContent).toBe("No project");
+    expect(host.textContent).toContain("Choose a project in the rail to start a thread.");
     expect(submitButton().disabled).toBe(true);
     expect(host.textContent).not.toContain("Untrusted");
 
@@ -701,8 +750,34 @@ describe("AgentModeView", () => {
   it("shows no start target when only a closed-tab draining project remains", () => {
     render({ projects: [{ ...backgroundProject(), origin: "closed-tab-live-tasks" }] });
 
-    expect(host.querySelector(".agent-composer__chip--empty")?.textContent).toBe("No project");
+    expect(host.textContent).toContain("Choose a project in the rail to start a thread.");
     expect(submitButton().disabled).toBe(true);
+  });
+
+  it("never starts a thread in a background project while the rail shows all projects", () => {
+    render({ projects: [backgroundProject()] });
+
+    expect(host.textContent).toContain("Choose a project in the rail to start a thread.");
+    expect(submitButton().disabled).toBe(true);
+
+    chooseScope(OTHER_ROOT, OTHER_ROOT);
+
+    expect(host.textContent).not.toContain("Choose a project in the rail to start a thread.");
+  });
+
+  it("prefers the active-tab project over a background project for a new thread", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    render({
+      agents: surface({ startThread }),
+      projects: [backgroundProject(), activeProject()],
+    });
+
+    typePrompt("Fix the parser");
+    await submitFormAsync();
+
+    expect(startThread).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRootKey: ROOT, repositoryRoot: ROOT }),
+    );
   });
 
   it("releases a closed-tab project through the surface callback", () => {
@@ -734,7 +809,7 @@ describe("AgentModeView", () => {
       agents: surface({
         lastUsedLaunch: (projectRootKey: string) =>
           projectRootKey === ROOT
-            ? { provider: "claudeCode", model: "opus", mode: "acceptEdits" }
+            ? { provider: "claudeCode", model: "opus", mode: "acceptEdits", effort: "default" }
             : null,
       }),
     });
@@ -756,7 +831,7 @@ describe("AgentModeView", () => {
       agents: surface({
         lastUsedLaunch: (projectRootKey: string) =>
           projectRootKey === OTHER_ROOT
-            ? { provider: "claudeCode", model: "sonnet", mode: "plan" }
+            ? { provider: "claudeCode", model: "sonnet", mode: "plan", effort: "default" }
             : null,
       }),
       projects: [activeProject(), backgroundProject()],
@@ -766,7 +841,7 @@ describe("AgentModeView", () => {
 
     expect(launchSelect("agent-launch-model").value).toBe("fable");
 
-    selectProject(OTHER_ROOT);
+    chooseScope(OTHER_ROOT, OTHER_ROOT);
 
     expect(launchSelect("agent-launch-model").value).toBe("sonnet");
     expect(launchSelect("agent-launch-mode").value).toBe("plan");
@@ -776,7 +851,12 @@ describe("AgentModeView", () => {
     render({
       agents: surface({
         agentCliKind: "codex",
-        lastUsedLaunch: () => ({ provider: "claudeCode", model: "opus", mode: "plan" }),
+        lastUsedLaunch: () => ({
+          provider: "claudeCode",
+          model: "opus",
+          mode: "plan",
+          effort: "default",
+        }),
       }),
     });
 
@@ -804,7 +884,12 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
-      launch: { provider: "claudeCode", model: "default", mode: "bypassPermissions" },
+      launch: {
+        provider: "claudeCode",
+        model: "default",
+        mode: "bypassPermissions",
+        effort: "default",
+      },
       dangerousLaunchConfirmed: true,
     });
     expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
@@ -836,7 +921,7 @@ describe("AgentModeView", () => {
     expect(sendFollowUp).toHaveBeenCalledWith({
       threadId: "agt-1",
       prompt: "Also update the docs",
-      launch: { provider: "claudeCode", model: "sonnet", mode: "default" },
+      launch: { provider: "claudeCode", model: "sonnet", mode: "default", effort: "default" },
       dangerousLaunchConfirmed: false,
     });
   });
@@ -873,8 +958,8 @@ describe("AgentModeView", () => {
       agents: surface({
         lastUsedLaunch: (projectRootKey: string) =>
           projectRootKey === OTHER_ROOT
-            ? { provider: "claudeCode", model: "opus", mode: "acceptEdits" }
-            : { provider: "claudeCode", model: "sonnet", mode: "plan" },
+            ? { provider: "claudeCode", model: "opus", mode: "acceptEdits", effort: "default" }
+            : { provider: "claudeCode", model: "sonnet", mode: "plan", effort: "default" },
         threads: [threadView({ threadId: "agt-b", rootKey: OTHER_ROOT })],
       }),
       projects: [activeProject(), backgroundProject()],
@@ -891,11 +976,16 @@ describe("AgentModeView", () => {
   it("seeds a follow-up launch from the thread's last turn before the remembered launch", () => {
     render({
       agents: surface({
-        lastUsedLaunch: () => ({ provider: "claudeCode", model: "opus", mode: "acceptEdits" }),
+        lastUsedLaunch: () => ({
+          provider: "claudeCode",
+          model: "opus",
+          mode: "acceptEdits",
+          effort: "default",
+        }),
         threads: [
           threadView({
             threadId: "agt-1",
-            launch: { provider: "claudeCode", model: "fable", mode: "plan" },
+            launch: { provider: "claudeCode", model: "fable", mode: "plan", effort: "default" },
           }),
         ],
       }),
@@ -929,7 +1019,7 @@ describe("AgentModeView", () => {
     expect(sendFollowUp).toHaveBeenCalledWith({
       threadId: "agt-b",
       prompt: "Also update the docs",
-      launch: { provider: "claudeCode", model: "sonnet", mode: "default" },
+      launch: { provider: "claudeCode", model: "sonnet", mode: "default", effort: "default" },
       dangerousLaunchConfirmed: false,
     });
   });
@@ -940,11 +1030,21 @@ describe("AgentModeView", () => {
         threads: [
           threadView({
             threadId: "agt-1",
-            launch: { provider: "claudeCode", model: "default", mode: "bypassPermissions" },
+            launch: {
+              provider: "claudeCode",
+              model: "default",
+              mode: "bypassPermissions",
+              effort: "default",
+            },
           }),
           threadView({
             threadId: "agt-2",
-            launch: { provider: "claudeCode", model: "default", mode: "bypassPermissions" },
+            launch: {
+              provider: "claudeCode",
+              model: "default",
+              mode: "bypassPermissions",
+              effort: "default",
+            },
           }),
         ],
       }),
@@ -967,6 +1067,7 @@ describe("AgentModeView", () => {
           provider: "claudeCode",
           model: "default",
           mode: "bypassPermissions",
+          effort: "default",
         }),
       }),
       projects: [activeProject(), backgroundProject()],
@@ -975,13 +1076,13 @@ describe("AgentModeView", () => {
     toggleCheckbox("agent-launch-danger-confirm", true);
     expect(checkbox("agent-launch-danger-confirm").checked).toBe(true);
 
-    selectProject(OTHER_ROOT);
+    chooseScope(OTHER_ROOT, OTHER_ROOT);
 
     expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
     expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
   });
 
-  it("advances session and info timestamps on clock ticks without rerendering the columns", () => {
+  it("advances session timestamps on clock ticks without rerendering the column", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
     vi.setSystemTime(NOW);
     try {
@@ -991,12 +1092,9 @@ describe("AgentModeView", () => {
       });
       click('[data-thread-id="agt-1"]');
 
-      expect(host.querySelector(".agent-info__since")?.textContent).toBe("10 minutes ago");
       expect(host.querySelector(".agent-prompt__meta")?.textContent).toContain("10 minutes ago");
       const sessionRenders = columnRenders.session;
-      const infoRenders = columnRenders.info;
       expect(sessionRenders).toBeGreaterThan(0);
-      expect(infoRenders).toBeGreaterThan(0);
 
       for (const minutes of [50, 110, 170]) {
         act(() => {
@@ -1005,10 +1103,8 @@ describe("AgentModeView", () => {
         });
       }
 
-      expect(host.querySelector(".agent-info__since")?.textContent).toBe("3 hours ago");
       expect(host.querySelector(".agent-prompt__meta")?.textContent).toContain("3 hours ago");
       expect(columnRenders.session).toBe(sessionRenders);
-      expect(columnRenders.info).toBe(infoRenders);
     } finally {
       vi.useRealTimers();
     }
@@ -1350,16 +1446,19 @@ describe("AgentModeView", () => {
     return element ?? document.createElement("input");
   }
 
-  function selectProject(value: string): void {
-    const element = host.querySelector<HTMLSelectElement>("select#agent-project");
+  function pickerTrigger(id: string): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>(`button#${id}`);
     expect(element).not.toBeNull();
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(
-        element,
-        value,
-      );
-      element?.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    return element ?? document.createElement("button");
+  }
+
+  function pickOption(id: string, value: string): void {
+    act(() => pickerTrigger(id).click());
+    const option = host.querySelector<HTMLElement>(
+      `#${id}-list [role="option"][data-value="${value}"]`,
+    );
+    expect(option).not.toBeNull();
+    act(() => option?.click());
   }
 
   function threadOrder(): readonly string[] {
@@ -1517,18 +1616,6 @@ describe("AgentModeView", () => {
     act(() => option?.click());
   }
 
-  function selectRepository(value: string): void {
-    const element = host.querySelector<HTMLSelectElement>("select#agent-repository");
-    expect(element).not.toBeNull();
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(
-        element,
-        value,
-      );
-      element?.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-  }
-
   function toggleCheckbox(id: string, checked: boolean): void {
     const element = host.querySelector<HTMLInputElement>(`input#${id}`);
     expect(element).not.toBeNull();
@@ -1573,6 +1660,18 @@ describe("AgentModeView", () => {
   }
 });
 
+function changedFile(relativePath: string): GitChangedFile {
+  return {
+    isStaged: false,
+    isUnversioned: false,
+    oldPath: null,
+    oldRelativePath: null,
+    path: `${ROOT}/.worktrees/agt-1/${relativePath}`,
+    relativePath,
+    status: "modified",
+  };
+}
+
 function defaultProps(): AgentModeViewProps {
   return {
     agents: surface({}),
@@ -1582,6 +1681,7 @@ function defaultProps(): AgentModeViewProps {
     projects: [defaultActiveProject()],
     workspaceRoot: ROOT,
     nowTickMs: NOW_TICK_MS,
+    chrome: chromeFixture(),
   };
 }
 

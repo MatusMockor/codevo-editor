@@ -22,10 +22,14 @@ export const CODEX_EXECUTION_MODES = [
 ] as const;
 export type CodexExecutionMode = (typeof CODEX_EXECUTION_MODES)[number];
 
+export const CLAUDE_EFFORT_CHOICES = ["default", "low", "medium", "high", "xhigh", "max"] as const;
+export type ClaudeEffortChoice = (typeof CLAUDE_EFFORT_CHOICES)[number];
+
 export interface ClaudeLaunchOptions {
   readonly provider: "claudeCode";
   readonly model: ClaudeModelChoice;
   readonly mode: ClaudePermissionMode;
+  readonly effort: ClaudeEffortChoice;
 }
 
 export interface CodexLaunchOptions {
@@ -42,7 +46,7 @@ export interface AgentLaunchOptionsByProvider {
 }
 
 export const DEFAULT_AGENT_LAUNCH_OPTIONS: AgentLaunchOptionsByProvider = {
-  claudeCode: { provider: "claudeCode", model: "default", mode: "default" },
+  claudeCode: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
   codex: { provider: "codex", model: "default", mode: "default" },
 };
 
@@ -51,24 +55,22 @@ export function defaultAgentLaunchOptions(provider: AgentCliKind): AgentLaunchOp
 }
 
 export function parseAgentLaunchOptions(value: unknown, path: string): AgentLaunchOptions {
-  const options = record(value, path);
-  exactKeys(options, ["provider", "model", "mode"], path);
-  const provider = launchProvider(options.provider, `${path}.provider`);
-  if (provider === "claudeCode") {
-    return {
-      provider,
-      model: member(options.model, CLAUDE_MODEL_CHOICES, `${path}.model`),
-      mode: member(options.mode, CLAUDE_PERMISSION_MODES, `${path}.mode`),
-    };
-  }
-  return {
-    provider,
-    model: member(options.model, CODEX_MODEL_CHOICES, `${path}.model`),
-    mode: member(options.mode, CODEX_EXECUTION_MODES, `${path}.mode`),
-  };
+  return parseLaunchOptions(value, path, false);
+}
+
+export function parseStoredAgentLaunchOptions(value: unknown, path: string): AgentLaunchOptions {
+  return parseLaunchOptions(value, path, true);
 }
 
 export function serializeAgentLaunchOptions(options: AgentLaunchOptions): Record<string, unknown> {
+  if (options.provider === "claudeCode") {
+    return {
+      provider: options.provider,
+      model: options.model,
+      mode: options.mode,
+      effort: options.effort,
+    };
+  }
   return { provider: options.provider, model: options.model, mode: options.mode };
 }
 
@@ -93,7 +95,42 @@ export function agentLaunchIsDangerous(options: AgentLaunchOptions): boolean {
 export function agentLaunchOptionsEqual(a: AgentLaunchOptions, b: AgentLaunchOptions): boolean {
   if (a.provider !== b.provider) return false;
   if (a.model !== b.model) return false;
-  return a.mode === b.mode;
+  if (a.mode !== b.mode) return false;
+  if (a.provider === "claudeCode" && b.provider === "claudeCode") return a.effort === b.effort;
+  return true;
+}
+
+function parseLaunchOptions(value: unknown, path: string, stored: boolean): AgentLaunchOptions {
+  const options = record(value, path);
+  const provider = launchProvider(options.provider, `${path}.provider`);
+  if (provider === "claudeCode") {
+    exactKeys(options, claudeLaunchKeys(options, stored), path);
+    return {
+      provider,
+      model: member(options.model, CLAUDE_MODEL_CHOICES, `${path}.model`),
+      mode: member(options.mode, CLAUDE_PERMISSION_MODES, `${path}.mode`),
+      effort: parseEffort(options.effort, `${path}.effort`, stored),
+    };
+  }
+  exactKeys(options, ["provider", "model", "mode"], path);
+  return {
+    provider,
+    model: member(options.model, CODEX_MODEL_CHOICES, `${path}.model`),
+    mode: member(options.mode, CODEX_EXECUTION_MODES, `${path}.mode`),
+  };
+}
+
+function claudeLaunchKeys(
+  options: Record<string, unknown>,
+  stored: boolean,
+): ReadonlyArray<string> {
+  if (stored && !("effort" in options)) return ["provider", "model", "mode"];
+  return ["provider", "model", "mode", "effort"];
+}
+
+function parseEffort(value: unknown, path: string, stored: boolean): ClaudeEffortChoice {
+  if (stored && value === undefined) return "default";
+  return member(value, CLAUDE_EFFORT_CHOICES, path);
 }
 
 function launchProvider(value: unknown, path: string): AgentCliKind {

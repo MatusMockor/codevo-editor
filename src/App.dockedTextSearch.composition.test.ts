@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(
+  new URL("./components/WorkbenchBottomPanelHost.tsx", import.meta.url),
+  "utf8",
+);
 const controllerSource = readFileSync(
   new URL("./application/useWorkbenchController.ts", import.meta.url),
   "utf8",
@@ -14,8 +17,8 @@ const textSearchWorkbenchSource = readFileSync(
   new URL("./application/useWorkbenchTextSearch.ts", import.meta.url),
   "utf8",
 );
-const textSearchEnd = "              />";
-const textSearchStart = "              <TextSearch\n";
+const textSearchEnd = "/>";
+const textSearchStart = "<TextSearch";
 
 describe("docked text search composition", () => {
   it("assembles every TextSearch prop from the dock owner and workbench", () => {
@@ -45,7 +48,7 @@ describe("docked text search composition", () => {
     ];
 
     expect(appSearch).toContain("{...dockedTextSearchProps({");
-    expect(appSearch).toContain("setOpen: setDockedTextSearchOpen");
+    expect(appSearch).toContain("setOpen: onSetDockedTextSearchOpen");
     expect(appSearch).toContain("workbench");
 
     for (const mapping of mappings) {
@@ -80,7 +83,7 @@ describe("docked text search composition", () => {
     ];
 
     expect(appSearch).toContain("{...dockedTextSearchProps({");
-    expect(appSearch).toContain("setOpen: setDockedTextSearchOpen");
+    expect(appSearch).toContain("setOpen: onSetDockedTextSearchOpen");
     expect(appSearch).toContain("workbench");
     expect(controllerSource).toContain(
       "const textSearchWorkbench = useWorkbenchDockedTextSearch({",

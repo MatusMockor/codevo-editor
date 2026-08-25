@@ -872,7 +872,12 @@ describe("lastUsedAgentLaunch", () => {
     const claude = thread({
       threadId: "agt-t4-0001",
       turns: [
-        stamped("agt-8-0a1b", 8_000, { provider: "claudeCode", model: "opus", mode: "plan" }),
+        stamped("agt-8-0a1b", 8_000, {
+          provider: "claudeCode",
+          model: "opus",
+          mode: "plan",
+          effort: "default",
+        }),
       ],
     });
     const bare = thread({ threadId: "agt-t5-0001", turns: [turn({ turnId: "agt-7-0a1b" })] });
@@ -882,6 +887,7 @@ describe("lastUsedAgentLaunch", () => {
       provider: "claudeCode",
       model: "opus",
       mode: "plan",
+      effort: "default",
     });
     expect(lastUsedAgentLaunch([], OWNER.rootKey, "codex")).toBeNull();
   });
@@ -920,6 +926,7 @@ describe("lastUsedAgentLaunch", () => {
           provider: "claudeCode",
           model: "opus",
           mode: "acceptEdits",
+          effort: "default",
         }),
       ],
     });
@@ -954,7 +961,14 @@ describe("agent thread wire compatibility", () => {
   it("round trips a stamped launch and view time and rejects an invalid launch", () => {
     const stamped = thread({
       turns: [
-        turn({ launch: { provider: "claudeCode", model: "sonnet", mode: "bypassPermissions" } }),
+        turn({
+          launch: {
+            provider: "claudeCode",
+            model: "sonnet",
+            mode: "bypassPermissions",
+            effort: "default",
+          },
+        }),
       ],
       viewedAtEpochMs: 4_000,
     });
@@ -967,7 +981,7 @@ describe("agent thread wire compatibility", () => {
 
     const turns = (wire.turns as Record<string, unknown>[]).map((entry) => ({
       ...entry,
-      launch: { provider: "claudeCode", model: "sonnet", mode: "yolo" },
+      launch: { provider: "claudeCode", model: "sonnet", mode: "yolo", effort: "default" },
     }));
     expect(() => parseAgentThread({ ...wire, turns })).toThrow(TypeError);
   });
@@ -987,7 +1001,7 @@ describe("agent thread wire compatibility", () => {
 
   it("round trips the default launch of both providers", () => {
     for (const launch of [
-      { provider: "claudeCode", model: "default", mode: "default" },
+      { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
       { provider: "codex", model: "default", mode: "default" },
     ] as const) {
       const stamped = thread({ turns: [turn({ launch })] });

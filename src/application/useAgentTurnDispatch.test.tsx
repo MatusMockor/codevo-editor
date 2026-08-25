@@ -221,7 +221,12 @@ describe("useAgentTurnDispatch startThread", () => {
 describe("useAgentTurnDispatch launch admission", () => {
   it("rejects a dangerous launch that was not confirmed before touching the gateway", async () => {
     const harness = renderDispatch();
-    const launch = { provider: "claudeCode", model: "opus", mode: "bypassPermissions" } as const;
+    const launch = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "bypassPermissions",
+      effort: "default",
+    } as const;
 
     const result = await act(() => harness.hook().startThread(startRequest({ launch })));
 
@@ -238,7 +243,12 @@ describe("useAgentTurnDispatch launch admission", () => {
 
   it("passes a confirmed dangerous launch into the start request and stamps it on the turn", async () => {
     const harness = renderDispatch();
-    const launch = { provider: "claudeCode", model: "opus", mode: "bypassPermissions" } as const;
+    const launch = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "bypassPermissions",
+      effort: "default",
+    } as const;
 
     const result = await act(() =>
       harness.hook().startThread(startRequest({ launch, dangerousLaunchConfirmed: true })),
@@ -271,7 +281,12 @@ describe("useAgentTurnDispatch launch admission", () => {
   it("uses the launch chosen for a follow-up rather than the previous turn's", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
-    const launch = { provider: "claudeCode", model: "sonnet", mode: "plan" } as const;
+    const launch = {
+      provider: "claudeCode",
+      model: "sonnet",
+      mode: "plan",
+      effort: "default",
+    } as const;
 
     expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Go", launch }))).toBe(
       true,
@@ -304,7 +319,12 @@ describe("useAgentTurnDispatch launch admission", () => {
   it("rejects an unconfirmed dangerous follow-up and never remembers a prior confirmation", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
-    const launch = { provider: "claudeCode", model: "default", mode: "bypassPermissions" } as const;
+    const launch = {
+      provider: "claudeCode",
+      model: "default",
+      mode: "bypassPermissions",
+      effort: "default",
+    } as const;
     harness.agent.startAgentTask.mockClear();
 
     const sent = await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Go", launch }));

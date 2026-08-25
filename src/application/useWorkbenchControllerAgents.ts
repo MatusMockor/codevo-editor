@@ -12,7 +12,13 @@ import type { WorkspaceTrustGateway } from "../domain/trust";
 import type { EditorDocument, FileEntry } from "../domain/workspace";
 import type { AgentThreadStoreGateway } from "./agentThreadPorts";
 import type { AgentEditorBridgePort } from "./useAgentEditorBridge";
-import { useAgentModeState, type AgentModeState } from "./useAgentModeState";
+import {
+  useAgentWorkbenchLayout,
+  type AgentWorkbenchLayoutHydration,
+  type AgentWorkbenchLayoutPersistencePort,
+  type AgentWorkbenchLayoutState,
+  type AgentWorkbenchLayoutSurface,
+} from "./useAgentWorkbenchLayout";
 import {
   useWorkbenchAgents,
   type WorkbenchAgentProjectGateways,
@@ -65,7 +71,13 @@ export type WorkbenchControllerOpenGitChange = (
   repositoryRoot?: string,
 ) => Promise<void>;
 
+export type WorkbenchControllerPersistWorkspaceSettings = (
+  rootPath: string,
+  nextSettings: WorkspaceSettings,
+) => Promise<void>;
+
 export interface WorkbenchControllerAgentsOptions {
+  readonly agentLayoutAvailable?: boolean;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly editorSessionOwnerKey: string | null;
@@ -82,6 +94,8 @@ export interface WorkbenchControllerAgentsOptions {
   readonly gitRepositoryMappings: ReadonlyArray<GitRepositoryMapping>;
   readonly gitRepositoryStatuses: ReadonlyArray<GitRepositoryStatus>;
   readonly openDocuments: ReadonlyArray<EditorDocument>;
+  readonly persistedAgentWorkbenchLayout?: AgentWorkbenchLayoutHydration | null;
+  readonly persistWorkspaceSettings?: WorkbenchControllerPersistWorkspaceSettings;
   readonly prompter: WorkbenchPrompter;
   readonly reportError: (source: string, error: unknown) => void;
   readonly setSettingsInitialSection: (section: SettingsSection) => void;
@@ -96,16 +110,31 @@ export interface WorkbenchControllerAgentsOptions {
   readonly workspaceTrustGateway: WorkspaceTrustGateway;
 }
 
-export interface WorkbenchControllerAgentsSurface extends WorkbenchAgentsSurface, AgentModeState {}
+export interface WorkbenchControllerAgentsSurface
+  extends WorkbenchAgentsSurface, AgentWorkbenchLayoutSurface {}
 
 export function useWorkbenchControllerAgents(
   options: WorkbenchControllerAgentsOptions,
 ): WorkbenchControllerAgentsSurface {
-  const agentMode = useAgentModeState(
-    options.editorSessionOwnerKey,
-    options.workspaceRoot !== null,
+  const layoutPersistence = useAgentWorkbenchLayoutPersistence(
+    options.workspaceRoot,
+    options.persistWorkspaceSettings,
+    options.workspaceSettingsRef,
   );
-  const { agentModeActive, setAgentModeActive, toggleAgentMode } = agentMode;
+
+  const agentLayout = useAgentWorkbenchLayout({
+    workspaceOwnerKey: options.editorSessionOwnerKey,
+    hasWorkspace: options.workspaceRoot !== null,
+    agentLayoutAvailable:
+      options.agentLayoutAvailable ?? options.options.agentRootLeaseGateway !== undefined,
+    hydration:
+      options.persistedAgentWorkbenchLayout ??
+      agentWorkbenchHydration(options.editorSessionOwnerKey, options.workspaceSettingsRef.current),
+    persistence: layoutPersistence,
+    reportError: options.reportError,
+  });
+  const { agentModeActive, agentWorkbench } = agentLayout;
+
   const agentProjectGateways = useAgentProjectGateways(
     options.options.agentRootLeaseGateway,
     options.workspaceIdentityByRootRef,
@@ -117,7 +146,7 @@ export function useWorkbenchControllerAgents(
   const editorBridge = useAgentEditorBridgePort(
     options.openFileRef,
     options.openGitChange,
-    setAgentModeActive,
+    agentWorkbench.dispatch,
   );
 
   const agents = useWorkbenchAgents({
@@ -142,22 +171,52 @@ export function useWorkbenchControllerAgents(
   });
 
   return useMemo(
-    () => ({ ...agents, agentModeActive, setAgentModeActive, toggleAgentMode }),
-    [agentModeActive, agents, setAgentModeActive, toggleAgentMode],
+    () => ({ ...agents, agentModeActive, agentWorkbench }),
+    [agentModeActive, agentWorkbench, agents],
   );
+}
+
+function useAgentWorkbenchLayoutPersistence(
+  workspaceRoot: string | null,
+  persistWorkspaceSettings: WorkbenchControllerPersistWorkspaceSettings | undefined,
+  workspaceSettingsRef: { readonly current: WorkspaceSettings },
+): AgentWorkbenchLayoutPersistencePort | null {
+  return useMemo(() => {
+    if (workspaceRoot === null || persistWorkspaceSettings === undefined) {
+      return null;
+    }
+
+    return {
+      write: async (_ownerKey, agentWorkbench) => {
+        const settings = workspaceSettingsRef.current;
+        await persistWorkspaceSettings(workspaceRoot, {
+          ...settings,
+          session: { ...settings.session, agentWorkbench },
+        });
+      },
+    };
+  }, [persistWorkspaceSettings, workspaceRoot, workspaceSettingsRef]);
 }
 
 function useAgentEditorBridgePort(
   openFileRef: WorkbenchControllerOpenFileRef,
   openGitChange: WorkbenchControllerOpenGitChange,
-  setAgentModeActive: AgentModeState["setAgentModeActive"],
+  dispatchAgentLayout: AgentWorkbenchLayoutState["dispatch"],
 ): AgentEditorBridgePort {
   return useMemo(
     () => ({
       openFile: (entry, options) => openFileRef.current(entry, options),
       openGitChange: (change, repositoryRoot) => openGitChange(change, repositoryRoot),
-      leaveAgentMode: () => setAgentModeActive(false),
+      openSurface: (surface) => dispatchAgentLayout({ kind: "openSurface", surface }),
     }),
-    [openFileRef, openGitChange, setAgentModeActive],
+    [dispatchAgentLayout, openFileRef, openGitChange],
   );
+}
+
+export function agentWorkbenchHydration(
+  ownerKey: string | null,
+  settings: WorkspaceSettings,
+): AgentWorkbenchLayoutHydration | null {
+  if (ownerKey === null) return null;
+  return { ownerKey, layout: settings.session.agentWorkbench };
 }

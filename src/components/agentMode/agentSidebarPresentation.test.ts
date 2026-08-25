@@ -245,6 +245,7 @@ describe("agent rail labels", () => {
       "Copy branch",
       "Copy thread ID",
       "-",
+      "Stop",
       "Archive",
       "Delete",
     ]);
@@ -255,6 +256,11 @@ describe("agent rail labels", () => {
         (entry) => (entry.kind === "item" ? entry.label : "-"),
       ),
     ).not.toContain("Archive");
+    expect(
+      agentThreadMenuEntries({ branch: null, pinned: false, archived: false, running: false }).map(
+        (entry) => (entry.kind === "item" ? entry.label : "-"),
+      ),
+    ).not.toContain("Stop");
   });
 });
 

@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import type { AgentWorkbenchLayoutAction } from "../domain/agentWorkbenchLayout";
 import {
   createAgentViewCommandBridge,
   type AgentViewCommandHandlers,
 } from "./agentViewCommandBridge";
 import { CommandRegistry, type CommandContext } from "./commandRegistry";
-import { workbenchAgentCommands } from "./workbenchAgentCommands";
+import {
+  workbenchAgentCommands,
+  type AgentWorkbenchLayoutCommandPort,
+} from "./workbenchAgentCommands";
 
 const disabledContext: CommandContext = {
   activeDocumentDirty: false,
@@ -33,6 +37,16 @@ const VIEW_COMMAND_IDS = [
   "agent.jumpToThread.9",
   "agent.searchThreads",
   "agent.findInThread",
+  "agent.runPreferredScript",
+  "agent.openCommitMenu",
+] as const;
+
+const LAYOUT_COMMAND_IDS = [
+  "agent.toggleRightPanel",
+  "agent.openFilesSurface",
+  "agent.openDiffSurface",
+  "agent.openTerminalSurface",
+  "agent.toggleEditorExpanded",
 ] as const;
 
 function handlers(threadSelected = true): AgentViewCommandHandlers {
@@ -43,25 +57,32 @@ function handlers(threadSelected = true): AgentViewCommandHandlers {
     jumpToThread: vi.fn(),
     searchThreads: vi.fn(),
     findInThread: vi.fn(),
+    runPreferredScript: vi.fn(),
+    openCommitMenu: vi.fn(),
     threadSelected: () => threadSelected,
   };
+}
+
+function recordingLayout(): AgentWorkbenchLayoutCommandPort & {
+  readonly actions: AgentWorkbenchLayoutAction[];
+} {
+  const actions: AgentWorkbenchLayoutAction[] = [];
+  return { actions, dispatch: (action) => actions.push(action) };
 }
 
 describe("workbenchAgentCommands", () => {
   it("returns the agent commands with registry metadata", () => {
     const commands = workbenchAgentCommands({
-      toggleAgentMode: vi.fn(),
       shortcut: (commandId) => `shortcut:${commandId}`,
     });
 
     expect(commands.map((command) => command.id)).toEqual([
-      "panel.showAgents",
       ...VIEW_COMMAND_IDS,
+      ...LAYOUT_COMMAND_IDS,
     ]);
     expect(commands.map((command) => command.category)).toEqual(commands.map(() => "Agents"));
-    expect(commands[0]?.shortcut).toBeUndefined();
-    expect(commands.slice(1).map((command) => command.shortcut)).toEqual(
-      VIEW_COMMAND_IDS.map((id) => `shortcut:${id}`),
+    expect(commands.map((command) => command.shortcut)).toEqual(
+      [...VIEW_COMMAND_IDS, ...LAYOUT_COMMAND_IDS].map((id) => `shortcut:${id}`),
     );
     expect(commands.find((command) => command.id === "agent.jumpToThread.4")?.title).toBe(
       "Jump to Thread 4",
@@ -69,12 +90,18 @@ describe("workbenchAgentCommands", () => {
     expect(commands.find((command) => command.id === "agent.findInThread")?.title).toBe(
       "Find in Thread",
     );
+    expect(commands.find((command) => command.id === "agent.toggleEditorExpanded")?.title).toBe(
+      "Expand or Collapse Editor",
+    );
   });
 
   it("disables every agent command without a workspace", () => {
     const bridge = createAgentViewCommandBridge();
     bridge.bind(handlers());
-    const commands = workbenchAgentCommands({ toggleAgentMode: vi.fn(), viewCommands: bridge });
+    const commands = workbenchAgentCommands({
+      agentLayout: recordingLayout(),
+      viewCommands: bridge,
+    });
 
     expect(commands.map((command) => command.isEnabled(disabledContext))).toEqual(
       commands.map(() => false),
@@ -83,11 +110,11 @@ describe("workbenchAgentCommands", () => {
 
   it("keeps the view commands disabled until an agent view is bound", () => {
     const bridge = createAgentViewCommandBridge();
-    const commands = workbenchAgentCommands({ toggleAgentMode: vi.fn(), viewCommands: bridge });
+    const commands = workbenchAgentCommands({ viewCommands: bridge });
 
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
-      true,
       ...VIEW_COMMAND_IDS.map(() => false),
+      ...LAYOUT_COMMAND_IDS.map(() => true),
     ]);
 
     const unbind = bridge.bind(handlers());
@@ -99,63 +126,101 @@ describe("workbenchAgentCommands", () => {
     unbind();
 
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
-      true,
       ...VIEW_COMMAND_IDS.map(() => false),
+      ...LAYOUT_COMMAND_IDS.map(() => true),
     ]);
   });
 
-  it("enables find in thread only while a thread is selected", () => {
+  it("enables the thread-scoped commands only while a thread is selected", () => {
     const bridge = createAgentViewCommandBridge();
     bridge.bind(handlers(false));
-    const commands = workbenchAgentCommands({ toggleAgentMode: vi.fn(), viewCommands: bridge });
-    const find = commands.find((command) => command.id === "agent.findInThread");
-    const search = commands.find((command) => command.id === "agent.searchThreads");
+    const commands = workbenchAgentCommands({ viewCommands: bridge });
+    const threadScoped = ["agent.findInThread", "agent.runPreferredScript", "agent.openCommitMenu"];
+    const enabledFor = (id: string) =>
+      commands.find((command) => command.id === id)?.isEnabled(enabledContext);
 
-    expect(search?.isEnabled(enabledContext)).toBe(true);
-    expect(find?.isEnabled(enabledContext)).toBe(false);
+    expect(enabledFor("agent.searchThreads")).toBe(true);
+    threadScoped.forEach((id) => expect(enabledFor(id)).toBe(false));
 
     bridge.bind(handlers(true));
 
-    expect(find?.isEnabled(enabledContext)).toBe(true);
+    threadScoped.forEach((id) => expect(enabledFor(id)).toBe(true));
   });
 
-  it("routes every command to the bound handlers exactly once", async () => {
-    const toggleAgentMode = vi.fn();
+  it("routes every view command to the bound handlers exactly once", async () => {
     const bound = handlers();
     const bridge = createAgentViewCommandBridge();
     bridge.bind(bound);
     const registry = new CommandRegistry();
-    for (const command of workbenchAgentCommands({ toggleAgentMode, viewCommands: bridge })) {
+    for (const command of workbenchAgentCommands({ viewCommands: bridge })) {
       registry.register(command);
     }
 
-    await registry.get("panel.showAgents")?.run();
     for (const id of VIEW_COMMAND_IDS) {
       await registry.get(id)?.run();
     }
 
-    expect(toggleAgentMode).toHaveBeenCalledTimes(1);
     expect(bound.newThread).toHaveBeenCalledTimes(1);
     expect(bound.previousThread).toHaveBeenCalledTimes(1);
     expect(bound.nextThread).toHaveBeenCalledTimes(1);
     expect(bound.searchThreads).toHaveBeenCalledTimes(1);
     expect(bound.findInThread).toHaveBeenCalledTimes(1);
+    expect(bound.runPreferredScript).toHaveBeenCalledTimes(1);
+    expect(bound.openCommitMenu).toHaveBeenCalledTimes(1);
     expect(vi.mocked(bound.jumpToThread).mock.calls.map(([slot]) => slot)).toEqual([
       1, 2, 3, 4, 5, 6, 7, 8, 9,
     ]);
   });
 
-  it("stays inert when no agent view is bound", async () => {
-    const commands = workbenchAgentCommands({ toggleAgentMode: vi.fn() });
+  it("routes every layout command to the layout port", async () => {
+    const agentLayout = recordingLayout();
+    const registry = new CommandRegistry();
+    for (const command of workbenchAgentCommands({ agentLayout })) {
+      registry.register(command);
+    }
+
+    for (const id of LAYOUT_COMMAND_IDS) {
+      await registry.get(id)?.run();
+    }
+
+    expect(agentLayout.actions).toEqual([
+      { kind: "toggleRightPanel" },
+      { kind: "openSurface", surface: "files" },
+      { kind: "openSurface", surface: "diff" },
+      { kind: "openSurface", surface: "terminal" },
+      { kind: "toggleEditorExpanded" },
+    ]);
+  });
+
+  it("stays inert when no agent view or layout port is bound", async () => {
+    const commands = workbenchAgentCommands({});
 
     for (const command of commands) {
       await command.run();
     }
 
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
-      true,
       ...VIEW_COMMAND_IDS.map(() => false),
+      ...LAYOUT_COMMAND_IDS.map(() => true),
     ]);
+  });
+
+  it("ignores handlers that a view does not implement", async () => {
+    const bridge = createAgentViewCommandBridge();
+    const partial: AgentViewCommandHandlers = {
+      ...handlers(),
+      runPreferredScript: undefined,
+      openCommitMenu: undefined,
+    };
+    bridge.bind(partial);
+    const registry = new CommandRegistry();
+    for (const command of workbenchAgentCommands({ viewCommands: bridge })) {
+      registry.register(command);
+    }
+
+    expect(() => registry.get("agent.runPreferredScript")?.run()).not.toThrow();
+    expect(() => registry.get("agent.openCommitMenu")?.run()).not.toThrow();
+    expect(partial.newThread).not.toHaveBeenCalled();
   });
 
   it("ignores a stale unbind after the view was replaced", () => {

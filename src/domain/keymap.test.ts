@@ -35,8 +35,8 @@ function defaultShortcutsWithoutIntentionalCollisions(
 
 describe("keymap", () => {
   it("keeps reserved commands out of the generated editable settings catalog", () => {
-    expect(keymapCommands).toHaveLength(149);
-    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(147);
+    expect(keymapCommands).toHaveLength(156);
+    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(154);
   });
 
   it("creates defaults for editable shortcuts", () => {
@@ -668,6 +668,49 @@ describe("keymap", () => {
       expect(defaultShortcutForCommand(id, "mac")).toBe(`Cmd+${index + 1}`);
       expect(defaultShortcutForCommand(id, "windows")).toBe(`Ctrl+${index + 1}`);
     });
+  });
+
+  it("registers the agent workbench chrome commands without shortcut collisions", () => {
+    const expected = {
+      "agent.toggleRightPanel": { label: "Toggle Right Panel", mac: "Cmd+Alt+R" },
+      "agent.openFilesSurface": { label: "Show Files Surface", mac: "Cmd+Alt+F" },
+      "agent.openDiffSurface": { label: "Show Diff Surface", mac: "Cmd+Alt+D" },
+      "agent.openTerminalSurface": { label: "Show Terminal Surface", mac: "Cmd+Alt+J" },
+      "agent.toggleEditorExpanded": { label: "Expand or Collapse Editor", mac: "Cmd+Alt+E" },
+      "agent.runPreferredScript": { label: "Run Thread Script", mac: "" },
+      "agent.openCommitMenu": { label: "Commit Thread Changes", mac: "" },
+    } as const;
+
+    for (const id of Object.keys(expected) as Array<keyof typeof expected>) {
+      expect(keymapCommands.find((command) => command.id === id)).toMatchObject({
+        category: "Agent",
+        defaultShortcut: expected[id].mac,
+        label: expected[id].label,
+      });
+    }
+
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+      const primary = platform === "mac" ? "Cmd" : "Ctrl";
+
+      expect(defaults["agent.toggleRightPanel"]).toBe(`${primary}+Alt+R`);
+      expect(defaults["agent.openFilesSurface"]).toBe(`${primary}+Alt+F`);
+      expect(defaults["agent.openDiffSurface"]).toBe(`${primary}+Alt+D`);
+      expect(defaults["agent.openTerminalSurface"]).toBe(`${primary}+Alt+J`);
+      expect(defaults["agent.toggleEditorExpanded"]).toBe(`${primary}+Alt+E`);
+      expect(defaults["agent.runPreferredScript"]).toBe("");
+      expect(defaults["agent.openCommitMenu"]).toBe("");
+
+      expect(defaults["agent.openTerminalSurface"]).not.toBe(defaults["panel.toggle"]);
+      expect(defaults["panel.toggle"]).toBe(`${primary}+J`);
+
+      for (const id of Object.keys(expected) as Array<keyof typeof expected>) {
+        const shortcut = defaults[id];
+        if (!shortcut) continue;
+        expect(keymapCommandIdsForShortcut(defaults, shortcut, platform)).toEqual([id]);
+        expect(findKeymapSequenceConflicts(defaults, id, platform)).toEqual([]);
+      }
+    }
   });
 
   it("reserves the agent-mode-scoped Search Threads collision with Delete Line", () => {

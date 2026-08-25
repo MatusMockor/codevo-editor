@@ -40,6 +40,8 @@ export interface AgentShipActions {
 export interface AgentShipPanelProps {
   readonly thread: AgentThreadView;
   readonly actions: AgentShipActions;
+  readonly initialMessage?: string | null;
+  onMessageChange?(message: string): void;
 }
 
 interface ThreadScopedValue<TValue> {
@@ -47,8 +49,15 @@ interface ThreadScopedValue<TValue> {
   readonly value: TValue;
 }
 
-export function AgentShipPanel({ actions, thread }: AgentShipPanelProps) {
-  const [messageDraft, setMessageDraft] = useState<ThreadScopedValue<string> | null>(null);
+export function AgentShipPanel({
+  actions,
+  initialMessage = null,
+  onMessageChange,
+  thread,
+}: AgentShipPanelProps) {
+  const [messageDraft, setMessageDraft] = useState<ThreadScopedValue<string> | null>(
+    initialMessage === null ? null : { threadId: thread.thread.threadId, value: initialMessage },
+  );
   const [modeChoice, setModeChoice] = useState<ThreadScopedValue<AgentShipIntegrationMode> | null>(
     null,
   );
@@ -106,7 +115,10 @@ export function AgentShipPanel({ actions, thread }: AgentShipPanelProps) {
         <textarea
           className="agent-ship__message"
           id={`agent-ship-message-${threadId}`}
-          onChange={(event) => setMessageDraft({ threadId, value: event.target.value })}
+          onChange={(event) => {
+            setMessageDraft({ threadId, value: event.target.value });
+            onMessageChange?.(event.target.value);
+          }}
           rows={2}
           value={message}
         />

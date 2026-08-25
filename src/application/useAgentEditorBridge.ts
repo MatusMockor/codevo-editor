@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react"
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentShipAvailability } from "../domain/agentShip";
 import type { AgentThread } from "../domain/agentThread";
+import type { AgentSurfaceKind } from "../domain/agentWorkbenchLayout";
 import type { GitChangedFile } from "../domain/git";
 import type { FileEntry } from "../domain/workspace";
 import {
@@ -24,8 +25,10 @@ export interface AgentEditorBridgePort {
     options: { readonly pin: true; readonly recordNavigation: true },
   ): Promise<boolean>;
   openGitChange(change: GitChangedFile, repositoryRoot: string): Promise<void>;
-  leaveAgentMode(): void;
+  openSurface(surface: AgentSurfaceKind): void;
 }
+
+export const EDITOR_BRIDGE_SURFACE: AgentSurfaceKind = "files";
 
 export interface AgentEditorBridgeDependencies {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
@@ -110,7 +113,7 @@ export function useAgentEditorBridge(
         return;
       }
       if (!opened.value) return;
-      editorPort.leaveAgentMode();
+      editorPort.openSurface(EDITOR_BRIDGE_SURFACE);
     },
     [resolveTarget],
   );
@@ -130,7 +133,7 @@ export function useAgentEditorBridge(
         dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, opened.error);
         return;
       }
-      editorPort.leaveAgentMode();
+      editorPort.openSurface(EDITOR_BRIDGE_SURFACE);
     },
     [resolveTarget],
   );

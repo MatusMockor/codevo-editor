@@ -15,7 +15,6 @@ import type {
 import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { GitChangedFile } from "../../domain/git";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
-import type { AgentShipActions } from "./AgentShipPanel";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
 import { AgentClockProvider } from "./agentClock";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
@@ -54,14 +53,6 @@ describe("AgentThreadSession", () => {
     render({ thread: null, composerRepositoryLabel: null });
 
     expect(host.textContent).toContain("No Git repository detected");
-  });
-
-  it("heads the session with the repository, the title and the lifecycle", () => {
-    render({ thread: threadView({ status: { kind: "running" } }) });
-
-    expect(host.querySelector(".agent-session__repo")?.textContent).toBe("app");
-    expect(host.querySelector(".agent-session__title")?.textContent).toBe("Refactor the parser");
-    expect(host.querySelector(".agent-session__status--running")?.textContent).toContain("Running");
   });
 
   it("renders one turn per prompt with its assistant paragraphs", () => {
@@ -226,6 +217,7 @@ describe("AgentThreadSession", () => {
             provider: "claudeCode",
             model: "opus",
             mode: "acceptEdits",
+            effort: "default",
           }),
         ],
       }),
@@ -247,6 +239,7 @@ describe("AgentThreadSession", () => {
             provider: "claudeCode",
             model: "opus",
             mode: "plan",
+            effort: "default",
           }),
           turn("agt-1-t2", "Do it", { kind: "exited", exitCode: 0 }, [], {
             provider: "codex",
@@ -283,133 +276,24 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("Earlier turns were dropped to bound memory.");
   });
 
-  it("lists changed files and opens a file diff", () => {
-    const onShowFileDiff = vi.fn();
+  it("replaces the inline change list with a single review cue that opens the Diff surface", () => {
+    const onReviewInDiff = vi.fn();
     render({
-      onShowFileDiff,
-      thread: threadView({ changeSummary: summary({ files: [changedFile("src/app.ts")] }) }),
-    });
-
-    expect(host.textContent).toContain("src/app.ts");
-    clickText("src/app.ts");
-
-    expect(onShowFileDiff).toHaveBeenCalledTimes(1);
-    expect(onShowFileDiff.mock.calls[0]?.[0]).toBe("agt-1");
-  });
-
-  it("reports an empty, truncated or failing change summary truthfully", () => {
-    render({ thread: threadView({ changeSummary: summary({ files: [] }) }) });
-
-    expect(host.textContent).toContain("The agent left no uncommitted changes.");
-
-    render({
+      onReviewInDiff,
       thread: threadView({
-        changeSummary: summary({ files: [changedFile("a.ts")], truncated: true }),
+        changeSummary: summary({ files: [changedFile("src/a.ts"), changedFile("src/b.ts")] }),
       }),
     });
 
-    expect(host.textContent).toContain("More changed files exist than are listed here.");
-
-    render({
-      thread: threadView({ changeSummary: summary({ error: "Reading the worktree failed." }) }),
-    });
-
-    expect(host.textContent).toContain("Reading the worktree failed.");
-  });
-
-  it("hides and refreshes the change summary", () => {
-    const onHideChanges = vi.fn();
-    const onRefreshChanges = vi.fn();
-    render({
-      onHideChanges,
-      onRefreshChanges,
-      thread: threadView({ changeSummary: summary({ files: [changedFile("a.ts")] }) }),
-    });
-
-    click('[aria-label="Refresh changes for agent agt-1"]');
-    click('[aria-label="Hide changes for agent agt-1"]');
-
-    expect(onRefreshChanges).toHaveBeenCalledWith("agt-1");
-    expect(onHideChanges).toHaveBeenCalledWith("agt-1");
-  });
-
-  it("renders both diff sides with their bounded-state notices", () => {
-    render({
-      thread: threadView({
-        changeSummary: summary({
-          files: [changedFile("a.ts")],
-          diff: {
-            relativePath: "a.ts",
-            loading: false,
-            error: null,
-            original: { text: "before", truncated: false },
-            modified: { text: "after", truncated: true },
-            unavailableReason: null,
-          },
-        }),
-      }),
-    });
-
-    expect(host.textContent).toContain("before");
-    expect(host.textContent).toContain("after");
-    expect(host.textContent).toContain("This side was truncated to stay bounded.");
-  });
-
-  it("explains a diff that cannot be previewed", () => {
-    render({
-      thread: threadView({
-        changeSummary: summary({
-          files: [changedFile("a.bin")],
-          diff: {
-            relativePath: "a.bin",
-            loading: false,
-            error: null,
-            original: { text: "", truncated: false },
-            modified: { text: "", truncated: false },
-            unavailableReason: "binary",
-          },
-        }),
-      }),
-    });
-
-    expect(host.textContent).toContain("This file is binary, so no text diff is shown.");
-  });
-
-  it("offers the ship panel once the thread settled and hides it otherwise", () => {
-    render({ thread: threadView({}) });
-    expect(host.querySelector('section[aria-label="Ship agent agt-1"]')).not.toBeNull();
-
-    render({ thread: threadView({ status: { kind: "running" } }) });
+    expect(host.querySelector(".agent-session__head")).toBeNull();
     expect(host.querySelector('section[aria-label="Ship agent agt-1"]')).toBeNull();
+    expect(host.querySelector(".agent-changes")).toBeNull();
+    expect(host.querySelector("[data-agent-changes-cue]")?.textContent).toContain(
+      "2 files changed",
+    );
+    clickText("Review in Diff");
 
-    render({ thread: threadView({ worktreeMissing: true }) });
-    expect(host.querySelector('section[aria-label="Ship agent agt-1"]')).toBeNull();
-  });
-
-  it("forwards the ship actions of the selected thread", () => {
-    const shipActions = { ...noopShipActions(), onPush: vi.fn() };
-    render({ shipActions, thread: threadView({}) });
-
-    click('[aria-label="Push branch"]');
-
-    expect(shipActions.onPush).toHaveBeenCalledWith("agt-1");
-  });
-
-  it("opens a changed file and its diff document from the changes list", () => {
-    const onOpenChangedFile = vi.fn();
-    const onOpenChangedFileDiff = vi.fn();
-    const file = changedFile("a.ts");
-    render({
-      onOpenChangedFile,
-      onOpenChangedFileDiff,
-      thread: threadView({ changeSummary: summary({ files: [file] }) }),
-    });
-
-    click('[aria-label="Open a.ts in the editor"]');
-    click('[aria-label="Open a diff document for a.ts"]');
-
-    expect(onOpenChangedFile).toHaveBeenCalledWith("agt-1", file);
-    expect(onOpenChangedFileDiff).toHaveBeenCalledWith("agt-1", file);
+    expect(onReviewInDiff).toHaveBeenCalledWith("agt-1");
   });
 
   it("re-renders no turn body when only the clock ticks", () => {
@@ -635,12 +519,6 @@ describe("AgentThreadSession", () => {
     );
   }
 
-  function click(selector: string): void {
-    const element = host.querySelector<HTMLElement>(selector);
-    expect(element).not.toBeNull();
-    act(() => element?.click());
-  }
-
   function clickText(text: string): void {
     const element = [...host.querySelectorAll("button")].find((candidate) =>
       (candidate.textContent ?? "").includes(text),
@@ -654,26 +532,7 @@ function defaultProps(): AgentThreadSessionProps {
   return {
     thread: threadView({}),
     composerRepositoryLabel: "app",
-    onHideChanges: () => undefined,
-    onHideFileDiff: () => undefined,
-    onOpenChangedFile: () => undefined,
-    onOpenChangedFileDiff: () => undefined,
-    onRefreshChanges: () => undefined,
-    onShowFileDiff: () => undefined,
-    shipActions: noopShipActions(),
-  };
-}
-
-function noopShipActions(): AgentShipActions {
-  return {
-    onRefreshShipStatus: () => undefined,
-    onCommit: () => undefined,
-    onPush: () => undefined,
-    onOpenCompareUrl: () => undefined,
-    onIntegrate: () => undefined,
-    onRemoveWorktree: () => undefined,
-    onDiscardWorktree: () => undefined,
-    onDismissFailure: () => undefined,
+    onReviewInDiff: () => undefined,
   };
 }
 

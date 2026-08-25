@@ -3,6 +3,11 @@
 import { act, useEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  initialAgentWorkbenchLayout,
+  type AgentWorkbenchLayout,
+  type AgentWorkbenchLayoutMode,
+} from "./domain/agentWorkbenchLayout";
 import { initialIndexProgress } from "./domain/indexProgress";
 import type { EditorDocument } from "./domain/workspace";
 import { buildJsTestExplorerTree, type JsTestExplorerTestNode } from "./domain/jsTestExplorerTree";
@@ -13,6 +18,7 @@ import { workbenchComposition } from "./workbenchComposition";
 const mocks = vi.hoisted(() => ({
   artisanClear: vi.fn(),
   bottomPanelProps: null as Record<string, unknown> | null,
+  agentLayoutDispatch: vi.fn(),
   hideBottomPanel: vi.fn(),
   ideProgress: { busy: true, state: "active", text: "Working" },
   jsExplorerRefresh: vi.fn(async () => undefined),
@@ -897,16 +903,20 @@ describe("App command routing", () => {
     expect(mocks.openGitBranchPanel).toHaveBeenCalledOnce();
   });
 
-  it("gives agent mode the full window and restores the IDE chrome on return", async () => {
+  it("gives the agent layout the full window and restores the IDE chrome when expanded", async () => {
     expect(host.querySelector(".activity-bar")).not.toBeNull();
     expect(host.querySelector(".sidebar")).not.toBeNull();
-    expect(host.querySelector('[data-testid="agent-mode-view"]')).toBeNull();
     expect(host.querySelector('[data-testid="project-tabs"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="status-bar"]')).not.toBeNull();
+    expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe(
+      "editor-expanded",
+    );
+    expect(host.querySelector(".workbench-mode-switch")).toBeNull();
     expect(document.title).toBe("workspace");
 
     mocks.workbenchOverrides = {
       agentModeActive: true,
+      agentWorkbench: agentLayoutState("agent"),
       agents: {
         liveTaskCount: 1,
         maxConcurrentAgentTasks: 3,
@@ -929,7 +939,9 @@ describe("App command routing", () => {
     expect(host.querySelector(".status-bar--agent")?.textContent).toContain("1/3 agents running");
     expect(host.querySelector(".workbench-toolbar--agent")).not.toBeNull();
     expect(host.querySelector(".smart-mode-switch")).toBeNull();
+    expect(host.querySelector(".workbench-mode-switch")).toBeNull();
     expect(host.querySelector(".app-shell")?.className).toContain("app-shell--agent-mode");
+    expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
     expect(document.title).toBe("Agents - workspace");
 
     mocks.workbenchOverrides = {};
@@ -938,7 +950,6 @@ describe("App command routing", () => {
       await Promise.resolve();
     });
 
-    expect(host.querySelector('[data-testid="agent-mode-view"]')).toBeNull();
     expect(host.querySelector(".activity-bar")).not.toBeNull();
     expect(host.querySelector(".sidebar")).not.toBeNull();
     expect(host.querySelector('[data-testid="project-tabs"]')).not.toBeNull();
@@ -946,10 +957,19 @@ describe("App command routing", () => {
     expect(host.querySelector(".status-bar--agent")).toBeNull();
     expect(host.querySelector(".sidebar-tab.active")?.textContent).toBe("Files");
     expect(host.querySelector(".app-shell")?.className).not.toContain("app-shell--agent-mode");
+    expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe(
+      "editor-expanded",
+    );
     expect(document.title).toBe("workspace");
   });
 
-  it("keeps the editor runtime and its state mounted across Code to Agents to Code", async () => {
+  it("collapses the expanded editor back to the threads from the toolbar", () => {
+    click(host.querySelector<HTMLButtonElement>('button[aria-label="Collapse editor (⌥⌘E)"]'));
+
+    expect(mocks.agentLayoutDispatch).toHaveBeenCalledWith({ kind: "collapseEditor" });
+  });
+
+  it("keeps one editor runtime mounted across agent, files surface, expanded and collapsed", async () => {
     const initialRuntime = requiredElement<HTMLElement>(
       host,
       '[data-testid="editor-runtime-host"]',
@@ -959,18 +979,38 @@ describe("App command routing", () => {
     expect(mocks.runtimeHostMounts).toBe(1);
     expect(mocks.runtimeHostUnmounts).toBe(0);
 
-    mocks.workbenchOverrides = { agentModeActive: true };
-    await act(async () => {
-      root.render(<App />);
-      await Promise.resolve();
-    });
+    const transitions: ReadonlyArray<{
+      readonly layout: ReturnType<typeof agentLayoutState>;
+      readonly hidden: boolean;
+    }> = [
+      { layout: agentLayoutState("agent"), hidden: true },
+      { layout: agentLayoutState("agent", { rightSurface: "files" }), hidden: false },
+      { layout: agentLayoutState("agent", { rightSurface: "diff" }), hidden: true },
+      { layout: agentLayoutState("editor-expanded"), hidden: false },
+      { layout: agentLayoutState("agent", { rightSurface: "files" }), hidden: false },
+      { layout: agentLayoutState("agent"), hidden: true },
+    ];
 
-    const hiddenRuntime = requiredElement<HTMLElement>(host, '[data-testid="editor-runtime-host"]');
-    expect(hiddenRuntime).toBe(initialRuntime);
-    expect(hiddenRuntime.closest(".editor-mode-surface")?.hasAttribute("hidden")).toBe(true);
-    expect(hiddenRuntime.dataset.editorState).toBe("undo=2;cursor=12:9;scroll=1440;dirty=true");
-    expect(mocks.runtimeHostMounts).toBe(1);
-    expect(mocks.runtimeHostUnmounts).toBe(0);
+    for (const transition of transitions) {
+      mocks.workbenchOverrides = {
+        agentModeActive: transition.layout.effectiveLayout === "agent",
+        agentWorkbench: transition.layout,
+      };
+      await act(async () => {
+        root.render(<App />);
+        await Promise.resolve();
+      });
+
+      const runtime = requiredElement<HTMLElement>(host, '[data-testid="editor-runtime-host"]');
+      expect(runtime).toBe(initialRuntime);
+      expect(runtime.closest(".editor-mode-surface")?.hasAttribute("hidden")).toBe(
+        transition.hidden,
+      );
+      expect(runtime.dataset.editorState).toBe("undo=2;cursor=12:9;scroll=1440;dirty=true");
+      expect(mocks.runtimeHostMounts).toBe(1);
+      expect(mocks.runtimeHostUnmounts).toBe(0);
+      expect(host.querySelectorAll('[data-testid="editor-runtime-host"]')).toHaveLength(1);
+    }
 
     mocks.workbenchOverrides = {};
     await act(async () => {
@@ -984,7 +1024,6 @@ describe("App command routing", () => {
     );
     expect(restoredRuntime).toBe(initialRuntime);
     expect(restoredRuntime.closest(".editor-mode-surface")?.hasAttribute("hidden")).toBe(false);
-    expect(restoredRuntime.dataset.editorState).toBe("undo=2;cursor=12:9;scroll=1440;dirty=true");
     expect(mocks.runtimeHostMounts).toBe(1);
     expect(mocks.runtimeHostUnmounts).toBe(0);
   });
@@ -992,6 +1031,7 @@ describe("App command routing", () => {
   it("keeps an external file conflict visible while agent mode is active", async () => {
     mocks.workbenchOverrides = {
       agentModeActive: true,
+      agentWorkbench: agentLayoutState("agent"),
       externalFileConflictState: {
         conflict: {
           baseline: { content: "before", path: "/workspace/src/a.ts" },
@@ -1038,6 +1078,17 @@ function requiredElement<T extends Element>(host: ParentNode, selector: string):
   return element as T;
 }
 
+function agentLayoutState(
+  mode: AgentWorkbenchLayoutMode,
+  overrides: Partial<AgentWorkbenchLayout> = {},
+) {
+  return {
+    layout: { ...initialAgentWorkbenchLayout, ...overrides, layout: mode },
+    effectiveLayout: mode,
+    dispatch: mocks.agentLayoutDispatch,
+  };
+}
+
 function createWorkbench() {
   const noop = vi.fn();
 
@@ -1046,6 +1097,7 @@ function createWorkbench() {
       activeDocument: null,
       activeFrameworkActivityLabel: null,
       agentModeActive: false,
+      agentWorkbench: agentLayoutState("editor-expanded"),
       agents: {
         liveTaskCount: 0,
         maxConcurrentAgentTasks: 4,

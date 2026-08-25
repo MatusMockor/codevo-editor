@@ -20,6 +20,11 @@ import {
   type AgentIsolationPolicy,
 } from "./agentSettings";
 import {
+  parseAgentWorkbenchLayout,
+  serializeAgentWorkbenchLayout,
+  type AgentWorkbenchLayoutPersisted,
+} from "./agentWorkbenchLayout";
+import {
   createInitialEditorGroupsState,
   normalizeEditorGroupsState,
   type EditorGroupId,
@@ -220,6 +225,7 @@ export interface WorkspaceSessionNavigation {
 }
 
 export interface WorkspaceSessionStateV1 {
+  agentWorkbench?: AgentWorkbenchLayoutPersisted;
   bottomPanelView: WorkspaceSessionBottomPanelView;
   editor: EditorGroupsState;
   navigation?: WorkspaceSessionNavigation;
@@ -657,6 +663,7 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
       ? normalizeWorkspaceSessionGroupViewStates(value.viewStates, editor)
       : normalizeLegacyWorkspaceSessionViewStates(value.viewStates, editor);
   const navigation = normalizeWorkspaceSessionNavigation(value.navigation);
+  const agentWorkbench = normalizeWorkspaceSessionAgentWorkbench(value.agentWorkbench);
 
   const normalized: WorkspaceSessionState = {
     bottomPanelView: isWorkspaceSessionBottomPanelView(value.bottomPanelView)
@@ -669,6 +676,10 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
     version: WORKSPACE_SESSION_VERSION,
   };
 
+  if (agentWorkbench) {
+    normalized.agentWorkbench = agentWorkbench;
+  }
+
   if (navigation) {
     normalized.navigation = navigation;
   }
@@ -678,6 +689,16 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
   }
 
   return normalized;
+}
+
+export function normalizeWorkspaceSessionAgentWorkbench(
+  value: unknown,
+): AgentWorkbenchLayoutPersisted | undefined {
+  if (!isRecord(value) || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return serializeAgentWorkbenchLayout(parseAgentWorkbenchLayout(value));
 }
 
 export function normalizeWorkspaceSessionNavigation(
