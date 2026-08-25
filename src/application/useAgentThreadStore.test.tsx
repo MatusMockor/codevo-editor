@@ -670,6 +670,68 @@ function renderStoreWithGateway(gateway: AgentThreadStoreGateway) {
   };
 }
 
+describe("useAgentThreadStore unread and rename", () => {
+  it("coalesces an unread mark into one save and skips no-op marks", async () => {
+    const harness = await renderLoadedStore();
+    const created = thread({ viewedAtEpochMs: 5 });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => {
+      expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1);
+    });
+    harness.gateway.saveAgentThread.mockClear();
+    harness.saved.length = 0;
+
+    act(() => harness.hook().markUnread("agt-missing"));
+    act(() => harness.hook().markUnread(created.threadId));
+    act(() => harness.hook().markUnread(created.threadId));
+    expect(harness.gateway.saveAgentThread).not.toHaveBeenCalled();
+    expect(harness.hook().currentState().threads.get(created.threadId)?.viewedAtEpochMs).toBeNull();
+
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, PERSIST_INTERVAL_MS * 2));
+    });
+    await waitForReact(() => {
+      expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1);
+    });
+    expect(harness.saved[0]?.thread.viewedAtEpochMs).toBeNull();
+
+    harness.gateway.saveAgentThread.mockClear();
+    act(() => harness.hook().markUnread(created.threadId));
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, PERSIST_INTERVAL_MS * 2));
+    });
+    expect(harness.gateway.saveAgentThread).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("saves a rename immediately and schedules nothing for a no-op rename", async () => {
+    const harness = await renderLoadedStore();
+    const created = thread({ title: "Old title" });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => {
+      expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1);
+    });
+    harness.gateway.saveAgentThread.mockClear();
+    harness.saved.length = 0;
+
+    act(() => harness.hook().rename(created.threadId, "Old title"));
+    act(() => harness.hook().rename(created.threadId, "   "));
+    act(() => harness.hook().rename("agt-missing", "New title"));
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, PERSIST_INTERVAL_MS * 2));
+    });
+    expect(harness.gateway.saveAgentThread).not.toHaveBeenCalled();
+
+    act(() => harness.hook().rename(created.threadId, "  New title  "));
+    expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1);
+    await waitForReact(() => {
+      expect(harness.saved[0]?.thread.title).toBe("New title");
+    });
+    expect(harness.hook().state.threads.get(created.threadId)?.title).toBe("New title");
+    harness.unmount();
+  });
+});
+
 describe("useAgentThreadStore persistent identity", () => {
   it("loads, saves and deletes with the persistent root owner while threads carry the runtime owner", async () => {
     const { gateway, files } = rustRuleGateway();

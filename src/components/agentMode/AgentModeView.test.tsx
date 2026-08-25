@@ -12,8 +12,12 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
+import type { AgentTurnEvent } from "../../domain/agentThread";
+import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
-import { agentThreadTimeLabel } from "./agentModePresentation";
+import { agentCompactTimeLabel, agentRailScopeValue } from "./agentSidebarPresentation";
+import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
+import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 
 const ROOT = "/workspace/app";
 const NESTED = "/workspace/app/packages/api";
@@ -22,6 +26,7 @@ const NOW_TICK_MS = 3_600_000;
 const NOW = 1_700_000_600_000;
 
 const columnRenders = vi.hoisted(() => ({ session: 0, info: 0 }));
+const sessionReveals = vi.hoisted((): Array<AgentThreadRevealRequest | null> => []);
 
 vi.mock("./AgentThreadSession", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./AgentThreadSession")>();
@@ -29,6 +34,7 @@ vi.mock("./AgentThreadSession", async (importOriginal) => {
     ...actual,
     AgentThreadSession: (props: Parameters<typeof actual.AgentThreadSession>[0]) => {
       columnRenders.session += 1;
+      sessionReveals.push(props.reveal ?? null);
       return <actual.AgentThreadSession {...props} />;
     },
   };
@@ -59,6 +65,8 @@ describe("AgentModeView", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    sessionReveals.length = 0;
+    document.querySelectorAll('[role="menu"]').forEach((menu) => menu.remove());
   });
 
   it("renders the three columns of the threads layout", () => {
@@ -422,8 +430,7 @@ describe("AgentModeView", () => {
     expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();
   });
 
-  it("routes orphan recovery to the surface", () => {
-    const removeOrphanedWorktree = vi.fn(async () => undefined);
+  it("reports orphaned worktrees as a single muted note under the scope menu", () => {
     render({
       agents: surface({
         orphanedWorktrees: [
@@ -435,13 +442,11 @@ describe("AgentModeView", () => {
             removing: false,
           },
         ],
-        removeOrphanedWorktree,
       }),
     });
 
-    click(`[aria-label="Remove orphaned worktree ${ROOT}/.worktrees/agt-9"]`);
-
-    expect(removeOrphanedWorktree).toHaveBeenCalledWith(`${ROOT}/.worktrees/agt-9`);
+    expect(host.querySelector(".agent-rail__note")?.textContent).toBe("1 orphaned worktree");
+    expect(host.querySelector("[data-thread-id]")).toBeNull();
   });
 
   it("routes stop, archive and remove to the surface", () => {
@@ -571,7 +576,8 @@ describe("AgentModeView", () => {
 
     expect(threadOrder()).toEqual(["agt-1", "agt-2", "agt-3"]);
 
-    click('[aria-label="Pin thread agt-2"]');
+    openRowMenu("agt-2");
+    clickMenuItem("Pin");
 
     expect(togglePin).toHaveBeenCalledWith("agt-2");
 
@@ -589,7 +595,7 @@ describe("AgentModeView", () => {
     expect(threadOrder()).toEqual(["agt-2", "agt-1", "agt-3"]);
   });
 
-  it("hides archived threads behind a collapsed group", () => {
+  it("hides archived threads behind the collapsed Archived shelf", () => {
     render({
       agents: surface({
         threads: [
@@ -600,20 +606,24 @@ describe("AgentModeView", () => {
     });
 
     expect(host.textContent).not.toContain("Archived work");
+    expect(host.querySelector(".agent-shelf")?.textContent).toContain("Archived (1)");
 
-    click(".agent-archived__head");
+    click(".agent-shelf");
 
     expect(host.textContent).toContain("Archived work");
   });
 
-  it("renders one project section per registered root and keeps the active tab first", () => {
+  it("lists every registered root in the scope picker with the active tab first", () => {
     render({ projects: [activeProject(), backgroundProject()] });
 
-    expect(host.querySelector('section[aria-label="Project app"]')).not.toBeNull();
-    expect(host.querySelector('section[aria-label="Project api-service"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label^="Project "]')).toBeNull();
+    expect(scopeOptionLabels()).toEqual(["All projects", "app", "api-service"]);
+    click("button#agent-rail-scope");
     expect(
-      [...host.querySelectorAll(".agent-project__name")].map((element) => element.textContent),
-    ).toEqual(["app", "api-service"]);
+      [...host.querySelectorAll("#agent-rail-scope-list .agent-picker__detail")].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(["Background"]);
   });
 
   it("starts in the project chosen in the composer and forces its worktree rule", async () => {
@@ -666,9 +676,13 @@ describe("AgentModeView", () => {
       projects: [{ ...backgroundProject(), trust: "untrusted" }],
     });
 
-    expect(host.textContent).toContain("This project is not trusted");
     expect(host.querySelector(".agent-composer__chip--empty")?.textContent).toBe("No project");
     expect(submitButton().disabled).toBe(true);
+    expect(host.textContent).not.toContain("Untrusted");
+
+    chooseScope(OTHER_ROOT, OTHER_ROOT);
+
+    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Untrusted");
 
     click('[aria-label="Trust project api-service"]');
 
@@ -681,7 +695,7 @@ describe("AgentModeView", () => {
     });
 
     expect(host.querySelector("select#agent-project")).toBeNull();
-    expect(host.querySelector('section[aria-label="Project api-service"]')).not.toBeNull();
+    expect(scopeOptionLabels()).toEqual(["All projects", "app", "api-service"]);
   });
 
   it("shows no start target when only a closed-tab draining project remains", () => {
@@ -697,6 +711,10 @@ describe("AgentModeView", () => {
       onReleaseProject,
       projects: [{ ...backgroundProject(), origin: "closed-tab-live-tasks" }],
     });
+
+    chooseScope(OTHER_ROOT, OTHER_ROOT);
+
+    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Tab closed");
 
     click('[aria-label="Release project api-service"]');
 
@@ -999,9 +1017,327 @@ describe("AgentModeView", () => {
   it("renders rail timestamps through the agent clock instead of a now prop", () => {
     render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
 
-    expect(host.querySelector(".agent-thread__meta")?.textContent).toContain(
-      agentThreadTimeLabel(1_700_000_000_000, Date.now()),
+    expect(host.querySelector(".agent-row__time")?.textContent).toBe(
+      agentCompactTimeLabel(1_700_000_000_000, Date.now()),
     );
+  });
+
+  it("passes a search reveal to the session once and opens the find bar on the hit", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      render({
+        agents: surface({
+          threads: [
+            threadView({ threadId: "agt-1", prompt: "Please tighten the lexer first" }),
+            threadView({ threadId: "agt-2", title: "Unrelated work" }),
+          ],
+        }),
+      });
+
+      typeSearch("lexer");
+      await act(async () => {
+        vi.advanceTimersByTime(150);
+        await Promise.resolve();
+      });
+
+      const options = [...host.querySelectorAll('#agent-rail-search-results [role="option"]')];
+      expect(options).toHaveLength(1);
+      expect(options[0]?.textContent).toContain("You:");
+      act(() => (options[0] as HTMLElement).click());
+      settleFind();
+
+      expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).not.toBeNull();
+      expect(searchField().value).toBe("");
+      expect(findField().value).toBe("lexer");
+      expect(host.querySelector(".agent-find__count")?.textContent).toBe("1 of 1");
+      const delivered = sessionReveals.filter((reveal) => reveal !== null);
+      expect(delivered.map((reveal) => reveal?.turnId)).toEqual(["agt-1-t1"]);
+      expect(sessionReveals[sessionReveals.length - 1]).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens the palette from the view command and keeps archived threads out of it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const bridge = createAgentViewCommandBridge();
+    try {
+      render({
+        agents: surface({
+          threads: [
+            threadView({ threadId: "agt-1" }),
+            threadView({ threadId: "agt-2", archived: true, title: "Archived parser work" }),
+          ],
+        }),
+        viewCommands: bridge,
+      });
+
+      expect(host.querySelector(".agent-thread-palette")).toBeNull();
+      act(() => bridge.run("agent.searchThreads"));
+      const palette = host.querySelector<HTMLElement>(".agent-thread-palette");
+      expect(palette).not.toBeNull();
+
+      typeInto(palette?.querySelector("input") ?? null, "parser");
+      await act(async () => {
+        vi.advanceTimersByTime(150);
+        await Promise.resolve();
+      });
+
+      const options = [...(palette?.querySelectorAll('[role="option"]') ?? [])];
+      expect(options.map((option) => option.textContent)).toEqual(["Refactor the parser"]);
+
+      act(() => (options[0] as HTMLElement).click());
+
+      expect(host.querySelector(".agent-thread-palette")).toBeNull();
+      expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).not.toBeNull();
+      expect(host.querySelector(".agent-find")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts find hits N of M and wraps in both directions", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const bridge = createAgentViewCommandBridge();
+    render({
+      agents: surface({
+        threads: [
+          threadView({
+            threadId: "agt-1",
+            prompt: "Fix token parsing",
+            events: [{ kind: "assistantText", text: "token one, token two" }],
+          }),
+        ],
+      }),
+      viewCommands: bridge,
+    });
+
+    expect(bridge.threadSelected()).toBe(false);
+    act(() => bridge.run("agent.findInThread"));
+    expect(host.querySelector(".agent-find")).toBeNull();
+
+    click('[data-thread-id="agt-1"]');
+    expect(bridge.threadSelected()).toBe(true);
+    act(() => bridge.run("agent.findInThread"));
+    typeInto(findField(), "token");
+    expect(host.querySelector(".agent-find__count")?.textContent).toBe("No results");
+    settleFind();
+
+    expect(host.querySelector(".agent-find__count")?.textContent).toBe("1 of 3");
+    expect(host.querySelectorAll(".agent-find__hit")).toHaveLength(3);
+
+    click('[aria-label="Next match"]');
+    click('[aria-label="Next match"]');
+    expect(host.querySelector(".agent-find__count")?.textContent).toBe("3 of 3");
+
+    click('[aria-label="Next match"]');
+    expect(host.querySelector(".agent-find__count")?.textContent).toBe("1 of 3");
+
+    click('[aria-label="Previous match"]');
+    expect(host.querySelector(".agent-find__count")?.textContent).toBe("3 of 3");
+
+    click('[aria-label="Close find bar"]');
+    expect(host.querySelector(".agent-find")).toBeNull();
+    expect(host.querySelectorAll(".agent-find__hit")).toHaveLength(0);
+    vi.useRealTimers();
+  });
+
+  it("closes the find bar when another thread is selected", () => {
+    const bridge = createAgentViewCommandBridge();
+    render({
+      agents: surface({
+        threads: [threadView({ threadId: "agt-1" }), threadView({ threadId: "agt-2" })],
+      }),
+      viewCommands: bridge,
+    });
+
+    click('[data-thread-id="agt-1"]');
+    act(() => bridge.run("agent.findInThread"));
+    expect(host.querySelector(".agent-find")).not.toBeNull();
+
+    click('[data-thread-id="agt-2"]');
+
+    expect(host.querySelector(".agent-find")).toBeNull();
+  });
+
+  it("copies thread details through the clipboard and reports a missing clipboard", async () => {
+    const writeText = vi.fn(async () => undefined);
+    const threadCopyDetail = vi.fn((threadId: string, detail: string) => `${detail}:${threadId}`);
+    render({
+      agents: surface({ threadCopyDetail, threads: [threadView({ threadId: "agt-1" })] }),
+    });
+
+    withClipboard({ writeText }, () => {
+      openRowMenu("agt-1");
+      clickMenuItem("Copy path");
+    });
+    expect(threadCopyDetail).toHaveBeenCalledWith("agt-1", "path");
+    expect(writeText).toHaveBeenCalledWith("path:agt-1");
+    expect(host.querySelector(".agent-notice")).toBeNull();
+
+    withClipboard(undefined, () => {
+      openRowMenu("agt-1");
+      clickMenuItem("Copy branch");
+    });
+    expect(threadCopyDetail).toHaveBeenCalledWith("agt-1", "branch");
+    expect(host.querySelector(".agent-notice")?.textContent).toContain(
+      "The clipboard is not available",
+    );
+
+    click('[aria-label="Dismiss agent notice"]');
+    expect(host.querySelector(".agent-notice")).toBeNull();
+
+    openRowMenu("agt-1");
+    clickMenuItem("Copy thread ID");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(threadCopyDetail).toHaveBeenLastCalledWith("agt-1", "threadId");
+  });
+
+  it("routes rename and mark unread from the row menu to the surface", () => {
+    const renameThread = vi.fn();
+    const markThreadUnread = vi.fn();
+    render({
+      agents: surface({
+        markThreadUnread,
+        renameThread,
+        threads: [threadView({ threadId: "agt-1" })],
+      }),
+    });
+
+    openRowMenu("agt-1");
+    clickMenuItem("Mark unread");
+    expect(markThreadUnread).toHaveBeenCalledWith("agt-1");
+
+    openRowMenu("agt-1");
+    clickMenuItem("Rename");
+    const rename = host.querySelector<HTMLInputElement>('input[aria-label="Rename thread"]');
+    expect(rename).not.toBeNull();
+    typeInto(rename, "Parser rewrite");
+    act(() => {
+      rename?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+
+    expect(renameThread).toHaveBeenCalledWith("agt-1", "Parser rewrite");
+  });
+
+  it("jumps, advances and rewinds the selection through the view commands", () => {
+    const bridge = createAgentViewCommandBridge();
+    render({
+      agents: surface({
+        threads: [
+          threadView({ threadId: "agt-1" }),
+          threadView({ threadId: "agt-2" }),
+          threadView({ threadId: "agt-3", archived: true }),
+        ],
+      }),
+      viewCommands: bridge,
+    });
+
+    act(() => bridge.run("agent.jumpToThread.2"));
+    expect(selectedSessionId()).toBe("agt-2");
+
+    act(() => bridge.run("agent.nextThread"));
+    expect(selectedSessionId()).toBe("agt-1");
+
+    act(() => bridge.run("agent.previousThread"));
+    expect(selectedSessionId()).toBe("agt-2");
+
+    act(() => bridge.run("agent.jumpToThread.3"));
+    expect(selectedSessionId()).toBe("agt-2");
+
+    act(() => bridge.run("agent.newThread"));
+    expect(selectedSessionId()).toBeNull();
+    expect(host.querySelector('form[aria-label="New agent thread"]')).not.toBeNull();
+  });
+
+  it("unbinds the view commands on unmount", () => {
+    const bridge = createAgentViewCommandBridge();
+    render({ viewCommands: bridge });
+    expect(bridge.bound()).toBe(true);
+
+    act(() => root.unmount());
+    root = createRoot(host);
+
+    expect(bridge.bound()).toBe(false);
+  });
+
+  it("collapses the rail behind a slim expand affordance", () => {
+    render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
+
+    click('[aria-label="Collapse sidebar"]');
+
+    expect(host.querySelector('aside[aria-label="Agent threads"]')).toBeNull();
+    expect(host.querySelector("[data-thread-id]")).toBeNull();
+
+    click('[aria-label="Expand sidebar"]');
+
+    expect(host.querySelector('aside[aria-label="Agent threads"]')).not.toBeNull();
+    expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
+  });
+
+  it("scopes the rail and the search to the chosen repository", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      render({
+        agents: surface({
+          threads: [
+            threadView({ threadId: "agt-1" }),
+            threadView({ threadId: "agt-3", repositoryRoot: NESTED, title: "Nested parser" }),
+          ],
+        }),
+      });
+
+      expect(threadOrder()).toEqual(["agt-1", "agt-3"]);
+
+      chooseScope(ROOT, NESTED);
+
+      expect(threadOrder()).toEqual(["agt-3"]);
+
+      typeSearch("parser");
+      await act(async () => {
+        vi.advanceTimersByTime(150);
+        await Promise.resolve();
+      });
+
+      expect(
+        [...host.querySelectorAll('#agent-rail-search-results [role="option"]')].map(
+          (option) => option.textContent,
+        ),
+      ).toEqual(["Nested parser"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never publishes search results of a previous owner after an A to B to A switch", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const viewsA = [threadView({ threadId: "agt-a", title: "Parser in A" })];
+      const viewsB = [threadView({ threadId: "agt-b", rootKey: OTHER_ROOT, title: "Parser in B" })];
+      render({ agents: surface({ threads: viewsA }) });
+
+      typeSearch("parser");
+      render({ agents: surface({ threads: viewsB }), projects: [backgroundProject()] });
+      await act(async () => {
+        vi.advanceTimersByTime(150);
+        await Promise.resolve();
+      });
+
+      expect(searchResultTitles()).toEqual(["Parser in B"]);
+
+      render({ agents: surface({ threads: viewsA }), projects: [defaultActiveProject()] });
+      expect(searchResultTitles()).not.toContain("Parser in B");
+      await act(async () => {
+        vi.advanceTimersByTime(150);
+        await Promise.resolve();
+      });
+
+      expect(searchResultTitles()).toEqual(["Parser in A"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   function render(overrides: Partial<AgentModeViewProps> = {}): void {
@@ -1027,9 +1363,118 @@ describe("AgentModeView", () => {
   }
 
   function threadOrder(): readonly string[] {
-    return [...host.querySelectorAll(".agent-thread__pin")].map((element) =>
-      (element.getAttribute("aria-label") ?? "").replace(/^(?:Un)?[Pp]in thread /, ""),
+    return [...host.querySelectorAll<HTMLElement>("[data-thread-id]")].map(
+      (element) => element.dataset.threadId ?? "",
     );
+  }
+
+  function selectedSessionId(): string | null {
+    const section = host.querySelector('section[aria-label^="Agent thread "]');
+    return section?.getAttribute("aria-label")?.replace("Agent thread ", "") ?? null;
+  }
+
+  function searchField(): HTMLInputElement {
+    const element = host.querySelector<HTMLInputElement>(
+      '.agent-rail input[aria-label="Search threads"]',
+    );
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("input");
+  }
+
+  function settleFind(): void {
+    act(() => {
+      vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS);
+    });
+  }
+
+  function findField(): HTMLInputElement {
+    const element = host.querySelector<HTMLInputElement>('input[aria-label="Find in thread"]');
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("input");
+  }
+
+  function searchResultTitles(): readonly string[] {
+    return [...host.querySelectorAll('#agent-rail-search-results [role="option"]')].map(
+      (option) => option.textContent ?? "",
+    );
+  }
+
+  function typeInto(element: HTMLInputElement | null, value: string): void {
+    expect(element).not.toBeNull();
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        element,
+        value,
+      );
+      element?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function typeSearch(value: string): void {
+    typeInto(searchField(), value);
+  }
+
+  function openRowMenu(threadId: string): void {
+    const row = host.querySelector<HTMLElement>(`[data-thread-id="${threadId}"]`);
+    expect(row).not.toBeNull();
+    act(() => {
+      row?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 8 }),
+      );
+    });
+  }
+
+  function clickMenuItem(label: string): void {
+    const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (candidate) => candidate.textContent === label,
+    );
+    expect(item).toBeDefined();
+    act(() => item?.click());
+  }
+
+  function scopeOptionLabels(): readonly string[] {
+    click("button#agent-rail-scope");
+    const labels = [
+      ...host.querySelectorAll('#agent-rail-scope-list [role="option"] .agent-picker__label'),
+    ].map((element) =>
+      [...element.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent ?? "")
+        .join(""),
+    );
+    click("button#agent-rail-scope");
+    return labels;
+  }
+
+  function chooseScope(projectRootKey: string, repositoryRoot: string): void {
+    click("button#agent-rail-scope");
+    click(
+      `#agent-rail-scope-list [role="option"][data-value="${agentRailScopeValue(
+        projectRootKey,
+        repositoryRoot,
+      )}"]`,
+    );
+  }
+
+  function restoreClipboard(descriptor: PropertyDescriptor | undefined): void {
+    if (descriptor === undefined) {
+      Reflect.deleteProperty(navigator, "clipboard");
+      return;
+    }
+    Object.defineProperty(navigator, "clipboard", descriptor);
+  }
+
+  function withClipboard(
+    clipboard: { readonly writeText: (text: string) => Promise<void> } | undefined,
+    run: () => void,
+  ): void {
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
+    try {
+      run();
+    } finally {
+      restoreClipboard(descriptor);
+    }
   }
 
   function promptField(): HTMLTextAreaElement {
@@ -1120,8 +1565,8 @@ describe("AgentModeView", () => {
   }
 
   function clickText(text: string): void {
-    const element = [...host.querySelectorAll("button")].find((candidate) =>
-      (candidate.textContent ?? "").includes(text),
+    const element = [...host.querySelectorAll<HTMLElement>('button, [role="button"]')].find(
+      (candidate) => (candidate.textContent ?? "").includes(text),
     );
     expect(element).toBeDefined();
     act(() => element?.click());
@@ -1232,6 +1677,9 @@ function surface(overrides: Partial<AgentThreadsSurface>): AgentThreadsSurface {
     configureAgentCli: () => undefined,
     dismissNotice: () => undefined,
     markThreadViewed: () => undefined,
+    markThreadUnread: () => undefined,
+    renameThread: () => undefined,
+    threadCopyDetail: () => null,
     lastUsedLaunch: () => null,
     ...overrides,
   };
@@ -1253,13 +1701,17 @@ interface ThreadViewOptions {
   readonly projectOrigin?: AgentProjectOrigin;
   readonly sessionId?: string | null;
   readonly title?: string;
+  readonly prompt?: string;
+  readonly events?: ReadonlyArray<AgentTurnEvent>;
   readonly worktreeMissing?: boolean;
   readonly ship?: AgentShipState;
 }
 
 function threadView({
   archived = false,
+  events = [],
   launch = null,
+  prompt,
   ship = { kind: "idle", status: null, loadingStatus: false },
   pinned = false,
   projectOrigin = "active-tab",
@@ -1283,7 +1735,7 @@ function threadView({
     archived,
     createdAtEpochMs: 1_700_000_000_000,
     updatedAtEpochMs: 1_700_000_000_000,
-    turns: [{ ...turn(threadId, title, status), launch }],
+    turns: [{ ...turn(threadId, prompt ?? title, status), events, launch }],
     turnsTruncated: false,
     viewedAtEpochMs: null,
     integration: null,

@@ -12,6 +12,7 @@ import {
   MAX_AGENT_EVENT_TEXT_BYTES,
   MAX_AGENT_THREADS_PER_ROOT,
   MAX_AGENT_THREAD_TITLE_BYTES,
+  MAX_AGENT_THREAD_TITLE_CHARS,
   MAX_AGENT_TURNS_PER_THREAD,
   agentThreadAttention,
   agentThreadLifecycle,
@@ -20,6 +21,7 @@ import {
   agentThreadsReducer,
   emptyAgentThreadsState,
   lastUsedAgentLaunch,
+  normalizeAgentThreadTitle,
   parseAgentThread,
   runningTurn,
   serializeAgentThread,
@@ -577,6 +579,112 @@ describe("threadViewed", () => {
     });
 
     expect(viewed.threads.get("agt-t1-0001")).toEqual({ ...before, viewedAtEpochMs: 7_000 });
+  });
+});
+
+describe("threadRenamed", () => {
+  it("renames a thread with a trimmed title and leaves other fields untouched", () => {
+    const before = settledThread({ pinned: true, updatedAtEpochMs: 3_000, viewedAtEpochMs: 5 });
+
+    const renamed = agentThreadsReducer(stateWith(before), {
+      kind: "threadRenamed",
+      threadId: "agt-t1-0001",
+      title: "  Parser rewrite  ",
+    });
+
+    expect(renamed.threads.get("agt-t1-0001")).toEqual({ ...before, title: "Parser rewrite" });
+  });
+
+  it("is a no-op for a missing thread, an unchanged title, and a blank title", () => {
+    const state = stateWith(settledThread({ title: "Same" }));
+
+    expect(
+      agentThreadsReducer(state, { kind: "threadRenamed", threadId: "agt-gone", title: "New" }),
+    ).toBe(state);
+    expect(
+      agentThreadsReducer(state, { kind: "threadRenamed", threadId: "agt-t1-0001", title: "Same" }),
+    ).toBe(state);
+    expect(
+      agentThreadsReducer(state, { kind: "threadRenamed", threadId: "agt-t1-0001", title: " \n " }),
+    ).toBe(state);
+  });
+
+  it("bounds the title to the first line, 200 chars, and the wire byte limit", () => {
+    const long = "x".repeat(MAX_AGENT_THREAD_TITLE_CHARS + 50);
+    expect(normalizeAgentThreadTitle(long)).toHaveLength(MAX_AGENT_THREAD_TITLE_CHARS);
+    expect(normalizeAgentThreadTitle("\n\n first line \nsecond")).toBe("first line");
+    expect(normalizeAgentThreadTitle("   ")).toBeNull();
+
+    const wide = "😀".repeat(MAX_AGENT_THREAD_TITLE_CHARS);
+    const bounded = normalizeAgentThreadTitle(wide) ?? "";
+    expect(new TextEncoder().encode(bounded).byteLength).toBeLessThanOrEqual(
+      MAX_AGENT_THREAD_TITLE_BYTES,
+    );
+    expect(bounded.endsWith("…")).toBe(true);
+
+    const renamed = agentThreadsReducer(stateWith(settledThread()), {
+      kind: "threadRenamed",
+      threadId: "agt-t1-0001",
+      title: wide,
+    });
+    const after = renamed.threads.get("agt-t1-0001") as AgentThread;
+    expect(after.title).toBe(bounded);
+    expect(parseAgentThread(serializeAgentThread(after))).toEqual(after);
+  });
+});
+
+describe("threadMarkedUnread", () => {
+  it("clears the view stamp and makes a settled thread unread again", () => {
+    const state = stateWith(settledThread({ viewedAtEpochMs: 5_000 }));
+
+    const unread = agentThreadsReducer(state, {
+      kind: "threadMarkedUnread",
+      threadId: "agt-t1-0001",
+    });
+
+    expect(unread.threads.get("agt-t1-0001")?.viewedAtEpochMs).toBeNull();
+    expect(agentThreadUnread(unread.threads.get("agt-t1-0001") as AgentThread)).toBe(true);
+  });
+
+  it("is a no-op for a missing thread and for an already unread thread", () => {
+    const state = stateWith(settledThread({ viewedAtEpochMs: null }));
+
+    expect(agentThreadsReducer(state, { kind: "threadMarkedUnread", threadId: "agt-gone" })).toBe(
+      state,
+    );
+    expect(
+      agentThreadsReducer(state, { kind: "threadMarkedUnread", threadId: "agt-t1-0001" }),
+    ).toBe(state);
+  });
+
+  it("leaves every other thread field untouched, including the update time", () => {
+    const before = settledThread({
+      pinned: true,
+      updatedAtEpochMs: 3_000,
+      viewedAtEpochMs: 5_000,
+    });
+
+    const unread = agentThreadsReducer(stateWith(before), {
+      kind: "threadMarkedUnread",
+      threadId: "agt-t1-0001",
+    });
+
+    expect(unread.threads.get("agt-t1-0001")).toEqual({ ...before, viewedAtEpochMs: null });
+  });
+
+  it("keeps the persisted wire document unchanged apart from the null view stamp", () => {
+    const before = settledThread({ viewedAtEpochMs: 5_000 });
+    const unread = agentThreadsReducer(stateWith(before), {
+      kind: "threadMarkedUnread",
+      threadId: "agt-t1-0001",
+    });
+    const after = unread.threads.get("agt-t1-0001") as AgentThread;
+
+    expect(serializeAgentThread(after)).toEqual({
+      ...serializeAgentThread(before),
+      viewedAtEpochMs: null,
+    });
+    expect(parseAgentThread(serializeAgentThread(after))).toEqual(after);
   });
 });
 

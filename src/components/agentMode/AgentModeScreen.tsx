@@ -1,3 +1,4 @@
+import { workbenchAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
 import { AgentModeView } from "./AgentModeView";
 
@@ -12,10 +13,12 @@ export function AgentModeScreen({ agents, workspaceRoot }: AgentModeScreenProps)
   return (
     <AgentModeView
       agents={agents}
+      key={workspaceRoot ?? ""}
       onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
       onTrustProject={(projectRootKey) => void projects.trustProject(projectRootKey)}
       overflowRootPaths={projects.overflowRootPaths}
       projects={projects.projects}
+      viewCommands={workbenchAgentViewCommandBridge}
       workspaceRoot={workspaceRoot}
     />
   );

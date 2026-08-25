@@ -250,6 +250,17 @@ export function useAgentThreadStore(
     [dispatchAction],
   );
 
+  const markUnread = useCallback(
+    (threadId: string): void => dispatchAction({ kind: "threadMarkedUnread", threadId }),
+    [dispatchAction],
+  );
+
+  const rename = useCallback(
+    (threadId: string, title: string): void =>
+      dispatchAction({ kind: "threadRenamed", threadId, title }),
+    [dispatchAction],
+  );
+
   const loadProject = useCallback(
     async (authority: AgentProjectAuthority): Promise<void> => {
       const key = authorityKey(authority);
@@ -312,8 +323,28 @@ export function useAgentThreadStore(
   const currentState = useCallback((): AgentThreadsState => stateRef.current, []);
 
   return useMemo(
-    () => ({ state, loadedRootKeys, currentState, dispatchAction, togglePin, archive, remove }),
-    [archive, currentState, dispatchAction, loadedRootKeys, remove, state, togglePin],
+    () => ({
+      state,
+      loadedRootKeys,
+      currentState,
+      dispatchAction,
+      togglePin,
+      archive,
+      remove,
+      markUnread,
+      rename,
+    }),
+    [
+      archive,
+      currentState,
+      dispatchAction,
+      loadedRootKeys,
+      markUnread,
+      remove,
+      rename,
+      state,
+      togglePin,
+    ],
   );
 }
 
@@ -342,6 +373,10 @@ function persistIntent(state: AgentThreadsState, action: AgentThreadsAction): Pe
       return liveTurnIntent(state, action.turnId, "immediate");
     case "threadViewed":
       return threadViewedIntent(state, action.threadId, action.atEpochMs);
+    case "threadMarkedUnread":
+      return changedThreadIntent(state, action, "coalesced");
+    case "threadRenamed":
+      return changedThreadIntent(state, action, "immediate");
     case "pinToggled":
     case "archived":
     case "integrationRecorded":
@@ -361,6 +396,15 @@ function persistIntent(state: AgentThreadsState, action: AgentThreadsAction): Pe
 
 function saveIntent(threadId: string, urgency: PersistUrgency): PersistIntent {
   return { saves: [[threadId, urgency]], remove: null };
+}
+
+function changedThreadIntent(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "threadMarkedUnread" | "threadRenamed" }>,
+  urgency: PersistUrgency,
+): PersistIntent {
+  if (agentThreadsReducer(state, action) === state) return NO_PERSIST;
+  return saveIntent(action.threadId, urgency);
 }
 
 function threadViewedIntent(

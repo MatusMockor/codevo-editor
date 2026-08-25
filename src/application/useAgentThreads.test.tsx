@@ -21,6 +21,7 @@ import type {
   AgentThreadStartRequest,
   AgentThreadStoreGateway,
   AgentThreadsSurface,
+  SaveAgentThreadRequest,
 } from "./agentThreadPorts";
 import { useAgentThreads, type AgentThreadsDependencies } from "./useAgentThreads";
 import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
@@ -284,7 +285,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       unreadable: [],
       evicted: 0,
     })),
-    saveAgentThread: vi.fn(async () => undefined),
+    saveAgentThread: vi.fn(async (_request: SaveAgentThreadRequest) => undefined),
     deleteAgentThread: vi.fn(async () => undefined),
   };
   const git = {
@@ -499,6 +500,79 @@ describe("useAgentThreads views and viewed marks", () => {
     await waitForReact(() => expect(harness.hook().threads[0]?.unread).toBe(false));
     await waitForReact(() => expect(harness.store.saveAgentThread).toHaveBeenCalledTimes(1));
     expect(harness.hook().lastUsedLaunch(ROOT)).toBeNull();
+    harness.unmount();
+  });
+
+  it("marks a viewed thread unread again, coalesces the save, and ignores unknown threads", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const harness = renderThreads({ storedThreads: [{ ...stored, viewedAtEpochMs: 2_500 }] });
+    await waitForReact(() => expect(harness.hook().threads[0]?.unread).toBe(false));
+    harness.store.saveAgentThread.mockClear();
+
+    act(() => harness.hook().markThreadUnread("agt-missing-0000"));
+    act(() => harness.hook().markThreadUnread(stored.threadId));
+    act(() => harness.hook().markThreadUnread(stored.threadId));
+
+    await waitForReact(() => expect(harness.hook().threads[0]?.unread).toBe(true));
+    expect(harness.hook().threads[0]?.thread.viewedAtEpochMs).toBeNull();
+    await waitForReact(() => expect(harness.store.saveAgentThread).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    });
+    expect(harness.store.saveAgentThread).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("renames a thread with an immediate save and rejects the rename while another project owns the tab", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const harness = renderThreads({ storedThreads: [stored] });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(1));
+    harness.store.saveAgentThread.mockClear();
+
+    harness.set({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 });
+    act(() => harness.hook().renameThread(stored.threadId, "Foreign rename"));
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    });
+    expect(harness.store.saveAgentThread).not.toHaveBeenCalled();
+
+    harness.set({ rootKey: ROOT, ownerId: OWNER, generation: 3 });
+    await waitForReact(() => expect(harness.hook().threads[0]?.thread.title).toBe("Stored thread"));
+    act(() => harness.hook().renameThread(stored.threadId, "  Renamed thread  "));
+    act(() => harness.hook().renameThread(stored.threadId, "   "));
+    await waitForReact(() =>
+      expect(harness.hook().threads[0]?.thread.title).toBe("Renamed thread"),
+    );
+    await waitForReact(() => expect(harness.store.saveAgentThread).toHaveBeenCalledTimes(1));
+    expect(harness.store.saveAgentThread.mock.calls[0]?.[0]?.thread.title).toBe("Renamed thread");
+    harness.unmount();
+  });
+
+  it("returns copy details for the owned thread only and fails closed for foreign owners", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const harness = renderThreads({
+      storedThreads: [stored],
+      worktrees: [worktreeOf(stored.threadId)],
+    });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(1));
+    await waitForReact(() => expect(harness.hook().threads[0]?.worktreeMissing).toBe(false));
+
+    expect(harness.hook().threadCopyDetail(stored.threadId, "threadId")).toBe(stored.threadId);
+    expect(harness.hook().threadCopyDetail(stored.threadId, "path")).toBe(
+      `${ROOT}/.worktrees/${stored.threadId}`,
+    );
+    expect(harness.hook().threadCopyDetail(stored.threadId, "branch")).toBeNull();
+    expect(harness.hook().threadCopyDetail("agt-missing-0000", "threadId")).toBeNull();
+
+    await act(() => harness.hook().refreshShipStatus(stored.threadId));
+    expect(harness.hook().threadCopyDetail(stored.threadId, "branch")).toBe("agent/x");
+
+    harness.set({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 });
+    expect(harness.hook().threadCopyDetail(stored.threadId, "threadId")).toBeNull();
+    harness.set({ rootKey: ROOT, ownerId: OWNER, generation: 3 });
+    await waitForReact(() =>
+      expect(harness.hook().threadCopyDetail(stored.threadId, "threadId")).toBe(stored.threadId),
+    );
     harness.unmount();
   });
 

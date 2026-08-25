@@ -77,7 +77,7 @@ describe("workbench agents production chain", () => {
     const host = getPanelHost();
     expect(host.querySelector('section[aria-label="Agent mode"]')).not.toBeNull();
     expect(host.querySelector('aside[aria-label="Agent threads"]')).not.toBeNull();
-    expect(host.textContent).toContain("Threads");
+    expect(host.querySelector('input[aria-label="Search threads"]')).not.toBeNull();
 
     await typePrompt(host, "Fix the failing unit test.");
     await submitComposer(host);

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Settings, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { PanelLeftOpen, Settings, X } from "lucide-react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { defaultAgentLaunchOptions, type AgentLaunchOptions } from "../../domain/agentLaunch";
 import { isTerminalAgentTurnStatus, type AgentThread } from "../../domain/agentThread";
@@ -13,6 +13,12 @@ import type {
   AgentThreadsSurface,
   AgentThreadView,
 } from "../../application/agentThreadPorts";
+import type {
+  AgentJumpSlot,
+  AgentViewCommandBridge,
+  AgentViewCommandHandlers,
+} from "../../application/agentViewCommandBridge";
+import { useAgentThreadSearch } from "../../application/useAgentThreadSearch";
 import {
   AgentComposer,
   type AgentComposerMode,
@@ -20,9 +26,19 @@ import {
   type AgentComposerSubmission,
 } from "./AgentComposer";
 import type { AgentShipActions } from "./AgentShipPanel";
+import { AgentThreadFindBar } from "./AgentThreadFindBar";
 import { AgentThreadInfoColumn } from "./AgentThreadInfoColumn";
+import { AgentThreadSearchPalette } from "./AgentThreadSearchPalette";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
+import {
+  agentRailNewThreadTarget,
+  agentRailScopeEntries,
+  type AgentRailScope,
+  type AgentThreadCopyDetail,
+  type AgentThreadMenuCommand,
+  type AgentThreadRevealRequest,
+} from "./agentSidebarPresentation";
 import { AgentClockProvider } from "./agentClock";
 import {
   agentFollowUpBlockedReason,
@@ -34,7 +50,11 @@ import {
   agentShipStatusUnread,
   agentThreadDisplayTitle,
   lastAgentTurn,
+  type AgentProjectGroup,
 } from "./agentModePresentation";
+import { adjacentThreadId, agentThreadsInScope, orderedRailThreadIds } from "./agentModeNavigation";
+import { useAgentThreadFind } from "./useAgentThreadFind";
+import { useAgentViewCommands } from "./useAgentViewCommands";
 
 export interface AgentModeViewProps {
   readonly agents: AgentThreadsSurface;
@@ -42,6 +62,7 @@ export interface AgentModeViewProps {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly overflowRootPaths: ReadonlyArray<string>;
   readonly nowTickMs?: number;
+  readonly viewCommands?: AgentViewCommandBridge | null;
   onTrustProject(projectRootKey: string): void;
   onReleaseProject(projectRootKey: string): void;
 }
@@ -52,6 +73,22 @@ interface ComposerTarget {
 }
 
 const DEFAULT_NOW_TICK_MS = 30_000;
+const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
+const EMPTY_IDS: ReadonlySet<string> = new Set();
+const COLLAPSED_RAIL_GRID: CSSProperties = {
+  gridTemplateColumns: "auto minmax(0, 1fr) var(--agent-info-width)",
+};
+const FIND_BAR_ROWS: CSSProperties = { gridTemplateRows: "auto minmax(0, 1fr) auto" };
+const CLIPBOARD_UNAVAILABLE_NOTICE: AgentTasksNotice = {
+  kind: "warning",
+  message: "The clipboard is not available, nothing was copied.",
+  action: null,
+};
+const NOTHING_TO_COPY_NOTICE: AgentTasksNotice = {
+  kind: "info",
+  message: "This thread has nothing to copy for that detail.",
+  action: null,
+};
 
 export function AgentModeView({
   agents,
@@ -60,27 +97,50 @@ export function AgentModeView({
   onTrustProject,
   overflowRootPaths,
   projects,
+  viewCommands = null,
 }: AgentModeViewProps) {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [collapsedProjectRootKeys, setCollapsedProjectRootKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const [collapsedRepositoryRoots, setCollapsedRepositoryRoots] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const [expandedArchivedRoots, setExpandedArchivedRoots] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+  const [railScope, setRailScope] = useState<AgentRailScope>({ kind: "all" });
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [localNotice, setLocalNotice] = useState<AgentTasksNotice | null>(null);
   const [selection, setSelection] = useState<ComposerTarget | null>(null);
   const [prompt, setPrompt] = useState("");
   const [isolationChoice, setIsolationChoice] = useState<IsolationChoice | null>(null);
   const [unsafeConfirmed, setUnsafeConfirmed] = useState<string | null>(null);
   const [launchChoice, setLaunchChoice] = useState<LaunchChoice | null>(null);
   const [dangerousConfirmed, setDangerousConfirmed] = useState(false);
+  const centerRef = useRef<HTMLDivElement | null>(null);
 
   const groups = useMemo(
     () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
     [projects, agents.orphanedWorktrees, agents.threads],
+  );
+
+  const scopeEntries = useMemo(() => agentRailScopeEntries(groups), [groups]);
+  const threadViews = agents.threads;
+  const scopedViews = useMemo(
+    () => agentThreadsInScope(threadViews, railScope),
+    [railScope, threadViews],
+  );
+  const search = useAgentThreadSearch(scopedViews);
+  const paletteTitles = useMemo(
+    () =>
+      paletteOpen
+        ? new Map(
+            scopedViews.map((view) => [view.thread.threadId, agentThreadDisplayTitle(view.thread)]),
+          )
+        : EMPTY_TITLES,
+    [paletteOpen, scopedViews],
+  );
+  const archivedThreadIds = useMemo(
+    () =>
+      paletteOpen
+        ? new Set(
+            scopedViews.filter((view) => view.thread.archived).map((view) => view.thread.threadId),
+          )
+        : EMPTY_IDS,
+    [paletteOpen, scopedViews],
   );
 
   const composerProjects = useMemo<ReadonlyArray<AgentComposerProjectOption>>(
@@ -119,6 +179,7 @@ export function AgentModeView({
 
   const selectedThread =
     agents.threads.find((view) => view.thread.threadId === selectedThreadId) ?? null;
+  const find = useAgentThreadFind(selectedThread?.thread ?? null);
 
   const unreadShipThreadId =
     selectedThread !== null && agentShipStatusUnread(selectedThread)
@@ -179,18 +240,6 @@ export function AgentModeView({
     (selectedThread === null &&
       (target === null || (isolation === "in-place" && guard.kind === "unsafe" && !confirmed)));
 
-  const toggleProject = useCallback((projectRootKey: string) => {
-    setCollapsedProjectRootKeys((current) => toggled(current, projectRootKey));
-  }, []);
-
-  const toggleGroup = useCallback((repositoryRoot: string) => {
-    setCollapsedRepositoryRoots((current) => toggled(current, repositoryRoot));
-  }, []);
-
-  const toggleArchived = useCallback((repositoryRoot: string) => {
-    setExpandedArchivedRoots((current) => toggled(current, repositoryRoot));
-  }, []);
-
   const startNewThread = useCallback((projectRootKey: string, repositoryRoot: string) => {
     setSelectedThreadId(null);
     setSelection({ projectRootKey, repositoryRoot });
@@ -201,6 +250,38 @@ export function AgentModeView({
     setSelectedThreadId(null);
     setUnsafeConfirmed(null);
   }, []);
+
+  const closeFind = find.close;
+  const requestReveal = find.requestReveal;
+  const selectThread = useCallback(
+    (threadId: string, reveal?: AgentThreadRevealRequest) => {
+      setSelectedThreadId(threadId);
+      if (reveal !== undefined) {
+        requestReveal(reveal);
+        return;
+      }
+      if (threadId !== selectedThreadId) closeFind();
+    },
+    [closeFind, requestReveal, selectedThreadId],
+  );
+
+  const closePalette = useCallback(() => {
+    setPaletteOpen(false);
+    search.clear();
+  }, [search]);
+
+  const activatePaletteResult = useCallback(
+    (threadId: string, reveal: AgentThreadRevealRequest | null) => {
+      selectThread(threadId, reveal ?? undefined);
+      closePalette();
+    },
+    [closePalette, selectThread],
+  );
+
+  const closeFindBar = useCallback(() => {
+    closeFind();
+    centerRef.current?.querySelector<HTMLElement>(".agent-session__scroll")?.focus();
+  }, [closeFind]);
 
   const sendFollowUp = agents.sendFollowUp;
   const startThread = agents.startThread;
@@ -259,41 +340,176 @@ export function AgentModeView({
     [agents],
   );
 
+  const copyThreadDetail = useCallback(
+    (threadId: string, detail: AgentThreadCopyDetail) => {
+      const text = agents.threadCopyDetail(threadId, detail);
+      if (text === null) {
+        setLocalNotice(NOTHING_TO_COPY_NOTICE);
+        return;
+      }
+      const clipboard = clipboardWriter();
+      if (clipboard === null) {
+        setLocalNotice(CLIPBOARD_UNAVAILABLE_NOTICE);
+        return;
+      }
+      void clipboard(text).catch(() => setLocalNotice(CLIPBOARD_UNAVAILABLE_NOTICE));
+    },
+    [agents],
+  );
+
+  const handleThreadMenuCommand = useCallback(
+    (threadId: string, command: AgentThreadMenuCommand) => {
+      switch (command.kind) {
+        case "togglePin":
+          agents.togglePin(threadId);
+          return;
+        case "archive":
+          agents.archive(threadId);
+          return;
+        case "delete":
+          remove(threadId);
+          return;
+        case "newThread": {
+          const repositoryRoot = threadRepositoryRoot(threadViews, threadId);
+          if (repositoryRoot === null) return;
+          const projectRootKey = projectRootKeyForRepository(groups, repositoryRoot);
+          if (projectRootKey === null) return;
+          startNewThread(projectRootKey, repositoryRoot);
+          return;
+        }
+        case "rename":
+          agents.renameThread(threadId, command.title);
+          return;
+        case "markUnread":
+          agents.markThreadUnread(threadId);
+          return;
+        case "copy":
+          copyThreadDetail(threadId, command.detail);
+          return;
+        default:
+          return unsupportedThreadMenuCommand(command);
+      }
+    },
+    [agents, copyThreadDetail, groups, remove, startNewThread, threadViews],
+  );
+
+  const orderedThreadIds = useMemo(
+    () => orderedRailThreadIds(scopedViews, railScope),
+    [railScope, scopedViews],
+  );
+  const openFind = find.openBar;
+  const commandHandlers = useMemo<AgentViewCommandHandlers>(
+    () => ({
+      newThread: () => {
+        const next = agentRailNewThreadTarget(railScope, scopeEntries);
+        if (next === null) return;
+        startNewThread(next.projectRootKey, next.repositoryRoot);
+      },
+      previousThread: () => {
+        const next = adjacentThreadId(orderedThreadIds, selectedThreadId, -1);
+        if (next !== null) selectThread(next);
+      },
+      nextThread: () => {
+        const next = adjacentThreadId(orderedThreadIds, selectedThreadId, 1);
+        if (next !== null) selectThread(next);
+      },
+      jumpToThread: (slot: AgentJumpSlot) => {
+        const next = orderedThreadIds[slot - 1];
+        if (next !== undefined) selectThread(next);
+      },
+      searchThreads: () => setPaletteOpen(true),
+      findInThread: () => {
+        if (selectedThreadId === null) return;
+        openFind();
+      },
+      threadSelected: () => selectedThreadId !== null,
+    }),
+    [
+      openFind,
+      orderedThreadIds,
+      railScope,
+      scopeEntries,
+      selectThread,
+      selectedThreadId,
+      startNewThread,
+    ],
+  );
+  useAgentViewCommands(viewCommands, commandHandlers);
+
+  const notice = localNotice ?? agents.notice;
+  const dismissNotice = useCallback(() => {
+    if (localNotice !== null) {
+      setLocalNotice(null);
+      return;
+    }
+    agents.dismissNotice();
+  }, [agents, localNotice]);
+
+  const findHitIndex = find.open && find.hitIndex >= 0 ? find.hitIndex : undefined;
+
   return (
     <section aria-label="Agent mode" className="agent-mode">
-      {agents.notice && (
+      {notice && (
         <AgentNoticeBar
-          notice={agents.notice}
+          notice={notice}
           onConfigure={() => agents.configureAgentCli()}
-          onDismiss={() => agents.dismissNotice()}
+          onDismiss={dismissNotice}
         />
       )}
       <AgentClockProvider nowTickMs={nowTickMs}>
-        <div className="agent-mode__grid">
-          <AgentThreadsSidebar
-            collapsedProjectRootKeys={collapsedProjectRootKeys}
-            collapsedRepositoryRoots={collapsedRepositoryRoots}
-            expandedArchivedRoots={expandedArchivedRoots}
-            groups={groups}
-            liveTaskCount={agents.liveTaskCount}
-            maxConcurrentAgentTasks={agents.maxConcurrentAgentTasks}
-            onNewThread={startNewThread}
-            onPruneOrphans={(root) => void agents.pruneOrphanedWorktrees(root)}
-            onReleaseProject={onReleaseProject}
-            onRemoveOrphan={(worktreePath) => void agents.removeOrphanedWorktree(worktreePath)}
-            onSelectThread={setSelectedThreadId}
-            onToggleArchived={toggleArchived}
-            onToggleGroup={toggleGroup}
-            onToggleProject={toggleProject}
-            onTogglePin={(threadId) => agents.togglePin(threadId)}
-            onTrustProject={onTrustProject}
-            overflowRootPaths={overflowRootPaths}
-            selectedThreadId={selectedThread?.thread.threadId ?? null}
-          />
+        <div className="agent-mode__grid" style={railCollapsed ? COLLAPSED_RAIL_GRID : undefined}>
+          {railCollapsed ? (
+            <div className="agent-rail__chrome">
+              <button
+                aria-expanded="false"
+                aria-label="Expand sidebar"
+                className="agent-iconbutton"
+                onClick={() => setRailCollapsed(false)}
+                title="Expand sidebar"
+                type="button"
+              >
+                <PanelLeftOpen aria-hidden="true" size={16} />
+              </button>
+            </div>
+          ) : (
+            <AgentThreadsSidebar
+              groups={groups}
+              onChangeScope={setRailScope}
+              onCollapseSidebar={() => setRailCollapsed(true)}
+              onNewThread={startNewThread}
+              onReleaseProject={onReleaseProject}
+              onSelectThread={selectThread}
+              onThreadMenuCommand={handleThreadMenuCommand}
+              onTogglePin={(threadId) => agents.togglePin(threadId)}
+              onTrustProject={onTrustProject}
+              overflowRootPaths={overflowRootPaths}
+              scope={railScope}
+              scopeEntries={scopeEntries}
+              search={search}
+              selectedThreadId={selectedThread?.thread.threadId ?? null}
+            />
+          )}
 
-          <div className="agent-mode__center">
+          <div
+            className="agent-mode__center"
+            ref={centerRef}
+            style={find.open ? FIND_BAR_ROWS : undefined}
+          >
+            {find.open && (
+              <AgentThreadFindBar
+                currentIndex={find.hitIndex}
+                hitCount={find.hits.length}
+                onChangeQuery={find.setQuery}
+                onClose={closeFindBar}
+                onNavigate={find.navigate}
+                query={find.query}
+              />
+            )}
             <AgentThreadSession
               composerRepositoryLabel={composerLabel}
+              findHitIndex={findHitIndex}
+              findHits={find.open ? find.hits : undefined}
+              findQuery={find.open ? find.query : undefined}
               onHideChanges={(threadId) => agents.hideChanges(threadId)}
               onHideFileDiff={(threadId) => agents.hideFileDiff(threadId)}
               onOpenChangedFile={(threadId, change) =>
@@ -304,6 +520,7 @@ export function AgentModeView({
               }
               onRefreshChanges={(threadId) => void agents.showChanges(threadId)}
               onShowFileDiff={(threadId, change) => void agents.showFileDiff(threadId, change)}
+              reveal={find.reveal}
               shipActions={shipActions}
               thread={selectedThread}
             />
@@ -374,8 +591,26 @@ export function AgentModeView({
           />
         </div>
       </AgentClockProvider>
+      <AgentThreadSearchPalette
+        archivedThreadIds={archivedThreadIds}
+        isOpen={paletteOpen}
+        onActivate={activatePaletteResult}
+        onChangeQuery={search.setQuery}
+        onClose={closePalette}
+        pending={search.pending}
+        query={search.query}
+        result={search.result}
+        titles={paletteTitles}
+      />
     </section>
   );
+}
+
+function clipboardWriter(): ((text: string) => Promise<void>) | null {
+  if (typeof navigator === "undefined") return null;
+  const clipboard: Clipboard | undefined = navigator.clipboard;
+  if (clipboard === undefined || typeof clipboard.writeText !== "function") return null;
+  return (text) => clipboard.writeText(text);
 }
 
 function useAgentShipActions(agents: AgentThreadsSurface): AgentShipActions {
@@ -499,14 +734,26 @@ function resolveComposerTarget(
   return { projectRootKey: project.projectRootKey, repositoryRoot: repository.repositoryRoot };
 }
 
-function toggled(current: ReadonlySet<string>, key: string): ReadonlySet<string> {
-  const next = new Set(current);
-  if (next.has(key)) {
-    next.delete(key);
-    return next;
-  }
-  next.add(key);
-  return next;
+function threadRepositoryRoot(
+  views: ReadonlyArray<AgentThreadView>,
+  threadId: string,
+): string | null {
+  const view = views.find((candidate) => candidate.thread.threadId === threadId);
+  return view?.thread.owner.repositoryRoot ?? null;
+}
+
+function projectRootKeyForRepository(
+  groups: ReadonlyArray<AgentProjectGroup>,
+  repositoryRoot: string,
+): string | null {
+  const group = groups.find((candidate) =>
+    candidate.repos.some((repo) => repo.repositoryRoot === repositoryRoot),
+  );
+  return group?.projectRootKey ?? null;
+}
+
+function unsupportedThreadMenuCommand(command: never): never {
+  throw new TypeError(`Unsupported agent thread menu command: ${JSON.stringify(command)}.`);
 }
 
 function AgentNoticeBar({

@@ -21,6 +21,7 @@ export const MAX_AGENT_TOOL_SUMMARY_BYTES = 512;
 export const MAX_AGENT_TOOL_ID_BYTES = 256;
 export const MAX_AGENT_TOOL_NAME_BYTES = 256;
 export const MAX_AGENT_THREAD_TITLE_BYTES = 256;
+export const MAX_AGENT_THREAD_TITLE_CHARS = 200;
 export const AGENT_THREAD_SCHEMA_VERSION = 1;
 export const UNTITLED_AGENT_THREAD_TITLE = "Untitled thread";
 export const AGENT_THREAD_STORE_FULL_ERROR =
@@ -170,6 +171,8 @@ export type AgentThreadsAction =
       readonly threadId: string;
       readonly atEpochMs: number;
     }
+  | { readonly kind: "threadMarkedUnread"; readonly threadId: string }
+  | { readonly kind: "threadRenamed"; readonly threadId: string; readonly title: string }
   | { readonly kind: "pinToggled"; readonly threadId: string }
   | { readonly kind: "archived"; readonly threadId: string }
   | { readonly kind: "deleted"; readonly threadId: string }
@@ -282,6 +285,12 @@ export function agentThreadTitle(prompt: string): string {
   return `${UTF8_DECODER.decode(bytes.subarray(0, end))}${TITLE_ELLIPSIS}`;
 }
 
+export function normalizeAgentThreadTitle(raw: string): string | null {
+  const line = firstNonEmptyLine(raw.slice(0, MAX_AGENT_THREAD_TITLE_CHARS));
+  if (line === "") return null;
+  return agentThreadTitle(line);
+}
+
 export function agentThreadsReducer(
   state: AgentThreadsState,
   action: AgentThreadsAction,
@@ -303,6 +312,10 @@ export function agentThreadsReducer(
       return recordIntegration(state, action.threadId, action.integration);
     case "threadViewed":
       return markThreadViewed(state, action.threadId, action.atEpochMs);
+    case "threadMarkedUnread":
+      return markThreadUnread(state, action.threadId);
+    case "threadRenamed":
+      return renameThread(state, action.threadId, action.title);
     case "pinToggled":
       return togglePin(state, action.threadId);
     case "archived":
@@ -533,6 +546,22 @@ function markThreadViewed(
   if (!Number.isSafeInteger(atEpochMs) || atEpochMs < 0) return state;
   if (thread.viewedAtEpochMs !== null && atEpochMs <= thread.viewedAtEpochMs) return state;
   return replaceThread(state, { ...thread, viewedAtEpochMs: atEpochMs });
+}
+
+function markThreadUnread(state: AgentThreadsState, threadId: string): AgentThreadsState {
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return state;
+  if (thread.viewedAtEpochMs === null) return state;
+  return replaceThread(state, { ...thread, viewedAtEpochMs: null });
+}
+
+function renameThread(state: AgentThreadsState, threadId: string, raw: string): AgentThreadsState {
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return state;
+  const title = normalizeAgentThreadTitle(raw);
+  if (title === null) return state;
+  if (title === thread.title) return state;
+  return replaceThread(state, { ...thread, title });
 }
 
 function togglePin(state: AgentThreadsState, threadId: string): AgentThreadsState {

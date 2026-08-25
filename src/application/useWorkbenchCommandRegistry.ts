@@ -35,6 +35,7 @@ import {
   isDebuggablePhpScriptPath,
   workbenchDebugCommands,
 } from "./workbenchDebugCommands";
+import { workbenchAgentViewCommandBridge } from "./agentViewCommandBridge";
 import { workbenchAgentCommands } from "./workbenchAgentCommands";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchAppLifecycleCommands } from "./workbenchAppLifecycleCommands";
@@ -999,7 +1000,9 @@ export function useWorkbenchCommandRegistry(
     }).forEach((command) => registry.register(command));
 
     workbenchAgentCommands({
+      shortcut,
       toggleAgentMode,
+      viewCommands: workbenchAgentViewCommandBridge,
     }).forEach((command) => registry.register(command));
 
     return registry;

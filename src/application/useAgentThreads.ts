@@ -11,6 +11,7 @@ import {
   type AgentThread,
 } from "../domain/agentThread";
 import {
+  agentShipStatus,
   initialAgentShipState,
   type AgentShipAvailability,
   type AgentShipState,
@@ -28,6 +29,7 @@ import type {
   AgentRepositoryStatusSnapshot,
   AgentTaskChangeSummary,
   AgentTasksNotice,
+  AgentThreadCopyDetail,
   AgentThreadStoreGateway,
   AgentThreadView,
   AgentThreadsSurface,
@@ -251,6 +253,37 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     [currentState, dispatchAction, now, projects],
   );
 
+  const { markUnread: markUnreadInStore, rename: renameInStore } = store;
+  const markThreadUnread = useCallback(
+    (threadId: string): void => {
+      const thread = currentState().threads.get(threadId);
+      if (thread === undefined) return;
+      if (!ownsThread(projects, thread)) return;
+      markUnreadInStore(threadId);
+    },
+    [currentState, markUnreadInStore, projects],
+  );
+
+  const renameThread = useCallback(
+    (threadId: string, title: string): void => {
+      const thread = currentState().threads.get(threadId);
+      if (thread === undefined) return;
+      if (!ownsThread(projects, thread)) return;
+      renameInStore(threadId, title);
+    },
+    [currentState, projects, renameInStore],
+  );
+
+  const threadCopyDetail = useCallback(
+    (threadId: string, detail: AgentThreadCopyDetail): string | null => {
+      const thread = currentState().threads.get(threadId);
+      if (thread === undefined) return null;
+      if (!ownsThread(projects, thread)) return null;
+      return copyDetailOf(thread, shipStates.get(threadId) ?? fallbackShipState(thread), detail);
+    },
+    [currentState, projects, shipStates],
+  );
+
   const lastUsedLaunch = useCallback(
     (projectRootKey: string): AgentLaunchOptions | null =>
       lastUsedAgentLaunch(threads.values(), projectRootKey, agentCliKind),
@@ -302,6 +335,9 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     liveTaskCount: countRunningTurns(store.state),
     maxConcurrentAgentTasks,
     markThreadViewed,
+    markThreadUnread,
+    renameThread,
+    threadCopyDetail,
     lastUsedLaunch,
     isolationPreview: isolation.isolationPreview,
     refreshIsolationStatus: isolation.refreshIsolationStatus,
@@ -346,6 +382,34 @@ function ownsThread(projects: ReadonlyArray<AgentProjectDescriptor>, thread: Age
   const project = projectByOwnerId(projects, thread.owner.ownerId);
   if (project === undefined) return false;
   return project.rootKey === thread.owner.rootKey;
+}
+
+function copyDetailOf(
+  thread: AgentThread,
+  ship: AgentShipState,
+  detail: AgentThreadCopyDetail,
+): string | null {
+  switch (detail) {
+    case "threadId":
+      return thread.threadId;
+    case "path":
+      return thread.target.worktreePath ?? thread.owner.repositoryRoot;
+    case "branch":
+      return threadBranch(thread, ship);
+    default:
+      return unsupportedCopyDetail(detail);
+  }
+}
+
+function threadBranch(thread: AgentThread, ship: AgentShipState): string | null {
+  const status = agentShipStatus(ship);
+  if (status !== null) return status.worktree.branch;
+  if (ship.kind === "pushed") return ship.receipt.branch;
+  return thread.integration?.pushed?.branch ?? null;
+}
+
+function unsupportedCopyDetail(detail: never): never {
+  throw new TypeError(`Unsupported agent thread copy detail: ${JSON.stringify(detail)}.`);
 }
 
 function agentThreadViews(

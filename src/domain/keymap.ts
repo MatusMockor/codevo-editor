@@ -870,6 +870,90 @@ export const keymapCommands = [
     id: "runtime.show",
     label: "Show Runtime Panel",
   },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+N",
+    id: "agent.newThread",
+    label: "New Thread",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+Shift+[",
+    id: "agent.previousThread",
+    label: "Previous Thread",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+Shift+]",
+    id: "agent.nextThread",
+    label: "Next Thread",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+1",
+    id: "agent.jumpToThread.1",
+    label: "Jump to Thread 1",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+2",
+    id: "agent.jumpToThread.2",
+    label: "Jump to Thread 2",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+3",
+    id: "agent.jumpToThread.3",
+    label: "Jump to Thread 3",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+4",
+    id: "agent.jumpToThread.4",
+    label: "Jump to Thread 4",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+5",
+    id: "agent.jumpToThread.5",
+    label: "Jump to Thread 5",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+6",
+    id: "agent.jumpToThread.6",
+    label: "Jump to Thread 6",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+7",
+    id: "agent.jumpToThread.7",
+    label: "Jump to Thread 7",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+8",
+    id: "agent.jumpToThread.8",
+    label: "Jump to Thread 8",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+9",
+    id: "agent.jumpToThread.9",
+    label: "Jump to Thread 9",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+Shift+K",
+    id: "agent.searchThreads",
+    label: "Search Threads",
+  },
+  {
+    category: "Agent",
+    defaultShortcut: "Cmd+F",
+    id: "agent.findInThread",
+    label: "Find in Thread",
+  },
 ] as const;
 
 export type KeymapCommand = (typeof keymapCommands)[number];

@@ -920,6 +920,8 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
         togglePin: () => undefined,
         archive: () => undefined,
         remove: () => undefined,
+        markUnread: () => undefined,
+        rename: () => undefined,
       }),
       [state],
     );

@@ -12,7 +12,9 @@ import type {
   AgentTurnEvent,
   AgentTurnStatus,
 } from "../../domain/agentThread";
+import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { GitChangedFile } from "../../domain/git";
+import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import type { AgentShipActions } from "./AgentShipPanel";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
 import { AgentClockProvider } from "./agentClock";
@@ -461,6 +463,168 @@ describe("AgentThreadSession", () => {
     expect(renders).toHaveLength(200);
   });
 
+  it("marks every find hit in the prompt and the assistant text", () => {
+    render(withFind({ findHitIndex: 0 }));
+
+    expect(
+      [...host.querySelectorAll("mark.agent-find__hit")].map((node) => node.textContent),
+    ).toEqual(["parser", "parser", "parser", "parser"]);
+  });
+
+  it("marks only the current hit as current", () => {
+    render(withFind({ findHitIndex: 1 }));
+
+    const current = host.querySelectorAll("mark.agent-find__hit--current");
+    expect(current).toHaveLength(1);
+    expect(current[0]?.getAttribute("data-hit-index")).toBe("1");
+    expect(current[0]?.closest("[data-agent-turn]")?.getAttribute("data-agent-turn")).toBe(
+      "agt-1-t1",
+    );
+  });
+
+  it("moves the current mark into the assistant paragraph that owns the hit", () => {
+    render(withFind({ findHitIndex: 2 }));
+
+    const current = host.querySelector("mark.agent-find__hit--current");
+    expect(current?.closest("[data-agent-event]")?.getAttribute("data-agent-event")).toBe("e0");
+    expect(current?.getAttribute("data-hit-index")).toBe("0");
+  });
+
+  it("scrolls the current hit into view", () => {
+    const scrolled = stubScrollIntoView();
+
+    render(withFind({ findHitIndex: 3 }));
+
+    expect(scrolled).toHaveLength(1);
+    expect((scrolled[0] as HTMLElement).className).toContain("agent-find__hit--current");
+  });
+
+  it("never highlights a query below the searchable minimum", () => {
+    render(withFind({ findQuery: "p", findHitIndex: 0 }));
+
+    expect(host.querySelectorAll("mark.agent-find__hit")).toHaveLength(0);
+    expect(host.querySelector(".agent-prompt__body")?.textContent).toBe("parser and parser");
+  });
+
+  it("reveals a turn whose events were dropped from the rendered projection", () => {
+    const scrolled = stubScrollIntoView();
+    const events: AgentTurnEvent[] = Array.from(
+      { length: MAX_RENDERED_EVENTS_PER_TURN + 4 },
+      (_unused, index) => ({ kind: "assistantText", text: `chunk ${index}` }),
+    );
+
+    render({
+      thread: threadView({
+        turnsTruncated: true,
+        turns: [turn("agt-1-t9", "Refactor the parser", { kind: "exited", exitCode: 0 }, events)],
+      }),
+      reveal: reveal({ turnId: "agt-1-t9", eventIndex: 0 }),
+    });
+
+    expect(scrolled).toHaveLength(1);
+    expect((scrolled[0] as HTMLElement).getAttribute("data-agent-turn")).toBe("agt-1-t9");
+  });
+
+  it("scrolls the exact event of a reveal when it is rendered", () => {
+    const scrolled = stubScrollIntoView();
+
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Refactor the parser", { kind: "exited", exitCode: 0 }, [
+            { kind: "assistantText", text: "First." },
+            { kind: "assistantText", text: "Second." },
+          ]),
+        ],
+      }),
+      reveal: reveal({ turnId: "agt-1-t1", eventIndex: 1 }),
+    });
+
+    expect(scrolled).toHaveLength(1);
+    expect((scrolled[0] as HTMLElement).getAttribute("data-agent-event")).toBe("e1");
+  });
+
+  it("ignores a reveal for a turn that is no longer in the thread", () => {
+    const scrolled = stubScrollIntoView();
+
+    render({ reveal: reveal({ turnId: "agt-1-gone", eventIndex: null }) });
+
+    expect(scrolled).toHaveLength(0);
+  });
+
+  it("re-renders only the turns whose highlight changed when the current hit moves", () => {
+    const renders: string[] = [];
+    const probe = (turnId: string): void => {
+      renders.push(turnId);
+    };
+    const view = findThreadView();
+
+    render({
+      thread: view,
+      turnRenderProbe: probe,
+      findQuery: FIND_QUERY,
+      findHits: FIND_HITS,
+      findHitIndex: 0,
+    });
+    expect(renders).toHaveLength(2);
+    renders.length = 0;
+
+    render({
+      thread: view,
+      turnRenderProbe: probe,
+      findQuery: FIND_QUERY,
+      findHits: FIND_HITS,
+      findHitIndex: 1,
+    });
+    expect(renders).toEqual(["agt-1-t1"]);
+    renders.length = 0;
+
+    render({
+      thread: view,
+      turnRenderProbe: probe,
+      findQuery: FIND_QUERY,
+      findHits: FIND_HITS,
+      findHitIndex: 3,
+    });
+    expect(renders.slice().sort()).toEqual(["agt-1-t1", "agt-1-t2"]);
+  });
+
+  it("leaves every turn untouched while no query is active", () => {
+    const renders: string[] = [];
+    const probe = (turnId: string): void => {
+      renders.push(turnId);
+    };
+    const view = findThreadView();
+
+    render({ thread: view, turnRenderProbe: probe });
+    renders.length = 0;
+
+    render({ thread: view, turnRenderProbe: probe });
+
+    expect(renders).toEqual([]);
+  });
+
+  function stubScrollIntoView(): Element[] {
+    const scrolled: Element[] = [];
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: function scrollIntoView(this: Element): void {
+        scrolled.push(this);
+      },
+      writable: true,
+    });
+    return scrolled;
+  }
+
+  function withFind(overrides: Partial<AgentThreadSessionProps>): Partial<AgentThreadSessionProps> {
+    return {
+      thread: findThreadView(),
+      findQuery: FIND_QUERY,
+      findHits: FIND_HITS,
+      ...overrides,
+    };
+  }
+
   function render(overrides: Partial<AgentThreadSessionProps> = {}): void {
     act(() =>
       root.render(
@@ -601,4 +765,34 @@ function changedFile(relativePath: string): GitChangedFile {
     relativePath,
     status: "modified",
   };
+}
+
+const FIND_QUERY = "parser";
+
+const FIND_HITS: ReadonlyArray<AgentThreadFindHit> = [
+  { turnId: "agt-1-t1", eventIndex: null, start: 0, end: 6 },
+  { turnId: "agt-1-t1", eventIndex: null, start: 11, end: 17 },
+  { turnId: "agt-1-t1", eventIndex: 0, start: 4, end: 10 },
+  { turnId: "agt-1-t2", eventIndex: null, start: 0, end: 6 },
+];
+
+const FIND_TURNS: ReadonlyArray<AgentTurn> = [
+  turn("agt-1-t1", "parser and parser", { kind: "exited", exitCode: 0 }, [
+    { kind: "assistantText", text: "the parser is ready.\n\nnothing else here." },
+  ]),
+  turn("agt-1-t2", "parser again", { kind: "exited", exitCode: 0 }, []),
+];
+
+let findThreadViewCache: AgentThreadView | null = null;
+
+function findThreadView(): AgentThreadView {
+  findThreadViewCache = findThreadViewCache ?? threadView({ turns: [...FIND_TURNS] });
+  return findThreadViewCache;
+}
+
+function reveal(overrides: {
+  readonly turnId: string;
+  readonly eventIndex: number | null;
+}): AgentThreadRevealRequest {
+  return { query: FIND_QUERY, start: 0, end: 6, ...overrides };
 }

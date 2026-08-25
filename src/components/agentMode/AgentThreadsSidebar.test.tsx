@@ -1,26 +1,24 @@
 // @vitest-environment jsdom
 
-import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentThreadView, OrphanedWorktreeView } from "../../application/agentThreadPorts";
-import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import { orderAgentThreadRows } from "./agentModePresentation";
+import type { AgentThreadSearchSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
+import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
+import type { AgentThreadSearchResult } from "../../domain/agentThreadSearch";
 import { AgentClockProvider } from "./agentClock";
+import type { AgentProjectGroup } from "./agentModePresentation";
 import { AgentThreadsSidebar, type AgentThreadsSidebarProps } from "./AgentThreadsSidebar";
 import {
-  DETACHED_AGENT_PROJECT_LABEL,
-  DETACHED_AGENT_PROJECT_ROOT_KEY,
-  type AgentProjectGroup,
-  type AgentRepositoryGroup,
-} from "./agentModePresentation";
+  ARCHIVED_PAGE_COUNT,
+  THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  agentRailScopeEntries,
+} from "./agentSidebarPresentation";
 
 const ROOT = "/workspace/app";
-const NESTED = "/workspace/app/packages/api";
+const OTHER = "/workspace/api";
 const NOW = 1_700_000_600_000;
-const NOW_TICK_MS = 1_000;
 
 describe("AgentThreadsSidebar", () => {
   let host: HTMLDivElement;
@@ -28,7 +26,9 @@ describe("AgentThreadsSidebar", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.useFakeTimers({
+      toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout", "Date"],
+    });
     vi.setSystemTime(NOW);
     host = document.createElement("div");
     document.body.append(host);
@@ -39,638 +39,602 @@ describe("AgentThreadsSidebar", () => {
     act(() => root.unmount());
     host.remove();
     vi.useRealTimers();
+    restoreNavigator();
   });
 
-  it("lists a single-repository project as one flat thread list", () => {
+  it("renders the chrome, search row and scope row without headings or filters", () => {
     render();
 
-    expect(host.querySelector('section[aria-label="Project app"]')).not.toBeNull();
-    expect(host.querySelector('section[aria-label="Repository app"]')).toBeNull();
-    expect(host.textContent).toContain("Fix the parser");
-    expect(host.textContent).toContain("Running");
-    expect(host.textContent).toContain("10 minutes ago");
-    expect(host.querySelector(".agent-dot--running")).not.toBeNull();
+    expect(host.querySelector('[aria-label="Collapse sidebar"]')).not.toBeNull();
+    expect(
+      host.querySelector('input[role="combobox"][aria-label="Search threads"]'),
+    ).not.toBeNull();
+    expect(host.querySelector('[aria-label="New thread"]')).not.toBeNull();
+    expect(host.querySelector("#agent-rail-scope")?.textContent).toContain("All projects");
+    expect(host.querySelector(".agent-rail__title")).toBeNull();
+    expect(host.querySelector(".agent-rail__filters")).toBeNull();
+    expect(host.textContent).not.toContain("running");
   });
 
-  it("nests repository subsections under a multi-repository project", () => {
-    render({ groups: [multiRepoProject()] });
-
-    expect(host.querySelector('section[aria-label="Project monorepo"]')).not.toBeNull();
-    expect(host.querySelector('section[aria-label="Repository app"]')).not.toBeNull();
-    expect(host.querySelector('section[aria-label="Repository packages/api"]')).not.toBeNull();
-  });
-
-  it("reports how many agents run against the concurrency cap", () => {
-    render({ liveTaskCount: 2, maxConcurrentAgentTasks: 4 });
-
-    expect(host.textContent).toContain("2/4 running");
-  });
-
-  it("rolls the live thread count up to the project header", () => {
-    render({ groups: [project({ liveCount: 3 })] });
-
-    expect(host.querySelector(".agent-project__live")?.textContent).toBe("3 live");
-  });
-
-  it("keeps the project header quiet when nothing is live", () => {
-    render({ groups: [project({ liveCount: 0, repos: [repositoryGroup({ liveCount: 0 })] })] });
-
-    expect(host.querySelector(".agent-project__live")).toBeNull();
-  });
-
-  it("badges a project whose editor tab is closed while its lease is held", () => {
-    render({ groups: [project({ origin: "closed-tab-live-tasks" })] });
-
-    expect(host.querySelector(".agent-project__badge")?.textContent).toBe("Tab closed");
-  });
-
-  it("badges a background project and keeps the active project unbadged", () => {
-    render({ groups: [project({ origin: "background-tab" })] });
-
-    expect(host.querySelector(".agent-project__badge")?.textContent).toBe("Background");
-
-    render();
-
-    expect(host.querySelector(".agent-project__badge")).toBeNull();
-  });
-
-  it("releases a closed-tab project once its last thread ended", () => {
-    const onReleaseProject = vi.fn();
+  it("lists every thread as one flat recency-sorted card list", () => {
     render({
       groups: [
-        project({
-          origin: "closed-tab-live-tasks",
-          liveCount: 0,
-          repos: [repositoryGroup({ liveCount: 0 })],
-        }),
+        group(ROOT, "app", [
+          settled("agt-old", "Old", { updatedAtEpochMs: NOW - 3 * 3_600_000 }),
+          running("agt-new", "New", { updatedAtEpochMs: NOW - 60_000 }),
+        ]),
+        group(OTHER, "api", [settled("agt-mid", "Mid", { updatedAtEpochMs: NOW - 8 * 60_000 })]),
       ],
-      onReleaseProject,
     });
 
-    click('[aria-label="Release project app"]');
-
-    expect(onReleaseProject).toHaveBeenCalledWith(ROOT);
+    expect(rowIds()).toEqual(["agt-new", "agt-mid", "agt-old"]);
+    expect(host.querySelector("section")).toBeNull();
+    expect(host.querySelector(".agent-band")).toBeNull();
+    expect(host.textContent).not.toContain("NEEDS ATTENTION");
+    expect(host.textContent).not.toContain("+ New thread");
   });
 
-  it("keeps a closed-tab project with live threads unreleasable", () => {
-    render({ groups: [project({ origin: "closed-tab-live-tasks", liveCount: 1 })] });
+  it("renders the three card lines: project, title, branch and provider glyph", () => {
+    render({
+      groups: [group(ROOT, "app", [settled("agt-1", "Fix the parser", { branch: "main" })])],
+    });
 
-    expect(host.querySelector('[aria-label="Release project app"]')).toBeNull();
+    const card = row("agt-1");
+    expect(card.querySelector(".agent-row__project")?.textContent).toBe("app");
+    expect(card.querySelector(".agent-row__title")?.textContent).toBe("Fix the parser");
+    expect(card.querySelector(".agent-row__branch")?.textContent).toBe("main");
+    expect(card.querySelector('[aria-label="Claude Code"] svg')).not.toBeNull();
+    expect(card.querySelector(".agent-row__time")?.textContent).toBe("2m");
   });
 
-  it("disables an untrusted project and offers the trust action", () => {
-    const onTrustProject = vi.fn();
-    const onNewThread = vi.fn();
-    render({ groups: [project({ trust: "untrusted" })], onNewThread, onTrustProject });
+  it("prefixes the repository with the project label only for multi-repository projects", () => {
+    render({
+      groups: [{ ...group(ROOT, "app", [settled("agt-1", "One")]), singleRepo: false }],
+    });
 
-    expect(host.textContent).toContain("This project is not trusted, so agents cannot start here.");
-    expect(host.querySelector(".agent-group__new")).toBeNull();
-    expect(host.textContent).toContain("Fix the parser");
-
-    click('[aria-label="Trust project app"]');
-
-    expect(onTrustProject).toHaveBeenCalledWith(ROOT);
-    expect(onNewThread).not.toHaveBeenCalled();
+    expect(row("agt-1").querySelector(".agent-row__project")?.textContent).toBe("app / app");
+    expect(row("agt-1").querySelector(".agent-row__branch")?.textContent).toBe("worktree");
   });
 
-  it("treats an unreadable trust state as untrusted", () => {
-    render({ groups: [project({ trust: "unknown" })] });
+  it("shows the Codex mark for codex threads", () => {
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "One", { provider: "codex" })])] });
 
-    expect(host.textContent).toContain("could not be read");
-    expect(host.querySelector(".agent-group__new")).toBeNull();
+    expect(row("agt-1").querySelector('[aria-label="Codex"]')).not.toBeNull();
   });
 
-  it("selects a thread when its row is clicked", () => {
+  it("replaces the time with Working plus a live duration while a turn runs", () => {
+    render({ groups: [group(ROOT, "app", [running("agt-1", "Busy")])] });
+
+    const status = row("agt-1").querySelector(".agent-row__status--working");
+    expect(status?.textContent).toContain("Working");
+    expect(status?.querySelector("time")?.textContent).toBe("10m");
+    expect(row("agt-1").classList.contains("agent-row--inflight")).toBe(true);
+  });
+
+  it("labels failed, stopped and unread done threads and keeps read ones quiet", () => {
+    render({
+      groups: [
+        group(ROOT, "app", [
+          failed("agt-f", "Broken"),
+          settled("agt-s", "Stopped", { status: { kind: "stopped" } }),
+          settled("agt-d", "Fresh", { viewedAtEpochMs: null, endedAtEpochMs: NOW }),
+          settled("agt-r", "Read"),
+        ]),
+      ],
+    });
+
+    expect(row("agt-f").querySelector(".agent-row__status--failed")?.textContent).toBe("Failed");
+    expect(row("agt-s").querySelector(".agent-row__status--stopped")?.textContent).toBe("Stopped");
+    expect(row("agt-d").querySelector(".agent-row__status--done")?.textContent).toBe("Done");
+    expect(row("agt-d").classList.contains("agent-row--unread")).toBe(true);
+    expect(row("agt-r").querySelector(".agent-row__status")).toBeNull();
+    expect(row("agt-r").classList.contains("agent-row--recede")).toBe(true);
+    expect(row("agt-f").classList.contains("agent-row--recede")).toBe(false);
+  });
+
+  it("marks the selected card as on and never receded", () => {
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "Read")])], selectedThreadId: "agt-1" });
+
+    expect(row("agt-1").classList.contains("agent-row--on")).toBe(true);
+    expect(row("agt-1").classList.contains("agent-row--recede")).toBe(false);
+    expect(row("agt-1").getAttribute("aria-current")).toBe("true");
+  });
+
+  it("puts pinned cards first behind a hairline divider and unpins from the pin glyph", () => {
+    const onTogglePin = vi.fn();
+    render({
+      groups: [
+        group(ROOT, "app", [
+          settled("agt-1", "Newest", { updatedAtEpochMs: NOW - 1000 }),
+          settled("agt-p", "Pinned", { pinned: true, updatedAtEpochMs: NOW - 9000 }),
+        ]),
+      ],
+      onTogglePin,
+    });
+
+    expect(rowIds()).toEqual(["agt-p", "agt-1"]);
+    expect(host.querySelector(".agent-list__divider")).not.toBeNull();
+    expect(row("agt-1").querySelector(".agent-row__pin")).toBeNull();
+
+    click('[aria-label="Unpin thread"]');
+
+    expect(onTogglePin).toHaveBeenCalledWith("agt-p");
+  });
+
+  it("offers the hover Archive action on cards and disables it while working", () => {
+    const onThreadMenuCommand = vi.fn();
+    render({
+      groups: [group(ROOT, "app", [running("agt-r", "Busy"), settled("agt-s", "Done")])],
+      onThreadMenuCommand,
+    });
+
+    const busy = row("agt-r").querySelector<HTMLButtonElement>('[aria-label="Archive thread"]');
+    expect(busy?.disabled).toBe(true);
+    expect(busy?.closest(".agent-row__actions")).not.toBeNull();
+
+    click('[data-thread-id="agt-s"] [aria-label="Archive thread"]');
+
+    expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-s", { kind: "archive" });
+  });
+
+  it("collapses archived threads into a slim shelf paginated by twenty", () => {
+    const archived = Array.from({ length: ARCHIVED_PAGE_COUNT + 5 }, (_, index) =>
+      settled(`arc-${index}`, `Archived ${index}`, {
+        archived: true,
+        updatedAtEpochMs: NOW - 86_400_000 * 4 - index,
+      }),
+    );
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "Live"), ...archived])] });
+
+    expect(host.querySelector(".agent-shelf")?.textContent).toBe(
+      `Archived (${ARCHIVED_PAGE_COUNT + 5})`,
+    );
+    expect(host.querySelector(".agent-row--slim")).toBeNull();
+
+    click('.agent-shelf[aria-expanded="false"]');
+
+    expect(host.querySelector(".agent-shelf")?.textContent).toBe("Archived");
+    expect(host.querySelectorAll(".agent-row--slim[data-thread-id]")).toHaveLength(
+      ARCHIVED_PAGE_COUNT,
+    );
+    expect(row("arc-0").querySelector(".agent-row__time")?.textContent).toBe("4d");
+    expect(host.querySelector(".agent-row--more")?.textContent).toContain("Show 5 more");
+
+    click(".agent-row--more");
+
+    expect(host.querySelectorAll(".agent-row--slim[data-thread-id]")).toHaveLength(
+      ARCHIVED_PAGE_COUNT + 5,
+    );
+    expect(host.querySelector(".agent-row--more")).toBeNull();
+  });
+
+  it("opens the T3-ordered context menu and dispatches commands", () => {
+    const onThreadMenuCommand = vi.fn();
+    render({
+      groups: [group(ROOT, "app", [running("agt-1", "Busy", { branch: "feat/x" })])],
+      onThreadMenuCommand,
+    });
+
+    act(() => {
+      row("agt-1").dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 20,
+          clientY: 30,
+        }),
+      );
+    });
+
+    const menu = document.querySelector('[role="menu"]');
+    const items = [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])];
+    expect(items.map((item) => item.textContent)).toEqual([
+      "New thread on feat/x",
+      "Pin",
+      "Rename",
+      "Mark unread",
+      "Copy path",
+      "Copy branch",
+      "Copy thread ID",
+      "Archive",
+      "Delete",
+    ]);
+    expect((items[7] as HTMLButtonElement).disabled).toBe(true);
+
+    act(() => {
+      (items[8] as HTMLButtonElement).click();
+    });
+
+    expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "delete" });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("renames inline from the context menu and commits on Enter", () => {
+    const onThreadMenuCommand = vi.fn();
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "Old name")])], onThreadMenuCommand });
+
+    act(() => {
+      row("agt-1").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+    const rename = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (item) => item.textContent === "Rename",
+    );
+    act(() => {
+      (rename as HTMLButtonElement).click();
+    });
+
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Rename thread"]');
+    expect(input?.value).toBe("Old name");
+    act(() => {
+      nativeInputValue(input as HTMLInputElement, "New name");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      input?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+
+    expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", {
+      kind: "rename",
+      title: "New name",
+    });
+    expect(host.querySelector('input[aria-label="Rename thread"]')).toBeNull();
+  });
+
+  it("moves focus with the arrow keys, selects with Enter and pins with p", () => {
     const onSelectThread = vi.fn();
-    render({ onSelectThread });
+    const onTogglePin = vi.fn();
+    render({
+      groups: [
+        group(ROOT, "app", [
+          settled("agt-1", "One", { updatedAtEpochMs: NOW - 1000 }),
+          settled("agt-2", "Two", { updatedAtEpochMs: NOW - 2000 }),
+        ]),
+      ],
+      onSelectThread,
+      onTogglePin,
+    });
 
-    clickText("Fix the parser");
+    expect(row("agt-1").tabIndex).toBe(0);
+    expect(row("agt-2").tabIndex).toBe(-1);
 
+    act(() => row("agt-1").focus());
+    key(row("agt-1"), "ArrowDown");
+
+    expect(document.activeElement).toBe(row("agt-2"));
+    expect(row("agt-2").tabIndex).toBe(0);
+
+    key(row("agt-2"), "Enter");
+    expect(onSelectThread).toHaveBeenCalledWith("agt-2");
+
+    key(row("agt-2"), "p");
+    expect(onTogglePin).toHaveBeenCalledWith("agt-2");
+
+    key(row("agt-2"), "Escape");
+    expect(document.activeElement).toBe(host.querySelector('[aria-label="Search threads"]'));
+  });
+
+  it("shows jump badges after holding the command key", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "One"), settled("agt-2", "Two")])] });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
+    });
+    expect(host.querySelector(".agent-row__jump")).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS);
+    });
+    expect([...host.querySelectorAll(".agent-row__jump")].map((el) => el.textContent)).toEqual([
+      "⌘1",
+      "⌘2",
+    ]);
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta" }));
+    });
+    expect(host.querySelector(".agent-row__jump")).toBeNull();
+  });
+
+  it("uses Control and the Ctrl glyph off macOS and clears hints when the tab hides", () => {
+    withUserAgent("Mozilla/5.0 (X11; Linux x86_64)");
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "One"), settled("agt-2", "Two")])] });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta" }));
+      vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS);
+    });
+    expect(host.querySelector(".agent-row__jump")).toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control" }));
+      vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS);
+    });
+    expect([...host.querySelectorAll(".agent-row__jump")].map((el) => el.textContent)).toEqual([
+      "Ctrl1",
+      "Ctrl2",
+    ]);
+
+    withVisibility("hidden", () => {
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+    });
+    expect(host.querySelector(".agent-row__jump")).toBeNull();
+  });
+
+  it("lets Enter on the archived shelf expand it instead of selecting the focused thread", () => {
+    const onSelectThread = vi.fn();
+    const onTogglePin = vi.fn();
+    render({
+      groups: [
+        group(ROOT, "app", [
+          settled("agt-1", "Live"),
+          settled("arc-1", "Old", { archived: true, updatedAtEpochMs: NOW - 86_400_000 }),
+        ]),
+      ],
+      onSelectThread,
+      onTogglePin,
+    });
+
+    const shelf = host.querySelector<HTMLButtonElement>(".agent-shelf");
+    expect(shelf?.getAttribute("aria-controls")).toBeNull();
+    act(() => shelf?.focus());
+    key(shelf as HTMLElement, "Enter");
+    expect(onSelectThread).not.toHaveBeenCalled();
+    expect(onTogglePin).not.toHaveBeenCalled();
+
+    click(".agent-shelf");
+    expect(shelf?.getAttribute("aria-expanded")).toBe("true");
+    expect(shelf?.getAttribute("aria-controls")).toBe("agent-rail-archived");
+    expect(host.querySelector("#agent-rail-archived")).not.toBeNull();
+
+    key(shelf as HTMLElement, "p");
+    expect(onTogglePin).not.toHaveBeenCalled();
+    const archive = row("agt-1").querySelector<HTMLElement>('[aria-label="Archive thread"]');
+    key(archive as HTMLElement, "Enter");
+    expect(onSelectThread).not.toHaveBeenCalled();
+
+    key(row("agt-1"), "Enter");
     expect(onSelectThread).toHaveBeenCalledWith("agt-1");
   });
 
-  it("marks the selected thread for assistive technology", () => {
-    render({ selectedThreadId: "agt-1" });
+  it("returns focus to the row that opened the context menu once it closes", () => {
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "One")])] });
 
-    const selected = host.querySelector('[aria-current="true"]');
+    act(() => row("agt-1").focus());
+    act(() => {
+      row("agt-1").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+    const menu = document.querySelector('[role="menu"]');
+    expect(menu?.contains(document.activeElement)).toBe(true);
 
-    expect(selected?.textContent).toContain("Fix the parser");
-  });
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(row("agt-1"));
 
-  it("collapses a project and hides its threads", () => {
-    const onToggleProject = vi.fn();
-    render({ onToggleProject });
-
-    click('.agent-project__head[aria-expanded="true"]');
-
-    expect(onToggleProject).toHaveBeenCalledWith(ROOT);
-
-    render({ collapsedProjectRootKeys: new Set([ROOT]) });
-
-    expect(host.textContent).not.toContain("Fix the parser");
-  });
-
-  it("collapses a repository subsection without collapsing its project", () => {
-    const onToggleGroup = vi.fn();
-    render({ groups: [multiRepoProject()], onToggleGroup });
-
-    click('.agent-group__head[aria-expanded="true"]');
-
-    expect(onToggleGroup).toHaveBeenCalledWith(ROOT);
-
-    render({ collapsedRepositoryRoots: new Set([ROOT]), groups: [multiRepoProject()] });
-
-    expect(host.textContent).not.toContain("Fix the parser");
-    expect(host.querySelector('section[aria-label="Repository packages/api"]')).not.toBeNull();
-  });
-
-  it("starts a new thread for the project and repository of the group", () => {
-    const onNewThread = vi.fn();
-    render({ onNewThread });
-
-    clickText("+ New thread");
-
-    expect(onNewThread).toHaveBeenCalledWith(ROOT, ROOT);
-  });
-
-  it("fails closed when a detached group is no longer resolved", () => {
-    const onNewThread = vi.fn();
-    render({ groups: [project({}), detachedProject()], onNewThread });
-
-    const detached = host.querySelector<HTMLElement>(
-      `section[aria-label="${DETACHED_AGENT_PROJECT_LABEL}"]`,
+    act(() => {
+      row("agt-1").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+    const copy = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === "Copy thread ID",
     );
-    expect(detached).not.toBeNull();
-    expect(detached?.querySelector(".agent-group__new")).toBeNull();
-    expect(detached?.textContent).toContain(
-      "This repository is no longer available in the current workspace.",
+    act(() => copy?.click());
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(row("agt-1"));
+  });
+
+  it("surfaces the document truncation bound from the search result", () => {
+    render({
+      search: searchSurface("parser", {
+        query: "parser",
+        truncated: false,
+        documentsTruncated: true,
+        matches: [],
+      }),
+    });
+
+    expect(host.querySelector(".agent-search-results__note")?.textContent).toBe(
+      "Older messages not searched",
     );
-    expect(detached?.querySelector(".agent-trust")).toBeNull();
-
-    clickText("+ New thread");
-    expect(onNewThread).toHaveBeenCalledWith(ROOT, ROOT);
-    expect(onNewThread).toHaveBeenCalledTimes(1);
+    expect(host.querySelector(".agent-search-results__empty")?.textContent).toBe(
+      "No threads found",
+    );
   });
 
-  it("reports the projects beyond the root limit instead of dropping them silently", () => {
-    render({ overflowRootPaths: ["/workspace/nine", "/workspace/ten"] });
+  it("changes the scope from the project menu and reports scope state", () => {
+    const onChangeScope = vi.fn();
+    const groups = [
+      group(ROOT, "app", [settled("agt-1", "One")]),
+      group(OTHER, "api", [settled("agt-2", "Two", { repositoryRoot: OTHER })], {
+        trust: "untrusted",
+      }),
+    ];
+    render({ groups, onChangeScope });
 
-    const overflow = host.querySelector(".agent-rail__overflow");
+    click("#agent-rail-scope");
+    click(`[role="option"][data-value="${OTHER}|${OTHER}"]`);
 
-    expect(overflow?.textContent).toBe("2 more projects are not shown (limit 8)");
-    expect(overflow?.getAttribute("title")).toBe("/workspace/nine\n/workspace/ten");
+    expect(onChangeScope).toHaveBeenCalledWith({
+      kind: "repository",
+      projectRootKey: OTHER,
+      repositoryRoot: OTHER,
+    });
+
+    const onTrustProject = vi.fn();
+    render({
+      groups,
+      onTrustProject,
+      scope: { kind: "repository", projectRootKey: OTHER, repositoryRoot: OTHER },
+    });
+
+    expect(rowIds()).toEqual(["agt-2"]);
+    expect(host.querySelector(".agent-scope__state")?.textContent).toContain("Untrusted");
+    click('[aria-label="Trust project api"]');
+    expect(onTrustProject).toHaveBeenCalledWith(OTHER);
+    expect(host.querySelector(".agent-trust")).toBeNull();
   });
 
-  it("keeps the overflow row singular for a single hidden project", () => {
-    render({ overflowRootPaths: ["/workspace/nine"] });
+  it("starts a new thread in the first dispatchable repository of the scope", () => {
+    const onNewThread = vi.fn();
+    render({
+      groups: [group(ROOT, "app", [], { trust: "untrusted" }), group(OTHER, "api", [])],
+      onNewThread,
+    });
 
+    click('[aria-label="New thread"]');
+
+    expect(onNewThread).toHaveBeenCalledWith(OTHER, OTHER);
+  });
+
+  it("renders the empty states and the overflow note", () => {
+    render({ groups: [] });
+    expect(host.querySelector(".agent-rail__empty-state")?.textContent).toBe("No projects yet");
+
+    render({ groups: [group(ROOT, "app", [])], overflowRootPaths: ["/workspace/nine"] });
+    expect(host.querySelector(".agent-rail__empty-state")?.textContent).toBe("No threads yet");
     expect(host.querySelector(".agent-rail__overflow")?.textContent).toBe(
       "1 more project is not shown (limit 8)",
     );
   });
 
-  it("hides the overflow row while every project fits", () => {
-    render();
+  it("forwards typing to the search surface and clears on Escape", () => {
+    const search = searchSurface("");
+    render({ search });
 
-    expect(host.querySelector(".agent-rail__overflow")).toBeNull();
-  });
-
-  it("removes an orphaned worktree listed under its repository", () => {
-    const onRemoveOrphan = vi.fn();
-    render({
-      groups: [project({ repos: [repositoryGroup({ orphans: [orphan(false)] })] })],
-      onRemoveOrphan,
+    const input = host.querySelector<HTMLInputElement>('[aria-label="Search threads"]');
+    act(() => {
+      nativeInputValue(input as HTMLInputElement, "par");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    expect(search.setQuery).toHaveBeenCalledWith("par");
 
-    expect(host.textContent).toContain("Orphaned worktrees");
-    click(`[aria-label="Remove orphaned worktree ${ROOT}/.worktrees/agt-9"]`);
-
-    expect(onRemoveOrphan).toHaveBeenCalledWith(`${ROOT}/.worktrees/agt-9`);
+    render({ search: searchSurface("par") });
+    key(host.querySelector('[aria-label="Search threads"]') as HTMLElement, "Escape");
+    expect(host.querySelector('[aria-label="Clear thread search"]')).not.toBeNull();
   });
 
-  it("prunes stale worktrees when the orphan is prunable", () => {
-    const onPruneOrphans = vi.fn();
-    render({
-      groups: [project({ repos: [repositoryGroup({ orphans: [orphan(true)] })] })],
-      onPruneOrphans,
-    });
-
-    click(`[aria-label="Prune stale worktrees for ${ROOT}"]`);
-
-    expect(onPruneOrphans).toHaveBeenCalledWith(ROOT);
-  });
-
-  it("pins and unpins a thread from its row", () => {
-    const onTogglePin = vi.fn();
-    render({ onTogglePin });
-
-    click('[aria-label="Pin thread agt-1"]');
-
-    expect(onTogglePin).toHaveBeenCalledWith("agt-1");
-    expect(
-      host.querySelector('[aria-label="Pin thread agt-1"]')?.getAttribute("aria-pressed"),
-    ).toBe("false");
-
-    render({
-      onTogglePin,
-      groups: [project({ repos: [repositoryGroup({ threads: [threadView({ pinned: true })] })] })],
-    });
-
-    const pinned = host.querySelector('[aria-label="Unpin thread agt-1"]');
-    expect(pinned?.getAttribute("aria-pressed")).toBe("true");
-    expect(pinned?.className).toContain("agent-thread__pin--on");
-
-    click('[aria-label="Unpin thread agt-1"]');
-    expect(onTogglePin).toHaveBeenCalledTimes(2);
-  });
-
-  it("keeps selecting a thread separate from pinning it", () => {
+  it("replaces the list with the search listbox and selects a hit with Enter", () => {
     const onSelectThread = vi.fn();
-    const onTogglePin = vi.fn();
-    render({ onSelectThread, onTogglePin });
-
-    click('[aria-label="Pin thread agt-1"]');
-
-    expect(onSelectThread).not.toHaveBeenCalled();
-    expect(onTogglePin).toHaveBeenCalledWith("agt-1");
-  });
-
-  it("offers no pin action for orphaned worktrees", () => {
-    render({
-      groups: [project({ repos: [repositoryGroup({ threads: [], orphans: [orphan(false)] })] })],
-    });
-
-    expect(host.textContent).toContain("Orphaned worktrees");
-    expect(host.querySelector(".agent-thread__pin")).toBeNull();
-  });
-
-  it("keeps archived threads behind a collapsed group per repository", () => {
-    const onToggleArchived = vi.fn();
-    render({
-      groups: [
-        project({
-          repos: [
-            repositoryGroup({
-              archived: [threadView({ threadId: "agt-old", title: "Old work", archived: true })],
-            }),
-          ],
-        }),
-      ],
-      onToggleArchived,
-    });
-
-    expect(host.querySelector('section[aria-label="Archived threads in app"]')).not.toBeNull();
-    expect(host.textContent).not.toContain("Old work");
-
-    click('.agent-archived__head[aria-expanded="false"]');
-
-    expect(onToggleArchived).toHaveBeenCalledWith(ROOT);
-
-    render({
-      expandedArchivedRoots: new Set([ROOT]),
-      groups: [
-        project({
-          repos: [
-            repositoryGroup({
-              archived: [threadView({ threadId: "agt-old", title: "Old work", archived: true })],
-            }),
-          ],
-        }),
+    const search = searchSurface("parser", {
+      query: "parser",
+      truncated: false,
+      documentsTruncated: false,
+      matches: [
+        {
+          threadId: "agt-2",
+          source: "user",
+          turnId: "agt-2-t1",
+          eventIndex: null,
+          snippet: "Fix the parser",
+          ranges: [{ start: 8, end: 14 }],
+          segmentStart: 8,
+          segmentEnd: 14,
+          score: 400,
+        },
+        {
+          threadId: "agt-1",
+          source: "title",
+          turnId: null,
+          eventIndex: null,
+          snippet: "parser",
+          ranges: [{ start: 0, end: 6 }],
+          segmentStart: 0,
+          segmentEnd: 6,
+          score: 0,
+        },
       ],
     });
-
-    expect(host.textContent).toContain("Old work");
-    expect(host.textContent).toContain("Archived");
-  });
-
-  it("hides the archived group when no thread is archived", () => {
-    render();
-
-    expect(host.querySelector(".agent-archived")).toBeNull();
-  });
-
-  it("explains a project without a Git repository", () => {
-    render({ groups: [project({ repos: [], singleRepo: false, liveCount: 0 })] });
-
-    expect(host.textContent).toContain("No Git repository was detected in this project.");
-  });
-
-  it("explains an empty workspace without projects", () => {
-    render({ groups: [] });
-
-    expect(host.textContent).toContain("No Git repository was detected in this workspace.");
-  });
-
-  it("orders rows into running, attention and settled bands", () => {
-    render({ groups: [busyProject()] });
-
-    const bands = [...host.querySelectorAll(".agent-band__label")].map((band) => band.textContent);
-    expect(bands).toEqual(["Running", "Needs attention", "Idle"]);
-    expect(threadOrder()).toEqual(["agt-1", "agt-2", "agt-3"]);
-  });
-
-  it("floats a pinned settled thread above its unpinned band peers only", () => {
     render({
-      groups: [
-        project({
-          repos: [
-            repositoryGroup({
-              threads: orderAgentThreadRows([
-                settled("agt-3", "Polish the docs"),
-                settled("agt-4", "Pinned cleanup", { pinned: true }),
-                running("agt-1", "Fix the parser"),
-              ]),
-            }),
-          ],
-        }),
-      ],
+      groups: [group(ROOT, "app", [settled("agt-1", "parser"), settled("agt-2", "Two")])],
+      onSelectThread,
+      search,
     });
 
-    expect(threadOrder()).toEqual(["agt-1", "agt-4", "agt-3"]);
+    expect(host.querySelector(".agent-list")).toBeNull();
+    const listbox = host.querySelector("#agent-rail-search-results");
+    expect(listbox?.getAttribute("role")).toBe("listbox");
+    const input = host.querySelector('[aria-label="Search threads"]') as HTMLElement;
+    expect(input.getAttribute("aria-activedescendant")).toBe("agent-rail-search-result-0");
+
+    key(input, "ArrowDown");
+    expect(input.getAttribute("aria-activedescendant")).toBe("agent-rail-search-result-1");
+
+    key(input, "Enter");
+    expect(onSelectThread).toHaveBeenCalledWith("agt-1", undefined);
+    expect(search.clear).toHaveBeenCalled();
   });
 
-  it("filters threads by a bounded case-insensitive title match", () => {
-    render({ groups: [busyProject()] });
-
-    typeFilter("RENAME");
-
-    expect(threadOrder()).toEqual(["agt-2"]);
-    expect(host.querySelector(".agent-rail__filter")?.getAttribute("maxlength")).toBe("128");
-  });
-
-  it("clips filter text beyond the bounded length", () => {
-    render({ groups: [busyProject()] });
-
-    typeFilter("x".repeat(200));
-
-    expect(host.querySelector<HTMLInputElement>(".agent-rail__filter")?.value).toHaveLength(128);
-  });
-
-  it("filters threads by attention status", () => {
-    render({ groups: [busyProject()] });
-
-    pickStatus("attention");
-
-    expect(threadOrder()).toEqual(["agt-2"]);
-  });
-
-  it("offers every status with its thread count in a single picker", () => {
-    render({ groups: [busyProject()] });
-
-    const trigger = host.querySelector<HTMLButtonElement>("button#agent-rail-status");
-    expect(trigger?.getAttribute("aria-haspopup")).toBe("listbox");
-    expect(trigger?.textContent).toContain("All");
-
-    act(() => trigger?.click());
-
-    const options = [...host.querySelectorAll<HTMLElement>('[role="option"]')].map(
-      (option) => option.textContent,
-    );
-    expect(options).toEqual(["All3", "Running1", "Needs attention1", "Idle1", "Archived0"]);
-    expect(host.querySelectorAll(".agent-rail__status-option")).toHaveLength(0);
-  });
-
-  it("names the picked status on the closed trigger", () => {
-    render({ groups: [busyProject()] });
-
-    expect(host.querySelector("button#agent-rail-status")?.textContent).toBe("Status:All");
-
-    pickStatus("running");
-
-    expect(host.querySelector("button#agent-rail-status")?.textContent).toBe("Status:Running");
-  });
-
-  it("counts only the threads the text filter still matches", () => {
-    render({ groups: [busyProject()] });
-
-    typeFilter("Fix the parser");
-    act(() => host.querySelector<HTMLButtonElement>("button#agent-rail-status")?.click());
-
-    const options = [...host.querySelectorAll<HTMLElement>('[role="option"]')].map(
-      (option) => option.textContent,
-    );
-    expect(options).toEqual(["All1", "Running1", "Needs attention0", "Idle0", "Archived0"]);
-  });
-
-  it("keeps archived threads out of every status filter but all and archived", () => {
-    render({ groups: [archivedProject()] });
-
-    pickStatus("running");
-    expect(host.querySelector('section[aria-label="Archived threads in app"]')).toBeNull();
-
-    pickStatus("archived");
-    expect(host.querySelector('section[aria-label="Archived threads in app"]')).not.toBeNull();
-  });
-
-  it("offers a way out when the filters match no thread", () => {
-    const onSelectThread = vi.fn();
-    render({ groups: [busyProject()], onSelectThread });
-
-    typeFilter("nothing matches this");
-
-    expect(host.textContent).toContain("No threads match");
-
-    clickText("Clear filters");
-
-    expect(threadOrder()).toEqual(["agt-1", "agt-2", "agt-3"]);
-    expect(onSelectThread).not.toHaveBeenCalled();
-  });
-
-  it("marks an unread result and hides the marker while its thread is selected", () => {
-    render({ groups: [busyProject()] });
-
-    const unread = host.querySelector('[aria-label="Unread result"]');
-    expect(unread).not.toBeNull();
-    expect(unread?.closest(".agent-thread-slot")?.textContent).toContain("Rename the port");
-
-    render({ groups: [busyProject()], selectedThreadId: "agt-2" });
-
-    expect(host.querySelector('[aria-label="Unread result"]')).toBeNull();
-  });
-
-  it("shows the recorded model of the last turn in the row meta", () => {
-    render({
-      groups: [
-        project({
-          repos: [
-            repositoryGroup({
-              threads: [
-                settled("agt-3", "Polish the docs", {
-                  launch: { provider: "claudeCode", model: "opus", mode: "acceptEdits" },
-                }),
-              ],
-            }),
-          ],
-        }),
-      ],
+  it("does not rerender untouched rows when one thread of two hundred updates", () => {
+    const counters = new Map<string, { count: number }>();
+    const views = Array.from({ length: 200 }, (_, index) => {
+      const counter = { count: 0 };
+      counters.set(`agt-${index}`, counter);
+      return settled(`agt-${index}`, `Thread ${index}`, {
+        countRenders: counter,
+        updatedAtEpochMs: NOW - index * 1000,
+      });
     });
+    render({ groups: [group(ROOT, "app", views)] });
 
-    expect(host.querySelector(".agent-thread__meta")?.textContent).toContain("opus");
-  });
-
-  it("moves a roving focus through the visible rows with the arrow keys", () => {
-    render({ groups: [busyProject()] });
-
-    expect(rowFor("agt-1")?.tabIndex).toBe(0);
-    expect(rowFor("agt-2")?.tabIndex).toBe(-1);
-
-    press("ArrowDown", rowFor("agt-1"));
-
-    expect(document.activeElement).toBe(rowFor("agt-2"));
-    expect(rowFor("agt-2")?.tabIndex).toBe(0);
-
-    press("End", rowFor("agt-2"));
-    expect(document.activeElement).toBe(rowFor("agt-3"));
-
-    press("ArrowDown", rowFor("agt-3"));
-    expect(document.activeElement).toBe(rowFor("agt-3"));
-
-    press("ArrowUp", rowFor("agt-3"));
-    expect(document.activeElement).toBe(rowFor("agt-2"));
-
-    press("Home", rowFor("agt-2"));
-    expect(document.activeElement).toBe(rowFor("agt-1"));
-  });
-
-  it("selects with Enter and pins with p without leaving the focused row", () => {
-    const onSelectThread = vi.fn();
-    const onTogglePin = vi.fn();
-    render({ groups: [busyProject()], onSelectThread, onTogglePin });
-
-    press("ArrowDown", rowFor("agt-1"));
-    press("Enter", rowFor("agt-2"));
-
-    expect(onSelectThread).toHaveBeenCalledWith("agt-2");
-
-    press("p", rowFor("agt-2"));
-
-    expect(onTogglePin).toHaveBeenCalledWith("agt-2");
-    expect(onSelectThread).toHaveBeenCalledTimes(1);
-  });
-
-  it("moves focus from a row to the filter input on Escape without clearing the filters", () => {
-    render({ groups: [busyProject()] });
-
-    typeFilter("rename");
-    expect(threadOrder()).toEqual(["agt-2"]);
-
-    press("Escape", rowFor("agt-2"));
-
-    expect(host.querySelector<HTMLInputElement>(".agent-rail__filter")?.value).toBe("rename");
-    expect(document.activeElement).toBe(host.querySelector(".agent-rail__filter"));
-    expect(threadOrder()).toEqual(["agt-2"]);
-  });
-
-  it("clears the filters on Escape inside the filter input", () => {
-    render({ groups: [busyProject()] });
-
-    typeFilter("rename");
-    expect(threadOrder()).toEqual(["agt-2"]);
-
-    press("Escape", host.querySelector<HTMLElement>(".agent-rail__filter"));
-
-    expect(host.querySelector<HTMLInputElement>(".agent-rail__filter")?.value).toBe("");
-    expect(threadOrder()).toEqual(["agt-1", "agt-2", "agt-3"]);
-  });
-
-  it("exposes the thread rail as a list of thread items", () => {
-    render({ groups: [busyProject()] });
-
-    const list = host.querySelector('[role="list"]');
-    expect(list?.classList.contains("agent-rail__groups")).toBe(true);
-    expect(list?.querySelectorAll('[role="listitem"] [data-thread-id]').length).toBe(3);
-  });
-
-  it("falls the roving target back to the first visible row when the focused row is filtered out", () => {
-    render({ groups: [busyProject()] });
-
-    press("End", rowFor("agt-1"));
-    expect(rowFor("agt-3")?.tabIndex).toBe(0);
-
-    typeFilter("rename");
-
-    expect(rowFor("agt-2")?.tabIndex).toBe(0);
-  });
-
-  it("keeps other rows out of a burst of updates to one thread", () => {
-    const idle = { count: 0 };
-    const idleView = settled("agt-3", "Polish the docs", { countRenders: idle });
-    const build = (title: string): ReadonlyArray<AgentProjectGroup> => [
-      project({
-        repos: [
-          repositoryGroup({
-            threads: orderAgentThreadRows([running("agt-1", title), idleView]),
-          }),
-        ],
-      }),
-    ];
-
-    render({ groups: build("Fix the parser") });
-
-    const before = idle.count;
+    expect(host.querySelectorAll("[data-thread-id]")).toHaveLength(200);
+    const before = counters.get("agt-5")?.count ?? 0;
     expect(before).toBeGreaterThan(0);
 
-    for (let index = 0; index < 20; index += 1) {
-      render({ groups: build(`Fix the parser ${index}`) });
+    for (let update = 1; update <= 20; update += 1) {
+      const target = settled("agt-0", `Thread 0 v${update}`, {
+        countRenders: counters.get("agt-0") ?? { count: 0 },
+        updatedAtEpochMs: NOW + update,
+      });
+      render({ groups: [group(ROOT, "app", [target, ...views.slice(1)])] });
     }
 
-    expect(host.textContent).toContain("Fix the parser 19");
-    expect(idle.count).toBe(before);
+    expect(counters.get("agt-5")?.count).toBe(before);
+    expect(counters.get("agt-0")?.count).toBeGreaterThan(before);
   });
 
-  it("keeps rows out of a clock tick", () => {
-    const idle = { count: 0 };
-    const idleView = settled("agt-3", "Polish the docs", { countRenders: idle });
-    render({
-      groups: [project({ repos: [repositoryGroup({ threads: [idleView] })] })],
-    });
-
-    const before = idle.count;
+  function render(overrides: Partial<AgentThreadsSidebarProps> = {}): void {
+    const groups = overrides.groups ?? [group(ROOT, "app", [settled("agt-1", "Fix the parser")])];
+    const props: AgentThreadsSidebarProps = {
+      groups,
+      search: searchSurface(""),
+      scope: { kind: "all" },
+      scopeEntries: agentRailScopeEntries(groups),
+      overflowRootPaths: [],
+      selectedThreadId: null,
+      onSelectThread: vi.fn(),
+      onTogglePin: vi.fn(),
+      onChangeScope: vi.fn(),
+      onThreadMenuCommand: vi.fn(),
+      onNewThread: vi.fn(),
+      onTrustProject: vi.fn(),
+      onReleaseProject: vi.fn(),
+      ...overrides,
+    };
     act(() => {
-      vi.setSystemTime(NOW + 2 * 60 * 60_000);
-      vi.advanceTimersByTime(NOW_TICK_MS);
-    });
-
-    expect(host.textContent).toContain("2 hours ago");
-    expect(idle.count).toBe(before);
-  });
-
-  function threadOrder(): ReadonlyArray<string> {
-    return [...host.querySelectorAll<HTMLElement>("[data-thread-id]")].map(
-      (row) => row.dataset.threadId ?? "",
-    );
-  }
-
-  function rowFor(threadId: string): HTMLElement | null {
-    return host.querySelector<HTMLElement>(`[data-thread-id="${threadId}"]`);
-  }
-
-  function press(key: string, element: HTMLElement | null): void {
-    expect(element).not.toBeNull();
-    act(() => {
-      element?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key }),
+      root.render(
+        <AgentClockProvider nowTickMs={1000}>
+          <AgentThreadsSidebar {...props} />
+        </AgentClockProvider>,
       );
     });
   }
 
-  function typeFilter(value: string): void {
-    const input = host.querySelector<HTMLInputElement>(".agent-rail__filter");
-    expect(input).not.toBeNull();
-    act(() => {
-      if (input === null) return;
-      nativeInputValue(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+  function row(threadId: string): HTMLElement {
+    const element = host.querySelector<HTMLElement>(`[data-thread-id="${threadId}"]`);
+    expect(element).not.toBeNull();
+    return element as HTMLElement;
   }
 
-  function render(overrides: Partial<AgentThreadsSidebarProps> = {}): void {
-    act(() =>
-      root.render(
-        <AgentClockProvider nowTickMs={NOW_TICK_MS}>
-          <AgentThreadsSidebar {...defaultProps()} {...overrides} />
-        </AgentClockProvider>,
-      ),
+  function rowIds(): ReadonlyArray<string> {
+    return [...host.querySelectorAll<HTMLElement>("[data-thread-id]")].map(
+      (element) => element.dataset.threadId ?? "",
     );
   }
 
@@ -680,143 +644,115 @@ describe("AgentThreadsSidebar", () => {
     act(() => element?.click());
   }
 
-  function pickStatus(value: string): void {
-    click("button#agent-rail-status");
-    click(`#agent-rail-status-list [role="option"][data-value="${value}"]`);
-  }
-
-  function clickText(text: string): void {
-    act(() => buttonWithText(text).click());
-  }
-
-  function buttonWithText(text: string): HTMLButtonElement {
-    const element = [...host.querySelectorAll("button")].find((candidate) =>
-      (candidate.textContent ?? "").includes(text),
-    );
-    expect(element).toBeDefined();
-    return element as HTMLButtonElement;
+  function key(element: HTMLElement, keyName: string): void {
+    act(() => {
+      element.dispatchEvent(
+        new KeyboardEvent("keydown", { key: keyName, bubbles: true, cancelable: true }),
+      );
+    });
   }
 });
 
-function defaultProps(): AgentThreadsSidebarProps {
-  return {
-    groups: [project({})],
-    collapsedProjectRootKeys: new Set(),
-    collapsedRepositoryRoots: new Set(),
-    expandedArchivedRoots: new Set(),
-    overflowRootPaths: [],
-    selectedThreadId: null,
-    liveTaskCount: 1,
-    maxConcurrentAgentTasks: 4,
-    onToggleProject: () => undefined,
-    onToggleGroup: () => undefined,
-    onToggleArchived: () => undefined,
-    onSelectThread: () => undefined,
-    onTogglePin: () => undefined,
-    onNewThread: () => undefined,
-    onTrustProject: () => undefined,
-    onReleaseProject: () => undefined,
-    onRemoveOrphan: () => undefined,
-    onPruneOrphans: () => undefined,
-  };
+let savedUserAgent: PropertyDescriptor | undefined;
+
+function withUserAgent(userAgent: string): void {
+  savedUserAgent = Object.getOwnPropertyDescriptor(navigator, "userAgent");
+  Object.defineProperty(navigator, "userAgent", { configurable: true, value: userAgent });
 }
 
-function project(overrides: Partial<AgentProjectGroup>): AgentProjectGroup {
+function restoreNavigator(): void {
+  if (savedUserAgent === undefined) {
+    Reflect.deleteProperty(navigator, "userAgent");
+    return;
+  }
+  Object.defineProperty(navigator, "userAgent", savedUserAgent);
+  savedUserAgent = undefined;
+}
+
+function withVisibility(state: DocumentVisibilityState, run: () => void): void {
+  const saved = Object.getOwnPropertyDescriptor(document, "visibilityState");
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
+  try {
+    run();
+  } finally {
+    if (saved === undefined) Reflect.deleteProperty(document, "visibilityState");
+    if (saved !== undefined) Object.defineProperty(document, "visibilityState", saved);
+  }
+}
+
+function searchSurface(query: string, result: AgentThreadSearchResult | null = null) {
+  const surface: AgentThreadSearchSurface = {
+    query,
+    active: query.trim().length >= 2,
+    result,
+    pending: false,
+    setQuery: vi.fn(),
+    clear: vi.fn(),
+  };
+  return surface;
+}
+
+function group(
+  repositoryRoot: string,
+  label: string,
+  threads: ReadonlyArray<AgentThreadView>,
+  overrides: Partial<Pick<AgentProjectGroup, "origin" | "trust">> = {},
+): AgentProjectGroup {
   return {
-    projectRootKey: ROOT,
+    projectRootKey: repositoryRoot,
     kind: "project",
-    label: "app",
+    label,
     trust: "trusted",
     origin: "active-tab",
     singleRepo: true,
-    repos: [repositoryGroup({})],
-    liveCount: 1,
-    ...overrides,
-  };
-}
-
-function multiRepoProject(): AgentProjectGroup {
-  return project({
-    label: "monorepo",
-    singleRepo: false,
     repos: [
-      repositoryGroup({}),
-      repositoryGroup({
-        repositoryRoot: NESTED,
-        label: "packages/api",
-        threads: [],
-        archived: [],
-        liveCount: 0,
-      }),
+      {
+        repositoryRoot,
+        label,
+        repositoryResolved: true,
+        threads: threads.filter((view) => !view.thread.archived),
+        archived: threads.filter((view) => view.thread.archived),
+        orphans: [],
+        liveCount: threads.filter((view) => view.lifecycle === "running").length,
+      },
     ],
-  });
-}
-
-function detachedProject(): AgentProjectGroup {
-  return {
-    projectRootKey: DETACHED_AGENT_PROJECT_ROOT_KEY,
-    kind: "detached",
-    label: DETACHED_AGENT_PROJECT_LABEL,
-    trust: "unknown",
-    origin: "closed-tab-live-tasks",
-    singleRepo: false,
-    repos: [
-      repositoryGroup({
-        repositoryRoot: "/detached/repository",
-        label: "/detached/repository",
-        repositoryResolved: false,
-        threads: [],
-        liveCount: 0,
-      }),
-    ],
-    liveCount: 0,
-  };
-}
-
-function repositoryGroup(overrides: Partial<AgentRepositoryGroup>): AgentRepositoryGroup {
-  return {
-    repositoryRoot: ROOT,
-    label: "app",
-    repositoryResolved: true,
-    threads: [threadView({ status: { kind: "running" } })],
-    archived: [],
-    orphans: [],
-    liveCount: 1,
+    liveCount: threads.filter((view) => view.lifecycle === "running").length,
     ...overrides,
   };
 }
 
 interface ThreadViewOptions {
-  readonly threadId?: string;
-  readonly title?: string;
   readonly status?: AgentTurnStatus;
   readonly pinned?: boolean;
   readonly archived?: boolean;
   readonly updatedAtEpochMs?: number;
   readonly endedAtEpochMs?: number | null;
   readonly viewedAtEpochMs?: number | null;
-  readonly launch?: AgentLaunchOptions | null;
+  readonly branch?: string | null;
+  readonly provider?: "claudeCode" | "codex";
+  readonly repositoryRoot?: string;
   readonly countRenders?: { count: number };
 }
 
-function threadView({
-  archived = false,
-  countRenders,
-  endedAtEpochMs = null,
-  launch = null,
-  pinned = false,
-  status = { kind: "running" },
-  threadId = "agt-1",
-  title = "Fix the parser",
-  updatedAtEpochMs = NOW - 10 * 60_000,
-  viewedAtEpochMs = null,
-}: ThreadViewOptions): AgentThreadView {
+function threadView(threadId: string, title: string, options: ThreadViewOptions): AgentThreadView {
+  const {
+    archived = false,
+    branch = null,
+    countRenders,
+    endedAtEpochMs = null,
+    pinned = false,
+    provider = "claudeCode",
+    repositoryRoot = ROOT,
+    status = { kind: "running" },
+    updatedAtEpochMs = NOW - 2 * 60_000,
+    viewedAtEpochMs = null,
+  } = options;
   const running = status.kind === "pending" || status.kind === "running";
   const thread: AgentThread = {
     threadId,
-    owner: { rootKey: ROOT, ownerId: "agent-root:app", repositoryRoot: ROOT },
-    target: { isolation: "worktree", worktreePath: `${ROOT}/.worktrees/${threadId}` },
-    provider: { kind: "claudeCode", sessionId: "session-abcdefgh" },
+    owner: { rootKey: repositoryRoot, ownerId: `agent-root:${repositoryRoot}`, repositoryRoot },
+    target: { isolation: "worktree", worktreePath: `${repositoryRoot}/.worktrees/${threadId}` },
+    provider: { kind: provider, sessionId: null },
     title,
     pinned,
     archived,
@@ -833,20 +769,24 @@ function threadView({
         eventsTruncated: false,
         lastStatusSequence: 0,
         lastOutputSequence: 0,
-        launch,
+        launch: null,
       },
     ],
     turnsTruncated: false,
     viewedAtEpochMs,
     integration: null,
   };
-
-  if (countRenders !== undefined) {
-    countTitleReads(thread, title, countRenders);
-  }
+  if (countRenders !== undefined) countTitleReads(thread, title, countRenders);
 
   return {
-    ship: { kind: "idle", status: null, loadingStatus: false },
+    ship:
+      branch === null
+        ? { kind: "idle", status: null, loadingStatus: false }
+        : {
+            kind: "pushed",
+            status: null,
+            receipt: { branch, remote: "origin", compareUrl: null },
+          },
     editorAvailability: { kind: "available" },
     attention: agentThreadAttention(thread),
     unread: agentThreadUnread(thread),
@@ -860,16 +800,18 @@ function threadView({
   };
 }
 
-function running(threadId: string, title: string): AgentThreadView {
-  return threadView({ status: { kind: "running" }, threadId, title });
+function running(
+  threadId: string,
+  title: string,
+  options: ThreadViewOptions = {},
+): AgentThreadView {
+  return threadView(threadId, title, { status: { kind: "running" }, ...options });
 }
 
-function attention(threadId: string, title: string): AgentThreadView {
-  return threadView({
+function failed(threadId: string, title: string): AgentThreadView {
+  return threadView(threadId, title, {
     endedAtEpochMs: NOW - 60_000,
     status: { kind: "failed", message: "boom" },
-    threadId,
-    title,
   });
 }
 
@@ -878,38 +820,11 @@ function settled(
   title: string,
   options: ThreadViewOptions = {},
 ): AgentThreadView {
-  return threadView({
+  return threadView(threadId, title, {
     endedAtEpochMs: NOW - 2 * 60_000,
     status: { kind: "exited", exitCode: 0 },
-    threadId,
-    title,
     viewedAtEpochMs: NOW,
     ...options,
-  });
-}
-
-function busyProject(): AgentProjectGroup {
-  return project({
-    repos: [
-      repositoryGroup({
-        threads: orderAgentThreadRows([
-          settled("agt-3", "Polish the docs"),
-          running("agt-1", "Fix the parser"),
-          attention("agt-2", "Rename the port"),
-        ]),
-      }),
-    ],
-  });
-}
-
-function archivedProject(): AgentProjectGroup {
-  return project({
-    repos: [
-      repositoryGroup({
-        threads: [running("agt-1", "Fix the parser")],
-        archived: [threadView({ archived: true, threadId: "agt-old", title: "Old work" })],
-      }),
-    ],
   });
 }
 
@@ -928,14 +843,4 @@ function countTitleReads(thread: AgentThread, title: string, counter: { count: n
       return title;
     },
   });
-}
-
-function orphan(prunable: boolean): OrphanedWorktreeView {
-  return {
-    repositoryRoot: ROOT,
-    worktreePath: `${ROOT}/.worktrees/agt-9`,
-    branch: "agent/agt-9",
-    prunable,
-    removing: false,
-  };
 }

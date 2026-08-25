@@ -13,6 +13,7 @@ import type {
   AgentThreadsAction,
   AgentThreadsState,
 } from "../domain/agentThread";
+import type { AgentThreadSearchResult } from "../domain/agentThreadSearch";
 import type {
   AgentShipAvailability,
   AgentShipIntegrationMode,
@@ -111,7 +112,11 @@ export interface AgentThreadStoreSurface {
   togglePin(threadId: string): void;
   archive(threadId: string): void;
   remove(threadId: string): void;
+  markUnread(threadId: string): void;
+  rename(threadId: string, title: string): void;
 }
+
+export type AgentThreadCopyDetail = "path" | "branch" | "threadId";
 
 export interface AgentThreadView {
   readonly thread: AgentThread;
@@ -125,6 +130,15 @@ export interface AgentThreadView {
   readonly editorAvailability: AgentShipAvailability;
   readonly attention: AgentThreadAttention;
   readonly unread: boolean;
+}
+
+export interface AgentThreadSearchSurface {
+  readonly query: string;
+  readonly active: boolean;
+  readonly result: AgentThreadSearchResult | null;
+  readonly pending: boolean;
+  setQuery(raw: string): void;
+  clear(): void;
 }
 
 export interface AgentThreadStartRequest {
@@ -159,6 +173,9 @@ export interface AgentThreadsSurface {
   readonly liveTaskCount: number;
   readonly maxConcurrentAgentTasks: number;
   markThreadViewed(threadId: string): void;
+  markThreadUnread(threadId: string): void;
+  renameThread(threadId: string, title: string): void;
+  threadCopyDetail(threadId: string, detail: AgentThreadCopyDetail): string | null;
   lastUsedLaunch(projectRootKey: string): AgentLaunchOptions | null;
   isolationPreview(repositoryRoot: string): AgentIsolationPreview;
   refreshIsolationStatus(repositoryRoot: string): Promise<void>;

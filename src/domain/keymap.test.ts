@@ -19,7 +19,7 @@ import {
   shortcutFromKeyboardEvent,
 } from "./keymap";
 
-function defaultShortcutsWithoutIntentionalDebugCollision(
+function defaultShortcutsWithoutIntentionalCollisions(
   platform: "linux" | "mac" | "windows",
 ): string[] {
   return Object.entries(defaultKeymapSettings(platform))
@@ -27,6 +27,7 @@ function defaultShortcutsWithoutIntentionalDebugCollision(
       ([id, shortcut]) =>
         shortcut &&
         id !== "workbench.action.debug.disconnect" &&
+        id !== "agent.searchThreads" &&
         !(id === "debug.setVariable" && platform !== "mac"),
     )
     .map(([, shortcut]) => shortcut);
@@ -34,8 +35,8 @@ function defaultShortcutsWithoutIntentionalDebugCollision(
 
 describe("keymap", () => {
   it("keeps reserved commands out of the generated editable settings catalog", () => {
-    expect(keymapCommands).toHaveLength(135);
-    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(133);
+    expect(keymapCommands).toHaveLength(149);
+    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(147);
   });
 
   it("creates defaults for editable shortcuts", () => {
@@ -98,18 +99,14 @@ describe("keymap", () => {
   it("registers recently used editor shortcuts as reserved without advertising them as rebindable", () => {
     const defaults = defaultKeymapSettings("mac") as Record<string, string>;
 
-    expect(
-      keymapCommands.find(({ id }) => id === "editor.nextRecentlyUsedEditor"),
-    ).toEqual({
+    expect(keymapCommands.find(({ id }) => id === "editor.nextRecentlyUsedEditor")).toEqual({
       category: "Editor",
       defaultShortcut: "Ctrl+Tab",
       id: "editor.nextRecentlyUsedEditor",
       label: "Open Next Recently Used Editor",
       rebindable: false,
     });
-    expect(
-      keymapCommands.find(({ id }) => id === "editor.previousRecentlyUsedEditor"),
-    ).toEqual({
+    expect(keymapCommands.find(({ id }) => id === "editor.previousRecentlyUsedEditor")).toEqual({
       category: "Editor",
       defaultShortcut: "Ctrl+Shift+Tab",
       id: "editor.previousRecentlyUsedEditor",
@@ -629,9 +626,64 @@ describe("keymap", () => {
     }
   });
 
+  it("registers the agent thread commands with their T3 parity defaults", () => {
+    const expected = {
+      "agent.newThread": "Cmd+N",
+      "agent.previousThread": "Cmd+Shift+[",
+      "agent.nextThread": "Cmd+Shift+]",
+      "agent.jumpToThread.1": "Cmd+1",
+      "agent.jumpToThread.5": "Cmd+5",
+      "agent.jumpToThread.9": "Cmd+9",
+      "agent.searchThreads": "Cmd+Shift+K",
+      "agent.findInThread": "Cmd+F",
+    } as const;
+
+    expect(defaultKeymapSettings("mac")).toMatchObject(expected);
+    expect(defaultKeymapSettings("linux")).toMatchObject({
+      "agent.newThread": "Ctrl+N",
+      "agent.searchThreads": "Ctrl+Shift+K",
+      "agent.findInThread": "Ctrl+F",
+    });
+
+    for (const id of Object.keys(expected) as Array<keyof typeof expected>) {
+      expect(keymapCommands.find((command) => command.id === id)).toMatchObject({
+        category: "Agent",
+        defaultShortcut: expected[id],
+      });
+    }
+
+    const jumpIds = [
+      "agent.jumpToThread.1",
+      "agent.jumpToThread.2",
+      "agent.jumpToThread.3",
+      "agent.jumpToThread.4",
+      "agent.jumpToThread.5",
+      "agent.jumpToThread.6",
+      "agent.jumpToThread.7",
+      "agent.jumpToThread.8",
+      "agent.jumpToThread.9",
+    ] as const;
+
+    jumpIds.forEach((id, index) => {
+      expect(defaultShortcutForCommand(id, "mac")).toBe(`Cmd+${index + 1}`);
+      expect(defaultShortcutForCommand(id, "windows")).toBe(`Ctrl+${index + 1}`);
+    });
+  });
+
+  it("reserves the agent-mode-scoped Search Threads collision with Delete Line", () => {
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+
+      expect(defaults["agent.searchThreads"]).toBe(defaults["editor.deleteLine"]);
+      expect(
+        keymapCommandIdsForShortcut(defaults, defaults["agent.searchThreads"], platform),
+      ).toEqual(["agent.searchThreads", "editor.deleteLine"]);
+    }
+  });
+
   it("keeps every other default shortcut unique across the whole keymap", () => {
     for (const platform of ["mac", "linux", "windows"] as const) {
-      const shortcuts = defaultShortcutsWithoutIntentionalDebugCollision(platform);
+      const shortcuts = defaultShortcutsWithoutIntentionalCollisions(platform);
 
       expect(new Set(shortcuts).size).toBe(shortcuts.length);
     }
@@ -924,7 +976,7 @@ describe("keymap", () => {
   });
 
   it("never assigns the same default shortcut to two commands", () => {
-    const assigned = defaultShortcutsWithoutIntentionalDebugCollision("mac");
+    const assigned = defaultShortcutsWithoutIntentionalCollisions("mac");
 
     expect(new Set(assigned).size).toBe(assigned.length);
   });
@@ -1020,7 +1072,7 @@ describe("keymap", () => {
 
   it("assigns every default shortcut to at most one command per platform", () => {
     for (const platform of ["mac", "linux", "windows"] as const) {
-      const assigned = defaultShortcutsWithoutIntentionalDebugCollision(platform);
+      const assigned = defaultShortcutsWithoutIntentionalCollisions(platform);
       const unique = new Set(assigned);
 
       expect(unique.size).toBe(assigned.length);

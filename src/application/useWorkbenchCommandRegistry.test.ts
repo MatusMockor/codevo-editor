@@ -120,6 +120,22 @@ describe("debug command registration", () => {
     expect(registration).toContain("shortcut,");
     expect(registration).toContain("stop: nodeRunWithoutDebugging.stop,");
   });
+
+  it("routes the agent view commands through the shared view command bridge", () => {
+    const source = readFileSync(
+      new URL("./useWorkbenchCommandRegistry.ts", import.meta.url),
+      "utf8",
+    );
+    const start = source.indexOf("workbenchAgentCommands({");
+    const end = source.indexOf("}).forEach((command) => registry.register(command));", start);
+    const registration = source.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(registration).toContain("shortcut,");
+    expect(registration).toContain("toggleAgentMode,");
+    expect(registration).toContain("viewCommands: workbenchAgentViewCommandBridge,");
+  });
 });
 
 describe("scopedNavigationCommands", () => {

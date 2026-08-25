@@ -1,113 +1,99 @@
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { PanelLeftClose } from "lucide-react";
+import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
+import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
+import { AgentRailHeader } from "./AgentRailHeader";
+import { useJumpHints, useStableCallback } from "./agentRailHooks";
+import { AgentThreadList } from "./AgentThreadList";
+import { AgentThreadSearchResults } from "./AgentThreadSearchResults";
+import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import {
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from "react";
-import {
-  AgentOverflowRow,
-  AgentProjectSection,
-  type ThreadListHandlers,
-} from "./AgentThreadsSidebarGroups";
-import { AgentPickerMenu } from "./AgentPickerMenu";
-import { agentPickerOption } from "./agentPickerOption";
-import {
-  AGENT_THREAD_STATUS_FILTERS,
-  MAX_AGENT_THREAD_FILTER_CHARS,
-  agentThreadListQuery,
-  agentThreadListQueryActive,
-  agentThreadStatusCounts,
-  agentThreadStatusFilterLabel,
-  applyAgentThreadListQuery,
-  clipAgentThreadFilterText,
-  visibleAgentThreadIds,
-  type AgentProjectGroup,
-  type AgentThreadStatusFilter,
-} from "./agentModePresentation";
+  ARCHIVED_PAGE_COUNT,
+  agentJumpSlots,
+  agentRailEmptyState,
+  agentRailProjectLabels,
+  agentRailSections,
+  agentRailViews,
+  agentThreadRevealForMatch,
+  type AgentRailScope,
+  type AgentRailScopeEntry,
+  type AgentRailSections,
+  type AgentThreadMenuCommand,
+  type AgentThreadRevealRequest,
+} from "./agentSidebarPresentation";
+
+export const SEARCH_LISTBOX_ID = "agent-rail-search-results";
+export const SEARCH_OPTION_PREFIX = "agent-rail-search-result-";
+const EMPTY_JUMP_LABELS: ReadonlyMap<string, string> = new Map();
+const EMPTY_MATCHES: ReadonlyArray<AgentThreadSearchMatch> = [];
+const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
 
 export interface AgentThreadsSidebarProps {
   readonly groups: ReadonlyArray<AgentProjectGroup>;
-  readonly collapsedProjectRootKeys: ReadonlySet<string>;
-  readonly collapsedRepositoryRoots: ReadonlySet<string>;
-  readonly expandedArchivedRoots: ReadonlySet<string>;
+  readonly search: AgentThreadSearchSurface;
+  readonly scope: AgentRailScope;
+  readonly scopeEntries: ReadonlyArray<AgentRailScopeEntry>;
   readonly overflowRootPaths: ReadonlyArray<string>;
   readonly selectedThreadId: string | null;
-  readonly liveTaskCount: number;
-  readonly maxConcurrentAgentTasks: number;
-  onToggleProject(projectRootKey: string): void;
-  onToggleGroup(repositoryRoot: string): void;
-  onToggleArchived(repositoryRoot: string): void;
-  onSelectThread(threadId: string): void;
+  onCollapseSidebar?(): void;
+  onSelectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
   onTogglePin(threadId: string): void;
+  onChangeScope(scope: AgentRailScope): void;
+  onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onTrustProject(projectRootKey: string): void;
   onReleaseProject(projectRootKey: string): void;
-  onRemoveOrphan(worktreePath: string): void;
-  onPruneOrphans(repositoryRoot: string): void;
 }
 
 export function AgentThreadsSidebar({
-  collapsedProjectRootKeys,
-  collapsedRepositoryRoots,
-  expandedArchivedRoots,
   groups,
-  liveTaskCount,
-  maxConcurrentAgentTasks,
+  onChangeScope,
+  onCollapseSidebar,
   onNewThread,
-  onPruneOrphans,
   onReleaseProject,
-  onRemoveOrphan,
   onSelectThread,
-  onToggleArchived,
-  onToggleGroup,
-  onToggleProject,
+  onThreadMenuCommand,
   onTogglePin,
   onTrustProject,
   overflowRootPaths,
+  scope,
+  scopeEntries,
+  search,
   selectedThreadId,
 }: AgentThreadsSidebarProps) {
-  const [filterText, setFilterText] = useState("");
-  const [statusFilter, setStatusFilter] = useState<AgentThreadStatusFilter>("all");
+  const [archivedExpanded, setArchivedExpanded] = useState(false);
+  const [archivedShown, setArchivedShown] = useState(ARCHIVED_PAGE_COUNT);
   const [focusRequest, setFocusRequest] = useState<string | null>(null);
-  const filterRef = useRef<HTMLInputElement | null>(null);
+  const jumpHints = useJumpHints();
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  const selectThread = useThreadCallback(onSelectThread);
-  const togglePin = useThreadCallback(onTogglePin);
+  const selectThread = useStableCallback(onSelectThread);
+  const togglePin = useStableCallback(onTogglePin);
+  const menuCommand = useStableCallback(onThreadMenuCommand);
 
-  const deferredText = useDeferredValue(filterText);
-  const query = useMemo(
-    () => agentThreadListQuery(deferredText, statusFilter),
-    [deferredText, statusFilter],
+  const views = useMemo(() => agentRailViews(groups), [groups]);
+  const projectLabels = useMemo(() => agentRailProjectLabels(groups), [groups]);
+  const sections = useMemo(
+    () => agentRailSections(views, scope, archivedExpanded, archivedShown),
+    [archivedExpanded, archivedShown, scope, views],
   );
-  const filtering = agentThreadListQueryActive(query);
-  const visibleGroups = useMemo(() => applyAgentThreadListQuery(groups, query), [groups, query]);
-  const statusOptions = useMemo(() => {
-    const matched = applyAgentThreadListQuery(groups, agentThreadListQuery(deferredText, "all"));
-    const counts = agentThreadStatusCounts(matched);
-    return AGENT_THREAD_STATUS_FILTERS.map((filter) =>
-      agentPickerOption(filter, agentThreadStatusFilterLabel(filter), null, null, counts[filter]),
-    );
-  }, [deferredText, groups]);
+  const empty = useMemo(
+    () => agentRailEmptyState(groups, sections, scope, scopeEntries),
+    [groups, scope, scopeEntries, sections],
+  );
+  const jumpLabels = useMemo(
+    () => (jumpHints.shown ? jumpLabelsFor(sections, jumpHints.glyph) : EMPTY_JUMP_LABELS),
+    [jumpHints, sections],
+  );
   const visibleThreadIds = useMemo(
     () =>
-      visibleAgentThreadIds(
-        visibleGroups,
-        collapsedProjectRootKeys,
-        collapsedRepositoryRoots,
-        expandedArchivedRoots,
+      [...sections.pinned, ...sections.active, ...sections.archived].map(
+        (view) => view.thread.threadId,
       ),
-    [collapsedProjectRootKeys, collapsedRepositoryRoots, expandedArchivedRoots, visibleGroups],
+    [sections],
   );
   const focusedThreadId = rovingThreadId(focusRequest, selectedThreadId, visibleThreadIds);
-
-  const clearFilters = useCallback(() => {
-    setFilterText("");
-    setStatusFilter("all");
-  }, []);
 
   const moveFocus = useCallback((threadId: string | undefined) => {
     if (threadId === undefined) return;
@@ -115,33 +101,18 @@ export function AgentThreadsSidebar({
     focusRow(listRef.current, threadId);
   }, []);
 
-  const handlers = useMemo<ThreadListHandlers>(
-    () => ({
-      expandedArchivedRoots,
-      focusedThreadId,
-      onNewThread,
-      onPruneOrphans,
-      onRemoveOrphan,
-      onSelectThread: selectThread,
-      onToggleArchived,
-      onTogglePin: togglePin,
-      selectedThreadId,
-    }),
-    [
-      expandedArchivedRoots,
-      focusedThreadId,
-      onNewThread,
-      onPruneOrphans,
-      onRemoveOrphan,
-      onToggleArchived,
-      selectThread,
-      selectedThreadId,
-      togglePin,
-    ],
-  );
+  const toggleArchived = useCallback(() => {
+    setArchivedExpanded((current) => !current);
+    setArchivedShown(ARCHIVED_PAGE_COUNT);
+  }, []);
+
+  const showMoreArchived = useCallback(() => {
+    setArchivedShown((current) => current + ARCHIVED_PAGE_COUNT);
+  }, []);
 
   const handleListKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.target instanceof HTMLInputElement) return;
       if (visibleThreadIds.length === 0) return;
       const index = focusedThreadId === null ? -1 : visibleThreadIds.indexOf(focusedThreadId);
       const target = nextThreadIndex(event.key, index, visibleThreadIds.length);
@@ -152,10 +123,11 @@ export function AgentThreadsSidebar({
       }
       if (event.key === "Escape") {
         event.preventDefault();
-        filterRef.current?.focus();
+        searchRef.current?.focus();
         return;
       }
       if (focusedThreadId === null) return;
+      if (!isThreadRow(event.target, focusedThreadId)) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         selectThread(focusedThreadId);
@@ -168,97 +140,108 @@ export function AgentThreadsSidebar({
     [focusedThreadId, moveFocus, selectThread, togglePin, visibleThreadIds],
   );
 
-  const handleFilterKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLInputElement>) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      clearFilters();
+  const matches = search.result?.matches ?? EMPTY_MATCHES;
+  const [highlightedHit, setHighlightedHit] = useState(0);
+  const activeHit = matches.length === 0 ? 0 : Math.min(highlightedHit, matches.length - 1);
+  const searchActive = search.active;
+  const titles = useMemo(
+    () =>
+      searchActive
+        ? new Map(views.map((view) => [view.thread.threadId, agentThreadDisplayTitle(view.thread)]))
+        : EMPTY_TITLES,
+    [searchActive, views],
+  );
+
+  const selectHit = useCallback(
+    (threadId: string, reveal: AgentThreadRevealRequest | null) => {
+      onSelectThread(threadId, reveal ?? undefined);
+      search.clear();
     },
-    [clearFilters],
+    [onSelectThread, search],
+  );
+
+  const handleSearchKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (!search.active || matches.length === 0) return;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        setHighlightedHit((activeHit + step + matches.length) % matches.length);
+        return;
+      }
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      const hit = matches[activeHit];
+      if (hit === undefined) return;
+      selectHit(hit.threadId, agentThreadRevealForMatch(search.query, hit));
+    },
+    [activeHit, matches, search.active, search.query, selectHit],
   );
 
   return (
     <aside aria-label="Agent threads" className="agent-rail">
-      <header className="agent-rail__head">
-        <h1 className="agent-rail__title">Threads</h1>
-        <span className="agent-rail__count agent-num">
-          {liveTaskCount}/{maxConcurrentAgentTasks} running
-        </span>
-      </header>
-
-      <div className="agent-rail__filters">
-        <input
-          aria-label="Filter threads"
-          className="agent-rail__filter"
-          maxLength={MAX_AGENT_THREAD_FILTER_CHARS}
-          onChange={(event) => setFilterText(clipAgentThreadFilterText(event.target.value))}
-          onKeyDown={handleFilterKeyDown}
-          placeholder="Filter threads"
-          ref={filterRef}
-          type="text"
-          value={filterText}
-        />
-        <AgentPickerMenu
-          align="end"
-          describedBy={null}
-          disabled={false}
-          id="agent-rail-status"
-          label="Filter threads by status"
-          onChange={(value) => setStatusFilter(parseStatusFilter(value))}
-          options={statusOptions}
-          prefix="Status"
-          tone={null}
-          value={statusFilter}
-        />
+      <div className="agent-rail__chrome">
+        <button
+          aria-expanded="true"
+          aria-label="Collapse sidebar"
+          className="agent-iconbutton"
+          onClick={() => onCollapseSidebar?.()}
+          title="Collapse sidebar (⌘B)"
+          type="button"
+        >
+          <PanelLeftClose aria-hidden="true" size={16} />
+        </button>
       </div>
-
-      <div
-        aria-label="Thread list"
-        className="agent-rail__groups"
-        onKeyDown={handleListKeyDown}
-        ref={listRef}
-        role="list"
-      >
-        {groups.length === 0 && (
-          <p className="agent-rail__empty">No Git repository was detected in this workspace.</p>
-        )}
-        {groups.length > 0 && visibleGroups.length === 0 && (
-          <div className="agent-rail__nomatch">
-            <p className="agent-rail__empty">No threads match</p>
-            <button className="agent-linkbutton" onClick={clearFilters} type="button">
-              Clear filters
-            </button>
-          </div>
-        )}
-        {visibleGroups.map((group) => (
-          <AgentProjectSection
-            collapsed={collapsedProjectRootKeys.has(group.projectRootKey)}
-            collapsedRepositoryRoots={collapsedRepositoryRoots}
-            group={group}
-            handlers={handlers}
-            key={group.projectRootKey}
-            onReleaseProject={onReleaseProject}
-            onToggleGroup={onToggleGroup}
-            onToggleProject={onToggleProject}
-            onTrustProject={onTrustProject}
+      <AgentRailHeader
+        groups={groups}
+        onChangeScope={onChangeScope}
+        onNewThread={onNewThread}
+        onReleaseProject={onReleaseProject}
+        onTrustProject={onTrustProject}
+        overflowRootPaths={overflowRootPaths}
+        scope={scope}
+        scopeEntries={scopeEntries}
+        onSearchKeyDown={handleSearchKeyDown}
+        search={search}
+        searchActiveDescendant={
+          search.active && matches.length > 0 ? `${SEARCH_OPTION_PREFIX}${activeHit}` : null
+        }
+        searchRef={searchRef}
+      />
+      <div className="agent-rail__scroll" onKeyDown={handleListKeyDown} ref={listRef}>
+        {search.active ? (
+          <AgentThreadSearchResults
+            activeIndex={activeHit}
+            documentsTruncated={search.result?.documentsTruncated ?? false}
+            listboxId={SEARCH_LISTBOX_ID}
+            matches={matches}
+            onHighlight={setHighlightedHit}
+            onSelect={selectHit}
+            optionPrefix={SEARCH_OPTION_PREFIX}
+            pending={search.pending}
+            query={search.query}
+            titles={titles}
+            truncated={search.result?.truncated ?? false}
           />
-        ))}
-        {!filtering && overflowRootPaths.length > 0 && (
-          <AgentOverflowRow rootPaths={overflowRootPaths} />
+        ) : (
+          <AgentThreadList
+            archivedExpanded={archivedExpanded}
+            empty={empty}
+            focusedThreadId={focusedThreadId}
+            jumpLabels={jumpLabels}
+            onSelectThread={selectThread}
+            onShowMoreArchived={showMoreArchived}
+            onThreadMenuCommand={menuCommand}
+            onToggleArchived={toggleArchived}
+            onTogglePin={togglePin}
+            projectLabels={projectLabels}
+            sections={sections}
+            selectedThreadId={selectedThreadId}
+          />
         )}
       </div>
     </aside>
   );
-}
-
-function useThreadCallback(handler: (threadId: string) => void): (threadId: string) => void {
-  const ref = useRef(handler);
-
-  useEffect(() => {
-    ref.current = handler;
-  }, [handler]);
-
-  return useCallback((threadId: string) => ref.current(threadId), []);
 }
 
 function rovingThreadId(
@@ -279,6 +262,16 @@ function nextThreadIndex(key: string, index: number, length: number): number | n
   return null;
 }
 
+function jumpLabelsFor(sections: AgentRailSections, glyph: string): ReadonlyMap<string, string> {
+  const labels = new Map<string, string>();
+  for (const [threadId, slot] of agentJumpSlots(sections)) labels.set(threadId, `${glyph}${slot}`);
+  return labels;
+}
+
+function isThreadRow(target: EventTarget, threadId: string): boolean {
+  return target instanceof HTMLElement && target.dataset.threadId === threadId;
+}
+
 function focusRow(list: HTMLDivElement | null, threadId: string): void {
   const rows = list?.querySelectorAll<HTMLElement>("[data-thread-id]");
   for (const row of Array.from(rows ?? [])) {
@@ -286,9 +279,4 @@ function focusRow(list: HTMLDivElement | null, threadId: string): void {
     row.focus();
     return;
   }
-}
-
-function parseStatusFilter(value: string): AgentThreadStatusFilter {
-  const match = AGENT_THREAD_STATUS_FILTERS.find((filter) => filter === value);
-  return match ?? "all";
 }

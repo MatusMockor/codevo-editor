@@ -1,8 +1,14 @@
-import { memo } from "react";
+import { memo, useEffect, useMemo, useRef, type ReactNode } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentTurn } from "../../domain/agentThread";
+import {
+  MIN_THREAD_SEARCH_QUERY_CHARS,
+  type AgentThreadFindHit,
+  type AgentThreadSearchRange,
+} from "../../domain/agentThreadSearch";
 import type { GitChangedFile } from "../../domain/git";
+import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import {
   agentLaunchModeHint,
   agentLaunchModeMeta,
@@ -23,11 +29,36 @@ import {
   type AgentTurnItem,
 } from "./agentModePresentation";
 
+const NO_FIND_HITS: ReadonlyArray<AgentThreadFindHit> = [];
+
+type AgentTurnHighlightCursor =
+  | { readonly kind: "prompt"; readonly occurrence: number }
+  | { readonly kind: "event"; readonly eventIndex: number; readonly occurrence: number };
+
+interface AgentTurnHighlight {
+  readonly query: string;
+  readonly current: AgentTurnHighlightCursor | null;
+}
+
+interface AgentItemHighlight {
+  readonly query: string;
+  readonly current: number | null;
+}
+
+interface AgentParagraphRun {
+  readonly text: string;
+  readonly current: number | null;
+}
+
 export interface AgentThreadSessionProps {
   readonly thread: AgentThreadView | null;
   readonly composerRepositoryLabel: string | null;
   readonly shipActions: AgentShipActions;
   readonly turnRenderProbe?: (turnId: string) => void;
+  readonly findQuery?: string;
+  readonly findHits?: ReadonlyArray<AgentThreadFindHit>;
+  readonly findHitIndex?: number;
+  readonly reveal?: AgentThreadRevealRequest | null;
   onHideChanges(threadId: string): void;
   onHideFileDiff(threadId: string): void;
   onRefreshChanges(threadId: string): void;
@@ -36,25 +67,64 @@ export interface AgentThreadSessionProps {
   onOpenChangedFileDiff(threadId: string, change: GitChangedFile): void;
 }
 
-export function AgentThreadSession({
-  composerRepositoryLabel,
+export function AgentThreadSession(props: AgentThreadSessionProps) {
+  const thread = props.thread;
+  if (thread === null) {
+    return <AgentThreadSessionEmpty repositoryLabel={props.composerRepositoryLabel} />;
+  }
+
+  return <AgentThreadSessionBody {...props} thread={thread} />;
+}
+
+type AgentThreadSessionBodyProps = AgentThreadSessionProps & {
+  readonly thread: AgentThreadView;
+};
+
+function AgentThreadSessionBody({
+  findHitIndex,
+  findHits,
+  findQuery,
   onHideChanges,
   onHideFileDiff,
   onOpenChangedFile,
   onOpenChangedFileDiff,
   onRefreshChanges,
   onShowFileDiff,
+  reveal = null,
   shipActions,
   thread,
   turnRenderProbe,
-}: AgentThreadSessionProps) {
-  if (thread === null) {
-    return <AgentThreadSessionEmpty repositoryLabel={composerRepositoryLabel} />;
-  }
-
+}: AgentThreadSessionBodyProps) {
   const record = thread.thread;
   const threadId = record.threadId;
   const tone = agentThreadTone(thread.lifecycle, lastAgentTurnStatus(record));
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const hits = findHits ?? NO_FIND_HITS;
+  const query = findQuery ?? "";
+  const activeHit = findHitIndex === undefined ? null : (hits[findHitIndex] ?? null);
+
+  const hitTurnIds = useMemo(() => new Set(hits.map((hit) => hit.turnId)), [hits]);
+  const baseHighlight = useMemo<AgentTurnHighlight>(() => ({ query, current: null }), [query]);
+  const activeHighlight = useMemo<AgentTurnHighlight | null>(() => {
+    if (findHitIndex === undefined) return null;
+    const cursor = turnCursor(hits, findHitIndex);
+    if (cursor === null) return null;
+    return { query, current: cursor };
+  }, [findHitIndex, hits, query]);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (container === null) return;
+    const target = revealTarget(container, reveal, activeHit);
+    target?.scrollIntoView?.({ block: "center" });
+  }, [activeHit, reveal]);
+
+  const highlightFor = (turnIdentity: string): AgentTurnHighlight | null => {
+    if (query === "") return null;
+    if (activeHit !== null && activeHit.turnId === turnIdentity) return activeHighlight;
+    if (!hitTurnIds.has(turnIdentity)) return null;
+    return baseHighlight;
+  };
 
   return (
     <section aria-label={`Agent thread ${threadId}`} className="agent-session">
@@ -68,7 +138,7 @@ export function AgentThreadSession({
         </span>
       </header>
 
-      <div className="agent-session__scroll">
+      <div className="agent-session__scroll" ref={scrollRef}>
         <div className="agent-session__body">
           {record.turnsTruncated && (
             <p className="agent-note agent-note--warning">
@@ -78,6 +148,7 @@ export function AgentThreadSession({
 
           {record.turns.map((turn) => (
             <AgentTurnView
+              highlight={highlightFor(turn.turnId)}
               isolationLabel={record.target.isolation}
               key={turn.turnId}
               renderProbe={turnRenderProbe}
@@ -116,10 +187,12 @@ export function AgentThreadSession({
 }
 
 const AgentTurnView = memo(function AgentTurnView({
+  highlight = null,
   isolationLabel,
   renderProbe,
   turn,
 }: {
+  readonly highlight?: AgentTurnHighlight | null;
   readonly isolationLabel: AgentThreadView["thread"]["target"]["isolation"];
   readonly renderProbe?: (turnId: string) => void;
   readonly turn: AgentTurn;
@@ -128,11 +201,19 @@ const AgentTurnView = memo(function AgentTurnView({
   const projection = agentTurnProjection(turn.events);
   const running = turn.status.kind === "pending" || turn.status.kind === "running";
   const empty = projection.items.length === 0 && projection.rawLines.length === 0;
+  const cursor = highlight?.current ?? null;
+  const promptCurrent = cursor !== null && cursor.kind === "prompt" ? cursor.occurrence : null;
 
   return (
-    <article aria-label={`Agent turn ${turn.turnId}`} className="agent-turn">
+    <article
+      aria-label={`Agent turn ${turn.turnId}`}
+      className="agent-turn"
+      data-agent-turn={turn.turnId}
+    >
       <article className="agent-prompt">
-        <div className="agent-prompt__body">{turn.prompt}</div>
+        <div className="agent-prompt__body">
+          <HighlightRun current={promptCurrent} query={highlight?.query ?? ""} text={turn.prompt} />
+        </div>
         <div className="agent-prompt__meta agent-num">
           <span>you</span>
           <span aria-hidden="true" className="agent-prompt__sep" />
@@ -153,7 +234,11 @@ const AgentTurnView = memo(function AgentTurnView({
 
       <div className="agent-turn__events">
         {projection.items.map((item) => (
-          <AgentTurnItemView item={item} key={item.key} />
+          <AgentTurnItemView
+            highlight={itemHighlight(highlight, item.key)}
+            item={item}
+            key={item.key}
+          />
         ))}
         {empty && running && (
           <p className="agent-note">
@@ -207,13 +292,19 @@ function AgentTurnLaunchMeta({ launch }: { readonly launch: AgentLaunchOptions }
   );
 }
 
-function AgentTurnItemView({ item }: { readonly item: AgentTurnItem }) {
+function AgentTurnItemView({
+  highlight,
+  item,
+}: {
+  readonly highlight: AgentItemHighlight | null;
+  readonly item: AgentTurnItem;
+}) {
   if (item.kind === "assistantText") {
     return (
-      <div className="agent-text">
-        {item.paragraphs.map((paragraph, index) => (
+      <div className="agent-text" data-agent-event={item.key}>
+        {paragraphRuns(item.paragraphs, highlight).map((run, index) => (
           <p className="agent-text__paragraph" key={`${item.key}p${index}`}>
-            {paragraph}
+            <HighlightRun current={run.current} query={highlight?.query ?? ""} text={run.text} />
           </p>
         ))}
       </div>
@@ -235,13 +326,24 @@ function AgentTurnItemView({ item }: { readonly item: AgentTurnItem }) {
 
   if (item.kind === "result") {
     return (
-      <section className={item.isError ? "agent-finale agent-finale--bad" : "agent-finale"}>
+      <section
+        className={item.isError ? "agent-finale agent-finale--bad" : "agent-finale"}
+        data-agent-event={item.key}
+      >
         <span
           className={item.isError ? "agent-microlabel agent-microlabel--bad" : "agent-microlabel"}
         >
           {item.isError ? "run failed" : "result"}
         </span>
-        {item.text !== "" && <p className="agent-finale__body">{item.text}</p>}
+        {item.text !== "" && (
+          <p className="agent-finale__body">
+            <HighlightRun
+              current={highlight?.current ?? null}
+              query={highlight?.query ?? ""}
+              text={item.text}
+            />
+          </p>
+        )}
       </section>
     );
   }
@@ -352,4 +454,138 @@ function AgentEmptyFigure() {
 function shippable(thread: AgentThreadView): boolean {
   if (thread.worktreeMissing || thread.worktreeRemoved) return false;
   return thread.lifecycle === "settled";
+}
+
+function HighlightRun({
+  current,
+  query,
+  text,
+}: {
+  readonly current: number | null;
+  readonly query: string;
+  readonly text: string;
+}): ReactNode {
+  const ranges = queryRanges(text, query);
+  if (ranges.length === 0) return <>{text}</>;
+
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  ranges.forEach((range, index) => {
+    if (range.start > cursor) nodes.push(text.slice(cursor, range.start));
+    nodes.push(
+      <mark
+        className={
+          index === current ? "agent-find__hit agent-find__hit--current" : "agent-find__hit"
+        }
+        data-hit-index={index}
+        key={`h${index}`}
+      >
+        {text.slice(range.start, range.end)}
+      </mark>,
+    );
+    cursor = range.end;
+  });
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+
+  return <>{nodes}</>;
+}
+
+function queryRanges(text: string, query: string): ReadonlyArray<AgentThreadSearchRange> {
+  const needle = query.trim().toLowerCase();
+  if (needle.length < MIN_THREAD_SEARCH_QUERY_CHARS) return [];
+
+  const haystack = text.toLowerCase();
+  const ranges: AgentThreadSearchRange[] = [];
+  let index = haystack.indexOf(needle);
+  while (index !== -1) {
+    ranges.push({ start: index, end: index + needle.length });
+    index = haystack.indexOf(needle, index + needle.length);
+  }
+  return ranges;
+}
+
+function occurrenceCount(text: string, query: string): number {
+  return queryRanges(text, query).length;
+}
+
+function itemHighlight(
+  highlight: AgentTurnHighlight | null,
+  key: string,
+): AgentItemHighlight | null {
+  if (highlight === null || highlight.query === "") return null;
+  const eventIndex = Number.parseInt(key.slice(1), 10);
+  const cursor = highlight.current;
+  if (cursor === null || cursor.kind !== "event" || cursor.eventIndex !== eventIndex) {
+    return { query: highlight.query, current: null };
+  }
+  return { query: highlight.query, current: cursor.occurrence };
+}
+
+function paragraphRuns(
+  paragraphs: ReadonlyArray<string>,
+  highlight: AgentItemHighlight | null,
+): ReadonlyArray<AgentParagraphRun> {
+  if (highlight === null) return paragraphs.map((text) => ({ text, current: null }));
+
+  const runs: AgentParagraphRun[] = [];
+  let consumed = 0;
+  for (const text of paragraphs) {
+    const start = consumed;
+    consumed += occurrenceCount(text, highlight.query);
+    const current = highlight.current;
+    const local =
+      current !== null && current >= start && current < consumed ? current - start : null;
+    runs.push({ text, current: local });
+  }
+  return runs;
+}
+
+function turnCursor(
+  hits: ReadonlyArray<AgentThreadFindHit>,
+  index: number,
+): AgentTurnHighlightCursor | null {
+  const hit = hits[index];
+  if (hit === undefined) return null;
+
+  let occurrence = 0;
+  for (let position = 0; position < index; position += 1) {
+    const other = hits[position];
+    if (other === undefined) continue;
+    if (other.turnId !== hit.turnId) continue;
+    if (other.eventIndex !== hit.eventIndex) continue;
+    occurrence += 1;
+  }
+
+  if (hit.eventIndex === null) return { kind: "prompt", occurrence };
+  return { kind: "event", eventIndex: hit.eventIndex, occurrence };
+}
+
+function revealTarget(
+  container: HTMLElement,
+  reveal: AgentThreadRevealRequest | null,
+  activeHit: AgentThreadFindHit | null,
+): HTMLElement | null {
+  const current = container.querySelector<HTMLElement>(".agent-find__hit--current");
+  if (current !== null) return current;
+
+  const turnId = reveal?.turnId ?? activeHit?.turnId ?? null;
+  if (turnId === null) return null;
+
+  const turn = turnElement(container, turnId);
+  if (turn === null) return null;
+
+  const eventIndex = reveal?.eventIndex ?? activeHit?.eventIndex ?? null;
+  if (eventIndex === null) return turn;
+  return eventElement(turn, eventIndex) ?? turn;
+}
+
+function turnElement(container: HTMLElement, turnId: string): HTMLElement | null {
+  const candidates = Array.from(container.querySelectorAll<HTMLElement>("[data-agent-turn]"));
+  return candidates.find((candidate) => candidate.dataset.agentTurn === turnId) ?? null;
+}
+
+function eventElement(turn: HTMLElement, eventIndex: number): HTMLElement | null {
+  const key = `e${eventIndex}`;
+  const candidates = Array.from(turn.querySelectorAll<HTMLElement>("[data-agent-event]"));
+  return candidates.find((candidate) => candidate.dataset.agentEvent === key) ?? null;
 }
