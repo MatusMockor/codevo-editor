@@ -1,11 +1,19 @@
 import { Archive, Eye, Pin, Square, Trash, Trash2 } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentThread } from "../../domain/agentThread";
+import { AgentRelativeTime } from "./agentClock";
+import {
+  agentLaunchDangerNotice,
+  agentLaunchModeHint,
+  agentLaunchModeLabel,
+  agentLaunchModelLabel,
+} from "./agentLaunchPresentation";
 import {
   agentIsolationBadgeLabel,
   agentIsolationBadgeReason,
   agentRunningTurnCount,
   agentThreadLifecycleLabel,
-  agentThreadTimeLabel,
   agentThreadTone,
   agentTurnStatusLabel,
   lastAgentTurnStatus,
@@ -13,12 +21,12 @@ import {
 
 export interface AgentThreadInfoColumnProps {
   readonly thread: AgentThreadView | null;
-  readonly now: number;
   readonly liveTaskCount: number;
   readonly maxConcurrentAgentTasks: number;
   readonly composerRepositoryLabel: string | null;
   readonly composerRepositoryRoot: string | null;
   readonly composerIsolationReason: string | null;
+  readonly composerLaunch: AgentLaunchOptions | null;
   onStop(threadId: string): void;
   onArchive(threadId: string): void;
   onRemove(threadId: string): void;
@@ -29,11 +37,11 @@ export interface AgentThreadInfoColumnProps {
 
 export function AgentThreadInfoColumn({
   composerIsolationReason,
+  composerLaunch,
   composerRepositoryLabel,
   composerRepositoryRoot,
   liveTaskCount,
   maxConcurrentAgentTasks,
-  now,
   onArchive,
   onRemove,
   onRemoveWorktree,
@@ -58,6 +66,7 @@ export function AgentThreadInfoColumn({
             <p className="agent-info__prose">{composerIsolationReason}</p>
           </section>
         )}
+        {composerLaunch && <AgentLaunchSection label="launch" launch={composerLaunch} />}
         <section className="agent-info__section">
           <span className="agent-microlabel">slots</span>
           <p className="agent-info__value agent-num">
@@ -76,6 +85,7 @@ export function AgentThreadInfoColumn({
   const running = thread.lifecycle === "running";
   const changedFiles = thread.changeSummary?.files.length ?? null;
   const isolation = record.target.isolation;
+  const latestLaunch = latestTurnLaunch(record);
   const reviewable = !running && isolation === "worktree" && !thread.worktreeRemoved;
   const integrated = thread.ship.kind === "integrated";
   const worktreeActionLabel = integrated ? "Remove worktree" : "Discard worktree";
@@ -93,7 +103,7 @@ export function AgentThreadInfoColumn({
             {agentThreadLifecycleLabel(thread.lifecycle)}
           </span>
           <span className="agent-info__since agent-num">
-            {agentThreadTimeLabel(record.updatedAtEpochMs, now)}
+            <AgentRelativeTime epochMs={record.updatedAtEpochMs} />
           </span>
         </div>
         {lastStatus && (
@@ -114,6 +124,8 @@ export function AgentThreadInfoColumn({
         <p className="agent-info__value">{agentIsolationBadgeLabel(isolation)}</p>
         <p className="agent-info__prose">{agentIsolationBadgeReason(isolation)}</p>
       </section>
+
+      {latestLaunch !== null && <AgentLaunchSection label="launch" launch={latestLaunch} />}
 
       {record.target.worktreePath && (
         <section className="agent-info__section">
@@ -204,4 +216,30 @@ export function AgentThreadInfoColumn({
       </section>
     </aside>
   );
+}
+
+function AgentLaunchSection({
+  label,
+  launch,
+}: {
+  readonly label: string;
+  readonly launch: AgentLaunchOptions;
+}) {
+  const danger = agentLaunchDangerNotice(launch);
+
+  return (
+    <section className="agent-info__section">
+      <span className="agent-microlabel">{label}</span>
+      <p className="agent-info__value">{agentLaunchModelLabel(launch)}</p>
+      <p className="agent-info__value">{agentLaunchModeLabel(launch)}</p>
+      <p className="agent-info__prose">{agentLaunchModeHint(launch)}</p>
+      {danger !== null && <p className="agent-note agent-note--warning">{danger}</p>}
+    </section>
+  );
+}
+
+function latestTurnLaunch(thread: AgentThread): AgentLaunchOptions | null {
+  const turns = thread.turns;
+  if (turns.length === 0) return null;
+  return turns[turns.length - 1].launch;
 }

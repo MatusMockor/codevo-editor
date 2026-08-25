@@ -1,5 +1,10 @@
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import {
+  agentLaunchIsDangerous,
+  agentLaunchMatchesProvider,
+  type AgentLaunchOptions,
+} from "../domain/agentLaunch";
+import {
   MAX_AGENT_TASK_PROMPT_BYTES,
   mintAgentTaskId,
   type AgentCliKind,
@@ -47,6 +52,10 @@ type AdmissionDependencies = AgentTurnAdmissionDependencies;
 
 const LEASE_REFUSED_NOTICE =
   "This project could not be protected from tab close, so the agent was not started.";
+export const LAUNCH_PROVIDER_MISMATCH_NOTICE =
+  "The selected model or mode belongs to a different provider.";
+export const DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE =
+  "Confirm running without permission checks before starting this agent.";
 const UTF8_ENCODER = new TextEncoder();
 
 export function agentPromptByteLength(prompt: string): number {
@@ -78,6 +87,8 @@ export interface AdmittedStart {
   readonly authority: AgentProjectAuthority;
   readonly prompt: string;
   readonly agentCliPath: string;
+  readonly agentCliKind: AgentCliKind;
+  readonly launch: AgentLaunchOptions;
 }
 
 export function admitStart(
@@ -106,9 +117,19 @@ export function admitStart(
   }
   const prompt = admitPrompt(deps, request.prompt);
   if (prompt === null) return null;
+  const agentCliKind = normalizeAgentCliKind(deps.getAgentCliKind());
+  const launch = admitLaunch(deps, request, agentCliKind);
+  if (launch === null) return null;
   const agentCliPath = admitCapacity(deps);
   if (agentCliPath === null) return null;
-  return { project, authority: projectAuthority(project), prompt, agentCliPath };
+  return {
+    project,
+    authority: projectAuthority(project),
+    prompt,
+    agentCliPath,
+    agentCliKind,
+    launch,
+  };
 }
 
 export interface AdmittedFollowUp {
@@ -117,6 +138,7 @@ export interface AdmittedFollowUp {
   readonly prompt: string;
   readonly agentCliPath: string;
   readonly sessionId: string;
+  readonly launch: AgentLaunchOptions;
 }
 
 export function admitFollowUp(
@@ -151,8 +173,6 @@ export function admitFollowUp(
   }
   const prompt = admitPrompt(deps, request.prompt);
   if (prompt === null) return null;
-  const agentCliPath = admitCapacity(deps);
-  if (agentCliPath === null) return null;
   const currentKind = normalizeAgentCliKind(deps.getAgentCliKind());
   if (thread.provider.kind !== currentKind) {
     deps.setNotice(
@@ -162,6 +182,10 @@ export function admitFollowUp(
     );
     return null;
   }
+  const launch = admitLaunch(deps, request, thread.provider.kind);
+  if (launch === null) return null;
+  const agentCliPath = admitCapacity(deps);
+  if (agentCliPath === null) return null;
   if (thread.provider.sessionId === null) {
     deps.setNotice(warning("This thread has no resumable session; start a new thread."));
     return null;
@@ -176,7 +200,30 @@ export function admitFollowUp(
     prompt,
     agentCliPath,
     sessionId: thread.provider.sessionId,
+    launch,
   };
+}
+
+interface LaunchRequest {
+  readonly launch: AgentLaunchOptions;
+  readonly dangerousLaunchConfirmed?: boolean;
+}
+
+function admitLaunch(
+  deps: AdmissionDependencies,
+  request: LaunchRequest,
+  provider: AgentCliKind,
+): AgentLaunchOptions | null {
+  const launch = request.launch;
+  if (!agentLaunchMatchesProvider(launch, provider)) {
+    deps.setNotice(failure(LAUNCH_PROVIDER_MISMATCH_NOTICE));
+    return null;
+  }
+  if (agentLaunchIsDangerous(launch) && request.dangerousLaunchConfirmed !== true) {
+    deps.setNotice(warning(DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE));
+    return null;
+  }
+  return launch;
 }
 
 function admitPrompt(deps: AdmissionDependencies, raw: string): string | null {

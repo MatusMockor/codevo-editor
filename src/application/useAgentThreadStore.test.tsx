@@ -12,6 +12,8 @@ import {
   type AgentTurn,
 } from "../domain/agentThread";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
+import { TauriAgentThreadStoreGateway } from "../infrastructure/tauriAgentThreadStoreGateway";
+import type { InvokeAgentThreadStoreCommand } from "../infrastructure/tauriAgentThreadStoreIpcContract";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type {
   AgentThreadStoreGateway,
@@ -65,6 +67,7 @@ function turn(turnId: string): AgentTurn {
     eventsTruncated: false,
     lastStatusSequence: 0,
     lastOutputSequence: 0,
+    launch: null,
   };
 }
 
@@ -81,6 +84,7 @@ function thread(overrides: Partial<AgentThread> = {}): AgentThread {
     updatedAtEpochMs: 10,
     turns: [],
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration: null,
     ...overrides,
   };
@@ -536,6 +540,131 @@ function renderRuntimeOwnedStore(files: ReadonlyMap<string, AgentThread>, gatewa
     files,
     reportError,
     setNotice,
+    hook: () => captured.value as AgentThreadStoreSurface,
+    unmount: () => act(() => root.unmount()),
+  };
+}
+
+describe("useAgentThreadStore thread viewed", () => {
+  it("coalesces viewed marks into one save per interval and skips no-op marks", async () => {
+    const harness = await renderLoadedStore();
+    const created = thread({ viewedAtEpochMs: 5 });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => {
+      expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1);
+    });
+    harness.gateway.saveAgentThread.mockClear();
+
+    act(() =>
+      harness.hook().dispatchAction({ kind: "threadViewed", threadId: "agt-1-0a1b", atEpochMs: 5 }),
+    );
+    act(() =>
+      harness
+        .hook()
+        .dispatchAction({ kind: "threadViewed", threadId: "agt-missing", atEpochMs: 6 }),
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, PERSIST_INTERVAL_MS * 2));
+    });
+    expect(harness.gateway.saveAgentThread).not.toHaveBeenCalled();
+
+    for (const atEpochMs of [10, 11, 12, 13]) {
+      act(() =>
+        harness.hook().dispatchAction({ kind: "threadViewed", threadId: "agt-1-0a1b", atEpochMs }),
+      );
+    }
+    expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, PERSIST_INTERVAL_MS * 2));
+    });
+    await waitForReact(() => {
+      expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(2);
+    });
+    expect(harness.saved[harness.saved.length - 1]?.thread.viewedAtEpochMs).toBe(13);
+    harness.unmount();
+  });
+
+  it("schedules no save for a stale-lower viewed mark the reducer ignores", async () => {
+    const harness = await renderLoadedStore();
+    const created = thread({ viewedAtEpochMs: 20 });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => {
+      expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1);
+    });
+    harness.gateway.saveAgentThread.mockClear();
+    harness.saved.length = 0;
+
+    act(() =>
+      harness
+        .hook()
+        .dispatchAction({ kind: "threadViewed", threadId: created.threadId, atEpochMs: 9 }),
+    );
+    const other = thread({ threadId: "agt-2-0a1b" });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: other }));
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, PERSIST_INTERVAL_MS * 3));
+    });
+
+    expect(harness.saved.map((request) => request.thread.threadId)).toEqual([other.threadId]);
+    expect(harness.hook().currentState().threads.get(created.threadId)?.viewedAtEpochMs).toBe(20);
+    harness.unmount();
+  });
+
+  it("round-trips launch and viewedAtEpochMs through the validated store gateway", async () => {
+    const files = new Map<string, unknown>();
+    const invokeCommand: InvokeAgentThreadStoreCommand = async (command, args) => {
+      const request = args.request as { threadId?: string; thread?: { threadId: string } };
+      if (command === "save_agent_thread") {
+        files.set(request.thread?.threadId ?? "", request.thread);
+        return null;
+      }
+      if (command === "delete_agent_thread") {
+        files.delete(request.threadId ?? "");
+        return null;
+      }
+      return { threads: [...files.values()], unreadable: [], evicted: 0 };
+    };
+    const gateway = new TauriAgentThreadStoreGateway(invokeCommand, () => true);
+    const launch = { provider: "claudeCode", model: "sonnet", mode: "acceptEdits" } as const;
+    const created = thread({
+      turns: [{ ...turn("agt-1-0a1c"), launch }],
+      viewedAtEpochMs: 42,
+    });
+
+    const first = renderStoreWithGateway(gateway);
+    await waitForReact(() => expect(first.hook().loadedRootKeys.has(ROOT_KEY)).toBe(true));
+    act(() => first.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => expect(files.size).toBe(1));
+    first.unmount();
+
+    const second = renderStoreWithGateway(gateway);
+    await waitForReact(() => expect(second.hook().state.threads.size).toBe(1));
+    const loaded = second.hook().state.threads.get("agt-1-0a1b");
+    expect(loaded?.viewedAtEpochMs).toBe(42);
+    expect(loaded?.turns[0]?.launch).toEqual(launch);
+    second.unmount();
+  });
+});
+
+function renderStoreWithGateway(gateway: AgentThreadStoreGateway) {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  const captured: { value: AgentThreadStoreSurface | null } = { value: null };
+  const dependencies: AgentThreadStoreDependencies = {
+    agentThreadStoreGateway: gateway,
+    projects: [project()],
+    agentModeActive: true,
+    reportError: vi.fn(),
+    setNotice: vi.fn(),
+    legacyPinStorage: { removeItem: vi.fn() },
+    minimumPersistIntervalMs: PERSIST_INTERVAL_MS,
+  };
+  function Harness() {
+    captured.value = useAgentThreadStore(dependencies);
+    return null;
+  }
+  act(() => root.render(<Harness />));
+  return {
     hook: () => captured.value as AgentThreadStoreSurface,
     unmount: () => act(() => root.unmount()),
   };

@@ -329,6 +329,140 @@ describe("AgentComposer", () => {
     expect(submitButton().textContent).toContain("Sending…");
   });
 
+  it("keeps the model and mode pickers in both composer modes", () => {
+    render({ launch: { provider: "claudeCode", model: "opus", mode: "plan" } });
+
+    expect(host.querySelector<HTMLSelectElement>("select#agent-launch-model")?.value).toBe("opus");
+    expect(host.querySelector<HTMLSelectElement>("select#agent-launch-mode")?.value).toBe("plan");
+
+    render({
+      launch: { provider: "codex", model: "gpt-5.5", mode: "readOnly" },
+      launchProvider: "codex",
+      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+    });
+
+    expect(host.querySelector<HTMLSelectElement>("select#agent-launch-model")?.value).toBe(
+      "gpt-5.5",
+    );
+    expect(host.querySelector<HTMLSelectElement>("select#agent-launch-mode")?.value).toBe(
+      "readOnly",
+    );
+  });
+
+  it("reports a picked model as a whole launch value", () => {
+    const onLaunchChange = vi.fn();
+    render({ onLaunchChange });
+
+    selectValue("select#agent-launch-model", "sonnet");
+
+    expect(onLaunchChange).toHaveBeenCalledWith({
+      provider: "claudeCode",
+      model: "sonnet",
+      mode: "default",
+    });
+  });
+
+  it("falls back to the defaults of the configured provider when the launch is stale", () => {
+    const onSubmit = vi.fn();
+    render({
+      launch: { provider: "claudeCode", model: "opus", mode: "bypassPermissions" },
+      launchProvider: "codex",
+      onSubmit,
+      prompt: "Fix it",
+    });
+
+    expect(
+      [...(host.querySelector<HTMLSelectElement>("select#agent-launch-mode")?.options ?? [])].map(
+        (option) => option.value,
+      ),
+    ).toEqual(["default", "readOnly", "workspaceWrite", "dangerFullAccess"]);
+    expect(host.querySelector(".agent-composer__danger")).toBeNull();
+    expect(submitButton().disabled).toBe(false);
+
+    submitForm();
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      launch: { provider: "codex", model: "default", mode: "default" },
+      dangerousLaunchConfirmed: false,
+    });
+  });
+
+  it("blocks a dangerous launch until it is confirmed for this submission", () => {
+    const onSubmit = vi.fn();
+    const onDangerousConfirmedChange = vi.fn();
+    render({
+      launch: { provider: "claudeCode", model: "opus", mode: "bypassPermissions" },
+      onDangerousConfirmedChange,
+      onSubmit,
+      prompt: "Fix it",
+    });
+
+    expect(host.querySelector(".agent-composer__danger")?.textContent).toContain(
+      "Bypasses permission checks",
+    );
+    expect(submitButton().disabled).toBe(true);
+
+    submitForm();
+    pressAccelerator();
+
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    toggleCheckbox("agent-launch-danger-confirm", true);
+
+    expect(onDangerousConfirmedChange).toHaveBeenCalledWith(true);
+
+    render({
+      dangerousConfirmed: true,
+      launch: { provider: "claudeCode", model: "opus", mode: "bypassPermissions" },
+      onSubmit,
+      prompt: "Fix it",
+    });
+
+    expect(submitButton().disabled).toBe(false);
+
+    submitForm();
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      launch: { provider: "claudeCode", model: "opus", mode: "bypassPermissions" },
+      dangerousLaunchConfirmed: true,
+    });
+  });
+
+  it("never claims a confirmation for a launch that is not dangerous", () => {
+    const onSubmit = vi.fn();
+    render({
+      dangerousConfirmed: true,
+      launch: { provider: "codex", model: "gpt-5.4", mode: "workspaceWrite" },
+      launchProvider: "codex",
+      onSubmit,
+      prompt: "Fix it",
+    });
+
+    submitForm();
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      launch: { provider: "codex", model: "gpt-5.4", mode: "workspaceWrite" },
+      dangerousLaunchConfirmed: false,
+    });
+  });
+
+  it("carries the newly chosen launch into a follow-up submission", () => {
+    const onSubmit = vi.fn();
+    render({
+      launch: { provider: "claudeCode", model: "sonnet", mode: "acceptEdits" },
+      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+      onSubmit,
+      prompt: "Also update the tests",
+    });
+
+    pressAccelerator();
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      launch: { provider: "claudeCode", model: "sonnet", mode: "acceptEdits" },
+      dangerousLaunchConfirmed: false,
+    });
+  });
+
   function render(overrides: Partial<AgentComposerProps> = {}): void {
     act(() => root.render(<AgentComposer {...defaultProps()} {...overrides} />));
   }
@@ -418,6 +552,9 @@ function defaultProps(): AgentComposerProps {
     worktreeOnlyReason: null,
     guard: { kind: "safe" },
     unsafeConfirmed: false,
+    launch: { provider: "claudeCode", model: "default", mode: "default" },
+    launchProvider: "claudeCode",
+    dangerousConfirmed: false,
     dispatching: false,
     submitBlocked: false,
     mode: { kind: "new" },
@@ -426,6 +563,8 @@ function defaultProps(): AgentComposerProps {
     onPromptChange: () => undefined,
     onIsolationChange: () => undefined,
     onUnsafeConfirmedChange: () => undefined,
+    onLaunchChange: () => undefined,
+    onDangerousConfirmedChange: () => undefined,
     onNewThread: () => undefined,
     onSubmit: () => undefined,
   };

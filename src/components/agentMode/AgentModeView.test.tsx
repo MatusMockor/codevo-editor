@@ -1,20 +1,49 @@
 // @vitest-environment jsdom
 
+import { defaultAgentLaunchOptions } from "../../domain/agentLaunch";
+import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/agentProject";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
+import { agentThreadTimeLabel } from "./agentModePresentation";
 
 const ROOT = "/workspace/app";
 const NESTED = "/workspace/app/packages/api";
 const OTHER_ROOT = "/workspace/api-service";
 const NOW_TICK_MS = 3_600_000;
+const NOW = 1_700_000_600_000;
+
+const columnRenders = vi.hoisted(() => ({ session: 0, info: 0 }));
+
+vi.mock("./AgentThreadSession", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./AgentThreadSession")>();
+  return {
+    ...actual,
+    AgentThreadSession: (props: Parameters<typeof actual.AgentThreadSession>[0]) => {
+      columnRenders.session += 1;
+      return <actual.AgentThreadSession {...props} />;
+    },
+  };
+});
+
+vi.mock("./AgentThreadInfoColumn", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./AgentThreadInfoColumn")>();
+  return {
+    ...actual,
+    AgentThreadInfoColumn: (props: Parameters<typeof actual.AgentThreadInfoColumn>[0]) => {
+      columnRenders.info += 1;
+      return <actual.AgentThreadInfoColumn {...props} />;
+    },
+  };
+});
 
 describe("AgentModeView", () => {
   let host: HTMLDivElement;
@@ -112,6 +141,8 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "worktree",
       unsafeInPlaceConfirmationKey: null,
+      launch: defaultAgentLaunchOptions("claudeCode"),
+      dangerousLaunchConfirmed: false,
     });
   });
 
@@ -147,6 +178,8 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: "dirty-preview-key",
+      launch: defaultAgentLaunchOptions("claudeCode"),
+      dangerousLaunchConfirmed: false,
     });
   });
 
@@ -164,6 +197,8 @@ describe("AgentModeView", () => {
       prompt: "Update the router",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
+      launch: defaultAgentLaunchOptions("claudeCode"),
+      dangerousLaunchConfirmed: false,
     });
   });
 
@@ -288,6 +323,8 @@ describe("AgentModeView", () => {
     expect(sendFollowUp).toHaveBeenCalledWith({
       threadId: "agt-1",
       prompt: "Also update the tests",
+      launch: defaultAgentLaunchOptions("claudeCode"),
+      dangerousLaunchConfirmed: false,
     });
     expect(promptField().value).toBe("");
   });
@@ -564,7 +601,7 @@ describe("AgentModeView", () => {
 
     expect(host.textContent).not.toContain("Archived work");
 
-    clickText("Archived");
+    click(".agent-archived__head");
 
     expect(host.textContent).toContain("Archived work");
   });
@@ -597,6 +634,8 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "worktree",
       unsafeInPlaceConfirmationKey: null,
+      launch: defaultAgentLaunchOptions("claudeCode"),
+      dangerousLaunchConfirmed: false,
     });
   });
 
@@ -615,6 +654,8 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
+      launch: defaultAgentLaunchOptions("claudeCode"),
+      dangerousLaunchConfirmed: false,
     });
   });
 
@@ -670,6 +711,299 @@ describe("AgentModeView", () => {
     );
   });
 
+  it("seeds the composer launch from the last used launch of the target project", () => {
+    render({
+      agents: surface({
+        lastUsedLaunch: (projectRootKey: string) =>
+          projectRootKey === ROOT
+            ? { provider: "claudeCode", model: "opus", mode: "acceptEdits" }
+            : null,
+      }),
+    });
+
+    expect(launchSelect("agent-launch-model").value).toBe("opus");
+    expect(launchSelect("agent-launch-mode").value).toBe("acceptEdits");
+  });
+
+  it("falls back to the provider default when the root has no remembered launch", () => {
+    render({ agents: surface({ agentCliKind: "codex" }) });
+
+    expect(launchSelect("agent-launch-model").value).toBe("default");
+    expect(launchSelect("agent-launch-mode").value).toBe("default");
+    expect(host.textContent).toContain("Default sandbox");
+  });
+
+  it("drops a launch chosen for another project when the composer target changes", () => {
+    render({
+      agents: surface({
+        lastUsedLaunch: (projectRootKey: string) =>
+          projectRootKey === OTHER_ROOT
+            ? { provider: "claudeCode", model: "sonnet", mode: "plan" }
+            : null,
+      }),
+      projects: [activeProject(), backgroundProject()],
+    });
+
+    chooseLaunch("agent-launch-model", "fable");
+
+    expect(launchSelect("agent-launch-model").value).toBe("fable");
+
+    selectProject(OTHER_ROOT);
+
+    expect(launchSelect("agent-launch-model").value).toBe("sonnet");
+    expect(launchSelect("agent-launch-mode").value).toBe("plan");
+  });
+
+  it("ignores a remembered launch that belongs to another provider", () => {
+    render({
+      agents: surface({
+        agentCliKind: "codex",
+        lastUsedLaunch: () => ({ provider: "claudeCode", model: "opus", mode: "plan" }),
+      }),
+    });
+
+    expect(launchSelect("agent-launch-model").value).toBe("default");
+  });
+
+  it("carries the launch and its confirmation into the start and forgets the confirmation", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    render({ agents: surface({ startThread }) });
+
+    chooseLaunch("agent-launch-mode", "bypassPermissions");
+    typePrompt("Fix the parser");
+
+    expect(submitButton().disabled).toBe(true);
+
+    toggleCheckbox("agent-launch-danger-confirm", true);
+
+    expect(submitButton().disabled).toBe(false);
+
+    await submitFormAsync();
+
+    expect(startThread).toHaveBeenCalledWith({
+      projectRootKey: ROOT,
+      repositoryRoot: ROOT,
+      prompt: "Fix the parser",
+      isolation: "in-place",
+      unsafeInPlaceConfirmationKey: null,
+      launch: { provider: "claudeCode", model: "default", mode: "bypassPermissions" },
+      dangerousLaunchConfirmed: true,
+    });
+    expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
+    expect(submitButton().disabled).toBe(true);
+  });
+
+  it("forgets the dangerous confirmation as soon as the launch changes", () => {
+    render();
+
+    chooseLaunch("agent-launch-mode", "bypassPermissions");
+    toggleCheckbox("agent-launch-danger-confirm", true);
+
+    expect(checkbox("agent-launch-danger-confirm").checked).toBe(true);
+
+    chooseLaunch("agent-launch-model", "opus");
+
+    expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
+  });
+
+  it("carries the launch into a follow-up turn", async () => {
+    const sendFollowUp = vi.fn(async () => true);
+    render({ agents: surface({ sendFollowUp, threads: [threadView({ threadId: "agt-1" })] }) });
+
+    click('[data-thread-id="agt-1"]');
+    chooseLaunch("agent-launch-model", "sonnet");
+    typePrompt("Also update the docs");
+    await submitFormAsync();
+
+    expect(sendFollowUp).toHaveBeenCalledWith({
+      threadId: "agt-1",
+      prompt: "Also update the docs",
+      launch: { provider: "claudeCode", model: "sonnet", mode: "default" },
+      dangerousLaunchConfirmed: false,
+    });
+  });
+
+  it("marks the selected thread viewed and again when its turn settles", () => {
+    const markThreadViewed = vi.fn();
+    render({
+      agents: surface({
+        markThreadViewed,
+        threads: [threadView({ threadId: "agt-1", status: { kind: "running" } })],
+      }),
+    });
+
+    expect(markThreadViewed).not.toHaveBeenCalled();
+
+    click('[data-thread-id="agt-1"]');
+
+    expect(markThreadViewed).toHaveBeenCalledWith("agt-1");
+    expect(markThreadViewed).toHaveBeenCalledTimes(1);
+
+    render({
+      agents: surface({
+        markThreadViewed,
+        threads: [threadView({ threadId: "agt-1", status: { kind: "exited", exitCode: 0 } })],
+      }),
+    });
+
+    expect(markThreadViewed).toHaveBeenCalledTimes(2);
+    expect(markThreadViewed).toHaveBeenLastCalledWith("agt-1");
+  });
+
+  it("seeds a follow-up launch from the selected thread's project, not the composer target", () => {
+    render({
+      agents: surface({
+        lastUsedLaunch: (projectRootKey: string) =>
+          projectRootKey === OTHER_ROOT
+            ? { provider: "claudeCode", model: "opus", mode: "acceptEdits" }
+            : { provider: "claudeCode", model: "sonnet", mode: "plan" },
+        threads: [threadView({ threadId: "agt-b", rootKey: OTHER_ROOT })],
+      }),
+      projects: [activeProject(), backgroundProject()],
+    });
+
+    expect(launchSelect("agent-launch-model").value).toBe("sonnet");
+
+    click('[data-thread-id="agt-b"]');
+
+    expect(launchSelect("agent-launch-model").value).toBe("opus");
+    expect(launchSelect("agent-launch-mode").value).toBe("acceptEdits");
+  });
+
+  it("seeds a follow-up launch from the thread's last turn before the remembered launch", () => {
+    render({
+      agents: surface({
+        lastUsedLaunch: () => ({ provider: "claudeCode", model: "opus", mode: "acceptEdits" }),
+        threads: [
+          threadView({
+            threadId: "agt-1",
+            launch: { provider: "claudeCode", model: "fable", mode: "plan" },
+          }),
+        ],
+      }),
+    });
+
+    click('[data-thread-id="agt-1"]');
+
+    expect(launchSelect("agent-launch-model").value).toBe("fable");
+    expect(launchSelect("agent-launch-mode").value).toBe("plan");
+  });
+
+  it("honours a launch change for a thread whose project is not a composer option", async () => {
+    const sendFollowUp = vi.fn(async () => true);
+    render({
+      agents: surface({
+        sendFollowUp,
+        threads: [threadView({ threadId: "agt-b", rootKey: OTHER_ROOT })],
+      }),
+      projects: [activeProject(), { ...backgroundProject(), trust: "untrusted" }],
+    });
+
+    expect(host.querySelector("select#agent-project")).toBeNull();
+
+    click('[data-thread-id="agt-b"]');
+    chooseLaunch("agent-launch-model", "sonnet");
+    expect(launchSelect("agent-launch-model").value).toBe("sonnet");
+
+    typePrompt("Also update the docs");
+    await submitFormAsync();
+
+    expect(sendFollowUp).toHaveBeenCalledWith({
+      threadId: "agt-b",
+      prompt: "Also update the docs",
+      launch: { provider: "claudeCode", model: "sonnet", mode: "default" },
+      dangerousLaunchConfirmed: false,
+    });
+  });
+
+  it("forgets the dangerous confirmation when the selected thread changes", () => {
+    render({
+      agents: surface({
+        threads: [
+          threadView({
+            threadId: "agt-1",
+            launch: { provider: "claudeCode", model: "default", mode: "bypassPermissions" },
+          }),
+          threadView({
+            threadId: "agt-2",
+            launch: { provider: "claudeCode", model: "default", mode: "bypassPermissions" },
+          }),
+        ],
+      }),
+    });
+
+    click('[data-thread-id="agt-1"]');
+    toggleCheckbox("agent-launch-danger-confirm", true);
+    expect(checkbox("agent-launch-danger-confirm").checked).toBe(true);
+
+    click('[data-thread-id="agt-2"]');
+
+    expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
+    expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
+  });
+
+  it("forgets the dangerous confirmation when the composer project changes", () => {
+    render({
+      agents: surface({
+        lastUsedLaunch: () => ({
+          provider: "claudeCode",
+          model: "default",
+          mode: "bypassPermissions",
+        }),
+      }),
+      projects: [activeProject(), backgroundProject()],
+    });
+
+    toggleCheckbox("agent-launch-danger-confirm", true);
+    expect(checkbox("agent-launch-danger-confirm").checked).toBe(true);
+
+    selectProject(OTHER_ROOT);
+
+    expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
+    expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
+  });
+
+  it("advances session and info timestamps on clock ticks without rerendering the columns", () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(NOW);
+    try {
+      render({
+        agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+        nowTickMs: 1_000,
+      });
+      click('[data-thread-id="agt-1"]');
+
+      expect(host.querySelector(".agent-info__since")?.textContent).toBe("10 minutes ago");
+      expect(host.querySelector(".agent-prompt__meta")?.textContent).toContain("10 minutes ago");
+      const sessionRenders = columnRenders.session;
+      const infoRenders = columnRenders.info;
+      expect(sessionRenders).toBeGreaterThan(0);
+      expect(infoRenders).toBeGreaterThan(0);
+
+      for (const minutes of [50, 110, 170]) {
+        act(() => {
+          vi.setSystemTime(NOW + minutes * 60_000);
+          vi.advanceTimersByTime(1_000);
+        });
+      }
+
+      expect(host.querySelector(".agent-info__since")?.textContent).toBe("3 hours ago");
+      expect(host.querySelector(".agent-prompt__meta")?.textContent).toContain("3 hours ago");
+      expect(columnRenders.session).toBe(sessionRenders);
+      expect(columnRenders.info).toBe(infoRenders);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders rail timestamps through the agent clock instead of a now prop", () => {
+    render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
+
+    expect(host.querySelector(".agent-thread__meta")?.textContent).toContain(
+      agentThreadTimeLabel(1_700_000_000_000, Date.now()),
+    );
+  });
+
   function render(overrides: Partial<AgentModeViewProps> = {}): void {
     act(() => root.render(<AgentModeView {...defaultProps()} {...overrides} />));
   }
@@ -718,6 +1052,23 @@ describe("AgentModeView", () => {
         value,
       );
       element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function launchSelect(id: string): HTMLSelectElement {
+    const element = host.querySelector<HTMLSelectElement>(`select#${id}`);
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("select");
+  }
+
+  function chooseLaunch(id: string, value: string): void {
+    const element = launchSelect(id);
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(
+        element,
+        value,
+      );
+      element.dispatchEvent(new Event("change", { bubbles: true }));
     });
   }
 
@@ -880,6 +1231,8 @@ function surface(overrides: Partial<AgentThreadsSurface>): AgentThreadsSurface {
     openChangedFileDiff: async () => undefined,
     configureAgentCli: () => undefined,
     dismissNotice: () => undefined,
+    markThreadViewed: () => undefined,
+    lastUsedLaunch: () => null,
     ...overrides,
   };
 }
@@ -891,6 +1244,8 @@ function repository(repositoryRoot: string, rootRelativePath: string): ResolvedG
 interface ThreadViewOptions {
   readonly threadId?: string;
   readonly repositoryRoot?: string;
+  readonly rootKey?: string;
+  readonly launch?: AgentLaunchOptions | null;
   readonly status?: AgentTurnStatus;
   readonly pinned?: boolean;
   readonly archived?: boolean;
@@ -904,11 +1259,13 @@ interface ThreadViewOptions {
 
 function threadView({
   archived = false,
+  launch = null,
   ship = { kind: "idle", status: null, loadingStatus: false },
   pinned = false,
   projectOrigin = "active-tab",
   providerKind = "claudeCode",
-  repositoryRoot = ROOT,
+  rootKey = ROOT,
+  repositoryRoot = rootKey,
   sessionId = "session-abcdefgh",
   status = { kind: "exited", exitCode: 0 },
   threadId = "agt-1",
@@ -918,7 +1275,7 @@ function threadView({
   const running = status.kind === "pending" || status.kind === "running";
   const thread: AgentThread = {
     threadId,
-    owner: { rootKey: ROOT, ownerId: "agent-root:app", repositoryRoot },
+    owner: { rootKey, ownerId: ownerIdFor(rootKey), repositoryRoot },
     target: { isolation: "worktree", worktreePath: `${repositoryRoot}/.worktrees/${threadId}` },
     provider: { kind: providerKind, sessionId },
     title,
@@ -926,14 +1283,17 @@ function threadView({
     archived,
     createdAtEpochMs: 1_700_000_000_000,
     updatedAtEpochMs: 1_700_000_000_000,
-    turns: [turn(threadId, title, status)],
+    turns: [{ ...turn(threadId, title, status), launch }],
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration: null,
   };
 
   return {
     ship,
     editorAvailability: { kind: "available" },
+    attention: agentThreadAttention(thread),
+    unread: agentThreadUnread(thread),
     thread,
     lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: "app",
@@ -942,6 +1302,10 @@ function threadView({
     worktreeMissing,
     changeSummary: null,
   };
+}
+
+function ownerIdFor(rootKey: string): string {
+  return rootKey === OTHER_ROOT ? "agent-root:api-service" : "agent-root:app";
 }
 
 function loadedShip(): AgentShipState {
@@ -968,5 +1332,6 @@ function turn(threadId: string, prompt: string, status: AgentTurnStatus): AgentT
     eventsTruncated: false,
     lastStatusSequence: 0,
     lastOutputSequence: 0,
+    launch: null,
   };
 }

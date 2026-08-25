@@ -1,10 +1,17 @@
 import { type FormEvent, type KeyboardEvent } from "react";
 import { Play, Plus, Send, TriangleAlert } from "lucide-react";
 import {
+  agentLaunchIsDangerous,
+  defaultAgentLaunchOptions,
+  type AgentLaunchOptions,
+} from "../../domain/agentLaunch";
+import {
   MAX_AGENT_TASK_PROMPT_BYTES,
+  type AgentCliKind,
   type AgentTaskIsolation,
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
+import { AgentLaunchControls, AgentLaunchWarning } from "./AgentLaunchControls";
 import { inPlaceGuardReasonLabel } from "./agentModePresentation";
 
 export interface AgentComposerRepositoryOption {
@@ -26,6 +33,11 @@ export type AgentComposerMode =
       readonly blockedReason: string | null;
     };
 
+export interface AgentComposerSubmission {
+  readonly launch: AgentLaunchOptions;
+  readonly dangerousLaunchConfirmed: boolean;
+}
+
 export interface AgentComposerProps {
   readonly mode: AgentComposerMode;
   readonly projects: ReadonlyArray<AgentComposerProjectOption>;
@@ -39,6 +51,9 @@ export interface AgentComposerProps {
   readonly worktreeOnlyReason: string | null;
   readonly guard: InPlaceDispatchGuard;
   readonly unsafeConfirmed: boolean;
+  readonly launch: AgentLaunchOptions;
+  readonly launchProvider: AgentCliKind;
+  readonly dangerousConfirmed: boolean;
   readonly dispatching: boolean;
   readonly submitBlocked: boolean;
   onSelectProject(projectRootKey: string): void;
@@ -46,17 +61,24 @@ export interface AgentComposerProps {
   onPromptChange(prompt: string): void;
   onIsolationChange(isolation: AgentTaskIsolation): void;
   onUnsafeConfirmedChange(confirmed: boolean): void;
+  onLaunchChange(launch: AgentLaunchOptions): void;
+  onDangerousConfirmedChange(confirmed: boolean): void;
   onNewThread(): void;
-  onSubmit(): void;
+  onSubmit(submission: AgentComposerSubmission): void;
 }
 
 export function AgentComposer({
+  dangerousConfirmed,
   dispatching,
   guard,
   isolation,
   isolationReason,
+  launch,
+  launchProvider,
   mode,
+  onDangerousConfirmedChange,
   onIsolationChange,
+  onLaunchChange,
   onNewThread,
   onPromptChange,
   onSelectProject,
@@ -82,7 +104,12 @@ export function AgentComposer({
   const repositories = selectedProject?.repositories ?? [];
   const selectedRepository =
     repositories.find((repository) => repository.repositoryRoot === selectedRepositoryRoot) ?? null;
-  const blocked = submitBlocked || blockedReason !== null;
+  const effectiveLaunch =
+    launch.provider === launchProvider ? launch : defaultAgentLaunchOptions(launchProvider);
+  const dangerousLaunch = agentLaunchIsDangerous(effectiveLaunch);
+  const dangerousLaunchConfirmed = dangerousLaunch && dangerousConfirmed;
+  const blocked =
+    submitBlocked || blockedReason !== null || (dangerousLaunch && !dangerousLaunchConfirmed);
   const caption = composerCaption({
     blockedReason,
     isolationReason,
@@ -90,10 +117,14 @@ export function AgentComposer({
     worktreeOnlyReason,
   });
 
+  const dispatch = (): void => {
+    onSubmit({ launch: effectiveLaunch, dangerousLaunchConfirmed });
+  };
+
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (blocked) return;
-    onSubmit();
+    dispatch();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -101,7 +132,7 @@ export function AgentComposer({
     if (!event.metaKey && !event.ctrlKey) return;
     event.preventDefault();
     if (blocked) return;
-    onSubmit();
+    dispatch();
   };
 
   return (
@@ -150,7 +181,19 @@ export function AgentComposer({
           </div>
         )}
 
+        <AgentLaunchWarning
+          confirmed={dangerousConfirmed}
+          launch={effectiveLaunch}
+          onConfirmedChange={onDangerousConfirmedChange}
+        />
+
         <div className="agent-composer__row">
+          <AgentLaunchControls
+            disabled={dispatching}
+            launch={effectiveLaunch}
+            onLaunchChange={onLaunchChange}
+          />
+
           {followUp && (
             <span className="agent-composer__chip agent-composer__chip--thread">
               {mode.threadTitle}

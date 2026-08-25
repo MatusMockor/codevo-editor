@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Settings, X } from "lucide-react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import { MAX_AGENT_TASK_PROMPT_BYTES, type AgentTaskIsolation } from "../../domain/agentTask";
+import { defaultAgentLaunchOptions, type AgentLaunchOptions } from "../../domain/agentLaunch";
+import { isTerminalAgentTurnStatus, type AgentThread } from "../../domain/agentThread";
+import {
+  MAX_AGENT_TASK_PROMPT_BYTES,
+  type AgentCliKind,
+  type AgentTaskIsolation,
+} from "../../domain/agentTask";
 import type {
   AgentTasksNotice,
   AgentThreadsSurface,
@@ -11,11 +17,13 @@ import {
   AgentComposer,
   type AgentComposerMode,
   type AgentComposerProjectOption,
+  type AgentComposerSubmission,
 } from "./AgentComposer";
 import type { AgentShipActions } from "./AgentShipPanel";
 import { AgentThreadInfoColumn } from "./AgentThreadInfoColumn";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
+import { AgentClockProvider } from "./agentClock";
 import {
   agentFollowUpBlockedReason,
   agentIsolationReasonLabel,
@@ -25,6 +33,7 @@ import {
   agentPromptByteLength,
   agentShipStatusUnread,
   agentThreadDisplayTitle,
+  lastAgentTurn,
 } from "./agentModePresentation";
 
 export interface AgentModeViewProps {
@@ -66,12 +75,8 @@ export function AgentModeView({
   const [prompt, setPrompt] = useState("");
   const [isolationChoice, setIsolationChoice] = useState<IsolationChoice | null>(null);
   const [unsafeConfirmed, setUnsafeConfirmed] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), nowTickMs);
-    return () => clearInterval(timer);
-  }, [nowTickMs]);
+  const [launchChoice, setLaunchChoice] = useState<LaunchChoice | null>(null);
+  const [dangerousConfirmed, setDangerousConfirmed] = useState(false);
 
   const groups = useMemo(
     () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
@@ -144,6 +149,30 @@ export function AgentModeView({
   const promptBytes = agentPromptByteLength(prompt);
   const promptEmpty = prompt.trim() === "" || promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
   const composerMode = useComposerMode(selectedThread, agents);
+
+  const targetRootKey = target?.projectRootKey ?? null;
+  const launchScope = useMemo(
+    () => resolveLaunchScope(selectedThread, targetRootKey),
+    [selectedThread, targetRootKey],
+  );
+  const agentCliKind = agents.agentCliKind;
+  const lastUsedLaunch = agents.lastUsedLaunch;
+  const composerLaunch = useMemo(
+    () => resolveComposerLaunch(launchChoice, launchScope, agentCliKind, lastUsedLaunch),
+    [agentCliKind, lastUsedLaunch, launchChoice, launchScope],
+  );
+  const launchKey = `${launchScope?.key ?? ""}|${agentLaunchKey(composerLaunch)}`;
+  useEffect(() => {
+    setDangerousConfirmed(false);
+  }, [launchKey]);
+
+  const markThreadViewed = agents.markThreadViewed;
+  const selectedTerminalKey = terminalTurnKey(selectedThread?.thread ?? null);
+  useEffect(() => {
+    if (selectedThreadId === null) return;
+    markThreadViewed(selectedThreadId);
+  }, [markThreadViewed, selectedTerminalKey, selectedThreadId]);
+
   const submitBlocked =
     agents.dispatching ||
     promptEmpty ||
@@ -177,37 +206,48 @@ export function AgentModeView({
   const startThread = agents.startThread;
   const followUpThreadId = selectedThread?.thread.threadId ?? null;
 
-  const submit = useCallback(() => {
-    if (followUpThreadId !== null) {
-      void sendFollowUp({ threadId: followUpThreadId, prompt }).then((sent) => {
-        if (!sent) return;
+  const submit = useCallback(
+    (submission: AgentComposerSubmission) => {
+      setDangerousConfirmed(false);
+      if (followUpThreadId !== null) {
+        void sendFollowUp({
+          threadId: followUpThreadId,
+          prompt,
+          launch: submission.launch,
+          dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
+        }).then((sent) => {
+          if (!sent) return;
+          setPrompt("");
+        });
+        return;
+      }
+      if (target === null) return;
+      void startThread({
+        projectRootKey: target.projectRootKey,
+        repositoryRoot: target.repositoryRoot,
+        prompt,
+        isolation,
+        unsafeInPlaceConfirmationKey: confirmed ? (preview?.confirmationKey ?? null) : null,
+        launch: submission.launch,
+        dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
+      }).then((started) => {
+        if (started === null) return;
         setPrompt("");
+        setUnsafeConfirmed(null);
+        setSelectedThreadId(started.threadId);
       });
-      return;
-    }
-    if (target === null) return;
-    void startThread({
-      projectRootKey: target.projectRootKey,
-      repositoryRoot: target.repositoryRoot,
-      prompt,
+    },
+    [
+      confirmed,
+      followUpThreadId,
       isolation,
-      unsafeInPlaceConfirmationKey: confirmed ? (preview?.confirmationKey ?? null) : null,
-    }).then((started) => {
-      if (started === null) return;
-      setPrompt("");
-      setUnsafeConfirmed(null);
-      setSelectedThreadId(started.threadId);
-    });
-  }, [
-    confirmed,
-    followUpThreadId,
-    isolation,
-    preview?.confirmationKey,
-    prompt,
-    sendFollowUp,
-    startThread,
-    target,
-  ]);
+      preview?.confirmationKey,
+      prompt,
+      sendFollowUp,
+      startThread,
+      target,
+    ],
+  );
 
   const shipActions = useAgentShipActions(agents);
 
@@ -228,102 +268,112 @@ export function AgentModeView({
           onDismiss={() => agents.dismissNotice()}
         />
       )}
-      <div className="agent-mode__grid">
-        <AgentThreadsSidebar
-          collapsedProjectRootKeys={collapsedProjectRootKeys}
-          collapsedRepositoryRoots={collapsedRepositoryRoots}
-          expandedArchivedRoots={expandedArchivedRoots}
-          groups={groups}
-          liveTaskCount={agents.liveTaskCount}
-          maxConcurrentAgentTasks={agents.maxConcurrentAgentTasks}
-          now={now}
-          onNewThread={startNewThread}
-          onPruneOrphans={(root) => void agents.pruneOrphanedWorktrees(root)}
-          onReleaseProject={onReleaseProject}
-          onRemoveOrphan={(worktreePath) => void agents.removeOrphanedWorktree(worktreePath)}
-          onSelectThread={setSelectedThreadId}
-          onToggleArchived={toggleArchived}
-          onToggleGroup={toggleGroup}
-          onToggleProject={toggleProject}
-          onTogglePin={(threadId) => agents.togglePin(threadId)}
-          onTrustProject={onTrustProject}
-          overflowRootPaths={overflowRootPaths}
-          selectedThreadId={selectedThread?.thread.threadId ?? null}
-        />
-
-        <div className="agent-mode__center">
-          <AgentThreadSession
-            composerRepositoryLabel={composerLabel}
-            now={now}
-            onHideChanges={(threadId) => agents.hideChanges(threadId)}
-            onHideFileDiff={(threadId) => agents.hideFileDiff(threadId)}
-            onOpenChangedFile={(threadId, change) => void agents.openChangedFile(threadId, change)}
-            onOpenChangedFileDiff={(threadId, change) =>
-              void agents.openChangedFileDiff(threadId, change)
-            }
-            onRefreshChanges={(threadId) => void agents.showChanges(threadId)}
-            onShowFileDiff={(threadId, change) => void agents.showFileDiff(threadId, change)}
-            shipActions={shipActions}
-            thread={selectedThread}
+      <AgentClockProvider nowTickMs={nowTickMs}>
+        <div className="agent-mode__grid">
+          <AgentThreadsSidebar
+            collapsedProjectRootKeys={collapsedProjectRootKeys}
+            collapsedRepositoryRoots={collapsedRepositoryRoots}
+            expandedArchivedRoots={expandedArchivedRoots}
+            groups={groups}
+            liveTaskCount={agents.liveTaskCount}
+            maxConcurrentAgentTasks={agents.maxConcurrentAgentTasks}
+            onNewThread={startNewThread}
+            onPruneOrphans={(root) => void agents.pruneOrphanedWorktrees(root)}
+            onReleaseProject={onReleaseProject}
+            onRemoveOrphan={(worktreePath) => void agents.removeOrphanedWorktree(worktreePath)}
+            onSelectThread={setSelectedThreadId}
+            onToggleArchived={toggleArchived}
+            onToggleGroup={toggleGroup}
+            onToggleProject={toggleProject}
+            onTogglePin={(threadId) => agents.togglePin(threadId)}
+            onTrustProject={onTrustProject}
+            overflowRootPaths={overflowRootPaths}
+            selectedThreadId={selectedThread?.thread.threadId ?? null}
           />
-          <AgentComposer
-            dispatching={agents.dispatching}
-            guard={guard}
-            isolation={isolation}
-            isolationReason={
+
+          <div className="agent-mode__center">
+            <AgentThreadSession
+              composerRepositoryLabel={composerLabel}
+              onHideChanges={(threadId) => agents.hideChanges(threadId)}
+              onHideFileDiff={(threadId) => agents.hideFileDiff(threadId)}
+              onOpenChangedFile={(threadId, change) =>
+                void agents.openChangedFile(threadId, change)
+              }
+              onOpenChangedFileDiff={(threadId, change) =>
+                void agents.openChangedFileDiff(threadId, change)
+              }
+              onRefreshChanges={(threadId) => void agents.showChanges(threadId)}
+              onShowFileDiff={(threadId, change) => void agents.showFileDiff(threadId, change)}
+              shipActions={shipActions}
+              thread={selectedThread}
+            />
+            <AgentComposer
+              dangerousConfirmed={dangerousConfirmed}
+              dispatching={agents.dispatching}
+              guard={guard}
+              isolation={isolation}
+              isolationReason={
+                preview === null ? null : agentIsolationReasonLabel(preview.recommended)
+              }
+              launch={composerLaunch}
+              launchProvider={agentCliKind}
+              mode={composerMode}
+              onDangerousConfirmedChange={setDangerousConfirmed}
+              onIsolationChange={(next) => {
+                if (composerRoot === null) return;
+                setIsolationChoice({ repositoryRoot: composerRoot, isolation: next });
+                setUnsafeConfirmed(null);
+              }}
+              onLaunchChange={(next) => {
+                if (launchScope === null) return;
+                setLaunchChoice({ key: launchScope.key, launch: next });
+              }}
+              onNewThread={clearSelection}
+              onPromptChange={setPrompt}
+              onSelectProject={(projectRootKey) => {
+                setSelection({ projectRootKey, repositoryRoot: "" });
+                setUnsafeConfirmed(null);
+              }}
+              onSelectRepository={(repositoryRoot) => {
+                if (target === null) return;
+                setSelection({ projectRootKey: target.projectRootKey, repositoryRoot });
+                setUnsafeConfirmed(null);
+              }}
+              onSubmit={submit}
+              onUnsafeConfirmedChange={(next) =>
+                setUnsafeConfirmed(next ? (preview?.confirmationKey ?? null) : null)
+              }
+              projects={composerProjects}
+              prompt={prompt}
+              promptBytes={promptBytes}
+              selectedProjectRootKey={target?.projectRootKey ?? null}
+              selectedRepositoryRoot={composerRoot}
+              submitBlocked={submitBlocked}
+              unsafeConfirmed={confirmed}
+              worktreeOnly={worktreeOnly}
+              worktreeOnlyReason={worktreeOnlyReason}
+            />
+          </div>
+
+          <AgentThreadInfoColumn
+            composerIsolationReason={
               preview === null ? null : agentIsolationReasonLabel(preview.recommended)
             }
-            mode={composerMode}
-            onIsolationChange={(next) => {
-              if (composerRoot === null) return;
-              setIsolationChoice({ repositoryRoot: composerRoot, isolation: next });
-              setUnsafeConfirmed(null);
-            }}
-            onNewThread={clearSelection}
-            onPromptChange={setPrompt}
-            onSelectProject={(projectRootKey) => {
-              setSelection({ projectRootKey, repositoryRoot: "" });
-              setUnsafeConfirmed(null);
-            }}
-            onSelectRepository={(repositoryRoot) => {
-              if (target === null) return;
-              setSelection({ projectRootKey: target.projectRootKey, repositoryRoot });
-              setUnsafeConfirmed(null);
-            }}
-            onSubmit={submit}
-            onUnsafeConfirmedChange={(next) =>
-              setUnsafeConfirmed(next ? (preview?.confirmationKey ?? null) : null)
-            }
-            projects={composerProjects}
-            prompt={prompt}
-            promptBytes={promptBytes}
-            selectedProjectRootKey={target?.projectRootKey ?? null}
-            selectedRepositoryRoot={composerRoot}
-            submitBlocked={submitBlocked}
-            unsafeConfirmed={confirmed}
-            worktreeOnly={worktreeOnly}
-            worktreeOnlyReason={worktreeOnlyReason}
+            composerLaunch={composerLaunch}
+            composerRepositoryLabel={composerLabel}
+            composerRepositoryRoot={composerRoot}
+            liveTaskCount={agents.liveTaskCount}
+            maxConcurrentAgentTasks={agents.maxConcurrentAgentTasks}
+            onArchive={(threadId) => agents.archive(threadId)}
+            onRemove={remove}
+            onRemoveWorktree={(threadId) => void agents.removeWorktree(threadId)}
+            onShowChanges={(threadId) => void agents.showChanges(threadId)}
+            onStop={(threadId) => void agents.stop(threadId)}
+            onTogglePin={(threadId) => agents.togglePin(threadId)}
+            thread={selectedThread}
           />
         </div>
-
-        <AgentThreadInfoColumn
-          composerIsolationReason={
-            preview === null ? null : agentIsolationReasonLabel(preview.recommended)
-          }
-          composerRepositoryLabel={composerLabel}
-          composerRepositoryRoot={composerRoot}
-          liveTaskCount={agents.liveTaskCount}
-          maxConcurrentAgentTasks={agents.maxConcurrentAgentTasks}
-          now={now}
-          onArchive={(threadId) => agents.archive(threadId)}
-          onRemove={remove}
-          onRemoveWorktree={(threadId) => void agents.removeWorktree(threadId)}
-          onShowChanges={(threadId) => void agents.showChanges(threadId)}
-          onStop={(threadId) => void agents.stop(threadId)}
-          onTogglePin={(threadId) => agents.togglePin(threadId)}
-          thread={selectedThread}
-        />
-      </div>
+      </AgentClockProvider>
     </section>
   );
 }
@@ -367,6 +417,61 @@ function useComposerMode(
 interface IsolationChoice {
   readonly repositoryRoot: string;
   readonly isolation: AgentTaskIsolation;
+}
+
+interface LaunchChoice {
+  readonly key: string;
+  readonly launch: AgentLaunchOptions;
+}
+
+interface LaunchScope {
+  readonly key: string;
+  readonly rootKey: string;
+  readonly seed: AgentLaunchOptions | null;
+}
+
+function resolveLaunchScope(
+  selectedThread: AgentThreadView | null,
+  targetRootKey: string | null,
+): LaunchScope | null {
+  if (selectedThread !== null) {
+    const thread = selectedThread.thread;
+    return {
+      key: `thread:${thread.threadId}`,
+      rootKey: thread.owner.rootKey,
+      seed: lastAgentTurn(thread)?.launch ?? null,
+    };
+  }
+  if (targetRootKey === null) return null;
+  return { key: `root:${targetRootKey}`, rootKey: targetRootKey, seed: null };
+}
+
+function resolveComposerLaunch(
+  choice: LaunchChoice | null,
+  scope: LaunchScope | null,
+  provider: AgentCliKind,
+  lastUsedLaunch: (projectRootKey: string) => AgentLaunchOptions | null,
+): AgentLaunchOptions {
+  if (scope === null) return defaultAgentLaunchOptions(provider);
+  if (choice !== null && choice.key === scope.key && choice.launch.provider === provider) {
+    return choice.launch;
+  }
+  if (scope.seed !== null && scope.seed.provider === provider) return scope.seed;
+  const remembered = lastUsedLaunch(scope.rootKey);
+  if (remembered !== null && remembered.provider === provider) return remembered;
+  return defaultAgentLaunchOptions(provider);
+}
+
+function agentLaunchKey(launch: AgentLaunchOptions): string {
+  return `${launch.provider}:${launch.model}:${launch.mode}`;
+}
+
+function terminalTurnKey(thread: AgentThread | null): string | null {
+  if (thread === null) return null;
+  const turn = lastAgentTurn(thread);
+  if (turn === null) return null;
+  if (!isTerminalAgentTurnStatus(turn.status)) return null;
+  return `${turn.turnId}:${turn.status.kind}:${turn.endedAtEpochMs ?? 0}`;
 }
 
 function resolveComposerTarget(

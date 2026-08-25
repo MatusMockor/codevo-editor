@@ -1,4 +1,5 @@
 import type { AgentProjectOrigin } from "../domain/agentProject";
+import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import type {
   AgentCliKind,
   AgentIsolationDefault,
@@ -7,6 +8,7 @@ import type {
 } from "../domain/agentTask";
 import type {
   AgentThread,
+  AgentThreadAttention,
   AgentThreadLifecycle,
   AgentThreadsAction,
   AgentThreadsState,
@@ -121,6 +123,8 @@ export interface AgentThreadView {
   readonly changeSummary: AgentTaskChangeSummary | null;
   readonly ship: AgentShipState;
   readonly editorAvailability: AgentShipAvailability;
+  readonly attention: AgentThreadAttention;
+  readonly unread: boolean;
 }
 
 export interface AgentThreadStartRequest {
@@ -129,6 +133,8 @@ export interface AgentThreadStartRequest {
   readonly prompt: string;
   readonly isolation: AgentTaskIsolation;
   readonly unsafeInPlaceConfirmationKey: string | null;
+  readonly launch: AgentLaunchOptions;
+  readonly dangerousLaunchConfirmed?: boolean;
 }
 
 export interface AgentThreadStartResult {
@@ -138,6 +144,8 @@ export interface AgentThreadStartResult {
 export interface AgentFollowUpRequest {
   readonly threadId: string;
   readonly prompt: string;
+  readonly launch: AgentLaunchOptions;
+  readonly dangerousLaunchConfirmed?: boolean;
 }
 
 export interface AgentThreadsSurface {
@@ -150,6 +158,8 @@ export interface AgentThreadsSurface {
   readonly agentCliKind: AgentCliKind;
   readonly liveTaskCount: number;
   readonly maxConcurrentAgentTasks: number;
+  markThreadViewed(threadId: string): void;
+  lastUsedLaunch(projectRootKey: string): AgentLaunchOptions | null;
   isolationPreview(repositoryRoot: string): AgentIsolationPreview;
   refreshIsolationStatus(repositoryRoot: string): Promise<void>;
   startThread(request: AgentThreadStartRequest): Promise<AgentThreadStartResult | null>;

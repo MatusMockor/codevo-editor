@@ -22,6 +22,7 @@ const THREAD: AgentThread = {
   updatedAtEpochMs: 2_000,
   turns: [],
   turnsTruncated: false,
+  viewedAtEpochMs: null,
   integration: null,
 };
 

@@ -1,3 +1,4 @@
+import type { AgentLaunchOptions } from "./agentLaunch";
 import {
   isAgentSessionId,
   isTerminalAgentTaskStatus,
@@ -42,6 +43,8 @@ export interface AgentProviderSession {
 }
 
 export type AgentThreadLifecycle = "running" | "settled" | "archived";
+
+export type AgentThreadAttention = "running" | "attention" | "settled" | "archived";
 
 export type AgentTurnStatus = AgentTaskStatus | { readonly kind: "interrupted" };
 
@@ -89,6 +92,7 @@ export interface AgentTurn {
   readonly eventsTruncated: boolean;
   readonly lastStatusSequence: number;
   readonly lastOutputSequence: number;
+  readonly launch: AgentLaunchOptions | null;
 }
 
 export interface AgentThreadPushReceipt {
@@ -122,6 +126,7 @@ export interface AgentThread {
   readonly turns: ReadonlyArray<AgentTurn>;
   readonly turnsTruncated: boolean;
   readonly integration: AgentThreadIntegration | null;
+  readonly viewedAtEpochMs: number | null;
 }
 
 export interface AgentThreadsState {
@@ -159,6 +164,11 @@ export type AgentThreadsAction =
       readonly kind: "integrationRecorded";
       readonly threadId: string;
       readonly integration: AgentThreadIntegration;
+    }
+  | {
+      readonly kind: "threadViewed";
+      readonly threadId: string;
+      readonly atEpochMs: number;
     }
   | { readonly kind: "pinToggled"; readonly threadId: string }
   | { readonly kind: "archived"; readonly threadId: string }
@@ -199,6 +209,67 @@ export function agentThreadLifecycle(thread: AgentThread): AgentThreadLifecycle 
   return "settled";
 }
 
+export function agentThreadAttention(thread: AgentThread): AgentThreadAttention {
+  if (thread.archived) return "archived";
+  if (runningTurn(thread) !== null) return "running";
+  const last = thread.turns[thread.turns.length - 1];
+  if (last === undefined) return "settled";
+  if (turnNeedsAttention(last.status)) return "attention";
+  return "settled";
+}
+
+function turnNeedsAttention(status: AgentTurnStatus): boolean {
+  switch (status.kind) {
+    case "failed":
+    case "interrupted":
+    case "stopped":
+      return true;
+    case "exited":
+      return status.exitCode !== 0;
+    case "pending":
+    case "running":
+      return false;
+    default:
+      return unsupportedTurnStatus(status);
+  }
+}
+
+export function agentThreadUnread(thread: AgentThread): boolean {
+  const last = thread.turns[thread.turns.length - 1];
+  if (last === undefined) return false;
+  if (!isTerminalAgentTurnStatus(last.status)) return false;
+  if (last.endedAtEpochMs === null) return false;
+  if (thread.viewedAtEpochMs === null) return true;
+  return last.endedAtEpochMs > thread.viewedAtEpochMs;
+}
+
+export function lastUsedAgentLaunch(
+  threads: Iterable<AgentThread>,
+  rootKey: string,
+  provider: AgentCliKind,
+): AgentLaunchOptions | null {
+  let best: AgentTurn | null = null;
+  for (const thread of threads) {
+    if (thread.owner.rootKey !== rootKey) continue;
+    for (const turn of thread.turns) {
+      if (turn.launch === null) continue;
+      if (turn.launch.provider !== provider) continue;
+      if (best !== null && compareTurnRecency(turn, best) <= 0) continue;
+      best = turn;
+    }
+  }
+  return best?.launch ?? null;
+}
+
+function compareTurnRecency(left: AgentTurn, right: AgentTurn): number {
+  if (left.startedAtEpochMs !== right.startedAtEpochMs) {
+    return left.startedAtEpochMs - right.startedAtEpochMs;
+  }
+  if (left.turnId < right.turnId) return -1;
+  if (left.turnId > right.turnId) return 1;
+  return 0;
+}
+
 export function agentThreadTitle(prompt: string): string {
   const line = firstNonEmptyLine(prompt);
   if (line === "") return UNTITLED_AGENT_THREAD_TITLE;
@@ -230,6 +301,8 @@ export function agentThreadsReducer(
       return interruptTurn(state, action.turnId, action.nowEpochMs);
     case "integrationRecorded":
       return recordIntegration(state, action.threadId, action.integration);
+    case "threadViewed":
+      return markThreadViewed(state, action.threadId, action.atEpochMs);
     case "pinToggled":
       return togglePin(state, action.threadId);
     case "archived":
@@ -450,6 +523,18 @@ function recordIntegration(
   });
 }
 
+function markThreadViewed(
+  state: AgentThreadsState,
+  threadId: string,
+  atEpochMs: number,
+): AgentThreadsState {
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return state;
+  if (!Number.isSafeInteger(atEpochMs) || atEpochMs < 0) return state;
+  if (thread.viewedAtEpochMs !== null && atEpochMs <= thread.viewedAtEpochMs) return state;
+  return replaceThread(state, { ...thread, viewedAtEpochMs: atEpochMs });
+}
+
 function togglePin(state: AgentThreadsState, threadId: string): AgentThreadsState {
   const thread = state.threads.get(threadId);
   if (thread === undefined) return state;
@@ -544,6 +629,10 @@ function firstNonEmptyLine(prompt: string): string {
     if (trimmed !== "") return trimmed;
   }
   return "";
+}
+
+function unsupportedTurnStatus(status: never): never {
+  throw new TypeError(`Unsupported agent turn status: ${JSON.stringify(status)}.`);
 }
 
 function unsupportedAction(action: never): never {

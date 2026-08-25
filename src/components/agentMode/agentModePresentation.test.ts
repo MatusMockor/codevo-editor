@@ -1,6 +1,8 @@
+import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { describe, expect, it } from "vitest";
 import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/agentProject";
 import type { AgentCliKind } from "../../domain/agentTask";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentThread, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import type { AgentThreadView, OrphanedWorktreeView } from "../../application/agentThreadPorts";
@@ -22,8 +24,20 @@ import {
   agentProjectWorktreeOnly,
   agentProjectWorktreeOnlyReason,
   agentPromptByteLength,
+  agentAttentionCount,
+  agentThreadAttentionLabel,
+  agentThreadBands,
   agentThreadDisplayTitle,
   agentThreadLifecycleLabel,
+  agentThreadListQuery,
+  agentThreadListQueryActive,
+  agentThreadModelTag,
+  agentThreadStatusFilterLabel,
+  applyAgentThreadListQuery,
+  clipAgentThreadFilterText,
+  orderAgentThreadRows,
+  visibleAgentThreadIds,
+  MAX_AGENT_THREAD_FILTER_CHARS,
   agentThreadTimeLabel,
   agentThreadTone,
   agentTurnProjection,
@@ -42,6 +56,7 @@ import {
   compareHostLabel,
   inPlaceGuardReasonLabel,
   type AgentFollowUpContext,
+  type AgentProjectGroup,
 } from "./agentModePresentation";
 
 const ROOT = "/workspace/app";
@@ -522,6 +537,184 @@ describe("agentModePresentation", () => {
   });
 });
 
+describe("agent thread queue presentation", () => {
+  it("labels every attention state and status filter", () => {
+    expect(agentThreadAttentionLabel("running")).toBe("Running");
+    expect(agentThreadAttentionLabel("attention")).toBe("Needs attention");
+    expect(agentThreadAttentionLabel("settled")).toBe("Idle");
+    expect(agentThreadAttentionLabel("archived")).toBe("Archived");
+
+    expect(agentThreadStatusFilterLabel("all")).toBe("All");
+    expect(agentThreadStatusFilterLabel("attention")).toBe("Needs attention");
+    expect(agentThreadStatusFilterLabel("settled")).toBe("Idle");
+  });
+
+  it("orders rows by attention band, then pins, then recency, then id", () => {
+    const ordered = orderAgentThreadRows([
+      settledThread("agt-5", { updatedAtEpochMs: 1_700_000_000_000 }),
+      runningThread("agt-4"),
+      attentionThread("agt-3"),
+      settledThread("agt-2", { updatedAtEpochMs: 1_700_000_900_000 }),
+      settledThread("agt-1", { pinned: true }),
+    ]);
+
+    expect(threadIds(ordered)).toEqual(["agt-4", "agt-3", "agt-1", "agt-2", "agt-5"]);
+  });
+
+  it("splits the ordered rows into the non-empty bands only", () => {
+    const bands = agentThreadBands(
+      orderAgentThreadRows([runningThread("agt-1"), settledThread("agt-2", {})]),
+    );
+
+    expect(bands.map((band) => band.label)).toEqual(["Running", "Idle"]);
+    expect(threadIds(bands[0]?.threads)).toEqual(["agt-1"]);
+  });
+
+  it("counts only the threads that need attention", () => {
+    expect(
+      agentAttentionCount([
+        runningThread("agt-1"),
+        attentionThread("agt-2"),
+        settledThread("agt-3", {}),
+      ]),
+    ).toBe(1);
+  });
+
+  it("clips the filter text on a UTF-16 boundary", () => {
+    expect(clipAgentThreadFilterText("abc")).toBe("abc");
+    expect(clipAgentThreadFilterText("x".repeat(400))).toHaveLength(MAX_AGENT_THREAD_FILTER_CHARS);
+
+    const surrogates = "🚀".repeat(200);
+    const clipped = clipAgentThreadFilterText(surrogates);
+
+    expect(clipped.length).toBeLessThanOrEqual(MAX_AGENT_THREAD_FILTER_CHARS);
+    expect([...clipped].every((character) => character === "🚀")).toBe(true);
+  });
+
+  it("treats only a non-empty text or a narrowed status as an active query", () => {
+    expect(agentThreadListQueryActive(agentThreadListQuery("   ", "all"))).toBe(false);
+    expect(agentThreadListQueryActive(agentThreadListQuery("port", "all"))).toBe(true);
+    expect(agentThreadListQueryActive(agentThreadListQuery("", "running"))).toBe(true);
+  });
+
+  it("returns the same groups for an inactive query", () => {
+    const groups = queueGroups();
+
+    expect(applyAgentThreadListQuery(groups, agentThreadListQuery("", "all"))).toBe(groups);
+  });
+
+  it("filters by a case-insensitive title substring and drops empty repositories", () => {
+    const filtered = applyAgentThreadListQuery(queueGroups(), agentThreadListQuery("PORT", "all"));
+
+    expect(threadIds(filtered[0]?.repos[0]?.threads)).toEqual(["agt-2"]);
+    expect(filtered[0]?.repos).toHaveLength(1);
+    expect(filtered[0]?.repos[0]?.orphans).toEqual([]);
+  });
+
+  it("filters by status and hides archived threads outside the all and archived filters", () => {
+    const attentionOnly = applyAgentThreadListQuery(
+      queueGroups(),
+      agentThreadListQuery("", "attention"),
+    );
+    expect(threadIds(attentionOnly[0]?.repos[0]?.threads)).toEqual(["agt-2"]);
+    expect(attentionOnly[0]?.repos[0]?.archived).toEqual([]);
+
+    const archivedOnly = applyAgentThreadListQuery(
+      queueGroups(),
+      agentThreadListQuery("", "archived"),
+    );
+    expect(threadIds(archivedOnly[0]?.repos[0]?.threads)).toEqual([]);
+    expect(threadIds(archivedOnly[0]?.repos[0]?.archived)).toEqual(["agt-4"]);
+  });
+
+  it("drops a project whose repositories all filtered out", () => {
+    expect(applyAgentThreadListQuery(queueGroups(), agentThreadListQuery("zzz", "all"))).toEqual(
+      [],
+    );
+  });
+
+  it("lists the visible thread ids in render order", () => {
+    const groups = queueGroups();
+
+    expect(visibleAgentThreadIds(groups, new Set(), new Set(), new Set([ROOT]))).toEqual([
+      "agt-1",
+      "agt-2",
+      "agt-3",
+      "agt-4",
+    ]);
+    expect(visibleAgentThreadIds(groups, new Set(), new Set(), new Set())).toEqual([
+      "agt-1",
+      "agt-2",
+      "agt-3",
+    ]);
+    expect(visibleAgentThreadIds(groups, new Set([ROOT]), new Set(), new Set())).toEqual([]);
+  });
+
+  it("skips a collapsed repository subsection of a multi-repository project", () => {
+    const groups = agentProjectGroups(
+      [project({ repositories: [repository("", ROOT), repository("packages/api", NESTED)] })],
+      [
+        thread({ threadId: "agt-1", repositoryRoot: ROOT }),
+        thread({ threadId: "agt-2", repositoryRoot: NESTED }),
+      ],
+      [],
+    );
+
+    expect(visibleAgentThreadIds(groups, new Set(), new Set([NESTED]), new Set())).toEqual([
+      "agt-1",
+    ]);
+  });
+
+  it("names the recorded model of the last turn and stays silent otherwise", () => {
+    expect(agentThreadModelTag(thread({}).thread)).toBeNull();
+    expect(
+      agentThreadModelTag(
+        thread({ launch: { provider: "claudeCode", model: "default", mode: "default" } }).thread,
+      ),
+    ).toBeNull();
+    expect(
+      agentThreadModelTag(
+        thread({ launch: { provider: "codex", model: "gpt-5.5", mode: "readOnly" } }).thread,
+      ),
+    ).toBe("gpt-5.5");
+  });
+});
+
+function queueGroups(): ReadonlyArray<AgentProjectGroup> {
+  return agentProjectGroups(
+    [project({ repositories: [repository("", ROOT)] })],
+    [
+      runningThread("agt-1", { title: "Fix the parser" }),
+      attentionThread("agt-2", { title: "Rename the port" }),
+      settledThread("agt-3", { title: "Polish the docs" }),
+      thread({ threadId: "agt-4", archived: true, title: "Old work" }),
+    ],
+    [orphan(ROOT, `${ROOT}/.worktrees/agt-9`)],
+  );
+}
+
+function runningThread(threadId: string, options: ThreadOptions = {}): AgentThreadView {
+  return thread({ status: { kind: "running" }, threadId, ...options });
+}
+
+function attentionThread(threadId: string, options: ThreadOptions = {}): AgentThreadView {
+  return thread({
+    endedAtEpochMs: 1_700_000_100_000,
+    status: { kind: "failed", message: "boom" },
+    threadId,
+    ...options,
+  });
+}
+
+function settledThread(threadId: string, options: ThreadOptions = {}): AgentThreadView {
+  return thread({
+    endedAtEpochMs: 1_700_000_100_000,
+    status: { kind: "exited", exitCode: 0 },
+    threadId,
+    ...options,
+  });
+}
+
 function blockedReason(
   view: AgentThreadView,
   context: Partial<AgentFollowUpContext> = {},
@@ -572,10 +765,16 @@ interface ThreadOptions {
   readonly sessionId?: string | null;
   readonly title?: string;
   readonly worktreeMissing?: boolean;
+  readonly updatedAtEpochMs?: number;
+  readonly endedAtEpochMs?: number | null;
+  readonly viewedAtEpochMs?: number | null;
+  readonly launch?: AgentLaunchOptions | null;
 }
 
 function thread({
   archived = false,
+  endedAtEpochMs = null,
+  launch = null,
   ownerId = `agent-root:${ROOT}`,
   pinned = false,
   projectOrigin = "active-tab",
@@ -585,6 +784,8 @@ function thread({
   status = { kind: "exited", exitCode: 0 },
   threadId = "agt-1",
   title = "Refactor the parser",
+  updatedAtEpochMs = 1_700_000_000_000,
+  viewedAtEpochMs = null,
   worktreeMissing = false,
 }: ThreadOptions): AgentThreadView {
   const running = status.kind === "pending" || status.kind === "running";
@@ -597,27 +798,31 @@ function thread({
     pinned,
     archived,
     createdAtEpochMs: 1_700_000_000_000,
-    updatedAtEpochMs: 1_700_000_000_000,
+    updatedAtEpochMs,
     turns: [
       {
         turnId: `${threadId}-t1`,
         prompt: title,
         status,
         startedAtEpochMs: 1_700_000_000_000,
-        endedAtEpochMs: null,
+        endedAtEpochMs,
         events: [],
         eventsTruncated: false,
         lastStatusSequence: 0,
         lastOutputSequence: 0,
+        launch,
       },
     ],
     turnsTruncated: false,
+    viewedAtEpochMs,
     integration: null,
   };
 
   return {
     ship: { kind: "idle", status: null, loadingStatus: false },
     editorAvailability: { kind: "available" },
+    attention: agentThreadAttention(record),
+    unread: agentThreadUnread(record),
     thread: record,
     lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: repositoryRoot,
@@ -876,6 +1081,7 @@ function shipThread(title: string): AgentThread {
     updatedAtEpochMs: 0,
     turns: [],
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration: null,
   };
 }

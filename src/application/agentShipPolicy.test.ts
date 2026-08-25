@@ -1,3 +1,4 @@
+import { agentThreadAttention, agentThreadUnread } from "../domain/agentThread";
 import { describe, expect, it } from "vitest";
 import { utf8ByteLength } from "../domain/agentOutput/utf8Text";
 import { MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES, type AgentShipState } from "../domain/agentShip";
@@ -55,6 +56,7 @@ function agentThread(overrides: Partial<AgentThread> = {}): AgentThread {
     updatedAtEpochMs: 2,
     turns: [],
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration: null,
     ...overrides,
   };
@@ -64,8 +66,9 @@ function threadView(
   ship: AgentShipState,
   overrides: Partial<AgentThreadView> = {},
 ): AgentThreadView {
+  const thread = agentThread();
   return {
-    thread: agentThread(),
+    thread,
     lifecycle: "settled",
     repositoryLabel: "repo",
     projectOrigin: "active-tab",
@@ -74,6 +77,8 @@ function threadView(
     changeSummary: null,
     ship,
     editorAvailability: { kind: "available" },
+    attention: agentThreadAttention(thread),
+    unread: agentThreadUnread(thread),
     ...overrides,
   };
 }

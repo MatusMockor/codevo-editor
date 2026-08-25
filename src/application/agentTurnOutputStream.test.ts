@@ -82,9 +82,11 @@ function stateWithRunningTurn(): AgentThreadsState {
         eventsTruncated: false,
         lastStatusSequence: 0,
         lastOutputSequence: 0,
+        launch: null,
       },
     ],
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration: null,
   };
   return agentThreadsReducer(emptyAgentThreadsState(), { kind: "threadCreated", thread });

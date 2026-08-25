@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -164,12 +165,15 @@ function threadView(overrides: {
     updatedAtEpochMs: NOW - 5 * 60_000,
     turns: [],
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration: null,
   };
 
   return {
     ship: { kind: "idle", status: null, loadingStatus: false },
     editorAvailability: overrides.editorAvailability ?? { kind: "available" },
+    attention: agentThreadAttention(thread),
+    unread: agentThreadUnread(thread),
     thread,
     lifecycle: "settled",
     repositoryLabel: "app",

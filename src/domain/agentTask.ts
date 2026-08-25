@@ -1,3 +1,9 @@
+import {
+  agentLaunchMatchesProvider,
+  parseAgentLaunchOptions,
+  type AgentLaunchOptions,
+} from "./agentLaunch";
+
 export const MAX_AGENT_TASK_ID_BYTES = 64;
 export const MAX_AGENT_TASK_WORKSPACE_ID_BYTES = 1_024;
 export const MAX_AGENT_TASK_PATH_BYTES = 4_096;
@@ -51,6 +57,7 @@ export interface StartAgentTaskRequest {
   readonly agentCliPath: string;
   readonly agentCliKind: AgentCliKind;
   readonly resumeSessionId: string | null;
+  readonly launch: AgentLaunchOptions;
 }
 
 export interface StartAgentTaskResult {
@@ -222,6 +229,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
       "agentCliPath",
       "agentCliKind",
       "resumeSessionId",
+      "launch",
     ],
     "request",
   );
@@ -231,6 +239,11 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
   if (isolation === "in-place" && cwd !== repositoryRoot) {
     invalid("request.cwd", "the repository root for an in-place agent task");
   }
+  const cliKind = agentCliKind(request.agentCliKind, "request.agentCliKind");
+  const launch = parseAgentLaunchOptions(request.launch, "request.launch");
+  if (!agentLaunchMatchesProvider(launch, cliKind)) {
+    invalid("request.launch.provider", "the agent CLI kind");
+  }
   return {
     taskId: agentTaskId(request.taskId, "request.taskId"),
     workspaceId: agentWorkspaceId(request.workspaceId, "request.workspaceId"),
@@ -239,8 +252,9 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
     isolation,
     prompt: boundedText(request.prompt, "request.prompt", MAX_AGENT_TASK_PROMPT_BYTES, false),
     agentCliPath: agentPath(request.agentCliPath, "request.agentCliPath"),
-    agentCliKind: agentCliKind(request.agentCliKind, "request.agentCliKind"),
+    agentCliKind: cliKind,
     resumeSessionId: optionalAgentSessionId(request.resumeSessionId, "request.resumeSessionId"),
+    launch,
   };
 }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import {
   isDefiniteAgentTaskStartRejection,
   isTerminalAgentTaskStatus,
@@ -15,7 +16,6 @@ import {
   type AgentThread,
   type AgentTurn,
 } from "../domain/agentThread";
-import { normalizeAgentCliKind } from "../domain/agentSettings";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import {
   AGENT_TASKS_SOURCE,
@@ -109,6 +109,7 @@ interface TurnStart {
   readonly agentCliPath: string;
   readonly agentCliKind: AgentCliKind;
   readonly resumeSessionId: string | null;
+  readonly launch: AgentLaunchOptions;
   readonly createdWorktree: CreatedAgentWorktree | null;
   readonly registration: TurnRegistration;
   readonly register: (turn: AgentTurn) => void;
@@ -312,7 +313,7 @@ export function useAgentTurnDispatch(
       const stillOwned = (): boolean =>
         isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot) &&
         registeredTurnAlive(start);
-      const turn = pendingTurn(turnId, start.prompt, now());
+      const turn = pendingTurn(turnId, start.prompt, now(), start.launch);
       if (start.registration === "before-start") start.register(turn);
       const started = await attempt(() =>
         gateway.startAgentTask({
@@ -325,6 +326,7 @@ export function useAgentTurnDispatch(
           agentCliPath: start.agentCliPath,
           agentCliKind: start.agentCliKind,
           resumeSessionId: start.resumeSessionId,
+          launch: start.launch,
         }),
       );
       if (!started.ok) {
@@ -379,7 +381,7 @@ export function useAgentTurnDispatch(
       const deps = dependenciesRef.current;
       const admitted = admitStart(deps, request);
       if (admitted === null) return null;
-      const { authority, project, prompt, agentCliPath } = admitted;
+      const { authority, project, prompt, agentCliPath, agentCliKind, launch } = admitted;
       const repositoryRoot = request.repositoryRoot;
       if (dispatchingRef.current) {
         deps.setNotice(warning("A dispatch is already in progress."));
@@ -434,7 +436,6 @@ export function useAgentTurnDispatch(
           return null;
         }
         const worktreePath = createdWorktree?.receipt.worktreePath ?? null;
-        const agentCliKind = normalizeAgentCliKind(deps.getAgentCliKind());
         const now = deps.now ?? Date.now;
         const started = await runTurnStart({
           authority,
@@ -448,6 +449,7 @@ export function useAgentTurnDispatch(
           agentCliPath,
           agentCliKind,
           resumeSessionId: null,
+          launch,
           createdWorktree,
           registration: "after-start",
           register: (turn) => {
@@ -465,6 +467,7 @@ export function useAgentTurnDispatch(
               turns: [turn],
               turnsTruncated: false,
               integration: null,
+              viewedAtEpochMs: createdAt,
             };
             registerStream(thread, turn.turnId, false);
             dependenciesRef.current.store.dispatchAction({ kind: "threadCreated", thread });
@@ -487,7 +490,7 @@ export function useAgentTurnDispatch(
       const deps = dependenciesRef.current;
       const admitted = admitFollowUp(deps, request, inFlightThreadsRef.current);
       if (admitted === null) return false;
-      const { thread, authority, prompt, agentCliPath, sessionId } = admitted;
+      const { thread, authority, prompt, agentCliPath, sessionId, launch } = admitted;
       const repositoryRoot = thread.owner.repositoryRoot;
       const turnId = mintUnusedId(deps, new Set(usedTurnIds(deps.store.state)));
       if (turnId === null) {
@@ -509,6 +512,7 @@ export function useAgentTurnDispatch(
           agentCliPath,
           agentCliKind: thread.provider.kind,
           resumeSessionId: sessionId,
+          launch,
           createdWorktree: null,
           registration: "before-start",
           register: (turn) => {
@@ -590,7 +594,12 @@ function noteSessionChange(
   deps.setNotice(notice);
 }
 
-function pendingTurn(turnId: string, prompt: string, startedAtEpochMs: number): AgentTurn {
+function pendingTurn(
+  turnId: string,
+  prompt: string,
+  startedAtEpochMs: number,
+  launch: AgentLaunchOptions,
+): AgentTurn {
   return {
     turnId,
     prompt,
@@ -601,6 +610,7 @@ function pendingTurn(turnId: string, prompt: string, startedAtEpochMs: number): 
     eventsTruncated: false,
     lastStatusSequence: 0,
     lastOutputSequence: 0,
+    launch,
   };
 }
 

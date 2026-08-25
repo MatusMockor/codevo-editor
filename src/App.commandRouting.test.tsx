@@ -911,6 +911,8 @@ describe("App command routing", () => {
         liveTaskCount: 1,
         maxConcurrentAgentTasks: 3,
         repositories: [],
+        threads: [],
+        lastUsedLaunch: () => null,
         agentProjects: { projects: [], overflowRootPaths: [] },
       },
     };
@@ -1048,6 +1050,8 @@ function createWorkbench() {
         liveTaskCount: 0,
         maxConcurrentAgentTasks: 4,
         repositories: [],
+        threads: [],
+        lastUsedLaunch: () => null,
         agentProjects: { projects: [], overflowRootPaths: [] },
       },
       activePath: null,

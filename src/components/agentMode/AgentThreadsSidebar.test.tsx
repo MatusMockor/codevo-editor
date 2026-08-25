@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
 
+import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadView, OrphanedWorktreeView } from "../../application/agentThreadPorts";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import { orderAgentThreadRows } from "./agentModePresentation";
 import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
+import { AgentClockProvider } from "./agentClock";
 import { AgentThreadsSidebar, type AgentThreadsSidebarProps } from "./AgentThreadsSidebar";
 import {
   DETACHED_AGENT_PROJECT_LABEL,
@@ -16,6 +20,7 @@ import {
 const ROOT = "/workspace/app";
 const NESTED = "/workspace/app/packages/api";
 const NOW = 1_700_000_600_000;
+const NOW_TICK_MS = 1_000;
 
 describe("AgentThreadsSidebar", () => {
   let host: HTMLDivElement;
@@ -23,6 +28,8 @@ describe("AgentThreadsSidebar", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(NOW);
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -31,6 +38,7 @@ describe("AgentThreadsSidebar", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    vi.useRealTimers();
   });
 
   it("lists a single-repository project as one flat thread list", () => {
@@ -353,8 +361,279 @@ describe("AgentThreadsSidebar", () => {
     expect(host.textContent).toContain("No Git repository was detected in this workspace.");
   });
 
+  it("orders rows into running, attention and settled bands", () => {
+    render({ groups: [busyProject()] });
+
+    const bands = [...host.querySelectorAll(".agent-band__label")].map((band) => band.textContent);
+    expect(bands).toEqual(["Running", "Needs attention", "Idle"]);
+    expect(threadOrder()).toEqual(["agt-1", "agt-2", "agt-3"]);
+  });
+
+  it("floats a pinned settled thread above its unpinned band peers only", () => {
+    render({
+      groups: [
+        project({
+          repos: [
+            repositoryGroup({
+              threads: orderAgentThreadRows([
+                settled("agt-3", "Polish the docs"),
+                settled("agt-4", "Pinned cleanup", { pinned: true }),
+                running("agt-1", "Fix the parser"),
+              ]),
+            }),
+          ],
+        }),
+      ],
+    });
+
+    expect(threadOrder()).toEqual(["agt-1", "agt-4", "agt-3"]);
+  });
+
+  it("filters threads by a bounded case-insensitive title match", () => {
+    render({ groups: [busyProject()] });
+
+    typeFilter("RENAME");
+
+    expect(threadOrder()).toEqual(["agt-2"]);
+    expect(host.querySelector(".agent-rail__filter")?.getAttribute("maxlength")).toBe("128");
+  });
+
+  it("clips filter text beyond the bounded length", () => {
+    render({ groups: [busyProject()] });
+
+    typeFilter("x".repeat(200));
+
+    expect(host.querySelector<HTMLInputElement>(".agent-rail__filter")?.value).toHaveLength(128);
+  });
+
+  it("filters threads by attention status", () => {
+    render({ groups: [busyProject()] });
+
+    clickText("Needs attention");
+
+    expect(threadOrder()).toEqual(["agt-2"]);
+  });
+
+  it("keeps archived threads out of every status filter but all and archived", () => {
+    render({ groups: [archivedProject()] });
+
+    clickText("Running");
+    expect(host.querySelector('section[aria-label="Archived threads in app"]')).toBeNull();
+
+    clickText("Archived");
+    expect(host.querySelector('section[aria-label="Archived threads in app"]')).not.toBeNull();
+  });
+
+  it("offers a way out when the filters match no thread", () => {
+    const onSelectThread = vi.fn();
+    render({ groups: [busyProject()], onSelectThread });
+
+    typeFilter("nothing matches this");
+
+    expect(host.textContent).toContain("No threads match");
+
+    clickText("Clear filters");
+
+    expect(threadOrder()).toEqual(["agt-1", "agt-2", "agt-3"]);
+    expect(onSelectThread).not.toHaveBeenCalled();
+  });
+
+  it("marks an unread result and hides the marker while its thread is selected", () => {
+    render({ groups: [busyProject()] });
+
+    const unread = host.querySelector('[aria-label="Unread result"]');
+    expect(unread).not.toBeNull();
+    expect(unread?.closest(".agent-thread-slot")?.textContent).toContain("Rename the port");
+
+    render({ groups: [busyProject()], selectedThreadId: "agt-2" });
+
+    expect(host.querySelector('[aria-label="Unread result"]')).toBeNull();
+  });
+
+  it("shows the recorded model of the last turn in the row meta", () => {
+    render({
+      groups: [
+        project({
+          repos: [
+            repositoryGroup({
+              threads: [
+                settled("agt-3", "Polish the docs", {
+                  launch: { provider: "claudeCode", model: "opus", mode: "acceptEdits" },
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    });
+
+    expect(host.querySelector(".agent-thread__meta")?.textContent).toContain("opus");
+  });
+
+  it("moves a roving focus through the visible rows with the arrow keys", () => {
+    render({ groups: [busyProject()] });
+
+    expect(rowFor("agt-1")?.tabIndex).toBe(0);
+    expect(rowFor("agt-2")?.tabIndex).toBe(-1);
+
+    press("ArrowDown", rowFor("agt-1"));
+
+    expect(document.activeElement).toBe(rowFor("agt-2"));
+    expect(rowFor("agt-2")?.tabIndex).toBe(0);
+
+    press("End", rowFor("agt-2"));
+    expect(document.activeElement).toBe(rowFor("agt-3"));
+
+    press("ArrowDown", rowFor("agt-3"));
+    expect(document.activeElement).toBe(rowFor("agt-3"));
+
+    press("ArrowUp", rowFor("agt-3"));
+    expect(document.activeElement).toBe(rowFor("agt-2"));
+
+    press("Home", rowFor("agt-2"));
+    expect(document.activeElement).toBe(rowFor("agt-1"));
+  });
+
+  it("selects with Enter and pins with p without leaving the focused row", () => {
+    const onSelectThread = vi.fn();
+    const onTogglePin = vi.fn();
+    render({ groups: [busyProject()], onSelectThread, onTogglePin });
+
+    press("ArrowDown", rowFor("agt-1"));
+    press("Enter", rowFor("agt-2"));
+
+    expect(onSelectThread).toHaveBeenCalledWith("agt-2");
+
+    press("p", rowFor("agt-2"));
+
+    expect(onTogglePin).toHaveBeenCalledWith("agt-2");
+    expect(onSelectThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves focus from a row to the filter input on Escape without clearing the filters", () => {
+    render({ groups: [busyProject()] });
+
+    typeFilter("rename");
+    expect(threadOrder()).toEqual(["agt-2"]);
+
+    press("Escape", rowFor("agt-2"));
+
+    expect(host.querySelector<HTMLInputElement>(".agent-rail__filter")?.value).toBe("rename");
+    expect(document.activeElement).toBe(host.querySelector(".agent-rail__filter"));
+    expect(threadOrder()).toEqual(["agt-2"]);
+  });
+
+  it("clears the filters on Escape inside the filter input", () => {
+    render({ groups: [busyProject()] });
+
+    typeFilter("rename");
+    expect(threadOrder()).toEqual(["agt-2"]);
+
+    press("Escape", host.querySelector<HTMLElement>(".agent-rail__filter"));
+
+    expect(host.querySelector<HTMLInputElement>(".agent-rail__filter")?.value).toBe("");
+    expect(threadOrder()).toEqual(["agt-1", "agt-2", "agt-3"]);
+  });
+
+  it("exposes the thread rail as a list of thread items", () => {
+    render({ groups: [busyProject()] });
+
+    const list = host.querySelector('[role="list"]');
+    expect(list?.classList.contains("agent-rail__groups")).toBe(true);
+    expect(list?.querySelectorAll('[role="listitem"] [data-thread-id]').length).toBe(3);
+  });
+
+  it("falls the roving target back to the first visible row when the focused row is filtered out", () => {
+    render({ groups: [busyProject()] });
+
+    press("End", rowFor("agt-1"));
+    expect(rowFor("agt-3")?.tabIndex).toBe(0);
+
+    typeFilter("rename");
+
+    expect(rowFor("agt-2")?.tabIndex).toBe(0);
+  });
+
+  it("keeps other rows out of a burst of updates to one thread", () => {
+    const idle = { count: 0 };
+    const idleView = settled("agt-3", "Polish the docs", { countRenders: idle });
+    const build = (title: string): ReadonlyArray<AgentProjectGroup> => [
+      project({
+        repos: [
+          repositoryGroup({
+            threads: orderAgentThreadRows([running("agt-1", title), idleView]),
+          }),
+        ],
+      }),
+    ];
+
+    render({ groups: build("Fix the parser") });
+
+    const before = idle.count;
+    expect(before).toBeGreaterThan(0);
+
+    for (let index = 0; index < 20; index += 1) {
+      render({ groups: build(`Fix the parser ${index}`) });
+    }
+
+    expect(host.textContent).toContain("Fix the parser 19");
+    expect(idle.count).toBe(before);
+  });
+
+  it("keeps rows out of a clock tick", () => {
+    const idle = { count: 0 };
+    const idleView = settled("agt-3", "Polish the docs", { countRenders: idle });
+    render({
+      groups: [project({ repos: [repositoryGroup({ threads: [idleView] })] })],
+    });
+
+    const before = idle.count;
+    act(() => {
+      vi.setSystemTime(NOW + 2 * 60 * 60_000);
+      vi.advanceTimersByTime(NOW_TICK_MS);
+    });
+
+    expect(host.textContent).toContain("2 hours ago");
+    expect(idle.count).toBe(before);
+  });
+
+  function threadOrder(): ReadonlyArray<string> {
+    return [...host.querySelectorAll<HTMLElement>("[data-thread-id]")].map(
+      (row) => row.dataset.threadId ?? "",
+    );
+  }
+
+  function rowFor(threadId: string): HTMLElement | null {
+    return host.querySelector<HTMLElement>(`[data-thread-id="${threadId}"]`);
+  }
+
+  function press(key: string, element: HTMLElement | null): void {
+    expect(element).not.toBeNull();
+    act(() => {
+      element?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key }),
+      );
+    });
+  }
+
+  function typeFilter(value: string): void {
+    const input = host.querySelector<HTMLInputElement>(".agent-rail__filter");
+    expect(input).not.toBeNull();
+    act(() => {
+      if (input === null) return;
+      nativeInputValue(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
   function render(overrides: Partial<AgentThreadsSidebarProps> = {}): void {
-    act(() => root.render(<AgentThreadsSidebar {...defaultProps()} {...overrides} />));
+    act(() =>
+      root.render(
+        <AgentClockProvider nowTickMs={NOW_TICK_MS}>
+          <AgentThreadsSidebar {...defaultProps()} {...overrides} />
+        </AgentClockProvider>,
+      ),
+    );
   }
 
   function click(selector: string): void {
@@ -386,7 +665,6 @@ function defaultProps(): AgentThreadsSidebarProps {
     selectedThreadId: null,
     liveTaskCount: 1,
     maxConcurrentAgentTasks: 4,
-    now: NOW,
     onToggleProject: () => undefined,
     onToggleGroup: () => undefined,
     onToggleArchived: () => undefined,
@@ -471,14 +749,24 @@ interface ThreadViewOptions {
   readonly status?: AgentTurnStatus;
   readonly pinned?: boolean;
   readonly archived?: boolean;
+  readonly updatedAtEpochMs?: number;
+  readonly endedAtEpochMs?: number | null;
+  readonly viewedAtEpochMs?: number | null;
+  readonly launch?: AgentLaunchOptions | null;
+  readonly countRenders?: { count: number };
 }
 
 function threadView({
   archived = false,
+  countRenders,
+  endedAtEpochMs = null,
+  launch = null,
   pinned = false,
   status = { kind: "running" },
   threadId = "agt-1",
   title = "Fix the parser",
+  updatedAtEpochMs = NOW - 10 * 60_000,
+  viewedAtEpochMs = null,
 }: ThreadViewOptions): AgentThreadView {
   const running = status.kind === "pending" || status.kind === "running";
   const thread: AgentThread = {
@@ -490,27 +778,35 @@ function threadView({
     pinned,
     archived,
     createdAtEpochMs: NOW - 10 * 60_000,
-    updatedAtEpochMs: NOW - 10 * 60_000,
+    updatedAtEpochMs,
     turns: [
       {
         turnId: `${threadId}-t1`,
         prompt: title,
         status,
         startedAtEpochMs: NOW - 10 * 60_000,
-        endedAtEpochMs: null,
+        endedAtEpochMs,
         events: [],
         eventsTruncated: false,
         lastStatusSequence: 0,
         lastOutputSequence: 0,
+        launch,
       },
     ],
     turnsTruncated: false,
+    viewedAtEpochMs,
     integration: null,
   };
+
+  if (countRenders !== undefined) {
+    countTitleReads(thread, title, countRenders);
+  }
 
   return {
     ship: { kind: "idle", status: null, loadingStatus: false },
     editorAvailability: { kind: "available" },
+    attention: agentThreadAttention(thread),
+    unread: agentThreadUnread(thread),
     thread,
     lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: "app",
@@ -519,6 +815,76 @@ function threadView({
     worktreeMissing: false,
     changeSummary: null,
   };
+}
+
+function running(threadId: string, title: string): AgentThreadView {
+  return threadView({ status: { kind: "running" }, threadId, title });
+}
+
+function attention(threadId: string, title: string): AgentThreadView {
+  return threadView({
+    endedAtEpochMs: NOW - 60_000,
+    status: { kind: "failed", message: "boom" },
+    threadId,
+    title,
+  });
+}
+
+function settled(
+  threadId: string,
+  title: string,
+  options: ThreadViewOptions = {},
+): AgentThreadView {
+  return threadView({
+    endedAtEpochMs: NOW - 2 * 60_000,
+    status: { kind: "exited", exitCode: 0 },
+    threadId,
+    title,
+    viewedAtEpochMs: NOW,
+    ...options,
+  });
+}
+
+function busyProject(): AgentProjectGroup {
+  return project({
+    repos: [
+      repositoryGroup({
+        threads: orderAgentThreadRows([
+          settled("agt-3", "Polish the docs"),
+          running("agt-1", "Fix the parser"),
+          attention("agt-2", "Rename the port"),
+        ]),
+      }),
+    ],
+  });
+}
+
+function archivedProject(): AgentProjectGroup {
+  return project({
+    repos: [
+      repositoryGroup({
+        threads: [running("agt-1", "Fix the parser")],
+        archived: [threadView({ archived: true, threadId: "agt-old", title: "Old work" })],
+      }),
+    ],
+  });
+}
+
+function nativeInputValue(input: HTMLInputElement, value: string): void {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  expect(descriptor?.set).toBeTypeOf("function");
+  descriptor?.set?.call(input, value);
+}
+
+function countTitleReads(thread: AgentThread, title: string, counter: { count: number }): void {
+  Object.defineProperty(thread, "title", {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      counter.count += 1;
+      return title;
+    },
+  });
 }
 
 function orphan(prunable: boolean): OrphanedWorktreeView {

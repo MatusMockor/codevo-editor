@@ -1,14 +1,21 @@
 import { memo } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentTurn } from "../../domain/agentThread";
 import type { GitChangedFile } from "../../domain/git";
+import {
+  agentLaunchModeHint,
+  agentLaunchModeMeta,
+  agentLaunchModelMeta,
+  agentLaunchTone,
+} from "./agentLaunchPresentation";
 import { AgentShipPanel, type AgentShipActions } from "./AgentShipPanel";
 import { AgentThreadChanges } from "./AgentThreadChanges";
+import { AgentRelativeTime } from "./agentClock";
 import {
   agentIsolationBadgeLabel,
   agentThreadDisplayTitle,
   agentThreadLifecycleLabel,
-  agentThreadTimeLabel,
   agentThreadTone,
   agentTurnProjection,
   agentTurnStatusLabel,
@@ -19,7 +26,6 @@ import {
 export interface AgentThreadSessionProps {
   readonly thread: AgentThreadView | null;
   readonly composerRepositoryLabel: string | null;
-  readonly now: number;
   readonly shipActions: AgentShipActions;
   readonly turnRenderProbe?: (turnId: string) => void;
   onHideChanges(threadId: string): void;
@@ -32,7 +38,6 @@ export interface AgentThreadSessionProps {
 
 export function AgentThreadSession({
   composerRepositoryLabel,
-  now,
   onHideChanges,
   onHideFileDiff,
   onOpenChangedFile,
@@ -76,7 +81,6 @@ export function AgentThreadSession({
               isolationLabel={record.target.isolation}
               key={turn.turnId}
               renderProbe={turnRenderProbe}
-              startedLabel={agentThreadTimeLabel(turn.startedAtEpochMs, now)}
               turn={turn}
             />
           ))}
@@ -114,12 +118,10 @@ export function AgentThreadSession({
 const AgentTurnView = memo(function AgentTurnView({
   isolationLabel,
   renderProbe,
-  startedLabel,
   turn,
 }: {
   readonly isolationLabel: AgentThreadView["thread"]["target"]["isolation"];
   readonly renderProbe?: (turnId: string) => void;
-  readonly startedLabel: string;
   readonly turn: AgentTurn;
 }) {
   renderProbe?.(turn.turnId);
@@ -134,11 +136,14 @@ const AgentTurnView = memo(function AgentTurnView({
         <div className="agent-prompt__meta agent-num">
           <span>you</span>
           <span aria-hidden="true" className="agent-prompt__sep" />
-          <span>{startedLabel}</span>
+          <span>
+            <AgentRelativeTime epochMs={turn.startedAtEpochMs} />
+          </span>
           <span aria-hidden="true" className="agent-prompt__sep" />
           <span>{agentIsolationBadgeLabel(isolationLabel).toLowerCase()}</span>
           <span aria-hidden="true" className="agent-prompt__sep" />
           <span>{agentTurnStatusLabel(turn.status).toLowerCase()}</span>
+          {turn.launch !== null && <AgentTurnLaunchMeta launch={turn.launch} />}
         </div>
       </article>
 
@@ -184,6 +189,23 @@ const AgentTurnView = memo(function AgentTurnView({
     </article>
   );
 });
+
+function AgentTurnLaunchMeta({ launch }: { readonly launch: AgentLaunchOptions }) {
+  const tone = agentLaunchTone(launch);
+  const modeClassName =
+    tone === null ? "agent-prompt__launch" : `agent-prompt__launch agent-prompt__launch--${tone}`;
+
+  return (
+    <>
+      <span aria-hidden="true" className="agent-prompt__sep" />
+      <span className="agent-prompt__launch">{agentLaunchModelMeta(launch)}</span>
+      <span aria-hidden="true" className="agent-prompt__sep" />
+      <span className={modeClassName} title={agentLaunchModeHint(launch)}>
+        {agentLaunchModeMeta(launch)}
+      </span>
+    </>
+  );
+}
 
 function AgentTurnItemView({ item }: { readonly item: AgentTurnItem }) {
   if (item.kind === "assistantText") {

@@ -17,8 +17,13 @@ import type { GitStatus } from "../domain/git";
 import type { GitIntegrationOutcome, GitShipStatus } from "../domain/gitIntegration";
 import type { GitWorktreeDescriptor, GitWorktreeGateway } from "../domain/gitWorktree";
 import { waitForReact } from "../test/reactTestLifecycle";
-import type { AgentThreadStoreGateway, AgentThreadsSurface } from "./agentThreadPorts";
+import type {
+  AgentThreadStartRequest,
+  AgentThreadStoreGateway,
+  AgentThreadsSurface,
+} from "./agentThreadPorts";
 import { useAgentThreads, type AgentThreadsDependencies } from "./useAgentThreads";
+import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 
 const ROOT = "/workspace/app";
 const OWNER = "workspace-a";
@@ -27,6 +32,8 @@ const CLI_PATH = "/usr/local/bin/claude";
 
 interface Environment {
   generation: number;
+  rootKey: string;
+  ownerId: string;
   agentModeActive: boolean;
   worktrees: ReadonlyArray<GitWorktreeDescriptor>;
   storedThreads: ReadonlyArray<AgentThread>;
@@ -173,14 +180,23 @@ function worktreeOf(threadId: string): GitWorktreeDescriptor {
   };
 }
 
-function startRequest() {
+function startRequest(overrides: Partial<AgentThreadStartRequest> = {}): AgentThreadStartRequest {
   return {
     projectRootKey: ROOT,
     repositoryRoot: ROOT,
     prompt: "Fix the failing test",
     isolation: "worktree" as const,
     unsafeInPlaceConfirmationKey: null,
+    launch: defaultAgentLaunchOptions("claudeCode"),
+    ...overrides,
   };
+}
+
+function assistantLine(text: string): string {
+  return JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "text", text }] },
+  });
 }
 
 function storedThread(
@@ -209,9 +225,11 @@ function storedThread(
         eventsTruncated: false,
         lastStatusSequence: 1,
         lastOutputSequence: 0,
+        launch: null,
       },
     ],
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration,
   };
 }
@@ -219,6 +237,8 @@ function storedThread(
 function renderThreads(overrides: Partial<Environment> = {}) {
   const environment: Environment = {
     generation: 1,
+    rootKey: ROOT,
+    ownerId: OWNER,
     agentModeActive: true,
     worktrees: [],
     storedThreads: [],
@@ -228,6 +248,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   };
   const startedRequests: StartAgentTaskRequest[] = [];
   let statusHandler: ((event: AgentTaskStatusEvent) => void) | null = null;
+  let outputHandler: ((event: AgentTaskOutputEvent) => void) | null = null;
   let entropy = 0;
 
   const agent = {
@@ -242,7 +263,8 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       statusHandler = handler;
       return () => undefined;
     }),
-    subscribeAgentTaskOutput: vi.fn(async (_handler: (event: AgentTaskOutputEvent) => void) => {
+    subscribeAgentTaskOutput: vi.fn(async (handler: (event: AgentTaskOutputEvent) => void) => {
+      outputHandler = handler;
       return () => undefined;
     }),
   };
@@ -299,15 +321,19 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   const openAgentSettings = vi.fn();
 
   const project = (): AgentProjectDescriptor => ({
-    rootKey: ROOT,
-    rootPath: ROOT,
-    ownerId: OWNER,
+    rootKey: environment.rootKey,
+    rootPath: environment.rootKey,
+    ownerId: environment.ownerId,
     label: "app",
     generation: environment.generation,
     trust: "trusted",
     origin: "active-tab",
     repositories: [
-      { mapping: { rootRelativePath: "" }, repositoryRoot: ROOT, repositoryRelativePath: "" },
+      {
+        mapping: { rootRelativePath: "" },
+        repositoryRoot: environment.rootKey,
+        repositoryRelativePath: "",
+      },
     ],
     isolationPolicy: "auto",
     leaseToken: 1,
@@ -347,7 +373,8 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
-  act(() => root.render(createElement(Harness)));
+  const render = (): void => act(() => root.render(createElement(Harness)));
+  render();
 
   return {
     agent,
@@ -356,6 +383,20 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     gitIntegration,
     editor,
     startedRequests,
+    set(next: Partial<Environment>): void {
+      Object.assign(environment, next);
+      render();
+    },
+    turnIdOf(threadId: string): string {
+      const view = (current as AgentThreadsSurface).threads.find(
+        (candidate) => candidate.thread.threadId === threadId,
+      );
+      return view?.thread.turns[view.thread.turns.length - 1]?.turnId ?? "";
+    },
+    emitOutput(turnId: string, sequence: number, chunk: string): void {
+      expect(outputHandler).not.toBeNull();
+      outputHandler?.({ taskId: turnId, sequence, stream: "stdout", chunk, truncated: false });
+    },
     hook(): AgentThreadsSurface {
       expect(current).not.toBeNull();
       return current as AgentThreadsSurface;
@@ -383,6 +424,97 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   };
 }
 
+describe("useAgentThreads views and viewed marks", () => {
+  it("keeps view identity for untouched threads across a burst of output events", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const harness = renderThreads({ storedThreads: [stored] });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(1));
+    const running = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(2));
+    const turnId = harness.turnIdOf(running);
+    const storedBefore = harness
+      .hook()
+      .threads.find((view) => view.thread.threadId === stored.threadId);
+    const runningBefore = harness.hook().threads.find((view) => view.thread.threadId === running);
+    expect(storedBefore).toBeDefined();
+
+    for (let sequence = 1; sequence <= 100; sequence += 1) {
+      await act(async () => {
+        harness.emitOutput(turnId, sequence, `${assistantLine(`line ${sequence}`)}\n`);
+      });
+    }
+    await waitForReact(() =>
+      expect(
+        harness.hook().threads.find((view) => view.thread.threadId === running)?.thread.turns[0]
+          ?.lastOutputSequence,
+      ).toBe(100),
+    );
+
+    const storedAfter = harness
+      .hook()
+      .threads.find((view) => view.thread.threadId === stored.threadId);
+    const runningAfter = harness.hook().threads.find((view) => view.thread.threadId === running);
+    expect(storedAfter).toBe(storedBefore);
+    expect(runningAfter).not.toBe(runningBefore);
+    harness.unmount();
+  });
+
+  it("marks an unread thread viewed once, ignores repeats, and coalesces the save", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const harness = renderThreads({ storedThreads: [stored] });
+    await waitForReact(() => expect(harness.hook().threads[0]?.unread).toBe(true));
+    harness.store.saveAgentThread.mockClear();
+
+    act(() => harness.hook().markThreadViewed(stored.threadId));
+    act(() => harness.hook().markThreadViewed(stored.threadId));
+    act(() => harness.hook().markThreadViewed(stored.threadId));
+    act(() => harness.hook().markThreadViewed("agt-missing-0000"));
+
+    await waitForReact(() => expect(harness.hook().threads[0]?.unread).toBe(false));
+    expect(harness.hook().threads[0]?.thread.viewedAtEpochMs).toBeGreaterThan(2_000);
+    await waitForReact(() => expect(harness.store.saveAgentThread).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    });
+    expect(harness.store.saveAgentThread).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("ignores a viewed mark while another project owns the tab and honours it after A to B to A", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const harness = renderThreads({ storedThreads: [stored] });
+    await waitForReact(() => expect(harness.hook().threads[0]?.unread).toBe(true));
+    harness.store.saveAgentThread.mockClear();
+
+    harness.set({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 });
+    act(() => harness.hook().markThreadViewed(stored.threadId));
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    });
+    expect(harness.store.saveAgentThread).not.toHaveBeenCalled();
+
+    harness.set({ rootKey: ROOT, ownerId: OWNER, generation: 3 });
+    await waitForReact(() => expect(harness.hook().threads[0]?.unread).toBe(true));
+    act(() => harness.hook().markThreadViewed(stored.threadId));
+    await waitForReact(() => expect(harness.hook().threads[0]?.unread).toBe(false));
+    await waitForReact(() => expect(harness.store.saveAgentThread).toHaveBeenCalledTimes(1));
+    expect(harness.hook().lastUsedLaunch(ROOT)).toBeNull();
+    harness.unmount();
+  });
+
+  it("reports the last used launch of the root after a turn", async () => {
+    const harness = renderThreads();
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const launch = { provider: "claudeCode", model: "sonnet", mode: "plan" } as const;
+
+    await act(() => harness.hook().startThread(startRequest({ launch })));
+
+    expect(harness.hook().lastUsedLaunch(ROOT)).toEqual(launch);
+    expect(harness.hook().lastUsedLaunch("/workspace/other")).toBeNull();
+    harness.unmount();
+  });
+});
+
 describe("useAgentThreads ship and editor wiring", () => {
   it("exposes ship state per thread and refreshes it on demand", async () => {
     const stored = storedThread("agt-stored-0001", "agt-stored-0002");
@@ -406,6 +538,41 @@ describe("useAgentThreads ship and editor wiring", () => {
     harness.unmount();
   });
 
+  it("keeps an untracked thread view stable and swaps identity once when ship state appears", async () => {
+    const first = storedThread("agt-stored-0001", "agt-stored-0002");
+    const second = storedThread("agt-stored-0003", "agt-stored-0004");
+    const harness = renderThreads({
+      storedThreads: [first, second],
+      worktrees: [worktreeOf(first.threadId), worktreeOf(second.threadId)],
+    });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(2));
+    await waitForReact(() =>
+      expect(harness.hook().threads.every((view) => !view.worktreeMissing)).toBe(true),
+    );
+
+    const viewOf = (threadId: string) =>
+      harness.hook().threads.find((view) => view.thread.threadId === threadId);
+    const trackedBefore = viewOf(first.threadId);
+    const untrackedBefore = viewOf(second.threadId);
+    expect(untrackedBefore?.ship).toEqual({ kind: "idle", status: null, loadingStatus: false });
+
+    harness.set({});
+    expect(viewOf(first.threadId)).toBe(trackedBefore);
+    expect(viewOf(second.threadId)).toBe(untrackedBefore);
+
+    await act(() => harness.hook().refreshShipStatus(first.threadId));
+
+    const trackedAfter = viewOf(first.threadId);
+    expect(trackedAfter).not.toBe(trackedBefore);
+    expect(trackedAfter?.ship).toMatchObject({ kind: "idle", status: shipStatus() });
+    expect(viewOf(second.threadId)).toBe(untrackedBefore);
+    expect(viewOf(second.threadId)?.ship).toBe(untrackedBefore?.ship);
+
+    harness.set({});
+    expect(viewOf(first.threadId)).toBe(trackedAfter);
+    harness.unmount();
+  });
+
   it("reconciles the ship status when a turn ends on a thread with no ship state yet", async () => {
     const stored = storedThread("agt-stored-0001", "agt-stored-0002");
     const harness = renderThreads({
@@ -416,7 +583,11 @@ describe("useAgentThreads ship and editor wiring", () => {
     expect(harness.gitIntegration.getShipStatus).not.toHaveBeenCalled();
 
     const sent = await act(() =>
-      harness.hook().sendFollowUp({ threadId: stored.threadId, prompt: "Keep going" }),
+      harness.hook().sendFollowUp({
+        threadId: stored.threadId,
+        prompt: "Keep going",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      }),
     );
     expect(sent).toBe(true);
 

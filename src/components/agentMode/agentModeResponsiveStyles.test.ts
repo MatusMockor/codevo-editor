@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const appCss = readFileSync(resolve(import.meta.dirname, "../../App.css"), "utf8");
+const appCss = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
 
 function block(source: string, marker: string): string {
   const start = source.indexOf(marker);

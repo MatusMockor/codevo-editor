@@ -1,7 +1,14 @@
+import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import { describe, expect, it, vi } from "vitest";
-import type { StartAgentTaskRequest } from "../domain/agentTask";
+import {
+  AgentTaskStartRejectedError,
+  isDefiniteAgentTaskStartRejection,
+  type StartAgentTaskRequest,
+} from "../domain/agentTask";
 import {
   ACKNOWLEDGE_AGENT_TASK_START_IPC_COMMAND,
+  AGENT_LAUNCH_PROVIDER_MISMATCH_REJECTION,
+  DEFINITE_AGENT_TASK_START_REJECTIONS,
   AGENT_TASK_OUTPUT_EVENT,
   AGENT_TASK_STATUS_EVENT,
   decodeAgentTaskOutputEvent,
@@ -26,6 +33,7 @@ const START_REQUEST: StartAgentTaskRequest = {
   agentCliPath: "/usr/local/bin/claude",
   agentCliKind: "claudeCode",
   resumeSessionId: null,
+  launch: defaultAgentLaunchOptions("claudeCode"),
 };
 
 describe("agent task IPC command names", () => {
@@ -65,6 +73,62 @@ describe("invokeStartAgentTaskIpc", () => {
       }),
     ).rejects.toThrow(TypeError);
     expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects a launch whose provider differs from the agent CLI kind", async () => {
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>();
+
+    await expect(
+      invokeStartAgentTaskIpc(invokeCommand, {
+        ...START_REQUEST,
+        launch: { provider: "codex", model: "gpt-5.5", mode: "readOnly" },
+      }),
+    ).rejects.toThrow(/request\.launch\.provider/);
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown launch model before touching the transport", async () => {
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>();
+
+    await expect(
+      invokeStartAgentTaskIpc(invokeCommand, {
+        ...START_REQUEST,
+        launch: { provider: "claudeCode", model: "claude-opus-4", mode: "default" },
+      } as unknown as StartAgentTaskRequest),
+    ).rejects.toThrow(TypeError);
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it("forwards the validated launch options in the request payload", async () => {
+    const invokeCommand = vi
+      .fn<InvokeAgentTaskCommand>()
+      .mockResolvedValue({ taskId: START_REQUEST.taskId });
+    const launch = { provider: "claudeCode", model: "opus", mode: "acceptEdits" } as const;
+
+    await invokeStartAgentTaskIpc(invokeCommand, { ...START_REQUEST, launch });
+
+    expect(invokeCommand).toHaveBeenCalledWith(START_AGENT_TASK_IPC_COMMAND, {
+      request: { ...START_REQUEST, launch },
+    });
+  });
+
+  it("classifies the backend launch provider mismatch as a definite rejection", async () => {
+    const invokeCommand = vi
+      .fn<InvokeAgentTaskCommand>()
+      .mockRejectedValue(AGENT_LAUNCH_PROVIDER_MISMATCH_REJECTION);
+
+    const rejection = await invokeStartAgentTaskIpc(invokeCommand, START_REQUEST).catch(
+      (error: unknown) => error,
+    );
+
+    expect(rejection).toBeInstanceOf(AgentTaskStartRejectedError);
+    expect(isDefiniteAgentTaskStartRejection(rejection)).toBe(true);
+    expect((rejection as Error).message).toBe(
+      "Agent launch options do not match the agent CLI kind.",
+    );
+    expect(DEFINITE_AGENT_TASK_START_REJECTIONS.has(AGENT_LAUNCH_PROVIDER_MISMATCH_REJECTION)).toBe(
+      true,
+    );
   });
 
   it("rejects a mismatched task id echo", async () => {

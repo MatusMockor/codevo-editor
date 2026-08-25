@@ -55,6 +55,7 @@ function thread(overrides: Partial<AgentThread> = {}): AgentThread {
     updatedAtEpochMs: 10,
     turns: [],
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration: null,
     ...overrides,
   };

@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
+import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type {
   AgentThread,
   AgentTurn,
@@ -13,6 +15,7 @@ import type {
 import type { GitChangedFile } from "../../domain/git";
 import type { AgentShipActions } from "./AgentShipPanel";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
+import { AgentClockProvider } from "./agentClock";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
 
 const ROOT = "/workspace/app";
@@ -25,6 +28,8 @@ describe("AgentThreadSession", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(NOW);
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -33,6 +38,7 @@ describe("AgentThreadSession", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    vi.useRealTimers();
   });
 
   it("invites a new thread when nothing is selected", () => {
@@ -210,6 +216,55 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("Agent CLI exited with code 1.");
   });
 
+  it("records the model and mode of a turn in its prompt meta line", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Refactor the parser", { kind: "exited", exitCode: 0 }, [], {
+            provider: "claudeCode",
+            model: "opus",
+            mode: "acceptEdits",
+          }),
+        ],
+      }),
+    });
+
+    const meta = host.querySelector(".agent-prompt__meta");
+
+    expect(meta?.textContent).toContain("opus");
+    expect(meta?.textContent).toContain("accept edits");
+    expect(host.querySelector(".agent-prompt__launch--plan")).toBeNull();
+    expect(host.querySelector(".agent-prompt__launch--danger")).toBeNull();
+  });
+
+  it("badges a plan turn and a turn that bypassed the permission checks", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Plan it", { kind: "exited", exitCode: 0 }, [], {
+            provider: "claudeCode",
+            model: "opus",
+            mode: "plan",
+          }),
+          turn("agt-1-t2", "Do it", { kind: "exited", exitCode: 0 }, [], {
+            provider: "codex",
+            model: "gpt-5.5",
+            mode: "dangerFullAccess",
+          }),
+        ],
+      }),
+    });
+
+    expect(host.querySelector(".agent-prompt__launch--plan")?.textContent).toBe("plan only");
+    expect(host.querySelector(".agent-prompt__launch--danger")?.textContent).toBe("full access");
+  });
+
+  it("shows no launch meta for a turn recorded before launch options existed", () => {
+    render({ thread: threadView({}) });
+
+    expect(host.querySelector(".agent-prompt__launch")).toBeNull();
+  });
+
   it("tells the user when the worktree was removed or disappeared", () => {
     render({ thread: threadView({ worktreeRemoved: true }) });
 
@@ -366,12 +421,15 @@ describe("AgentThreadSession", () => {
         turn("agt-1-t2", "Also update the tests", { kind: "running" }, []),
       ],
     });
-    render({ now: NOW, thread: view, turnRenderProbe: probe });
+    render({ thread: view, turnRenderProbe: probe });
 
     expect(renders).toHaveLength(2);
 
     for (let tick = 1; tick <= 500; tick += 1) {
-      render({ now: NOW + tick * 100, thread: view, turnRenderProbe: probe });
+      act(() => {
+        vi.setSystemTime(NOW + tick * 100);
+        vi.advanceTimersByTime(1);
+      });
     }
 
     expect(renders).toHaveLength(2);
@@ -404,7 +462,13 @@ describe("AgentThreadSession", () => {
   });
 
   function render(overrides: Partial<AgentThreadSessionProps> = {}): void {
-    act(() => root.render(<AgentThreadSession {...defaultProps()} {...overrides} />));
+    act(() =>
+      root.render(
+        <AgentClockProvider nowTickMs={1}>
+          <AgentThreadSession {...defaultProps()} {...overrides} />
+        </AgentClockProvider>,
+      ),
+    );
   }
 
   function click(selector: string): void {
@@ -426,7 +490,6 @@ function defaultProps(): AgentThreadSessionProps {
   return {
     thread: threadView({}),
     composerRepositoryLabel: "app",
-    now: NOW,
     onHideChanges: () => undefined,
     onHideFileDiff: () => undefined,
     onOpenChangedFile: () => undefined,
@@ -476,12 +539,15 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
     updatedAtEpochMs: NOW - 5 * 60_000,
     turns,
     turnsTruncated: overrides.turnsTruncated ?? false,
+    viewedAtEpochMs: null,
     integration: null,
   };
 
   return {
     ship: { kind: "idle", status: null, loadingStatus: false },
     editorAvailability: { kind: "available" },
+    attention: agentThreadAttention(thread),
+    unread: agentThreadUnread(thread),
     thread,
     lifecycle: running ? "running" : "settled",
     repositoryLabel: "app",
@@ -497,6 +563,7 @@ function turn(
   prompt: string,
   status: AgentTurnStatus,
   events: ReadonlyArray<AgentTurnEvent>,
+  launch: AgentLaunchOptions | null = null,
 ): AgentTurn {
   return {
     turnId,
@@ -508,6 +575,7 @@ function turn(
     eventsTruncated: false,
     lastStatusSequence: 0,
     lastOutputSequence: 0,
+    launch,
   };
 }
 

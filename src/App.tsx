@@ -112,7 +112,7 @@ import { isGitHistoryDiffDocumentPath } from "./domain/editorDocumentSchemes";
 import { formatWindowTitle } from "./domain/windowTitle";
 import type { BottomPanelView } from "./domain/bottomPanel";
 import { AgentModeScreen } from "./components/agentMode/AgentModeScreen";
-import { AgentStatusBar } from "./components/agentMode/AgentStatusBar";
+import { AgentStatusBarHost } from "./components/agentMode/AgentStatusBarHost";
 import { WorkbenchToolbar } from "./components/WorkbenchToolbar";
 import { workbenchComposition } from "./workbenchComposition";
 import "./App.css";
@@ -1286,9 +1286,8 @@ function App() {
       </section>
 
       {workbench.agentModeActive ? (
-        <AgentStatusBar
-          liveTaskCount={workbench.agents.liveTaskCount}
-          maxConcurrentAgentTasks={workbench.agents.maxConcurrentAgentTasks}
+        <AgentStatusBarHost
+          agents={workbench.agents}
           workspaceRoot={workbench.workspaceRoot}
           workspaceTrusted={workspaceTrusted}
         />

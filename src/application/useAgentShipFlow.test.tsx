@@ -80,6 +80,7 @@ function runningTurnFixture(): AgentTurn {
     eventsTruncated: false,
     lastStatusSequence: 1,
     lastOutputSequence: 0,
+    launch: null,
   };
 }
 
@@ -96,6 +97,7 @@ function thread(overrides: Partial<AgentThread> = {}): AgentThread {
     updatedAtEpochMs: 10,
     turns: [],
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration: null,
     ...overrides,
   };

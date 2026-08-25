@@ -340,6 +340,8 @@ function persistIntent(state: AgentThreadsState, action: AgentThreadsAction): Pe
       return sessionCaptureIntent(state, action.turnId, action.sessionId);
     case "turnInterrupted":
       return liveTurnIntent(state, action.turnId, "immediate");
+    case "threadViewed":
+      return threadViewedIntent(state, action.threadId, action.atEpochMs);
     case "pinToggled":
     case "archived":
     case "integrationRecorded":
@@ -359,6 +361,18 @@ function persistIntent(state: AgentThreadsState, action: AgentThreadsAction): Pe
 
 function saveIntent(threadId: string, urgency: PersistUrgency): PersistIntent {
   return { saves: [[threadId, urgency]], remove: null };
+}
+
+function threadViewedIntent(
+  state: AgentThreadsState,
+  threadId: string,
+  atEpochMs: number,
+): PersistIntent {
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return NO_PERSIST;
+  if (!Number.isSafeInteger(atEpochMs) || atEpochMs < 0) return NO_PERSIST;
+  if (thread.viewedAtEpochMs !== null && atEpochMs <= thread.viewedAtEpochMs) return NO_PERSIST;
+  return saveIntent(threadId, "coalesced");
 }
 
 function liveTurnIntent(

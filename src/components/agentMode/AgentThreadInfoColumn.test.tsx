@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
+import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
@@ -19,6 +21,8 @@ describe("AgentThreadInfoColumn", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -27,6 +31,7 @@ describe("AgentThreadInfoColumn", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    vi.useRealTimers();
   });
 
   it("previews the composer repository, its isolation reason and the free slots", () => {
@@ -204,6 +209,50 @@ describe("AgentThreadInfoColumn", () => {
     expect(host.querySelector('[aria-label^="Pin thread"]')).toBeNull();
   });
 
+  it("names the model and mode of the latest turn of the selected thread", () => {
+    render({
+      thread: threadView({
+        launch: { provider: "claudeCode", model: "sonnet", mode: "acceptEdits" },
+        status: { kind: "exited", exitCode: 0 },
+      }),
+    });
+
+    expect(host.textContent).toContain("launch");
+    expect(host.textContent).toContain("Sonnet");
+    expect(host.textContent).toContain("Accept edits");
+    expect(host.querySelector(".agent-note--warning")).toBeNull();
+  });
+
+  it("warns in the info column when the latest turn bypassed the safety checks", () => {
+    render({
+      thread: threadView({
+        launch: { provider: "codex", model: "gpt-5.5", mode: "dangerFullAccess" },
+        status: { kind: "exited", exitCode: 0 },
+      }),
+    });
+
+    expect(host.textContent).toContain("Full access");
+    expect(host.querySelector(".agent-note--warning")?.textContent).toContain(
+      "Bypasses permission checks",
+    );
+  });
+
+  it("hides the launch section for a thread recorded before launch options existed", () => {
+    render({ thread: threadView({ status: { kind: "exited", exitCode: 0 } }) });
+
+    expect(host.textContent).not.toContain("launch");
+  });
+
+  it("previews the last used launch of the composer while no thread is selected", () => {
+    render({
+      thread: null,
+      composerLaunch: { provider: "claudeCode", model: "opus", mode: "plan" },
+    });
+
+    expect(host.textContent).toContain("Opus");
+    expect(host.textContent).toContain("Plan only");
+  });
+
   function render(overrides: Partial<AgentThreadInfoColumnProps> = {}): void {
     act(() => root.render(<AgentThreadInfoColumn {...defaultProps()} {...overrides} />));
   }
@@ -218,12 +267,12 @@ describe("AgentThreadInfoColumn", () => {
 function defaultProps(): AgentThreadInfoColumnProps {
   return {
     thread: threadView({}),
-    now: NOW,
     liveTaskCount: 0,
     maxConcurrentAgentTasks: 4,
     composerRepositoryLabel: "app",
     composerRepositoryRoot: ROOT,
     composerIsolationReason: null,
+    composerLaunch: null,
     onStop: () => undefined,
     onArchive: () => undefined,
     onRemove: () => undefined,
@@ -243,6 +292,7 @@ interface ThreadViewOptions {
   readonly archived?: boolean;
   readonly turnCount?: number;
   readonly ship?: AgentShipState;
+  readonly launch?: AgentLaunchOptions | null;
 }
 
 function threadView(overrides: ThreadViewOptions): AgentThreadView {
@@ -271,14 +321,18 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
       eventsTruncated: false,
       lastStatusSequence: 0,
       lastOutputSequence: 0,
+      launch: overrides.launch ?? null,
     })),
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration: null,
   };
 
   return {
     ship: overrides.ship ?? { kind: "idle", status: null, loadingStatus: false },
     editorAvailability: { kind: "available" },
+    attention: agentThreadAttention(thread),
+    unread: agentThreadUnread(thread),
     thread,
     lifecycle: archived ? "archived" : running ? "running" : "settled",
     repositoryLabel: "app",

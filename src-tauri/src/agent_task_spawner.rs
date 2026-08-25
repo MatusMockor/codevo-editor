@@ -13,6 +13,11 @@ pub const MAX_AGENT_SESSION_ID_BYTES: usize = 128;
 pub const AGENT_TASK_INHERITED_ENV: [&str; 7] =
     ["HOME", "PATH", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG"];
 
+#[path = "agent_launch.rs"]
+pub mod agent_launch;
+
+use agent_launch::{AgentLaunchOptions, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR};
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum AgentCliInvocation {
@@ -68,7 +73,11 @@ pub fn plan_agent_invocation(
     prompt: &str,
     cwd: &Path,
     resume_session_id: Option<&str>,
+    launch: AgentLaunchOptions,
 ) -> Result<AgentTaskSpawnPlan, String> {
+    if !launch.matches(invocation) {
+        return Err(AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR.to_string());
+    }
     if let Some(candidate) = resume_session_id {
         validate_resume_session_id(candidate)?;
     }
@@ -97,7 +106,7 @@ pub fn plan_agent_invocation(
     if !cwd.is_absolute() {
         return Err("Agent working directory must be absolute.".to_string());
     }
-    let args = agent_invocation_args(invocation, prompt, resume_session_id);
+    let args = agent_invocation_args(invocation, prompt, resume_session_id, launch);
     Ok(AgentTaskSpawnPlan {
         program: program.to_path_buf(),
         args,
@@ -110,25 +119,25 @@ fn agent_invocation_args(
     invocation: AgentCliInvocation,
     prompt: &str,
     resume_session_id: Option<&str>,
+    launch: AgentLaunchOptions,
 ) -> Vec<String> {
-    let template: Vec<&str> = match (invocation, resume_session_id) {
-        (AgentCliInvocation::ClaudeCode, None) => {
-            vec!["-p", "--output-format", "stream-json", "--verbose", "--"]
+    let resumed = resume_session_id.is_some();
+    let mut template: Vec<&str> = match invocation {
+        AgentCliInvocation::ClaudeCode => {
+            vec!["-p", "--output-format", "stream-json", "--verbose"]
         }
-        (AgentCliInvocation::ClaudeCode, Some(session_id)) => vec![
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--resume",
-            session_id,
-            "--",
-        ],
-        (AgentCliInvocation::CodexExec, None) => vec!["exec", "--json", "--"],
-        (AgentCliInvocation::CodexExec, Some(session_id)) => {
-            vec!["exec", "resume", "--json", session_id, "--"]
-        }
+        AgentCliInvocation::CodexExec if resumed => vec!["exec", "resume", "--json"],
+        AgentCliInvocation::CodexExec => vec!["exec", "--json"],
     };
+    template.extend_from_slice(launch.model_args());
+    template.extend_from_slice(launch.mode_args(resumed));
+    if let Some(session_id) = resume_session_id {
+        match invocation {
+            AgentCliInvocation::ClaudeCode => template.extend_from_slice(&["--resume", session_id]),
+            AgentCliInvocation::CodexExec => template.push(session_id),
+        }
+    }
+    template.push("--");
     template
         .into_iter()
         .map(str::to_string)
@@ -331,14 +340,61 @@ fn exit_code_of(status: std::process::ExitStatus) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use super::agent_launch::{
+        ClaudeModelChoice, ClaudePermissionMode, CodexExecutionMode, CodexModelChoice,
+    };
     use super::*;
 
     const SESSION_ID: &str = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
 
+    const CLAUDE_MODELS: [ClaudeModelChoice; 4] = [
+        ClaudeModelChoice::Default,
+        ClaudeModelChoice::Fable,
+        ClaudeModelChoice::Opus,
+        ClaudeModelChoice::Sonnet,
+    ];
+    const CLAUDE_MODES: [ClaudePermissionMode; 4] = [
+        ClaudePermissionMode::Default,
+        ClaudePermissionMode::Plan,
+        ClaudePermissionMode::AcceptEdits,
+        ClaudePermissionMode::BypassPermissions,
+    ];
+    const CODEX_MODELS: [CodexModelChoice; 4] = [
+        CodexModelChoice::Default,
+        CodexModelChoice::Gpt56Sol,
+        CodexModelChoice::Gpt55,
+        CodexModelChoice::Gpt54,
+    ];
+    const CODEX_MODES: [CodexExecutionMode; 4] = [
+        CodexExecutionMode::Default,
+        CodexExecutionMode::ReadOnly,
+        CodexExecutionMode::WorkspaceWrite,
+        CodexExecutionMode::DangerFullAccess,
+    ];
+
+    fn claude_default() -> AgentLaunchOptions {
+        AgentLaunchOptions::ClaudeCode {
+            model: ClaudeModelChoice::Default,
+            mode: ClaudePermissionMode::Default,
+        }
+    }
+
+    fn codex_default() -> AgentLaunchOptions {
+        AgentLaunchOptions::Codex {
+            model: CodexModelChoice::Default,
+            mode: CodexExecutionMode::Default,
+        }
+    }
+
     #[test]
-    fn claude_first_turn_uses_the_stream_json_argv_template() {
+    fn claude_first_turn_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
         assert_eq!(
-            agent_invocation_args(AgentCliInvocation::ClaudeCode, "do it", None),
+            agent_invocation_args(
+                AgentCliInvocation::ClaudeCode,
+                "do it",
+                None,
+                claude_default()
+            ),
             [
                 "-p",
                 "--output-format",
@@ -351,9 +407,14 @@ mod tests {
     }
 
     #[test]
-    fn claude_follow_up_turn_passes_resume_before_the_prompt_separator() {
+    fn claude_follow_up_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
         assert_eq!(
-            agent_invocation_args(AgentCliInvocation::ClaudeCode, "do it", Some(SESSION_ID)),
+            agent_invocation_args(
+                AgentCliInvocation::ClaudeCode,
+                "do it",
+                Some(SESSION_ID),
+                claude_default()
+            ),
             [
                 "-p",
                 "--output-format",
@@ -368,19 +429,191 @@ mod tests {
     }
 
     #[test]
-    fn codex_first_turn_uses_the_json_exec_argv_template() {
+    fn codex_first_turn_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
         assert_eq!(
-            agent_invocation_args(AgentCliInvocation::CodexExec, "do it", None),
+            agent_invocation_args(
+                AgentCliInvocation::CodexExec,
+                "do it",
+                None,
+                codex_default()
+            ),
             ["exec", "--json", "--", "do it"]
         );
     }
 
     #[test]
-    fn codex_follow_up_turn_uses_the_exec_resume_argv_template() {
+    fn codex_follow_up_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
         assert_eq!(
-            agent_invocation_args(AgentCliInvocation::CodexExec, "do it", Some(SESSION_ID)),
+            agent_invocation_args(
+                AgentCliInvocation::CodexExec,
+                "do it",
+                Some(SESSION_ID),
+                codex_default()
+            ),
             ["exec", "resume", "--json", SESSION_ID, "--", "do it"]
         );
+    }
+
+    #[test]
+    fn claude_argv_places_model_then_mode_then_resume_before_the_prompt_separator() {
+        assert_eq!(
+            agent_invocation_args(
+                AgentCliInvocation::ClaudeCode,
+                "do it",
+                Some(SESSION_ID),
+                AgentLaunchOptions::ClaudeCode {
+                    model: ClaudeModelChoice::Opus,
+                    mode: ClaudePermissionMode::AcceptEdits,
+                }
+            ),
+            [
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--model",
+                "opus",
+                "--permission-mode",
+                "acceptEdits",
+                "--resume",
+                SESSION_ID,
+                "--",
+                "do it"
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_resume_argv_places_options_before_the_positional_session_id() {
+        assert_eq!(
+            agent_invocation_args(
+                AgentCliInvocation::CodexExec,
+                "do it",
+                Some(SESSION_ID),
+                AgentLaunchOptions::Codex {
+                    model: CodexModelChoice::Gpt55,
+                    mode: CodexExecutionMode::WorkspaceWrite,
+                }
+            ),
+            [
+                "exec",
+                "resume",
+                "--json",
+                "-m",
+                "gpt-5.5",
+                "-c",
+                "sandbox_mode=\"workspace-write\"",
+                SESSION_ID,
+                "--",
+                "do it"
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_argv_table_covers_every_model_mode_and_resume_combination() {
+        for model in CLAUDE_MODELS {
+            for mode in CLAUDE_MODES {
+                let launch = AgentLaunchOptions::ClaudeCode { model, mode };
+                for resume in [None, Some(SESSION_ID)] {
+                    let mut expected: Vec<String> =
+                        ["-p", "--output-format", "stream-json", "--verbose"]
+                            .into_iter()
+                            .map(str::to_string)
+                            .collect();
+                    expected.extend(launch.model_args().iter().map(|arg| (*arg).to_string()));
+                    expected.extend(
+                        launch
+                            .mode_args(resume.is_some())
+                            .iter()
+                            .map(|arg| (*arg).to_string()),
+                    );
+                    if let Some(session_id) = resume {
+                        expected.push("--resume".to_string());
+                        expected.push(session_id.to_string());
+                    }
+                    expected.push("--".to_string());
+                    expected.push("do it".to_string());
+                    assert_eq!(
+                        agent_invocation_args(
+                            AgentCliInvocation::ClaudeCode,
+                            "do it",
+                            resume,
+                            launch
+                        ),
+                        expected,
+                        "claude {model:?}/{mode:?} resume={}",
+                        resume.is_some()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn codex_argv_table_covers_every_model_mode_and_resume_combination() {
+        for model in CODEX_MODELS {
+            for mode in CODEX_MODES {
+                let launch = AgentLaunchOptions::Codex { model, mode };
+                for resume in [None, Some(SESSION_ID)] {
+                    let mut expected: Vec<String> = match resume {
+                        Some(_) => vec!["exec", "resume", "--json"],
+                        None => vec!["exec", "--json"],
+                    }
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect();
+                    expected.extend(launch.model_args().iter().map(|arg| (*arg).to_string()));
+                    expected.extend(
+                        launch
+                            .mode_args(resume.is_some())
+                            .iter()
+                            .map(|arg| (*arg).to_string()),
+                    );
+                    if let Some(session_id) = resume {
+                        expected.push(session_id.to_string());
+                    }
+                    expected.push("--".to_string());
+                    expected.push("do it".to_string());
+                    assert_eq!(
+                        agent_invocation_args(
+                            AgentCliInvocation::CodexExec,
+                            "do it",
+                            resume,
+                            launch
+                        ),
+                        expected,
+                        "codex {model:?}/{mode:?} resume={}",
+                        resume.is_some()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn planning_rejects_launch_options_from_another_provider() {
+        let mismatch = plan_agent_invocation(
+            "",
+            AgentCliInvocation::ClaudeCode,
+            "do it",
+            Path::new("/workspace"),
+            None,
+            codex_default(),
+        )
+        .expect_err("cross-provider launch must be refused");
+        assert_eq!(mismatch, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR);
+
+        let reversed = plan_agent_invocation(
+            "",
+            AgentCliInvocation::CodexExec,
+            "do it",
+            Path::new("/workspace"),
+            None,
+            claude_default(),
+        )
+        .expect_err("cross-provider launch must be refused");
+        assert_eq!(reversed, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR);
     }
 
     #[test]
@@ -402,7 +635,7 @@ mod tests {
         assert!(validate_resume_session_id(&"a".repeat(MAX_AGENT_SESSION_ID_BYTES + 1)).is_err());
         assert!(validate_resume_session_id("has space").is_err());
         assert!(validate_resume_session_id("sess/ion1").is_err());
-        assert!(validate_resume_session_id("sessión01").is_err());
+        assert!(validate_resume_session_id("sessi\u{00f3}n01").is_err());
     }
 
     #[test]
@@ -413,6 +646,7 @@ mod tests {
             "do it",
             Path::new("/workspace"),
             Some("--dangerously-skip-permissions"),
+            claude_default(),
         )
         .expect_err("flag-like resume id must be refused");
         let oversize = plan_agent_invocation(
@@ -421,6 +655,7 @@ mod tests {
             "do it",
             Path::new("/workspace"),
             Some(&"a".repeat(MAX_AGENT_SESSION_ID_BYTES + 1)),
+            codex_default(),
         )
         .expect_err("oversize resume id must be refused");
 

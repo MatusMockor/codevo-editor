@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import { act, createElement, useMemo, useReducer } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
@@ -30,6 +31,10 @@ import { waitForReact } from "../test/reactTestLifecycle";
 import type { AgentTasksNotice, AgentThreadStoreSurface } from "./agentThreadPorts";
 import type { AgentOutputParserPort } from "./agentTurnOutputStream";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
+import {
+  DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE,
+  LAUNCH_PROVIDER_MISMATCH_NOTICE,
+} from "./agentTurnAdmission";
 import {
   useAgentTurnDispatch,
   type AgentTurnDispatchDependencies,
@@ -213,6 +218,104 @@ describe("useAgentTurnDispatch startThread", () => {
   });
 });
 
+describe("useAgentTurnDispatch launch admission", () => {
+  it("rejects a dangerous launch that was not confirmed before touching the gateway", async () => {
+    const harness = renderDispatch();
+    const launch = { provider: "claudeCode", model: "opus", mode: "bypassPermissions" } as const;
+
+    const result = await act(() => harness.hook().startThread(startRequest({ launch })));
+
+    expect(result).toBeNull();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
+    expect(harness.notice()).toEqual({
+      kind: "warning",
+      message: DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE,
+      action: null,
+    });
+    harness.unmount();
+  });
+
+  it("passes a confirmed dangerous launch into the start request and stamps it on the turn", async () => {
+    const harness = renderDispatch();
+    const launch = { provider: "claudeCode", model: "opus", mode: "bypassPermissions" } as const;
+
+    const result = await act(() =>
+      harness.hook().startThread(startRequest({ launch, dangerousLaunchConfirmed: true })),
+    );
+
+    expect(result).not.toBeNull();
+    expect(harness.startedRequests[0]?.launch).toEqual(launch);
+    expect(harness.thread(result?.threadId ?? "").turns[0]?.launch).toEqual(launch);
+    expect(harness.notice()).toBeNull();
+    harness.unmount();
+  });
+
+  it("rejects a launch whose provider differs from the agent CLI kind before the gateway call", async () => {
+    const harness = renderDispatch();
+
+    const result = await act(() =>
+      harness.hook().startThread(startRequest({ launch: defaultAgentLaunchOptions("codex") })),
+    );
+
+    expect(result).toBeNull();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()).toEqual({
+      kind: "error",
+      message: LAUNCH_PROVIDER_MISMATCH_NOTICE,
+      action: null,
+    });
+    harness.unmount();
+  });
+
+  it("uses the launch chosen for a follow-up rather than the previous turn's", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const launch = { provider: "claudeCode", model: "sonnet", mode: "plan" } as const;
+
+    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Go", launch }))).toBe(
+      true,
+    );
+
+    expect(harness.startedRequests[1]?.launch).toEqual(launch);
+    expect(harness.startedRequests[1]?.resumeSessionId).toBe(SESSION_ID);
+    expect(harness.thread(threadId).turns[1]?.launch).toEqual(launch);
+    harness.unmount();
+  });
+
+  it("rejects a follow-up whose launch provider differs from the thread provider", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    harness.agent.startAgentTask.mockClear();
+
+    const sent = await act(() =>
+      harness
+        .hook()
+        .sendFollowUp({ threadId, prompt: "Go", launch: defaultAgentLaunchOptions("codex") }),
+    );
+
+    expect(sent).toBe(false);
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()?.message).toBe(LAUNCH_PROVIDER_MISMATCH_NOTICE);
+    expect(harness.thread(threadId).turns).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("rejects an unconfirmed dangerous follow-up and never remembers a prior confirmation", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const launch = { provider: "claudeCode", model: "default", mode: "bypassPermissions" } as const;
+    harness.agent.startAgentTask.mockClear();
+
+    const sent = await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Go", launch }));
+
+    expect(sent).toBe(false);
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()?.message).toBe(DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE);
+    harness.unmount();
+  });
+});
+
 describe("useAgentTurnDispatch output stream", () => {
   it("captures the session id, batches chunks per frame, and flushes before the terminal status", async () => {
     const harness = renderDispatch();
@@ -298,9 +401,15 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     const threadId = await harness.settleThreadWithSession();
     const firstTurnId = harness.turnIdOf(threadId, 0);
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Continue" }))).toBe(
-      true,
-    );
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(true);
 
     const followUp = harness.startedRequests[1];
     expect(followUp?.resumeSessionId).toBe(SESSION_ID);
@@ -317,9 +426,23 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
   it("allows only one running turn per thread", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
-    await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Continue" }));
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      }),
+    );
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Again" }))).toBe(false);
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Again",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(false);
 
     expect(harness.notice()?.message).toContain("still running");
     expect(harness.startedRequests).toHaveLength(2);
@@ -335,9 +458,17 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       return pendingStart.promise;
     });
 
-    const first = act(() => harness.hook().sendFollowUp({ threadId, prompt: "One" }));
+    const first = act(() =>
+      harness
+        .hook()
+        .sendFollowUp({ threadId, prompt: "One", launch: defaultAgentLaunchOptions("claudeCode") }),
+    );
     await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
-    const second = await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Two" }));
+    const second = await act(() =>
+      harness
+        .hook()
+        .sendFollowUp({ threadId, prompt: "Two", launch: defaultAgentLaunchOptions("claudeCode") }),
+    );
     pendingStart.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
 
     expect(second).toBe(false);
@@ -357,7 +488,11 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
 
     let result = false;
     await act(async () => {
-      const sending = harness.hook().sendFollowUp({ threadId, prompt: "Continue" });
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
       await harness.waitForStartedRequests(2);
       expect(harness.actionsOf("turnStarted")).toHaveLength(1);
       harness.dispatchAction({ kind: "archived", threadId });
@@ -388,7 +523,11 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
 
     let result = true;
     await act(async () => {
-      const sending = harness.hook().sendFollowUp({ threadId, prompt: "Continue" });
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
       await harness.waitForStartedRequests(2);
       harness.dropThread(threadId);
       pendingStart.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
@@ -414,9 +553,15 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       ),
     );
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Continue" }))).toBe(
-      false,
-    );
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(false);
 
     const turn = harness.turn(threadId, 1);
     expect(turn.status).toEqual({
@@ -430,7 +575,15 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     });
     expect(harness.retainUncertainWorktree).not.toHaveBeenCalled();
     expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Retry" }))).toBe(true);
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Retry",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(true);
     harness.unmount();
   });
 
@@ -439,9 +592,15 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     const threadId = await harness.settleThreadWithSession();
     harness.agent.startAgentTask.mockRejectedValueOnce(new Error("socket hung up"));
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Continue" }))).toBe(
-      false,
-    );
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(false);
 
     expect(harness.turn(threadId, 1).status.kind).toBe("failed");
     expect(harness.notice()?.message).toContain("uncertain");
@@ -453,7 +612,15 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     const threadId = await harness.settleThreadWithSession();
     act(() => harness.dispatchAction({ kind: "archived", threadId }));
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "More" }))).toBe(false);
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "More",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(false);
 
     expect(harness.notice()?.message).toContain("archived");
     harness.unmount();
@@ -464,7 +631,15 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     const threadId = await harness.settleThreadWithSession();
     harness.switchToProject(ROOT_B, OWNER_B);
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "More" }))).toBe(false);
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "More",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(false);
 
     expect(harness.notice()?.message).toContain("no longer open");
     expect(harness.startedRequests).toHaveLength(1);
@@ -477,9 +652,15 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     await harness.startThread();
     harness.environment.maxConcurrent = 1;
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId: settled, prompt: "x" }))).toBe(
-      false,
-    );
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId: settled,
+          prompt: "x",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(false);
 
     expect(harness.notice()?.message).toContain("concurrent agent limit");
     harness.unmount();
@@ -490,7 +671,13 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     const threadId = await harness.settleThreadWithSession();
     harness.environment.cliPath = null;
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "x" }))).toBe(false);
+    expect(
+      await act(() =>
+        harness
+          .hook()
+          .sendFollowUp({ threadId, prompt: "x", launch: defaultAgentLaunchOptions("claudeCode") }),
+      ),
+    ).toBe(false);
 
     expect(harness.notice()?.action).toBe("configure-agent-cli");
     harness.unmount();
@@ -501,7 +688,13 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     const threadId = await harness.settleThreadWithSession();
     harness.environment.cliKind = "codex";
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "x" }))).toBe(false);
+    expect(
+      await act(() =>
+        harness
+          .hook()
+          .sendFollowUp({ threadId, prompt: "x", launch: defaultAgentLaunchOptions("claudeCode") }),
+      ),
+    ).toBe(false);
 
     expect(harness.notice()?.message).toBe(
       "This thread was started with Claude Code; start a new thread.",
@@ -516,7 +709,13 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       harness.emitStatus(harness.turnIdOf(threadId, 0), 1, { kind: "exited", exitCode: 0 });
     });
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "x" }))).toBe(false);
+    expect(
+      await act(() =>
+        harness
+          .hook()
+          .sendFollowUp({ threadId, prompt: "x", launch: defaultAgentLaunchOptions("claudeCode") }),
+      ),
+    ).toBe(false);
 
     expect(harness.notice()?.message).toBe(
       "This thread has no resumable session; start a new thread.",
@@ -529,7 +728,13 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     const threadId = await harness.settleThreadWithSession();
     harness.environment.worktreeMissing = true;
 
-    expect(await act(() => harness.hook().sendFollowUp({ threadId, prompt: "x" }))).toBe(false);
+    expect(
+      await act(() =>
+        harness
+          .hook()
+          .sendFollowUp({ threadId, prompt: "x", launch: defaultAgentLaunchOptions("claudeCode") }),
+      ),
+    ).toBe(false);
 
     expect(harness.notice()?.message).toBe("The worktree for this thread no longer exists.");
     harness.unmount();
@@ -538,7 +743,13 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
   it("warns once when a resumed turn exits non-zero without a session or result", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
-    await act(() => harness.hook().sendFollowUp({ threadId, prompt: "Continue" }));
+    await act(() =>
+      harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      }),
+    );
 
     await act(async () => {
       harness.emitStatus(harness.turnIdOf(threadId, 1), 1, { kind: "exited", exitCode: 2 });
@@ -592,6 +803,7 @@ function startRequest(
     prompt: "Fix the failing test",
     isolation: "worktree" as const,
     unsafeInPlaceConfirmationKey: null,
+    launch: defaultAgentLaunchOptions("claudeCode"),
     ...overrides,
   };
 }

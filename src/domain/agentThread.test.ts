@@ -13,10 +13,13 @@ import {
   MAX_AGENT_THREADS_PER_ROOT,
   MAX_AGENT_THREAD_TITLE_BYTES,
   MAX_AGENT_TURNS_PER_THREAD,
+  agentThreadAttention,
   agentThreadLifecycle,
   agentThreadTitle,
+  agentThreadUnread,
   agentThreadsReducer,
   emptyAgentThreadsState,
+  lastUsedAgentLaunch,
   parseAgentThread,
   runningTurn,
   serializeAgentThread,
@@ -41,6 +44,7 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     eventsTruncated: false,
     lastStatusSequence: 0,
     lastOutputSequence: 0,
+    launch: null,
     ...overrides,
   };
 }
@@ -59,6 +63,7 @@ function thread(overrides: Partial<AgentThread> = {}): AgentThread {
     updatedAtEpochMs: 1_000,
     turns: [turn({ turnId: firstTurnIdOf(threadId) })],
     turnsTruncated: false,
+    viewedAtEpochMs: null,
     integration: null,
     ...overrides,
   };
@@ -490,6 +495,418 @@ describe("agentThreadTitle", () => {
   });
 });
 
+describe("threadViewed", () => {
+  it("stamps the view time on the addressed thread only", () => {
+    const state = agentThreadsReducer(emptyAgentThreadsState(), {
+      kind: "threadCreated",
+      thread: settledThread(),
+    });
+
+    const viewed = agentThreadsReducer(state, {
+      kind: "threadViewed",
+      threadId: "agt-t1-0001",
+      atEpochMs: 5_000,
+    });
+
+    expect(viewed.threads.get("agt-t1-0001")?.viewedAtEpochMs).toBe(5_000);
+  });
+
+  it("is a no-op for a missing thread, an unchanged stamp, and an invalid time", () => {
+    const state = agentThreadsReducer(emptyAgentThreadsState(), {
+      kind: "threadCreated",
+      thread: settledThread({ viewedAtEpochMs: 5_000 }),
+    });
+
+    expect(
+      agentThreadsReducer(state, { kind: "threadViewed", threadId: "agt-gone", atEpochMs: 9 }),
+    ).toBe(state);
+    expect(
+      agentThreadsReducer(state, {
+        kind: "threadViewed",
+        threadId: "agt-t1-0001",
+        atEpochMs: 5_000,
+      }),
+    ).toBe(state);
+    expect(
+      agentThreadsReducer(state, {
+        kind: "threadViewed",
+        threadId: "agt-t1-0001",
+        atEpochMs: -1,
+      }),
+    ).toBe(state);
+    expect(
+      agentThreadsReducer(state, {
+        kind: "threadViewed",
+        threadId: "agt-t1-0001",
+        atEpochMs: 5_000.5,
+      }),
+    ).toBe(state);
+  });
+
+  it("advances the stamp monotonically and ignores a late older stamp", () => {
+    const state = stateWith(settledThread());
+
+    const first = agentThreadsReducer(state, {
+      kind: "threadViewed",
+      threadId: "agt-t1-0001",
+      atEpochMs: 5_000,
+    });
+    const later = agentThreadsReducer(first, {
+      kind: "threadViewed",
+      threadId: "agt-t1-0001",
+      atEpochMs: 6_000,
+    });
+    const stale = agentThreadsReducer(later, {
+      kind: "threadViewed",
+      threadId: "agt-t1-0001",
+      atEpochMs: 4_999,
+    });
+
+    expect(later.threads.get("agt-t1-0001")?.viewedAtEpochMs).toBe(6_000);
+    expect(stale).toBe(later);
+    expect(agentThreadUnread(stale.threads.get("agt-t1-0001") as AgentThread)).toBe(false);
+  });
+
+  it("leaves every other thread field untouched, including the update time", () => {
+    const before = settledThread({ pinned: true, updatedAtEpochMs: 3_000 });
+
+    const viewed = agentThreadsReducer(stateWith(before), {
+      kind: "threadViewed",
+      threadId: "agt-t1-0001",
+      atEpochMs: 7_000,
+    });
+
+    expect(viewed.threads.get("agt-t1-0001")).toEqual({ ...before, viewedAtEpochMs: 7_000 });
+  });
+});
+
+describe("agentThreadAttention", () => {
+  it("classifies archived, running, attention, and settled threads", () => {
+    expect(agentThreadAttention(settledThread({ archived: true }))).toBe("archived");
+    expect(agentThreadAttention(thread({ turns: [turn({ status: { kind: "running" } })] }))).toBe(
+      "running",
+    );
+    expect(agentThreadAttention(thread({ turns: [turn({ status: { kind: "pending" } })] }))).toBe(
+      "running",
+    );
+    expect(
+      agentThreadAttention(thread({ turns: [turn({ status: { kind: "failed", message: "x" } })] })),
+    ).toBe("attention");
+    expect(
+      agentThreadAttention(thread({ turns: [turn({ status: { kind: "interrupted" } })] })),
+    ).toBe("attention");
+    expect(agentThreadAttention(thread({ turns: [turn({ status: { kind: "stopped" } })] }))).toBe(
+      "attention",
+    );
+    expect(
+      agentThreadAttention(thread({ turns: [turn({ status: { kind: "exited", exitCode: 2 } })] })),
+    ).toBe("attention");
+    expect(
+      agentThreadAttention(thread({ turns: [turn({ status: { kind: "exited", exitCode: 0 } })] })),
+    ).toBe("settled");
+    expect(agentThreadAttention(thread({ turns: [] }))).toBe("settled");
+  });
+
+  it("treats a signal exit as attention and a clean exit after a failure as settled", () => {
+    expect(
+      agentThreadAttention(thread({ turns: [turn({ status: { kind: "exited", exitCode: -9 } })] })),
+    ).toBe("attention");
+    expect(
+      agentThreadAttention(
+        thread({
+          turns: [
+            turn({ turnId: "agt-1-0a1b", status: { kind: "failed", message: "x" } }),
+            turn({ turnId: "agt-2-0a1b", status: { kind: "exited", exitCode: 0 } }),
+          ],
+        }),
+      ),
+    ).toBe("settled");
+  });
+
+  it("lets archived win over a running or failed last turn", () => {
+    expect(
+      agentThreadAttention(
+        thread({ archived: true, turns: [turn({ status: { kind: "running" } })] }),
+      ),
+    ).toBe("archived");
+    expect(
+      agentThreadAttention(
+        thread({ archived: true, turns: [turn({ status: { kind: "failed", message: "x" } })] }),
+      ),
+    ).toBe("archived");
+  });
+
+  it("classifies pinned threads exactly like unpinned ones", () => {
+    const statuses: ReadonlyArray<AgentTurn["status"]> = [
+      { kind: "pending" },
+      { kind: "running" },
+      { kind: "failed", message: "x" },
+      { kind: "interrupted" },
+      { kind: "stopped" },
+      { kind: "exited", exitCode: 0 },
+      { kind: "exited", exitCode: 2 },
+    ];
+
+    for (const status of statuses) {
+      expect(agentThreadAttention(thread({ pinned: true, turns: [turn({ status })] }))).toBe(
+        agentThreadAttention(thread({ pinned: false, turns: [turn({ status })] })),
+      );
+    }
+  });
+});
+
+describe("agentThreadUnread", () => {
+  it("is unread only while a settled result is newer than the last view", () => {
+    const settled = (endedAtEpochMs: number | null): AgentTurn =>
+      turn({ status: { kind: "exited", exitCode: 0 }, endedAtEpochMs });
+
+    expect(agentThreadUnread(thread({ turns: [settled(2_000)] }))).toBe(true);
+    expect(agentThreadUnread(thread({ turns: [settled(2_000)], viewedAtEpochMs: 1_000 }))).toBe(
+      true,
+    );
+    expect(agentThreadUnread(thread({ turns: [settled(2_000)], viewedAtEpochMs: 2_000 }))).toBe(
+      false,
+    );
+    expect(agentThreadUnread(thread({ turns: [settled(2_000)], viewedAtEpochMs: 3_000 }))).toBe(
+      false,
+    );
+    expect(agentThreadUnread(thread({ turns: [settled(null)] }))).toBe(false);
+    expect(agentThreadUnread(thread({ turns: [turn({ status: { kind: "running" } })] }))).toBe(
+      false,
+    );
+    expect(agentThreadUnread(thread({ turns: [] }))).toBe(false);
+  });
+
+  it("counts every terminal status and ignores a pending first turn", () => {
+    const ended = (status: AgentTurn["status"]): AgentThread =>
+      thread({ turns: [turn({ status, endedAtEpochMs: 2_000 })], viewedAtEpochMs: 1_000 });
+
+    expect(agentThreadUnread(ended({ kind: "failed", message: "x" }))).toBe(true);
+    expect(agentThreadUnread(ended({ kind: "interrupted" }))).toBe(true);
+    expect(agentThreadUnread(ended({ kind: "stopped" }))).toBe(true);
+    expect(agentThreadUnread(ended({ kind: "exited", exitCode: 3 }))).toBe(true);
+    expect(agentThreadUnread(thread({ turns: [turn({ status: { kind: "pending" } })] }))).toBe(
+      false,
+    );
+  });
+
+  it("reads only the last turn and ignores pinning and archiving", () => {
+    const trailing = (viewedAtEpochMs: number | null): AgentThread =>
+      thread({
+        viewedAtEpochMs,
+        turns: [
+          turn({
+            turnId: "agt-1-0a1b",
+            status: { kind: "exited", exitCode: 0 },
+            endedAtEpochMs: 9_000,
+          }),
+          turn({
+            turnId: "agt-2-0a1b",
+            status: { kind: "exited", exitCode: 0 },
+            endedAtEpochMs: 2_000,
+          }),
+        ],
+      });
+
+    expect(agentThreadUnread(trailing(3_000))).toBe(false);
+    expect(agentThreadUnread(trailing(1_000))).toBe(true);
+    expect(agentThreadUnread({ ...trailing(1_000), pinned: true, archived: true })).toBe(true);
+  });
+});
+
+describe("lastUsedAgentLaunch", () => {
+  const stamped = (
+    turnId: string,
+    startedAtEpochMs: number,
+    launch: AgentTurn["launch"],
+  ): AgentTurn => turn({ turnId, startedAtEpochMs, launch });
+
+  it("picks the newest launch by start time then turn id for the root and provider", () => {
+    const threads = [
+      thread({
+        threadId: "agt-t1-0001",
+        turns: [
+          stamped("agt-1-0a1b", 1_000, { provider: "codex", model: "gpt-5.4", mode: "default" }),
+        ],
+      }),
+      thread({
+        threadId: "agt-t2-0001",
+        turns: [
+          stamped("agt-2-0a1b", 2_000, {
+            provider: "codex",
+            model: "gpt-5.5",
+            mode: "workspaceWrite",
+          }),
+          stamped("agt-3-0a1b", 2_000, {
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            mode: "readOnly",
+          }),
+        ],
+      }),
+    ];
+
+    expect(lastUsedAgentLaunch(threads, OWNER.rootKey, "codex")).toEqual({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      mode: "readOnly",
+    });
+  });
+
+  it("ignores other roots, other providers, and unstamped turns", () => {
+    const foreign = thread({
+      threadId: "agt-t3-0001",
+      owner: { ...OWNER, rootKey: "/other" },
+      turns: [
+        stamped("agt-9-0a1b", 9_000, { provider: "codex", model: "gpt-5.5", mode: "default" }),
+      ],
+    });
+    const claude = thread({
+      threadId: "agt-t4-0001",
+      turns: [
+        stamped("agt-8-0a1b", 8_000, { provider: "claudeCode", model: "opus", mode: "plan" }),
+      ],
+    });
+    const bare = thread({ threadId: "agt-t5-0001", turns: [turn({ turnId: "agt-7-0a1b" })] });
+
+    expect(lastUsedAgentLaunch([foreign, claude, bare], OWNER.rootKey, "codex")).toBeNull();
+    expect(lastUsedAgentLaunch([foreign, claude, bare], OWNER.rootKey, "claudeCode")).toEqual({
+      provider: "claudeCode",
+      model: "opus",
+      mode: "plan",
+    });
+    expect(lastUsedAgentLaunch([], OWNER.rootKey, "codex")).toBeNull();
+  });
+
+  it("breaks a cross-thread tie by the higher turn id, whatever the iteration order", () => {
+    const threads = [
+      thread({
+        threadId: "agt-t1-0001",
+        turns: [
+          stamped("agt-a-0a1b", 4_000, { provider: "codex", model: "gpt-5.4", mode: "readOnly" }),
+        ],
+      }),
+      thread({
+        threadId: "agt-t2-0001",
+        turns: [
+          stamped("agt-b-0a1b", 4_000, {
+            provider: "codex",
+            model: "gpt-5.5",
+            mode: "workspaceWrite",
+          }),
+        ],
+      }),
+    ];
+    const expected = { provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" };
+
+    expect(lastUsedAgentLaunch(threads, OWNER.rootKey, "codex")).toEqual(expected);
+    expect(lastUsedAgentLaunch([...threads].reverse(), OWNER.rootKey, "codex")).toEqual(expected);
+  });
+
+  it("skips a foreign provider turn that sits after the matching one in the same thread", () => {
+    const mixed = thread({
+      threadId: "agt-t1-0001",
+      turns: [
+        stamped("agt-1-0a1b", 1_000, { provider: "codex", model: "gpt-5.5", mode: "readOnly" }),
+        stamped("agt-2-0a1b", 2_000, {
+          provider: "claudeCode",
+          model: "opus",
+          mode: "acceptEdits",
+        }),
+      ],
+    });
+
+    expect(lastUsedAgentLaunch([mixed], OWNER.rootKey, "codex")).toEqual({
+      provider: "codex",
+      model: "gpt-5.5",
+      mode: "readOnly",
+    });
+  });
+});
+
+describe("agent thread wire compatibility", () => {
+  it("reads a pre-slice document without launch or viewedAtEpochMs", () => {
+    const stamped = thread({
+      turns: [turn({ launch: { provider: "codex", model: "gpt-5.5", mode: "readOnly" } })],
+      viewedAtEpochMs: 4_000,
+    });
+    const wire = serializeAgentThread(stamped) as Record<string, unknown>;
+    const turns = (wire.turns as Record<string, unknown>[]).map((entry) => {
+      const { launch: _launch, ...rest } = entry;
+      return rest;
+    });
+    const { viewedAtEpochMs: _viewed, ...rest } = wire;
+
+    const parsed = parseAgentThread({ ...rest, turns });
+
+    expect(parsed.viewedAtEpochMs).toBeNull();
+    expect(parsed.turns[0]?.launch).toBeNull();
+  });
+
+  it("round trips a stamped launch and view time and rejects an invalid launch", () => {
+    const stamped = thread({
+      turns: [
+        turn({ launch: { provider: "claudeCode", model: "sonnet", mode: "bypassPermissions" } }),
+      ],
+      viewedAtEpochMs: 4_000,
+    });
+
+    const wire = JSON.parse(JSON.stringify(serializeAgentThread(stamped))) as Record<
+      string,
+      unknown
+    >;
+    expect(parseAgentThread(wire)).toEqual(stamped);
+
+    const turns = (wire.turns as Record<string, unknown>[]).map((entry) => ({
+      ...entry,
+      launch: { provider: "claudeCode", model: "sonnet", mode: "yolo" },
+    }));
+    expect(() => parseAgentThread({ ...wire, turns })).toThrow(TypeError);
+  });
+
+  it("accepts an explicit null launch and view time", () => {
+    const wire = serializeAgentThread(thread()) as Record<string, unknown>;
+    const turns = (wire.turns as Record<string, unknown>[]).map((entry) => ({
+      ...entry,
+      launch: null,
+    }));
+
+    const parsed = parseAgentThread({ ...wire, turns, viewedAtEpochMs: null });
+
+    expect(parsed.viewedAtEpochMs).toBeNull();
+    expect(parsed.turns[0]?.launch).toBeNull();
+  });
+
+  it("round trips the default launch of both providers", () => {
+    for (const launch of [
+      { provider: "claudeCode", model: "default", mode: "default" },
+      { provider: "codex", model: "default", mode: "default" },
+    ] as const) {
+      const stamped = thread({ turns: [turn({ launch })] });
+      const wire = JSON.parse(JSON.stringify(serializeAgentThread(stamped))) as unknown;
+      expect(parseAgentThread(wire).turns[0]?.launch).toEqual(launch);
+    }
+  });
+
+  it("fails the whole thread closed on an unknown key inside a persisted launch", () => {
+    const wire = serializeAgentThread(thread()) as Record<string, unknown>;
+    const turns = (wire.turns as Record<string, unknown>[]).map((entry) => ({
+      ...entry,
+      launch: { provider: "codex", model: "default", mode: "default", effort: "high" },
+    }));
+
+    expect(() => parseAgentThread({ ...wire, turns })).toThrow(/thread\.turns\[0\]\.launch/);
+  });
+
+  it("rejects a view time that is not an unsigned safe integer", () => {
+    const wire = serializeAgentThread(thread()) as Record<string, unknown>;
+
+    expect(() => parseAgentThread({ ...wire, viewedAtEpochMs: -1 })).toThrow(TypeError);
+    expect(() => parseAgentThread({ ...wire, viewedAtEpochMs: 1.5 })).toThrow(TypeError);
+    expect(() => parseAgentThread({ ...wire, viewedAtEpochMs: "4000" })).toThrow(TypeError);
+  });
+});
+
 describe("parseAgentThread", () => {
   const full = thread({
     target: { isolation: "worktree", worktreePath: "/repo/.worktrees/agt-t1-0001" },
@@ -517,10 +934,12 @@ describe("parseAgentThread", () => {
         eventsTruncated: true,
         lastStatusSequence: 3,
         lastOutputSequence: 7,
+        launch: null,
       }),
       turn({ turnId: "agt-2-0a1b", status: { kind: "interrupted" } }),
     ],
     turnsTruncated: true,
+    viewedAtEpochMs: null,
   });
 
   it("round trips through serialize and parse", () => {

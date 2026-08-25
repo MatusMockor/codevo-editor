@@ -14,6 +14,7 @@ import {
   UNTITLED_AGENT_THREAD_TITLE,
   runningTurn,
   type AgentThread,
+  type AgentThreadAttention,
   type AgentThreadLifecycle,
   type AgentTurn,
   type AgentTurnEvent,
@@ -32,6 +33,7 @@ import type { GitShipStatus } from "../../domain/gitIntegration";
 import { gitRepositoryDisplayName } from "../../domain/gitRepositoryMapping";
 import { localHistoryRelativeTime } from "../../domain/localHistory";
 import type { AgentThreadView, OrphanedWorktreeView } from "../../application/agentThreadPorts";
+import { agentLaunchModelMeta } from "./agentLaunchPresentation";
 
 export const MAX_RENDERED_EVENTS_PER_TURN = 200;
 
@@ -639,7 +641,7 @@ function buildGroup(
   orphans: ReadonlyArray<OrphanedWorktreeView>,
   repositoryResolved: boolean,
 ): AgentRepositoryGroup {
-  const active = orderPinnedThreadsFirst(threads.filter((view) => view.lifecycle !== "archived"));
+  const active = orderAgentThreadRows(threads.filter((view) => view.lifecycle !== "archived"));
   const archived = threads.filter((view) => view.lifecycle === "archived");
 
   return {
@@ -653,17 +655,199 @@ function buildGroup(
   };
 }
 
-export function orderPinnedThreadsFirst(
+const ATTENTION_BAND_ORDER: Readonly<Record<AgentThreadAttention, number>> = {
+  running: 0,
+  attention: 1,
+  settled: 2,
+  archived: 3,
+};
+
+export function orderAgentThreadRows(
   threads: ReadonlyArray<AgentThreadView>,
 ): ReadonlyArray<AgentThreadView> {
-  if (!threads.some((view) => view.thread.pinned)) {
-    return threads;
-  }
-  return [...threads].sort((left, right) => pinRank(left) - pinRank(right));
+  return [...threads].sort(compareAgentThreadRows);
+}
+
+function compareAgentThreadRows(left: AgentThreadView, right: AgentThreadView): number {
+  const band = ATTENTION_BAND_ORDER[left.attention] - ATTENTION_BAND_ORDER[right.attention];
+  if (band !== 0) return band;
+  const pin = pinRank(left) - pinRank(right);
+  if (pin !== 0) return pin;
+  const recency = right.thread.updatedAtEpochMs - left.thread.updatedAtEpochMs;
+  if (recency !== 0) return recency;
+  return compareThreadIds(left.thread.threadId, right.thread.threadId);
+}
+
+function compareThreadIds(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 function pinRank(view: AgentThreadView): number {
   return view.thread.pinned ? 0 : 1;
+}
+
+export const MAX_AGENT_THREAD_FILTER_CHARS = 128;
+
+export type AgentThreadStatusFilter = "all" | "running" | "attention" | "settled" | "archived";
+
+export const AGENT_THREAD_STATUS_FILTERS: ReadonlyArray<AgentThreadStatusFilter> = [
+  "all",
+  "running",
+  "attention",
+  "settled",
+  "archived",
+];
+
+export interface AgentThreadListQuery {
+  readonly text: string;
+  readonly status: AgentThreadStatusFilter;
+}
+
+export const ALL_AGENT_THREADS_QUERY: AgentThreadListQuery = { text: "", status: "all" };
+
+export interface AgentThreadBand {
+  readonly attention: AgentThreadAttention;
+  readonly label: string;
+  readonly threads: ReadonlyArray<AgentThreadView>;
+}
+
+const ACTIVE_ATTENTION_BANDS: ReadonlyArray<AgentThreadAttention> = [
+  "running",
+  "attention",
+  "settled",
+];
+
+export function agentThreadAttentionLabel(attention: AgentThreadAttention): string {
+  switch (attention) {
+    case "running":
+      return "Running";
+    case "attention":
+      return "Needs attention";
+    case "settled":
+      return "Idle";
+    case "archived":
+      return "Archived";
+    default:
+      return unsupportedAttention(attention);
+  }
+}
+
+export function agentThreadStatusFilterLabel(filter: AgentThreadStatusFilter): string {
+  if (filter === "all") return "All";
+  return agentThreadAttentionLabel(filter);
+}
+
+export function agentAttentionCount(threads: ReadonlyArray<AgentThreadView>): number {
+  return threads.filter((view) => view.attention === "attention").length;
+}
+
+export function agentThreadModelTag(thread: AgentThread): string | null {
+  const launch = lastAgentTurn(thread)?.launch ?? null;
+  if (launch === null) return null;
+  if (launch.model === "default") return null;
+  return agentLaunchModelMeta(launch);
+}
+
+export function agentThreadBands(
+  threads: ReadonlyArray<AgentThreadView>,
+): ReadonlyArray<AgentThreadBand> {
+  return ACTIVE_ATTENTION_BANDS.map((attention) => ({
+    attention,
+    label: agentThreadAttentionLabel(attention),
+    threads: threads.filter((view) => view.attention === attention),
+  })).filter((band) => band.threads.length > 0);
+}
+
+export function clipAgentThreadFilterText(text: string): string {
+  if (text.length <= MAX_AGENT_THREAD_FILTER_CHARS) return text;
+  const clipped = text.slice(0, MAX_AGENT_THREAD_FILTER_CHARS);
+  const last = clipped.charCodeAt(clipped.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) return clipped.slice(0, -1);
+  return clipped;
+}
+
+export function agentThreadListQuery(
+  text: string,
+  status: AgentThreadStatusFilter,
+): AgentThreadListQuery {
+  return { text: clipAgentThreadFilterText(text), status };
+}
+
+export function agentThreadListQueryActive(query: AgentThreadListQuery): boolean {
+  return query.text.trim() !== "" || query.status !== "all";
+}
+
+export function applyAgentThreadListQuery(
+  groups: ReadonlyArray<AgentProjectGroup>,
+  query: AgentThreadListQuery,
+): ReadonlyArray<AgentProjectGroup> {
+  if (!agentThreadListQueryActive(query)) return groups;
+  const needle = query.text.trim().toLowerCase();
+  return groups
+    .map((group) => ({
+      ...group,
+      repos: filterRepositoryGroups(group.repos, needle, query.status),
+    }))
+    .filter((group) => group.repos.length > 0);
+}
+
+function filterRepositoryGroups(
+  repos: ReadonlyArray<AgentRepositoryGroup>,
+  needle: string,
+  status: AgentThreadStatusFilter,
+): ReadonlyArray<AgentRepositoryGroup> {
+  return repos
+    .map((repo) => filterRepositoryGroup(repo, needle, status))
+    .filter((repo) => repo.threads.length > 0 || repo.archived.length > 0);
+}
+
+function filterRepositoryGroup(
+  repo: AgentRepositoryGroup,
+  needle: string,
+  status: AgentThreadStatusFilter,
+): AgentRepositoryGroup {
+  return {
+    ...repo,
+    threads: repo.threads.filter((view) => matchesQuery(view, needle, status)),
+    archived: repo.archived.filter((view) => matchesQuery(view, needle, status)),
+    orphans: [],
+  };
+}
+
+function matchesQuery(
+  view: AgentThreadView,
+  needle: string,
+  status: AgentThreadStatusFilter,
+): boolean {
+  if (status !== "all" && view.attention !== status) return false;
+  if (needle === "") return true;
+  return agentThreadDisplayTitle(view.thread).toLowerCase().includes(needle);
+}
+
+export function visibleAgentThreadIds(
+  groups: ReadonlyArray<AgentProjectGroup>,
+  collapsedProjectRootKeys: ReadonlySet<string>,
+  collapsedRepositoryRoots: ReadonlySet<string>,
+  expandedArchivedRoots: ReadonlySet<string>,
+): ReadonlyArray<string> {
+  const ids: string[] = [];
+  for (const group of groups) {
+    if (collapsedProjectRootKeys.has(group.projectRootKey)) continue;
+    const repos = group.singleRepo ? group.repos.slice(0, 1) : group.repos;
+    for (const repo of repos) {
+      if (!group.singleRepo && collapsedRepositoryRoots.has(repo.repositoryRoot)) continue;
+      for (const view of repo.threads) ids.push(view.thread.threadId);
+      if (!expandedArchivedRoots.has(repo.repositoryRoot)) continue;
+      for (const view of repo.archived) ids.push(view.thread.threadId);
+    }
+  }
+  return ids;
+}
+
+function unsupportedAttention(attention: never): never {
+  throw new TypeError(`Unsupported agent thread attention: ${String(attention)}.`);
 }
 
 export const MAX_RENDERED_SHIP_CONFLICT_FILES = 12;

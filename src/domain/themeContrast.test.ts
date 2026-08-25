@@ -1,10 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  terminalThemeForAppTheme,
-  type TerminalTheme,
-} from "./settings";
+import { terminalThemeForAppTheme, type TerminalTheme } from "./settings";
 import { contrastRatio } from "./themeContrast";
 
 const minimumTextContrast = 4.5;
@@ -71,11 +68,7 @@ const runtimeStyleTokens = new Set([
   "--structure-indent",
   "--tree-level",
 ]);
-const unmappedThemeTokens = [
-  "--button-primary-text",
-  "--color-shadow",
-  "--font-mono",
-];
+const unmappedThemeTokens = ["--button-primary-text", "--color-shadow", "--font-mono"];
 const terminalTextColorKeys = [
   "black",
   "blue",
@@ -143,71 +136,47 @@ describe("contrastRatio", () => {
     const appCss = readFileSync("src/App.css", "utf8");
     const darkActive = cssVariable(appCss, ":root", "--color-active");
     const darkActiveText = cssVariable(appCss, ":root", "--color-active-text");
-    const lightActive = cssVariable(
-      appCss,
-      ".app-shell[data-theme=\"light\"]",
-      "--color-active",
-    );
+    const lightActive = cssVariable(appCss, '.app-shell[data-theme="light"]', "--color-active");
     const lightActiveText = cssVariable(
       appCss,
-      ".app-shell[data-theme=\"light\"]",
+      '.app-shell[data-theme="light"]',
       "--color-active-text",
     );
-    const systemActive = cssVariable(
-      appCss,
-      ".app-shell[data-theme=\"system\"]",
-      "--color-active",
-    );
+    const systemActive = cssVariable(appCss, '.app-shell[data-theme="system"]', "--color-active");
     const systemActiveText = cssVariable(
       appCss,
-      ".app-shell[data-theme=\"system\"]",
+      '.app-shell[data-theme="system"]',
       "--color-active-text",
     );
-    const ayuActive = cssVariable(
-      appCss,
-      ".app-shell[data-theme=\"ayuMirage\"]",
-      "--color-active",
-    );
+    const ayuActive = cssVariable(appCss, '.app-shell[data-theme="ayuMirage"]', "--color-active");
     const ayuActiveText = cssVariable(
       appCss,
-      ".app-shell[data-theme=\"ayuMirage\"]",
+      '.app-shell[data-theme="ayuMirage"]',
       "--color-active-text",
     );
     const materialActive = cssVariable(
       appCss,
-      ".app-shell[data-theme=\"materialDeepOcean\"]",
+      '.app-shell[data-theme="materialDeepOcean"]',
       "--color-active",
     );
     const materialActiveText = cssVariable(
       appCss,
-      ".app-shell[data-theme=\"materialDeepOcean\"]",
+      '.app-shell[data-theme="materialDeepOcean"]',
       "--color-active-text",
     );
 
     expect(appCss).toContain("color: var(--color-active-text)");
-    expect(contrastRatio(darkActiveText, darkActive)).toBeGreaterThanOrEqual(
-      minimumTextContrast,
-    );
-    expect(contrastRatio(lightActiveText, lightActive)).toBeGreaterThanOrEqual(
-      minimumTextContrast,
-    );
+    expect(contrastRatio(darkActiveText, darkActive)).toBeGreaterThanOrEqual(minimumTextContrast);
+    expect(contrastRatio(lightActiveText, lightActive)).toBeGreaterThanOrEqual(minimumTextContrast);
     expect(contrastRatio(systemActiveText, systemActive)).toBeGreaterThanOrEqual(
       minimumTextContrast,
     );
-    expect(contrastRatio(ayuActiveText, ayuActive)).toBeGreaterThanOrEqual(
+    expect(contrastRatio(ayuActiveText, ayuActive)).toBeGreaterThanOrEqual(minimumTextContrast);
+    expect(contrastRatio(materialActiveText, materialActive)).toBeGreaterThanOrEqual(
       minimumTextContrast,
     );
-    expect(
-      contrastRatio(materialActiveText, materialActive),
-    ).toBeGreaterThanOrEqual(minimumTextContrast);
 
-    for (const id of [
-      "oneDarkPro",
-      "dracula",
-      "catppuccinMocha",
-      "catppuccinLatte",
-      "oneLight",
-    ]) {
+    for (const id of ["oneDarkPro", "dracula", "catppuccinMocha", "catppuccinLatte", "oneLight"]) {
       const selector = `.app-shell[data-theme="${id}"]`;
       const active = cssVariable(appCss, selector, "--color-active");
       const activeText = cssVariable(appCss, selector, "--color-active-text");
@@ -249,13 +218,16 @@ describe("calm design tokens", () => {
   });
 
   it("limits undeclared theme tokens to documented unmapped tokens", () => {
-    const definedTokens = new Set(
-      Array.from(appCss.matchAll(/^\s*(--[\w-]+)\s*:/gm), (match) => match[1]),
-    );
+    const definedTokens = new Set<string>();
     const usedTokens = new Set<string>();
 
     for (const file of sourceFiles("src")) {
       const source = readFileSync(file, "utf8");
+      if (extname(file) === ".css") {
+        for (const match of source.matchAll(/^\s*(--[\w-]+)\s*:/gm)) {
+          definedTokens.add(match[1]);
+        }
+      }
       for (const match of source.matchAll(/var\(\s*(--[\w-]+)/g)) {
         usedTokens.add(match[1]);
       }
@@ -352,11 +324,7 @@ describe("calm design tokens", () => {
 
   it("keeps circular symbol icon glyphs readable on their kind backgrounds", () => {
     for (const [name, selector] of themeSelectors) {
-      const foreground = cssVariableWithRootFallback(
-        appCss,
-        selector,
-        "--symbol-icon-foreground",
-      );
+      const foreground = cssVariableWithRootFallback(appCss, selector, "--symbol-icon-foreground");
 
       for (const symbolKey of symbolColorKeys) {
         const symbol = cssVariable(appCss, selector, symbolKey);
@@ -400,9 +368,7 @@ describe("Monaco popup chrome", () => {
       ".monaco-editor .action-widget",
     ]) {
       const block = cssBlockContainingSelector(appCss, selector);
-      expect(block, `${selector}: radius`).toContain(
-        "border-radius: var(--radius-lg)",
-      );
+      expect(block, `${selector}: radius`).toContain("border-radius: var(--radius-lg)");
     }
 
     for (const selector of [
@@ -412,12 +378,8 @@ describe("Monaco popup chrome", () => {
       ".monaco-editor .action-widget",
     ]) {
       const block = cssBlockContainingSelector(appCss, selector);
-      expect(block, `${selector}: border`).toContain(
-        "var(--color-border-strong)",
-      );
-      expect(block, `${selector}: shadow`).toContain(
-        "box-shadow: var(--shadow-pop)",
-      );
+      expect(block, `${selector}: border`).toContain("var(--color-border-strong)");
+      expect(block, `${selector}: shadow`).toContain("box-shadow: var(--shadow-pop)");
     }
   });
 
@@ -433,9 +395,7 @@ describe("Monaco popup chrome", () => {
       ".monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled)",
     ]) {
       const block = cssBlockContainingSelector(appCss, selector);
-      expect(block, `${selector}: selected background`).toContain(
-        "var(--color-accent-soft)",
-      );
+      expect(block, `${selector}: selected background`).toContain("var(--color-accent-soft)");
     }
 
     const actionRow = cssBlockContainingSelector(
@@ -480,8 +440,7 @@ function accentSoftColor(css: string, selector: string): string {
 function mixHex(foreground: string, background: string, weight: number): string {
   const a = hexChannels(foreground);
   const b = hexChannels(background);
-  const channel = (index: number) =>
-    Math.round(weight * a[index] + (1 - weight) * b[index]);
+  const channel = (index: number) => Math.round(weight * a[index] + (1 - weight) * b[index]);
 
   return `#${[channel(0), channel(1), channel(2)]
     .map((value) => value.toString(16).padStart(2, "0"))
@@ -507,9 +466,7 @@ function expectTerminalThemeContrast(theme: TerminalTheme) {
 
 function cssVariable(css: string, selector: string, variable: string): string {
   const block = cssBlock(css, selector);
-  const match = new RegExp(`${escapeRegex(variable)}:\\s*(#[0-9a-fA-F]{6})`).exec(
-    block,
-  );
+  const match = new RegExp(`${escapeRegex(variable)}:\\s*(#[0-9a-fA-F]{6})`).exec(block);
 
   if (!match) {
     throw new Error(`Missing ${variable} in ${selector}`);
@@ -528,11 +485,7 @@ function cssDeclaration(css: string, property: string): string {
   return match[1].trim();
 }
 
-function cssVariableWithRootFallback(
-  css: string,
-  selector: string,
-  variable: string,
-): string {
+function cssVariableWithRootFallback(css: string, selector: string, variable: string): string {
   try {
     return cssVariable(css, selector, variable);
   } catch (error) {

@@ -20,6 +20,10 @@ use agent_task_admission::{
     AGENT_TASK_GLOBAL_LIMIT_ERROR, AGENT_TASK_IN_PLACE_EXCLUSIVE_ERROR,
     AGENT_TASK_REPOSITORY_LIMIT, AGENT_TASK_REPOSITORY_LIMIT_ERROR,
 };
+use agent_task_spawner::agent_launch::{
+    AgentLaunchOptions, ClaudeModelChoice, ClaudePermissionMode, CodexExecutionMode,
+    CodexModelChoice,
+};
 use agent_task_spawner::{
     plan_agent_invocation, AgentChild, AgentCliInvocation, AgentProcessSpawner, AgentTaskSpawnPlan,
     StdAgentProcessSpawner, AGENT_TASK_INHERITED_ENV, MAX_AGENT_PROMPT_BYTES,
@@ -572,6 +576,15 @@ fn assert_wire<T: serde::Serialize>(value: &T, expected: &str) {
     assert_eq!(actual, expected);
 }
 
+const CLAUDE_LAUNCH: AgentLaunchOptions = AgentLaunchOptions::ClaudeCode {
+    model: ClaudeModelChoice::Default,
+    mode: ClaudePermissionMode::Default,
+};
+const CODEX_LAUNCH: AgentLaunchOptions = AgentLaunchOptions::Codex {
+    model: CodexModelChoice::Default,
+    mode: CodexExecutionMode::Default,
+};
+
 #[test]
 fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
     let directory = unique_path("plan");
@@ -583,6 +596,7 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
         "do the task",
         &directory,
         None,
+        CLAUDE_LAUNCH,
     )
     .expect("claude plan");
     assert_eq!(claude.program(), cli.as_path());
@@ -614,6 +628,7 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
         "ship",
         &directory,
         None,
+        CODEX_LAUNCH,
     )
     .expect("codex plan");
     assert_eq!(
@@ -631,6 +646,7 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
         "do the task",
         &directory,
         Some("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"),
+        CLAUDE_LAUNCH,
     )
     .expect("resumed claude plan");
     assert_eq!(
@@ -652,6 +668,7 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
         "ship",
         &directory,
         Some("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"),
+        CODEX_LAUNCH,
     )
     .expect("resumed codex plan");
     assert_eq!(
@@ -673,6 +690,7 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
                 "do the task",
                 &directory,
                 Some(candidate),
+                CLAUDE_LAUNCH,
             )
             .is_err(),
             "resume session id {candidate} must be refused"
@@ -707,7 +725,8 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
                 AgentCliInvocation::ClaudeCode,
                 prompt,
                 &directory,
-                None
+                None,
+                CLAUDE_LAUNCH,
             )
             .is_err(),
             "expected rejection for {label}"
@@ -720,7 +739,8 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
             AgentCliInvocation::ClaudeCode,
             prompt,
             &directory,
-            None
+            None,
+            CLAUDE_LAUNCH,
         )
         .is_err(),
         "expected rejection for non-executable file"
@@ -732,7 +752,8 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
             AgentCliInvocation::ClaudeCode,
             "",
             &directory,
-            None
+            None,
+            CLAUDE_LAUNCH,
         )
         .is_err(),
         "expected rejection for empty prompt"
@@ -744,7 +765,8 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
             AgentCliInvocation::ClaudeCode,
             &oversized_prompt,
             &directory,
-            None
+            None,
+            CLAUDE_LAUNCH,
         )
         .is_err(),
         "expected rejection for oversized prompt"
@@ -755,7 +777,8 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
             AgentCliInvocation::ClaudeCode,
             prompt,
             Path::new("relative/cwd"),
-            None
+            None,
+            CLAUDE_LAUNCH,
         )
         .is_err(),
         "expected rejection for relative cwd"
@@ -766,7 +789,8 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
             AgentCliInvocation::ClaudeCode,
             prompt,
             &directory,
-            Some("-not-a-session")
+            Some("-not-a-session"),
+            CLAUDE_LAUNCH,
         )
         .is_err(),
         "expected rejection for a flag-like resume session id"
@@ -777,7 +801,8 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
             AgentCliInvocation::ClaudeCode,
             prompt,
             &directory,
-            Some("session-0001")
+            Some("session-0001"),
+            CLAUDE_LAUNCH,
         )
         .is_ok(),
         "expected a safe resume session id to be accepted"

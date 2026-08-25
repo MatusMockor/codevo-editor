@@ -52,9 +52,69 @@ function startRequest(overrides: Record<string, unknown> = {}): Record<string, u
     agentCliPath: "/usr/local/bin/claude",
     agentCliKind: "claudeCode",
     resumeSessionId: null,
+    launch: { provider: "claudeCode", model: "default", mode: "default" },
     ...overrides,
   };
 }
+
+describe("validateStartAgentTaskRequest launch", () => {
+  it("accepts a matching provider and returns the parsed launch options", () => {
+    const request = validateStartAgentTaskRequest(
+      startRequest({ launch: { provider: "claudeCode", model: "opus", mode: "plan" } }),
+    );
+
+    expect(request.launch).toEqual({ provider: "claudeCode", model: "opus", mode: "plan" });
+  });
+
+  it("rejects a launch whose provider differs from the agent CLI kind", () => {
+    expect(() =>
+      validateStartAgentTaskRequest(
+        startRequest({
+          agentCliKind: "codex",
+          launch: { provider: "claudeCode", model: "default", mode: "default" },
+        }),
+      ),
+    ).toThrow("Invalid agent task value at request.launch.provider: expected the agent CLI kind.");
+    expect(() =>
+      validateStartAgentTaskRequest(
+        startRequest({
+          agentCliKind: "claudeCode",
+          launch: { provider: "codex", model: "default", mode: "default" },
+        }),
+      ),
+    ).toThrow(/request\.launch\.provider/);
+  });
+
+  it("accepts both providers when the launch provider matches", () => {
+    expect(
+      validateStartAgentTaskRequest(
+        startRequest({
+          agentCliKind: "codex",
+          launch: { provider: "codex", model: "gpt-5.6-sol", mode: "dangerFullAccess" },
+        }),
+      ).launch,
+    ).toEqual({ provider: "codex", model: "gpt-5.6-sol", mode: "dangerFullAccess" });
+  });
+
+  it("rejects a missing, unknown, or cross-provider launch", () => {
+    const withoutLaunch = startRequest();
+    delete withoutLaunch.launch;
+
+    expect(() => validateStartAgentTaskRequest(withoutLaunch)).toThrow(TypeError);
+    expect(() =>
+      validateStartAgentTaskRequest(
+        startRequest({ launch: { provider: "claudeCode", model: "gpt-5.5", mode: "default" } }),
+      ),
+    ).toThrow(TypeError);
+    expect(() =>
+      validateStartAgentTaskRequest(
+        startRequest({
+          launch: { provider: "claudeCode", model: "default", mode: "default", effort: "high" },
+        }),
+      ),
+    ).toThrow(TypeError);
+  });
+});
 
 describe("isTerminalAgentTaskStatus", () => {
   it("classifies every status of the closed union", () => {
@@ -255,6 +315,7 @@ describe("validateStartAgentTaskRequest", () => {
       isolation: "worktree",
       cwd: "/repo/.worktrees/agt-1-0a1b",
       agentCliKind: "codex",
+      launch: { provider: "codex", model: "gpt-5.5", mode: "readOnly" },
     });
     expect(validateStartAgentTaskRequest(request)).toEqual(request);
   });

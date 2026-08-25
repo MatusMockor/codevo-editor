@@ -1,3 +1,4 @@
+import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import { describe, expect, it, vi } from "vitest";
 import { AgentTaskStartRejectedError, type StartAgentTaskRequest } from "../domain/agentTask";
 import {
@@ -17,6 +18,7 @@ const START_REQUEST: StartAgentTaskRequest = {
   agentCliPath: "/usr/local/bin/claude",
   agentCliKind: "claudeCode",
   resumeSessionId: null,
+  launch: defaultAgentLaunchOptions("claudeCode"),
 };
 
 const available: AgentTaskRuntimeDetector = () => true;

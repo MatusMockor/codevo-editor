@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
@@ -51,6 +52,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Fix the failing test",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
         }),
       ).not.toBeNull();
     });
@@ -89,6 +91,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Refactor the API",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
         }),
       ).not.toBeNull();
     });
@@ -122,6 +125,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Refactor the API",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
         }),
       ).toBeNull();
     });
@@ -158,6 +162,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Refactor the API",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
         }),
       ).toBeNull();
     });
@@ -193,6 +198,7 @@ describe("useWorkbenchAgents composition", () => {
           prompt: "Refactor the API",
           isolation: "worktree",
           unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
         }),
       ).not.toBeNull();
     });
@@ -245,6 +251,7 @@ describe("useWorkbenchAgents composition", () => {
         prompt: "Refactor the API",
         isolation: "worktree",
         unsafeInPlaceConfirmationKey: null,
+        launch: defaultAgentLaunchOptions("claudeCode"),
       });
     });
     const taskId = harness.startedRequests[0]?.taskId ?? "";

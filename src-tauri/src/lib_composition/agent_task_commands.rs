@@ -1,5 +1,8 @@
 use super::{canonicalize_workspace_root, trusted_for, workspace_root_for_disposal, GitTrustState};
 use crate::agent_task_admission::AgentTaskAdmissionRegistry;
+use crate::agent_task_spawner::agent_launch::{
+    AgentLaunchOptions, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR,
+};
 use crate::agent_task_spawner::{plan_agent_invocation, AgentCliInvocation, AgentTaskSpawnPlan};
 use crate::agent_task_supervisor::{
     AgentTaskEventSink, AgentTaskIsolation, AgentTaskOutputEvent, AgentTaskRegistry,
@@ -39,6 +42,7 @@ pub(crate) struct StartAgentTaskRequest {
     agent_cli_path: String,
     agent_cli_kind: AgentCliInvocation,
     resume_session_id: Option<String>,
+    launch: AgentLaunchOptions,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -146,6 +150,9 @@ struct PreparedAgentTaskStart {
 fn prepare_agent_task_start(
     request: &StartAgentTaskRequest,
 ) -> Result<PreparedAgentTaskStart, String> {
+    if !request.launch.matches(request.agent_cli_kind) {
+        return Err(AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR.to_string());
+    }
     let task_id = safe_agent_task_id(&request.task_id)?;
     ensure_workspace_id_bounds(&request.workspace_id)?;
     let repository_root = canonicalize_workspace_root(&request.repository_root)?;
@@ -168,6 +175,7 @@ fn prepare_agent_task_start(
         &request.prompt,
         &cwd,
         request.resume_session_id.as_deref(),
+        request.launch,
     )?;
 
     Ok(PreparedAgentTaskStart {
@@ -327,6 +335,9 @@ pub(crate) fn stop_agent_tasks_on_dispose(app: &AppHandle, root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_task_spawner::agent_launch::{
+        ClaudeModelChoice, ClaudePermissionMode, CodexExecutionMode, CodexModelChoice,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -394,6 +405,7 @@ mod tests {
             agent_cli_path: workspace.executable_cli().to_string_lossy().into_owned(),
             agent_cli_kind: AgentCliInvocation::ClaudeCode,
             resume_session_id: None,
+            launch: AgentLaunchOptions::default(),
         }
     }
 
@@ -515,6 +527,179 @@ mod tests {
     }
 
     #[test]
+    fn prepare_rejects_launch_options_from_another_provider() {
+        let workspace = TempWorkspace::create("launch-mismatch");
+        let worktree = workspace.worktree("agt-test-0001");
+        let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
+        request.launch = AgentLaunchOptions::Codex {
+            model: CodexModelChoice::Gpt55,
+            mode: CodexExecutionMode::ReadOnly,
+        };
+
+        let error = prepare_agent_task_start(&request).expect_err("cross-provider launch");
+
+        assert_eq!(error, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR);
+    }
+
+    #[test]
+    fn prepare_rejects_a_provider_mismatch_before_any_path_or_process_work() {
+        let workspace = TempWorkspace::create("launch-mismatch-early");
+        let mut request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
+        request.task_id = "Bad--Id".to_string();
+        request.repository_root = "/nonexistent/repository/root".to_string();
+        request.cwd = "/nonexistent/repository/root".to_string();
+        request.agent_cli_path = "/nonexistent/agent-cli".to_string();
+        request.launch = AgentLaunchOptions::Codex {
+            model: CodexModelChoice::Default,
+            mode: CodexExecutionMode::Default,
+        };
+
+        let error = prepare_agent_task_start(&request).expect_err("cross-provider launch");
+
+        assert_eq!(error, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR);
+    }
+
+    #[test]
+    fn prepare_rejects_a_claude_launch_on_a_codex_cli_kind() {
+        let workspace = TempWorkspace::create("launch-mismatch-reversed");
+        let worktree = workspace.worktree("agt-test-0001");
+        let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
+        request.agent_cli_kind = AgentCliInvocation::CodexExec;
+
+        let error = prepare_agent_task_start(&request).expect_err("cross-provider launch");
+
+        assert_eq!(error, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR);
+    }
+
+    #[test]
+    fn prepare_forwards_the_codex_resume_sandbox_override_into_the_argv() {
+        let workspace = TempWorkspace::create("codex-resume-plan");
+        let worktree = workspace.worktree("agt-test-0001");
+        let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
+        request.agent_cli_kind = AgentCliInvocation::CodexExec;
+        request.launch = AgentLaunchOptions::Codex {
+            model: CodexModelChoice::Gpt56Sol,
+            mode: CodexExecutionMode::ReadOnly,
+        };
+        request.resume_session_id = Some("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string());
+
+        let prepared = prepare_agent_task_start(&request).expect("prepare resumed codex start");
+
+        assert_eq!(
+            prepared.plan.args(),
+            [
+                "exec".to_string(),
+                "resume".to_string(),
+                "--json".to_string(),
+                "-m".to_string(),
+                "gpt-5.6-sol".to_string(),
+                "-c".to_string(),
+                "sandbox_mode=\"read-only\"".to_string(),
+                "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string(),
+                "--".to_string(),
+                request.prompt.clone()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dangerous_launch_still_depends_on_the_repository_trust_gate() {
+        let workspace = TempWorkspace::create("dangerous-launch");
+        let worktree = workspace.worktree("agt-test-0001");
+        let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
+        request.launch = AgentLaunchOptions::ClaudeCode {
+            model: ClaudeModelChoice::Default,
+            mode: ClaudePermissionMode::BypassPermissions,
+        };
+
+        let refused = ensure_agent_task_trust(false, false, request.isolation)
+            .expect_err("dangerous launches need a trusted repository");
+        let prepared = prepare_agent_task_start(&request).expect("prepare dangerous start");
+
+        assert_eq!(refused, UNTRUSTED_AGENT_REPOSITORY_ERROR);
+        assert!(prepared
+            .plan
+            .args()
+            .contains(&"--dangerously-skip-permissions".to_string()));
+    }
+
+    #[test]
+    fn the_start_request_contract_has_no_dangerous_launch_confirmation_field() {
+        let dangerous = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"codex","resumeSessionId":null,"launch":{"provider":"codex","model":"gpt-5.6-sol","mode":"dangerFullAccess"}}"#;
+        let parsed: StartAgentTaskRequest =
+            serde_json::from_str(dangerous).expect("dangerous request parses");
+        assert_eq!(
+            parsed.launch,
+            AgentLaunchOptions::Codex {
+                model: CodexModelChoice::Gpt56Sol,
+                mode: CodexExecutionMode::DangerFullAccess,
+            }
+        );
+        assert_eq!(parsed.agent_cli_kind, AgentCliInvocation::CodexExec);
+
+        let with_confirmation = dangerous.replace(
+            "\"resumeSessionId\":null",
+            "\"resumeSessionId\":null,\"dangerousLaunchConfirmed\":true",
+        );
+        assert!(
+            serde_json::from_str::<StartAgentTaskRequest>(&with_confirmation).is_err(),
+            "the confirmation lives in the composer, never on the wire"
+        );
+
+        let snake_case = dangerous.replace("agentCliKind", "agent_cli_kind");
+        assert!(serde_json::from_str::<StartAgentTaskRequest>(&snake_case).is_err());
+    }
+
+    #[test]
+    fn prepare_forwards_the_launch_flags_into_the_argv() {
+        let workspace = TempWorkspace::create("launch-plan");
+        let worktree = workspace.worktree("agt-test-0001");
+        let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
+        request.launch = AgentLaunchOptions::ClaudeCode {
+            model: ClaudeModelChoice::Sonnet,
+            mode: ClaudePermissionMode::AcceptEdits,
+        };
+
+        let prepared = prepare_agent_task_start(&request).expect("prepare launch start");
+
+        assert_eq!(
+            prepared.plan.args(),
+            [
+                "-p".to_string(),
+                "--output-format".to_string(),
+                "stream-json".to_string(),
+                "--verbose".to_string(),
+                "--model".to_string(),
+                "sonnet".to_string(),
+                "--permission-mode".to_string(),
+                "acceptEdits".to_string(),
+                "--".to_string(),
+                request.prompt.clone()
+            ]
+        );
+    }
+
+    #[test]
+    fn the_start_request_contract_requires_a_launch_and_rejects_unknown_fields() {
+        let complete = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"claudeCode","resumeSessionId":null,"launch":{"provider":"claudeCode","model":"opus","mode":"plan"}}"#;
+        let parsed: StartAgentTaskRequest =
+            serde_json::from_str(complete).expect("complete request parses");
+        assert_eq!(
+            parsed.launch,
+            AgentLaunchOptions::ClaudeCode {
+                model: ClaudeModelChoice::Opus,
+                mode: ClaudePermissionMode::Plan,
+            }
+        );
+
+        let missing_launch = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"claudeCode","resumeSessionId":null}"#;
+        assert!(serde_json::from_str::<StartAgentTaskRequest>(missing_launch).is_err());
+
+        let unknown_model = complete.replace("\"opus\"", "\"claude-opus-4\"");
+        assert!(serde_json::from_str::<StartAgentTaskRequest>(&unknown_model).is_err());
+    }
+
+    #[test]
     fn prepare_forwards_a_validated_resume_session_id_to_the_argv() {
         let workspace = TempWorkspace::create("resume-plan");
         let worktree = workspace.worktree("agt-test-0001");
@@ -553,10 +738,10 @@ mod tests {
     #[test]
     fn start_requests_reject_unknown_fields_and_accept_a_null_resume_session_id() {
         let unknown = serde_json::from_str::<StartAgentTaskRequest>(
-            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"extra\":1}",
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"extra\":1}",
         );
         let accepted = serde_json::from_str::<StartAgentTaskRequest>(
-            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null}",
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"}}",
         )
         .expect("deserialize start request");
 

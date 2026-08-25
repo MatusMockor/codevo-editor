@@ -5,9 +5,13 @@ export interface AgentStatusBarProps {
   readonly maxConcurrentAgentTasks: number;
   readonly workspaceRoot: string | null;
   readonly workspaceTrusted: boolean;
+  readonly attentionCount?: number;
+  readonly launchLabel?: string | null;
 }
 
 export function AgentStatusBar({
+  attentionCount = 0,
+  launchLabel = null,
   liveTaskCount,
   maxConcurrentAgentTasks,
   workspaceRoot,
@@ -25,8 +29,17 @@ export function AgentStatusBar({
         <span aria-hidden="true" className={dotClassName} />
         {slotsLabel}
       </span>
+      {attentionCount > 0 ? (
+        <span className="status-agent-attention">{attentionLabel(attentionCount)}</span>
+      ) : null}
+      {launchLabel === null ? null : <span className="status-agent-launch">{launchLabel}</span>}
       {workspaceRoot ? <span>{displayBaseName(workspaceRoot)}</span> : null}
       {workspaceRoot ? <span>{workspaceTrusted ? "Trusted" : "Untrusted"}</span> : null}
     </footer>
   );
+}
+
+function attentionLabel(count: number): string {
+  const verb = count === 1 ? "needs" : "need";
+  return `${count} ${verb} attention`;
 }

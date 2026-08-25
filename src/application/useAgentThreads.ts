@@ -1,8 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentCliKind, AgentTaskGateway, AgentTaskStatusEvent } from "../domain/agentTask";
-import { agentThreadLifecycle, runningTurn, type AgentThread } from "../domain/agentThread";
-import { initialAgentShipState, type AgentShipState } from "../domain/agentShip";
+import type { AgentLaunchOptions } from "../domain/agentLaunch";
+import {
+  agentThreadAttention,
+  agentThreadLifecycle,
+  agentThreadUnread,
+  lastUsedAgentLaunch,
+  runningTurn,
+  type AgentThread,
+} from "../domain/agentThread";
+import {
+  initialAgentShipState,
+  type AgentShipAvailability,
+  type AgentShipState,
+} from "../domain/agentShip";
 import {
   normalizeAgentCliKind,
   normalizeAgentCliPath,
@@ -20,6 +32,7 @@ import type {
   AgentThreadView,
   AgentThreadsSurface,
 } from "./agentThreadPorts";
+import { projectByOwnerId } from "./agentProjectAuthority";
 import { countRunningTurns, countRunningTurnsInRepository } from "./agentTurnAdmission";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
 import {
@@ -223,31 +236,54 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     [dispatchAction, refreshOrphanedWorktrees],
   );
 
+  const agentCliKind = normalizeAgentCliKind(dependencies.getAgentCliKind());
+
+  const now = dependencies.now ?? Date.now;
+  const { currentState } = store;
+  const markThreadViewed = useCallback(
+    (threadId: string): void => {
+      const thread = currentState().threads.get(threadId);
+      if (thread === undefined) return;
+      if (!agentThreadUnread(thread)) return;
+      if (!ownsThread(projects, thread)) return;
+      dispatchAction({ kind: "threadViewed", threadId, atEpochMs: now() });
+    },
+    [currentState, dispatchAction, now, projects],
+  );
+
+  const lastUsedLaunch = useCallback(
+    (projectRootKey: string): AgentLaunchOptions | null =>
+      lastUsedAgentLaunch(threads.values(), projectRootKey, agentCliKind),
+    [agentCliKind, threads],
+  );
+
   const { openAgentSettings } = dependencies;
   const configureAgentCli = useCallback((): void => openAgentSettings(), [openAgentSettings]);
   const dismissNotice = useCallback((): void => setNotice(null), []);
 
-  const threadViews = useMemo(
-    () =>
-      agentThreadViews(
-        threads,
-        changes.summaries,
-        worktrees.removedWorktreeThreadIds,
-        missingWorktreeThreadIds,
-        shipStates,
-        editor,
-        projects,
-      ),
-    [
-      changes.summaries,
-      editor,
-      missingWorktreeThreadIds,
-      projects,
-      shipStates,
+  const viewCacheRef = useRef<ReadonlyMap<string, AgentThreadView>>(new Map());
+  const threadViews = useMemo(() => {
+    const views = agentThreadViews(
+      viewCacheRef.current,
       threads,
+      changes.summaries,
       worktrees.removedWorktreeThreadIds,
-    ],
-  );
+      missingWorktreeThreadIds,
+      shipStates,
+      editor,
+      projects,
+    );
+    viewCacheRef.current = new Map(views.map((view) => [view.thread.threadId, view]));
+    return views;
+  }, [
+    changes.summaries,
+    editor,
+    missingWorktreeThreadIds,
+    projects,
+    shipStates,
+    threads,
+    worktrees.removedWorktreeThreadIds,
+  ]);
 
   const repositories = useMemo(() => flattenProjectRepositories(projects), [projects]);
   const maxConcurrentAgentTasks = normalizeMaxConcurrentAgentTasks(
@@ -262,9 +298,11 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     notice,
     dispatching: dispatch.dispatching,
     agentCliConfigured,
-    agentCliKind: normalizeAgentCliKind(dependencies.getAgentCliKind()),
+    agentCliKind,
     liveTaskCount: countRunningTurns(store.state),
     maxConcurrentAgentTasks,
+    markThreadViewed,
+    lastUsedLaunch,
     isolationPreview: isolation.isolationPreview,
     refreshIsolationStatus: isolation.refreshIsolationStatus,
     startThread: dispatch.startThread,
@@ -304,7 +342,14 @@ function threadIdForTurn(threads: ReadonlyMap<string, AgentThread>, turnId: stri
   return turnId;
 }
 
+function ownsThread(projects: ReadonlyArray<AgentProjectDescriptor>, thread: AgentThread): boolean {
+  const project = projectByOwnerId(projects, thread.owner.ownerId);
+  if (project === undefined) return false;
+  return project.rootKey === thread.owner.rootKey;
+}
+
 function agentThreadViews(
+  previous: ReadonlyMap<string, AgentThreadView>,
   threads: ReadonlyMap<string, AgentThread>,
   summaries: ReadonlyMap<string, AgentTaskChangeSummary>,
   removedWorktrees: ReadonlySet<string>,
@@ -322,7 +367,7 @@ function agentThreadViews(
   for (const thread of threads.values()) {
     const project = projectsByOwnerId.get(thread.owner.ownerId);
     if (project === undefined) continue;
-    views.push({
+    const next: AgentThreadView = {
       thread,
       lifecycle: agentThreadLifecycle(thread),
       repositoryLabel: repositoryLabel(thread.owner.repositoryRoot, project.rootPath),
@@ -330,11 +375,42 @@ function agentThreadViews(
       worktreeRemoved: removedWorktrees.has(thread.threadId),
       worktreeMissing: missingWorktrees.has(thread.threadId),
       changeSummary: summaries.get(thread.threadId) ?? null,
-      ship: shipStates.get(thread.threadId) ?? initialAgentShipState(thread.integration),
+      ship: shipStates.get(thread.threadId) ?? fallbackShipState(thread),
       editorAvailability: editor.canOpenInEditor(thread.threadId),
-    });
+      attention: agentThreadAttention(thread),
+      unread: agentThreadUnread(thread),
+    };
+    const cached = previous.get(thread.threadId);
+    views.push(cached !== undefined && sameThreadView(cached, next) ? cached : next);
   }
   return views.sort(compareThreadViews);
+}
+
+const fallbackShipStates = new WeakMap<AgentThread, AgentShipState>();
+
+function fallbackShipState(thread: AgentThread): AgentShipState {
+  const memoized = fallbackShipStates.get(thread);
+  if (memoized !== undefined) return memoized;
+  const initial = initialAgentShipState(thread.integration);
+  fallbackShipStates.set(thread, initial);
+  return initial;
+}
+
+function sameThreadView(cached: AgentThreadView, next: AgentThreadView): boolean {
+  if (cached.thread !== next.thread) return false;
+  if (cached.changeSummary !== next.changeSummary) return false;
+  if (cached.ship !== next.ship) return false;
+  if (cached.worktreeRemoved !== next.worktreeRemoved) return false;
+  if (cached.worktreeMissing !== next.worktreeMissing) return false;
+  if (cached.projectOrigin !== next.projectOrigin) return false;
+  if (cached.repositoryLabel !== next.repositoryLabel) return false;
+  return sameAvailability(cached.editorAvailability, next.editorAvailability);
+}
+
+function sameAvailability(left: AgentShipAvailability, right: AgentShipAvailability): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "blocked" && right.kind === "blocked") return left.reason === right.reason;
+  return true;
 }
 
 function compareThreadViews(left: AgentThreadView, right: AgentThreadView): number {

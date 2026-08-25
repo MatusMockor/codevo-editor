@@ -1,4 +1,9 @@
 import {
+  parseAgentLaunchOptions,
+  serializeAgentLaunchOptions,
+  type AgentLaunchOptions,
+} from "./agentLaunch";
+import {
   AGENT_TASK_ID_PATTERN,
   MAX_AGENT_TASK_FAILURE_BYTES,
   MAX_AGENT_TASK_ID_BYTES,
@@ -58,6 +63,7 @@ export function serializeAgentThread(thread: AgentThread): Record<string, unknow
     turns: thread.turns.map(serializeTurn),
     turnsTruncated: thread.turnsTruncated,
     integration: serializeIntegration(thread.integration),
+    viewedAtEpochMs: thread.viewedAtEpochMs,
   };
 }
 
@@ -94,6 +100,7 @@ function serializeTurn(turn: AgentTurn): Record<string, unknown> {
     eventsTruncated: turn.eventsTruncated,
     lastStatusSequence: turn.lastStatusSequence,
     lastOutputSequence: turn.lastOutputSequence,
+    launch: turn.launch === null ? null : serializeAgentLaunchOptions(turn.launch),
   };
 }
 
@@ -168,7 +175,7 @@ export function parseAgentThread(value: unknown): AgentThread {
       "turns",
       "turnsTruncated",
     ],
-    ["integration"],
+    ["integration", "viewedAtEpochMs"],
     "thread",
   );
   return {
@@ -184,7 +191,18 @@ export function parseAgentThread(value: unknown): AgentThread {
     turns: parseTurns(thread.turns, "thread.turns"),
     turnsTruncated: booleanFlag(thread.turnsTruncated, "thread.turnsTruncated"),
     integration: parseIntegration(thread.integration, "thread.integration"),
+    viewedAtEpochMs: parseViewedAt(thread.viewedAtEpochMs, "thread.viewedAtEpochMs"),
   };
+}
+
+function parseViewedAt(value: unknown, path: string): number | null {
+  if (value === undefined) return null;
+  return optionalUnsignedSafeInteger(value, path);
+}
+
+function parseLaunch(value: unknown, path: string): AgentLaunchOptions | null {
+  if (value === undefined || value === null) return null;
+  return parseAgentLaunchOptions(value, path);
 }
 
 function parseIntegration(value: unknown, path: string): AgentThreadIntegration | null {
@@ -305,7 +323,7 @@ function parseTurns(value: unknown, path: string): ReadonlyArray<AgentTurn> {
 
 function parseTurn(value: unknown, path: string): AgentTurn {
   const turn = record(value, path);
-  exactKeys(
+  boundedKeys(
     turn,
     [
       "turnId",
@@ -318,6 +336,7 @@ function parseTurn(value: unknown, path: string): AgentTurn {
       "lastStatusSequence",
       "lastOutputSequence",
     ],
+    ["launch"],
     path,
   );
   return {
@@ -332,6 +351,7 @@ function parseTurn(value: unknown, path: string): AgentTurn {
     eventsTruncated: booleanFlag(turn.eventsTruncated, `${path}.eventsTruncated`),
     lastStatusSequence: unsignedSafeInteger(turn.lastStatusSequence, `${path}.lastStatusSequence`),
     lastOutputSequence: unsignedSafeInteger(turn.lastOutputSequence, `${path}.lastOutputSequence`),
+    launch: parseLaunch(turn.launch, `${path}.launch`),
   };
 }
 

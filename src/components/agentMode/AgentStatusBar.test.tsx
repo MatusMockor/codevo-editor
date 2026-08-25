@@ -45,6 +45,32 @@ describe("AgentStatusBar", () => {
     expect(labels).not.toContain("Trusted");
   });
 
+  it("counts the threads that need attention in plural and singular", () => {
+    render({ attentionCount: 2 });
+
+    expect(host.querySelector(".status-agent-attention")?.textContent).toBe("2 need attention");
+
+    render({ attentionCount: 1 });
+
+    expect(host.querySelector(".status-agent-attention")?.textContent).toBe("1 needs attention");
+  });
+
+  it("stays silent when nothing needs attention", () => {
+    render({ attentionCount: 0 });
+
+    expect(host.querySelector(".status-agent-attention")).toBeNull();
+  });
+
+  it("names the launch of the selected thread only when one is given", () => {
+    render({ launchLabel: "opus · accept edits" });
+
+    expect(host.querySelector(".status-agent-launch")?.textContent).toBe("opus · accept edits");
+
+    render({ launchLabel: null });
+
+    expect(host.querySelector(".status-agent-launch")).toBeNull();
+  });
+
   it("omits workspace items without a workspace", () => {
     render({ workspaceRoot: null });
 

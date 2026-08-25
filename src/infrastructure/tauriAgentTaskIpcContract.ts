@@ -27,6 +27,9 @@ export type InvokeAgentTaskCommand = (
   args: Record<string, unknown>,
 ) => Promise<unknown>;
 
+export const AGENT_LAUNCH_PROVIDER_MISMATCH_REJECTION =
+  "Agent launch options do not match the agent CLI kind." as const;
+
 export const DEFINITE_AGENT_TASK_START_REJECTIONS: ReadonlySet<string> = new Set([
   "Agent tasks require a trusted repository.",
   "Agent tasks require a trusted agent worktree.",
@@ -36,6 +39,7 @@ export const DEFINITE_AGENT_TASK_START_REJECTIONS: ReadonlySet<string> = new Set
   "An agent task is already using this repository's working tree.",
   "An agent task is already running in this working directory.",
   "An agent task with this taskId already exists.",
+  AGENT_LAUNCH_PROVIDER_MISMATCH_REJECTION,
 ]);
 
 export function classifyAgentTaskStartFailure(error: unknown): unknown {

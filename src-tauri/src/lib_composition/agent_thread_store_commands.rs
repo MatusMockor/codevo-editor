@@ -219,8 +219,10 @@ mod tests {
                     events_truncated: false,
                     last_status_sequence: 0,
                     last_output_sequence: 0,
+                    launch: None,
                 }],
                 turns_truncated: false,
+                viewed_at_epoch_ms: None,
                 integration: None,
             }],
             unreadable: vec![UnreadableAgentThread {

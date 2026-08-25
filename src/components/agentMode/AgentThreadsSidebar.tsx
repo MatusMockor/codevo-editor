@@ -1,16 +1,28 @@
-import { ChevronDown, Pin, ShieldAlert } from "lucide-react";
-import { MAX_AGENT_PROJECT_ROOTS } from "../../domain/agentProject";
-import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
-  agentProjectOriginBadge,
-  agentProjectTrustNotice,
-  agentThreadDisplayTitle,
-  agentThreadLifecycleLabel,
-  agentThreadTimeLabel,
-  agentThreadTone,
-  lastAgentTurnStatus,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
+import {
+  AgentOverflowRow,
+  AgentProjectSection,
+  type ThreadListHandlers,
+} from "./AgentThreadsSidebarGroups";
+import {
+  AGENT_THREAD_STATUS_FILTERS,
+  MAX_AGENT_THREAD_FILTER_CHARS,
+  agentThreadListQuery,
+  agentThreadListQueryActive,
+  agentThreadStatusFilterLabel,
+  applyAgentThreadListQuery,
+  clipAgentThreadFilterText,
+  visibleAgentThreadIds,
   type AgentProjectGroup,
-  type AgentRepositoryGroup,
+  type AgentThreadStatusFilter,
 } from "./agentModePresentation";
 
 export interface AgentThreadsSidebarProps {
@@ -22,7 +34,6 @@ export interface AgentThreadsSidebarProps {
   readonly selectedThreadId: string | null;
   readonly liveTaskCount: number;
   readonly maxConcurrentAgentTasks: number;
-  readonly now: number;
   onToggleProject(projectRootKey: string): void;
   onToggleGroup(repositoryRoot: string): void;
   onToggleArchived(repositoryRoot: string): void;
@@ -35,18 +46,6 @@ export interface AgentThreadsSidebarProps {
   onPruneOrphans(repositoryRoot: string): void;
 }
 
-interface ThreadListHandlers {
-  readonly now: number;
-  readonly expandedArchivedRoots: ReadonlySet<string>;
-  readonly selectedThreadId: string | null;
-  onSelectThread(threadId: string): void;
-  onTogglePin(threadId: string): void;
-  onToggleArchived(repositoryRoot: string): void;
-  onNewThread(projectRootKey: string, repositoryRoot: string): void;
-  onRemoveOrphan(worktreePath: string): void;
-  onPruneOrphans(repositoryRoot: string): void;
-}
-
 export function AgentThreadsSidebar({
   collapsedProjectRootKeys,
   collapsedRepositoryRoots,
@@ -54,7 +53,6 @@ export function AgentThreadsSidebar({
   groups,
   liveTaskCount,
   maxConcurrentAgentTasks,
-  now,
   onNewThread,
   onPruneOrphans,
   onReleaseProject,
@@ -68,17 +66,106 @@ export function AgentThreadsSidebar({
   overflowRootPaths,
   selectedThreadId,
 }: AgentThreadsSidebarProps) {
-  const handlers: ThreadListHandlers = {
-    expandedArchivedRoots,
-    now,
-    onNewThread,
-    onPruneOrphans,
-    onRemoveOrphan,
-    onSelectThread,
-    onToggleArchived,
-    onTogglePin,
-    selectedThreadId,
-  };
+  const [filterText, setFilterText] = useState("");
+  const [statusFilter, setStatusFilter] = useState<AgentThreadStatusFilter>("all");
+  const [focusRequest, setFocusRequest] = useState<string | null>(null);
+  const filterRef = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  const selectThread = useThreadCallback(onSelectThread);
+  const togglePin = useThreadCallback(onTogglePin);
+
+  const deferredText = useDeferredValue(filterText);
+  const query = useMemo(
+    () => agentThreadListQuery(deferredText, statusFilter),
+    [deferredText, statusFilter],
+  );
+  const filtering = agentThreadListQueryActive(query);
+  const visibleGroups = useMemo(() => applyAgentThreadListQuery(groups, query), [groups, query]);
+  const visibleThreadIds = useMemo(
+    () =>
+      visibleAgentThreadIds(
+        visibleGroups,
+        collapsedProjectRootKeys,
+        collapsedRepositoryRoots,
+        expandedArchivedRoots,
+      ),
+    [collapsedProjectRootKeys, collapsedRepositoryRoots, expandedArchivedRoots, visibleGroups],
+  );
+  const focusedThreadId = rovingThreadId(focusRequest, selectedThreadId, visibleThreadIds);
+
+  const clearFilters = useCallback(() => {
+    setFilterText("");
+    setStatusFilter("all");
+  }, []);
+
+  const moveFocus = useCallback((threadId: string | undefined) => {
+    if (threadId === undefined) return;
+    setFocusRequest(threadId);
+    focusRow(listRef.current, threadId);
+  }, []);
+
+  const handlers = useMemo<ThreadListHandlers>(
+    () => ({
+      expandedArchivedRoots,
+      focusedThreadId,
+      onNewThread,
+      onPruneOrphans,
+      onRemoveOrphan,
+      onSelectThread: selectThread,
+      onToggleArchived,
+      onTogglePin: togglePin,
+      selectedThreadId,
+    }),
+    [
+      expandedArchivedRoots,
+      focusedThreadId,
+      onNewThread,
+      onPruneOrphans,
+      onRemoveOrphan,
+      onToggleArchived,
+      selectThread,
+      selectedThreadId,
+      togglePin,
+    ],
+  );
+
+  const handleListKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (visibleThreadIds.length === 0) return;
+      const index = focusedThreadId === null ? -1 : visibleThreadIds.indexOf(focusedThreadId);
+      const target = nextThreadIndex(event.key, index, visibleThreadIds.length);
+      if (target !== null) {
+        event.preventDefault();
+        moveFocus(visibleThreadIds[target]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        filterRef.current?.focus();
+        return;
+      }
+      if (focusedThreadId === null) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectThread(focusedThreadId);
+        return;
+      }
+      if (event.key !== "p" && event.key !== "P") return;
+      event.preventDefault();
+      togglePin(focusedThreadId);
+    },
+    [focusedThreadId, moveFocus, selectThread, togglePin, visibleThreadIds],
+  );
+
+  const handleFilterKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      clearFilters();
+    },
+    [clearFilters],
+  );
 
   return (
     <aside aria-label="Agent threads" className="agent-rail">
@@ -89,11 +176,52 @@ export function AgentThreadsSidebar({
         </span>
       </header>
 
-      <div className="agent-rail__groups">
+      <div className="agent-rail__filters">
+        <input
+          aria-label="Filter threads"
+          className="agent-rail__filter"
+          maxLength={MAX_AGENT_THREAD_FILTER_CHARS}
+          onChange={(event) => setFilterText(clipAgentThreadFilterText(event.target.value))}
+          onKeyDown={handleFilterKeyDown}
+          placeholder="Filter threads"
+          ref={filterRef}
+          type="text"
+          value={filterText}
+        />
+        <div aria-label="Filter threads by status" className="agent-rail__status" role="group">
+          {AGENT_THREAD_STATUS_FILTERS.map((filter) => (
+            <button
+              aria-pressed={statusFilter === filter}
+              className={statusClassName(statusFilter === filter)}
+              key={filter}
+              onClick={() => setStatusFilter(filter)}
+              type="button"
+            >
+              {agentThreadStatusFilterLabel(filter)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div
+        aria-label="Thread list"
+        className="agent-rail__groups"
+        onKeyDown={handleListKeyDown}
+        ref={listRef}
+        role="list"
+      >
         {groups.length === 0 && (
           <p className="agent-rail__empty">No Git repository was detected in this workspace.</p>
         )}
-        {groups.map((group) => (
+        {groups.length > 0 && visibleGroups.length === 0 && (
+          <div className="agent-rail__nomatch">
+            <p className="agent-rail__empty">No threads match</p>
+            <button className="agent-linkbutton" onClick={clearFilters} type="button">
+              Clear filters
+            </button>
+          </div>
+        )}
+        {visibleGroups.map((group) => (
           <AgentProjectSection
             collapsed={collapsedProjectRootKeys.has(group.projectRootKey)}
             collapsedRepositoryRoots={collapsedRepositoryRoots}
@@ -106,371 +234,53 @@ export function AgentThreadsSidebar({
             onTrustProject={onTrustProject}
           />
         ))}
-        {overflowRootPaths.length > 0 && <AgentOverflowRow rootPaths={overflowRootPaths} />}
+        {!filtering && overflowRootPaths.length > 0 && (
+          <AgentOverflowRow rootPaths={overflowRootPaths} />
+        )}
       </div>
     </aside>
   );
 }
 
-function AgentProjectSection({
-  collapsed,
-  collapsedRepositoryRoots,
-  group,
-  handlers,
-  onReleaseProject,
-  onToggleGroup,
-  onToggleProject,
-  onTrustProject,
-}: {
-  readonly collapsed: boolean;
-  readonly collapsedRepositoryRoots: ReadonlySet<string>;
-  readonly group: AgentProjectGroup;
-  readonly handlers: ThreadListHandlers;
-  onToggleProject(projectRootKey: string): void;
-  onToggleGroup(repositoryRoot: string): void;
-  onTrustProject(projectRootKey: string): void;
-  onReleaseProject(projectRootKey: string): void;
-}) {
-  const detached = group.kind === "detached";
-  const trustNotice = detached ? null : agentProjectTrustNotice(group.trust);
-  const badge = detached ? null : agentProjectOriginBadge(group.origin);
-  const dispatchable = !detached && trustNotice === null;
-  const flatRepo = group.singleRepo ? (group.repos[0] ?? null) : null;
-  const threadCount = group.repos.reduce((total, repo) => total + repo.threads.length, 0);
-  const releasable = !detached && group.origin === "closed-tab-live-tasks" && group.liveCount === 0;
+function useThreadCallback(handler: (threadId: string) => void): (threadId: string) => void {
+  const ref = useRef(handler);
 
-  return (
-    <section
-      aria-label={detached ? group.label : `Project ${group.label}`}
-      className={projectClassName(collapsed, detached, trustNotice !== null)}
-    >
-      <button
-        aria-expanded={!collapsed}
-        className="agent-project__head"
-        onClick={() => onToggleProject(group.projectRootKey)}
-        type="button"
-      >
-        <ChevronDown aria-hidden="true" className="agent-project__chevron" size={12} />
-        <span className="agent-project__name">{group.label}</span>
-        {badge && <span className="agent-project__badge">{badge}</span>}
-        {group.liveCount > 0 && (
-          <span className="agent-project__live agent-num">{group.liveCount} live</span>
-        )}
-        <span className="agent-project__count agent-num">{threadCount}</span>
-      </button>
+  useEffect(() => {
+    ref.current = handler;
+  }, [handler]);
 
-      {!collapsed && (
-        <div className="agent-project__body">
-          {trustNotice && (
-            <div className="agent-trust">
-              <ShieldAlert aria-hidden="true" className="agent-trust__icon" size={12} />
-              <span className="agent-trust__text">{trustNotice}</span>
-              <button
-                aria-label={`Trust project ${group.label}`}
-                className="agent-linkbutton"
-                onClick={() => onTrustProject(group.projectRootKey)}
-                type="button"
-              >
-                Trust to enable
-              </button>
-            </div>
-          )}
-
-          {group.repos.length === 0 && (
-            <p className="agent-rail__empty">No Git repository was detected in this project.</p>
-          )}
-
-          {flatRepo !== null && (
-            <AgentRepositoryThreads
-              dispatchable={dispatchable}
-              group={flatRepo}
-              handlers={handlers}
-              projectRootKey={group.projectRootKey}
-            />
-          )}
-
-          {flatRepo === null &&
-            group.repos.map((repo) => (
-              <AgentRepositorySubsection
-                collapsed={collapsedRepositoryRoots.has(repo.repositoryRoot)}
-                dispatchable={dispatchable}
-                group={repo}
-                handlers={handlers}
-                key={repo.repositoryRoot}
-                onToggleGroup={onToggleGroup}
-                projectRootKey={group.projectRootKey}
-              />
-            ))}
-
-          {releasable && (
-            <button
-              aria-label={`Release project ${group.label}`}
-              className="agent-project__release"
-              onClick={() => onReleaseProject(group.projectRootKey)}
-              type="button"
-            >
-              Release project
-            </button>
-          )}
-        </div>
-      )}
-    </section>
-  );
+  return useCallback((threadId: string) => ref.current(threadId), []);
 }
 
-function projectClassName(collapsed: boolean, detached: boolean, untrusted: boolean): string {
-  const classes = ["agent-project"];
-  if (collapsed) classes.push("agent-project--closed");
-  if (detached) classes.push("agent-project--detached");
-  if (untrusted) classes.push("agent-project--untrusted");
-  return classes.join(" ");
+function rovingThreadId(
+  request: string | null,
+  selected: string | null,
+  visible: ReadonlyArray<string>,
+): string | null {
+  if (request !== null && visible.includes(request)) return request;
+  if (selected !== null && visible.includes(selected)) return selected;
+  return visible[0] ?? null;
 }
 
-function AgentRepositorySubsection({
-  collapsed,
-  dispatchable,
-  group,
-  handlers,
-  onToggleGroup,
-  projectRootKey,
-}: {
-  readonly collapsed: boolean;
-  readonly dispatchable: boolean;
-  readonly group: AgentRepositoryGroup;
-  readonly handlers: ThreadListHandlers;
-  readonly projectRootKey: string;
-  onToggleGroup(repositoryRoot: string): void;
-}) {
-  const className = collapsed ? "agent-group agent-group--closed" : "agent-group";
-
-  return (
-    <section aria-label={`Repository ${group.label}`} className={className}>
-      <button
-        aria-expanded={!collapsed}
-        className="agent-group__head"
-        onClick={() => onToggleGroup(group.repositoryRoot)}
-        type="button"
-      >
-        <ChevronDown aria-hidden="true" className="agent-group__chevron" size={12} />
-        <span className="agent-group__name">{group.label}</span>
-        {group.liveCount > 0 && (
-          <span className="agent-group__live agent-num">{group.liveCount} live</span>
-        )}
-        <span className="agent-group__count agent-num">{group.threads.length}</span>
-      </button>
-
-      {!collapsed && (
-        <AgentRepositoryThreads
-          dispatchable={dispatchable}
-          group={group}
-          handlers={handlers}
-          projectRootKey={projectRootKey}
-        />
-      )}
-    </section>
-  );
+function nextThreadIndex(key: string, index: number, length: number): number | null {
+  if (key === "ArrowDown") return Math.min(index + 1, length - 1);
+  if (key === "ArrowUp") return Math.max(index - 1, 0);
+  if (key === "Home") return 0;
+  if (key === "End") return length - 1;
+  return null;
 }
 
-function AgentRepositoryThreads({
-  dispatchable,
-  group,
-  handlers,
-  projectRootKey,
-}: {
-  readonly dispatchable: boolean;
-  readonly group: AgentRepositoryGroup;
-  readonly handlers: ThreadListHandlers;
-  readonly projectRootKey: string;
-}) {
-  return (
-    <div className="agent-group__threads">
-      {group.threads.map((view) => (
-        <AgentThreadRow
-          key={view.thread.threadId}
-          now={handlers.now}
-          onSelect={handlers.onSelectThread}
-          onTogglePin={handlers.onTogglePin}
-          selected={handlers.selectedThreadId === view.thread.threadId}
-          view={view}
-        />
-      ))}
-      {group.archived.length > 0 && (
-        <AgentArchivedGroup
-          expanded={handlers.expandedArchivedRoots.has(group.repositoryRoot)}
-          group={group}
-          handlers={handlers}
-        />
-      )}
-      {!group.repositoryResolved && (
-        <p className="agent-rail__empty">
-          This repository is no longer available in the current workspace.
-        </p>
-      )}
-      {group.repositoryResolved && dispatchable && (
-        <button
-          className="agent-group__new"
-          onClick={() => handlers.onNewThread(projectRootKey, group.repositoryRoot)}
-          type="button"
-        >
-          + New thread
-        </button>
-      )}
-      {group.orphans.length > 0 && (
-        <AgentOrphanList
-          group={group}
-          onPruneOrphans={handlers.onPruneOrphans}
-          onRemoveOrphan={handlers.onRemoveOrphan}
-        />
-      )}
-    </div>
-  );
+function focusRow(list: HTMLDivElement | null, threadId: string): void {
+  const rows = list?.querySelectorAll<HTMLElement>("[data-thread-id]");
+  for (const row of Array.from(rows ?? [])) {
+    if (row.dataset.threadId !== threadId) continue;
+    row.focus();
+    return;
+  }
 }
 
-function AgentArchivedGroup({
-  expanded,
-  group,
-  handlers,
-}: {
-  readonly expanded: boolean;
-  readonly group: AgentRepositoryGroup;
-  readonly handlers: ThreadListHandlers;
-}) {
-  return (
-    <section
-      aria-label={`Archived threads in ${group.label}`}
-      className={expanded ? "agent-archived" : "agent-archived agent-archived--closed"}
-    >
-      <button
-        aria-expanded={expanded}
-        className="agent-archived__head"
-        onClick={() => handlers.onToggleArchived(group.repositoryRoot)}
-        type="button"
-      >
-        <ChevronDown aria-hidden="true" className="agent-archived__chevron" size={11} />
-        <span className="agent-archived__name">Archived</span>
-        <span className="agent-archived__count agent-num">{group.archived.length}</span>
-      </button>
-      {expanded &&
-        group.archived.map((view) => (
-          <AgentThreadRow
-            key={view.thread.threadId}
-            now={handlers.now}
-            onSelect={handlers.onSelectThread}
-            onTogglePin={handlers.onTogglePin}
-            selected={handlers.selectedThreadId === view.thread.threadId}
-            view={view}
-          />
-        ))}
-    </section>
-  );
-}
-
-function AgentThreadRow({
-  now,
-  onSelect,
-  onTogglePin,
-  selected,
-  view,
-}: {
-  readonly now: number;
-  readonly selected: boolean;
-  readonly view: AgentThreadView;
-  onSelect(threadId: string): void;
-  onTogglePin(threadId: string): void;
-}) {
-  const thread = view.thread;
-  const threadId = thread.threadId;
-  const tone = agentThreadTone(view.lifecycle, lastAgentTurnStatus(thread));
-  const pinned = thread.pinned;
-  const className = selected ? "agent-thread agent-thread--on" : "agent-thread";
-  const pinClassName = pinned ? "agent-thread__pin agent-thread__pin--on" : "agent-thread__pin";
-
-  return (
-    <div className="agent-thread-slot">
-      <button
-        aria-current={selected}
-        className={className}
-        onClick={() => onSelect(threadId)}
-        type="button"
-      >
-        <span aria-hidden="true" className={`agent-dot agent-dot--${tone}`} />
-        <span className="agent-thread__text">
-          <span className="agent-thread__title">{agentThreadDisplayTitle(thread)}</span>
-          <span className="agent-thread__meta agent-num">
-            {agentThreadLifecycleLabel(view.lifecycle)} ·{" "}
-            {agentThreadTimeLabel(thread.updatedAtEpochMs, now)}
-          </span>
-        </span>
-        {view.lifecycle === "running" && (
-          <span aria-label="Turn running" className="agent-thread__live" role="img" />
-        )}
-      </button>
-      <button
-        aria-label={pinned ? `Unpin thread ${threadId}` : `Pin thread ${threadId}`}
-        aria-pressed={pinned}
-        className={pinClassName}
-        onClick={() => onTogglePin(threadId)}
-        title={pinned ? "Unpin thread" : "Pin thread"}
-        type="button"
-      >
-        <Pin aria-hidden="true" size={11} />
-      </button>
-    </div>
-  );
-}
-
-function AgentOverflowRow({ rootPaths }: { readonly rootPaths: ReadonlyArray<string> }) {
-  const suffix = rootPaths.length === 1 ? "project is" : "projects are";
-
-  return (
-    <p className="agent-rail__overflow" title={rootPaths.join("\n")}>
-      {rootPaths.length} more {suffix} not shown (limit {MAX_AGENT_PROJECT_ROOTS})
-    </p>
-  );
-}
-
-function AgentOrphanList({
-  group,
-  onPruneOrphans,
-  onRemoveOrphan,
-}: {
-  readonly group: AgentRepositoryGroup;
-  onRemoveOrphan(worktreePath: string): void;
-  onPruneOrphans(repositoryRoot: string): void;
-}) {
-  return (
-    <section aria-label={`Orphaned worktrees in ${group.label}`} className="agent-orphans">
-      <span className="agent-orphans__title">Orphaned worktrees</span>
-      <p className="agent-orphans__hint">
-        These agent worktrees have no thread in this session. Removing them frees the repository
-        worktree limit and keeps the branches.
-      </p>
-      {group.orphans.map((orphan) => (
-        <div className="agent-orphans__row" key={orphan.worktreePath}>
-          <span className="agent-orphans__path">{orphan.worktreePath}</span>
-          {orphan.branch && <span className="agent-orphans__branch">{orphan.branch}</span>}
-          {orphan.prunable ? (
-            <button
-              aria-label={`Prune stale worktrees for ${orphan.repositoryRoot}`}
-              className="agent-linkbutton"
-              onClick={() => onPruneOrphans(orphan.repositoryRoot)}
-              type="button"
-            >
-              Prune
-            </button>
-          ) : (
-            <button
-              aria-label={`Remove orphaned worktree ${orphan.worktreePath}`}
-              className="agent-linkbutton"
-              disabled={orphan.removing}
-              onClick={() => onRemoveOrphan(orphan.worktreePath)}
-              type="button"
-            >
-              {orphan.removing ? "Removing…" : "Remove"}
-            </button>
-          )}
-        </div>
-      ))}
-    </section>
-  );
+function statusClassName(active: boolean): string {
+  return active
+    ? "agent-rail__status-option agent-rail__status-option--on"
+    : "agent-rail__status-option";
 }
