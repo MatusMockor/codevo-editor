@@ -271,9 +271,9 @@ export function AgentComposer({
         </div>
 
         {caption && <p className="agent-composer__reason">{caption}</p>}
-      </div>
 
-      {(followUp || !compact) && <div className="agent-composer__footer">{footer}</div>}
+        {(followUp || !compact) && <div className="agent-composer__footer">{footer}</div>}
+      </div>
     </form>
   );
 }

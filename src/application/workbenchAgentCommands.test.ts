@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentWorkbenchLayoutAction } from "../domain/agentWorkbenchLayout";
+import {
+  initialAgentWorkbenchLayout,
+  type AgentSurfaceKind,
+  type AgentWorkbenchLayout,
+  type AgentWorkbenchLayoutAction,
+} from "../domain/agentWorkbenchLayout";
 import {
   createAgentViewCommandBridge,
   type AgentViewCommandHandlers,
@@ -49,8 +54,12 @@ const LAYOUT_COMMAND_IDS = [
   "agent.toggleEditorExpanded",
 ] as const;
 
-function handlers(threadSelected = true): AgentViewCommandHandlers {
+function handlers(
+  threadSelected = true,
+  blockedSurfaces: ReadonlyArray<AgentSurfaceKind> = [],
+): AgentViewCommandHandlers {
   return {
+    surfaceBlocked: (surface) => blockedSurfaces.includes(surface),
     newThread: vi.fn(),
     previousThread: vi.fn(),
     nextThread: vi.fn(),
@@ -63,11 +72,13 @@ function handlers(threadSelected = true): AgentViewCommandHandlers {
   };
 }
 
-function recordingLayout(): AgentWorkbenchLayoutCommandPort & {
+function recordingLayout(
+  layout: AgentWorkbenchLayout = initialAgentWorkbenchLayout,
+): AgentWorkbenchLayoutCommandPort & {
   readonly actions: AgentWorkbenchLayoutAction[];
 } {
   const actions: AgentWorkbenchLayoutAction[] = [];
-  return { actions, dispatch: (action) => actions.push(action) };
+  return { actions, layout, dispatch: (action) => actions.push(action) };
 }
 
 describe("workbenchAgentCommands", () => {
@@ -174,8 +185,10 @@ describe("workbenchAgentCommands", () => {
 
   it("routes every layout command to the layout port", async () => {
     const agentLayout = recordingLayout();
+    const bridge = createAgentViewCommandBridge();
+    bridge.bind(handlers());
     const registry = new CommandRegistry();
-    for (const command of workbenchAgentCommands({ agentLayout })) {
+    for (const command of workbenchAgentCommands({ agentLayout, viewCommands: bridge })) {
       registry.register(command);
     }
 
@@ -188,9 +201,81 @@ describe("workbenchAgentCommands", () => {
       { kind: "openSurface", surface: "files" },
       { kind: "openSurface", surface: "diff" },
       { kind: "openSurface", surface: "terminal" },
-      { kind: "toggleEditorExpanded" },
+      { kind: "expandEditor" },
     ]);
   });
+
+  it("restores the remembered surface only when it is not blocked", async () => {
+    const closedWithDiff: AgentWorkbenchLayout = {
+      ...initialAgentWorkbenchLayout,
+      lastSurface: "diff",
+    };
+
+    expect(await toggleRightPanel(closedWithDiff, [])).toEqual([{ kind: "toggleRightPanel" }]);
+    expect(await toggleRightPanel(closedWithDiff, ["diff"])).toEqual([{ kind: "showRightPanel" }]);
+    expect(
+      await toggleRightPanel({ ...closedWithDiff, rightPanel: "open", rightSurface: "diff" }, []),
+    ).toEqual([{ kind: "closeSurface" }]);
+  });
+
+  it("collapses the expanded editor onto an empty panel when the remembered surface is blocked", async () => {
+    const expanded: AgentWorkbenchLayout = {
+      ...initialAgentWorkbenchLayout,
+      layout: "editor-expanded",
+      lastSurface: "terminal",
+    };
+
+    expect(await toggleRightPanel(expanded, ["terminal"])).toEqual([{ kind: "showRightPanel" }]);
+    expect(await toggleRightPanel(expanded, [])).toEqual([{ kind: "collapseEditor" }]);
+    expect(await toggleEditorExpanded(expanded, ["terminal"])).toEqual([
+      { kind: "showRightPanel" },
+    ]);
+    expect(await toggleEditorExpanded(expanded, [])).toEqual([{ kind: "collapseEditor" }]);
+  });
+
+  it("keeps the panel empty while no agent view answers for the surfaces", async () => {
+    const agentLayout = recordingLayout({ ...initialAgentWorkbenchLayout, lastSurface: "diff" });
+    const registry = new CommandRegistry();
+    for (const command of workbenchAgentCommands({ agentLayout })) {
+      registry.register(command);
+    }
+
+    await registry.get("agent.toggleRightPanel")?.run();
+
+    expect(agentLayout.actions).toEqual([{ kind: "showRightPanel" }]);
+  });
+
+  async function toggleRightPanel(
+    layout: AgentWorkbenchLayout,
+    blockedSurfaces: ReadonlyArray<AgentSurfaceKind>,
+  ): Promise<ReadonlyArray<AgentWorkbenchLayoutAction>> {
+    return runLayoutCommand("agent.toggleRightPanel", layout, blockedSurfaces);
+  }
+
+  async function toggleEditorExpanded(
+    layout: AgentWorkbenchLayout,
+    blockedSurfaces: ReadonlyArray<AgentSurfaceKind>,
+  ): Promise<ReadonlyArray<AgentWorkbenchLayoutAction>> {
+    return runLayoutCommand("agent.toggleEditorExpanded", layout, blockedSurfaces);
+  }
+
+  async function runLayoutCommand(
+    commandId: string,
+    layout: AgentWorkbenchLayout,
+    blockedSurfaces: ReadonlyArray<AgentSurfaceKind>,
+  ): Promise<ReadonlyArray<AgentWorkbenchLayoutAction>> {
+    const agentLayout = recordingLayout(layout);
+    const bridge = createAgentViewCommandBridge();
+    bridge.bind(handlers(true, blockedSurfaces));
+    const registry = new CommandRegistry();
+    for (const command of workbenchAgentCommands({ agentLayout, viewCommands: bridge })) {
+      registry.register(command);
+    }
+
+    await registry.get(commandId)?.run();
+
+    return agentLayout.actions;
+  }
 
   it("stays inert when no agent view or layout port is bound", async () => {
     const commands = workbenchAgentCommands({});

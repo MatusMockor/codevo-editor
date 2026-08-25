@@ -11,6 +11,8 @@ import {
   type AgentSurfacePanelProps,
 } from "./AgentSurfacePanel";
 import {
+  SURFACE_FILES_THREAD_DESCRIPTION,
+  SURFACE_FILES_WORKSPACE_DESCRIPTION,
   SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
   SURFACE_NO_THREAD_REASON,
   SURFACE_UNTRUSTED_TERMINAL_REASON,
@@ -52,19 +54,24 @@ describe("AgentSurfacePanel", () => {
     expect(host.querySelector("[data-surface]")?.getAttribute("data-surface")).toBe("empty");
     click('[aria-label="Open Diff surface"]');
     expect(onChooseSurface).toHaveBeenCalledWith("diff");
-    expect(
-      host.querySelector<HTMLButtonElement>('[aria-label="Expand to editor (⌥⌘E)"]')?.disabled,
-    ).toBe(true);
+    expect(host.querySelector('[aria-label^="Expand to editor"]')).toBeNull();
+  });
+
+  it("tells the Files card what it opens with and without a thread", () => {
+    render({ thread: null });
+    expect(filesCardDescription()).toBe(SURFACE_FILES_WORKSPACE_DESCRIPTION);
+
+    render({ thread: surfaceThreadView() });
+    expect(filesCardDescription()).toBe(SURFACE_FILES_THREAD_DESCRIPTION);
   });
 
   it("disables cards with reasons: no thread, worktree gone, untrusted terminal", () => {
     render({ thread: null });
-    expect(reasons()).toEqual([
-      SURFACE_NO_THREAD_REASON,
-      SURFACE_NO_THREAD_REASON,
-      SURFACE_NO_THREAD_REASON,
-    ]);
-    expect(host.querySelectorAll<HTMLButtonElement>('[role="tab"]:disabled')).toHaveLength(3);
+    expect(reasons()).toEqual([SURFACE_NO_THREAD_REASON, SURFACE_NO_THREAD_REASON]);
+    expect(host.querySelectorAll<HTMLButtonElement>('[role="tab"]:disabled')).toHaveLength(2);
+    expect(
+      host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]')?.disabled,
+    ).toBe(false);
 
     render({ thread: surfaceThreadView({ worktreeMissing: true }) });
     expect(reasons()).toEqual([
@@ -107,6 +114,7 @@ describe("AgentSurfacePanel", () => {
     render({ layout: { rightSurface: "files" }, fileTree: null, thread: null });
     const aside = host.querySelector("aside.agent-surface");
     expect(aside?.getAttribute("data-tree")).toBe("hidden");
+    expect(host.querySelector('[aria-label="Toggle file tree"]')).toBeNull();
     expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
     expect(host.querySelector(`[${AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE}]`)).not.toBeNull();
 
@@ -146,8 +154,7 @@ describe("AgentSurfacePanel", () => {
     expect(tab?.title).toBe(SURFACE_FOREIGN_ROOT_TERMINAL_REASON);
   });
 
-  it("wires expand, close, tabs and the layout controls slot", () => {
-    const onExpandEditor = vi.fn();
+  it("wires close, tabs and the single expand button in the layout controls slot", () => {
     const onCloseSurface = vi.fn();
     const onChooseSurface = vi.fn();
     render({
@@ -155,14 +162,12 @@ describe("AgentSurfacePanel", () => {
       layoutControls: <button data-layout-control type="button" />,
       onChooseSurface,
       onCloseSurface,
-      onExpandEditor,
     });
 
     expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Files");
-    click('[aria-label="Expand to editor (⌥⌘E)"]');
+    expect(host.querySelectorAll('[aria-label^="Expand to editor"]')).toHaveLength(0);
     click('[aria-label="Close surface"]');
     click('[role="tab"]:nth-child(3)');
-    expect(onExpandEditor).toHaveBeenCalledTimes(1);
     expect(onCloseSurface).toHaveBeenCalledTimes(1);
     expect(onChooseSurface).toHaveBeenCalledWith("terminal");
     expect(
@@ -170,6 +175,13 @@ describe("AgentSurfacePanel", () => {
     ).not.toBeNull();
     expect(host.querySelector('[role="separator"][aria-orientation="vertical"]')).not.toBeNull();
   });
+
+  function filesCardDescription(): string {
+    return (
+      host.querySelector(".agent-surface-card__slot .agent-surface-card__description")
+        ?.textContent ?? ""
+    );
+  }
 
   function reasons(): string[] {
     return Array.from(host.querySelectorAll(".agent-surface-card__reason")).map(
@@ -240,7 +252,6 @@ function defaultProps(): AgentSurfacePanelProps {
     },
     onChooseSurface: () => undefined,
     onCloseSurface: () => undefined,
-    onExpandEditor: () => undefined,
   };
 }
 

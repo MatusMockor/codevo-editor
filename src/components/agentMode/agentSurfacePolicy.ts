@@ -15,6 +15,14 @@ export const SURFACE_UNTRUSTED_TERMINAL_REASON = "Trust the workspace to start a
 export const SURFACE_FOREIGN_ROOT_TERMINAL_REASON =
   "Terminal is available for the workspace root repository only.";
 
+export const SURFACE_FILES_THREAD_DESCRIPTION = "Browse and edit the thread's checkout.";
+export const SURFACE_FILES_WORKSPACE_DESCRIPTION = "Open the workspace editor.";
+
+export function agentSurfaceFilesDescription(thread: AgentThreadView | null): string {
+  if (thread === null) return SURFACE_FILES_WORKSPACE_DESCRIPTION;
+  return SURFACE_FILES_THREAD_DESCRIPTION;
+}
+
 export function agentSurfaceTerminalRootMismatch(
   thread: AgentThreadView,
   workspaceRoot: string | null,
@@ -28,6 +36,7 @@ export function agentSurfaceBlockedReason(
   workspaceTrusted: boolean,
   workspaceRoot: string | null,
 ): string | null {
+  if (kind === "files") return filesSurfaceBlockedReason(thread);
   if (thread === null) return SURFACE_NO_THREAD_REASON;
   if (agentSurfaceTargetGone(thread)) return SURFACE_WORKTREE_GONE_REASON;
   if (kind !== "terminal") return null;
@@ -35,6 +44,12 @@ export function agentSurfaceBlockedReason(
     return SURFACE_FOREIGN_ROOT_TERMINAL_REASON;
   }
   if (!workspaceTrusted) return SURFACE_UNTRUSTED_TERMINAL_REASON;
+  return null;
+}
+
+function filesSurfaceBlockedReason(thread: AgentThreadView | null): string | null {
+  if (thread === null) return null;
+  if (agentSurfaceTargetGone(thread)) return SURFACE_WORKTREE_GONE_REASON;
   return null;
 }
 

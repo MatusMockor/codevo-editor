@@ -4,7 +4,11 @@ import {
   useAgentThreadScripts,
   type AgentThreadScriptTarget,
 } from "../../application/useAgentThreadScripts";
-import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
+import {
+  editorExpandToggleAction,
+  rightPanelToggleAction,
+  type AgentSurfaceKind,
+} from "../../domain/agentWorkbenchLayout";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { MAX_AGENT_TASK_PROMPT_BYTES, type AgentTaskIsolation } from "../../domain/agentTask";
 import type {
@@ -359,13 +363,19 @@ export function AgentModeView({
     (surface: AgentSurfaceKind) => dispatchLayout({ kind: "openSurface", surface }),
     [dispatchLayout],
   );
+  const workspaceTrusted = chrome.workspaceTrusted;
+  const surfaceBlocked = useCallback(
+    (surface: AgentSurfaceKind) =>
+      agentSurfaceBlockedReason(surface, selectedThread, workspaceTrusted, workspaceRoot) !== null,
+    [selectedThread, workspaceRoot, workspaceTrusted],
+  );
   const expandEditor = useCallback(
-    () => dispatchLayout({ kind: "expandEditor" }),
-    [dispatchLayout],
+    () => dispatchLayout(editorExpandToggleAction(layout, surfaceBlocked)),
+    [dispatchLayout, layout, surfaceBlocked],
   );
   const toggleRightPanel = useCallback(
-    () => dispatchLayout({ kind: "toggleRightPanel" }),
-    [dispatchLayout],
+    () => dispatchLayout(rightPanelToggleAction(layout, surfaceBlocked)),
+    [dispatchLayout, layout, surfaceBlocked],
   );
   const onShowTerminalPanel = chrome.onShowTerminalPanel;
   const scripts = useAgentThreadScripts({
@@ -485,9 +495,11 @@ export function AgentModeView({
           ?.click();
       },
       threadSelected: () => selectedThreadId !== null,
+      surfaceBlocked,
     }),
     [
       openFind,
+      surfaceBlocked,
       scripts,
       orderedThreadIds,
       railScope,
@@ -516,7 +528,6 @@ export function AgentModeView({
       onExpandEditor={expandEditor}
       onToggleBottomPanel={chrome.onToggleBottomPanel}
       onToggleRightPanel={toggleRightPanel}
-      rightPanelDisabledReason={null}
       rightPanelOpen
       shortcuts={chrome.shortcuts}
     />
@@ -584,12 +595,6 @@ export function AgentModeView({
                 onToggleBottomPanel={chrome.onToggleBottomPanel}
                 onToggleRightPanel={toggleRightPanel}
                 project={headerProject}
-                rightPanelDisabledReason={agentSurfaceBlockedReason(
-                  layout.lastSurface,
-                  selectedThread,
-                  chrome.workspaceTrusted,
-                  workspaceRoot,
-                )}
                 scripts={scripts}
                 shipActions={shipActions}
                 shortcuts={chrome.shortcuts}
@@ -669,7 +674,7 @@ export function AgentModeView({
           titles={paletteTitles}
         />
       </section>
-      {layout.layout === "agent" && layout.rightSurface !== null && (
+      {layout.layout === "agent" && layout.rightPanel === "open" && (
         <AgentSurfaceHost
           agents={agents}
           chrome={chrome}
@@ -677,7 +682,6 @@ export function AgentModeView({
           layoutControls={layoutControls}
           onChooseSurface={openSurface}
           onCloseSurface={() => dispatchLayout({ kind: "closeSurface" })}
-          onExpandEditor={expandEditor}
           thread={selectedThread}
           workspaceRoot={workspaceRoot}
         />

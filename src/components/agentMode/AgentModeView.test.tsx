@@ -15,6 +15,7 @@ import type { GitChangedFile } from "../../domain/git";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import type { AgentTurnEvent } from "../../domain/agentThread";
 import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
+import { workbenchAgentCommands } from "../../application/workbenchAgentCommands";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
 import { chromeFixture, recordedLayoutState } from "./agentWorkbenchChromeTestFixtures";
 import { waitForReact } from "../../test/reactTestLifecycle";
@@ -533,6 +534,104 @@ describe("AgentModeView", () => {
     expect(removeWorktree).toHaveBeenCalledWith("agt-1");
   });
 
+  it("opens an empty right panel from the header toggle when the remembered surface is blocked", () => {
+    const layout = recordedLayoutState({ lastSurface: "diff" });
+    render({
+      chrome: chromeFixture({ layout }),
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+    });
+
+    const toggle = host.querySelector<HTMLButtonElement>(
+      '[data-agent-thread-head] button[aria-label^="Toggle right panel"]',
+    );
+    expect(toggle).not.toBeNull();
+    expect(toggle?.disabled).toBe(false);
+    act(() => toggle?.click());
+    expect(layout.actions).toEqual([{ kind: "showRightPanel" }]);
+
+    clickText("Refactor the parser");
+    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
+    expect(layout.actions).toEqual([{ kind: "showRightPanel" }, { kind: "toggleRightPanel" }]);
+  });
+
+  it("restores the remembered Files surface from the header toggle without a thread", () => {
+    const layout = recordedLayoutState();
+    render({
+      chrome: chromeFixture({ layout }),
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+    });
+
+    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
+
+    expect(layout.actions).toEqual([{ kind: "toggleRightPanel" }]);
+  });
+
+  it("applies the same right panel policy to the ⌥⌘R command", async () => {
+    const bridge = createAgentViewCommandBridge();
+    const layout = recordedLayoutState({ lastSurface: "diff" });
+    render({
+      chrome: chromeFixture({ layout }),
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      viewCommands: bridge,
+    });
+    const toggleCommand = workbenchAgentCommands({
+      agentLayout: layout,
+      viewCommands: bridge,
+    }).find((command) => command.id === "agent.toggleRightPanel");
+
+    await toggleCommand?.run();
+    expect(layout.actions).toEqual([{ kind: "showRightPanel" }]);
+
+    clickText("Refactor the parser");
+    await toggleCommand?.run();
+    expect(layout.actions).toEqual([{ kind: "showRightPanel" }, { kind: "toggleRightPanel" }]);
+  });
+
+  it("collapses the expanded editor onto an empty panel when the remembered surface is blocked", async () => {
+    const bridge = createAgentViewCommandBridge();
+    const layout = recordedLayoutState({ layout: "editor-expanded", lastSurface: "terminal" });
+    render({
+      chrome: chromeFixture({ layout }),
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      viewCommands: bridge,
+    });
+    const expandCommand = workbenchAgentCommands({
+      agentLayout: layout,
+      viewCommands: bridge,
+    }).find((command) => command.id === "agent.toggleEditorExpanded");
+
+    await expandCommand?.run();
+
+    expect(layout.actions).toEqual([{ kind: "showRightPanel" }]);
+  });
+
+  it("renders the empty surface panel with only Files enabled while no thread is selected", () => {
+    const layout = recordedLayoutState({ rightPanel: "open" });
+    render({
+      chrome: chromeFixture({ layout }),
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+    });
+
+    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
+    expect(host.querySelector("[data-agent-thread-head] [data-panel-layout-controls]")).toBeNull();
+    const files = host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]');
+    const diff = host.querySelector<HTMLButtonElement>('[aria-label="Open Diff surface"]');
+    const terminal = host.querySelector<HTMLButtonElement>('[aria-label="Open Terminal surface"]');
+    expect(files?.disabled).toBe(false);
+    expect(diff?.disabled).toBe(true);
+    expect(terminal?.disabled).toBe(true);
+    expect(host.textContent).toContain("Select a thread first");
+
+    click('[aria-label="Open Files surface"]');
+    expect(layout.actions).toEqual([{ kind: "openSurface", surface: "files" }]);
+
+    click('.agent-surface [aria-label^="Toggle right panel"]');
+    expect(layout.actions).toEqual([
+      { kind: "openSurface", surface: "files" },
+      { kind: "closeSurface" },
+    ]);
+  });
+
   it("offers the changed files as a review cue that opens the Diff surface", () => {
     const showChanges = vi.fn(async () => undefined);
     const layout = recordedLayoutState();
@@ -571,7 +670,9 @@ describe("AgentModeView", () => {
     const file = changedFile("a.ts");
     const view = threadView({ threadId: "agt-1" });
     render({
-      chrome: chromeFixture({ layout: recordedLayoutState({ rightSurface: "diff" }) }),
+      chrome: chromeFixture({
+        layout: recordedLayoutState({ rightPanel: "open", rightSurface: "diff" }),
+      }),
       agents: surface({
         openChangedFile,
         openChangedFileDiff,

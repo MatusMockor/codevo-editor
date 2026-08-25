@@ -60,12 +60,12 @@ describe("AgentPanelLayoutControls", () => {
     expect(onToggleRightPanel).toHaveBeenCalledTimes(1);
   });
 
-  it("disables the right panel toggle with its reason", () => {
-    render({ rightPanelDisabledReason: "Widen the window to open a surface" });
+  it("keeps the right panel toggle enabled without a thread", () => {
+    render({ rightPanelOpen: false });
 
-    const right = button("Widen the window to open a surface");
-    expect(right.disabled).toBe(true);
-    expect(right.title).toBe("Widen the window to open a surface");
+    const right = button("Toggle right panel (⌥⌘R)");
+    expect(right.disabled).toBe(false);
+    expect(right.title).toBe("Toggle right panel (⌥⌘R)");
   });
 
   it("shows the expand button only when an expand handler is given", () => {
@@ -80,7 +80,6 @@ describe("AgentPanelLayoutControls", () => {
     const props: AgentPanelLayoutControlsProps = {
       bottomPanelOpen: false,
       rightPanelOpen: false,
-      rightPanelDisabledReason: null,
       shortcuts: SHORTCUTS,
       onToggleBottomPanel: vi.fn(),
       onToggleRightPanel: vi.fn(),

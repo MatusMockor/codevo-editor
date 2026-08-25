@@ -1,4 +1,4 @@
-import { FolderTree, GitCompare, Maximize2, PanelLeft, SquareTerminal, X } from "lucide-react";
+import { FolderTree, GitCompare, PanelLeft, SquareTerminal, X } from "lucide-react";
 import { Suspense, lazy, useState, type PointerEvent, type ReactNode } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
@@ -36,7 +36,6 @@ export interface AgentSurfacePanelProps {
   readonly terminal: AgentSurfaceTerminalPanelProps | null;
   onChooseSurface(surface: AgentSurfaceKind): void;
   onCloseSurface(): void;
-  onExpandEditor(): void;
   onTrustWorkspace?(): void;
   onResizeStart?(event: PointerEvent<HTMLDivElement>): void;
 }
@@ -60,7 +59,6 @@ export function AgentSurfacePanel({
   layoutControls,
   onChooseSurface,
   onCloseSurface,
-  onExpandEditor,
   onResizeStart,
   onTrustWorkspace,
   terminal,
@@ -114,7 +112,7 @@ export function AgentSurfacePanel({
           })}
         </div>
         <span className="agent-session__spacer" />
-        {surface === "files" && (
+        {surface === "files" && fileTree !== null && (
           <button
             aria-label="Toggle file tree"
             aria-pressed={treeVisible}
@@ -125,16 +123,6 @@ export function AgentSurfacePanel({
             <PanelLeft aria-hidden="true" size={13} />
           </button>
         )}
-        <button
-          aria-label="Expand to editor (⌥⌘E)"
-          className="agent-iconbutton"
-          disabled={surface === null}
-          onClick={onExpandEditor}
-          title="Expand to editor (⌥⌘E)"
-          type="button"
-        >
-          <Maximize2 aria-hidden="true" size={13} />
-        </button>
         <div className="agent-surface__layout-controls">{layoutControls}</div>
         <button
           aria-label="Close surface"

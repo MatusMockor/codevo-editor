@@ -75,6 +75,7 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     expect(saved[0]?.rootPath).toBe(ROOT_A);
     expect(saved[0]?.settings.session.agentWorkbench).toEqual({
       layout: "agent",
+      rightPanel: "open",
       rightSurface: "terminal",
       bottomPanel: false,
       rightPanelWidth: 540,

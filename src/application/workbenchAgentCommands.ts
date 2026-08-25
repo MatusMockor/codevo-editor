@@ -1,4 +1,10 @@
-import type { AgentSurfaceKind, AgentWorkbenchLayoutAction } from "../domain/agentWorkbenchLayout";
+import {
+  editorExpandToggleAction,
+  rightPanelToggleAction,
+  type AgentSurfaceKind,
+  type AgentWorkbenchLayout,
+  type AgentWorkbenchLayoutAction,
+} from "../domain/agentWorkbenchLayout";
 import type { KeymapCommandId } from "../domain/keymap";
 import {
   AGENT_JUMP_SLOTS,
@@ -10,6 +16,7 @@ import {
 import type { Command, CommandContext } from "./commandRegistry";
 
 export interface AgentWorkbenchLayoutCommandPort {
+  readonly layout: AgentWorkbenchLayout;
   dispatch(action: AgentWorkbenchLayoutAction): void;
 }
 
@@ -62,6 +69,26 @@ export function workbenchAgentCommands({
     isEnabled: (context) => context.hasWorkspace,
     run: () => agentLayout?.dispatch(action),
   });
+  const layoutPolicyCommand = (
+    id: KeymapCommandId,
+    title: string,
+    actionFor: (
+      layout: AgentWorkbenchLayout,
+      isSurfaceBlocked: (surface: AgentSurfaceKind) => boolean,
+    ) => AgentWorkbenchLayoutAction,
+  ): Command => ({
+    id,
+    title,
+    category: "Agents",
+    shortcut: shortcut?.(id),
+    isEnabled: (context) => context.hasWorkspace,
+    run: () => {
+      if (agentLayout === undefined) return;
+      agentLayout.dispatch(
+        actionFor(agentLayout.layout, (surface) => viewCommands.surfaceBlocked(surface)),
+      );
+    },
+  });
 
   return [
     viewCommand("agent.newThread", "New Thread"),
@@ -74,15 +101,17 @@ export function workbenchAgentCommands({
     viewCommand("agent.findInThread", "Find in Thread", withThread),
     viewCommand("agent.runPreferredScript", "Run Thread Script", withThread),
     viewCommand("agent.openCommitMenu", "Commit Thread Changes", withThread),
-    layoutCommand("agent.toggleRightPanel", "Toggle Right Panel", { kind: "toggleRightPanel" }),
+    layoutPolicyCommand("agent.toggleRightPanel", "Toggle Right Panel", rightPanelToggleAction),
     ...SURFACE_COMMANDS.map((surfaceCommand) =>
       layoutCommand(surfaceCommand.id, surfaceCommand.title, {
         kind: "openSurface",
         surface: surfaceCommand.surface,
       }),
     ),
-    layoutCommand("agent.toggleEditorExpanded", "Expand or Collapse Editor", {
-      kind: "toggleEditorExpanded",
-    }),
+    layoutPolicyCommand(
+      "agent.toggleEditorExpanded",
+      "Expand or Collapse Editor",
+      editorExpandToggleAction,
+    ),
   ];
 }

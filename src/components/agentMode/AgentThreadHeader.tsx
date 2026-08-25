@@ -34,7 +34,6 @@ export interface AgentThreadHeaderProps {
   readonly scripts: AgentThreadScriptsSurface;
   readonly shipActions: AgentShipActions;
   readonly shortcuts: AgentPanelLayoutShortcuts | null;
-  readonly rightPanelDisabledReason: string | null;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onRenameThread(threadId: string, title: string): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
@@ -156,13 +155,12 @@ export function AgentThreadHeader(props: AgentThreadHeaderProps) {
             <AgentCommitMenu actions={props.shipActions} thread={thread} />
           </>
         )}
-        {layout.rightSurface === null && (
+        {layout.rightPanel === "closed" && (
           <AgentPanelLayoutControls
             bottomPanelOpen={layout.bottomPanel}
             onExpandEditor={null}
             onToggleBottomPanel={props.onToggleBottomPanel}
             onToggleRightPanel={props.onToggleRightPanel}
-            rightPanelDisabledReason={props.rightPanelDisabledReason}
             rightPanelOpen={false}
             shortcuts={props.shortcuts}
           />

@@ -1393,13 +1393,44 @@
   padding: var(--agent-space-3) var(--agent-space-3) var(--agent-space-3) 12px;
 }
 
-/* Footer under the box: where the run lands, never what it is asked to do. */
+/* Footer strip attached to the box: where the run lands, never what it is asked to do. */
 .agent-composer__footer {
   display: flex;
   align-items: center;
-  gap: var(--agent-space-2);
+  gap: 2px;
   min-width: 0;
-  padding-inline: 4px;
+  min-height: 30px;
+  border-top: 1px solid var(--agent-hairline);
+  color: var(--agent-text-subtle);
+  font-size: var(--agent-fs-sm);
+  padding: 2px 8px 2px 9px;
+}
+
+.agent-composer__footer .agent-picker__trigger {
+  height: 24px;
+  max-width: 260px;
+  border-color: var(--agent-hairline);
+  background: none;
+  color: var(--agent-text-subtle);
+  font-family: inherit;
+  font-size: var(--agent-fs-sm);
+  padding: 0 6px 0 7px;
+}
+
+.agent-composer__footer .agent-picker__trigger:hover:not(:disabled) {
+  border-color: var(--agent-hairline-strong);
+  background: var(--agent-row-hover);
+  color: var(--agent-text-strong);
+}
+
+.agent-composer__footer .agent-picker--open .agent-picker__trigger {
+  border-color: var(--agent-hairline-strong);
+  background: var(--agent-row-hover);
+  color: var(--agent-text-strong);
+}
+
+.agent-composer__footer .agent-picker__prefix {
+  color: var(--agent-text-subtle);
 }
 
 /* A glyph sits inside the trigger pill, so the control reads as one token. */
@@ -1411,13 +1442,13 @@
 }
 
 .agent-composer__glyphed .agent-picker__trigger {
-  padding-left: 26px;
+  padding-left: 24px;
 }
 
 .agent-composer__glyph {
   position: absolute;
   top: 50%;
-  left: 8px;
+  left: 7px;
   display: inline-flex;
   align-items: center;
   color: var(--agent-text-subtle);
@@ -1437,9 +1468,8 @@
   overflow: hidden;
   height: 24px;
   color: var(--agent-text-subtle);
-  font-family: var(--agent-mono);
-  font-size: var(--agent-fs-xs);
-  padding-inline: 4px;
+  font-size: var(--agent-fs-sm);
+  padding-inline: 7px;
   white-space: nowrap;
 }
 

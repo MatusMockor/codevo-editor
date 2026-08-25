@@ -1,3 +1,5 @@
+import type { AgentSurfaceKind } from "../domain/agentWorkbenchLayout";
+
 export const AGENT_JUMP_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 export type AgentJumpSlot = (typeof AGENT_JUMP_SLOTS)[number];
@@ -13,6 +15,7 @@ export type AgentViewCommandId =
   | `agent.jumpToThread.${AgentJumpSlot}`;
 
 export interface AgentViewCommandHandlers {
+  surfaceBlocked(surface: AgentSurfaceKind): boolean;
   newThread(): void;
   previousThread(): void;
   nextThread(): void;
@@ -28,6 +31,7 @@ export interface AgentViewCommandBridge {
   bind(handlers: AgentViewCommandHandlers): () => void;
   bound(): boolean;
   threadSelected(): boolean;
+  surfaceBlocked(surface: AgentSurfaceKind): boolean;
   run(commandId: AgentViewCommandId): void;
 }
 
@@ -48,6 +52,7 @@ export function createAgentViewCommandBridge(): AgentViewCommandBridge {
     },
     bound: () => current !== null,
     threadSelected: () => current?.threadSelected() ?? false,
+    surfaceBlocked: (surface) => current?.surfaceBlocked(surface) ?? true,
     run(commandId) {
       const handlers = current;
       if (handlers === null) return;

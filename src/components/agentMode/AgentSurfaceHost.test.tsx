@@ -137,6 +137,5 @@ function defaultProps(): AgentSurfaceHostProps {
     layoutControls: null,
     onChooseSurface: () => undefined,
     onCloseSurface: () => undefined,
-    onExpandEditor: () => undefined,
   };
 }

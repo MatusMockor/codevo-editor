@@ -10,7 +10,7 @@ export interface WorkbenchShellPlacementInput {
   readonly effectiveLayout: AgentWorkbenchLayoutMode;
   readonly layout: Pick<
     AgentWorkbenchLayout,
-    "rightSurface" | "rightPanelWidth" | "bottomPanelHeight"
+    "rightPanel" | "rightSurface" | "rightPanelWidth" | "bottomPanelHeight"
   >;
   readonly bottomPanelVisible: boolean;
 }
@@ -50,7 +50,7 @@ export function workbenchShellPlacement({
   return {
     layout: effectiveLayout,
     editorHidden: layout.rightSurface !== "files",
-    rightPanelWidth: layout.rightSurface === null ? 0 : layout.rightPanelWidth,
+    rightPanelWidth: layout.rightPanel === "open" ? layout.rightPanelWidth : 0,
     bottomPanelHeight: bottomPanelVisible ? layout.bottomPanelHeight : 0,
   };
 }

@@ -111,19 +111,29 @@ describe("AgentThreadHeader", () => {
     render({});
     expect(host.querySelector("[data-panel-layout-controls]")).not.toBeNull();
 
-    render({ layout: { ...initialAgentWorkbenchLayout, rightSurface: "files" } });
+    render({
+      layout: { ...initialAgentWorkbenchLayout, rightPanel: "open", rightSurface: "files" },
+    });
+    expect(host.querySelector("[data-panel-layout-controls]")).toBeNull();
+
+    render({ layout: { ...initialAgentWorkbenchLayout, rightPanel: "open" } });
     expect(host.querySelector("[data-panel-layout-controls]")).toBeNull();
   });
 
   it("renders the empty state with the project crumb and only the toggles", () => {
     const onToggleBottomPanel = vi.fn();
-    render({ thread: null, onToggleBottomPanel });
+    const onToggleRightPanel = vi.fn();
+    render({ thread: null, onToggleBottomPanel, onToggleRightPanel });
 
     expect(host.querySelector("h2.agent-crumbs__heading")?.textContent).toBe("New thread");
     expect(button("Thread actions for New thread").disabled).toBe(true);
     expect(host.querySelector(".agent-split")).toBeNull();
     act(() => button("Toggle terminal panel (⌘J)").click());
     expect(onToggleBottomPanel).toHaveBeenCalledTimes(1);
+    const right = button("Toggle right panel (⌥⌘R)");
+    expect(right.disabled).toBe(false);
+    act(() => right.click());
+    expect(onToggleRightPanel).toHaveBeenCalledTimes(1);
   });
 
   it("routes a reveal failure to the injected notice handler", async () => {
@@ -159,7 +169,6 @@ describe("AgentThreadHeader", () => {
       scripts: scriptsSurface(),
       shipActions: shipActions(),
       shortcuts: SHORTCUTS,
-      rightPanelDisabledReason: null,
       onNewThread: vi.fn(),
       onRenameThread: vi.fn(),
       onThreadMenuCommand: vi.fn(),

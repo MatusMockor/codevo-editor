@@ -10,7 +10,6 @@ export type { AgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation"
 export interface AgentPanelLayoutControlsProps {
   readonly bottomPanelOpen: boolean;
   readonly rightPanelOpen: boolean;
-  readonly rightPanelDisabledReason: string | null;
   readonly shortcuts: AgentPanelLayoutShortcuts | null;
   onToggleBottomPanel(): void;
   onToggleRightPanel(): void;
@@ -22,14 +21,12 @@ export function AgentPanelLayoutControls({
   onExpandEditor,
   onToggleBottomPanel,
   onToggleRightPanel,
-  rightPanelDisabledReason,
   rightPanelOpen,
   shortcuts,
 }: AgentPanelLayoutControlsProps) {
   const chords = shortcuts ?? defaultAgentPanelLayoutShortcuts();
   const bottomTitle = agentControlTooltip("Toggle terminal panel", chords.bottomPanel);
-  const rightTitle =
-    rightPanelDisabledReason ?? agentControlTooltip("Toggle right panel", chords.rightPanel);
+  const rightTitle = agentControlTooltip("Toggle right panel", chords.rightPanel);
   const expandTitle = agentControlTooltip("Expand to editor", chords.expandEditor);
 
   return (
@@ -59,7 +56,6 @@ export function AgentPanelLayoutControls({
         aria-label={rightTitle}
         aria-pressed={rightPanelOpen}
         className="agent-icon-toggle"
-        disabled={rightPanelDisabledReason !== null}
         onClick={onToggleRightPanel}
         title={rightTitle}
         type="button"

@@ -1134,6 +1134,7 @@ describe("normalizeWorkspaceSession", () => {
     expect(normalized.version).toBe(WORKSPACE_SESSION_VERSION);
     expect(normalized.agentWorkbench).toEqual({
       layout: "agent",
+      rightPanel: "open",
       rightSurface: "diff",
       bottomPanel: true,
       rightPanelWidth: 640,

@@ -7,7 +7,9 @@ import type {
 import { TauriTerminalGateway } from "../../infrastructure/tauriTerminalGateway";
 import {
   SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
+  SURFACE_NO_THREAD_REASON,
   SURFACE_UNTRUSTED_TERMINAL_REASON,
+  SURFACE_WORKTREE_GONE_REASON,
   agentSurfaceBlockedReason,
   agentSurfaceTerminalLaunchTargetFor,
   withTerminalLaunchTarget,
@@ -110,6 +112,20 @@ describe("agentSurfaceBlockedReason", () => {
     );
     expect(agentSurfaceBlockedReason("files", thread, false, "/workspace/other")).toBeNull();
     expect(agentSurfaceBlockedReason("diff", thread, true, null)).toBeNull();
+  });
+
+  it("keeps Files open without a thread and blocks the thread-bound surfaces", () => {
+    expect(agentSurfaceBlockedReason("files", null, true, SURFACE_FIXTURE_ROOT)).toBeNull();
+    expect(agentSurfaceBlockedReason("diff", null, true, SURFACE_FIXTURE_ROOT)).toBe(
+      SURFACE_NO_THREAD_REASON,
+    );
+    expect(agentSurfaceBlockedReason("terminal", null, true, SURFACE_FIXTURE_ROOT)).toBe(
+      SURFACE_NO_THREAD_REASON,
+    );
+    const gone = surfaceThreadView({ worktreeMissing: true });
+    expect(agentSurfaceBlockedReason("files", gone, true, SURFACE_FIXTURE_ROOT)).toBe(
+      SURFACE_WORKTREE_GONE_REASON,
+    );
   });
 
   it("derives the launch target from the thread id and isolation only", () => {

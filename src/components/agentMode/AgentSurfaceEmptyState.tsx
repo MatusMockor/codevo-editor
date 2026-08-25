@@ -1,7 +1,12 @@
 import { FolderTree, GitCompare, SquareTerminal } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { AGENT_SURFACE_KINDS, type AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
-import { SURFACE_UNTRUSTED_TERMINAL_REASON, agentSurfaceBlockedReason } from "./agentSurfacePolicy";
+import {
+  SURFACE_FILES_THREAD_DESCRIPTION,
+  SURFACE_UNTRUSTED_TERMINAL_REASON,
+  agentSurfaceBlockedReason,
+  agentSurfaceFilesDescription,
+} from "./agentSurfacePolicy";
 
 export interface AgentSurfaceEmptyStateProps {
   readonly thread: AgentThreadView | null;
@@ -22,7 +27,7 @@ const CARDS: ReadonlyArray<SurfaceCard> = [
   {
     kind: "files",
     label: "Files",
-    description: "Browse and edit the thread's checkout.",
+    description: SURFACE_FILES_THREAD_DESCRIPTION,
     icon: FolderTree,
   },
   { kind: "diff", label: "Diff", description: "Review changes in this thread.", icon: GitCompare },
@@ -53,6 +58,8 @@ export function AgentSurfaceEmptyState({
             const card = CARDS.find((candidate) => candidate.kind === kind) ?? CARDS[0];
             const reason = agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot);
             const Icon = card.icon;
+            const description =
+              kind === "files" ? agentSurfaceFilesDescription(thread) : card.description;
             const showTrust =
               reason === SURFACE_UNTRUSTED_TERMINAL_REASON && onTrustWorkspace !== undefined;
             return (
@@ -69,7 +76,7 @@ export function AgentSurfaceEmptyState({
                     <Icon aria-hidden="true" size={18} />
                   </span>
                   <span className="agent-surface-card__label">{card.label}</span>
-                  <span className="agent-surface-card__description">{card.description}</span>
+                  <span className="agent-surface-card__description">{description}</span>
                 </button>
                 {reason !== null && (
                   <p className="agent-surface-card__reason" id={`agent-surface-card-${kind}`}>

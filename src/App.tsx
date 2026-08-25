@@ -105,6 +105,7 @@ import type { EditorDocument, ImageTab } from "./domain/workspace";
 import { createInitialEditorGroupsState, type EditorGroupId } from "./domain/editorGroups";
 import { isGitHistoryDiffDocumentPath } from "./domain/editorDocumentSchemes";
 import { formatWindowTitle } from "./domain/windowTitle";
+import { useAgentEditorCollapse } from "./application/useAgentEditorCollapse";
 import type { BottomPanelView } from "./domain/bottomPanel";
 import { AgentWorkbenchScreen } from "./components/agentMode/AgentWorkbenchScreen";
 import { AgentStatusBarHost } from "./components/agentMode/AgentStatusBarHost";
@@ -710,10 +711,7 @@ function App() {
     onResizeRightPanel: resizeAgentRightPanel,
     onResizeBottomPanel: resizeAgentBottomPanel,
   });
-  const collapseEditor = useCallback(
-    () => agentLayout.dispatch({ kind: "collapseEditor" }),
-    [agentLayout],
-  );
+  const collapseEditor = useAgentEditorCollapse(agentLayout);
   const shellPlacement = workbenchShellPlacement({
     bottomPanelVisible: workbench.bottomPanelVisible,
     effectiveLayout: agentLayout.effectiveLayout,

@@ -84,13 +84,15 @@ describe("AgentComposer", () => {
     expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
   });
 
-  it("picks the checkout in the footer under the box", () => {
+  it("picks the checkout in the footer strip attached to the box", () => {
     const onIsolationChange = vi.fn();
     render({ onIsolationChange });
 
+    const box = host.querySelector(".agent-composer__box");
     const footer = host.querySelector(".agent-composer__footer");
     expect(footer?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
-    expect(host.querySelector(".agent-composer__box")?.nextElementSibling).toBe(footer);
+    expect(box?.lastElementChild).toBe(footer);
+    expect(footer?.querySelector(`#${REPOSITORY_ID}`)).not.toBeNull();
     expect(pickerValue(CHECKOUT_ID)).toBe("in-place");
     expect(trigger(CHECKOUT_ID).textContent).toContain("Local checkout");
     expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Local checkout", "Isolated worktree"]);
@@ -108,7 +110,9 @@ describe("AgentComposer", () => {
 
     expect(pickerValue(CHECKOUT_ID)).toBe("worktree");
     expect(trigger(CHECKOUT_ID).textContent).toContain("Isolated worktree");
-    expect(host.textContent).toContain("The working tree has uncommitted changes.");
+    const reason = host.querySelector(".agent-composer__reason");
+    expect(reason?.textContent).toBe("The working tree has uncommitted changes.");
+    expect(reason?.nextElementSibling).toBe(host.querySelector(".agent-composer__footer"));
   });
 
   it("locks a background project to an isolated worktree and says why", () => {
@@ -137,6 +141,9 @@ describe("AgentComposer", () => {
     const lock = host.querySelector(".agent-composer__lock");
     expect(lock?.textContent).toContain("Isolated worktree");
     expect(lock?.querySelector("button")).toBeNull();
+    const footer = host.querySelector(".agent-composer__footer");
+    expect(footer?.contains(lock)).toBe(true);
+    expect(host.querySelector(".agent-composer__box")?.lastElementChild).toBe(footer);
   });
 
   it("keeps the reply context line and the escape to a new thread", () => {

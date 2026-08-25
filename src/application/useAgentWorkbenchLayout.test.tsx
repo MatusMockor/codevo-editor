@@ -22,6 +22,7 @@ afterEach(() => {
 
 const diffLayout: AgentWorkbenchLayoutPersisted = {
   layout: "agent",
+  rightPanel: "open",
   rightSurface: "diff",
   bottomPanel: true,
   rightPanelWidth: 700,
@@ -30,6 +31,7 @@ const diffLayout: AgentWorkbenchLayoutPersisted = {
 
 const terminalLayout: AgentWorkbenchLayoutPersisted = {
   layout: "agent",
+  rightPanel: "open",
   rightSurface: "terminal",
   bottomPanel: false,
   rightPanelWidth: 420,
@@ -223,6 +225,7 @@ describe("useAgentWorkbenchLayout", () => {
         ownerKey: "workspace-a",
         layout: {
           layout: "agent",
+          rightPanel: "open",
           rightSurface: "diff",
           bottomPanel: false,
           rightPanelWidth: initialAgentWorkbenchLayout.rightPanelWidth,

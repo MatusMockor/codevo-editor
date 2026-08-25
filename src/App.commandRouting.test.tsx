@@ -8,6 +8,7 @@ import {
   type AgentWorkbenchLayout,
   type AgentWorkbenchLayoutMode,
 } from "./domain/agentWorkbenchLayout";
+import { workbenchAgentViewCommandBridge } from "./application/agentViewCommandBridge";
 import { initialIndexProgress } from "./domain/indexProgress";
 import type { EditorDocument } from "./domain/workspace";
 import { buildJsTestExplorerTree, type JsTestExplorerTestNode } from "./domain/jsTestExplorerTree";
@@ -964,9 +965,16 @@ describe("App command routing", () => {
   });
 
   it("collapses the expanded editor back to the threads from the toolbar", () => {
+    const unbind = bindSurfacePolicy(false);
     click(host.querySelector<HTMLButtonElement>('button[aria-label="Collapse editor (⌥⌘E)"]'));
 
     expect(mocks.agentLayoutDispatch).toHaveBeenCalledWith({ kind: "collapseEditor" });
+
+    unbind();
+    bindSurfacePolicy(true);
+    click(host.querySelector<HTMLButtonElement>('button[aria-label="Collapse editor (⌥⌘E)"]'));
+
+    expect(mocks.agentLayoutDispatch).toHaveBeenLastCalledWith({ kind: "showRightPanel" });
   });
 
   it("keeps one editor runtime mounted across agent, files surface, expanded and collapsed", async () => {
@@ -984,10 +992,19 @@ describe("App command routing", () => {
       readonly hidden: boolean;
     }> = [
       { layout: agentLayoutState("agent"), hidden: true },
-      { layout: agentLayoutState("agent", { rightSurface: "files" }), hidden: false },
-      { layout: agentLayoutState("agent", { rightSurface: "diff" }), hidden: true },
+      {
+        layout: agentLayoutState("agent", { rightPanel: "open", rightSurface: "files" }),
+        hidden: false,
+      },
+      {
+        layout: agentLayoutState("agent", { rightPanel: "open", rightSurface: "diff" }),
+        hidden: true,
+      },
       { layout: agentLayoutState("editor-expanded"), hidden: false },
-      { layout: agentLayoutState("agent", { rightSurface: "files" }), hidden: false },
+      {
+        layout: agentLayoutState("agent", { rightPanel: "open", rightSurface: "files" }),
+        hidden: false,
+      },
       { layout: agentLayoutState("agent"), hidden: true },
     ];
 
@@ -1076,6 +1093,19 @@ function requiredElement<T extends Element>(host: ParentNode, selector: string):
   const element = host.querySelector<T>(selector);
   expect(element).not.toBeNull();
   return element as T;
+}
+
+function bindSurfacePolicy(blocked: boolean): () => void {
+  return workbenchAgentViewCommandBridge.bind({
+    newThread: () => undefined,
+    previousThread: () => undefined,
+    nextThread: () => undefined,
+    jumpToThread: () => undefined,
+    searchThreads: () => undefined,
+    findInThread: () => undefined,
+    threadSelected: () => false,
+    surfaceBlocked: () => blocked,
+  });
 }
 
 function agentLayoutState(

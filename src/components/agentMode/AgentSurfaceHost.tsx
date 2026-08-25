@@ -28,7 +28,6 @@ export interface AgentSurfaceHostProps {
   readonly layoutControls: ReactNode;
   onChooseSurface(surface: AgentSurfaceKind): void;
   onCloseSurface(): void;
-  onExpandEditor(): void;
 }
 
 const UNAVAILABLE_FILES: AgentSurfaceFileTreeDependencies["files"] = {
@@ -42,7 +41,6 @@ export function AgentSurfaceHost({
   layoutControls,
   onChooseSurface,
   onCloseSurface,
-  onExpandEditor,
   thread,
   workspaceRoot,
 }: AgentSurfaceHostProps) {
@@ -121,7 +119,6 @@ export function AgentSurfaceHost({
         layoutControls={layoutControls}
         onChooseSurface={onChooseSurface}
         onCloseSurface={onCloseSurface}
-        onExpandEditor={onExpandEditor}
         onResizeStart={chrome.onResizeRightPanelStart}
         onTrustWorkspace={chrome.onTrustWorkspace}
         terminal={terminal}

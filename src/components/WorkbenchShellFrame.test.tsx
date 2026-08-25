@@ -3,7 +3,10 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { initialAgentWorkbenchLayout } from "../domain/agentWorkbenchLayout";
+import {
+  DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
+  initialAgentWorkbenchLayout,
+} from "../domain/agentWorkbenchLayout";
 import { WorkbenchShellFrame } from "./WorkbenchShellFrame";
 import { useWorkbenchFrameTreeReport } from "./workbenchFrameTreeReport";
 import {
@@ -19,6 +22,7 @@ describe("workbenchShellPlacement", () => {
     expect(placement("agent", "terminal").editorHidden).toBe(true);
     expect(placement("agent", "files").editorHidden).toBe(false);
     expect(placement("editor-expanded", null).editorHidden).toBe(false);
+    expect(emptyOpenPanelPlacement().editorHidden).toBe(true);
   });
 
   it("collapses the right and bottom panel tracks when they are closed", () => {
@@ -29,6 +33,10 @@ describe("workbenchShellPlacement", () => {
       rightPanelWidth: 0,
       bottomPanelHeight: 0,
     });
+    expect(emptyOpenPanelPlacement()).toMatchObject({
+      rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
+      editorHidden: true,
+    });
   });
 });
 
@@ -38,6 +46,7 @@ describe("workbenchFrameTreeState", () => {
     expect(workbenchFrameTreeState(placement("agent", "files"), false)).toBe("hidden");
     expect(workbenchFrameTreeState(placement("agent", "diff"), true)).toBe("hidden");
     expect(workbenchFrameTreeState(placement("editor-expanded", "files"), true)).toBe("hidden");
+    expect(workbenchFrameTreeState(emptyOpenPanelPlacement(), true)).toBe("hidden");
   });
 });
 
@@ -81,6 +90,17 @@ describe("WorkbenchShellFrame", () => {
     render(placement("agent", null));
     expect(host.querySelector("#editor-content")).toBe(editorChild);
     expect(editor?.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("keeps the right panel track while an open panel shows no surface", () => {
+    render(emptyOpenPanelPlacement());
+    const frame = host.querySelector<HTMLElement>(".editor-workbench");
+
+    expect(frame?.style.getPropertyValue("--agent-right-panel-committed")).toBe(
+      `${DEFAULT_AGENT_RIGHT_PANEL_WIDTH}px`,
+    );
+    expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector(".workbench-frame")?.getAttribute("data-tree")).toBe("hidden");
   });
 
   it("publishes the committed panel sizes on the workbench the drag handles write to", () => {
@@ -134,6 +154,14 @@ function TreeReporter({ visible }: { readonly visible: boolean }) {
   return <div data-slot="agent">agent</div>;
 }
 
+function emptyOpenPanelPlacement(bottomPanelVisible = false): WorkbenchShellPlacement {
+  return workbenchShellPlacement({
+    bottomPanelVisible,
+    effectiveLayout: "agent",
+    layout: { ...initialAgentWorkbenchLayout, rightPanel: "open", rightSurface: null },
+  });
+}
+
 function placement(
   effectiveLayout: "agent" | "editor-expanded",
   rightSurface: "files" | "diff" | "terminal" | null,
@@ -142,6 +170,10 @@ function placement(
   return workbenchShellPlacement({
     bottomPanelVisible,
     effectiveLayout,
-    layout: { ...initialAgentWorkbenchLayout, rightSurface },
+    layout: {
+      ...initialAgentWorkbenchLayout,
+      rightPanel: rightSurface === null ? "closed" : "open",
+      rightSurface,
+    },
   });
 }

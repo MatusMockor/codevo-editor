@@ -24,6 +24,7 @@ export function useAgentViewCommands(
       searchThreads: () => ref.current.searchThreads(),
       findInThread: () => ref.current.findInThread(),
       threadSelected: () => ref.current.threadSelected(),
+      surfaceBlocked: (surface) => ref.current.surfaceBlocked(surface),
     });
   }, [bridge]);
 }
