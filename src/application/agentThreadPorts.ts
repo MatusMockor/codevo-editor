@@ -170,6 +170,7 @@ export interface AgentThreadsSurface {
   readonly dispatching: boolean;
   readonly agentCliConfigured: boolean;
   readonly agentCliKind: AgentCliKind;
+  readonly agentCliVersion: string | null;
   readonly liveTaskCount: number;
   readonly maxConcurrentAgentTasks: number;
   markThreadViewed(threadId: string): void;

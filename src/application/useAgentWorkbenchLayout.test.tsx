@@ -23,7 +23,9 @@ afterEach(() => {
 const diffLayout: AgentWorkbenchLayoutPersisted = {
   layout: "agent",
   rightPanel: "open",
-  rightSurface: "diff",
+  openSurfaces: ["diff"],
+  activeSurface: "diff",
+  rightPanelMaximized: false,
   bottomPanel: true,
   rightPanelWidth: 700,
   bottomPanelHeight: 320,
@@ -32,7 +34,9 @@ const diffLayout: AgentWorkbenchLayoutPersisted = {
 const terminalLayout: AgentWorkbenchLayoutPersisted = {
   layout: "agent",
   rightPanel: "open",
-  rightSurface: "terminal",
+  openSurfaces: ["terminal"],
+  activeSurface: "terminal",
+  rightPanelMaximized: false,
   bottomPanel: false,
   rightPanelWidth: 420,
   bottomPanelHeight: 200,
@@ -82,7 +86,7 @@ describe("useAgentWorkbenchLayout", () => {
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));
 
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBe("diff");
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("diff");
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "expandEditor" }));
 
@@ -117,10 +121,7 @@ describe("useAgentWorkbenchLayout", () => {
 
     await harness.settle();
 
-    expect(harness.result().agentWorkbench.layout).toEqual({
-      ...diffLayout,
-      lastSurface: "diff",
-    });
+    expect(harness.result().agentWorkbench.layout).toEqual(diffLayout);
     harness.unmount();
   });
 
@@ -130,7 +131,7 @@ describe("useAgentWorkbenchLayout", () => {
       hasWorkspace: true,
       hydration: {
         ownerKey: "workspace-a",
-        layout: { ...diffLayout, rightSurface: null },
+        layout: { ...diffLayout, openSurfaces: [], activeSurface: null },
       },
     });
 
@@ -138,8 +139,53 @@ describe("useAgentWorkbenchLayout", () => {
 
     expect(harness.result().agentWorkbench.layout).toMatchObject({
       rightPanel: "open",
-      rightSurface: null,
-      lastSurface: null,
+      openSurfaces: [],
+      activeSurface: null,
+    });
+    harness.unmount();
+  });
+
+  it("migrates the previous single-surface persisted shape into one tab", async () => {
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      hydration: {
+        ownerKey: "workspace-a",
+        layout: { layout: "agent", rightPanel: "open", rightSurface: "diff", bottomPanel: true },
+      },
+    });
+
+    await harness.settle();
+
+    expect(harness.result().agentWorkbench.layout).toMatchObject({
+      rightPanel: "open",
+      openSurfaces: ["diff"],
+      activeSurface: "diff",
+      rightPanelMaximized: false,
+      bottomPanel: true,
+    });
+    harness.unmount();
+  });
+
+  it("persists the maximized flag and the tab order after dispatches", async () => {
+    const persistence = recordingPersistence();
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      persistence,
+    });
+
+    act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));
+    act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "files" }));
+    act(() => harness.result().agentWorkbench.dispatch({ kind: "toggleMaximized" }));
+    await harness.settle();
+
+    const last = persistence.writes[persistence.writes.length - 1];
+    expect(last.layout).toMatchObject({
+      rightPanel: "open",
+      openSurfaces: ["diff", "files"],
+      activeSurface: "files",
+      rightPanelMaximized: true,
     });
     harness.unmount();
   });
@@ -179,7 +225,7 @@ describe("useAgentWorkbenchLayout", () => {
     harness.rerender({ hydration: { ownerKey: "workspace-a", layout: diffLayout } });
     await harness.settle();
 
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBe("terminal");
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("terminal");
     harness.unmount();
   });
 
@@ -192,14 +238,14 @@ describe("useAgentWorkbenchLayout", () => {
       persistence,
     });
     await harness.settle();
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBe("diff");
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("diff");
 
     harness.rerender({
       workspaceOwnerKey: "workspace-b",
       hydration: { ownerKey: "workspace-b", layout: terminalLayout },
     });
     await harness.settle();
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBe("terminal");
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("terminal");
     expect(harness.result().agentWorkbench.layout.rightPanelWidth).toBe(420);
 
     harness.rerender({
@@ -208,7 +254,7 @@ describe("useAgentWorkbenchLayout", () => {
     });
     await harness.settle();
 
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBe("diff");
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("diff");
     expect(harness.result().agentWorkbench.layout.rightPanelWidth).toBe(700);
     expect(persistence.writes).toEqual([]);
     harness.unmount();
@@ -246,7 +292,9 @@ describe("useAgentWorkbenchLayout", () => {
         layout: {
           layout: "agent",
           rightPanel: "open",
-          rightSurface: "diff",
+          openSurfaces: ["diff"],
+          activeSurface: "diff",
+          rightPanelMaximized: false,
           bottomPanel: false,
           rightPanelWidth: initialAgentWorkbenchLayout.rightPanelWidth,
           bottomPanelHeight: initialAgentWorkbenchLayout.bottomPanelHeight,
@@ -273,7 +321,7 @@ describe("useAgentWorkbenchLayout", () => {
     harness.unmount();
   });
 
-  it("does not persist the remembered surface", async () => {
+  it("persists the closed panel with its tabs so they come back", async () => {
     const persistence = recordingPersistence();
     const harness = renderLayout({
       workspaceOwnerKey: "workspace-a",
@@ -286,8 +334,18 @@ describe("useAgentWorkbenchLayout", () => {
     await harness.settle();
 
     const last = persistence.writes[persistence.writes.length - 1];
-    expect(last.layout.rightSurface).toBeNull();
-    expect("lastSurface" in last.layout).toBe(false);
+    expect(last.layout.activeSurface).toBe("diff");
+    expect(last.layout.openSurfaces).toEqual(["diff"]);
+    expect(last.layout.rightPanel).toBe("closed");
+    expect(last.layout.rightPanelMaximized).toBe(false);
+
+    act(() => harness.result().agentWorkbench.dispatch({ kind: "toggleRightPanel" }));
+    await harness.settle();
+    expect(harness.result().agentWorkbench.layout).toMatchObject({
+      rightPanel: "open",
+      openSurfaces: ["diff"],
+      activeSurface: "diff",
+    });
     harness.unmount();
   });
 
@@ -325,7 +383,7 @@ describe("useAgentWorkbenchLayout", () => {
     await harness.settle();
 
     expect(reportError).toHaveBeenCalledWith("Agent Layout", expect.any(Error));
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBe("diff");
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("diff");
     harness.unmount();
   });
 

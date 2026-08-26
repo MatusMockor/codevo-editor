@@ -22,6 +22,7 @@ function turn(turnId: string, prompt: string, assistant: string): AgentTurn {
     lastStatusSequence: 1,
     lastOutputSequence: 1,
     launch: null,
+    cliVersion: null,
   };
 }
 

@@ -59,6 +59,9 @@ interface Environment {
   worktreeMissing: boolean;
   leaseToken: number | null;
   preflight: InPlacePreflight;
+  currentCliVersion: string | null;
+  probeCliVersion:
+    ((agentCliPath: string, agentCliKind: AgentCliKind) => Promise<string | null>) | null;
 }
 
 function createDeferred<T>() {
@@ -96,6 +99,63 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(thread.provider).toEqual({ kind: "claudeCode", sessionId: null });
     expect(thread.title).toBe("Fix the failing test");
     expect(harness.notice()).toBeNull();
+    harness.unmount();
+  });
+
+  it("stamps the cached CLI version on the started turn and refreshes it in the background", async () => {
+    const probeCliVersion = vi.fn(async () => "1.5.0");
+    const harness = renderDispatch({ currentCliVersion: "1.4.2", probeCliVersion });
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+
+    expect(result).not.toBeNull();
+    expect(probeCliVersion).toHaveBeenCalledWith(CLI_PATH, "claudeCode");
+    expect(harness.turn(result?.threadId ?? "", 0).cliVersion).toBe("1.4.2");
+    harness.unmount();
+  });
+
+  it("starts the turn with an unknown CLI version when no version is cached and the probe fails", async () => {
+    const probeCliVersion = vi.fn(async () => {
+      throw new Error("probe failed");
+    });
+    const harness = renderDispatch({ probeCliVersion });
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+
+    expect(result).not.toBeNull();
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.turn(result?.threadId ?? "", 0).cliVersion).toBeNull();
+    harness.unmount();
+  });
+
+  it("registers the turn without waiting for a CLI version probe that never settles", async () => {
+    const probeCliVersion = vi.fn(() => new Promise<string | null>(() => undefined));
+    const harness = renderDispatch({ probeCliVersion });
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+
+    expect(result).not.toBeNull();
+    expect(probeCliVersion).toHaveBeenCalledTimes(1);
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.turn(result?.threadId ?? "", 0).cliVersion).toBeNull();
+    harness.unmount();
+  });
+
+  it("keeps a late probe result from touching a turn owned by another project", async () => {
+    const probe = createDeferred<string | null>();
+    const harness = renderDispatch({ probeCliVersion: () => probe.promise });
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+    const threadId = result?.threadId ?? "";
+    harness.switchToProject(ROOT_B, OWNER_B);
+    probe.resolve("9.9.9");
+    await act(async () => {
+      await probe.promise;
+    });
+
+    expect(harness.turn(threadId, 0).cliVersion).toBeNull();
+    expect(harness.thread(threadId).owner.ownerId).toBe(OWNER_A);
+    expect(harness.actionsOf("threadCreated")).toHaveLength(1);
     harness.unmount();
   });
 
@@ -863,6 +923,8 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     worktreeMissing: false,
     leaseToken: 1,
     preflight: { kind: "ok" },
+    currentCliVersion: null,
+    probeCliVersion: null,
     ...overrides,
   };
   const startedRequests: StartAgentTaskRequest[] = [];
@@ -962,6 +1024,8 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       preflightInPlace,
       isWorktreeMissing: () => environment.worktreeMissing,
       retainUncertainWorktree,
+      currentCliVersion: () => environment.currentCliVersion,
+      probeCliVersion: environment.probeCliVersion ?? undefined,
       onTurnTerminal,
       reportError,
       setNotice: (notice) => notices.push(notice),

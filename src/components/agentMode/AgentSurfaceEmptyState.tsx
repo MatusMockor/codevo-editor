@@ -1,4 +1,5 @@
 import { FolderTree, GitCompare, SquareTerminal } from "lucide-react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { AGENT_SURFACE_KINDS, type AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import {
@@ -7,11 +8,13 @@ import {
   agentSurfaceBlockedReason,
   agentSurfaceFilesDescription,
 } from "./agentSurfacePolicy";
+import { AGENT_SURFACE_HOTKEYS, agentSurfaceForHotkey } from "./agentSurfaceHotkeys";
 
 export interface AgentSurfaceEmptyStateProps {
   readonly thread: AgentThreadView | null;
   readonly workspaceRoot: string | null;
   readonly workspaceTrusted: boolean;
+  readonly autoFocus?: boolean;
   onChooseSurface(surface: AgentSurfaceKind): void;
   onTrustWorkspace?(): void;
 }
@@ -40,14 +43,41 @@ const CARDS: ReadonlyArray<SurfaceCard> = [
 ];
 
 export function AgentSurfaceEmptyState({
+  autoFocus = false,
   onChooseSurface,
   onTrustWorkspace,
   thread,
   workspaceRoot,
   workspaceTrusted,
 }: AgentSurfaceEmptyStateProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const blockedReason = (kind: AgentSurfaceKind): string | null =>
+    agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot);
+
+  useEffect(() => {
+    if (!autoFocus) return;
+    const container = containerRef.current;
+    if (container === null || container.contains(document.activeElement)) return;
+    container.focus({ preventScroll: true });
+  }, [autoFocus]);
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const surface = agentSurfaceForHotkey(event.key);
+    if (surface === null || blockedReason(surface) !== null) return;
+    event.preventDefault();
+    onChooseSurface(surface);
+  };
+
   return (
-    <div className="agent-surface-empty">
+    <div
+      aria-label="Open a surface"
+      className="agent-surface-empty"
+      onKeyDown={onKeyDown}
+      ref={containerRef}
+      role="group"
+      tabIndex={-1}
+    >
       <div className="agent-surface-empty__inner">
         <header className="agent-surface-empty__head">
           <h3 className="agent-surface-empty__title">Open a surface</h3>
@@ -56,7 +86,7 @@ export function AgentSurfaceEmptyState({
         <div className="agent-surface-empty__cards">
           {AGENT_SURFACE_KINDS.map((kind) => {
             const card = CARDS.find((candidate) => candidate.kind === kind) ?? CARDS[0];
-            const reason = agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot);
+            const reason = blockedReason(kind);
             const Icon = card.icon;
             const description =
               kind === "files" ? agentSurfaceFilesDescription(thread) : card.description;
@@ -66,14 +96,20 @@ export function AgentSurfaceEmptyState({
               <div className="agent-surface-card__slot" key={kind}>
                 <button
                   aria-describedby={reason === null ? undefined : `agent-surface-card-${kind}`}
+                  aria-keyshortcuts={AGENT_SURFACE_HOTKEYS[kind]}
                   aria-label={`Open ${card.label} surface`}
                   className="agent-surface-card"
                   disabled={reason !== null}
                   onClick={() => onChooseSurface(kind)}
                   type="button"
                 >
-                  <span className="agent-surface-card__icon">
-                    <Icon aria-hidden="true" size={18} />
+                  <span className="agent-surface-card__top">
+                    <span className="agent-surface-card__icon">
+                      <Icon aria-hidden="true" size={18} />
+                    </span>
+                    <kbd aria-hidden="true" className="agent-surface-card__key">
+                      {AGENT_SURFACE_HOTKEYS[kind]}
+                    </kbd>
                   </span>
                   <span className="agent-surface-card__label">{card.label}</span>
                   <span className="agent-surface-card__description">{description}</span>

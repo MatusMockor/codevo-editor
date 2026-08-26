@@ -47,7 +47,7 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     const harness = renderAgents();
 
     expect(harness.result().agentModeActive).toBe(true);
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBeNull();
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBeNull();
     harness.unmount();
   });
 
@@ -55,7 +55,7 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     const harness = renderAgents();
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBe("diff");
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("diff");
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "toggleEditorExpanded" }));
     expect(harness.result().agentModeActive).toBe(false);
@@ -76,7 +76,9 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     expect(saved[0]?.settings.session.agentWorkbench).toEqual({
       layout: "agent",
       rightPanel: "open",
-      rightSurface: "terminal",
+      openSurfaces: ["terminal"],
+      activeSurface: "terminal",
+      rightPanelMaximized: false,
       bottomPanel: false,
       rightPanelWidth: 540,
       bottomPanelHeight: 280,
@@ -98,7 +100,7 @@ describe("useWorkbenchControllerAgents layout surface", () => {
       },
     });
     await harness.settle();
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBe("diff");
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("diff");
 
     harness.rerender({
       workspaceRoot: ROOT_B,
@@ -106,7 +108,7 @@ describe("useWorkbenchControllerAgents layout surface", () => {
       persistedAgentWorkbenchLayout: null,
     });
     await harness.settle();
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBeNull();
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBeNull();
     expect(harness.result().agentWorkbench.layout.rightPanelWidth).toBe(540);
 
     harness.rerender({
@@ -125,7 +127,7 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     });
     await harness.settle();
 
-    expect(harness.result().agentWorkbench.layout.rightSurface).toBe("diff");
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("diff");
     expect(harness.result().agentWorkbench.layout.rightPanelWidth).toBe(700);
     expect(harness.persisted()).toEqual([]);
     harness.unmount();

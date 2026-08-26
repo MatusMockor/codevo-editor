@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentCliKind, AgentTaskGateway, AgentTaskStatusEvent } from "../domain/agentTask";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
@@ -37,6 +38,7 @@ import type {
 import { projectByOwnerId } from "./agentProjectAuthority";
 import { countRunningTurns, countRunningTurnsInRepository } from "./agentTurnAdmission";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
+import { useAgentCliVersion } from "./useAgentCliVersion";
 import {
   useAgentEditorBridge,
   type AgentEditorBridgePort,
@@ -56,6 +58,7 @@ export type AgentThreadsGitGateway = Pick<
 
 export interface AgentThreadsDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
+  readonly agentCliVersionGateway?: AgentCliVersionGateway;
   readonly agentThreadStoreGateway: AgentThreadStoreGateway;
   readonly gitWorktreeGateway: GitWorktreeGateway;
   readonly gitGateway: AgentThreadsGitGateway;
@@ -187,6 +190,35 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     void refreshOrphanedWorktrees();
   }, [refreshOrphanedWorktrees]);
 
+  const agentCliKind = normalizeAgentCliKind(dependencies.getAgentCliKind());
+  const agentCliPath = normalizeAgentCliPath(dependencies.getAgentCliPath());
+  const agentCliVersionGateway = dependencies.agentCliVersionGateway;
+
+  const cliVersionNoticeRef = useRef<AgentTasksNotice | null>(null);
+  const setCliVersionNotice = useCallback((next: AgentTasksNotice | null): void => {
+    cliVersionNoticeRef.current = next;
+    setNotice(next);
+  }, []);
+  const setDispatchNotice = useCallback((next: AgentTasksNotice | null): void => {
+    if (next !== null) {
+      setNotice(next);
+      return;
+    }
+    setNotice((current) =>
+      current !== null && current === cliVersionNoticeRef.current ? current : null,
+    );
+  }, []);
+
+  const cliVersion = useAgentCliVersion({
+    gateway: agentCliVersionGateway ?? null,
+    agentCliPath,
+    agentCliKind,
+    enabled: dependencies.agentModeActive,
+    setNotice: setCliVersionNotice,
+    reportError,
+    now: dependencies.now,
+  });
+
   const dispatch = useAgentTurnDispatch({
     agentTaskGateway: dependencies.agentTaskGateway,
     gitWorktreeGateway: dependencies.gitWorktreeGateway,
@@ -198,12 +230,14 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     preflightInPlace: isolation.preflightInPlace,
     isWorktreeMissing,
     retainUncertainWorktree: worktrees.retainUncertainWorktree,
+    currentCliVersion: () => cliVersion.current,
+    probeCliVersion: agentCliVersionGateway === undefined ? undefined : cliVersion.probe,
     onWorktreeDispatchFailed,
     onTurnTerminal,
     onProjectDispatchTrustRejected: dependencies.onProjectDispatchTrustRejected,
     ensureProjectLease: dependencies.ensureProjectLease,
     reportError,
-    setNotice,
+    setNotice: setDispatchNotice,
     now: dependencies.now,
     createEntropyHex4: dependencies.createEntropyHex4,
   });
@@ -237,8 +271,6 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     },
     [dispatchAction, refreshOrphanedWorktrees],
   );
-
-  const agentCliKind = normalizeAgentCliKind(dependencies.getAgentCliKind());
 
   const now = dependencies.now ?? Date.now;
   const { currentState } = store;
@@ -322,7 +354,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const maxConcurrentAgentTasks = normalizeMaxConcurrentAgentTasks(
     dependencies.getMaxConcurrentAgentTasks(),
   );
-  const agentCliConfigured = normalizeAgentCliPath(dependencies.getAgentCliPath()) !== null;
+  const agentCliConfigured = agentCliPath !== null;
 
   return {
     threads: threadViews,
@@ -332,6 +364,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     dispatching: dispatch.dispatching,
     agentCliConfigured,
     agentCliKind,
+    agentCliVersion: cliVersion.current,
     liveTaskCount: countRunningTurns(store.state),
     maxConcurrentAgentTasks,
     markThreadViewed,

@@ -61,6 +61,7 @@ fn settled_turn(turn_id: &str) -> AgentTurn {
         last_status_sequence: 1,
         last_output_sequence: 1,
         launch: None,
+        cli_version: None,
     }
 }
 
@@ -598,7 +599,8 @@ fn document_json() -> Value {
                     "eventsTruncated": true,
                     "lastStatusSequence": 3,
                     "lastOutputSequence": 7,
-                    "launch": null
+                    "launch": null,
+                    "cliVersion": null
                 },
                 {
                     "turnId": "agt-2-0a1b",
@@ -610,7 +612,8 @@ fn document_json() -> Value {
                     "eventsTruncated": false,
                     "lastStatusSequence": 0,
                     "lastOutputSequence": 0,
-                    "launch": null
+                    "launch": null,
+                    "cliVersion": null
                 },
                 {
                     "turnId": "agt-3-0a1b",
@@ -622,7 +625,8 @@ fn document_json() -> Value {
                     "eventsTruncated": false,
                     "lastStatusSequence": 0,
                     "lastOutputSequence": 0,
-                    "launch": null
+                    "launch": null,
+                    "cliVersion": null
                 }
             ],
             "turnsTruncated": false,
@@ -657,6 +661,66 @@ fn a_pre_launch_document_loads_with_absent_launch_and_viewed_at() {
         .turns
         .iter()
         .all(|turn| turn.launch.is_none()));
+}
+
+#[test]
+fn a_pre_cli_version_document_loads_with_an_absent_cli_version() {
+    let mut source = document_json();
+    for turn in source
+        .pointer_mut("/thread/turns")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("turns array")
+    {
+        turn.as_object_mut()
+            .expect("turn object")
+            .remove("cliVersion");
+    }
+
+    let document: AgentThreadDocument =
+        serde_json::from_value(source).expect("pre-cli-version document still loads");
+
+    assert!(document
+        .thread
+        .turns
+        .iter()
+        .all(|turn| turn.cli_version.is_none()));
+}
+
+#[test]
+fn a_cli_version_stamped_document_round_trips_and_is_bounds_checked() {
+    let mut source = document_json();
+    source["thread"]["owner"]["ownerId"] = json!(agent_root_owner_id("/workspace"));
+    source["thread"]["turns"][0]["cliVersion"] = json!("2.1.245");
+
+    let document: AgentThreadDocument =
+        serde_json::from_value(source.clone()).expect("stamped document loads");
+
+    assert_eq!(
+        document.thread.turns[0].cli_version.as_deref(),
+        Some("2.1.245")
+    );
+    assert_eq!(
+        serde_json::to_value(&document).expect("serialize document"),
+        source
+    );
+    validate_agent_thread_document("/workspace", &document)
+        .expect("a bounded cli version is accepted");
+
+    for rejected in [
+        String::new(),
+        "garbage".to_string(),
+        "2.1.245 (Claude Code)".to_string(),
+        "v2.1.245".to_string(),
+        "9".repeat(65),
+    ] {
+        let mut invalid = document.clone();
+        invalid.thread.turns[0].cli_version = Some(rejected.clone());
+
+        assert!(
+            validate_agent_thread_document("/workspace", &invalid).is_err(),
+            "cli version {rejected:?} must be refused"
+        );
+    }
 }
 
 #[test]

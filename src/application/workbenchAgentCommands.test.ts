@@ -197,47 +197,39 @@ describe("workbenchAgentCommands", () => {
     }
 
     expect(agentLayout.actions).toEqual([
-      { kind: "showRightPanel" },
+      { kind: "toggleRightPanel" },
       { kind: "openSurface", surface: "files" },
       { kind: "openSurface", surface: "diff" },
       { kind: "openSurface", surface: "terminal" },
-      { kind: "expandEditor" },
+      { kind: "toggleEditorExpanded" },
     ]);
   });
 
-  it("restores the remembered surface only when it is not blocked", async () => {
-    const closedWithDiff: AgentWorkbenchLayout = {
+  it("dispatches the plain layout actions whatever the surface policy says", async () => {
+    const openDiff: AgentWorkbenchLayout = {
       ...initialAgentWorkbenchLayout,
-      lastSurface: "diff",
+      rightPanel: "open",
+      openSurfaces: ["diff"],
+      activeSurface: "diff",
     };
-
-    expect(await toggleRightPanel(initialAgentWorkbenchLayout, [])).toEqual([
-      { kind: "showRightPanel" },
-    ]);
-    expect(await toggleRightPanel(closedWithDiff, [])).toEqual([{ kind: "toggleRightPanel" }]);
-    expect(await toggleRightPanel(closedWithDiff, ["diff"])).toEqual([{ kind: "showRightPanel" }]);
-    expect(
-      await toggleRightPanel({ ...closedWithDiff, rightPanel: "open", rightSurface: "diff" }, []),
-    ).toEqual([{ kind: "toggleRightPanel" }]);
-  });
-
-  it("collapses the expanded editor onto an empty panel when the remembered surface is blocked", async () => {
     const expanded: AgentWorkbenchLayout = {
       ...initialAgentWorkbenchLayout,
       layout: "editor-expanded",
-      lastSurface: "terminal",
     };
 
-    expect(await toggleRightPanel(expanded, ["terminal"])).toEqual([{ kind: "showRightPanel" }]);
-    expect(await toggleRightPanel(expanded, [])).toEqual([{ kind: "collapseEditor" }]);
-    expect(await toggleEditorExpanded(expanded, ["terminal"])).toEqual([
-      { kind: "showRightPanel" },
+    expect(await toggleRightPanel(initialAgentWorkbenchLayout, [])).toEqual([
+      { kind: "toggleRightPanel" },
     ]);
-    expect(await toggleEditorExpanded(expanded, [])).toEqual([{ kind: "collapseEditor" }]);
+    expect(await toggleRightPanel(openDiff, ["diff"])).toEqual([{ kind: "toggleRightPanel" }]);
+    expect(await toggleRightPanel(expanded, ["terminal"])).toEqual([{ kind: "toggleRightPanel" }]);
+    expect(await toggleEditorExpanded(openDiff, ["diff"])).toEqual([
+      { kind: "toggleEditorExpanded" },
+    ]);
+    expect(await toggleEditorExpanded(expanded, [])).toEqual([{ kind: "toggleEditorExpanded" }]);
   });
 
-  it("keeps the panel empty while no agent view answers for the surfaces", async () => {
-    const agentLayout = recordingLayout({ ...initialAgentWorkbenchLayout, lastSurface: "diff" });
+  it("toggles the panel while no agent view answers for the surfaces", async () => {
+    const agentLayout = recordingLayout(initialAgentWorkbenchLayout);
     const registry = new CommandRegistry();
     for (const command of workbenchAgentCommands({ agentLayout })) {
       registry.register(command);
@@ -245,7 +237,7 @@ describe("workbenchAgentCommands", () => {
 
     await registry.get("agent.toggleRightPanel")?.run();
 
-    expect(agentLayout.actions).toEqual([{ kind: "showRightPanel" }]);
+    expect(agentLayout.actions).toEqual([{ kind: "toggleRightPanel" }]);
   });
 
   async function toggleRightPanel(

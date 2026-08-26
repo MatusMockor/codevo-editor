@@ -340,6 +340,7 @@ function view({
         lastStatusSequence: 0,
         lastOutputSequence: 0,
         launch: null,
+        cliVersion: null,
       },
     ],
     turnsTruncated: false,

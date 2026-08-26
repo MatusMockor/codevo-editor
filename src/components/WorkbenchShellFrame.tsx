@@ -34,6 +34,7 @@ export function WorkbenchShellFrame({
       <div
         className="workbench-frame"
         data-layout={placement.layout}
+        data-right-panel={placement.rightPanelMaximized ? "maximized" : "docked"}
         data-tree={workbenchFrameTreeState(placement, treeReportedVisible)}
       >
         <WorkbenchFrameTreeContext.Provider value={setTreeReportedVisible}>

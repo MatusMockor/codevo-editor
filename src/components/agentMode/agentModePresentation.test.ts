@@ -663,6 +663,7 @@ function thread({
         lastStatusSequence: 0,
         lastOutputSequence: 0,
         launch,
+        cliVersion: null,
       },
     ],
     turnsTruncated: false,

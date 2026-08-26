@@ -53,6 +53,7 @@ function runningTurnFixture(): AgentTurn {
     lastStatusSequence: 1,
     lastOutputSequence: 0,
     launch: null,
+    cliVersion: null,
   };
 }
 

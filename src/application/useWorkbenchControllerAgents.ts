@@ -83,7 +83,7 @@ export interface WorkbenchControllerAgentsOptions {
   readonly editorSessionOwnerKey: string | null;
   readonly options: Pick<
     WorkbenchControllerOptions,
-    "agentRootLeaseGateway" | "agentTaskGateway" | "gitWorktreeGateway"
+    "agentCliVersionGateway" | "agentRootLeaseGateway" | "agentTaskGateway" | "gitWorktreeGateway"
   >;
   readonly openFileRef: WorkbenchControllerOpenFileRef;
   readonly openGitChange: WorkbenchControllerOpenGitChange;
@@ -150,6 +150,7 @@ export function useWorkbenchControllerAgents(
   );
 
   const agents = useWorkbenchAgents({
+    agentCliVersionGateway: options.options.agentCliVersionGateway,
     agentTaskGateway: options.options.agentTaskGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway,
     gitWorktreeGateway: options.options.gitWorktreeGateway,

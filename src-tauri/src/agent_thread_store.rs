@@ -1,3 +1,4 @@
+use super::super::agent_cli_version_commands::agent_cli_version::parse_agent_cli_version;
 use crate::agent_task_spawner::agent_launch::AgentLaunchOptions;
 use crate::agent_task_spawner::{
     validate_resume_session_id, AgentCliInvocation, MAX_AGENT_PROMPT_BYTES,
@@ -131,6 +132,8 @@ pub struct AgentTurn {
     pub last_output_sequence: u64,
     #[serde(default)]
     pub launch: Option<AgentLaunchOptions>,
+    #[serde(default)]
+    pub cli_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -498,6 +501,17 @@ fn validate_agent_turn(turn: &AgentTurn) -> Result<(), String> {
     }
     for event in &turn.events {
         validate_agent_turn_event(event)?;
+    }
+    validate_agent_turn_cli_version(turn.cli_version.as_deref())?;
+    Ok(())
+}
+
+fn validate_agent_turn_cli_version(cli_version: Option<&str>) -> Result<(), String> {
+    let Some(cli_version) = cli_version else {
+        return Ok(());
+    };
+    if parse_agent_cli_version(cli_version).as_deref() != Some(cli_version) {
+        return Err("Agent turn CLI version is not a supported version string.".to_string());
     }
     Ok(())
 }

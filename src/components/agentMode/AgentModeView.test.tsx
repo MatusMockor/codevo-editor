@@ -542,8 +542,8 @@ describe("AgentModeView", () => {
     expect(removeWorktree).toHaveBeenCalledWith("agt-1");
   });
 
-  it("opens an empty right panel from the header toggle when the remembered surface is blocked", () => {
-    const layout = recordedLayoutState({ lastSurface: "diff" });
+  it("toggles the right panel from the header with and without a thread", () => {
+    const layout = recordedLayoutState();
     render({
       chrome: chromeFixture({ layout }),
       agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
@@ -555,33 +555,18 @@ describe("AgentModeView", () => {
     expect(toggle).not.toBeNull();
     expect(toggle?.disabled).toBe(false);
     act(() => toggle?.click());
-    expect(layout.actions).toEqual([{ kind: "showRightPanel" }]);
-
-    clickText("Refactor the parser");
-    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
-    expect(layout.actions).toEqual([{ kind: "showRightPanel" }, { kind: "toggleRightPanel" }]);
-  });
-
-  it("opens the chooser on the first header toggle with and without a thread", () => {
-    const layout = recordedLayoutState();
-    render({
-      chrome: chromeFixture({ layout }),
-      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
-    });
-
-    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
     clickText("Refactor the parser");
     click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
 
-    expect(layout.actions).toEqual([{ kind: "showRightPanel" }, { kind: "showRightPanel" }]);
+    expect(layout.actions).toEqual([{ kind: "toggleRightPanel" }, { kind: "toggleRightPanel" }]);
     expect(reduceRecordedLayout(layout)).toMatchObject({
-      rightPanel: "open",
-      rightSurface: null,
-      lastSurface: null,
+      rightPanel: "closed",
+      openSurfaces: [],
+      activeSurface: null,
     });
   });
 
-  it("remembers the surface picked in the chooser when the panel is closed and reopened", async () => {
+  it("drives the surface tabs: open, add, switch, close, maximize and close the panel", async () => {
     const threads = [threadView({ threadId: "agt-1" })];
     let layout = recordedLayoutState();
     const rerender = (): void => {
@@ -593,95 +578,132 @@ describe("AgentModeView", () => {
     clickText("Refactor the parser");
     click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
     rerender();
-
     expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
     expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(3);
     expect(host.querySelector('[aria-label^="Expand to editor"]')).toBeNull();
 
+    click('[aria-label="Open Files surface"]');
+    rerender();
+    expect(surfaceTabs()).toEqual(["Files"]);
+    expect(activeSurfaceTab()).toBe("Files");
+
+    click('.agent-surface [aria-label="Add surface"]');
+    rerender();
+    expect(surfaceTabs()).toEqual(["Files"]);
+    expect(activeSurfaceTab()).toBe("");
+    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
+
     click('[aria-label="Open Diff surface"]');
     rerender();
     await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).not.toBeNull());
+    expect(surfaceTabs()).toEqual(["Files", "Diff"]);
     expect(activeSurfaceTab()).toBe("Diff");
-    expect(host.querySelector('[aria-label^="Expand to editor"]')).not.toBeNull();
 
-    click('.agent-surface [aria-label^="Toggle right panel"]');
-    rerender();
-    expect(host.querySelector(".agent-surface")).toBeNull();
-
-    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
-    rerender();
-    await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).not.toBeNull());
-    expect(activeSurfaceTab()).toBe("Diff");
-  });
-
-  it("returns an open surface to the chooser and only then closes the panel", async () => {
-    const threads = [threadView({ threadId: "agt-1" })];
-    let layout = recordedLayoutState();
-    const rerender = (): void => {
-      layout = recordedLayoutState(reduceRecordedLayout(layout));
-      render({ chrome: chromeFixture({ layout }), agents: surface({ threads }) });
-    };
-    render({ chrome: chromeFixture({ layout }), agents: surface({ threads }) });
-
-    clickText("Refactor the parser");
-    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
-    rerender();
-    click('[aria-label="Open Files surface"]');
+    click("#agent-surface-tab-files");
     rerender();
     expect(activeSurfaceTab()).toBe("Files");
+    expect(host.querySelector("[data-mock-diff]")).not.toBeNull();
+    expect(host.querySelector('[data-surface-panel="diff"]')?.hasAttribute("hidden")).toBe(true);
 
-    click('[aria-label="Back to surfaces"]');
+    click('[aria-label="Close Diff tab"]');
     rerender();
-    expect(host.querySelector(".agent-surface")).not.toBeNull();
+    expect(surfaceTabs()).toEqual(["Files"]);
+    expect(activeSurfaceTab()).toBe("Files");
+    expect(host.querySelector("[data-mock-diff]")).toBeNull();
+
+    click('.agent-surface [aria-label="Maximize panel"]');
+    rerender();
+    expect(agentModeSection()?.getAttribute("data-right-panel")).toBe("maximized");
+    expect(host.querySelector('.agent-surface [aria-label="Restore panel"]')).not.toBeNull();
+
+    click('.agent-surface [aria-label="Restore panel"]');
+    rerender();
+    expect(agentModeSection()?.getAttribute("data-right-panel")).toBe("docked");
+
+    click('[aria-label="Close Files tab"]');
+    rerender();
+    expect(surfaceTabs()).toEqual([]);
     expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
 
     click('[aria-label="Close panel"]');
     rerender();
     expect(host.querySelector(".agent-surface")).toBeNull();
+    expect(reduceRecordedLayout(layout)).toMatchObject({ rightPanel: "closed", openSurfaces: [] });
+  });
+
+  it("keeps the tabs and the surfaces mounted while the panel is closed", async () => {
+    const threads = [threadView({ threadId: "agt-1" })];
+    let layout = recordedLayoutState({
+      rightPanel: "open",
+      openSurfaces: ["files", "diff"],
+      activeSurface: "diff",
+    });
+    const rerender = (): void => {
+      layout = recordedLayoutState(reduceRecordedLayout(layout));
+      render({ chrome: chromeFixture({ layout }), agents: surface({ threads }) });
+    };
+    render({ chrome: chromeFixture({ layout }), agents: surface({ threads }) });
+    clickText("Refactor the parser");
+    await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).not.toBeNull());
+
+    click('.agent-surface [aria-label="Close panel"]');
+    rerender();
+
+    expect(reduceRecordedLayout(layout)).toMatchObject({
+      rightPanel: "closed",
+      openSurfaces: ["files", "diff"],
+      activeSurface: "diff",
+      rightPanelMaximized: false,
+    });
+    expect(host.querySelector('[data-slot="surface"]')?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector("[data-mock-diff]")).not.toBeNull();
 
     click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
     rerender();
-    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
-    await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).toBeNull());
+
+    expect(host.querySelector('[data-slot="surface"]')?.hasAttribute("hidden")).toBe(false);
+    expect(surfaceTabs()).toEqual(["Files", "Diff"]);
+    expect(activeSurfaceTab()).toBe("Diff");
   });
 
-  it("applies the same right panel policy to the ⌥⌘R command", async () => {
+  it("marks the rail state on the agent section so the maximized grid composes", () => {
+    render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
+
+    expect(agentModeSection()?.getAttribute("data-rail")).toBe("expanded");
+    expect(
+      agentModeSection()?.querySelector(".agent-mode__grid")?.getAttribute("style"),
+    ).toBeNull();
+
+    click('[aria-label="Collapse sidebar"]');
+
+    expect(agentModeSection()?.getAttribute("data-rail")).toBe("collapsed");
+    expect(
+      agentModeSection()?.querySelector(".agent-mode__grid")?.getAttribute("style"),
+    ).toBeNull();
+  });
+
+  it("routes the ⌥⌘R and ⌥⌘E commands to the plain layout actions", async () => {
     const bridge = createAgentViewCommandBridge();
-    const layout = recordedLayoutState({ lastSurface: "diff" });
+    const layout = recordedLayoutState();
     render({
       chrome: chromeFixture({ layout }),
       agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
       viewCommands: bridge,
     });
-    const toggleCommand = workbenchAgentCommands({
-      agentLayout: layout,
-      viewCommands: bridge,
-    }).find((command) => command.id === "agent.toggleRightPanel");
+    const commands = workbenchAgentCommands({ agentLayout: layout, viewCommands: bridge });
+    const toggleCommand = commands.find((command) => command.id === "agent.toggleRightPanel");
+    const expandCommand = commands.find((command) => command.id === "agent.toggleEditorExpanded");
 
     await toggleCommand?.run();
-    expect(layout.actions).toEqual([{ kind: "showRightPanel" }]);
-
     clickText("Refactor the parser");
     await toggleCommand?.run();
-    expect(layout.actions).toEqual([{ kind: "showRightPanel" }, { kind: "toggleRightPanel" }]);
-  });
-
-  it("collapses the expanded editor onto an empty panel when the remembered surface is blocked", async () => {
-    const bridge = createAgentViewCommandBridge();
-    const layout = recordedLayoutState({ layout: "editor-expanded", lastSurface: "terminal" });
-    render({
-      chrome: chromeFixture({ layout }),
-      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
-      viewCommands: bridge,
-    });
-    const expandCommand = workbenchAgentCommands({
-      agentLayout: layout,
-      viewCommands: bridge,
-    }).find((command) => command.id === "agent.toggleEditorExpanded");
-
     await expandCommand?.run();
 
-    expect(layout.actions).toEqual([{ kind: "showRightPanel" }]);
+    expect(layout.actions).toEqual([
+      { kind: "toggleRightPanel" },
+      { kind: "toggleRightPanel" },
+      { kind: "toggleEditorExpanded" },
+    ]);
   });
 
   it("renders the empty surface panel with only Files enabled while no thread is selected", () => {
@@ -750,7 +772,11 @@ describe("AgentModeView", () => {
     const view = threadView({ threadId: "agt-1" });
     render({
       chrome: chromeFixture({
-        layout: recordedLayoutState({ rightPanel: "open", rightSurface: "diff" }),
+        layout: recordedLayoutState({
+          rightPanel: "open",
+          openSurfaces: ["diff"],
+          activeSurface: "diff",
+        }),
       }),
       agents: surface({
         openChangedFile,
@@ -1715,6 +1741,16 @@ describe("AgentModeView", () => {
     act(() => root.render(<AgentModeView {...defaultProps()} {...overrides} />));
   }
 
+  function surfaceTabs(): string[] {
+    return Array.from(host.querySelectorAll('.agent-surface__tabs [role="tab"]')).map(
+      (tab) => tab.textContent ?? "",
+    );
+  }
+
+  function agentModeSection(): HTMLElement | null {
+    return host.querySelector('section[aria-label="Agent mode"]');
+  }
+
   function activeSurfaceTab(): string {
     return (
       host.querySelector('.agent-surface__tabs [role="tab"][aria-selected="true"]')?.textContent ??
@@ -2054,6 +2090,7 @@ function surface(overrides: Partial<AgentThreadsSurface>): AgentThreadsSurface {
     dispatching: false,
     agentCliConfigured: true,
     agentCliKind: "claudeCode",
+    agentCliVersion: null,
     liveTaskCount: 0,
     maxConcurrentAgentTasks: 4,
     isolationPreview: (repositoryRoot: string) => ({
@@ -2205,5 +2242,6 @@ function turn(threadId: string, prompt: string, status: AgentTurnStatus): AgentT
     lastStatusSequence: 0,
     lastOutputSequence: 0,
     launch: null,
+    cliVersion: null,
   };
 }

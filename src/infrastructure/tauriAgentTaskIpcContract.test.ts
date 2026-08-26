@@ -1,5 +1,6 @@
 import { CLAUDE_EFFORT_CHOICES, defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import { describe, expect, it, vi } from "vitest";
+import { agentCliBinaryUnavailableMessage } from "../domain/agentCliVersion";
 import {
   AgentTaskStartRejectedError,
   isDefiniteAgentTaskStartRejection,
@@ -183,6 +184,35 @@ describe("invokeStartAgentTaskIpc", () => {
     );
     expect(DEFINITE_AGENT_TASK_START_REJECTIONS.has(AGENT_LAUNCH_PROVIDER_MISMATCH_REJECTION)).toBe(
       true,
+    );
+  });
+
+  it("classifies a missing or updating agent CLI binary as a definite rejection", async () => {
+    const messages: readonly string[] = [
+      "The Claude CLI binary is missing or not executable (it may be updating). Retry in a moment.",
+      "The Codex CLI binary is missing or not executable (it may be updating). Retry in a moment.",
+    ];
+
+    for (const message of messages) {
+      expect(DEFINITE_AGENT_TASK_START_REJECTIONS.has(message)).toBe(true);
+
+      const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue(new Error(message));
+      const rejection = await invokeStartAgentTaskIpc(invokeCommand, START_REQUEST).catch(
+        (error: unknown) => error,
+      );
+
+      expect(rejection).toBeInstanceOf(AgentTaskStartRejectedError);
+      expect(isDefiniteAgentTaskStartRejection(rejection)).toBe(true);
+      expect((rejection as Error).message).toBe(message);
+    }
+  });
+
+  it("keeps the domain-authored binary messages in sync with the rejection set", () => {
+    expect(agentCliBinaryUnavailableMessage("claudeCode")).toBe(
+      "The Claude CLI binary is missing or not executable (it may be updating). Retry in a moment.",
+    );
+    expect(agentCliBinaryUnavailableMessage("codex")).toBe(
+      "The Codex CLI binary is missing or not executable (it may be updating). Retry in a moment.",
     );
   });
 

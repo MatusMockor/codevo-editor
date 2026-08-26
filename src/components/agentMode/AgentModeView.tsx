@@ -4,11 +4,7 @@ import {
   useAgentThreadScripts,
   type AgentThreadScriptTarget,
 } from "../../application/useAgentThreadScripts";
-import {
-  editorExpandToggleAction,
-  rightPanelToggleAction,
-  type AgentSurfaceKind,
-} from "../../domain/agentWorkbenchLayout";
+import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { MAX_AGENT_TASK_PROMPT_BYTES, type AgentTaskIsolation } from "../../domain/agentTask";
 import type {
@@ -30,6 +26,7 @@ import {
 import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
 import type { AgentShipActions } from "./AgentShipPanel";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
+import { agentSurfaceHostPlacement } from "../workbenchShellPlacement";
 import { agentSurfaceBlockedReason } from "./agentSurfacePolicy";
 import { AgentAddProjectDialog } from "./AgentAddProjectDialog";
 import { AgentNoticeBar } from "./AgentNoticeBar";
@@ -96,7 +93,6 @@ export interface AgentModeViewProps {
 const DEFAULT_NOW_TICK_MS = 30_000;
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
 const EMPTY_IDS: ReadonlySet<string> = new Set();
-const COLLAPSED_RAIL_GRID: CSSProperties = { gridTemplateColumns: "auto minmax(0, 1fr)" };
 const FIND_BAR_ROWS: CSSProperties = { gridTemplateRows: "auto auto minmax(0, 1fr) auto" };
 const CLIPBOARD_UNAVAILABLE_NOTICE: AgentTasksNotice = {
   kind: "warning",
@@ -363,10 +359,32 @@ export function AgentModeView({
   const shipActions = useAgentShipActions(agents);
   const layout = agentWorkbenchLayoutProjection(chrome);
   const dispatchLayout = chrome.layout.dispatch;
+  const [chooserRequested, setChooserRequested] = useState(false);
   const openSurface = useCallback(
-    (surface: AgentSurfaceKind) => dispatchLayout({ kind: "openSurface", surface }),
+    (surface: AgentSurfaceKind) => {
+      setChooserRequested(false);
+      dispatchLayout({ kind: "openSurface", surface });
+    },
     [dispatchLayout],
   );
+  const activateSurface = useCallback(
+    (surface: AgentSurfaceKind) => {
+      setChooserRequested(false);
+      dispatchLayout({ kind: "activateSurface", surface });
+    },
+    [dispatchLayout],
+  );
+  const closeSurfaceTab = useCallback(
+    (surface: AgentSurfaceKind) => {
+      setChooserRequested(true);
+      dispatchLayout({ kind: "closeSurfaceTab", surface });
+    },
+    [dispatchLayout],
+  );
+  const showSurfaceChooser = useCallback(() => {
+    setChooserRequested(true);
+    dispatchLayout({ kind: "showSurfaceChooser" });
+  }, [dispatchLayout]);
   const workspaceTrusted = chrome.workspaceTrusted;
   const surfaceBlocked = useCallback(
     (surface: AgentSurfaceKind) =>
@@ -374,13 +392,13 @@ export function AgentModeView({
     [selectedThread, workspaceRoot, workspaceTrusted],
   );
   const expandEditor = useCallback(
-    () => dispatchLayout(editorExpandToggleAction(layout, surfaceBlocked)),
-    [dispatchLayout, layout, surfaceBlocked],
+    () => dispatchLayout({ kind: "toggleEditorExpanded" }),
+    [dispatchLayout],
   );
-  const toggleRightPanel = useCallback(
-    () => dispatchLayout(rightPanelToggleAction(layout, surfaceBlocked)),
-    [dispatchLayout, layout, surfaceBlocked],
-  );
+  const toggleRightPanel = useCallback(() => {
+    setChooserRequested(false);
+    dispatchLayout({ kind: "toggleRightPanel" });
+  }, [dispatchLayout]);
   const onShowTerminalPanel = chrome.onShowTerminalPanel;
   const scripts = useAgentThreadScripts({
     target: selectedThread === null ? null : scriptTarget(selectedThread),
@@ -553,10 +571,15 @@ export function AgentModeView({
 
   const findHitIndex = find.open && find.hitIndex >= 0 ? find.hitIndex : undefined;
   const headerProject = agentThreadHeaderProject(selectedThread, groups, projects, target);
+  const surfaceHost = agentSurfaceHostPlacement(layout);
   const layoutControls = (
     <AgentPanelLayoutControls
       bottomPanelOpen={layout.bottomPanel}
-      onExpandEditor={layout.rightSurface === null ? null : expandEditor}
+      maximize={{
+        maximized: layout.rightPanelMaximized,
+        onToggle: () => dispatchLayout({ kind: "toggleMaximized" }),
+      }}
+      onExpandEditor={null}
       onToggleBottomPanel={chrome.onToggleBottomPanel}
       onToggleRightPanel={toggleRightPanel}
       rightPanelOpen
@@ -566,7 +589,13 @@ export function AgentModeView({
 
   return (
     <>
-      <section aria-label="Agent mode" className="agent-mode" data-slot="agent">
+      <section
+        aria-label="Agent mode"
+        className="agent-mode"
+        data-rail={railCollapsed ? "collapsed" : "expanded"}
+        data-right-panel={layout.rightPanelMaximized ? "maximized" : "docked"}
+        data-slot="agent"
+      >
         {notice && (
           <AgentNoticeBar
             notice={notice}
@@ -575,7 +604,7 @@ export function AgentModeView({
           />
         )}
         <AgentClockProvider nowTickMs={nowTickMs}>
-          <div className="agent-mode__grid" style={railCollapsed ? COLLAPSED_RAIL_GRID : undefined}>
+          <div className="agent-mode__grid">
             {railCollapsed ? (
               <div className="agent-rail__chrome">
                 <button
@@ -717,14 +746,19 @@ export function AgentModeView({
           titles={paletteTitles}
         />
       </section>
-      {layout.layout === "agent" && layout.rightPanel === "open" && (
+      {surfaceHost.mounted && (
         <AgentSurfaceHost
           agents={agents}
+          chooserAutoFocus={chooserRequested}
           chrome={chrome}
+          hidden={surfaceHost.hidden}
           layout={layout}
           layoutControls={layoutControls}
-          onChooseSurface={openSurface}
-          onCloseSurface={() => dispatchLayout({ kind: "closeSurface" })}
+          onActivateSurface={activateSurface}
+          onClosePanel={toggleRightPanel}
+          onCloseSurfaceTab={closeSurfaceTab}
+          onOpenSurface={openSurface}
+          onShowSurfaceChooser={showSurfaceChooser}
           thread={selectedThread}
           workspaceRoot={workspaceRoot}
         />

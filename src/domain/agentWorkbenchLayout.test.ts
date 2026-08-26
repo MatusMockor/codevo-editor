@@ -1,18 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  AGENT_RIGHT_PANEL_STATES,
   AGENT_SURFACE_KINDS,
   DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
   DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
   MAX_AGENT_BOTTOM_PANEL_HEIGHT,
+  MAX_AGENT_OPEN_SURFACES,
   MAX_AGENT_RIGHT_PANEL_WIDTH,
   MIN_AGENT_BOTTOM_PANEL_HEIGHT,
   MIN_AGENT_RIGHT_PANEL_WIDTH,
   agentWorkbenchLayoutReducer,
+  agentWorkbenchLayoutSnapshotsEqual,
   agentWorkbenchLayoutsEqual,
-  collapseEditorAction,
-  editorExpandToggleAction,
-  rightPanelToggleAction,
   initialAgentWorkbenchLayout,
   parseAgentWorkbenchLayout,
   serializeAgentWorkbenchLayout,
@@ -22,12 +20,12 @@ import {
 } from "./agentWorkbenchLayout";
 
 const ACTIONS: ReadonlyArray<AgentWorkbenchLayoutAction> = [
-  { kind: "openSurface", surface: "files" },
-  { kind: "openSurface", surface: "diff" },
-  { kind: "openSurface", surface: "terminal" },
-  { kind: "closeSurface" },
-  { kind: "showRightPanel" },
+  ...AGENT_SURFACE_KINDS.map((surface) => ({ kind: "openSurface", surface }) as const),
+  ...AGENT_SURFACE_KINDS.map((surface) => ({ kind: "activateSurface", surface }) as const),
+  ...AGENT_SURFACE_KINDS.map((surface) => ({ kind: "closeSurfaceTab", surface }) as const),
+  { kind: "showSurfaceChooser" },
   { kind: "toggleRightPanel" },
+  { kind: "toggleMaximized" },
   { kind: "toggleBottomPanel" },
   { kind: "showBottomPanel" },
   { kind: "hideBottomPanel" },
@@ -42,349 +40,426 @@ function layoutOf(overrides: Partial<AgentWorkbenchLayout>): AgentWorkbenchLayou
   return { ...initialAgentWorkbenchLayout, ...overrides };
 }
 
-const REMEMBERED_SURFACES: ReadonlyArray<AgentSurfaceKind | null> = [null, ...AGENT_SURFACE_KINDS];
-
-function everyReachableState(): ReadonlyArray<AgentWorkbenchLayout> {
-  const surfaces: ReadonlyArray<AgentSurfaceKind | null> = [null, ...AGENT_SURFACE_KINDS];
-  return ["agent", "editor-expanded"].flatMap((layout) =>
-    surfaces.flatMap((rightSurface) =>
-      AGENT_RIGHT_PANEL_STATES.flatMap((rightPanel) =>
-        REMEMBERED_SURFACES.flatMap((lastSurface) =>
-          [false, true].map((bottomPanel) =>
-            layoutOf({
-              layout: layout as AgentWorkbenchLayout["layout"],
-              rightPanel: reachableRightPanel(layout, rightSurface, rightPanel),
-              rightSurface: layout === "editor-expanded" ? null : rightSurface,
-              lastSurface,
-              bottomPanel,
-            }),
-          ),
-        ),
-      ),
-    ),
-  );
+function open(
+  openSurfaces: ReadonlyArray<AgentSurfaceKind>,
+  activeSurface: AgentSurfaceKind | null,
+  overrides: Partial<AgentWorkbenchLayout> = {},
+): AgentWorkbenchLayout {
+  return layoutOf({ rightPanel: "open", openSurfaces, activeSurface, ...overrides });
 }
 
-function reachableRightPanel(
-  layout: string,
-  rightSurface: AgentSurfaceKind | null,
-  rightPanel: AgentWorkbenchLayout["rightPanel"],
-): AgentWorkbenchLayout["rightPanel"] {
-  if (layout === "editor-expanded") return "closed";
-  if (rightSurface !== null) return "open";
-  return rightPanel;
+const EXPANDED = layoutOf({ layout: "editor-expanded" });
+
+function orderedSubsets(): ReadonlyArray<ReadonlyArray<AgentSurfaceKind>> {
+  const subsets: AgentSurfaceKind[][] = [[]];
+  const extend = (prefix: AgentSurfaceKind[]): void => {
+    for (const surface of AGENT_SURFACE_KINDS) {
+      if (prefix.includes(surface)) continue;
+      const next = [...prefix, surface];
+      subsets.push(next);
+      extend(next);
+    }
+  };
+  extend([]);
+  return subsets;
+}
+
+function everyReachableState(): ReadonlyArray<AgentWorkbenchLayout> {
+  const states: AgentWorkbenchLayout[] = [];
+  for (const bottomPanel of [false, true]) {
+    for (const openSurfaces of orderedSubsets()) {
+      for (const activeSurface of [null, ...openSurfaces]) {
+        states.push(
+          layoutOf({ layout: "editor-expanded", bottomPanel, openSurfaces, activeSurface }),
+        );
+        states.push(layoutOf({ rightPanel: "closed", bottomPanel, openSurfaces, activeSurface }));
+        for (const rightPanelMaximized of activeSurface === null ? [false] : [false, true]) {
+          states.push(open(openSurfaces, activeSurface, { bottomPanel, rightPanelMaximized }));
+        }
+      }
+    }
+  }
+  return states;
 }
 
 function expectConsistent(state: AgentWorkbenchLayout): void {
+  expect(new Set(state.openSurfaces).size).toBe(state.openSurfaces.length);
+  expect(state.openSurfaces.length).toBeLessThanOrEqual(MAX_AGENT_OPEN_SURFACES);
+  if (state.activeSurface !== null) {
+    expect(state.openSurfaces).toContain(state.activeSurface);
+  }
+  if (state.rightPanelMaximized) {
+    expect(state.rightPanel).toBe("open");
+    expect(state.activeSurface).not.toBeNull();
+  }
   if (state.layout === "editor-expanded") {
     expect(state.rightPanel).toBe("closed");
-    expect(state.rightSurface).toBeNull();
   }
-  if (state.rightSurface !== null) {
-    expect(state.rightPanel).toBe("open");
+  if (state.rightPanel === "closed") {
+    expect(state.rightPanelMaximized).toBe(false);
   }
+  expect(state.rightPanelWidth).toBeGreaterThanOrEqual(MIN_AGENT_RIGHT_PANEL_WIDTH);
+  expect(state.rightPanelWidth).toBeLessThanOrEqual(MAX_AGENT_RIGHT_PANEL_WIDTH);
+  expect(state.bottomPanelHeight).toBeGreaterThanOrEqual(MIN_AGENT_BOTTOM_PANEL_HEIGHT);
+  expect(state.bottomPanelHeight).toBeLessThanOrEqual(MAX_AGENT_BOTTOM_PANEL_HEIGHT);
 }
 
 describe("agentWorkbenchLayoutReducer", () => {
-  it("keeps every state valid for every action", () => {
-    everyReachableState().forEach((state) => {
-      ACTIONS.forEach((action) => {
-        const next = agentWorkbenchLayoutReducer(state, action);
-
-        expect(next.rightPanelWidth).toBeGreaterThanOrEqual(MIN_AGENT_RIGHT_PANEL_WIDTH);
-        expect(next.rightPanelWidth).toBeLessThanOrEqual(MAX_AGENT_RIGHT_PANEL_WIDTH);
-        expect(next.bottomPanelHeight).toBeGreaterThanOrEqual(MIN_AGENT_BOTTOM_PANEL_HEIGHT);
-        expect(next.bottomPanelHeight).toBeLessThanOrEqual(MAX_AGENT_BOTTOM_PANEL_HEIGHT);
-        expect(REMEMBERED_SURFACES).toContain(next.lastSurface);
-        expectConsistent(next);
-      });
-    });
+  it("keeps every invariant for every action from every reachable state", () => {
+    const states = everyReachableState();
+    expect(states.length).toBeGreaterThan(100);
+    for (const state of states) {
+      expectConsistent(state);
+      for (const action of ACTIONS) {
+        expectConsistent(agentWorkbenchLayoutReducer(state, action));
+      }
+    }
   });
 
   it("never mutates the input state", () => {
-    everyReachableState().forEach((state) => {
-      ACTIONS.forEach((action) => {
-        const snapshot = { ...state };
-        agentWorkbenchLayoutReducer(state, action);
-        expect(state).toEqual(snapshot);
+    for (const state of everyReachableState()) {
+      const frozen = Object.freeze({
+        ...state,
+        openSurfaces: Object.freeze([...state.openSurfaces]),
       });
-    });
+      for (const action of ACTIONS) {
+        agentWorkbenchLayoutReducer(frozen, action);
+      }
+      expect(frozen).toEqual(state);
+    }
   });
 
-  it("opens a surface into the agent layout and remembers it", () => {
-    AGENT_SURFACE_KINDS.forEach((surface) => {
-      const next = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
+  it("returns the same reference for no-op actions", () => {
+    const filesOnly = open(["files"], "files");
+    expect(agentWorkbenchLayoutReducer(filesOnly, { kind: "openSurface", surface: "files" })).toBe(
+      filesOnly,
+    );
+    expect(
+      agentWorkbenchLayoutReducer(filesOnly, { kind: "activateSurface", surface: "files" }),
+    ).toBe(filesOnly);
+    expect(
+      agentWorkbenchLayoutReducer(filesOnly, { kind: "activateSurface", surface: "diff" }),
+    ).toBe(filesOnly);
+    expect(
+      agentWorkbenchLayoutReducer(filesOnly, { kind: "closeSurfaceTab", surface: "diff" }),
+    ).toBe(filesOnly);
+    expect(agentWorkbenchLayoutReducer(filesOnly, { kind: "collapseEditor" })).toBe(filesOnly);
+    expect(agentWorkbenchLayoutReducer(EXPANDED, { kind: "expandEditor" })).toBe(EXPANDED);
+    const chooser = open([], null);
+    expect(agentWorkbenchLayoutReducer(chooser, { kind: "showSurfaceChooser" })).toBe(chooser);
+  });
+
+  describe("openSurface", () => {
+    it("opens the panel with a single tab from the closed panel", () => {
+      expect(
+        agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
+          kind: "openSurface",
+          surface: "diff",
+        }),
+      ).toEqual(open(["diff"], "diff"));
+    });
+
+    it("appends a tab in opening order and activates it", () => {
+      const withFiles = open(["files"], "files");
+      const withDiff = agentWorkbenchLayoutReducer(withFiles, {
         kind: "openSurface",
-        surface,
+        surface: "diff",
       });
-
-      expect(next.layout).toBe("agent");
-      expect(next.rightPanel).toBe("open");
-      expect(next.rightSurface).toBe(surface);
-      expect(next.lastSurface).toBe(surface);
-    });
-  });
-
-  it("shows the right panel without a surface and keeps the remembered one", () => {
-    const state = layoutOf({ lastSurface: "diff" });
-    const shown = agentWorkbenchLayoutReducer(state, { kind: "showRightPanel" });
-
-    expect(shown.rightPanel).toBe("open");
-    expect(shown.rightSurface).toBeNull();
-    expect(shown.lastSurface).toBe("diff");
-    expect(agentWorkbenchLayoutReducer(shown, { kind: "showRightPanel" })).toBe(shown);
-
-    const files = agentWorkbenchLayoutReducer(shown, { kind: "openSurface", surface: "files" });
-    expect(files.rightPanel).toBe("open");
-    expect(files.rightSurface).toBe("files");
-  });
-
-  it("keeps an open surface when the empty panel is shown", () => {
-    const diff = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "openSurface",
-      surface: "diff",
+      expect(withDiff).toEqual(open(["files", "diff"], "diff"));
+      expect(
+        agentWorkbenchLayoutReducer(withDiff, { kind: "openSurface", surface: "terminal" }),
+      ).toEqual(open(["files", "diff", "terminal"], "terminal"));
     });
 
-    expect(agentWorkbenchLayoutReducer(diff, { kind: "showRightPanel" })).toBe(diff);
-  });
-
-  it("returns from the expanded editor to an empty panel on showRightPanel", () => {
-    const expanded = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "expandEditor",
-    });
-    const shown = agentWorkbenchLayoutReducer(expanded, { kind: "showRightPanel" });
-
-    expect(shown.layout).toBe("agent");
-    expect(shown.rightPanel).toBe("open");
-    expect(shown.rightSurface).toBeNull();
-  });
-
-  it("closes the empty panel with toggle and closeSurface", () => {
-    const shown = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "showRightPanel",
-    });
-
-    expect(agentWorkbenchLayoutReducer(shown, { kind: "toggleRightPanel" }).rightPanel).toBe(
-      "closed",
-    );
-    expect(agentWorkbenchLayoutReducer(shown, { kind: "closeSurface" })).toEqual(
-      initialAgentWorkbenchLayout,
-    );
-    expect(agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, { kind: "closeSurface" })).toBe(
-      initialAgentWorkbenchLayout,
-    );
-  });
-
-  it("returns an open surface to the chooser and forgets it", () => {
-    AGENT_SURFACE_KINDS.forEach((surface) => {
-      const open = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-        kind: "openSurface",
-        surface,
-      });
-      const chooser = agentWorkbenchLayoutReducer(open, { kind: "closeSurface" });
-
-      expect(chooser).toEqual(
-        layoutOf({ layout: "agent", rightPanel: "open", rightSurface: null, lastSurface: null }),
+    it("activates an already open tab without duplicating it", () => {
+      const state = open(["files", "diff"], "diff");
+      expect(agentWorkbenchLayoutReducer(state, { kind: "openSurface", surface: "files" })).toEqual(
+        open(["files", "diff"], "files"),
       );
-      expect(agentWorkbenchLayoutReducer(chooser, { kind: "closeSurface" })).toEqual(
+    });
+
+    it("opens from the chooser while keeping the other tabs", () => {
+      const chooser = open(["files"], null);
+      expect(
+        agentWorkbenchLayoutReducer(chooser, { kind: "openSurface", surface: "terminal" }),
+      ).toEqual(open(["files", "terminal"], "terminal"));
+    });
+
+    it("returns to the agent layout from the expanded editor", () => {
+      expect(
+        agentWorkbenchLayoutReducer(EXPANDED, { kind: "openSurface", surface: "files" }),
+      ).toEqual(open(["files"], "files"));
+    });
+
+    it("keeps the maximized panel maximized", () => {
+      const maximized = open(["files"], "files", { rightPanelMaximized: true });
+      expect(
+        agentWorkbenchLayoutReducer(maximized, { kind: "openSurface", surface: "diff" }),
+      ).toEqual(open(["files", "diff"], "diff", { rightPanelMaximized: true }));
+    });
+  });
+
+  describe("activateSurface", () => {
+    it("switches between open tabs and ignores surfaces that are not open", () => {
+      const state = open(["files", "diff"], "files");
+      expect(
+        agentWorkbenchLayoutReducer(state, { kind: "activateSurface", surface: "diff" }),
+      ).toEqual(open(["files", "diff"], "diff"));
+      expect(
+        agentWorkbenchLayoutReducer(state, { kind: "activateSurface", surface: "terminal" }),
+      ).toBe(state);
+      expect(
+        agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
+          kind: "activateSurface",
+          surface: "files",
+        }),
+      ).toBe(initialAgentWorkbenchLayout);
+    });
+
+    it("leaves the chooser for an open tab", () => {
+      expect(
+        agentWorkbenchLayoutReducer(open(["files"], null), {
+          kind: "activateSurface",
+          surface: "files",
+        }),
+      ).toEqual(open(["files"], "files"));
+    });
+  });
+
+  describe("closeSurfaceTab", () => {
+    it("closes an inactive tab and keeps the active one", () => {
+      expect(
+        agentWorkbenchLayoutReducer(open(["files", "diff", "terminal"], "terminal"), {
+          kind: "closeSurfaceTab",
+          surface: "files",
+        }),
+      ).toEqual(open(["diff", "terminal"], "terminal"));
+    });
+
+    it("activates the right neighbour, then the left one", () => {
+      const state = open(["files", "diff", "terminal"], "diff");
+      const closedDiff = agentWorkbenchLayoutReducer(state, {
+        kind: "closeSurfaceTab",
+        surface: "diff",
+      });
+      expect(closedDiff).toEqual(open(["files", "terminal"], "terminal"));
+      expect(
+        agentWorkbenchLayoutReducer(closedDiff, { kind: "closeSurfaceTab", surface: "terminal" }),
+      ).toEqual(open(["files"], "files"));
+    });
+
+    it("shows the chooser when the last tab closes and keeps the panel open", () => {
+      expect(
+        agentWorkbenchLayoutReducer(open(["files"], "files"), {
+          kind: "closeSurfaceTab",
+          surface: "files",
+        }),
+      ).toEqual(open([], null));
+      expect(
+        agentWorkbenchLayoutReducer(open(["files"], "files", { rightPanelMaximized: true }), {
+          kind: "closeSurfaceTab",
+          surface: "files",
+        }),
+      ).toEqual(open([], null));
+    });
+
+    it("closes a tab while the chooser is shown", () => {
+      expect(
+        agentWorkbenchLayoutReducer(open(["files", "diff"], null), {
+          kind: "closeSurfaceTab",
+          surface: "diff",
+        }),
+      ).toEqual(open(["files"], null));
+    });
+  });
+
+  describe("showSurfaceChooser", () => {
+    it("keeps the open tabs and deactivates them", () => {
+      expect(
+        agentWorkbenchLayoutReducer(open(["files", "diff"], "diff"), {
+          kind: "showSurfaceChooser",
+        }),
+      ).toEqual(open(["files", "diff"], null));
+    });
+
+    it("leaves the maximized panel because the chooser has no active surface", () => {
+      expect(
+        agentWorkbenchLayoutReducer(open(["files"], "files", { rightPanelMaximized: true }), {
+          kind: "showSurfaceChooser",
+        }),
+      ).toEqual(open(["files"], null));
+    });
+
+    it("opens an empty panel from the closed panel and from the expanded editor", () => {
+      expect(
+        agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, { kind: "showSurfaceChooser" }),
+      ).toEqual(open([], null));
+      expect(agentWorkbenchLayoutReducer(EXPANDED, { kind: "showSurfaceChooser" })).toEqual(
+        open([], null),
+      );
+    });
+  });
+
+  describe("toggleRightPanel", () => {
+    it("opens the chooser from the closed panel", () => {
+      expect(
+        agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, { kind: "toggleRightPanel" }),
+      ).toEqual(open([], null));
+    });
+
+    it("keeps every tab when the panel closes and drops only the maximized state", () => {
+      expect(
+        agentWorkbenchLayoutReducer(
+          open(["files", "diff"], "diff", { rightPanelMaximized: true, bottomPanel: true }),
+          { kind: "toggleRightPanel" },
+        ),
+      ).toEqual(
+        layoutOf({
+          bottomPanel: true,
+          openSurfaces: ["files", "diff"],
+          activeSurface: "diff",
+        }),
+      );
+      expect(agentWorkbenchLayoutReducer(open([], null), { kind: "toggleRightPanel" })).toEqual(
         initialAgentWorkbenchLayout,
       );
-      expect(agentWorkbenchLayoutReducer(chooser, { kind: "toggleRightPanel" })).toMatchObject({
-        rightPanel: "closed",
-        rightSurface: null,
-        lastSurface: null,
+    });
+
+    it("restores the tabs and the active tab when the panel reopens", () => {
+      const closed = layoutOf({ openSurfaces: ["files", "diff"], activeSurface: "diff" });
+      expect(agentWorkbenchLayoutReducer(closed, { kind: "toggleRightPanel" })).toEqual(
+        open(["files", "diff"], "diff"),
+      );
+    });
+
+    it("activates the first tab when the panel reopens without an active tab", () => {
+      const closed = layoutOf({ openSurfaces: ["files", "diff"], activeSurface: null });
+      expect(agentWorkbenchLayoutReducer(closed, { kind: "toggleRightPanel" })).toEqual(
+        open(["files", "diff"], "files"),
+      );
+    });
+
+    it("collapses the expanded editor onto the chooser", () => {
+      expect(agentWorkbenchLayoutReducer(EXPANDED, { kind: "toggleRightPanel" })).toEqual(
+        open([], null),
+      );
+    });
+  });
+
+  describe("toggleMaximized", () => {
+    it("flips the maximized flag of an open panel", () => {
+      const state = open(["files"], "files");
+      const maximized = agentWorkbenchLayoutReducer(state, { kind: "toggleMaximized" });
+      expect(maximized).toEqual(open(["files"], "files", { rightPanelMaximized: true }));
+      expect(agentWorkbenchLayoutReducer(maximized, { kind: "toggleMaximized" })).toEqual(state);
+    });
+
+    it("refuses to maximize the chooser because it has no active surface", () => {
+      expect(
+        agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, { kind: "toggleMaximized" }),
+      ).toBe(initialAgentWorkbenchLayout);
+      expect(agentWorkbenchLayoutReducer(EXPANDED, { kind: "toggleMaximized" })).toBe(EXPANDED);
+      expect(agentWorkbenchLayoutReducer(open([], null), { kind: "toggleMaximized" })).toEqual(
+        open([], null),
+      );
+    });
+
+    it("reopens a closed panel maximized on its active tab", () => {
+      const closed = layoutOf({ openSurfaces: ["files", "diff"], activeSurface: "diff" });
+      expect(agentWorkbenchLayoutReducer(closed, { kind: "toggleMaximized" })).toEqual(
+        open(["files", "diff"], "diff", { rightPanelMaximized: true }),
+      );
+    });
+
+    it("un-maximizes when the last tab closes", () => {
+      const maximized = open(["files"], "files", { rightPanelMaximized: true });
+      expect(
+        agentWorkbenchLayoutReducer(maximized, { kind: "closeSurfaceTab", surface: "files" }),
+      ).toEqual(open([], null));
+    });
+  });
+
+  describe("editor expansion", () => {
+    it("expands from every panel state keeping the tabs and collapses back onto them", () => {
+      for (const state of everyReachableState()) {
+        const expanded = agentWorkbenchLayoutReducer(state, { kind: "expandEditor" });
+        expect(expanded).toEqual(
+          layoutOf({
+            layout: "editor-expanded",
+            openSurfaces: state.openSurfaces,
+            activeSurface: state.activeSurface,
+            bottomPanel: state.bottomPanel,
+            rightPanelWidth: state.rightPanelWidth,
+            bottomPanelHeight: state.bottomPanelHeight,
+          }),
+        );
+        expect(agentWorkbenchLayoutReducer(expanded, { kind: "collapseEditor" })).toEqual(
+          open(state.openSurfaces, state.activeSurface ?? state.openSurfaces[0] ?? null, {
+            bottomPanel: state.bottomPanel,
+            rightPanelWidth: state.rightPanelWidth,
+            bottomPanelHeight: state.bottomPanelHeight,
+          }),
+        );
+      }
+    });
+
+    it("toggles the expanded editor in both directions and keeps the tab", () => {
+      const expanded = agentWorkbenchLayoutReducer(open(["diff"], "diff"), {
+        kind: "toggleEditorExpanded",
       });
-    });
-  });
-
-  it("keeps the panel open on closeSurface even when another surface was remembered", () => {
-    const open = layoutOf({ rightPanel: "open", rightSurface: "terminal", lastSurface: "diff" });
-
-    expect(agentWorkbenchLayoutReducer(open, { kind: "closeSurface" })).toMatchObject({
-      rightPanel: "open",
-      rightSurface: null,
-      lastSurface: null,
-    });
-  });
-
-  it("keeps the remembered surface when the chooser closes the panel", () => {
-    const chooser = layoutOf({ rightPanel: "open", rightSurface: null, lastSurface: "diff" });
-    const closed = agentWorkbenchLayoutReducer(chooser, { kind: "closeSurface" });
-
-    expect(closed).toMatchObject({ rightPanel: "closed", rightSurface: null, lastSurface: "diff" });
-    expect(agentWorkbenchLayoutReducer(closed, { kind: "toggleRightPanel" })).toMatchObject({
-      rightPanel: "open",
-      rightSurface: "diff",
-    });
-  });
-
-  it("replaces the open surface instead of stacking surfaces", () => {
-    const files = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "openSurface",
-      surface: "files",
-    });
-    const diff = agentWorkbenchLayoutReducer(files, { kind: "openSurface", surface: "diff" });
-
-    expect(diff.rightSurface).toBe("diff");
-    expect(diff.lastSurface).toBe("diff");
-  });
-
-  it("returns to the agent layout when a surface is opened while expanded", () => {
-    const expanded = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "expandEditor",
-    });
-    const next = agentWorkbenchLayoutReducer(expanded, {
-      kind: "openSurface",
-      surface: "terminal",
-    });
-
-    expect(next.layout).toBe("agent");
-    expect(next.rightSurface).toBe("terminal");
-  });
-
-  it("toggles the right panel closed and reopens the remembered surface", () => {
-    const diff = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "openSurface",
-      surface: "diff",
-    });
-    const closed = agentWorkbenchLayoutReducer(diff, { kind: "toggleRightPanel" });
-
-    expect(closed.rightPanel).toBe("closed");
-    expect(closed.rightSurface).toBeNull();
-    expect(closed.lastSurface).toBe("diff");
-
-    const reopened = agentWorkbenchLayoutReducer(closed, { kind: "toggleRightPanel" });
-    expect(reopened.rightPanel).toBe("open");
-    expect(reopened.rightSurface).toBe("diff");
-  });
-
-  it("opens the chooser when no surface was picked yet", () => {
-    const next = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "toggleRightPanel",
-    });
-
-    expect(next.rightPanel).toBe("open");
-    expect(next.rightSurface).toBeNull();
-    expect(next.lastSurface).toBeNull();
-  });
-
-  it("collapses back to the agent layout when the right panel is toggled while expanded", () => {
-    const expanded = agentWorkbenchLayoutReducer(
-      layoutOf({ rightSurface: "diff", lastSurface: "diff" }),
-      { kind: "expandEditor" },
-    );
-    const next = agentWorkbenchLayoutReducer(expanded, { kind: "toggleRightPanel" });
-
-    expect(next.layout).toBe("agent");
-    expect(next.rightSurface).toBe("diff");
-  });
-
-  it("expands from every surface and restores it on collapse", () => {
-    AGENT_SURFACE_KINDS.forEach((surface) => {
-      const open = layoutOf({ rightSurface: surface, lastSurface: surface });
-      const expanded = agentWorkbenchLayoutReducer(open, { kind: "expandEditor" });
-
       expect(expanded.layout).toBe("editor-expanded");
-      expect(expanded.rightPanel).toBe("closed");
-      expect(expanded.rightSurface).toBeNull();
-      expect(expanded.lastSurface).toBe(surface);
-
-      const collapsed = agentWorkbenchLayoutReducer(expanded, { kind: "collapseEditor" });
-      expect(collapsed.layout).toBe("agent");
-      expect(collapsed.rightSurface).toBe(surface);
+      expect(expanded.openSurfaces).toEqual(["diff"]);
+      expect(agentWorkbenchLayoutReducer(expanded, { kind: "toggleEditorExpanded" })).toEqual(
+        open(["diff"], "diff"),
+      );
     });
-  });
-
-  it("expands with no open surface and collapses back to the chooser", () => {
-    const expanded = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "expandEditor",
-    });
-    const collapsed = agentWorkbenchLayoutReducer(expanded, { kind: "collapseEditor" });
-
-    expect(collapsed.rightPanel).toBe("open");
-    expect(collapsed.rightSurface).toBeNull();
-  });
-
-  it("toggles the expanded editor in both directions", () => {
-    const expanded = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "toggleEditorExpanded",
-    });
-    expect(expanded.layout).toBe("editor-expanded");
-
-    const collapsed = agentWorkbenchLayoutReducer(expanded, { kind: "toggleEditorExpanded" });
-    expect(collapsed.layout).toBe("agent");
-  });
-
-  it("keeps expand and collapse idempotent", () => {
-    const expanded = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "expandEditor",
-    });
-
-    expect(agentWorkbenchLayoutReducer(expanded, { kind: "expandEditor" })).toBe(expanded);
-    expect(
-      agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, { kind: "collapseEditor" }),
-    ).toBe(initialAgentWorkbenchLayout);
   });
 
   it("drives the bottom panel independently of the layout", () => {
-    const shown = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "toggleBottomPanel",
-    });
-    expect(shown.bottomPanel).toBe(true);
-    expect(shown.layout).toBe("agent");
-
+    const state = open(["files"], "files", { rightPanelMaximized: true });
+    const shown = agentWorkbenchLayoutReducer(state, { kind: "showBottomPanel" });
+    expect(shown).toEqual({ ...state, bottomPanel: true });
     expect(agentWorkbenchLayoutReducer(shown, { kind: "showBottomPanel" })).toBe(shown);
-    expect(agentWorkbenchLayoutReducer(shown, { kind: "hideBottomPanel" }).bottomPanel).toBe(false);
-    expect(agentWorkbenchLayoutReducer(shown, { kind: "toggleBottomPanel" }).bottomPanel).toBe(
-      false,
-    );
-
-    const expanded = agentWorkbenchLayoutReducer(shown, { kind: "expandEditor" });
-    expect(expanded.bottomPanel).toBe(true);
+    expect(agentWorkbenchLayoutReducer(shown, { kind: "toggleBottomPanel" })).toEqual(state);
+    expect(agentWorkbenchLayoutReducer(shown, { kind: "hideBottomPanel" })).toEqual(state);
+    expect(agentWorkbenchLayoutReducer(state, { kind: "hideBottomPanel" })).toBe(state);
   });
 
-  it("clamps resize actions", () => {
-    const narrow = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "resizeRightPanel",
-      width: 10,
-    });
-    const wide = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "resizeRightPanel",
-      width: 100_000,
-    });
-    const short = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "resizeBottomPanel",
-      height: -5,
-    });
-    const tall = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "resizeBottomPanel",
-      height: 100_000,
-    });
-
-    expect(narrow.rightPanelWidth).toBe(MIN_AGENT_RIGHT_PANEL_WIDTH);
-    expect(wide.rightPanelWidth).toBe(MAX_AGENT_RIGHT_PANEL_WIDTH);
-    expect(short.bottomPanelHeight).toBe(MIN_AGENT_BOTTOM_PANEL_HEIGHT);
-    expect(tall.bottomPanelHeight).toBe(MAX_AGENT_BOTTOM_PANEL_HEIGHT);
-  });
-
-  it("falls back to the defaults for non-finite sizes", () => {
-    const width = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "resizeRightPanel",
-      width: Number.NaN,
-    });
-    const height = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "resizeBottomPanel",
-      height: Number.POSITIVE_INFINITY,
-    });
-
-    expect(width.rightPanelWidth).toBe(DEFAULT_AGENT_RIGHT_PANEL_WIDTH);
-    expect(height.bottomPanelHeight).toBe(DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT);
+  it("clamps resize actions and falls back to the defaults for non-finite sizes", () => {
+    const state = initialAgentWorkbenchLayout;
+    expect(
+      agentWorkbenchLayoutReducer(state, { kind: "resizeRightPanel", width: 10 }).rightPanelWidth,
+    ).toBe(MIN_AGENT_RIGHT_PANEL_WIDTH);
+    expect(
+      agentWorkbenchLayoutReducer(state, { kind: "resizeRightPanel", width: 5000 }).rightPanelWidth,
+    ).toBe(MAX_AGENT_RIGHT_PANEL_WIDTH);
+    expect(
+      agentWorkbenchLayoutReducer(state, { kind: "resizeRightPanel", width: 600.4 })
+        .rightPanelWidth,
+    ).toBe(600);
+    expect(
+      agentWorkbenchLayoutReducer(state, { kind: "resizeBottomPanel", height: 10 })
+        .bottomPanelHeight,
+    ).toBe(MIN_AGENT_BOTTOM_PANEL_HEIGHT);
+    expect(
+      agentWorkbenchLayoutReducer(state, { kind: "resizeBottomPanel", height: 5000 })
+        .bottomPanelHeight,
+    ).toBe(MAX_AGENT_BOTTOM_PANEL_HEIGHT);
+    expect(
+      agentWorkbenchLayoutReducer(state, { kind: "resizeRightPanel", width: Number.NaN }),
+    ).toBe(state);
+    expect(
+      agentWorkbenchLayoutReducer(
+        { ...state, bottomPanelHeight: 400 },
+        { kind: "resizeBottomPanel", height: Number.POSITIVE_INFINITY },
+      ).bottomPanelHeight,
+    ).toBe(DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT);
   });
 
   it("rejects an unsupported action", () => {
     expect(() =>
       agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-        kind: "browserSurface",
+        kind: "teleport",
       } as unknown as AgentWorkbenchLayoutAction),
     ).toThrow(TypeError);
   });
@@ -392,315 +467,209 @@ describe("agentWorkbenchLayoutReducer", () => {
 
 describe("parseAgentWorkbenchLayout", () => {
   it("returns the initial layout for non-record values", () => {
-    [null, undefined, 4, "agent", [], true].forEach((value) => {
+    for (const value of [null, undefined, 1, "agent", [], true]) {
       expect(parseAgentWorkbenchLayout(value)).toEqual(initialAgentWorkbenchLayout);
-    });
+    }
   });
 
   it("returns the initial layout for an entirely invalid record", () => {
     expect(
       parseAgentWorkbenchLayout({
         layout: "browser",
-        rightSurface: "preview",
+        rightPanel: "sideways",
+        openSurfaces: "files",
+        activeSurface: "preview",
+        rightPanelMaximized: "yes",
         bottomPanel: "yes",
         rightPanelWidth: "wide",
-        bottomPanelHeight: null,
+        bottomPanelHeight: "tall",
       }),
     ).toEqual(initialAgentWorkbenchLayout);
   });
 
   it("restores a valid persisted layout", () => {
-    expect(
-      parseAgentWorkbenchLayout({
-        layout: "agent",
-        rightSurface: "diff",
-        bottomPanel: true,
-        rightPanelWidth: 640,
-        bottomPanelHeight: 320,
-      }),
-    ).toEqual({
-      layout: "agent",
-      rightPanel: "open",
-      rightSurface: "diff",
-      lastSurface: "diff",
+    const persisted = open(["files", "diff"], "diff", {
+      rightPanelMaximized: true,
       bottomPanel: true,
       rightPanelWidth: 640,
       bottomPanelHeight: 320,
     });
+    expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(persisted))).toEqual(persisted);
+  });
+
+  it("migrates the previous single-surface shape into one tab", () => {
+    expect(
+      parseAgentWorkbenchLayout({ layout: "agent", rightPanel: "open", rightSurface: "diff" }),
+    ).toEqual(open(["diff"], "diff"));
+    expect(
+      parseAgentWorkbenchLayout({ layout: "agent", rightPanel: "open", rightSurface: null }),
+    ).toEqual(open([], null));
+    expect(
+      parseAgentWorkbenchLayout({ layout: "agent", rightSurface: "files", lastSurface: "diff" }),
+    ).toEqual(open(["files"], "files"));
+  });
+
+  it("ignores the legacy surface when the new shape is present", () => {
+    expect(
+      parseAgentWorkbenchLayout({
+        layout: "agent",
+        openSurfaces: ["terminal"],
+        activeSurface: "terminal",
+        rightSurface: "diff",
+      }),
+    ).toEqual(open(["terminal"], "terminal"));
+    expect(
+      parseAgentWorkbenchLayout({ layout: "agent", openSurfaces: [], rightSurface: "diff" }),
+    ).toEqual(initialAgentWorkbenchLayout);
+  });
+
+  it("drops unknown, duplicate and surplus open surfaces fail-closed", () => {
+    expect(
+      parseAgentWorkbenchLayout({
+        layout: "agent",
+        openSurfaces: ["diff", "preview", "diff", 7, "files", "terminal", "files"],
+        activeSurface: "files",
+      }),
+    ).toEqual(open(["diff", "files", "terminal"], "files"));
+    expect(parseAgentWorkbenchLayout({ layout: "agent", openSurfaces: { 0: "files" } })).toEqual(
+      initialAgentWorkbenchLayout,
+    );
+  });
+
+  it("clears an active surface that is not among the open tabs", () => {
+    expect(
+      parseAgentWorkbenchLayout({
+        layout: "agent",
+        openSurfaces: ["files"],
+        activeSurface: "diff",
+      }),
+    ).toEqual(open(["files"], null));
+    expect(
+      parseAgentWorkbenchLayout({ layout: "agent", openSurfaces: ["files"], activeSurface: 3 }),
+    ).toEqual(open(["files"], null));
+    expect(parseAgentWorkbenchLayout({ layout: "agent", activeSurface: "files" })).toEqual(
+      initialAgentWorkbenchLayout,
+    );
+  });
+
+  it("keeps a closed panel with its tabs and rejects unknown panel states", () => {
+    expect(
+      parseAgentWorkbenchLayout({
+        layout: "agent",
+        rightPanel: "closed",
+        openSurfaces: ["files"],
+        activeSurface: "files",
+      }),
+    ).toEqual(layoutOf({ openSurfaces: ["files"], activeSurface: "files" }));
+    expect(
+      parseAgentWorkbenchLayout({
+        layout: "agent",
+        rightPanel: "closed",
+        rightPanelMaximized: true,
+      }),
+    ).toEqual(initialAgentWorkbenchLayout);
+    expect(
+      parseAgentWorkbenchLayout({ layout: "agent", openSurfaces: ["diff"], activeSurface: "diff" }),
+    ).toEqual(open(["diff"], "diff"));
+    expect(parseAgentWorkbenchLayout({ layout: "agent", rightPanel: "open" })).toEqual(
+      open([], null),
+    );
+    expect(parseAgentWorkbenchLayout({ layout: "agent", rightPanel: "ajar" })).toEqual(
+      initialAgentWorkbenchLayout,
+    );
+    expect(
+      parseAgentWorkbenchLayout({ layout: "agent", rightPanel: "open", rightPanelMaximized: 1 }),
+    ).toEqual(open([], null));
+  });
+
+  it("closes the panel persisted alongside the expanded layout but keeps its tabs", () => {
+    expect(
+      parseAgentWorkbenchLayout({
+        layout: "editor-expanded",
+        rightPanel: "open",
+        openSurfaces: ["files"],
+        activeSurface: "files",
+        rightPanelMaximized: true,
+        bottomPanel: true,
+        rightPanelWidth: 700,
+      }),
+    ).toEqual(
+      layoutOf({
+        layout: "editor-expanded",
+        openSurfaces: ["files"],
+        activeSurface: "files",
+        bottomPanel: true,
+        rightPanelWidth: 700,
+      }),
+    );
   });
 
   it("clamps out-of-bounds persisted sizes", () => {
-    const parsed = parseAgentWorkbenchLayout({
-      layout: "agent",
-      rightSurface: "files",
-      bottomPanel: false,
-      rightPanelWidth: 5,
-      bottomPanelHeight: 99_999,
-    });
-
-    expect(parsed.rightPanelWidth).toBe(MIN_AGENT_RIGHT_PANEL_WIDTH);
-    expect(parsed.bottomPanelHeight).toBe(MAX_AGENT_BOTTOM_PANEL_HEIGHT);
-  });
-
-  it("drops a surface persisted alongside the expanded layout", () => {
-    const parsed = parseAgentWorkbenchLayout({
-      layout: "editor-expanded",
-      rightSurface: "terminal",
-      bottomPanel: false,
-      rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
-      bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
-    });
-
-    expect(parsed.rightPanel).toBe("closed");
-    expect(parsed.rightSurface).toBeNull();
-    expect(parsed.lastSurface).toBe("terminal");
-  });
-
-  it("derives a missing right panel state from the persisted surface", () => {
-    const base = {
-      layout: "agent",
-      bottomPanel: false,
-      rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
-      bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
-    };
-
-    expect(parseAgentWorkbenchLayout({ ...base, rightSurface: "diff" }).rightPanel).toBe("open");
-    expect(parseAgentWorkbenchLayout({ ...base, rightSurface: null }).rightPanel).toBe("closed");
-  });
-
-  it("restores an empty open panel and rejects unknown panel states", () => {
-    const base = {
-      layout: "agent",
-      rightSurface: null,
-      bottomPanel: false,
-      rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
-      bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
-    };
-
-    expect(parseAgentWorkbenchLayout({ ...base, rightPanel: "open" })).toMatchObject({
-      rightPanel: "open",
-      rightSurface: null,
-      lastSurface: null,
-    });
-    expect(parseAgentWorkbenchLayout({ ...base, rightPanel: "wide" }).rightPanel).toBe("closed");
     expect(
-      parseAgentWorkbenchLayout({ ...base, rightPanel: "closed", rightSurface: "files" })
-        .rightPanel,
-    ).toBe("open");
+      parseAgentWorkbenchLayout({ layout: "agent", rightPanelWidth: 1, bottomPanelHeight: 9999 }),
+    ).toMatchObject({
+      rightPanelWidth: MIN_AGENT_RIGHT_PANEL_WIDTH,
+      bottomPanelHeight: MAX_AGENT_BOTTOM_PANEL_HEIGHT,
+    });
     expect(
-      parseAgentWorkbenchLayout({ ...base, layout: "editor-expanded", rightPanel: "open" })
-        .rightPanel,
-    ).toBe("closed");
+      parseAgentWorkbenchLayout({ layout: "agent", rightPanelWidth: Number.NaN }),
+    ).toMatchObject({ rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH });
   });
 
-  it("never throws for adversarial values", () => {
-    expect(() =>
-      parseAgentWorkbenchLayout({
-        layout: { toString: () => "agent" },
-        rightSurface: ["files"],
-        rightPanelWidth: Number.NaN,
-        bottomPanelHeight: Number.NEGATIVE_INFINITY,
-      }),
-    ).not.toThrow();
+  it("never throws and always yields a consistent state for adversarial values", () => {
+    const values: unknown[] = [
+      { openSurfaces: new Array(10_000).fill("files"), activeSurface: "files" },
+      { openSurfaces: [null, undefined, {}, [], "FILES"], rightPanel: "open" },
+      { layout: ["agent"], rightPanelMaximized: "true" },
+      Object.create(null),
+      { __proto__: { openSurfaces: ["diff"] } },
+    ];
+    for (const value of values) {
+      const parsed = parseAgentWorkbenchLayout(value);
+      expectConsistent(parsed);
+    }
   });
 });
 
 describe("serializeAgentWorkbenchLayout", () => {
-  it("omits the remembered surface", () => {
-    const state = agentWorkbenchLayoutReducer(
-      agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-        kind: "openSurface",
-        surface: "diff",
-      }),
-      { kind: "toggleRightPanel" },
-    );
-
+  it("persists exactly the layout fields", () => {
+    const state = open(["files", "terminal"], "terminal", { rightPanelMaximized: true });
     expect(serializeAgentWorkbenchLayout(state)).toEqual({
       layout: "agent",
-      rightPanel: "closed",
-      rightSurface: null,
+      rightPanel: "open",
+      openSurfaces: ["files", "terminal"],
+      activeSurface: "terminal",
+      rightPanelMaximized: true,
       bottomPanel: false,
       rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
       bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
     });
   });
 
-  it("round-trips through the parser", () => {
-    const state = agentWorkbenchLayoutReducer(
-      agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-        kind: "openSurface",
-        surface: "terminal",
-      }),
-      { kind: "resizeRightPanel", width: 800 },
-    );
-
-    expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(state))).toEqual(state);
+  it("round-trips every reachable state through the parser", () => {
+    for (const state of everyReachableState()) {
+      expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(state))).toEqual(state);
+    }
   });
 
-  it("reloads an empty open panel as the chooser because the remembered surface is not persisted", () => {
-    const state = agentWorkbenchLayoutReducer(
-      agentWorkbenchLayoutReducer(
-        agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-          kind: "openSurface",
-          surface: "diff",
-        }),
-        { kind: "toggleRightPanel" },
-      ),
-      { kind: "showRightPanel" },
-    );
-
-    expect(state).toMatchObject({ rightPanel: "open", rightSurface: null, lastSurface: "diff" });
-    expect(serializeAgentWorkbenchLayout(state)).not.toHaveProperty("lastSurface");
-    expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(state))).toEqual({
-      ...state,
-      lastSurface: null,
-    });
+  it("survives JSON serialization", () => {
+    const state = open(["diff"], "diff");
+    expect(
+      parseAgentWorkbenchLayout(JSON.parse(JSON.stringify(serializeAgentWorkbenchLayout(state)))),
+    ).toEqual(state);
   });
 });
 
 describe("agentWorkbenchLayoutsEqual", () => {
-  it("compares the remembered surface too", () => {
-    expect(
-      agentWorkbenchLayoutsEqual(initialAgentWorkbenchLayout, { ...initialAgentWorkbenchLayout }),
-    ).toBe(true);
-    expect(
-      agentWorkbenchLayoutsEqual(initialAgentWorkbenchLayout, layoutOf({ lastSurface: "diff" })),
-    ).toBe(false);
-    expect(
-      agentWorkbenchLayoutsEqual(initialAgentWorkbenchLayout, layoutOf({ bottomPanel: true })),
-    ).toBe(false);
-    expect(
-      agentWorkbenchLayoutsEqual(initialAgentWorkbenchLayout, layoutOf({ rightPanel: "open" })),
-    ).toBe(false);
-  });
-});
-
-describe("rightPanelToggleAction", () => {
-  const closedWithDiff: AgentWorkbenchLayout = {
-    ...initialAgentWorkbenchLayout,
-    lastSurface: "diff",
-  };
-
-  it("opens the chooser on the first toggle because no surface is remembered", () => {
-    const action = rightPanelToggleAction(initialAgentWorkbenchLayout, () => false);
-
-    expect(action).toEqual({ kind: "showRightPanel" });
-    expect(agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, action)).toMatchObject({
-      rightPanel: "open",
-      rightSurface: null,
-      lastSurface: null,
-    });
-  });
-
-  it("reopens the surface the user picked earlier in the session", () => {
-    const picked = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "openSurface",
-      surface: "diff",
-    });
-    const closed = agentWorkbenchLayoutReducer(
-      picked,
-      rightPanelToggleAction(picked, () => false),
+  it("compares tab order, active tab and the maximized flag", () => {
+    const state = open(["files", "diff"], "diff");
+    expect(agentWorkbenchLayoutsEqual(state, open(["files", "diff"], "diff"))).toBe(true);
+    expect(agentWorkbenchLayoutsEqual(state, open(["diff", "files"], "diff"))).toBe(false);
+    expect(agentWorkbenchLayoutsEqual(state, open(["files", "diff"], "files"))).toBe(false);
+    expect(agentWorkbenchLayoutsEqual(state, open(["files"], "diff"))).toBe(false);
+    expect(agentWorkbenchLayoutsEqual(state, { ...state, rightPanelMaximized: true })).toBe(false);
+    expect(agentWorkbenchLayoutSnapshotsEqual(state, { ...state, bottomPanelHeight: 300 })).toBe(
+      false,
     );
-
-    expect(closed.rightPanel).toBe("closed");
-    expect(
-      agentWorkbenchLayoutReducer(
-        closed,
-        rightPanelToggleAction(closed, () => false),
-      ),
-    ).toMatchObject({ rightPanel: "open", rightSurface: "diff" });
-  });
-
-  it("restores the remembered surface when it is available", () => {
-    expect(rightPanelToggleAction(closedWithDiff, () => false)).toEqual({
-      kind: "toggleRightPanel",
-    });
-    expect(
-      agentWorkbenchLayoutReducer(
-        closedWithDiff,
-        rightPanelToggleAction(closedWithDiff, () => false),
-      ),
-    ).toMatchObject({ rightPanel: "open", rightSurface: "diff" });
-  });
-
-  it("opens an empty panel when the remembered surface is blocked", () => {
-    const action = rightPanelToggleAction(closedWithDiff, (surface) => surface === "diff");
-
-    expect(action).toEqual({ kind: "showRightPanel" });
-    expect(agentWorkbenchLayoutReducer(closedWithDiff, action)).toMatchObject({
-      rightPanel: "open",
-      rightSurface: null,
-      lastSurface: "diff",
-    });
-  });
-
-  it("closes an open panel whatever the surface policy says", () => {
-    const open: AgentWorkbenchLayout = {
-      ...closedWithDiff,
-      rightPanel: "open",
-      rightSurface: "diff",
-    };
-    const chooser: AgentWorkbenchLayout = { ...closedWithDiff, rightPanel: "open" };
-
-    expect(rightPanelToggleAction(open, () => false)).toEqual({ kind: "toggleRightPanel" });
-    expect(rightPanelToggleAction(open, () => true)).toEqual({ kind: "toggleRightPanel" });
-    expect(
-      agentWorkbenchLayoutReducer(
-        open,
-        rightPanelToggleAction(open, () => false),
-      ),
-    ).toMatchObject({ rightPanel: "closed", rightSurface: null, lastSurface: "diff" });
-    expect(rightPanelToggleAction(chooser, () => false)).toEqual({ kind: "toggleRightPanel" });
-    expect(
-      agentWorkbenchLayoutReducer(
-        chooser,
-        rightPanelToggleAction(chooser, () => false),
-      ),
-    ).toMatchObject({ rightPanel: "closed", rightSurface: null });
-  });
-
-  it("collapses the expanded editor through the same policy", () => {
-    const expanded: AgentWorkbenchLayout = {
-      ...initialAgentWorkbenchLayout,
-      layout: "editor-expanded",
-      lastSurface: "terminal",
-    };
-
-    expect(rightPanelToggleAction(expanded, () => false)).toEqual({ kind: "collapseEditor" });
-    expect(rightPanelToggleAction(expanded, () => true)).toEqual({ kind: "showRightPanel" });
-    expect(collapseEditorAction(expanded, () => true)).toEqual({ kind: "showRightPanel" });
-    expect(collapseEditorAction(initialAgentWorkbenchLayout, () => true)).toEqual({
-      kind: "collapseEditor",
-    });
-  });
-
-  it("collapses the expanded editor onto the chooser when no surface is remembered", () => {
-    const expanded = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
-      kind: "expandEditor",
-    });
-
-    expect(expanded.lastSurface).toBeNull();
-    expect(rightPanelToggleAction(expanded, () => false)).toEqual({ kind: "showRightPanel" });
-    expect(collapseEditorAction(expanded, () => false)).toEqual({ kind: "showRightPanel" });
-    expect(editorExpandToggleAction(expanded, () => false)).toEqual({ kind: "showRightPanel" });
-  });
-});
-
-describe("editorExpandToggleAction", () => {
-  it("expands from the agent layout and collapses through the surface policy", () => {
-    expect(editorExpandToggleAction(initialAgentWorkbenchLayout, () => true)).toEqual({
-      kind: "expandEditor",
-    });
-
-    const expanded: AgentWorkbenchLayout = {
-      ...initialAgentWorkbenchLayout,
-      layout: "editor-expanded",
-      lastSurface: "diff",
-    };
-
-    expect(editorExpandToggleAction(expanded, () => false)).toEqual({ kind: "collapseEditor" });
-    expect(editorExpandToggleAction(expanded, (surface) => surface === "diff")).toEqual({
-      kind: "showRightPanel",
-    });
   });
 });

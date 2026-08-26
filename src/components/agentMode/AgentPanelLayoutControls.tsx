@@ -1,4 +1,4 @@
-import { Maximize2, PanelBottom, PanelRight } from "lucide-react";
+import { Expand, Maximize2, Minimize2, PanelBottom, PanelRight } from "lucide-react";
 import {
   agentControlTooltip,
   defaultAgentPanelLayoutShortcuts,
@@ -7,10 +7,19 @@ import {
 
 export type { AgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
 
+export const AGENT_PANEL_MAXIMIZE_LABEL = "Maximize panel";
+export const AGENT_PANEL_RESTORE_LABEL = "Restore panel";
+
+export interface AgentPanelMaximizeControl {
+  readonly maximized: boolean;
+  onToggle(): void;
+}
+
 export interface AgentPanelLayoutControlsProps {
   readonly bottomPanelOpen: boolean;
   readonly rightPanelOpen: boolean;
   readonly shortcuts: AgentPanelLayoutShortcuts | null;
+  readonly maximize?: AgentPanelMaximizeControl | null;
   onToggleBottomPanel(): void;
   onToggleRightPanel(): void;
   onExpandEditor: (() => void) | null;
@@ -18,6 +27,7 @@ export interface AgentPanelLayoutControlsProps {
 
 export function AgentPanelLayoutControls({
   bottomPanelOpen,
+  maximize = null,
   onExpandEditor,
   onToggleBottomPanel,
   onToggleRightPanel,
@@ -28,9 +38,24 @@ export function AgentPanelLayoutControls({
   const bottomTitle = agentControlTooltip("Toggle terminal panel", chords.bottomPanel);
   const rightTitle = agentControlTooltip("Toggle right panel", chords.rightPanel);
   const expandTitle = agentControlTooltip("Expand to editor", chords.expandEditor);
+  const maximizeTitle =
+    maximize?.maximized === true ? AGENT_PANEL_RESTORE_LABEL : AGENT_PANEL_MAXIMIZE_LABEL;
+  const MaximizeIcon = maximize?.maximized === true ? Minimize2 : Maximize2;
 
   return (
     <div className="agent-layout-controls" data-panel-layout-controls>
+      {maximize !== null && (
+        <button
+          aria-label={maximizeTitle}
+          aria-pressed={maximize.maximized}
+          className="agent-icon-toggle"
+          onClick={maximize.onToggle}
+          title={maximizeTitle}
+          type="button"
+        >
+          <MaximizeIcon aria-hidden="true" size={14} />
+        </button>
+      )}
       {onExpandEditor !== null && (
         <button
           aria-label={expandTitle}
@@ -39,7 +64,7 @@ export function AgentPanelLayoutControls({
           title={expandTitle}
           type="button"
         >
-          <Maximize2 aria-hidden="true" size={14} />
+          <Expand aria-hidden="true" size={14} />
         </button>
       )}
       <button

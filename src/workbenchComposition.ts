@@ -9,6 +9,7 @@ import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway"
 import { BrowserDirtyTextSearchGateway } from "./infrastructure/browserDirtyTextSearchGateway";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { TauriAgentRootLeaseGateway } from "./infrastructure/tauriAgentRootLeaseGateway";
+import { TauriAgentCliVersionGateway } from "./infrastructure/tauriAgentCliVersionGateway";
 import { TauriAgentTaskGateway } from "./infrastructure/tauriAgentTaskGateway";
 import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
 import { TauriDebugGateway } from "./infrastructure/tauriDebugGateway";
@@ -85,6 +86,7 @@ export function createWorkbenchComposition() {
   const quickInputCoordinator = new QuickInputCoordinator();
 
   return {
+    agentCliVersionGateway: new TauriAgentCliVersionGateway(),
     agentRootLeaseGateway: new TauriAgentRootLeaseGateway(),
     agentTaskGateway: new TauriAgentTaskGateway(),
     cursorStore: new EditorCursorStore(),

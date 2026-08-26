@@ -40,6 +40,32 @@ describe("workbenchShellPlacement", () => {
   });
 });
 
+describe("workbenchShellPlacement maximized", () => {
+  it("reports the maximized panel only for an open panel in the agent layout", () => {
+    expect(placement("agent", "files", false, true).rightPanelMaximized).toBe(true);
+    expect(placement("agent", "files", false, false).rightPanelMaximized).toBe(false);
+    expect(placement("agent", null, false, true).rightPanelMaximized).toBe(false);
+    expect(placement("editor-expanded", null, false, true).rightPanelMaximized).toBe(false);
+    expect(
+      workbenchShellPlacement({
+        bottomPanelVisible: false,
+        effectiveLayout: "agent",
+        layout: { ...initialAgentWorkbenchLayout, rightPanel: "open", rightPanelMaximized: true },
+      }),
+    ).toMatchObject({ rightPanelMaximized: true, editorHidden: true });
+  });
+
+  it("keeps the editor over the Files area while maximized", () => {
+    expect(placement("agent", "files", true, true)).toMatchObject({
+      editorHidden: false,
+      rightPanelMaximized: true,
+      rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
+      bottomPanelHeight: 280,
+    });
+    expect(placement("agent", "diff", false, true).editorHidden).toBe(true);
+  });
+});
+
 describe("workbenchFrameTreeState", () => {
   it("shows the tree only in the agent layout with the editor visible and a tree reported", () => {
     expect(workbenchFrameTreeState(placement("agent", "files"), true)).toBe("visible");
@@ -90,6 +116,23 @@ describe("WorkbenchShellFrame", () => {
     render(placement("agent", null));
     expect(host.querySelector("#editor-content")).toBe(editorChild);
     expect(editor?.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("stamps the maximized panel on the frame and restores the docked panel", () => {
+    render(placement("agent", "files", false, true));
+    const frame = host.querySelector(".workbench-frame");
+    expect(frame?.getAttribute("data-right-panel")).toBe("maximized");
+    expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(false);
+
+    render(placement("agent", "diff", false, true));
+    expect(frame?.getAttribute("data-right-panel")).toBe("maximized");
+    expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
+
+    render(placement("agent", "files"));
+    expect(frame?.getAttribute("data-right-panel")).toBe("docked");
+
+    render(placement("editor-expanded", null, false, true));
+    expect(frame?.getAttribute("data-right-panel")).toBe("docked");
   });
 
   it("keeps the right panel track while an open panel shows no surface", () => {
@@ -165,7 +208,7 @@ function emptyOpenPanelPlacement(bottomPanelVisible = false): WorkbenchShellPlac
   return workbenchShellPlacement({
     bottomPanelVisible,
     effectiveLayout: "agent",
-    layout: { ...initialAgentWorkbenchLayout, rightPanel: "open", rightSurface: null },
+    layout: { ...initialAgentWorkbenchLayout, rightPanel: "open" },
   });
 }
 
@@ -173,6 +216,7 @@ function placement(
   effectiveLayout: "agent" | "editor-expanded",
   rightSurface: "files" | "diff" | "terminal" | null,
   bottomPanelVisible = false,
+  maximized = false,
 ): WorkbenchShellPlacement {
   return workbenchShellPlacement({
     bottomPanelVisible,
@@ -180,7 +224,8 @@ function placement(
     layout: {
       ...initialAgentWorkbenchLayout,
       rightPanel: rightSurface === null ? "closed" : "open",
-      rightSurface,
+      activeSurface: rightSurface,
+      rightPanelMaximized: maximized,
     },
   });
 }

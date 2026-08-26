@@ -112,7 +112,12 @@ describe("AgentThreadHeader", () => {
     expect(host.querySelector("[data-panel-layout-controls]")).not.toBeNull();
 
     render({
-      layout: { ...initialAgentWorkbenchLayout, rightPanel: "open", rightSurface: "files" },
+      layout: {
+        ...initialAgentWorkbenchLayout,
+        rightPanel: "open",
+        openSurfaces: ["files"],
+        activeSurface: "files",
+      },
     });
     expect(host.querySelector("[data-panel-layout-controls]")).toBeNull();
 

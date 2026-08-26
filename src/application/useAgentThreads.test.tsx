@@ -12,6 +12,11 @@ import type {
   AgentTaskStatusEvent,
   StartAgentTaskRequest,
 } from "../domain/agentTask";
+import {
+  agentCliVersionChangeMessage,
+  type AgentCliVersionGateway,
+  type AgentCliVersionProbeRequest,
+} from "../domain/agentCliVersion";
 import type { AgentThread } from "../domain/agentThread";
 import type { GitStatus } from "../domain/git";
 import type { GitIntegrationOutcome, GitShipStatus } from "../domain/gitIntegration";
@@ -30,6 +35,7 @@ const ROOT = "/workspace/app";
 const OWNER = "workspace-a";
 const PERSISTENT_OWNER = agentRootOwnerId(ROOT);
 const CLI_PATH = "/usr/local/bin/claude";
+const CLI_VERSION = "1.4.2";
 
 interface Environment {
   generation: number;
@@ -40,6 +46,7 @@ interface Environment {
   storedThreads: ReadonlyArray<AgentThread>;
   shipStatus: GitShipStatus;
   withEditor: boolean;
+  cliVersion: string | null;
 }
 
 const SHA_A = "a".repeat(40);
@@ -227,6 +234,7 @@ function storedThread(
         lastStatusSequence: 1,
         lastOutputSequence: 0,
         launch: null,
+        cliVersion: null,
       },
     ],
     turnsTruncated: false,
@@ -245,6 +253,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     storedThreads: [],
     shipStatus: shipStatus(),
     withEditor: true,
+    cliVersion: CLI_VERSION,
     ...overrides,
   };
   const startedRequests: StartAgentTaskRequest[] = [];
@@ -318,6 +327,13 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     openGitChange: vi.fn(async () => undefined),
     openSurface: vi.fn(),
   };
+  const cliVersionGateway = {
+    probeAgentCliVersion: vi.fn(async (request: AgentCliVersionProbeRequest) => ({
+      version: environment.cliVersion,
+      probedAtEpochMs: 1_700_000_000_000,
+      binaryFingerprint: { sizeBytes: request.agentCliPath.length, modifiedEpochMs: 1 },
+    })),
+  };
   const reportError = vi.fn();
   const openAgentSettings = vi.fn();
 
@@ -345,6 +361,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   function Harness() {
     const dependencies: AgentThreadsDependencies = {
       agentTaskGateway: agent as unknown as AgentTaskGateway,
+      agentCliVersionGateway: cliVersionGateway as AgentCliVersionGateway,
       agentThreadStoreGateway: store as unknown as AgentThreadStoreGateway,
       gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
       gitGateway: git,
@@ -379,6 +396,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
 
   return {
     agent,
+    cliVersionGateway,
     store,
     git,
     gitIntegration,
@@ -573,6 +591,68 @@ describe("useAgentThreads views and viewed marks", () => {
     await waitForReact(() =>
       expect(harness.hook().threadCopyDetail(stored.threadId, "threadId")).toBe(stored.threadId),
     );
+    harness.unmount();
+  });
+
+  it("exposes the probed agent CLI version and stamps dispatched turns with it", async () => {
+    const harness = renderThreads();
+    await waitForReact(() => expect(harness.hook().agentCliVersion).toBe(CLI_VERSION));
+    expect(harness.cliVersionGateway.probeAgentCliVersion).toHaveBeenCalledWith({
+      agentCliPath: CLI_PATH,
+      agentCliKind: "claudeCode",
+    });
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+    const view = harness
+      .hook()
+      .threads.find((candidate) => candidate.thread.threadId === result?.threadId);
+
+    expect(view?.thread.turns[0]?.cliVersion).toBe(CLI_VERSION);
+    expect(harness.hook().notice).toBeNull();
+    harness.unmount();
+  });
+
+  it("announces a CLI version change and stamps the next turn with the new version", async () => {
+    const harness = renderThreads();
+    await waitForReact(() => expect(harness.hook().agentCliVersion).toBe(CLI_VERSION));
+
+    harness.set({ cliVersion: "1.5.0", agentModeActive: false });
+    harness.set({ agentModeActive: true });
+    await waitForReact(() => expect(harness.hook().agentCliVersion).toBe("1.5.0"));
+
+    expect(harness.hook().notice).toEqual({
+      kind: "info",
+      message: agentCliVersionChangeMessage("claudeCode", CLI_VERSION, "1.5.0"),
+      action: null,
+    });
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+    const view = harness
+      .hook()
+      .threads.find((candidate) => candidate.thread.threadId === result?.threadId);
+
+    expect(view?.thread.turns[0]?.cliVersion).toBe("1.5.0");
+    expect(harness.hook().notice?.kind).toBe("info");
+    harness.unmount();
+  });
+
+  it("dispatches with the cached version and announces the update found by the background refresh", async () => {
+    const harness = renderThreads();
+    await waitForReact(() => expect(harness.hook().agentCliVersion).toBe(CLI_VERSION));
+
+    harness.set({ cliVersion: "1.5.0" });
+    const result = await act(() => harness.hook().startThread(startRequest()));
+    const view = harness
+      .hook()
+      .threads.find((candidate) => candidate.thread.threadId === result?.threadId);
+
+    expect(view?.thread.turns[0]?.cliVersion).toBe(CLI_VERSION);
+    await waitForReact(() => expect(harness.hook().agentCliVersion).toBe("1.5.0"));
+    expect(harness.hook().notice).toEqual({
+      kind: "info",
+      message: agentCliVersionChangeMessage("claudeCode", CLI_VERSION, "1.5.0"),
+      action: null,
+    });
     harness.unmount();
   });
 

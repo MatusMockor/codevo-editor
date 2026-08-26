@@ -47,6 +47,7 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     lastStatusSequence: 0,
     lastOutputSequence: 0,
     launch: null,
+    cliVersion: null,
     ...overrides,
   };
 }

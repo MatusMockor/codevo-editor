@@ -40,8 +40,11 @@ describe("agent mode responsive layout contract", () => {
     const tablet = block(appCss, "@media (max-width: 1180px)");
     const narrow = block(appCss, "@media (max-width: 720px)");
 
-    expect(rule(".agent-mode__grid", tablet)).toContain(
-      "grid-template-columns: 248px minmax(0, 1fr)",
+    expect(rule('.agent-mode[data-rail="expanded"]', tablet)).toContain(
+      "--agent-rail-track: 248px",
+    );
+    expect(rule(".agent-mode__grid")).toContain(
+      "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr)",
     );
     expect(appCss).not.toContain(".agent-info");
     expect(appCss).not.toContain("--agent-info-width");
@@ -60,6 +63,33 @@ describe("agent mode responsive layout contract", () => {
     expect(
       rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss),
     ).toContain("padding-left: var(--agent-surface-tree-width)");
+  });
+
+  it("pins the maximized frame rail column to the rail track instead of the notice text", () => {
+    const maximizedFrame = rule(
+      '.workbench-frame[data-layout="agent"][data-right-panel="maximized"] {',
+      shellCss,
+    );
+    expect(maximizedFrame).not.toContain("grid-template-columns: auto");
+    expect(maximizedFrame).toContain("grid-template-columns: min-content minmax(0, 1fr)");
+
+    const maximizedAgent = rule(
+      '.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="agent"]',
+      shellCss,
+    );
+    expect(maximizedAgent).toContain("width: var(--agent-rail-track)");
+    expect(maximizedAgent).toContain("min-width: 0");
+    expect(maximizedAgent).toContain("overflow: hidden");
+  });
+
+  it("composes the collapsed rail with the maximized panel through the rail track", () => {
+    expect(rule(".agent-mode {")).toContain("--agent-rail-track: var(--agent-rail-width)");
+    expect(rule('.agent-mode[data-rail="collapsed"]')).toContain(
+      "--agent-rail-track: var(--agent-rail-collapsed-width)",
+    );
+    expect(rule('.agent-mode[data-right-panel="maximized"] .agent-mode__grid')).toContain(
+      "grid-template-columns: var(--agent-rail-track)",
+    );
   });
 
   it("keeps the ship panel bounded inside the session column", () => {

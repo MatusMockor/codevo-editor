@@ -121,6 +121,7 @@ function threadWith(events: ReadonlyArray<AgentTurnEvent>): AgentThread {
         lastStatusSequence: 0,
         lastOutputSequence: 0,
         launch: null,
+        cliVersion: null,
       },
     ],
     turnsTruncated: false,

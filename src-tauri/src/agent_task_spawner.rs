@@ -12,6 +12,10 @@ pub const MIN_AGENT_SESSION_ID_BYTES: usize = 8;
 pub const MAX_AGENT_SESSION_ID_BYTES: usize = 128;
 pub const AGENT_TASK_INHERITED_ENV: [&str; 7] =
     ["HOME", "PATH", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG"];
+pub const CLAUDE_CLI_BINARY_UNAVAILABLE_ERROR: &str =
+    "The Claude CLI binary is missing or not executable (it may be updating). Retry in a moment.";
+pub const CODEX_CLI_BINARY_UNAVAILABLE_ERROR: &str =
+    "The Codex CLI binary is missing or not executable (it may be updating). Retry in a moment.";
 
 #[path = "agent_launch.rs"]
 pub mod agent_launch;
@@ -91,12 +95,12 @@ pub fn plan_agent_invocation(
     if !program.is_absolute() {
         return Err("Agent CLI path must be absolute.".to_string());
     }
-    let metadata = fs::metadata(program)
-        .map_err(|error| format!("Agent CLI path is not readable: {error}"))?;
+    let metadata =
+        fs::metadata(program).map_err(|_| agent_cli_binary_unavailable_error(invocation))?;
     if !metadata.is_file() {
-        return Err("Agent CLI path is not a regular file.".to_string());
+        return Err(agent_cli_binary_unavailable_error(invocation));
     }
-    ensure_executable(&metadata)?;
+    ensure_executable(&metadata, invocation)?;
     if prompt.is_empty() {
         return Err("Agent prompt must not be empty.".to_string());
     }
@@ -171,7 +175,7 @@ pub fn validate_resume_session_id(candidate: &str) -> Result<&str, String> {
     Ok(candidate)
 }
 
-fn inherited_environment() -> Vec<(String, String)> {
+pub(crate) fn inherited_environment() -> Vec<(String, String)> {
     AGENT_TASK_INHERITED_ENV
         .iter()
         .filter_map(|key| {
@@ -182,17 +186,30 @@ fn inherited_environment() -> Vec<(String, String)> {
         .collect()
 }
 
+pub fn agent_cli_binary_unavailable_error(invocation: AgentCliInvocation) -> String {
+    match invocation {
+        AgentCliInvocation::ClaudeCode => CLAUDE_CLI_BINARY_UNAVAILABLE_ERROR.to_string(),
+        AgentCliInvocation::CodexExec => CODEX_CLI_BINARY_UNAVAILABLE_ERROR.to_string(),
+    }
+}
+
 #[cfg(unix)]
-fn ensure_executable(metadata: &fs::Metadata) -> Result<(), String> {
+fn ensure_executable(
+    metadata: &fs::Metadata,
+    invocation: AgentCliInvocation,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     if metadata.permissions().mode() & 0o111 == 0 {
-        return Err("Agent CLI path is not executable.".to_string());
+        return Err(agent_cli_binary_unavailable_error(invocation));
     }
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn ensure_executable(_metadata: &fs::Metadata) -> Result<(), String> {
+fn ensure_executable(
+    _metadata: &fs::Metadata,
+    _invocation: AgentCliInvocation,
+) -> Result<(), String> {
     Ok(())
 }
 
@@ -294,7 +311,7 @@ impl AgentChild for StdAgentChild {
 }
 
 #[cfg(unix)]
-fn observe_exit_without_reaping(child: &Child) -> io::Result<bool> {
+pub(crate) fn observe_exit_without_reaping(child: &Child) -> io::Result<bool> {
     loop {
         let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
         let result = unsafe {
@@ -316,7 +333,7 @@ fn observe_exit_without_reaping(child: &Child) -> io::Result<bool> {
     }
 }
 
-fn reap_child(child: &mut Child) -> io::Result<std::process::ExitStatus> {
+pub(crate) fn reap_child(child: &mut Child) -> io::Result<std::process::ExitStatus> {
     loop {
         match child.wait() {
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,

@@ -4,7 +4,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSurfaceFileTreeSurface } from "../../application/useAgentSurfaceFileTree";
+import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import { waitForReact } from "../../test/reactTestLifecycle";
+import { AGENT_SURFACE_HOTKEYS, agentSurfaceForHotkey } from "./agentSurfaceHotkeys";
 import {
   AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE,
   AgentSurfacePanel,
@@ -28,6 +30,24 @@ vi.mock("@xterm/addon-fit", async () =>
   (await import("./agentSurfaceTerminalTestSupport")).fitAddonMockModule(),
 );
 
+function open(
+  openSurfaces: ReadonlyArray<AgentSurfaceKind>,
+  activeSurface: AgentSurfaceKind | null,
+): AgentSurfacePanelProps["layout"] {
+  return { openSurfaces, activeSurface };
+}
+
+describe("agentSurfaceForHotkey", () => {
+  it("maps the card letters case-insensitively and rejects anything else", () => {
+    expect(agentSurfaceForHotkey("f")).toBe("files");
+    expect(agentSurfaceForHotkey("D")).toBe("diff");
+    expect(agentSurfaceForHotkey("t")).toBe("terminal");
+    expect(agentSurfaceForHotkey("x")).toBeNull();
+    expect(agentSurfaceForHotkey("Enter")).toBeNull();
+    expect(agentSurfaceForHotkey("")).toBeNull();
+  });
+});
+
 describe("AgentSurfacePanel", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -45,16 +65,48 @@ describe("AgentSurfacePanel", () => {
     host.remove();
   });
 
-  it("shows the empty state with three cards and routes a choice", () => {
-    const onChooseSurface = vi.fn();
-    render({ onChooseSurface });
+  it("shows the chooser with three cards, key hints and no tab strip", () => {
+    const onOpenSurface = vi.fn();
+    render({ onOpenSurface });
 
     expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
     expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(3);
     expect(host.querySelector("[data-surface]")?.getAttribute("data-surface")).toBe("empty");
+    expect(host.querySelector('[role="tablist"][aria-label="Surfaces"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Add surface"]')).toBeNull();
+    expect(
+      Array.from(host.querySelectorAll(".agent-surface-card__key")).map((key) => key.textContent),
+    ).toEqual([
+      AGENT_SURFACE_HOTKEYS.files,
+      AGENT_SURFACE_HOTKEYS.diff,
+      AGENT_SURFACE_HOTKEYS.terminal,
+    ]);
+    expect(
+      host.querySelector('[aria-label="Open Diff surface"]')?.getAttribute("aria-keyshortcuts"),
+    ).toBe("D");
     click('[aria-label="Open Diff surface"]');
-    expect(onChooseSurface).toHaveBeenCalledWith("diff");
-    expect(host.querySelector('[aria-label^="Expand to editor"]')).toBeNull();
+    expect(onOpenSurface).toHaveBeenCalledWith("diff");
+  });
+
+  it("focuses the chooser and opens a surface from its hint letter", () => {
+    const onOpenSurface = vi.fn();
+    render({ onOpenSurface, thread: null });
+    const chooser = host.querySelector<HTMLElement>('[role="group"][aria-label="Open a surface"]');
+    expect(chooser).not.toBeNull();
+    expect(document.activeElement).toBe(chooser);
+
+    keydown(chooser, "f");
+    expect(onOpenSurface).toHaveBeenCalledWith("files");
+
+    keydown(chooser, "d");
+    keydown(chooser, "t");
+    expect(onOpenSurface).toHaveBeenCalledTimes(1);
+
+    render({ onOpenSurface });
+    keydown(host.querySelector<HTMLElement>('[role="group"]'), "T");
+    expect(onOpenSurface).toHaveBeenLastCalledWith("terminal");
+    keydown(host.querySelector<HTMLElement>('[role="group"]'), "d", { metaKey: true });
+    expect(onOpenSurface).toHaveBeenCalledTimes(2);
   });
 
   it("tells the Files card what it opens with and without a thread", () => {
@@ -68,7 +120,6 @@ describe("AgentSurfacePanel", () => {
   it("disables cards with reasons: no thread, worktree gone, untrusted terminal", () => {
     render({ thread: null });
     expect(reasons()).toEqual([SURFACE_NO_THREAD_REASON, SURFACE_NO_THREAD_REASON]);
-    expect(host.querySelector('[role="tablist"][aria-label="Surfaces"]')).toBeNull();
     expect(
       host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]')?.disabled,
     ).toBe(false);
@@ -83,15 +134,12 @@ describe("AgentSurfacePanel", () => {
     const onTrustWorkspace = vi.fn();
     render({ workspaceTrusted: false, onTrustWorkspace });
     expect(reasons()).toEqual([SURFACE_UNTRUSTED_TERMINAL_REASON]);
-    expect(
-      host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]')?.disabled,
-    ).toBe(false);
     click('[aria-label="Trust the workspace"]');
     expect(onTrustWorkspace).toHaveBeenCalledTimes(1);
   });
 
   it("renders the Files surface as tree plus an empty editor slot and toggles the tree", () => {
-    render({ layout: { rightSurface: "files" } });
+    render({ layout: open(["files"], "files") });
 
     const aside = host.querySelector("aside.agent-surface");
     expect(aside?.getAttribute("data-surface")).toBe("files");
@@ -110,93 +158,208 @@ describe("AgentSurfacePanel", () => {
     expect(host.querySelector(`[${AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE}]`)).not.toBeNull();
   });
 
-  it("reports the tree hidden when the Files surface has no tree to show", () => {
-    render({ layout: { rightSurface: "files" }, fileTree: null, thread: null });
+  it("reports the tree hidden when the Files surface has no tree or is not active", () => {
+    render({ layout: open(["files"], "files"), fileTree: null, thread: null });
     const aside = host.querySelector("aside.agent-surface");
     expect(aside?.getAttribute("data-tree")).toBe("hidden");
     expect(host.querySelector('[aria-label="Toggle file tree"]')).toBeNull();
     expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
-    expect(host.querySelector(`[${AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE}]`)).not.toBeNull();
-
     const files = host.querySelector(".agent-surface__files");
     expect(files?.childElementCount).toBe(1);
     expect(files?.firstElementChild?.className).toBe("agent-surface__editor-slot");
 
-    render({ layout: { rightSurface: "diff" } });
+    render({ layout: open(["files", "diff"], "diff") });
     expect(host.querySelector("aside.agent-surface")?.getAttribute("data-tree")).toBe("hidden");
+    expect(host.querySelector('[aria-label="Toggle file tree"]')).toBeNull();
+    expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
   });
 
-  it("lazily mounts the real Diff and Terminal surfaces with the selected thread", async () => {
+  it("renders one tab per open surface with the close button and the add button", () => {
+    const onActivateSurface = vi.fn();
+    const onCloseSurfaceTab = vi.fn();
+    const onShowSurfaceChooser = vi.fn();
+    render({
+      layout: open(["files", "diff"], "files"),
+      onActivateSurface,
+      onCloseSurfaceTab,
+      onShowSurfaceChooser,
+    });
+
+    expect(tabLabels()).toEqual(["Files", "Diff"]);
+    expect(activeTab()).toBe("Files");
+    expect(
+      host.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute("aria-controls"),
+    ).toBe("agent-surface-panel-files");
+    expect(host.querySelector(".agent-surface__tabitem--active")?.textContent).toBe("Files");
+    expect(host.querySelectorAll(".agent-surface__tab-close")).toHaveLength(2);
+
+    click('[role="tab"]#agent-surface-tab-diff');
+    expect(onActivateSurface).toHaveBeenCalledWith("diff");
+    click('[aria-label="Close Diff tab"]');
+    expect(onCloseSurfaceTab).toHaveBeenCalledWith("diff");
+    click('[aria-label="Add surface"]');
+    expect(onShowSurfaceChooser).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the add button once every surface is open or while the chooser is shown", () => {
+    render({ layout: open(["files", "diff", "terminal"], "terminal") });
+    expect(host.querySelector('[aria-label="Add surface"]')).toBeNull();
+    expect(tabLabels()).toEqual(["Files", "Diff", "Terminal"]);
+
+    render({ layout: open(["files"], null) });
+    expect(host.querySelector('[aria-label="Add surface"]')).toBeNull();
+    expect(tabLabels()).toEqual(["Files"]);
+    expect(activeTab()).toBeNull();
+    expect(host.querySelector(".agent-surface-empty")).not.toBeNull();
+    expect(host.querySelector('[data-surface-panel="files"]')?.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("keeps inactive surfaces mounted but hidden and unmounts a closed tab", async () => {
     const gateway = fakeTerminalGateway();
     const props = defaultProps();
     const terminal = { ...props.terminal!, terminalGateway: gateway };
-    render({ layout: { rightSurface: "diff" }, terminal });
-    await waitForReact(() =>
-      expect(host.querySelector("[data-agent-surface-diff]")).not.toBeNull(),
-    );
-    expect(host.querySelector('[aria-label="Refresh changes for agent agt-1"]')).not.toBeNull();
-    expect(host.querySelector("[data-agent-surface-terminal]")).toBeNull();
-
-    render({ layout: { rightSurface: "terminal" }, terminal });
+    render({ layout: open(["diff", "terminal"], "terminal"), terminal });
     await waitForReact(() =>
       expect(host.querySelector('[role="tablist"][aria-label="Terminal sessions"]')).not.toBeNull(),
     );
-    expect(host.querySelector("[data-agent-surface-diff]")).toBeNull();
     await waitForReact(() => expect(gateway.start).toHaveBeenCalledTimes(1));
+    await waitForReact(() =>
+      expect(host.querySelector("[data-agent-surface-diff]")).not.toBeNull(),
+    );
+    expect(host.querySelector('[data-surface-panel="diff"]')?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector('[data-surface-panel="terminal"]')?.hasAttribute("hidden")).toBe(
+      false,
+    );
 
-    render({ layout: { rightSurface: null }, terminal });
+    render({ layout: open(["diff", "terminal"], "diff"), terminal });
+    expect(host.querySelector('[data-surface-panel="terminal"]')?.hasAttribute("hidden")).toBe(
+      true,
+    );
+    expect(host.querySelector("[data-agent-surface-terminal]")).not.toBeNull();
+    expect(gateway.stop).not.toHaveBeenCalled();
+    expect(gateway.start).toHaveBeenCalledTimes(1);
+
+    render({ layout: open(["diff"], "diff"), terminal });
     expect(host.querySelector("[data-agent-surface-terminal]")).toBeNull();
-    expect(host.querySelector(".agent-surface-empty")).not.toBeNull();
     await waitForReact(() => expect(gateway.stop).toHaveBeenCalledWith(1));
+    expect(host.querySelector("[data-agent-surface-diff]")).not.toBeNull();
   });
 
-  it("blocks the Terminal tab and card for a thread outside the workspace root", () => {
-    render({ workspaceRoot: "/workspace/other" });
-    expect(reasons()).toEqual([SURFACE_FOREIGN_ROOT_TERMINAL_REASON]);
+  it("explains a blocked open tab instead of mounting its surface", async () => {
+    render({ layout: open(["diff", "terminal"], "terminal"), workspaceRoot: "/workspace/other" });
+    await act(async () => Promise.resolve());
+    expect(host.querySelector("[data-agent-surface-terminal]")).toBeNull();
+    expect(host.querySelector('[data-surface-panel="terminal"] .agent-note')?.textContent).toBe(
+      SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
+    );
 
-    render({ layout: { rightSurface: "files" }, workspaceRoot: "/workspace/other" });
-    const tab = host.querySelector<HTMLButtonElement>('[role="tab"]:nth-child(3)');
-    expect(tab?.disabled).toBe(true);
-    expect(tab?.title).toBe(SURFACE_FOREIGN_ROOT_TERMINAL_REASON);
+    render({ layout: open(["diff"], "diff"), thread: null });
+    expect(host.querySelector('[data-surface-panel="diff"] .agent-note')?.textContent).toBe(
+      SURFACE_NO_THREAD_REASON,
+    );
   });
 
-  it("wires close, tabs and the single expand button in the layout controls slot", () => {
-    const onCloseSurface = vi.fn();
-    const onChooseSurface = vi.fn();
+  it("wires the layout controls slot, the resize handle and the close button", () => {
+    const onClosePanel = vi.fn();
     render({
-      layout: { rightSurface: "files" },
+      layout: open(["files"], "files"),
       layoutControls: <button data-layout-control type="button" />,
-      onChooseSurface,
-      onCloseSurface,
+      onClosePanel,
     });
 
-    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Files");
-    expect(host.querySelectorAll('[aria-label^="Expand to editor"]')).toHaveLength(0);
-    click('[aria-label="Back to surfaces"]');
-    click('[role="tab"]:nth-child(3)');
-    expect(onCloseSurface).toHaveBeenCalledTimes(1);
-    expect(onChooseSurface).toHaveBeenCalledWith("terminal");
     expect(
       host.querySelector(".agent-surface__layout-controls [data-layout-control]"),
     ).not.toBeNull();
     expect(host.querySelector('[role="separator"][aria-orientation="vertical"]')).not.toBeNull();
+    click('[aria-label="Close panel"]');
+    expect(onClosePanel).toHaveBeenCalledTimes(1);
+
+    render({ layout: open([], null), onClosePanel });
+    click('[aria-label="Close panel"]');
+    expect(onClosePanel).toHaveBeenCalledTimes(2);
   });
 
-  it("labels the dismiss button for the state it acts on", () => {
-    const onCloseSurface = vi.fn();
-    render({ layout: { rightSurface: "diff" }, onCloseSurface });
+  it("keeps the tablist owning only tabs and pairs each close button with its panel", () => {
+    render({ layout: open(["files", "diff"], "files") });
 
-    expect(host.querySelector('[aria-label="Close panel"]')).toBeNull();
-    expect(host.querySelector('[aria-label="Back to surfaces"]')?.getAttribute("title")).toBe(
-      "Back to surfaces",
+    const tablist = host.querySelector('[role="tablist"][aria-label="Surfaces"]');
+    expect(tablist).not.toBeNull();
+    expect(Array.from(tablist?.children ?? []).map((child) => child.getAttribute("role"))).toEqual([
+      "presentation",
+      "presentation",
+    ]);
+    expect(host.querySelector('[aria-label="Close Diff tab"]')?.getAttribute("aria-controls")).toBe(
+      "agent-surface-panel-diff",
+    );
+    expect(host.querySelector('[role="tab"]')?.closest('[role="tablist"]')).toBe(tablist);
+  });
+
+  it("rolls the tab stop and moves between tabs with the arrow, Home and End keys", () => {
+    const onActivateSurface = vi.fn();
+    render({ layout: open(["files", "diff", "terminal"], "diff"), onActivateSurface });
+
+    expect(
+      Array.from(host.querySelectorAll('[aria-label="Surfaces"] [role="tab"]')).map((tab) =>
+        tab.getAttribute("tabindex"),
+      ),
+    ).toEqual(["-1", "0", "-1"]);
+
+    keydown(host.querySelector<HTMLElement>("#agent-surface-tab-diff"), "ArrowRight");
+    expect(onActivateSurface).toHaveBeenLastCalledWith("terminal");
+
+    keydown(host.querySelector<HTMLElement>("#agent-surface-tab-diff"), "ArrowLeft");
+    expect(onActivateSurface).toHaveBeenLastCalledWith("files");
+
+    keydown(host.querySelector<HTMLElement>("#agent-surface-tab-diff"), "Home");
+    expect(onActivateSurface).toHaveBeenLastCalledWith("files");
+
+    keydown(host.querySelector<HTMLElement>("#agent-surface-tab-diff"), "End");
+    expect(onActivateSurface).toHaveBeenLastCalledWith("terminal");
+
+    keydown(host.querySelector<HTMLElement>("#agent-surface-tab-diff"), "ArrowRight", {
+      metaKey: true,
+    });
+    expect(onActivateSurface).toHaveBeenCalledTimes(4);
+  });
+
+  it("wraps the arrow keys around the tab strip and focuses the tab it activates", () => {
+    render({ layout: open(["files", "diff"], "files") });
+    const files = host.querySelector<HTMLElement>("#agent-surface-tab-files");
+    files?.focus();
+
+    keydown(files, "ArrowLeft");
+    expect(document.activeElement?.id).toBe("agent-surface-tab-diff");
+  });
+
+  it("focuses the chooser only when it was explicitly requested", () => {
+    render({ chooserAutoFocus: false });
+    expect(document.activeElement).not.toBe(
+      host.querySelector('[role="group"][aria-label="Open a surface"]'),
     );
 
-    render({ layout: { rightSurface: null }, onCloseSurface });
-
-    expect(host.querySelector('[aria-label="Back to surfaces"]')).toBeNull();
-    click('[aria-label="Close panel"]');
-    expect(onCloseSurface).toHaveBeenCalledTimes(1);
+    render({ chooserAutoFocus: true });
+    expect(document.activeElement).toBe(
+      host.querySelector('[role="group"][aria-label="Open a surface"]'),
+    );
   });
+
+  it("never focuses the chooser of a hidden panel and reports no tree", () => {
+    render({ hidden: true, chooserAutoFocus: true });
+    expect(document.activeElement).not.toBe(
+      host.querySelector('[role="group"][aria-label="Open a surface"]'),
+    );
+
+    render({ hidden: true, layout: open(["files"], "files") });
+    expect(host.querySelector("[data-surface]")?.getAttribute("data-tree")).toBe("hidden");
+  });
+
+  function tabLabels(): string[] {
+    return Array.from(host.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent ?? "");
+  }
+
+  function activeTab(): string | null {
+    return host.querySelector('[role="tab"][aria-selected="true"]')?.textContent ?? null;
+  }
 
   function filesCardDescription(): string {
     return (
@@ -220,6 +383,13 @@ describe("AgentSurfacePanel", () => {
     expect(element, `Missing element ${selector}`).not.toBeNull();
     act(() => element?.click());
   }
+
+  function keydown(element: HTMLElement | null, key: string, init: KeyboardEventInit = {}): void {
+    expect(element).not.toBeNull();
+    act(() => {
+      element?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init }));
+    });
+  }
 });
 
 function tree(): AgentSurfaceFileTreeSurface {
@@ -240,11 +410,13 @@ function tree(): AgentSurfaceFileTreeSurface {
 function defaultProps(): AgentSurfacePanelProps {
   const thread = surfaceThreadView();
   return {
-    layout: { rightSurface: null },
+    layout: open([], null),
     thread,
     workspaceRoot: "/workspace/app",
     workspaceTrusted: true,
     layoutControls: null,
+    hidden: false,
+    chooserAutoFocus: true,
     fileTree: {
       tree: tree(),
       activePath: null,
@@ -272,8 +444,11 @@ function defaultProps(): AgentSurfacePanelProps {
       profileLabel: null,
       shellIntegrationEnabled: false,
     },
-    onChooseSurface: () => undefined,
-    onCloseSurface: () => undefined,
+    onOpenSurface: () => undefined,
+    onActivateSurface: () => undefined,
+    onCloseSurfaceTab: () => undefined,
+    onShowSurfaceChooser: () => undefined,
+    onClosePanel: () => undefined,
   };
 }
 

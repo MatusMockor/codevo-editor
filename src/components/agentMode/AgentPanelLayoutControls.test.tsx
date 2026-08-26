@@ -68,6 +68,23 @@ describe("AgentPanelLayoutControls", () => {
     expect(right.title).toBe("Toggle right panel (⌥⌘R)");
   });
 
+  it("shows the maximize toggle only when a maximize control is given", () => {
+    render({});
+    expect(host.querySelector('[aria-label="Maximize panel"]')).toBeNull();
+
+    const onToggle = vi.fn();
+    render({ maximize: { maximized: false, onToggle } });
+    const maximize = button("Maximize panel");
+    expect(maximize.getAttribute("aria-pressed")).toBe("false");
+    act(() => maximize.click());
+    expect(onToggle).toHaveBeenCalledTimes(1);
+
+    render({ maximize: { maximized: true, onToggle } });
+    const restore = button("Restore panel");
+    expect(restore.getAttribute("aria-pressed")).toBe("true");
+    expect(host.querySelector('[aria-label="Maximize panel"]')).toBeNull();
+  });
+
   it("shows the expand button only when an expand handler is given", () => {
     const onExpandEditor = vi.fn();
     render({ onExpandEditor });

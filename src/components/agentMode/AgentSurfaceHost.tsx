@@ -21,13 +21,18 @@ export type AgentSurfaceHostAgents = Pick<
 
 export interface AgentSurfaceHostProps {
   readonly chrome: AgentWorkbenchChrome;
-  readonly layout: Pick<AgentWorkbenchLayout, "rightSurface">;
+  readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
   readonly thread: AgentThreadView | null;
   readonly workspaceRoot: string | null;
   readonly agents: AgentSurfaceHostAgents;
   readonly layoutControls: ReactNode;
-  onChooseSurface(surface: AgentSurfaceKind): void;
-  onCloseSurface(): void;
+  readonly hidden: boolean;
+  readonly chooserAutoFocus: boolean;
+  onOpenSurface(surface: AgentSurfaceKind): void;
+  onActivateSurface(surface: AgentSurfaceKind): void;
+  onCloseSurfaceTab(surface: AgentSurfaceKind): void;
+  onShowSurfaceChooser(): void;
+  onClosePanel(): void;
 }
 
 const UNAVAILABLE_FILES: AgentSurfaceFileTreeDependencies["files"] = {
@@ -36,18 +41,24 @@ const UNAVAILABLE_FILES: AgentSurfaceFileTreeDependencies["files"] = {
 
 export function AgentSurfaceHost({
   agents,
+  chooserAutoFocus,
   chrome,
+  hidden,
   layout,
   layoutControls,
-  onChooseSurface,
-  onCloseSurface,
+  onActivateSurface,
+  onClosePanel,
+  onCloseSurfaceTab,
+  onOpenSurface,
+  onShowSurfaceChooser,
   thread,
   workspaceRoot,
 }: AgentSurfaceHostProps) {
   const fileTreeChrome = chrome.fileTree;
+  const filesOpen = layout.openSurfaces.includes("files");
   const target = useMemo(
-    () => fileTreeTarget(chrome.workspaceId, thread, layout.rightSurface === "files"),
-    [chrome.workspaceId, layout.rightSurface, thread],
+    () => fileTreeTarget(chrome.workspaceId, thread, filesOpen),
+    [chrome.workspaceId, filesOpen, thread],
   );
   const tree = useAgentSurfaceFileTree({
     target,
@@ -111,15 +122,25 @@ export function AgentSurfaceHost({
   ]);
 
   return (
-    <div className="agent-mode agent-mode--surface" data-slot="surface">
+    <div
+      aria-hidden={hidden || undefined}
+      className="agent-mode agent-mode--surface"
+      data-slot="surface"
+      hidden={hidden}
+    >
       <AgentSurfacePanel
+        chooserAutoFocus={chooserAutoFocus}
         diff={diff}
+        hidden={hidden}
         fileTree={fileTree}
         layout={layout}
         layoutControls={layoutControls}
-        onChooseSurface={onChooseSurface}
-        onCloseSurface={onCloseSurface}
+        onActivateSurface={onActivateSurface}
+        onClosePanel={onClosePanel}
+        onCloseSurfaceTab={onCloseSurfaceTab}
+        onOpenSurface={onOpenSurface}
         onResizeStart={chrome.onResizeRightPanelStart}
+        onShowSurfaceChooser={onShowSurfaceChooser}
         onTrustWorkspace={chrome.onTrustWorkspace}
         terminal={terminal}
         thread={thread}

@@ -391,6 +391,7 @@ function threadsSurface(root: string, worktreePath: string | null): AgentThreads
     dispatching: false,
     agentCliConfigured: true,
     agentCliKind: "claudeCode",
+    agentCliVersion: null,
     liveTaskCount: 0,
     maxConcurrentAgentTasks: 4,
     isolationPreview: (repositoryRoot: string) => ({
@@ -462,6 +463,7 @@ function threadView(root: string, worktreePath: string | null): AgentThreadView 
         lastStatusSequence: 0,
         lastOutputSequence: 0,
         launch: null,
+        cliVersion: null,
       },
     ],
     turnsTruncated: false,

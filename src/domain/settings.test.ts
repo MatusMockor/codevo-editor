@@ -1135,10 +1135,39 @@ describe("normalizeWorkspaceSession", () => {
     expect(normalized.agentWorkbench).toEqual({
       layout: "agent",
       rightPanel: "open",
-      rightSurface: "diff",
+      openSurfaces: ["diff"],
+      activeSurface: "diff",
+      rightPanelMaximized: false,
       bottomPanel: true,
       rightPanelWidth: 640,
       bottomPanelHeight: 320,
+    });
+  });
+
+  it("restores the tabbed agent workbench layout", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      agentWorkbench: {
+        layout: "agent",
+        rightPanel: "open",
+        openSurfaces: ["files", "terminal", "bogus", "files"],
+        activeSurface: "terminal",
+        rightPanelMaximized: true,
+        bottomPanel: false,
+        rightPanelWidth: 540,
+        bottomPanelHeight: 280,
+      },
+    });
+
+    expect(normalized.agentWorkbench).toEqual({
+      layout: "agent",
+      rightPanel: "open",
+      openSurfaces: ["files", "terminal"],
+      activeSurface: "terminal",
+      rightPanelMaximized: true,
+      bottomPanel: false,
+      rightPanelWidth: 540,
+      bottomPanelHeight: 280,
     });
   });
 
@@ -1159,6 +1188,9 @@ describe("normalizeWorkspaceSession", () => {
       agentWorkbench: {
         layout: "browser",
         rightSurface: "preview",
+        openSurfaces: "files",
+        activeSurface: "files",
+        rightPanelMaximized: "yes",
         bottomPanel: "yes",
         rightPanelWidth: "wide",
         bottomPanelHeight: "tall",
@@ -1170,7 +1202,34 @@ describe("normalizeWorkspaceSession", () => {
     );
   });
 
-  it("never persists the remembered surface", () => {
+  it("round-trips a closed agent panel that still remembers its tabs", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      agentWorkbench: {
+        layout: "agent",
+        rightPanel: "closed",
+        openSurfaces: ["files", "terminal"],
+        activeSurface: "terminal",
+        rightPanelMaximized: true,
+        bottomPanel: false,
+        rightPanelWidth: 640,
+        bottomPanelHeight: 300,
+      },
+    });
+
+    expect(normalized.agentWorkbench).toEqual({
+      layout: "agent",
+      rightPanel: "closed",
+      openSurfaces: ["files", "terminal"],
+      activeSurface: "terminal",
+      rightPanelMaximized: false,
+      bottomPanel: false,
+      rightPanelWidth: 640,
+      bottomPanelHeight: 300,
+    });
+  });
+
+  it("drops the legacy remembered surface field", () => {
     const normalized = normalizeWorkspaceSession({
       ...defaultWorkspaceSessionState(),
       agentWorkbench: {

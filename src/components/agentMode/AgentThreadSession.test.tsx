@@ -258,6 +258,27 @@ describe("AgentThreadSession", () => {
     render({ thread: threadView({}) });
 
     expect(host.querySelector(".agent-prompt__launch")).toBeNull();
+    expect(host.querySelector(".agent-prompt__cli")).toBeNull();
+  });
+
+  it("shows the CLI version a turn ran with and stays quiet when it is unknown", () => {
+    render({
+      thread: threadView({
+        turns: [
+          {
+            ...turn("agt-1-t1", "Plan it", { kind: "exited", exitCode: 0 }, []),
+            cliVersion: "2.1.245",
+          },
+          turn("agt-1-t2", "Do it", { kind: "exited", exitCode: 0 }, []),
+        ],
+      }),
+    });
+
+    const versions = Array.from(host.querySelectorAll(".agent-prompt__cli"));
+    expect(versions.map((node) => node.textContent)).toEqual(["claude 2.1.245"]);
+    expect(versions[0]?.closest("[data-agent-turn]")?.getAttribute("data-agent-turn")).toBe(
+      "agt-1-t1",
+    );
   });
 
   it("tells the user when the worktree was removed or disappeared", () => {
@@ -599,6 +620,7 @@ function turn(
     lastStatusSequence: 0,
     lastOutputSequence: 0,
     launch,
+    cliVersion: null,
   };
 }
 

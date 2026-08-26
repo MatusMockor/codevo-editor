@@ -220,6 +220,7 @@ mod tests {
                     last_status_sequence: 0,
                     last_output_sequence: 0,
                     launch: None,
+                    cli_version: None,
                 }],
                 turns_truncated: false,
                 viewed_at_epoch_ms: None,

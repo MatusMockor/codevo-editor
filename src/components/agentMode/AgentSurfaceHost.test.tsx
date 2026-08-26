@@ -39,7 +39,10 @@ describe("AgentSurfaceHost", () => {
 
   it("starts the thread terminal on the registered workspace root, not the thread checkout", async () => {
     const gateway = fakeTerminalGateway();
-    render({ chrome: chrome(gateway), layout: { rightSurface: "terminal" } });
+    render({
+      chrome: chrome(gateway),
+      layout: { openSurfaces: ["terminal"], activeSurface: "terminal" },
+    });
     await waitForReact(() => expect(host.querySelector(TABLIST)).not.toBeNull());
     await waitForReact(() => expect(gateway.start).toHaveBeenCalledTimes(1));
     expect(gateway.start).toHaveBeenCalledWith(
@@ -62,17 +65,23 @@ describe("AgentSurfaceHost", () => {
         },
       },
     } as never);
-    render({ chrome: chrome(gateway), layout: { rightSurface: "terminal" }, thread });
+    render({
+      chrome: chrome(gateway),
+      layout: { openSurfaces: ["terminal"], activeSurface: "terminal" },
+      thread,
+    });
     await waitForReact(() =>
-      expect(host.querySelector(".agent-surface-terminal .agent-note--warning")).not.toBeNull(),
+      expect(
+        host.querySelector('[data-surface-panel="terminal"] .agent-note--warning'),
+      ).not.toBeNull(),
     );
-    expect(host.querySelector(".agent-surface-terminal .agent-note--warning")?.textContent).toBe(
-      SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
-    );
+    expect(
+      host.querySelector('[data-surface-panel="terminal"] .agent-note--warning')?.textContent,
+    ).toBe(SURFACE_FOREIGN_ROOT_TERMINAL_REASON);
     expect(host.querySelector(TABLIST)).toBeNull();
     expect(gateway.start).not.toHaveBeenCalled();
 
-    render({ chrome: chrome(gateway), layout: { rightSurface: null }, thread });
+    render({ chrome: chrome(gateway), layout: { openSurfaces: [], activeSurface: null }, thread });
     const card = host.querySelector<HTMLButtonElement>('[aria-label="Open Terminal surface"]');
     expect(card?.disabled).toBe(true);
     expect(host.querySelector("#agent-surface-card-terminal")?.textContent).toBe(
@@ -82,7 +91,11 @@ describe("AgentSurfaceHost", () => {
 
   it("offers no terminal without a registered workspace root", async () => {
     const gateway = fakeTerminalGateway();
-    render({ chrome: chrome(gateway), layout: { rightSurface: "terminal" }, workspaceRoot: null });
+    render({
+      chrome: chrome(gateway),
+      layout: { openSurfaces: ["terminal"], activeSurface: "terminal" },
+      workspaceRoot: null,
+    });
     await act(async () => Promise.resolve());
     expect(host.querySelector(TABLIST)).toBeNull();
     expect(gateway.start).not.toHaveBeenCalled();
@@ -101,7 +114,7 @@ function chrome(
     : never,
 ): AgentWorkbenchChrome {
   return {
-    layout: { layout: { rightSurface: "terminal" } } as never,
+    layout: { layout: { openSurfaces: ["terminal"], activeSurface: "terminal" } } as never,
     bottomPanelVisible: false,
     shortcuts: null,
     scripts: UNAVAILABLE_AGENT_SCRIPT_RUNNER,
@@ -125,9 +138,11 @@ function chrome(
 function defaultProps(): AgentSurfaceHostProps {
   return {
     chrome: chrome(fakeTerminalGateway()),
-    layout: { rightSurface: null },
+    layout: { openSurfaces: [], activeSurface: null },
     thread: surfaceThreadView(),
     workspaceRoot: SURFACE_FIXTURE_ROOT,
+    hidden: false,
+    chooserAutoFocus: true,
     agents: {
       showChanges: async () => undefined,
       showFileDiff: async () => undefined,
@@ -136,7 +151,10 @@ function defaultProps(): AgentSurfaceHostProps {
       openChangedFileDiff: async () => undefined,
     },
     layoutControls: null,
-    onChooseSurface: () => undefined,
-    onCloseSurface: () => undefined,
+    onOpenSurface: () => undefined,
+    onActivateSurface: () => undefined,
+    onCloseSurfaceTab: () => undefined,
+    onShowSurfaceChooser: () => undefined,
+    onClosePanel: () => undefined,
   };
 }

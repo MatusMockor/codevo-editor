@@ -91,6 +91,25 @@ describe("AgentStatusBarHost", () => {
 
     expect(host.querySelector(".status-agent-launch")).toBeNull();
     expect(host.querySelector(".status-agent-attention")).toBeNull();
+    expect(host.querySelector(".status-agent-cli")).toBeNull();
+  });
+
+  it("names the configured CLI binary and its probed version", () => {
+    render({ agents: agents({ agentCliKind: "claudeCode", agentCliVersion: "2.1.245" }) });
+
+    expect(host.querySelector(".status-agent-cli")?.textContent).toBe("claude 2.1.245");
+  });
+
+  it("labels the codex binary by its executable name", () => {
+    render({ agents: agents({ agentCliKind: "codex", agentCliVersion: "0.104.0" }) });
+
+    expect(host.querySelector(".status-agent-cli")?.textContent).toBe("codex 0.104.0");
+  });
+
+  it("hides the version while the probe is unknown", () => {
+    render({ agents: agents({ agentCliVersion: null }) });
+
+    expect(host.querySelector(".status-agent-cli")).toBeNull();
   });
 
   it("reports the live slots of the surface it was given", () => {
@@ -118,6 +137,8 @@ function agents(overrides: Partial<AgentStatusBarAgents>): AgentStatusBarAgents 
     liveTaskCount: 0,
     maxConcurrentAgentTasks: 3,
     lastUsedLaunch: () => null,
+    agentCliKind: "claudeCode",
+    agentCliVersion: null,
     ...overrides,
   };
 }
@@ -178,5 +199,6 @@ function turn(threadId: string, launch: AgentLaunchOptions | null): AgentTurn {
     lastStatusSequence: 0,
     lastOutputSequence: 0,
     launch,
+    cliVersion: null,
   };
 }

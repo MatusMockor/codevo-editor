@@ -68,6 +68,7 @@ function turn(turnId: string): AgentTurn {
     lastStatusSequence: 0,
     lastOutputSequence: 0,
     launch: null,
+    cliVersion: null,
   };
 }
 

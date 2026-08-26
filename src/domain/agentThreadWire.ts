@@ -1,3 +1,4 @@
+import { parseAgentCliVersion } from "./agentCliVersion";
 import {
   parseStoredAgentLaunchOptions,
   serializeAgentLaunchOptions,
@@ -101,6 +102,7 @@ function serializeTurn(turn: AgentTurn): Record<string, unknown> {
     lastStatusSequence: turn.lastStatusSequence,
     lastOutputSequence: turn.lastOutputSequence,
     launch: turn.launch === null ? null : serializeAgentLaunchOptions(turn.launch),
+    cliVersion: turn.cliVersion,
   };
 }
 
@@ -336,7 +338,7 @@ function parseTurn(value: unknown, path: string): AgentTurn {
       "lastStatusSequence",
       "lastOutputSequence",
     ],
-    ["launch"],
+    ["launch", "cliVersion"],
     path,
   );
   return {
@@ -352,7 +354,15 @@ function parseTurn(value: unknown, path: string): AgentTurn {
     lastStatusSequence: unsignedSafeInteger(turn.lastStatusSequence, `${path}.lastStatusSequence`),
     lastOutputSequence: unsignedSafeInteger(turn.lastOutputSequence, `${path}.lastOutputSequence`),
     launch: parseLaunch(turn.launch, `${path}.launch`),
+    cliVersion: parseCliVersion(turn.cliVersion, `${path}.cliVersion`),
   };
+}
+
+function parseCliVersion(value: unknown, path: string): string | null {
+  if (value === undefined || value === null) return null;
+  const version = parseAgentCliVersion(value);
+  if (version === null || version !== value) invalid(path, "a bounded agent CLI version");
+  return version;
 }
 
 function parseTurnStatus(value: unknown, path: string): AgentTurnStatus {

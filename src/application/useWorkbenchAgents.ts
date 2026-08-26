@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { GitIntegrationGateway } from "../domain/gitIntegration";
@@ -51,6 +52,7 @@ export interface WorkbenchAgentProjectGateways {
 
 export interface WorkbenchAgentsOptions {
   readonly agentTaskGateway?: AgentTaskGateway;
+  readonly agentCliVersionGateway?: AgentCliVersionGateway;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly gitWorktreeGateway?: GitWorktreeGateway;
   readonly gitIntegrationGateway?: GitIntegrationGateway;
@@ -204,6 +206,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
 
   const threads = useAgentThreads({
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
+    agentCliVersionGateway: options.agentCliVersionGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway ?? defaultAgentThreadStoreGateway,
     gitWorktreeGateway: options.gitWorktreeGateway ?? defaultGitWorktreeGateway,
     gitGateway: options.gitGateway,

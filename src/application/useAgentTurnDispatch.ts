@@ -75,6 +75,11 @@ export interface AgentTurnDispatchDependencies extends AgentTurnAdmissionDepende
     unsafeInPlaceConfirmationKey: string | null,
   ) => Promise<InPlacePreflight>;
   readonly retainUncertainWorktree: (worktreePath: string) => void;
+  readonly currentCliVersion?: () => string | null;
+  readonly probeCliVersion?: (
+    agentCliPath: string,
+    agentCliKind: AgentCliKind,
+  ) => Promise<string | null>;
   readonly onWorktreeDispatchFailed?: () => void;
   readonly onTurnTerminal?: (event: AgentTaskStatusEvent) => void;
   readonly onProjectDispatchTrustRejected?: (projectRootKey: string) => void;
@@ -313,7 +318,9 @@ export function useAgentTurnDispatch(
       const stillOwned = (): boolean =>
         isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot) &&
         registeredTurnAlive(start);
-      const turn = pendingTurn(turnId, start.prompt, now(), start.launch);
+      const cliVersion = deps.currentCliVersion?.() ?? null;
+      refreshCliVersion(deps, start);
+      const turn = pendingTurn(turnId, start.prompt, now(), start.launch, cliVersion);
       if (start.registration === "before-start") start.register(turn);
       const started = await attempt(() =>
         gateway.startAgentTask({
@@ -594,11 +601,18 @@ function noteSessionChange(
   deps.setNotice(notice);
 }
 
+function refreshCliVersion(deps: AgentTurnDispatchDependencies, start: TurnStart): void {
+  const probe = deps.probeCliVersion;
+  if (probe === undefined) return;
+  void attempt(() => probe(start.agentCliPath, start.agentCliKind));
+}
+
 function pendingTurn(
   turnId: string,
   prompt: string,
   startedAtEpochMs: number,
   launch: AgentLaunchOptions,
+  cliVersion: string | null,
 ): AgentTurn {
   return {
     turnId,
@@ -611,6 +625,7 @@ function pendingTurn(
     lastStatusSequence: 0,
     lastOutputSequence: 0,
     launch,
+    cliVersion,
   };
 }
 

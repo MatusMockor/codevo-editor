@@ -924,6 +924,8 @@ describe("App command routing", () => {
         repositories: [],
         threads: [],
         lastUsedLaunch: () => null,
+        agentCliKind: "claudeCode",
+        agentCliVersion: null,
         agentProjects: { projects: [], overflowRootPaths: [] },
       },
     };
@@ -974,7 +976,7 @@ describe("App command routing", () => {
     bindSurfacePolicy(true);
     click(host.querySelector<HTMLButtonElement>('button[aria-label="Collapse editor (⌥⌘E)"]'));
 
-    expect(mocks.agentLayoutDispatch).toHaveBeenLastCalledWith({ kind: "showRightPanel" });
+    expect(mocks.agentLayoutDispatch).toHaveBeenLastCalledWith({ kind: "collapseEditor" });
   });
 
   it("keeps one editor runtime mounted across agent, files surface, expanded and collapsed", async () => {
@@ -993,16 +995,28 @@ describe("App command routing", () => {
     }> = [
       { layout: agentLayoutState("agent"), hidden: true },
       {
-        layout: agentLayoutState("agent", { rightPanel: "open", rightSurface: "files" }),
+        layout: agentLayoutState("agent", {
+          rightPanel: "open",
+          openSurfaces: ["files"],
+          activeSurface: "files",
+        }),
         hidden: false,
       },
       {
-        layout: agentLayoutState("agent", { rightPanel: "open", rightSurface: "diff" }),
+        layout: agentLayoutState("agent", {
+          rightPanel: "open",
+          openSurfaces: ["diff"],
+          activeSurface: "diff",
+        }),
         hidden: true,
       },
       { layout: agentLayoutState("editor-expanded"), hidden: false },
       {
-        layout: agentLayoutState("agent", { rightPanel: "open", rightSurface: "files" }),
+        layout: agentLayoutState("agent", {
+          rightPanel: "open",
+          openSurfaces: ["files"],
+          activeSurface: "files",
+        }),
         hidden: false,
       },
       { layout: agentLayoutState("agent"), hidden: true },
@@ -1127,13 +1141,15 @@ function createWorkbench() {
       activeDocument: null,
       activeFrameworkActivityLabel: null,
       agentModeActive: false,
-      agentWorkbench: agentLayoutState("editor-expanded", { lastSurface: "files" }),
+      agentWorkbench: agentLayoutState("editor-expanded"),
       agents: {
         liveTaskCount: 0,
         maxConcurrentAgentTasks: 4,
         repositories: [],
         threads: [],
         lastUsedLaunch: () => null,
+        agentCliKind: "claudeCode",
+        agentCliVersion: null,
         agentProjects: { projects: [], overflowRootPaths: [] },
       },
       activePath: null,

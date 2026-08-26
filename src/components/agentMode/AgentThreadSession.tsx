@@ -1,6 +1,8 @@
 import { memo, useEffect, useMemo, useRef, type ReactNode } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import { agentCliVersionLabel } from "../../domain/agentCliVersion";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentTurn } from "../../domain/agentThread";
 import {
   MIN_THREAD_SEARCH_QUERY_CHARS,
@@ -122,6 +124,7 @@ function AgentThreadSessionBody({
               highlight={highlightFor(turn.turnId)}
               isolationLabel={record.target.isolation}
               key={turn.turnId}
+              provider={record.provider.kind}
               renderProbe={turnRenderProbe}
               turn={turn}
             />
@@ -153,14 +156,17 @@ function AgentThreadSessionBody({
 const AgentTurnView = memo(function AgentTurnView({
   highlight = null,
   isolationLabel,
+  provider,
   renderProbe,
   turn,
 }: {
   readonly highlight?: AgentTurnHighlight | null;
   readonly isolationLabel: AgentThreadView["thread"]["target"]["isolation"];
+  readonly provider: AgentCliKind;
   readonly renderProbe?: (turnId: string) => void;
   readonly turn: AgentTurn;
 }) {
+  const cliVersion = agentCliVersionLabel(provider, turn.cliVersion);
   renderProbe?.(turn.turnId);
   const projection = agentTurnProjection(turn.events);
   const running = turn.status.kind === "pending" || turn.status.kind === "running";
@@ -189,6 +195,14 @@ const AgentTurnView = memo(function AgentTurnView({
           <span aria-hidden="true" className="agent-prompt__sep" />
           <span>{agentTurnStatusLabel(turn.status).toLowerCase()}</span>
           {turn.launch !== null && <AgentTurnLaunchMeta launch={turn.launch} />}
+          {cliVersion !== null && (
+            <>
+              <span aria-hidden="true" className="agent-prompt__sep" />
+              <span className="agent-prompt__cli" title="CLI version this turn ran with">
+                {cliVersion}
+              </span>
+            </>
+          )}
         </div>
       </article>
 

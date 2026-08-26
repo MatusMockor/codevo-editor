@@ -94,6 +94,7 @@ export interface AgentTurn {
   readonly lastStatusSequence: number;
   readonly lastOutputSequence: number;
   readonly launch: AgentLaunchOptions | null;
+  readonly cliVersion: string | null;
 }
 
 export interface AgentThreadPushReceipt {

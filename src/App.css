@@ -2066,6 +2066,25 @@ button {
   flex: 1 1 auto;
 }
 
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] {
+  grid-template-columns: min-content minmax(0, 1fr);
+}
+
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="agent"] {
+  width: var(--agent-rail-track);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="surface"],
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="editor"] {
+  grid-row: 1;
+}
+
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="bottom"] {
+  grid-column: 2;
+}
+
 .workbench-frame[data-layout="editor-expanded"] > [data-slot="agent"],
 .workbench-frame[data-layout="editor-expanded"] > [data-slot="surface"] {
   display: none;

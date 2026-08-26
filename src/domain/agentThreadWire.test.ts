@@ -12,6 +12,7 @@ const STORED_TURN = {
   eventsTruncated: false,
   lastStatusSequence: 0,
   lastOutputSequence: 0,
+  cliVersion: null,
 } as const;
 
 function storedThread(launch: unknown): Record<string, unknown> {
@@ -30,6 +31,10 @@ function storedThread(launch: unknown): Record<string, unknown> {
     integration: null,
     viewedAtEpochMs: null,
   };
+}
+
+function storedThreadWithTurn(turn: Record<string, unknown>): Record<string, unknown> {
+  return { ...storedThread(null), turns: [turn] };
 }
 
 describe("agentThreadWire launch effort", () => {
@@ -73,5 +78,35 @@ describe("agentThreadWire launch effort", () => {
 
     expect(parsed.turns[0].launch).toBeNull();
     expect(serializeAgentThread(parsed)).toEqual(storedThread(null));
+  });
+});
+
+describe("agentThreadWire cliVersion", () => {
+  it("reads a thread stored before the cliVersion field existed as null", () => {
+    const { cliVersion: _cliVersion, ...legacyTurn } = STORED_TURN;
+
+    const parsed = parseAgentThread(storedThreadWithTurn({ ...legacyTurn, launch: null }));
+
+    expect(parsed.turns[0].cliVersion).toBeNull();
+    expect(serializeAgentThread(parsed)).toEqual(storedThread(null));
+  });
+
+  it("round-trips a recorded CLI version", () => {
+    const stored = storedThreadWithTurn({ ...STORED_TURN, launch: null, cliVersion: "2.1.245" });
+
+    const parsed = parseAgentThread(stored);
+
+    expect(parsed.turns[0].cliVersion).toBe("2.1.245");
+    expect(serializeAgentThread(parsed)).toEqual(stored);
+  });
+
+  it("rejects a non-canonical or malformed stored CLI version", () => {
+    const rejected: readonly unknown[] = ["garbage", " 2.1.245", "v2.1.245", "2", "", 2.1, {}];
+
+    for (const cliVersion of rejected) {
+      expect(() =>
+        parseAgentThread(storedThreadWithTurn({ ...STORED_TURN, launch: null, cliVersion })),
+      ).toThrow(/thread\.turns\[0\]\.cliVersion/);
+    }
   });
 });

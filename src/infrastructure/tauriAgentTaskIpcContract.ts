@@ -1,3 +1,4 @@
+import { agentCliBinaryUnavailableMessage } from "../domain/agentCliVersion";
 import {
   AgentTaskStartRejectedError,
   parseAgentTaskOutputEvent,
@@ -40,6 +41,8 @@ export const DEFINITE_AGENT_TASK_START_REJECTIONS: ReadonlySet<string> = new Set
   "An agent task is already running in this working directory.",
   "An agent task with this taskId already exists.",
   AGENT_LAUNCH_PROVIDER_MISMATCH_REJECTION,
+  agentCliBinaryUnavailableMessage("claudeCode"),
+  agentCliBinaryUnavailableMessage("codex"),
 ]);
 
 export function classifyAgentTaskStartFailure(error: unknown): unknown {

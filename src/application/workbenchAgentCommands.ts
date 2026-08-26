@@ -1,9 +1,7 @@
-import {
-  editorExpandToggleAction,
-  rightPanelToggleAction,
-  type AgentSurfaceKind,
-  type AgentWorkbenchLayout,
-  type AgentWorkbenchLayoutAction,
+import type {
+  AgentSurfaceKind,
+  AgentWorkbenchLayout,
+  AgentWorkbenchLayoutAction,
 } from "../domain/agentWorkbenchLayout";
 import type { KeymapCommandId } from "../domain/keymap";
 import {
@@ -69,26 +67,6 @@ export function workbenchAgentCommands({
     isEnabled: (context) => context.hasWorkspace,
     run: () => agentLayout?.dispatch(action),
   });
-  const layoutPolicyCommand = (
-    id: KeymapCommandId,
-    title: string,
-    actionFor: (
-      layout: AgentWorkbenchLayout,
-      isSurfaceBlocked: (surface: AgentSurfaceKind) => boolean,
-    ) => AgentWorkbenchLayoutAction,
-  ): Command => ({
-    id,
-    title,
-    category: "Agents",
-    shortcut: shortcut?.(id),
-    isEnabled: (context) => context.hasWorkspace,
-    run: () => {
-      if (agentLayout === undefined) return;
-      agentLayout.dispatch(
-        actionFor(agentLayout.layout, (surface) => viewCommands.surfaceBlocked(surface)),
-      );
-    },
-  });
 
   return [
     viewCommand("agent.newThread", "New Thread"),
@@ -101,17 +79,15 @@ export function workbenchAgentCommands({
     viewCommand("agent.findInThread", "Find in Thread", withThread),
     viewCommand("agent.runPreferredScript", "Run Thread Script", withThread),
     viewCommand("agent.openCommitMenu", "Commit Thread Changes", withThread),
-    layoutPolicyCommand("agent.toggleRightPanel", "Toggle Right Panel", rightPanelToggleAction),
+    layoutCommand("agent.toggleRightPanel", "Toggle Right Panel", { kind: "toggleRightPanel" }),
     ...SURFACE_COMMANDS.map((surfaceCommand) =>
       layoutCommand(surfaceCommand.id, surfaceCommand.title, {
         kind: "openSurface",
         surface: surfaceCommand.surface,
       }),
     ),
-    layoutPolicyCommand(
-      "agent.toggleEditorExpanded",
-      "Expand or Collapse Editor",
-      editorExpandToggleAction,
-    ),
+    layoutCommand("agent.toggleEditorExpanded", "Expand or Collapse Editor", {
+      kind: "toggleEditorExpanded",
+    }),
   ];
 }

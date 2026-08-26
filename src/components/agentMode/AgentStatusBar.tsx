@@ -7,10 +7,12 @@ export interface AgentStatusBarProps {
   readonly workspaceTrusted: boolean;
   readonly attentionCount?: number;
   readonly launchLabel?: string | null;
+  readonly cliVersionLabel?: string | null;
 }
 
 export function AgentStatusBar({
   attentionCount = 0,
+  cliVersionLabel = null,
   launchLabel = null,
   liveTaskCount,
   maxConcurrentAgentTasks,
@@ -33,6 +35,11 @@ export function AgentStatusBar({
         <span className="status-agent-attention">{attentionLabel(attentionCount)}</span>
       ) : null}
       {launchLabel === null ? null : <span className="status-agent-launch">{launchLabel}</span>}
+      {cliVersionLabel === null ? null : (
+        <span className="status-agent-cli" title="Agent CLI version">
+          {cliVersionLabel}
+        </span>
+      )}
       {workspaceRoot ? <span>{displayBaseName(workspaceRoot)}</span> : null}
       {workspaceRoot ? <span>{workspaceTrusted ? "Trusted" : "Untrusted"}</span> : null}
     </footer>
