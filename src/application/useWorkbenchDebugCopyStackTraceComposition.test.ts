@@ -9,7 +9,7 @@ describe("workbench Copy Call Stack composition", () => {
       "utf8",
     );
     const controller = readFileSync(
-      new URL("./useWorkbenchController.ts", import.meta.url),
+      new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
     const controllerOptions = readFileSync(
@@ -20,9 +20,26 @@ describe("workbench Copy Call Stack composition", () => {
       new URL("./workbenchControllerContracts.ts", import.meta.url),
       "utf8",
     );
+    const rootController = readFileSync(
+      new URL("./useWorkbenchController.ts", import.meta.url),
+      "utf8",
+    );
     const start = orchestration.indexOf("const debugCopyStackTrace = useDebugCopyStackTrace({");
     const end = orchestration.indexOf("\n  });", start);
     const composition = orchestration.slice(start, end);
+    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
+    const rootBinding = rootController.slice(
+      rootController.lastIndexOf("  const {", rootBindingEnd),
+      rootBindingEnd,
+    );
+    const commandsStart = rootController.indexOf(
+      "const commandRegistry = useWorkbenchCommandRegistry({",
+    );
+    const commands = rootController.slice(
+      commandsStart,
+      rootController.indexOf("\n  });", commandsStart),
+    );
+    const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));
 
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
@@ -35,7 +52,8 @@ describe("workbench Copy Call Stack composition", () => {
     expect(controllerContracts).toContain(
       "export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOptions {",
     );
-    expect(controller).toContain("options: WorkbenchControllerOptions = {},");
+    expect(controller).toContain("type WorkbenchTaskDebugOptions = Pick<");
+    expect(controller).toContain("options: WorkbenchTaskDebugOptions;");
     expect(controller).toContain("debugTextClipboard: options.debugTextClipboard,");
     expect(orchestration).toContain("debugTextClipboard = null,");
     expect(orchestration).toContain("debugTextClipboard?: TextClipboardGateway | null;");
@@ -53,6 +71,10 @@ describe("workbench Copy Call Stack composition", () => {
     expect(composition).not.toContain("startDebug");
     expect(composition).not.toContain("stopDebug");
     expect(orchestration).toContain("debugCopyStackTrace,");
+    expect(controller).toContain("...debug,");
+    expect(rootBinding).toMatch(/^ {4}debugCopyStackTrace,$/mu);
+    expect(commands).toMatch(/^ {4}debugCopyStackTrace,$/mu);
+    expect(projection).toMatch(/^ {4}debugCopyStackTrace,$/mu);
   });
 
   it("projects only the narrow command capability into the Debug panel", () => {

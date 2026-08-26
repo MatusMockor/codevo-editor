@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 describe("workbench breakpoint navigation composition", () => {
   it("composes the active editor capture with the private breakpoint model and owner-safe opener", () => {
     const controller = readFileSync(
-      new URL("./useWorkbenchController.ts", import.meta.url),
+      new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
     const controllerOptions = readFileSync(
@@ -13,6 +13,10 @@ describe("workbench breakpoint navigation composition", () => {
     );
     const controllerContracts = readFileSync(
       new URL("./workbenchControllerContracts.ts", import.meta.url),
+      "utf8",
+    );
+    const rootController = readFileSync(
+      new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
     const start = controller.indexOf(
@@ -26,6 +30,8 @@ describe("workbench breakpoint navigation composition", () => {
       ownerPredicateStart,
     );
     const ownerPredicates = controller.slice(ownerPredicateStart, ownerPredicateEnd);
+    const rootBinding = coordinatorBinding(rootController);
+    const commands = commandRegistryComposition(rootController);
 
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
@@ -37,9 +43,10 @@ describe("workbench breakpoint navigation composition", () => {
     expect(controllerContracts).toContain(
       "export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOptions {",
     );
-    expect(controller).toContain("options: WorkbenchControllerOptions = {},");
+    expect(controller).toContain("type WorkbenchTaskDebugOptions = Pick<");
+    expect(controller).toContain("options: WorkbenchTaskDebugOptions;");
     expect(composition).toContain("captureReader: options.debugBreakpointNavigationCaptureReader,");
-    expect(composition).toContain("getBreakpoints: () => debugSession.breakpoints,");
+    expect(composition).toContain("getBreakpoints: () => debug.debugSession.breakpoints,");
     expect(composition).toContain("isWorkspaceCurrent: isCurrentJavaScriptEditorWorkspaceOwner,");
     expect(ownerPredicates).toMatch(
       /(?:Boolean\(workspaceDescriptor\?\.javaScriptTypeScript\)|!!workspaceDescriptor\?\.javaScriptTypeScript)\s*&&/u,
@@ -49,11 +56,13 @@ describe("workbench breakpoint navigation composition", () => {
     );
     expect(ownerPredicates).toContain("currentEditorSessionOwnerKeyRef.current === ownerKey");
     expect(ownerPredicates).toContain("isCurrentEditorWorkspaceOwner(rootPath, ownerKey)");
-    expect(composition).toContain("openDebugLocation,");
+    expect(composition).toContain("openDebugLocation: debug.openDebugLocation,");
     expect(composition).not.toContain("debugGateway");
     expect(composition).not.toContain("isWorkspaceTrusted");
     expect(composition).not.toContain("snapshot");
     expect(controller).toContain("debugBreakpointNavigation,");
+    expect(rootBinding).toMatch(/^ {4}debugBreakpointNavigation,$/mu);
+    expect(commands).toMatch(/^ {4}debugBreakpointNavigation,$/mu);
   });
 
   it("routes only the active scoped editor reader into the controller", () => {
@@ -70,3 +79,13 @@ describe("workbench breakpoint navigation composition", () => {
     expect(app).toContain("updateDebugBreakpointNavigationCaptureReader");
   });
 });
+
+function coordinatorBinding(source: string): string {
+  const end = source.indexOf("} = useWorkbenchTaskDebugCoordinator({");
+  return source.slice(source.lastIndexOf("  const {", end), end);
+}
+
+function commandRegistryComposition(source: string): string {
+  const start = source.indexOf("const commandRegistry = useWorkbenchCommandRegistry({");
+  return source.slice(start, source.indexOf("\n  });", start));
+}

@@ -56,6 +56,10 @@ import {
   useWorkbenchGitPanelsCoordinator,
 } from "./workbenchController/useWorkbenchGitCoordinator";
 import {
+  useWorkbenchTaskDebugCoordinator,
+  useWorkbenchTaskDebugNavigationCoordinator,
+} from "./workbenchController/useWorkbenchTaskDebugCoordinator";
+import {
   useManagedLanguageServerInstallCommands,
   useManagedLanguageServerInstallSubscriptions,
 } from "./workbenchController/useManagedLanguageServerInstallLifecycle";
@@ -98,26 +102,9 @@ import { runEslintDisableAtCursor } from "./workbenchEslintDisableCommand";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
 import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
 import { useWorkbenchCommandContext } from "./useWorkbenchCommandContext";
-import { useWorkbenchDebugOrchestration } from "./useWorkbenchDebugOrchestration";
-import { useWorkbenchNodePackageScripts } from "./useNodePackageScriptWorkbench";
-import { useWorkbenchNpmOpenScriptNavigation } from "./useWorkbenchNpmOpenScriptNavigation";
 import { useWorkbenchDirtyCloseDecisionPort } from "./useWorkbenchDirtyCloseDecisionPort";
 import { useOptionalWorkspaceTextReader } from "./useOptionalWorkspaceTextReader";
 import { useActiveWorkspaceOwners } from "./useActiveWorkspaceOwners";
-import { useWorkbenchNodeRunWithoutDebugging } from "./useWorkbenchNodeRunWithoutDebugging";
-import { useWorkbenchVscodeProcessTasks } from "./useWorkbenchVscodeProcessTasks";
-import { useConfigureVscodeProcessTasks } from "./useConfigureVscodeProcessTasks";
-import { unavailableNodeRunTaskGateway } from "./workbenchUnavailableTaskGateways";
-import { createNodeLaunchPickerCoordinator } from "./useNodeLaunchConfigurationPicker";
-import { useNodeLaunchWorkspaceCurrent } from "./useNodeLaunchWorkspaceCurrent";
-import { useNodeLaunchConfigurationsSurface } from "./useNodeLaunchConfigurationsSurface";
-import { useWorkbenchJsTestCursorDebugging } from "./useWorkbenchJsTestCursorDebugging";
-import { useDebugEvaluateInConsole } from "./useDebugEvaluateInConsole";
-import { useDebugBreakpointNavigation } from "./useDebugBreakpointNavigation";
-import { useDebugCallStackNavigation } from "./useDebugCallStackNavigation";
-import { useDebugRestartFrame } from "./useDebugRestartFrame";
-import { useDebugInlineBreakpoint } from "./useDebugInlineBreakpoint";
-import { useWorkbenchFrameworkPanels } from "./useWorkbenchFrameworkPanels";
 import { WorkspaceTrustIntentCoordinator } from "./workspaceTrustIntentCoordinator";
 import { executeCommandAndReport, type CommandExecutionRunner } from "./commandRegistry";
 import {
@@ -261,7 +248,6 @@ import { useJavaScriptTypeScriptLanguageServerSettings } from "./useJavaScriptTy
 import { useWorkspaceEditFileOperations } from "./useWorkspaceEditFileOperations";
 import { useNavigationHistory, useRecentNavigation } from "./useNavigationHistory";
 import { useLanguageServerDocumentSyncState } from "./useLanguageServerDocumentSyncState";
-import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useWorkbenchFrameworkIntelligenceDependencies } from "./useWorkbenchFrameworkIntelligenceDependencies";
 import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
@@ -283,12 +269,7 @@ import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfac
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
 import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
-import { navigateToArtisanController } from "./artisanRouteNavigation";
-import {
-  quoteShellArgument,
-  terminalDirectoryForEntry,
-  workspaceRelativePath as contextMenuRelativePath,
-} from "../domain/pathDerivation";
+import { workspaceRelativePath as contextMenuRelativePath } from "../domain/pathDerivation";
 
 export type {
   PhpCodeActionDescriptor,
@@ -318,8 +299,6 @@ import {
 import type { GitGateway } from "../domain/git";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import type { BottomPanelView } from "../domain/bottomPanel";
-import type { ArtisanControllerAction } from "../domain/artisanRoutes";
-import { usePhpTestCaseNavigation } from "./usePhpTestCaseNavigation";
 import { useSymfonyWorkspaceNavigation } from "./useSymfonyWorkspaceNavigation";
 import type { IndexProgressGateway } from "../domain/indexProgress";
 import {
@@ -5486,19 +5465,9 @@ export function useWorkbenchController(
   });
   openSymbolPanelNavigationTargetRef.current = openNavigationTarget;
 
-  const openNodePackageScript = useWorkbenchNpmOpenScriptNavigation({
-    discoveryVersion: workspaceDiscoveryVersions.nodePackageScriptDiscoveryVersion,
-    documents: openDocuments,
-    gateway: options.workspaceSourceDiscoveryGateway,
-    identity: workspaceIdentityDescriptor,
-    openNavigationTarget,
-    rootPath: workspaceRoot,
-  });
-
   const {
     hideBottomPanel,
     registerActiveTerminalSession,
-    requestActiveTerminalSession,
     runAllJsTestsForActiveDocument,
     runAllTestsForActiveDocument,
     runInActiveTerminal,
@@ -5507,63 +5476,9 @@ export function useWorkbenchController(
     runTestForActiveDocument,
     showBottomPanelView,
     toggleBottomPanel,
-  } = useTerminalTestRunner({
-    activeDocumentRef,
-    activeEditorPositionRef,
-    currentWorkspaceRootRef,
-    invalidateJsTestCoverageAndResults,
-    workspaceRuntimeOwnerRef,
-    readTestFileIfExists,
-    reportErrorForActiveWorkspaceRoot,
-    setBottomPanelView,
-    setBottomPanelVisible,
-    setMessage,
-    terminalGateway,
-    workspaceDescriptor,
-    workspaceRoot,
-    workspaceRuntimeOwner,
-  });
-  const configureTasks = useConfigureVscodeProcessTasks({
-    currentWorkspaceRootRef,
-    openFile,
-    workspaceFiles,
-    workspaceOwnerFiles,
-    workspaceIdentity: workspaceIdentityDescriptor,
-    workspaceRoot,
-    workspaceRuntimeOwner,
-    workspaceRuntimeOwnerClaimsRef,
-    workspaceRuntimeOwnerRef,
-    workspaceTrustedRef,
-  });
-  const vscodeProcessTaskComposition = useWorkbenchVscodeProcessTasks({
-    configurationVersion: workspaceDiscoveryVersions.vscodeProcessTasksVersion,
-    configureTasks,
-    gateway: options.vscodeProcessTasksGateway,
-    requestTerminalSession: requestActiveTerminalSession,
-    rootPath: workspaceRoot,
-    setNotices,
-    workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,
-    workspaceTrusted,
-  });
-  const nodePackageScripts = useWorkbenchNodePackageScripts({
-    currentWorkspaceRootRef,
-    discoveryVersion: workspaceDiscoveryVersions.nodePackageScriptDiscoveryVersion,
-    gateway: options.nodePackageScriptsGateway,
-    hasJavaScriptTypeScriptWorkspace: !!workspaceDescriptor?.javaScriptTypeScript,
-    identity: workspaceIdentityDescriptor,
-    reportErrorForActiveWorkspaceRoot,
-    requestTerminalSession: requestActiveTerminalSession,
-    rootPath: workspaceRoot,
-    setNotices,
-    trusted: workspaceTrusted,
-  });
-  const nodeLaunchPickerCoordinator = useMemo(createNodeLaunchPickerCoordinator, []);
-  const isNodeLaunchWorkspaceCurrent = useNodeLaunchWorkspaceCurrent(
-    currentWorkspaceRootRef,
-    workspaceRuntimeOwnerRef,
-  );
-
-  const {
+    openNodePackageScript,
+    nodePackageScripts,
+    vscodeProcessTaskComposition,
     attachNodeDebug,
     debugCopyStackTrace,
     debugSession,
@@ -5574,157 +5489,52 @@ export function useWorkbenchController(
     startOrContinueDebug,
     startPhpListenDebug,
     toggleDebugBreakpointAtCursor,
-  } = useWorkbenchDebugOrchestration({
+    debugWatchAtCursor,
+    jsTestDebugAtCursor,
+    jsTestRunSelection,
+    debugEvaluateInConsole,
+    debugBreakpointNavigation,
+    debugCallStackNavigation,
+    debugRestartFrame,
+    debugInlineBreakpoint,
+    nodeRunWithoutDebugging,
+    nodeLaunchConfigurationsSurface,
+  } = useWorkbenchTaskDebugCoordinator({
+    activeDocument,
     activeDocumentRef,
     activeEditorPositionRef,
-    configurationPickerCoordinator: nodeLaunchPickerCoordinator,
+    currentEditorSessionOwnerKeyRef,
     currentWorkspaceRootRef,
-    debugBreakpointStorage: options.debugBreakpointStorage,
-    debugTextClipboard: options.debugTextClipboard,
-    debugAddToWatchCommands: options.debugAddToWatchCommands,
-    debugCopyValueCommands: options.debugCopyValueCommands,
-    debugSetVariableCommands: options.debugSetVariableCommands,
-    debugCopyEvaluatePathOnce: options.debugCopyEvaluatePathOnce,
     debugGateway: options.debugGateway ?? defaultDebugGateway,
-    serverReadyExternalUrlOpener: options.serverReadyExternalUrlOpener,
-    hasJavaScriptTypeScriptWorkspace: () => !!workspaceDescriptor?.javaScriptTypeScript,
+    editorSessionOwnerKey,
+    invalidateJsTestCoverageAndResults,
     isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
     isWorkspaceTrusted,
-    isWorkspaceCurrent: isNodeLaunchWorkspaceCurrent,
-    nodeDebugAttachCandidateGateway: options.nodeDebugAttachCandidateGateway,
-    nodeDebugAttachCandidateStart: options.nodeDebugAttachCandidateStart,
-    nodeLaunchConfigurationVersion: workspaceDiscoveryVersions.nodeLaunchConfigurationVersion,
     openDocuments,
+    openFile,
     openNavigationTarget,
+    options,
     prompter,
     readTestFileIfExists,
-    reportWarning: setMessage,
+    reportErrorForActiveWorkspaceRoot,
     setBottomPanelView,
     setBottomPanelVisible,
+    setMessage,
+    setNotices,
+    terminalGateway,
+    workspaceDescriptor,
+    workspaceDiscoveryVersions,
     workspaceFiles,
-    workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,
+    workspaceIdentityDescriptor,
+    workspaceOwnerFiles,
     workspaceRoot,
-    vscodeProcessTasks: vscodeProcessTaskComposition.state,
-  });
-  const isCurrentEditorWorkspaceOwner = (rootPath: string, ownerKey: string) =>
-    workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
-    currentEditorSessionOwnerKeyRef.current === ownerKey;
-  const isCurrentJavaScriptEditorWorkspaceOwner = (rootPath: string, ownerKey: string) =>
-    !!workspaceDescriptor?.javaScriptTypeScript &&
-    isCurrentEditorWorkspaceOwner(rootPath, ownerKey);
-  const { debugWatchAtCursor, jsTestDebugAtCursor, jsTestRunSelection } =
-    useWorkbenchJsTestCursorDebugging({
-      activeDocument: () => activeDocumentRef.current,
-      captureReader: options.debugWatchAtCursorCaptureReader,
-      isDebugStartBlocked: debugSession.isDebugStartBlocked,
-      isWorkspaceCurrent: isCurrentJavaScriptEditorWorkspaceOwner,
-      isWorkspaceTrusted,
-      openDebugPanel,
-      ownerKey: editorSessionOwnerKey,
-      readTextFileBounded: workspaceFiles.readTextFileBounded,
-      reportWarning: setMessage,
-      runner: options.jsTestExplorerScopeRunner,
-      startDebugAccepted: debugSession.startDebugAccepted,
-      watches: debugSession.watches,
-      workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,
-      workspaceRoot,
-    });
-  const debugEvaluateInConsole = useDebugEvaluateInConsole({
-    captureReader: options.debugEvaluateInConsoleCaptureReader,
-    focusConsole: debugSession.consoleSurface.focus,
-    getDebugContext: () => {
-      const state = debugSession.snapshot.state;
-      const sessionId = state.kind === "inactive" ? null : state.sessionId;
-      const owner = debugSession.inspectionOwner;
-      const frameId =
-        debugSession.selectedFrameId ??
-        (state.kind === "stopped" ? (state.topFrame?.frameId ?? null) : null);
-      const exactOwner =
-        state.kind === "stopped" &&
-        owner?.sessionId === state.sessionId &&
-        frameId === owner.frameId;
-      return {
-        adapterKind: debugSession.debugAdapterKind,
-        frameId: exactOwner ? owner.frameId : null,
-        pauseGeneration: exactOwner ? owner.pauseGeneration : null,
-        rootPath: exactOwner ? owner.rootKey : null,
-        sessionId,
-        stateKind: state.kind,
-      };
-    },
-    isWorkspaceCurrent: isCurrentEditorWorkspaceOwner,
-    isWorkspaceTrusted,
-    submit: debugSession.console.submit,
-  });
-  const debugBreakpointNavigation = useDebugBreakpointNavigation({
-    captureReader: options.debugBreakpointNavigationCaptureReader,
-    getBreakpoints: () => debugSession.breakpoints,
-    isWorkspaceCurrent: isCurrentJavaScriptEditorWorkspaceOwner,
-    openDebugLocation,
-  });
-  const debugCallStackNavigation = useDebugCallStackNavigation({
-    getPauseOwner: () => debugSession.pauseOwner,
-    getSelectedFrameId: () => debugSession.selectedFrameId,
-    getSnapshot: () => debugSession.snapshot,
-    selectFrame: debugSession.selectFrame,
-  });
-  const debugRestartFrame = useDebugRestartFrame({
-    canRestartFrame: debugSession.canRestartFrame,
-    getDebugAdapterKind: () => debugSession.debugAdapterKind,
-    getPauseOwner: () => debugSession.pauseOwner,
-    getSelectedFrameId: () => debugSession.selectedFrameId,
-    getSnapshot: () => debugSession.snapshot,
-    isWorkspaceTrusted,
-    restartFrame: debugSession.restartFrame,
-  });
-  const debugInlineBreakpoint = useDebugInlineBreakpoint({
-    addBreakpoint: debugSession.addInlineBreakpoint,
-    captureReader: options.debugInlineBreakpointCaptureReader,
-    getBreakpoints: () => debugSession.breakpoints,
-    isWorkspaceCurrent: isCurrentJavaScriptEditorWorkspaceOwner,
-  });
-
-  const reportNodeRunError = useCallback(
-    (error: unknown) =>
-      reportErrorForActiveWorkspaceRoot(
-        currentWorkspaceRootRef.current,
-        "Run Without Debugging",
-        error,
-      ),
-    [currentWorkspaceRootRef, reportErrorForActiveWorkspaceRoot],
-  );
-  const nodeRunWithoutDebugging = useWorkbenchNodeRunWithoutDebugging({
-    activeDocument,
-    configurationPickerCoordinator: nodeLaunchPickerCoordinator,
-    configurationVersion: workspaceDiscoveryVersions.nodeLaunchConfigurationVersion,
-    debugSession,
-    gateway: options.nodeRunTaskGateway ?? unavailableNodeRunTaskGateway,
-    hasJavaScriptTypeScriptWorkspace: !!workspaceDescriptor?.javaScriptTypeScript,
-    isActiveDocumentJsTest,
-    isWorkspaceCurrent: isNodeLaunchWorkspaceCurrent,
-    isWorkspaceTrusted,
-    readFileIfExists: readTestFileIfExists,
-    reportError: reportNodeRunError,
-    reportWarning: setMessage,
-    requestTerminalSession: requestActiveTerminalSession,
-    workspaceFiles,
-    workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,
-    workspaceRoot,
+    workspaceRuntimeOwner,
+    workspaceRuntimeOwnerClaimsRef,
+    workspaceRuntimeOwnerRef,
     workspaceTrusted,
+    workspaceTrustedRef,
   });
-  const nodeLaunchConfigurationsSurface = useNodeLaunchConfigurationsSurface({
-    available: Boolean(
-      workspaceRoot &&
-      workspaceRuntimeOwner &&
-      workspaceDescriptor?.javaScriptTypeScript &&
-      workspaceRootKeysEqual(workspaceRoot, workspaceDescriptor.rootPath),
-    ),
-    closeDebugPicker: debugSession.configurationLauncher.closePicker,
-    closeRunPicker: nodeRunWithoutDebugging.configurationLauncher.closePicker,
-    ownerKey: workspaceRuntimeOwner?.ownerKey ?? null,
-  });
-
   const revealEntry = useCallback(
     (entry: FileEntry) => {
       const requestedRoot = currentWorkspaceRootRef.current;
@@ -5744,60 +5554,28 @@ export function useWorkbenchController(
     },
     [reportErrorForActiveWorkspaceRoot],
   );
-
-  const openEntryInTerminal = useCallback(
-    (entry: FileEntry) => {
-      const requestedRoot = currentWorkspaceRootRef.current;
-
-      if (!requestedRoot) {
-        return;
-      }
-
-      const directory = terminalDirectoryForEntry(requestedRoot, entry);
-
-      if (!directory) {
-        return;
-      }
-
-      runInActiveTerminal(`cd -- ${quoteShellArgument(directory)}`);
-    },
-    [runInActiveTerminal],
-  );
-
   const {
+    openEntryInTerminal,
     openArtisanRoutesPanel,
     openExpressRoutesPanel,
     openJsTestResultsPanel,
     openPhpTestResultsPanel,
-  } = useWorkbenchFrameworkPanels({
+    openPhpTestCase,
+    openArtisanController,
+  } = useWorkbenchTaskDebugNavigationCoordinator({
+    activeDocumentRef,
     currentWorkspaceRootRef,
+    openNavigationTarget,
+    projectSymbolSearch,
+    runInActiveTerminal,
     setBottomPanelView,
     setBottomPanelVisible,
     setJsTestRunRequestVersion,
+    setMessage,
     setPhpTestRunRequestVersion,
     workspaceDescriptor,
+    workspaceRoot,
   });
-
-  const openPhpTestCase = usePhpTestCaseNavigation({
-    currentWorkspaceRootRef,
-    openNavigationTarget,
-  });
-
-  const openArtisanController = useCallback(
-    (action: ArtisanControllerAction) =>
-      navigateToArtisanController(
-        {
-          activePath: activeDocumentRef.current?.path ?? "",
-          currentRootPath: () => currentWorkspaceRootRef.current,
-          openNavigationTarget,
-          projectSymbolSearch,
-          rootPath: workspaceRoot,
-          setMessage,
-        },
-        action,
-      ),
-    [activeDocumentRef, openNavigationTarget, projectSymbolSearch, workspaceRoot],
-  );
 
   const {
     todoPanelOpen,

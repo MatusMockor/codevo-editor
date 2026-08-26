@@ -6,8 +6,31 @@ describe("server-ready action workbench composition", () => {
     const composition = source("../workbenchComposition.ts");
     const app = source("../App.tsx");
     const controllerOptions = source("./workbenchDebugControllerOptions.ts");
-    const controller = source("./useWorkbenchController.ts");
+    const rootController = source("./useWorkbenchController.ts");
+    const coordinator = source("./workbenchController/useWorkbenchTaskDebugCoordinator.ts");
     const orchestration = source("./useWorkbenchDebugOrchestration.ts");
+    const coordinatorCallStart = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
+    const coordinatorCall = rootController.slice(
+      coordinatorCallStart,
+      rootController.indexOf("\n  });", coordinatorCallStart),
+    );
+    const coordinatorOptionsStart = coordinator.indexOf("type WorkbenchTaskDebugOptions = Pick<");
+    const coordinatorOptions = coordinator.slice(
+      coordinatorOptionsStart,
+      coordinator.indexOf(";", coordinatorOptionsStart) + 1,
+    );
+    const debugCompositionStart = coordinator.indexOf(
+      "const debug = useWorkbenchDebugOrchestration({",
+    );
+    const debugComposition = coordinator.slice(
+      debugCompositionStart,
+      coordinator.indexOf("\n  });", debugCompositionStart),
+    );
+    const rootBinding = rootController.slice(
+      rootController.lastIndexOf("  const {", coordinatorCallStart),
+      coordinatorCallStart,
+    );
+    const projection = rootController.slice(rootController.indexOf("\n  return {"));
 
     expect(composition).toContain(
       'import { TauriServerReadyExternalUrlOpener } from "./infrastructure/tauriServerReadyExternalUrlOpener";',
@@ -19,14 +42,26 @@ describe("server-ready action workbench composition", () => {
     expect(controllerOptions).toContain(
       "serverReadyExternalUrlOpener?: DebugServerReadyExternalUrlOpener;",
     );
-    expect(controller).toContain(
+    expect(coordinatorOptionsStart).toBeGreaterThanOrEqual(0);
+    expect(debugCompositionStart).toBeGreaterThanOrEqual(0);
+    expect(coordinator).toContain(
+      'import type { WorkbenchControllerOptions } from "../workbenchControllerContracts";',
+    );
+    expect(coordinatorOptions).toContain('  | "serverReadyExternalUrlOpener"');
+    expect(coordinator).toContain("options: WorkbenchTaskDebugOptions;");
+    expect(coordinatorCall).toMatch(/^ {4}options,$/mu);
+    expect(debugComposition).toContain(
       "serverReadyExternalUrlOpener: options.serverReadyExternalUrlOpener,",
     );
     expect(orchestration).toContain(
       "serverReadyExternalUrlOpener ?? unavailableServerReadyExternalUrlOpener,",
     );
+    expect(coordinator).toContain("...debug,");
+    expect(rootBinding).toMatch(/^ {4}debugSession,$/mu);
+    expect(projection).toContain("debugSession: {");
     expect(app).not.toContain("TauriServerReadyExternalUrlOpener");
-    expect(controller).not.toContain("TauriServerReadyExternalUrlOpener");
+    expect(coordinator).not.toContain("TauriServerReadyExternalUrlOpener");
+    expect(rootController).not.toContain("TauriServerReadyExternalUrlOpener");
   });
 });
 

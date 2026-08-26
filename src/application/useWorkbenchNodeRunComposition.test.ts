@@ -4,10 +4,27 @@ import { describe, expect, it } from "vitest";
 describe("workbench Node run composition", () => {
   it("composes the lifecycle through the injected gateway and returns one capability", () => {
     const controller = readFileSync(
-      new URL("./useWorkbenchController.ts", import.meta.url),
+      new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const rootController = readFileSync(
+      new URL("./useWorkbenchController.ts", import.meta.url),
+      "utf8",
+    );
+    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
+    const rootBinding = rootController.slice(
+      rootController.lastIndexOf("  const {", rootBindingEnd),
+      rootBindingEnd,
+    );
+    const commandsStart = rootController.indexOf(
+      "const commandRegistry = useWorkbenchCommandRegistry({",
+    );
+    const commands = rootController.slice(
+      commandsStart,
+      rootController.indexOf("\n  });", commandsStart),
+    );
+    const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));
 
     expect(controller).toContain(
       "const nodeRunWithoutDebugging = useWorkbenchNodeRunWithoutDebugging({",
@@ -17,6 +34,9 @@ describe("workbench Node run composition", () => {
     );
     expect(controller).toContain("nodeRunWithoutDebugging,");
     expect(app).toContain("nodeRunTaskGateway,");
+    expect(rootBinding).toMatch(/^ {4}nodeRunWithoutDebugging,$/mu);
+    expect(commands).toMatch(/^ {4}nodeRunWithoutDebugging,$/mu);
+    expect(projection).toMatch(/^ {4}nodeRunWithoutDebugging,$/mu);
   });
 
   it("gates the command capability against active debug ownership", () => {
@@ -33,7 +53,7 @@ describe("workbench Node run composition", () => {
 
   it("shares one instance-scoped picker coordinator between Debug and Run", () => {
     const controller = readFileSync(
-      new URL("./useWorkbenchController.ts", import.meta.url),
+      new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
     const orchestration = readFileSync(
@@ -61,6 +81,10 @@ describe("workbench Node run composition", () => {
 
   it("routes command, toolbar gear, and Settings edit through one controlled dialog", () => {
     const controller = readFileSync(
+      new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
+      "utf8",
+    );
+    const rootController = readFileSync(
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
@@ -74,10 +98,10 @@ describe("workbench Node run composition", () => {
     );
 
     expect(controller).toContain("const nodeLaunchConfigurationsSurface =");
-    expect(controller).toContain(
+    expect(rootController).toContain(
       "configureNodeLaunchConfigurations: nodeLaunchConfigurationsSurface.openNodeLaunchConfigurations,",
     );
-    expect(controller).toContain("...nodeLaunchConfigurationsSurface,");
+    expect(rootController).toContain("...nodeLaunchConfigurationsSurface,");
     expect(panels).toContain(
       "openNodeLaunchConfigurations: workbench.openNodeLaunchConfigurations,",
     );

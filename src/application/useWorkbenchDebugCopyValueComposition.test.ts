@@ -5,7 +5,7 @@ describe("workbench Copy Value composition", () => {
   it("reuses one text clipboard and keeps App/controller as typed plumbing", () => {
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     const controller = readFileSync(
-      new URL("./useWorkbenchController.ts", import.meta.url),
+      new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
     const controllerOptions = readFileSync(
@@ -44,13 +44,24 @@ describe("workbench Copy Value composition", () => {
       new URL("../workbenchComposition.ts", import.meta.url),
       "utf8",
     );
+    const rootController = readFileSync(
+      new URL("./useWorkbenchController.ts", import.meta.url),
+      "utf8",
+    );
+    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
+    const rootBinding = rootController.slice(
+      rootController.lastIndexOf("  const {", rootBindingEnd),
+      rootBindingEnd,
+    );
+    const projection = rootController.slice(rootController.indexOf("\n  return {"));
 
     expect(app).toContain("const debugTextClipboard = new BrowserTextClipboardGateway();");
     expect(controllerOptions).toContain("debugTextClipboard?: TextClipboardGateway | null;");
     expect(controllerContracts).toContain(
       "export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOptions {",
     );
-    expect(controller).toContain("options: WorkbenchControllerOptions = {},");
+    expect(controller).toContain("type WorkbenchTaskDebugOptions = Pick<");
+    expect(controller).toContain("options: WorkbenchTaskDebugOptions;");
     expect(controller).toContain("debugTextClipboard: options.debugTextClipboard,");
     expect(orchestration).toContain("debugTextClipboard = null,");
     expect(app).toContain("const debugCommandBridges = useDebugCommandBridges();");
@@ -80,5 +91,8 @@ describe("workbench Copy Value composition", () => {
     );
     expect(commandBridges).toContain("return useMemo(() => {");
     expect(commandBridges).toContain("const copyValue = createDebugCopyValueCommandBridge();");
+    expect(controller).toContain("...debug,");
+    expect(rootBinding).toMatch(/^ {4}debugSession,$/mu);
+    expect(projection).toContain("debugSession: {");
   });
 });
