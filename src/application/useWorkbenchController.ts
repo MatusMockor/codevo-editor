@@ -50,6 +50,12 @@ import { useWorkbenchDiagnosticPresentation } from "./workbenchController/useWor
 import { useWorkbenchEditorPresentation } from "./workbenchController/useWorkbenchEditorPresentation";
 import { useWorkbenchSettingsCommands } from "./workbenchController/useWorkbenchSettingsCommands";
 import {
+  useWorkbenchGitChangesCoordinator,
+  useWorkbenchGitDiscoveryCoordinator,
+  useWorkbenchGitHistoryCoordinator,
+  useWorkbenchGitPanelsCoordinator,
+} from "./workbenchController/useWorkbenchGitCoordinator";
+import {
   useManagedLanguageServerInstallCommands,
   useManagedLanguageServerInstallSubscriptions,
 } from "./workbenchController/useManagedLanguageServerInstallLifecycle";
@@ -85,20 +91,9 @@ import {
   workspaceIdentityAliasPaths,
   workspaceTabsWithPath,
 } from "./documentSessionAuthorityLifecycleCoordinator";
-import { canRevertGitChangeForDocuments } from "./gitRevertCapability";
 import { useChangedDocumentSyncScheduling } from "./useChangedDocumentSyncScheduling";
-import { useGitStashPanel } from "./useGitStashPanel";
-import { useGitBranchPanel } from "./useGitBranchPanel";
 import { useFloatingSurfaces } from "./useFloatingSurfaces";
-import { useGitWorkspace } from "./useGitWorkspace";
-import {
-  gitChangeForDiffDocumentPath,
-  isGitDiffDocumentPath,
-  useGitDiffWorkspace,
-} from "./useGitDiffWorkspace";
-import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
-import { useGitStatusSurface } from "./useGitStatusSurface";
-import { useGitOperationCurrency } from "./useGitOperationCurrency";
+import { gitChangeForDiffDocumentPath, isGitDiffDocumentPath } from "./useGitDiffWorkspace";
 import { runEslintDisableAtCursor } from "./workbenchEslintDisableCommand";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
 import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
@@ -123,7 +118,6 @@ import { useDebugCallStackNavigation } from "./useDebugCallStackNavigation";
 import { useDebugRestartFrame } from "./useDebugRestartFrame";
 import { useDebugInlineBreakpoint } from "./useDebugInlineBreakpoint";
 import { useWorkbenchFrameworkPanels } from "./useWorkbenchFrameworkPanels";
-import { useWorkbenchGitFileActions } from "./useWorkbenchGitFileActions";
 import { WorkspaceTrustIntentCoordinator } from "./workspaceTrustIntentCoordinator";
 import { executeCommandAndReport, type CommandExecutionRunner } from "./commandRegistry";
 import {
@@ -163,7 +157,6 @@ import { usePhpMethodTargetNavigation } from "./usePhpMethodTargetNavigation";
 import { usePhpPropertyTargetNavigation } from "./usePhpPropertyTargetNavigation";
 import { usePhpImplementationNavigation } from "./usePhpImplementationNavigation";
 import { useBookmarks } from "./useBookmarks";
-import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentLifecycle } from "./useDocumentLifecycle";
 import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
@@ -322,7 +315,7 @@ import {
   shouldStartLanguageServer,
   type SmartModeGateway,
 } from "../domain/intelligence";
-import { type GitChangedFile, type GitGateway } from "../domain/git";
+import type { GitGateway } from "../domain/git";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import type { ArtisanControllerAction } from "../domain/artisanRoutes";
@@ -414,7 +407,6 @@ import {
   phpTestNavigationTargets,
 } from "../domain/phpTestNavigation";
 import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
-import { pushGitCommitMessageHistory } from "../domain/gitCommitMessageHistory";
 import { emptyRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import {
   defaultAppSettings,
@@ -1612,11 +1604,6 @@ export function useWorkbenchController(
     setWorkspaceSymbolsOpen,
   });
 
-  const closeReplacedGitDiffDocumentRef = useRef<(document: EditorDocument) => void>(() => {});
-  const closeReplacedGitDiffDocument = useCallback((document: EditorDocument) => {
-    closeReplacedGitDiffDocumentRef.current(document);
-  }, []);
-
   const {
     gitDiffDocuments,
     gitDiffLoading,
@@ -1633,29 +1620,9 @@ export function useWorkbenchController(
     reconcileGitDiffDocument,
     previewGitChange,
     openGitChange,
-  } = useGitDiffWorkspace({
-    workspaceRoot,
-    gitGateway,
-    currentWorkspaceRootRef,
-    documentTabSession,
-    setMessage,
-    recordCurrentNavigationLocation,
-    reportError,
-    onDocumentReplaced: closeReplacedGitDiffDocument,
-  });
-
-  const reconcileSelectedGitDiffPreviewForGitStatusSurfaceRef = useRef<
-    (repositoryRoot: string, changes: GitChangedFile[]) => void
-  >(() => {});
-  const reconcileSelectedGitDiffPreviewForGitStatusSurface = useCallback(
-    (repositoryRoot: string, changes: GitChangedFile[]) => {
-      reconcileSelectedGitDiffPreviewForGitStatusSurfaceRef.current(repositoryRoot, changes);
-    },
-    [],
-  );
-  const gitRepositoryDiscoveryRequestTokenRef = useRef(0);
-  const gitOperationCurrency = useGitOperationCurrency(workspaceRoot);
-  const {
+    closeReplacedGitDiffDocumentRef,
+    connectDiffPreviewReconciliation,
+    gitOperationCurrency,
     activeDocumentGitBaseline,
     applyGitOperationStatuses,
     gitActiveFileBranch,
@@ -1667,21 +1634,27 @@ export function useWorkbenchController(
     resetGitStatusSurface,
     resolveGitRepositoryTarget,
     runGitRepositoryDiscovery,
-  } = useGitStatusSurface({
-    activeDocument,
-    activePath,
-    reconcileSelectedGitDiffPreviewForRepository:
-      reconcileSelectedGitDiffPreviewForGitStatusSurface,
-    getSelectedGitDiffDocument,
-    currentWorkspaceRootRef,
-    editorGitBaselineRequestTokenRef,
-    gitGateway,
-    gitOperationCurrency,
-    gitRepositoryDiscoveryRequestTokenRef,
-    reportError,
-    reportErrorForActiveWorkspaceRoot,
-    setMessage,
-    workspaceRoot,
+  } = useWorkbenchGitDiscoveryCoordinator({
+    diffWorkspace: {
+      workspaceRoot,
+      gitGateway,
+      currentWorkspaceRootRef,
+      documentTabSession,
+      setMessage,
+      recordCurrentNavigationLocation,
+      reportError,
+    },
+    statusSurface: {
+      activeDocument,
+      activePath,
+      currentWorkspaceRootRef,
+      editorGitBaselineRequestTokenRef,
+      gitGateway,
+      reportError,
+      reportErrorForActiveWorkspaceRoot,
+      setMessage,
+      workspaceRoot,
+    },
   });
 
   const agents = useWorkbenchControllerAgents({
@@ -3733,54 +3706,9 @@ export function useWorkbenchController(
     revealPathInTree(activePath, true);
   }, [activePath, revealPathInTree, workspaceSettings.revealActiveFileInTree]);
 
-  const { closeGitDiffPreview, reconcileSelectedGitDiffPreviewForRepository } =
-    useGitDiffPreviewCloseLifecycle({
-      documentTabSession,
-      cancelGitDiffDocument,
-      getGitDiffDocument,
-      getSelectedGitDiffDocument,
-      gitChangeForDiffDocumentPath,
-      loadGitDiffDocument,
-      reloadGitDiffDocument,
-      reconcileGitDiffDocument,
-    });
-  reconcileSelectedGitDiffPreviewForGitStatusSurfaceRef.current =
-    reconcileSelectedGitDiffPreviewForRepository;
-
-  const recordGitCommitMessage = useCallback(
-    async (requestedRoot: string, commitMessage: string) => {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      const currentSettings = workspaceSettingsRef.current;
-      const gitCommitMessageHistory = pushGitCommitMessageHistory(
-        currentSettings.gitCommitMessageHistory,
-        commitMessage,
-      );
-
-      if (gitCommitMessageHistory === currentSettings.gitCommitMessageHistory) {
-        return;
-      }
-
-      try {
-        await persistWorkspaceSettings(requestedRoot, {
-          ...currentSettings,
-          gitCommitMessageHistory,
-        });
-      } catch (error) {
-        reportErrorForActiveWorkspaceRoot(requestedRoot, "Settings", error);
-      }
-    },
-    [persistWorkspaceSettings, reportErrorForActiveWorkspaceRoot],
-  );
-
-  const canRevertGitChange = useCallback(
-    (change: GitChangedFile) => canRevertGitChangeForDocuments(change, documentsRef.current),
-    [documentsRef],
-  );
-
   const {
+    canRevertGitChange,
+    closeGitDiffPreview,
     gitAmendEnabled,
     gitCommitMessage,
     gitCommitMessageHistory,
@@ -3799,21 +3727,37 @@ export function useWorkbenchController(
     amendGitChanges,
     commitGitChanges,
     commitAndPushGitChanges,
-  } = useGitWorkspace({
-    gitGateway,
-    gitOperationCurrency,
+  } = useWorkbenchGitChangesCoordinator({
+    connectDiffPreviewReconciliation,
     currentWorkspaceRootRef,
-    workspaceRoot,
-    gitStatus,
-    applyGitOperationStatuses,
-    reportError,
-    setMessage,
-    prompter,
-    canRevertGitChange,
-    gitRepositoryMappings,
-    gitRepositoryStatuses,
-    gitCommitMessageHistory: workspaceSettings.gitCommitMessageHistory,
-    recordGitCommitMessage,
+    diffPreview: {
+      documentTabSession,
+      cancelGitDiffDocument,
+      getGitDiffDocument,
+      getSelectedGitDiffDocument,
+      gitChangeForDiffDocumentPath,
+      loadGitDiffDocument,
+      reloadGitDiffDocument,
+      reconcileGitDiffDocument,
+    },
+    documentsRef,
+    gitWorkspace: {
+      gitGateway,
+      gitOperationCurrency,
+      currentWorkspaceRootRef,
+      workspaceRoot,
+      gitStatus,
+      applyGitOperationStatuses,
+      reportError,
+      setMessage,
+      prompter,
+      gitRepositoryMappings,
+      gitRepositoryStatuses,
+    },
+    persistWorkspaceSettings,
+    reportErrorForActiveWorkspaceRoot,
+    workspaceSettings,
+    workspaceSettingsRef,
   });
 
   // PHP project tree + PHP file structure (outline) intelligence lives in a
@@ -5905,163 +5849,39 @@ export function useWorkbenchController(
     openFileHistory,
     selectFileHistoryCommit,
     closeFileHistory,
-  } = useFileHistory({
-    activeDocumentRef,
-    currentWorkspaceRootRef,
-    gitGateway,
-    reportError,
-    resolveGitRepositoryTarget,
-    workspaceRoot,
-  });
-  const {
     openWorkspaceFile,
     provideGitBlame,
     readWorkspaceFile,
     revealCommitInFileHistory,
     toggleGitBlame,
-  } = useWorkbenchGitFileActions({
-    activeDocumentRef,
+    revertSelectedGitCommit,
+    cherryPickSelectedGitCommit,
+    rewordSelectedGitCommit,
+    canRewordSelectedGitCommit,
+  } = useWorkbenchGitHistoryCoordinator({
     currentWorkspaceRootRef,
-    gitGateway,
-    openFile,
-    openFileHistory,
-    resolveGitRepositoryTarget,
-    setGitBlameEnabledPaths,
-    showBottomPanelView,
-    workspaceFiles,
+    fileHistory: {
+      activeDocumentRef,
+      currentWorkspaceRootRef,
+      gitGateway,
+      reportError,
+      resolveGitRepositoryTarget,
+      workspaceRoot,
+    },
+    fileActions: {
+      activeDocumentRef,
+      currentWorkspaceRootRef,
+      gitGateway,
+      openFile,
+      resolveGitRepositoryTarget,
+      setGitBlameEnabledPaths,
+      showBottomPanelView,
+      workspaceFiles,
+    },
+    refreshGitStatus,
+    setMessage,
+    workspaceRequestTokenRef: openWorkspaceRequestTokenRef,
   });
-
-  const revertSelectedGitCommit = useCallback(() => {
-    window.dispatchEvent(new CustomEvent("mockor-revert-selected-git-commit"));
-  }, []);
-
-  const cherryPickSelectedGitCommit = useCallback(() => {
-    window.dispatchEvent(new CustomEvent("mockor-cherry-pick-selected-git-commit"));
-  }, []);
-
-  const rewordSelectedGitCommit = useCallback(() => {
-    window.dispatchEvent(new CustomEvent("mockor-reword-selected-git-commit"));
-  }, []);
-
-  const canRewordSelectedGitCommit = useCallback(() => {
-    const detail = { enabled: false };
-    window.dispatchEvent(new CustomEvent("mockor-query-reword-selected-git-commit", { detail }));
-    return detail.enabled;
-  }, []);
-
-  useEffect(() => {
-    const refreshAfterRevert = async (event: Event) => {
-      const detail = (event as CustomEvent<{ rootPath?: unknown; subject?: unknown }>).detail;
-
-      if (
-        typeof detail?.rootPath !== "string" ||
-        typeof detail.subject !== "string" ||
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, detail.rootPath)
-      ) {
-        return;
-      }
-
-      const requestedRoot = detail.rootPath;
-      await refreshGitStatus();
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setMessage(`Reverted commit: ${detail.subject}`);
-    };
-    const listener = (event: Event) => {
-      void refreshAfterRevert(event);
-    };
-
-    window.addEventListener("mockor-git-commit-reverted", listener);
-
-    return () => {
-      window.removeEventListener("mockor-git-commit-reverted", listener);
-    };
-  }, [refreshGitStatus]);
-
-  useEffect(() => {
-    const refreshAfterCherryPick = async (event: Event) => {
-      const detail = (event as CustomEvent<{ rootPath?: unknown; subject?: unknown }>).detail;
-
-      if (
-        typeof detail?.rootPath !== "string" ||
-        typeof detail.subject !== "string" ||
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, detail.rootPath)
-      ) {
-        return;
-      }
-
-      const requestedRoot = detail.rootPath;
-      await refreshGitStatus();
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setMessage(`Cherry-picked commit: ${detail.subject}`);
-    };
-    const listener = (event: Event) => {
-      void refreshAfterCherryPick(event);
-    };
-
-    window.addEventListener("mockor-git-commit-cherry-picked", listener);
-
-    return () => {
-      window.removeEventListener("mockor-git-commit-cherry-picked", listener);
-    };
-  }, [refreshGitStatus]);
-
-  useEffect(() => {
-    const refreshAfterReword = async (event: Event) => {
-      const detail = (event as CustomEvent<{ rootPath?: unknown; subject?: unknown }>).detail;
-
-      if (
-        typeof detail?.rootPath !== "string" ||
-        typeof detail.subject !== "string" ||
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, detail.rootPath)
-      ) {
-        return;
-      }
-
-      const requestedRoot = detail.rootPath;
-      await refreshGitStatus();
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setMessage(`Reworded commit: ${detail.subject}`);
-    };
-    const listener = (event: Event) => {
-      void refreshAfterReword(event);
-    };
-
-    window.addEventListener("mockor-git-commit-reworded", listener);
-
-    return () => {
-      window.removeEventListener("mockor-git-commit-reworded", listener);
-    };
-  }, [refreshGitStatus]);
-
-  useEffect(() => {
-    const reveal = (event: Event) => {
-      const detail = (event as CustomEvent<{ path?: unknown; sha?: unknown }>).detail;
-
-      if (typeof detail?.path !== "string" || typeof detail.sha !== "string") {
-        return;
-      }
-
-      void revealCommitInFileHistory(detail.path, detail.sha);
-    };
-
-    window.addEventListener("mockor-reveal-git-blame-commit", reveal);
-
-    return () => {
-      window.removeEventListener("mockor-reveal-git-blame-commit", reveal);
-    };
-  }, [revealCommitInFileHistory]);
 
   const {
     localHistoryPanelOpen,
@@ -6172,17 +5992,6 @@ export function useWorkbenchController(
     popGitStash,
     dropGitStash,
     setGitStashMessage,
-  } = useGitStashPanel({
-    gitGateway,
-    currentWorkspaceRootRef,
-    workspaceRoot,
-    reportError,
-    refreshGitStatus,
-    setMessage,
-    prompter,
-  });
-
-  const {
     gitBranchPanelOpen,
     gitBranchEntries,
     gitRemoteBranchEntries,
@@ -6195,14 +6004,25 @@ export function useWorkbenchController(
     deleteGitBranch,
     renameGitBranch,
     refreshGitBranches,
-  } = useGitBranchPanel({
-    gitGateway,
-    currentWorkspaceRootRef,
-    workspaceRoot,
-    reportError,
-    refreshGitStatus,
-    setMessage,
-    prompter,
+  } = useWorkbenchGitPanelsCoordinator({
+    stashPanel: {
+      gitGateway,
+      currentWorkspaceRootRef,
+      workspaceRoot,
+      reportError,
+      refreshGitStatus,
+      setMessage,
+      prompter,
+    },
+    branchPanel: {
+      gitGateway,
+      currentWorkspaceRootRef,
+      workspaceRoot,
+      reportError,
+      refreshGitStatus,
+      setMessage,
+      prompter,
+    },
   });
 
   const {
