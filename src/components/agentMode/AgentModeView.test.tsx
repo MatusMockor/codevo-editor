@@ -13,6 +13,7 @@ import type { AgentThreadScriptRunner } from "../../application/useAgentThreadSc
 import type { NodePackageScript } from "../../domain/nodePackageScripts";
 import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
+import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import type { GitChangedFile } from "../../domain/git";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import type { AgentTurnEvent } from "../../domain/agentThread";
@@ -33,6 +34,7 @@ const ROOT = "/workspace/app";
 const NESTED = "/workspace/app/packages/api";
 const OTHER_ROOT = "/workspace/api-service";
 const NOW_TICK_MS = 3_600_000;
+const ADD_PROJECT_HOME = "/Users/dev";
 const NOW = 1_700_000_600_000;
 
 const columnRenders = vi.hoisted(() => ({ session: 0 }));
@@ -1678,6 +1680,37 @@ describe("AgentModeView", () => {
     }
   });
 
+  it("adds the highlighted home directory from the rail add-project dialog", async () => {
+    const addProject = vi.fn(async () => undefined);
+    render({
+      chrome: chromeFixture({ addProject: { gateway: addProjectGateway(), addProject } }),
+    });
+
+    click('button[aria-label="Add project"]');
+    await waitForReact(() => {
+      expect(host.querySelector(".agent-add-project")).not.toBeNull();
+    });
+
+    const input = host.querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]');
+    expect(input).not.toBeNull();
+    act(() => {
+      input?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+      );
+    });
+
+    expect(addProject).toHaveBeenCalledWith(ADD_PROJECT_HOME);
+    expect(host.querySelector(".agent-add-project")).toBeNull();
+  });
+
+  it("keeps the rail add-project button disabled without add-project chrome", () => {
+    render();
+
+    const button = host.querySelector<HTMLButtonElement>('button[aria-label="Add project"]');
+    expect(button).not.toBeNull();
+    expect(button?.disabled).toBe(true);
+  });
+
   function render(overrides: Partial<AgentModeViewProps> = {}): void {
     act(() => root.render(<AgentModeView {...defaultProps()} {...overrides} />));
   }
@@ -1908,6 +1941,18 @@ describe("AgentModeView", () => {
     act(() => element?.click());
   }
 });
+
+function addProjectGateway(): DirectoryListingGateway {
+  return {
+    listDirectoryEntries: async () => ({
+      path: ADD_PROJECT_HOME,
+      parent: "/Users",
+      entries: [{ name: "Developer", kind: "directory", hidden: false }],
+      truncated: false,
+    }),
+    revealDirectory: async () => undefined,
+  };
+}
 
 function scriptRunner(run: (script: NodePackageScript) => boolean): AgentThreadScriptRunner {
   return {

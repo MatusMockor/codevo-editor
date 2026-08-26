@@ -470,7 +470,9 @@ pub fn run() {
             git_worktree_commands::list_git_worktrees,
             git_worktree_commands::add_git_worktree,
             git_worktree_commands::remove_git_worktree,
-            git_worktree_commands::prune_git_worktrees
+            git_worktree_commands::prune_git_worktrees,
+            directory_listing_commands::list_directory_entries,
+            directory_listing_commands::open_directory_in_file_manager
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|error| panic!("Error building tauri application: {error}"))

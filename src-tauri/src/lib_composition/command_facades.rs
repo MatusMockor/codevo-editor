@@ -2,6 +2,8 @@
 mod agent_task_commands;
 #[path = "agent_thread_store_commands.rs"]
 mod agent_thread_store_commands;
+#[path = "directory_listing_commands.rs"]
+mod directory_listing_commands;
 #[path = "git_integration_commands.rs"]
 mod git_integration_commands;
 #[path = "git_worktree_commands.rs"]

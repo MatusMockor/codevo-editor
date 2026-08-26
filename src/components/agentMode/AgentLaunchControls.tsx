@@ -1,4 +1,5 @@
 import { Lock, LockOpen, TriangleAlert } from "lucide-react";
+import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
   agentLaunchAccess,
@@ -10,7 +11,6 @@ import {
   agentLaunchModeChoices,
   agentLaunchModeHint,
   agentLaunchModeLabel,
-  agentLaunchModelChoices,
   agentLaunchModelHint,
   agentLaunchSupportsEffort,
   agentLaunchTone,
@@ -20,9 +20,9 @@ import {
   type AgentLaunchAccess,
   type AgentLaunchChoice,
 } from "./agentLaunchPresentation";
+import { AgentModelPicker } from "./AgentModelPicker";
 import { AgentPickerMenu } from "./AgentPickerMenu";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
-import { AgentProviderGlyph } from "./AgentProviderGlyph";
 
 const MODEL_ID = "agent-launch-model";
 const EFFORT_ID = "agent-launch-effort";
@@ -32,29 +32,26 @@ const DANGER_ID = "agent-launch-danger-confirm";
 export interface AgentLaunchControlsProps {
   readonly launch: AgentLaunchOptions;
   readonly disabled: boolean;
+  readonly favorites: AgentModelFavorites;
   onLaunchChange(next: AgentLaunchOptions): void;
 }
 
 export function AgentLaunchControls({
   disabled,
+  favorites,
   launch,
   onLaunchChange,
 }: AgentLaunchControlsProps) {
   return (
     <div className="agent-composer__launch">
-      <AgentPickerMenu
-        align="start"
+      <AgentModelPicker
         describedBy={`${MODEL_ID}-hint`}
         disabled={disabled}
-        icon={<AgentProviderGlyph kind={launch.provider} />}
+        favorites={favorites}
         id={MODEL_ID}
         label="Agent model"
-        onChange={(value) => onLaunchChange(agentLaunchWithModel(launch, value))}
-        options={agentLaunchModelChoices(launch.provider).map(toOption)}
-        prefix={null}
-        tone={null}
-        value={launch.model}
-        variant="ghost"
+        launch={launch}
+        onSelect={(model) => onLaunchChange(agentLaunchWithModel(launch, model))}
       />
       <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
         {agentLaunchModelHint(launch)}

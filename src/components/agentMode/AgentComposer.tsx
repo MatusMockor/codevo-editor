@@ -1,5 +1,6 @@
 import { type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Folder, FolderGit2, Play, Plus, Send, TriangleAlert } from "lucide-react";
+import { useAgentModelFavorites } from "../../application/useAgentModelFavorites";
 import {
   agentLaunchIsDangerous,
   defaultAgentLaunchOptions,
@@ -105,6 +106,7 @@ export function AgentComposer({
   worktreeOnlyReason,
 }: AgentComposerProps) {
   const compact = useCompactComposerControls();
+  const favorites = useAgentModelFavorites();
   const followUp = mode.kind === "followUp";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason = composerTargetReason(followUp, target);
@@ -130,6 +132,7 @@ export function AgentComposer({
   const launchControls = (
     <AgentLaunchControls
       disabled={dispatching}
+      favorites={favorites}
       launch={effectiveLaunch}
       onLaunchChange={onLaunchChange}
     />

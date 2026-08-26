@@ -1,5 +1,5 @@
 import { useCallback, useMemo, type KeyboardEvent, type RefObject } from "react";
-import { Search, SquarePen, X } from "lucide-react";
+import { FolderPlus, Search, SquarePen, X } from "lucide-react";
 import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
 import { MAX_THREAD_SEARCH_QUERY_CHARS } from "../../domain/agentThreadSearch";
 import { MAX_AGENT_PROJECT_ROOTS } from "../../domain/agentProject";
@@ -17,6 +17,7 @@ import {
 } from "./agentSidebarPresentation";
 
 export interface AgentRailHeaderProps {
+  readonly addProjectAvailable: boolean;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly search: AgentThreadSearchSurface;
   readonly searchRef: RefObject<HTMLInputElement | null>;
@@ -27,12 +28,15 @@ export interface AgentRailHeaderProps {
   onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>): void;
   onChangeScope(scope: AgentRailScope): void;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
+  onAddProject(): void;
   onTrustProject(projectRootKey: string): void;
   onReleaseProject(projectRootKey: string): void;
 }
 
 export function AgentRailHeader({
+  addProjectAvailable,
   groups,
+  onAddProject,
   onChangeScope,
   onNewThread,
   onReleaseProject,
@@ -127,6 +131,16 @@ export function AgentRailHeader({
           type="button"
         >
           <SquarePen aria-hidden="true" size={16} />
+        </button>
+        <button
+          aria-label="Add project"
+          className="agent-iconbutton"
+          disabled={!addProjectAvailable}
+          onClick={onAddProject}
+          title="Add project"
+          type="button"
+        >
+          <FolderPlus aria-hidden="true" size={16} />
         </button>
       </div>
       <div className="agent-rail__row agent-scope">

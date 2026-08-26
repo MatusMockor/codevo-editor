@@ -31,6 +31,7 @@ import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
 import type { AgentShipActions } from "./AgentShipPanel";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
 import { agentSurfaceBlockedReason } from "./agentSurfacePolicy";
+import { AgentAddProjectDialog } from "./AgentAddProjectDialog";
 import { AgentNoticeBar } from "./AgentNoticeBar";
 import {
   agentLaunchKey,
@@ -112,6 +113,7 @@ const REVEAL_FAILED_NOTICE: AgentTasksNotice = {
   message: "Unable to reveal that path in the file manager.",
   action: null,
 };
+const MAX_ADD_PROJECT_NOTICE_CHARS = 200;
 
 export function AgentModeView({
   agents,
@@ -128,6 +130,7 @@ export function AgentModeView({
   const [railScope, setRailScope] = useState<AgentRailScope>({ kind: "all" });
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [localNotice, setLocalNotice] = useState<AgentTasksNotice | null>(null);
   const [selection, setSelection] = useState<ComposerTarget | null>(null);
   const [prompt, setPrompt] = useState("");
@@ -520,6 +523,34 @@ export function AgentModeView({
     agents.dismissNotice();
   }, [agents, localNotice]);
 
+  const projectRootPaths = useMemo(
+    () => [
+      ...projects.map((project) => project.rootPath),
+      ...(workspaceRoot === null ? [] : [workspaceRoot]),
+    ],
+    [projects, workspaceRoot],
+  );
+
+  const reportAddProjectNotice = useCallback((message: string) => {
+    setLocalNotice({
+      kind: "warning",
+      message: message.slice(0, MAX_ADD_PROJECT_NOTICE_CHARS),
+      action: null,
+    });
+  }, []);
+
+  const addProjectChrome = chrome.addProject;
+  const addProject = useCallback(
+    (path: string) => {
+      if (addProjectChrome === null) return;
+      setAddProjectOpen(false);
+      void addProjectChrome.addProject(path).catch((error: unknown) => {
+        reportAddProjectNotice(error instanceof Error ? error.message : String(error));
+      });
+    },
+    [addProjectChrome, reportAddProjectNotice],
+  );
+
   const findHitIndex = find.open && find.hitIndex >= 0 ? find.hitIndex : undefined;
   const headerProject = agentThreadHeaderProject(selectedThread, groups, projects, target);
   const layoutControls = (
@@ -560,7 +591,9 @@ export function AgentModeView({
               </div>
             ) : (
               <AgentThreadsSidebar
+                addProjectAvailable={chrome.addProject !== null}
                 groups={groups}
+                onAddProject={() => setAddProjectOpen(true)}
                 onChangeScope={setRailScope}
                 onCollapseSidebar={() => setRailCollapsed(true)}
                 onNewThread={startNewThread}
@@ -663,6 +696,15 @@ export function AgentModeView({
             </div>
           </div>
         </AgentClockProvider>
+        {addProjectOpen && chrome.addProject !== null && (
+          <AgentAddProjectDialog
+            gateway={chrome.addProject.gateway}
+            onAdd={addProject}
+            onClose={() => setAddProjectOpen(false)}
+            onNotice={reportAddProjectNotice}
+            projectRootPaths={projectRootPaths}
+          />
+        )}
         <AgentThreadSearchPalette
           archivedThreadIds={archivedThreadIds}
           isOpen={paletteOpen}

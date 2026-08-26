@@ -6,6 +6,7 @@ import type { AgentWorkbenchLayoutState } from "../../application/useAgentWorkbe
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
 import type { BottomPanelView } from "../../domain/bottomPanel";
+import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import type { GitChangeStatus } from "../../domain/git";
 import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
 import type { TerminalGateway } from "../../domain/terminal";
@@ -38,6 +39,11 @@ export interface AgentWorkbenchTerminalChrome {
   onOpenLink?(path: string, line?: number, column?: number): void;
 }
 
+export interface AgentWorkbenchAddProjectChrome {
+  readonly gateway: DirectoryListingGateway;
+  addProject(path: string): Promise<void>;
+}
+
 export interface AgentWorkbenchChrome {
   readonly layout: AgentWorkbenchLayoutState;
   readonly bottomPanelVisible: boolean;
@@ -48,6 +54,7 @@ export interface AgentWorkbenchChrome {
   readonly fileTree: AgentWorkbenchFileTreeChrome | null;
   readonly diff: AgentWorkbenchDiffChrome;
   readonly terminal: AgentWorkbenchTerminalChrome | null;
+  readonly addProject: AgentWorkbenchAddProjectChrome | null;
   onToggleBottomPanel(): void;
   onShowTerminalPanel(): void;
   onOpenScriptsView: (() => void) | null;

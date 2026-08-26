@@ -603,6 +603,7 @@ describe("AgentThreadsSidebar", () => {
   function render(overrides: Partial<AgentThreadsSidebarProps> = {}): void {
     const groups = overrides.groups ?? [group(ROOT, "app", [settled("agt-1", "Fix the parser")])];
     const props: AgentThreadsSidebarProps = {
+      addProjectAvailable: true,
       groups,
       search: searchSurface(""),
       scope: { kind: "all" },
@@ -614,6 +615,7 @@ describe("AgentThreadsSidebar", () => {
       onChangeScope: vi.fn(),
       onThreadMenuCommand: vi.fn(),
       onNewThread: vi.fn(),
+      onAddProject: vi.fn(),
       onTrustProject: vi.fn(),
       onReleaseProject: vi.fn(),
       ...overrides,

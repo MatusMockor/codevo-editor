@@ -4,10 +4,12 @@ import type { AgentSurfaceFileTreeDependencies } from "../../application/useAgen
 import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
 import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
 import type { useWorkbenchController } from "../../application/useWorkbenchController";
+import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import type { GitChangeStatus } from "../../domain/git";
 import { shortcutForCommand, type KeymapSettings } from "../../domain/keymap";
 import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
 import type { TerminalGateway } from "../../domain/terminal";
+import { TauriDirectoryListingGateway } from "../../infrastructure/tauriDirectoryListingGateway";
 import {
   TauriRevealPathGateway,
   type RevealPathGateway,
@@ -37,6 +39,7 @@ export type AgentWorkbenchScreenWorkbench = Pick<
   | "nodePackageScripts"
   | "openPinnedFile"
   | "openProblemNotice"
+  | "openWorkspaceRoot"
   | "previewFile"
   | "setSidebarView"
   | "showBottomPanelView"
@@ -55,14 +58,19 @@ export interface AgentWorkbenchScreenProps {
   readonly terminalTheme: TerminalTheme;
   readonly workspaceTrusted: boolean;
   readonly revealPathGateway?: RevealPathGateway;
+  readonly directoryListingGateway?: DirectoryListingGateway;
   onTrustWorkspace(): void;
   onResizeRightPanelStart(event: PointerEvent<HTMLDivElement>): void;
 }
 
+export const ADD_PROJECT_REFUSED_REASON = "Unable to add that project.";
 const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGateway();
+const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
+  new TauriDirectoryListingGateway();
 
 export function AgentWorkbenchScreen({
   activeFileRevealSignal,
+  directoryListingGateway = DEFAULT_DIRECTORY_LISTING_GATEWAY,
   fileChanges,
   fileStatusesByPath,
   files,
@@ -78,6 +86,7 @@ export function AgentWorkbenchScreen({
   const projects = workbench.agents.agentProjects;
   const { agentWorkbench, appSettings, nodePackageScripts, workspaceRoot } = workbench;
   const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
+  const { openWorkspaceRoot } = workbench;
   const { bottomPanelView, bottomPanelVisible, hideBottomPanel, showBottomPanelView } = workbench;
   const workspaceId = workbench.workspaceIdentityDescriptor?.workspaceId ?? null;
 
@@ -167,6 +176,17 @@ export function AgentWorkbenchScreen({
     [openProblemNotice],
   );
 
+  const addProject = useMemo(
+    () => ({
+      gateway: directoryListingGateway,
+      addProject: async (path: string) => {
+        const opened = await openWorkspaceRoot(path);
+        if (!opened) throw new Error(ADD_PROJECT_REFUSED_REASON);
+      },
+    }),
+    [directoryListingGateway, openWorkspaceRoot],
+  );
+
   const shortcuts = useMemo(() => layoutShortcuts(appSettings.keymap), [appSettings.keymap]);
   const chrome = useMemo<AgentWorkbenchChrome>(
     () => ({
@@ -197,6 +217,7 @@ export function AgentWorkbenchScreen({
         shellIntegrationEnabled: appSettings.terminalShellIntegrationEnabled,
         onOpenLink: openTerminalLink,
       },
+      addProject,
       onToggleBottomPanel,
       onShowTerminalPanel: showTerminalPanel,
       onOpenScriptsView: openScriptsView,
@@ -206,6 +227,7 @@ export function AgentWorkbenchScreen({
     }),
     [
       activeFileRevealSignal,
+      addProject,
       agentWorkbench,
       appSettings.editorFontFamily,
       appSettings.editorFontLigatures,

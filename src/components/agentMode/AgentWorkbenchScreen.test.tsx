@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import {
   agentThreadAttention,
   agentThreadUnread,
@@ -21,6 +22,7 @@ import {
   type RecordedAgentWorkbenchLayout,
 } from "./agentWorkbenchChromeTestFixtures";
 import {
+  ADD_PROJECT_REFUSED_REASON,
   AgentWorkbenchScreen,
   type AgentWorkbenchScreenProps,
   type AgentWorkbenchScreenWorkbench,
@@ -34,6 +36,7 @@ describe("AgentWorkbenchScreen", () => {
   let root: Root;
   let reveals: RevealPathRequest[];
   let revealPathGateway: RevealPathGateway;
+  let directoryListingGateway: DirectoryListingGateway;
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -45,6 +48,15 @@ describe("AgentWorkbenchScreen", () => {
       revealPath: async (request) => {
         reveals.push(request);
       },
+    };
+    directoryListingGateway = {
+      listDirectoryEntries: async () => ({
+        path: "/Users/dev",
+        parent: "/Users",
+        entries: [{ name: "Developer", kind: "directory", hidden: false }],
+        truncated: false,
+      }),
+      revealDirectory: async () => undefined,
     };
   });
 
@@ -180,12 +192,50 @@ describe("AgentWorkbenchScreen", () => {
     expect(host.textContent).toContain("Unable to reveal that path in the file manager.");
   });
 
+  it("opens the browsed directory through the workspace open flow", async () => {
+    const workbench = createWorkbench(ROOT_A);
+    render(workbench);
+
+    click('button[aria-label="Add project"]');
+    await act(async () => {});
+
+    const input = host.querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]');
+    expect(input).not.toBeNull();
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+      );
+    });
+
+    expect(workbench.openWorkspaceRoot).toHaveBeenCalledWith("/Users/dev");
+  });
+
+  it("reports the refusal when the workspace open flow declines the directory", async () => {
+    const workbench = createWorkbench(ROOT_A, { openWorkspaceRoot: vi.fn(async () => false) });
+    render(workbench);
+
+    click('button[aria-label="Add project"]');
+    await act(async () => {});
+
+    const input = host.querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]');
+    expect(input).not.toBeNull();
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+      );
+    });
+    await act(async () => {});
+
+    expect(workbench.openWorkspaceRoot).toHaveBeenCalledWith("/Users/dev");
+    expect(host.textContent).toContain(ADD_PROJECT_REFUSED_REASON);
+  });
+
   function render(workbench: AgentWorkbenchScreenWorkbench): void {
     act(() => root.render(<AgentWorkbenchScreen {...defaultProps(workbench)} />));
   }
 
   function defaultProps(workbench: AgentWorkbenchScreenWorkbench): AgentWorkbenchScreenProps {
-    return { ...baseProps(workbench), revealPathGateway };
+    return { ...baseProps(workbench), directoryListingGateway, revealPathGateway };
   }
 
   function click(selector: string): void {
@@ -230,6 +280,7 @@ function baseProps(workbench: AgentWorkbenchScreenWorkbench): AgentWorkbenchScre
 }
 
 type MockedWorkbench = AgentWorkbenchScreenWorkbench & {
+  readonly openWorkspaceRoot: ReturnType<typeof vi.fn>;
   readonly agentWorkbench: RecordedAgentWorkbenchLayout;
   readonly hideBottomPanel: ReturnType<typeof vi.fn>;
   readonly setSidebarView: ReturnType<typeof vi.fn>;
@@ -278,6 +329,7 @@ function createWorkbench(
     nodePackageScripts,
     openPinnedFile: vi.fn(),
     openProblemNotice: vi.fn(async () => true),
+    openWorkspaceRoot: vi.fn(async () => true),
     previewFile: vi.fn(),
     setSidebarView: vi.fn(),
     showBottomPanelView: vi.fn(),

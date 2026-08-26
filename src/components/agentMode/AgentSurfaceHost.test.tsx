@@ -117,6 +117,7 @@ function chrome(
     onToggleBottomPanel: () => undefined,
     onShowTerminalPanel: () => undefined,
     onOpenScriptsView: null,
+    addProject: null,
     revealPath: async () => undefined,
   };
 }

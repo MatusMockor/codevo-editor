@@ -3,8 +3,15 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import { AgentLaunchControls, AgentLaunchWarning } from "./AgentLaunchControls";
+
+const NO_FAVORITES: AgentModelFavorites = {
+  keys: new Set(),
+  isFavorite: () => false,
+  toggle: () => undefined,
+};
 
 describe("AgentLaunchControls", () => {
   let host: HTMLDivElement;
@@ -253,7 +260,12 @@ describe("AgentLaunchControls", () => {
   ): void {
     act(() =>
       root.render(
-        <AgentLaunchControls disabled={disabled} launch={launch} onLaunchChange={onLaunchChange} />,
+        <AgentLaunchControls
+          disabled={disabled}
+          favorites={NO_FAVORITES}
+          launch={launch}
+          onLaunchChange={onLaunchChange}
+        />,
       ),
     );
   }
@@ -293,7 +305,9 @@ describe("AgentLaunchControls", () => {
   }
 
   function optionLabel(option: HTMLElement): string {
-    return option.querySelector(".agent-picker__label")?.textContent ?? "";
+    return (
+      option.querySelector(".agent-picker__label, .agent-model-picker__label")?.textContent ?? ""
+    );
   }
 
   function selectedOption(id: string): HTMLElement | null {

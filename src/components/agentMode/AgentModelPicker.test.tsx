@@ -1,0 +1,293 @@
+// @vitest-environment jsdom
+
+import { act, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAgentModelFavorites } from "../../application/useAgentModelFavorites";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import { AgentModelPicker } from "./AgentModelPicker";
+import type { AgentModelChoice } from "./agentLaunchPresentation";
+import { agentPlatformModifier } from "./agentSubmitShortcut";
+
+const CLAUDE: AgentLaunchOptions = {
+  provider: "claudeCode",
+  model: "default",
+  mode: "default",
+  effort: "default",
+};
+const CODEX: AgentLaunchOptions = { provider: "codex", model: "gpt-5.5", mode: "default" };
+const ID = "model-picker";
+
+describe("AgentModelPicker", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("opens a dialog with the provider rail, an autofocused search and the closed model rows", () => {
+    render(CLAUDE);
+
+    expect(trigger().getAttribute("aria-haspopup")).toBe("dialog");
+    expect(trigger().dataset.value).toBe("default");
+    expect(trigger().textContent).toBe("Claude (default)");
+
+    open();
+
+    const dialog = host.querySelector('[role="dialog"]');
+    expect(dialog?.id).toBe(`${ID}-dialog`);
+    expect(trigger().getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(search());
+    expect(optionValues()).toEqual(["default", "fable", "opus", "sonnet"]);
+    expect(selectedOption()?.dataset.value).toBe("default");
+    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-0`);
+    expect(
+      [...host.querySelectorAll(".agent-model-picker__provider")].map((el) => el.textContent),
+    ).toEqual(["Claude Code", "Claude Code", "Claude Code", "Claude Code"]);
+    expect(
+      [...host.querySelectorAll(".agent-model-picker__kbd")].map((el) => el.textContent),
+    ).toEqual([1, 2, 3, 4].map((digit) => `${agentPlatformModifier().glyph}${digit}`));
+  });
+
+  it("marks the current provider active and disables the other one with a truthful reason", () => {
+    render(CODEX);
+    open();
+
+    const claude = railItem("claudeCode");
+    const codex = railItem("codex");
+    expect(codex.getAttribute("aria-pressed")).toBe("true");
+    expect(codex.getAttribute("aria-disabled")).toBeNull();
+    expect(claude.getAttribute("aria-disabled")).toBe("true");
+    expect(claude.title).toBe("Switch the agent CLI in settings");
+
+    act(() => claude.click());
+    expect(optionValues()).toEqual(["default", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]);
+    expect(selectedOption()?.dataset.value).toBe("gpt-5.5");
+  });
+
+  it("filters rows as the query changes and Escape clears the query before closing", () => {
+    render(CLAUDE);
+    open();
+
+    type("sON");
+    expect(optionValues()).toEqual(["sonnet"]);
+    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-0`);
+
+    type("zzz");
+    expect(optionValues()).toEqual([]);
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("No models match your search.");
+
+    key("Escape");
+    expect(search().value).toBe("");
+    expect(optionValues()).toHaveLength(4);
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+
+    key("Escape");
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("moves the active row with arrow keys and selects it with Enter", () => {
+    const onSelect = vi.fn();
+    render(CLAUDE, onSelect);
+    open();
+
+    key("ArrowDown");
+    key("ArrowDown");
+    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-2`);
+    expect(
+      host
+        .querySelector(".agent-model-picker__row--active [role='option']")
+        ?.getAttribute("data-value"),
+    ).toBe("opus");
+
+    key("ArrowUp");
+    key("Enter");
+
+    expect(onSelect).toHaveBeenCalledWith("fable");
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("selects the nth visible row with the platform modifier and a digit", () => {
+    const onSelect = vi.fn();
+    render(CLAUDE, onSelect);
+    open();
+    type("claude");
+    expect(optionValues()).toHaveLength(4);
+
+    key("9", { metaKey: true });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+
+    key("2", { metaKey: true });
+    expect(onSelect).toHaveBeenCalledWith("fable");
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("stars a model and the favorites filter keeps only starred rows", () => {
+    render(CLAUDE);
+    open();
+
+    const star = starFor("opus");
+    expect(star.getAttribute("aria-pressed")).toBe("false");
+    expect(star.getAttribute("aria-label")).toBe("Add Claude Opus 5 to favorites");
+    act(() => star.click());
+    expect(starFor("opus").getAttribute("aria-pressed")).toBe("true");
+    expect(starFor("opus").getAttribute("aria-label")).toBe("Remove Claude Opus 5 from favorites");
+
+    act(() => favoritesRail().click());
+    expect(favoritesRail().getAttribute("aria-pressed")).toBe("true");
+    expect(railItem("claudeCode").getAttribute("aria-pressed")).toBe("false");
+    expect(optionValues()).toEqual(["opus"]);
+
+    act(() => starFor("opus").click());
+    expect(optionValues()).toEqual([]);
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("No favorite models yet");
+
+    act(() => railItem("claudeCode").click());
+    expect(optionValues()).toHaveLength(4);
+  });
+
+  it("closes on an outside pointer press and on a click of the chosen row", () => {
+    const onSelect = vi.fn();
+    render(CLAUDE, onSelect);
+    open();
+
+    act(() => {
+      document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+
+    open();
+    act(() => option("sonnet").click());
+    expect(onSelect).toHaveBeenCalledWith("sonnet");
+    expect(document.activeElement).toBe(trigger());
+
+    open();
+    act(() => option("default").click());
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not open while disabled", () => {
+    render(CLAUDE, vi.fn(), true);
+    expect(trigger().disabled).toBe(true);
+    open();
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  function Harness({
+    disabled,
+    launch,
+    onSelect,
+  }: {
+    readonly launch: AgentLaunchOptions;
+    readonly disabled: boolean;
+    onSelect(model: AgentModelChoice): void;
+  }) {
+    const favorites = useAgentModelFavorites();
+    const [current] = useState(launch);
+    return (
+      <AgentModelPicker
+        describedBy={null}
+        disabled={disabled}
+        favorites={favorites}
+        id={ID}
+        label="Agent model"
+        launch={current}
+        onSelect={onSelect}
+      />
+    );
+  }
+
+  function render(
+    launch: AgentLaunchOptions,
+    onSelect: (model: AgentModelChoice) => void = () => undefined,
+    disabled = false,
+  ): void {
+    act(() => root.render(<Harness disabled={disabled} launch={launch} onSelect={onSelect} />));
+  }
+
+  function trigger(): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>(`button#${ID}`);
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("button");
+  }
+
+  function open(): void {
+    act(() => trigger().click());
+  }
+
+  function search(): HTMLInputElement {
+    const element = host.querySelector<HTMLInputElement>(`#${ID}-dialog input`);
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("input");
+  }
+
+  function type(value: string): void {
+    const input = search();
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    act(() => {
+      setter?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function key(name: string, init: KeyboardEventInit = {}): void {
+    act(() => {
+      search().dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, ...init }));
+    });
+  }
+
+  function optionValues(): ReadonlyArray<string> {
+    return [...host.querySelectorAll<HTMLElement>(`#${ID}-list [role="option"]`)].map(
+      (element) => element.dataset.value ?? "",
+    );
+  }
+
+  function option(value: string): HTMLElement {
+    const element = host.querySelector<HTMLElement>(
+      `#${ID}-list [role="option"][data-value="${value}"]`,
+    );
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("div");
+  }
+
+  function selectedOption(): HTMLElement | null {
+    return host.querySelector<HTMLElement>(`#${ID}-list [role="option"][aria-selected="true"]`);
+  }
+
+  function starFor(value: string): HTMLButtonElement {
+    const element = option(value).parentElement?.querySelector<HTMLButtonElement>(
+      ".agent-model-picker__star",
+    );
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("button");
+  }
+
+  function railItem(provider: string): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>(
+      `.agent-model-picker__rail-item[data-provider="${provider}"]`,
+    );
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("button");
+  }
+
+  function favoritesRail(): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>(
+      '.agent-model-picker__rail-item[aria-label="Favorite models"]',
+    );
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("button");
+  }
+});

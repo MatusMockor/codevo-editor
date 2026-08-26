@@ -14,6 +14,21 @@ import {
 } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 
+export type AgentModelChoice = ClaudeModelChoice | CodexModelChoice;
+
+export interface AgentModelRow {
+  readonly value: AgentModelChoice;
+  readonly label: string;
+  readonly hint: string;
+  readonly provider: AgentCliKind;
+  readonly providerName: string;
+  readonly favoriteKey: string;
+}
+
+export type AgentModelFilter = "all" | "favorites";
+
+export const MAX_AGENT_MODEL_QUERY_LENGTH = 64;
+
 export interface AgentLaunchChoice {
   readonly value: string;
   readonly label: string;
@@ -162,6 +177,46 @@ export function agentLaunchModelChoices(provider: AgentCliKind): ReadonlyArray<A
   return choices(CODEX_MODEL_CHOICES, CODEX_MODEL_TEXT, () => null);
 }
 
+export function agentModelRows(provider: AgentCliKind): ReadonlyArray<AgentModelRow> {
+  if (provider === "claudeCode")
+    return modelRows(provider, CLAUDE_MODEL_CHOICES, CLAUDE_MODEL_TEXT);
+  return modelRows(provider, CODEX_MODEL_CHOICES, CODEX_MODEL_TEXT);
+}
+
+export function agentModelFavoriteKey(provider: AgentCliKind, model: AgentModelChoice): string {
+  return `${provider}/${model}`;
+}
+
+export function agentModelProviderName(provider: AgentCliKind): string {
+  if (provider === "claudeCode") return "Claude Code";
+  return "Codex";
+}
+
+export function boundAgentModelQuery(query: string): string {
+  return query.slice(0, MAX_AGENT_MODEL_QUERY_LENGTH);
+}
+
+export function agentModelRowMatches(row: AgentModelRow, query: string): boolean {
+  const needle = boundAgentModelQuery(query).trim().toLocaleLowerCase();
+  if (needle === "") return true;
+  return (
+    row.label.toLocaleLowerCase().includes(needle) ||
+    row.providerName.toLocaleLowerCase().includes(needle)
+  );
+}
+
+export function filterAgentModelRows(
+  rows: ReadonlyArray<AgentModelRow>,
+  filter: AgentModelFilter,
+  favorites: ReadonlySet<string>,
+  query: string,
+): ReadonlyArray<AgentModelRow> {
+  return rows.filter((row) => {
+    if (filter === "favorites" && !favorites.has(row.favoriteKey)) return false;
+    return agentModelRowMatches(row, query);
+  });
+}
+
 export function agentLaunchModeChoices(provider: AgentCliKind): ReadonlyArray<AgentLaunchChoice> {
   if (provider === "claudeCode") {
     return choices(CLAUDE_PERMISSION_MODES, CLAUDE_MODE_TEXT, (mode) =>
@@ -301,6 +356,22 @@ function modeText(launch: AgentLaunchOptions): LaunchText {
 
 function effortText(launch: AgentLaunchOptions): LaunchText {
   return CLAUDE_EFFORT_TEXT[agentLaunchEffortValue(launch)];
+}
+
+function modelRows<Value extends AgentModelChoice>(
+  provider: AgentCliKind,
+  values: ReadonlyArray<Value>,
+  text: Record<Value, LaunchText>,
+): ReadonlyArray<AgentModelRow> {
+  const providerName = agentModelProviderName(provider);
+  return values.map((value) => ({
+    value,
+    label: text[value].label,
+    hint: text[value].hint,
+    provider,
+    providerName,
+    favoriteKey: agentModelFavoriteKey(provider, value),
+  }));
 }
 
 function choices<Value extends string>(

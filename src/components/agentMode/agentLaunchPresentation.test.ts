@@ -8,7 +8,12 @@ import {
   CODEX_MODEL_CHOICES,
 } from "../../domain/agentLaunch";
 import {
+  MAX_AGENT_MODEL_QUERY_LENGTH,
   agentLaunchAccess,
+  agentModelFavoriteKey,
+  agentModelRows,
+  boundAgentModelQuery,
+  filterAgentModelRows,
   agentLaunchDangerConfirmLabel,
   agentLaunchDangerNotice,
   agentLaunchEffortChoices,
@@ -319,5 +324,48 @@ describe("agentLaunchPresentation", () => {
     expect(
       agentLaunchMetaLabel({ provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" }),
     ).toBe("gpt-5.5 · workspace write");
+  });
+});
+
+describe("agent model rows", () => {
+  it("lists the closed model choices per provider with a provider name and favorite key", () => {
+    expect(agentModelRows("claudeCode").map((row) => row.value)).toEqual([
+      "default",
+      "fable",
+      "opus",
+      "sonnet",
+    ]);
+    expect(agentModelRows("codex").map((row) => row.value)).toEqual([
+      "default",
+      "gpt-5.6-sol",
+      "gpt-5.5",
+      "gpt-5.4",
+    ]);
+    const opus = agentModelRows("claudeCode")[2];
+    expect(opus?.providerName).toBe("Claude Code");
+    expect(opus?.favoriteKey).toBe(agentModelFavoriteKey("claudeCode", "opus"));
+    expect(agentModelRows("codex")[0]?.providerName).toBe("Codex");
+  });
+
+  it("matches a literal case-folded query against the label and provider name only", () => {
+    const rows = agentModelRows("claudeCode");
+    expect(filterAgentModelRows(rows, "all", new Set(), "OPUS").map((r) => r.value)).toEqual([
+      "opus",
+    ]);
+    expect(filterAgentModelRows(rows, "all", new Set(), "  claude code ").length).toBe(4);
+    expect(filterAgentModelRows(rows, "all", new Set(), ".*").length).toBe(0);
+    expect(filterAgentModelRows(rows, "all", new Set(), "latest").length).toBe(0);
+    expect(filterAgentModelRows(rows, "all", new Set(), "").length).toBe(4);
+  });
+
+  it("bounds the query length and keeps only starred rows under the favorites filter", () => {
+    const rows = agentModelRows("codex");
+    expect(boundAgentModelQuery("x".repeat(500))).toHaveLength(MAX_AGENT_MODEL_QUERY_LENGTH);
+    const favorites = new Set([agentModelFavoriteKey("codex", "gpt-5.5")]);
+    expect(filterAgentModelRows(rows, "favorites", favorites, "").map((r) => r.value)).toEqual([
+      "gpt-5.5",
+    ]);
+    expect(filterAgentModelRows(rows, "favorites", favorites, "sol")).toEqual([]);
+    expect(filterAgentModelRows(rows, "favorites", new Set(), "")).toEqual([]);
   });
 });

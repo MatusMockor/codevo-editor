@@ -37,6 +37,7 @@ export function chromeFixture(overrides: Partial<AgentWorkbenchChrome> = {}): Ag
     fileTree: null,
     diff: { monacoTheme: "calm-dark" },
     terminal: null,
+    addProject: null,
     onToggleBottomPanel: () => undefined,
     onShowTerminalPanel: () => undefined,
     onOpenScriptsView: null,

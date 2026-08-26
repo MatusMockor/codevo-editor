@@ -29,6 +29,7 @@ const EMPTY_MATCHES: ReadonlyArray<AgentThreadSearchMatch> = [];
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
 
 export interface AgentThreadsSidebarProps {
+  readonly addProjectAvailable: boolean;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly search: AgentThreadSearchSurface;
   readonly scope: AgentRailScope;
@@ -41,12 +42,15 @@ export interface AgentThreadsSidebarProps {
   onChangeScope(scope: AgentRailScope): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
+  onAddProject(): void;
   onTrustProject(projectRootKey: string): void;
   onReleaseProject(projectRootKey: string): void;
 }
 
 export function AgentThreadsSidebar({
+  addProjectAvailable,
   groups,
+  onAddProject,
   onChangeScope,
   onCollapseSidebar,
   onNewThread,
@@ -193,7 +197,9 @@ export function AgentThreadsSidebar({
         </button>
       </div>
       <AgentRailHeader
+        addProjectAvailable={addProjectAvailable}
         groups={groups}
+        onAddProject={onAddProject}
         onChangeScope={onChangeScope}
         onNewThread={onNewThread}
         onReleaseProject={onReleaseProject}
