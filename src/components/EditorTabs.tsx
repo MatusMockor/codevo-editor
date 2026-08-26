@@ -1,5 +1,5 @@
 import { Circle, X } from "lucide-react";
-import { memo, useRef, useState } from "react";
+import { memo, useRef, useState, type RefObject } from "react";
 import type { DragEvent, KeyboardEvent } from "react";
 import type { MouseEvent } from "react";
 import type { EditorDocument, ImageTab } from "../domain/workspace";
@@ -23,6 +23,7 @@ export interface EditorTabsProps {
   activePath: string | null;
   previewPath: string | null;
   groupId?: string;
+  groupElementRef?: RefObject<HTMLElement | null>;
   projectId?: string;
   onActivate(path: string): void;
   onClose(path: string): void;
@@ -37,6 +38,7 @@ function EditorTabsComponent({
   activePath,
   previewPath,
   groupId,
+  groupElementRef,
   projectId = "default",
   onActivate,
   onClose,
@@ -52,6 +54,7 @@ function EditorTabsComponent({
   const openEditorsMru = useOpenEditorsMru({
     activePath,
     entries: documents.map(({ name, path }) => ({ name, path })),
+    groupElementRef,
     groupId: groupId ?? "editor-main",
     onActivate,
     projectId: normalizedWorkspaceRootKey(projectId),
@@ -176,7 +179,7 @@ function EditorTabsComponent({
               onDrop={(event) => handleDrop(document.path, event)}
             >
               <button
-                aria-controls={getTabPanelId(document.path, groupId)}
+                aria-controls={active ? getTabPanelId(document.path, groupId) : undefined}
                 aria-selected={active}
                 className="tab-main"
                 id={getTabId(document.path, groupId)}

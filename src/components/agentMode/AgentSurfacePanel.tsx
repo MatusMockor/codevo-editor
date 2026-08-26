@@ -16,6 +16,7 @@ import { AgentSurfaceFileTree, type AgentSurfaceFileTreeProps } from "./AgentSur
 import type { AgentSurfaceTerminalProps } from "./AgentSurfaceTerminal";
 import { SURFACE_NO_THREAD_REASON, agentSurfaceBlockedReason } from "./agentSurfacePolicy";
 import { useWorkbenchFrameTreeReport } from "../workbenchFrameTreeReport";
+import { WorkbenchEditorTabsPortalTarget } from "../workbenchEditorTabsPortal";
 
 export const AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE = "data-agent-editor-slot";
 export const AGENT_SURFACE_CLOSE_PANEL_LABEL = "Close panel";
@@ -173,7 +174,8 @@ export function AgentSurfacePanel({
             })}
           </div>
         )}
-        <span className="agent-session__spacer" />
+        {activeSurface === "files" && !hidden && <WorkbenchEditorTabsPortalTarget />}
+        {activeSurface !== "files" && <span className="agent-session__spacer" />}
         {activeSurface === "files" && fileTree !== null && (
           <button
             aria-label="Toggle file tree"

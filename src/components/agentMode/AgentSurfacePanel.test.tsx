@@ -154,6 +154,7 @@ describe("AgentSurfacePanel", () => {
     expect(slot).not.toBeNull();
     expect(slot?.childElementCount).toBe(0);
     expect(host.querySelector(".monaco-editor")).toBeNull();
+    expect(host.querySelector(".agent-surface__head .agent-surface__editor-tabs")).not.toBeNull();
 
     click('[aria-label="Toggle file tree"]');
     expect(aside?.getAttribute("data-tree")).toBe("hidden");
@@ -175,6 +176,10 @@ describe("AgentSurfacePanel", () => {
     expect(host.querySelector("aside.agent-surface")?.getAttribute("data-tree")).toBe("hidden");
     expect(host.querySelector('[aria-label="Toggle file tree"]')).toBeNull();
     expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
+    expect(host.querySelector(".agent-surface__editor-tabs")).toBeNull();
+
+    render({ layout: open(["files"], "files"), hidden: true });
+    expect(host.querySelector(".agent-surface__editor-tabs")).toBeNull();
   });
 
   it("renders one tab per open surface with the close button and no add button", () => {

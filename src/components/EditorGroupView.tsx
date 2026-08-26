@@ -1,10 +1,12 @@
-import { memo, type ReactNode } from "react";
+import { memo, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { EditorGroup, EditorGroupId } from "../domain/editorGroups";
 import { visibleEditorPaths, type EditorDocument, type ImageTab } from "../domain/workspace";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import type { TabDropPosition } from "../domain/tabOrdering";
 import { EditorTabs } from "./EditorTabs";
 import { getTabId, getTabPanelId } from "./tabIds";
+import { useWorkbenchEditorTabsPortalTarget } from "./workbenchEditorTabsPortalContext";
 
 export type EditorGroupDocument = EditorDocument | ImageTab | MarkdownPreviewTab;
 export type EditorGroupSurface =
@@ -54,6 +56,8 @@ export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupV
     return document ? [document] : [];
   });
   const activeDocument = group.activePath ? byPath.get(group.activePath) : undefined;
+  const groupElementRef = useRef<HTMLElement | null>(null);
+  const editorTabsPortalTarget = useWorkbenchEditorTabsPortalTarget();
   const surface: EditorGroupSurface =
     activeDocument && group.activePath
       ? { kind: "document", document: activeDocument, path: group.activePath }
@@ -66,12 +70,30 @@ export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupV
     onActivateGroup(groupId);
   }
 
+  const tabs = (
+    <EditorTabs
+      activePath={group.activePath}
+      documents={groupDocuments}
+      fileStatusesByPath={fileStatusesByPath}
+      groupId={groupId}
+      groupElementRef={groupElementRef}
+      onActivate={(path) => onActivateTab(groupId, path)}
+      onClose={(path) => onCloseTab(groupId, path)}
+      onMove={onMoveTab}
+      onPin={(path) => onPinTab(groupId, path)}
+      onReorder={(fromPath, toPath, position) => onReorderTab(groupId, fromPath, toPath, position)}
+      previewPath={group.previewPath}
+      projectId={projectId}
+    />
+  );
+
   return (
     <section
       className={`editor-group${active ? " active" : ""}`}
       data-editor-group-id={groupId}
       onFocusCapture={activateGroup}
       onPointerDown={activateGroup}
+      ref={groupElementRef}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -80,21 +102,9 @@ export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupV
         minWidth: 0,
       }}
     >
-      <EditorTabs
-        activePath={group.activePath}
-        documents={groupDocuments}
-        fileStatusesByPath={fileStatusesByPath}
-        groupId={groupId}
-        onActivate={(path) => onActivateTab(groupId, path)}
-        onClose={(path) => onCloseTab(groupId, path)}
-        onMove={onMoveTab}
-        onPin={(path) => onPinTab(groupId, path)}
-        onReorder={(fromPath, toPath, position) =>
-          onReorderTab(groupId, fromPath, toPath, position)
-        }
-        previewPath={group.previewPath}
-        projectId={projectId}
-      />
+      {active && editorTabsPortalTarget !== null
+        ? createPortal(tabs, editorTabsPortalTarget)
+        : tabs}
       <div
         aria-labelledby={
           activeDocument && group.activePath ? getTabId(group.activePath, groupId) : undefined

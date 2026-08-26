@@ -2586,7 +2586,7 @@
 }
 
 /* Variant A "Graphite": flat neutral surfaces, hairline-led, one cool accent, no glow but the live dot. */
-.workbench-frame[data-agent-variant="a"] {
+.workbench-frame[data-agent-variant="graphite"] {
   --agent-accent-dark: #7fa7d9;
   --agent-accent-light: #2f6cb3;
   --agent-live: var(--agent-accent-dark);
@@ -2619,9 +2619,9 @@
   --agent-turn-gap: 24px;
 }
 
-.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="a"],
-.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="a"],
-.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="a"] {
+.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="graphite"],
+.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="graphite"],
+.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="graphite"] {
   --agent-live: var(--agent-accent-light);
   --agent-scanline: transparent;
   --agent-raised: #fff;
@@ -2629,7 +2629,7 @@
 }
 
 /* Variant B "Warm paper": warm neutrals, softer contrast, rounded corners, amber accent, soft drop shadows. */
-.workbench-frame[data-agent-variant="b"] {
+.workbench-frame[data-agent-variant="paper"] {
   --agent-accent-dark: #e0a95a;
   --agent-accent-light: #a8681a;
   --agent-warm: #7a5a38;
@@ -2669,9 +2669,9 @@
   --agent-tracking-label: 0.1em;
 }
 
-.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="b"],
-.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="b"],
-.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="b"] {
+.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="paper"],
+.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="paper"],
+.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="paper"] {
   --agent-warm: #efe2cc;
   --agent-live: var(--agent-accent-light);
   --agent-live-contrast: #fffaf2;
@@ -2686,7 +2686,7 @@
 }
 
 /* Variant C "Studio": deeper ambient depth, restrained violet/teal accents, denser rail. */
-.workbench-frame[data-agent-variant="c"] {
+.workbench-frame[data-agent-variant="studio"] {
   --agent-accent-dark: #a78bfa;
   --agent-accent-light: #6d4fd6;
   --agent-ok-dark: #5fd3c7;
@@ -2730,9 +2730,9 @@
   --agent-tracking-label: 0.16em;
 }
 
-.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="c"],
-.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="c"],
-.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="c"] {
+.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="studio"],
+.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="studio"],
+.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="studio"] {
   --agent-tint: #ded6fb;
   --agent-live: var(--agent-accent-light);
   --agent-ok: var(--agent-ok-light);
@@ -3491,6 +3491,36 @@
   min-width: 0;
   align-items: center;
   gap: 2px;
+}
+
+.agent-surface__editor-tabs {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-self: stretch;
+  border-left: 1px solid var(--agent-hairline);
+}
+
+.agent-surface__editor-tabs .editor-tabs {
+  height: calc(var(--agent-surface-header-height) - 1px);
+  min-height: 0;
+  max-height: none;
+  align-items: flex-end;
+  padding: 0 4px;
+  border-bottom: 0;
+  background: transparent;
+  gap: 2px;
+}
+
+.agent-surface__editor-tabs .editor-tab {
+  height: 30px;
+  min-width: 96px;
+  max-width: 180px;
+}
+
+.agent-surface__editor-tabs .tab-main {
+  height: 30px;
+  padding-left: 8px;
 }
 
 .agent-surface__tabitem {

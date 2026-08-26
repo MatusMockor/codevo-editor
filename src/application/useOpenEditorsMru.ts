@@ -16,6 +16,7 @@ interface UseOpenEditorsMruOptions {
   readonly activePath: string | null;
   readonly entries: readonly OpenEditorMruEntry[];
   readonly groupId: string;
+  readonly groupElementRef?: RefObject<HTMLElement | null>;
   readonly onActivate: (path: string) => void;
   readonly projectId: string;
   readonly stripRef: RefObject<HTMLElement | null>;
@@ -31,6 +32,7 @@ export function __resetOpenEditorsMruForTests(): void {
 export function useOpenEditorsMru({
   activePath,
   entries,
+  groupElementRef,
   groupId,
   onActivate,
   projectId,
@@ -62,10 +64,10 @@ export function useOpenEditorsMru({
       if (!entry || !currentSession) {
         return;
       }
-      if (!isActiveGroup(stripRef.current)) {
+      if (!isActiveGroup(stripRef.current, groupElementRef)) {
         committedPathRef.current = null;
         setSession(null);
-        focusActiveEditorSurface(stripRef.current);
+        focusActiveEditorSurface(stripRef.current, groupElementRef);
         return;
       }
       const nextOrder = promotePath(orderRef.current, entry.path);
@@ -76,10 +78,10 @@ export function useOpenEditorsMru({
       onActivateRef.current(entry.path);
       if (entry.path === activePathRef.current) {
         committedPathRef.current = null;
-        focusEditorSurface(stripRef.current);
+        focusEditorSurface(stripRef.current, groupElementRef);
       }
     },
-    [scope, setSession, stripRef],
+    [groupElementRef, scope, setSession, stripRef],
   );
 
   useLayoutEffect(() => {
@@ -119,18 +121,18 @@ export function useOpenEditorsMru({
       return;
     }
     committedPathRef.current = null;
-    focusEditorSurface(stripRef.current);
-  }, [activePath, stripRef]);
+    focusEditorSurface(stripRef.current, groupElementRef);
+  }, [activePath, groupElementRef, stripRef]);
 
   useEffect(() => {
     const stripElement = stripRef.current;
     const discardInactiveSession = () => {
-      if (!sessionRef.current || isActiveGroup(stripRef.current)) {
+      if (!sessionRef.current || isActiveGroup(stripRef.current, groupElementRef)) {
         return false;
       }
       committedPathRef.current = null;
       setSession(null);
-      focusActiveEditorSurface(stripRef.current);
+      focusActiveEditorSurface(stripRef.current, groupElementRef);
       return true;
     };
 
@@ -152,7 +154,7 @@ export function useOpenEditorsMru({
         event.metaKey ||
         dismissedUntilControlReleaseRef.current ||
         isInsideModal(event.target) ||
-        !isActiveGroup(stripRef.current)
+        !isActiveGroup(stripRef.current, groupElementRef)
       ) {
         return;
       }
@@ -204,15 +206,15 @@ export function useOpenEditorsMru({
       }
       setSession(null);
       dismissedUntilControlReleaseRef.current = false;
-      if (isActiveGroup(stripRef.current)) {
+      if (isActiveGroup(stripRef.current, groupElementRef)) {
         restoreFocus(currentSession.returnFocus);
       } else {
         committedPathRef.current = null;
-        focusActiveEditorSurface(stripRef.current);
+        focusActiveEditorSurface(stripRef.current, groupElementRef);
       }
     };
 
-    const group = stripElement?.closest(".editor-group");
+    const group = editorGroupElement(stripElement, groupElementRef);
     const activeGroupObserver = group
       ? new MutationObserver(() => {
           discardInactiveSession();
@@ -231,15 +233,15 @@ export function useOpenEditorsMru({
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", handleBlur);
       const currentSession = sessionRef.current;
-      if (currentSession && isActiveGroup(stripElement)) {
+      if (currentSession && isActiveGroup(stripElement, groupElementRef)) {
         restoreFocus(currentSession.returnFocus);
       } else if (currentSession) {
         committedPathRef.current = null;
-        focusActiveEditorSurface(stripElement);
+        focusActiveEditorSurface(stripElement, groupElementRef);
       }
       setSession(null);
     };
-  }, [commitEntry, scope, setSession, stripRef]);
+  }, [commitEntry, groupElementRef, scope, setSession, stripRef]);
 
   const cancel = () => {
     const currentSession = sessionRef.current;
@@ -247,9 +249,9 @@ export function useOpenEditorsMru({
       return;
     }
     setSession(null);
-    if (!isActiveGroup(stripRef.current)) {
+    if (!isActiveGroup(stripRef.current, groupElementRef)) {
       committedPathRef.current = null;
-      focusActiveEditorSurface(stripRef.current);
+      focusActiveEditorSurface(stripRef.current, groupElementRef);
       return;
     }
     restoreFocus(currentSession.returnFocus);
@@ -315,8 +317,18 @@ function retainScope(scope: string, order: string[]) {
   }
 }
 
-function isActiveGroup(strip: HTMLElement | null): boolean {
-  const group = strip?.closest(".editor-group");
+function editorGroupElement(
+  strip: HTMLElement | null,
+  groupElementRef: RefObject<HTMLElement | null> | undefined,
+): HTMLElement | null {
+  return groupElementRef?.current ?? strip?.closest<HTMLElement>(".editor-group") ?? null;
+}
+
+function isActiveGroup(
+  strip: HTMLElement | null,
+  groupElementRef: RefObject<HTMLElement | null> | undefined,
+): boolean {
+  const group = editorGroupElement(strip, groupElementRef);
   if (!group) {
     return false;
   }
@@ -340,13 +352,20 @@ function isInsideModal(target: EventTarget | null): boolean {
   );
 }
 
-function focusEditorSurface(strip: HTMLElement | null) {
-  const group = strip?.closest(".editor-group");
+function focusEditorSurface(
+  strip: HTMLElement | null,
+  groupElementRef: RefObject<HTMLElement | null> | undefined,
+) {
+  const group = editorGroupElement(strip, groupElementRef);
   focusGroupEditorSurface(group);
 }
 
-function focusActiveEditorSurface(strip: HTMLElement | null) {
-  const editorArea = strip?.closest(".editor-area");
+function focusActiveEditorSurface(
+  strip: HTMLElement | null,
+  groupElementRef: RefObject<HTMLElement | null> | undefined,
+) {
+  const ownedGroup = editorGroupElement(strip, groupElementRef);
+  const editorArea = ownedGroup?.closest(".editor-area") ?? strip?.closest(".editor-area");
   const group =
     editorArea?.querySelector(".editor-group.active") ??
     strip?.ownerDocument.querySelector(".editor-group.active");
