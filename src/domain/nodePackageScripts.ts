@@ -1,3 +1,5 @@
+import { AGENT_TASK_ID_PATTERN } from "./agentTask";
+
 export const MAX_NODE_PACKAGE_DISCOVERY_MANIFESTS = 2_000;
 export const MAX_NODE_PACKAGE_DISCOVERY_SCRIPTS = 20_000;
 export const MAX_NODE_PACKAGE_DISCOVERY_VISITED = 100_000;
@@ -45,7 +47,41 @@ export interface NodePackageTaskOwner {
   readonly scriptName: string;
 }
 
+export type NodePackageTaskLaunchTarget =
+  | { readonly kind: "workspaceRoot" }
+  | { readonly kind: "agentWorktree"; readonly threadId: string };
+
+export const DEFAULT_NODE_PACKAGE_TASK_LAUNCH_TARGET: NodePackageTaskLaunchTarget = {
+  kind: "workspaceRoot",
+};
+
+export function normalizeNodePackageTaskLaunchTarget(
+  value: NodePackageTaskLaunchTarget,
+): NodePackageTaskLaunchTarget {
+  if (value === null || typeof value !== "object") {
+    invalid("target", "an object");
+  }
+  if (value.kind === "workspaceRoot") {
+    exactKeys(value, ["kind"], "target");
+    return { kind: "workspaceRoot" };
+  }
+  if (value.kind === "agentWorktree") {
+    exactKeys(value, ["kind", "threadId"], "target");
+    if (
+      typeof value.threadId !== "string" ||
+      !AGENT_TASK_ID_PATTERN.test(value.threadId) ||
+      value.threadId.includes("--")
+    ) {
+      invalid("target.threadId", "a safe agent thread id");
+    }
+    return { kind: "agentWorktree", threadId: value.threadId };
+  }
+  return invalid("target.kind", "workspaceRoot or agentWorktree");
+}
+
 export type StartNodePackageTaskRequest = NodePackageTaskOwner & {
+  readonly repositoryRoot: string;
+  readonly target: NodePackageTaskLaunchTarget;
   readonly problemMatcher?: import("./nodePackageTaskProblems").NodePackageProblemMatcher | null;
 };
 

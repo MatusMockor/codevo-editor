@@ -97,7 +97,8 @@ export function AgentWorkbenchScreen({
       available: nodePackageScripts.available,
       unavailableReason: nodePackageScripts.error,
       active: nodePackageScripts.pending ? nodePackageScripts.task : null,
-      run: (script) => nodePackageScripts.run(script),
+      run: (script, target, repositoryRoot) =>
+        nodePackageScripts.run(script, target, repositoryRoot),
       stop: () => nodePackageScripts.stop(),
     }),
     [nodePackageScripts],

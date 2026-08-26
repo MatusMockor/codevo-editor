@@ -72,7 +72,9 @@ describe("useNodePackageScriptWorkbench", () => {
       workspaceId: "ws-1",
       sessionId: 17,
       manifestRelativePath: "apps/web/package.json",
+      repositoryRoot: "/workspace-1",
       scriptName: "build prod ✓",
+      target: { kind: "workspaceRoot" },
     });
     expect(harness.current().task).toMatchObject({ status: "running", sessionId: 17 });
     harness.unmount();
@@ -86,6 +88,32 @@ describe("useNodePackageScriptWorkbench", () => {
     expect(harness.requestTerminalSession).not.toHaveBeenCalled();
     expect(harness.current().run(SCRIPT)).toBe(true);
     expect(harness.requestTerminalSession).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
+  it("captures an immutable launch target before terminal acquisition", async () => {
+    const harness = await renderHarness();
+    const target = { kind: "agentWorktree" as const, threadId: "agt-123-abc" };
+    const mutableScript = { ...SCRIPT };
+
+    act(() => {
+      expect(harness.current().run(mutableScript, target, "/workspace-1/repositories/api")).toBe(
+        true,
+      );
+    });
+    (target as { threadId: string }).threadId = "agt-999-def";
+    mutableScript.manifestRelativePath = "changed/package.json";
+    mutableScript.scriptName = "changed";
+    await act(async () => harness.deliverSession(17));
+
+    expect(harness.startNodePackageTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryRoot: "/workspace-1/repositories/api",
+        manifestRelativePath: "apps/web/package.json",
+        scriptName: "build prod ✓",
+        target: { kind: "agentWorktree", threadId: "agt-123-abc" },
+      }),
+    );
     harness.unmount();
   });
 

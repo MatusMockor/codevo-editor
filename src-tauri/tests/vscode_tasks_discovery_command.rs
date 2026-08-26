@@ -78,11 +78,18 @@ mod node_package_scripts {
     use crate::node_package_problem_matcher::NodePackageTaskOutputStream;
 
     #[derive(Clone, Debug)]
+    pub(crate) enum NodePackageTaskLaunchTarget {
+        WorkspaceRoot {},
+    }
+
+    #[derive(Clone, Debug)]
     pub(crate) struct RunNodePackageScriptRequest {
         pub workspace_id: workspace_registry::WorkspaceId,
         pub session_id: u64,
         pub manifest_relative_path: String,
+        pub repository_root: String,
         pub script_name: String,
+        pub target: NodePackageTaskLaunchTarget,
     }
 
     pub(crate) trait NodePackageTaskOutputObserver: Send + Sync + 'static {

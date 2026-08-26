@@ -2,7 +2,8 @@
 
 use crate::node_package_scripts::{
     preflight_vscode_node_package_task, spawn_vscode_node_package_task,
-    NodePackageTaskOutputObserver, RunNodePackageScriptRequest, SpawnedNodePackageTask,
+    NodePackageTaskLaunchTarget, NodePackageTaskOutputObserver, RunNodePackageScriptRequest,
+    SpawnedNodePackageTask,
 };
 use crate::{
     managed_javascript_typescript::node_executable_path,
@@ -123,6 +124,10 @@ impl<'a> ProcessTaskRuntime<'a> {
             &request.config_revision,
         )?;
         let _trust = validate_workspace_trust(self.trust, &descriptor)?;
+        let repository_root = descriptor
+            .canonical_root_path
+            .to_string_lossy()
+            .into_owned();
         let execution_plan = config
             .tasks
             .execution_plan(&request.label)
@@ -144,7 +149,9 @@ impl<'a> ProcessTaskRuntime<'a> {
                             request.package_root_relative_path(),
                             task.options.cwd.as_deref(),
                         )?,
+                        repository_root: repository_root.clone(),
                         script_name: script.clone(),
+                        target: NodePackageTaskLaunchTarget::WorkspaceRoot {},
                     });
                 }
                 continue;
@@ -228,7 +235,12 @@ impl<'a> ProcessTaskRuntime<'a> {
                     workspace_id: request.owner.workspace_id.clone(),
                     session_id: request.owner.terminal_session_id,
                     manifest_relative_path,
+                    repository_root: descriptor
+                        .canonical_root_path
+                        .to_string_lossy()
+                        .into_owned(),
                     script_name: script.clone(),
+                    target: NodePackageTaskLaunchTarget::WorkspaceRoot {},
                 },
                 Arc::new(SilentNodePackageObserver),
                 &descriptor.canonical_root_path,

@@ -32,7 +32,9 @@ describe("TauriNodePackageScriptsGateway", () => {
       workspaceId: "ws-1",
       sessionId: 12,
       manifestRelativePath: "apps/web/package.json",
+      repositoryRoot: ROOT,
       scriptName: "build prod ✓",
+      target: { kind: "workspaceRoot" as const },
     };
 
     await expect(gateway.startNodePackageTask(request)).resolves.toEqual({ runId: "run-1" });
@@ -40,9 +42,12 @@ describe("TauriNodePackageScriptsGateway", () => {
       request,
     });
     invoke.mockResolvedValueOnce(null);
-    await expect(gateway.acknowledgeNodePackageTaskStart({
-      runId: "run-1", workspaceId: "ws-1",
-    })).resolves.toBeUndefined();
+    await expect(
+      gateway.acknowledgeNodePackageTaskStart({
+        runId: "run-1",
+        workspaceId: "ws-1",
+      }),
+    ).resolves.toBeUndefined();
     await expect(
       gateway.stopNodePackageTask({ runId: "run-1", workspaceId: "ws-1" }),
     ).resolves.toBeUndefined();
@@ -89,8 +94,11 @@ describe("TauriNodePackageScriptsGateway", () => {
     await gateway.subscribeNodePackageTaskOutputEvents(output);
     await gateway.subscribeNodePackageTaskProblemsEvents(problems);
     const owner = {
-      runId: "run-1", workspaceId: "ws-1", sessionId: 2,
-      manifestRelativePath: "package.json", scriptName: "lint",
+      runId: "run-1",
+      workspaceId: "ws-1",
+      sessionId: 2,
+      manifestRelativePath: "package.json",
+      scriptName: "lint",
     };
     listeners.get("node-package-task://output")?.({
       payload: { owner, sequence: 1, stream: "stdout", data: "ok", truncated: false },

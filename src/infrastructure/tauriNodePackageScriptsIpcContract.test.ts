@@ -72,7 +72,9 @@ describe("Node package scripts IPC contract", () => {
       workspaceId: "ws-1",
       sessionId: 7,
       manifestRelativePath: "apps/web/package.json",
+      repositoryRoot: "/workspace",
       scriptName: "build prod ✓",
+      target: { kind: "workspaceRoot" as const },
     };
 
     await expect(invokeStartNodePackageTaskIpc(invoke, request)).resolves.toEqual({
@@ -99,7 +101,9 @@ describe("Node package scripts IPC contract", () => {
           workspaceId: "ws-1",
           sessionId: 7,
           manifestRelativePath: "package.json",
+          repositoryRoot: "/workspace",
           scriptName,
+          target: { kind: "workspaceRoot" },
         }),
       ).rejects.toThrow("request.scriptName");
       expect(invoke).not.toHaveBeenCalled();
@@ -114,7 +118,9 @@ describe("Node package scripts IPC contract", () => {
         workspaceId: "ws-1",
         sessionId: 7,
         manifestRelativePath: "package.json",
+        repositoryRoot: "/workspace",
         scriptName: "build",
+        target: { kind: "workspaceRoot" },
         extra: true,
       } as never),
     ).rejects.toThrow(TypeError);
@@ -128,7 +134,9 @@ describe("Node package scripts IPC contract", () => {
           workspaceId: "ws-1",
           sessionId: 7,
           manifestRelativePath: "package.json",
+          repositoryRoot: "/workspace",
           scriptName: "build",
+          target: { kind: "workspaceRoot" },
         },
       ),
     ).rejects.toThrow("result.runId");
@@ -138,7 +146,9 @@ describe("Node package scripts IPC contract", () => {
       workspaceId: "ws-1",
       sessionId: 7,
       manifestRelativePath: "package.json",
+      repositoryRoot: "/workspace",
       scriptName: "build",
+      target: { kind: "workspaceRoot" as const },
     };
     for (const invalid of [
       { ...valid, runId: "x".repeat(129) },
@@ -344,7 +354,9 @@ describe("Node package scripts IPC contract", () => {
       workspaceId: "ws-1",
       sessionId: 7,
       manifestRelativePath: "package.json",
+      repositoryRoot: "/workspace",
       scriptName: "lint",
+      target: { kind: "workspaceRoot" as const },
     };
     const invoke = vi.fn(async () => ({ runId: "run-1" }));
     await invokeStartNodePackageTaskIpc(invoke, { ...base, problemMatcher: null });
@@ -355,6 +367,47 @@ describe("Node package scripts IPC contract", () => {
         problemMatcher: "custom",
       } as never),
     ).rejects.toThrow("problemMatcher");
+  });
+
+  it("accepts only exact closed package task launch targets", async () => {
+    const base = {
+      runId: "run-1",
+      workspaceId: "ws-1",
+      sessionId: 7,
+      manifestRelativePath: "package.json",
+      repositoryRoot: "/workspace",
+      scriptName: "lint",
+    };
+    const invoke = vi.fn(async () => ({ runId: "run-1" }));
+
+    await invokeStartNodePackageTaskIpc(invoke, {
+      ...base,
+      target: { kind: "agentWorktree", threadId: "agt-123-abc" },
+    });
+    await expect(
+      invokeStartNodePackageTaskIpc(invoke, {
+        ...base,
+        target: { kind: "agentWorktree", threadId: "../escape" },
+      }),
+    ).rejects.toThrow("request.target.threadId");
+    await expect(
+      invokeStartNodePackageTaskIpc(invoke, {
+        ...base,
+        target: { kind: "agentWorktree", threadId: "agt--123" },
+      }),
+    ).rejects.toThrow("request.target.threadId");
+    await expect(
+      invokeStartNodePackageTaskIpc(invoke, {
+        ...base,
+        target: { kind: "workspaceRoot", threadId: "agt-123-abc" },
+      } as never),
+    ).rejects.toThrow("request.target");
+    await expect(
+      invokeStartNodePackageTaskIpc(invoke, {
+        ...base,
+        target: { kind: "other" },
+      } as never),
+    ).rejects.toThrow("request.target.kind");
   });
 });
 

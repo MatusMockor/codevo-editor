@@ -1,4 +1,8 @@
 use crate::{
+    git_worktree::{
+        agent_worktree_path, ensure_worktree_path_in_base, safe_agent_task_id,
+        WORKTREE_BASE_DIR_NAME,
+    },
     node_package_problem_matcher::NodePackageTaskOutputStream,
     terminal::{TerminalEventSink, TerminalOutputEvent},
     terminal_session::TerminalSupervisor,
@@ -113,7 +117,33 @@ pub(crate) struct RunNodePackageScriptRequest {
     pub workspace_id: WorkspaceId,
     pub session_id: u64,
     pub manifest_relative_path: String,
+    pub repository_root: String,
     pub script_name: String,
+    pub target: NodePackageTaskLaunchTarget,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) enum NodePackageTaskLaunchTarget {
+    WorkspaceRoot {},
+    #[serde(rename_all = "camelCase")]
+    AgentWorktree {
+        thread_id: String,
+    },
+}
+
+impl Default for NodePackageTaskLaunchTarget {
+    fn default() -> Self {
+        Self::WorkspaceRoot {}
+    }
+}
+
+struct NodePackageLaunchDirectory {
+    directory: File,
+    path: PathBuf,
+    problem_root: File,
+    problem_root_path: PathBuf,
+    problem_package_relative: PathBuf,
 }
 
 #[derive(Debug)]
@@ -406,31 +436,43 @@ fn spawn_node_package_task_with_policy(
         .selected_root_path
         .to_str()
         .ok_or_else(|| "Workspace root path is not valid UTF-8.".to_string())?;
-    let trusted = trust
+    if !trust
         .lock()
         .map_err(|error| error.to_string())?
         .get(trust_root)
-        .trusted;
-    if !trusted {
+        .trusted
+    {
         return Err("Trust this workspace before running a package script.".to_string());
     }
     let sink = terminals.task_sink(request.session_id, &root_identity)?;
     let package_root = manifest_path.parent().unwrap_or_else(|| Path::new(""));
-    let package_directory = open_package_directory(&root, package_root)
-        .map_err(|error| format!("Failed to open the package directory safely: {error}"))?;
-    let expected_package_path = root_identity.join(package_root);
-    let retained_package_path = opened_root_path(&package_directory)
+    let repository_relative = resolve_repository_relative_path(
+        &root,
+        &root_identity,
+        Path::new(&request.repository_root),
+    )?;
+    if package_root.strip_prefix(&repository_relative).is_err() {
+        return Err("Package manifest is outside the requested repository.".to_string());
+    }
+    let launch = resolve_package_launch_directory(
+        &root,
+        &root_identity,
+        package_root,
+        &repository_relative,
+        &request.target,
+    )?;
+    let retained_package_path = opened_root_path(&launch.directory)
         .map_err(|error| format!("Failed to inspect the package directory identity: {error}"))?;
-    if retained_package_path != expected_package_path {
+    if retained_package_path != launch.path {
         return Err("Package directory identity changed before task start.".to_string());
     }
     output_observer.prepare(
-        &root,
-        &root_identity,
-        &package_directory,
+        &launch.problem_root,
+        &launch.problem_root_path,
+        &launch.directory,
         &retained_package_path,
     )?;
-    let manifest_file = open_manifest_in_directory(&package_directory)
+    let manifest_file = open_manifest_in_directory(&launch.directory)
         .map_err(|error| format!("Failed to open package.json safely: {error}"))?;
     let parsed = parse_manifest(manifest_file)?;
     if !parsed
@@ -445,7 +487,12 @@ fn spawn_node_package_task_with_policy(
     }
     let manager = parsed
         .manager
-        .or_else(|| detect_manager_from_retained_root(&root, package_root))
+        .or_else(|| {
+            detect_manager_from_retained_root(
+                &launch.problem_root,
+                &launch.problem_package_relative,
+            )
+        })
         .ok_or_else(|| "Could not determine a supported package manager.".to_string())?;
 
     let mut command = Command::new(manager.executable());
@@ -455,7 +502,7 @@ fn spawn_node_package_task_with_policy(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_descriptor_bound_cwd(&mut command, &package_directory)?;
+    configure_descriptor_bound_cwd(&mut command, &launch.directory)?;
     let operation = registry
         .lock_operations()
         .map_err(|error| error.to_string())?;
@@ -465,9 +512,29 @@ fn spawn_node_package_task_with_policy(
     if current_descriptor != descriptor {
         return Err("The package task workspace identity changed before start.".to_string());
     }
+    let current_root_identity = opened_root_path(&root)
+        .map_err(|error| format!("Failed to inspect the registered workspace root: {error}"))?;
+    if current_root_identity != current_descriptor.canonical_root_path {
+        return Err("Registered workspace root identity changed.".to_string());
+    }
+    let current_problem_root = opened_root_path(&launch.problem_root)
+        .map_err(|error| format!("Failed to inspect the package task root: {error}"))?;
+    if current_problem_root != launch.problem_root_path {
+        return Err("Package task root identity changed before start.".to_string());
+    }
+    let current_package_path = opened_root_path(&launch.directory)
+        .map_err(|error| format!("Failed to inspect the package directory identity: {error}"))?;
+    if current_package_path != launch.path {
+        return Err("Package directory identity changed before task start.".to_string());
+    }
+    let trust_guard = trust.lock().map_err(|error| error.to_string())?;
+    if !trust_guard.get(trust_root).trusted {
+        return Err("Trust this workspace before running a package script.".to_string());
+    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to start package script: {error}"))?;
+    drop(trust_guard);
     drop(operation);
     let process_group_id = i32::try_from(child.id()).map_err(|_| {
         let _ = child.kill();
@@ -517,6 +584,102 @@ fn spawn_node_package_task_with_policy(
         output_observer,
         settled: false,
     })
+}
+
+fn resolve_package_launch_directory(
+    workspace: &File,
+    workspace_path: &Path,
+    package_root: &Path,
+    repository_relative: &Path,
+    target: &NodePackageTaskLaunchTarget,
+) -> Result<NodePackageLaunchDirectory, String> {
+    match target {
+        NodePackageTaskLaunchTarget::WorkspaceRoot {} => {
+            let directory = open_package_directory(workspace, package_root)
+                .map_err(|error| format!("Failed to open the package directory safely: {error}"))?;
+            Ok(NodePackageLaunchDirectory {
+                directory,
+                path: workspace_path.join(package_root),
+                problem_root: workspace
+                    .try_clone()
+                    .map_err(|error| format!("Failed to retain workspace identity: {error}"))?,
+                problem_root_path: workspace_path.to_path_buf(),
+                problem_package_relative: package_root.to_path_buf(),
+            })
+        }
+        NodePackageTaskLaunchTarget::AgentWorktree { thread_id } => {
+            resolve_agent_worktree_package_directory(
+                workspace,
+                workspace_path,
+                package_root,
+                repository_relative,
+                thread_id,
+            )
+        }
+    }
+}
+
+fn resolve_agent_worktree_package_directory(
+    workspace: &File,
+    workspace_path: &Path,
+    package_root: &Path,
+    repository_relative: &Path,
+    thread_id: &str,
+) -> Result<NodePackageLaunchDirectory, String> {
+    let thread_id = safe_agent_task_id(thread_id)?;
+    let worktree_relative = repository_relative
+        .join(WORKTREE_BASE_DIR_NAME)
+        .join(&thread_id);
+    let worktree_directory = open_package_directory(workspace, &worktree_relative)
+        .map_err(|_| "The agent worktree no longer exists.".to_string())?;
+    let repository_path = workspace_path.join(repository_relative);
+    let worktree_path = opened_root_path(&worktree_directory)
+        .map_err(|error| format!("Failed to inspect the agent worktree identity: {error}"))?;
+    let expected_worktree_path = agent_worktree_path(&repository_path, &thread_id);
+    let confined_worktree_path =
+        ensure_worktree_path_in_base(&repository_path, &expected_worktree_path)?;
+    if worktree_path != confined_worktree_path {
+        return Err("Agent worktree identity changed before package task start.".to_string());
+    }
+    let package_suffix = package_root
+        .strip_prefix(repository_relative)
+        .map_err(|_| "Package directory is outside the agent worktree repository.".to_string())?;
+    let directory =
+        open_package_directory(&worktree_directory, package_suffix).map_err(|error| {
+            format!("Failed to open the package directory in the agent worktree safely: {error}")
+        })?;
+    Ok(NodePackageLaunchDirectory {
+        path: confined_worktree_path.join(package_suffix),
+        directory,
+        problem_root: worktree_directory,
+        problem_root_path: confined_worktree_path,
+        problem_package_relative: package_suffix.to_path_buf(),
+    })
+}
+
+fn resolve_repository_relative_path(
+    workspace: &File,
+    workspace_path: &Path,
+    repository_root: &Path,
+) -> Result<PathBuf, String> {
+    if !repository_root.is_absolute() || repository_root.as_os_str().len() > 4 * 1024 {
+        return Err("Repository root must be a bounded absolute path.".to_string());
+    }
+    let relative = repository_root
+        .strip_prefix(workspace_path)
+        .map_err(|_| "Repository root is outside the registered workspace.".to_string())?;
+    if !relative.as_os_str().is_empty() {
+        crate::workspace_registry::validate_relative_path(relative)
+            .map_err(|_| "Repository root is outside the registered workspace.".to_string())?;
+    }
+    let directory = open_package_directory(workspace, relative)
+        .map_err(|_| "Repository root is outside the registered workspace.".to_string())?;
+    let opened = opened_root_path(&directory)
+        .map_err(|_| "Repository root identity changed before package task start.".to_string())?;
+    if opened != repository_root {
+        return Err("Repository root identity changed before package task start.".to_string());
+    }
+    Ok(relative.to_path_buf())
 }
 
 fn reject_vscode_lifecycle_hooks(
@@ -1041,10 +1204,15 @@ mod tests {
             &Mutex::new(trust),
             &supervisor,
             &RunNodePackageScriptRequest {
-                workspace_id: descriptor.workspace_id,
+                workspace_id: descriptor.workspace_id.clone(),
                 session_id,
                 manifest_relative_path: "package.json".to_string(),
+                repository_root: descriptor
+                    .canonical_root_path
+                    .to_string_lossy()
+                    .into_owned(),
                 script_name: "build".to_string(),
+                target: NodePackageTaskLaunchTarget::WorkspaceRoot {},
             },
             Arc::new(NoopOutputObserver),
             &descriptor.canonical_root_path,
@@ -1060,6 +1228,82 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn package_panel_spawns_in_the_nested_agent_worktree() {
+        let root = temp_workspace("agent-worktree-spawn");
+        write_manifest(
+            &root,
+            "repositories/api/packages/web/package.json",
+            r#"{"packageManager":"npm@10","scripts":{"build":"node -e \"process.exit(9)\""}}"#,
+        );
+        write_manifest(
+            &root,
+            "repositories/api/.worktrees/agt-123-abc/packages/web/package.json",
+            r#"{"packageManager":"npm@10","scripts":{"build":"node -e \"require('fs').writeFileSync('cwd.txt', process.cwd())\""}}"#,
+        );
+        let registry = WorkspaceRegistry::new();
+        let descriptor = registry.register(&root).expect("register workspace");
+        let supervisor = TerminalSupervisor::new();
+        let status = supervisor
+            .start(
+                descriptor.canonical_root_path.clone(),
+                TerminalSize::default(),
+                TerminalProfile {
+                    command: None,
+                    id: "default".into(),
+                    label: "Default".into(),
+                },
+                None,
+                &FakeSpawner,
+                Arc::new(NoopSink),
+            )
+            .expect("start terminal");
+        let TerminalRuntimeStatus::Running { session_id, .. } = status else {
+            panic!("expected running terminal");
+        };
+        let storage = root.join("trust.json");
+        let mut trust = WorkspaceTrustService::load(storage).expect("load trust");
+        trust
+            .set(
+                descriptor
+                    .selected_root_path
+                    .to_str()
+                    .expect("utf8 selected root"),
+                true,
+            )
+            .expect("trust workspace");
+        let repository_root = descriptor.canonical_root_path.join("repositories/api");
+        let task = spawn_node_package_task(
+            &registry,
+            &Mutex::new(trust),
+            &supervisor,
+            &RunNodePackageScriptRequest {
+                workspace_id: descriptor.workspace_id,
+                session_id,
+                manifest_relative_path: "repositories/api/packages/web/package.json".to_string(),
+                repository_root: repository_root.to_string_lossy().into_owned(),
+                script_name: "build".to_string(),
+                target: NodePackageTaskLaunchTarget::AgentWorktree {
+                    thread_id: "agt-123-abc".to_string(),
+                },
+            },
+            Arc::new(NoopOutputObserver),
+        )
+        .expect("spawn worktree package task");
+        assert!(matches!(
+            finish_node_package_task(&supervisor, task),
+            NodePackageTaskCompletion::Exited { exit_code: Some(0) }
+        ));
+        let package = repository_root.join(".worktrees/agt-123-abc/packages/web");
+        assert_eq!(
+            fs::read_to_string(package.join("cwd.txt")).expect("read task cwd"),
+            package.to_string_lossy()
+        );
+        supervisor.stop(session_id).expect("stop terminal");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn package_directory_open_rejects_a_symlink_component() {
         use std::os::unix::fs::symlink;
 
@@ -1069,6 +1313,110 @@ mod tests {
         let root_file = File::open(&root).expect("open workspace root");
 
         assert!(open_package_directory(&root_file, Path::new("linked/package")).is_err());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_repository_worktree_launch_retains_exact_package_and_problem_roots() {
+        let root = fs::canonicalize(temp_workspace("nested-worktree-launch"))
+            .expect("canonical workspace");
+        let repository = root.join("repositories/api");
+        let worktree = repository.join(".worktrees/agt-123-abc");
+        write_manifest(
+            &root,
+            "repositories/api/packages/web/package.json",
+            r#"{"scripts":{"main":"node main.js"}}"#,
+        );
+        write_manifest(
+            &root,
+            "repositories/api/.worktrees/agt-123-abc/packages/web/package.json",
+            r#"{"scripts":{"worktree":"node worktree.js"}}"#,
+        );
+        fs::create_dir_all(worktree.join("packages/web/src")).expect("create worktree source");
+        fs::write(worktree.join("packages/web/src/index.ts"), "export {};\n")
+            .expect("write worktree source");
+        let workspace = File::open(&root).expect("open workspace");
+
+        let launch = resolve_package_launch_directory(
+            &workspace,
+            &root,
+            Path::new("repositories/api/packages/web"),
+            Path::new("repositories/api"),
+            &NodePackageTaskLaunchTarget::AgentWorktree {
+                thread_id: "agt-123-abc".to_string(),
+            },
+        )
+        .expect("resolve nested worktree package");
+
+        assert_eq!(launch.path, worktree.join("packages/web"));
+        assert_eq!(launch.problem_root_path, worktree);
+        let manifest = parse_manifest(
+            open_manifest_in_directory(&launch.directory).expect("open retained manifest"),
+        )
+        .expect("parse retained manifest");
+        assert_eq!(manifest.scripts, vec!["worktree"]);
+        let mut matcher = crate::node_package_problem_matcher::NodePackageProblemMatcher::new(
+            crate::node_package_problem_matcher::NodePackageProblemMatcherKind::TypeScript,
+            &launch.problem_root,
+            &launch.problem_root_path,
+            &launch.directory,
+            &launch.path,
+        )
+        .expect("create worktree matcher");
+        let problems = matcher.push_bytes(
+            NodePackageTaskOutputStream::Stdout,
+            b"src/index.ts(1,2): error TS1: broken\n",
+        );
+        assert_eq!(problems.len(), 1);
+        assert_eq!(
+            problems[0].file_path,
+            launch.path.join("src/index.ts").to_string_lossy()
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worktree_launch_rejects_foreign_repository_and_symlinked_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = fs::canonicalize(temp_workspace("worktree-repository-authority"))
+            .expect("canonical workspace");
+        write_manifest(
+            &root,
+            "repositories/api/packages/web/package.json",
+            r#"{"scripts":{"test":"node test.js"}}"#,
+        );
+        fs::create_dir_all(root.join("repositories/api/.worktrees")).expect("create worktree base");
+        fs::create_dir_all(root.join("foreign/agt-123-abc/packages/web"))
+            .expect("create foreign target");
+        symlink(
+            root.join("foreign/agt-123-abc"),
+            root.join("repositories/api/.worktrees/agt-123-abc"),
+        )
+        .expect("link foreign worktree");
+        let workspace = File::open(&root).expect("open workspace");
+        let target = NodePackageTaskLaunchTarget::AgentWorktree {
+            thread_id: "agt-123-abc".to_string(),
+        };
+
+        assert!(resolve_package_launch_directory(
+            &workspace,
+            &root,
+            Path::new("repositories/api/packages/web"),
+            Path::new("repositories/other"),
+            &target,
+        )
+        .is_err());
+        assert!(resolve_package_launch_directory(
+            &workspace,
+            &root,
+            Path::new("repositories/api/packages/web"),
+            Path::new("repositories/api"),
+            &target,
+        )
+        .is_err());
         fs::remove_dir_all(root).expect("cleanup");
     }
 

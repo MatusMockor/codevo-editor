@@ -1,4 +1,5 @@
 import {
+  normalizeNodePackageTaskLaunchTarget,
   MAX_NODE_PACKAGE_DISCOVERY_MANIFESTS,
   MAX_NODE_PACKAGE_DISCOVERY_SCRIPTS,
   MAX_NODE_PACKAGE_DISCOVERY_VISITED,
@@ -8,6 +9,7 @@ import {
   parseNodePackageScriptsResult,
   parseStartNodePackageTaskResult,
   type NodePackageDiscoveryLimits,
+  type NodePackageTaskLaunchTarget,
   type NodePackageTaskEvent,
   type NodePackageScriptsResult,
   type StartNodePackageTaskRequest,
@@ -161,7 +163,15 @@ function validateStartRequest(value: unknown): StartNodePackageTaskRequest {
   const request = record(value, "request");
   exactOptionalKeys(
     request,
-    ["runId", "workspaceId", "sessionId", "manifestRelativePath", "scriptName"],
+    [
+      "runId",
+      "workspaceId",
+      "sessionId",
+      "manifestRelativePath",
+      "scriptName",
+      "repositoryRoot",
+      "target",
+    ],
     ["problemMatcher"],
     "request",
   );
@@ -174,8 +184,36 @@ function validateStartRequest(value: unknown): StartNodePackageTaskRequest {
     sessionId: unsignedSafeInteger(request.sessionId, "request.sessionId"),
     manifestRelativePath: manifestRelativePath(request.manifestRelativePath),
     scriptName: scriptName(request.scriptName),
+    repositoryRoot: absoluteDirectoryPath(request.repositoryRoot, "request.repositoryRoot"),
+    target: validateLaunchTarget(request.target),
     ...(problemMatcher !== undefined ? { problemMatcher } : {}),
   };
+}
+
+function absoluteDirectoryPath(value: unknown, path: string): string {
+  const candidate = boundedString(value, path, 4_096);
+  if (!candidate.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(candidate)) {
+    invalid(path, "an absolute directory path");
+  }
+  if (/\p{Cc}/u.test(candidate)) invalid(path, "an absolute path without control characters");
+  return candidate;
+}
+
+function validateLaunchTarget(value: unknown): NodePackageTaskLaunchTarget {
+  const target = record(value, "request.target");
+  if (target.kind === "workspaceRoot") {
+    exactKeys(target, ["kind"], "request.target");
+    return normalizeNodePackageTaskLaunchTarget({ kind: "workspaceRoot" });
+  }
+  if (target.kind === "agentWorktree") {
+    exactKeys(target, ["kind", "threadId"], "request.target");
+    try {
+      return normalizeNodePackageTaskLaunchTarget(target as NodePackageTaskLaunchTarget);
+    } catch {
+      invalid("request.target.threadId", "a safe agent thread id");
+    }
+  }
+  invalid("request.target.kind", "workspaceRoot or agentWorktree");
 }
 
 function validateProblemMatcher(value: unknown, path: string): NodePackageProblemMatcher | null {

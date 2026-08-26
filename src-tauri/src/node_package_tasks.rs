@@ -35,7 +35,7 @@ use crate::{
     },
     node_package_scripts::{
         finish_node_package_task, spawn_node_package_task, NodePackageTaskCompletion,
-        NodePackageTaskOutputObserver, RunNodePackageScriptRequest,
+        NodePackageTaskLaunchTarget, NodePackageTaskOutputObserver, RunNodePackageScriptRequest,
     },
     terminal_session::TerminalSupervisor,
     terminal_task_admission::{TerminalTaskAdmission, TerminalTaskAdmissionRegistry},
@@ -68,7 +68,9 @@ pub(crate) struct StartNodePackageTaskRequest {
     workspace_id: WorkspaceId,
     session_id: u64,
     manifest_relative_path: String,
+    repository_root: String,
     script_name: String,
+    target: NodePackageTaskLaunchTarget,
     #[serde(default)]
     problem_matcher: Option<NodePackageTaskProblemMatcherKind>,
 }
@@ -798,7 +800,9 @@ pub(crate) fn workspace_start_node_package_task(
                 workspace_id: request.workspace_id,
                 session_id: request.session_id,
                 manifest_relative_path: request.manifest_relative_path,
+                repository_root: request.repository_root,
                 script_name: request.script_name,
+                target: request.target,
             },
             output_observer,
         )
@@ -1043,6 +1047,7 @@ mod tests {
                 serde_json::from_value::<StartNodePackageTaskRequest>(serde_json::json!({
                     "runId":"r", "workspaceId":"ws-a", "sessionId":1,
                     "manifestRelativePath":"package.json", "scriptName":"test",
+                    "repositoryRoot":"/workspace", "target":{"kind":"workspaceRoot"},
                     "problemMatcher": matcher
                 }))
                 .expect("known optional matcher");
@@ -1052,10 +1057,38 @@ mod tests {
             serde_json::from_value::<StartNodePackageTaskRequest>(serde_json::json!({
                 "runId":"r", "workspaceId":"ws-a", "sessionId":1,
                 "manifestRelativePath":"package.json", "scriptName":"test",
+                "repositoryRoot":"/workspace", "target":{"kind":"workspaceRoot"},
                 "problemMatcher":"stylelint"
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn strict_launch_target_wire_accepts_closed_variants_only() {
+        let base = serde_json::json!({
+            "runId":"r", "workspaceId":"ws-a", "sessionId":1,
+            "manifestRelativePath":"package.json", "scriptName":"test",
+            "repositoryRoot":"/workspace"
+        });
+        for target in [
+            serde_json::json!({"kind":"workspaceRoot"}),
+            serde_json::json!({"kind":"agentWorktree","threadId":"agt-123-abc"}),
+        ] {
+            let mut request = base.clone();
+            request["target"] = target;
+            assert!(serde_json::from_value::<StartNodePackageTaskRequest>(request).is_ok());
+        }
+        for target in [
+            serde_json::json!({"kind":"unknown"}),
+            serde_json::json!({"kind":"agentWorktree"}),
+            serde_json::json!({"kind":"workspaceRoot","threadId":"agt-123-abc"}),
+        ] {
+            let mut request = base.clone();
+            request["target"] = target;
+            assert!(serde_json::from_value::<StartNodePackageTaskRequest>(request).is_err());
+        }
+        assert!(serde_json::from_value::<StartNodePackageTaskRequest>(base).is_err());
     }
 
     #[test]

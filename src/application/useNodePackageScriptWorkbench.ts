@@ -10,10 +10,15 @@ import {
 } from "react";
 import type { NpmRunSelectedScriptContextCapture } from "../domain/command";
 import type {
+  NodePackageTaskLaunchTarget,
   NodePackageScript,
   NodePackageScriptRunGateway,
   NodePackageScriptsGateway,
   NodePackageTaskEvent,
+} from "../domain/nodePackageScripts";
+import {
+  DEFAULT_NODE_PACKAGE_TASK_LAUNCH_TARGET,
+  normalizeNodePackageTaskLaunchTarget,
 } from "../domain/nodePackageScripts";
 import {
   nodePackageProblemMatcherForScript,
@@ -442,18 +447,25 @@ export function useNodePackageScriptWorkbench({
   }, [executionEnabled, requestBackendStop, rootPath, transition, workspaceId]);
 
   const run = useCallback(
-    (script: NodePackageScript) => {
+    (
+      script: NodePackageScript,
+      launchTarget: NodePackageTaskLaunchTarget = DEFAULT_NODE_PACKAGE_TASK_LAUNCH_TARGET,
+      repositoryRoot?: string,
+    ) => {
       const captured = currentRef.current;
+      const capturedScript = { ...script };
+      const capturedLaunchTarget = normalizeNodePackageTaskLaunchTarget(launchTarget);
       if (
         !mountedRef.current ||
         !captured.executionEnabled ||
         !captured.rootPath ||
         !captured.workspaceId ||
         nodePackageTaskIsActive(taskRef.current) ||
-        !captured.scripts.some((candidate) => candidate.key === script.key)
+        !captured.scripts.some((candidate) => candidate.key === capturedScript.key)
       ) {
         return false;
       }
+      const capturedRepositoryRoot = repositoryRoot ?? captured.rootPath;
       const runId = createRunId();
       const capturedWorkspaceId = captured.workspaceId;
       const ownerSequence = ownerSequenceRef.current;
@@ -462,8 +474,8 @@ export function useNodePackageScriptWorkbench({
         identity: {
           runId,
           workspaceId: capturedWorkspaceId,
-          manifestRelativePath: script.manifestRelativePath,
-          scriptName: script.scriptName,
+          manifestRelativePath: capturedScript.manifestRelativePath,
+          scriptName: capturedScript.scriptName,
         },
       });
 
@@ -480,7 +492,7 @@ export function useNodePackageScriptWorkbench({
           current.workspaceId !== capturedWorkspaceId ||
           taskRef.current?.runId !== runId ||
           !nodePackageTaskIsActive(taskRef.current) ||
-          !current.scripts.some((candidate) => candidate.key === script.key)
+          !current.scripts.some((candidate) => candidate.key === capturedScript.key)
         ) {
           if (taskRef.current?.runId === runId) transition({ type: "stopping", runId });
           return;
@@ -504,13 +516,15 @@ export function useNodePackageScriptWorkbench({
           }
           const operationKey = taskOperationKey(capturedWorkspaceId, runId);
           startDispatchedRef.current.add(operationKey);
-          const problemMatcher = nodePackageProblemMatcherForScript(script.scriptName);
+          const problemMatcher = nodePackageProblemMatcherForScript(capturedScript.scriptName);
           const result = await runGateway.startNodePackageTask({
             runId,
             workspaceId: capturedWorkspaceId,
             sessionId,
-            manifestRelativePath: script.manifestRelativePath,
-            scriptName: script.scriptName,
+            manifestRelativePath: capturedScript.manifestRelativePath,
+            scriptName: capturedScript.scriptName,
+            repositoryRoot: capturedRepositoryRoot,
+            target: capturedLaunchTarget,
             ...(problemMatcher ? { problemMatcher } : {}),
           });
           if (result.runId !== runId)
@@ -531,8 +545,8 @@ export function useNodePackageScriptWorkbench({
                 runId,
                 workspaceId: capturedWorkspaceId,
                 sessionId,
-                manifestRelativePath: script.manifestRelativePath,
-                scriptName: script.scriptName,
+                manifestRelativePath: capturedScript.manifestRelativePath,
+                scriptName: capturedScript.scriptName,
                 status: "stopping",
               });
             return;
@@ -573,8 +587,8 @@ export function useNodePackageScriptWorkbench({
                 runId,
                 workspaceId: capturedWorkspaceId,
                 sessionId,
-                manifestRelativePath: script.manifestRelativePath,
-                scriptName: script.scriptName,
+                manifestRelativePath: capturedScript.manifestRelativePath,
+                scriptName: capturedScript.scriptName,
                 status: "stopping",
               });
             }

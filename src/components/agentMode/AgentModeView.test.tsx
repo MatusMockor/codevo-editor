@@ -10,7 +10,6 @@ import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/ag
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
-import type { NodePackageScript } from "../../domain/nodePackageScripts";
 import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
@@ -1666,7 +1665,35 @@ describe("AgentModeView", () => {
     act(() => bridge.run("agent.runPreferredScript"));
 
     expect(onShowTerminalPanel).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith(expect.objectContaining({ scriptName: "dev" }));
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ scriptName: "dev" }),
+      { kind: "workspaceRoot" },
+      ROOT,
+    );
+  });
+
+  it("runs a nested repository script through the selected worktree target", () => {
+    const bridge = createAgentViewCommandBridge();
+    const run = vi.fn<AgentThreadScriptRunner["run"]>(() => true);
+    render({
+      agents: surface({
+        threads: [threadView({ threadId: "agt-1", isolation: "worktree", repositoryRoot: NESTED })],
+      }),
+      chrome: chromeFixture({ scripts: scriptRunner(run, "packages/api") }),
+      viewCommands: bridge,
+    });
+
+    clickText("Refactor the parser");
+    act(() => bridge.run("agent.runPreferredScript"));
+
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manifestRelativePath: "packages/api/package.json",
+        scriptName: "dev",
+      }),
+      { kind: "agentWorktree", threadId: "agt-1" },
+      NESTED,
+    );
   });
 
   it("opens the ship popover of the selected thread from the view command", () => {
@@ -2099,15 +2126,21 @@ function addProjectGateway(): DirectoryListingGateway {
   };
 }
 
-function scriptRunner(run: (script: NodePackageScript) => boolean): AgentThreadScriptRunner {
+function scriptRunner(
+  run: AgentThreadScriptRunner["run"],
+  packageRootRelativePath = "",
+): AgentThreadScriptRunner {
   return {
     scripts: [
       {
         key: "package.json:dev",
-        manifestRelativePath: "package.json",
+        manifestRelativePath:
+          packageRootRelativePath === ""
+            ? "package.json"
+            : `${packageRootRelativePath}/package.json`,
         packageName: "app",
         packageManager: "npm",
-        packageRootRelativePath: "",
+        packageRootRelativePath,
         scriptName: "dev",
       },
     ],

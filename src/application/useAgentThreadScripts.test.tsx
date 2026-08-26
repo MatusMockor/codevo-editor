@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NodePackageScript } from "../domain/nodePackageScripts";
 import {
   AGENT_SCRIPT_BUSY_REASON,
-  AGENT_SCRIPT_WORKTREE_BLOCKED_REASON,
   AGENT_SCRIPT_WORKTREE_MISSING_REASON,
   MAX_AGENT_THREAD_SCRIPT_ENTRIES,
   preferredEntry,
@@ -63,7 +62,13 @@ describe("useAgentThreadScripts", () => {
       surface().runScript("lint");
     });
 
-    expect(runner.run).toHaveBeenCalledWith(expect.objectContaining({ key: "lint" }));
+    expect(runner.run).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "lint" }),
+      {
+        kind: "workspaceRoot",
+      },
+      WORKSPACE,
+    );
     expect(surface().preferred?.key).toBe("lint");
   });
 
@@ -86,18 +91,22 @@ describe("useAgentThreadScripts", () => {
     expect(onBeforeRun).toHaveBeenCalledTimes(1);
   });
 
-  it("marks worktree threads as blocked instead of running in the main checkout", () => {
+  it("runs worktree threads through the typed worktree target", () => {
     const runner = runnerWith([script("dev", "dev", "")]);
     render({ runner, target: target({ isolation: "worktree" }) });
 
-    expect(surface().entries[0]?.availability).toEqual({
-      kind: "blocked",
-      reason: AGENT_SCRIPT_WORKTREE_BLOCKED_REASON,
-    });
+    expect(surface().entries[0]?.availability).toEqual({ kind: "available" });
     act(() => {
       surface().runScript("dev");
     });
-    expect(runner.run).not.toHaveBeenCalled();
+    expect(runner.run).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "dev" }),
+      {
+        kind: "agentWorktree",
+        threadId: "agt-1",
+      },
+      WORKSPACE,
+    );
   });
 
   it("blocks a missing worktree and an unavailable runner with their reasons", () => {

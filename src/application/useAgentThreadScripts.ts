@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentTaskIsolation } from "../domain/agentTask";
-import type { NodePackageScript } from "../domain/nodePackageScripts";
+import type { NodePackageScript, NodePackageTaskLaunchTarget } from "../domain/nodePackageScripts";
 
 export const MAX_AGENT_THREAD_SCRIPT_ENTRIES = 64;
-export const AGENT_SCRIPT_WORKTREE_BLOCKED_REASON = "Runs in the main checkout only";
 export const AGENT_SCRIPT_WORKTREE_MISSING_REASON = "The worktree no longer exists";
 export const AGENT_SCRIPT_BUSY_REASON = "Another script is already running";
-const SCRIPT_RUNNER_ACCEPTS_WORKTREE_CWD = false;
 const PREFERRED_SCRIPT_NAMES: ReadonlyArray<string> = ["dev", "start", "test"];
 
 export interface AgentThreadScriptTarget {
@@ -56,7 +54,11 @@ export interface AgentThreadScriptRunner {
     readonly scriptName: string;
     readonly manifestRelativePath: string;
   } | null;
-  run(script: NodePackageScript): boolean;
+  run(
+    script: NodePackageScript,
+    target: NodePackageTaskLaunchTarget,
+    repositoryRoot: string,
+  ): boolean;
   stop(): void;
 }
 
@@ -153,6 +155,7 @@ export function useAgentThreadScripts({
     (key: string): boolean => {
       if (runner.active !== null) return false;
       if (threadId === null) return false;
+      if (target === null) return false;
       const script = scoped.scripts.find((candidate) => candidate.key === key);
       if (script === undefined) return false;
       if (availability.kind === "blocked") return false;
@@ -161,13 +164,13 @@ export function useAgentThreadScripts({
       }
       onBeforeRun();
       startedByRef.current = threadId;
-      const started = runner.run(script);
+      const started = runner.run(script, launchTarget(target), target.repositoryRoot);
       if (!started) {
         startedByRef.current = null;
       }
       return started;
     },
-    [availability, onBeforeRun, repositoryRoot, runner, scoped.scripts, threadId],
+    [availability, onBeforeRun, repositoryRoot, runner, scoped.scripts, target, threadId],
   );
 
   const stopScript = useCallback(() => {
@@ -225,10 +228,12 @@ function targetAvailability(
   if (!available) return blocked(unavailableReason ?? "Scripts are unavailable");
   if (foreignRun) return blocked(AGENT_SCRIPT_BUSY_REASON);
   if (target.worktreeMissing) return blocked(AGENT_SCRIPT_WORKTREE_MISSING_REASON);
-  if (target.isolation === "worktree" && !SCRIPT_RUNNER_ACCEPTS_WORKTREE_CWD) {
-    return blocked(AGENT_SCRIPT_WORKTREE_BLOCKED_REASON);
-  }
   return { kind: "available" };
+}
+
+function launchTarget(target: AgentThreadScriptTarget): NodePackageTaskLaunchTarget {
+  if (target.isolation === "in-place") return { kind: "workspaceRoot" };
+  return { kind: "agentWorktree", threadId: target.threadId };
 }
 
 function scriptEntry(
