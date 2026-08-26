@@ -162,7 +162,7 @@ export function AgentSurfacePanel({
                     title={`Close ${tab.label}`}
                     type="button"
                   >
-                    <X aria-hidden="true" size={11} />
+                    <X aria-hidden="true" size={14} />
                   </button>
                 </span>
               );
@@ -189,7 +189,7 @@ export function AgentSurfacePanel({
           title={AGENT_SURFACE_CLOSE_PANEL_LABEL}
           type="button"
         >
-          <X aria-hidden="true" size={13} />
+          <X aria-hidden="true" size={14} />
         </button>
       </header>
       <div className="agent-surface__body" data-agent-surface-body>

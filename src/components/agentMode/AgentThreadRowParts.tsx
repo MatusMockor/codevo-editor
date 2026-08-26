@@ -1,7 +1,20 @@
-import { useState, type KeyboardEvent } from "react";
-import { CircleCheck, CircleDashed } from "lucide-react";
+import { useState, type ComponentType, type KeyboardEvent } from "react";
+import { CircleCheck, CircleDashed, CircleStop, CircleX, type LucideProps } from "lucide-react";
 import { AgentCompactRelativeTime, AgentWorkingDuration } from "./agentClock";
 import { agentRowStatusLabel, type AgentRowStatus } from "./agentSidebarPresentation";
+
+type AgentRowStatusKind = AgentRowStatus["kind"];
+
+const STATUS_ICONS: Readonly<
+  Record<Exclude<AgentRowStatusKind, "none">, ComponentType<LucideProps>>
+> = {
+  working: CircleDashed,
+  done: CircleCheck,
+  failed: CircleX,
+  stopped: CircleStop,
+};
+
+export const AGENT_ROW_STATUS_ICON_SIZE = 13;
 
 export function StatusSlot({
   status,
@@ -11,18 +24,22 @@ export function StatusSlot({
   readonly updatedAtEpochMs: number;
 }) {
   const label = agentRowStatusLabel(status);
-  if (label === null) {
+  if (status.kind === "none" || label === null) {
     return (
       <span className="agent-row__time agent-num">
         <AgentCompactRelativeTime epochMs={updatedAtEpochMs} />
       </span>
     );
   }
+  const Icon = STATUS_ICONS[status.kind];
   return (
     <span className={`agent-row__status agent-row__status--${status.kind}`}>
-      {status.kind === "working" && <CircleDashed aria-hidden="true" size={16} />}
-      {status.kind === "done" && <CircleCheck aria-hidden="true" size={16} />}
-      {label}
+      <Icon
+        aria-hidden="true"
+        className="agent-row__status-icon"
+        size={AGENT_ROW_STATUS_ICON_SIZE}
+      />
+      <span className="agent-row__status-label">{label}</span>
       {status.kind === "working" && (
         <time className="agent-num">
           <AgentWorkingDuration startedAtEpochMs={status.startedAtEpochMs} />

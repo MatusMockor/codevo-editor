@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -291,3 +293,33 @@ describe("AgentModelPicker", () => {
     return element ?? document.createElement("button");
   }
 });
+
+describe("AgentModelPicker search styling contract", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
+
+  it("keeps the search field borderless with only a bottom hairline", () => {
+    const search = cssRule(css, ".agent-model-picker__search {");
+    expect(search).toContain("border-bottom: 1px solid var(--agent-hairline)");
+    expect(search).not.toMatch(/box-shadow/);
+    expect(cssRule(css, ".agent-model-picker__search:focus-within {")).toContain(
+      "border-bottom-color",
+    );
+  });
+
+  it("suppresses the global focus ring on the search input", () => {
+    const input = cssRule(css, ".agent-model-picker__input {");
+    expect(input).toContain("border: none");
+    expect(input).toContain("outline: none");
+    const focus = cssRule(css, ".agent-model-picker__input:focus-visible {");
+    expect(focus).toContain("box-shadow: none");
+  });
+});
+
+function cssRule(source: string, selector: string): string {
+  const start = source.indexOf(selector);
+  expect(start, `Missing CSS selector ${selector}`).toBeGreaterThanOrEqual(0);
+  const bodyStart = source.indexOf("{", start);
+  const end = source.indexOf("}", bodyStart);
+  expect(end).toBeGreaterThan(bodyStart);
+  return source.slice(bodyStart + 1, end);
+}

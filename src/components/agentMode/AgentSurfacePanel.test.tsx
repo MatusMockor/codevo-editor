@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -190,6 +192,10 @@ describe("AgentSurfacePanel", () => {
     ).toBe("agent-surface-panel-files");
     expect(host.querySelector(".agent-surface__tabitem--active")?.textContent).toBe("Files");
     expect(host.querySelectorAll(".agent-surface__tab-close")).toHaveLength(2);
+    const close = host.querySelector<HTMLElement>('[aria-label="Close Diff tab"]');
+    expect(close?.querySelector("svg")?.getAttribute("width")).toBe("14");
+    expect(cssRule(agentModeCss, ".agent-surface__tab-close {")).toContain("width: 20px");
+    expect(cssRule(agentModeCss, ".agent-surface__tab-close:hover {")).toContain("background:");
 
     click('[role="tab"]#agent-surface-tab-diff');
     expect(onActivateSurface).toHaveBeenCalledWith("diff");
@@ -452,4 +458,15 @@ function terminalThemeStub(): NonNullable<AgentSurfacePanelProps["terminal"]>["t
   return new Proxy({} as NonNullable<AgentSurfacePanelProps["terminal"]>["terminalTheme"], {
     get: () => "#000000",
   });
+}
+
+const agentModeCss = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
+
+function cssRule(source: string, selector: string): string {
+  const start = source.indexOf(selector);
+  expect(start, `Missing CSS selector ${selector}`).toBeGreaterThanOrEqual(0);
+  const bodyStart = source.indexOf("{", start);
+  const end = source.indexOf("}", bodyStart);
+  expect(end).toBeGreaterThan(bodyStart);
+  return source.slice(bodyStart + 1, end);
 }
