@@ -57,6 +57,8 @@ import {
 import {
   agentRailNewThreadTarget,
   agentRailScopeEntries,
+  type AgentProjectMenuCommand,
+  type AgentProjectMenuTarget,
   type AgentRailScope,
   type AgentThreadCopyDetail,
   type AgentThreadMenuCommand,
@@ -422,6 +424,15 @@ export function AgentModeView({
     [agents],
   );
 
+  const copyText = useCallback((text: string) => {
+    const clipboard = clipboardWriter();
+    if (clipboard === null) {
+      setLocalNotice(CLIPBOARD_UNAVAILABLE_NOTICE);
+      return;
+    }
+    void clipboard(text).catch(() => setLocalNotice(CLIPBOARD_UNAVAILABLE_NOTICE));
+  }, []);
+
   const copyThreadDetail = useCallback(
     (threadId: string, detail: AgentThreadCopyDetail) => {
       const text = agents.threadCopyDetail(threadId, detail);
@@ -429,14 +440,41 @@ export function AgentModeView({
         setLocalNotice(NOTHING_TO_COPY_NOTICE);
         return;
       }
-      const clipboard = clipboardWriter();
-      if (clipboard === null) {
-        setLocalNotice(CLIPBOARD_UNAVAILABLE_NOTICE);
-        return;
-      }
-      void clipboard(text).catch(() => setLocalNotice(CLIPBOARD_UNAVAILABLE_NOTICE));
+      copyText(text);
     },
-    [agents],
+    [agents, copyText],
+  );
+
+  const revealPath = chrome.revealPath;
+  const handleProjectCommand = useCallback(
+    (target: AgentProjectMenuTarget, command: AgentProjectMenuCommand) => {
+      switch (command) {
+        case "trust":
+          onTrustProject(target.projectRootKey);
+          return;
+        case "release":
+          onReleaseProject(target.projectRootKey);
+          return;
+        case "filterToProject":
+          setRailScope({
+            kind: "repository",
+            projectRootKey: target.projectRootKey,
+            repositoryRoot: target.repositoryRoot,
+          });
+          return;
+        case "reveal":
+          if (target.rootPath === null) return;
+          void revealPath(target.rootPath).catch(() => setLocalNotice(REVEAL_FAILED_NOTICE));
+          return;
+        case "copyPath":
+          if (target.rootPath === null) return;
+          copyText(target.rootPath);
+          return;
+        default:
+          return unsupportedProjectCommand(command);
+      }
+    },
+    [copyText, onReleaseProject, onTrustProject, revealPath],
   );
 
   const handleThreadMenuCommand = useCallback(
@@ -626,6 +664,7 @@ export function AgentModeView({
                 onChangeScope={setRailScope}
                 onCollapseSidebar={() => setRailCollapsed(true)}
                 onNewThread={startNewThread}
+                onProjectCommand={handleProjectCommand}
                 onReleaseProject={onReleaseProject}
                 onSelectThread={selectThread}
                 onThreadMenuCommand={handleThreadMenuCommand}
@@ -837,6 +876,10 @@ function scriptTarget(view: AgentThreadView): AgentThreadScriptTarget {
     worktreePath: record.target.worktreePath,
     worktreeMissing: view.worktreeMissing,
   };
+}
+
+function unsupportedProjectCommand(command: never): never {
+  throw new TypeError(`Unsupported agent project command: ${String(command)}.`);
 }
 
 function unsupportedThreadMenuCommand(command: never): never {

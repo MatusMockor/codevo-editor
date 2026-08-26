@@ -11,6 +11,9 @@ import {
   agentRailEmptyState,
   agentRailNewThreadTarget,
   agentRailProjectLabels,
+  agentProjectMenuEntries,
+  agentProjectMenuTarget,
+  agentProjectRepositoryCountLabel,
   agentRailScopeEntries,
   agentRailScopeLabel,
   agentRailScopeState,
@@ -22,6 +25,8 @@ import {
   agentRowStatusLabel,
   agentThreadMenuEntries,
   agentWorkingDurationLabel,
+  type AgentRailProjectScopeEntry,
+  type AgentRailScopeEntry,
 } from "./agentSidebarPresentation";
 
 const ROOT = "/workspace/app";
@@ -194,6 +199,61 @@ describe("agent rail scope", () => {
     expect(agentRailScopeState(null)).toBeNull();
   });
 
+  it("offers the project actions that match the project state", () => {
+    const trusted = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
+    const untrusted = projectEntry(
+      agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })]),
+    );
+    const closed = projectEntry(
+      agentRailScopeEntries([group(ROOT, "app", [], { origin: "closed-tab-live-tasks" })]),
+    );
+    const detached = projectEntry(
+      agentRailScopeEntries([group(ROOT, "app", [], { rootPath: null })]),
+    );
+
+    expect(agentProjectMenuEntries(trusted, false).map((entry) => entry.label)).toEqual([
+      "Filter to this project",
+      "Reveal in Finder",
+      "Copy path",
+    ]);
+    expect(agentProjectMenuEntries(untrusted, false)[0]).toEqual({
+      id: "trust",
+      label: "Trust project",
+      command: "trust",
+      disabled: false,
+    });
+    expect(agentProjectMenuEntries(closed, false)[0]?.command).toBe("release");
+    expect(agentProjectMenuEntries(detached, false).map((entry) => entry.command)).toEqual([
+      "filterToProject",
+    ]);
+  });
+
+  it("disables the filter action for the project already in scope", () => {
+    const entry = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
+    const filter = agentProjectMenuEntries(entry, true).find(
+      (candidate) => candidate.command === "filterToProject",
+    );
+
+    expect(filter?.disabled).toBe(true);
+    expect(agentProjectMenuTarget(entry)).toEqual({
+      projectRootKey: ROOT,
+      repositoryRoot: ROOT,
+      rootPath: ROOT,
+    });
+  });
+
+  it("reports the repository count only for a multi-repository project", () => {
+    const entries = agentRailScopeEntries([group(ROOT, "app", [])]);
+    const single = projectEntry(entries);
+
+    expect(agentProjectRepositoryCountLabel(entries[0] as AgentRailScopeEntry)).toBeNull();
+    expect(agentProjectRepositoryCountLabel(single)).toBeNull();
+    expect(agentProjectRepositoryCountLabel({ ...single, repositoryCount: 3 })).toBe("3 repos");
+    expect(agentProjectMenuEntries({ ...single, repositoryCount: 3 }, false)[0]?.label).toBe(
+      "Filter to this repository",
+    );
+  });
+
   it("targets the first dispatchable repository for a new thread", () => {
     const entries = agentRailScopeEntries([
       group(ROOT, "app", [], { trust: "untrusted" }),
@@ -272,12 +332,13 @@ function group(
   repositoryRoot: string,
   label: string,
   threads: ReadonlyArray<AgentThreadView>,
-  overrides: Partial<Pick<AgentProjectGroup, "origin" | "trust">> = {},
+  overrides: Partial<Pick<AgentProjectGroup, "origin" | "rootPath" | "trust">> = {},
 ): AgentProjectGroup {
   return {
     projectRootKey: repositoryRoot,
     kind: "project",
     label,
+    rootPath: repositoryRoot,
     trust: "trusted",
     origin: "active-tab",
     singleRepo: true,
@@ -362,4 +423,10 @@ function view({
     worktreeMissing: false,
     changeSummary: null,
   };
+}
+
+function projectEntry(entries: ReadonlyArray<AgentRailScopeEntry>): AgentRailProjectScopeEntry {
+  const entry = entries[1];
+  expect(entry?.kind).toBe("repository");
+  return entry as AgentRailProjectScopeEntry;
 }

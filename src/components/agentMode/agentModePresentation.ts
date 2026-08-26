@@ -63,6 +63,7 @@ export interface AgentProjectGroup {
   readonly projectRootKey: string;
   readonly kind: AgentProjectGroupKind;
   readonly label: string;
+  readonly rootPath: string | null;
   readonly trust: AgentProjectTrust;
   readonly origin: AgentProjectOrigin;
   readonly singleRepo: boolean;
@@ -544,6 +545,7 @@ export function agentProjectGroups(
       projectRootKey: DETACHED_AGENT_PROJECT_ROOT_KEY,
       kind: "detached",
       label: DETACHED_AGENT_PROJECT_LABEL,
+      rootPath: null,
       trust: "unknown",
       origin: "closed-tab-live-tasks",
       singleRepo: false,
@@ -601,6 +603,7 @@ function buildProjectGroup(
     projectRootKey: project.rootKey,
     kind: "project",
     label: project.label,
+    rootPath: project.rootPath,
     trust: project.trust,
     origin: project.origin,
     singleRepo:

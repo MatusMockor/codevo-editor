@@ -15,6 +15,8 @@ import {
   agentRailSections,
   agentRailViews,
   agentThreadRevealForMatch,
+  type AgentProjectMenuCommand,
+  type AgentProjectMenuTarget,
   type AgentRailScope,
   type AgentRailScopeEntry,
   type AgentRailSections,
@@ -45,6 +47,7 @@ export interface AgentThreadsSidebarProps {
   onAddProject(): void;
   onTrustProject(projectRootKey: string): void;
   onReleaseProject(projectRootKey: string): void;
+  onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
 }
 
 export function AgentThreadsSidebar({
@@ -54,6 +57,7 @@ export function AgentThreadsSidebar({
   onChangeScope,
   onCollapseSidebar,
   onNewThread,
+  onProjectCommand,
   onReleaseProject,
   onSelectThread,
   onThreadMenuCommand,
@@ -202,6 +206,7 @@ export function AgentThreadsSidebar({
         onAddProject={onAddProject}
         onChangeScope={onChangeScope}
         onNewThread={onNewThread}
+        onProjectCommand={onProjectCommand}
         onReleaseProject={onReleaseProject}
         onTrustProject={onTrustProject}
         overflowRootPaths={overflowRootPaths}

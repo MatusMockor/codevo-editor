@@ -39,7 +39,27 @@ export type AgentRailScopeEntry =
       readonly repositoryResolved: boolean;
       readonly trust: AgentProjectTrust;
       readonly origin: AgentProjectOrigin;
+      readonly rootPath: string | null;
+      readonly repositoryCount: number;
     };
+
+export type AgentRailProjectScopeEntry = Extract<AgentRailScopeEntry, { kind: "repository" }>;
+
+export type AgentProjectMenuCommand =
+  "trust" | "release" | "reveal" | "copyPath" | "filterToProject";
+
+export interface AgentProjectMenuTarget {
+  readonly projectRootKey: string;
+  readonly repositoryRoot: string;
+  readonly rootPath: string | null;
+}
+
+export interface AgentProjectMenuEntry {
+  readonly id: string;
+  readonly label: string;
+  readonly command: AgentProjectMenuCommand;
+  readonly disabled: boolean;
+}
 
 export interface AgentRailSections {
   readonly pinned: ReadonlyArray<AgentThreadView>;
@@ -188,6 +208,8 @@ export function agentRailScopeEntries(
         repositoryResolved: repo.repositoryResolved,
         trust: group.trust,
         origin: group.origin,
+        rootPath: group.rootPath,
+        repositoryCount: group.repos.length,
       });
     }
   }
@@ -310,6 +332,51 @@ export function agentRailScopeState(entry: AgentRailScopeEntry | null): AgentRai
   if (entry.origin === "background-tab") return { label: "Background", action: null };
   if (entry.origin === "closed-tab-live-tasks") return { label: "Tab closed", action: "release" };
   return null;
+}
+
+export function agentProjectMenuTarget(entry: AgentRailProjectScopeEntry): AgentProjectMenuTarget {
+  return {
+    projectRootKey: entry.projectRootKey,
+    repositoryRoot: entry.repositoryRoot,
+    rootPath: entry.rootPath,
+  };
+}
+
+export function agentProjectMenuEntries(
+  entry: AgentRailProjectScopeEntry,
+  scoped: boolean,
+): ReadonlyArray<AgentProjectMenuEntry> {
+  const entries: AgentProjectMenuEntry[] = [];
+  if (entry.trust !== "trusted") {
+    entries.push(projectMenuEntry("trust", "Trust project", "trust", false));
+  }
+  if (entry.origin === "closed-tab-live-tasks") {
+    entries.push(projectMenuEntry("release", "Release project", "release", false));
+  }
+  entries.push(projectMenuEntry("filter", filterScopeLabel(entry), "filterToProject", scoped));
+  if (entry.rootPath === null) return entries;
+  entries.push(projectMenuEntry("reveal", "Reveal in Finder", "reveal", false));
+  entries.push(projectMenuEntry("copy-path", "Copy path", "copyPath", false));
+  return entries;
+}
+
+export function agentProjectRepositoryCountLabel(entry: AgentRailScopeEntry): string | null {
+  if (entry.kind === "all" || entry.repositoryCount <= 1) return null;
+  return `${entry.repositoryCount} repos`;
+}
+
+function filterScopeLabel(entry: AgentRailProjectScopeEntry): string {
+  if (entry.repositoryCount > 1) return "Filter to this repository";
+  return "Filter to this project";
+}
+
+function projectMenuEntry(
+  id: string,
+  label: string,
+  command: AgentProjectMenuCommand,
+  disabled: boolean,
+): AgentProjectMenuEntry {
+  return { id, label, command, disabled };
 }
 
 export function agentRailNewThreadTarget(

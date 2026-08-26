@@ -875,7 +875,7 @@ describe("AgentModeView", () => {
     expect(scopeOptionLabels()).toEqual(["All projects", "app", "api-service"]);
     click("button#agent-rail-scope");
     expect(
-      [...host.querySelectorAll("#agent-rail-scope-list .agent-picker__detail")].map(
+      [...host.querySelectorAll("#agent-rail-scope-list .agent-menu__detail")].map(
         (element) => element.textContent,
       ),
     ).toEqual(["Background"]);
@@ -942,6 +942,54 @@ describe("AgentModeView", () => {
     click('[aria-label="Trust project api-service"]');
 
     expect(onTrustProject).toHaveBeenCalledWith(OTHER_ROOT);
+  });
+
+  it("runs the project actions from the gear of a rail project row", () => {
+    const onTrustProject = vi.fn();
+    const revealPath = vi.fn(async () => undefined);
+    const writeText = vi.fn(async () => undefined);
+    render({
+      chrome: chromeFixture({ revealPath }),
+      onTrustProject,
+      projects: [activeProject(), { ...backgroundProject(), trust: "untrusted" }],
+    });
+
+    openProjectMenu("api-service");
+    expect(projectMenuLabels()).toEqual([
+      "Trust project",
+      "Filter to this project",
+      "Reveal in Finder",
+      "Copy path",
+    ]);
+
+    clickMenuItem("Trust project");
+    expect(onTrustProject).toHaveBeenCalledWith(OTHER_ROOT);
+
+    openProjectMenu("api-service");
+    withClipboard({ writeText }, () => clickMenuItem("Copy path"));
+    expect(writeText).toHaveBeenCalledWith(OTHER_ROOT);
+
+    openProjectMenu("api-service");
+    clickMenuItem("Reveal in Finder");
+    expect(revealPath).toHaveBeenCalledWith(OTHER_ROOT);
+
+    openProjectMenu("api-service");
+    clickMenuItem("Filter to this project");
+
+    expect(pickerTrigger("agent-rail-scope").textContent).toContain("api-service");
+    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Untrusted");
+  });
+
+  it("offers no trust or release action for a trusted active project", () => {
+    render({ projects: [activeProject(), backgroundProject()] });
+
+    openProjectMenu("app");
+
+    expect(projectMenuLabels()).toEqual([
+      "Filter to this project",
+      "Reveal in Finder",
+      "Copy path",
+    ]);
   });
 
   it("keeps a closed-tab draining project out of the composer picker", () => {
@@ -1841,6 +1889,19 @@ describe("AgentModeView", () => {
     });
   }
 
+  function openProjectMenu(label: string): void {
+    if (host.querySelector("#agent-rail-scope-list") === null) {
+      click("button#agent-rail-scope");
+    }
+    click(`[aria-label="Project actions for ${label}"]`);
+  }
+
+  function projectMenuLabels(): readonly string[] {
+    return [...host.querySelectorAll<HTMLButtonElement>('.agent-menu__item[role="menuitem"]')].map(
+      (item) => item.textContent ?? "",
+    );
+  }
+
   function clickMenuItem(label: string): void {
     const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
       (candidate) => candidate.textContent === label,
@@ -1852,13 +1913,8 @@ describe("AgentModeView", () => {
   function scopeOptionLabels(): readonly string[] {
     click("button#agent-rail-scope");
     const labels = [
-      ...host.querySelectorAll('#agent-rail-scope-list [role="option"] .agent-picker__label'),
-    ].map((element) =>
-      [...element.childNodes]
-        .filter((node) => node.nodeType === Node.TEXT_NODE)
-        .map((node) => node.textContent ?? "")
-        .join(""),
-    );
+      ...host.querySelectorAll('#agent-rail-scope-list [role="menuitemradio"] .agent-menu__label'),
+    ].map((element) => element.textContent ?? "");
     click("button#agent-rail-scope");
     return labels;
   }
@@ -1866,7 +1922,7 @@ describe("AgentModeView", () => {
   function chooseScope(projectRootKey: string, repositoryRoot: string): void {
     click("button#agent-rail-scope");
     click(
-      `#agent-rail-scope-list [role="option"][data-value="${agentRailScopeValue(
+      `#agent-rail-scope-list [role="menuitemradio"][data-value="${agentRailScopeValue(
         projectRootKey,
         repositoryRoot,
       )}"]`,

@@ -1,10 +1,9 @@
-import { useCallback, useMemo, type KeyboardEvent, type RefObject } from "react";
+import { useCallback, type KeyboardEvent, type RefObject } from "react";
 import { FolderPlus, Search, SquarePen, X } from "lucide-react";
 import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
 import { MAX_THREAD_SEARCH_QUERY_CHARS } from "../../domain/agentThreadSearch";
 import { MAX_AGENT_PROJECT_ROOTS } from "../../domain/agentProject";
-import { AgentPickerMenu } from "./AgentPickerMenu";
-import { agentPickerOption } from "./agentPickerOption";
+import { AgentProjectScopeMenu } from "./AgentProjectScopeMenu";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import {
   agentRailNewThreadTarget,
@@ -12,6 +11,8 @@ import {
   agentRailScopeEntryValue,
   agentRailScopeFromEntry,
   agentRailScopeState,
+  type AgentProjectMenuCommand,
+  type AgentProjectMenuTarget,
   type AgentRailScope,
   type AgentRailScopeEntry,
 } from "./agentSidebarPresentation";
@@ -31,6 +32,7 @@ export interface AgentRailHeaderProps {
   onAddProject(): void;
   onTrustProject(projectRootKey: string): void;
   onReleaseProject(projectRootKey: string): void;
+  onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
 }
 
 export function AgentRailHeader({
@@ -39,6 +41,7 @@ export function AgentRailHeader({
   onAddProject,
   onChangeScope,
   onNewThread,
+  onProjectCommand,
   onReleaseProject,
   onSearchKeyDown,
   onTrustProject,
@@ -52,13 +55,6 @@ export function AgentRailHeader({
   const scopeValue = agentRailScopeEntryValue(scope);
   const scopeEntry = scopeEntries.find((entry) => entry.value === scopeValue) ?? null;
   const scopeState = agentRailScopeState(scopeEntry);
-  const scopeOptions = useMemo(
-    () =>
-      scopeEntries.map((entry) =>
-        agentPickerOption(entry.value, entry.label, null, null, scopeDetail(entry)),
-      ),
-    [scopeEntries],
-  );
   const newThreadTarget = agentRailNewThreadTarget(scope, scopeEntries);
   const orphanCount = agentRailOrphanCount(groups, scope);
 
@@ -144,16 +140,13 @@ export function AgentRailHeader({
         </button>
       </div>
       <div className="agent-rail__row agent-scope">
-        <AgentPickerMenu
-          align="start"
-          describedBy={null}
+        <AgentProjectScopeMenu
           disabled={scopeEntries.length <= 1}
+          entries={scopeEntries}
           id="agent-rail-scope"
           label="Project scope"
           onChange={changeScope}
-          options={scopeOptions}
-          prefix={null}
-          tone={null}
+          onProjectCommand={onProjectCommand}
           value={scopeValue}
         />
       </div>
@@ -190,10 +183,6 @@ export function AgentRailHeader({
       )}
     </div>
   );
-}
-
-function scopeDetail(entry: AgentRailScopeEntry): string | null {
-  return agentRailScopeState(entry)?.label ?? null;
 }
 
 function orphanLabel(count: number): string {

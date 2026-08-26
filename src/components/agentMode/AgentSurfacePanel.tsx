@@ -67,11 +67,7 @@ const TABS: ReadonlyArray<SurfaceTab> = [
   { kind: "terminal", label: "Terminal", icon: SquareTerminal },
 ];
 
-function nextAgentSurfaceTabIndex(
-  key: string,
-  count: number,
-  current: number,
-): number | null {
+function nextAgentSurfaceTabIndex(key: string, count: number, current: number): number | null {
   if (count === 0) return null;
   if (key === "ArrowRight") return (current + 1) % count;
   if (key === "ArrowLeft") return (current - 1 + count) % count;

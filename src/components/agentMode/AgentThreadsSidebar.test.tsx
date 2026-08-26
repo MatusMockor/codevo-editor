@@ -460,7 +460,7 @@ describe("AgentThreadsSidebar", () => {
     render({ groups, onChangeScope });
 
     click("#agent-rail-scope");
-    click(`[role="option"][data-value="${OTHER}|${OTHER}"]`);
+    click(`[role="menuitemradio"][data-value="${OTHER}|${OTHER}"]`);
 
     expect(onChangeScope).toHaveBeenCalledWith({
       kind: "repository",
@@ -618,6 +618,7 @@ describe("AgentThreadsSidebar", () => {
       onAddProject: vi.fn(),
       onTrustProject: vi.fn(),
       onReleaseProject: vi.fn(),
+      onProjectCommand: vi.fn(),
       ...overrides,
     };
     act(() => {
@@ -699,12 +700,13 @@ function group(
   repositoryRoot: string,
   label: string,
   threads: ReadonlyArray<AgentThreadView>,
-  overrides: Partial<Pick<AgentProjectGroup, "origin" | "trust">> = {},
+  overrides: Partial<Pick<AgentProjectGroup, "origin" | "rootPath" | "trust">> = {},
 ): AgentProjectGroup {
   return {
     projectRootKey: repositoryRoot,
     kind: "project",
     label,
+    rootPath: repositoryRoot,
     trust: "trusted",
     origin: "active-tab",
     singleRepo: true,

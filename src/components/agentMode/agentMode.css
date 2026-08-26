@@ -446,6 +446,75 @@
   white-space: nowrap;
 }
 
+/*
+  Project scope menu: each project row carries a trailing gear that opens the
+  per-project actions. The gear stays in the DOM at rest so keyboard users reach
+  it with the arrow keys, and only fades in on hover or focus.
+*/
+.agent-scope-menu__menu {
+  min-width: 220px;
+}
+
+.agent-scope-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--agent-radius-md);
+}
+
+.agent-scope-menu__row:hover {
+  background: var(--agent-hover);
+}
+
+.agent-scope-menu__item {
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+
+.agent-scope-menu__count {
+  flex: none;
+  color: var(--agent-text-subtle);
+  font-size: var(--agent-fs-2xs);
+}
+
+.agent-scope-menu__actions {
+  position: relative;
+  flex: none;
+}
+
+.agent-scope-menu__gear {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  outline: none;
+  padding: 0;
+}
+
+.agent-scope-menu__row:hover .agent-scope-menu__gear,
+.agent-scope-menu__gear:focus-visible,
+.agent-scope-menu__gear[data-open="true"] {
+  opacity: 1;
+}
+
+.agent-scope-menu__gear:hover,
+.agent-scope-menu__gear[data-open="true"] {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+}
+
+.agent-scope-menu__gear:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--agent-live);
+}
+
 .agent-rail__note {
   overflow: hidden;
   color: var(--agent-text-subtle);
