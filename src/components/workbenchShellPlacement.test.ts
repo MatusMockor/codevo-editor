@@ -65,9 +65,20 @@ describe("workbenchShellPlacement", () => {
       rightPanelHidden: true,
       surfacesMounted: true,
       rightPanelMaximized: false,
+      rail: "expanded",
       rightPanelWidth: 0,
       bottomPanelHeight: 0,
     });
+  });
+
+  it("carries the collapsed rail into the placement for the frame rail track", () => {
+    expect(
+      workbenchShellPlacement({
+        bottomPanelVisible: true,
+        effectiveLayout: "agent",
+        layout: layoutOf({ rail: "collapsed" }),
+      }),
+    ).toMatchObject({ rail: "collapsed", bottomPanelHeight: 280 });
   });
 
   it("places the editor in the files surface while the panel is open", () => {
@@ -79,6 +90,7 @@ describe("workbenchShellPlacement", () => {
         openSurfaces: ["files", "diff"],
         activeSurface: "files",
         rightPanelMaximized: true,
+        rail: "collapsed",
         rightPanelWidth: 620,
         bottomPanelHeight: 200,
       }),
@@ -90,6 +102,7 @@ describe("workbenchShellPlacement", () => {
       rightPanelHidden: false,
       surfacesMounted: true,
       rightPanelMaximized: true,
+      rail: "collapsed",
       rightPanelWidth: 620,
       bottomPanelHeight: 200,
     });
@@ -108,6 +121,7 @@ describe("workbenchShellPlacement", () => {
       rightPanelHidden: true,
       surfacesMounted: false,
       rightPanelMaximized: false,
+      rail: "expanded",
       rightPanelWidth: 0,
       bottomPanelHeight: 0,
     });

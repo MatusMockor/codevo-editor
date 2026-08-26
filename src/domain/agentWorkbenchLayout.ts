@@ -17,12 +17,16 @@ export const DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT = 280;
 export const AGENT_RIGHT_PANEL_STATES = ["open", "closed"] as const;
 export type AgentRightPanelState = (typeof AGENT_RIGHT_PANEL_STATES)[number];
 
+export const AGENT_RAIL_STATES = ["expanded", "collapsed"] as const;
+export type AgentRailState = (typeof AGENT_RAIL_STATES)[number];
+
 export interface AgentWorkbenchLayout {
   readonly layout: AgentWorkbenchLayoutMode;
   readonly rightPanel: AgentRightPanelState;
   readonly openSurfaces: ReadonlyArray<AgentSurfaceKind>;
   readonly activeSurface: AgentSurfaceKind | null;
   readonly rightPanelMaximized: boolean;
+  readonly rail: AgentRailState;
   readonly bottomPanel: boolean;
   readonly rightPanelWidth: number;
   readonly bottomPanelHeight: number;
@@ -37,6 +41,7 @@ export type AgentWorkbenchLayoutAction =
   | { readonly kind: "showSurfaceChooser" }
   | { readonly kind: "toggleRightPanel" }
   | { readonly kind: "toggleMaximized" }
+  | { readonly kind: "toggleRail" }
   | { readonly kind: "toggleBottomPanel" }
   | { readonly kind: "showBottomPanel" }
   | { readonly kind: "hideBottomPanel" }
@@ -58,6 +63,7 @@ export const initialAgentWorkbenchLayout: AgentWorkbenchLayout = {
   ...CLOSED_RIGHT_PANEL,
   openSurfaces: NO_SURFACES,
   activeSurface: null,
+  rail: "expanded",
   bottomPanel: false,
   rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
   bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
@@ -69,6 +75,10 @@ export function isAgentSurfaceKind(value: unknown): value is AgentSurfaceKind {
 
 export function isAgentRightPanelState(value: unknown): value is AgentRightPanelState {
   return (AGENT_RIGHT_PANEL_STATES as ReadonlyArray<string>).includes(value as string);
+}
+
+export function isAgentRailState(value: unknown): value is AgentRailState {
+  return (AGENT_RAIL_STATES as ReadonlyArray<string>).includes(value as string);
 }
 
 export function isAgentWorkbenchLayoutMode(value: unknown): value is AgentWorkbenchLayoutMode {
@@ -110,6 +120,8 @@ export function agentWorkbenchLayoutReducer(
       return toggleRightPanel(state);
     case "toggleMaximized":
       return toggleMaximized(state);
+    case "toggleRail":
+      return { ...state, rail: state.rail === "expanded" ? "collapsed" : "expanded" };
     case "toggleBottomPanel":
       return { ...state, bottomPanel: !state.bottomPanel };
     case "showBottomPanel":
@@ -165,6 +177,7 @@ export function serializeAgentWorkbenchLayout(
     openSurfaces: state.openSurfaces,
     activeSurface: state.activeSurface,
     rightPanelMaximized: state.rightPanelMaximized,
+    rail: state.rail,
     bottomPanel: state.bottomPanel,
     rightPanelWidth: state.rightPanelWidth,
     bottomPanelHeight: state.bottomPanelHeight,
@@ -188,6 +201,7 @@ export function agentWorkbenchLayoutSnapshotsEqual(
     surfacesEqual(left.openSurfaces, right.openSurfaces) &&
     left.activeSurface === right.activeSurface &&
     left.rightPanelMaximized === right.rightPanelMaximized &&
+    left.rail === right.rail &&
     left.bottomPanel === right.bottomPanel &&
     left.rightPanelWidth === right.rightPanelWidth &&
     left.bottomPanelHeight === right.bottomPanelHeight
@@ -295,8 +309,9 @@ function resizeBottomPanel(state: AgentWorkbenchLayout, height: number): AgentWo
 
 function parseIndependentFields(
   value: Record<string, unknown>,
-): Pick<AgentWorkbenchLayout, "bottomPanel" | "rightPanelWidth" | "bottomPanelHeight"> {
+): Pick<AgentWorkbenchLayout, "rail" | "bottomPanel" | "rightPanelWidth" | "bottomPanelHeight"> {
   return {
+    rail: isAgentRailState(value.rail) ? value.rail : initialAgentWorkbenchLayout.rail,
     bottomPanel:
       typeof value.bottomPanel === "boolean"
         ? value.bottomPanel

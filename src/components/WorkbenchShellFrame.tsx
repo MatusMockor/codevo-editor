@@ -34,6 +34,7 @@ export function WorkbenchShellFrame({
       <div
         className="workbench-frame"
         data-layout={placement.layout}
+        data-rail={placement.rail}
         data-right-panel={placement.rightPanelMaximized ? "maximized" : "docked"}
         data-tree={workbenchFrameTreeState(placement, treeReportedVisible)}
       >

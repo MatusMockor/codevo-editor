@@ -126,7 +126,6 @@ export function AgentModeView({
 }: AgentModeViewProps) {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [railScope, setRailScope] = useState<AgentRailScope>({ kind: "all" });
-  const [railCollapsed, setRailCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [localNotice, setLocalNotice] = useState<AgentTasksNotice | null>(null);
@@ -397,6 +396,7 @@ export function AgentModeView({
     setChooserRequested(false);
     dispatchLayout({ kind: "toggleRightPanel" });
   }, [dispatchLayout]);
+  const toggleRail = useCallback(() => dispatchLayout({ kind: "toggleRail" }), [dispatchLayout]);
   const onShowTerminalPanel = chrome.onShowTerminalPanel;
   const scripts = useAgentThreadScripts({
     target: selectedThread === null ? null : scriptTarget(selectedThread),
@@ -626,7 +626,6 @@ export function AgentModeView({
       <section
         aria-label="Agent mode"
         className="agent-mode"
-        data-rail={railCollapsed ? "collapsed" : "expanded"}
         data-right-panel={layout.rightPanelMaximized ? "maximized" : "docked"}
         data-slot="agent"
       >
@@ -639,13 +638,13 @@ export function AgentModeView({
         )}
         <AgentClockProvider nowTickMs={nowTickMs}>
           <div className="agent-mode__grid">
-            {railCollapsed ? (
+            {layout.rail === "collapsed" ? (
               <div className="agent-rail__chrome">
                 <button
                   aria-expanded="false"
                   aria-label="Expand sidebar"
                   className="agent-iconbutton"
-                  onClick={() => setRailCollapsed(false)}
+                  onClick={toggleRail}
                   title="Expand sidebar"
                   type="button"
                 >
@@ -658,7 +657,7 @@ export function AgentModeView({
                 groups={groups}
                 onAddProject={() => setAddProjectOpen(true)}
                 onChangeScope={setRailScope}
-                onCollapseSidebar={() => setRailCollapsed(true)}
+                onCollapseSidebar={toggleRail}
                 onNewThread={startNewThread}
                 onProjectCommand={handleProjectCommand}
                 onReleaseProject={onReleaseProject}

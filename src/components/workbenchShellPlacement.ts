@@ -1,4 +1,5 @@
 import type {
+  AgentRailState,
   AgentWorkbenchLayout,
   AgentWorkbenchLayoutMode,
 } from "../domain/agentWorkbenchLayout";
@@ -14,6 +15,7 @@ export interface WorkbenchShellPlacementInput {
     | "openSurfaces"
     | "activeSurface"
     | "rightPanelMaximized"
+    | "rail"
     | "rightPanelWidth"
     | "bottomPanelHeight"
   >;
@@ -26,6 +28,7 @@ export interface WorkbenchShellPlacement {
   readonly rightPanelHidden: boolean;
   readonly surfacesMounted: boolean;
   readonly rightPanelMaximized: boolean;
+  readonly rail: AgentRailState;
   readonly rightPanelWidth: number;
   readonly bottomPanelHeight: number;
 }
@@ -66,6 +69,7 @@ export function workbenchShellPlacement({
       rightPanelHidden: true,
       surfacesMounted: false,
       rightPanelMaximized: false,
+      rail: "expanded",
       rightPanelWidth: 0,
       bottomPanelHeight: 0,
     };
@@ -80,6 +84,7 @@ export function workbenchShellPlacement({
     rightPanelHidden,
     surfacesMounted: host.mounted,
     rightPanelMaximized: !rightPanelHidden && layout.rightPanelMaximized,
+    rail: layout.rail,
     rightPanelWidth: rightPanelHidden ? 0 : layout.rightPanelWidth,
     bottomPanelHeight: bottomPanelVisible ? layout.bottomPanelHeight : 0,
   };

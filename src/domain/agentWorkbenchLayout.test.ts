@@ -490,6 +490,7 @@ describe("parseAgentWorkbenchLayout", () => {
   it("restores a valid persisted layout", () => {
     const persisted = open(["files", "diff"], "diff", {
       rightPanelMaximized: true,
+      rail: "expanded",
       bottomPanel: true,
       rightPanelWidth: 640,
       bottomPanelHeight: 320,
@@ -631,6 +632,26 @@ describe("parseAgentWorkbenchLayout", () => {
   });
 });
 
+describe("toggleRail", () => {
+  it("flips the rail between expanded and collapsed and persists it", () => {
+    const collapsed = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
+      kind: "toggleRail",
+    });
+    expect(collapsed).toEqual({ ...initialAgentWorkbenchLayout, rail: "collapsed" });
+    expect(agentWorkbenchLayoutReducer(collapsed, { kind: "toggleRail" })).toEqual(
+      initialAgentWorkbenchLayout,
+    );
+    expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(collapsed))).toEqual(collapsed);
+  });
+
+  it("falls back to the expanded rail for unknown persisted values", () => {
+    expect(parseAgentWorkbenchLayout({ layout: "agent", rail: "hidden" }).rail).toBe("expanded");
+    expect(parseAgentWorkbenchLayout({ layout: "agent", rail: "collapsed" }).rail).toBe(
+      "collapsed",
+    );
+  });
+});
+
 describe("serializeAgentWorkbenchLayout", () => {
   it("persists exactly the layout fields", () => {
     const state = open(["files", "terminal"], "terminal", { rightPanelMaximized: true });
@@ -640,6 +661,7 @@ describe("serializeAgentWorkbenchLayout", () => {
       openSurfaces: ["files", "terminal"],
       activeSurface: "terminal",
       rightPanelMaximized: true,
+      rail: "expanded",
       bottomPanel: false,
       rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
       bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,

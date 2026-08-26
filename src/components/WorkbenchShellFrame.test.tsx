@@ -135,6 +135,19 @@ describe("WorkbenchShellFrame", () => {
     expect(frame?.getAttribute("data-right-panel")).toBe("docked");
   });
 
+  it("stamps the rail state on the frame so the bottom panel track follows the rail", () => {
+    render(placement("agent", null, true));
+    const frame = host.querySelector(".workbench-frame");
+    expect(frame?.getAttribute("data-rail")).toBe("expanded");
+
+    render({ ...placement("agent", "diff", true, true), rail: "collapsed" });
+    expect(frame?.getAttribute("data-rail")).toBe("collapsed");
+    expect(frame?.getAttribute("data-right-panel")).toBe("maximized");
+
+    render(placement("editor-expanded", null, true));
+    expect(frame?.getAttribute("data-rail")).toBe("expanded");
+  });
+
   it("keeps the right panel track while an open panel shows no surface", () => {
     render(emptyOpenPanelPlacement());
     const frame = host.querySelector<HTMLElement>(".editor-workbench");

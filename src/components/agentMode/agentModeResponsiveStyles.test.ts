@@ -40,9 +40,12 @@ describe("agent mode responsive layout contract", () => {
     const tablet = block(appCss, "@media (max-width: 1180px)");
     const narrow = block(appCss, "@media (max-width: 720px)");
 
-    expect(rule('.agent-mode[data-rail="expanded"]', tablet)).toContain(
+    expect(rule('.workbench-frame[data-layout="agent"][data-rail="expanded"]', tablet)).toContain(
       "--agent-rail-track: 248px",
     );
+    expect(
+      rule('.workbench-frame[data-layout="agent"][data-right-panel="docked"]', narrow),
+    ).toContain("--agent-rail-track: 0px");
     expect(rule(".agent-mode__grid")).toContain(
       "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr)",
     );
@@ -65,26 +68,60 @@ describe("agent mode responsive layout contract", () => {
     ).toContain("padding-left: var(--agent-surface-tree-width)");
   });
 
-  it("pins the maximized frame rail column to the rail track instead of the notice text", () => {
+  it("places the docked bottom panel under the thread column beside a full-height right panel", () => {
+    const frame = rule('.workbench-frame[data-layout="agent"] {', shellCss);
+    expect(frame.replace(/\s+/g, " ")).toContain(
+      "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr) var(--agent-right-panel-width)",
+    );
+    expect(frame).toContain("grid-template-rows: minmax(0, 1fr) var(--agent-bottom-panel-height)");
+
+    const agent = rule('.workbench-frame[data-layout="agent"] > [data-slot="agent"]', shellCss);
+    expect(agent).toContain("grid-column: 1 / 3");
+    expect(agent).toContain("grid-row: 1");
+
+    const bottom = rule('.workbench-frame[data-layout="agent"] > [data-slot="bottom"]', shellCss);
+    expect(bottom).toContain("grid-column: 2");
+    expect(bottom).toContain("grid-row: 2");
+
+    const surface = rule('.workbench-frame[data-layout="agent"] > [data-slot="surface"]', shellCss);
+    expect(surface).toContain("grid-column: 3");
+    expect(surface).toContain("grid-row: 1 / -1");
+    expect(
+      rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss),
+    ).toContain("grid-column: 3");
+  });
+
+  it("pins the maximized frame rail column to the rail track and moves the bottom panel under the surface", () => {
     const maximizedFrame = rule(
       '.workbench-frame[data-layout="agent"][data-right-panel="maximized"] {',
       shellCss,
     );
     expect(maximizedFrame).not.toContain("grid-template-columns: auto");
-    expect(maximizedFrame).toContain("grid-template-columns: min-content minmax(0, 1fr)");
+    expect(maximizedFrame).toContain(
+      "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr)",
+    );
 
     const maximizedAgent = rule(
       '.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="agent"]',
       shellCss,
     );
-    expect(maximizedAgent).toContain("width: var(--agent-rail-track)");
-    expect(maximizedAgent).toContain("min-width: 0");
+    expect(maximizedAgent).toContain("grid-column: 1");
     expect(maximizedAgent).toContain("overflow: hidden");
+    expect(
+      rule(
+        '.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="bottom"]',
+        shellCss,
+      ),
+    ).toContain("grid-column: 2");
   });
 
-  it("composes the collapsed rail with the maximized panel through the rail track", () => {
-    expect(rule(".agent-mode {")).toContain("--agent-rail-track: var(--agent-rail-width)");
-    expect(rule('.agent-mode[data-rail="collapsed"]')).toContain(
+  it("composes the collapsed rail with the maximized panel through the frame-owned rail track", () => {
+    expect(rule(".agent-mode {")).not.toContain("--agent-rail-track");
+    expect(rule(".agent-mode {")).not.toContain("--agent-rail-width");
+    expect(rule('.workbench-frame[data-layout="agent"] {')).toContain(
+      "--agent-rail-track: var(--agent-rail-width)",
+    );
+    expect(rule('.workbench-frame[data-layout="agent"][data-rail="collapsed"]')).toContain(
       "--agent-rail-track: var(--agent-rail-collapsed-width)",
     );
     expect(rule('.agent-mode[data-right-panel="maximized"] .agent-mode__grid')).toContain(

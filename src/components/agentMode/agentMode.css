@@ -51,11 +51,7 @@
   --agent-space-5: 16px;
   --agent-space-6: 24px;
   --agent-space-7: 32px;
-  --agent-rail-width: 272px;
-  --agent-rail-collapsed-width: calc(32px + 2 * var(--agent-rail-inset));
-  --agent-rail-track: var(--agent-rail-width);
   --agent-rail-min-width: 208px;
-  --agent-rail-inset: 8px;
   --agent-rail-row-inset: 10px;
   --agent-rail-gap: 8px;
   --agent-row-hover: var(--agent-hover);
@@ -108,7 +104,16 @@
   }
 }
 
-.agent-mode[data-rail="collapsed"] {
+/* The shell frame owns the rail track: its grid places the bottom panel beside the rail and the
+   agent grid below reuses the same track so both columns stay aligned. */
+.workbench-frame[data-layout="agent"] {
+  --agent-rail-width: 272px;
+  --agent-rail-inset: 8px;
+  --agent-rail-collapsed-width: calc(32px + 2 * var(--agent-rail-inset));
+  --agent-rail-track: var(--agent-rail-width);
+}
+
+.workbench-frame[data-layout="agent"][data-rail="collapsed"] {
   --agent-rail-track: var(--agent-rail-collapsed-width);
 }
 
@@ -1739,12 +1744,16 @@
   bounded row above the session, keeping both navigation and the composer usable.
 */
 @media (max-width: 1180px) {
-  .agent-mode[data-rail="expanded"] {
+  .workbench-frame[data-layout="agent"][data-rail="expanded"] {
     --agent-rail-track: 248px;
   }
 }
 
 @media (max-width: 720px) {
+  .workbench-frame[data-layout="agent"][data-right-panel="docked"] {
+    --agent-rail-track: 0px;
+  }
+
   .agent-mode__grid {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(112px, 28vh) minmax(0, 1fr);
@@ -2620,7 +2629,6 @@
   --agent-radius-md: 4px;
   --agent-radius-lg: 6px;
   --agent-radius-xl: 8px;
-  --agent-rail-width: 260px;
   --agent-tracking-label: 0.12em;
   --agent-turn-gap: 24px;
 }
@@ -2668,7 +2676,6 @@
   --agent-radius-md: 8px;
   --agent-radius-lg: 12px;
   --agent-radius-xl: 16px;
-  --agent-rail-width: 276px;
   --agent-rail-row-py: 10px;
   --agent-session-gutter: 32px;
   --agent-turn-gap: 26px;
@@ -2729,7 +2736,6 @@
   --agent-radius-md: 6px;
   --agent-radius-lg: 10px;
   --agent-radius-xl: 14px;
-  --agent-rail-width: 240px;
   --agent-rail-row-py: 6px;
   --agent-rail-row-px: 26px;
   --agent-turn-gap: 24px;

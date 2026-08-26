@@ -662,20 +662,22 @@ describe("AgentModeView", () => {
     expect(activeSurfaceTab()).toBe("Diff");
   });
 
-  it("marks the rail state on the agent section so the maximized grid composes", () => {
-    render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
+  it("hands the rail state to the layout so the shell frame owns the rail track", () => {
+    const layout = recordedLayoutState();
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      chrome: chromeFixture({ layout }),
+    });
 
-    expect(agentModeSection()?.getAttribute("data-rail")).toBe("expanded");
+    expect(agentModeSection()?.hasAttribute("data-rail")).toBe(false);
     expect(
       agentModeSection()?.querySelector(".agent-mode__grid")?.getAttribute("style"),
     ).toBeNull();
 
     click('[aria-label="Collapse sidebar"]');
 
-    expect(agentModeSection()?.getAttribute("data-rail")).toBe("collapsed");
-    expect(
-      agentModeSection()?.querySelector(".agent-mode__grid")?.getAttribute("style"),
-    ).toBeNull();
+    expect(layout.actions).toEqual([{ kind: "toggleRail" }]);
+    expect(reduceRecordedLayout(layout).rail).toBe("collapsed");
   });
 
   it("routes the ⌥⌘R and ⌥⌘E commands to the plain layout actions", async () => {
@@ -1674,14 +1676,20 @@ describe("AgentModeView", () => {
   });
 
   it("collapses the rail behind a slim expand affordance", () => {
-    render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
+    const threads = [threadView({ threadId: "agt-1" })];
+    let layout = recordedLayoutState();
+    render({ agents: surface({ threads }), chrome: chromeFixture({ layout }) });
 
     click('[aria-label="Collapse sidebar"]');
+    layout = recordedLayoutState(reduceRecordedLayout(layout));
+    render({ agents: surface({ threads }), chrome: chromeFixture({ layout }) });
 
     expect(host.querySelector('aside[aria-label="Agent threads"]')).toBeNull();
     expect(host.querySelector("[data-thread-id]")).toBeNull();
 
     click('[aria-label="Expand sidebar"]');
+    layout = recordedLayoutState(reduceRecordedLayout(layout));
+    render({ agents: surface({ threads }), chrome: chromeFixture({ layout }) });
 
     expect(host.querySelector('aside[aria-label="Agent threads"]')).not.toBeNull();
     expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();

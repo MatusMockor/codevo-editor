@@ -79,6 +79,7 @@ describe("useWorkbenchControllerAgents layout surface", () => {
       openSurfaces: ["terminal"],
       activeSurface: "terminal",
       rightPanelMaximized: false,
+      rail: "expanded",
       bottomPanel: false,
       rightPanelWidth: 540,
       bottomPanelHeight: 280,
