@@ -1348,9 +1348,7 @@
 
 .agent-composer__box:focus-within {
   box-shadow:
-    0 0 0 1px var(--agent-live),
-    0 0 0 4px var(--agent-live-soft),
-    0 0 24px var(--agent-glow-faint),
+    0 0 0 1px var(--agent-hairline-strong),
     var(--agent-shadow-raised);
 }
 
@@ -1365,7 +1363,7 @@
   min-height: 74px;
   outline: none;
   padding: 14px 18px 6px;
-  resize: vertical;
+  resize: none;
 }
 
 .agent-composer__textarea::placeholder {
