@@ -174,15 +174,13 @@ describe("AgentSurfacePanel", () => {
     expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
   });
 
-  it("renders one tab per open surface with the close button and the add button", () => {
+  it("renders one tab per open surface with the close button and no add button", () => {
     const onActivateSurface = vi.fn();
     const onCloseSurfaceTab = vi.fn();
-    const onShowSurfaceChooser = vi.fn();
     render({
       layout: open(["files", "diff"], "files"),
       onActivateSurface,
       onCloseSurfaceTab,
-      onShowSurfaceChooser,
     });
 
     expect(tabLabels()).toEqual(["Files", "Diff"]);
@@ -197,11 +195,10 @@ describe("AgentSurfacePanel", () => {
     expect(onActivateSurface).toHaveBeenCalledWith("diff");
     click('[aria-label="Close Diff tab"]');
     expect(onCloseSurfaceTab).toHaveBeenCalledWith("diff");
-    click('[aria-label="Add surface"]');
-    expect(onShowSurfaceChooser).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[aria-label="Add surface"]')).toBeNull();
   });
 
-  it("hides the add button once every surface is open or while the chooser is shown", () => {
+  it("never renders an add button, whichever surfaces are open", () => {
     render({ layout: open(["files", "diff", "terminal"], "terminal") });
     expect(host.querySelector('[aria-label="Add surface"]')).toBeNull();
     expect(tabLabels()).toEqual(["Files", "Diff", "Terminal"]);
@@ -447,7 +444,6 @@ function defaultProps(): AgentSurfacePanelProps {
     onOpenSurface: () => undefined,
     onActivateSurface: () => undefined,
     onCloseSurfaceTab: () => undefined,
-    onShowSurfaceChooser: () => undefined,
     onClosePanel: () => undefined,
   };
 }

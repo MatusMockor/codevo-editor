@@ -154,7 +154,6 @@ function defaultProps(): AgentSurfaceHostProps {
     onOpenSurface: () => undefined,
     onActivateSurface: () => undefined,
     onCloseSurfaceTab: () => undefined,
-    onShowSurfaceChooser: () => undefined,
     onClosePanel: () => undefined,
   };
 }

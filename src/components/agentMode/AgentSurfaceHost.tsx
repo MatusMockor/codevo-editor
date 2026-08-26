@@ -31,7 +31,6 @@ export interface AgentSurfaceHostProps {
   onOpenSurface(surface: AgentSurfaceKind): void;
   onActivateSurface(surface: AgentSurfaceKind): void;
   onCloseSurfaceTab(surface: AgentSurfaceKind): void;
-  onShowSurfaceChooser(): void;
   onClosePanel(): void;
 }
 
@@ -50,7 +49,6 @@ export function AgentSurfaceHost({
   onClosePanel,
   onCloseSurfaceTab,
   onOpenSurface,
-  onShowSurfaceChooser,
   thread,
   workspaceRoot,
 }: AgentSurfaceHostProps) {
@@ -140,7 +138,6 @@ export function AgentSurfaceHost({
         onCloseSurfaceTab={onCloseSurfaceTab}
         onOpenSurface={onOpenSurface}
         onResizeStart={chrome.onResizeRightPanelStart}
-        onShowSurfaceChooser={onShowSurfaceChooser}
         onTrustWorkspace={chrome.onTrustWorkspace}
         terminal={terminal}
         thread={thread}

@@ -4,13 +4,13 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type CSSProperties,
   type FocusEvent,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
 import { Check, ChevronDown, TriangleAlert } from "lucide-react";
 import type { AgentPickerOption, AgentPickerTone } from "./agentPickerOption";
+import { useAgentPopoverPlacement } from "./agentPopover";
 
 export type { AgentPickerOption, AgentPickerTone } from "./agentPickerOption";
 
@@ -33,21 +33,6 @@ export interface AgentPickerMenuProps {
   onChange(value: string): void;
 }
 
-type Placement = "down" | "up";
-
-interface MenuPosition {
-  readonly placement: Placement;
-  readonly inset: number;
-  readonly offset: number;
-  readonly minWidth: number;
-  readonly maxHeight: number;
-}
-
-const MENU_GAP = 4;
-const MENU_MARGIN = 8;
-const MENU_MAX_WIDTH = 320;
-const MENU_MAX_HEIGHT = 320;
-const MENU_MIN_HEIGHT = 96;
 const UNKNOWN_VALUE_LABEL = "Select…";
 
 export function AgentPickerMenu({
@@ -66,17 +51,16 @@ export function AgentPickerMenu({
 }: AgentPickerMenuProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [position, setPosition] = useState<MenuPosition | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const placement = useAgentPopoverPlacement(open, triggerRef, menuRef, align);
   const listId = `${id}-list`;
   const selectedIndex = options.findIndex((option) => option.value === value);
   const selected = selectedIndex < 0 ? null : (options[selectedIndex] ?? null);
 
   const close = useCallback((restoreFocus: boolean) => {
     setOpen(false);
-    setPosition(null);
     if (!restoreFocus) return;
     triggerRef.current?.focus();
   }, []);
@@ -115,27 +99,6 @@ export function AgentPickerMenu({
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, [close, open]);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    const trigger = triggerRef.current;
-    if (trigger === null) return;
-    const place = (): void => {
-      const menu = menuRef.current;
-      if (menu === null) return;
-      const next = menuPosition(trigger.getBoundingClientRect(), menu, align);
-      setPosition((current) => (current !== null && samePosition(current, next) ? current : next));
-    };
-    place();
-    const observer = observeSize(trigger, place);
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [align, open]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -187,7 +150,7 @@ export function AgentPickerMenu({
   return (
     <div
       className={`agent-picker${open ? " agent-picker--open" : ""}`}
-      data-placement={open ? (position?.placement ?? "down") : undefined}
+      data-placement={open ? placement.placement : undefined}
       onBlur={onBlur}
       ref={rootRef}
     >
@@ -225,7 +188,7 @@ export function AgentPickerMenu({
           onKeyDown={onMenuKeyDown}
           ref={menuRef}
           role="listbox"
-          style={menuStyle(position, align)}
+          style={placement.style}
         >
           {options.map((option, index) => (
             <div
@@ -277,57 +240,6 @@ function optionClassName(option: AgentPickerOption, active: boolean): string {
   if (active) classes.push("agent-picker__option--active");
   if (option.tone !== null) classes.push(`agent-picker__option--${option.tone}`);
   return classes.join(" ");
-}
-
-function observeSize(element: HTMLElement, place: () => void): ResizeObserver | null {
-  if (typeof ResizeObserver === "undefined") return null;
-  const observer = new ResizeObserver(() => place());
-  observer.observe(element);
-  return observer;
-}
-
-function menuPosition(rect: DOMRect, menu: HTMLElement, align: AgentPickerAlign): MenuPosition {
-  const height = Math.max(menu.scrollHeight, menu.offsetHeight);
-  const roomBelow = window.innerHeight - rect.bottom - MENU_GAP - MENU_MARGIN;
-  const roomAbove = rect.top - MENU_GAP - MENU_MARGIN;
-  const up = roomBelow < height && roomAbove > roomBelow;
-  const anchor = align === "start" ? rect.left : window.innerWidth - rect.right;
-  return {
-    placement: up ? "up" : "down",
-    inset: clampInset(anchor, menu.offsetWidth),
-    offset: up ? window.innerHeight - rect.top + MENU_GAP : rect.bottom + MENU_GAP,
-    minWidth: Math.min(rect.width, MENU_MAX_WIDTH),
-    maxHeight: Math.max(MENU_MIN_HEIGHT, Math.min(MENU_MAX_HEIGHT, up ? roomAbove : roomBelow)),
-  };
-}
-
-function menuStyle(position: MenuPosition | null, align: AgentPickerAlign): CSSProperties {
-  if (position === null) return {};
-  const horizontal: CSSProperties =
-    align === "start" ? { left: position.inset } : { right: position.inset };
-  const vertical: CSSProperties =
-    position.placement === "up" ? { bottom: position.offset } : { top: position.offset };
-  return {
-    minWidth: position.minWidth,
-    maxHeight: position.maxHeight,
-    ...horizontal,
-    ...vertical,
-  };
-}
-
-function samePosition(current: MenuPosition, next: MenuPosition): boolean {
-  return (
-    current.placement === next.placement &&
-    current.inset === next.inset &&
-    current.offset === next.offset &&
-    current.minWidth === next.minWidth &&
-    current.maxHeight === next.maxHeight
-  );
-}
-
-function clampInset(inset: number, menuWidth: number): number {
-  const limit = Math.max(MENU_MARGIN, window.innerWidth - MENU_MARGIN - menuWidth);
-  return Math.min(Math.max(inset, MENU_MARGIN), limit);
 }
 
 function clamp(index: number, length: number): number {

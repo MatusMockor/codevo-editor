@@ -94,7 +94,7 @@
   flex-direction: column;
   min-height: 0;
   background: var(--agent-ambient), var(--agent-canvas);
-  animation: agent-mode-enter var(--agent-motion-enter) var(--ease-standard) both;
+  animation: agent-mode-enter var(--agent-motion-enter) var(--ease-standard) backwards;
 }
 
 @keyframes agent-mode-enter {
@@ -3585,10 +3585,6 @@
 .agent-surface__tab-close:focus-visible {
   box-shadow: var(--agent-focus-ring);
   outline: none;
-}
-
-.agent-surface__add {
-  margin-left: 2px;
 }
 
 .agent-surface__tabpanel {

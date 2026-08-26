@@ -383,10 +383,6 @@ export function AgentModeView({
     },
     [dispatchLayout],
   );
-  const showSurfaceChooser = useCallback(() => {
-    setChooserRequested(true);
-    dispatchLayout({ kind: "showSurfaceChooser" });
-  }, [dispatchLayout]);
   const workspaceTrusted = chrome.workspaceTrusted;
   const surfaceBlocked = useCallback(
     (surface: AgentSurfaceKind) =>
@@ -797,7 +793,6 @@ export function AgentModeView({
           onClosePanel={toggleRightPanel}
           onCloseSurfaceTab={closeSurfaceTab}
           onOpenSurface={openSurface}
-          onShowSurfaceChooser={showSurfaceChooser}
           thread={selectedThread}
           workspaceRoot={workspaceRoot}
         />

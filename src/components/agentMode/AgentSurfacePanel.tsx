@@ -1,4 +1,4 @@
-import { FolderTree, GitCompare, PanelLeft, Plus, SquareTerminal, X } from "lucide-react";
+import { FolderTree, GitCompare, PanelLeft, SquareTerminal, X } from "lucide-react";
 import {
   Suspense,
   lazy,
@@ -9,11 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import {
-  MAX_AGENT_OPEN_SURFACES,
-  type AgentSurfaceKind,
-  type AgentWorkbenchLayout,
-} from "../../domain/agentWorkbenchLayout";
+import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
 import type { AgentSurfaceDiffProps } from "./AgentSurfaceDiff";
 import { AgentSurfaceEmptyState } from "./AgentSurfaceEmptyState";
 import { AgentSurfaceFileTree, type AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
@@ -22,7 +18,6 @@ import { SURFACE_NO_THREAD_REASON, agentSurfaceBlockedReason } from "./agentSurf
 import { useWorkbenchFrameTreeReport } from "../workbenchFrameTreeReport";
 
 export const AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE = "data-agent-editor-slot";
-export const AGENT_SURFACE_ADD_LABEL = "Add surface";
 export const AGENT_SURFACE_CLOSE_PANEL_LABEL = "Close panel";
 
 const LazyAgentSurfaceDiff = lazy(() =>
@@ -49,7 +44,6 @@ export interface AgentSurfacePanelProps {
   onOpenSurface(surface: AgentSurfaceKind): void;
   onActivateSurface(surface: AgentSurfaceKind): void;
   onCloseSurfaceTab(surface: AgentSurfaceKind): void;
-  onShowSurfaceChooser(): void;
   onClosePanel(): void;
   onTrustWorkspace?(): void;
   onResizeStart?(event: PointerEvent<HTMLDivElement>): void;
@@ -88,7 +82,6 @@ export function AgentSurfacePanel({
   onCloseSurfaceTab,
   onOpenSurface,
   onResizeStart,
-  onShowSurfaceChooser,
   onTrustWorkspace,
   terminal,
   thread,
@@ -101,7 +94,6 @@ export function AgentSurfacePanel({
   useWorkbenchFrameTreeReport(treeShown);
   const tabRefs = useRef(new Map<AgentSurfaceKind, HTMLButtonElement | null>());
   const chooserShown = activeSurface === null;
-  const canAddSurface = !chooserShown && openSurfaces.length < MAX_AGENT_OPEN_SURFACES;
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -176,17 +168,6 @@ export function AgentSurfacePanel({
               );
             })}
           </div>
-        )}
-        {canAddSurface && (
-          <button
-            aria-label={AGENT_SURFACE_ADD_LABEL}
-            className="agent-iconbutton agent-surface__add"
-            onClick={onShowSurfaceChooser}
-            title={AGENT_SURFACE_ADD_LABEL}
-            type="button"
-          >
-            <Plus aria-hidden="true" size={13} />
-          </button>
         )}
         <span className="agent-session__spacer" />
         {activeSurface === "files" && fileTree !== null && (

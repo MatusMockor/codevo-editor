@@ -566,7 +566,7 @@ describe("AgentModeView", () => {
     });
   });
 
-  it("drives the surface tabs: open, add, switch, close, maximize and close the panel", async () => {
+  it("drives the surface tabs: open, add by command, switch, close, maximize and close the panel", async () => {
     const threads = [threadView({ threadId: "agt-1" })];
     let layout = recordedLayoutState();
     const rerender = (): void => {
@@ -587,13 +587,9 @@ describe("AgentModeView", () => {
     expect(surfaceTabs()).toEqual(["Files"]);
     expect(activeSurfaceTab()).toBe("Files");
 
-    click('.agent-surface [aria-label="Add surface"]');
-    rerender();
-    expect(surfaceTabs()).toEqual(["Files"]);
-    expect(activeSurfaceTab()).toBe("");
-    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
+    expect(host.querySelector('.agent-surface [aria-label="Add surface"]')).toBeNull();
 
-    click('[aria-label="Open Diff surface"]');
+    act(() => layout.dispatch({ kind: "openSurface", surface: "diff" }));
     rerender();
     await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).not.toBeNull());
     expect(surfaceTabs()).toEqual(["Files", "Diff"]);
