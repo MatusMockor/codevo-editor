@@ -1370,6 +1370,10 @@
   color: var(--agent-text-subtle);
 }
 
+.agent-composer__textarea:focus-visible {
+  box-shadow: none;
+}
+
 /* Context line: which thread the reply continues, above the text. */
 .agent-composer__context {
   display: flex;
