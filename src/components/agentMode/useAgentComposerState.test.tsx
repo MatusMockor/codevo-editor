@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
@@ -229,7 +229,10 @@ describe("useAgentComposerState", () => {
     readonly agents: AgentThreadsSurface;
     readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   }) {
-    const groups = agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees);
+    const groups = useMemo(
+      () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
+      [agents.orphanedWorktrees, agents.threads, projects],
+    );
     const navigation = useAgentThreadNavigation({ agents, groups });
     const composer = useAgentComposerState({
       agents,
@@ -238,7 +241,7 @@ describe("useAgentComposerState", () => {
       railScope: navigation.railScope,
       selectedThread: navigation.selectedThread,
       onClearSelectedThread: navigation.clearSelectedThread,
-      onThreadStarted: navigation.selectThread,
+      onThreadStarted: navigation.selectStartedThread,
     });
     captured = { composer, navigation };
     return null;

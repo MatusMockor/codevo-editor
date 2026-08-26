@@ -79,11 +79,11 @@ export function AgentModeView({
     railScope,
     selectedThread,
     onClearSelectedThread: navigation.clearSelectedThread,
-    onThreadStarted: navigation.selectThread,
+    onThreadStarted: navigation.selectStartedThread,
   });
   const startNewThread = composer.startNewThread;
 
-  const shipActions = useAgentShipActions(agents, selectedThread);
+  const shipActions = useAgentShipActions({ agents, selectedThread });
   const surface = useAgentSurfaceLayout({ chrome, selectedThread, workspaceRoot });
   const { layout, openSurface, toggleRail, toggleRightPanel } = surface;
   const onShowTerminalPanel = chrome.onShowTerminalPanel;

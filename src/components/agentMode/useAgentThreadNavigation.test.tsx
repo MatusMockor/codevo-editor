@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
@@ -159,6 +159,18 @@ describe("useAgentThreadNavigation", () => {
     expect(current().find.open).toBe(false);
   });
 
+  it("selects a started thread without closing the find bar", () => {
+    render(threadsSurfaceFixture({ threads: [view("agt-1"), view("agt-2")] }));
+
+    act(() => current().selectThread("agt-1"));
+    act(() => current().commands.findInThread());
+    expect(current().find.open).toBe(true);
+
+    act(() => current().selectStartedThread("agt-2"));
+    expect(current().selectedThreadId).toBe("agt-2");
+    expect(current().find.open).toBe(true);
+  });
+
   function view(threadId: string, repositoryRoot: string = SURFACE_FIXTURE_ROOT): AgentThreadView {
     const base = surfaceThreadView().thread;
     return surfaceThreadView({
@@ -196,7 +208,10 @@ describe("useAgentThreadNavigation", () => {
     readonly agents: AgentThreadsSurface;
     readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   }) {
-    const groups = agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees);
+    const groups = useMemo(
+      () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
+      [agents.orphanedWorktrees, agents.threads, projects],
+    );
     captured = useAgentThreadNavigation({ agents, groups });
     return null;
   }

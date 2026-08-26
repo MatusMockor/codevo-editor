@@ -3,10 +3,27 @@ import type { AgentThreadsSurface, AgentThreadView } from "../../application/age
 import type { AgentShipActions } from "./AgentShipPanel";
 import { agentShipStatusUnread } from "./agentModePresentation";
 
-export function useAgentShipActions(
-  agents: AgentThreadsSurface,
-  selectedThread: AgentThreadView | null,
-): AgentShipActions {
+export type AgentShipSurface = Pick<
+  AgentThreadsSurface,
+  | "refreshShipStatus"
+  | "commitThreadChanges"
+  | "pushThreadBranch"
+  | "openThreadCompareUrl"
+  | "integrateThreadBranch"
+  | "removeThreadWorktree"
+  | "removeWorktree"
+  | "resetThreadShip"
+>;
+
+export interface AgentShipActionsOptions {
+  readonly agents: AgentShipSurface;
+  readonly selectedThread: AgentThreadView | null;
+}
+
+export function useAgentShipActions({
+  agents,
+  selectedThread,
+}: AgentShipActionsOptions): AgentShipActions {
   const unreadShipThreadId =
     selectedThread !== null && agentShipStatusUnread(selectedThread)
       ? selectedThread.thread.threadId

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
+import type {
+  AgentThreadSearchSurface,
+  AgentThreadsSurface,
+  AgentThreadView,
+} from "../../application/agentThreadPorts";
 import type {
   AgentJumpSlot,
   AgentViewCommandHandlers,
 } from "../../application/agentViewCommandBridge";
-import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
 import { useAgentThreadSearch } from "../../application/useAgentThreadSearch";
 import { terminalTurnKey } from "./agentComposerLaunch";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
@@ -54,6 +57,7 @@ export interface AgentThreadNavigation {
   readonly commands: AgentNavigationCommandHandlers;
   setRailScope(scope: AgentRailScope): void;
   selectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
+  selectStartedThread(threadId: string): void;
   clearSelectedThread(): void;
   forgetThread(threadId: string): void;
   closeFindBar(): void;
@@ -108,6 +112,10 @@ export function useAgentThreadNavigation({
     if (selectedThreadId === null) return;
     markThreadViewed(selectedThreadId);
   }, [markThreadViewed, selectedTerminalKey, selectedThreadId]);
+
+  const selectStartedThread = useCallback((threadId: string) => {
+    setSelectedThreadId(threadId);
+  }, []);
 
   const clearSelectedThread = useCallback(() => setSelectedThreadId(null), []);
 
@@ -205,6 +213,7 @@ export function useAgentThreadNavigation({
     commands,
     setRailScope,
     selectThread,
+    selectStartedThread,
     clearSelectedThread,
     forgetThread,
     closeFindBar,

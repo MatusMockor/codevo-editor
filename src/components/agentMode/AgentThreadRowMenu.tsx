@@ -30,10 +30,11 @@ export function AgentThreadRowMenu(props: AgentThreadRowMenuProps) {
   const entries = agentThreadMenuEntries(props);
 
   useLayoutEffect(() => {
+    const menu = menuRef.current;
     const opener = document.activeElement;
     restoreFocusRef.current = opener instanceof HTMLElement ? opener : null;
     return () => {
-      restoreOpenerFocus(restoreFocusRef.current, menuRef.current);
+      restoreOpenerFocus(restoreFocusRef.current, menu);
       restoreFocusRef.current = null;
     };
   }, []);

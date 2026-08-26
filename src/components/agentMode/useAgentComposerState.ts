@@ -31,8 +31,22 @@ import {
   type AgentProjectGroup,
 } from "./agentModePresentation";
 
+export type AgentComposerSurface = Pick<
+  AgentThreadsSurface,
+  | "agentCliConfigured"
+  | "agentCliKind"
+  | "dispatching"
+  | "isolationPreview"
+  | "lastUsedLaunch"
+  | "liveTaskCount"
+  | "maxConcurrentAgentTasks"
+  | "refreshIsolationStatus"
+  | "sendFollowUp"
+  | "startThread"
+>;
+
 export interface AgentComposerStateOptions {
-  readonly agents: AgentThreadsSurface;
+  readonly agents: AgentComposerSurface;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly selectedThread: AgentThreadView | null;
@@ -267,7 +281,7 @@ function composerProjectOptions(
 
 function useComposerMode(
   selectedThread: AgentThreadView | null,
-  agents: AgentThreadsSurface,
+  agents: AgentComposerSurface,
 ): AgentComposerMode {
   const { agentCliConfigured, agentCliKind, liveTaskCount, maxConcurrentAgentTasks } = agents;
   return useMemo<AgentComposerMode>(() => {
