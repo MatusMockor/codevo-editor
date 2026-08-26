@@ -38,7 +38,6 @@ export {
 import {
   isBlockedByManuallyCollapsedDirectory,
   isJavaScriptTypeScriptDocumentSyncableForRoot,
-  isPhpPath,
   parentDirectoriesInWorkspace,
   relativeWorkspacePath,
   shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
@@ -59,6 +58,7 @@ import {
   useWorkbenchTaskDebugNavigationCoordinator,
 } from "./workbenchController/useWorkbenchTaskDebugCoordinator";
 import { useWorkbenchLanguageDocumentSyncCoordinator } from "./workbenchController/useWorkbenchLanguageDocumentSyncCoordinator";
+import { useWorkbenchFrameworkIntelligenceCoordinator } from "./workbenchController/useWorkbenchFrameworkIntelligenceCoordinator";
 import {
   useWorkbenchJavaScriptTypeScriptRuntimeSurfacesCoordinator,
   useWorkbenchLanguageRuntimeOwnershipCoordinator,
@@ -131,30 +131,7 @@ import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { useWorkbenchActiveDocumentEditing } from "./useWorkbenchActiveDocumentEditing";
 import { useWorkbenchEditorConfigCoordinator } from "./useWorkbenchEditorConfigCoordinator";
 import { refreshEditorConfigAfterDocumentSave } from "./editorConfigInvalidation";
-import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
-import { createPhpFrameworkBindingFileChangeInvalidator } from "./phpFrameworkBindingInvalidation";
-import { usePhpFrameworkDefinitionNavigation } from "./usePhpFrameworkDefinitionNavigation";
-import { usePhpFrameworkModelNavigationTargets } from "./usePhpFrameworkModelNavigationTargets";
-import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigationTargets";
-import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMemberDefinitionNavigation";
-import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
-import { usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation } from "./usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation";
-import { usePhpContextualFrameworkLiteralDefinitionNavigation } from "./usePhpContextualFrameworkLiteralDefinitionNavigation";
-import { usePhpFrameworkLiteralNavigationDependencies } from "./usePhpFrameworkLiteralNavigationDependencies";
-import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
-import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
-import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
-import { usePhpFrameworkIdentifierDefinitionNavigation } from "./usePhpFrameworkIdentifierDefinitionNavigation";
-import type { NavigationRequest } from "./navigationRequest";
-import {
-  createDefaultPhpFrameworkIdentifierNavigationActivationAdapters,
-  createPhpFrameworkIdentifierNavigationAdapters,
-} from "./phpFrameworkIdentifierNavigationAdapterComposition";
-import { usePhpClassTargetNavigation } from "./usePhpClassTargetNavigation";
-import { usePhpMethodTargetNavigation } from "./usePhpMethodTargetNavigation";
-import { usePhpPropertyTargetNavigation } from "./usePhpPropertyTargetNavigation";
-import { usePhpImplementationNavigation } from "./usePhpImplementationNavigation";
 import { useBookmarks } from "./useBookmarks";
 import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentLifecycle } from "./useDocumentLifecycle";
@@ -209,21 +186,6 @@ import {
 } from "./useWorkbenchNavigationSessionPersistence";
 import { useLanguageServerFeatureErrorReporting } from "./useLanguageServerFeatureErrorReporting";
 import { useWorkbenchWorkspaceSymbols } from "./useWorkbenchWorkspaceSymbols";
-import { usePhpDiagnosticContextFilter } from "./usePhpDiagnosticContextFilter";
-import { usePhpTraitHostPredicates } from "./usePhpTraitHostPredicates";
-import { usePhpMethodCompletionResolvers } from "./usePhpMethodCompletionResolvers";
-import {
-  phpNormalizedReceiverExpressionIsThis,
-  usePhpMethodCompletionProvider,
-} from "./usePhpMethodCompletionProvider";
-import { usePhpClassHierarchyPredicates } from "./usePhpClassHierarchyPredicates";
-import { usePhpClassMemberCollectors } from "./usePhpClassMemberCollectors";
-import { usePhpLaravelScopePredicates } from "./usePhpLaravelScopePredicates";
-import { usePhpSignatureHelpProvider } from "./usePhpSignatureHelpProvider";
-import { usePhpFrameworkMorphMapResolver } from "./usePhpFrameworkMorphMapResolver";
-import { usePhpFrameworkModelSemantics } from "./usePhpFrameworkModelSemantics";
-import { usePhpLaravelModelSemanticsAdapter } from "./usePhpLaravelModelSemanticsAdapter";
-import { usePhpSemanticResolver } from "./usePhpSemanticResolver";
 import {
   useWorkbenchImplementationChooserState,
   useWorkbenchLanguageNavigation,
@@ -245,16 +207,8 @@ import { WorkspaceRuntimeOwnerClaimRegistry } from "./workspaceRuntimeOwnerClaim
 import { useWorkspaceEditFileOperations } from "./useWorkspaceEditFileOperations";
 import { useNavigationHistory, useRecentNavigation } from "./useNavigationHistory";
 import { useLanguageServerDocumentSyncState } from "./useLanguageServerDocumentSyncState";
-import { useWorkbenchFrameworkIntelligenceDependencies } from "./useWorkbenchFrameworkIntelligenceDependencies";
-import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
-import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
-import { createPhpFrameworkFileChangeInvalidator } from "./phpFrameworkFileChangeInvalidationRegistry";
-import { composePhpFrameworkFileChangeInvalidationContributions } from "./phpFrameworkFileChangeInvalidationComposition";
 import { usePhpFrameworkResolution } from "./usePhpFrameworkResolution";
-import { composePhpFrameworkActiveDocumentDiagnosticsContributions } from "./phpFrameworkActiveDocumentDiagnosticsComposition";
-import { usePhpFrameworkActiveDocumentDiagnostics } from "./usePhpFrameworkActiveDocumentDiagnostics";
 import { usePhpOutline } from "./usePhpOutline";
-import { synthesizePhpTypedReceiverSource } from "./phpTypedReceiverSource";
 import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfaceCommand";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
@@ -266,7 +220,6 @@ export type {
   PhpCodeActionRange,
 } from "./usePhpCodeActions";
 
-import { usePhpCodeActionProvider } from "./usePhpCodeActionProvider";
 import { usePhpCodeActionNewFileApplication } from "./usePhpCodeActionNewFileApplication";
 import { usePhpChangeSignatureWorkflow } from "./usePhpChangeSignatureWorkflow";
 import {
@@ -274,10 +227,7 @@ import {
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
 } from "./workbenchNotice";
-import {
-  PhpDiagnosticsReclassificationCoordinator,
-  reclassifyPhpDiagnosticsForOwner,
-} from "./phpDiagnosticsReclassificationCoordinator";
+import { PhpDiagnosticsReclassificationCoordinator } from "./phpDiagnosticsReclassificationCoordinator";
 
 import { useReplaceJavaScriptTestProblemNotices } from "./useWorkbenchNoticeStore";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
@@ -289,7 +239,6 @@ import {
 import type { GitGateway } from "../domain/git";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import type { BottomPanelView } from "../domain/bottomPanel";
-import { useSymfonyWorkspaceNavigation } from "./useSymfonyWorkspaceNavigation";
 import type { IndexProgressGateway } from "../domain/indexProgress";
 import {
   type LanguageServerDiagnostic,
@@ -353,7 +302,6 @@ import {
   type PhpFileStructureScope,
 } from "../domain/phpFileOutline";
 import { emptyPhpTree, type PhpTreeGateway } from "../domain/phpTree";
-import { resolvePhpClassName } from "../domain/phpNavigation";
 import { phpTestClassPlan, renderPhpTestSkeleton } from "../domain/phpTestGen";
 import {
   phpTestPartnerMissingMessage,
@@ -5382,777 +5330,69 @@ export function useWorkbenchController(
   });
 
   const {
-    currentPhpFrameworkBindingCacheGeneration,
-    invalidatePhpFrameworkBindingCache,
-    isPhpFrameworkBindingSearchCandidatePath,
-    resolvePhpClassReference,
-    resolvePhpClassSourcePaths,
-    resolvePhpDeclaredType,
-    resolvePhpFrameworkBoundConcrete,
-    resolvePhpFrameworkReturnTypeReference,
-    resolvePhpMethodDeclaredReturnType,
-    resolvePhpSemanticTypeReference,
-  } = usePhpSemanticResolver({
-    activePhpFrameworkProviders,
-    currentPhpFrameworkSourceContext,
-    currentWorkspaceRootRef,
-    fileSearch,
-    intelligenceMode,
-    phpClassSourcePathCacheRef,
-    phpFrameworkBindingCacheRef,
-    projectSymbolSearch,
-    readNavigationFileContent,
-    textSearch,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-  invalidatePhpFrameworkBindingCacheRef.current = invalidatePhpFrameworkBindingCache;
-  isPhpFrameworkBindingDependencyPathRef.current = isPhpFrameworkBindingSearchCandidatePath;
-
-  const invalidatePhpFrameworkBindingsForFileChange = useMemo(
-    () =>
-      createPhpFrameworkBindingFileChangeInvalidator({
-        frameworkRuntime: phpFrameworkRuntimeContext,
-        frameworkProviders: activePhpFrameworkProviders,
-        currentRootPath: () => currentWorkspaceRootRef.current,
-        currentBindingCacheGeneration: currentPhpFrameworkBindingCacheGeneration,
-        invalidateBindingCache: () => invalidatePhpFrameworkBindingCacheRef.current(),
-        isBindingSearchCandidatePath: isPhpFrameworkBindingSearchCandidatePath,
-        readTextFile: (path) => workspaceFiles.readTextFile(path),
-      }),
-    [
-      activePhpFrameworkProviders,
-      currentPhpFrameworkBindingCacheGeneration,
-      currentWorkspaceRootRef,
-      isPhpFrameworkBindingSearchCandidatePath,
-      phpFrameworkRuntimeContext,
-      workspaceFiles,
-    ],
-  );
-
-  const { resetPhpFrameworkMorphMapModelTypeCache, resolvePhpFrameworkProjectMorphMapModelType } =
-    usePhpFrameworkMorphMapResolver({
-      currentWorkspaceRootRef,
-      frameworkRuntime: phpFrameworkRuntimeContext,
-      readNavigationFileContent,
-      textSearch,
-      workspaceDescriptor,
-      workspaceRoot,
-    });
-  resetPhpFrameworkMorphMapModelTypeCacheRef.current = resetPhpFrameworkMorphMapModelTypeCache;
-
-  const reclassifyPhpLanguageServerDiagnosticsForRoot = useCallback(
-    (rootPath: string, expectedOwnerKey: string): boolean =>
-      reclassifyPhpDiagnosticsForOwner({
-        activePhpFrameworkProviders,
-        currentWorkspaceRoot: currentWorkspaceRootRef.current,
-        diagnosticsByOwnerRef: languageServerDiagnosticsByRootRef,
-        documentsRef,
-        expectedOwnerKey,
-        resolveOwnerKey: (requestedRoot) =>
-          resolveWorkspaceRuntimeOwner(requestedRoot)?.ownerKey ??
-          normalizedWorkspaceRootKey(requestedRoot),
-        rootPath,
-        setDiagnosticsByPath: setLanguageServerDiagnosticsByPath,
-        setNotices,
-        workspaceSources: currentPhpFrameworkSourceContext().workspaceSources,
-      }),
-    [
-      activePhpFrameworkProviders,
-      currentPhpFrameworkSourceContext,
-      documentsRef,
-      languageServerDiagnosticsByRootRef,
-      setNotices,
-      resolveWorkspaceRuntimeOwner,
-    ],
-  );
-
-  useEffect(() => {
-    reclassifyPhpLanguageServerDiagnosticsForRootRef.current =
-      reclassifyPhpLanguageServerDiagnosticsForRoot;
-  }, [reclassifyPhpLanguageServerDiagnosticsForRoot]);
-
-  const {
-    readPhpClassMembersFromPath,
-    collectPhpMethodsForClass,
-    collectPhpFrameworkSyntheticMethodsForClass,
-    collectPhpFrameworkRelationCompletionsForClass,
-    resolvePhpGenericTemplateTypesForInheritedClass,
-    resolvePhpGenericTemplateTypesForMixinClass,
-    resetPhpClassMemberCache,
-  } = usePhpClassMemberCollectors({
-    currentPhpFrameworkSourceContext,
-    currentWorkspaceRootRef,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    readNavigationFileContent,
-    resolvePhpClassReference,
-    resolvePhpClassSourcePaths,
-    resolvePhpDeclaredType,
-    resolvePhpFrameworkBoundConcrete,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  useEffect(() => {
-    resetPhpClassMemberCacheRef.current = resetPhpClassMemberCache;
-  }, [resetPhpClassMemberCache]);
-
-  const readWorkspaceDirectory = useCallback(
-    (path: string) => workspaceFiles.readDirectory(path),
-    [workspaceFiles],
-  );
-
-  const {
-    collectNamedRouteTargets,
-    collectAuthorizationAbilityTargets,
-    collectMiddlewareAliasTargets,
-    collectEnvironmentTargets,
-    collectViewTargets,
-    collectConfigTargets,
-    collectTranslationTargets,
-    collectAuthGuardTargets,
-    collectCacheStoreTargets,
-    collectDatabaseConnectionTargets,
-    collectBroadcastConnectionTargets,
-    collectQueueConnectionTargets,
-    collectRedisConnectionTargets,
-    collectMailMailerTargets,
-    collectPasswordBrokerTargets,
-    collectLogChannelTargets,
-    collectStorageDiskTargets,
-    findViewTarget,
-    findConfigTarget,
-    findTranslationTarget,
-    findAuthGuardTarget,
-    findCacheStoreTarget,
-    findDatabaseConnectionTarget,
-    findBroadcastConnectionTarget,
-    findQueueConnectionTarget,
-    findRedisConnectionTarget,
-    findMailMailerTarget,
-    findPasswordBrokerTarget,
-    findLogChannelTarget,
-    findStorageDiskTarget,
-    findEnvironmentTarget,
-    invalidateTargetCache: invalidateFrameworkTargetCache,
-  } = usePhpFrameworkTargets({
-    currentWorkspaceRootRef,
-    workspaceRoot,
-    textSearch,
-    readNavigationFileContent,
-    readWorkspaceDirectory,
-    relativeWorkspacePath,
-    joinWorkspacePath,
-    isPhpPath,
-    frameworkIntelligence: phpFrameworkIntelligence,
-  });
-
-  const {
-    phpClassHierarchyHasConstant,
-    phpClassHierarchyHasMethod,
-    phpClassHierarchyHasProperty,
-    phpClassHierarchyHasStaticMethod,
-  } = usePhpClassHierarchyPredicates({
-    currentWorkspaceRootRef,
-    readPhpClassMembersFromPath,
-    resolvePhpClassReference,
-    resolvePhpClassSourcePaths,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const { phpClassHasLaravelDynamicWhere, phpClassHasLaravelLocalScope } =
-    usePhpLaravelScopePredicates({
-      collectPhpFrameworkSyntheticMethodsForClass,
-      collectPhpMethodsForClass,
-      frameworkRuntime: phpFrameworkRuntimeContext,
-    });
-
-  const {
-    resolvePhpClassPropertyOrRelationType,
-    resolvePhpFrameworkBuilderModelType,
-    resolvePhpFrameworkRelationPathOwnerType,
-    resolvePhpExpressionType,
-  } = usePhpFrameworkModelSemantics({
-    collectPhpMethodsForClass,
-    currentWorkspaceRootRef,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    phpClassHasDynamicBuilderFinder: phpClassHasLaravelDynamicWhere,
-    phpClassHasNamedBuilderScope: phpClassHasLaravelLocalScope,
-    readNavigationFileContent,
-    readPhpClassMembersFromPath,
-    resolvePhpClassReference,
-    resolvePhpClassSourcePaths,
-    resolvePhpDeclaredType,
-    resolvePhpFrameworkBoundConcrete,
-    resolvePhpFrameworkProjectMorphMapModelType,
-    resolvePhpFrameworkReturnTypeReference,
-    resolvePhpGenericTemplateTypesForInheritedClass,
-    resolvePhpGenericTemplateTypesForMixinClass,
-    resolvePhpMethodDeclaredReturnType,
-    resolvePhpSemanticTypeReference,
-    useModelSemanticsAdapter: usePhpLaravelModelSemanticsAdapter,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const {
+    frameworkIntelligenceProviders,
+    goToContextualPhpDefinition,
+    goToIndexedPhpImplementation,
+    goToIndexedSymbolDefinition,
+    goToSuperMethod,
+    invalidateFrameworkCachesForPath,
+    invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpTraitHostClassNames,
-    phpTraitHostConstantExists,
-    phpTraitHostMethodExists,
-    phpTraitHostPropertyExists,
-    phpTraitHostPropertyMethodExists,
-    resolvePhpTraitHostClassNames,
-  } = usePhpTraitHostPredicates({
-    currentWorkspaceRootRef,
-    isPhpPath,
-    phpClassHierarchyHasConstant,
-    phpClassHierarchyHasMethod,
-    phpClassHierarchyHasProperty,
-    readNavigationFileContent,
-    resolvePhpClassReference,
-    resolvePhpClassPropertyOrRelationType,
-    searchText: (root, query, limit, options) =>
-      options === undefined
-        ? textSearch.searchText(root, query, limit)
-        : textSearch.searchText(root, query, limit, options),
-    workspaceRoot,
-  });
-
-  usePhpDiagnosticContextFilter({
-    contextualDiagnosticsFilterRef,
-    currentPhpFrameworkSourceContext,
-    currentWorkspaceRoot: () => currentWorkspaceRootRef.current,
-    ensurePhpFrameworkSourceCollectionsLoaded,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    isPhpPath,
-    phpClassHasLaravelDynamicWhere,
-    phpClassHasLaravelLocalScope,
-    phpClassHierarchyHasMethod,
-    phpClassHierarchyHasProperty,
-    phpClassHierarchyHasStaticMethod,
-    phpTraitHostConstantExists,
-    phpTraitHostMethodExists,
-    phpTraitHostPropertyExists,
-    phpTraitHostPropertyMethodExists,
-    readNavigationFileContent,
-    resolvePhpClassReference,
-    resolvePhpFrameworkBuilderModelType,
-    resolvePhpExpressionType,
-  });
-
-  const { resolvePhpReceiverMethodCompletions, resolvePhpStaticMethodCompletions } =
-    usePhpMethodCompletionResolvers({
-      collectPhpFrameworkSyntheticMethodsForClass,
-      collectPhpMethodsForClass,
-      currentPhpFrameworkSourceContext,
-      frameworkRuntime: phpFrameworkRuntimeContext,
-      phpNormalizedReceiverExpressionIsThis,
-      resolvePhpClassReference,
-      resolvePhpFrameworkBuilderModelType,
-      resolvePhpExpressionType,
-    });
-
-  const { providePhpMethodCompletions } = usePhpMethodCompletionProvider({
-    activeDocument,
-    collectAuthGuardTargets,
-    collectBroadcastConnectionTargets,
-    collectCacheStoreTargets,
-    collectConfigTargets,
-    collectDatabaseConnectionTargets,
-    collectEnvTargets: collectEnvironmentTargets,
-    collectGateAbilityTargets: collectAuthorizationAbilityTargets,
-    collectLogChannelTargets,
-    collectMailMailerTargets,
-    collectMiddlewareAliasTargets,
-    collectNamedRouteTargets,
-    collectPasswordBrokerTargets,
-    collectPhpFrameworkRelationCompletionsForClass,
-    collectPhpMethodsForClass,
-    collectQueueConnectionTargets,
-    collectRedisConnectionTargets,
-    collectStorageDiskTargets,
-    collectTranslationTargets,
-    collectViewTargets,
-    currentWorkspaceRootRef,
-    ensurePhpFrameworkSourceCollectionsLoaded,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    joinWorkspacePath,
-    projectSymbolSearch,
-    readNavigationFileContent,
-    relativeWorkspacePath,
-    resolvePhpClassReference,
-    resolvePhpFrameworkBuilderModelType,
-    resolvePhpExpressionType,
-    resolvePhpFrameworkRelationPathOwnerType,
-    resolvePhpReceiverMethodCompletions,
-    resolvePhpStaticMethodCompletions,
-    resolvePhpTraitHostClassNames,
-    workspaceRoot,
-  });
-
-  const { providePhpMethodSignature, providePhpParameterInlayHints } = usePhpSignatureHelpProvider({
-    currentWorkspaceRootRef,
-    resolvePhpReceiverMethodCompletions,
-    resolvePhpStaticMethodCompletions,
-    workspaceRoot,
-  });
-
-  const readOpenDocumentContent = useCallback(
-    (path: string): string | null => documentsRef.current[path]?.content ?? null,
-    [documentsRef],
-  );
-  const { createMissingBladeViewCodeAction, providePhpCodeActions } = usePhpCodeActionProvider({
-    activeDocumentPath: activeDocument?.path ?? null,
-    collectViewTargets,
-    currentWorkspaceRootRef,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    getPhpDocumentSyncVersion,
-    intelligenceMode,
-    projectSymbolSearch,
-    readNavigationFileContent,
-    readOpenDocumentContent,
-    readTestFileIfExists,
-    resolvePhpClassSourcePaths,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const { openPhpClassTarget } = usePhpClassTargetNavigation({
-    activeDocument,
-    currentWorkspaceRootRef,
-    intelligenceMode,
-    openNavigationTarget,
-    projectSymbolSearch,
-    readNavigationFileContent,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const phpFrameworkLiteralNavigationDependencies = usePhpFrameworkLiteralNavigationDependencies({
-    collectNamedRouteTargets,
-    currentWorkspaceRootRef,
-    findAuthGuardTarget,
-    findBroadcastConnectionTarget,
-    findCacheStoreTarget,
-    findConfigTarget,
-    findDatabaseConnectionTarget,
-    findEnvTarget: findEnvironmentTarget,
-    findLogChannelTarget,
-    findMailMailerTarget,
-    findPasswordBrokerTarget,
-    findQueueConnectionTarget,
-    findRedisConnectionTarget,
-    findStorageDiskTarget,
-    findTranslationTarget,
-    findViewTarget,
-    joinWorkspacePath,
-    providers: activePhpFrameworkProviders,
-    readNavigationFileContent,
-    readWorkspaceDirectory,
-    relativeWorkspacePath,
-    workspaceRoot,
-  });
-
-  const phpFrameworkRuntimeOwnerKey = workspaceRuntimeOwnerRef.current?.ownerKey ?? "";
-  const phpFrameworkDefinitionNavigationActivation = useMemo(() => {
-    const capturedGeneration = phpFrameworkNavigationGenerationRef.current;
-    const capturedOwnerKey = phpFrameworkRuntimeOwnerKey;
-    const capturedRoot = workspaceRoot ?? "";
-
-    return {
-      generation: capturedGeneration,
-      ownerKey: capturedOwnerKey,
-      rootPath: capturedRoot,
-      isCurrent: () => {
-        if (phpFrameworkNavigationGenerationRef.current !== capturedGeneration) {
-          return false;
-        }
-
-        const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
-
-        if (!currentOwner || currentOwner.ownerKey !== capturedOwnerKey) {
-          return false;
-        }
-
-        return workspaceRootKeysEqual(currentWorkspaceRootRef.current, capturedRoot);
-      },
-    };
-  }, [phpFrameworkRuntimeOwnerKey, resolveCurrentWorkspaceRuntimeOwner, workspaceRoot]);
-
-  const { providePhpFrameworkDefinition } = usePhpFrameworkDefinitionNavigation({
-    activeDocument,
-    currentWorkspaceRootRef,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    frameworkActivation: phpFrameworkDefinitionNavigationActivation,
-    frameworkLiteralNavigationDependencies: phpFrameworkLiteralNavigationDependencies,
-    openNavigationTarget,
     openPhpClassTarget,
-    readNavigationFileContent,
-    resolvePhpExpressionType,
-    resolvePhpClassSourcePaths,
-    textSearch,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const { openDirectPhpMethodTarget, openPhpMethodHintTarget } = usePhpMethodTargetNavigation({
-    currentWorkspaceRootRef,
-    intelligenceMode,
-    openNavigationTarget,
-    projectSymbolSearch,
-    readNavigationFileContent,
-    resolvePhpClassReference,
-    resolvePhpClassSourcePaths,
-    resolvePhpFrameworkBoundConcrete,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const { openSymfonyRouteController, openSymfonyService } = useSymfonyWorkspaceNavigation({
-    openPhpClassTarget,
-    openPhpMethodTarget: openDirectPhpMethodTarget,
-  });
-
-  const { openDirectPhpPropertyTarget } = usePhpPropertyTargetNavigation({
-    currentWorkspaceRootRef,
-    openNavigationTarget,
-    readNavigationFileContent,
-    resolvePhpClassReference,
-    resolvePhpClassSourcePaths,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const { goToIndexedPhpImplementation } = usePhpImplementationNavigation({
-    activeDocument,
-    activeEditorPositionRef,
-    currentWorkspaceRootRef,
-    identifierAtEditorPosition,
-    intelligenceMode,
-    openNavigationTarget,
-    projectSymbolSearch,
-    readNavigationFileContent,
-    resolvePhpClassReference,
-    resolvePhpClassSourcePaths,
-    setImplementationChooser,
-    workspaceRoot,
-  });
-
-  const { findValidationRuleModelTargets } = usePhpFrameworkModelNavigationTargets({
-    currentWorkspaceRootRef,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    projectSymbolSearch,
-    providers: activePhpFrameworkProviders,
-    readNavigationFileContent,
-    resolvePhpClassSourcePaths,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const { openPhpLaravelDynamicWhereTarget, openPhpLaravelModelAttributeTarget } =
-    usePhpLaravelModelNavigationTargets({
-      currentWorkspaceRootRef,
-      frameworkRuntime: phpFrameworkRuntimeContext,
-      openNavigationTarget,
-      readNavigationFileContent,
-      resolvePhpClassSourcePaths,
-      workspaceDescriptor,
-      workspaceRoot,
-    });
-
-  const { goToPhpMemberPropertyDefinition } = usePhpMemberPropertyDefinitionNavigation({
-    activeDocument,
-    activeEditorPositionRef,
-    currentWorkspaceRootRef,
-    openDirectPhpMethodTarget,
-    openDirectPhpPropertyTarget,
-    openPhpClassTarget,
-    openPhpLaravelModelAttributeTarget,
-    phpClassHierarchyHasProperty,
-    resolvePhpExpressionType,
-    setMessage,
-    workspaceRoot,
-  });
-
-  const {
-    goToPhpClassConstantDefinition,
-    goToPhpLaravelRelationStringDefinition,
-    goToPhpMethodCallDefinition,
-    goToPhpStaticMethodCallDefinition,
-  } = usePhpContextualMemberDefinitionNavigation({
-    activeDocument,
-    activeEditorPositionRef,
-    currentWorkspaceRootRef,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    openDirectPhpMethodTarget,
-    openNavigationTarget,
-    openPhpClassTarget,
-    openPhpLaravelDynamicWhereTarget,
-    openPhpMethodHintTarget,
-    readNavigationFileContent,
-    resolvePhpClassReference,
-    resolvePhpClassSourcePaths,
-    resolvePhpFrameworkBuilderModelType,
-    resolvePhpExpressionType,
-    resolvePhpFrameworkRelationPathOwnerType,
-    setMessage,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const workbenchFrameworkIntelligenceDependencies = useWorkbenchFrameworkIntelligenceDependencies({
+    openSymfonyRouteController,
+    openSymfonyService,
+    provideBladeDefinition,
+    provideLatteDefinitionOutcome,
+    provideNeonDefinition,
+    providePhpCodeActions,
+    providePhpFrameworkDefinition,
+    providePhpMethodCompletions,
+    providePhpMethodSignature,
+    providePhpParameterInlayHints,
+  } = useWorkbenchFrameworkIntelligenceCoordinator({
     activeDocument,
     activeDocumentRef,
+    activeEditorPositionRef,
     activePhpFrameworkProviders,
-    collectConfigTargets,
-    collectNamedRouteTargets,
-    collectTranslationTargets,
-    collectViewTargets,
-    createMissingBladeViewCodeAction,
+    contextualDiagnosticsFilterRef,
+    currentPhpFrameworkSourceContext,
     currentWorkspaceRootRef,
+    documentsRef,
     ensurePhpFrameworkSourceCollectionsLoaded,
-    findConfigTarget,
-    findTranslationTarget,
-    findViewTarget,
+    fileSearch,
+    getPhpDocumentSyncVersion,
     intelligenceMode,
-    joinWorkspacePath,
-    openDirectPhpMethodTarget,
-    openDirectPhpPropertyTarget,
+    invalidatePhpFrameworkBindingCacheRef,
+    isPhpFrameworkBindingDependencyPathRef,
+    languageServerDiagnosticsByRootRef,
     openNavigationTarget,
-    openPhpClassTarget,
-    openPhpLaravelModelAttributeTarget,
+    phpClassSourcePathCacheRef,
+    phpFrameworkBindingCacheRef,
     phpFrameworkIntelligence,
+    phpFrameworkNavigationGenerationRef,
     phpFrameworkRuntimeContext,
     projectSymbolSearch,
     readNavigationFileContent,
-    relativeWorkspacePath,
-    resolvePhpClassPropertyOrRelationType,
-    resolvePhpClassSourcePaths,
-    resolvePhpDeclaredType,
-    resolvePhpExpressionType,
-    resolvePhpReceiverMethodCompletions,
+    readTestFileIfExists,
+    reclassifyPhpLanguageServerDiagnosticsForRootRef,
+    reportErrorForActiveWorkspaceRoot,
+    resetPhpClassMemberCacheRef,
+    resetPhpFrameworkCachesRef,
+    resetPhpFrameworkMorphMapModelTypeCacheRef,
+    resetPhpFrameworkSourceRegistries,
+    resolveCurrentWorkspaceRuntimeOwner,
+    resolveWorkspaceRuntimeOwner,
+    setFrameworkDiagnosticsByPath,
     setImplementationChooser,
-    synthesizePhpTypedReceiverSource,
+    setLanguageServerDiagnosticsByPath,
+    setMessage,
+    setNotices,
     textSearch,
+    workspaceDescriptor,
     workspaceFiles,
     workspaceRoot,
+    workspaceRuntimeOwnerRef,
   });
-
-  const workbenchFrameworkIntelligence = useWorkbenchFrameworkIntelligence(
-    workbenchFrameworkIntelligenceDependencies,
-  );
-  const {
-    provideBladeDefinition,
-    invalidateBladeComponentNamesForPath,
-    invalidateBladeViewDataEntriesForPath,
-    invalidateLatteExpressionDataForPath,
-    invalidateNeonConfigForPath,
-    providePhpNetteInjectionDefinition,
-    resetBladeIntelligenceCaches,
-    collectCompleteLatteTemplateRelativePaths,
-    provideLattePresenterLinkDiagnostics,
-    provideLatteDefinitionOutcome,
-    provideNeonDefinition,
-  } = workbenchFrameworkIntelligence;
-
-  const activeDocumentDiagnosticsContributions = useMemo(
-    () =>
-      composePhpFrameworkActiveDocumentDiagnosticsContributions({
-        collectCompleteLatteTemplateRelativePaths,
-        collectViewTargets,
-        provideLattePresenterLinkDiagnostics,
-      }),
-    [
-      collectCompleteLatteTemplateRelativePaths,
-      collectViewTargets,
-      provideLattePresenterLinkDiagnostics,
-    ],
-  );
-
-  usePhpFrameworkActiveDocumentDiagnostics({
-    activeDocument,
-    activeDocumentRef,
-    contributions: activeDocumentDiagnosticsContributions,
-    currentWorkspaceRootRef,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    setFrameworkDiagnosticsByPath,
-    workspaceRoot,
-  });
-
-  const fileChangeInvalidationContributions = useMemo(
-    () =>
-      composePhpFrameworkFileChangeInvalidationContributions({
-        invalidateBladeComponentNamesForPath,
-        invalidateBladeViewDataEntriesForPath,
-        invalidateLatteExpressionDataForPath,
-        invalidateNeonConfigForPath,
-      }),
-    [
-      invalidateBladeComponentNamesForPath,
-      invalidateBladeViewDataEntriesForPath,
-      invalidateLatteExpressionDataForPath,
-      invalidateNeonConfigForPath,
-    ],
-  );
-  const invalidateFrameworkCachesForPath = useMemo(
-    () =>
-      createPhpFrameworkFileChangeInvalidator({
-        contributions: fileChangeInvalidationContributions,
-        frameworkRuntime: phpFrameworkRuntimeContext,
-      }),
-    [fileChangeInvalidationContributions, phpFrameworkRuntimeContext],
-  );
-  resetPhpFrameworkCachesRef.current = () => {
-    phpClassSourcePathCacheRef.current = {};
-    invalidatePhpTraitHostClassNames();
-    resetPhpClassMemberCacheRef.current();
-    invalidatePhpFrameworkBindingCache();
-    resetPhpFrameworkMorphMapModelTypeCache();
-    invalidateFrameworkTargetCache();
-    resetPhpFrameworkSourceRegistries();
-    resetBladeIntelligenceCaches();
-  };
-  const frameworkIntelligenceProviders = useWorkbenchFrameworkProviderAdapter(
-    workbenchFrameworkIntelligence,
-  );
-
-  const {
-    goToPhpFrameworkAuthorizationAbilityDefinition,
-    goToPhpFrameworkMiddlewareAliasDefinition,
-  } = usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
-    activeDocument,
-    collectAuthorizationAbilityTargets,
-    collectMiddlewareAliasTargets,
-    currentWorkspaceRootRef,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    openNavigationTarget,
-    setMessage,
-    workspaceRoot,
-  });
-
-  const { goToPhpFrameworkLiteralDefinition } =
-    usePhpContextualFrameworkLiteralDefinitionNavigation({
-      activeDocument,
-      currentWorkspaceRootRef,
-      frameworkLiteralNavigationDependencies: {
-        ...phpFrameworkLiteralNavigationDependencies,
-        findValidationRuleModelTargets,
-      },
-      openNavigationTarget,
-      providers: activePhpFrameworkProviders,
-      setMessage,
-      supportsStringLiterals: phpFrameworkRuntimeContext.supports("stringLiterals"),
-      workspaceRoot,
-    });
-
-  const goToPhpClassIdentifierDefinition = useCallback(
-    async (name: string, request?: NavigationRequest): Promise<boolean> => {
-      if (!activeDocument) {
-        return false;
-      }
-
-      const className = resolvePhpClassName(activeDocument.content, name);
-
-      if (!className) {
-        return false;
-      }
-
-      return request
-        ? openPhpClassTarget(className, name, request)
-        : openPhpClassTarget(className, name);
-    },
-    [activeDocument, openPhpClassTarget],
-  );
-
-  const {
-    adapters: phpFrameworkIdentifierDefinitionAdapters,
-    contextualAdapters: contextualPhpFrameworkIdentifierDefinitionAdapters,
-  } = useMemo(
-    () =>
-      createPhpFrameworkIdentifierNavigationAdapters({
-        activationAdapters: createDefaultPhpFrameworkIdentifierNavigationActivationAdapters({
-          laravel: {
-            activeDocument,
-            goToPhpFrameworkLiteralDefinition,
-            goToPhpFrameworkAuthorizationAbilityDefinition,
-            goToPhpFrameworkMiddlewareAliasDefinition,
-            goToPhpLaravelRelationStringDefinition,
-            openDirectPhpMethodTarget,
-            openPhpClassTarget,
-          },
-          nette: {
-            activeDocument,
-            activeEditorPositionRef,
-            providePhpNetteInjectionDefinition,
-          },
-        }),
-        frameworkRuntime: phpFrameworkRuntimeContext,
-      }),
-    [
-      activeDocument,
-      activeEditorPositionRef,
-      goToPhpFrameworkLiteralDefinition,
-      goToPhpFrameworkAuthorizationAbilityDefinition,
-      goToPhpFrameworkMiddlewareAliasDefinition,
-      goToPhpLaravelRelationStringDefinition,
-      providePhpNetteInjectionDefinition,
-      openDirectPhpMethodTarget,
-      openPhpClassTarget,
-      phpFrameworkRuntimeContext,
-    ],
-  );
-
-  const { goToContextualPhpFrameworkIdentifierDefinition, goToPhpFrameworkIdentifierDefinition } =
-    usePhpFrameworkIdentifierDefinitionNavigation({
-      adapters: phpFrameworkIdentifierDefinitionAdapters,
-      contextualAdapters: contextualPhpFrameworkIdentifierDefinitionAdapters,
-    });
-
-  const { goToContextualPhpDefinition } = usePhpContextualDefinitionNavigation({
-    activeDocument,
-    activeEditorPositionRef,
-    goToPhpClassConstantDefinition,
-    goToPhpClassIdentifierDefinition,
-    goToPhpFrameworkIdentifierDefinition: goToContextualPhpFrameworkIdentifierDefinition,
-    goToPhpMemberPropertyDefinition,
-    goToPhpMethodCallDefinition,
-    goToPhpStaticMethodCallDefinition,
-    providers: activePhpFrameworkProviders,
-  });
-
-  const { goToSuperMethod } = usePhpSuperMethodNavigation({
-    activeDocument,
-    activeEditorPositionRef,
-    currentWorkspaceRootRef,
-    openNavigationTarget,
-    readNavigationFileContent,
-    resolvePhpClassReference,
-    resolvePhpClassSourcePaths,
-    setMessage,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const { goToIndexedSymbolDefinition } = usePhpIndexedDefinitionNavigation({
-    activeDocument,
-    activeEditorPositionRef,
-    currentWorkspaceRootRef,
-    goToPhpClassConstantDefinition,
-    goToPhpClassIdentifierDefinition,
-    goToPhpFrameworkIdentifierDefinition,
-    goToPhpMethodCallDefinition,
-    goToPhpStaticMethodCallDefinition,
-    identifierAtEditorPosition,
-    intelligenceMode,
-    openNavigationTarget,
-    projectSymbolSearch,
-    providers: activePhpFrameworkProviders,
-    reportErrorForActiveWorkspaceRoot,
-    setMessage,
-    workspaceRoot,
-  });
-
   const {
     goToDeclaration,
     goToDefinition,
