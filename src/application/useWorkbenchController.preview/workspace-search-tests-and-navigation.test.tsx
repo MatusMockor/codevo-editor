@@ -39,8 +39,20 @@ import {
   type WorkspaceFileChangeEvent,
 } from "./testSupport";
 
+function expectOwnerRelativeWrite(write: unknown, relativePath: string, content: string) {
+  expect(write).toHaveBeenLastCalledWith(
+    "workspace",
+    relativePath,
+    content,
+    expect.objectContaining({ contentHash: `test:/workspace/${relativePath}` }),
+  );
+}
+
 describe("useWorkbenchController file events, tests, search, and recent navigation", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController: renderLegacyController, renderRegisteredController: renderController } =
+    setupWorkbenchControllerTestHarness();
+  const renderWorkspaceController = (options: Parameters<typeof renderController>[0] = {}) =>
+    renderController({ appSettings: workspaceAppSettings(), ...options });
 
   it("aggregates TODO comments across workspace source files and skips dependency directories", async () => {
     const readDirectory = vi.fn(async (path: string) => {
@@ -73,8 +85,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
 
       return `// ${path}\n`;
     });
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { getWorkbench } = renderWorkspaceController({
       readDirectory,
       readTextFile,
     });
@@ -179,8 +190,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
         return () => undefined;
       }),
     };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { getWorkbench } = renderWorkspaceController({
       readDirectory,
       workspaceFileChangeGateway,
     });
@@ -236,8 +246,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       rootPath: "/workspace",
       sessionId: 71,
     };
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { dependencies, getWorkbench } = renderWorkspaceController({
       languageServerDiagnosticsGateway,
       readDirectory,
       runtimeStatus: runningStatus,
@@ -419,7 +428,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       rootPath: "/workspace",
       sessionId: 91,
     };
-    const { getWorkbench } = renderController({
+    const { getWorkbench } = renderLegacyController({
       appSettings: workspaceAppSettings(),
       languageServerDiagnosticsGateway,
       readDirectory,
@@ -492,8 +501,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
   });
   it("clears local PHP diagnostics when a PHP tab is closed", async () => {
     const filePath = "/workspace/src/TransientSyntax.php";
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { getWorkbench } = renderWorkspaceController({
       readTextFile: vi.fn(async () => "<?php\nfinal class TransientSyntax {\n"),
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -551,8 +559,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
         return () => undefined;
       }),
     };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { getWorkbench } = renderWorkspaceController({
       readDirectory,
       workspaceFileChangeGateway,
     });
@@ -641,8 +648,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
         return () => undefined;
       }),
     };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { getWorkbench } = renderWorkspaceController({
       readTextFile,
       workspaceFileChangeGateway,
     });
@@ -697,8 +703,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
         return () => undefined;
       }),
     };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { getWorkbench } = renderWorkspaceController({
       readTextFile,
       workspaceFileChangeGateway,
     });
@@ -742,8 +747,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
         return () => undefined;
       }),
     };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { getWorkbench } = renderWorkspaceController({
       readDirectory,
       workspaceFileChangeGateway,
     });
@@ -799,13 +803,16 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
 
       return content;
     });
+    const createTextFile = vi.fn(async (path: string) => {
+      files.set(path, "");
+    });
     const writeTextFile = vi.fn(async (path: string, content: string) => {
       files.set(path, content);
+      return { revision: null, status: "success" as const };
     });
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { getWorkbench } = renderWorkspaceController({
       readTextFile,
-      workspaceFiles: { writeTextFile },
+      workspaceFiles: { createTextFile, writeTextFile },
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
           { dev: false, namespace: "App\\", paths: ["app/"] },
@@ -824,7 +831,6 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       await flushAsyncTurns();
     });
 
-    void dependencies;
     expect(writeTextFile).toHaveBeenCalledTimes(1);
     const [writtenPath, writtenContent] = writeTextFile.mock.calls[0] as [string, string];
     expect(writtenPath).toBe(testPath);
@@ -862,8 +868,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
 
       throw new Error(`missing: ${path}`);
     });
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { dependencies, getWorkbench } = renderWorkspaceController({
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -900,8 +905,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       "}",
       "",
     ].join("\n");
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { dependencies, getWorkbench } = renderWorkspaceController({
       readTextFile: vi.fn(async () => sourceContent),
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app/"] }],
@@ -1008,8 +1012,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
 
       throw new Error(`missing: ${path}`);
     });
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { dependencies, getWorkbench } = renderWorkspaceController({
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1060,8 +1063,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
 
       throw new Error(`missing: ${path}`);
     });
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { getWorkbench } = renderWorkspaceController({
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1157,8 +1159,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
 
       throw new Error(`missing: ${path}`);
     });
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { dependencies, getWorkbench } = renderWorkspaceController({
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1265,8 +1266,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
 
       throw new Error(`missing: ${path}`);
     });
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { dependencies, getWorkbench } = renderWorkspaceController({
       readDirectory: vi.fn(async () => [
         fileEntry("/workspace/composer.json", "composer.json"),
         fileEntry("/workspace/package.json", "package.json"),
@@ -1314,8 +1314,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
 
       throw new Error(`missing: ${path}`);
     });
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { dependencies, getWorkbench } = renderWorkspaceController({
       readDirectory: vi.fn(async () => [
         fileEntry("/workspace/package.json", "package.json"),
         fileEntry("/workspace/pnpm-lock.yaml", "pnpm-lock.yaml"),
@@ -1453,8 +1452,7 @@ class InvoiceServiceTest extends TestCase
 
       throw new Error(`missing: ${path}`);
     });
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { dependencies, getWorkbench } = renderWorkspaceController({
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1509,8 +1507,7 @@ class SampleTest extends TestCase
 
       throw new Error(`missing: ${path}`);
     });
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+    const { dependencies, getWorkbench } = renderWorkspaceController({
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -3355,8 +3352,9 @@ class PostRepository
       });
       await flushAsyncTurns();
 
-      expect(dependencies.workspaceGateways.files.writeTextFile).toHaveBeenLastCalledWith(
-        "/workspace/app/User.php",
+      expectOwnerRelativeWrite(
+        dependencies.workspaceGateways.ownerFiles?.writeTextFileForWorkspaceRelativePath,
+        "app/User.php",
         "<?php\r\nclass User {}\r\n",
       );
     });
@@ -3391,8 +3389,9 @@ class PostRepository
       await flushAsyncTurns();
 
       // Trailing whitespace preserved, no final newline added: editor defaults.
-      expect(dependencies.workspaceGateways.files.writeTextFile).toHaveBeenLastCalledWith(
-        "/workspace/app/User.php",
+      expectOwnerRelativeWrite(
+        dependencies.workspaceGateways.ownerFiles?.writeTextFileForWorkspaceRelativePath,
+        "app/User.php",
         "<?php   \nclass User {}   ",
       );
     });

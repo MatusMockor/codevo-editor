@@ -24,16 +24,22 @@ import {
   phpWorkspaceDescriptor,
   range,
   readyJavaScriptTypeScriptPlan,
+  registeredWorkspaceIdentityGateway as registeredIdentity,
   setupWorkbenchControllerTestHarness,
   vi,
   waitForReact,
   type LanguageServerWorkspaceEdit,
   emptyPhpFileOutline,
+  expectSmartModeSet,
+  expectInitialWorkspaceIndexScan as expectInitialScan,
+  expectWorkspaceIndexClear,
+  expectedWorkspaceSettingsIdentity,
+  workspaceSettingsRoot,
   type PhpFileOutlineGateway,
 } from "./testSupport";
 
 describe("useWorkbenchController document editing and language-service mutations", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderRegisteredController: renderController } = setupWorkbenchControllerTestHarness();
 
   it("retries JavaScript and TypeScript autostart after a rootless running response", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
@@ -3051,7 +3057,8 @@ describe("useWorkbenchController document editing and language-service mutations
           recentWorkspacePath: parentRoot,
           workspaceTabs: [parentRoot, childRoot],
         })),
-        loadWorkspaceSettings: vi.fn(async (rootPath: string) => {
+        loadWorkspaceSettings: vi.fn(async (identity) => {
+          const rootPath = workspaceSettingsRoot(identity);
           if (rootPath === childRoot) {
             return {
               ...defaultWorkspaceSettings(),
@@ -3209,7 +3216,7 @@ describe("useWorkbenchController document editing and language-service mutations
 });
 
 describe("useWorkbenchController document editing and language-service mutations", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderRegisteredController: renderController } = setupWorkbenchControllerTestHarness();
   it("notifies the JavaScript TypeScript service when a JS TS file is created", async () => {
     const newPath = "/workspace/src/NewWidget.ts";
     const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
@@ -4604,19 +4611,19 @@ describe("useWorkbenchController document editing and language-service mutations
     });
     await waitForReact(() => {
       expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
-        "/workspace-a",
+        expectedWorkspaceSettingsIdentity("/workspace-a"),
         expect.any(Object),
       );
     });
 
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    let switchPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
     });
-    await flushAsyncTurns();
 
     await act(async () => {
       workspaceSettingsSave.reject(new Error("stale workspace settings"));
-      await savePromise;
+      await Promise.all([savePromise, switchPromise]);
     });
     await flushAsyncTurns();
 
@@ -4675,7 +4682,7 @@ describe("useWorkbenchController document editing and language-service mutations
     expect(
       vi
         .mocked(dependencies.smartModeGateway.setMode)
-        .mock.calls.some(([, mode]) => mode === "fullSmart"),
+        .mock.calls.some(([request]) => request.mode === "fullSmart"),
     ).toBe(false);
     expect(getWorkbench().message).not.toBe("Settings saved.");
   });
@@ -4687,6 +4694,7 @@ describe("useWorkbenchController document editing and language-service mutations
         recentWorkspacePath: "/workspace",
         workspaceTabs: ["/workspace"],
       },
+      workspaceIdentityGateway: registeredIdentity(["/workspace"]),
     });
     await flushAsyncTurns(24);
     await act(async () => {
@@ -4731,7 +4739,7 @@ describe("useWorkbenchController document editing and language-service mutations
     expect(dependencies.prompter.confirm).toHaveBeenCalledWith(
       "Close workspace and discard unsaved changes?",
     );
-    expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith("/workspace", "fullSmart");
+    expectSmartModeSet(dependencies.smartModeGateway, "/workspace", "fullSmart");
     expect(getWorkbench().workspaceRoot).toBe("/workspace");
     expect(getWorkbench().workspaceTabs).toEqual(["/workspace"]);
   });
@@ -4796,7 +4804,7 @@ describe("useWorkbenchController document editing and language-service mutations
     expect(
       vi
         .mocked(dependencies.smartModeGateway.setMode)
-        .mock.calls.some(([, mode]) => mode === "fullSmart"),
+        .mock.calls.some(([request]) => request.mode === "fullSmart"),
     ).toBe(false);
     expect(getWorkbench().workspaceRoot).toBeNull();
   });
@@ -4829,17 +4837,21 @@ describe("useWorkbenchController document editing and language-service mutations
     });
     await waitForReact(() => {
       expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
-        "/workspace-a",
+        expectedWorkspaceSettingsIdentity("/workspace-a"),
         expect.objectContaining({
           statusBar: expect.objectContaining({ message: true }),
         }),
       );
     });
 
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    let switchPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
     });
-    await flushAsyncTurns();
+    await act(async () => {
+      statusBarSave.reject(new Error("stale status bar"));
+      await Promise.all([savePromise, switchPromise]);
+    });
     await act(async () => {
       await getWorkbench().setStatusBarItemVisibility("message", true);
     });
@@ -4847,12 +4859,6 @@ describe("useWorkbenchController document editing and language-service mutations
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(getWorkbench().workspaceSettings.statusBar.message).toBe(true);
-
-    await act(async () => {
-      statusBarSave.reject(new Error("stale status bar"));
-      await savePromise;
-    });
-    await flushAsyncTurns();
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(getWorkbench().workspaceSettings.statusBar.message).toBe(true);
@@ -4873,7 +4879,7 @@ describe("useWorkbenchController document editing and language-service mutations
       readTextFile: vi.fn(async (path: string) => `<?php\n// ${path}\n`),
     });
     await flushAsyncTurns();
-    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockImplementationOnce(
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockImplementation(
       async () => sessionSave.promise,
     );
 
@@ -4882,7 +4888,7 @@ describe("useWorkbenchController document editing and language-service mutations
     });
     await waitForReact(() => {
       expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
-        "/workspace-a",
+        expectedWorkspaceSettingsIdentity("/workspace-a"),
         expect.objectContaining({
           session: expect.objectContaining({
             editor: expect.objectContaining({
@@ -4926,30 +4932,37 @@ describe("useWorkbenchController document editing and language-service mutations
       },
     });
     await flushAsyncTurns(24);
+
     vi.mocked(dependencies.settingsGateway.loadWorkspaceSettings).mockClear();
     vi.mocked(dependencies.workspaceGateways.detection.detectWorkspace).mockClear();
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
     vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockImplementationOnce(
       async () => sessionSave.promise,
     );
     vi.mocked(dependencies.settingsGateway.loadWorkspaceSettings).mockImplementation(
-      async (path) =>
-        path === "/workspace-c" ? workspaceCSettings.promise : defaultWorkspaceSettings(),
+      async (identity) =>
+        workspaceSettingsRoot(identity) === "/workspace-c"
+          ? workspaceCSettings.promise
+          : defaultWorkspaceSettings(),
     );
 
-    let switchToB: Promise<void> = Promise.resolve();
     act(() => {
       getWorkbench().splitActiveEditorGroup("right");
-      switchToB = getWorkbench().activateWorkspaceTab("/workspace-b");
     });
     await waitForReact(() => {
       expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
-        "/workspace-a",
+        expectedWorkspaceSettingsIdentity("/workspace-a"),
         expect.any(Object),
       );
     });
     const persistedSession = vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mock
       .calls[0]?.[1].session;
     expect(Object.keys(persistedSession.editor.groups)).toHaveLength(2);
+
+    let switchToB: Promise<void> = Promise.resolve();
+    act(() => {
+      switchToB = getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
 
     let switchToC: Promise<void> = Promise.resolve();
     act(() => {
@@ -4963,7 +4976,7 @@ describe("useWorkbenchController document editing and language-service mutations
     });
     await waitForReact(() => {
       expect(dependencies.settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith(
-        "/workspace-c",
+        expectedWorkspaceSettingsIdentity("/workspace-c"),
       );
     });
 
@@ -4985,7 +4998,9 @@ describe("useWorkbenchController document editing and language-service mutations
     expect(dependencies.settingsGateway.loadWorkspaceSettings).not.toHaveBeenCalledWith(
       "/workspace-b",
     );
-    expect(dependencies.settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith("/workspace-c");
+    expect(dependencies.settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith(
+      expectedWorkspaceSettingsIdentity("/workspace-c"),
+    );
     expect(dependencies.workspaceGateways.detection.detectWorkspace).not.toHaveBeenCalledWith(
       "/workspace-b",
     );
@@ -5189,6 +5204,7 @@ describe("useWorkbenchController document editing and language-service mutations
   it("clears indexed intelligence and stops the language server when IDE mode is turned off", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
+      workspaceIdentityGateway: registeredIdentity(["/workspace"]),
     });
     await flushAsyncTurns();
 
@@ -5199,13 +5215,9 @@ describe("useWorkbenchController document editing and language-service mutations
       await getWorkbench().toggleSmartMode();
     });
 
-    expect(dependencies.indexProgressGateway.startInitialMetadataScan).toHaveBeenCalledWith(
-      "/workspace",
-    );
+    expectInitialScan(dependencies.indexProgressGateway, "/workspace");
     expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith("/workspace");
-    expect(dependencies.indexProgressGateway.clearWorkspaceIndex).toHaveBeenCalledWith(
-      "/workspace",
-    );
+    expectWorkspaceIndexClear(dependencies.indexProgressGateway, "/workspace");
     expect(getWorkbench().intelligenceMode).toBe("basic");
   });
   it("does not attach the workspace root to a rootless PHP stop response", async () => {

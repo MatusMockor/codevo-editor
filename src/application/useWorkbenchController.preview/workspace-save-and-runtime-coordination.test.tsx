@@ -23,9 +23,11 @@ import {
   type LanguageServerRuntimeStatus,
   phpWorkspaceDescriptor,
   readyJavaScriptTypeScriptPlan,
-  runningStatus,
+  runningStatus as runningRuntimeStatus,
+  singleRegisteredIdentityFixture,
   type SettingsGateway,
-  setupWorkbenchControllerTestHarness,
+  setupRegisteredWorkbenchControllerTestHarness,
+  trustedDescriptor,
   vi,
   waitForReact,
   workspaceRootKeysEqual,
@@ -34,18 +36,60 @@ import {
   EditorActiveLiveDocumentSaveCoordinator,
 } from "./testSupport";
 
+const initialRevision = (path: string) => ({
+  contentHash: `test:${path}`,
+  device: "test-device",
+  inode: path,
+  modifiedNanoseconds: 0,
+  modifiedSeconds: 0,
+  size: 0,
+});
+
+const documentSyncCapabilities = () => ({
+  ...emptyLanguageServerCapabilities(),
+  documentSync: {
+    changeKind: "full" as const,
+    openClose: true,
+    save: { includeText: true, kind: "supported" as const },
+  },
+});
+
+const workspacePairSettings = {
+  ...defaultAppSettings(),
+  recentWorkspacePath: "/workspace-a",
+  workspaceTabs: ["/workspace-a", "/workspace-b"],
+};
+
+const rootOwnedIdentityFixture = (...roots: string[]) => {
+  const gateways = new Map(
+    roots.map((root) => [root, singleRegisteredIdentityFixture(trustedDescriptor(root, root))]),
+  );
+  return {
+    getDescriptor: vi.fn(async (workspaceId: string) => {
+      const gateway = gateways.get(workspaceId);
+      if (!gateway) throw new Error(`Unexpected workspace identity: ${workspaceId}`);
+      return gateway.getDescriptor(workspaceId);
+    }),
+    openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+    openPath: vi.fn(async (path: string) => {
+      const gateway = gateways.get(path);
+      if (!gateway?.openPath) throw new Error(`Unexpected workspace path: ${path}`);
+      return gateway.openPath(path);
+    }),
+    unregister: vi.fn(async (workspaceId: string) => {
+      await gateways.get(workspaceId)?.unregister(workspaceId);
+    }),
+  };
+};
+
 describe("useWorkbenchController workspace lifecycle, language runtimes, and save coordination", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupRegisteredWorkbenchControllerTestHarness();
 
   it("drops stale Search Everywhere results after switching project tabs", async () => {
     const slowSearch = createDeferred<FileSearchResult[]>();
     let firstQuery = true;
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       searchFiles: vi.fn(async () => {
         if (firstQuery) {
           firstQuery = false;
@@ -116,11 +160,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     const path = "/workspace-a/src/User.php";
     const openFile = createDeferred<string>();
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       readTextFile: vi.fn(async (requestedPath: string) =>
         requestedPath === path ? openFile.promise : `<?php\n// ${requestedPath}\n`,
       ),
@@ -158,11 +198,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     const path = "/workspace-a/src/User.php";
     const openFile = createDeferred<string>();
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       readTextFile: vi.fn(async (requestedPath: string) =>
         requestedPath === path ? openFile.promise : `<?php\n// ${requestedPath}\n`,
       ),
@@ -198,11 +234,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     const path = "/workspace-a/src/User.php";
     const openFile = createDeferred<string>();
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       readTextFile: vi.fn(async (requestedPath: string) =>
         requestedPath === path ? openFile.promise : `<?php\n// ${requestedPath}\n`,
       ),
@@ -238,21 +270,16 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(getWorkbench().isOpeningFile).toBe(false);
   });
   it("shows the opened document as soon as its content is read", async () => {
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 71,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 71);
     const path = "/workspace/app/Models/User.php";
     const read = createDeferred<string>();
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       readTextFile: vi.fn(async () => read.promise),
       runtimeStatus: runningStatus,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
 
     let openPromise: Promise<boolean> = Promise.resolve(false);
     await act(async () => {
@@ -605,11 +632,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       return read.promise;
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       readTextFile,
     });
     await flushAsyncTurns();
@@ -710,11 +733,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       ),
     };
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       readTextFile: vi.fn(async (requestedPath: string) =>
         requestedPath === path ? openFile.promise : `<?php\n// ${requestedPath}\n`,
       ),
@@ -764,7 +783,6 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(getWorkbench().activePath).not.toBe(path);
   });
   it("restores cached JavaScript and TypeScript runtime status when activating a kept-alive project tab", async () => {
-    let publishRuntimeStatus: ((status: LanguageServerRuntimeStatus) => void) | null = null;
     const workspaceBStatus = createDeferred<LanguageServerRuntimeStatus>();
     const runningWorkspaceBStatus: LanguageServerRuntimeStatus = {
       capabilities: {
@@ -787,23 +805,19 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
       start: vi.fn(async () => runningWorkspaceBStatus),
       stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
-      subscribeStatus: vi.fn(async (listener) => {
-        publishRuntimeStatus = listener;
-        return () => undefined;
-      }),
+      subscribeStatus: vi.fn(async () => () => undefined),
     };
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+    const { drainAdmissions, getWorkbench } = renderController({
+      appSettings: workspacePairSettings,
       javaScriptTypeScriptLanguageServerRuntimeGateway,
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace-a", "/workspace-b"),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
 
-    act(() => {
-      publishRuntimeStatus?.(runningWorkspaceBStatus);
+    workspaceBStatus.resolve(runningWorkspaceBStatus);
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
     });
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
@@ -823,19 +837,12 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         sessionId: 88,
       }),
     );
-
-    workspaceBStatus.resolve(runningWorkspaceBStatus);
-    await flushAsyncTurns(24);
   });
   it("does not let a stale JavaScript and TypeScript plan overwrite the active project tab", async () => {
     const workspaceAPlan = createDeferred<LanguageServerPlan>();
     const workspaceBPlan = readyJavaScriptTypeScriptPlan("/workspace-b");
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
     });
     vi.mocked(
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
@@ -885,7 +892,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace-a",
@@ -893,8 +900,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         workspaceTabs: ["/workspace-a", "/workspace-b"],
       },
       javaScriptTypeScriptLanguageServerRuntimeGateway,
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace-a", "/workspace-b"),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
 
     act(() => {
       publishRuntimeStatus?.(runningWorkspaceAStatus);
@@ -902,7 +910,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     await flushAsyncTurns();
 
     expect(getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus).toEqual(
-      expect.objectContaining({ kind: "running", rootPath: "/workspace-a/" }),
+      expect.objectContaining({ kind: "running", rootPath: "/workspace-a" }),
     );
 
     await act(async () => {
@@ -931,11 +939,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     };
     const path = "/workspace-a/src/App.ts";
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
       javaScriptTypeScriptRuntimeStatus: runningStatus,
       readTextFile: vi.fn(async (requestedPath: string) => `// ${requestedPath}\n`),
@@ -976,11 +980,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     };
     const path = "/workspace-a/src/App.ts";
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
       javaScriptTypeScriptRuntimeStatus: runningStatus,
       readTextFile: vi.fn(async (requestedPath: string) => `// ${requestedPath}\n`),
@@ -1034,11 +1034,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     };
     const path = "/workspace-a/src/App.ts";
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
       javaScriptTypeScriptRuntimeStatus: runningStatus,
@@ -1108,9 +1104,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
           }),
         };
       const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway = {
-        getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 301)),
+        getStatus: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 301)),
         openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
-        start: vi.fn(async (rootPath) => runningStatus(rootPath, 303)),
+        start: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 303)),
         stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
         subscribeStatus: vi.fn(async (listener) => {
           publishRuntimeStatus = listener;
@@ -1144,7 +1140,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       await flushAsyncTurns(24);
 
       act(() => {
-        publishRuntimeStatus?.(runningStatus(backgroundRoot, 302));
+        publishRuntimeStatus?.(runningRuntimeStatus(backgroundRoot, 302));
         publishDiagnostics?.({
           diagnostics: [
             {
@@ -1178,7 +1174,6 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
   );
   it("caches PHP runtime status and diagnostics for background project tabs", async () => {
     let publishDiagnostics: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
-    let publishRuntimeStatus: ((status: LanguageServerRuntimeStatus) => void) | null = null;
     const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
       subscribeDiagnostics: vi.fn(async (listener) => {
         publishDiagnostics = listener;
@@ -1190,31 +1185,28 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       getStatus: vi.fn((rootPath) =>
         rootPath === "/workspace-b"
           ? workspaceBStatus.promise
-          : Promise.resolve(runningStatus(rootPath, 301)),
+          : Promise.resolve(runningRuntimeStatus(rootPath, 301)),
       ),
       openLog: vi.fn(async () => null),
-      start: vi.fn(async (rootPath) => runningStatus(rootPath, 303)),
+      start: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 303)),
       stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
-      subscribeStatus: vi.fn(async (listener) => {
-        publishRuntimeStatus = listener;
-        return () => undefined;
-      }),
+      subscribeStatus: vi.fn(async () => () => undefined),
     };
     const workspaceBPath = "/workspace-b/app/Models/User.php";
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+    const { drainAdmissions, getWorkbench } = renderController({
+      appSettings: workspacePairSettings,
       languageServerDiagnosticsGateway,
       languageServerRuntimeGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace-a", "/workspace-b"),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
 
+    workspaceBStatus.resolve(runningRuntimeStatus("/workspace-b", 302));
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
     act(() => {
-      publishRuntimeStatus?.(runningStatus("/workspace-b", 302));
       publishDiagnostics?.({
         diagnostics: [
           {
@@ -1232,6 +1224,10 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       });
     });
     await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
 
     expect(getWorkbench().languageServerRuntimeStatus).not.toEqual(
       expect.objectContaining({ rootPath: "/workspace-b" }),
@@ -1251,11 +1247,6 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       }),
     );
     expect(getWorkbench().languageServerDiagnosticsByPath[workspaceBPath]).toHaveLength(1);
-
-    act(() => {
-      workspaceBStatus.resolve(runningStatus("/workspace-b", 302));
-    });
-    await flushAsyncTurns(4);
   });
   it("ignores PHP diagnostics without an explicit workspace root", async () => {
     let publishDiagnostics: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
@@ -1265,12 +1256,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 61,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 61);
     const path = "/workspace/app/Models/User.php";
     const uri = fileUriFromPath(path);
     const { getWorkbench } = renderController({
@@ -1318,9 +1304,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       }),
     };
     const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
-      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 401)),
+      getStatus: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 401)),
       openLog: vi.fn(async () => null),
-      start: vi.fn(async (rootPath) => runningStatus(rootPath, 401)),
+      start: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 401)),
       stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
       subscribeStatus: vi.fn(async (listener) => {
         publishRuntimeStatus = listener;
@@ -1329,20 +1315,16 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     };
     const activePath = "/workspace-a/app/Models/User.php";
     const inactivePath = "/workspace-b/app/Models/Post.php";
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+    const { drainAdmissions, getWorkbench } = renderController({
+      appSettings: workspacePairSettings,
       languageServerDiagnosticsGateway,
       languageServerRuntimeGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
 
     act(() => {
-      publishRuntimeStatus?.(runningStatus("/workspace-b", 402));
+      publishRuntimeStatus?.(runningRuntimeStatus("/workspace-b", 402));
       publishDiagnostics?.({
         diagnostics: [
           {
@@ -1408,12 +1390,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 71,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 71);
     const path = "/workspace/app/Broken.php";
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
@@ -1580,11 +1557,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     const textPath = "/workspace-a/config.txt";
     const source = "APP_NAME=Codevo\nAPP_NAME=Editor\n";
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       readTextFile: vi.fn(async () => source),
     });
     await flushAsyncTurns();
@@ -1617,12 +1590,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 71,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 71);
     const fileCount = 40;
     const paths = Array.from(
       { length: fileCount },
@@ -1676,12 +1644,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 81,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 81);
     const fileCount = 25;
     const paths = Array.from(
       { length: fileCount },
@@ -1731,12 +1694,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 91,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 91);
     const path = "/workspace/app/Models/User.php";
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
@@ -1783,16 +1741,10 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus = (rootPath: string, sessionId: number): LanguageServerRuntimeStatus => ({
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath,
-      sessionId,
-    });
     const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
-      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 501)),
+      getStatus: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 501)),
       openLog: vi.fn(async () => null),
-      start: vi.fn(async (rootPath) => runningStatus(rootPath, 501)),
+      start: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 501)),
       stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
       subscribeStatus: vi.fn(async (listener) => {
         publishRuntimeStatus = listener;
@@ -1802,11 +1754,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     const activePath = "/workspace-a/app/Models/User.php";
     const inactivePath = "/workspace-b/app/Models/Post.php";
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       languageServerDiagnosticsGateway,
       languageServerRuntimeGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
@@ -1814,7 +1762,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     await flushAsyncTurns(24);
 
     act(() => {
-      publishRuntimeStatus?.(runningStatus("/workspace-b", 502));
+      publishRuntimeStatus?.(runningRuntimeStatus("/workspace-b", 502));
       publishDiagnostics?.({
         diagnostics: [
           {
@@ -1864,12 +1812,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 601,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 601);
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       languageServerDiagnosticsGateway,
@@ -1921,12 +1864,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 611,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 611);
     const path = "/workspace/app/Models/User.php";
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
@@ -1970,14 +1908,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 701,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 701);
     const path = "/workspace/app/Models/User.php";
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       languageServerDiagnosticsGateway,
       languageServerRuntimeGateway: {
@@ -1992,8 +1925,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       },
       readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace"),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
     });
@@ -2055,12 +1989,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 731,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 731);
     const path = "/workspace/app/Models/User.php";
     const uri = fileUriFromPath(path);
     const { getWorkbench } = renderController({
@@ -2116,12 +2045,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     // from the synced set and a didClose is sent; the queued didChange must then
     // be dropped so it never targets a closed document (UnknownDocument/desync).
     const didOpen = createDeferred<void>();
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 741,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 741);
     const path = "/workspace/app/Models/User.php";
     const { dependencies, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
@@ -2187,12 +2111,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     // Single-tab close does not bump the JS/TS sync generation, so the synced
     // set membership is the guard that has to catch this.
     const didOpen = createDeferred<void>();
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 742,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 742);
     const path = "/workspace/src/App.ts";
     const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway = {
       getStatus: vi.fn(async () => runningStatus),
@@ -2265,12 +2184,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 711,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 711);
     const path = "/workspace/app/Models/User.php";
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
@@ -2359,12 +2273,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     // server's reply, phpactor answers with UnknownDocument for a path that is
     // no longer synced. That is a benign desync, not a real failure, so it must
     // not surface a false error toast or status message.
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 821,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 821);
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       languageServerRuntimeGateway: {
@@ -2444,11 +2353,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
   it("drops an async command rejection after switching workspace roots", async () => {
     const commandRun = createDeferred<void>();
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
     });
     await waitForReact(() => {
       expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
@@ -2480,11 +2385,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
   });
   it("suppresses a reportCommandError callback captured for an inactive root", async () => {
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
     });
     await waitForReact(() => {
       expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
@@ -2504,12 +2405,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(getWorkbench().notices).toEqual([]);
   });
   it("suppresses benign language server cancellations before they become notices", async () => {
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 824,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 824);
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       languageServerRuntimeGateway: {
@@ -2540,12 +2436,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
   it("still reports a legitimate language server feature error", async () => {
     // A genuine LSP failure (not UnknownDocument) reported through the Monaco
     // feature path must continue to surface a notice and status message.
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 822,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 822);
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       languageServerRuntimeGateway: {
@@ -2582,12 +2473,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
   it("still reports an UnknownDocument error for an open, synced document", async () => {
     // An UnknownDocument error for a document that IS still open is a real
     // desync problem, not the benign close race, so it must remain visible.
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 823,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 823);
     const path = "/workspace/app/Models/User.php";
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
@@ -2633,12 +2519,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 712,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 712);
     const path = "/workspace/app/Models/User.php";
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
@@ -2706,15 +2587,10 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath: "/workspace",
-      sessionId: 711,
-    };
+    const runningStatus = runningRuntimeStatus("/workspace", 711);
     const oldPath = "/workspace/app/Models/User.php";
     const newPath = "/workspace/app/Models/Account.php";
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       languageServerDiagnosticsGateway,
       languageServerRuntimeGateway: {
@@ -2729,8 +2605,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       },
       readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace"),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.php"));
     });
@@ -2790,7 +2667,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     };
     const oldPath = "/workspace/src/User.ts";
     const newPath = "/workspace/src/Account.ts";
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
@@ -2803,8 +2680,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return `// ${requestedPath}\n`;
       }),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace"),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
     });
@@ -2863,15 +2741,16 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       sessionId: 702,
     };
     const path = "/workspace/src/User.ts";
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
       javaScriptTypeScriptRuntimeStatus: runningStatus,
       readTextFile: vi.fn(async () => "export class User {}\n"),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace"),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(path, "User.ts"));
     });
@@ -2925,16 +2804,10 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus = (rootPath: string, sessionId: number): LanguageServerRuntimeStatus => ({
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath,
-      sessionId,
-    });
     const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
-      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 801)),
+      getStatus: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 801)),
       openLog: vi.fn(async () => null),
-      start: vi.fn(async (rootPath) => runningStatus(rootPath, 801)),
+      start: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 801)),
       stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
       subscribeStatus: vi.fn(async (listener) => {
         publishRuntimeStatus = listener;
@@ -2943,40 +2816,20 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     };
     const activePath = "/workspace-a/app/Models/User.php";
     const inactivePath = "/workspace-b/app/Models/Post.php";
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+    const { drainAdmissions, getWorkbench } = renderController({
+      appSettings: workspacePairSettings,
       languageServerDiagnosticsGateway,
       languageServerRuntimeGateway,
       readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace-a", "/workspace-b"),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
     await act(async () => {
-      await getWorkbench().openPinnedFile(fileEntry(activePath, "User.php"));
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
     });
-    await flushAsyncTurns(24);
-
     act(() => {
-      publishRuntimeStatus?.(runningStatus("/workspace-b", 802));
-      publishDiagnostics?.({
-        diagnostics: [
-          {
-            character: 0,
-            line: 0,
-            message: "Active error",
-            severity: "error",
-            source: "phpactor",
-          },
-        ],
-        rootPath: "/workspace-a",
-        sessionId: 801,
-        uri: fileUriFromPath(activePath),
-        version: null,
-      });
+      publishRuntimeStatus?.(runningRuntimeStatus("/workspace-b", 802));
       publishDiagnostics?.({
         diagnostics: [
           {
@@ -2990,6 +2843,31 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         rootPath: "/workspace-b",
         sessionId: 802,
         uri: fileUriFromPath(inactivePath),
+        version: null,
+      });
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(activePath, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Active error",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: 801,
+        uri: fileUriFromPath(activePath),
         version: null,
       });
     });
@@ -3019,16 +2897,10 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const runningStatus = (rootPath: string, sessionId: number): LanguageServerRuntimeStatus => ({
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      rootPath,
-      sessionId,
-    });
     const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
-      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 501)),
+      getStatus: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 501)),
       openLog: vi.fn(async () => null),
-      start: vi.fn(async (rootPath) => runningStatus(rootPath, 501)),
+      start: vi.fn(async (rootPath) => runningRuntimeStatus(rootPath, 501)),
       stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
       subscribeStatus: vi.fn(async (listener) => {
         publishRuntimeStatus = listener;
@@ -3039,11 +2911,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     const secondPath = "/workspace-a/app/Models/Zone.php";
     const inactivePath = "/workspace-b/app/Models/Comment.php";
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       languageServerDiagnosticsGateway,
       languageServerRuntimeGateway,
       readTextFile: vi.fn(async (path: string) => `<?php\n// ${path}\n`),
@@ -3052,7 +2920,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     await flushAsyncTurns(24);
 
     act(() => {
-      publishRuntimeStatus?.(runningStatus("/workspace-b", 502));
+      publishRuntimeStatus?.(runningRuntimeStatus("/workspace-b", 502));
       publishDiagnostics?.({
         diagnostics: [
           {
@@ -3160,7 +3028,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
 });
 
 describe("useWorkbenchController workspace lifecycle, language runtimes, and save coordination", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupRegisteredWorkbenchControllerTestHarness();
   it("does not sync JavaScript and TypeScript documents with a runtime from another project tab", async () => {
     let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null = null;
     const runningWorkspaceAStatus: LanguageServerRuntimeStatus = {
@@ -3224,7 +3092,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
   });
   it("syncs JSX and TSX documents through the JavaScript and TypeScript language server", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
+      capabilities: documentSyncCapabilities(),
       kind: "running",
       rootPath: "/workspace",
       sessionId: 205,
@@ -3246,8 +3114,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       },
     ];
     const contentByPath = new Map(cases.map((entry) => [entry.path, entry.originalContent]));
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
+      bridgeRegisteredOwnerFiles: true,
       javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
       javaScriptTypeScriptRuntimeStatus: runningStatus,
       readTextFile: vi.fn(async (requestedPath: string) => contentByPath.get(requestedPath) ?? ""),
@@ -3257,8 +3126,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         autoSave: false,
         formatOnSave: false,
       },
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace"),
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
 
     const syncGateway = dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
 
@@ -3600,11 +3470,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         .mockImplementation(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       languageServerRuntimeGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -3651,11 +3517,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       }),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       languageServerRuntimeGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -3792,11 +3654,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         .mockImplementation(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       javaScriptTypeScriptLanguageServerRuntimeGateway,
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
@@ -3831,11 +3689,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         .mockImplementation(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       languageServerDiagnosticsGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -3870,11 +3724,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         .mockImplementation(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
@@ -4060,7 +3910,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     const path = "/workspace/src/App.ts";
     const didSave = createDeferred<void>();
     const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
-      capabilities: emptyLanguageServerCapabilities(),
+      capabilities: documentSyncCapabilities(),
       kind: "running",
       rootPath: "/workspace",
       sessionId,
@@ -4076,18 +3926,21 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
+      bridgeRegisteredOwnerFiles: true,
       javaScriptTypeScriptInitialRuntimeStatus: runningStatus(321),
       javaScriptTypeScriptLanguageServerRuntimeGateway,
       javaScriptTypeScriptRuntimeStatus: runningStatus(321),
       readTextFile: vi.fn(async () => "export const value = 0;\n"),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace"),
+      workspaceSettings: { ...defaultWorkspaceSettings(), autoSave: false },
     });
     vi.mocked(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didSave,
     ).mockImplementationOnce(() => didSave.promise);
-    await flushAsyncTurns(24);
+    await drainAdmissions();
 
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
@@ -4137,7 +3990,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     const path = "/workspace/src/User.php";
     const didSave = createDeferred<void>();
     const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
-      capabilities: emptyLanguageServerCapabilities(),
+      capabilities: documentSyncCapabilities(),
       kind: "running",
       rootPath: "/workspace",
       sessionId,
@@ -4153,16 +4006,20 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         return () => undefined;
       }),
     };
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
+      bridgeRegisteredOwnerFiles: true,
       languageServerRuntimeGateway,
       readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
       runtimeStatus: runningStatus(341),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace"),
+      workspaceSettings: { ...defaultWorkspaceSettings(), autoSave: false },
     });
     vi.mocked(dependencies.documentSyncGateway.didSave).mockImplementationOnce(
       () => didSave.promise,
     );
-    await flushAsyncTurns(24);
+    await drainAdmissions();
 
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
@@ -4213,11 +4070,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       sessionId: 351,
     };
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       readTextFile: vi.fn(async () => "<?php\nfinal class User {}\n"),
       runtimeStatus: runningStatus,
     });
@@ -4269,11 +4122,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       sessionId: 352,
     };
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspacePairSettings,
       readTextFile: vi.fn(async () => "<?php\nfinal class User {}\n"),
       runtimeStatus: runningStatus,
     });
@@ -4331,15 +4180,14 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
   it("ignores stale save errors after switching project tabs", async () => {
     const path = "/workspace-a/src/User.php";
     const save = createDeferred<void>();
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
+      bridgeRegisteredOwnerFiles: true,
+      appSettings: workspacePairSettings,
       readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace-a", "/workspace-b"),
+      workspaceSettings: { ...defaultWorkspaceSettings(), autoSave: false },
     });
-    await flushAsyncTurns();
+    await drainAdmissions();
 
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
@@ -4358,9 +4206,13 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       await Promise.resolve();
     });
     await waitForReact(() => {
-      expect(dependencies.workspaceGateways.files.writeTextFile).toHaveBeenCalledWith(
-        path,
+      expect(
+        dependencies.workspaceGateways.ownerFiles?.writeTextFileForWorkspaceRelativePath,
+      ).toHaveBeenCalledWith(
+        "/workspace-a",
+        "src/User.php",
         "<?php\nfinal class User {}\n",
+        initialRevision(path),
       );
     });
 
@@ -4398,15 +4250,14 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       status: "success";
       revision: typeof savedRevision;
     }>();
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
+      bridgeRegisteredOwnerFiles: true,
+      appSettings: workspacePairSettings,
       readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace-a", "/workspace-b"),
+      workspaceSettings: { ...defaultWorkspaceSettings(), autoSave: false },
     });
-    await flushAsyncTurns();
+    await drainAdmissions();
 
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
@@ -4425,9 +4276,13 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       await Promise.resolve();
     });
     await waitForReact(() => {
-      expect(dependencies.workspaceGateways.files.writeTextFile).toHaveBeenCalledWith(
-        path,
+      expect(
+        dependencies.workspaceGateways.ownerFiles?.writeTextFileForWorkspaceRelativePath,
+      ).toHaveBeenCalledWith(
+        "/workspace-a",
+        "src/User.php",
         "<?php\nfinal class User {}\n",
+        initialRevision(path),
       );
     });
 
@@ -4462,15 +4317,14 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
   it("cancels a drain-blocked workspace switch when the visible tab is reactivated", async () => {
     const path = "/workspace-a/src/User.php";
     const write = createDeferred<void>();
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+    const { dependencies, drainAdmissions, getWorkbench } = renderController({
+      bridgeRegisteredOwnerFiles: true,
+      appSettings: workspacePairSettings,
       readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
+      workspaceIdentityGateway: rootOwnedIdentityFixture("/workspace-a", "/workspace-b"),
+      workspaceSettings: { ...defaultWorkspaceSettings(), autoSave: false },
     });
-    await flushAsyncTurns(24);
+    await drainAdmissions();
 
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
@@ -4489,9 +4343,13 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       savePromise = getWorkbench().saveActiveDocument();
     });
     await waitForReact(() => {
-      expect(dependencies.workspaceGateways.files.writeTextFile).toHaveBeenCalledWith(
-        path,
+      expect(
+        dependencies.workspaceGateways.ownerFiles?.writeTextFileForWorkspaceRelativePath,
+      ).toHaveBeenCalledWith(
+        "/workspace-a",
+        "src/User.php",
         "<?php\nfinal class User {}\n",
+        initialRevision(path),
       );
     });
 

@@ -1,9 +1,9 @@
 import { act, Profiler, StrictMode, type ProfilerOnRenderCallback } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, vi } from "vitest";
+import { afterEach, beforeEach, expect, vi } from "vitest";
 import type { DiagnosticsFlushScheduler } from "../domain/diagnosticsCoalescer";
 import { emptyGitStatus, type GitGateway } from "../domain/git";
-import type { IndexProgressGateway } from "../domain/indexProgress";
+import type { IndexProgressGateway, MetadataScanCompletionEvent } from "../domain/indexProgress";
 import type { SmartModeGateway } from "../domain/intelligence";
 import type { LanguageServerGateway, LanguageServerPlan } from "../domain/languageServer";
 import type { LanguageServerDiagnosticsGateway } from "../domain/languageServerDiagnostics";
@@ -145,6 +145,8 @@ export interface RenderControllerOptions {
     session: unknown;
   };
   workspaceTrustGateway?: WorkspaceTrustGateway;
+  bridgeRegisteredOwnerFiles?: boolean;
+  useRegisteredWorkspaceIdentity?: boolean;
 }
 
 export function setupWorkbenchControllerTestHarness() {
@@ -245,6 +247,8 @@ export function setupWorkbenchControllerTestHarness() {
     workspaceRuntimeLifecycleGateway,
     workspaceSettings = defaultWorkspaceSettings(),
     workspaceTrustGateway,
+    bridgeRegisteredOwnerFiles = false,
+    useRegisteredWorkspaceIdentity = false,
   }: RenderControllerOptions = {}) {
     const mountedRoot = root;
     if (!mountedRoot) {
@@ -295,6 +299,8 @@ export function setupWorkbenchControllerTestHarness() {
           session: normalizeWorkspaceSession(workspaceSettings.session),
         },
         workspaceTrustGateway,
+        bridgeRegisteredOwnerFiles,
+        useRegisteredWorkspaceIdentity,
       },
       diagnosticsFlushScheduler,
     );
@@ -343,7 +349,15 @@ export function setupWorkbenchControllerTestHarness() {
     return { dependencies, getWorkbench };
   }
 
-  return { getHost, getRoot, renderController };
+  function renderRegisteredController(options: RenderControllerOptions = {}) {
+    return renderController({
+      bridgeRegisteredOwnerFiles: true,
+      useRegisteredWorkspaceIdentity: true,
+      ...options,
+    });
+  }
+
+  return { getHost, getRoot, renderController, renderRegisteredController };
 }
 
 function fallbackLiveSaveCoordinator(): EditorActiveLiveDocumentSaveAdmissionPort {
@@ -351,6 +365,173 @@ function fallbackLiveSaveCoordinator(): EditorActiveLiveDocumentSaveAdmissionPor
     admit: () => ({ status: "fallback" }),
     publish: () => undefined,
   };
+}
+
+function createDefaultWorkspaceIdentity(path: string, admissionToken: number) {
+  return {
+    admissionToken,
+    canonicalRoot: path,
+    caseSensitive: true as const,
+    policy: {
+      caseSensitive: true as const,
+      unicodeNormalization: "none" as const,
+    },
+    selectedPath: path,
+    unicodeNormalizationPolicy: "preserved" as const,
+    workspaceId: path.replace(/^\/+/, "") || "workspace",
+  };
+}
+
+export function registeredWorkspaceIdentityGateway(
+  paths: readonly string[],
+): WorkbenchWorkspaceGateways["identity"] {
+  return createRegisteredWorkspaceIdentityGateway(paths, false);
+}
+
+function createRegisteredWorkspaceIdentityGateway(
+  paths: readonly string[],
+  admitUnknownPaths: boolean,
+): WorkbenchWorkspaceGateways["identity"] {
+  const descriptors = new Map(
+    paths.map((path, index) => [path, createDefaultWorkspaceIdentity(path, index + 1)]),
+  );
+  const descriptorsById = new Map(
+    [...descriptors.values()].map((descriptor) => [descriptor.workspaceId, descriptor]),
+  );
+  return {
+    getDescriptor: vi.fn(async (workspaceId) => {
+      const descriptor = descriptorsById.get(workspaceId);
+      if (!descriptor) throw new Error(`Unknown test workspace identity: ${workspaceId}`);
+      return {
+        canonicalRootPath: descriptor.canonicalRoot,
+        caseSensitive: descriptor.caseSensitive,
+        selectedRootPath: descriptor.selectedPath,
+        unicodeNormalizationPolicy: descriptor.unicodeNormalizationPolicy,
+        workspaceId: descriptor.workspaceId,
+      };
+    }),
+    openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+    openPath: vi.fn(async (path) => {
+      let descriptor = descriptors.get(path);
+      if (!descriptor && admitUnknownPaths) {
+        descriptor = createDefaultWorkspaceIdentity(path, descriptors.size + 1);
+        descriptors.set(path, descriptor);
+        descriptorsById.set(descriptor.workspaceId, descriptor);
+      }
+      if (!descriptor) throw new Error(`Unexpected test workspace path: ${path}`);
+      return descriptor;
+    }),
+    unregister: vi.fn(async () => undefined),
+  };
+}
+
+export function indexProgressGatewayHarness(
+  databasePathForRoot: (rootPath: string) => string = () => "/tmp/index.sqlite",
+) {
+  let operationGeneration = 0;
+  let completionListener: ((event: MetadataScanCompletionEvent) => void) | null = null;
+  const start: IndexProgressGateway["startInitialMetadataScan"] = async (request) => {
+    operationGeneration = request.operationGeneration;
+    return {
+      databasePath: databasePathForRoot(request.rootPath),
+      operationGeneration,
+      rootPath: request.rootPath,
+      status: "started",
+    };
+  };
+  return {
+    gateway: {
+      clearWorkspaceIndex: vi.fn(async (request) => ({
+        databasePath: databasePathForRoot(request.rootPath),
+        rootPath: request.rootPath,
+        status: "cleared" as const,
+      })),
+      startInitialMetadataScan: vi.fn(start),
+      startReindex: vi.fn(start),
+      subscribeIndexProgress: vi.fn(async () => () => undefined),
+      subscribeMetadataScanCompletion: vi.fn(async (listener) => {
+        completionListener = listener;
+        return () => undefined;
+      }),
+    } satisfies IndexProgressGateway,
+    publishMetadataScanCompletion(
+      event:
+        | Omit<Extract<MetadataScanCompletionEvent, { status: "completed" }>, "operationGeneration">
+        | Omit<Extract<MetadataScanCompletionEvent, { status: "failed" }>, "operationGeneration">,
+    ) {
+      if (event.status === "completed") {
+        completionListener?.({ ...event, operationGeneration });
+        return;
+      }
+      completionListener?.({ ...event, operationGeneration });
+    },
+  };
+}
+
+export function expectedWorkspaceIndexOperation(
+  rootPath: string,
+  workspaceId = rootPath.replace(/^\/+/, "") || "workspace",
+  admissionToken = 1,
+) {
+  return {
+    admissionToken,
+    operationGeneration: expect.any(Number),
+    rootPath,
+    workspaceId,
+  };
+}
+
+export function expectInitialWorkspaceIndexScan(
+  gateway: IndexProgressGateway,
+  rootPath: string,
+  workspaceId?: string,
+  admissionToken?: number,
+) {
+  expect(gateway.startInitialMetadataScan).toHaveBeenCalledWith(
+    expectedWorkspaceIndexOperation(rootPath, workspaceId, admissionToken),
+  );
+}
+
+export function mockNextInitialIndexStart(gateway: IndexProgressGateway, responseRootPath: string) {
+  vi.mocked(gateway.startInitialMetadataScan).mockImplementationOnce(async (request) => ({
+    databasePath: "/tmp/index.sqlite",
+    operationGeneration: request.operationGeneration,
+    rootPath: responseRootPath,
+    status: "started",
+  }));
+}
+
+export function expectWorkspaceIndexClear(
+  gateway: IndexProgressGateway,
+  rootPath: string,
+  workspaceId = rootPath.replace(/^\/+/, "") || "workspace",
+  admissionToken = 1,
+) {
+  expect(gateway.clearWorkspaceIndex).toHaveBeenCalledWith({
+    admissionToken,
+    rootPath,
+    workspaceId,
+  });
+}
+
+export function expectSmartModeSet(
+  gateway: SmartModeGateway,
+  rootPath: string,
+  mode: Parameters<SmartModeGateway["setMode"]>[0]["mode"],
+  workspaceId = rootPath.replace(/^\/+/, "") || "workspace",
+  admissionToken = 1,
+) {
+  expect(gateway.setMode).toHaveBeenCalledWith({ admissionToken, mode, rootPath, workspaceId });
+}
+
+export function expectedWorkspaceSettingsIdentity(rootPath: string) {
+  return { canonicalKey: rootPath, legacyRawKeys: [rootPath] };
+}
+
+export function workspaceSettingsRoot(
+  identity: Parameters<SettingsGateway["loadWorkspaceSettings"]>[0],
+) {
+  return typeof identity === "string" ? identity : identity.canonicalKey;
 }
 
 export function featuresGateway(): LanguageServerFeaturesGateway {
@@ -637,6 +818,8 @@ function createControllerDependencies(
     workspaceRuntimeLifecycleGateway,
     workspaceSettings,
     workspaceTrustGateway,
+    bridgeRegisteredOwnerFiles,
+    useRegisteredWorkspaceIdentity,
   }: Required<
     Pick<
       RenderControllerOptions,
@@ -677,12 +860,49 @@ function createControllerDependencies(
     diagnosticsFlushScheduler,
     editorCursorStore: new EditorCursorStore(),
   };
+  const filesGateway: WorkbenchWorkspaceGateways["files"] = {
+    applyWorkspaceEdit: vi.fn(async () => 0),
+    createDirectory: vi.fn(async () => undefined),
+    createTextFile: vi.fn(async () => undefined),
+    deletePath: vi.fn(async () => undefined),
+    readDirectory: vi.fn(readDirectory ?? (async () => [])),
+    readDirectoryBounded: vi.fn(async (path: string, maxEntries: number) => {
+      const entries = await (readDirectory ?? (async () => []))(path);
+      return { entries: entries.slice(0, maxEntries), truncated: entries.length > maxEntries };
+    }),
+    readTextFile,
+    readTextFileSnapshot: vi.fn(async (path) => ({
+      content: await readTextFile(path),
+      revision: {
+        contentHash: `test:${path}`,
+        device: "test-device",
+        inode: path,
+        modifiedNanoseconds: 0,
+        modifiedSeconds: 0,
+        size: 0,
+      },
+    })),
+    readTextFileBounded: vi.fn(async (path: string, maxBytes: number) => {
+      const content = await readTextFile(path);
+
+      return new TextEncoder().encode(content).byteLength > maxBytes
+        ? { status: "tooLarge" as const }
+        : { content, status: "ok" as const };
+    }),
+    renamePath: vi.fn(async () => undefined),
+    writeTextFile: vi.fn(async () => undefined),
+    ...workspaceFiles,
+  };
   const workspaceGateways: WorkbenchWorkspaceGateways = {
-    identity: workspaceIdentityGateway ?? {
-      getDescriptor: vi.fn(),
-      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-      unregister: vi.fn(async () => undefined),
-    },
+    identity:
+      workspaceIdentityGateway ??
+      (useRegisteredWorkspaceIdentity
+        ? createRegisteredWorkspaceIdentityGateway([], true)
+        : {
+            getDescriptor: vi.fn(),
+            openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+            unregister: vi.fn(async () => undefined),
+          }),
     detection: workspaceDetectionGateway ?? {
       detectWorkspace: vi.fn(async (path) => ({
         javaScriptTypeScript: workspaceDescriptor?.javaScriptTypeScript ?? null,
@@ -713,28 +933,7 @@ function createControllerDependencies(
     fileSearch: {
       searchFiles,
     },
-    files: {
-      applyWorkspaceEdit: vi.fn(async () => 0),
-      createDirectory: vi.fn(async () => undefined),
-      createTextFile: vi.fn(async () => undefined),
-      deletePath: vi.fn(async () => undefined),
-      readDirectory: vi.fn(readDirectory ?? (async () => [])),
-      readDirectoryBounded: vi.fn(async (path: string, maxEntries: number) => {
-        const entries = await (readDirectory ?? (async () => []))(path);
-        return { entries: entries.slice(0, maxEntries), truncated: entries.length > maxEntries };
-      }),
-      readTextFile,
-      readTextFileBounded: vi.fn(async (path: string, maxBytes: number) => {
-        const content = await readTextFile(path);
-
-        return new TextEncoder().encode(content).byteLength > maxBytes
-          ? { status: "tooLarge" as const }
-          : { content, status: "ok" as const };
-      }),
-      renamePath: vi.fn(async () => undefined),
-      writeTextFile: vi.fn(async () => undefined),
-      ...workspaceFiles,
-    },
+    files: filesGateway,
     ownerFiles: workspaceOwnerFiles
       ? {
           createDirectoryForWorkspace:
@@ -762,7 +961,45 @@ function createControllerDependencies(
               );
             }),
         }
-      : undefined,
+      : bridgeRegisteredOwnerFiles
+        ? {
+            createDirectoryForWorkspace: vi.fn(async (_workspaceId, path) => {
+              await filesGateway.createDirectory(path);
+            }),
+            createTextFileWithContentForWorkspace: vi.fn(async (_workspaceId, path, content) => {
+              await filesGateway.createTextFile(path);
+              return (
+                (await filesGateway.writeTextFile(path, content)) ?? {
+                  revision: null,
+                  status: "success" as const,
+                }
+              );
+            }),
+            writeTextFileForWorkspace: vi.fn(async (_workspaceId, path, content) => {
+              return (
+                (await filesGateway.writeTextFile(path, content)) ?? {
+                  revision: null,
+                  status: "success" as const,
+                }
+              );
+            }),
+            writeTextFileForWorkspaceRelativePath: vi.fn(
+              async (workspaceId, relativePath, content) => {
+                const normalizedWorkspaceId = workspaceId.replace(/^\/+|\/+$/g, "");
+                const normalizedRelativePath = relativePath.replace(/^\/+/, "");
+                return (
+                  (await filesGateway.writeTextFile(
+                    `/${normalizedWorkspaceId}/${normalizedRelativePath}`,
+                    content,
+                  )) ?? {
+                    revision: null,
+                    status: "success" as const,
+                  }
+                );
+              },
+            ),
+          }
+        : undefined,
     phpTools: phpToolGateway ?? {
       detectPhpTools: vi.fn(async () => ({
         intelephense: null,
@@ -828,19 +1065,21 @@ function createControllerDependencies(
     },
     localHistoryGateway: localHistoryGateway ?? createInMemoryLocalHistoryGateway(),
     indexProgressGateway: indexProgressGateway ?? {
-      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
+      clearWorkspaceIndex: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        rootPath: request.rootPath,
         status: "cleared" as const,
       })),
-      startInitialMetadataScan: vi.fn(async (rootPath) => ({
+      startInitialMetadataScan: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        operationGeneration: request.operationGeneration,
+        rootPath: request.rootPath,
         status: "started" as const,
       })),
-      startReindex: vi.fn(async (rootPath) => ({
+      startReindex: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        operationGeneration: request.operationGeneration,
+        rootPath: request.rootPath,
         status: "started" as const,
       })),
       subscribeIndexProgress: vi.fn(async () => () => undefined),
@@ -924,9 +1163,9 @@ function createControllerDependencies(
         mode: "basic" as const,
         status: "off" as const,
       })),
-      setMode: vi.fn(async (_rootPath, mode) => ({
+      setMode: vi.fn(async (request) => ({
         message: "Updated",
-        mode,
+        mode: request.mode,
         status: "ready" as const,
       })),
     },

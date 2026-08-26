@@ -85,6 +85,32 @@ impl GitignoreWorkspaceIgnoreMatcher {
         Self::load_with_options_and_cancellation(root, options, &|| false)
     }
 
+    pub(crate) fn from_gitignore_contents(
+        root: &Path,
+        contents: Vec<(PathBuf, String)>,
+    ) -> io::Result<Self> {
+        let mut scopes = Vec::with_capacity(contents.len());
+        for (relative_directory, content) in contents {
+            let directory = root.join(relative_directory);
+            let source = directory.join(".gitignore");
+            let mut builder = GitignoreBuilder::new(&directory);
+            for line in content.lines() {
+                builder
+                    .add_line(Some(source.clone()), line)
+                    .map_err(to_io_error)?;
+            }
+            scopes.push(GitignoreScope {
+                gitignore: builder.build().map_err(to_io_error)?,
+                root: directory,
+            });
+        }
+        Ok(Self {
+            options: WorkspaceIgnoreOptions::default(),
+            root: root.to_path_buf(),
+            scopes,
+        })
+    }
+
     fn load_with_options_and_cancellation(
         root: &Path,
         options: WorkspaceIgnoreOptions,

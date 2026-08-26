@@ -93,6 +93,15 @@ function diagnosticsEventOwner(
   return null;
 }
 
+function subscriptionOwnerIsCurrent(
+  subscriptionOwner: WorkspaceRuntimeOwner | undefined,
+  resolveCurrentWorkspaceRuntimeOwner: (() => WorkspaceRuntimeOwner | null) | undefined,
+): boolean {
+  if (subscriptionOwner === undefined) return true;
+  if (resolveCurrentWorkspaceRuntimeOwner === undefined) return true;
+  return resolveCurrentWorkspaceRuntimeOwner() === subscriptionOwner;
+}
+
 export function useLanguageServerDiagnosticsSubscriptions({
   workspaceRoot,
   workspaceRuntimeOwner,
@@ -176,13 +185,8 @@ export function useLanguageServerDiagnosticsSubscriptions({
           return;
         }
 
-        if (
-          subscriptionOwner &&
-          resolveCurrentWorkspaceRuntimeOwner &&
-          resolveCurrentWorkspaceRuntimeOwner()?.ownerKey !== subscriptionOwner.ownerKey
-        ) {
+        if (!subscriptionOwnerIsCurrent(subscriptionOwner, resolveCurrentWorkspaceRuntimeOwner))
           return;
-        }
 
         if (
           !subscriptionOwner &&
@@ -289,13 +293,8 @@ export function useLanguageServerDiagnosticsSubscriptions({
           return;
         }
 
-        if (
-          subscriptionOwner &&
-          resolveCurrentWorkspaceRuntimeOwner &&
-          resolveCurrentWorkspaceRuntimeOwner()?.ownerKey !== subscriptionOwner.ownerKey
-        ) {
+        if (!subscriptionOwnerIsCurrent(subscriptionOwner, resolveCurrentWorkspaceRuntimeOwner))
           return;
-        }
 
         if (
           !subscriptionOwner &&

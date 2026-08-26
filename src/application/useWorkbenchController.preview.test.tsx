@@ -11,6 +11,7 @@ import type { LocalHistoryGateway } from "../domain/localHistory";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { createLocalHistorySaveWritersFixture } from "../test/localHistorySaveWritersFixture";
 import { waitForReact } from "../test/reactTestLifecycle";
+import { workspaceSettingsIdentity } from "../test/workbenchRegisteredAuthorityTestFixtures";
 import {
   createInMemoryLocalHistoryGateway,
   documentSyncGatewayMock,
@@ -28,8 +29,10 @@ import {
   trustedDescriptor,
 } from "./useWorkbenchController.preview/testSupport";
 
+const tabPaths = (tabs: readonly { path: string }[]) => tabs.map(({ path }) => path);
+
 describe("useWorkbenchController preview tabs, Git history, and Local History", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController, renderRegisteredController } = setupWorkbenchControllerTestHarness();
 
   it("routes image extensions to isolated read-only image tabs", async () => {
     const readTextFile = vi.fn(async () => "text");
@@ -63,7 +66,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
       base64: path.includes("workspace-a") ? "QUFB" : "QkJC",
       byteLength: 3,
     }));
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, getWorkbench } = renderRegisteredController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace-a",
@@ -90,7 +93,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
       getWorkbench().setActivePath(imageA.path);
       await Promise.resolve();
     });
-    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([
+    expect(tabPaths(getWorkbench().openTabs)).toEqual([
       firstText.path,
       imageA.path,
       secondText.path,
@@ -104,7 +107,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
     expect(getWorkbench().activeImage).toBeNull();
     expect(getWorkbench().openTabs).toEqual([]);
     expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
-      "/workspace-a",
+      workspaceSettingsIdentity("/workspace-a"),
       expect.objectContaining({
         session: expect.objectContaining({
           editor: expect.objectContaining({
@@ -129,7 +132,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
     await flushAsyncTurns(24);
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
-    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([
+    expect(tabPaths(getWorkbench().openTabs)).toEqual([
       firstText.path,
       imageA.path,
       secondText.path,
@@ -148,7 +151,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([imageB.path]);
+    expect(tabPaths(getWorkbench().openTabs)).toEqual([imageB.path]);
     expect(getWorkbench().activeImage?.path).toBe(imageB.path);
   });
   it("frees cached image tabs when their workspace is closed", async () => {
@@ -221,7 +224,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
     });
 
     expect(getWorkbench().activePath).toBe(previewPath);
-    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([file.path, previewPath]);
+    expect(tabPaths(getWorkbench().openTabs)).toEqual([file.path, previewPath]);
     expect(getWorkbench().openMarkdownPreviews).toHaveLength(1);
     expect(renderMarkdown).toHaveBeenCalledOnce();
   });
@@ -243,7 +246,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
       await getWorkbench().openPinnedFile(file);
       await getWorkbench().openMarkdownPreview();
     });
-    const previewPath = getWorkbench().activePath as string;
+    const previewPath = getWorkbench().activePath!;
 
     await act(async () => {
       getWorkbench().setActivePath(file.path);
@@ -273,7 +276,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
     vi.useRealTimers();
   });
   it("keeps Markdown preview tabs out of text and persisted session pipelines", async () => {
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, getWorkbench } = renderRegisteredController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace",
@@ -289,7 +292,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
       await getWorkbench().openMarkdownPreview();
     });
     await flushAsyncTurns(12);
-    const previewPath = getWorkbench().activePath as string;
+    const previewPath = getWorkbench().activePath!;
     const saveCommand = getWorkbench().commands.find((command) => command.id === "editor.save");
 
     expect(getWorkbench().activeDocument).toBeNull();
@@ -318,7 +321,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
         .some((value) => JSON.stringify(value).includes(previewPath)),
     ).toBe(false);
     expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenLastCalledWith(
-      "/workspace",
+      workspaceSettingsIdentity("/workspace"),
       expect.objectContaining({
         session: expect.objectContaining({
           editor: expect.objectContaining({
@@ -334,7 +337,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
     );
   });
   it("reorders regular tabs without persisting the open preview", async () => {
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, getWorkbench } = renderRegisteredController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace",
@@ -358,14 +361,10 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
     });
     await flushAsyncTurns(12);
 
-    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([
-      second.path,
-      first.path,
-      preview.path,
-    ]);
+    expect(tabPaths(getWorkbench().openTabs)).toEqual([second.path, first.path, preview.path]);
     expect(getWorkbench().previewPath).toBe(preview.path);
     expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenLastCalledWith(
-      "/workspace",
+      workspaceSettingsIdentity("/workspace"),
       expect.objectContaining({
         session: expect.objectContaining({
           editor: expect.objectContaining({
@@ -397,11 +396,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
       getWorkbench().reorderOpenTabs(preview.path, first.path, "before");
     });
 
-    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([
-      preview.path,
-      first.path,
-      second.path,
-    ]);
+    expect(tabPaths(getWorkbench().openTabs)).toEqual([preview.path, first.path, second.path]);
     expect(getWorkbench().previewPath).toBeNull();
     expect(getWorkbench().activePath).toBe(preview.path);
   });
@@ -1573,7 +1568,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
       rootPath: "/workspace-a",
       sessionId: 901,
     };
-    const { getWorkbench } = renderController({
+    const { getWorkbench } = renderRegisteredController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace-a",
@@ -1638,7 +1633,7 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
       rootPath: "/workspace",
       sessionId: 902,
     };
-    const { getWorkbench } = renderController({
+    const { getWorkbench } = renderRegisteredController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace",

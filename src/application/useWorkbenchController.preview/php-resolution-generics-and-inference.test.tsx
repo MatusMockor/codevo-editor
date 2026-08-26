@@ -12,7 +12,7 @@ import {
   fileEntry,
   type FileSearchResult,
   fileUriFromPath,
-  flushAsyncTurns,
+  flushAsyncTurns as flushControllerTurns,
   it,
   type LanguageServerDiagnosticEvent,
   type LanguageServerDiagnosticsGateway,
@@ -21,18 +21,48 @@ import {
   phpWorkspaceDescriptor,
   positionAfter,
   type ProjectSymbolSearchResult,
-  setupWorkbenchControllerTestHarness,
   vi,
-  waitForReact,
+  waitForReact as waitForController,
   type WorkbenchController,
   defaultWorkspaceSettings,
   type ProjectSymbolSearchGateway,
   type WorkbenchWorkspaceGateways,
   type WorkspaceFileChangeEvent,
 } from "./testSupport";
+import { setupRegisteredWorkbenchControllerTestHarness } from "../../test/workbenchRegisteredAuthorityTestFixtures";
+
+const pendingWorkspaceAdmissions: Array<() => Promise<void>> = [];
+
+async function drainWorkspaceAdmissions() {
+  while (pendingWorkspaceAdmissions.length > 0) await pendingWorkspaceAdmissions.shift()?.();
+}
+
+async function flushAsyncTurns(turns?: number) {
+  await flushControllerTurns(turns);
+  await drainWorkspaceAdmissions();
+  await flushControllerTurns(turns);
+}
+
+async function waitForReact(assertion: () => void | Promise<void>) {
+  await flushControllerTurns();
+  await drainWorkspaceAdmissions();
+  await waitForController(assertion);
+}
+
+function setupAdmittedWorkbenchControllerTestHarness() {
+  const harness = setupRegisteredWorkbenchControllerTestHarness();
+  return {
+    ...harness,
+    renderController: (options: Parameters<typeof harness.renderController>[0] = {}) => {
+      const rendered = harness.renderController(options);
+      pendingWorkspaceAdmissions.push(rendered.drainAdmissions);
+      return rendered;
+    },
+  };
+}
 
 describe("useWorkbenchController PHP language intelligence", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupAdmittedWorkbenchControllerTestHarness();
   it("infers Laravel relation query callback builders", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
     const albumPath = "/workspace/app/Models/Album.php";
@@ -1735,8 +1765,6 @@ class ReportRun extends Model
     );
     const byName = (name: string) => completions.filter((completion) => completion.name === name);
 
-    // Derived scopes (classic `scopeX` and `#[Scope]`) carry `kind: "scope"` so
-    // the ordering layer can group them into their own category.
     expect(completions).toEqual(
       expect.arrayContaining([
         {
@@ -1763,28 +1791,20 @@ class ReportRun extends Model
       ]),
     );
 
-    // No raw `scopeX` source method leaks alongside the derived scope.
     expect(
       completions.filter((completion) => completion.name.toLowerCase().startsWith("scope")),
     ).toEqual([]);
 
-    // The `#[Scope]` source method `failed` is represented exactly once - the
-    // derived scope - never duplicated by the raw attributed method.
     expect(byName("failed")).toHaveLength(1);
     expect(byName("inFlight")).toHaveLength(1);
     expect(byName("stale")).toHaveLength(1);
 
-    // A scope whose name collides with a property keeps both, each in its own
-    // kind, and still drops the raw `scopeX` source.
     expect(
       byName("status")
         .map((completion) => completion.kind)
         .sort(),
     ).toEqual(["property", "scope"]);
 
-    // A scope whose name collides with a relation or a plain method survives the
-    // collision: the derived scope is present exactly once (the raw `scopeX`
-    // source is already proven dropped above) and the colliding member remains.
     expect(byName("owner").filter((completion) => completion.kind === "scope")).toHaveLength(1);
     expect(byName("owner").some((completion) => completion.kind !== "scope")).toBe(true);
     expect(byName("process").filter((completion) => completion.kind === "scope")).toHaveLength(1);
@@ -2173,17 +2193,9 @@ Route::post('/reactions', [ReactionController::class, 'store']);
 });
 
 describe("useWorkbenchController PHP language intelligence", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupAdmittedWorkbenchControllerTestHarness();
 
   it("resolves a basic-mode method call instantly without a project-wide file search", async () => {
-    // Performance / Fleet-parity guard for the slow path. Method-call
-    // navigation resolves the receiver's class through
-    // resolvePhpClassSourcePaths. In basic (light) mode that class lives at its
-    // deterministic PSR-4 path, so resolution must come straight from that
-    // verified candidate. It must NOT fall back to the project-wide fuzzy
-    // fileSearch.searchFiles (the cold 5-10s tree walk on large repos like
-    // kontentino) on every Cmd+B. If this regresses, basic-mode method
-    // navigation goes slow again.
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const servicePath = "/workspace/app/Services/CommentsService.php";
     const controllerSource = `<?php
@@ -3927,8 +3939,6 @@ class UsageController
         await getWorkbench().openFile(fileEntry(controllerPathFor(root), "UsageController.php"));
       });
 
-      // First completion warms the cache off the hot path; it is served from
-      // the (empty) cache, so it may not yet carry migration columns.
       await act(async () => {
         await completionNames(getWorkbench);
       });
@@ -3938,9 +3948,7 @@ class UsageController
 
       const warm = await completionNames(getWorkbench);
 
-      // $fillable/$casts attributes remain.
       expect(warm).toEqual(expect.arrayContaining(["user_id", "account_id", "usage_count"]));
-      // Columns that only exist in the migration (primary key + timestamps()).
       expect(warm).toEqual(expect.arrayContaining(["id", "created_at", "updated_at"]));
     });
 
@@ -3983,7 +3991,6 @@ class UsageController
       const names = await completionNames(getWorkbench);
 
       expect(names).toEqual(expect.arrayContaining(["user_id", "account_id", "usage_count"]));
-      // Migration-only columns never appear when there are no migrations.
       expect(names).not.toContain("created_at");
       expect(names).not.toContain("id");
     });
@@ -4102,7 +4109,6 @@ class UsageController
 
       expect(await completionNames(getWorkbench)).not.toContain("nickname");
 
-      // A new migration column lands on disk and the watcher reports the change.
       migrationSource = aiUsagesMigration("\n            $table->string('nickname');");
       await act(async () => {
         publishFileChange?.({
@@ -4172,8 +4178,6 @@ class UsageController
         expect(await completionNames(getWorkbench)).toContain("created_at");
       });
 
-      // Switch to workspace B, which has no migrations: A's DB-only columns must
-      // not leak into B's completions.
       await act(async () => {
         await getWorkbench().activateWorkspaceTab(rootB);
       });
@@ -4212,10 +4216,6 @@ class Post extends Model
 }
 `;
 
-    // Minimal vendor stub so the controller can resolve the Eloquent Builder
-    // class (the receiver type of Post::query()) to a source file. The macro is
-    // NOT declared here - it is contributed via the provider sources merged into
-    // the workspace source context.
     const builderStub = `<?php
 namespace Illuminate\\Database\\Eloquent;
 
@@ -4306,8 +4306,6 @@ class PostController
         await getWorkbench().openFile(fileEntry(controllerPathFor(root), "PostController.php"));
       });
 
-      // First completion warms the cache off the hot path; it is served from the
-      // (empty) cache, so it may not yet carry the provider macro.
       await act(async () => {
         await completionNames(getWorkbench);
       });
@@ -4462,7 +4460,6 @@ class PostController
 
       const names = await completionNames(getWorkbench);
 
-      // No providers -> no provider-defined macro, and no crash.
       expect(names).not.toContain("withDashboardScope");
     });
 
@@ -4584,7 +4581,6 @@ class PostController
 
       expect(await completionNames(getWorkbench)).not.toContain("withDashboardCounts");
 
-      // A new macro lands on disk and the watcher reports the change.
       providerSource = appServiceProvider(
         `\n        Builder::macro('withDashboardCounts', function (): Builder {\n            return $this;\n        });`,
       );
@@ -4660,8 +4656,6 @@ class PostController
         expect(await completionNames(getWorkbench)).toContain("withDashboardScope");
       });
 
-      // Switch to workspace B, which has no providers: A's macro must not leak
-      // into B's completions.
       await act(async () => {
         await getWorkbench().activateWorkspaceTab(rootB);
       });

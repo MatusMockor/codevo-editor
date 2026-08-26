@@ -6,15 +6,11 @@ use crate::debug_cdp;
 use crate::eslint;
 use crate::file_uri_path::path_from_file_uri;
 use crate::index::{
-    workspace_index_path, SqliteWorkspaceIndex, WorkspaceFileRecord,
-    WorkspaceIndexMaintenanceStore, WorkspaceIndexStore, WorkspaceIndexSummary,
-};
-use crate::index_reindex::{
-    LocalWorkspaceReindexStarter, WorkspaceReindexRequest, WorkspaceReindexStarter,
+    workspace_index_path, SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore,
+    WorkspaceIndexSummary,
 };
 use crate::index_scan::{
-    IndexProgressEvent, InitialMetadataScanStart, MetadataScanCompletionEvent,
-    MetadataScanEventSink, WorkspaceReindexMode, INDEX_PROGRESS_EVENT,
+    IndexProgressEvent, MetadataScanCompletionEvent, MetadataScanEventSink, INDEX_PROGRESS_EVENT,
     METADATA_SCAN_COMPLETED_EVENT,
 };
 use crate::job_scheduler::WorkspaceIndexLifecycle;
@@ -65,6 +61,12 @@ use tauri_plugin_dialog::DialogExt;
 #[path = "workspace_facade/unregister.rs"]
 mod unregister;
 use unregister::{unregister_workspace_with_runtime_cleanup, NoopDebugSessionDisposer};
+
+#[path = "workspace_facade/index_operation_commands.rs"]
+mod index_operation_commands;
+pub(crate) use index_operation_commands::{
+    clear_workspace_index, start_initial_metadata_scan, start_workspace_reindex,
+};
 
 #[cfg(target_os = "macos")]
 pub(crate) const CLOSE_ACTIVE_TAB_EVENT: &str = "mockor-close-active-tab";
@@ -574,78 +576,6 @@ pub(crate) fn remove_workspace_index_file(
         .remove_file(&path)
         .map_err(|error| error.to_string())?;
     index.summary().map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub(crate) fn clear_workspace_index(
-    root_path: String,
-    app: AppHandle,
-) -> Result<WorkspaceIndexClearResult, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    let root_string = root.to_string_lossy().to_string();
-
-    if let Some(index_lifecycle) = app.try_state::<WorkspaceIndexLifecycle>() {
-        return index_lifecycle.cancel_workspace_and_block_writes(&root_string, || {
-            clear_workspace_index_database(&app, &root)
-        });
-    }
-
-    clear_workspace_index_database(&app, &root)
-}
-
-pub(crate) fn clear_workspace_index_database(
-    app: &AppHandle,
-    root: &Path,
-) -> Result<WorkspaceIndexClearResult, String> {
-    let database_path = workspace_index_database_path(app, root)?;
-    let index = SqliteWorkspaceIndex::open(&database_path).map_err(|error| error.to_string())?;
-    index
-        .clear_workspace_files()
-        .map_err(|error| error.to_string())?;
-
-    Ok(WorkspaceIndexClearResult {
-        database_path: database_path.to_string_lossy().to_string(),
-        root_path: root.to_string_lossy().to_string(),
-        status: "cleared",
-    })
-}
-
-#[tauri::command]
-pub(crate) fn start_initial_metadata_scan(
-    root_path: String,
-    app: AppHandle,
-) -> Result<InitialMetadataScanStart, String> {
-    start_workspace_reindex(root_path, WorkspaceReindexMode::Soft, None, app)
-}
-
-#[tauri::command]
-pub(crate) fn start_workspace_reindex(
-    root_path: String,
-    mode: WorkspaceReindexMode,
-    language: Option<String>,
-    app: AppHandle,
-) -> Result<InitialMetadataScanStart, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    let database_path = workspace_index_database_path(&app, &root)?;
-    let root_string = root.to_string_lossy().to_string();
-    let lifecycle_token = app
-        .try_state::<WorkspaceIndexLifecycle>()
-        .map(|lifecycle| lifecycle.begin_workspace_run(&root_string));
-    let starter = LocalWorkspaceReindexStarter;
-    let event_sink = Arc::new(AppHandleMetadataScanEventSink::new(app));
-
-    starter
-        .start(
-            WorkspaceReindexRequest {
-                database_path,
-                language,
-                lifecycle_token,
-                mode,
-                root_path: root,
-            },
-            event_sink,
-        )
-        .map_err(|error| error.to_string())
 }
 
 pub(crate) struct AppHandleMetadataScanEventSink {

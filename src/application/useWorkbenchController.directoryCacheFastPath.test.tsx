@@ -21,6 +21,22 @@ import {
 describe("useWorkbenchController directory cache fast path", () => {
   const { renderController } = setupWorkbenchControllerTestHarness();
 
+  function registeredWorkspaceIdentityGateway() {
+    let admissionToken = 100;
+    return {
+      getDescriptor: vi.fn(),
+      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      openPath: vi.fn(async (path: string) => {
+        admissionToken += 1;
+        return {
+          ...trustedDescriptor(`workspace:${path}`, path),
+          admissionToken,
+        };
+      }),
+      unregister: vi.fn(async () => undefined),
+    };
+  }
+
   it("projects the exact cached tree before its authoritative refresh settles", async () => {
     const workspaceA = "/workspace-a";
     const workspaceB = "/workspace-b";
@@ -44,8 +60,8 @@ describe("useWorkbenchController directory cache fast path", () => {
         mode: "basic" as const,
         status: "off" as const,
       })),
-      setMode: vi.fn(async (rootPath, mode) => {
-        if (rootPath === workspaceA) {
+      setMode: vi.fn(async (request) => {
+        if (request.rootPath === workspaceA) {
           workspaceAModeCount += 1;
           if (workspaceAModeCount === 2) {
             return returningSmartMode.promise;
@@ -54,7 +70,7 @@ describe("useWorkbenchController directory cache fast path", () => {
 
         return {
           message: "Updated",
-          mode,
+          mode: request.mode,
           status: "ready" as const,
         };
       }),
@@ -67,6 +83,7 @@ describe("useWorkbenchController directory cache fast path", () => {
       },
       readDirectory,
       smartModeGateway,
+      workspaceIdentityGateway: registeredWorkspaceIdentityGateway(),
     });
 
     await waitForReact(() => {
@@ -131,6 +148,7 @@ describe("useWorkbenchController directory cache fast path", () => {
         workspaceTabs: [workspaceA, workspaceB],
       },
       readDirectory,
+      workspaceIdentityGateway: registeredWorkspaceIdentityGateway(),
     });
 
     await waitForReact(() => {
@@ -180,6 +198,7 @@ describe("useWorkbenchController directory cache fast path", () => {
         workspaceTabs: [workspaceA, workspaceB],
       },
       readDirectory,
+      workspaceIdentityGateway: registeredWorkspaceIdentityGateway(),
     });
 
     await waitForReact(() => {
@@ -211,8 +230,14 @@ describe("useWorkbenchController directory cache fast path", () => {
     const workspaceRoot = "/workspace";
     const sourceDirectory = `${workspaceRoot}/src`;
     const testDirectory = `${workspaceRoot}/test`;
-    const ownerA = trustedDescriptor("workspace-owner-a", workspaceRoot);
-    const ownerB = trustedDescriptor("workspace-owner-b", workspaceRoot);
+    const ownerA = {
+      ...trustedDescriptor("workspace-owner-a", workspaceRoot),
+      admissionToken: 201,
+    };
+    const ownerB = {
+      ...trustedDescriptor("workspace-owner-b", workspaceRoot),
+      admissionToken: 202,
+    };
     let requestedOwner = ownerA;
     let renderHistory: Array<{
       readonly entries: Record<string, readonly string[]>;

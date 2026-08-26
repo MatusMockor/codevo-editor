@@ -8,9 +8,16 @@ export interface SmartModeState {
   message: string;
 }
 
+export interface SmartModeSetRequest {
+  readonly admissionToken: number;
+  readonly mode: IntelligenceMode;
+  readonly rootPath: string;
+  readonly workspaceId: string;
+}
+
 export interface SmartModeGateway {
   getState(rootPath: string): Promise<SmartModeState>;
-  setMode(rootPath: string, mode: IntelligenceMode): Promise<SmartModeState>;
+  setMode(request: SmartModeSetRequest): Promise<SmartModeState>;
 }
 
 export function shouldIndexWorkspace(mode: IntelligenceMode): boolean {

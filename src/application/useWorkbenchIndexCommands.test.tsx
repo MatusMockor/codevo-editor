@@ -9,6 +9,7 @@ import {
   type InitialMetadataScanStart,
 } from "../domain/indexProgress";
 import {
+  attachIndexStartReceipt,
   useWorkbenchIndexCommands,
   type WorkbenchIndexActions,
   type WorkbenchIndexCommandsOptions,
@@ -19,9 +20,10 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other-workspace";
 
-function startResult(rootPath = ROOT): InitialMetadataScanStart {
+function startResult(rootPath = ROOT, operationGeneration = 7): InitialMetadataScanStart {
   return {
     databasePath: `${rootPath}/.editor/index.sqlite`,
+    operationGeneration,
     rootPath,
     status: "started",
   };
@@ -31,7 +33,9 @@ function indexProgressGateway(): IndexProgressGateway {
   return {
     clearWorkspaceIndex: vi.fn(),
     startInitialMetadataScan: vi.fn(),
-    startReindex: vi.fn(async (rootPath) => startResult(rootPath)),
+    startReindex: vi.fn(async (request) =>
+      startResult(request.rootPath, request.operationGeneration),
+    ),
     subscribeIndexProgress: vi.fn(),
     subscribeMetadataScanCompletion: vi.fn(),
   };
@@ -42,11 +46,17 @@ function makeOptions(
 ): WorkbenchIndexCommandsOptions {
   return {
     activeIndexRootRef: { current: null },
-    currentWorkspaceRootRef: { current: ROOT },
+    abandonIndexOperation: vi.fn(),
+    beginIndexOperation: vi.fn((rootPath) => ({
+      admissionToken: 11,
+      operationGeneration: 7,
+      requestIsCurrent: () => true,
+      rootPath,
+      workspaceId: "workspace-a",
+    })),
     indexProgressGateway: indexProgressGateway(),
+    indexOperationIsCurrent: vi.fn(() => true),
     intelligenceMode: "fullSmart",
-    pendingIndexRootRef: { current: null },
-    pendingIndexScanRef: { current: false },
     reportError: vi.fn(),
     setIndexHealthLogs: vi.fn(),
     setIndexProgress: vi.fn(),
@@ -66,11 +76,7 @@ function renderHook(options: WorkbenchIndexCommandsOptions) {
     actions: null,
   };
 
-  function Harness({
-    dependencies,
-  }: {
-    dependencies: WorkbenchIndexCommandsOptions;
-  }) {
+  function Harness({ dependencies }: { dependencies: WorkbenchIndexCommandsOptions }) {
     captured.actions = useWorkbenchIndexCommands(dependencies);
     return null;
   }
@@ -139,7 +145,12 @@ describe("useWorkbenchIndexCommands", () => {
     });
 
     expect(options.indexProgressGateway.startReindex).toHaveBeenCalledWith(
-      ROOT,
+      {
+        admissionToken: 11,
+        operationGeneration: 7,
+        rootPath: ROOT,
+        workspaceId: "workspace-a",
+      },
       "soft",
       undefined,
     );
@@ -154,7 +165,12 @@ describe("useWorkbenchIndexCommands", () => {
     });
 
     expect(options.indexProgressGateway.startReindex).toHaveBeenCalledWith(
-      ROOT,
+      {
+        admissionToken: 11,
+        operationGeneration: 7,
+        rootPath: ROOT,
+        workspaceId: "workspace-a",
+      },
       "language",
       "php",
     );
@@ -169,7 +185,12 @@ describe("useWorkbenchIndexCommands", () => {
     });
 
     expect(options.indexProgressGateway.startReindex).toHaveBeenCalledWith(
-      ROOT,
+      {
+        admissionToken: 11,
+        operationGeneration: 7,
+        rootPath: ROOT,
+        workspaceId: "workspace-a",
+      },
       "hard",
       undefined,
     );
@@ -189,8 +210,7 @@ describe("useWorkbenchIndexCommands", () => {
     });
 
     expect(options.activeIndexRootRef.current).toBeNull();
-    expect(options.pendingIndexScanRef.current).toBe(false);
-    expect(options.pendingIndexRootRef.current).toBeNull();
+    expect(options.abandonIndexOperation).toHaveBeenCalledOnce();
     expect(options.setIndexProgress).not.toHaveBeenCalled();
     expect(options.setIndexHealthLogs).not.toHaveBeenCalled();
     expect(options.setMessage).not.toHaveBeenCalledWith("Index scan started.");
@@ -205,16 +225,33 @@ describe("useWorkbenchIndexCommands", () => {
     });
 
     expect(options.activeIndexRootRef.current).toBe(ROOT);
-    expect(options.setIndexProgress).toHaveBeenCalledWith(
+    const update = vi.mocked(options.setIndexProgress).mock.calls[0]?.[0];
+    if (typeof update !== "function") throw new Error("Missing index progress update");
+    expect(update(initialIndexProgress())).toEqual(
       expect.objectContaining({
         databasePath: `${ROOT}/.editor/index.sqlite`,
         rootPath: ROOT,
         status: "scanning",
       }),
     );
-    expect(options.setIndexProgress).not.toHaveBeenCalledWith(
-      initialIndexProgress(),
-    );
+    expect(options.setIndexProgress).not.toHaveBeenCalledWith(initialIndexProgress());
     expect(options.setMessage).toHaveBeenCalledWith("Index scan started.");
+  });
+});
+
+describe("attachIndexStartReceipt", () => {
+  it("preserves exact progress that arrived before the receipt", () => {
+    const current = {
+      ...initialIndexProgress(),
+      operationGeneration: 7,
+      processedFiles: 9,
+      rootPath: ROOT,
+      status: "scanning" as const,
+      totalFiles: 10,
+    };
+    expect(attachIndexStartReceipt(current, startResult(ROOT, 7))).toEqual({
+      ...current,
+      databasePath: `${ROOT}/.editor/index.sqlite`,
+    });
   });
 });

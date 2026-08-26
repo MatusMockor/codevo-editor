@@ -5,20 +5,12 @@ import { emptyGitStatus, type GitGateway } from "../../domain/git";
 import type { LanguageServerPlan, PhpLanguageServerPlanOptions } from "../../domain/languageServer";
 import type { EditorPosition, LanguageServerRange } from "../../domain/languageServerFeatures";
 import {
-  emptyLanguageServerCapabilities,
-  type LanguageServerRuntimeStatus,
-} from "../../domain/languageServerRuntime";
-import { defaultAppSettings } from "../../domain/settings";
-import {
   type FileEntry,
   type ManagedPhpactorInstallCompletionEvent,
   type PhpProjectDescriptor,
   type WorkspaceDescriptor,
 } from "../../domain/workspace";
-import {
-  flushAsyncTurns,
-  type WorkbenchController,
-} from "../../test/workbenchControllerTestHarness";
+import type { WorkbenchController } from "../../test/workbenchControllerTestHarness";
 import {
   type PhpCodeActionDescriptor,
   type WorkbenchWorkspaceGateways,
@@ -52,101 +44,15 @@ export * from "../../domain/workspaceRootKey";
 export * from "../../domain/workspaceRuntimeLifecycle";
 export * from "../../test/reactTestLifecycle";
 export * from "../../test/workbenchControllerTestHarness";
+export * from "../../test/workbenchRegisteredAuthorityTestFixtures";
 export * from "../editorActiveLiveDocumentSaveCoordinator";
 export * from "../useWorkbenchController";
 export { act } from "react";
 export { describe, expect, it, vi } from "vitest";
 
-export interface Deferred<T> {
-  promise: Promise<T>;
-  resolve(value: T): void;
-  reject(error: unknown): void;
-}
-
 export function completion(fields: Record<string, unknown>) {
   return expect.objectContaining(fields);
 }
-
-export function workspaceAppSettings() {
-  return {
-    ...defaultAppSettings(),
-    recentWorkspacePath: "/workspace",
-  };
-}
-
-export function readyJavaScriptTypeScriptPlan(rootPath: string): LanguageServerPlan {
-  return {
-    command: {
-      args: ["--stdio"],
-      executable: "typescript-language-server",
-      workingDirectory: rootPath,
-    },
-    initializeRequest: {
-      id: 1,
-      jsonrpc: "2.0",
-      method: "initialize",
-      params: {},
-    },
-    message: "TypeScript language server is ready.",
-    provider: "typeScriptLanguageServer",
-    status: "ready",
-  };
-}
-
-export function trustedDescriptor(workspaceId: string, root: string) {
-  return {
-    workspaceId,
-    selectedPath: root,
-    canonicalRoot: root,
-    caseSensitive: true,
-    unicodeNormalizationPolicy: "preserved" as const,
-    policy: {
-      caseSensitive: true as const,
-      unicodeNormalization: "none" as const,
-    },
-  };
-}
-
-export function runningStatus(rootPath: string, sessionId: number): LanguageServerRuntimeStatus {
-  return {
-    capabilities: emptyLanguageServerCapabilities(),
-    kind: "running",
-    rootPath,
-    sessionId,
-  };
-}
-
-export function createDeferred<T>(): Deferred<T> {
-  let resolveValue: ((value: T) => void) | null = null;
-  let rejectValue: ((error: unknown) => void) | null = null;
-  const promise = new Promise<T>((resolve, reject) => {
-    resolveValue = resolve;
-    rejectValue = reject;
-  });
-
-  return {
-    promise,
-    reject(error: unknown) {
-      rejectValue?.(error);
-    },
-    resolve(value: T) {
-      resolveValue?.(value);
-    },
-  };
-}
-
-async function flushAfter(delay: number): Promise<void> {
-  await act(async () => {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, delay);
-    });
-  });
-  await flushAsyncTurns();
-}
-
-export const flushWorkspaceDirectoryRefresh = () => flushAfter(150);
-export const flushSearchEverywhereDebounce = () => flushAfter(150);
-export const flushFilePrefetch = () => flushAfter(150);
 
 export function createManagedPhpactorInstallHarness(
   overrides: Partial<WorkbenchWorkspaceGateways["phpTools"]> = {},

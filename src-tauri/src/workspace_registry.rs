@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::MutexGuard,
 };
 
 #[cfg(target_os = "macos")]
@@ -23,10 +24,14 @@ use std::{
 
 #[path = "workspace_registry/registration.rs"]
 pub(crate) mod registration;
+#[path = "workspace_registry/registration_operation.rs"]
+mod registration_operation;
 #[path = "workspace_registry/runtime_start.rs"]
 mod runtime_start;
 #[path = "workspace_registry/unregister.rs"]
 mod unregister;
+
+pub(crate) use registration_operation::WorkspaceRegistrationOperationLease;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 const MAX_REGISTERED_PATHS_PER_WORKSPACE: usize = 128;
@@ -112,11 +117,19 @@ struct ManagedWorkspace {
     descriptor: ManagedWorkspaceDescriptor,
     registered_paths: BTreeSet<PathBuf>,
     registration_admissions: HashMap<u64, RegistrationAdmission>,
+    root_identity: RegisteredRootIdentity,
     latest_admission_token: u64,
     root: File,
     unregister_generation: Option<u64>,
     #[cfg(test)]
     drop_hook: Option<Box<dyn FnOnce() + Send>>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct RegisteredRootIdentity {
+    device: u64,
+    inode: u64,
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -157,6 +170,18 @@ pub struct WorkspaceRegistry {
     next_registration_token: AtomicU64,
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     next_unregister_generation: AtomicU64,
+    registration_operations: std::sync::Arc<registration_operation::RegistrationOperationRegistry>,
+}
+
+pub(crate) struct WorkspaceRegistrationAuthority<'a> {
+    descriptor: ManagedWorkspaceDescriptor,
+    _operation: MutexGuard<'a, ()>,
+}
+
+impl WorkspaceRegistrationAuthority<'_> {
+    pub(crate) fn descriptor(&self) -> &ManagedWorkspaceDescriptor {
+        &self.descriptor
+    }
 }
 
 impl WorkspaceRegistry {
@@ -274,6 +299,11 @@ impl WorkspaceRegistry {
 
     pub(crate) fn lock_operations(&self) -> io::Result<std::sync::MutexGuard<'_, ()>> {
         self.operations.lock().map_err(lock_error)
+    }
+
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    pub(crate) fn operations_locked_for_test(&self) -> bool {
+        self.operations.try_lock().is_err()
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -513,7 +543,7 @@ fn open_relative_to(root: &File, path: &Path) -> io::Result<File> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn open_directory_relative_to(root: &File, path: &Path) -> io::Result<File> {
+pub(crate) fn open_directory_relative_to(root: &File, path: &Path) -> io::Result<File> {
     open_directory_relative_to_with_hook(root, path, || Ok(()))
 }
 

@@ -3,8 +3,8 @@ export type UnsubscribeFn = () => void;
 export type IndexHealthLogSeverity = "error" | "info" | "warning";
 
 export interface IndexHealthDetail {
-  path: string;
-  reason: string;
+  readonly path: string;
+  readonly reason: string;
 }
 
 export interface IndexHealthLogEntry {
@@ -16,19 +16,20 @@ export interface IndexHealthLogEntry {
 }
 
 export interface MetadataScanReport {
-  changedFiles: number;
-  errorDetails: IndexHealthDetail[];
-  erroredEntries: number;
-  indexedFiles: number;
-  parsedFiles: number;
-  removedFiles: number;
-  skippedDetails: IndexHealthDetail[];
-  skippedEntries: number;
-  symbolsIndexed: number;
+  readonly changedFiles: number;
+  readonly errorDetails: readonly IndexHealthDetail[];
+  readonly erroredEntries: number;
+  readonly indexedFiles: number;
+  readonly parsedFiles: number;
+  readonly removedFiles: number;
+  readonly skippedDetails: readonly IndexHealthDetail[];
+  readonly skippedEntries: number;
+  readonly symbolsIndexed: number;
 }
 
 export interface InitialMetadataScanStart {
   databasePath: string;
+  operationGeneration: number;
   rootPath: string;
   status: "started";
 }
@@ -42,24 +43,46 @@ export interface WorkspaceIndexClearResult {
 export type MetadataScanCompletionStatus = "completed" | "failed";
 export type WorkspaceReindexMode = "hard" | "language" | "soft";
 
-export interface MetadataScanCompletionEvent {
-  databasePath: string;
-  message: string | null;
-  report: MetadataScanReport | null;
-  rootPath: string;
-  status: MetadataScanCompletionStatus;
+export interface WorkspaceIndexMutationRequest {
+  readonly admissionToken: number;
+  readonly rootPath: string;
+  readonly workspaceId: string;
 }
 
+export interface WorkspaceIndexOperationRequest extends WorkspaceIndexMutationRequest {
+  readonly operationGeneration: number;
+}
+
+interface MetadataScanCompletionBase {
+  readonly databasePath: string;
+  readonly operationGeneration: number;
+  readonly rootPath: string;
+}
+
+export type MetadataScanCompletionEvent =
+  | (MetadataScanCompletionBase & {
+      readonly message: null;
+      readonly report: MetadataScanReport;
+      readonly status: "completed";
+    })
+  | (MetadataScanCompletionBase & {
+      readonly message: string;
+      readonly report: null;
+      readonly status: "failed";
+    });
+
 export type IndexProgressStatus = "idle" | "scanning" | "completed" | "failed";
+export type IndexProgressPhase = "parsing" | "scanning";
 
 /// Incremental progress emitted on batch boundaries during a reindex (mirrors the Rust
 /// `IndexProgressEvent`). `totalFiles` is `null` when the total is unknown so the UI degrades to an
 /// indeterminate count. Tagged with `rootPath` so cross-workspace events are dropped.
 export interface IndexProgressEvent {
-  phase: string;
-  processedFiles: number;
-  rootPath: string;
-  totalFiles: number | null;
+  readonly operationGeneration: number;
+  readonly phase: IndexProgressPhase;
+  readonly processedFiles: number;
+  readonly rootPath: string;
+  readonly totalFiles: number | null;
 }
 
 export interface IndexProgressState {
@@ -68,6 +91,7 @@ export interface IndexProgressState {
   erroredEntries: number;
   indexedFiles: number;
   message: string | null;
+  operationGeneration: number | null;
   processedFiles: number;
   rootPath: string | null;
   skippedDetails: IndexHealthDetail[];
@@ -77,18 +101,16 @@ export interface IndexProgressState {
 }
 
 export interface IndexProgressGateway {
-  clearWorkspaceIndex(rootPath: string): Promise<WorkspaceIndexClearResult>;
+  clearWorkspaceIndex(request: WorkspaceIndexMutationRequest): Promise<WorkspaceIndexClearResult>;
   startInitialMetadataScan(
-    rootPath: string,
+    request: WorkspaceIndexOperationRequest,
   ): Promise<InitialMetadataScanStart>;
   startReindex(
-    rootPath: string,
+    request: WorkspaceIndexOperationRequest,
     mode: WorkspaceReindexMode,
     language?: string,
   ): Promise<InitialMetadataScanStart>;
-  subscribeIndexProgress(
-    listener: (event: IndexProgressEvent) => void,
-  ): Promise<UnsubscribeFn>;
+  subscribeIndexProgress(listener: (event: IndexProgressEvent) => void): Promise<UnsubscribeFn>;
   subscribeMetadataScanCompletion(
     listener: (event: MetadataScanCompletionEvent) => void,
   ): Promise<UnsubscribeFn>;
@@ -101,6 +123,7 @@ export function initialIndexProgress(): IndexProgressState {
     erroredEntries: 0,
     indexedFiles: 0,
     message: null,
+    operationGeneration: null,
     processedFiles: 0,
     rootPath: null,
     skippedDetails: [],
@@ -110,17 +133,24 @@ export function initialIndexProgress(): IndexProgressState {
   };
 }
 
-export function startIndexProgress(
-  start: InitialMetadataScanStart,
+export function startIndexProgress(start: InitialMetadataScanStart): IndexProgressState {
+  return beginIndexProgress(start.rootPath, start.operationGeneration, start.databasePath);
+}
+
+export function beginIndexProgress(
+  rootPath: string,
+  operationGeneration: number,
+  databasePath: string | null = null,
 ): IndexProgressState {
   return {
-    databasePath: start.databasePath,
+    databasePath,
     errorDetails: [],
     erroredEntries: 0,
     indexedFiles: 0,
     message: null,
+    operationGeneration,
     processedFiles: 0,
-    rootPath: start.rootPath,
+    rootPath,
     skippedDetails: [],
     skippedEntries: 0,
     status: "scanning",
@@ -135,6 +165,10 @@ export function applyIndexProgress(
   current: IndexProgressState,
   event: IndexProgressEvent,
 ): IndexProgressState {
+  if (!ownsIndexOperation(current, event)) {
+    return current;
+  }
+
   return {
     ...current,
     processedFiles: Math.max(current.processedFiles, event.processedFiles),
@@ -149,15 +183,17 @@ export function applyMetadataScanCompletion(
   current: IndexProgressState,
   event: MetadataScanCompletionEvent,
 ): IndexProgressState {
+  if (!ownsIndexOperation(current, event)) {
+    return current;
+  }
+
   const report = event.report;
 
   if (event.status === "failed") {
     return {
       ...current,
       databasePath: event.databasePath,
-      errorDetails: event.message
-        ? [{ path: event.rootPath, reason: event.message }]
-        : [],
+      errorDetails: event.message ? [{ path: event.rootPath, reason: event.message }] : [],
       erroredEntries: event.message ? 1 : 0,
       message: event.message || "Index scan failed.",
       processedFiles: 0,
@@ -171,22 +207,34 @@ export function applyMetadataScanCompletion(
 
   return {
     databasePath: event.databasePath,
-    errorDetails: report?.errorDetails ?? [],
+    errorDetails: report ? [...report.errorDetails] : [],
     erroredEntries: report?.erroredEntries ?? 0,
     indexedFiles: report?.indexedFiles ?? 0,
     message: indexProgressCompletionMessage(event),
+    operationGeneration: event.operationGeneration,
     processedFiles: 0,
     rootPath: event.rootPath,
-    skippedDetails: report?.skippedDetails ?? [],
+    skippedDetails: report ? [...report.skippedDetails] : [],
     skippedEntries: report?.skippedEntries ?? 0,
     status: "completed",
     totalFiles: null,
   };
 }
 
-export function indexProgressLabel(
-  progress: IndexProgressState,
-): string | null {
+function ownsIndexOperation(
+  current: IndexProgressState,
+  event: { operationGeneration: number; rootPath: string },
+): boolean {
+  if (current.status !== "scanning") {
+    return false;
+  }
+
+  return (
+    current.rootPath === event.rootPath && current.operationGeneration === event.operationGeneration
+  );
+}
+
+export function indexProgressLabel(progress: IndexProgressState): string | null {
   if (progress.status === "idle") {
     return null;
   }
@@ -233,9 +281,7 @@ export function indexProgressPercent(progress: IndexProgressState): number {
   return Math.min(100, Math.max(0, Math.round(ratio * 100)));
 }
 
-export function indexProgressCompletionMessage(
-  event: MetadataScanCompletionEvent,
-): string {
+export function indexProgressCompletionMessage(event: MetadataScanCompletionEvent): string {
   if (event.status === "failed") {
     return event.message || "Index scan failed.";
   }

@@ -22,7 +22,6 @@ import {
   phpWorkspaceDescriptor,
   positionAfter,
   type ProjectSymbolSearchGateway,
-  type ProjectSymbolSearchResult,
   range,
   setupWorkbenchControllerTestHarness,
   vi,
@@ -34,7 +33,7 @@ import {
 } from "./testSupport";
 
 describe("useWorkbenchController navigation, references, hierarchies, and symbols", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController, renderRegisteredController } = setupWorkbenchControllerTestHarness();
   it("drops stale PHP workspace symbol results after switching project tabs", async () => {
     const workspaceSymbols =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
@@ -829,21 +828,20 @@ describe("useWorkbenchController navigation, references, hierarchies, and symbol
   it("uses the project index for go to definition when the language server is unavailable", async () => {
     const controllerPath = "/workspace/src/CommentController.php";
     const agentPath = "/workspace/src/CommentsAgent.php";
-    const projectSymbols: ProjectSymbolSearchResult[] = [
-      {
-        column: 13,
-        containerName: null,
-        fullyQualifiedName: "App\\CommentsAgent",
-        kind: "class",
-        lineNumber: 4,
-        name: "CommentsAgent",
-        path: agentPath,
-        relativePath: "src/CommentsAgent.php",
-      },
-    ];
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, getWorkbench } = renderRegisteredController({
       appSettings: workspaceAppSettings(),
-      projectSymbols,
+      projectSymbols: [
+        {
+          column: 13,
+          containerName: null,
+          fullyQualifiedName: "App\\CommentsAgent",
+          kind: "class",
+          lineNumber: 4,
+          name: "CommentsAgent",
+          path: agentPath,
+          relativePath: "src/CommentsAgent.php",
+        },
+      ],
       readTextFile: vi.fn(async (path: string) => {
         if (path === controllerPath) {
           return "<?php\n$agent = new CommentsAgent();\n";
@@ -906,7 +904,7 @@ describe("useWorkbenchController navigation, references, hierarchies, and symbol
 
       return `<?php\n// ${path}\n`;
     });
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, getWorkbench } = renderRegisteredController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace-a",
@@ -1009,7 +1007,7 @@ class PageRepository
 
       throw new Error(`Unexpected read ${path}`);
     });
-    const { getWorkbench } = renderController({
+    const { getWorkbench } = renderRegisteredController({
       appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceSettings: {
@@ -1051,7 +1049,7 @@ class PageRepository
 });
 
 describe("useWorkbenchController navigation, references, hierarchies, and symbols", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController, renderRegisteredController } = setupWorkbenchControllerTestHarness();
 
   it("reloads JavaScript and TypeScript file structure after closing and reopening a workspace", async () => {
     const path = "/workspace/src/userService.ts";
@@ -4600,7 +4598,7 @@ describe("useWorkbenchController navigation, references, hierarchies, and symbol
         uri: fileUriFromPath(externalPath),
       },
     ]);
-    const { dependencies, getWorkbench } = renderController({
+    const { dependencies, getWorkbench } = renderRegisteredController({
       appSettings: workspaceAppSettings(),
       javaScriptTypeScriptInitialRuntimeStatus: runningStatus(803),
       javaScriptTypeScriptLanguageServerFeaturesGateway,

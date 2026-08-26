@@ -1,17 +1,16 @@
-import {
-  useCallback,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
+import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import {
   createWorkspaceTextFileWithContent,
   getFileName,
   getParentPath,
   type FileEntry,
   type WorkspaceFileGateway,
+  type WorkspaceOwnerFileGateway,
+  type WorkspaceWriteResult,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
+import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
 import type { PhpCodeActionNewFile } from "./usePhpCodeActions";
 import {
   shouldApplyClassEditAfterWrite,
@@ -33,10 +32,14 @@ export interface PhpCodeActionNewFileApplicationDependencies {
   workspaceRoot: string | null;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   workspaceFiles: WorkspaceFileGateway;
+  workspaceIdentityDescriptorRef: MutableRefObject<WorkspaceIdentityDescriptor | null>;
+  workspaceOwnerFiles: WorkspaceOwnerFileGateway | undefined;
+  workspaceRuntimeOwnerClaimsRef: {
+    readonly current: { generationFor(ownerKey: string): number | null | undefined };
+  };
+  workspaceRuntimeOwnerRef: MutableRefObject<WorkspaceRuntimeOwner | null>;
   setExpandedDirectories: Dispatch<SetStateAction<Set<string>>>;
-  notifyJavaScriptTypeScriptWatchedFilesChanged: (
-    changes: WatchedFileChange[],
-  ) => Promise<void>;
+  notifyJavaScriptTypeScriptWatchedFilesChanged: (changes: WatchedFileChange[]) => Promise<void>;
   openFile: (entry: FileEntry, options?: OpenFileOptions) => Promise<boolean>;
   readTestFileIfExists: (path: string) => Promise<string | null>;
   refreshDirectory: (path: string) => Promise<void>;
@@ -51,6 +54,10 @@ export function usePhpCodeActionNewFileApplication({
   workspaceRoot,
   currentWorkspaceRootRef,
   workspaceFiles,
+  workspaceIdentityDescriptorRef,
+  workspaceOwnerFiles,
+  workspaceRuntimeOwnerClaimsRef,
+  workspaceRuntimeOwnerRef,
   setExpandedDirectories,
   notifyJavaScriptTypeScriptWatchedFilesChanged,
   openFile,
@@ -61,30 +68,60 @@ export function usePhpCodeActionNewFileApplication({
   return useCallback(
     async (newFile: PhpCodeActionNewFile): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const requestedIdentity = workspaceIdentityDescriptorRef.current;
+      const requestedOwner = workspaceRuntimeOwnerRef.current;
+      const requestedOwnerGeneration = requestedOwner
+        ? workspaceRuntimeOwnerClaimsRef.current.generationFor(requestedOwner.ownerKey)
+        : null;
+      const isRequestedRootActive = () => {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) return false;
+        if (!requestedIdentity) {
+          return !requestedOwner && requestedOwnerGeneration === null;
+        }
+        if (!requestedOwner || requestedOwnerGeneration === null) return false;
+        if (requestedOwnerGeneration === undefined) return false;
+        return (
+          workspaceIdentityDescriptorRef.current === requestedIdentity &&
+          workspaceRuntimeOwnerRef.current === requestedOwner &&
+          requestedIdentity.workspaceId === requestedOwner.ownerKey &&
+          workspaceRootKeysEqual(requestedOwner.executionRoot, requestedRoot) &&
+          workspaceRuntimeOwnerClaimsRef.current.generationFor(requestedOwner.ownerKey) ===
+            requestedOwnerGeneration
+        );
+      };
 
-      if (!requestedRoot) {
+      if (!requestedRoot || !isRequestedRootActive()) {
         return false;
       }
 
       const targetPath = newFile.path;
       const operationTitle = newFile.title ?? "Extract Interface";
-      const result = await writeExtractedInterfaceFile(
-        targetPath,
-        newFile.content,
-        {
-          fileExists: async (path) =>
-            (await readTestFileIfExists(path)) !== null,
-          writeFile: async (path, content) => {
-            await createWorkspaceTextFileWithContent(
-              workspaceFiles,
+      const result = await writeExtractedInterfaceFile(targetPath, newFile.content, {
+        fileExists: async (path) => {
+          if (!isRequestedRootActive()) throw new Error("Workspace authority changed.");
+          const exists = (await readTestFileIfExists(path)) !== null;
+          if (!isRequestedRootActive()) throw new Error("Workspace authority changed.");
+          return exists;
+        },
+        writeFile: async (path, content) => {
+          if (!isRequestedRootActive()) throw new Error("Workspace authority changed.");
+          if (requestedIdentity && requestedOwner) {
+            if (!workspaceOwnerFiles) throw new Error("Workspace owner file gateway unavailable.");
+            const writeResult = await workspaceOwnerFiles.createTextFileWithContentForWorkspace(
+              requestedOwner.ownerKey,
               path,
               content,
             );
-          },
+            if (!isRequestedRootActive()) throw new Error("Workspace authority changed.");
+            requireSuccessfulWorkspaceWrite(writeResult);
+            return;
+          }
+          await createWorkspaceTextFileWithContent(workspaceFiles, path, content);
+          if (!isRequestedRootActive()) throw new Error("Workspace authority changed.");
         },
-      );
+      });
+
+      if (!isRequestedRootActive()) return false;
 
       if (result.status === "target-exists") {
         reportErrorForActiveWorkspaceRoot(
@@ -109,38 +146,32 @@ export function usePhpCodeActionNewFileApplication({
       }
 
       if (result.status === "write-failed") {
-        reportErrorForActiveWorkspaceRoot(
-          requestedRoot,
-          operationTitle,
-          result.error,
-        );
+        reportErrorForActiveWorkspaceRoot(requestedRoot, operationTitle, result.error);
 
         return false;
       }
 
       const parentPath = getParentPath(targetPath);
 
-      if (isRequestedRootActive()) {
-        await notifyJavaScriptTypeScriptWatchedFilesChanged([
-          {
-            changeType: "created",
-            path: targetPath,
-          },
-        ]);
-      }
-
-      if (isRequestedRootActive()) {
-        setExpandedDirectories((current) => new Set(current).add(parentPath));
-        await refreshDirectory(parentPath);
-      }
-
-      if (isRequestedRootActive()) {
-        await openFile({
-          kind: "file",
-          name: getFileName(targetPath),
+      if (!isRequestedRootActive()) return false;
+      await notifyJavaScriptTypeScriptWatchedFilesChanged([
+        {
+          changeType: "created",
           path: targetPath,
-        });
-      }
+        },
+      ]);
+      if (!isRequestedRootActive()) return false;
+
+      setExpandedDirectories((current) => new Set(current).add(parentPath));
+      await refreshDirectory(parentPath);
+      if (!isRequestedRootActive()) return false;
+
+      await openFile({
+        kind: "file",
+        name: getFileName(targetPath),
+        path: targetPath,
+      });
+      if (!isRequestedRootActive()) return false;
 
       return shouldApplyClassEditAfterWrite(result);
     },
@@ -153,7 +184,26 @@ export function usePhpCodeActionNewFileApplication({
       reportErrorForActiveWorkspaceRoot,
       setExpandedDirectories,
       workspaceFiles,
+      workspaceIdentityDescriptorRef,
+      workspaceOwnerFiles,
       workspaceRoot,
+      workspaceRuntimeOwnerClaimsRef,
+      workspaceRuntimeOwnerRef,
     ],
   );
+}
+
+function requireSuccessfulWorkspaceWrite(result: WorkspaceWriteResult): void {
+  switch (result.status) {
+    case "success":
+      return;
+    case "conflict":
+    case "partial":
+    case "error":
+      throw new Error(result.message);
+    default: {
+      const unsupported: never = result;
+      throw new Error(`Unsupported workspace write result: ${String(unsupported)}`);
+    }
+  }
 }

@@ -34,10 +34,12 @@ import {
   type AppSettings,
   type SettingsGateway,
   type WorkspaceSettings,
+  type WorkspaceSettingsIdentity,
 } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
+import { trustedDescriptor } from "./useWorkbenchController.preview/testSupport";
 
 type WorkbenchController = ReturnType<typeof useWorkbenchController>;
 
@@ -102,12 +104,23 @@ async function flushAsyncTurns(count = 12): Promise<void> {
   });
 }
 
+function workspaceSettingsRoot(identity: string | WorkspaceSettingsIdentity): string {
+  return typeof identity === "string" ? identity : identity.canonicalKey;
+}
+
 function repoStatus(rootPath: string): GitStatus {
   return {
     branch: "main",
     changes: [],
     isRepository: true,
     rootPath,
+  };
+}
+
+function registeredWorkspaceDescriptor(rootPath: string) {
+  return {
+    ...trustedDescriptor(`workspace:${rootPath}`, rootPath),
+    admissionToken: rootPath === "/workspace-b" ? 302 : 301,
   };
 }
 
@@ -320,6 +333,7 @@ function buildDependencies({
     identity: {
       getDescriptor: vi.fn(),
       openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      openPath: vi.fn(async (path) => registeredWorkspaceDescriptor(path)),
       unregister: vi.fn(async () => undefined),
     },
     detection: {
@@ -370,9 +384,9 @@ function buildDependencies({
       mode: "basic" as const,
       status: "off" as const,
     })),
-    setMode: vi.fn(async (_rootPath, mode) => ({
+    setMode: vi.fn(async (request) => ({
       message: "Updated",
-      mode,
+      mode: request.mode,
       status: "ready" as const,
     })),
   };
@@ -381,19 +395,21 @@ function buildDependencies({
     setTrust: vi.fn(async (rootPath, trusted) => ({ rootPath, trusted })),
   };
   const indexProgressGateway: IndexProgressGateway = {
-    clearWorkspaceIndex: vi.fn(async (rootPath) => ({
+    clearWorkspaceIndex: vi.fn(async (request) => ({
       databasePath: "/tmp/index.sqlite",
-      rootPath,
+      rootPath: request.rootPath,
       status: "cleared" as const,
     })),
-    startInitialMetadataScan: vi.fn(async (rootPath) => ({
+    startInitialMetadataScan: vi.fn(async (request) => ({
       databasePath: "/tmp/index.sqlite",
-      rootPath,
+      operationGeneration: request.operationGeneration,
+      rootPath: request.rootPath,
       status: "started" as const,
     })),
-    startReindex: vi.fn(async (rootPath) => ({
+    startReindex: vi.fn(async (request) => ({
       databasePath: "/tmp/index.sqlite",
-      rootPath,
+      operationGeneration: request.operationGeneration,
+      rootPath: request.rootPath,
       status: "started" as const,
     })),
     subscribeIndexProgress: vi.fn(async () => () => undefined),
@@ -751,7 +767,8 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
         workspaceTabs: ["/workspace-a", "/workspace-b"],
       })),
       loadWorkspaceSettings: vi.fn(
-        async (rootPath: string) => settingsByRoot[rootPath] ?? defaultWorkspaceSettings(),
+        async (identity) =>
+          settingsByRoot[workspaceSettingsRoot(identity)] ?? defaultWorkspaceSettings(),
       ),
       saveAppSettings: vi.fn(async () => undefined),
       saveWorkspaceSettings: vi.fn(async () => undefined),

@@ -45,14 +45,19 @@ import {
   type ProjectSymbolSearchResult,
   range,
   readyJavaScriptTypeScriptPlan,
+  indexRequest,
   runCommand,
   serializeBreakpoints,
+  setupRegisteredWorkbenchControllerTestHarness,
+  singleRegisteredIdentityFixture,
+  smartModeRequest,
   type SettingsGateway,
-  setupWorkbenchControllerTestHarness,
   trustedDescriptor,
   vi,
   waitForReact,
   withWorkspaceIdentityLease,
+  workspaceSettingsIdentity,
+  workspaceSettingsKey,
   type WorkbenchWorkspaceGateways,
   type WorkspaceDescriptor,
   type WorkspaceRuntimeLifecycleGateway,
@@ -61,26 +66,7 @@ import {
 } from "./testSupport";
 
 describe("useWorkbenchController workspace identity, editor groups, bookmarks, and debugger wiring", () => {
-  const { getRoot, renderController } = setupWorkbenchControllerTestHarness();
-  const registeredIdentityGateway = (
-    descriptor: ReturnType<typeof trustedDescriptor>,
-    unregister: (workspaceId: string) => Promise<void> = vi.fn(async () => undefined),
-  ): WorkbenchWorkspaceGateways["identity"] => ({
-    getDescriptor: vi.fn(async (workspaceId) => {
-      if (workspaceId !== descriptor.workspaceId) throw new Error("Unexpected workspace identity");
-      return {
-        ...descriptor,
-        canonicalRootPath: descriptor.canonicalRoot,
-        selectedRootPath: descriptor.selectedPath,
-      };
-    }),
-    openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-    openPath: vi.fn(async (path) => {
-      if (path !== descriptor.selectedPath) throw new Error(`Unexpected workspace path: ${path}`);
-      return descriptor;
-    }),
-    unregister,
-  });
+  const { getRoot, renderController } = setupRegisteredWorkbenchControllerTestHarness();
   it("fences real PHP class fallback navigation by owner at the same root", async () => {
     const sharedRoot = "/selected/navigation-owner";
     const sourcePath = `${sharedRoot}/src/Source.php`;
@@ -449,8 +435,7 @@ MissingClass::class;
       descriptor.selectedPath,
     );
     expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
-      descriptor.selectedPath,
-      "basic",
+      smartModeRequest(descriptor, "basic"),
     );
 
     await act(async () => {
@@ -491,7 +476,7 @@ MissingClass::class;
         sessionId: 303,
       },
       workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceIdentityGateway: registeredIdentityGateway(descriptor),
+      workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor),
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         intelligenceMode: "fullSmart",
@@ -819,7 +804,7 @@ MissingClass::class;
         sessionId: 304,
       },
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
-      workspaceIdentityGateway: registeredIdentityGateway(descriptor),
+      workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor),
     });
 
     let openPromise: Promise<unknown> | null = null;
@@ -2033,7 +2018,7 @@ MissingClass::class;
     };
     const { dependencies, getWorkbench } = renderController({
       settingsGateway,
-      workspaceIdentityGateway: registeredIdentityGateway(descriptor, unregister),
+      workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor, unregister),
     });
 
     const staleWorkbench = getWorkbench();
@@ -2143,7 +2128,7 @@ MissingClass::class;
     const unregister = vi.fn(async () => undefined);
     const { dependencies, getWorkbench } = renderController({
       readTextFile: vi.fn(async () => "const clean = true;\n"),
-      workspaceIdentityGateway: registeredIdentityGateway(descriptor, unregister),
+      workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor, unregister),
     });
 
     await act(async () => {
@@ -2196,7 +2181,7 @@ MissingClass::class;
     };
     const unregister = vi.fn(async () => undefined);
     const { dependencies, getWorkbench } = renderController({
-      workspaceIdentityGateway: registeredIdentityGateway(descriptor, unregister),
+      workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor, unregister),
     });
     await act(async () => {
       await getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
@@ -2245,7 +2230,7 @@ MissingClass::class;
       .mockRejectedValueOnce(new Error("transient unregister failure"))
       .mockResolvedValue(undefined);
     const { dependencies, getWorkbench } = renderController({
-      workspaceIdentityGateway: registeredIdentityGateway(descriptor, unregister),
+      workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor, unregister),
     });
 
     await act(async () => {
@@ -2284,7 +2269,7 @@ MissingClass::class;
       .mockRejectedValueOnce(new Error("transient unregister failure"))
       .mockResolvedValue(undefined);
     const { getWorkbench } = renderController({
-      workspaceIdentityGateway: registeredIdentityGateway(descriptor, unregister),
+      workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor, unregister),
     });
 
     await act(async () => {
@@ -2522,7 +2507,7 @@ MissingClass::class;
     };
     const { dependencies, getWorkbench } = renderController({
       runtimeStatus: runningStatus,
-      workspaceIdentityGateway: registeredIdentityGateway(descriptor),
+      workspaceIdentityGateway: singleRegisteredIdentityFixture(descriptor),
     });
 
     await act(async () => {
@@ -2724,6 +2709,7 @@ MissingClass::class;
   });
   it("opens, caches, and restores separate trusted descriptors across project tabs", async () => {
     const descriptorA = {
+      admissionToken: 1,
       workspaceId: "ws-a",
       selectedPath: "/link/a",
       canonicalRoot: "/real/a",
@@ -2732,6 +2718,7 @@ MissingClass::class;
       policy: { caseSensitive: true as const, unicodeNormalization: "none" as const },
     };
     const descriptorB = {
+      admissionToken: 2,
       workspaceId: "ws-b",
       selectedPath: "/workspace-b",
       canonicalRoot: "/workspace-b",
@@ -2768,12 +2755,10 @@ MissingClass::class;
       descriptorB.selectedPath,
     ]);
     expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
-      descriptorA.selectedPath,
-      "basic",
+      smartModeRequest(descriptorA, "basic"),
     );
     expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
-      descriptorB.selectedPath,
-      "basic",
+      smartModeRequest(descriptorB, "basic"),
     );
 
     await act(async () => {
@@ -2786,6 +2771,7 @@ MissingClass::class;
   it("releases an unadopted descriptor when workspace opening throws", async () => {
     const unregister = vi.fn(async () => undefined);
     const descriptor = {
+      admissionToken: 1,
       workspaceId: "ws-failed",
       selectedPath: "/failed",
       canonicalRoot: "/failed",
@@ -3386,7 +3372,7 @@ MissingClass::class;
         debugGateway: debugGateway.gateway,
         readTextFile,
         workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
-        workspaceIdentityGateway: registeredIdentityGateway(debugWorkspaceIdentity),
+        workspaceIdentityGateway: singleRegisteredIdentityFixture(debugWorkspaceIdentity),
       });
       await flushAsyncTurns();
       await admitDebugWorkspace(getWorkbench);
@@ -3463,7 +3449,7 @@ MissingClass::class;
         debugGateway: debugGateway.gateway,
         readTextFile,
         workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
-        workspaceIdentityGateway: registeredIdentityGateway(debugWorkspaceIdentity),
+        workspaceIdentityGateway: singleRegisteredIdentityFixture(debugWorkspaceIdentity),
       });
       await flushAsyncTurns();
       await admitDebugWorkspace(getWorkbench);
@@ -3487,7 +3473,7 @@ MissingClass::class;
         appSettings: workspaceAppSettings(),
         debugGateway: debugGateway.gateway,
         workspaceDescriptor: phpWorkspaceDescriptor(),
-        workspaceIdentityGateway: registeredIdentityGateway(debugWorkspaceIdentity),
+        workspaceIdentityGateway: singleRegisteredIdentityFixture(debugWorkspaceIdentity),
       });
       await flushAsyncTurns();
       await admitDebugWorkspace(getWorkbench);
@@ -3512,7 +3498,7 @@ MissingClass::class;
         appSettings: workspaceAppSettings(),
         debugGateway: debugGateway.gateway,
         workspaceDescriptor: phpWorkspaceDescriptor(),
-        workspaceIdentityGateway: registeredIdentityGateway(debugWorkspaceIdentity),
+        workspaceIdentityGateway: singleRegisteredIdentityFixture(debugWorkspaceIdentity),
       });
       await flushAsyncTurns();
       await admitDebugWorkspace(getWorkbench);
@@ -3651,7 +3637,7 @@ MissingClass::class;
         debugGateway: debugGateway.gateway,
         readTextFile,
         workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
-        workspaceIdentityGateway: registeredIdentityGateway(debugWorkspaceIdentity),
+        workspaceIdentityGateway: singleRegisteredIdentityFixture(debugWorkspaceIdentity),
       });
       await flushAsyncTurns();
       await admitDebugWorkspace(getWorkbench);
@@ -3730,7 +3716,7 @@ MissingClass::class;
 });
 
 describe("useWorkbenchController workspace lifecycle, language runtimes, and save coordination", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupRegisteredWorkbenchControllerTestHarness();
 
   it("switches between persisted project tabs without stopping another project runtime", async () => {
     const { dependencies, getWorkbench } = renderController({
@@ -4499,7 +4485,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
           }) satisfies LanguageServerPlan,
       ),
     };
-    const { getWorkbench } = renderController({
+    const { dependencies, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       languageServerGateway,
       phpToolGateway,
@@ -4518,6 +4504,13 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
 
     // Enabling IDE mode runs the previously deferred PHP probe.
     expect(getWorkbench().intelligenceMode).toBe("fullSmart");
+    const descriptor = trustedDescriptor("workspace", "/workspace");
+    expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
+      smartModeRequest(descriptor, "fullSmart"),
+    );
+    expect(dependencies.indexProgressGateway.startInitialMetadataScan).toHaveBeenCalledWith(
+      indexRequest(descriptor, 13),
+    );
     expect(phpToolGateway.detectPhpTools).toHaveBeenCalledWith("/workspace");
     expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
       "/workspace",
@@ -4810,8 +4803,8 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     };
     const settingsGateway: SettingsGateway = {
       loadAppSettings: vi.fn(async () => appSettings),
-      loadWorkspaceSettings: vi.fn(async (path: string) => {
-        if (path === "/workspace-a") {
+      loadWorkspaceSettings: vi.fn(async (address) => {
+        if (workspaceSettingsKey(address) === "/workspace-a") {
           return workspaceASettingsLoad.promise;
         }
 
@@ -4825,14 +4818,18 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       settingsGateway,
     });
     await waitForReact(() => {
-      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith("/workspace-a");
+      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith(
+        workspaceSettingsIdentity("/workspace-a"),
+      );
     });
 
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");
     });
     await waitForReact(() => {
-      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith("/workspace-b");
+      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith(
+        workspaceSettingsIdentity("/workspace-b"),
+      );
     });
     await flushAsyncTurns();
 
@@ -4866,12 +4863,14 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     };
     const settingsGateway: SettingsGateway = {
       loadAppSettings: vi.fn(async () => appSettings),
-      loadWorkspaceSettings: vi.fn(async (path: string) =>
-        path === "/workspace-a" ? persistedWorkspaceSettings : defaultWorkspaceSettings(),
+      loadWorkspaceSettings: vi.fn(async (address) =>
+        workspaceSettingsKey(address) === "/workspace-a"
+          ? persistedWorkspaceSettings
+          : defaultWorkspaceSettings(),
       ),
       saveAppSettings: vi.fn(async () => undefined),
-      saveWorkspaceSettings: vi.fn(async (path, settings) => {
-        if (path !== "/workspace-a") {
+      saveWorkspaceSettings: vi.fn(async (address, settings) => {
+        if (workspaceSettingsKey(address) !== "/workspace-a") {
           return;
         }
 
@@ -4879,8 +4878,8 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         persistedWorkspaceSettings = settings;
       }),
     };
-    const { getWorkbench } = renderController({ appSettings, settingsGateway });
-    await flushAsyncTurns(24);
+    const { drainAdmissions, getWorkbench } = renderController({ appSettings, settingsGateway });
+    await drainAdmissions();
 
     let savePromise: Promise<void> = Promise.resolve();
     await act(async () => {
@@ -4896,7 +4895,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     });
     await waitForReact(() => {
       expect(settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
-        "/workspace-a",
+        workspaceSettingsIdentity("/workspace-a"),
         expect.objectContaining({ javaScriptTypeScriptValidation: true }),
       );
     });
@@ -4906,7 +4905,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     });
     const workspaceALoadsBeforeReturn = vi
       .mocked(settingsGateway.loadWorkspaceSettings)
-      .mock.calls.filter(([path]) => path === "/workspace-a").length;
+      .mock.calls.filter(([address]) => workspaceSettingsKey(address) === "/workspace-a").length;
 
     let returnToWorkspaceA: Promise<void> = Promise.resolve();
     act(() => {
@@ -4917,7 +4916,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(
       vi
         .mocked(settingsGateway.loadWorkspaceSettings)
-        .mock.calls.filter(([path]) => path === "/workspace-a"),
+        .mock.calls.filter(([address]) => workspaceSettingsKey(address) === "/workspace-a"),
     ).toHaveLength(workspaceALoadsBeforeReturn);
 
     await act(async () => {
@@ -4938,8 +4937,8 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     };
     const settingsGateway: SettingsGateway = {
       loadAppSettings: vi.fn(async () => appSettings),
-      loadWorkspaceSettings: vi.fn(async (path: string) => {
-        if (path === "/workspace") {
+      loadWorkspaceSettings: vi.fn(async (address) => {
+        if (workspaceSettingsKey(address) === "/workspace") {
           return workspaceSettingsLoad.promise;
         }
 
@@ -4955,13 +4954,16 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         rootPath: path,
       })),
     };
-    const { getWorkbench } = renderController({
+    const { admitWorkspaceRoot, getWorkbench } = renderController({
       appSettings,
       settingsGateway,
       workspaceDetectionGateway,
     });
+    void admitWorkspaceRoot("/workspace");
     await waitForReact(() => {
-      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith("/workspace");
+      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith(
+        workspaceSettingsIdentity("/workspace"),
+      );
     });
 
     await act(async () => {
@@ -4999,10 +5001,11 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       }),
       saveWorkspaceSettings: vi.fn(async () => undefined),
     };
-    const { getWorkbench } = renderController({
+    const { admitWorkspaceRoot, getWorkbench } = renderController({
       appSettings,
       settingsGateway,
     });
+    void admitWorkspaceRoot("/workspace-a");
     await waitForReact(() => {
       expect(settingsGateway.saveAppSettings).toHaveBeenCalledWith(
         expect.objectContaining({ recentWorkspacePath: "/workspace-a" }),
@@ -5039,7 +5042,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
 
       return [];
     });
-    const { getWorkbench } = renderController({
+    const { admitWorkspaceRoot, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace-a",
@@ -5047,6 +5050,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       },
       readDirectory,
     });
+    void admitWorkspaceRoot("/workspace-a");
     await waitForReact(() => {
       expect(readDirectory).toHaveBeenCalledWith("/workspace-a");
     });
@@ -5092,7 +5096,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
         trusted,
       })),
     };
-    const { getWorkbench } = renderController({
+    const { admitWorkspaceRoot, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace-a",
@@ -5101,6 +5105,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       readDirectory,
       workspaceTrustGateway,
     });
+    void admitWorkspaceRoot("/workspace-a");
     await waitForReact(() => {
       expect(readDirectory).toHaveBeenCalledWith("/workspace-a");
     });

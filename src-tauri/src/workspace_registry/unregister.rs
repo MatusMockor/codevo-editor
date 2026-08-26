@@ -88,7 +88,7 @@ impl WorkspaceRegistry {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let _operation = self.lock_operations()?;
+            let operation = self.lock_operations()?;
             if self.has_runtime_start(workspace_id)? {
                 return Err(io::Error::new(
                     io::ErrorKind::WouldBlock,
@@ -110,9 +110,16 @@ impl WorkspaceRegistry {
                 .fetch_add(1, Ordering::Relaxed)
                 .wrapping_add(1);
             workspace.unregister_generation = Some(generation);
+            let descriptor = workspace.descriptor.clone();
+            let transition = self
+                .registration_operations
+                .begin_transition(workspace_id)?;
+            drop(workspaces);
+            drop(operation);
+            transition.wait()?;
             Ok(WorkspaceUnregisterReservation {
                 registry: self,
-                descriptor: workspace.descriptor.clone(),
+                descriptor,
                 generation,
                 cleanup_started: false,
                 settled: false,
@@ -186,6 +193,10 @@ impl WorkspaceRegistry {
             return self.finalize_unregister(reservation);
         }
         workspace.unregister_generation = None;
+        self.registration_operations.replace_latest(
+            &reservation.descriptor.workspace_id,
+            workspace.latest_admission_token,
+        )?;
         let registered_paths = workspace.registered_paths.clone();
         let workspace_id = workspace.descriptor.workspace_id.clone();
         let mut path_owners = self.path_owners.lock().map_err(lock_error)?;

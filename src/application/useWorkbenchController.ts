@@ -29,8 +29,6 @@ import {
 } from "./workbenchController/workspaceRuntimePolicy";
 import {
   isLanguageServerActiveForWorkspace,
-  isLanguageServerSessionActiveForOwner,
-  isLanguageServerSessionCurrentForOwnerOrLegacy,
   isRunningLanguageServerForWorkspace,
 } from "./workbenchController/languageServerStatusPolicy";
 export {
@@ -60,6 +58,21 @@ import {
   useWorkbenchTaskDebugCoordinator,
   useWorkbenchTaskDebugNavigationCoordinator,
 } from "./workbenchController/useWorkbenchTaskDebugCoordinator";
+import { useWorkbenchLanguageDocumentSyncCoordinator } from "./workbenchController/useWorkbenchLanguageDocumentSyncCoordinator";
+import {
+  useWorkbenchJavaScriptTypeScriptRuntimeSurfacesCoordinator,
+  useWorkbenchLanguageRuntimeOwnershipCoordinator,
+} from "./workbenchController/useWorkbenchLanguageServerRuntimeCoordinator";
+import {
+  beginWorkbenchSmartModeIntent,
+  useWorkbenchLanguageDiagnosticsCoordinator,
+  useWorkbenchLanguageRuntimeChannelRefs,
+  useWorkbenchLanguageRuntimeEffects,
+  useWorkbenchLanguageRuntimeOwnerRefs,
+  useWorkbenchSmartModeCoordinator,
+  useWorkbenchStaticAnalysisCoordinator,
+  type WorkbenchSmartModeIntentState,
+} from "./workbenchController/useWorkbenchLanguageRuntimeCoordinator";
 import {
   useManagedLanguageServerInstallCommands,
   useManagedLanguageServerInstallSubscriptions,
@@ -96,10 +109,8 @@ import {
   workspaceIdentityAliasPaths,
   workspaceTabsWithPath,
 } from "./documentSessionAuthorityLifecycleCoordinator";
-import { useChangedDocumentSyncScheduling } from "./useChangedDocumentSyncScheduling";
 import { useFloatingSurfaces } from "./useFloatingSurfaces";
 import { gitChangeForDiffDocumentPath, isGitDiffDocumentPath } from "./useGitDiffWorkspace";
-import { runEslintDisableAtCursor } from "./workbenchEslintDisableCommand";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
 import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
 import { useWorkbenchCommandContext } from "./useWorkbenchCommandContext";
@@ -217,54 +228,32 @@ import {
   useWorkbenchImplementationChooserState,
   useWorkbenchLanguageNavigation,
 } from "./useWorkbenchLanguageNavigation";
-import { useDocumentSync } from "./useDocumentSync";
 import { optionalEditorJavaScriptTypeScriptIncrementalSyncFacade } from "./editorJavaScriptTypeScriptIncrementalSyncFacade";
-import {
-  useJavaScriptTypeScriptIncrementalSyncComposition,
-  useJavaScriptTypeScriptIncrementalSyncOwnerRef,
-} from "./useJavaScriptTypeScriptIncrementalSyncComposition";
-import { usePhpLanguageServerIndexWarmup } from "./usePhpLanguageServerIndexWarmup";
-import { configureReplacedGitDiffDocumentClose } from "./configureReplacedGitDiffDocumentClose";
+import { useJavaScriptTypeScriptIncrementalSyncOwnerRef } from "./useJavaScriptTypeScriptIncrementalSyncComposition";
 import { useCommitBailoutState } from "./useCommitBailoutState";
 import {
   EMPTY_EDITOR_VIEW_STATES,
   EMPTY_EDITOR_VIEW_STATES_BY_GROUP,
-  EMPTY_ESLINT_DIAGNOSTICS,
-  EMPTY_ESLINT_FIXES,
-  EMPTY_PHPSTAN_DIAGNOSTICS,
 } from "./workbenchEmptyProjections";
-import { useDiagnostics } from "./useDiagnostics";
 import {
   createWorkspaceSettingsByRootSnapshot,
   type WorkspaceSettingsByRootSnapshot,
 } from "./workspaceSettingsForRoot";
 import { createWorkspaceSettingsSaveCoordinator } from "./workspaceSettingsSaveCoordinator";
-import {
-  type LanguageServerDiagnosticsRuntimeKind,
-  useLanguageServerDiagnosticsSubscriptions,
-} from "./useLanguageServerDiagnosticsSubscriptions";
-import { useLanguageServerRuntimeLifecycle } from "./useLanguageServerRuntimeLifecycle";
+import { type LanguageServerDiagnosticsRuntimeKind } from "./useLanguageServerDiagnosticsSubscriptions";
 import { WorkspaceRuntimeOwnerClaimRegistry } from "./workspaceRuntimeOwnerClaimRegistry";
-import { useJavaScriptTypeScriptLanguageServerSettings } from "./useJavaScriptTypeScriptLanguageServerSettings";
 import { useWorkspaceEditFileOperations } from "./useWorkspaceEditFileOperations";
 import { useNavigationHistory, useRecentNavigation } from "./useNavigationHistory";
 import { useLanguageServerDocumentSyncState } from "./useLanguageServerDocumentSyncState";
 import { useWorkbenchFrameworkIntelligenceDependencies } from "./useWorkbenchFrameworkIntelligenceDependencies";
 import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
-import {
-  runEslintFixAllInActiveFile,
-  runEslintWorkspaceAnalysis,
-  runPhpstanIgnoreAtCursor,
-  runPhpstanWorkspaceAnalysis,
-} from "./useWorkbenchCodeQualityDiagnostics";
 import { createPhpFrameworkFileChangeInvalidator } from "./phpFrameworkFileChangeInvalidationRegistry";
 import { composePhpFrameworkFileChangeInvalidationContributions } from "./phpFrameworkFileChangeInvalidationComposition";
 import { usePhpFrameworkResolution } from "./usePhpFrameworkResolution";
 import { composePhpFrameworkActiveDocumentDiagnosticsContributions } from "./phpFrameworkActiveDocumentDiagnosticsComposition";
 import { usePhpFrameworkActiveDocumentDiagnostics } from "./usePhpFrameworkActiveDocumentDiagnostics";
 import { usePhpOutline } from "./usePhpOutline";
-import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
 import { synthesizePhpTypedReceiverSource } from "./phpTypedReceiverSource";
 import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfaceCommand";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
@@ -307,12 +296,7 @@ import {
   type LanguageServerDiagnosticEvent,
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
-import {
-  animationFrameDiagnosticsFlushScheduler,
-  createDiagnosticsCoalescer,
-  type DiagnosticsCoalescer,
-  type DiagnosticsFlushScheduler,
-} from "../domain/diagnosticsCoalescer";
+import { createDiagnosticsCoalescer } from "../domain/diagnosticsCoalescer";
 import { documentNeedsAttention } from "../domain/externalFileConflict";
 import {
   isLanguageServerDocument,
@@ -336,15 +320,8 @@ import {
   phpstanDiagnosticsGateway,
   pintGateway,
 } from "./workbenchDefaultGateways";
-import {
-  replaceEslintDiagnosticsForRoot,
-  type EslintDiagnosticsByRoot,
-  type EslintFix,
-} from "../domain/eslintDiagnostics";
-import {
-  replacePhpstanDiagnosticsForRoot,
-  type PhpstanDiagnosticsByRoot,
-} from "../domain/phpstanDiagnostics";
+import { type EslintDiagnosticsByRoot, type EslintFix } from "../domain/eslintDiagnostics";
+import { type PhpstanDiagnosticsByRoot } from "../domain/phpstanDiagnostics";
 import {
   isMarkdownDocument,
   markdownPreviewPath,
@@ -369,11 +346,7 @@ import {
   createLegacyEditorSessionOwnerKey,
   type EditorSessionOwnerKey,
 } from "../domain/editorSessionOwnerKey";
-import {
-  normalizedWorkspaceRootKey,
-  workspaceDisplayName,
-  workspaceRootKeysEqual,
-} from "../domain/workspaceRootKey";
+import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   type PhpFileOutline,
   type PhpFileOutlineGateway,
@@ -435,11 +408,7 @@ import {
 } from "../domain/workspace";
 import { createJsTestRerunLastRunCommands } from "./workbenchDebugControllerOptions";
 import { documentOffsetAtEditorPosition, identifierAtEditorPosition } from "./editorPositionText";
-import { isCleanWritableDocument } from "./editorDocumentState";
-import {
-  useCursorCommandAvailability,
-  useResolvedEditorCursorStore,
-} from "./useCursorCommandAvailability";
+import { useResolvedEditorCursorStore } from "./useCursorCommandAvailability";
 
 interface OpenWorkspacePathOptions {
   cachePreviousWorkspace?: boolean;
@@ -499,6 +468,8 @@ export function useWorkbenchController(
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [workspaceIdentityDescriptor, setWorkspaceIdentityDescriptor] =
     useState<WorkspaceIdentityDescriptor | null>(null);
+  const workspaceIdentityDescriptorRef = useRef(workspaceIdentityDescriptor);
+  workspaceIdentityDescriptorRef.current = workspaceIdentityDescriptor;
   const {
     currentEditorSessionOwnerKeyRef,
     editorSessionOwnerKey,
@@ -817,12 +788,15 @@ export function useWorkbenchController(
     Record<
       string,
       {
+        generation: number | null | undefined;
         owner: WorkspaceRuntimeOwner;
         promise: Promise<void>;
       }
     >
   >({});
   const intelligenceModeRef = useRef<IntelligenceMode>("basic");
+  const smartModeRequestGenerationRef = useRef(0);
+  const smartModeRequestIntentRef = useRef<WorkbenchSmartModeIntentState | null>(null);
   const {
     documentVersionsRef,
     documentVersionsByUriRef,
@@ -863,39 +837,25 @@ export function useWorkbenchController(
     resetJavaScriptTypeScriptLanguageServerDocuments,
     getPhpDocumentSyncVersion,
   } = useLanguageServerDocumentSyncState();
-  const languageServerRuntimeStatusByRootRef = useRef<Record<string, LanguageServerRuntimeStatus>>(
-    {},
-  );
-  const languageServerDiagnosticsByRootRef = useRef<
-    Record<string, Record<string, LanguageServerDiagnostic[]>>
-  >({});
+  const { languageServerDiagnosticsByRootRef, languageServerRuntimeStatusByRootRef } =
+    useWorkbenchLanguageRuntimeOwnerRefs();
   const {
     forgetExternallyRemovedDocumentPath,
     isExternallyRemovedDocumentPath,
     markExternallyRemovedDocumentPath,
     tombstonesByPathRef: externallyRemovedDocumentRootByPathRef,
   } = useExternallyRemovedDocumentTombstones();
-  // Coalescers buffer incoming publishDiagnostics events (per root/uri) and
-  // replay them through the apply* sinks once per scheduled frame, collapsing an
-  // indexing burst of N un-batched events into a single batched application.
-  // Held in refs so workspace-switch / close paths can drop a root's buffer
-  // before it flushes, keeping diagnostics isolated per workspace tab.
-  const languageServerDiagnosticsCoalescerRef = useRef<DiagnosticsCoalescer | null>(null);
-  const javaScriptTypeScriptDiagnosticsCoalescerRef = useRef<DiagnosticsCoalescer | null>(null);
-  const diagnosticsFlushSchedulerRef = useRef<DiagnosticsFlushScheduler>(
-    options.diagnosticsFlushScheduler ?? animationFrameDiagnosticsFlushScheduler(),
-  );
-  const javaScriptTypeScriptRuntimeStatusByRootRef = useRef<
-    Record<string, LanguageServerRuntimeStatus>
-  >({});
-  const javaScriptTypeScriptDiagnosticsByRootRef = useRef<
-    Record<string, Record<string, LanguageServerDiagnostic[]>>
-  >({});
-  const languageServerRuntimeStatusRef = useRef<LanguageServerRuntimeStatus | null>(null);
-  const languageServerRuntimeStatusRootRef = useRef<string | null>(null);
-  const javaScriptTypeScriptLanguageServerRuntimeStatusRef =
-    useRef<LanguageServerRuntimeStatus | null>(null);
-  const javaScriptTypeScriptLanguageServerRuntimeStatusRootRef = useRef<string | null>(null);
+  const {
+    diagnosticsFlushSchedulerRef,
+    javaScriptTypeScriptDiagnosticsByRootRef,
+    javaScriptTypeScriptDiagnosticsCoalescerRef,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRef,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
+    javaScriptTypeScriptRuntimeStatusByRootRef,
+    languageServerDiagnosticsCoalescerRef,
+    languageServerRuntimeStatusRef,
+    languageServerRuntimeStatusRootRef,
+  } = useWorkbenchLanguageRuntimeChannelRefs(options.diagnosticsFlushScheduler);
   const phpClassSourcePathCacheRef = useRef<Record<string, string[]>>({});
   const phpFrameworkBindingCacheRef = useRef<Record<string, string | null>>({});
   const phpLocalDiagnosticValidationGenerationRef = useRef(0);
@@ -916,6 +876,13 @@ export function useWorkbenchController(
   const resetPhpFrameworkCaches = useCallback(() => {
     resetPhpFrameworkCachesRef.current();
   }, []);
+  const workspaceRuntimeOwnerGenerationForIndexRef = useRef<
+    (ownerKey: string) => number | null | undefined
+  >(() => null);
+  const resolveWorkspaceRuntimeOwnerGenerationForIndex = useCallback(
+    (ownerKey: string) => workspaceRuntimeOwnerGenerationForIndexRef.current(ownerKey),
+    [],
+  );
   const {
     clearIndexWorkspaceState,
     clearWorkspaceIndex,
@@ -938,6 +905,10 @@ export function useWorkbenchController(
     setMessage,
     setNotices,
     workspaceRoot,
+    workspaceIdentityDescriptorRef,
+    workspaceRuntimeOwner,
+    workspaceRuntimeOwnerGeneration: resolveWorkspaceRuntimeOwnerGenerationForIndex,
+    workspaceRuntimeOwnerRef,
   });
   const artisanMakePaletteOpen = Boolean(
     workspaceRoot &&
@@ -1061,6 +1032,8 @@ export function useWorkbenchController(
     [workspaceGateways.identity, workspaceSettingsByRoot],
   );
   const workspaceRuntimeOwnerClaimsRef = useRef(new WorkspaceRuntimeOwnerClaimRegistry());
+  workspaceRuntimeOwnerGenerationForIndexRef.current = (ownerKey) =>
+    workspaceRuntimeOwnerClaimsRef.current.generationFor(ownerKey);
   const releaseWorkspaceTrustOwner = useCallback((ownerKey: string) => {
     workspaceTrustIntentCoordinatorRef.current.release(ownerKey);
     delete workspaceTrustRevisionByOwnerRef.current[ownerKey];
@@ -1096,7 +1069,7 @@ export function useWorkbenchController(
         javaScriptTypeScriptRuntimeStatusByRootRef.current,
       );
     },
-    [],
+    [javaScriptTypeScriptRuntimeStatusByRootRef, languageServerRuntimeStatusByRootRef],
   );
   const {
     flushDeferredCleanup: flushDeferredWorkspaceIdentityCleanup,
@@ -1279,7 +1252,12 @@ export function useWorkbenchController(
   useEffect(() => {
     languageServerRuntimeStatusRef.current = languageServerRuntimeStatus;
     languageServerRuntimeStatusRootRef.current = languageServerRuntimeStatusRoot;
-  }, [languageServerRuntimeStatus, languageServerRuntimeStatusRoot]);
+  }, [
+    languageServerRuntimeStatus,
+    languageServerRuntimeStatusRef,
+    languageServerRuntimeStatusRoot,
+    languageServerRuntimeStatusRootRef,
+  ]);
 
   useEffect(() => {
     javaScriptTypeScriptLanguageServerRuntimeStatusRef.current =
@@ -1288,7 +1266,9 @@ export function useWorkbenchController(
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot;
   }, [
     javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRef,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
   ]);
 
   useEffect(() => {
@@ -1666,19 +1646,6 @@ export function useWorkbenchController(
     persistWorkspaceSettings,
   });
 
-  const isLanguageServerSessionCurrentForRoot = useCallback(
-    (rootPath: string, sessionId: number) =>
-      isLanguageServerSessionCurrentForOwnerOrLegacy(
-        languageServerRuntimeStatusByRootRef.current,
-        workspaceRuntimeOwnerByTabRef.current[rootPath],
-        languageServerRuntimeStatusRef.current,
-        languageServerRuntimeStatusRootRef.current,
-        rootPath,
-        sessionId,
-      ),
-    [],
-  );
-
   const {
     replaceEslintDiagnostics,
     clearEslintDiagnosticsForRoot,
@@ -1703,310 +1670,90 @@ export function useWorkbenchController(
     applyLanguageServerDiagnosticsBatch,
     applyJavaScriptTypeScriptLanguageServerDiagnostics,
     applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
-  } = useDiagnostics({
-    currentWorkspaceRootRef,
-    activeDocumentRef,
-    documentsRef,
-    activeDocument,
-    appSettingsRef,
-    workspaceSettingsForRoot: resolveWorkspaceSettingsForDiagnosticsRoot,
-    setLanguageServerDiagnosticsByPath,
-    setJavaScriptTypeScriptDiagnosticsByPath,
-    setPhpLocalDiagnosticsByPath,
-    setFrameworkDiagnosticsByPath,
-    setNotices,
-    languageServerDiagnosticsByRootRef,
-    javaScriptTypeScriptDiagnosticsByRootRef,
-    languageServerDiagnosticsCoalescerRef,
-    javaScriptTypeScriptDiagnosticsCoalescerRef,
-    lastAppliedDiagnosticVersionByUriRef,
-    javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
-    languageServerRuntimeStatusByRootRef,
-    javaScriptTypeScriptRuntimeStatusByRootRef,
-    contextualDiagnosticsFilterRef,
-    phpLocalDiagnosticValidationGenerationRef,
-    phpLocalDiagnosticRetryTimersRef,
-    phpLocalSyntaxDiagnosticsGateway,
-    isExternallyRemovedDocumentPath,
     isLanguageServerSessionCurrentForRoot,
-    onPhpLanguageServerDiagnosticsCommitted,
-    reportLanguageServerErrorForActiveWorkspaceRoot,
+  } = useWorkbenchLanguageDiagnosticsCoordinator({
+    diagnostics: {
+      currentWorkspaceRootRef,
+      activeDocumentRef,
+      documentsRef,
+      activeDocument,
+      appSettingsRef,
+      workspaceSettingsForRoot: resolveWorkspaceSettingsForDiagnosticsRoot,
+      setLanguageServerDiagnosticsByPath,
+      setJavaScriptTypeScriptDiagnosticsByPath,
+      setPhpLocalDiagnosticsByPath,
+      setFrameworkDiagnosticsByPath,
+      setNotices,
+      languageServerDiagnosticsByRootRef,
+      javaScriptTypeScriptDiagnosticsByRootRef,
+      languageServerDiagnosticsCoalescerRef,
+      javaScriptTypeScriptDiagnosticsCoalescerRef,
+      lastAppliedDiagnosticVersionByUriRef,
+      javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
+      languageServerRuntimeStatusByRootRef,
+      javaScriptTypeScriptRuntimeStatusByRootRef,
+      contextualDiagnosticsFilterRef,
+      phpLocalDiagnosticValidationGenerationRef,
+      phpLocalDiagnosticRetryTimersRef,
+      phpLocalSyntaxDiagnosticsGateway,
+      isExternallyRemovedDocumentPath,
+      onPhpLanguageServerDiagnosticsCommitted,
+      reportLanguageServerErrorForActiveWorkspaceRoot,
+    },
+    languageServerRuntimeStatusByRootRef,
+    languageServerRuntimeStatusRef,
+    languageServerRuntimeStatusRootRef,
+    workspaceRuntimeOwnerByTabRef,
   });
 
-  const runEslintAnalysisForRoot = useCallback(
-    async (rootPath: string, showStartMessage: boolean) => {
-      await runEslintWorkspaceAnalysis({
-        rootPath,
-        binaryPath: workspaceSettingsRef.current.eslintPath,
-        currentWorkspaceRootRef,
-        inFlightRef: eslintAnalysisInFlightRef,
-        gateway: eslintDiagnosticsGateway,
-        replaceEslintDiagnostics,
-        replaceEslintFixes: (analysedRoot, result) => {
-          const fixesByPath: Record<string, EslintFix[]> = {};
-
-          if (result.status === "ok") {
-            result.diagnostics.forEach((diagnostic) => {
-              if (!diagnostic.fix) {
-                return;
-              }
-
-              const path = joinWorkspacePath(analysedRoot, diagnostic.filePath);
-              fixesByPath[path] = [...(fixesByPath[path] ?? []), diagnostic.fix];
-            });
-          }
-
-          setEslintFixesByRoot((current) => ({
-            ...current,
-            [analysedRoot]: fixesByPath,
-          }));
-        },
-        replaceEslintRetainedDiagnostics: (analysedRoot, result) => {
-          setEslintDiagnosticsByRoot((current) =>
-            replaceEslintDiagnosticsForRoot(current, analysedRoot, result),
-          );
-        },
-        showStartMessage,
-        setMessage,
-        setRunning: setEslintAnalysisRunning,
-        workspaceTrusted,
-      });
-    },
-    [replaceEslintDiagnostics, workspaceTrusted],
-  );
-
-  const runEslintAnalysis = useCallback(async () => {
-    const rootPath = currentWorkspaceRootRef.current;
-
-    if (!rootPath) {
-      return;
-    }
-
-    await runEslintAnalysisForRoot(rootPath, true);
-  }, [runEslintAnalysisForRoot]);
-
-  const activeEslintFixes =
-    workspaceRoot && activeDocument
-      ? (eslintFixesByRoot[workspaceRoot]?.[activeDocument.path] ?? EMPTY_ESLINT_FIXES)
-      : EMPTY_ESLINT_FIXES;
-  const activeEslintDiagnostics =
-    workspaceRoot && activeDocument
-      ? (eslintDiagnosticsByRoot[workspaceRoot]?.[activeDocument.path] ?? EMPTY_ESLINT_DIAGNOSTICS)
-      : EMPTY_ESLINT_DIAGNOSTICS;
-  const activeEslintBufferClean = isCleanWritableDocument(activeDocument);
-  const disableEslintRuleAtCursor = useCallback(() => {
-    const requestedRoot = workspaceRoot;
-    const requestedDocument = activeDocumentRef.current;
-    const lineNumber = activeEditorPositionRef.current?.lineNumber;
-    const diagnostics =
-      requestedRoot && requestedDocument
-        ? (eslintDiagnosticsByRoot[requestedRoot]?.[requestedDocument.path] ?? [])
-        : [];
-
-    if (!lineNumber) {
-      return;
-    }
-
-    runEslintDisableAtCursor({
-      currentRoot: currentWorkspaceRootRef.current,
-      requestedRoot,
-      document: requestedDocument,
-      lineNumber,
-      diagnostics,
-      runner: editorSurfaceEslintDisableRunner ?? null,
-      setMessage,
-      workspaceTrusted,
-    });
-  }, [
+  const {
+    activeEslintBufferClean,
+    activeEslintFixes,
+    activePhpstanBufferClean,
+    disableEslintRuleAtCursor,
+    fixAllEslintInActiveFile,
+    hasEslintDiagnosticAtCursor,
+    hasPhpstanDiagnosticAtCursor,
+    ignorePhpstanIssueAtCursor,
+    runEslintAnalysis,
+    runEslintAnalysisOnSave,
+    runPhpstanAnalysis,
+    runPhpstanAnalysisOnSave,
+  } = useWorkbenchStaticAnalysisCoordinator({
+    activeDocument,
     activeDocumentRef,
     activeEditorPositionRef,
+    appWorkspaceTabs: appSettings.workspaceTabs,
+    clearEslintDiagnosticsForRoot,
+    clearPhpstanDiagnosticsForRoot,
+    currentWorkspaceRootRef,
+    editorSurfaceBufferFixRunner: editorSurfaceBufferFixRunner ?? null,
+    editorSurfaceEslintDisableRunner: editorSurfaceEslintDisableRunner ?? null,
+    editorSurfacePhpstanIgnoreRunner: editorSurfacePhpstanIgnoreRunner ?? null,
+    eslintAnalysisInFlightRef,
+    eslintAnalysisRunning,
     eslintDiagnosticsByRoot,
-    editorSurfaceEslintDisableRunner,
-    workspaceRoot,
-    workspaceTrusted,
-  ]);
-  const fixAllEslintInActiveFile = useCallback(() => {
-    const requestedRoot = workspaceRoot;
-    const requestedDocument = activeDocumentRef.current;
-    const fixes =
-      requestedRoot && requestedDocument
-        ? (eslintFixesByRoot[requestedRoot]?.[requestedDocument.path] ?? [])
-        : [];
-
-    runEslintFixAllInActiveFile({
-      currentRoot: currentWorkspaceRootRef.current,
-      document: requestedDocument,
-      fixes,
-      requestedRoot,
-      runner: editorSurfaceBufferFixRunner ?? null,
-      setMessage,
-      workspaceTrusted,
-    });
-  }, [
-    activeDocumentRef,
+    eslintDiagnosticsGateway,
     eslintFixesByRoot,
-    editorSurfaceBufferFixRunner,
-    workspaceRoot,
-    workspaceTrusted,
-  ]);
-
-  const runEslintAnalysisOnSave = useCallback(
-    (rootPath: string) => {
-      if (!workspaceTrusted) {
-        return;
-      }
-
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
-        workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson !== true ||
-        eslintAnalysisRunning
-      ) {
-        return;
-      }
-
-      void runEslintAnalysisForRoot(rootPath, false);
-    },
-    [
-      eslintAnalysisRunning,
-      runEslintAnalysisForRoot,
-      workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson,
-      workspaceTrusted,
-    ],
-  );
-
-  useEffect(() => {
-    const currentTabs = appSettings.workspaceTabs;
-
-    eslintWorkspaceTabsRef.current.forEach((previousRoot) => {
-      if (!currentTabs.some((currentRoot) => workspaceRootKeysEqual(currentRoot, previousRoot))) {
-        clearEslintDiagnosticsForRoot(previousRoot);
-        setEslintFixesByRoot((current) => {
-          const next = { ...current };
-          delete next[previousRoot];
-          return next;
-        });
-        setEslintDiagnosticsByRoot((current) => {
-          const next = { ...current };
-          delete next[previousRoot];
-          return next;
-        });
-      }
-    });
-    eslintWorkspaceTabsRef.current = currentTabs;
-  }, [appSettings.workspaceTabs, clearEslintDiagnosticsForRoot]);
-
-  const runPhpstanAnalysisForRoot = useCallback(
-    async (rootPath: string, showStartMessage: boolean) => {
-      await runPhpstanWorkspaceAnalysis({
-        rootPath,
-        binaryPath: workspaceSettingsRef.current.phpstanPath,
-        currentWorkspaceRootRef,
-        inFlightRef: phpstanAnalysisInFlightRef,
-        gateway: phpstanDiagnosticsGateway,
-        replacePhpstanDiagnostics,
-        replacePhpstanRetainedDiagnostics: (analysedRoot, result) => {
-          setPhpstanDiagnosticsByRoot((current) =>
-            replacePhpstanDiagnosticsForRoot(current, analysedRoot, result),
-          );
-        },
-        showStartMessage,
-        setMessage,
-        setRunning: setPhpstanAnalysisRunning,
-        workspaceTrusted,
-      });
-    },
-    [replacePhpstanDiagnostics, workspaceTrusted],
-  );
-
-  const runPhpstanAnalysis = useCallback(async () => {
-    const rootPath = currentWorkspaceRootRef.current;
-
-    if (!rootPath) {
-      return;
-    }
-
-    await runPhpstanAnalysisForRoot(rootPath, true);
-  }, [runPhpstanAnalysisForRoot]);
-
-  const activePhpstanDiagnostics =
-    workspaceRoot && activeDocument
-      ? (phpstanDiagnosticsByRoot[workspaceRoot]?.[activeDocument.path] ??
-        EMPTY_PHPSTAN_DIAGNOSTICS)
-      : EMPTY_PHPSTAN_DIAGNOSTICS;
-  const activePhpstanBufferClean = isCleanWritableDocument(activeDocument);
-  const { hasEslintDiagnosticAtCursor, hasPhpstanDiagnosticAtCursor } =
-    useCursorCommandAvailability({
-      activeDocument,
-      eslintDiagnostics: activeEslintDiagnostics,
-      phpstanDiagnostics: activePhpstanDiagnostics,
-      positionRef: activeEditorPositionRef,
-    });
-  const ignorePhpstanIssueAtCursor = useCallback(() => {
-    const requestedRoot = workspaceRoot;
-    const requestedDocument = activeDocumentRef.current;
-    const lineNumber = activeEditorPositionRef.current?.lineNumber;
-    const diagnostics =
-      requestedRoot && requestedDocument
-        ? (phpstanDiagnosticsByRoot[requestedRoot]?.[requestedDocument.path] ?? [])
-        : [];
-
-    if (!lineNumber) {
-      return;
-    }
-
-    runPhpstanIgnoreAtCursor({
-      currentRoot: currentWorkspaceRootRef.current,
-      requestedRoot,
-      document: requestedDocument,
-      lineNumber,
-      diagnostics,
-      runner: editorSurfacePhpstanIgnoreRunner ?? null,
-      setMessage,
-      workspaceTrusted,
-    });
-  }, [
-    activeDocumentRef,
-    activeEditorPositionRef,
-    editorSurfacePhpstanIgnoreRunner,
+    eslintWorkspaceTabsRef,
+    phpstanAnalysisInFlightRef,
+    phpstanAnalysisRunning,
     phpstanDiagnosticsByRoot,
+    phpstanDiagnosticsGateway,
+    phpstanWorkspaceTabsRef,
+    replaceEslintDiagnostics,
+    replacePhpstanDiagnostics,
+    setEslintAnalysisRunning,
+    setEslintDiagnosticsByRoot,
+    setEslintFixesByRoot,
+    setMessage,
+    setPhpstanAnalysisRunning,
+    setPhpstanDiagnosticsByRoot,
+    workspaceDescriptor,
     workspaceRoot,
+    workspaceSettingsRef,
     workspaceTrusted,
-  ]);
-
-  const runPhpstanAnalysisOnSave = useCallback(
-    (rootPath: string) => {
-      if (!workspaceTrusted) {
-        return;
-      }
-
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
-        !workspaceDescriptor?.php ||
-        phpstanAnalysisRunning
-      ) {
-        return;
-      }
-
-      void runPhpstanAnalysisForRoot(rootPath, false);
-    },
-    [phpstanAnalysisRunning, runPhpstanAnalysisForRoot, workspaceDescriptor?.php, workspaceTrusted],
-  );
-
-  useEffect(() => {
-    const currentTabs = appSettings.workspaceTabs;
-
-    phpstanWorkspaceTabsRef.current.forEach((previousRoot) => {
-      if (!currentTabs.some((currentRoot) => workspaceRootKeysEqual(currentRoot, previousRoot))) {
-        clearPhpstanDiagnosticsForRoot(previousRoot);
-        setPhpstanDiagnosticsByRoot((current) => {
-          const next = { ...current };
-          delete next[previousRoot];
-          return next;
-        });
-      }
-    });
-    phpstanWorkspaceTabsRef.current = currentTabs;
-  }, [appSettings.workspaceTabs, clearPhpstanDiagnosticsForRoot]);
+  });
 
   resetIndexedWorkspaceViewsRef.current = () => {
     lastPhpFileOutlineRefreshKeyRef.current = null;
@@ -2027,10 +1774,9 @@ export function useWorkbenchController(
     runPhpWorkspaceProbe,
     refreshJavaScriptTypeScriptLanguageServerPlan,
     forgetLanguageServerRuntimeStatuses,
-    isLanguageServerSessionActiveForRoot: isLegacyLanguageServerSessionActiveForRoot,
+    isLanguageServerSessionActiveForRoot,
     isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
-    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot:
-      isLegacyJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
     stopLanguageServerRuntime,
     stopJavaScriptTypeScriptLanguageServerRuntime,
     stopProjectRuntimes,
@@ -2038,209 +1784,87 @@ export function useWorkbenchController(
     startLanguageServer,
     stopLanguageServer,
     restartJavaScriptTypeScriptService,
-  } = useLanguageServerRuntimeLifecycle({
-    workspaceRoot,
-    workspaceRuntimeOwner,
-    workspaceTrust,
-    intelligenceMode,
-    workspaceSettings,
-    shouldAutoStartJavaScriptTypeScriptLanguageServer,
-    phpLanguageServerAutostartRetryVersion,
-    languageServerPlan,
-    javaScriptTypeScriptLanguageServerPlan,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    appSettingsRef,
-    workspaceSettingsRef,
-    currentWorkspaceRootRef,
-    autoStartedLanguageServerRootRef,
-    phpLanguageServerAutostartAttemptsByRootRef,
-    manuallyStoppedPhpLanguageServerRootsRef,
-    autoStartedJavaScriptTypeScriptLanguageServerRootRef,
-    lastLanguageServerCrashRef,
-    languageServerRuntimeStatusByRootRef,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRef,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
-    javaScriptTypeScriptRuntimeStatusByRootRef,
-    setPhpTools,
-    setLanguageServerPlan,
-    setJavaScriptTypeScriptLanguageServerPlan,
-    setLanguageServerRuntimeStatus,
-    setLanguageServerRuntimeStatusRoot,
-    setJavaScriptTypeScriptLanguageServerRuntimeStatus,
-    setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    setMessage,
-    setNotices,
-    setPhpLanguageServerAutostartRetryVersion,
-    phpToolGateway,
-    languageServerGateway,
-    languageServerRuntimeGateway,
-    javaScriptTypeScriptLanguageServerRuntimeGateway,
-    workspaceRuntimeLifecycleGateway,
-    terminalGateway,
-    clearLanguageServerDiagnosticsForRoot,
-    clearJavaScriptTypeScriptDiagnosticsForRoot,
-    resetLanguageServerDiagnosticsForRoot,
-    resetJavaScriptTypeScriptDiagnosticsForRoot,
-    prepareLanguageServerDiagnosticsForRuntimeStart,
-    prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart,
-    resetLanguageServerDocuments,
-    resetJavaScriptTypeScriptLanguageServerDocuments,
-    isLanguageServerSessionCurrentForRoot,
-    reportError,
-    reportLanguageServerCrash,
-    reportLanguageServerError,
-    reportLanguageServerErrorForActiveWorkspaceRoot,
-    reportErrorForActiveWorkspaceRoot,
+    refreshJavaScriptTypeScriptPlanAfterTrustGrant,
+    stopProjectLanguageServersAfterTrustRevocation,
+  } = useWorkbenchLanguageRuntimeOwnershipCoordinator({
+    lifecycle: {
+      workspaceRoot,
+      workspaceRuntimeOwner,
+      workspaceTrust,
+      intelligenceMode,
+      workspaceSettings,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer,
+      phpLanguageServerAutostartRetryVersion,
+      languageServerPlan,
+      javaScriptTypeScriptLanguageServerPlan,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      appSettingsRef,
+      workspaceSettingsRef,
+      currentWorkspaceRootRef,
+      autoStartedLanguageServerRootRef,
+      phpLanguageServerAutostartAttemptsByRootRef,
+      manuallyStoppedPhpLanguageServerRootsRef,
+      autoStartedJavaScriptTypeScriptLanguageServerRootRef,
+      lastLanguageServerCrashRef,
+      languageServerRuntimeStatusByRootRef,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRef,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
+      javaScriptTypeScriptRuntimeStatusByRootRef,
+      setPhpTools,
+      setLanguageServerPlan,
+      setJavaScriptTypeScriptLanguageServerPlan,
+      setLanguageServerRuntimeStatus,
+      setLanguageServerRuntimeStatusRoot,
+      setJavaScriptTypeScriptLanguageServerRuntimeStatus,
+      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      setMessage,
+      setNotices,
+      setPhpLanguageServerAutostartRetryVersion,
+      phpToolGateway,
+      languageServerGateway,
+      languageServerRuntimeGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      workspaceRuntimeLifecycleGateway,
+      terminalGateway,
+      clearLanguageServerDiagnosticsForRoot,
+      clearJavaScriptTypeScriptDiagnosticsForRoot,
+      resetLanguageServerDiagnosticsForRoot,
+      resetJavaScriptTypeScriptDiagnosticsForRoot,
+      prepareLanguageServerDiagnosticsForRuntimeStart,
+      prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart,
+      resetLanguageServerDocuments,
+      resetJavaScriptTypeScriptLanguageServerDocuments,
+      isLanguageServerSessionCurrentForRoot,
+      reportError,
+      reportLanguageServerCrash,
+      reportLanguageServerError,
+      reportLanguageServerErrorForActiveWorkspaceRoot,
+      reportErrorForActiveWorkspaceRoot,
+    },
+    ownership: {
+      javaScriptTypeScriptRuntimeStatusByRootRef,
+      javaScriptTypeScriptTrustAutostartRef,
+      languageServerRuntimeStatusByRootRef,
+      openWorkspaceRequestTokenRef,
+      resolveCurrentWorkspaceRuntimeOwner,
+      workspaceTrustRevisionByOwnerRef,
+      workspaceTrustRevocationByOwnerRef,
+      workspaceRuntimeOwnerClaimsRef,
+    },
   });
 
-  const stopProjectLanguageServersAfterTrustRevocation = useCallback(
-    async (requestedOwner: WorkspaceRuntimeOwner) => {
-      const inFlight = workspaceTrustRevocationByOwnerRef.current[requestedOwner.ownerKey];
-      if (
-        inFlight &&
-        workspaceRootKeysEqual(inFlight.owner.executionRoot, requestedOwner.executionRoot)
-      ) {
-        await inFlight.promise;
-        return;
-      }
-
-      const promise = Promise.all([
-        stopLanguageServerRuntime(requestedOwner.executionRoot, requestedOwner),
-        stopJavaScriptTypeScriptLanguageServerRuntime(requestedOwner.executionRoot, requestedOwner),
-      ]).then(() => undefined);
-      workspaceTrustRevocationByOwnerRef.current[requestedOwner.ownerKey] = {
-        owner: requestedOwner,
-        promise,
-      };
-
-      try {
-        await promise;
-      } finally {
-        if (
-          workspaceTrustRevocationByOwnerRef.current[requestedOwner.ownerKey]?.promise === promise
-        ) {
-          delete workspaceTrustRevocationByOwnerRef.current[requestedOwner.ownerKey];
-        }
-      }
-    },
-    [stopJavaScriptTypeScriptLanguageServerRuntime, stopLanguageServerRuntime],
-  );
-
-  const refreshJavaScriptTypeScriptPlanAfterTrustGrant = useCallback(
-    async (
-      requestedOwner: WorkspaceRuntimeOwner,
-      requestedRevision: number,
-      requestedTrustRevision: number,
-      typeScriptVersionPreference: WorkspaceSettings["javaScriptTypeScriptVersion"],
-    ) => {
-      const requestIsCurrent = () => {
-        const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
-        if (openWorkspaceRequestTokenRef.current !== requestedRevision) {
-          return false;
-        }
-
-        if (!currentOwner || currentOwner.ownerKey !== requestedOwner.ownerKey) {
-          return false;
-        }
-
-        if (!workspaceRootKeysEqual(currentOwner.executionRoot, requestedOwner.executionRoot)) {
-          return false;
-        }
-
-        return (
-          (workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] ?? 0) ===
-          requestedTrustRevision
-        );
-      };
-      if (!requestIsCurrent()) {
-        return;
-      }
-
-      const inFlight = javaScriptTypeScriptTrustAutostartRef.current;
-      if (
-        inFlight &&
-        inFlight.revision === requestedRevision &&
-        inFlight.trustRevision === requestedTrustRevision &&
-        inFlight.typeScriptVersionPreference === typeScriptVersionPreference &&
-        inFlight.owner.ownerKey === requestedOwner.ownerKey &&
-        workspaceRootKeysEqual(inFlight.owner.executionRoot, requestedOwner.executionRoot)
-      ) {
-        await inFlight.promise;
-        return;
-      }
-
-      const request = { promise: null as Promise<void> | null };
-      const promise = (async () => {
-        if (!requestIsCurrent()) {
-          return;
-        }
-
-        await refreshJavaScriptTypeScriptLanguageServerPlan(
-          requestedOwner.executionRoot,
-          typeScriptVersionPreference,
-          requestedOwner,
-          () =>
-            requestIsCurrent() &&
-            javaScriptTypeScriptTrustAutostartRef.current?.promise === request.promise,
-        );
-      })();
-      request.promise = promise;
-      javaScriptTypeScriptTrustAutostartRef.current = {
-        owner: requestedOwner,
-        promise,
-        revision: requestedRevision,
-        trustRevision: requestedTrustRevision,
-        typeScriptVersionPreference,
-      };
-
-      try {
-        await promise;
-      } finally {
-        if (javaScriptTypeScriptTrustAutostartRef.current?.promise === promise) {
-          javaScriptTypeScriptTrustAutostartRef.current = null;
-        }
-      }
-    },
-    [refreshJavaScriptTypeScriptLanguageServerPlan, resolveCurrentWorkspaceRuntimeOwner],
-  );
-
-  const isLanguageServerSessionActiveForRoot = useCallback(
-    (rootPath: string, sessionId: number, owner?: WorkspaceRuntimeOwner) => {
-      if (!owner) {
-        return isLegacyLanguageServerSessionActiveForRoot(rootPath, sessionId);
-      }
-
-      return isLanguageServerSessionActiveForOwner(
-        languageServerRuntimeStatusByRootRef.current,
-        owner,
-        rootPath,
-        sessionId,
-      );
-    },
-    [isLegacyLanguageServerSessionActiveForRoot],
-  );
-
-  const isJavaScriptTypeScriptLanguageServerSessionActiveForRoot = useCallback(
-    (rootPath: string, sessionId: number, owner?: WorkspaceRuntimeOwner) => {
-      if (!owner) {
-        return isLegacyJavaScriptTypeScriptLanguageServerSessionActiveForRoot(rootPath, sessionId);
-      }
-
-      return isLanguageServerSessionActiveForOwner(
-        javaScriptTypeScriptRuntimeStatusByRootRef.current,
-        owner,
-        rootPath,
-        sessionId,
-      );
-    },
-    [isLegacyJavaScriptTypeScriptLanguageServerSessionActiveForRoot],
-  );
-
-  const { applyJavaScriptTypeScriptSettingsChange, openJavaScriptTypeScriptServiceLog } =
-    useJavaScriptTypeScriptLanguageServerSettings({
+  const {
+    applyJavaScriptTypeScriptSettingsChange,
+    openJavaScriptTypeScriptServiceLog,
+    javaScriptTypeScriptFileStructureOutlineForDocument,
+    javaScriptTypeScriptFileStructureLoadingForDocument,
+    openJavaScriptTypeScriptFileStructure,
+    resetJavaScriptTypeScriptFileStructure,
+  } = useWorkbenchJavaScriptTypeScriptRuntimeSurfacesCoordinator({
+    settings: {
       workspaceRoot,
       activeDocumentRef,
       activeEditorConfigRef,
@@ -2250,38 +1874,26 @@ export function useWorkbenchController(
       javaScriptTypeScriptLanguageServerRuntimeGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       refreshJavaScriptTypeScriptLanguageServerPlan,
       reportErrorForActiveWorkspaceRoot,
       setMessage,
       stopJavaScriptTypeScriptLanguageServerRuntime,
-    });
-
-  const {
-    javaScriptTypeScriptFileStructureOutlineForDocument,
-    javaScriptTypeScriptFileStructureLoadingForDocument,
-    openJavaScriptTypeScriptFileStructure,
-    resetJavaScriptTypeScriptFileStructure,
-  } = useJavaScriptTypeScriptFileStructure({
-    workspaceRoot,
-    currentWorkspaceRootRef,
-    languageServerFeaturesGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
-    languageServerRuntimeStatus: javaScriptTypeScriptLanguageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot: javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    isLanguageServerSessionActiveForRoot: isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-    reportError,
-    setMessage,
-    setFileStructureOpen,
-    setFileStructureScopeCurrent: setJavaScriptTypeScriptFileStructureScopeCurrent,
+    },
+    fileStructure: {
+      workspaceRoot,
+      currentWorkspaceRootRef,
+      languageServerFeaturesGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
+      languageServerRuntimeStatus: javaScriptTypeScriptLanguageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot: javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      reportError,
+      setMessage,
+      setFileStructureOpen,
+      setFileStructureScopeCurrent: setJavaScriptTypeScriptFileStructureScopeCurrent,
+    },
+    isSessionActive: isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
   });
 
   const javaScriptTypeScriptIncrementalSyncRef = useJavaScriptTypeScriptIncrementalSyncOwnerRef();
-
-  const warmUpPhpLanguageServerIndex = usePhpLanguageServerIndexWarmup({
-    gateway: languageServerFeaturesGateway,
-    isSessionCurrent: isLanguageServerSessionCurrentForRoot,
-    warmedRootsRef: phpLanguageServerIndexWarmedRootsRef,
-  });
 
   const {
     syncOpenDocument,
@@ -2301,92 +1913,91 @@ export function useWorkbenchController(
     syncSavedJavaScriptTypeScriptDocument: syncSavedJavaScriptTypeScriptDocumentForRoot,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
-    isJavaScriptTypeScriptLegacyHandoffSafe,
-    retireLegacyJavaScriptTypeScriptDocumentForIncrementalHandoff,
     closeSyncedLanguageServerDocumentsForRoot,
     closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-  } = useDocumentSync({
-    largeSmartDocumentPolicy: workspaceSettings.largeFileMode,
-    currentWorkspaceRootRef,
-    activeDocumentRef,
-    documentsRef,
-    syncedDocumentPathsRef,
-    syncedDocumentContentRef,
-    pendingDocumentChangesRef,
-    pendingDocumentOpenSyncAttemptsRef,
-    documentOpenSyncAttemptIdRef,
-    documentChangeTimersRef,
-    documentSyncQueuesRef,
-    documentSyncGenerationRef,
-    nextDocumentLifecycleIdentityRef,
-    documentLifecycleIdentitiesRef,
-    pendingDocumentLifecycleIdentitiesRef,
-    documentVersionsRef,
-    documentVersionsByUriRef,
-    lastAppliedDiagnosticVersionByUriRef,
-    languageServerRuntimeStatusRef,
-    languageServerRuntimeStatusRootRef,
-    languageServerRuntimeStatusByRootRef,
-    javaScriptTypeScriptSyncedDocumentPathsRef,
-    javaScriptTypeScriptSyncedDocumentContentRef,
-    javaScriptTypeScriptPendingDocumentChangesRef,
-    javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef,
-    javaScriptTypeScriptDocumentOpenSyncAttemptIdRef,
-    javaScriptTypeScriptDocumentChangeTimersRef,
-    javaScriptTypeScriptDocumentChangeMailbox,
-    javaScriptTypeScriptDocumentSyncQueuesRef,
-    javaScriptTypeScriptDocumentSyncGenerationRef,
-    javaScriptTypeScriptDocumentVersionsRef,
-    javaScriptTypeScriptDocumentVersionsByUriRef,
-    javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRef,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
-    javaScriptTypeScriptRuntimeStatusByRootRef,
-    javaScriptTypeScriptIncrementalSyncRef,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    languageServerDocumentSyncGateway,
-    javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-    nextDocumentVersion,
-    nextJavaScriptTypeScriptDocumentVersion,
-    clearDocumentChangeTimer,
-    clearJavaScriptTypeScriptDocumentChangeTimer,
-    enqueueDocumentSync,
-    enqueueJavaScriptTypeScriptDocumentSync,
-    resetLanguageServerDocuments,
-    warmUpPhpLanguageServerIndex,
-    isLanguageServerSessionCurrentForRoot,
-    isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
-    isRunningLanguageServerForWorkspace,
-    isSessionPathInWorkspace,
-    isJavaScriptTypeScriptDocumentSyncableForRoot,
-    reportLanguageServerError,
-    reportLanguageServerErrorForActiveWorkspaceRoot,
-    reportErrorForActiveWorkspaceRoot,
-  });
-  useJavaScriptTypeScriptIncrementalSyncComposition({
-    currentWorkspaceRootRef,
-    documentsRef,
-    gateway: javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway,
-    isHandoffSafe: isJavaScriptTypeScriptLegacyHandoffSafe,
-    isSessionCurrent: isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
-    productionRef: javaScriptTypeScriptIncrementalSyncRef,
-    retireForHandoff: retireLegacyJavaScriptTypeScriptDocumentForIncrementalHandoff,
-    runtimeStatusRef: javaScriptTypeScriptLanguageServerRuntimeStatusRef,
-    runtimeStatusRootRef: javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
-    syncGenerationRef: javaScriptTypeScriptDocumentSyncGenerationRef,
-    syncOpen: syncOpenJavaScriptTypeScriptDocument,
-  });
-  configureReplacedGitDiffDocumentClose({
-    closeRef: closeReplacedGitDiffDocumentRef,
-    currentRootRef: currentWorkspaceRootRef,
-    reportJavaScriptTypeScript: (rootPath, error) =>
-      reportErrorForActiveWorkspaceRoot(rootPath, "JavaScript/TypeScript", error),
-    reportPhp: reportLanguageServerErrorForActiveWorkspaceRoot,
-    syncJavaScriptTypeScript: syncClosedJavaScriptTypeScriptDocument,
-    syncPhp: syncClosedDocument,
+  } = useWorkbenchLanguageDocumentSyncCoordinator({
+    documentSync: {
+      largeSmartDocumentPolicy: workspaceSettings.largeFileMode,
+      currentWorkspaceRootRef,
+      activeDocumentRef,
+      documentsRef,
+      syncedDocumentPathsRef,
+      syncedDocumentContentRef,
+      pendingDocumentChangesRef,
+      pendingDocumentOpenSyncAttemptsRef,
+      documentOpenSyncAttemptIdRef,
+      documentChangeTimersRef,
+      documentSyncQueuesRef,
+      documentSyncGenerationRef,
+      nextDocumentLifecycleIdentityRef,
+      documentLifecycleIdentitiesRef,
+      pendingDocumentLifecycleIdentitiesRef,
+      documentVersionsRef,
+      documentVersionsByUriRef,
+      lastAppliedDiagnosticVersionByUriRef,
+      languageServerRuntimeStatusRef,
+      languageServerRuntimeStatusRootRef,
+      languageServerRuntimeStatusByRootRef,
+      javaScriptTypeScriptSyncedDocumentPathsRef,
+      javaScriptTypeScriptSyncedDocumentContentRef,
+      javaScriptTypeScriptPendingDocumentChangesRef,
+      javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef,
+      javaScriptTypeScriptDocumentOpenSyncAttemptIdRef,
+      javaScriptTypeScriptDocumentChangeTimersRef,
+      javaScriptTypeScriptDocumentChangeMailbox,
+      javaScriptTypeScriptDocumentSyncQueuesRef,
+      javaScriptTypeScriptDocumentSyncGenerationRef,
+      javaScriptTypeScriptDocumentVersionsRef,
+      javaScriptTypeScriptDocumentVersionsByUriRef,
+      javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRef,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
+      javaScriptTypeScriptRuntimeStatusByRootRef,
+      javaScriptTypeScriptIncrementalSyncRef,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      languageServerDocumentSyncGateway,
+      javaScriptTypeScriptLanguageServerDocumentSyncGateway,
+      nextDocumentVersion,
+      nextJavaScriptTypeScriptDocumentVersion,
+      clearDocumentChangeTimer,
+      clearJavaScriptTypeScriptDocumentChangeTimer,
+      enqueueDocumentSync,
+      enqueueJavaScriptTypeScriptDocumentSync,
+      resetLanguageServerDocuments,
+      isLanguageServerSessionCurrentForRoot,
+      isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
+      isRunningLanguageServerForWorkspace,
+      isSessionPathInWorkspace,
+      isJavaScriptTypeScriptDocumentSyncableForRoot,
+      reportLanguageServerError,
+      reportLanguageServerErrorForActiveWorkspaceRoot,
+      reportErrorForActiveWorkspaceRoot,
+    },
+    incrementalSync: {
+      currentWorkspaceRootRef,
+      documentsRef,
+      gateway: javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway,
+      isSessionCurrent: isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
+      productionRef: javaScriptTypeScriptIncrementalSyncRef,
+      runtimeStatusRef: javaScriptTypeScriptLanguageServerRuntimeStatusRef,
+      runtimeStatusRootRef: javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
+      syncGenerationRef: javaScriptTypeScriptDocumentSyncGenerationRef,
+    },
+    replacedGitDiffClose: {
+      closeRef: closeReplacedGitDiffDocumentRef,
+      currentRootRef: currentWorkspaceRootRef,
+      reportJavaScriptTypeScript: (rootPath, error) =>
+        reportErrorForActiveWorkspaceRoot(rootPath, "JavaScript/TypeScript", error),
+      reportPhp: reportLanguageServerErrorForActiveWorkspaceRoot,
+    },
+    warmup: {
+      gateway: languageServerFeaturesGateway,
+      isSessionCurrent: isLanguageServerSessionCurrentForRoot,
+      warmedRootsRef: phpLanguageServerIndexWarmedRootsRef,
+    },
   });
 
   const openSymbolPanelNavigationTargetRef = useRef<
@@ -2604,6 +2215,12 @@ export function useWorkbenchController(
       clearIndexWorkspaceState,
       clearJavaScriptTypeScriptLanguageServerDiagnostics,
       clearLanguageServerDiagnostics,
+      javaScriptTypeScriptDiagnosticsByRootRef,
+      javaScriptTypeScriptDiagnosticsCoalescerRef,
+      javaScriptTypeScriptRuntimeStatusByRootRef,
+      languageServerDiagnosticsByRootRef,
+      languageServerDiagnosticsCoalescerRef,
+      languageServerRuntimeStatusByRootRef,
       clearPhpLocalDiagnostics,
       clearPhpstanDiagnosticsForRoot,
       clearWorkspaceStateCache,
@@ -2732,6 +2349,7 @@ export function useWorkbenchController(
       const previousWorkspaceIdentity = previousRootPath
         ? (workspaceIdentityByRootRef.current[previousRootPath] ?? null)
         : null;
+      const previousWorkspaceSettingsSaveCoordinator = workspaceSettingsSaveCoordinator;
       const { nextOwnerKey, replacingOwnerAtSameRoot, switchingWorkspace } =
         resolveDocumentSessionWorkspaceTransition(
           previousRootPath,
@@ -2847,7 +2465,7 @@ export function useWorkbenchController(
 
       adoptLegacyWorkspaceCache();
       const pendingWorkspaceSettingsSave =
-        workspaceSettingsSaveCoordinator.waitForIdle(canonicalKey);
+        previousWorkspaceSettingsSaveCoordinator.waitForIdle(canonicalKey);
       if (pendingWorkspaceSettingsSave) {
         await pendingWorkspaceSettingsSave;
       }
@@ -3022,29 +2640,28 @@ export function useWorkbenchController(
         },
       }));
       setWorkspaceIdentityDescriptor(identityDescriptor);
+      workspaceIdentityDescriptorRef.current = identityDescriptor;
       const admittedRuntimeOwner = workspaceRuntimeOwnerFor(path, identityDescriptor);
       const explicitRuntimeOwner = identityDescriptor ? admittedRuntimeOwner : undefined;
+      const admittedRuntimeGeneration = identityDescriptor
+        ? (ownedWorkspaceIdentityGenerationByIdRef.current[identityDescriptor.workspaceId] ?? null)
+        : null;
       workspaceRuntimeOwnerRef.current = admittedRuntimeOwner;
       const isCurrentOpenWorkspaceOwnerRequest = () => {
-        if (!isCurrentOpenWorkspaceRequest()) {
-          return false;
-        }
+        if (!isCurrentOpenWorkspaceRequest() || admittedRuntimeGeneration === null) return false;
 
-        const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
-        if (!currentOwner || currentOwner.ownerKey !== admittedRuntimeOwner.ownerKey) {
-          return false;
-        }
-
-        return workspaceRootKeysEqual(
-          currentOwner.executionRoot,
-          admittedRuntimeOwner.executionRoot,
+        return (
+          workspaceRuntimeOwnerByTabRef.current[path] === admittedRuntimeOwner &&
+          workspaceRuntimeOwnerClaimsRef.current.generationFor(admittedRuntimeOwner.ownerKey) ===
+            admittedRuntimeGeneration &&
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)
         );
       };
       if (identityDescriptor) {
         workspaceRuntimeOwnerClaimsRef.current.register(
           admittedRuntimeOwner,
           identityAliasPaths,
-          ownedWorkspaceIdentityGenerationByIdRef.current[identityDescriptor.workspaceId] ?? null,
+          admittedRuntimeGeneration,
         );
         workspaceIdentityByRootRef.current[path] = identityDescriptor;
         workspaceIdentityByRootRef.current[identityDescriptor.canonicalRoot] = identityDescriptor;
@@ -3059,6 +2676,19 @@ export function useWorkbenchController(
       }
       currentWorkspaceRootRef.current = path;
       currentEditorSessionOwnerKeyRef.current = nextOwnerKey;
+      const openSmartModeIntent = beginWorkbenchSmartModeIntent({
+        currentWorkspaceRootRef,
+        identity: identityDescriptor,
+        intentGenerationRef: smartModeRequestGenerationRef,
+        intentStateRef: smartModeRequestIntentRef,
+        mode: workspaceSettings.intelligenceMode,
+        owner: admittedRuntimeOwner,
+        rootPath: path,
+        workspaceRuntimeOwnerClaimsRef,
+        workspaceRuntimeOwnerRef,
+      });
+      const isCurrentOpenWorkspaceSmartModeRequest = () =>
+        isCurrentOpenWorkspaceOwnerRequest() && Boolean(openSmartModeIntent?.isCurrent());
       const activateCurrentDocumentSessionAuthority = () =>
         documentSessionAuthorityLifecycle.activate({
           descriptor: identityDescriptor,
@@ -3217,21 +2847,26 @@ export function useWorkbenchController(
       let resolvedIntelligenceMode = workspaceSettings.intelligenceMode;
 
       try {
-        const smartMode = await smartModeGateway.setMode(path, workspaceSettings.intelligenceMode);
+        if (openSmartModeIntent) {
+          const smartMode = await openSmartModeIntent.setMode(smartModeGateway);
 
-        if (!isCurrentOpenWorkspaceRequest()) {
-          return;
+          if (isCurrentOpenWorkspaceSmartModeRequest() && openSmartModeIntent.claimEffects()) {
+            resolvedIntelligenceMode = smartMode.mode;
+            intelligenceModeRef.current = smartMode.mode;
+            setIntelligenceMode(smartMode.mode);
+          }
+          if (isCurrentOpenWorkspaceOwnerRequest() && !isCurrentOpenWorkspaceSmartModeRequest()) {
+            resolvedIntelligenceMode = intelligenceModeRef.current;
+          }
         }
-
-        resolvedIntelligenceMode = smartMode.mode;
-        intelligenceModeRef.current = smartMode.mode;
-        setIntelligenceMode(smartMode.mode);
       } catch (error) {
-        if (!isCurrentOpenWorkspaceRequest()) {
+        if (!isCurrentOpenWorkspaceOwnerRequest()) {
           return;
         }
 
-        reportError("IDE Mode", error);
+        if (isCurrentOpenWorkspaceSmartModeRequest()) {
+          reportError("IDE Mode", error);
+        }
       }
 
       if (!isCurrentOpenWorkspaceRequest()) {
@@ -3362,7 +2997,7 @@ export function useWorkbenchController(
         shouldIndexWorkspace(resolvedIntelligenceMode) &&
         shouldRunInitialIndexScan(cachedWorkspaceState)
       ) {
-        void startInitialIndexScan(path);
+        void startInitialIndexScan(path, isCurrentOpenWorkspaceOwnerRequest);
       }
 
       const [, , descriptor] = await Promise.all([
@@ -3415,6 +3050,7 @@ export function useWorkbenchController(
       forgetCachedWorkspaceState,
       loadDirectory,
       loadPackageScripts,
+      languageServerRuntimeStatusByRootRef,
       persistAppSettings,
       persistCurrentWorkspaceSession,
       primeCachedDirectoryEntries,
@@ -3423,7 +3059,6 @@ export function useWorkbenchController(
       reportError,
       reportErrorForActiveWorkspaceRoot,
       releaseOwnedWorkspaceIdentity,
-      resolveCurrentWorkspaceRuntimeOwner,
       retireWorkspaceRuntimeOwnerClaim,
       restoreLanguageServerDiagnosticsForRoot,
       coalesceWorkspaceStateCache,
@@ -3460,12 +3095,15 @@ export function useWorkbenchController(
       resolveDocumentSaveOwnership,
       settingsGateway,
       smartModeGateway,
+      smartModeRequestGenerationRef,
+      smartModeRequestIntentRef,
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,
       workspaceDetection,
       workspaceSettingsByRoot,
       workspaceSettingsSaveCoordinator,
       workspaceTrustGateway,
+      workspaceRuntimeOwnerClaimsRef,
       workspaceRuntimeOwnerRef,
       refreshJavaScriptTypeScriptLanguageServerPlan,
       setCallHierarchyView,
@@ -4028,7 +3666,12 @@ export function useWorkbenchController(
         synchronizedOwner,
       );
     },
-    [currentWorkspaceRootRef, resolveWorkspaceRuntimeOwner],
+    [
+      currentWorkspaceRootRef,
+      javaScriptTypeScriptRuntimeStatusByRootRef,
+      languageServerRuntimeStatusByRootRef,
+      resolveWorkspaceRuntimeOwner,
+    ],
   );
 
   const externalFileConflicts = useExternalFileConflictLifecycle({
@@ -4300,6 +3943,12 @@ export function useWorkbenchController(
       setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       setLanguageServerRuntimeStatus,
       setLanguageServerRuntimeStatusRoot,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRef,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
+      javaScriptTypeScriptRuntimeStatusByRootRef,
+      languageServerRuntimeStatusByRootRef,
+      languageServerRuntimeStatusRef,
+      languageServerRuntimeStatusRootRef,
       stopProjectRuntimes,
     ],
   );
@@ -4911,94 +4560,30 @@ export function useWorkbenchController(
     [persistWorkspaceSettings, reportErrorForActiveWorkspaceRoot, workspaceRoot],
   );
 
-  const setSmartMode = useCallback(
-    async (mode: IntelligenceMode) => {
-      const requestedRoot = workspaceRoot;
-      if (!requestedRoot) {
-        return;
-      }
-
-      if (mode === intelligenceMode) {
-        return;
-      }
-
-      try {
-        const previousMode = intelligenceMode;
-        const state = await smartModeGateway.setMode(
-          workspaceIdentityDescriptor?.canonicalRoot ?? requestedRoot,
-          mode,
-        );
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        const nextMode = state.mode;
-
-        if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
-          intelligenceModeRef.current = nextMode;
-          setIntelligenceMode(nextMode);
-          autoStartedLanguageServerRootRef.current = requestedRoot;
-          // "What's being killed" visibility: turning IDE mode off stops the
-          // PHP language server runtime and clears the workspace index, so say
-          // so up front rather than leaving the status bar silent until the
-          // stop completes. The final `state.message` from the gateway (set
-          // below via clearWorkspaceIndex) supersedes this once the stop
-          // finishes.
-          setMessage(`Stopping PHPactor + index for ${workspaceDisplayName(requestedRoot)}`);
-          await stopLanguageServerRuntime(requestedRoot);
-        }
-
-        if (!shouldStartLanguageServer(previousMode) && shouldStartLanguageServer(nextMode)) {
-          autoStartedLanguageServerRootRef.current = null;
-          delete phpLanguageServerAutostartAttemptsByRootRef.current[
-            normalizedWorkspaceRootKey(requestedRoot)
-          ];
-
-          // Enabling IDE mode replays the PHP probe that was deferred at open
-          // time (detectPhpTools + plan refresh + managed engine notice), so
-          // the PHP language server can autostart and hover/completion light
-          // up. Only PHP workspaces need it; the autostart effect picks up the
-          // resulting ready plan.
-          if (workspaceDescriptor?.php) {
-            void runPhpWorkspaceProbe(requestedRoot);
-          }
-        }
-
-        intelligenceModeRef.current = nextMode;
-        setIntelligenceMode(nextMode);
-        await persistWorkspaceSettings(requestedRoot, {
-          ...workspaceSettingsRef.current,
-          intelligenceMode: nextMode,
-        });
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        if (shouldIndexWorkspace(nextMode)) {
-          setMessage(state.message);
-          await startInitialIndexScan(requestedRoot);
-          return;
-        }
-
-        await clearWorkspaceIndex(requestedRoot, state.message);
-      } catch (error) {
-        reportErrorForActiveWorkspaceRoot(requestedRoot, "IDE Mode", error);
-      }
-    },
-    [
-      clearWorkspaceIndex,
-      intelligenceMode,
-      persistWorkspaceSettings,
-      reportErrorForActiveWorkspaceRoot,
-      runPhpWorkspaceProbe,
-      smartModeGateway,
-      startInitialIndexScan,
-      stopLanguageServerRuntime,
-      workspaceDescriptor,
-      workspaceIdentityDescriptor,
-      workspaceRoot,
-    ],
-  );
+  const setSmartMode = useWorkbenchSmartModeCoordinator({
+    autoStartedLanguageServerRootRef,
+    clearWorkspaceIndex,
+    currentWorkspaceRootRef,
+    intelligenceMode,
+    intelligenceModeRef,
+    persistWorkspaceSettings,
+    phpLanguageServerAutostartAttemptsByRootRef,
+    reportErrorForActiveWorkspaceRoot,
+    runPhpWorkspaceProbe,
+    setIntelligenceMode,
+    setMessage,
+    smartModeGateway,
+    smartModeRequestGenerationRef,
+    smartModeRequestIntentRef,
+    startInitialIndexScan,
+    stopLanguageServerRuntime,
+    workspaceDescriptor,
+    workspaceIdentityDescriptor,
+    workspaceRoot,
+    workspaceRuntimeOwnerClaimsRef,
+    workspaceRuntimeOwnerRef,
+    workspaceSettingsRef,
+  });
 
   const updateActiveDocument = useWorkbenchActiveDocumentEditing({
     activeDocument,
@@ -5303,6 +4888,10 @@ export function useWorkbenchController(
     workspaceRoot,
     currentWorkspaceRootRef,
     workspaceFiles,
+    workspaceIdentityDescriptorRef,
+    workspaceOwnerFiles,
+    workspaceRuntimeOwnerClaimsRef,
+    workspaceRuntimeOwnerRef,
     setExpandedDirectories,
     notifyJavaScriptTypeScriptWatchedFilesChanged,
     openFile,
@@ -5872,6 +5461,7 @@ export function useWorkbenchController(
       activePhpFrameworkProviders,
       currentPhpFrameworkSourceContext,
       documentsRef,
+      languageServerDiagnosticsByRootRef,
       setNotices,
       resolveWorkspaceRuntimeOwner,
     ],
@@ -6714,6 +6304,8 @@ export function useWorkbenchController(
       setSmartMode,
       setWorkspaceTrust,
       smartModeGateway,
+      smartModeRequestGenerationRef,
+      smartModeRequestIntentRef,
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,
       stopLanguageServerRuntime,
@@ -6722,6 +6314,8 @@ export function useWorkbenchController(
       workspaceDescriptor,
       workspaceIdentityDescriptor,
       workspaceRoot,
+      workspaceRuntimeOwnerClaimsRef,
+      workspaceRuntimeOwnerRef,
       workspaceSettingsRef,
       workspaceTrust,
       workspaceTrustGateway,
@@ -7156,153 +6750,63 @@ export function useWorkbenchController(
     reportError,
   });
 
-  useLanguageServerDiagnosticsSubscriptions({
-    workspaceRoot,
-    workspaceRuntimeOwner,
-    resolveCurrentWorkspaceRuntimeOwner,
-    resolveWorkspaceRuntimeOwnerForDiagnosticsEvent,
-    currentWorkspaceRootRef,
-    diagnosticsFlushSchedulerRef,
-    languageServerDiagnosticsCoalescerRef,
-    javaScriptTypeScriptDiagnosticsCoalescerRef,
-    languageServerDiagnosticsGateway,
-    javaScriptTypeScriptLanguageServerDiagnosticsGateway,
-    createDiagnosticsCoalescer,
-    applyLanguageServerDiagnostics,
-    applyLanguageServerDiagnosticsBatch,
-    applyJavaScriptTypeScriptLanguageServerDiagnostics,
-    applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
-    reportLanguageServerError,
-    reportJavaScriptTypeScriptLanguageServerError,
-  });
-
-  useEffect(() => {
-    if (
-      !isRunningLanguageServerForWorkspace(
-        languageServerRuntimeStatus,
-        languageServerRuntimeStatusRoot,
-        workspaceRoot,
-      )
-    ) {
-      resetLanguageServerDocuments();
-      return;
-    }
-
-    const runtimeRoot =
-      languageServerRuntimeStatus.rootPath ?? languageServerRuntimeStatusRoot ?? workspaceRoot;
-    const runtimeSignature = [
-      normalizedWorkspaceRootKey(runtimeRoot),
-      languageServerRuntimeStatus.sessionId,
-    ].join(":");
-
-    if (documentSyncRuntimeSignatureRef.current !== runtimeSignature) {
-      resetLanguageServerDocuments();
-      documentSyncRuntimeSignatureRef.current = runtimeSignature;
-    }
-
-    const documentsToSync = openDocumentPaths
-      .map((path) => documentsRef.current[path])
-      .filter((document): document is EditorDocument => Boolean(document));
-
-    if (
-      activePath &&
-      documentsRef.current[activePath] &&
-      !documentsToSync.some((document) => document.path === activePath)
-    ) {
-      documentsToSync.push(documentsRef.current[activePath]);
-    }
-
-    documentsToSync.forEach((document) => {
-      void syncOpenDocument(document);
-    });
-  }, [
-    activePath,
-    documentSyncRuntimeSignatureRef,
-    documentsRef,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    openDocumentPaths,
-    resetLanguageServerDocuments,
-    syncOpenDocument,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (
-      !workspaceRoot ||
-      !isRunningLanguageServerForWorkspace(
-        javaScriptTypeScriptLanguageServerRuntimeStatus,
-        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-        workspaceRoot,
-      )
-    ) {
-      resetJavaScriptTypeScriptLanguageServerDocuments();
-      return;
-    }
-
-    const runtimeRoot =
-      javaScriptTypeScriptLanguageServerRuntimeStatus.rootPath ??
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot ??
-      workspaceRoot;
-    const runtimeSignature = [
-      normalizedWorkspaceRootKey(runtimeRoot),
-      javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
-    ].join(":");
-
-    if (javaScriptTypeScriptDocumentSyncRuntimeSignatureRef.current !== runtimeSignature) {
-      resetJavaScriptTypeScriptLanguageServerDocuments();
-      javaScriptTypeScriptDocumentSyncRuntimeSignatureRef.current = runtimeSignature;
-    }
-
-    const documentsToSync = openDocumentPaths
-      .map((path) => documentsRef.current[path])
-      .filter(
-        (document): document is EditorDocument =>
-          !!document && isJavaScriptTypeScriptDocumentSyncableForRoot(workspaceRoot, document),
-      );
-
-    if (
-      activePath &&
-      documentsRef.current[activePath] &&
-      isJavaScriptTypeScriptDocumentSyncableForRoot(
-        workspaceRoot,
-        documentsRef.current[activePath],
-      ) &&
-      !documentsToSync.some((document) => document.path === activePath)
-    ) {
-      documentsToSync.push(documentsRef.current[activePath]);
-    }
-
-    documentsToSync.forEach((document) => {
-      void syncOpenJavaScriptTypeScriptDocument(document);
-    });
-  }, [
-    activePath,
-    documentsRef,
-    javaScriptTypeScriptDocumentSyncRuntimeSignatureRef,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    openDocumentPaths,
-    resetJavaScriptTypeScriptLanguageServerDocuments,
-    syncOpenJavaScriptTypeScriptDocument,
-    workspaceRoot,
-  ]);
-
-  useChangedDocumentSyncScheduling({
-    documentsRef,
-    incrementalSyncRef: javaScriptTypeScriptIncrementalSyncRef,
-    scheduleDocumentChange,
-    scheduleJavaScriptTypeScriptDocumentChange,
-    subscribeChangedDocuments,
-  });
-
-  useEffect(
-    () => () => {
-      resetLanguageServerDocuments();
-      resetJavaScriptTypeScriptLanguageServerDocuments();
+  const activeLanguageRuntimeGeneration = workspaceRuntimeOwner
+    ? (workspaceRuntimeOwnerClaimsRef.current.generationFor(workspaceRuntimeOwner.ownerKey) ?? null)
+    : null;
+  useWorkbenchLanguageRuntimeEffects({
+    changedDocumentSync: {
+      documentsRef,
+      incrementalSyncRef: javaScriptTypeScriptIncrementalSyncRef,
+      scheduleDocumentChange,
+      scheduleJavaScriptTypeScriptDocumentChange,
+      subscribeChangedDocuments,
     },
-    [resetJavaScriptTypeScriptLanguageServerDocuments, resetLanguageServerDocuments],
-  );
+    diagnosticsSubscriptions: {
+      workspaceRoot,
+      workspaceRuntimeOwner,
+      resolveCurrentWorkspaceRuntimeOwner,
+      resolveWorkspaceRuntimeOwnerForDiagnosticsEvent,
+      currentWorkspaceRootRef,
+      diagnosticsFlushSchedulerRef,
+      languageServerDiagnosticsCoalescerRef,
+      javaScriptTypeScriptDiagnosticsCoalescerRef,
+      languageServerDiagnosticsGateway,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      createDiagnosticsCoalescer,
+      applyLanguageServerDiagnostics,
+      applyLanguageServerDiagnosticsBatch,
+      applyJavaScriptTypeScriptLanguageServerDiagnostics,
+      applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
+      reportLanguageServerError,
+      reportJavaScriptTypeScriptLanguageServerError,
+    },
+    javaScriptTypeScript: {
+      activePath,
+      documentSyncRuntimeSignatureRef: javaScriptTypeScriptDocumentSyncRuntimeSignatureRef,
+      documentsRef,
+      languageServerRuntimeStatus: javaScriptTypeScriptLanguageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot: javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      openDocumentPaths,
+      resetLanguageServerDocuments: resetJavaScriptTypeScriptLanguageServerDocuments,
+      runtimeGeneration: activeLanguageRuntimeGeneration,
+      runtimeOwner: workspaceRuntimeOwner,
+      syncOpenDocument: syncOpenJavaScriptTypeScriptDocument,
+      workspaceRoot,
+    },
+    php: {
+      activePath,
+      documentSyncRuntimeSignatureRef,
+      documentsRef,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      openDocumentPaths,
+      resetLanguageServerDocuments,
+      runtimeGeneration: activeLanguageRuntimeGeneration,
+      runtimeOwner: workspaceRuntimeOwner,
+      syncOpenDocument,
+      workspaceRoot,
+    },
+  });
 
   const {
     diagnosticsSummary,

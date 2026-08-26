@@ -1,9 +1,4 @@
-import {
-  useCallback,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
+import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { shouldIndexWorkspace } from "../domain/intelligence";
 import {
   createIndexHealthLogEntry,
@@ -12,6 +7,7 @@ import {
   type IndexHealthLogEntry,
   type IndexProgressGateway,
   type IndexProgressState,
+  type InitialMetadataScanStart,
   type WorkspaceReindexMode,
 } from "../domain/indexProgress";
 import type { IntelligenceMode } from "../domain/workspace";
@@ -23,13 +19,21 @@ export interface WorkbenchIndexActions {
   startHardReindex(): Promise<void>;
 }
 
+export interface WorkbenchIndexOperation {
+  readonly admissionToken: number;
+  readonly operationGeneration: number;
+  readonly requestIsCurrent: () => boolean;
+  readonly rootPath: string;
+  readonly workspaceId: string;
+}
+
 export interface WorkbenchIndexCommandsOptions {
   activeIndexRootRef: MutableRefObject<string | null>;
-  currentWorkspaceRootRef: MutableRefObject<string | null>;
+  abandonIndexOperation(operation: WorkbenchIndexOperation): void;
+  beginIndexOperation(rootPath: string): WorkbenchIndexOperation | null;
   indexProgressGateway: IndexProgressGateway;
   intelligenceMode: IntelligenceMode;
-  pendingIndexRootRef: MutableRefObject<string | null>;
-  pendingIndexScanRef: MutableRefObject<boolean>;
+  indexOperationIsCurrent(operation: WorkbenchIndexOperation): boolean;
   reportError(source: string, error: unknown): void;
   setIndexHealthLogs: Dispatch<SetStateAction<IndexHealthLogEntry[]>>;
   setIndexProgress: Dispatch<SetStateAction<IndexProgressState>>;
@@ -39,97 +43,88 @@ export interface WorkbenchIndexCommandsOptions {
 
 export function useWorkbenchIndexCommands({
   activeIndexRootRef,
-  currentWorkspaceRootRef,
+  abandonIndexOperation,
+  beginIndexOperation,
   indexProgressGateway,
   intelligenceMode,
-  pendingIndexRootRef,
-  pendingIndexScanRef,
+  indexOperationIsCurrent,
   reportError,
   setIndexHealthLogs,
   setIndexProgress,
   setMessage,
   workspaceRoot,
 }: WorkbenchIndexCommandsOptions): WorkbenchIndexActions {
-  const startReindex = useCallback(async (
-    mode: WorkspaceReindexMode,
-    language?: string,
-  ) => {
-    if (!workspaceRoot) {
-      return;
-    }
-
-    if (!shouldIndexWorkspace(intelligenceMode)) {
-      setMessage("Enable Smart Index or IDE Mode to index this workspace.");
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    pendingIndexScanRef.current = true;
-    pendingIndexRootRef.current = requestedRoot;
-
-    try {
-      const started = await indexProgressGateway.startReindex(
-        requestedRoot,
-        mode,
-        language,
-      );
-
-      if (
-        !pendingIndexScanRef.current ||
-        !workspaceRootKeysEqual(pendingIndexRootRef.current, requestedRoot)
-      ) {
+  const startReindex = useCallback(
+    async (mode: WorkspaceReindexMode, language?: string) => {
+      if (!workspaceRoot) {
         return;
       }
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        pendingIndexScanRef.current = false;
-        pendingIndexRootRef.current = null;
+      if (!shouldIndexWorkspace(intelligenceMode)) {
+        setMessage("Enable Smart Index or IDE Mode to index this workspace.");
         return;
       }
 
-      if (!workspaceRootKeysEqual(started.rootPath, requestedRoot)) {
-        pendingIndexScanRef.current = false;
-        pendingIndexRootRef.current = null;
-        return;
+      const requestedRoot = workspaceRoot;
+      const operation = beginIndexOperation(requestedRoot);
+      if (!operation) return;
+
+      try {
+        const started = await indexProgressGateway.startReindex(
+          {
+            admissionToken: operation.admissionToken,
+            operationGeneration: operation.operationGeneration,
+            rootPath: requestedRoot,
+            workspaceId: operation.workspaceId,
+          },
+          mode,
+          language,
+        );
+
+        if (!indexOperationIsCurrent(operation)) {
+          abandonIndexOperation(operation);
+          return;
+        }
+
+        if (
+          started.operationGeneration !== operation.operationGeneration ||
+          !workspaceRootKeysEqual(started.rootPath, requestedRoot)
+        ) {
+          abandonIndexOperation(operation);
+          return;
+        }
+
+        activeIndexRootRef.current = started.rootPath;
+        setIndexProgress((current) => attachIndexStartReceipt(current, started));
+        const message = reindexStartMessage(mode);
+        setIndexHealthLogs((current) =>
+          prependIndexHealthLog(current, createIndexHealthLogEntry("info", requestedRoot, message)),
+        );
+        setMessage(message);
+      } catch (error) {
+        if (!indexOperationIsCurrent(operation)) {
+          abandonIndexOperation(operation);
+          return;
+        }
+        abandonIndexOperation(operation);
+
+        reportError("Index", error);
       }
-
-      activeIndexRootRef.current = started.rootPath;
-      setIndexProgress(startIndexProgress(started));
-      const message = reindexStartMessage(mode);
-      setIndexHealthLogs((current) =>
-        prependIndexHealthLog(
-          current,
-          createIndexHealthLogEntry("info", requestedRoot, message),
-        ),
-      );
-      setMessage(message);
-    } catch (error) {
-      if (!workspaceRootKeysEqual(pendingIndexRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      pendingIndexScanRef.current = false;
-      pendingIndexRootRef.current = null;
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      reportError("Index", error);
-    }
-  }, [
-    activeIndexRootRef,
-    currentWorkspaceRootRef,
-    indexProgressGateway,
-    intelligenceMode,
-    pendingIndexRootRef,
-    pendingIndexScanRef,
-    reportError,
-    setIndexHealthLogs,
-    setIndexProgress,
-    setMessage,
-    workspaceRoot,
-  ]);
+    },
+    [
+      activeIndexRootRef,
+      abandonIndexOperation,
+      beginIndexOperation,
+      indexOperationIsCurrent,
+      indexProgressGateway,
+      intelligenceMode,
+      reportError,
+      setIndexHealthLogs,
+      setIndexProgress,
+      setMessage,
+      workspaceRoot,
+    ],
+  );
 
   const startIndexScan = useCallback(async () => {
     await startReindex("soft");
@@ -160,4 +155,18 @@ export function reindexStartMessage(mode: WorkspaceReindexMode): string {
   }
 
   return "Index scan started.";
+}
+
+export function attachIndexStartReceipt(
+  current: IndexProgressState,
+  started: InitialMetadataScanStart,
+): IndexProgressState {
+  if (
+    current.status === "scanning" &&
+    current.operationGeneration === started.operationGeneration &&
+    workspaceRootKeysEqual(current.rootPath, started.rootPath)
+  ) {
+    return { ...current, databasePath: started.databasePath };
+  }
+  return startIndexProgress(started);
 }

@@ -1,8 +1,13 @@
 use crate::file_watcher::{WorkspaceWatchEvent, WorkspaceWatchEventBatch, WorkspaceWatchEventKind};
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicU32, AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
+
+const MAX_WORKSPACE_LIFECYCLE_ROOTS: usize = 4_096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexJobQueue {
@@ -186,13 +191,27 @@ pub trait IndexDbWriteExecutor {
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceIndexLifecycle {
-    state: Arc<Mutex<WorkspaceIndexLifecycleState>>,
+    state: Arc<WorkspaceIndexLifecycleState>,
 }
 
 #[derive(Debug, Default)]
 struct WorkspaceIndexLifecycleState {
-    global_generation: u64,
-    workspace_generations: HashMap<String, u64>,
+    global_generation: AtomicU64,
+    latest_operation_gate: Mutex<Option<Arc<WorkspaceIndexOperationGate>>>,
+    latest_operation_generation: AtomicU32,
+    operation_admission: Mutex<()>,
+    workspace_gates: Mutex<HashMap<String, Arc<Mutex<WorkspaceIndexRootState>>>>,
+}
+
+#[derive(Debug, Default)]
+struct WorkspaceIndexOperationGate {
+    commit: Mutex<()>,
+    current: std::sync::atomic::AtomicBool,
+}
+
+#[derive(Debug, Default)]
+struct WorkspaceIndexRootState {
+    generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +219,9 @@ pub struct WorkspaceIndexLifecycleToken {
     generation: u64,
     global_generation: u64,
     lifecycle: WorkspaceIndexLifecycle,
+    operation_generation: Option<u32>,
+    operation_gate: Option<Arc<WorkspaceIndexOperationGate>>,
+    root_state: Arc<Mutex<WorkspaceIndexRootState>>,
     workspace_root: String,
 }
 
@@ -212,25 +234,96 @@ impl Default for WorkspaceIndexLifecycle {
 impl WorkspaceIndexLifecycle {
     pub fn new() -> Self {
         Self {
-            state: Arc::new(Mutex::new(WorkspaceIndexLifecycleState::default())),
+            state: Arc::new(WorkspaceIndexLifecycleState::default()),
         }
     }
 
     pub fn begin_workspace_run(&self, workspace_root: &str) -> WorkspaceIndexLifecycleToken {
-        let mut state = self.lock_state();
-        let generation = bump_workspace_generation(&mut state, workspace_root);
+        self.begin_workspace_run_inner(workspace_root)
+            .expect("workspace lifecycle capacity")
+    }
 
-        WorkspaceIndexLifecycleToken {
-            generation,
-            global_generation: state.global_generation,
-            lifecycle: self.clone(),
-            workspace_root: workspace_root.to_string(),
+    pub fn begin_workspace_operation(
+        &self,
+        workspace_root: &str,
+        operation_generation: u32,
+    ) -> Result<WorkspaceIndexLifecycleToken, String> {
+        let _admission = self
+            .state
+            .operation_admission
+            .lock()
+            .map_err(|error| error.to_string())?;
+        if operation_generation
+            <= self
+                .state
+                .latest_operation_generation
+                .load(Ordering::Acquire)
+        {
+            return Err("Index operation generation is stale.".to_string());
         }
+        let operation_gate = Arc::new(WorkspaceIndexOperationGate {
+            commit: Mutex::new(()),
+            current: std::sync::atomic::AtomicBool::new(true),
+        });
+        let previous = self
+            .state
+            .latest_operation_gate
+            .lock()
+            .map_err(|error| error.to_string())?
+            .replace(Arc::clone(&operation_gate));
+        self.state
+            .latest_operation_generation
+            .store(operation_generation, Ordering::Release);
+        if let Some(previous) = previous {
+            previous.current.store(false, Ordering::Release);
+            drop(lock_operation_commit(&previous));
+        }
+        let root_state = self
+            .root_state(workspace_root, true)
+            .ok_or_else(|| "Workspace index lifecycle capacity is exhausted.".to_string())?;
+        let mut state = lock_root_state(&root_state);
+        state.generation = state.generation.saturating_add(1);
+        let generation = state.generation;
+        drop(state);
+        Ok(WorkspaceIndexLifecycleToken {
+            generation,
+            global_generation: self.state.global_generation.load(Ordering::Acquire),
+            lifecycle: self.clone(),
+            operation_generation: Some(operation_generation),
+            operation_gate: Some(operation_gate),
+            root_state,
+            workspace_root: workspace_root.to_string(),
+        })
+    }
+
+    fn begin_workspace_run_inner(
+        &self,
+        workspace_root: &str,
+    ) -> Option<WorkspaceIndexLifecycleToken> {
+        let root_state = self.root_state(workspace_root, true)?;
+        let mut state = lock_root_state(&root_state);
+        state.generation = state.generation.saturating_add(1);
+        let generation = state.generation;
+        drop(state);
+
+        Some(WorkspaceIndexLifecycleToken {
+            generation,
+            global_generation: self.state.global_generation.load(Ordering::Acquire),
+            lifecycle: self.clone(),
+            operation_generation: None,
+            operation_gate: None,
+            root_state,
+            workspace_root: workspace_root.to_string(),
+        })
     }
 
     pub fn cancel_workspace(&self, workspace_root: &str) -> u64 {
-        let mut state = self.lock_state();
-        bump_workspace_generation(&mut state, workspace_root)
+        let Some(root_state) = self.root_state(workspace_root, true) else {
+            return 0;
+        };
+        let mut state = lock_root_state(&root_state);
+        state.generation = state.generation.saturating_add(1);
+        state.generation
     }
 
     pub fn cancel_workspace_and_block_writes<T>(
@@ -238,49 +331,139 @@ impl WorkspaceIndexLifecycle {
         workspace_root: &str,
         action: impl FnOnce() -> T,
     ) -> T {
-        let mut state = self.lock_state();
-        bump_workspace_generation(&mut state, workspace_root);
+        let root_state = self
+            .root_state(workspace_root, true)
+            .expect("workspace lifecycle capacity");
+        let mut state = lock_root_state(&root_state);
+        state.generation = state.generation.saturating_add(1);
         let result = action();
         drop(state);
         result
     }
 
     pub fn cancel_all(&self) -> u64 {
-        let mut state = self.lock_state();
-        state.global_generation = state.global_generation.saturating_add(1);
-        state.global_generation
+        let _admission = self
+            .state
+            .operation_admission
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let generation = self
+            .state
+            .global_generation
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                Some(current.saturating_add(1))
+            })
+            .expect("global lifecycle generation update")
+            .saturating_add(1);
+        let operation = self
+            .state
+            .latest_operation_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(operation) = operation {
+            operation.current.store(false, Ordering::Release);
+            drop(lock_operation_commit(&operation));
+        }
+        let roots = self
+            .state
+            .workspace_gates
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for root in roots {
+            drop(lock_root_state(&root));
+        }
+        generation
     }
 
     pub fn current_generation(&self, workspace_root: &str) -> u64 {
-        let state = self.lock_state();
-        current_workspace_generation(&state, workspace_root)
+        self.root_state(workspace_root, false)
+            .map(|root_state| lock_root_state(&root_state).generation)
+            .unwrap_or(0)
     }
 
-    fn lock_state(&self) -> MutexGuard<'_, WorkspaceIndexLifecycleState> {
-        self.state
+    fn root_state(
+        &self,
+        workspace_root: &str,
+        create: bool,
+    ) -> Option<Arc<Mutex<WorkspaceIndexRootState>>> {
+        let mut gates = self
+            .state
+            .workspace_gates
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn is_token_current(
-        state: &WorkspaceIndexLifecycleState,
-        token: &WorkspaceIndexLifecycleToken,
-    ) -> bool {
-        token.global_generation == state.global_generation
-            && token.generation == current_workspace_generation(state, &token.workspace_root)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(state) = gates.get(workspace_root) {
+            return Some(Arc::clone(state));
+        }
+        if !create {
+            return None;
+        }
+        if gates.len() >= MAX_WORKSPACE_LIFECYCLE_ROOTS {
+            gates.retain(|_, state| Arc::strong_count(state) > 1);
+        }
+        if gates.len() >= MAX_WORKSPACE_LIFECYCLE_ROOTS {
+            return None;
+        }
+        let state = Arc::new(Mutex::new(WorkspaceIndexRootState::default()));
+        gates.insert(workspace_root.to_string(), Arc::clone(&state));
+        Some(state)
     }
 }
 
 impl WorkspaceIndexLifecycleToken {
     pub fn is_current(&self) -> bool {
-        let state = self.lifecycle.lock_state();
-        WorkspaceIndexLifecycle::is_token_current(&state, self)
+        if self.global_generation
+            != self
+                .lifecycle
+                .state
+                .global_generation
+                .load(Ordering::Acquire)
+        {
+            return false;
+        }
+        let state = lock_root_state(&self.root_state);
+        state.generation == self.generation
+            && self
+                .operation_gate
+                .as_ref()
+                .is_none_or(|operation| operation.current.load(Ordering::Acquire))
+            && self.operation_generation.is_none_or(|generation| {
+                self.lifecycle
+                    .state
+                    .latest_operation_generation
+                    .load(Ordering::Acquire)
+                    == generation
+            })
     }
 
     pub fn run_if_current<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
-        let state = self.lifecycle.lock_state();
-
-        if !WorkspaceIndexLifecycle::is_token_current(&state, self) {
+        let _operation_commit = self
+            .operation_gate
+            .as_ref()
+            .map(|operation| lock_operation_commit(operation));
+        let state = lock_root_state(&self.root_state);
+        if self.global_generation
+            != self
+                .lifecycle
+                .state
+                .global_generation
+                .load(Ordering::Acquire)
+            || state.generation != self.generation
+            || self
+                .operation_gate
+                .as_ref()
+                .is_some_and(|operation| !operation.current.load(Ordering::Acquire))
+            || self.operation_generation.is_some_and(|generation| {
+                self.lifecycle
+                    .state
+                    .latest_operation_generation
+                    .load(Ordering::Acquire)
+                    != generation
+            })
+        {
             return None;
         }
 
@@ -298,24 +481,18 @@ impl WorkspaceIndexLifecycleToken {
     }
 }
 
-fn bump_workspace_generation(
-    state: &mut WorkspaceIndexLifecycleState,
-    workspace_root: &str,
-) -> u64 {
-    let generation = state
-        .workspace_generations
-        .entry(workspace_root.to_string())
-        .or_insert(0);
-    *generation = generation.saturating_add(1);
-    *generation
+fn lock_operation_commit(gate: &WorkspaceIndexOperationGate) -> std::sync::MutexGuard<'_, ()> {
+    gate.commit
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn current_workspace_generation(state: &WorkspaceIndexLifecycleState, workspace_root: &str) -> u64 {
+fn lock_root_state(
+    state: &Mutex<WorkspaceIndexRootState>,
+) -> std::sync::MutexGuard<'_, WorkspaceIndexRootState> {
     state
-        .workspace_generations
-        .get(workspace_root)
-        .copied()
-        .unwrap_or(0)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub trait IndexGenerationGuard {
@@ -718,6 +895,107 @@ mod tests {
         lifecycle.cancel_workspace("/workspace");
 
         assert_eq!(token.run_if_current(|| 13), None);
+    }
+
+    #[test]
+    fn lifecycle_rejects_delayed_older_operation_generation() {
+        let lifecycle = WorkspaceIndexLifecycle::new();
+        let newer = lifecycle
+            .begin_workspace_operation("/other", 2)
+            .expect("newer operation");
+
+        let older = lifecycle.begin_workspace_operation("/workspace", 1);
+
+        assert_eq!(
+            older.expect_err("stale operation"),
+            "Index operation generation is stale."
+        );
+        assert!(newer.is_current());
+    }
+
+    #[test]
+    fn lifecycle_new_global_operation_generation_revokes_other_root() {
+        let lifecycle = WorkspaceIndexLifecycle::new();
+        let first = lifecycle
+            .begin_workspace_operation("/workspace", 1)
+            .expect("first operation");
+        let second = lifecycle
+            .begin_workspace_operation("/other", 2)
+            .expect("second operation");
+
+        assert!(!first.is_current());
+        assert!(second.is_current());
+    }
+
+    #[test]
+    fn newer_cross_root_operation_waits_for_entered_commit() {
+        let lifecycle = std::sync::Arc::new(WorkspaceIndexLifecycle::new());
+        let first = lifecycle
+            .begin_workspace_operation("/workspace", 1)
+            .expect("first operation");
+        let (entered_sender, entered_receiver) = std::sync::mpsc::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let commit = std::thread::spawn(move || {
+            first.run_if_current(|| {
+                entered_sender.send(()).expect("entered");
+                release_receiver.recv().expect("release");
+            })
+        });
+        entered_receiver.recv().expect("commit entered");
+        let next_lifecycle = std::sync::Arc::clone(&lifecycle);
+        let (next_sender, next_receiver) = std::sync::mpsc::channel();
+        let next = std::thread::spawn(move || {
+            let token = next_lifecycle.begin_workspace_operation("/other", 2);
+            next_sender.send(token).expect("next result");
+        });
+
+        assert!(next_receiver
+            .recv_timeout(std::time::Duration::from_millis(50))
+            .is_err());
+        release_sender.send(()).expect("release commit");
+        assert_eq!(commit.join().expect("commit thread"), Some(()));
+        assert!(next_receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("next operation")
+            .expect("next token")
+            .is_current());
+        next.join().expect("next thread");
+    }
+
+    #[test]
+    fn cancel_all_waits_for_entered_commit() {
+        let lifecycle = std::sync::Arc::new(WorkspaceIndexLifecycle::new());
+        let token = lifecycle
+            .begin_workspace_operation("/workspace", 1)
+            .expect("operation");
+        let (entered_sender, entered_receiver) = std::sync::mpsc::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let commit = std::thread::spawn(move || {
+            token.run_if_current(|| {
+                entered_sender.send(()).expect("entered");
+                release_receiver.recv().expect("release");
+            })
+        });
+        entered_receiver.recv().expect("commit entered");
+        let cancel_lifecycle = std::sync::Arc::clone(&lifecycle);
+        let (cancelled_sender, cancelled_receiver) = std::sync::mpsc::channel();
+        let cancel = std::thread::spawn(move || {
+            let generation = cancel_lifecycle.cancel_all();
+            cancelled_sender.send(generation).expect("cancel result");
+        });
+
+        assert!(cancelled_receiver
+            .recv_timeout(std::time::Duration::from_millis(50))
+            .is_err());
+        release_sender.send(()).expect("release commit");
+        assert_eq!(commit.join().expect("commit thread"), Some(()));
+        assert_eq!(
+            cancelled_receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("cancel completes"),
+            1
+        );
+        cancel.join().expect("cancel thread");
     }
 
     #[test]

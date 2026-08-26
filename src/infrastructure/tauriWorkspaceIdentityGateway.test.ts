@@ -38,6 +38,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
     expect(result).toEqual({
       status: "opened",
       descriptor: {
+        admissionToken: 1,
         workspaceId: "ws-1",
         selectedPath: "/link/project",
         canonicalRoot: "/real/project",
@@ -61,6 +62,7 @@ describe("TauriWorkspaceIdentityGateway", () => {
     const gateway = new TauriWorkspaceIdentityGateway();
 
     await expect(gateway.openPath("/link/project")).resolves.toMatchObject({
+      admissionToken: 1,
       workspaceId: "ws-path",
       selectedPath: "/link/project",
       canonicalRoot: "/real/project",

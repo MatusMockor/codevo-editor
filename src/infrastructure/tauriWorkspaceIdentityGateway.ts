@@ -285,11 +285,13 @@ export class TauriWorkspaceIdentityGateway
 
   private cacheDescriptor(
     nativeDescriptor: NativeWorkspaceDescriptor,
+    admissionToken: number,
     operationSequence: number,
   ): WorkspaceIdentityDescriptor {
     const descriptor = workspaceIdentityDescriptor(
       nativeDescriptor,
       nativeDescriptor.selectedRootPath,
+      admissionToken,
     );
     const unregisterSequence = this.unregisterSequences.get(descriptor.workspaceId) ?? 0;
     if (unregisterSequence > operationSequence) {
@@ -349,7 +351,7 @@ export class TauriWorkspaceIdentityGateway
       throw new Error("Workspace identity capacity has been reached.");
     }
     try {
-      return this.cacheDescriptor(nativeDescriptor, operationSequence);
+      return this.cacheDescriptor(nativeDescriptor, registration.admissionToken, operationSequence);
     } catch (error) {
       await this.rollbackRegistration(registration);
       this.assertActive(admission);
@@ -752,8 +754,10 @@ function workspaceRelativePathForRoot(
 export function workspaceIdentityDescriptor(
   descriptor: NativeWorkspaceDescriptor,
   selectedPath: string = descriptor.canonicalRootPath,
+  admissionToken?: number,
 ): WorkspaceIdentityDescriptor {
   return {
+    ...(admissionToken === undefined ? {} : { admissionToken }),
     workspaceId: descriptor.workspaceId,
     selectedPath,
     canonicalRoot: descriptor.canonicalRootPath,

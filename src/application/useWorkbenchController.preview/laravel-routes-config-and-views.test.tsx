@@ -25,7 +25,7 @@ import {
 } from "./testSupport";
 
 describe("useWorkbenchController Laravel language intelligence", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const renderController = setupWorkbenchControllerTestHarness().renderRegisteredController;
 
   it("resolves Laravel invokable route controller classes to __invoke before LSP fallback", async () => {
     const routesPath = "/workspace/routes/web.php";

@@ -22,6 +22,7 @@ export interface NativeWorkspaceRegistrationResult {
 }
 
 export interface WorkspaceIdentityDescriptor {
+  admissionToken?: number;
   workspaceId: string;
   selectedPath: string;
   canonicalRoot: string;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyIndexProgress,
   applyMetadataScanCompletion,
+  beginIndexProgress,
   createIndexHealthCompletionLog,
   createIndexHealthLogEntry,
   indexProgressCompletionMessage,
@@ -12,12 +13,14 @@ import {
   startIndexProgress,
   type IndexProgressEvent,
   type MetadataScanCompletionEvent,
+  type MetadataScanReport,
 } from "./indexProgress";
 
 describe("indexProgress", () => {
   it("tracks a started scan", () => {
     const progress = startIndexProgress({
       databasePath: "/config/index.sqlite3",
+      operationGeneration: 7,
       rootPath: "/workspace",
       status: "started",
     });
@@ -28,6 +31,7 @@ describe("indexProgress", () => {
       erroredEntries: 0,
       indexedFiles: 0,
       message: null,
+      operationGeneration: 7,
       processedFiles: 0,
       rootPath: "/workspace",
       skippedDetails: [],
@@ -38,10 +42,23 @@ describe("indexProgress", () => {
     expect(indexProgressLabel(progress)).toBe("Index: scanning");
   });
 
+  it("activates caller-issued authority before a start response", () => {
+    const progress = applyIndexProgress(
+      beginIndexProgress("/workspace", 7),
+      progressEvent({ processedFiles: 1 }),
+    );
+
+    expect(progress.databasePath).toBeNull();
+    expect(progress.operationGeneration).toBe(7);
+    expect(progress.processedFiles).toBe(1);
+    expect(progress.status).toBe("scanning");
+  });
+
   it("applies incremental progress with a known total as 'X of N'", () => {
     const progress = applyIndexProgress(
       startIndexProgress({
         databasePath: "/config/index.sqlite3",
+        operationGeneration: 7,
         rootPath: "/workspace",
         status: "started",
       }),
@@ -63,6 +80,7 @@ describe("indexProgress", () => {
     const progress = applyIndexProgress(
       startIndexProgress({
         databasePath: "/config/index.sqlite3",
+        operationGeneration: 7,
         rootPath: "/workspace",
         status: "started",
       }),
@@ -83,6 +101,7 @@ describe("indexProgress", () => {
     const advanced = applyIndexProgress(
       startIndexProgress({
         databasePath: "/config/index.sqlite3",
+        operationGeneration: 7,
         rootPath: "/workspace",
         status: "started",
       }),
@@ -98,14 +117,16 @@ describe("indexProgress", () => {
 
   it("applies completed scan counts", () => {
     const progress = applyMetadataScanCompletion(
-      initialIndexProgress(),
-      completedEvent(scanReport({
-        erroredEntries: 0,
-        errorDetails: [],
-        indexedFiles: 42,
-        skippedDetails: [{ path: "vendor", reason: "Ignored by workspace rules." }],
-        skippedEntries: 7,
-      })),
+      scanningProgress(),
+      completedEvent(
+        scanReport({
+          erroredEntries: 0,
+          errorDetails: [],
+          indexedFiles: 42,
+          skippedDetails: [{ path: "vendor", reason: "Ignored by workspace rules." }],
+          skippedEntries: 7,
+        }),
+      ),
     );
 
     expect(progress.status).toBe("completed");
@@ -119,24 +140,28 @@ describe("indexProgress", () => {
   });
 
   it("labels completed scans with entry errors", () => {
-    const event = completedEvent(scanReport({
-      erroredEntries: 2,
-      indexedFiles: 8,
-      skippedEntries: 3,
-    }));
-    const progress = applyMetadataScanCompletion(initialIndexProgress(), event);
+    const event = completedEvent(
+      scanReport({
+        erroredEntries: 2,
+        indexedFiles: 8,
+        skippedEntries: 3,
+      }),
+    );
+    const progress = applyMetadataScanCompletion(scanningProgress(), event);
 
     expect(indexProgressLabel(progress)).toBe("Index: 8 files · 2 errors");
     expect(indexProgressNoticeSeverity(event)).toBe("warning");
   });
 
   it("includes source symbol reindex counts in completion messages", () => {
-    const event = completedEvent(scanReport({
-      indexedFiles: 3,
-      parsedFiles: 2,
-      skippedEntries: 1,
-      symbolsIndexed: 8,
-    }));
+    const event = completedEvent(
+      scanReport({
+        indexedFiles: 3,
+        parsedFiles: 2,
+        skippedEntries: 1,
+        symbolsIndexed: 8,
+      }),
+    );
 
     expect(indexProgressCompletionMessage(event)).toBe(
       "Indexed 3 files, parsed 2 source files, 8 symbols (1 skipped, 0 errors).",
@@ -144,11 +169,13 @@ describe("indexProgress", () => {
   });
 
   it("describes zero-symbol parsed source files neutrally", () => {
-    const event = completedEvent(scanReport({
-      indexedFiles: 2,
-      parsedFiles: 2,
-      symbolsIndexed: 0,
-    }));
+    const event = completedEvent(
+      scanReport({
+        indexedFiles: 2,
+        parsedFiles: 2,
+        symbolsIndexed: 0,
+      }),
+    );
 
     expect(indexProgressCompletionMessage(event)).toBe(
       "Indexed 2 files, parsed 2 source files, 0 symbols (0 skipped, 0 errors).",
@@ -157,26 +184,51 @@ describe("indexProgress", () => {
 
   it("tracks failed scans", () => {
     const event = failedEvent("database locked");
-    const progress = applyMetadataScanCompletion(initialIndexProgress(), event);
+    const progress = applyMetadataScanCompletion(scanningProgress(), event);
 
     expect(progress.status).toBe("failed");
-    expect(progress.errorDetails).toEqual([
-      { path: "/workspace", reason: "database locked" },
-    ]);
+    expect(progress.errorDetails).toEqual([{ path: "/workspace", reason: "database locked" }]);
     expect(progress.message).toBe("database locked");
     expect(indexProgressLabel(progress)).toBe("Index: failed");
     expect(indexProgressCompletionMessage(event)).toBe("database locked");
     expect(indexProgressNoticeSeverity(event)).toBe("error");
   });
 
+  it("ignores events that do not own the active root and generation", () => {
+    const current = scanningProgress();
+
+    expect(applyIndexProgress(current, progressEvent({ operationGeneration: 6 }))).toBe(current);
+    expect(applyIndexProgress(current, progressEvent({ rootPath: "/other" }))).toBe(current);
+    expect(
+      applyMetadataScanCompletion(
+        current,
+        completedEvent(scanReport({ indexedFiles: 99 }), {
+          operationGeneration: 6,
+        }),
+      ),
+    ).toBe(current);
+  });
+
+  it("does not let a stale A event paint replacement A", () => {
+    const firstA = scanningProgress(1);
+    const replacementA = scanningProgress(3);
+    const staleCompletion = completedEvent(scanReport({ indexedFiles: 99 }), {
+      operationGeneration: firstA.operationGeneration ?? 1,
+    });
+
+    expect(applyMetadataScanCompletion(replacementA, staleCompletion)).toBe(replacementA);
+  });
+
+  it("does not let an event initialize idle state", () => {
+    const idle = initialIndexProgress();
+
+    expect(applyIndexProgress(idle, progressEvent())).toBe(idle);
+    expect(applyMetadataScanCompletion(idle, completedEvent(scanReport({})))).toBe(idle);
+  });
+
   it("creates bounded health log entries", () => {
     const failed = createIndexHealthCompletionLog(failedEvent("database locked"), 2);
-    const started = createIndexHealthLogEntry(
-      "info",
-      "/workspace",
-      "Index scan started.",
-      1,
-    );
+    const started = createIndexHealthLogEntry("info", "/workspace", "Index scan started.", 1);
 
     expect(failed).toMatchObject({
       message: "database locked",
@@ -189,14 +241,17 @@ describe("indexProgress", () => {
 });
 
 function completedEvent(
-  report: MetadataScanCompletionEvent["report"],
+  report: MetadataScanReport,
+  overrides: Partial<Extract<MetadataScanCompletionEvent, { status: "completed" }>> = {},
 ): MetadataScanCompletionEvent {
   return {
     databasePath: "/config/index.sqlite3",
     message: null,
+    operationGeneration: 7,
     report,
     rootPath: "/workspace",
     status: "completed",
+    ...overrides,
   };
 }
 
@@ -217,10 +272,9 @@ function scanReport(
   };
 }
 
-function progressEvent(
-  overrides: Partial<IndexProgressEvent>,
-): IndexProgressEvent {
+function progressEvent(overrides: Partial<IndexProgressEvent> = {}): IndexProgressEvent {
   return {
+    operationGeneration: 7,
     phase: "parsing",
     processedFiles: 0,
     rootPath: "/workspace",
@@ -233,8 +287,18 @@ function failedEvent(message: string): MetadataScanCompletionEvent {
   return {
     databasePath: "/config/index.sqlite3",
     message,
+    operationGeneration: 7,
     report: null,
     rootPath: "/workspace",
     status: "failed",
   };
+}
+
+function scanningProgress(operationGeneration = 7) {
+  return startIndexProgress({
+    databasePath: "/config/index.sqlite3",
+    operationGeneration,
+    rootPath: "/workspace",
+    status: "started",
+  });
 }

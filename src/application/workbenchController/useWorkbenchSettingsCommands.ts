@@ -10,6 +10,10 @@ import type { WorkspaceRuntimeOwner } from "../../domain/workspaceRuntimeOwner";
 import type { IntelligenceMode, WorkspaceDescriptor } from "../../domain/workspace";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import type { WorkspaceTrustIntentCoordinator } from "../workspaceTrustIntentCoordinator";
+import {
+  beginWorkbenchSmartModeIntent,
+  type WorkbenchSmartModeIntentState,
+} from "./useWorkbenchLanguageRuntimeCoordinator";
 
 interface TrustAutostart {
   readonly owner: WorkspaceRuntimeOwner;
@@ -27,7 +31,9 @@ interface JavaScriptTypeScriptSettingsChangeInput {
 }
 
 interface WorkspaceSettingsIdentity {
+  readonly admissionToken?: number;
   readonly canonicalRoot: string;
+  readonly workspaceId: string;
 }
 
 type AppSettingsFailurePolicy = "report" | "reportAndReject";
@@ -38,7 +44,11 @@ interface WorkbenchSettingsCommandsInput {
   ) => Promise<void>;
   readonly appSettingsRef: MutableRefObject<AppSettings>;
   readonly autoStartedLanguageServerRootRef: MutableRefObject<string | null>;
-  readonly clearWorkspaceIndex: (rootPath: string, message?: string) => Promise<void>;
+  readonly clearWorkspaceIndex: (
+    rootPath: string,
+    message: string | undefined,
+    requestIsCurrent: () => boolean,
+  ) => Promise<void>;
   readonly currentWorkspaceRootRef: MutableRefObject<string | null>;
   readonly intelligenceMode: IntelligenceMode;
   readonly intelligenceModeRef: MutableRefObject<IntelligenceMode>;
@@ -56,7 +66,10 @@ interface WorkbenchSettingsCommandsInput {
     trustRevision: number,
     typeScriptVersionPreference: WorkspaceSettings["javaScriptTypeScriptVersion"],
   ) => Promise<void>;
-  readonly refreshLanguageServerPlan: (rootPath: string) => Promise<unknown>;
+  readonly refreshLanguageServerPlan: (
+    rootPath: string,
+    owner: WorkspaceRuntimeOwner,
+  ) => Promise<unknown>;
   readonly reportErrorForActiveWorkspaceRoot: (
     rootPath: string | null,
     source: string,
@@ -73,7 +86,12 @@ interface WorkbenchSettingsCommandsInput {
   readonly setSmartMode: (mode: IntelligenceMode) => Promise<void>;
   readonly setWorkspaceTrust: Dispatch<SetStateAction<WorkspaceTrustState | null>>;
   readonly smartModeGateway: SmartModeGateway;
-  readonly startInitialIndexScan: (rootPath: string) => Promise<void>;
+  readonly smartModeRequestGenerationRef: MutableRefObject<number>;
+  readonly smartModeRequestIntentRef: MutableRefObject<WorkbenchSmartModeIntentState | null>;
+  readonly startInitialIndexScan: (
+    rootPath: string,
+    requestIsCurrent: () => boolean,
+  ) => Promise<void>;
   readonly stopBackgroundProjectRuntimes: (
     policy: AppSettings["runtimePolicy"],
     rootPath: string,
@@ -81,7 +99,7 @@ interface WorkbenchSettingsCommandsInput {
   ) => Promise<void>;
   readonly stopLanguageServerRuntime: (
     rootPath: string,
-    owner?: WorkspaceRuntimeOwner,
+    owner: WorkspaceRuntimeOwner,
   ) => Promise<unknown>;
   readonly stopProjectLanguageServersAfterTrustRevocation: (
     owner: WorkspaceRuntimeOwner,
@@ -90,6 +108,10 @@ interface WorkbenchSettingsCommandsInput {
   readonly workspaceDescriptor: WorkspaceDescriptor | null;
   readonly workspaceIdentityDescriptor: WorkspaceSettingsIdentity | null;
   readonly workspaceRoot: string | null;
+  readonly workspaceRuntimeOwnerClaimsRef: {
+    readonly current: { generationFor(ownerKey: string): number | null | undefined };
+  };
+  readonly workspaceRuntimeOwnerRef: { readonly current: WorkspaceRuntimeOwner | null };
   readonly workspaceSettingsRef: MutableRefObject<WorkspaceSettings>;
   readonly workspaceTrust: WorkspaceTrustState | null;
   readonly workspaceTrustGateway: WorkspaceTrustGateway;
@@ -121,6 +143,8 @@ export function useWorkbenchSettingsCommands({
   setSmartMode,
   setWorkspaceTrust,
   smartModeGateway,
+  smartModeRequestGenerationRef,
+  smartModeRequestIntentRef,
   startInitialIndexScan,
   stopBackgroundProjectRuntimes,
   stopLanguageServerRuntime,
@@ -129,6 +153,8 @@ export function useWorkbenchSettingsCommands({
   workspaceDescriptor,
   workspaceIdentityDescriptor,
   workspaceRoot,
+  workspaceRuntimeOwnerClaimsRef,
+  workspaceRuntimeOwnerRef,
   workspaceSettingsRef,
   workspaceTrust,
   workspaceTrustGateway,
@@ -202,7 +228,7 @@ export function useWorkbenchSettingsCommands({
 
       if (!workspaceDescriptor?.php) return;
 
-      await refreshLanguageServerPlan(requestedRoot);
+      await refreshLanguageServerPlan(requestedRoot, requestedOwner);
       if (!requestIsCurrent()) return;
     } catch (error) {
       if (!requestIsCurrent()) return;
@@ -236,6 +262,20 @@ export function useWorkbenchSettingsCommands({
     ) => {
       const requestedRoot = workspaceRoot;
       const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
+      const requestedOwnerGeneration = requestedOwner
+        ? workspaceRuntimeOwnerClaimsRef.current.generationFor(requestedOwner.ownerKey)
+        : null;
+      const smartModeIntent = beginWorkbenchSmartModeIntent({
+        currentWorkspaceRootRef,
+        identity: workspaceIdentityDescriptor,
+        intentGenerationRef: smartModeRequestGenerationRef,
+        intentStateRef: smartModeRequestIntentRef,
+        mode: nextWorkspaceSettings.intelligenceMode,
+        owner: requestedOwner,
+        rootPath: requestedRoot,
+        workspaceRuntimeOwnerClaimsRef,
+        workspaceRuntimeOwnerRef,
+      });
       const requestedRevision = openWorkspaceRequestTokenRef.current;
       const trustIntentCoordinator = workspaceTrustIntentCoordinatorRef.current;
       const desiredTrust =
@@ -268,14 +308,23 @@ export function useWorkbenchSettingsCommands({
         : null;
       const requestIsCurrent = () => {
         if (!requestedRoot || !requestedOwner) return false;
+        if (requestedOwnerGeneration === null || requestedOwnerGeneration === undefined) {
+          return false;
+        }
         if (openWorkspaceRequestTokenRef.current !== requestedRevision) return false;
 
         const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
-        if (!currentOwner || currentOwner.ownerKey !== requestedOwner.ownerKey) return false;
-        if (!workspaceRootKeysEqual(currentOwner.executionRoot, requestedOwner.executionRoot)) {
+        if (
+          currentOwner !== requestedOwner ||
+          workspaceRuntimeOwnerRef.current !== requestedOwner
+        ) {
           return false;
         }
-
+        if (
+          workspaceRuntimeOwnerClaimsRef.current.generationFor(requestedOwner.ownerKey) !==
+          requestedOwnerGeneration
+        )
+          return false;
         const currentRootGeneration =
           workspaceCloseGenerationByRootRef.current[normalizedWorkspaceRootKey(requestedRoot)] ?? 0;
         return (
@@ -309,13 +358,13 @@ export function useWorkbenchSettingsCommands({
 
         const previousMode = intelligenceModeRef.current;
         let nextMode = nextWorkspaceSettings.intelligenceMode;
+        let ownsModeMutation = true;
         if (nextWorkspaceSettings.intelligenceMode !== previousMode) {
-          const smartMode = await smartModeGateway.setMode(
-            workspaceIdentityDescriptor?.canonicalRoot ?? requestedRoot,
-            nextWorkspaceSettings.intelligenceMode,
-          );
+          if (!smartModeIntent) return;
+          const smartMode = await smartModeIntent.setMode(smartModeGateway);
           if (!requestIsCurrent()) return;
-          nextMode = smartMode.mode;
+          ownsModeMutation = smartModeIntent.isCurrent() && smartModeIntent.claimEffects();
+          nextMode = ownsModeMutation ? smartMode.mode : intelligenceModeRef.current;
         }
 
         const resolvedWorkspaceSettings = {
@@ -336,25 +385,35 @@ export function useWorkbenchSettingsCommands({
             (mapping, index) => mapping !== nextGitDirectoryMappings[index],
           );
 
-        if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
+        if (
+          ownsModeMutation &&
+          shouldStartLanguageServer(previousMode) &&
+          !shouldStartLanguageServer(nextMode)
+        ) {
           intelligenceModeRef.current = nextMode;
           setIntelligenceMode(nextMode);
-          autoStartedLanguageServerRootRef.current = requestedRoot;
-          await stopLanguageServerRuntime(requestedRoot);
+          autoStartedLanguageServerRootRef.current = requestedOwner.ownerKey;
+          await stopLanguageServerRuntime(requestedRoot, requestedOwner);
           if (!requestIsCurrent()) return;
         }
 
-        if (!shouldStartLanguageServer(previousMode) && shouldStartLanguageServer(nextMode)) {
+        if (
+          ownsModeMutation &&
+          !shouldStartLanguageServer(previousMode) &&
+          shouldStartLanguageServer(nextMode)
+        ) {
           autoStartedLanguageServerRootRef.current = null;
-          delete phpLanguageServerAutostartAttemptsByRootRef.current[
-            normalizedWorkspaceRootKey(requestedRoot)
-          ];
+          delete phpLanguageServerAutostartAttemptsByRootRef.current[requestedOwner.ownerKey];
         }
 
-        intelligenceModeRef.current = nextMode;
+        if (ownsModeMutation) {
+          intelligenceModeRef.current = nextMode;
+        }
         await persistWorkspaceSettings(requestedRoot, resolvedWorkspaceSettings);
         if (!requestIsCurrent()) return;
-        setIntelligenceMode(nextMode);
+        if (ownsModeMutation) {
+          setIntelligenceMode(nextMode);
+        }
 
         await applyJavaScriptTypeScriptSettingsChange({
           previousSettings: previousWorkspaceSettings,
@@ -366,11 +425,12 @@ export function useWorkbenchSettingsCommands({
 
         let refreshedPhpLanguageServerPlan = false;
         if (
+          ownsModeMutation &&
           !shouldStartLanguageServer(previousMode) &&
           shouldStartLanguageServer(nextMode) &&
           workspaceDescriptor?.php
         ) {
-          await runPhpWorkspaceProbe(requestedRoot);
+          await runPhpWorkspaceProbe(requestedRoot, requestedOwner);
           refreshedPhpLanguageServerPlan = true;
           if (!requestIsCurrent()) return;
         }
@@ -400,7 +460,7 @@ export function useWorkbenchSettingsCommands({
           }
 
           if (workspaceDescriptor?.php) {
-            await refreshLanguageServerPlan(requestedRoot);
+            await refreshLanguageServerPlan(requestedRoot, requestedOwner);
             refreshedPhpLanguageServerPlan = true;
             if (!requestIsCurrent()) return;
           }
@@ -412,19 +472,25 @@ export function useWorkbenchSettingsCommands({
           !refreshedPhpLanguageServerPlan
         ) {
           autoStartedLanguageServerRootRef.current = null;
-          delete phpLanguageServerAutostartAttemptsByRootRef.current[
-            normalizedWorkspaceRootKey(requestedRoot)
-          ];
-          await refreshLanguageServerPlan(requestedRoot);
+          delete phpLanguageServerAutostartAttemptsByRootRef.current[requestedOwner.ownerKey];
+          await refreshLanguageServerPlan(requestedRoot, requestedOwner);
           if (!requestIsCurrent()) return;
         }
 
-        if (!shouldIndexWorkspace(previousMode) && shouldIndexWorkspace(nextMode)) {
-          await startInitialIndexScan(requestedRoot);
+        if (
+          ownsModeMutation &&
+          !shouldIndexWorkspace(previousMode) &&
+          shouldIndexWorkspace(nextMode)
+        ) {
+          await startInitialIndexScan(requestedRoot, requestIsCurrent);
           if (!requestIsCurrent()) return;
         }
-        if (shouldIndexWorkspace(previousMode) && !shouldIndexWorkspace(nextMode)) {
-          await clearWorkspaceIndex(requestedRoot);
+        if (
+          ownsModeMutation &&
+          shouldIndexWorkspace(previousMode) &&
+          !shouldIndexWorkspace(nextMode)
+        ) {
+          await clearWorkspaceIndex(requestedRoot, undefined, requestIsCurrent);
           if (!requestIsCurrent()) return;
         }
         if (shouldRediscoverGitRepositories) {
@@ -466,6 +532,8 @@ export function useWorkbenchSettingsCommands({
       setMessage,
       setWorkspaceTrust,
       smartModeGateway,
+      smartModeRequestGenerationRef,
+      smartModeRequestIntentRef,
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,
       stopLanguageServerRuntime,
@@ -474,6 +542,8 @@ export function useWorkbenchSettingsCommands({
       workspaceDescriptor,
       workspaceIdentityDescriptor,
       workspaceRoot,
+      workspaceRuntimeOwnerClaimsRef,
+      workspaceRuntimeOwnerRef,
       workspaceSettingsRef,
       workspaceTrust,
       workspaceTrustGateway,

@@ -50,9 +50,9 @@ use crate::lsp_session::{
 use crate::managed_javascript_typescript;
 use crate::managed_phpactor;
 use crate::runtime_observability;
-use crate::smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
+use crate::smart_mode::{IntelligenceMode, SmartModeService, SmartModeSetRequest, SmartModeState};
 use crate::trust::WorkspaceTrustService;
-use crate::workspace_registry::WorkspaceRegistry;
+use crate::workspace_registry::{WorkspaceRegistrationAuthority, WorkspaceRegistry};
 use crate::workspace_typescript::{
     build_javascript_typescript_language_server_plan_with_trust,
     capture_javascript_typescript_workspace_trust,
@@ -66,23 +66,202 @@ use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
 pub(crate) fn set_smart_mode(
-    root_path: String,
-    mode: IntelligenceMode,
+    request: SmartModeSetRequest,
+    registry: State<'_, WorkspaceRegistry>,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
     service: State<'_, Mutex<SmartModeService>>,
     app: AppHandle,
 ) -> Result<SmartModeState, String> {
-    let root = workspace_root_for_disposal(&root_path);
-    let root_key = root.to_string_lossy();
-    let disables_indexing = matches!(mode, IntelligenceMode::Basic);
+    let mutation = set_smart_mode_with_authority(&request, &registry, &trust, &service)?;
+    let index_lifecycle = app.try_state::<WorkspaceIndexLifecycle>();
+    Ok(complete_smart_mode_mutation(
+        mutation,
+        index_lifecycle.as_deref(),
+    ))
+}
 
-    if disables_indexing {
-        if let Some(index_lifecycle) = app.try_state::<WorkspaceIndexLifecycle>() {
-            index_lifecycle.cancel_workspace(&root_key);
+struct SmartModeMutation<'a> {
+    _authority: WorkspaceRegistrationAuthority<'a>,
+    disables_indexing: bool,
+    root_key: String,
+    state: SmartModeState,
+}
+
+fn set_smart_mode_with_authority<'a>(
+    request: &SmartModeSetRequest,
+    registry: &'a WorkspaceRegistry,
+    trust: &Mutex<WorkspaceTrustService>,
+    service: &Mutex<SmartModeService>,
+) -> Result<SmartModeMutation<'a>, String> {
+    validate_smart_mode_request(request)?;
+    let authority = registry
+        .claim_latest_registration(&request.workspace_id, request.admission_token)
+        .map_err(|error| error.to_string())?;
+    let descriptor = authority.descriptor();
+    let requested_root = Path::new(&request.root_path);
+    if requested_root != descriptor.selected_root_path
+        && requested_root != descriptor.canonical_root_path
+    {
+        return Err("Smart mode root does not match its registered workspace.".to_string());
+    }
+    let root_key = descriptor.canonical_root_path.to_string_lossy().to_string();
+    let trust = trust.lock().map_err(|error| error.to_string())?;
+    let trust_snapshot = trust.snapshot(&root_key);
+    if !trust_snapshot.trusted && !matches!(request.mode, IntelligenceMode::Basic) {
+        return Err("Smart mode requires a trusted workspace.".to_string());
+    }
+    let disables_indexing = matches!(request.mode, IntelligenceMode::Basic);
+    let mut service = service.lock().map_err(|error| error.to_string())?;
+    let state = service.set_mode(&root_key, request.mode.clone());
+    Ok(SmartModeMutation {
+        _authority: authority,
+        disables_indexing,
+        root_key,
+        state,
+    })
+}
+
+fn complete_smart_mode_mutation(
+    mutation: SmartModeMutation<'_>,
+    index_lifecycle: Option<&WorkspaceIndexLifecycle>,
+) -> SmartModeState {
+    if mutation.disables_indexing {
+        if let Some(index_lifecycle) = index_lifecycle {
+            index_lifecycle.cancel_workspace(&mutation.root_key);
         }
     }
+    mutation.state
+}
 
-    let mut service = service.lock().map_err(|error| error.to_string())?;
-    Ok(service.set_mode(&root_key, mode))
+fn validate_smart_mode_request(request: &SmartModeSetRequest) -> Result<(), String> {
+    const MAX_JAVASCRIPT_SAFE_INTEGER: u64 = (1_u64 << 53) - 1;
+    const MAX_ROOT_PATH_BYTES: usize = 32_768;
+    const MAX_WORKSPACE_ID_BYTES: usize = 1_024;
+
+    if request.admission_token == 0 || request.admission_token > MAX_JAVASCRIPT_SAFE_INTEGER {
+        return Err("Smart mode admission token is invalid.".to_string());
+    }
+    if request.root_path.is_empty()
+        || request.root_path.len() > MAX_ROOT_PATH_BYTES
+        || request.root_path.contains('\0')
+        || !Path::new(&request.root_path).is_absolute()
+    {
+        return Err("Smart mode root path is invalid.".to_string());
+    }
+    let workspace_id = request.workspace_id.as_str();
+    if workspace_id.is_empty()
+        || workspace_id.len() > MAX_WORKSPACE_ID_BYTES
+        || workspace_id.contains('\0')
+    {
+        return Err("Smart mode workspace id is invalid.".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod smart_mode_authority_tests {
+    use super::*;
+    use std::fs;
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc, Arc,
+    };
+    use std::time::Duration;
+
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_root(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "codevo-smart-mode-{label}-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn same_root_aba_rejects_the_predecessor_before_mutation() {
+        let registry = WorkspaceRegistry::new();
+        let root_a = temp_root("aba-a");
+        let root_b = temp_root("aba-b");
+        let first_a = registry.register_with_receipt(&root_a).unwrap();
+        let _workspace_b = registry.register_with_receipt(&root_b).unwrap();
+        let replacement_a = registry.register_with_receipt(&root_a).unwrap();
+        let canonical_root = replacement_a
+            .descriptor
+            .canonical_root_path
+            .to_string_lossy()
+            .to_string();
+        let mut trust_service = WorkspaceTrustService::load(root_a.join("trust.json")).unwrap();
+        trust_service.set(&canonical_root, true).unwrap();
+        let trust = Mutex::new(trust_service);
+        let service = Mutex::new(SmartModeService::new());
+
+        let current = SmartModeSetRequest {
+            admission_token: replacement_a.receipt.admission_token,
+            mode: IntelligenceMode::FullSmart,
+            root_path: canonical_root.clone(),
+            workspace_id: replacement_a.receipt.workspace_id,
+        };
+        set_smart_mode_with_authority(&current, &registry, &trust, &service).unwrap();
+
+        let stale = SmartModeSetRequest {
+            admission_token: first_a.receipt.admission_token,
+            mode: IntelligenceMode::Basic,
+            root_path: canonical_root.clone(),
+            workspace_id: first_a.receipt.workspace_id,
+        };
+        assert!(set_smart_mode_with_authority(&stale, &registry, &trust, &service).is_err());
+        assert!(matches!(
+            service.lock().unwrap().state(&canonical_root).mode,
+            IntelligenceMode::FullSmart
+        ));
+    }
+
+    #[test]
+    fn replacement_registration_waits_until_index_cancellation_finishes() {
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let root = temp_root("cancel-fence");
+        let registration = registry.register_with_receipt(&root).unwrap();
+        let canonical_root = registration
+            .descriptor
+            .canonical_root_path
+            .to_string_lossy()
+            .to_string();
+        let trust = Mutex::new(WorkspaceTrustService::load(root.join("trust.json")).unwrap());
+        let service = Mutex::new(SmartModeService::new());
+        let request = SmartModeSetRequest {
+            admission_token: registration.receipt.admission_token,
+            mode: IntelligenceMode::Basic,
+            root_path: canonical_root,
+            workspace_id: registration.receipt.workspace_id,
+        };
+        let mutation =
+            set_smart_mode_with_authority(&request, &registry, &trust, &service).unwrap();
+        assert!(registry.operations_locked_for_test());
+        let replacement_registry = Arc::clone(&registry);
+        let replacement_root = root.clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let replacement = std::thread::spawn(move || {
+            let result = replacement_registry.register_with_hook(&replacement_root, || {
+                entered_tx.send(()).unwrap();
+                Ok(())
+            });
+            completed_tx.send(result).unwrap();
+        });
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        assert!(completed_rx.try_recv().is_err());
+        complete_smart_mode_mutation(mutation, None);
+
+        assert!(completed_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .is_ok());
+        replacement.join().unwrap();
+    }
 }
 
 pub(crate) fn registered_runtime_root(registry: &WorkspaceRegistry, root_path: &str) -> PathBuf {

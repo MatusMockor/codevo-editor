@@ -11,13 +11,13 @@ import { shouldIndexWorkspace } from "../domain/intelligence";
 import {
   applyIndexProgress,
   applyMetadataScanCompletion,
+  beginIndexProgress,
   createIndexHealthCompletionLog,
   createIndexHealthLogEntry,
   indexProgressCompletionMessage,
   indexProgressNoticeSeverity,
   initialIndexProgress,
   prependIndexHealthLog,
-  startIndexProgress,
   type IndexHealthLogEntry,
   type IndexProgressEvent,
   type IndexProgressGateway,
@@ -27,15 +27,21 @@ import {
 } from "../domain/indexProgress";
 import type { IntelligenceMode } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   createWorkbenchNotice,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
 } from "./workbenchNotice";
 import {
+  attachIndexStartReceipt,
   useWorkbenchIndexCommands,
   type WorkbenchIndexActions,
+  type WorkbenchIndexOperation,
 } from "./useWorkbenchIndexCommands";
+
+const MAX_INDEX_OPERATION_GENERATION = 4_294_967_295;
+const workbenchIndexOperationGenerationIssuer = createIndexOperationGenerationIssuer();
 
 export interface WorkbenchIndexLifecycleOptions {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
@@ -48,11 +54,24 @@ export interface WorkbenchIndexLifecycleOptions {
   setMessage: Dispatch<SetStateAction<string | null>>;
   setNotices: Dispatch<SetStateAction<WorkbenchNotice[]>>;
   workspaceRoot: string | null;
+  workspaceIdentityDescriptorRef: {
+    readonly current: {
+      readonly admissionToken?: number;
+      readonly workspaceId: string;
+    } | null;
+  };
+  workspaceRuntimeOwner: WorkspaceRuntimeOwner | null;
+  workspaceRuntimeOwnerGeneration(ownerKey: string): number | null | undefined;
+  workspaceRuntimeOwnerRef: { readonly current: WorkspaceRuntimeOwner | null };
 }
 
 export interface WorkbenchIndexLifecycle extends WorkbenchIndexActions {
   clearIndexWorkspaceState(): void;
-  clearWorkspaceIndex(rootPath: string, message?: string): Promise<void>;
+  clearWorkspaceIndex(
+    rootPath: string,
+    message: string | undefined,
+    requestIsCurrent: () => boolean,
+  ): Promise<void>;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   restoreCachedIndexState(
@@ -60,7 +79,7 @@ export interface WorkbenchIndexLifecycle extends WorkbenchIndexActions {
     indexHealthLogs: IndexHealthLogEntry[],
   ): void;
   restoreIndexRoot(rootPath: string | null): void;
-  startInitialIndexScan(rootPath: string): Promise<void>;
+  startInitialIndexScan(rootPath: string, requestIsCurrent: () => boolean): Promise<void>;
 }
 
 export function useWorkbenchIndexLifecycle({
@@ -74,61 +93,141 @@ export function useWorkbenchIndexLifecycle({
   setMessage,
   setNotices,
   workspaceRoot,
+  workspaceIdentityDescriptorRef,
+  workspaceRuntimeOwner,
+  workspaceRuntimeOwnerGeneration,
+  workspaceRuntimeOwnerRef,
 }: WorkbenchIndexLifecycleOptions): WorkbenchIndexLifecycle {
-  const [indexProgress, setIndexProgress] = useState<IndexProgressState>(
-    initialIndexProgress,
-  );
-  const [indexHealthLogs, setIndexHealthLogs] = useState<
-    IndexHealthLogEntry[]
-  >([]);
+  const [indexProgress, setIndexProgress] = useState<IndexProgressState>(initialIndexProgress);
+  const [indexHealthLogs, setIndexHealthLogs] = useState<IndexHealthLogEntry[]>([]);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexRootRef = useRef<string | null>(null);
   const pendingIndexScanRef = useRef(false);
+  const pendingIndexOperationRef = useRef<WorkbenchIndexOperation | null>(null);
+
+  const captureIndexOperationAuthority = useCallback(
+    (rootPath: string, requestedOwner: WorkspaceRuntimeOwner | null) => {
+      if (!requestedOwner || !workspaceRootKeysEqual(requestedOwner.executionRoot, rootPath)) {
+        return null;
+      }
+      const requestedGeneration = workspaceRuntimeOwnerGeneration(requestedOwner.ownerKey);
+      if (requestedGeneration === null || requestedGeneration === undefined) return null;
+      const workspaceIdentityDescriptor = workspaceIdentityDescriptorRef.current;
+      const admissionToken = workspaceIdentityDescriptor?.admissionToken;
+      if (
+        !workspaceIdentityDescriptor ||
+        workspaceIdentityDescriptor.workspaceId !== requestedOwner.ownerKey
+      )
+        return null;
+      if (typeof admissionToken !== "number" || !Number.isSafeInteger(admissionToken)) return null;
+      if (admissionToken <= 0) return null;
+      return Object.freeze({
+        admissionToken,
+        requestIsCurrent: () =>
+          workspaceRuntimeOwnerRef.current === requestedOwner &&
+          workspaceRuntimeOwnerGeneration(requestedOwner.ownerKey) === requestedGeneration &&
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath),
+        workspaceId: workspaceIdentityDescriptor.workspaceId,
+      });
+    },
+    [
+      currentWorkspaceRootRef,
+      workspaceIdentityDescriptorRef,
+      workspaceRuntimeOwnerGeneration,
+      workspaceRuntimeOwnerRef,
+    ],
+  );
+
+  const indexOperationIsCurrent = useCallback(
+    (operation: WorkbenchIndexOperation) =>
+      pendingIndexOperationRef.current === operation &&
+      operation.requestIsCurrent() &&
+      pendingIndexScanRef.current &&
+      workspaceRootKeysEqual(pendingIndexRootRef.current, operation.rootPath),
+    [],
+  );
+
+  const cancelIndexOperation = useCallback((operation: WorkbenchIndexOperation) => {
+    if (pendingIndexOperationRef.current !== operation) return;
+    pendingIndexOperationRef.current = null;
+    pendingIndexScanRef.current = false;
+    pendingIndexRootRef.current = null;
+  }, []);
+
+  const abandonIndexOperation = useCallback(
+    (operation: WorkbenchIndexOperation) => {
+      if (pendingIndexOperationRef.current !== operation) return;
+      cancelIndexOperation(operation);
+      activeIndexRootRef.current = null;
+      setIndexProgress(initialIndexProgress());
+    },
+    [cancelIndexOperation],
+  );
+
+  const beginIndexOperation = useCallback(
+    (rootPath: string, requestIsCurrent?: () => boolean): WorkbenchIndexOperation | null => {
+      const ownerAuthority = captureIndexOperationAuthority(
+        rootPath,
+        workspaceRuntimeOwnerRef.current,
+      );
+      if (!ownerAuthority) return null;
+      const remainsCurrent = () =>
+        ownerAuthority.requestIsCurrent() && (!requestIsCurrent || requestIsCurrent());
+      if (!remainsCurrent()) return null;
+      const operationGeneration = workbenchIndexOperationGenerationIssuer.issue();
+      if (operationGeneration === null) {
+        reportError("Index", new Error("Index operation generation exhausted."));
+        return null;
+      }
+      const operation = Object.freeze({
+        admissionToken: ownerAuthority.admissionToken,
+        operationGeneration,
+        requestIsCurrent: remainsCurrent,
+        rootPath,
+        workspaceId: ownerAuthority.workspaceId,
+      });
+      pendingIndexOperationRef.current = operation;
+      pendingIndexScanRef.current = true;
+      pendingIndexRootRef.current = rootPath;
+      setIndexProgress(beginIndexProgress(rootPath, operationGeneration));
+      return operation;
+    },
+    [captureIndexOperationAuthority, reportError, workspaceRuntimeOwnerRef],
+  );
 
   const handleMetadataScanCompletion = useCallback(
     (event: MetadataScanCompletionEvent) => {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.rootPath)) {
-        return;
-      }
+      const operation = pendingIndexOperationRef.current;
+      if (!operation || !indexOperationIsCurrent(operation)) return;
+      if (operation.operationGeneration !== event.operationGeneration) return;
+      if (!workspaceRootKeysEqual(operation.rootPath, event.rootPath)) return;
 
       if (!shouldIndexWorkspace(intelligenceModeRef.current)) {
         const clearRoot = event.rootPath;
-        pendingIndexScanRef.current = false;
-        pendingIndexRootRef.current = null;
+        cancelIndexOperation(operation);
         activeIndexRootRef.current = null;
         indexProgressGateway
-          .clearWorkspaceIndex(clearRoot)
+          .clearWorkspaceIndex({
+            admissionToken: operation.admissionToken,
+            rootPath: clearRoot,
+            workspaceId: operation.workspaceId,
+          })
           .catch((error) => {
-            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, clearRoot)) {
-              return;
-            }
+            if (!operation.requestIsCurrent()) return;
 
             reportError("Index", error);
           });
         return;
       }
 
-      if (pendingIndexScanRef.current) {
-        if (!workspaceRootKeysEqual(pendingIndexRootRef.current, event.rootPath)) {
-          return;
-        }
-      } else {
-        if (!workspaceRootKeysEqual(activeIndexRootRef.current, event.rootPath)) {
-          return;
-        }
-      }
-
       const message = indexProgressCompletionMessage(event);
       const severity = indexProgressNoticeSeverity(event);
       const groupKey = indexProgressNoticeGroup(event.rootPath);
 
-      pendingIndexScanRef.current = false;
-      pendingIndexRootRef.current = null;
+      cancelIndexOperation(operation);
       activeIndexRootRef.current = event.rootPath;
       resetPhpFrameworkCaches();
-      setIndexProgress((current) =>
-        applyMetadataScanCompletion(current, event),
-      );
+      setIndexProgress((current) => applyMetadataScanCompletion(current, event));
       setIndexHealthLogs((current) =>
         prependIndexHealthLog(current, createIndexHealthCompletionLog(event)),
       );
@@ -137,14 +236,13 @@ export function useWorkbenchIndexLifecycle({
         replaceWorkbenchNoticeGroup(
           current,
           groupKey,
-          severity
-            ? [createWorkbenchNotice(severity, "Index", message, groupKey)]
-            : [],
+          severity ? [createWorkbenchNotice(severity, "Index", message, groupKey)] : [],
         ),
       );
     },
     [
-      currentWorkspaceRootRef,
+      cancelIndexOperation,
+      indexOperationIsCurrent,
       indexProgressGateway,
       intelligenceModeRef,
       reportError,
@@ -154,70 +252,51 @@ export function useWorkbenchIndexLifecycle({
     ],
   );
 
-  const handleIndexProgress = useCallback((event: IndexProgressEvent) => {
-    // Per-workspace isolation: drop progress for any root that is not the active workspace and the
-    // root the in-flight index was actually started for, so a stale background run can never paint
-    // the newly-active workspace's status bar. Progress is purely advisory - completion/failure are
-    // still owned by handleMetadataScanCompletion.
-    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.rootPath)) {
-      return;
-    }
+  const handleIndexProgress = useCallback(
+    (event: IndexProgressEvent) => {
+      const operation = pendingIndexOperationRef.current;
+      if (!operation || !indexOperationIsCurrent(operation)) return;
+      if (operation.operationGeneration !== event.operationGeneration) return;
+      if (!workspaceRootKeysEqual(operation.rootPath, event.rootPath)) return;
 
-    const indexRoot = pendingIndexScanRef.current
-      ? pendingIndexRootRef.current
-      : activeIndexRootRef.current;
+      setIndexProgress((current) => {
+        if (current.operationGeneration !== event.operationGeneration) return current;
+        if (!workspaceRootKeysEqual(current.rootPath, event.rootPath)) return current;
 
-    if (!workspaceRootKeysEqual(indexRoot, event.rootPath)) {
-      return;
-    }
-
-    setIndexProgress((current) => {
-      if (
-        current.rootPath &&
-        !workspaceRootKeysEqual(current.rootPath, event.rootPath)
-      ) {
-        return current;
-      }
-
-      return applyIndexProgress(current, event);
-    });
-  }, [currentWorkspaceRootRef]);
+        return applyIndexProgress(current, event);
+      });
+    },
+    [indexOperationIsCurrent],
+  );
 
   const startInitialIndexScan = useCallback(
-    async (rootPath: string) => {
-      if (!shouldIndexWorkspace(intelligenceModeRef.current)) {
-        return;
-      }
-
-      pendingIndexScanRef.current = true;
-      pendingIndexRootRef.current = rootPath;
+    async (rootPath: string, requestIsCurrent: () => boolean) => {
+      if (!shouldIndexWorkspace(intelligenceModeRef.current)) return;
+      const operation = beginIndexOperation(rootPath, requestIsCurrent);
+      if (!operation) return;
 
       try {
-        const started = await indexProgressGateway.startInitialMetadataScan(
+        const started = await indexProgressGateway.startInitialMetadataScan({
+          admissionToken: operation.admissionToken,
+          operationGeneration: operation.operationGeneration,
           rootPath,
-        );
+          workspaceId: operation.workspaceId,
+        });
+        if (!indexOperationIsCurrent(operation)) {
+          abandonIndexOperation(operation);
+          return;
+        }
 
         if (
-          !pendingIndexScanRef.current ||
-          !workspaceRootKeysEqual(pendingIndexRootRef.current, rootPath)
+          started.operationGeneration !== operation.operationGeneration ||
+          !workspaceRootKeysEqual(started.rootPath, rootPath)
         ) {
-          return;
-        }
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-          pendingIndexScanRef.current = false;
-          pendingIndexRootRef.current = null;
-          return;
-        }
-
-        if (!workspaceRootKeysEqual(started.rootPath, rootPath)) {
-          pendingIndexScanRef.current = false;
-          pendingIndexRootRef.current = null;
+          abandonIndexOperation(operation);
           return;
         }
 
         activeIndexRootRef.current = started.rootPath;
-        setIndexProgress(startIndexProgress(started));
+        setIndexProgress((current) => attachIndexStartReceipt(current, started));
         setIndexHealthLogs((current) =>
           prependIndexHealthLog(
             current,
@@ -226,22 +305,19 @@ export function useWorkbenchIndexLifecycle({
         );
         setMessage("Indexing workspace.");
       } catch (error) {
-        if (!workspaceRootKeysEqual(pendingIndexRootRef.current, rootPath)) {
+        if (!indexOperationIsCurrent(operation)) {
+          abandonIndexOperation(operation);
           return;
         }
-
-        pendingIndexScanRef.current = false;
-        pendingIndexRootRef.current = null;
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-          return;
-        }
+        abandonIndexOperation(operation);
 
         reportError("Index", error);
       }
     },
     [
-      currentWorkspaceRootRef,
+      abandonIndexOperation,
+      beginIndexOperation,
+      indexOperationIsCurrent,
       indexProgressGateway,
       intelligenceModeRef,
       reportError,
@@ -252,6 +328,7 @@ export function useWorkbenchIndexLifecycle({
   const clearIndexWorkspaceState = useCallback(() => {
     pendingIndexScanRef.current = false;
     pendingIndexRootRef.current = null;
+    pendingIndexOperationRef.current = null;
     activeIndexRootRef.current = null;
     resetPhpFrameworkCaches();
     setIndexProgress(initialIndexProgress());
@@ -263,40 +340,45 @@ export function useWorkbenchIndexLifecycle({
   }, [resetIndexedWorkspaceViews, resetPhpFrameworkCaches, setNotices]);
 
   const clearWorkspaceIndex = useCallback(
-    async (rootPath: string, message?: string) => {
+    async (rootPath: string, message: string | undefined, requestIsCurrent: () => boolean) => {
+      const ownerAuthority = captureIndexOperationAuthority(
+        rootPath,
+        workspaceRuntimeOwnerRef.current,
+      );
+      if (!ownerAuthority) return;
+      const remainsCurrent = () => ownerAuthority.requestIsCurrent() && requestIsCurrent();
+      if (!remainsCurrent()) return;
       clearIndexWorkspaceState();
 
       try {
-        await indexProgressGateway.clearWorkspaceIndex(rootPath);
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-          return;
-        }
+        await indexProgressGateway.clearWorkspaceIndex({
+          admissionToken: ownerAuthority.admissionToken,
+          rootPath,
+          workspaceId: ownerAuthority.workspaceId,
+        });
+        if (!remainsCurrent()) return;
 
         if (message) {
           setMessage(message);
         }
       } catch (error) {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-          return;
-        }
+        if (!remainsCurrent()) return;
 
         reportError("Index", error);
       }
     },
     [
       clearIndexWorkspaceState,
-      currentWorkspaceRootRef,
+      captureIndexOperationAuthority,
       indexProgressGateway,
       reportError,
       setMessage,
+      workspaceRuntimeOwnerRef,
     ],
   );
 
   const restoreCachedIndexState = useCallback(
-    (
-      restoredIndexProgress: IndexProgressState,
-      restoredIndexHealthLogs: IndexHealthLogEntry[],
-    ) => {
+    (restoredIndexProgress: IndexProgressState, restoredIndexHealthLogs: IndexHealthLogEntry[]) => {
       setIndexHealthLogs(restoredIndexHealthLogs);
       setIndexProgress(restoredIndexProgress);
     },
@@ -306,19 +388,16 @@ export function useWorkbenchIndexLifecycle({
   const restoreIndexRoot = useCallback((rootPath: string | null) => {
     activeIndexRootRef.current = rootPath;
     pendingIndexScanRef.current = false;
+    pendingIndexOperationRef.current = null;
   }, []);
 
-  const {
-    startHardReindex,
-    startIndexScan,
-    startPhpReindex,
-  } = useWorkbenchIndexCommands({
+  const { startHardReindex, startIndexScan, startPhpReindex } = useWorkbenchIndexCommands({
     activeIndexRootRef,
-    currentWorkspaceRootRef,
+    abandonIndexOperation,
+    beginIndexOperation,
     indexProgressGateway,
+    indexOperationIsCurrent,
     intelligenceMode,
-    pendingIndexRootRef,
-    pendingIndexScanRef,
     reportError,
     setIndexHealthLogs,
     setIndexProgress,
@@ -329,6 +408,10 @@ export function useWorkbenchIndexLifecycle({
   useEffect(() => {
     let active = true;
     const subscriptionRoot = workspaceRoot;
+    const subscriptionOwner = workspaceRuntimeOwner;
+    const subscriptionGeneration = subscriptionOwner
+      ? workspaceRuntimeOwnerGeneration(subscriptionOwner.ownerKey)
+      : null;
     let unsubscribe: IndexProgressUnsubscribeFn | null = null;
     let unsubscribeProgress: IndexProgressUnsubscribeFn | null = null;
 
@@ -336,6 +419,11 @@ export function useWorkbenchIndexLifecycle({
       if (
         !active ||
         !subscriptionRoot ||
+        !subscriptionOwner ||
+        subscriptionGeneration === null ||
+        subscriptionGeneration === undefined ||
+        workspaceRuntimeOwnerRef.current !== subscriptionOwner ||
+        workspaceRuntimeOwnerGeneration(subscriptionOwner.ownerKey) !== subscriptionGeneration ||
         !workspaceRootKeysEqual(currentWorkspaceRootRef.current, subscriptionRoot)
       ) {
         return;
@@ -392,6 +480,9 @@ export function useWorkbenchIndexLifecycle({
     indexProgressGateway,
     reportError,
     workspaceRoot,
+    workspaceRuntimeOwner,
+    workspaceRuntimeOwnerGeneration,
+    workspaceRuntimeOwnerRef,
   ]);
 
   return {
@@ -410,4 +501,25 @@ export function useWorkbenchIndexLifecycle({
 
 function indexProgressNoticeGroup(rootPath: string): string {
   return `index-progress:${rootPath}`;
+}
+
+export interface IndexOperationGenerationIssuer {
+  issue(): number | null;
+}
+
+export function createIndexOperationGenerationIssuer(initialGeneration = 0) {
+  let currentGeneration = initialGeneration;
+  return Object.freeze<IndexOperationGenerationIssuer>({
+    issue() {
+      if (
+        !Number.isInteger(currentGeneration) ||
+        currentGeneration < 0 ||
+        currentGeneration >= MAX_INDEX_OPERATION_GENERATION
+      ) {
+        return null;
+      }
+      currentGeneration += 1;
+      return currentGeneration;
+    },
+  });
 }

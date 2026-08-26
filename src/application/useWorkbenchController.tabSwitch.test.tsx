@@ -10,13 +10,14 @@ import {
   fileEntry,
   flushAsyncTurns,
   it,
-  setupWorkbenchControllerTestHarness,
+  setupRegisteredWorkbenchControllerTestHarness,
   vi,
   waitForReact,
   type SettingsGateway,
   type WorkbenchCommitPhase,
   type WorkbenchController,
   type WorkspaceSettings,
+  workspaceSettingsIdentity,
 } from "./useWorkbenchController.preview/testSupport";
 
 const ROOT = "/workspace";
@@ -84,7 +85,7 @@ const UNRELATED_CHANGE_STABLE_OUTPUT_KEYS = [
 ] as const satisfies readonly (keyof WorkbenchController)[];
 
 describe("useWorkbenchController tab switch", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupRegisteredWorkbenchControllerTestHarness();
 
   it("commits the workbench at most once synchronously and once trailing per activation", async () => {
     const { getWorkbench, renders } = await openTwoTabs();
@@ -157,9 +158,9 @@ describe("useWorkbenchController tab switch", () => {
     await waitForReact(() => {
       expect(saveWorkspaceSettings).toHaveBeenCalled();
     });
-    const calls = saveWorkspaceSettings.mock.calls;
-    const lastCall = calls[calls.length - 1];
-    expect(lastCall?.[1].session.editor.groups[DEFAULT_WORKSPACE_EDITOR_GROUP_ID]?.activePath).toBe(
+    const [identity, settings] = saveWorkspaceSettings.mock.lastCall ?? [];
+    expect(identity).toEqual(workspaceSettingsIdentity(ROOT));
+    expect(settings?.session.editor.groups[DEFAULT_WORKSPACE_EDITOR_GROUP_ID]?.activePath).toBe(
       PATH_B,
     );
   });
@@ -244,7 +245,6 @@ describe("useWorkbenchController tab switch", () => {
     await waitForReact(() => {
       expect(getWorkbench().openTabs.length).toBe(2);
     });
-    await settle();
 
     return { commitPhases, getWorkbench, renders, saveWorkspaceSettings };
   }

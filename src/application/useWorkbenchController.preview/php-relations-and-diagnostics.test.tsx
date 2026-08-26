@@ -19,7 +19,7 @@ import {
   phpactorLanguageServerPlan,
   phpWorkspaceDescriptor,
   positionAfter,
-  setupWorkbenchControllerTestHarness,
+  setupRegisteredWorkbenchControllerTestHarness,
   type TextSearchResult,
   vi,
   waitForReact,
@@ -27,7 +27,7 @@ import {
 } from "./testSupport";
 
 describe("useWorkbenchController PHP language intelligence", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupRegisteredWorkbenchControllerTestHarness();
   it("infers Laravel relation model completions from property and relation chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

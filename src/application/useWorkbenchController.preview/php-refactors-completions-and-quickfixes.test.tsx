@@ -32,7 +32,7 @@ import {
 } from "./testSupport";
 
 describe("useWorkbenchController PHP language intelligence", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderRegisteredController: renderController } = setupWorkbenchControllerTestHarness();
 
   it("resolves generic trait method returns through PHPDoc use", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
@@ -3398,7 +3398,7 @@ class Comment extends BaseComment
 });
 
 describe("useWorkbenchController workspace sessions and PHP code actions", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderRegisteredController: renderController } = setupWorkbenchControllerTestHarness();
   it("offers a generate constructor action for a class with properties and no constructor", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php

@@ -3,10 +3,13 @@ use super::unsupported_platform;
 use super::{
     detect_case_sensitivity, detect_unicode_policy, lock_error, normalize_registered_path,
     open_selected_root, opened_root_path, random_workspace_id, unknown_workspace, ManagedWorkspace,
-    ManagedWorkspaceDescriptor, RegisteredPathOwner, RegistrationAdmission, WorkspaceId,
-    WorkspaceRegistry, MAX_REGISTERED_PATHS_GLOBAL, MAX_REGISTERED_PATHS_PER_WORKSPACE,
+    ManagedWorkspaceDescriptor, RegisteredPathOwner, RegisteredRootIdentity, RegistrationAdmission,
+    WorkspaceId, WorkspaceRegistrationAuthority, WorkspaceRegistry, MAX_REGISTERED_PATHS_GLOBAL,
+    MAX_REGISTERED_PATHS_PER_WORKSPACE,
 };
 use serde::Serialize;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use std::os::unix::fs::MetadataExt;
 use std::{
     collections::BTreeSet,
     io,
@@ -97,6 +100,43 @@ impl Drop for WorkspaceRegistrationRollback<'_> {
 }
 
 impl WorkspaceRegistry {
+    pub(crate) fn claim_latest_registration(
+        &self,
+        workspace_id: &WorkspaceId,
+        admission_token: u64,
+    ) -> io::Result<WorkspaceRegistrationAuthority<'_>> {
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (workspace_id, admission_token);
+            return Err(unsupported_platform());
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let operation = self.lock_operations()?;
+            let workspaces = self.workspaces.lock().map_err(lock_error)?;
+            let workspace = workspaces
+                .get(workspace_id)
+                .filter(|workspace| workspace.unregister_generation.is_none())
+                .ok_or_else(unknown_workspace)?;
+            if workspace.latest_admission_token != admission_token
+                || !workspace
+                    .registration_admissions
+                    .contains_key(&admission_token)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "workspace registration admission is stale",
+                ));
+            }
+            let descriptor = workspace.descriptor.clone();
+            drop(workspaces);
+            Ok(WorkspaceRegistrationAuthority {
+                descriptor,
+                _operation: operation,
+            })
+        }
+    }
+
     pub(crate) fn register(
         &self,
         selected_root: impl AsRef<Path>,
@@ -124,8 +164,8 @@ impl WorkspaceRegistry {
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    pub(super) fn register_with_hook<F>(
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    pub(crate) fn register_with_hook<F>(
         &self,
         selected_root: &Path,
         post_open: F,
@@ -151,6 +191,11 @@ impl WorkspaceRegistry {
         let root = open_selected_root(selected_root)?;
         post_open()?;
         let canonical_root_path = opened_root_path(&root)?;
+        let root_metadata = root.metadata()?;
+        let root_identity = RegisteredRootIdentity {
+            device: root_metadata.dev(),
+            inode: root_metadata.ino(),
+        };
         if selected_root.to_str().is_none() || canonical_root_path.to_str().is_none() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -161,7 +206,7 @@ impl WorkspaceRegistry {
         let canonical_path = normalize_registered_path(&canonical_root_path)?;
         let requested_paths = BTreeSet::from([selected_path, canonical_path]);
 
-        let _operation = self.lock_operations()?;
+        let operation = self.lock_operations()?;
         let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
         let mut path_owners = self.path_owners.lock().map_err(lock_error)?;
         if workspaces.values().any(|workspace| {
@@ -173,11 +218,17 @@ impl WorkspaceRegistry {
                 "workspace root is being unregistered",
             ));
         }
-        let existing_id = workspaces.iter().find_map(|(workspace_id, workspace)| {
-            (workspace.unregister_generation.is_none()
-                && workspace.descriptor.canonical_root_path == canonical_root_path)
-                .then(|| workspace_id.clone())
+        let existing = workspaces.iter().find(|(_, workspace)| {
+            workspace.unregister_generation.is_none()
+                && workspace.descriptor.canonical_root_path == canonical_root_path
         });
+        if existing.is_some_and(|(_, workspace)| workspace.root_identity != root_identity) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "canonical workspace path is retained by a different root identity",
+            ));
+        }
+        let existing_id = existing.map(|(workspace_id, _)| workspace_id.clone());
         let created_identity = existing_id.is_none();
         let workspace_id = match existing_id {
             Some(workspace_id) => workspace_id,
@@ -305,6 +356,7 @@ impl WorkspaceRegistry {
                     registration_admissions,
                     latest_admission_token: admission_token,
                     root,
+                    root_identity,
                     unregister_generation: None,
                     #[cfg(test)]
                     drop_hook: None,
@@ -312,6 +364,37 @@ impl WorkspaceRegistry {
             );
             descriptor
         };
+        let transition = self
+            .registration_operations
+            .begin_transition(&workspace_id)?;
+        drop(path_owners);
+        drop(workspaces);
+        drop(operation);
+        transition.wait()?;
+        let _operation = self.lock_operations()?;
+        let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
+        let current = workspaces.get(&workspace_id).is_some_and(|workspace| {
+            workspace.unregister_generation.is_none()
+                && workspace.latest_admission_token == admission_token
+                && workspace
+                    .registration_admissions
+                    .contains_key(&admission_token)
+        });
+        if !current {
+            let mut path_owners = self.path_owners.lock().map_err(lock_error)?;
+            remove_losing_registration_admission(
+                &mut workspaces,
+                &mut path_owners,
+                &workspace_id,
+                admission_token,
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "workspace registration admission was replaced before publication",
+            ));
+        }
+        self.registration_operations
+            .publish_latest(&workspace_id, admission_token)?;
         Ok(WorkspaceRegistration {
             receipt: WorkspaceRegistrationReceipt {
                 workspace_id,
@@ -334,7 +417,7 @@ impl WorkspaceRegistry {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let _operation = self.lock_operations()?;
+            let operation = self.lock_operations()?;
             let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
             let Some(workspace) = workspaces.get_mut(workspace_id) else {
                 return Ok(None);
@@ -358,6 +441,12 @@ impl WorkspaceRegistry {
                     .fetch_add(1, Ordering::Relaxed)
                     .wrapping_add(1);
                 workspace.unregister_generation = Some(generation);
+                let transition = self
+                    .registration_operations
+                    .begin_transition(workspace_id)?;
+                drop(workspaces);
+                drop(operation);
+                transition.wait()?;
                 return Ok(Some(WorkspaceRegistrationRollback {
                     registry: self,
                     descriptor,
@@ -385,6 +474,15 @@ impl WorkspaceRegistry {
                 .keys()
                 .max()
                 .expect("non-empty admission registry");
+            let latest_admission_token = workspace.latest_admission_token;
+            let transition = self
+                .registration_operations
+                .begin_transition(workspace_id)?;
+            drop(path_owners);
+            drop(workspaces);
+            drop(operation);
+            transition.wait()?;
+            self.publish_registration_if_latest(workspace_id, latest_admission_token)?;
             Ok(Some(WorkspaceRegistrationRollback {
                 registry: self,
                 descriptor,
@@ -409,7 +507,7 @@ impl WorkspaceRegistry {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            let _operation = self.lock_operations()?;
+            let operation = self.lock_operations()?;
             let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
             let workspace = workspaces
                 .get_mut(workspace_id)
@@ -429,8 +527,38 @@ impl WorkspaceRegistry {
                 .keys()
                 .max()
                 .expect("retained registration admission");
+            let latest_admission_token = workspace.latest_admission_token;
+            let transition = self
+                .registration_operations
+                .begin_transition(workspace_id)?;
+            drop(workspaces);
+            drop(operation);
+            transition.wait()?;
+            self.publish_registration_if_latest(workspace_id, latest_admission_token)?;
             Ok(())
         }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn publish_registration_if_latest(
+        &self,
+        workspace_id: &WorkspaceId,
+        admission_token: u64,
+    ) -> io::Result<()> {
+        let _operation = self.lock_operations()?;
+        let workspaces = self.workspaces.lock().map_err(lock_error)?;
+        let current = workspaces.get(workspace_id).is_some_and(|workspace| {
+            workspace.unregister_generation.is_none()
+                && workspace.latest_admission_token == admission_token
+                && workspace
+                    .registration_admissions
+                    .contains_key(&admission_token)
+        });
+        if !current {
+            return Ok(());
+        }
+        self.registration_operations
+            .publish_latest(workspace_id, admission_token)
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -458,6 +586,8 @@ impl WorkspaceRegistry {
         let removed = workspaces
             .remove(workspace_id)
             .ok_or_else(unknown_workspace)?;
+        self.registration_operations
+            .revoke_workspace(workspace_id)?;
         for path in &removed.registered_paths {
             if path_owners
                 .get(path)
@@ -484,6 +614,8 @@ impl WorkspaceRegistry {
         if let Some(workspace) = workspaces.get_mut(workspace_id) {
             if workspace.unregister_generation == Some(generation) {
                 workspace.unregister_generation = None;
+                self.registration_operations
+                    .replace_latest(workspace_id, workspace.latest_admission_token)?;
             }
         }
         Ok(())
@@ -513,6 +645,62 @@ fn remove_path_from_admission(
     }
     if let Some(admission) = workspace.registration_admissions.get_mut(&admission_token) {
         admission.added_registered_paths.remove(path);
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn remove_losing_registration_admission(
+    workspaces: &mut std::collections::HashMap<WorkspaceId, ManagedWorkspace>,
+    path_owners: &mut std::collections::HashMap<PathBuf, RegisteredPathOwner>,
+    workspace_id: &WorkspaceId,
+    admission_token: u64,
+) {
+    let Some(workspace) = workspaces.get_mut(workspace_id) else {
+        return;
+    };
+    let Some(admission) = workspace.registration_admissions.remove(&admission_token) else {
+        return;
+    };
+    if workspace.registration_admissions.is_empty() {
+        workspace.registration_admissions.insert(
+            RETAINED_REGISTRATION_ADMISSION,
+            RegistrationAdmission {
+                added_registered_paths: BTreeSet::new(),
+            },
+        );
+        workspace.latest_admission_token = RETAINED_REGISTRATION_ADMISSION;
+        for path in workspace.registered_paths.iter() {
+            let Some(owner) = path_owners.get_mut(path) else {
+                continue;
+            };
+            if owner.workspace_id == *workspace_id && owner.admission_token == admission_token {
+                owner.admission_token = RETAINED_REGISTRATION_ADMISSION;
+            }
+        }
+        return;
+    }
+    workspace.latest_admission_token = *workspace
+        .registration_admissions
+        .keys()
+        .max()
+        .expect("non-empty admission registry");
+    for path in admission.added_registered_paths {
+        let owned_by_loser = path_owners.get(&path).is_some_and(|owner| {
+            owner.workspace_id == *workspace_id && owner.admission_token == admission_token
+        });
+        if !owned_by_loser {
+            continue;
+        }
+        path_owners.remove(&path);
+        workspace.registered_paths.remove(&path);
+    }
+    for path in workspace.registered_paths.iter() {
+        let Some(owner) = path_owners.get_mut(path) else {
+            continue;
+        };
+        if owner.workspace_id == *workspace_id && owner.admission_token == admission_token {
+            owner.admission_token = workspace.latest_admission_token;
+        }
     }
 }
 
@@ -632,6 +820,64 @@ mod tests {
         assert!(registry
             .descriptor(&second.descriptor.workspace_id)
             .is_err());
+    }
+
+    #[test]
+    fn latest_registration_claim_rejects_same_root_aba_predecessor() {
+        let registry = WorkspaceRegistry::new();
+        let root_a = temp_root("claim-aba-a");
+        let root_b = temp_root("claim-aba-b");
+        let first_a = registry.register_with_receipt(&root_a).unwrap();
+        let _workspace_b = registry.register_with_receipt(&root_b).unwrap();
+        let replacement_a = registry.register_with_receipt(&root_a).unwrap();
+
+        let stale = registry.claim_latest_registration(
+            &first_a.receipt.workspace_id,
+            first_a.receipt.admission_token,
+        );
+        let error = match stale {
+            Ok(_) => panic!("predecessor admission must be stale"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+
+        let current = registry
+            .claim_latest_registration(
+                &replacement_a.receipt.workspace_id,
+                replacement_a.receipt.admission_token,
+            )
+            .unwrap();
+        assert_eq!(current.descriptor(), &replacement_a.descriptor);
+    }
+
+    #[test]
+    fn path_replacement_cannot_reuse_a_retained_root_identity() {
+        let registry = WorkspaceRegistry::new();
+        let root = temp_root("inode-replacement");
+        let moved_root = root.with_extension("moved");
+        let original = registry.register_with_receipt(&root).unwrap();
+        fs::rename(&root, &moved_root).unwrap();
+        fs::create_dir(&root).unwrap();
+
+        assert_eq!(
+            registry.register_with_receipt(&root).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        let workspaces = registry.workspaces.lock().unwrap();
+        let retained = workspaces.get(&original.receipt.workspace_id).unwrap();
+        assert_eq!(retained.registration_admissions.len(), 1);
+        assert_eq!(
+            retained.latest_admission_token,
+            original.receipt.admission_token
+        );
+        drop(workspaces);
+
+        registry.unregister(&original.receipt.workspace_id).unwrap();
+        let replacement = registry.register_with_receipt(&root).unwrap();
+        assert_ne!(
+            replacement.receipt.workspace_id,
+            original.receipt.workspace_id
+        );
     }
 
     #[test]

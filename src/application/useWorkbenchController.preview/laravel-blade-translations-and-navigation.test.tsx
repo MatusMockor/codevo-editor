@@ -31,9 +31,10 @@ import {
   type WorkbenchWorkspaceGateways,
   type WorkspaceFileChangeEvent,
 } from "./testSupport";
+import { registeredIdentityFixture } from "../../test/workbenchRegisteredAuthorityTestFixtures";
 
 describe("useWorkbenchController Laravel language intelligence", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderRegisteredController: renderController } = setupWorkbenchControllerTestHarness();
 
   describe("Laravel string-helper Cmd+Click definition", () => {
     it("navigates a config literal to the config file key line", async () => {
@@ -77,7 +78,6 @@ return [
       await act(async () => {
         await getWorkbench().openFile(fileEntry(controllerPath, "AppController.php"));
       });
-
       let handled = false;
       await act(async () => {
         handled = await getWorkbench().providePhpFrameworkDefinition(
@@ -85,7 +85,6 @@ return [
           controllerSource.indexOf("app.name") + 1,
         );
       });
-
       expect(handled).toBe(true);
       expect(getWorkbench().activePath).toBe(appConfigPath);
       expect(getWorkbench().editorRevealTarget).toEqual({
@@ -134,9 +133,8 @@ return [
         }),
         workspaceDescriptor: phpWorkspaceDescriptor(),
         workspaceIdentityGateway: {
-          getDescriptor: vi.fn(),
+          ...registeredIdentityFixture(),
           openFromPicker,
-          unregister: vi.fn(async () => undefined),
         },
       });
       await flushAsyncTurns();
@@ -1966,7 +1964,7 @@ class SendShipmentNotification
 });
 
 describe("useWorkbenchController Laravel language intelligence", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderRegisteredController: renderController } = setupWorkbenchControllerTestHarness();
   describe("Latte Cmd+Click definition and completion", () => {
     it("prioritizes Latte include definitions over TypeScript symbols in IDE mode", async () => {
       const lattePath = "/workspace/app/UI/Home/show.latte";

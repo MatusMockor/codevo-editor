@@ -1,19 +1,33 @@
-use crate::ignore_matcher::{GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher};
+use crate::ignore_matcher::{
+    is_default_ignored_name, GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher,
+};
 use crate::index::{BatchOutcome, SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore};
-use crate::job_scheduler::WorkspaceIndexLifecycleToken;
+pub(crate) mod operation_authority;
+
+use self::operation_authority::{run_if_index_operation_current, WorkspaceIndexOperationAuthority};
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
-    fmt, fs, io,
+    fmt, fs,
+    io::{self, Read},
+    num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use std::{ffi::CStr, os::unix::ffi::OsStringExt};
 
 pub const METADATA_SCAN_COMPLETED_EVENT: &str = "index://metadata-scan-completed";
 pub const INDEX_PROGRESS_EVENT: &str = "index://progress";
 const MAX_SCAN_HEALTH_DETAILS: usize = 100;
+const MAX_REGISTERED_SCAN_ENTRIES: usize = 1_000_000;
+const MAX_REGISTERED_SCAN_DIRECTORIES: usize = 100_000;
+const MAX_REGISTERED_SCAN_DEPTH: usize = 256;
+const MAX_GITIGNORE_FILES: usize = 4_096;
+const MAX_GITIGNORE_FILE_BYTES: u64 = 1_048_576;
+const MAX_GITIGNORE_TOTAL_BYTES: usize = 8_388_608;
 /// Number of file metadata rows written per batched SQLite transaction during the initial scan.
 /// One commit (one WAL fsync) per batch instead of per file is the main indexing speedup; the
 /// bound keeps the transaction short enough to honour lifecycle cancellation between batches.
@@ -64,6 +78,23 @@ pub trait WorkspaceMetadataScanner {
 
 pub struct LocalWorkspaceMetadataScanner {
     language_detector: Box<dyn MetadataLanguageDetector>,
+}
+
+struct RegisteredScanContext<'a> {
+    authority: &'a WorkspaceIndexOperationAuthority,
+    collection: &'a mut MetadataScanCollection,
+    is_cancelled: &'a dyn Fn() -> bool,
+    matcher: &'a dyn WorkspaceIgnoreMatcher,
+    root_path: &'a Path,
+    budget: &'a mut RegisteredScanBudget,
+}
+
+#[derive(Default)]
+struct RegisteredScanBudget {
+    directories: usize,
+    entries: usize,
+    gitignore_bytes: usize,
+    gitignore_files: usize,
 }
 
 impl Default for LocalWorkspaceMetadataScanner {
@@ -203,6 +234,158 @@ impl LocalWorkspaceMetadataScanner {
         Ok(collection)
     }
 
+    pub(crate) fn collect_registered_root_with_cancellation(
+        &self,
+        root_path: &Path,
+        authority: &WorkspaceIndexOperationAuthority,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<MetadataScanCollection, MetadataScanError> {
+        ensure_collection_current(is_cancelled)?;
+        let mut gitignores = Vec::new();
+        let mut budget = RegisteredScanBudget::default();
+        self.collect_registered_gitignores(
+            authority,
+            Path::new(""),
+            0,
+            &mut budget,
+            &mut gitignores,
+            is_cancelled,
+        )?;
+        let matcher =
+            GitignoreWorkspaceIgnoreMatcher::from_gitignore_contents(root_path, gitignores)?;
+        let root = authority.try_clone_root()?;
+        let mut collection = MetadataScanCollection::default();
+        let mut context = RegisteredScanContext {
+            authority,
+            collection: &mut collection,
+            is_cancelled,
+            matcher: &matcher,
+            root_path,
+            budget: &mut budget,
+        };
+        self.scan_registered_directory(&mut context, Path::new(""), root, 0)?;
+        Ok(collection)
+    }
+
+    fn collect_registered_gitignores(
+        &self,
+        authority: &WorkspaceIndexOperationAuthority,
+        relative_directory: &Path,
+        depth: usize,
+        budget: &mut RegisteredScanBudget,
+        contents: &mut Vec<(PathBuf, String)>,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), MetadataScanError> {
+        ensure_collection_current(is_cancelled)?;
+        let directory = if relative_directory.as_os_str().is_empty() {
+            authority.try_clone_root()?
+        } else {
+            authority.open_directory(relative_directory)?
+        };
+        register_directory(budget, depth)?;
+        visit_directory_entries(&directory, is_cancelled, |name| {
+            ensure_collection_current(is_cancelled)?;
+            register_entry(budget)?;
+            let name_text = name.to_string_lossy();
+            if is_default_ignored_name(&name_text) {
+                return Ok(());
+            }
+            let relative = relative_directory.join(&name);
+            if name_text == ".gitignore" {
+                if let Ok(mut file) = authority.open_file(&relative) {
+                    if budget.gitignore_files >= MAX_GITIGNORE_FILES {
+                        return Err(limit_error("gitignore file limit exceeded").into());
+                    }
+                    let mut content = String::new();
+                    file.by_ref()
+                        .take(MAX_GITIGNORE_FILE_BYTES + 1)
+                        .read_to_string(&mut content)?;
+                    if content.len() as u64 > MAX_GITIGNORE_FILE_BYTES
+                        || budget.gitignore_bytes.saturating_add(content.len())
+                            > MAX_GITIGNORE_TOTAL_BYTES
+                    {
+                        return Err(limit_error("gitignore byte limit exceeded").into());
+                    }
+                    ensure_collection_current(is_cancelled)?;
+                    budget.gitignore_files += 1;
+                    budget.gitignore_bytes += content.len();
+                    contents.push((relative_directory.to_path_buf(), content));
+                }
+                return Ok(());
+            }
+            if authority.open_directory(&relative).is_err() {
+                return Ok(());
+            }
+            self.collect_registered_gitignores(
+                authority,
+                &relative,
+                depth + 1,
+                budget,
+                contents,
+                is_cancelled,
+            )
+        })
+    }
+
+    fn scan_registered_directory(
+        &self,
+        context: &mut RegisteredScanContext<'_>,
+        relative_directory: &Path,
+        directory: fs::File,
+        depth: usize,
+    ) -> Result<(), MetadataScanError> {
+        ensure_collection_current(context.is_cancelled)?;
+        register_directory(context.budget, depth)?;
+        visit_directory_entries(&directory, context.is_cancelled, |name| {
+            ensure_collection_current(context.is_cancelled)?;
+            register_entry(context.budget)?;
+            let relative = relative_directory.join(name);
+            let logical_path = context.root_path.join(&relative);
+            if let Ok(child_directory) = context.authority.open_directory(&relative) {
+                if context.matcher.is_ignored(&logical_path, true) {
+                    context.collection.report.record_skip(
+                        relative.to_string_lossy().to_string(),
+                        "Ignored by workspace rules.",
+                    );
+                    return Ok(());
+                }
+                return self.scan_registered_directory(
+                    context,
+                    &relative,
+                    child_directory,
+                    depth + 1,
+                );
+            }
+            let file = match context.authority.open_file(&relative) {
+                Ok(file) => file,
+                Err(_) => {
+                    context.collection.report.record_skip(
+                        relative.to_string_lossy().to_string(),
+                        "Symlink or unsupported file type skipped.",
+                    );
+                    return Ok(());
+                }
+            };
+            if context.matcher.is_ignored(&logical_path, false) {
+                context.collection.report.record_skip(
+                    relative.to_string_lossy().to_string(),
+                    "Ignored by workspace rules.",
+                );
+                return Ok(());
+            }
+            let metadata = file.metadata()?;
+            context.collection.records.push(WorkspaceFileRecord {
+                language: self.language_detector.language_for_path(&logical_path),
+                modified_at_unix: modified_at_unix(&metadata),
+                path: logical_path.to_string_lossy().to_string(),
+                relative_path: relative.to_string_lossy().to_string(),
+                size_bytes: size_bytes(&metadata),
+            });
+            context.collection.report.indexed_files += 1;
+            Ok(())
+        })
+    }
+
     fn scan_file(
         &self,
         root_path: &Path,
@@ -251,6 +434,124 @@ impl LocalWorkspaceMetadataScanner {
 
         Ok(())
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct DirectoryStream(*mut libc::DIR);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Drop for DirectoryStream {
+    fn drop(&mut self) {
+        unsafe {
+            libc::closedir(self.0);
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn visit_directory_entries(
+    directory: &fs::File,
+    is_cancelled: &dyn Fn() -> bool,
+    mut visit: impl FnMut(std::ffi::OsString) -> Result<(), MetadataScanError>,
+) -> Result<(), MetadataScanError> {
+    use std::os::fd::AsRawFd;
+
+    let relative = c".";
+    let descriptor = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            relative.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if descriptor < 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    let stream = unsafe { libc::fdopendir(descriptor) };
+    if stream.is_null() {
+        unsafe {
+            libc::close(descriptor);
+        }
+        return Err(io::Error::last_os_error().into());
+    }
+    let stream = DirectoryStream(stream);
+    loop {
+        ensure_collection_current(is_cancelled)?;
+        set_directory_errno(0);
+        let entry = unsafe { libc::readdir(stream.0) };
+        if entry.is_null() {
+            let error = directory_errno();
+            if error == 0 {
+                return Ok(());
+            }
+            return Err(io::Error::from_raw_os_error(error).into());
+        }
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+        if name == b"." || name == b".." {
+            continue;
+        }
+        visit(std::ffi::OsString::from_vec(name.to_vec()))?;
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn visit_directory_entries(
+    _directory: &fs::File,
+    _is_cancelled: &dyn Fn() -> bool,
+    _visit: impl FnMut(std::ffi::OsString) -> Result<(), MetadataScanError>,
+) -> Result<(), MetadataScanError> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "descriptor-backed index traversal is unsupported",
+    )
+    .into())
+}
+
+#[cfg(target_os = "macos")]
+fn set_directory_errno(value: i32) {
+    unsafe {
+        *libc::__error() = value;
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn set_directory_errno(value: i32) {
+    unsafe {
+        *libc::__errno_location() = value;
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn directory_errno() -> i32 {
+    unsafe { *libc::__error() }
+}
+
+#[cfg(target_os = "linux")]
+fn directory_errno() -> i32 {
+    unsafe { *libc::__errno_location() }
+}
+
+fn register_directory(
+    budget: &mut RegisteredScanBudget,
+    depth: usize,
+) -> Result<(), MetadataScanError> {
+    if depth > MAX_REGISTERED_SCAN_DEPTH || budget.directories >= MAX_REGISTERED_SCAN_DIRECTORIES {
+        return Err(limit_error("directory traversal limit exceeded").into());
+    }
+    budget.directories += 1;
+    Ok(())
+}
+
+fn register_entry(budget: &mut RegisteredScanBudget) -> Result<(), MetadataScanError> {
+    if budget.entries >= MAX_REGISTERED_SCAN_ENTRIES {
+        return Err(limit_error("directory entry limit exceeded").into());
+    }
+    budget.entries += 1;
+    Ok(())
+}
+
+fn limit_error(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
 impl WorkspaceMetadataScanner for LocalWorkspaceMetadataScanner {
@@ -327,10 +628,11 @@ pub struct MetadataScanCollection {
     pub report: MetadataScanReport,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WorkspaceMetadataScanRequest {
     pub database_path: PathBuf,
-    pub lifecycle_token: Option<WorkspaceIndexLifecycleToken>,
+    pub operation_authority: Option<WorkspaceIndexOperationAuthority>,
+    pub operation_generation: NonZeroU32,
     pub root_path: PathBuf,
 }
 
@@ -338,6 +640,7 @@ pub struct WorkspaceMetadataScanRequest {
 #[serde(rename_all = "camelCase")]
 pub struct InitialMetadataScanStart {
     pub database_path: String,
+    pub operation_generation: NonZeroU32,
     pub root_path: String,
     pub status: InitialMetadataScanStartStatus,
 }
@@ -361,6 +664,7 @@ pub enum WorkspaceReindexMode {
 pub struct MetadataScanCompletionEvent {
     pub database_path: String,
     pub message: Option<String>,
+    pub operation_generation: NonZeroU32,
     pub report: Option<MetadataScanReport>,
     pub root_path: String,
     pub status: MetadataScanCompletionStatus,
@@ -370,31 +674,45 @@ impl MetadataScanCompletionEvent {
     pub(crate) fn completed(
         root_path: &Path,
         database_path: &Path,
+        operation_generation: NonZeroU32,
         report: MetadataScanReport,
     ) -> Self {
         Self {
             database_path: database_path.to_string_lossy().to_string(),
             message: None,
+            operation_generation,
             report: Some(report),
             root_path: root_path.to_string_lossy().to_string(),
             status: MetadataScanCompletionStatus::Completed,
         }
     }
 
-    pub(crate) fn failed(root_path: &Path, database_path: &Path, error: MetadataScanError) -> Self {
+    pub(crate) fn failed(
+        root_path: &Path,
+        database_path: &Path,
+        operation_generation: NonZeroU32,
+        error: MetadataScanError,
+    ) -> Self {
         Self {
             database_path: database_path.to_string_lossy().to_string(),
             message: Some(error.to_string()),
+            operation_generation,
             report: None,
             root_path: root_path.to_string_lossy().to_string(),
             status: MetadataScanCompletionStatus::Failed,
         }
     }
 
-    pub(crate) fn failed_message(root_path: &Path, database_path: &Path, message: String) -> Self {
+    pub(crate) fn failed_message(
+        root_path: &Path,
+        database_path: &Path,
+        operation_generation: NonZeroU32,
+        message: String,
+    ) -> Self {
         Self {
             database_path: database_path.to_string_lossy().to_string(),
             message: Some(message),
+            operation_generation,
             report: None,
             root_path: root_path.to_string_lossy().to_string(),
             status: MetadataScanCompletionStatus::Failed,
@@ -409,6 +727,13 @@ pub enum MetadataScanCompletionStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum IndexProgressPhase {
+    Parsing,
+    Scanning,
+}
+
 /// Incremental progress emitted on batch boundaries during a workspace reindex so the UI can show
 /// "X of N files" instead of an indeterminate spinner that looks like a hang. `total_files` is the
 /// number of source files queued to parse for `phase`; it is `None` when unknown so the UI degrades
@@ -416,7 +741,8 @@ pub enum MetadataScanCompletionStatus {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexProgressEvent {
-    pub phase: String,
+    pub operation_generation: NonZeroU32,
+    pub phase: IndexProgressPhase,
     pub processed_files: usize,
     pub root_path: String,
     pub total_files: Option<usize>,
@@ -425,12 +751,14 @@ pub struct IndexProgressEvent {
 impl IndexProgressEvent {
     pub(crate) fn new(
         root_path: &Path,
-        phase: impl Into<String>,
+        operation_generation: NonZeroU32,
+        phase: IndexProgressPhase,
         processed_files: usize,
         total_files: Option<usize>,
     ) -> Self {
         Self {
-            phase: phase.into(),
+            operation_generation,
+            phase,
             processed_files,
             root_path: root_path.to_string_lossy().to_string(),
             total_files,
@@ -464,7 +792,8 @@ impl WorkspaceMetadataScanStarter for LocalWorkspaceMetadataScanStarter {
     ) -> Result<InitialMetadataScanStart, MetadataScanStartError> {
         let root_path = request.root_path;
         let database_path = request.database_path;
-        let lifecycle_token = request.lifecycle_token;
+        let operation_authority = request.operation_authority;
+        let operation_generation = request.operation_generation;
         let thread_root_path = root_path.clone();
         let thread_database_path = database_path.clone();
 
@@ -474,7 +803,8 @@ impl WorkspaceMetadataScanStarter for LocalWorkspaceMetadataScanStarter {
                 run_background_scan(
                     thread_root_path,
                     thread_database_path,
-                    lifecycle_token,
+                    operation_authority,
+                    operation_generation,
                     event_sink,
                 )
             })
@@ -482,6 +812,7 @@ impl WorkspaceMetadataScanStarter for LocalWorkspaceMetadataScanStarter {
 
         Ok(InitialMetadataScanStart {
             database_path: database_path.to_string_lossy().to_string(),
+            operation_generation,
             root_path: root_path.to_string_lossy().to_string(),
             status: InitialMetadataScanStartStatus::Started,
         })
@@ -537,43 +868,61 @@ impl Error for MetadataScanStartError {}
 fn run_background_scan(
     root_path: PathBuf,
     database_path: PathBuf,
-    lifecycle_token: Option<WorkspaceIndexLifecycleToken>,
+    operation_authority: Option<WorkspaceIndexOperationAuthority>,
+    operation_generation: NonZeroU32,
     event_sink: Arc<dyn MetadataScanEventSink>,
 ) {
     let progress_sink = Arc::clone(&event_sink);
-    let mut on_progress = |event: IndexProgressEvent| {
-        progress_sink.emit_progress(event);
+    let progress_authority = operation_authority.clone();
+    let mut on_progress = move |event: IndexProgressEvent| {
+        run_if_index_operation_current(progress_authority.as_ref(), || {
+            progress_sink.emit_progress(event)
+        });
     };
     let event = match scan_background_workspace_with_progress(
         &root_path,
         &database_path,
-        lifecycle_token.as_ref(),
+        operation_authority.as_ref(),
+        operation_generation,
         &mut on_progress,
     ) {
         Ok(report) => {
-            if !lifecycle_token_is_current(lifecycle_token.as_ref()) {
+            if !operation_authority_is_current(operation_authority.as_ref()) {
                 return;
             }
 
-            MetadataScanCompletionEvent::completed(&root_path, &database_path, report)
+            MetadataScanCompletionEvent::completed(
+                &root_path,
+                &database_path,
+                operation_generation,
+                report,
+            )
         }
         Err(MetadataScanError::Cancelled) => return,
-        Err(error) => MetadataScanCompletionEvent::failed(&root_path, &database_path, error),
+        Err(error) => MetadataScanCompletionEvent::failed(
+            &root_path,
+            &database_path,
+            operation_generation,
+            error,
+        ),
     };
 
-    event_sink.emit_completion(event);
+    run_if_index_operation_current(operation_authority.as_ref(), || {
+        event_sink.emit_completion(event)
+    });
 }
 
 #[cfg(test)]
 fn scan_background_workspace(
     root_path: &Path,
     database_path: &Path,
-    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    operation_authority: Option<&WorkspaceIndexOperationAuthority>,
 ) -> Result<MetadataScanReport, MetadataScanError> {
     scan_background_workspace_with_progress(
         root_path,
         database_path,
-        lifecycle_token,
+        operation_authority,
+        NonZeroU32::MIN,
         &mut |_event| {},
     )
 }
@@ -581,15 +930,23 @@ fn scan_background_workspace(
 fn scan_background_workspace_with_progress(
     root_path: &Path,
     database_path: &Path,
-    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    operation_authority: Option<&WorkspaceIndexOperationAuthority>,
+    operation_generation: NonZeroU32,
     on_progress: &mut dyn FnMut(IndexProgressEvent),
 ) -> Result<MetadataScanReport, MetadataScanError> {
-    ensure_scan_current(lifecycle_token)?;
+    ensure_scan_current(operation_authority)?;
     let index = SqliteWorkspaceIndex::open(database_path)?;
     let scanner = LocalWorkspaceMetadataScanner::default();
-    let is_cancelled = || !lifecycle_token_is_current(lifecycle_token);
-    let collection = scanner.collect_path_with_cancellation(root_path, root_path, &is_cancelled)?;
-    ensure_scan_current(lifecycle_token)?;
+    let is_cancelled = || !operation_authority_is_current(operation_authority);
+    let collection = match operation_authority {
+        Some(authority) => scanner.collect_registered_root_with_cancellation(
+            root_path,
+            authority,
+            &is_cancelled,
+        )?,
+        None => scanner.collect_path_with_cancellation(root_path, root_path, &is_cancelled)?,
+    };
+    ensure_scan_current(operation_authority)?;
 
     let total_files = collection.records.len();
     let mut processed_files = 0;
@@ -598,8 +955,8 @@ fn scan_background_workspace_with_progress(
         // Re-check the lifecycle token BEFORE each batch (not just at the end) so a workspace
         // switch cancels the scan promptly; already-committed batches remain a valid partial
         // index, and we never open a transaction past a cancellation point.
-        ensure_scan_current(lifecycle_token)?;
-        guarded_scan_batch(&index, lifecycle_token, |store| {
+        ensure_scan_current(operation_authority)?;
+        guarded_scan_batch(&index, operation_authority, |store| {
             for record in batch {
                 store.upsert_file(record)?;
             }
@@ -608,7 +965,8 @@ fn scan_background_workspace_with_progress(
         processed_files += batch.len();
         on_progress(IndexProgressEvent::new(
             root_path,
-            "scanning",
+            operation_generation,
+            IndexProgressPhase::Scanning,
             processed_files,
             Some(total_files),
         ));
@@ -622,10 +980,10 @@ fn scan_background_workspace_with_progress(
 /// A cancelled batch is rolled back and surfaced as `Cancelled`.
 fn guarded_scan_batch(
     index: &SqliteWorkspaceIndex,
-    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    operation_authority: Option<&WorkspaceIndexOperationAuthority>,
     action: impl FnOnce(&SqliteWorkspaceIndex) -> rusqlite::Result<()>,
 ) -> Result<(), MetadataScanError> {
-    let Some(token) = lifecycle_token else {
+    let Some(token) = operation_authority else {
         return index
             .with_batch_transaction(action)
             .map_err(MetadataScanError::Store);
@@ -642,9 +1000,9 @@ fn guarded_scan_batch(
 }
 
 fn ensure_scan_current(
-    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    operation_authority: Option<&WorkspaceIndexOperationAuthority>,
 ) -> Result<(), MetadataScanError> {
-    if lifecycle_token_is_current(lifecycle_token) {
+    if operation_authority_is_current(operation_authority) {
         return Ok(());
     }
 
@@ -659,8 +1017,10 @@ fn ensure_collection_current(is_cancelled: &dyn Fn() -> bool) -> Result<(), Meta
     Err(MetadataScanError::Cancelled)
 }
 
-fn lifecycle_token_is_current(lifecycle_token: Option<&WorkspaceIndexLifecycleToken>) -> bool {
-    match lifecycle_token {
+fn operation_authority_is_current(
+    operation_authority: Option<&WorkspaceIndexOperationAuthority>,
+) -> bool {
+    match operation_authority {
         Some(token) => token.is_current(),
         None => true,
     }
@@ -708,16 +1068,19 @@ fn size_bytes(metadata: &fs::Metadata) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExtensionMetadataLanguageDetector, LocalWorkspaceMetadataScanner, MetadataLanguageDetector,
-        MetadataScanCompletionEvent, MetadataScanCompletionStatus, MetadataScanEventSink,
-        MetadataScanReport, WorkspaceMetadataScanRequest, WorkspaceMetadataScanStarter,
-        WorkspaceMetadataScanner,
+        ExtensionMetadataLanguageDetector, IndexProgressEvent, IndexProgressPhase,
+        InitialMetadataScanStart, InitialMetadataScanStartStatus, LocalWorkspaceMetadataScanner,
+        MetadataLanguageDetector, MetadataScanCompletionEvent, MetadataScanCompletionStatus,
+        MetadataScanEventSink, MetadataScanReport, WorkspaceIndexOperationAuthority,
+        WorkspaceMetadataScanRequest, WorkspaceMetadataScanStarter, WorkspaceMetadataScanner,
     };
     use crate::index::{SqliteWorkspaceIndex, WorkspaceIndexStore};
     use crate::job_scheduler::WorkspaceIndexLifecycle;
+    use crate::workspace_registry::WorkspaceRegistry;
     use rusqlite::Connection;
     use std::{
         fs,
+        num::NonZeroU32,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -765,6 +1128,51 @@ mod tests {
                 ("src/User.php".to_string(), "php".to_string(), 25),
             ]
         );
+    }
+
+    #[test]
+    fn index_operation_events_serialize_exact_generation_contract() {
+        let generation = NonZeroU32::new(4_294_967_295).expect("generation");
+        let root = Path::new("/workspace");
+        let database = Path::new("/config/index.sqlite3");
+        let start = InitialMetadataScanStart {
+            database_path: database.to_string_lossy().to_string(),
+            operation_generation: generation,
+            root_path: root.to_string_lossy().to_string(),
+            status: InitialMetadataScanStartStatus::Started,
+        };
+        let progress =
+            IndexProgressEvent::new(root, generation, IndexProgressPhase::Parsing, 3, Some(5));
+        let completion = MetadataScanCompletionEvent::completed(
+            root,
+            database,
+            generation,
+            MetadataScanReport::default(),
+        );
+
+        assert_eq!(
+            serde_json::to_value(start).expect("serialize start"),
+            serde_json::json!({
+                "databasePath": "/config/index.sqlite3",
+                "operationGeneration": 4_294_967_295_u64,
+                "rootPath": "/workspace",
+                "status": "started"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(progress).expect("serialize progress"),
+            serde_json::json!({
+                "operationGeneration": 4_294_967_295_u64,
+                "phase": "parsing",
+                "processedFiles": 3,
+                "rootPath": "/workspace",
+                "totalFiles": 5
+            })
+        );
+        let completion = serde_json::to_value(completion).expect("serialize completion");
+        assert_eq!(completion["operationGeneration"], 4_294_967_295_u64);
+        assert_eq!(completion["rootPath"], "/workspace");
+        assert_eq!(completion["status"], "completed");
     }
 
     #[test]
@@ -853,6 +1261,49 @@ mod tests {
         assert_eq!(relative_paths, vec!["src/User.php".to_string()]);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn registered_scan_stays_bound_to_admitted_root_after_path_replacement() {
+        let root = temp_workspace("registered-root-replacement");
+        fs::write(root.join("Original.php"), "<?php").expect("original source");
+        let moved = root.with_extension("admitted");
+        let registry = WorkspaceRegistry::new();
+        let registration = registry.register_with_receipt(&root).expect("registration");
+        let lease = registry
+            .reserve_latest_registration_operation(
+                &registration.receipt.workspace_id,
+                registration.receipt.admission_token,
+            )
+            .expect("operation lease");
+        let root_key = registration
+            .descriptor
+            .canonical_root_path
+            .to_string_lossy()
+            .to_string();
+        let authority = WorkspaceIndexOperationAuthority::new(
+            WorkspaceIndexLifecycle::new().begin_workspace_run(&root_key),
+            lease,
+        )
+        .expect("operation authority");
+
+        fs::rename(&root, &moved).expect("move admitted root");
+        fs::create_dir_all(&root).expect("replacement root");
+        fs::write(root.join("Replacement.php"), "<?php").expect("replacement source");
+
+        let collection = LocalWorkspaceMetadataScanner::default()
+            .collect_registered_root_with_cancellation(&root, &authority, &|| false)
+            .expect("registered scan");
+        let relative_paths = collection
+            .records
+            .into_iter()
+            .map(|record| record.relative_path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(relative_paths, vec!["Original.php"]);
+        fs::remove_dir_all(root).expect("replacement cleanup");
+        fs::remove_dir_all(moved).expect("admitted cleanup");
+    }
+
     #[test]
     fn detects_metadata_languages_by_extension() {
         let detector = ExtensionMetadataLanguageDetector;
@@ -896,11 +1347,13 @@ mod tests {
         let database_path = temp_database_path("cancelled-background");
         fs::write(root.join("User.php"), "<?php").expect("source file");
         let lifecycle = WorkspaceIndexLifecycle::new();
-        let token = lifecycle.begin_workspace_run(&root.to_string_lossy());
+        let root_key = root.to_string_lossy().to_string();
+        let token = lifecycle.begin_workspace_run(&root_key);
+        let authority = WorkspaceIndexOperationAuthority::lifecycle(token);
 
-        lifecycle.cancel_workspace(token.workspace_root());
+        lifecycle.cancel_workspace(&root_key);
 
-        let error = super::scan_background_workspace(&root, &database_path, Some(&token))
+        let error = super::scan_background_workspace(&root, &database_path, Some(&authority))
             .expect_err("cancelled scan");
         let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
 
@@ -1002,6 +1455,7 @@ mod tests {
             &root,
             &database_path,
             None,
+            NonZeroU32::new(7).expect("generation"),
             &mut |event| events.push(event),
         )
         .expect("background scan");
@@ -1020,7 +1474,11 @@ mod tests {
             .all(|event| event.root_path == root.to_string_lossy()));
         assert!(events
             .iter()
-            .all(|event| event.phase == "scanning" && event.total_files == Some(file_count)));
+            .all(|event| event.operation_generation.get() == 7));
+        assert!(events
+            .iter()
+            .all(|event| event.phase == IndexProgressPhase::Scanning
+                && event.total_files == Some(file_count)));
     }
 
     #[test]
@@ -1030,22 +1488,26 @@ mod tests {
         fs::write(root.join("User.php"), "<?php").expect("source file");
         let (sink, receiver) = channel_sink();
 
-        super::LocalWorkspaceMetadataScanStarter
+        let start = super::LocalWorkspaceMetadataScanStarter
             .start(
                 WorkspaceMetadataScanRequest {
                     database_path: database_path.clone(),
-                    lifecycle_token: None,
+                    operation_authority: None,
+                    operation_generation: NonZeroU32::new(7).expect("generation"),
                     root_path: root.clone(),
                 },
                 sink,
             )
             .expect("start scan");
 
+        assert_eq!(start.operation_generation.get(), 7);
+
         let event = receiver
             .recv_timeout(Duration::from_secs(3))
             .expect("completion event");
 
         assert_eq!(event.status, MetadataScanCompletionStatus::Completed);
+        assert_eq!(event.operation_generation.get(), 7);
         assert_eq!(event.report.expect("scan report").indexed_files, 1);
         assert_eq!(indexed_records(&database_path).len(), 1);
     }
@@ -1058,22 +1520,26 @@ mod tests {
         let database_path = blocked_parent.join("index.sqlite3");
         let (sink, receiver) = channel_sink();
 
-        super::LocalWorkspaceMetadataScanStarter
+        let start = super::LocalWorkspaceMetadataScanStarter
             .start(
                 WorkspaceMetadataScanRequest {
                     database_path,
-                    lifecycle_token: None,
+                    operation_authority: None,
+                    operation_generation: NonZeroU32::new(7).expect("generation"),
                     root_path: root,
                 },
                 sink,
             )
             .expect("start scan");
 
+        assert_eq!(start.operation_generation.get(), 7);
+
         let event = receiver
             .recv_timeout(Duration::from_secs(3))
             .expect("failure event");
 
         assert_eq!(event.status, MetadataScanCompletionStatus::Failed);
+        assert_eq!(event.operation_generation.get(), 7);
         assert!(event
             .message
             .expect("error message")

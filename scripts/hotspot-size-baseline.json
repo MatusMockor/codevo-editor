@@ -24,8 +24,8 @@
         "src/application/useWorkbenchController.preview/workspace-save-and-runtime-coordination.test.tsx",
         "src/application/useWorkbenchController.preview/workspace-search-tests-and-navigation.test.tsx"
       ],
-      "rawLines": 71698,
-      "structuralTokens": 336292
+      "rawLines": 71312,
+      "structuralTokens": 335377
     }
   },
   "files": {
@@ -63,8 +63,8 @@
       "structuralTokens": 6637
     },
     "src/application/useWorkbenchController.ts": {
-      "rawLines": 7786,
-      "structuralTokens": 26969
+      "rawLines": 7290,
+      "structuralTokens": 24819
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 2502,

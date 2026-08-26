@@ -21,7 +21,6 @@ import { fileUriFromPath } from "../domain/languageServerDocumentSync";
 import {
   createLegacyWorkspaceRuntimeOwner,
   createWorkspaceRuntimeOwner,
-  transferWorkspaceRuntimeOwner,
   type WorkspaceRuntimeOwner,
 } from "../domain/workspaceRuntimeOwner";
 
@@ -492,12 +491,9 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
     expect(coalescers[1]?.dropOwner).not.toHaveBeenCalled();
   });
 
-  it("isolates same-root owner generations while accepting a same-ID alias", async () => {
+  it("isolates same-root owner generations while preserving current-owner errors", async () => {
     const subscribedOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
-    let currentOwner: WorkspaceRuntimeOwner = transferWorkspaceRuntimeOwner(
-      subscribedOwner,
-      "/workspace-alias",
-    );
+    let currentOwner: WorkspaceRuntimeOwner = subscribedOwner;
     const aliasPhpDeferred = createDeferred<DiagnosticsUnsubscribeFn>();
     const aliasTsDeferred = createDeferred<DiagnosticsUnsubscribeFn>();
     const alias = baseDependencies({
@@ -543,6 +539,29 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
 
     expect(stale.dependencies.reportLanguageServerError).not.toHaveBeenCalled();
     expect(stale.dependencies.reportJavaScriptTypeScriptLanguageServerError).not.toHaveBeenCalled();
+  });
+
+  it("suppresses same-key A to B to A subscription rejections from a stale incarnation", async () => {
+    const subscribedOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = subscribedOwner;
+    const phpDeferred = createDeferred<DiagnosticsUnsubscribeFn>();
+    const tsDeferred = createDeferred<DiagnosticsUnsubscribeFn>();
+    const { dependencies } = baseDependencies({
+      workspaceRuntimeOwner: subscribedOwner,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+      languageServerDiagnosticsGateway: deferredGateway(phpDeferred).gateway,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway: deferredGateway(tsDeferred).gateway,
+    });
+    renderHook(dependencies);
+
+    currentOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    currentOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    phpDeferred.reject(new Error("stale php incarnation"));
+    tsDeferred.reject(new Error("stale typescript incarnation"));
+    await flushAsyncTurns();
+
+    expect(dependencies.reportLanguageServerError).not.toHaveBeenCalled();
+    expect(dependencies.reportJavaScriptTypeScriptLanguageServerError).not.toHaveBeenCalled();
   });
 
   it("reports subscription errors only for the still-active workspace root", async () => {

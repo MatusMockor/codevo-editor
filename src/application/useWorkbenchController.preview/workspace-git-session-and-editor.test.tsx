@@ -24,26 +24,30 @@ import {
   type LanguageServerRuntimeStatus,
   normalizeWorkspaceSession,
   phpWorkspaceDescriptor,
+  registeredWorkspaceIdentityGateway as registeredIdentity,
   setupWorkbenchControllerTestHarness,
   vi,
   waitForReact,
   type WorkbenchWorkspaceGateways,
-  type IndexProgressGateway,
   type LanguageServerCodeAction,
   type LanguageServerTextEdit,
-  type MetadataScanCompletionEvent,
   type PhpTreeGateway,
   defaultKeymapSettings,
   emptyGitStatus,
+  expectedWorkspaceSettingsIdentity,
+  expectInitialWorkspaceIndexScan as expectInitialScan,
   flushWorkspaceDirectoryRefresh,
   gitChangedFile,
   gitChangeKey,
   type GitGateway,
+  indexProgressGatewayHarness as indexHarness,
+  mockNextInitialIndexStart,
   type WorkspaceFileChangeEvent,
+  workspaceSettingsRoot,
 } from "./testSupport";
 
 describe("useWorkbenchController workspace lifecycle, language runtimes, and save coordination", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderRegisteredController: renderController } = setupWorkbenchControllerTestHarness();
   it("preserves an edit made during an issued save as dirty in the workspace cache", async () => {
     const path = "/workspace-a/src/User.php";
     const savedRevision = {
@@ -2284,15 +2288,18 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     vi.mocked(dependencies.settingsGateway.loadWorkspaceSettings).mockClear();
     vi.mocked(dependencies.workspaceGateways.detection.detectWorkspace).mockClear();
     vi.mocked(dependencies.settingsGateway.loadWorkspaceSettings).mockImplementation(
-      async (rootPath) => ({
-        ...defaultWorkspaceSettings(),
-        session: normalizeWorkspaceSession({
-          activePath: rootPath === "/workspace-c" ? workspaceCPath : workspaceBPath,
-          bottomPanelView: "problems",
-          openPaths: [rootPath === "/workspace-c" ? workspaceCPath : workspaceBPath],
-          sidebarView: "files",
-        }),
-      }),
+      async (identity) => {
+        const rootPath = workspaceSettingsRoot(identity);
+        return {
+          ...defaultWorkspaceSettings(),
+          session: normalizeWorkspaceSession({
+            activePath: rootPath === "/workspace-c" ? workspaceCPath : workspaceBPath,
+            bottomPanelView: "problems",
+            openPaths: [rootPath === "/workspace-c" ? workspaceCPath : workspaceBPath],
+            sidebarView: "files",
+          }),
+        };
+      },
     );
 
     let switchToB: Promise<void> = Promise.resolve();
@@ -2341,7 +2348,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(dependencies.workspaceGateways.detection.detectWorkspace).not.toHaveBeenCalledWith(
       "/workspace-b",
     );
-    expect(dependencies.settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith("/workspace-c");
+    expect(dependencies.settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith(
+      expectedWorkspaceSettingsIdentity("/workspace-c"),
+    );
     expect(dependencies.workspaceGateways.detection.detectWorkspace).toHaveBeenCalledWith(
       "/workspace-c",
     );
@@ -3874,6 +3883,16 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       },
     });
     await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).mockClear();
+    vi.mocked(dependencies.languageServerRuntimeGateway.stop).mockClear();
+    vi.mocked(dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop).mockClear();
+    vi.mocked(dependencies.terminalGateway.stopRoot).mockClear();
     vi.mocked(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).mockRejectedValueOnce(
       new Error("dispose failed"),
     );
@@ -4074,29 +4093,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(getWorkbench().workspaceTabs).toEqual(["/workspace-b"]);
   });
   it("clears the workbench and stops runtime when the last project tab closes", async () => {
-    let publishMetadataScanCompletion: ((event: MetadataScanCompletionEvent) => void) | null = null;
-    const indexProgressGateway: IndexProgressGateway = {
-      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
-        databasePath: "/tmp/index.sqlite",
-        rootPath,
-        status: "cleared" as const,
-      })),
-      startInitialMetadataScan: vi.fn(async (rootPath) => ({
-        databasePath: "/tmp/index.sqlite",
-        rootPath,
-        status: "started" as const,
-      })),
-      startReindex: vi.fn(async (rootPath) => ({
-        databasePath: "/tmp/index.sqlite",
-        rootPath,
-        status: "started" as const,
-      })),
-      subscribeIndexProgress: vi.fn(async () => () => undefined),
-      subscribeMetadataScanCompletion: vi.fn(async (listener) => {
-        publishMetadataScanCompletion = listener;
-        return () => undefined;
-      }),
-    };
+    const { gateway: indexProgressGateway, publishMetadataScanCompletion } = indexHarness();
     const runningPhpStatus: LanguageServerRuntimeStatus = {
       capabilities: {
         ...emptyLanguageServerCapabilities(),
@@ -4139,6 +4136,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       indexProgressGateway,
       runtimeStatus: runningPhpStatus,
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: registeredIdentity(["/workspace"]),
     });
     await flushAsyncTurns();
     vi.mocked(dependencies.phpTreeGateway.getPhpTree).mockResolvedValueOnce(phpTree);
@@ -4194,7 +4192,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(getWorkbench().fileStructureOpen).toBe(true);
     expect(getWorkbench().fileStructureScope).toBe("inherited");
     act(() => {
-      publishMetadataScanCompletion?.({
+      publishMetadataScanCompletion({
         databasePath: "/tmp/index.sqlite",
         message: null,
         report: {
@@ -4382,7 +4380,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
 });
 
 describe("useWorkbenchController Git operations and workspace editor behavior", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderRegisteredController: renderController } = setupWorkbenchControllerTestHarness();
 
   it("loads the Git original content for active editor change markers", async () => {
     const file = fileEntry("/workspace/src/User.php", "User.php");
@@ -5611,6 +5609,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   it("starts indexing when a restored workspace is already in IDE mode", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
+      workspaceIdentityGateway: registeredIdentity(["/workspace"]),
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         intelligenceMode: "fullSmart",
@@ -5619,34 +5618,12 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     await flushAsyncTurns();
 
     expect(getWorkbench().intelligenceMode).toBe("fullSmart");
-    expect(dependencies.indexProgressGateway.startInitialMetadataScan).toHaveBeenCalledWith(
-      "/workspace",
-    );
+    expectInitialScan(dependencies.indexProgressGateway, "/workspace");
   });
   it("does not restart a completed index scan when returning to a cached project tab", async () => {
-    let publishMetadataScanCompletion: ((event: MetadataScanCompletionEvent) => void) | null = null;
-    const indexProgressGateway: IndexProgressGateway = {
-      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
-        databasePath: "/tmp/index.sqlite",
-        rootPath,
-        status: "cleared" as const,
-      })),
-      startInitialMetadataScan: vi.fn(async (rootPath) => ({
-        databasePath: `/tmp/${rootPath.replace(/\W+/g, "-")}.sqlite`,
-        rootPath,
-        status: "started" as const,
-      })),
-      startReindex: vi.fn(async (rootPath) => ({
-        databasePath: `/tmp/${rootPath.replace(/\W+/g, "-")}.sqlite`,
-        rootPath,
-        status: "started" as const,
-      })),
-      subscribeIndexProgress: vi.fn(async () => () => undefined),
-      subscribeMetadataScanCompletion: vi.fn(async (listener) => {
-        publishMetadataScanCompletion = listener;
-        return () => undefined;
-      }),
-    };
+    const { gateway: indexProgressGateway, publishMetadataScanCompletion } = indexHarness(
+      (rootPath) => `/tmp/${rootPath.replace(/\W+/g, "-")}.sqlite`,
+    );
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -5654,6 +5631,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
         workspaceTabs: ["/workspace-a", "/workspace-b"],
       },
       indexProgressGateway,
+      workspaceIdentityGateway: registeredIdentity(["/workspace-a", "/workspace-b"]),
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         intelligenceMode: "fullSmart",
@@ -5661,11 +5639,9 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(dependencies.indexProgressGateway.startInitialMetadataScan).toHaveBeenCalledWith(
-      "/workspace-a",
-    );
+    expectInitialScan(dependencies.indexProgressGateway, "/workspace-a");
     act(() => {
-      publishMetadataScanCompletion?.({
+      publishMetadataScanCompletion({
         databasePath: "/tmp/workspace-a.sqlite",
         message: null,
         report: {
@@ -5697,7 +5673,9 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
 
     const initialScanCalls = vi.mocked(dependencies.indexProgressGateway.startInitialMetadataScan)
       .mock.calls;
-    expect(initialScanCalls.filter(([rootPath]) => rootPath === "/workspace-a")).toHaveLength(1);
+    expect(
+      initialScanCalls.filter(([request]) => request.rootPath === "/workspace-a"),
+    ).toHaveLength(1);
     expect(getWorkbench().indexProgress).toEqual(
       expect.objectContaining({
         indexedFiles: 42,
@@ -5710,6 +5688,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     const { dependencies, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: registeredIdentity(["/workspace"]),
     });
     await flushAsyncTurns();
 
@@ -5718,42 +5697,31 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
     vi.mocked(dependencies.phpTreeGateway.getPhpTree).mockClear();
-    vi.mocked(dependencies.indexProgressGateway.startInitialMetadataScan).mockResolvedValueOnce({
-      databasePath: "/tmp/index.sqlite",
-      rootPath: "/workspace/",
-      status: "started",
-    });
+    mockNextInitialIndexStart(dependencies.indexProgressGateway, "/workspace/");
 
     await act(async () => {
       await getWorkbench().setSmartMode("fullSmart");
     });
     await flushAsyncTurns();
 
-    expect(dependencies.indexProgressGateway.startInitialMetadataScan).toHaveBeenCalledWith(
-      "/workspace",
-    );
+    expectInitialScan(dependencies.indexProgressGateway, "/workspace");
     expect(dependencies.phpTreeGateway.getPhpTree).toHaveBeenCalledWith("/workspace");
   });
   it("ignores index start responses that belong to another workspace root", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: registeredIdentity(["/workspace"]),
     });
     await flushAsyncTurns();
-    vi.mocked(dependencies.indexProgressGateway.startInitialMetadataScan).mockResolvedValueOnce({
-      databasePath: "/tmp/index.sqlite",
-      rootPath: "/other",
-      status: "started",
-    });
+    mockNextInitialIndexStart(dependencies.indexProgressGateway, "/other");
 
     await act(async () => {
       await getWorkbench().setSmartMode("fullSmart");
     });
     await flushAsyncTurns();
 
-    expect(dependencies.indexProgressGateway.startInitialMetadataScan).toHaveBeenCalledWith(
-      "/workspace",
-    );
+    expectInitialScan(dependencies.indexProgressGateway, "/workspace");
     expect(getWorkbench().indexProgress).toEqual(
       expect.objectContaining({
         rootPath: null,

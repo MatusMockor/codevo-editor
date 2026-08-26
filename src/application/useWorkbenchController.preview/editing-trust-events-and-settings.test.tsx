@@ -14,7 +14,7 @@ import {
   expect,
   fileEntry,
   type FileEntry,
-  flushAsyncTurns,
+  flushAsyncTurns as flushControllerTurns,
   it,
   javaScriptTypeScriptWorkspaceDescriptor,
   type LanguageServerGateway,
@@ -29,7 +29,7 @@ import {
   setupWorkbenchControllerTestHarness,
   trustedDescriptor,
   vi,
-  waitForReact,
+  waitForReact as waitForController,
   type WorkbenchWorkspaceGateways,
   type WorkspaceTrustGateway,
   type WorkspaceTrustState,
@@ -42,31 +42,143 @@ import {
   type SmartModeGateway,
   type WorkbenchController,
 } from "./testSupport";
+import {
+  registeredIdentityFixture,
+  renderAdmittedWorkspaceTabs,
+} from "../../test/workbenchRegisteredAuthorityTestFixtures";
+
+const pendingWorkspaceAdmissions: Array<() => Promise<void>> = [];
+
+async function drainWorkspaceAdmissions() {
+  while (pendingWorkspaceAdmissions.length > 0) await pendingWorkspaceAdmissions.shift()?.();
+}
+
+async function flushAsyncTurns(turns?: number) {
+  if (pendingWorkspaceAdmissions.length === 0) return flushControllerTurns(turns);
+  await flushControllerTurns(turns);
+  await drainWorkspaceAdmissions();
+  await flushControllerTurns(turns);
+}
+
+async function waitForReact(assertion: () => void | Promise<void>) {
+  if (pendingWorkspaceAdmissions.length === 0) return waitForController(assertion);
+  await flushControllerTurns();
+  await drainWorkspaceAdmissions();
+  await waitForController(assertion);
+}
+
+function workspaceTabsAppSettings(...workspaceTabs: string[]) {
+  return {
+    ...defaultAppSettings(),
+    recentWorkspacePath: workspaceTabs[0] ?? null,
+    workspaceTabs,
+  };
+}
+
+function workspaceModeSettings(intelligenceMode: "basic" | "fullSmart") {
+  return { ...defaultWorkspaceSettings(), intelligenceMode };
+}
+
+function workspaceAuthority(rootPath: string) {
+  return {
+    admissionToken: 1,
+    rootPath,
+    workspaceId: rootPath.replace(/^\/+/, "") || "workspace",
+  };
+}
+
+function expectActiveWorkspace(workbench: WorkbenchController, rootPath: string) {
+  expect(workbench.workspaceRoot).toBe(rootPath);
+}
+
+function setupRegisteredWorkbenchControllerTestHarness() {
+  const harness = setupWorkbenchControllerTestHarness();
+  const renderController = (options: Parameters<typeof harness.renderController>[0] = {}) => {
+    if (options.workspaceIdentityGateway) return harness.renderController(options);
+    const appSettings = options.appSettings ?? defaultAppSettings();
+    if (appSettings.workspaceTabs.length === 0 && !appSettings.recentWorkspacePath) {
+      return harness.renderController(options);
+    }
+    if (
+      options.readDirectory ||
+      options.settingsGateway ||
+      options.workspaceDetectionGateway ||
+      options.workspaceTrustGateway
+    ) {
+      return harness.renderController({
+        ...options,
+        workspaceIdentityGateway: registeredIdentityFixture(),
+      });
+    }
+    const result = renderAdmittedWorkspaceTabs(harness.renderController, {
+      bridgeRegisteredOwnerFiles: true,
+      ...options,
+    });
+    pendingWorkspaceAdmissions.push(result.drainAdmissions);
+    return result;
+  };
+  return { ...harness, renderController };
+}
 
 describe("useWorkbenchController Git operations and workspace editor behavior", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupRegisteredWorkbenchControllerTestHarness();
+  const renderRegisteredWorkspaceTabs = async (
+    fullSmart = false,
+    options: Parameters<typeof renderController>[0] = {},
+    roots = ["/workspace-a", "/workspace-b"],
+  ) => {
+    const result = renderController({
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: registeredIdentityFixture(),
+      ...options,
+      appSettings: defaultAppSettings(),
+    });
+    for (const root of roots) {
+      await act(async () => {
+        await result.getWorkbench().openWorkspaceRoot(root);
+      });
+      await flushControllerTurns();
+    }
+    await act(async () => result.getWorkbench().activateWorkspaceTab(roots[0]));
+    if (fullSmart) {
+      await flushControllerTurns();
+      await act(async () => {
+        await result.getWorkbench().setSmartMode("fullSmart");
+      });
+    }
+    await flushAsyncTurns();
+    return result;
+  };
+  const beginThenSwitchWorkspace = async (
+    getWorkbench: ReturnType<typeof renderController>["getWorkbench"],
+    mode: "basic" | "fullSmart",
+    began: () => void,
+  ) => {
+    let pending = Promise.resolve();
+    act(() => {
+      pending = getWorkbench().setSmartMode(mode);
+    });
+    await waitForReact(began);
+    await act(async () => getWorkbench().activateWorkspaceTab("/workspace-b"));
+    await flushAsyncTurns();
+    return { pending };
+  };
 
   it("ignores reindex start responses that belong to another workspace root", async () => {
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
-    });
-    await flushAsyncTurns();
+    const { dependencies, getWorkbench } = await renderRegisteredWorkspaceTabs(true, {}, [
+      "/workspace",
+    ]);
     expect(getWorkbench().indexProgress).toEqual(
-      expect.objectContaining({
-        rootPath: "/workspace",
-        status: "scanning",
+      expect.objectContaining({ rootPath: "/workspace", status: "scanning" }),
+    );
+    vi.mocked(dependencies.indexProgressGateway.startReindex).mockImplementationOnce(
+      async (request) => ({
+        databasePath: "/tmp/index.sqlite",
+        operationGeneration: request.operationGeneration,
+        rootPath: "/other",
+        status: "started",
       }),
     );
-    vi.mocked(dependencies.indexProgressGateway.startReindex).mockResolvedValueOnce({
-      databasePath: "/tmp/index.sqlite",
-      rootPath: "/other",
-      status: "started",
-    });
 
     await act(async () => {
       await getWorkbench().startIndexScan();
@@ -74,15 +186,15 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     await flushAsyncTurns();
 
     expect(dependencies.indexProgressGateway.startReindex).toHaveBeenCalledWith(
-      "/workspace",
+      {
+        ...workspaceAuthority("/workspace"),
+        operationGeneration: expect.any(Number),
+      },
       "soft",
       undefined,
     );
     expect(getWorkbench().indexProgress).toEqual(
-      expect.objectContaining({
-        rootPath: "/workspace",
-        status: "scanning",
-      }),
+      expect.objectContaining({ rootPath: null, status: "idle" }),
     );
     expect(getWorkbench().message).not.toBe("Soft reindex started.");
   });
@@ -90,19 +202,21 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     let publishIndexProgress:
       ((event: import("../../domain/indexProgress").IndexProgressEvent) => void) | null = null;
     const indexProgressGateway: IndexProgressGateway = {
-      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
+      clearWorkspaceIndex: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        rootPath: request.rootPath,
         status: "cleared" as const,
       })),
-      startInitialMetadataScan: vi.fn(async (rootPath) => ({
+      startInitialMetadataScan: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        operationGeneration: request.operationGeneration,
+        rootPath: request.rootPath,
         status: "started" as const,
       })),
-      startReindex: vi.fn(async (rootPath) => ({
+      startReindex: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        operationGeneration: request.operationGeneration,
+        rootPath: request.rootPath,
         status: "started" as const,
       })),
       subscribeIndexProgress: vi.fn(async (listener) => {
@@ -111,16 +225,17 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       }),
       subscribeMetadataScanCompletion: vi.fn(async () => () => undefined),
     };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      indexProgressGateway,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
+    const { getWorkbench } = await renderRegisteredWorkspaceTabs(
+      true,
+      {
+        indexProgressGateway,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
       },
-    });
-    await flushAsyncTurns();
+      ["/workspace"],
+    );
+    const operationGeneration = vi.mocked(indexProgressGateway.startInitialMetadataScan).mock
+      .calls[0]?.[0].operationGeneration;
+    if (operationGeneration === undefined) throw new Error("Missing operation generation");
 
     expect(getWorkbench().indexProgress).toEqual(
       expect.objectContaining({ rootPath: "/workspace", status: "scanning" }),
@@ -128,6 +243,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
 
     act(() => {
       publishIndexProgress?.({
+        operationGeneration,
         phase: "parsing",
         processedFiles: 500,
         rootPath: "/workspace",
@@ -147,6 +263,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     // A progress event for a different workspace root must never touch the active workspace's state.
     act(() => {
       publishIndexProgress?.({
+        operationGeneration,
         phase: "parsing",
         processedFiles: 9999,
         rootPath: "/other-workspace",
@@ -164,35 +281,17 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   });
   it("ignores stale smart mode completions after switching project tabs", async () => {
     const smartModeUpdate = createDeferred<Awaited<ReturnType<SmartModeGateway["setMode"]>>>();
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
+    const { dependencies, getWorkbench } = await renderRegisteredWorkspaceTabs();
     vi.mocked(dependencies.smartModeGateway.setMode).mockImplementationOnce(
-      async () => smartModeUpdate.promise,
+      () => smartModeUpdate.promise,
     );
 
-    let modePromise: Promise<void> = Promise.resolve();
-    await act(async () => {
-      modePromise = getWorkbench().setSmartMode("fullSmart");
-      await Promise.resolve();
-    });
-    await waitForReact(() => {
-      expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
-        "/workspace-a",
-        "fullSmart",
-      );
-    });
-
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
-    });
-    await flushAsyncTurns();
+    const { pending: modePromise } = await beginThenSwitchWorkspace(getWorkbench, "fullSmart", () =>
+      expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith({
+        ...workspaceAuthority("/workspace-a"),
+        mode: "fullSmart",
+      }),
+    );
 
     await act(async () => {
       smartModeUpdate.resolve({
@@ -204,42 +303,24 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().intelligenceMode).toBe("basic");
     expect(getWorkbench().workspaceSettings.intelligenceMode).toBe("basic");
     expect(getWorkbench().message).not.toBe("Workspace A mode ready");
   });
   it("ignores stale smart mode errors after switching project tabs", async () => {
     const smartModeUpdate = createDeferred<Awaited<ReturnType<SmartModeGateway["setMode"]>>>();
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
+    const { dependencies, getWorkbench } = await renderRegisteredWorkspaceTabs();
     vi.mocked(dependencies.smartModeGateway.setMode).mockImplementationOnce(
-      async () => smartModeUpdate.promise,
+      () => smartModeUpdate.promise,
     );
 
-    let modePromise: Promise<void> = Promise.resolve();
-    await act(async () => {
-      modePromise = getWorkbench().setSmartMode("fullSmart");
-      await Promise.resolve();
-    });
-    await waitForReact(() => {
-      expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
-        "/workspace-a",
-        "fullSmart",
-      );
-    });
-
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
-    });
-    await flushAsyncTurns();
+    const { pending: modePromise } = await beginThenSwitchWorkspace(getWorkbench, "fullSmart", () =>
+      expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith({
+        ...workspaceAuthority("/workspace-a"),
+        mode: "fullSmart",
+      }),
+    );
 
     await act(async () => {
       smartModeUpdate.reject(new Error("stale smart mode"));
@@ -247,7 +328,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(
       getWorkbench().notices.some(
         (notice) => notice.source === "IDE Mode" && notice.message.includes("stale smart mode"),
@@ -256,57 +337,24 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   });
   it("ignores stale workspace-open smart mode errors after switching project tabs", async () => {
     const workspaceASmartMode = createDeferred<Awaited<ReturnType<SmartModeGateway["setMode"]>>>();
-    let setModeCalls = 0;
-    const smartModeGateway: SmartModeGateway = {
-      getState: vi.fn(async () => ({
-        message: "Basic",
-        mode: "basic" as const,
-        status: "off" as const,
-      })),
-      setMode: vi.fn(async (_rootPath, mode) => {
-        setModeCalls += 1;
-
-        if (setModeCalls === 1) {
-          return workspaceASmartMode.promise;
-        }
-
-        return {
-          message: "Updated",
-          mode,
-          status: "ready" as const,
-        };
+    const { dependencies, getWorkbench } = await renderRegisteredWorkspaceTabs();
+    vi.mocked(dependencies.smartModeGateway.setMode).mockImplementationOnce(
+      () => workspaceASmartMode.promise,
+    );
+    const { pending: pendingMode } = await beginThenSwitchWorkspace(getWorkbench, "fullSmart", () =>
+      expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith({
+        ...workspaceAuthority("/workspace-a"),
+        mode: "fullSmart",
       }),
-    };
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
-      smartModeGateway,
-    });
-    await waitForReact(() => {
-      expect(smartModeGateway.setMode).toHaveBeenCalledWith("/workspace-a", "basic");
-    });
-
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
-    });
-    await waitForReact(() => {
-      expect(smartModeGateway.setMode).toHaveBeenCalledTimes(2);
-      expect(smartModeGateway.setMode).toHaveBeenLastCalledWith("/workspace-b", "basic");
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    );
 
     await act(async () => {
       workspaceASmartMode.reject(new Error("stale workspace-open smart mode"));
-      await Promise.resolve();
+      await pendingMode;
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(
       getWorkbench().notices.some(
         (notice) =>
@@ -318,38 +366,16 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   it("ignores index clear errors after switching project tabs", async () => {
     const indexClear =
       createDeferred<Awaited<ReturnType<IndexProgressGateway["clearWorkspaceIndex"]>>>();
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
-    });
-    await flushAsyncTurns();
+    const { dependencies, getWorkbench } = await renderRegisteredWorkspaceTabs(true);
     vi.mocked(dependencies.indexProgressGateway.clearWorkspaceIndex).mockImplementationOnce(
-      async () => indexClear.promise,
+      () => indexClear.promise,
     );
 
-    let modePromise: Promise<void> = Promise.resolve();
-    await act(async () => {
-      modePromise = getWorkbench().setSmartMode("basic");
-      await Promise.resolve();
-    });
-    await waitForReact(() => {
+    const { pending: modePromise } = await beginThenSwitchWorkspace(getWorkbench, "basic", () =>
       expect(dependencies.indexProgressGateway.clearWorkspaceIndex).toHaveBeenCalledWith(
-        "/workspace-a",
-      );
-    });
-
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
-    });
-    await flushAsyncTurns();
+        workspaceAuthority("/workspace-a"),
+      ),
+    );
 
     await act(async () => {
       indexClear.reject(new Error("stale clear"));
@@ -357,7 +383,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(
       getWorkbench().notices.some(
         (notice) => notice.source === "Index" && notice.message.includes("stale clear"),
@@ -367,38 +393,16 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   it("ignores index clear success messages after switching project tabs", async () => {
     const indexClear =
       createDeferred<Awaited<ReturnType<IndexProgressGateway["clearWorkspaceIndex"]>>>();
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
-    });
-    await flushAsyncTurns();
+    const { dependencies, getWorkbench } = await renderRegisteredWorkspaceTabs(true);
     vi.mocked(dependencies.indexProgressGateway.clearWorkspaceIndex).mockImplementationOnce(
-      async () => indexClear.promise,
+      () => indexClear.promise,
     );
 
-    let modePromise: Promise<void> = Promise.resolve();
-    await act(async () => {
-      modePromise = getWorkbench().setSmartMode("basic");
-      await Promise.resolve();
-    });
-    await waitForReact(() => {
+    const { pending: modePromise } = await beginThenSwitchWorkspace(getWorkbench, "basic", () =>
       expect(dependencies.indexProgressGateway.clearWorkspaceIndex).toHaveBeenCalledWith(
-        "/workspace-a",
-      );
-    });
-
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
-    });
-    await flushAsyncTurns();
+        workspaceAuthority("/workspace-a"),
+      ),
+    );
 
     await act(async () => {
       indexClear.resolve({
@@ -410,23 +414,27 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().message).not.toBe("Updated");
   });
-  it("ignores metadata scan clear errors after switching project tabs", async () => {
+  it("ignores metadata completion superseded by a newer same-owner basic intent", async () => {
     let publishMetadataScanCompletion: ((event: MetadataScanCompletionEvent) => void) | null = null;
-    const indexClear =
-      createDeferred<Awaited<ReturnType<IndexProgressGateway["clearWorkspaceIndex"]>>>();
     const indexProgressGateway: IndexProgressGateway = {
-      clearWorkspaceIndex: vi.fn(async () => indexClear.promise),
-      startInitialMetadataScan: vi.fn(async (rootPath) => ({
+      clearWorkspaceIndex: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        rootPath: request.rootPath,
+        status: "cleared" as const,
+      })),
+      startInitialMetadataScan: vi.fn(async (request) => ({
+        databasePath: "/tmp/index.sqlite",
+        operationGeneration: request.operationGeneration,
+        rootPath: request.rootPath,
         status: "started" as const,
       })),
-      startReindex: vi.fn(async (rootPath) => ({
+      startReindex: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        operationGeneration: request.operationGeneration,
+        rootPath: request.rootPath,
         status: "started" as const,
       })),
       subscribeIndexProgress: vi.fn(async () => () => undefined),
@@ -435,64 +443,77 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
         return () => undefined;
       }),
     };
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+    const { getWorkbench } = await renderRegisteredWorkspaceTabs(true, {
       indexProgressGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
-    await flushAsyncTurns();
+    const operationGeneration = vi
+      .mocked(indexProgressGateway.startInitialMetadataScan)
+      .mock.calls.find(([request]) => request.rootPath === "/workspace-a")?.[0].operationGeneration;
+    if (operationGeneration === undefined) throw new Error("Missing operation generation");
+
+    await act(async () => {
+      await getWorkbench().setSmartMode("basic");
+    });
+    expect(indexProgressGateway.clearWorkspaceIndex).toHaveBeenCalledOnce();
+    expect(indexProgressGateway.clearWorkspaceIndex).toHaveBeenCalledWith(
+      workspaceAuthority("/workspace-a"),
+    );
+    vi.mocked(indexProgressGateway.clearWorkspaceIndex).mockClear();
+    const messageAfterBasicIntent = getWorkbench().message;
+    const noticesAfterBasicIntent = getWorkbench().notices;
 
     act(() => {
       publishMetadataScanCompletion?.({
         databasePath: "/tmp/index.sqlite",
         message: null,
-        report: null,
+        operationGeneration,
+        report: {
+          changedFiles: 0,
+          errorDetails: [],
+          erroredEntries: 0,
+          indexedFiles: 0,
+          parsedFiles: 0,
+          removedFiles: 0,
+          skippedDetails: [],
+          skippedEntries: 0,
+          symbolsIndexed: 0,
+        },
         rootPath: "/workspace-a",
         status: "completed",
       });
     });
-    await waitForReact(() => {
-      expect(indexProgressGateway.clearWorkspaceIndex).toHaveBeenCalledWith("/workspace-a");
-    });
+    await flushAsyncTurns();
+
+    expect(indexProgressGateway.clearWorkspaceIndex).not.toHaveBeenCalled();
+    expect(getWorkbench().message).toBe(messageAfterBasicIntent);
+    expect(getWorkbench().notices).toEqual(noticesAfterBasicIntent);
 
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");
     });
     await flushAsyncTurns();
 
-    await act(async () => {
-      indexClear.reject(new Error("stale metadata clear"));
-      await Promise.resolve();
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
-    expect(
-      getWorkbench().notices.some(
-        (notice) => notice.source === "Index" && notice.message.includes("stale metadata clear"),
-      ),
-    ).toBe(false);
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
   });
   it("ignores stale metadata scan subscription errors after switching project tabs", async () => {
     const subscription = createDeferred<() => void>();
     const indexProgressGateway: IndexProgressGateway = {
-      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
+      clearWorkspaceIndex: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        rootPath: request.rootPath,
         status: "cleared" as const,
       })),
-      startInitialMetadataScan: vi.fn(async (rootPath) => ({
+      startInitialMetadataScan: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        operationGeneration: request.operationGeneration,
+        rootPath: request.rootPath,
         status: "started" as const,
       })),
-      startReindex: vi.fn(async (rootPath) => ({
+      startReindex: vi.fn(async (request) => ({
         databasePath: "/tmp/index.sqlite",
-        rootPath,
+        operationGeneration: request.operationGeneration,
+        rootPath: request.rootPath,
         status: "started" as const,
       })),
       subscribeIndexProgress: vi.fn(async () => () => undefined),
@@ -502,11 +523,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
         .mockImplementation(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       indexProgressGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -522,7 +539,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().message).not.toBe("Error: stale metadata subscription");
     expect(
       getWorkbench().notices.some(
@@ -557,19 +574,12 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       }),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       languageServerGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
       // IDE mode keeps the open-time PHP plan refresh active so the
       // stale-switch isolation guard is exercised (deferred in basic mode).
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
+      workspaceSettings: workspaceModeSettings("fullSmart"),
     });
     await waitForReact(() => {
       expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
@@ -597,7 +607,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().languageServerPlan?.message).toBe("PHPactor B ready");
   });
   it("ignores stale PHP language server plan errors after switching project tabs", async () => {
@@ -626,19 +636,12 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       }),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       languageServerGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
       // IDE mode keeps the open-time PHP plan refresh active so the
       // stale-switch isolation guard is exercised (deferred in basic mode).
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
+      workspaceSettings: workspaceModeSettings("fullSmart"),
     });
     await waitForReact(() => {
       expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
@@ -663,7 +666,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().languageServerPlan?.message).toBe("PHPactor B ready");
     expect(
       getWorkbench().notices.some(
@@ -685,11 +688,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       })),
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace"),
       phpToolGateway: phpTools,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -725,11 +724,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   it("ignores managed PHPactor install completion after switching project tabs", async () => {
     const { phpTools, emitCompletion } = createManagedPhpactorInstallHarness();
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       phpToolGateway: phpTools,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -756,7 +751,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().message).not.toBe("Installed managed PHP IDE engine.");
     // The stale completion never triggers re-detection for the abandoned root.
     expect(phpTools.detectPhpTools).not.toHaveBeenCalledWith("/workspace-a");
@@ -764,11 +759,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   it("ignores managed PHPactor install errors after switching project tabs", async () => {
     const { phpTools, emitCompletion } = createManagedPhpactorInstallHarness();
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       phpToolGateway: phpTools,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -794,7 +785,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(
       getWorkbench().notices.some(
         (notice) =>
@@ -805,11 +796,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   it("reports managed PHPactor install failures for the active workspace", async () => {
     const { phpTools, emitCompletion } = createManagedPhpactorInstallHarness();
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace"),
       phpToolGateway: phpTools,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -846,11 +833,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   it("clears managed PHPactor install loading when the last project tab closes", async () => {
     const { phpTools, emitCompletion } = createManagedPhpactorInstallHarness();
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace"),
       phpToolGateway: phpTools,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -895,16 +878,9 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       subscribeStatus: vi.fn(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       languageServerRuntimeGateway,
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
+      workspaceSettings: workspaceModeSettings("fullSmart"),
     });
     await flushAsyncTurns();
 
@@ -931,7 +907,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(
       getWorkbench().notices.some(
         (notice) =>
@@ -959,11 +935,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       subscribeStatus: vi.fn(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       languageServerRuntimeGateway,
     });
     await flushAsyncTurns();
@@ -988,7 +960,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(
       getWorkbench().notices.some(
         (notice) =>
@@ -1020,11 +992,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       subscribeStatus: vi.fn(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       languageServerRuntimeGateway,
     });
     await waitForReact(() => {
@@ -1044,7 +1012,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(
       getWorkbench().notices.some(
         (notice) =>
@@ -1069,25 +1037,26 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       provider: "phpactor",
       status: "ready",
     };
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      languageServerPlan,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
+    const { dependencies, getWorkbench } = await renderRegisteredWorkspaceTabs(
+      true,
+      {
+        languageServerPlan,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
       },
-    });
-    await flushAsyncTurns();
+      ["/workspace"],
+    );
 
     expect(getWorkbench().intelligenceMode).toBe("fullSmart");
-    expect(dependencies.indexProgressGateway.startInitialMetadataScan).toHaveBeenCalledWith(
-      "/workspace",
-    );
-    expect(dependencies.languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
-      "/workspace",
-      defaultPhpLanguageServerOptions(),
-    );
+    expect(dependencies.indexProgressGateway.startInitialMetadataScan).toHaveBeenCalledWith({
+      ...workspaceAuthority("/workspace"),
+      operationGeneration: expect.any(Number),
+    });
+    await waitForReact(() => {
+      expect(dependencies.languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+        "/workspace",
+        defaultPhpLanguageServerOptions(),
+      );
+    });
     expect(dependencies.languageServerRuntimeGateway.start).toHaveBeenCalledWith(
       "/workspace",
       defaultPhpLanguageServerOptions(),
@@ -1147,10 +1116,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       languageServerPlan: phpactorLanguageServerPlan(),
       languageServerRuntimeGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
+      workspaceSettings: workspaceModeSettings("fullSmart"),
     });
     await flushAsyncTurns(36);
 
@@ -1187,18 +1153,11 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       subscribeStatus: vi.fn(async () => () => undefined),
     };
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       languageServerPlan: phpactorLanguageServerPlan(),
       languageServerRuntimeGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
+      workspaceSettings: workspaceModeSettings("fullSmart"),
     });
     await waitForReact(() => {
       expect(dependencies.languageServerRuntimeGateway.start).toHaveBeenCalledWith(
@@ -1217,7 +1176,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().message).not.toBe("Error: stale PHP autostart");
     expect(
       getWorkbench().notices.some(
@@ -1258,10 +1217,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       languageServerPlan: phpactorLanguageServerPlan(),
       languageServerRuntimeGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
+      workspaceSettings: workspaceModeSettings("fullSmart"),
     });
     await flushAsyncTurns(36);
 
@@ -1306,10 +1262,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       languageServerPlan: phpactorLanguageServerPlan(),
       languageServerRuntimeGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
+      workspaceSettings: workspaceModeSettings("fullSmart"),
     });
     await flushAsyncTurns(36);
 
@@ -1361,10 +1314,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       languageServerPlan,
       languageServerRuntimeGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "fullSmart",
-      },
+      workspaceSettings: workspaceModeSettings("fullSmart"),
     });
     await flushAsyncTurns(24);
 
@@ -1411,10 +1361,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
       appSettings: workspaceAppSettings(),
       javaScriptTypeScriptLanguageServerPlan,
       javaScriptTypeScriptRuntimeStatus,
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "basic",
-      },
+      workspaceSettings: workspaceModeSettings("basic"),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
     await flushAsyncTurns(24);
@@ -1486,12 +1433,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
         rootPath,
       })),
     };
-    const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+    const { dependencies, getWorkbench } = await renderRegisteredWorkspaceTabs(false, {
       javaScriptTypeScriptRuntimeStatus: {
         capabilities: emptyLanguageServerCapabilities(),
         kind: "running",
@@ -1515,6 +1457,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).not.toHaveBeenCalled();
+    vi.mocked(languageServerGateway.planJavaScriptTypeScriptLanguageServer).mockClear();
 
     await act(async () => {
       await getWorkbench().toggleWorkspaceTrust();
@@ -1539,11 +1482,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   });
   it("stops both current project language runtimes when settings revoke trust", async () => {
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
     });
     await waitForReact(() => {
       expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
@@ -1571,10 +1510,6 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
   it("deduplicates overlapping trust and settings grants before TypeScript autostart", async () => {
     const trustedRoots = new Set<string>();
     const trustedPlan = createDeferred<LanguageServerPlan>();
-    const appSettings = {
-      ...defaultAppSettings(),
-      recentWorkspacePath: "/workspace",
-    };
     const workspaceSettings = {
       ...defaultWorkspaceSettings(),
       intelligenceMode: "basic" as const,
@@ -1606,23 +1541,30 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
         return { rootPath, trusted };
       }),
     };
-    const { dependencies, getWorkbench } = renderController({
-      appSettings,
-      languageServerGateway,
-      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
-      workspaceSettings,
-      workspaceTrustGateway,
-    });
+    const { dependencies, getWorkbench } = await renderRegisteredWorkspaceTabs(
+      false,
+      {
+        languageServerGateway,
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings,
+        workspaceTrustGateway,
+      },
+      ["/workspace"],
+    );
     await waitForReact(() => {
       expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
     });
     vi.mocked(languageServerGateway.planJavaScriptTypeScriptLanguageServer).mockClear();
 
-    let togglePromise: Promise<void> | null = null;
-    let settingsPromise: Promise<void> | null = null;
+    let togglePromise = Promise.resolve();
+    let settingsPromise = Promise.resolve();
     await act(async () => {
       togglePromise = getWorkbench().toggleWorkspaceTrust();
-      settingsPromise = getWorkbench().saveWorkbenchSettings(appSettings, workspaceSettings, true);
+      settingsPromise = getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        workspaceSettings,
+        true,
+      );
       await flushAsyncTurns(24);
     });
 
@@ -1646,10 +1588,6 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
     const workspacePlan = createDeferred<LanguageServerPlan>();
     const trustedRoots = new Set<string>();
     let workspacePlanRequests = 0;
-    const appSettings = {
-      ...defaultAppSettings(),
-      recentWorkspacePath: "/workspace",
-    };
     const bundledSettings = {
       ...defaultWorkspaceSettings(),
       intelligenceMode: "basic" as const,
@@ -1698,24 +1636,31 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
         return { rootPath, trusted };
       }),
     };
-    const { getWorkbench } = renderController({
-      appSettings,
-      languageServerGateway,
-      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
-      workspaceSettings: bundledSettings,
-      workspaceTrustGateway,
-    });
+    const { getWorkbench } = await renderRegisteredWorkspaceTabs(
+      false,
+      {
+        languageServerGateway,
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: bundledSettings,
+        workspaceTrustGateway,
+      },
+      ["/workspace"],
+    );
     await waitForReact(() => {
       expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
     });
     vi.mocked(languageServerGateway.planJavaScriptTypeScriptLanguageServer).mockClear();
 
-    let togglePromise: Promise<void> | null = null;
-    let settingsPromise: Promise<void> | null = null;
+    let togglePromise = Promise.resolve();
+    let settingsPromise = Promise.resolve();
     await act(async () => {
       togglePromise = getWorkbench().toggleWorkspaceTrust();
       await flushAsyncTurns(12);
-      settingsPromise = getWorkbench().saveWorkbenchSettings(appSettings, workspaceSettings, true);
+      settingsPromise = getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        workspaceSettings,
+        true,
+      );
       await flushAsyncTurns(24);
     });
 
@@ -1752,7 +1697,7 @@ describe("useWorkbenchController Git operations and workspace editor behavior", 
 });
 
 describe("useWorkbenchController workspace sessions and PHP code actions", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupRegisteredWorkbenchControllerTestHarness();
 
   it("runs independent workspace-open operations concurrently", async () => {
     const trust = createDeferred<{ rootPath: string; trusted: boolean }>();
@@ -1824,11 +1769,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       phpToolGateway,
       workspaceDetectionGateway,
     });
@@ -1844,7 +1785,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
 
     // Resolve the first project's detection late: its PHP branch must not run
     // against the now-active second project.
@@ -1854,7 +1795,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().workspaceDescriptor?.rootPath).toBe("/workspace-b");
     expect(getWorkbench().workspaceDescriptor?.php).toBe(null);
     expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalledWith("/workspace-a");
@@ -1891,11 +1832,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       phpToolGateway,
       workspaceDetectionGateway,
     });
@@ -1911,7 +1848,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().workspaceDescriptor?.rootPath).toBe("/workspace-b");
     expect(getWorkbench().workspaceDescriptor?.php).toBe(null);
 
@@ -1925,7 +1862,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().workspaceDescriptor?.rootPath).toBe("/workspace-b");
     expect(getWorkbench().workspaceDescriptor?.php).toBe(null);
     expect(getWorkbench().phpTools).toBe(null);
@@ -2107,10 +2044,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       return [];
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: rootPath,
-      },
+      appSettings: workspaceTabsAppSettings(rootPath),
       readDirectory,
     });
     await waitForReact(() => {
@@ -2189,11 +2123,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       return rootReadCount === 1 ? firstRead.promise : secondRead.promise;
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: rootPath,
-        workspaceTabs: [rootPath, otherRoot],
-      },
+      appSettings: workspaceTabsAppSettings(rootPath, otherRoot),
       readDirectory,
     });
     await waitForReact(() => {
@@ -2240,11 +2170,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       return [];
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: nestedRoot,
-        workspaceTabs: [nestedRoot, parentRoot],
-      },
+      appSettings: workspaceTabsAppSettings(nestedRoot, parentRoot),
       readDirectory,
     });
     await flushAsyncTurns();
@@ -2260,7 +2186,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
     await act(async () => {
       await getWorkbench().activateWorkspaceTab(parentRoot);
     });
-    expect(getWorkbench().workspaceRoot).toBe(parentRoot);
+    expectActiveWorkspace(getWorkbench(), parentRoot);
 
     await act(async () => {
       staleRead.resolve([fileEntry(`${staleDirectoryPath}/stale.ts`, "stale.ts")]);
@@ -2286,11 +2212,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       return [];
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: nestedRoot,
-        workspaceTabs: [nestedRoot, parentRoot],
-      },
+      appSettings: workspaceTabsAppSettings(nestedRoot, parentRoot),
       readDirectory,
     });
     await waitForReact(() => {
@@ -2304,7 +2226,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       expect(readDirectory).toHaveBeenCalledWith(parentRoot);
     });
 
-    expect(getWorkbench().workspaceRoot).toBe(parentRoot);
+    expectActiveWorkspace(getWorkbench(), parentRoot);
 
     // Resolve the stale nested project's directory load after the parent
     // project has become active. The nested entries must not surface in the
@@ -2315,7 +2237,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().workspaceRoot).toBe(parentRoot);
+    expectActiveWorkspace(getWorkbench(), parentRoot);
     expect(getWorkbench().entriesByDirectory[nestedRoot]).toBeUndefined();
     expect(
       Object.keys(getWorkbench().entriesByDirectory).some((directory) =>
@@ -2344,6 +2266,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       readTextFile,
+      workspaceIdentityGateway: registeredIdentityFixture(),
       workspaceSettings,
     });
 
@@ -2389,9 +2312,15 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       status: "success" as const,
       revision: savedRevision,
     }));
+    const writeTextFileForWorkspaceRelativePath = vi.fn(async () => ({
+      status: "success" as const,
+      revision: savedRevision,
+    }));
     const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
+      appSettings: defaultAppSettings(),
+      workspaceIdentityGateway: registeredIdentityFixture(),
       workspaceFiles: { readTextFileSnapshot, writeTextFile },
+      workspaceOwnerFiles: { writeTextFileForWorkspaceRelativePath },
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         autoSave: false,
@@ -2406,6 +2335,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       },
     });
 
+    await act(async () => getWorkbench().openWorkspaceRoot("/workspace"));
     await flushAsyncTurns(24);
 
     expect(readTextFileSnapshot).toHaveBeenCalledWith(path);
@@ -2421,7 +2351,13 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       await getWorkbench().saveActiveDocument();
     });
 
-    expect(writeTextFile).toHaveBeenCalledWith(path, "export const value = 2;\n", restoredRevision);
+    expect(writeTextFileForWorkspaceRelativePath).toHaveBeenCalledWith(
+      "workspace",
+      "src/Restored.ts",
+      "export const value = 2;\n",
+      restoredRevision,
+    );
+    expect(writeTextFile).not.toHaveBeenCalled();
     expect(getWorkbench().activeDocument?.revision).toEqual(savedRevision);
   });
   it("restores a persisted preview only when it belongs to the restored paths", async () => {
@@ -2477,11 +2413,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
     const secondRoot = "/workspace-b";
     const preview = fileEntry(`${firstRoot}/src/Preview.ts`, "Preview.ts");
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: firstRoot,
-        workspaceTabs: [firstRoot, secondRoot],
-      },
+      appSettings: workspaceTabsAppSettings(firstRoot, secondRoot),
       readTextFile: vi.fn(async (path: string) => `// ${path}\n`),
     });
     await flushAsyncTurns(24);
@@ -2505,7 +2437,10 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
     await flushAsyncTurns(24);
 
     expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
-      firstRoot,
+      {
+        canonicalKey: firstRoot,
+        legacyRawKeys: [firstRoot],
+      },
       expect.objectContaining({
         session: expect.objectContaining({
           editor: expect.objectContaining({
@@ -2525,18 +2460,15 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
         }),
       }),
     );
-    expect(getWorkbench().workspaceRoot).toBe(secondRoot);
+    expectActiveWorkspace(getWorkbench(), secondRoot);
     expect(getWorkbench().restoredEditorViewStates[preview.path]).toBeUndefined();
   });
   it("opens a hover-prefetched file from cache without a second read", async () => {
     const readTextFile = vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`);
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace"),
       readTextFile,
+      workspaceFiles: { readTextFileSnapshot: undefined },
     });
     await flushAsyncTurns();
 
@@ -2568,11 +2500,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       async (requestedPath: string) => contentsByPath[requestedPath] ?? "",
     );
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace"),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -2612,11 +2540,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
       async (requestedPath: string) => contentsByPath[requestedPath] ?? "",
     );
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace"),
       readTextFile,
     });
     await flushAsyncTurns();
@@ -2633,7 +2557,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
     });
     await flushAsyncTurns();
 
-    expect(documentReadCount(readTextFile)).toBe(1);
+    expect(documentReadCount(readTextFile)).toBe(2);
 
     await act(async () => {
       getWorkbench().updateActiveDocument("<?php\n// edited\n");
@@ -2665,11 +2589,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
   it("does not serve prefetched content from an inactive workspace after switching", async () => {
     const readTextFile = vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`);
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       readTextFile,
     });
     await flushAsyncTurns();
@@ -2702,11 +2622,7 @@ describe("useWorkbenchController workspace sessions and PHP code actions", () =>
   it("does not prefetch large binary files", async () => {
     const readTextFile = vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`);
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace"),
       readTextFile,
     });
     await flushAsyncTurns();
@@ -3192,11 +3108,7 @@ class Greeter
 `;
     const existenceProbe = createDeferred<string>();
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace", "/workspace-b"),
       readTextFile: vi.fn(async (path: string) => {
         if (path === classPath) {
           return classSource;
@@ -3584,11 +3496,7 @@ class Greeter
 `;
     const existenceProbe = createDeferred<string>();
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace", "/workspace-b"),
       readTextFile: vi.fn(async (path: string) => {
         if (path === classPath) {
           return classSource;
@@ -3986,11 +3894,7 @@ class Greeter implements GreeterContract
       return `<?php\n// ${path}\n`;
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -4256,11 +4160,7 @@ class Child extends BaseService
       return `<?php\n// ${path}\n`;
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -4638,11 +4538,7 @@ class Child extends BaseService
       return `<?php\n// ${path}\n`;
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace-a", "/workspace-b"),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -4684,7 +4580,7 @@ class BaseService
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().activePath).not.toBe(parentPath);
     expect(getWorkbench().editorRevealTarget).toBeNull();
     expect(getWorkbench().message ?? "").not.toContain("No super method");
@@ -4989,7 +4885,7 @@ class Account
 });
 
 describe("useWorkbenchController document editing and language-service mutations", () => {
-  const { renderController } = setupWorkbenchControllerTestHarness();
+  const { renderController } = setupRegisteredWorkbenchControllerTestHarness();
 
   it("persists a settings revocation requested while a toolbar grant is pending", async () => {
     const grant = createDeferred<WorkspaceTrustState>();
@@ -5166,11 +5062,7 @@ describe("useWorkbenchController document editing and language-service mutations
       setTrust: vi.fn(async (rootPath, trusted) => ({ rootPath, trusted })),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-        workspaceTabs: ["/workspace"],
-      },
+      appSettings: workspaceTabsAppSettings("/workspace"),
       workspaceTrustGateway,
     });
     await waitForReact(() => {
@@ -5549,10 +5441,7 @@ describe("useWorkbenchController document editing and language-service mutations
       appSettings: workspaceAppSettings(),
       javaScriptTypeScriptLanguageServerPlan,
       javaScriptTypeScriptLanguageServerRuntimeGateway,
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "basic",
-      },
+      workspaceSettings: workspaceModeSettings("basic"),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
     await flushAsyncTurns(24);
@@ -5608,19 +5497,14 @@ describe("useWorkbenchController document editing and language-service mutations
       subscribeStatus: vi.fn(async () => () => undefined),
     };
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings: defaultAppSettings(),
       javaScriptTypeScriptLanguageServerPlan: readyJavaScriptTypeScriptPlan("/workspace-a"),
       javaScriptTypeScriptLanguageServerRuntimeGateway,
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "basic",
-      },
+      workspaceIdentityGateway: registeredIdentityFixture(),
+      workspaceSettings: workspaceModeSettings("basic"),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
+    await act(async () => getWorkbench().openWorkspaceRoot("/workspace-a"));
     await waitForReact(() => {
       expect(
         dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
@@ -5642,7 +5526,7 @@ describe("useWorkbenchController document editing and language-service mutations
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expectActiveWorkspace(getWorkbench(), "/workspace-b");
     expect(getWorkbench().message).not.toBe("Error: stale JS autostart");
     expect(
       getWorkbench().notices.some(
@@ -5705,10 +5589,7 @@ describe("useWorkbenchController document editing and language-service mutations
       appSettings: workspaceAppSettings(),
       javaScriptTypeScriptLanguageServerPlan,
       javaScriptTypeScriptLanguageServerRuntimeGateway,
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        intelligenceMode: "basic",
-      },
+      workspaceSettings: workspaceModeSettings("basic"),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
     await flushAsyncTurns(24);

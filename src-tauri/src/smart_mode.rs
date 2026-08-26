@@ -1,3 +1,4 @@
+use crate::workspace_registry::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -22,6 +23,15 @@ pub struct SmartModeState {
     pub mode: IntelligenceMode,
     pub status: SmartModeStatus,
     pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SmartModeSetRequest {
+    pub admission_token: u64,
+    pub mode: IntelligenceMode,
+    pub root_path: String,
+    pub workspace_id: WorkspaceId,
 }
 
 pub struct SmartModeService {
@@ -85,7 +95,7 @@ impl Default for SmartModeService {
 
 #[cfg(test)]
 mod tests {
-    use super::{IntelligenceMode, SmartModeService, SmartModeStatus};
+    use super::{IntelligenceMode, SmartModeService, SmartModeSetRequest, SmartModeStatus};
 
     #[test]
     fn basic_mode_reports_smart_services_off() {
@@ -131,5 +141,15 @@ mod tests {
             service.state("/workspace-b").mode,
             IntelligenceMode::Basic
         ));
+    }
+
+    #[test]
+    fn set_request_rejects_missing_and_unknown_authority_fields() {
+        for payload in [
+            r#"{"mode":"basic","rootPath":"/workspace","workspaceId":"ws-1"}"#,
+            r#"{"admissionToken":1,"mode":"basic","rootPath":"/workspace","workspaceId":"ws-1","unexpected":true}"#,
+        ] {
+            assert!(serde_json::from_str::<SmartModeSetRequest>(payload).is_err());
+        }
     }
 }

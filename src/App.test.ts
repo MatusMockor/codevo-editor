@@ -106,10 +106,12 @@ describe("ideActivityDetail", () => {
     const progress = applyIndexProgress(
       startIndexProgress({
         databasePath: "/config/index.sqlite3",
+        operationGeneration: 1,
         rootPath: "/workspace",
         status: "started",
       }),
       {
+        operationGeneration: 1,
         phase: "parsing",
         processedFiles: 500,
         rootPath: "/workspace",
@@ -235,10 +237,12 @@ describe("ideActivityStatus index progress", () => {
     const progress = applyIndexProgress(
       startIndexProgress({
         databasePath: "/config/index.sqlite3",
+        operationGeneration: 1,
         rootPath: "/workspace",
         status: "started",
       }),
       {
+        operationGeneration: 1,
         phase: "parsing",
         processedFiles: 500,
         rootPath: "/workspace",
@@ -256,10 +260,12 @@ describe("ideActivityStatus index progress", () => {
     const progress = applyIndexProgress(
       startIndexProgress({
         databasePath: "/config/index.sqlite3",
+        operationGeneration: 1,
         rootPath: "/workspace",
         status: "started",
       }),
       {
+        operationGeneration: 1,
         phase: "parsing",
         processedFiles: 320,
         rootPath: "/workspace",
