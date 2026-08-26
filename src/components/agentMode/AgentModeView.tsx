@@ -43,11 +43,7 @@ import { AgentThreadHeader } from "./AgentThreadHeader";
 import { AgentThreadSearchPalette } from "./AgentThreadSearchPalette";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
-import {
-  agentThreadHeaderProject,
-  agentWorkbenchLayoutProjection,
-  type AgentWorkbenchChrome,
-} from "./agentWorkbenchChrome";
+import { agentThreadHeaderProject, type AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 import {
   composerTargetView,
   resolveComposerTarget,
@@ -358,7 +354,7 @@ export function AgentModeView({
   );
 
   const shipActions = useAgentShipActions(agents);
-  const layout = agentWorkbenchLayoutProjection(chrome);
+  const layout = chrome.layout.layout;
   const dispatchLayout = chrome.layout.dispatch;
   const [chooserRequested, setChooserRequested] = useState(false);
   const openSurface = useCallback(
@@ -605,10 +601,13 @@ export function AgentModeView({
 
   const findHitIndex = find.open && find.hitIndex >= 0 ? find.hitIndex : undefined;
   const headerProject = agentThreadHeaderProject(selectedThread, groups, projects, target);
-  const surfaceHost = agentSurfaceHostPlacement(layout);
+  const surfaceHost = agentSurfaceHostPlacement({
+    ...layout,
+    layout: chrome.layout.effectiveLayout,
+  });
   const layoutControls = (
     <AgentPanelLayoutControls
-      bottomPanelOpen={layout.bottomPanel}
+      bottomPanelOpen={chrome.bottomPanelVisible}
       maximize={{
         maximized: layout.rightPanelMaximized,
         onToggle: () => dispatchLayout({ kind: "toggleMaximized" }),
@@ -623,12 +622,7 @@ export function AgentModeView({
 
   return (
     <>
-      <section
-        aria-label="Agent mode"
-        className="agent-mode"
-        data-right-panel={layout.rightPanelMaximized ? "maximized" : "docked"}
-        data-slot="agent"
-      >
+      <section aria-label="Agent mode" className="agent-mode" data-slot="agent">
         {notice && (
           <AgentNoticeBar
             notice={notice}
@@ -679,6 +673,7 @@ export function AgentModeView({
               style={find.open ? FIND_BAR_ROWS : undefined}
             >
               <AgentThreadHeader
+                bottomPanelOpen={chrome.bottomPanelVisible}
                 commitMenuOpenSignal={commitMenuOpenSignal}
                 layout={layout}
                 onExpandEditor={expandEditor}

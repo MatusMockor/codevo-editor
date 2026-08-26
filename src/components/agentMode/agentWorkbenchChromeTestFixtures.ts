@@ -4,6 +4,7 @@ import {
   initialAgentWorkbenchLayout,
   type AgentWorkbenchLayout,
   type AgentWorkbenchLayoutAction,
+  type AgentWorkbenchLayoutMode,
 } from "../../domain/agentWorkbenchLayout";
 import { UNAVAILABLE_AGENT_SCRIPT_RUNNER, type AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 
@@ -13,13 +14,16 @@ export interface RecordedAgentWorkbenchLayout extends AgentWorkbenchLayoutState 
 
 export function recordedLayoutState(
   overrides: Partial<AgentWorkbenchLayout> = {},
+  persistedBottomPanel = false,
+  effectiveLayout?: AgentWorkbenchLayoutMode,
 ): RecordedAgentWorkbenchLayout {
   const actions: AgentWorkbenchLayoutAction[] = [];
   const state = { ...initialAgentWorkbenchLayout, ...overrides };
   return {
     actions,
     layout: state,
-    effectiveLayout: state.layout,
+    effectiveLayout: effectiveLayout ?? state.layout,
+    persistedBottomPanel,
     dispatch: (action) => {
       actions.push(action);
     },

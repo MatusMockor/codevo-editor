@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  agentBottomPanelSync,
-  initialAgentBottomPanelSyncState,
-  type AgentBottomPanelSyncState,
+  agentTerminalPanelIntent,
+  initialAgentTerminalPanelIntentState,
+  type AgentTerminalPanelIntentState,
 } from "./agentWorkbenchChrome";
 
 const OWNER = "/workspace/app";
 
-describe("agentBottomPanelSync", () => {
-  it("adopts the owner without touching either side", () => {
-    const result = agentBottomPanelSync(initialAgentBottomPanelSyncState, {
+describe("agentTerminalPanelIntent", () => {
+  it("adopts the owner without revealing the terminal", () => {
+    const result = agentTerminalPanelIntent(initialAgentTerminalPanelIntentState, {
       owner: OWNER,
       active: true,
       visible: false,
@@ -17,7 +17,6 @@ describe("agentBottomPanelSync", () => {
       persisted: false,
     });
 
-    expect(result.mirror).toBeNull();
     expect(result.showTerminal).toBe(false);
     expect(result.state).toEqual({
       owner: OWNER,
@@ -30,7 +29,7 @@ describe("agentBottomPanelSync", () => {
   it("shows the terminal once when the hydrated layout persisted an open panel", () => {
     const adopted = adopt();
 
-    const hydrated = agentBottomPanelSync(adopted, {
+    const hydrated = agentTerminalPanelIntent(adopted, {
       owner: OWNER,
       active: true,
       visible: false,
@@ -40,29 +39,27 @@ describe("agentBottomPanelSync", () => {
     expect(hydrated.showTerminal).toBe(true);
     expect(hydrated.state.applied).toBe(true);
 
-    const settled = agentBottomPanelSync(hydrated.state, {
+    const settled = agentTerminalPanelIntent(hydrated.state, {
       owner: OWNER,
       active: true,
       visible: true,
       view: "terminal",
       persisted: true,
     });
-    expect(settled.mirror).toBe("show");
     expect(settled.showTerminal).toBe(false);
 
-    const idle = agentBottomPanelSync(settled.state, {
+    const idle = agentTerminalPanelIntent(settled.state, {
       owner: OWNER,
       active: true,
       visible: true,
       view: "terminal",
       persisted: true,
     });
-    expect(idle.mirror).toBeNull();
     expect(idle.showTerminal).toBe(false);
   });
 
-  it("mirrors a controller toggle into the layout and reveals the terminal view", () => {
-    const opened = agentBottomPanelSync(adopt(), {
+  it("reveals the terminal view when the controller shows the panel with an unchanged view", () => {
+    const opened = agentTerminalPanelIntent(adopt(), {
       owner: OWNER,
       active: true,
       visible: true,
@@ -70,10 +67,9 @@ describe("agentBottomPanelSync", () => {
       persisted: false,
     });
 
-    expect(opened.mirror).toBe("show");
     expect(opened.showTerminal).toBe(true);
 
-    const closed = agentBottomPanelSync(opened.state, {
+    const closed = agentTerminalPanelIntent(opened.state, {
       owner: OWNER,
       active: true,
       visible: false,
@@ -81,12 +77,11 @@ describe("agentBottomPanelSync", () => {
       persisted: true,
     });
 
-    expect(closed.mirror).toBe("hide");
     expect(closed.showTerminal).toBe(false);
   });
 
   it("keeps an explicit view change out of the terminal reveal", () => {
-    const opened = agentBottomPanelSync(adopt(), {
+    const opened = agentTerminalPanelIntent(adopt(), {
       owner: OWNER,
       active: true,
       visible: true,
@@ -94,12 +89,11 @@ describe("agentBottomPanelSync", () => {
       persisted: false,
     });
 
-    expect(opened.mirror).toBe("show");
     expect(opened.showTerminal).toBe(false);
   });
 
-  it("tracks without touching either side while the agent layout is inactive", () => {
-    const applied = agentBottomPanelSync(adopt(), {
+  it("tracks without revealing the terminal while the agent layout is inactive", () => {
+    const applied = agentTerminalPanelIntent(adopt(), {
       owner: OWNER,
       active: true,
       visible: false,
@@ -107,30 +101,28 @@ describe("agentBottomPanelSync", () => {
       persisted: true,
     }).state;
 
-    const inactive = agentBottomPanelSync(applied, {
+    const inactive = agentTerminalPanelIntent(applied, {
       owner: OWNER,
       active: false,
       visible: true,
       view: "problems",
       persisted: false,
     });
-    expect(inactive.mirror).toBeNull();
     expect(inactive.showTerminal).toBe(false);
     expect(inactive.state.visible).toBe(true);
 
-    const resumed = agentBottomPanelSync(inactive.state, {
+    const resumed = agentTerminalPanelIntent(inactive.state, {
       owner: OWNER,
       active: true,
       visible: true,
       view: "problems",
       persisted: false,
     });
-    expect(resumed.mirror).toBe("show");
     expect(resumed.showTerminal).toBe(false);
   });
 
   it("resets the applied flag on a workspace A -> B -> A switch", () => {
-    const applied = agentBottomPanelSync(adopt(), {
+    const applied = agentTerminalPanelIntent(adopt(), {
       owner: OWNER,
       active: true,
       visible: false,
@@ -139,7 +131,7 @@ describe("agentBottomPanelSync", () => {
     }).state;
     expect(applied.applied).toBe(true);
 
-    const other = agentBottomPanelSync(applied, {
+    const other = agentTerminalPanelIntent(applied, {
       owner: "/workspace/api",
       active: true,
       visible: false,
@@ -154,7 +146,7 @@ describe("agentBottomPanelSync", () => {
     });
     expect(other.showTerminal).toBe(false);
 
-    const back = agentBottomPanelSync(other.state, {
+    const back = agentTerminalPanelIntent(other.state, {
       owner: OWNER,
       active: true,
       visible: false,
@@ -166,8 +158,8 @@ describe("agentBottomPanelSync", () => {
   });
 });
 
-function adopt(): AgentBottomPanelSyncState {
-  return agentBottomPanelSync(initialAgentBottomPanelSyncState, {
+function adopt(): AgentTerminalPanelIntentState {
+  return agentTerminalPanelIntent(initialAgentTerminalPanelIntentState, {
     owner: OWNER,
     active: true,
     visible: false,

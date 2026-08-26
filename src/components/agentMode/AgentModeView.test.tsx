@@ -609,12 +609,13 @@ describe("AgentModeView", () => {
 
     click('.agent-surface [aria-label="Maximize panel"]');
     rerender();
-    expect(agentModeSection()?.getAttribute("data-right-panel")).toBe("maximized");
+    expect(reduceRecordedLayout(layout).rightPanelMaximized).toBe(true);
+    expect(agentModeSection()?.hasAttribute("data-right-panel")).toBe(false);
     expect(host.querySelector('.agent-surface [aria-label="Restore panel"]')).not.toBeNull();
 
     click('.agent-surface [aria-label="Restore panel"]');
     rerender();
-    expect(agentModeSection()?.getAttribute("data-right-panel")).toBe("docked");
+    expect(reduceRecordedLayout(layout).rightPanelMaximized).toBe(false);
 
     click('[aria-label="Close Files tab"]');
     rerender();
@@ -660,6 +661,31 @@ describe("AgentModeView", () => {
     expect(host.querySelector('[data-slot="surface"]')?.hasAttribute("hidden")).toBe(false);
     expect(surfaceTabs()).toEqual(["Files", "Diff"]);
     expect(activeSurfaceTab()).toBe("Diff");
+  });
+
+  it("places the surface host from the effective layout, not the reducer layout", () => {
+    const docked = recordedLayoutState({
+      rightPanel: "open",
+      openSurfaces: ["diff"],
+      activeSurface: "diff",
+    });
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      chrome: chromeFixture({ layout: docked }),
+    });
+    expect(host.querySelector('[data-slot="surface"]')).not.toBeNull();
+
+    const forcedEditor = recordedLayoutState(
+      { rightPanel: "open", openSurfaces: ["diff"], activeSurface: "diff" },
+      false,
+      "editor-expanded",
+    );
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      chrome: chromeFixture({ layout: forcedEditor }),
+    });
+
+    expect(host.querySelector('[data-slot="surface"]')).toBeNull();
   });
 
   it("hands the rail state to the layout so the shell frame owns the rail track", () => {

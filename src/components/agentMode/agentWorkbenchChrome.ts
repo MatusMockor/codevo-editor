@@ -4,7 +4,6 @@ import type { AgentSurfaceFileTreeDependencies } from "../../application/useAgen
 import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
 import type { AgentWorkbenchLayoutState } from "../../application/useAgentWorkbenchLayout";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import type { AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
 import type { BottomPanelView } from "../../domain/bottomPanel";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import type { GitChangeStatus } from "../../domain/git";
@@ -63,14 +62,14 @@ export interface AgentWorkbenchChrome {
   onResizeRightPanelStart?(event: PointerEvent<HTMLDivElement>): void;
 }
 
-export interface AgentBottomPanelSyncState {
+export interface AgentTerminalPanelIntentState {
   readonly owner: string | null;
   readonly visible: boolean;
   readonly view: BottomPanelView;
   readonly applied: boolean;
 }
 
-export interface AgentBottomPanelSyncInput {
+export interface AgentTerminalPanelIntentInput {
   readonly owner: string | null;
   readonly active: boolean;
   readonly visible: boolean;
@@ -78,61 +77,46 @@ export interface AgentBottomPanelSyncInput {
   readonly persisted: boolean;
 }
 
-export interface AgentBottomPanelSyncResult {
-  readonly state: AgentBottomPanelSyncState;
-  readonly mirror: "show" | "hide" | null;
+export interface AgentTerminalPanelIntentResult {
+  readonly state: AgentTerminalPanelIntentState;
   readonly showTerminal: boolean;
 }
 
-export const initialAgentBottomPanelSyncState: AgentBottomPanelSyncState = Object.freeze({
+export const initialAgentTerminalPanelIntentState: AgentTerminalPanelIntentState = Object.freeze({
   owner: null,
   visible: false,
   view: "problems",
   applied: false,
 });
 
-export function agentBottomPanelSync(
-  state: AgentBottomPanelSyncState,
-  next: AgentBottomPanelSyncInput,
-): AgentBottomPanelSyncResult {
+export function agentTerminalPanelIntent(
+  state: AgentTerminalPanelIntentState,
+  next: AgentTerminalPanelIntentInput,
+): AgentTerminalPanelIntentResult {
   if (state.owner !== next.owner) {
     return {
       state: { owner: next.owner, visible: next.visible, view: next.view, applied: false },
-      mirror: null,
       showTerminal: false,
     };
   }
 
   const tracked = { ...state, visible: next.visible, view: next.view };
   if (!next.active) {
-    return { state: tracked, mirror: null, showTerminal: false };
+    return { state: tracked, showTerminal: false };
   }
 
   if (state.visible !== next.visible) {
     return {
       state: { ...tracked, applied: true },
-      mirror: next.visible ? "show" : "hide",
       showTerminal: next.visible && state.view === next.view,
     };
   }
 
   if (!state.applied && next.persisted) {
-    return {
-      state: { ...tracked, applied: true },
-      mirror: null,
-      showTerminal: !next.visible,
-    };
+    return { state: { ...tracked, applied: true }, showTerminal: !next.visible };
   }
 
-  if (state.applied && next.persisted !== next.visible) {
-    return {
-      state: tracked,
-      mirror: next.visible ? "show" : "hide",
-      showTerminal: false,
-    };
-  }
-
-  return { state: tracked, mirror: null, showTerminal: false };
+  return { state: tracked, showTerminal: false };
 }
 
 export const UNAVAILABLE_AGENT_SCRIPT_RUNNER: AgentThreadScriptRunner = Object.freeze({
@@ -144,14 +128,6 @@ export const UNAVAILABLE_AGENT_SCRIPT_RUNNER: AgentThreadScriptRunner = Object.f
   run: () => false,
   stop: () => undefined,
 });
-
-export function agentWorkbenchLayoutProjection(
-  chrome: Pick<AgentWorkbenchChrome, "layout" | "bottomPanelVisible">,
-): AgentWorkbenchLayout {
-  const layout = chrome.layout.layout;
-  if (layout.bottomPanel === chrome.bottomPanelVisible) return layout;
-  return { ...layout, bottomPanel: chrome.bottomPanelVisible };
-}
 
 export function agentThreadHeaderProject(
   thread: AgentThreadView | null,

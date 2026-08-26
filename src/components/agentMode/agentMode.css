@@ -2,9 +2,11 @@
   Agent mode — "quiet instrument panel".
   Every value below derives from the theme primitives, so light and every dark
   palette are covered by construction. Variants (data-agent-variant) reassign
-  tokens only; they never add selectors or layout.
+  tokens only; they never add selectors or layout. The palette is scoped to the
+  shell frame so every frame slot — the agent view and the right-panel surface
+  host — inherits it without borrowing another slot's class.
 */
-.agent-mode {
+.workbench-frame {
   --agent-shade: #000;
   --agent-shadow-alpha: 0.28;
   --agent-canvas: var(--color-app);
@@ -85,6 +87,10 @@
   --agent-motion-select: 180ms;
   --agent-motion-enter: 200ms;
   --agent-mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+}
+
+.agent-mode,
+.agent-surface-host {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -104,19 +110,8 @@
   }
 }
 
-/* The shell frame owns the rail track: its grid places the bottom panel beside the rail and the
-   agent grid below reuses the same track so both columns stay aligned. */
-.workbench-frame[data-layout="agent"] {
-  --agent-rail-width: 272px;
-  --agent-rail-inset: 8px;
-  --agent-rail-collapsed-width: calc(32px + 2 * var(--agent-rail-inset));
-  --agent-rail-track: var(--agent-rail-width);
-}
-
-.workbench-frame[data-layout="agent"][data-rail="collapsed"] {
-  --agent-rail-track: var(--agent-rail-collapsed-width);
-}
-
+/* The rail track comes from the shell frame (workbenchShellFrame.css); the agent grid only
+   reuses it so both columns stay aligned. */
 .agent-mode__grid {
   display: grid;
   flex: 1;
@@ -245,6 +240,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .agent-mode,
+  .agent-surface-host,
   .agent-dot--running::after,
   .agent-well__caret {
     animation: none;
@@ -1743,17 +1739,7 @@
   changing primary navigation. On phone-sized windows the thread rail becomes a
   bounded row above the session, keeping both navigation and the composer usable.
 */
-@media (max-width: 1180px) {
-  .workbench-frame[data-layout="agent"][data-rail="expanded"] {
-    --agent-rail-track: 248px;
-  }
-}
-
 @media (max-width: 720px) {
-  .workbench-frame[data-layout="agent"][data-right-panel="docked"] {
-    --agent-rail-track: 0px;
-  }
-
   .agent-mode__grid {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(112px, 28vh) minmax(0, 1fr);
@@ -2569,13 +2555,13 @@
   Scheme primitives: the only values that cannot derive from a theme color.
   Dark palettes shade toward black and ink toward white; light palettes invert.
 */
-.agent-mode {
+.workbench-frame {
   --agent-ink: #fff;
 }
 
-.app-shell[data-theme="light"] .agent-mode,
-.app-shell[data-theme="catppuccinLatte"] .agent-mode,
-.app-shell[data-theme="oneLight"] .agent-mode {
+.app-shell[data-theme="light"] .workbench-frame,
+.app-shell[data-theme="catppuccinLatte"] .workbench-frame,
+.app-shell[data-theme="oneLight"] .workbench-frame {
   --agent-shade: #fff;
   --agent-ink: #000;
   --agent-shadow-alpha: 0.1;
@@ -2587,7 +2573,7 @@
 }
 
 @media (prefers-color-scheme: light) {
-  .app-shell[data-theme="system"] .agent-mode {
+  .app-shell[data-theme="system"] .workbench-frame {
     --agent-shade: #fff;
     --agent-ink: #000;
     --agent-shadow-alpha: 0.1;
@@ -2600,7 +2586,7 @@
 }
 
 /* Variant A "Graphite": flat neutral surfaces, hairline-led, one cool accent, no glow but the live dot. */
-.agent-mode[data-agent-variant="a"] {
+.workbench-frame[data-agent-variant="a"] {
   --agent-accent-dark: #7fa7d9;
   --agent-accent-light: #2f6cb3;
   --agent-live: var(--agent-accent-dark);
@@ -2633,9 +2619,9 @@
   --agent-turn-gap: 24px;
 }
 
-.app-shell[data-theme="light"] .agent-mode[data-agent-variant="a"],
-.app-shell[data-theme="catppuccinLatte"] .agent-mode[data-agent-variant="a"],
-.app-shell[data-theme="oneLight"] .agent-mode[data-agent-variant="a"] {
+.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="a"],
+.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="a"],
+.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="a"] {
   --agent-live: var(--agent-accent-light);
   --agent-scanline: transparent;
   --agent-raised: #fff;
@@ -2643,7 +2629,7 @@
 }
 
 /* Variant B "Warm paper": warm neutrals, softer contrast, rounded corners, amber accent, soft drop shadows. */
-.agent-mode[data-agent-variant="b"] {
+.workbench-frame[data-agent-variant="b"] {
   --agent-accent-dark: #e0a95a;
   --agent-accent-light: #a8681a;
   --agent-warm: #7a5a38;
@@ -2683,9 +2669,9 @@
   --agent-tracking-label: 0.1em;
 }
 
-.app-shell[data-theme="light"] .agent-mode[data-agent-variant="b"],
-.app-shell[data-theme="catppuccinLatte"] .agent-mode[data-agent-variant="b"],
-.app-shell[data-theme="oneLight"] .agent-mode[data-agent-variant="b"] {
+.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="b"],
+.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="b"],
+.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="b"] {
   --agent-warm: #efe2cc;
   --agent-live: var(--agent-accent-light);
   --agent-live-contrast: #fffaf2;
@@ -2700,7 +2686,7 @@
 }
 
 /* Variant C "Studio": deeper ambient depth, restrained violet/teal accents, denser rail. */
-.agent-mode[data-agent-variant="c"] {
+.workbench-frame[data-agent-variant="c"] {
   --agent-accent-dark: #a78bfa;
   --agent-accent-light: #6d4fd6;
   --agent-ok-dark: #5fd3c7;
@@ -2744,9 +2730,9 @@
   --agent-tracking-label: 0.16em;
 }
 
-.app-shell[data-theme="light"] .agent-mode[data-agent-variant="c"],
-.app-shell[data-theme="catppuccinLatte"] .agent-mode[data-agent-variant="c"],
-.app-shell[data-theme="oneLight"] .agent-mode[data-agent-variant="c"] {
+.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="c"],
+.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="c"],
+.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="c"] {
   --agent-tint: #ded6fb;
   --agent-live: var(--agent-accent-light);
   --agent-ok: var(--agent-ok-light);
@@ -3466,18 +3452,8 @@
 
 /* Surfaces */
 
-/* Right panel: a tab strip of open surfaces. The Files surface leaves an empty editor slot; the
-   shell frame places the single editor host over it using these two variables. Maximized, the
-   panel takes the thread column and only the rail stays. */
-.app-shell {
-  --agent-surface-header-height: 36px;
-  --agent-surface-tree-width: 220px;
-}
-
-.workbench-frame[data-tree="hidden"] {
-  --agent-surface-tree-width: 0px;
-}
-
+/* Right panel: a tab strip of open surfaces. The surface tracks themselves belong to the shell
+   frame (workbenchShellFrame.css). */
 .agent-surface {
   position: relative;
   display: flex;
@@ -3508,14 +3484,6 @@
   border-bottom: 1px solid var(--agent-hairline);
   background: var(--agent-rail);
   gap: 2px;
-}
-
-.agent-mode[data-right-panel="maximized"] .agent-mode__grid {
-  grid-template-columns: var(--agent-rail-track);
-}
-
-.agent-mode[data-right-panel="maximized"] .agent-mode__center {
-  display: none;
 }
 
 .agent-surface__tabs {

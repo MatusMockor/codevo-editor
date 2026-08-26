@@ -1,0 +1,146 @@
+/*
+  Workbench shell frame — the single place the agent workbench layout is expressed.
+  WorkbenchShellFrame stamps data-layout, data-rail, data-right-panel and data-tree on
+  .workbench-frame, and every track, slot placement and layout token below derives from
+  those attributes. agentMode.css owns agent visuals and never restates placement.
+*/
+.workbench-frame {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.workbench-frame__bottom {
+  display: flex;
+  min-height: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+}
+
+.editor-workbench {
+  --agent-right-panel-committed: 0px;
+  --agent-bottom-panel-committed: 0px;
+  --agent-right-panel-width: var(--agent-right-panel-committed);
+  --agent-bottom-panel-height: var(--agent-bottom-panel-committed);
+}
+
+/*
+  Right panel: the Files surface leaves an empty editor slot and the frame places the single
+  editor host over it using these two variables.
+*/
+.app-shell {
+  --agent-surface-header-height: 36px;
+  --agent-surface-tree-width: 220px;
+}
+
+.workbench-frame[data-tree="hidden"] {
+  --agent-surface-tree-width: 0px;
+}
+
+/*
+  The frame owns the rail track: its grid places the bottom panel beside the rail and the
+  agent grid below reuses the same track so both columns stay aligned.
+*/
+.workbench-frame[data-layout="agent"] {
+  --agent-rail-width: 272px;
+  --agent-rail-inset: 8px;
+  --agent-rail-collapsed-width: calc(32px + 2 * var(--agent-rail-inset));
+  --agent-rail-track: var(--agent-rail-width);
+  display: grid;
+  grid-template-columns:
+    var(--agent-rail-track) minmax(0, 1fr)
+    var(--agent-right-panel-width);
+  grid-template-rows: minmax(0, 1fr) var(--agent-bottom-panel-height);
+}
+
+.workbench-frame[data-layout="agent"][data-rail="collapsed"] {
+  --agent-rail-track: var(--agent-rail-collapsed-width);
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="agent"] {
+  min-width: 0;
+  min-height: 0;
+  grid-column: 1 / 3;
+  grid-row: 1;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="bottom"] {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="surface"] {
+  min-width: 0;
+  min-height: 0;
+  grid-column: 3;
+  grid-row: 1 / -1;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="editor"] {
+  z-index: 1;
+  padding-top: var(--agent-surface-header-height);
+  padding-left: var(--agent-surface-tree-width);
+  grid-column: 3;
+  grid-row: 1 / -1;
+  pointer-events: none;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="editor"] > * {
+  pointer-events: auto;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="bottom"] .bottom-panel {
+  height: 100%;
+  max-height: none;
+  flex: 1 1 auto;
+}
+
+/* Maximized: the surface takes the thread column and only the rail stays. */
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] {
+  grid-template-columns: var(--agent-rail-track) minmax(0, 1fr);
+}
+
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="agent"] {
+  overflow: hidden;
+  grid-column: 1;
+}
+
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="surface"],
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="editor"] {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="bottom"] {
+  grid-column: 2;
+}
+
+.workbench-frame[data-right-panel="maximized"] .agent-mode__grid {
+  grid-template-columns: var(--agent-rail-track);
+}
+
+.workbench-frame[data-right-panel="maximized"] .agent-mode__center {
+  display: none;
+}
+
+.workbench-frame[data-layout="editor-expanded"] > [data-slot="agent"],
+.workbench-frame[data-layout="editor-expanded"] > [data-slot="surface"] {
+  display: none;
+}
+
+/*
+  Responsive order is deliberate: narrow the rail track before changing primary navigation.
+*/
+@media (max-width: 1180px) {
+  .workbench-frame[data-layout="agent"][data-rail="expanded"] {
+    --agent-rail-track: 248px;
+  }
+}
+
+@media (max-width: 720px) {
+  .workbench-frame[data-layout="agent"][data-right-panel="docked"] {
+    --agent-rail-track: 0px;
+  }
+}

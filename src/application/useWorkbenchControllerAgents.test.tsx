@@ -7,8 +7,14 @@ import type { AgentTaskGateway } from "../domain/agentTask";
 import type { GitStatus } from "../domain/git";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import {
+  initialAgentWorkbenchLayout,
+  serializeAgentWorkbenchLayout,
+} from "../domain/agentWorkbenchLayout";
+import {
   defaultAppSettings,
   defaultWorkspaceSettings,
+  normalizeWorkspaceSession,
+  WORKSPACE_SESSION_VERSION,
   type WorkspaceSettings,
 } from "../domain/settings";
 import type { AgentThreadStoreGateway } from "./agentThreadPorts";
@@ -80,10 +86,55 @@ describe("useWorkbenchControllerAgents layout surface", () => {
       activeSurface: "terminal",
       rightPanelMaximized: false,
       rail: "expanded",
-      bottomPanel: false,
       rightPanelWidth: 540,
       bottomPanelHeight: 280,
+      bottomPanel: false,
     });
+    harness.unmount();
+  });
+
+  it("persists the bottom panel visibility the controller owns", async () => {
+    const harness = renderAgents({ bottomPanelVisible: false });
+
+    harness.rerender({ bottomPanelVisible: true });
+    await harness.settle();
+
+    const saved = harness.persisted();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.rootPath).toBe(ROOT_A);
+    expect(saved[0]?.settings.session.agentWorkbench?.bottomPanel).toBe(true);
+    harness.unmount();
+  });
+
+  it("keeps the persisted bottom panel out of another workspace across A to B to A", async () => {
+    const harness = renderAgents({ bottomPanelVisible: false });
+
+    harness.rerender({ bottomPanelVisible: true });
+    await harness.settle();
+    expect(harness.persisted()).toHaveLength(1);
+
+    harness.rerender({
+      workspaceRoot: ROOT_B,
+      editorSessionOwnerKey: ROOT_B,
+      bottomPanelVisible: false,
+      persistedAgentWorkbenchLayout: {
+        ownerKey: ROOT_B,
+        layout: normalizedAgentWorkbench(false),
+      },
+    });
+    await harness.settle();
+    expect(harness.result().agentWorkbench.persistedBottomPanel).toBe(false);
+
+    harness.rerender({
+      workspaceRoot: ROOT_A,
+      editorSessionOwnerKey: ROOT_A,
+      bottomPanelVisible: false,
+      persistedAgentWorkbenchLayout: { ownerKey: ROOT_A, layout: normalizedAgentWorkbench(true) },
+    });
+    await harness.settle();
+
+    expect(harness.result().agentWorkbench.persistedBottomPanel).toBe(true);
+    expect(harness.persisted().map((entry) => entry.rootPath)).toEqual([ROOT_A]);
     harness.unmount();
   });
 
@@ -146,7 +197,15 @@ describe("useWorkbenchControllerAgents layout surface", () => {
   });
 });
 
+function normalizedAgentWorkbench(bottomPanel: boolean): unknown {
+  return normalizeWorkspaceSession({
+    agentWorkbench: serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, bottomPanel),
+    version: WORKSPACE_SESSION_VERSION,
+  }).agentWorkbench;
+}
+
 interface HarnessOverrides {
+  readonly bottomPanelVisible?: boolean;
   readonly workspaceRoot?: string | null;
   readonly editorSessionOwnerKey?: string | null;
   readonly withLeaseGateway?: boolean;
@@ -188,6 +247,7 @@ function renderAgents(overrides: HarnessOverrides = {}) {
   let options: WorkbenchControllerAgentsOptions = {
     agentThreadStoreGateway: threadStore,
     appSettingsRef,
+    bottomPanelVisible: overrides.bottomPanelVisible ?? false,
     editorSessionOwnerKey: overrides.editorSessionOwnerKey ?? ROOT_A,
     options: {
       agentRootLeaseGateway: overrides.withLeaseGateway === false ? undefined : leaseGateway,

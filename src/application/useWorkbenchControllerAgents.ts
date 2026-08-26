@@ -80,6 +80,7 @@ export interface WorkbenchControllerAgentsOptions {
   readonly agentLayoutAvailable?: boolean;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly appSettingsRef: { readonly current: AppSettings };
+  readonly bottomPanelVisible: boolean;
   readonly editorSessionOwnerKey: string | null;
   readonly options: Pick<
     WorkbenchControllerOptions,
@@ -127,6 +128,7 @@ export function useWorkbenchControllerAgents(
     hasWorkspace: options.workspaceRoot !== null,
     agentLayoutAvailable:
       options.agentLayoutAvailable ?? options.options.agentRootLeaseGateway !== undefined,
+    bottomPanelVisible: options.bottomPanelVisible,
     hydration:
       options.persistedAgentWorkbenchLayout ??
       agentWorkbenchHydration(options.editorSessionOwnerKey, options.workspaceSettingsRef.current),

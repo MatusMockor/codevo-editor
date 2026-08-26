@@ -21,8 +21,8 @@ import {
   type AgentPanelLayoutShortcuts,
 } from "./agentThreadHeaderPresentation";
 import {
-  agentBottomPanelSync,
-  initialAgentBottomPanelSyncState,
+  agentTerminalPanelIntent,
+  initialAgentTerminalPanelIntentState,
   type AgentWorkbenchChrome,
 } from "./agentWorkbenchChrome";
 
@@ -120,30 +120,24 @@ export function AgentWorkbenchScreen({
     showTerminalPanel();
   }, [bottomPanelVisible, hideBottomPanel, showTerminalPanel]);
 
-  const syncRef = useRef(initialAgentBottomPanelSyncState);
-  const persistedBottomPanel = agentWorkbench.layout.bottomPanel;
+  const intentRef = useRef(initialAgentTerminalPanelIntentState);
+  const { persistedBottomPanel } = agentWorkbench;
   const agentLayoutActive = agentWorkbench.effectiveLayout === "agent";
-  const dispatchLayout = agentWorkbench.dispatch;
   useEffect(() => {
-    const result = agentBottomPanelSync(syncRef.current, {
+    const result = agentTerminalPanelIntent(intentRef.current, {
       owner: workspaceRoot,
       active: agentLayoutActive,
       visible: bottomPanelVisible,
       view: bottomPanelView,
       persisted: persistedBottomPanel,
     });
-    syncRef.current = result.state;
-    if (result.mirror !== null) {
-      dispatchLayout({ kind: result.mirror === "show" ? "showBottomPanel" : "hideBottomPanel" });
-    }
-    if (result.showTerminal) {
-      showBottomPanelView("terminal");
-    }
+    intentRef.current = result.state;
+    if (!result.showTerminal) return;
+    showBottomPanelView("terminal");
   }, [
     agentLayoutActive,
     bottomPanelView,
     bottomPanelVisible,
-    dispatchLayout,
     persistedBottomPanel,
     showBottomPanelView,
     workspaceRoot,

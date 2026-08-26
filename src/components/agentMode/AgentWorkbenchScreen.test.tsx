@@ -4,7 +4,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
+import { useAgentWorkbenchLayout } from "../../application/useAgentWorkbenchLayout";
 import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
+import { agentWorkbenchHydration } from "../../application/useWorkbenchControllerAgents";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import {
@@ -12,7 +14,16 @@ import {
   agentThreadUnread,
   type AgentThread,
 } from "../../domain/agentThread";
-import { defaultAppSettings, terminalThemeForAppTheme } from "../../domain/settings";
+import {
+  initialAgentWorkbenchLayout,
+  serializeAgentWorkbenchLayout,
+} from "../../domain/agentWorkbenchLayout";
+import {
+  defaultAppSettings,
+  normalizeWorkspaceSettings,
+  terminalThemeForAppTheme,
+  WORKSPACE_SESSION_VERSION,
+} from "../../domain/settings";
 import type {
   RevealPathGateway,
   RevealPathRequest,
@@ -104,18 +115,31 @@ describe("AgentWorkbenchScreen", () => {
     expect(visible.hideBottomPanel).toHaveBeenCalledTimes(1);
   });
 
-  it("mirrors the controller panel visibility into the layout reducer", () => {
+  it("opens the terminal view when the controller shows the panel in the agent layout", () => {
     const layout = recordedLayoutState();
     render(createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: false }));
-    expect(layout.actions).toEqual([]);
 
     const opened = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: true });
     render(opened);
-    expect(layout.actions).toEqual([{ kind: "showBottomPanel" }]);
     expect(opened.showBottomPanelView).toHaveBeenCalledWith("terminal");
 
+    const closed = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: false });
+    render(closed);
+    expect(closed.showBottomPanelView).not.toHaveBeenCalled();
+    expect(layout.actions).toEqual([]);
+  });
+
+  it("keeps a view the controller opened together with the panel", () => {
+    const layout = recordedLayoutState();
     render(createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: false }));
-    expect(layout.actions).toEqual([{ kind: "showBottomPanel" }, { kind: "hideBottomPanel" }]);
+
+    const problems = createWorkbench(ROOT_A, {
+      agentWorkbench: layout,
+      bottomPanelView: "problems",
+      bottomPanelVisible: true,
+    });
+    render({ ...problems, bottomPanelView: "terminal" });
+    expect(problems.showBottomPanelView).not.toHaveBeenCalled();
   });
 
   it("applies a persisted open bottom panel once at hydration", () => {
@@ -128,18 +152,68 @@ describe("AgentWorkbenchScreen", () => {
     expect(workbench.showBottomPanelView).not.toHaveBeenCalled();
 
     const hydrated = createWorkbench(ROOT_A, {
-      agentWorkbench: recordedLayoutState({ bottomPanel: true }),
+      agentWorkbench: recordedLayoutState({}, true),
       bottomPanelVisible: false,
     });
     render(hydrated);
-
     expect(hydrated.showBottomPanelView).toHaveBeenCalledWith("terminal");
+
+    const settled = createWorkbench(ROOT_A, {
+      agentWorkbench: recordedLayoutState({}, true),
+      bottomPanelView: "terminal",
+      bottomPanelVisible: true,
+    });
+    render(settled);
+    render({ ...settled, bottomPanelVisible: false });
+    render({ ...settled, bottomPanelVisible: false });
+    expect(settled.showBottomPanelView).not.toHaveBeenCalled();
+    expect(layout.actions).toEqual([]);
+  });
+
+  it("restores the persisted terminal panel from the normalized workspace settings", async () => {
+    const settings = normalizeWorkspaceSettings({
+      session: {
+        version: WORKSPACE_SESSION_VERSION,
+        agentWorkbench: serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, true),
+      },
+    });
+    expect(settings.session.agentWorkbench?.bottomPanel).toBe(true);
+
+    const workbench = createWorkbench(ROOT_A, { bottomPanelVisible: false });
+    function Hydrated({ terminalShown }: { readonly terminalShown: boolean }) {
+      const { agentWorkbench } = useAgentWorkbenchLayout({
+        workspaceOwnerKey: ROOT_A,
+        hasWorkspace: true,
+        bottomPanelVisible: terminalShown,
+        hydration: agentWorkbenchHydration(ROOT_A, settings),
+      });
+      return (
+        <AgentWorkbenchScreen
+          {...defaultProps({
+            ...workbench,
+            agentWorkbench,
+            bottomPanelView: terminalShown ? "terminal" : "problems",
+            bottomPanelVisible: terminalShown,
+          })}
+        />
+      );
+    }
+
+    await act(async () => root.render(<Hydrated terminalShown={false} />));
+
+    expect(workbench.showBottomPanelView).toHaveBeenCalledTimes(1);
+    expect(workbench.showBottomPanelView).toHaveBeenCalledWith("terminal");
+
+    await act(async () => root.render(<Hydrated terminalShown={true} />));
+    await act(async () => root.render(<Hydrated terminalShown={true} />));
+
+    expect(workbench.showBottomPanelView).toHaveBeenCalledTimes(1);
   });
 
   it("does not leak a persisted open panel across a workspace switch", () => {
     render(
       createWorkbench(ROOT_A, {
-        agentWorkbench: recordedLayoutState({ bottomPanel: true }),
+        agentWorkbench: recordedLayoutState({}, true),
         bottomPanelVisible: true,
       }),
     );

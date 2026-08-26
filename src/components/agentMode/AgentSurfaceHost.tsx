@@ -122,7 +122,7 @@ export function AgentSurfaceHost({
   return (
     <div
       aria-hidden={hidden || undefined}
-      className="agent-mode agent-mode--surface"
+      className="agent-surface-host"
       data-slot="surface"
       hidden={hidden}
     >

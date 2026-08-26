@@ -1682,6 +1682,7 @@ export function useWorkbenchController(
 
   const agents = useWorkbenchControllerAgents({
     appSettingsRef,
+    bottomPanelVisible,
     options,
     openFileRef,
     openGitChange,

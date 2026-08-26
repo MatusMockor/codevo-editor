@@ -110,6 +110,10 @@ describe("AgentThreadHeader", () => {
   it("shows the layout toggles only while the right panel is closed", () => {
     render({});
     expect(host.querySelector("[data-panel-layout-controls]")).not.toBeNull();
+    expect(button("Toggle terminal panel (⌘J)").getAttribute("aria-pressed")).toBe("false");
+
+    render({ bottomPanelOpen: true });
+    expect(button("Toggle terminal panel (⌘J)").getAttribute("aria-pressed")).toBe("true");
 
     render({
       layout: {
@@ -171,6 +175,7 @@ describe("AgentThreadHeader", () => {
       thread: threadView({}),
       project: PROJECT,
       layout: initialAgentWorkbenchLayout,
+      bottomPanelOpen: false,
       scripts: scriptsSurface(),
       shipActions: shipActions(),
       shortcuts: SHORTCUTS,

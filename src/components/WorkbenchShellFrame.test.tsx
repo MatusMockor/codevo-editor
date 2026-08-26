@@ -7,6 +7,7 @@ import {
   DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
   initialAgentWorkbenchLayout,
 } from "../domain/agentWorkbenchLayout";
+import { AgentThreadRowMenu } from "./agentMode/AgentThreadRowMenu";
 import { WorkbenchShellFrame } from "./WorkbenchShellFrame";
 import { useWorkbenchFrameTreeReport } from "./workbenchFrameTreeReport";
 import {
@@ -197,6 +198,15 @@ describe("WorkbenchShellFrame", () => {
     expect(frame()).toBe("hidden");
   });
 
+  it("portals the agent row menu into the frame that scopes the agent tokens", () => {
+    render(placement("agent", null), <RowMenuHost />);
+
+    const menu = document.querySelector(".agent-row-menu");
+    expect(menu).not.toBeNull();
+    expect(menu?.closest(".workbench-frame")).toBe(host.querySelector(".workbench-frame"));
+    expect(menu?.parentElement).toBe(host.querySelector(".workbench-frame"));
+  });
+
   function render(placementValue: WorkbenchShellPlacement, agent?: ReactNode): void {
     act(() =>
       root.render(
@@ -211,6 +221,24 @@ describe("WorkbenchShellFrame", () => {
     );
   }
 });
+
+function RowMenuHost() {
+  return (
+    <div data-slot="agent">
+      <AgentThreadRowMenu
+        archived={false}
+        branch={null}
+        onClose={() => undefined}
+        onCommand={() => undefined}
+        onRename={() => undefined}
+        pinned={false}
+        position={{ x: 10, y: 10 }}
+        running={false}
+        threadId="agt-1"
+      />
+    </div>
+  );
+}
 
 function TreeReporter({ visible }: { readonly visible: boolean }) {
   useWorkbenchFrameTreeReport(visible);

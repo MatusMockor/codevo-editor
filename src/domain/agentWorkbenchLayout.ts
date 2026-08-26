@@ -27,12 +27,13 @@ export interface AgentWorkbenchLayout {
   readonly activeSurface: AgentSurfaceKind | null;
   readonly rightPanelMaximized: boolean;
   readonly rail: AgentRailState;
-  readonly bottomPanel: boolean;
   readonly rightPanelWidth: number;
   readonly bottomPanelHeight: number;
 }
 
-export type AgentWorkbenchLayoutPersisted = AgentWorkbenchLayout;
+export interface AgentWorkbenchLayoutPersisted extends AgentWorkbenchLayout {
+  readonly bottomPanel: boolean;
+}
 
 export type AgentWorkbenchLayoutAction =
   | { readonly kind: "openSurface"; readonly surface: AgentSurfaceKind }
@@ -42,9 +43,6 @@ export type AgentWorkbenchLayoutAction =
   | { readonly kind: "toggleRightPanel" }
   | { readonly kind: "toggleMaximized" }
   | { readonly kind: "toggleRail" }
-  | { readonly kind: "toggleBottomPanel" }
-  | { readonly kind: "showBottomPanel" }
-  | { readonly kind: "hideBottomPanel" }
   | { readonly kind: "expandEditor" }
   | { readonly kind: "collapseEditor" }
   | { readonly kind: "toggleEditorExpanded" }
@@ -64,7 +62,6 @@ export const initialAgentWorkbenchLayout: AgentWorkbenchLayout = {
   openSurfaces: NO_SURFACES,
   activeSurface: null,
   rail: "expanded",
-  bottomPanel: false,
   rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
   bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
 };
@@ -122,12 +119,6 @@ export function agentWorkbenchLayoutReducer(
       return toggleMaximized(state);
     case "toggleRail":
       return { ...state, rail: state.rail === "expanded" ? "collapsed" : "expanded" };
-    case "toggleBottomPanel":
-      return { ...state, bottomPanel: !state.bottomPanel };
-    case "showBottomPanel":
-      return state.bottomPanel ? state : { ...state, bottomPanel: true };
-    case "hideBottomPanel":
-      return state.bottomPanel ? { ...state, bottomPanel: false } : state;
     case "expandEditor":
       return expandEditor(state);
     case "collapseEditor":
@@ -168,8 +159,13 @@ export function parseAgentWorkbenchLayout(value: unknown): AgentWorkbenchLayout 
   };
 }
 
+export function parsePersistedAgentBottomPanel(value: unknown): boolean {
+  return isRecord(value) && value.bottomPanel === true;
+}
+
 export function serializeAgentWorkbenchLayout(
   state: AgentWorkbenchLayout,
+  bottomPanel: boolean,
 ): AgentWorkbenchLayoutPersisted {
   return {
     layout: state.layout,
@@ -178,22 +174,15 @@ export function serializeAgentWorkbenchLayout(
     activeSurface: state.activeSurface,
     rightPanelMaximized: state.rightPanelMaximized,
     rail: state.rail,
-    bottomPanel: state.bottomPanel,
     rightPanelWidth: state.rightPanelWidth,
     bottomPanelHeight: state.bottomPanelHeight,
+    bottomPanel,
   };
 }
 
 export function agentWorkbenchLayoutsEqual(
   left: AgentWorkbenchLayout,
   right: AgentWorkbenchLayout,
-): boolean {
-  return agentWorkbenchLayoutSnapshotsEqual(left, right);
-}
-
-export function agentWorkbenchLayoutSnapshotsEqual(
-  left: AgentWorkbenchLayoutPersisted,
-  right: AgentWorkbenchLayoutPersisted,
 ): boolean {
   return (
     left.layout === right.layout &&
@@ -202,10 +191,16 @@ export function agentWorkbenchLayoutSnapshotsEqual(
     left.activeSurface === right.activeSurface &&
     left.rightPanelMaximized === right.rightPanelMaximized &&
     left.rail === right.rail &&
-    left.bottomPanel === right.bottomPanel &&
     left.rightPanelWidth === right.rightPanelWidth &&
     left.bottomPanelHeight === right.bottomPanelHeight
   );
+}
+
+export function agentWorkbenchLayoutSnapshotsEqual(
+  left: AgentWorkbenchLayoutPersisted,
+  right: AgentWorkbenchLayoutPersisted,
+): boolean {
+  return left.bottomPanel === right.bottomPanel && agentWorkbenchLayoutsEqual(left, right);
 }
 
 function openSurface(state: AgentWorkbenchLayout, surface: AgentSurfaceKind): AgentWorkbenchLayout {
@@ -309,13 +304,9 @@ function resizeBottomPanel(state: AgentWorkbenchLayout, height: number): AgentWo
 
 function parseIndependentFields(
   value: Record<string, unknown>,
-): Pick<AgentWorkbenchLayout, "rail" | "bottomPanel" | "rightPanelWidth" | "bottomPanelHeight"> {
+): Pick<AgentWorkbenchLayout, "rail" | "rightPanelWidth" | "bottomPanelHeight"> {
   return {
     rail: isAgentRailState(value.rail) ? value.rail : initialAgentWorkbenchLayout.rail,
-    bottomPanel:
-      typeof value.bottomPanel === "boolean"
-        ? value.bottomPanel
-        : initialAgentWorkbenchLayout.bottomPanel,
     rightPanelWidth: parseSize(value.rightPanelWidth, clampAgentRightPanelWidth),
     bottomPanelHeight: parseSize(value.bottomPanelHeight, clampAgentBottomPanelHeight),
   };

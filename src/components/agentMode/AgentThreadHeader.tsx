@@ -31,6 +31,7 @@ export interface AgentThreadHeaderProps {
   readonly thread: AgentThreadView | null;
   readonly project: AgentThreadHeaderProject | null;
   readonly layout: AgentWorkbenchLayout;
+  readonly bottomPanelOpen: boolean;
   readonly scripts: AgentThreadScriptsSurface;
   readonly shipActions: AgentShipActions;
   readonly shortcuts: AgentPanelLayoutShortcuts | null;
@@ -162,7 +163,7 @@ export function AgentThreadHeader(props: AgentThreadHeaderProps) {
         )}
         {layout.rightPanel === "closed" && (
           <AgentPanelLayoutControls
-            bottomPanelOpen={layout.bottomPanel}
+            bottomPanelOpen={props.bottomPanelOpen}
             onExpandEditor={null}
             onToggleBottomPanel={props.onToggleBottomPanel}
             onToggleRightPanel={props.onToggleRightPanel}

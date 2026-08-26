@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const appCss = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
-const shellCss = readFileSync(resolve(import.meta.dirname, "../../App.css"), "utf8");
+const shellCss = readFileSync(resolve(import.meta.dirname, "../workbenchShellFrame.css"), "utf8");
 
 function block(source: string, marker: string): string {
   const start = source.indexOf(marker);
@@ -37,14 +37,15 @@ describe("agent mode responsive layout contract", () => {
   });
 
   it("narrows the thread rail before adapting thread navigation", () => {
-    const tablet = block(appCss, "@media (max-width: 1180px)");
+    const tablet = block(shellCss, "@media (max-width: 1180px)");
+    const shellNarrow = block(shellCss, "@media (max-width: 720px)");
     const narrow = block(appCss, "@media (max-width: 720px)");
 
     expect(rule('.workbench-frame[data-layout="agent"][data-rail="expanded"]', tablet)).toContain(
       "--agent-rail-track: 248px",
     );
     expect(
-      rule('.workbench-frame[data-layout="agent"][data-right-panel="docked"]', narrow),
+      rule('.workbench-frame[data-layout="agent"][data-right-panel="docked"]', shellNarrow),
     ).toContain("--agent-rail-track: 0px");
     expect(rule(".agent-mode__grid")).toContain(
       "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr)",
@@ -58,7 +59,7 @@ describe("agent mode responsive layout contract", () => {
   });
 
   it("collapses the file tree column when the surface reports no tree", () => {
-    expect(rule('.workbench-frame[data-tree="hidden"]')).toContain(
+    expect(rule('.workbench-frame[data-tree="hidden"]', shellCss)).toContain(
       "--agent-surface-tree-width: 0px",
     );
     expect(rule(".agent-surface-tree")).toContain("width: var(--agent-surface-tree-width)");
@@ -116,17 +117,21 @@ describe("agent mode responsive layout contract", () => {
   });
 
   it("composes the collapsed rail with the maximized panel through the frame-owned rail track", () => {
-    expect(rule(".agent-mode {")).not.toContain("--agent-rail-track");
-    expect(rule(".agent-mode {")).not.toContain("--agent-rail-width");
-    expect(rule('.workbench-frame[data-layout="agent"] {')).toContain(
+    expect(appCss).not.toContain("--agent-rail-track:");
+    expect(appCss).not.toContain("--agent-rail-width:");
+    expect(appCss).not.toContain(".agent-mode[data-right-panel=");
+    expect(rule('.workbench-frame[data-layout="agent"] {', shellCss)).toContain(
       "--agent-rail-track: var(--agent-rail-width)",
     );
-    expect(rule('.workbench-frame[data-layout="agent"][data-rail="collapsed"]')).toContain(
-      "--agent-rail-track: var(--agent-rail-collapsed-width)",
-    );
-    expect(rule('.agent-mode[data-right-panel="maximized"] .agent-mode__grid')).toContain(
-      "grid-template-columns: var(--agent-rail-track)",
-    );
+    expect(
+      rule('.workbench-frame[data-layout="agent"][data-rail="collapsed"]', shellCss),
+    ).toContain("--agent-rail-track: var(--agent-rail-collapsed-width)");
+    expect(
+      rule('.workbench-frame[data-right-panel="maximized"] .agent-mode__grid', shellCss),
+    ).toContain("grid-template-columns: var(--agent-rail-track)");
+    expect(
+      rule('.workbench-frame[data-right-panel="maximized"] .agent-mode__center', shellCss),
+    ).toContain("display: none");
   });
 
   it("keeps the ship panel bounded inside the session column", () => {

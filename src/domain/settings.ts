@@ -21,6 +21,7 @@ import {
 } from "./agentSettings";
 import {
   parseAgentWorkbenchLayout,
+  parsePersistedAgentBottomPanel,
   serializeAgentWorkbenchLayout,
   type AgentWorkbenchLayoutPersisted,
 } from "./agentWorkbenchLayout";
@@ -698,7 +699,10 @@ export function normalizeWorkspaceSessionAgentWorkbench(
     return undefined;
   }
 
-  return serializeAgentWorkbenchLayout(parseAgentWorkbenchLayout(value));
+  return serializeAgentWorkbenchLayout(
+    parseAgentWorkbenchLayout(value),
+    parsePersistedAgentBottomPanel(value),
+  );
 }
 
 export function normalizeWorkspaceSessionNavigation(

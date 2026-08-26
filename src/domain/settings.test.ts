@@ -1139,10 +1139,36 @@ describe("normalizeWorkspaceSession", () => {
       activeSurface: "diff",
       rightPanelMaximized: false,
       rail: "expanded",
-      bottomPanel: true,
       rightPanelWidth: 640,
       bottomPanelHeight: 320,
+      bottomPanel: true,
     });
+  });
+
+  it("preserves the persisted bottom panel flag through normalization", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      agentWorkbench: serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, true),
+    });
+
+    expect(normalized.agentWorkbench).toEqual(
+      serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, true),
+    );
+    expect(normalized.agentWorkbench?.bottomPanel).toBe(true);
+  });
+
+  it("normalizes a missing or invalid bottom panel flag to false", () => {
+    for (const bottomPanel of [undefined, false, "yes", 1, null]) {
+      const normalized = normalizeWorkspaceSession({
+        ...defaultWorkspaceSessionState(),
+        agentWorkbench: {
+          ...serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, true),
+          bottomPanel,
+        },
+      });
+
+      expect(normalized.agentWorkbench?.bottomPanel).toBe(false);
+    }
   });
 
   it("restores the tabbed agent workbench layout", () => {
@@ -1168,9 +1194,9 @@ describe("normalizeWorkspaceSession", () => {
       activeSurface: "terminal",
       rightPanelMaximized: true,
       rail: "expanded",
-      bottomPanel: false,
       rightPanelWidth: 540,
       bottomPanelHeight: 280,
+      bottomPanel: false,
     });
   });
 
@@ -1201,7 +1227,7 @@ describe("normalizeWorkspaceSession", () => {
     });
 
     expect(normalized.agentWorkbench).toEqual(
-      serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout),
+      serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, false),
     );
   });
 
@@ -1228,9 +1254,9 @@ describe("normalizeWorkspaceSession", () => {
       activeSurface: "terminal",
       rightPanelMaximized: false,
       rail: "expanded",
-      bottomPanel: false,
       rightPanelWidth: 640,
       bottomPanelHeight: 300,
+      bottomPanel: false,
     });
   });
 

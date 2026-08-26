@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   initialAgentWorkbenchLayout,
+  type AgentWorkbenchLayout,
   type AgentWorkbenchLayoutPersisted,
 } from "../domain/agentWorkbenchLayout";
 import {
@@ -20,26 +21,24 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-const diffLayout: AgentWorkbenchLayoutPersisted = {
+const diffLayout: AgentWorkbenchLayout = {
   layout: "agent",
   rightPanel: "open",
   openSurfaces: ["diff"],
   activeSurface: "diff",
   rightPanelMaximized: false,
   rail: "expanded",
-  bottomPanel: true,
   rightPanelWidth: 700,
   bottomPanelHeight: 320,
 };
 
-const terminalLayout: AgentWorkbenchLayoutPersisted = {
+const terminalLayout: AgentWorkbenchLayout = {
   layout: "agent",
   rightPanel: "open",
   openSurfaces: ["terminal"],
   activeSurface: "terminal",
   rightPanelMaximized: false,
   rail: "expanded",
-  bottomPanel: false,
   rightPanelWidth: 420,
   bottomPanelHeight: 200,
 };
@@ -164,8 +163,36 @@ describe("useAgentWorkbenchLayout", () => {
       openSurfaces: ["diff"],
       activeSurface: "diff",
       rightPanelMaximized: false,
-      bottomPanel: true,
     });
+    expect("bottomPanel" in harness.result().agentWorkbench.layout).toBe(false);
+    expect(harness.result().agentWorkbench.persistedBottomPanel).toBe(true);
+    harness.unmount();
+  });
+
+  it("resets the persisted bottom panel request on an owner switch", async () => {
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      hydration: { ownerKey: "workspace-a", layout: { layout: "agent", bottomPanel: true } },
+    });
+    await harness.settle();
+    expect(harness.result().agentWorkbench.persistedBottomPanel).toBe(true);
+
+    harness.rerender({
+      workspaceOwnerKey: "workspace-b",
+      hasWorkspace: true,
+      hydration: { ownerKey: "workspace-b", layout: { layout: "agent", bottomPanel: false } },
+    });
+    await harness.settle();
+    expect(harness.result().agentWorkbench.persistedBottomPanel).toBe(false);
+
+    harness.rerender({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      hydration: { ownerKey: "workspace-a", layout: { layout: "agent", bottomPanel: true } },
+    });
+    await harness.settle();
+    expect(harness.result().agentWorkbench.persistedBottomPanel).toBe(true);
     harness.unmount();
   });
 
@@ -298,12 +325,81 @@ describe("useAgentWorkbenchLayout", () => {
           activeSurface: "diff",
           rightPanelMaximized: false,
           rail: "expanded",
-          bottomPanel: false,
           rightPanelWidth: initialAgentWorkbenchLayout.rightPanelWidth,
           bottomPanelHeight: initialAgentWorkbenchLayout.bottomPanelHeight,
+          bottomPanel: false,
         },
       },
     ]);
+    harness.unmount();
+  });
+
+  it("persists the controller bottom panel visibility alongside the layout", async () => {
+    const persistence = recordingPersistence();
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      bottomPanelVisible: false,
+      persistence,
+    });
+
+    harness.rerender({ bottomPanelVisible: true });
+    await harness.settle();
+
+    expect(persistence.writes).toHaveLength(1);
+    expect(persistence.writes[0]).toMatchObject({
+      ownerKey: "workspace-a",
+      layout: { bottomPanel: true, layout: "agent" },
+    });
+
+    act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));
+    await harness.settle();
+
+    const last = persistence.writes[persistence.writes.length - 1];
+    expect(last.layout.bottomPanel).toBe(true);
+    expect(last.layout.activeSurface).toBe("diff");
+    harness.unmount();
+  });
+
+  it("never writes a bottom panel change made outside the agent layout", async () => {
+    const persistence = recordingPersistence();
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      agentLayoutAvailable: false,
+      bottomPanelVisible: false,
+      persistence,
+    });
+
+    harness.rerender({ bottomPanelVisible: true });
+    await harness.settle();
+
+    expect(persistence.writes).toEqual([]);
+    harness.unmount();
+  });
+
+  it("keeps the persisted bottom panel isolated across workspace A to B to A", async () => {
+    const persistence = recordingPersistence();
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      bottomPanelVisible: false,
+      persistence,
+    });
+
+    harness.rerender({ bottomPanelVisible: true });
+    await harness.settle();
+    expect(persistence.writes.map((write) => write.ownerKey)).toEqual(["workspace-a"]);
+
+    harness.rerender({ workspaceOwnerKey: "workspace-b", bottomPanelVisible: false });
+    await harness.settle();
+    expect(persistence.writes).toHaveLength(1);
+
+    harness.rerender({ workspaceOwnerKey: "workspace-a", bottomPanelVisible: false });
+    await harness.settle();
+
+    expect(persistence.writes).toHaveLength(1);
+    expect(persistence.writes[0]?.layout.bottomPanel).toBe(true);
     harness.unmount();
   });
 

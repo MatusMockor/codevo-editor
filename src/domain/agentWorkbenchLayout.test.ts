@@ -13,6 +13,7 @@ import {
   agentWorkbenchLayoutsEqual,
   initialAgentWorkbenchLayout,
   parseAgentWorkbenchLayout,
+  parsePersistedAgentBottomPanel,
   serializeAgentWorkbenchLayout,
   type AgentSurfaceKind,
   type AgentWorkbenchLayout,
@@ -26,9 +27,6 @@ const ACTIONS: ReadonlyArray<AgentWorkbenchLayoutAction> = [
   { kind: "showSurfaceChooser" },
   { kind: "toggleRightPanel" },
   { kind: "toggleMaximized" },
-  { kind: "toggleBottomPanel" },
-  { kind: "showBottomPanel" },
-  { kind: "hideBottomPanel" },
   { kind: "expandEditor" },
   { kind: "collapseEditor" },
   { kind: "toggleEditorExpanded" },
@@ -66,16 +64,12 @@ function orderedSubsets(): ReadonlyArray<ReadonlyArray<AgentSurfaceKind>> {
 
 function everyReachableState(): ReadonlyArray<AgentWorkbenchLayout> {
   const states: AgentWorkbenchLayout[] = [];
-  for (const bottomPanel of [false, true]) {
-    for (const openSurfaces of orderedSubsets()) {
-      for (const activeSurface of [null, ...openSurfaces]) {
-        states.push(
-          layoutOf({ layout: "editor-expanded", bottomPanel, openSurfaces, activeSurface }),
-        );
-        states.push(layoutOf({ rightPanel: "closed", bottomPanel, openSurfaces, activeSurface }));
-        for (const rightPanelMaximized of activeSurface === null ? [false] : [false, true]) {
-          states.push(open(openSurfaces, activeSurface, { bottomPanel, rightPanelMaximized }));
-        }
+  for (const openSurfaces of orderedSubsets()) {
+    for (const activeSurface of [null, ...openSurfaces]) {
+      states.push(layoutOf({ layout: "editor-expanded", openSurfaces, activeSurface }));
+      states.push(layoutOf({ rightPanel: "closed", openSurfaces, activeSurface }));
+      for (const rightPanelMaximized of activeSurface === null ? [false] : [false, true]) {
+        states.push(open(openSurfaces, activeSurface, { rightPanelMaximized }));
       }
     }
   }
@@ -310,12 +304,11 @@ describe("agentWorkbenchLayoutReducer", () => {
     it("keeps every tab when the panel closes and drops only the maximized state", () => {
       expect(
         agentWorkbenchLayoutReducer(
-          open(["files", "diff"], "diff", { rightPanelMaximized: true, bottomPanel: true }),
+          open(["files", "diff"], "diff", { rightPanelMaximized: true }),
           { kind: "toggleRightPanel" },
         ),
       ).toEqual(
         layoutOf({
-          bottomPanel: true,
           openSurfaces: ["files", "diff"],
           activeSurface: "diff",
         }),
@@ -388,14 +381,12 @@ describe("agentWorkbenchLayoutReducer", () => {
             layout: "editor-expanded",
             openSurfaces: state.openSurfaces,
             activeSurface: state.activeSurface,
-            bottomPanel: state.bottomPanel,
             rightPanelWidth: state.rightPanelWidth,
             bottomPanelHeight: state.bottomPanelHeight,
           }),
         );
         expect(agentWorkbenchLayoutReducer(expanded, { kind: "collapseEditor" })).toEqual(
           open(state.openSurfaces, state.activeSurface ?? state.openSurfaces[0] ?? null, {
-            bottomPanel: state.bottomPanel,
             rightPanelWidth: state.rightPanelWidth,
             bottomPanelHeight: state.bottomPanelHeight,
           }),
@@ -413,16 +404,6 @@ describe("agentWorkbenchLayoutReducer", () => {
         open(["diff"], "diff"),
       );
     });
-  });
-
-  it("drives the bottom panel independently of the layout", () => {
-    const state = open(["files"], "files", { rightPanelMaximized: true });
-    const shown = agentWorkbenchLayoutReducer(state, { kind: "showBottomPanel" });
-    expect(shown).toEqual({ ...state, bottomPanel: true });
-    expect(agentWorkbenchLayoutReducer(shown, { kind: "showBottomPanel" })).toBe(shown);
-    expect(agentWorkbenchLayoutReducer(shown, { kind: "toggleBottomPanel" })).toEqual(state);
-    expect(agentWorkbenchLayoutReducer(shown, { kind: "hideBottomPanel" })).toEqual(state);
-    expect(agentWorkbenchLayoutReducer(state, { kind: "hideBottomPanel" })).toBe(state);
   });
 
   it("clamps resize actions and falls back to the defaults for non-finite sizes", () => {
@@ -491,11 +472,20 @@ describe("parseAgentWorkbenchLayout", () => {
     const persisted = open(["files", "diff"], "diff", {
       rightPanelMaximized: true,
       rail: "expanded",
-      bottomPanel: true,
       rightPanelWidth: 640,
       bottomPanelHeight: 320,
     });
-    expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(persisted))).toEqual(persisted);
+    expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(persisted, false))).toEqual(
+      persisted,
+    );
+  });
+
+  it("keeps the persisted bottom panel flag out of the reducer state", () => {
+    const persisted = open(["files"], "files");
+    expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(persisted, true))).toEqual(
+      persisted,
+    );
+    expect("bottomPanel" in parseAgentWorkbenchLayout({ bottomPanel: true })).toBe(false);
   });
 
   it("migrates the previous single-surface shape into one tab", () => {
@@ -591,7 +581,6 @@ describe("parseAgentWorkbenchLayout", () => {
         openSurfaces: ["files"],
         activeSurface: "files",
         rightPanelMaximized: true,
-        bottomPanel: true,
         rightPanelWidth: 700,
       }),
     ).toEqual(
@@ -599,7 +588,6 @@ describe("parseAgentWorkbenchLayout", () => {
         layout: "editor-expanded",
         openSurfaces: ["files"],
         activeSurface: "files",
-        bottomPanel: true,
         rightPanelWidth: 700,
       }),
     );
@@ -641,7 +629,9 @@ describe("toggleRail", () => {
     expect(agentWorkbenchLayoutReducer(collapsed, { kind: "toggleRail" })).toEqual(
       initialAgentWorkbenchLayout,
     );
-    expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(collapsed))).toEqual(collapsed);
+    expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(collapsed, false))).toEqual(
+      collapsed,
+    );
   });
 
   it("falls back to the expanded rail for unknown persisted values", () => {
@@ -652,32 +642,52 @@ describe("toggleRail", () => {
   });
 });
 
+describe("parsePersistedAgentBottomPanel", () => {
+  it("accepts only a persisted true flag", () => {
+    expect(parsePersistedAgentBottomPanel({ bottomPanel: true })).toBe(true);
+    expect(parsePersistedAgentBottomPanel({ bottomPanel: false })).toBe(false);
+    expect(parsePersistedAgentBottomPanel({ bottomPanel: "yes" })).toBe(false);
+    expect(parsePersistedAgentBottomPanel({})).toBe(false);
+    expect(parsePersistedAgentBottomPanel(null)).toBe(false);
+    expect(parsePersistedAgentBottomPanel([true])).toBe(false);
+  });
+});
+
 describe("serializeAgentWorkbenchLayout", () => {
   it("persists exactly the layout fields", () => {
     const state = open(["files", "terminal"], "terminal", { rightPanelMaximized: true });
-    expect(serializeAgentWorkbenchLayout(state)).toEqual({
+    expect(serializeAgentWorkbenchLayout(state, true)).toEqual({
       layout: "agent",
       rightPanel: "open",
       openSurfaces: ["files", "terminal"],
       activeSurface: "terminal",
       rightPanelMaximized: true,
       rail: "expanded",
-      bottomPanel: false,
       rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
       bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
+      bottomPanel: true,
     });
+  });
+
+  it("carries the controller bottom panel visibility into the persisted blob", () => {
+    const state = open(["terminal"], "terminal");
+    expect(serializeAgentWorkbenchLayout(state, true).bottomPanel).toBe(true);
+    expect(serializeAgentWorkbenchLayout(state, false).bottomPanel).toBe(false);
+    expect(parsePersistedAgentBottomPanel(serializeAgentWorkbenchLayout(state, true))).toBe(true);
   });
 
   it("round-trips every reachable state through the parser", () => {
     for (const state of everyReachableState()) {
-      expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(state))).toEqual(state);
+      expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(state, false))).toEqual(state);
     }
   });
 
   it("survives JSON serialization", () => {
     const state = open(["diff"], "diff");
     expect(
-      parseAgentWorkbenchLayout(JSON.parse(JSON.stringify(serializeAgentWorkbenchLayout(state)))),
+      parseAgentWorkbenchLayout(
+        JSON.parse(JSON.stringify(serializeAgentWorkbenchLayout(state, false))),
+      ),
     ).toEqual(state);
   });
 });
@@ -690,8 +700,22 @@ describe("agentWorkbenchLayoutsEqual", () => {
     expect(agentWorkbenchLayoutsEqual(state, open(["files", "diff"], "files"))).toBe(false);
     expect(agentWorkbenchLayoutsEqual(state, open(["files"], "diff"))).toBe(false);
     expect(agentWorkbenchLayoutsEqual(state, { ...state, rightPanelMaximized: true })).toBe(false);
-    expect(agentWorkbenchLayoutSnapshotsEqual(state, { ...state, bottomPanelHeight: 300 })).toBe(
-      false,
-    );
+    expect(
+      agentWorkbenchLayoutSnapshotsEqual(
+        serializeAgentWorkbenchLayout(state, false),
+        serializeAgentWorkbenchLayout({ ...state, bottomPanelHeight: 300 }, false),
+      ),
+    ).toBe(false);
+  });
+
+  it("separates the persisted bottom panel flag from the reducer layout", () => {
+    const state = open(["files"], "files");
+    expect(agentWorkbenchLayoutsEqual(state, { ...state })).toBe(true);
+    expect(
+      agentWorkbenchLayoutSnapshotsEqual(
+        serializeAgentWorkbenchLayout(state, true),
+        serializeAgentWorkbenchLayout(state, false),
+      ),
+    ).toBe(false);
   });
 });

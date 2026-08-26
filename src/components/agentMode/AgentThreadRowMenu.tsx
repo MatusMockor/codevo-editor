@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
+import { useWorkbenchFramePortalTarget } from "../workbenchFramePortal";
 import {
   agentThreadMenuEntries,
   type AgentThreadMenuCommand,
@@ -25,6 +26,7 @@ export function AgentThreadRowMenu(props: AgentThreadRowMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const [placed, setPlaced] = useState(position);
+  const portalTarget = useWorkbenchFramePortalTarget();
   const entries = agentThreadMenuEntries(props);
 
   useLayoutEffect(() => {
@@ -111,7 +113,7 @@ export function AgentThreadRowMenu(props: AgentThreadRowMenuProps) {
         ),
       )}
     </div>,
-    document.body,
+    portalTarget,
   );
 }
 

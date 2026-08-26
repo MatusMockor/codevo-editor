@@ -1,4 +1,5 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
+import { WorkbenchFramePortalContext } from "./workbenchFramePortal";
 import { WorkbenchFrameTreeContext } from "./workbenchFrameTreeReport";
 import {
   WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE,
@@ -23,6 +24,7 @@ export function WorkbenchShellFrame({
   placement,
 }: WorkbenchShellFrameProps) {
   const [treeReportedVisible, setTreeReportedVisible] = useState(false);
+  const [frameElement, setFrameElement] = useState<HTMLDivElement | null>(null);
   const style = {
     [WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE]: `${placement.rightPanelWidth}px`,
     [WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE]: `${placement.bottomPanelHeight}px`,
@@ -37,10 +39,13 @@ export function WorkbenchShellFrame({
         data-rail={placement.rail}
         data-right-panel={placement.rightPanelMaximized ? "maximized" : "docked"}
         data-tree={workbenchFrameTreeState(placement, treeReportedVisible)}
+        ref={setFrameElement}
       >
-        <WorkbenchFrameTreeContext.Provider value={setTreeReportedVisible}>
-          {agent}
-        </WorkbenchFrameTreeContext.Provider>
+        <WorkbenchFramePortalContext.Provider value={frameElement}>
+          <WorkbenchFrameTreeContext.Provider value={setTreeReportedVisible}>
+            {agent}
+          </WorkbenchFrameTreeContext.Provider>
+        </WorkbenchFramePortalContext.Provider>
         <div
           aria-hidden={placement.editorHidden || undefined}
           className="editor-mode-surface"
