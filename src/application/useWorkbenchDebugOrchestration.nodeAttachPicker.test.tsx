@@ -177,6 +177,7 @@ function renderOrchestration(initial: HarnessOptions) {
     value = useWorkbenchDebugOrchestration({
       activeDocumentRef: { current: null },
       activeEditorPositionRef: { current: null },
+      captureDocumentDebugAuthority: () => ({ isCurrent: () => true }),
       currentWorkspaceRootRef: options.rootRef,
       debugGateway: {
         start: options.debugGatewayStart,

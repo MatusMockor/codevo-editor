@@ -63,7 +63,10 @@ const mocks = vi.hoisted(() => {
     startDebugAccepted,
     startDebugSessionAccepted,
     startDebugCompoundAccepted,
-    useConfiguredNodeLaunchStarter: vi.fn(() => vi.fn(async () => false)),
+    useConfiguredNodeLaunchStarter: vi.fn(
+      (_options?: { isWorkspaceCurrent(rootPath: string, ownerKey: string): boolean }) =>
+        vi.fn(async (_rootPath: string, _documentPath: string, _ownerKey: string | null) => false),
+    ),
     useNodeDebugConfigurationLauncher: vi.fn(
       (_options: UseNodeDebugConfigurationLauncherOptions) => configurationLauncher,
     ),
@@ -173,6 +176,11 @@ describe("workbench named Node debug configuration composition", () => {
     mocks.nodeDebugTaskComposition.postTaskActive = false;
     mocks.nodeDebugTaskComposition.postTaskBusy = false;
     mocks.nodeDebugTaskComposition.start.mockReset();
+    mocks.useConfiguredNodeLaunchStarter
+      .mockReset()
+      .mockReturnValue(
+        vi.fn(async (_rootPath: string, _documentPath: string, _ownerKey: string | null) => false),
+      );
     mocks.useNodeDebugPreLaunchComposition.mockImplementation(
       (options: {
         startDebug: (launch: PreparedNodeDebugLaunch["launch"]) => Promise<number | null>;
@@ -209,6 +217,7 @@ describe("workbench named Node debug configuration composition", () => {
       result = useWorkbenchDebugOrchestration({
         activeDocumentRef: { current: null },
         activeEditorPositionRef: { current: null },
+        captureDocumentDebugAuthority: () => ({ isCurrent: () => true }),
         currentWorkspaceRootRef: { current: "/workspace" },
         debugTextClipboard: null,
         debugGateway: { subscribe: vi.fn(() => vi.fn()) } as never,
@@ -242,7 +251,7 @@ describe("workbench named Node debug configuration composition", () => {
     expect(mocks.useConfiguredNodeLaunchStarter).toHaveBeenLastCalledWith({
       getActiveDocumentPath: expect.any(Function),
       isDebugStartBlocked: expect.any(Function),
-      isWorkspaceCurrent,
+      isWorkspaceCurrent: expect.any(Function),
       isWorkspaceTrusted: expect.any(Function),
       openDebugPanel: mocks.openDebugPanel,
       reportWarning: expect.any(Function),
@@ -286,12 +295,148 @@ describe("workbench named Node debug configuration composition", () => {
     act(() => root.unmount());
   });
 
+  it("rejects a configured launch after an exact document authority A to B to A transition", async () => {
+    const configuredLoad = deferred<void>();
+    const authorityA = { isCurrent: () => currentAuthority === authorityA };
+    const authorityB = { isCurrent: () => currentAuthority === authorityB };
+    const replacementAuthorityA = {
+      isCurrent: () => currentAuthority === replacementAuthorityA,
+    };
+    let currentAuthority = authorityA;
+    mocks.useConfiguredNodeLaunchStarter.mockImplementationOnce(
+      (options?: { isWorkspaceCurrent(rootPath: string, ownerKey: string): boolean }) =>
+        vi.fn(async (rootPath: string, _documentPath: string, ownerKey: string | null) => {
+          await configuredLoad.promise;
+          if (!ownerKey || !options?.isWorkspaceCurrent(rootPath, ownerKey)) return true;
+          mocks.openDebugPanel();
+          return true;
+        }),
+    );
+    const document = {
+      content: "console.log('ready')",
+      language: "typescript",
+      name: "server.ts",
+      path: "/workspace/server.ts",
+      savedContent: "console.log('ready')",
+    };
+    const root = createRoot(window.document.createElement("div"));
+    let result: ReturnType<typeof useWorkbenchDebugOrchestration> | null = null;
+    function Harness() {
+      result = useWorkbenchDebugOrchestration({
+        activeDocumentRef: { current: document },
+        activeEditorPositionRef: { current: null },
+        captureDocumentDebugAuthority: () => currentAuthority,
+        currentWorkspaceRootRef: { current: "/workspace" },
+        debugTextClipboard: null,
+        debugGateway: { subscribe: vi.fn(() => vi.fn()) } as never,
+        hasJavaScriptTypeScriptWorkspace: () => true,
+        isActiveDocumentJsTest: false,
+        isActiveDocumentPhpTest: false,
+        isWorkspaceCurrent: () => true,
+        isWorkspaceTrusted: () => true,
+        nodeLaunchConfigurationVersion: 0,
+        openNavigationTarget: vi.fn() as never,
+        prompter: { prompt: vi.fn() },
+        readTestFileIfExists: vi.fn(async () => null),
+        reportWarning: vi.fn(),
+        setBottomPanelView: vi.fn(),
+        setBottomPanelVisible: vi.fn(),
+        workspaceFiles: {
+          readDirectory: vi.fn(),
+          readTextFile: vi.fn(),
+          readTextFileBounded: vi.fn(),
+        },
+        workspaceId: "workspace-id",
+        workspaceRoot: "/workspace",
+        vscodeProcessTasks: {} as never,
+      });
+      return null;
+    }
+    act(() => root.render(<Harness />));
+
+    const pending = result!.startOrContinueDebug();
+    currentAuthority = authorityB;
+    currentAuthority = replacementAuthorityA;
+    configuredLoad.resolve();
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(mocks.openDebugPanel).not.toHaveBeenCalled();
+    expect(mocks.startDebugSessionAccepted).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it("suppresses a configured launch rejection after exact authority replacement", async () => {
+    const configuredLoad = deferred<void>();
+    const authorityA = { isCurrent: () => currentAuthority === authorityA };
+    const replacementAuthorityA = {
+      isCurrent: () => currentAuthority === replacementAuthorityA,
+    };
+    let currentAuthority = authorityA;
+    mocks.useConfiguredNodeLaunchStarter.mockImplementationOnce(() =>
+      vi.fn(async () => {
+        await configuredLoad.promise;
+        throw new Error("stale configured launch");
+      }),
+    );
+    const document = {
+      content: "console.log('ready')",
+      language: "typescript",
+      name: "server.ts",
+      path: "/workspace/server.ts",
+      savedContent: "console.log('ready')",
+    };
+    const root = createRoot(window.document.createElement("div"));
+    let result: ReturnType<typeof useWorkbenchDebugOrchestration> | null = null;
+    function Harness() {
+      result = useWorkbenchDebugOrchestration({
+        activeDocumentRef: { current: document },
+        activeEditorPositionRef: { current: null },
+        captureDocumentDebugAuthority: () => currentAuthority,
+        currentWorkspaceRootRef: { current: "/workspace" },
+        debugTextClipboard: null,
+        debugGateway: { subscribe: vi.fn(() => vi.fn()) } as never,
+        hasJavaScriptTypeScriptWorkspace: () => true,
+        isActiveDocumentJsTest: false,
+        isActiveDocumentPhpTest: false,
+        isWorkspaceCurrent: () => true,
+        isWorkspaceTrusted: () => true,
+        nodeLaunchConfigurationVersion: 0,
+        openNavigationTarget: vi.fn() as never,
+        prompter: { prompt: vi.fn() },
+        readTestFileIfExists: vi.fn(async () => null),
+        reportWarning: vi.fn(),
+        setBottomPanelView: vi.fn(),
+        setBottomPanelVisible: vi.fn(),
+        workspaceFiles: {
+          readDirectory: vi.fn(),
+          readTextFile: vi.fn(),
+          readTextFileBounded: vi.fn(),
+        },
+        workspaceId: "workspace-id",
+        workspaceRoot: "/workspace",
+        vscodeProcessTasks: {} as never,
+      });
+      return null;
+    }
+    act(() => root.render(<Harness />));
+
+    const pending = result!.startOrContinueDebug();
+    currentAuthority = replacementAuthorityA;
+    configuredLoad.resolve();
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(mocks.openDebugPanel).not.toHaveBeenCalled();
+    expect(mocks.startDebugSessionAccepted).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
   it("supplies a fail-closed opener when the host does not inject one", async () => {
     const root = createRoot(document.createElement("div"));
     function Harness() {
       useWorkbenchDebugOrchestration({
         activeDocumentRef: { current: null },
         activeEditorPositionRef: { current: null },
+        captureDocumentDebugAuthority: () => ({ isCurrent: () => true }),
         currentWorkspaceRootRef: { current: "/workspace" },
         debugGateway: { subscribe: vi.fn(() => vi.fn()) } as never,
         hasJavaScriptTypeScriptWorkspace: () => true,
@@ -382,6 +527,7 @@ describe("workbench named Node debug configuration composition", () => {
       result = useWorkbenchDebugOrchestration({
         activeDocumentRef: { current: null },
         activeEditorPositionRef: { current: null },
+        captureDocumentDebugAuthority: () => ({ isCurrent: () => true }),
         currentWorkspaceRootRef: { current: "/workspace" },
         debugTextClipboard: null,
         debugGateway: { subscribe: vi.fn(() => vi.fn()) } as never,
@@ -438,6 +584,7 @@ describe("workbench named Node debug configuration composition", () => {
       result = useWorkbenchDebugOrchestration({
         activeDocumentRef: { current: null },
         activeEditorPositionRef: { current: null },
+        captureDocumentDebugAuthority: () => ({ isCurrent: () => true }),
         currentWorkspaceRootRef: { current: "/workspace" },
         debugTextClipboard: null,
         debugGateway: {
@@ -608,6 +755,7 @@ function renderOrchestration() {
     result = useWorkbenchDebugOrchestration({
       activeDocumentRef: { current: null },
       activeEditorPositionRef: { current: null },
+      captureDocumentDebugAuthority: () => ({ isCurrent: () => true }),
       currentWorkspaceRootRef: { current: "/workspace" },
       debugTextClipboard: null,
       debugGateway: { subscribe: vi.fn(() => vi.fn()) } as never,

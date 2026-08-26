@@ -82,12 +82,14 @@ function harness(
   overrides: Partial<Parameters<typeof startWorkbenchDocumentDebug>[0]> = {},
 ) {
   const openDebugPanel = vi.fn();
-  const startDebug = vi.fn(async (_launch: DebugLaunchTarget) => undefined);
+  const startDebug = vi.fn(async (_launch: DebugLaunchTarget) => 1);
+  const stopExactDebugSession = vi.fn(async (_sessionId: number) => true);
+  const authority = { isCurrent: () => true };
   return {
     openDebugPanel,
     options: {
       activeDocumentPath: () => path,
-      currentWorkspaceRoot: () => ROOT,
+      authority,
       document: { path },
       isJsTest: false,
       isPhpTest: false,
@@ -95,10 +97,12 @@ function harness(
       readTestFileIfExists: async () => null,
       reportWarning: vi.fn(),
       requestedRoot: ROOT,
-      startDebug,
+      startDebugSessionAccepted: startDebug,
+      stopExactDebugSession,
       ...overrides,
     },
     startDebug,
+    stopExactDebugSession,
   };
 }
 
@@ -144,6 +148,119 @@ describe("startWorkbenchDocumentDebug", () => {
     await startWorkbenchDocumentDebug(stale.options);
     expect(stale.openDebugPanel).not.toHaveBeenCalled();
     expect(stale.startDebug).not.toHaveBeenCalled();
+  });
+
+  it("drops JavaScript test discovery after an A to B to A authority replacement", async () => {
+    const path = `${ROOT}/src/server.test.ts`;
+    let resolveManifest!: (content: string | null) => void;
+    const manifest = new Promise<string | null>((resolve) => {
+      resolveManifest = resolve;
+    });
+    const authorityA = { isCurrent: () => activeAuthority === authorityA };
+    const authorityB = { isCurrent: () => activeAuthority === authorityB };
+    const replacementAuthorityA = { isCurrent: () => activeAuthority === replacementAuthorityA };
+    let activeAuthority = authorityA;
+    const stale = harness(path, {
+      authority: authorityA,
+      isJsTest: true,
+      readTestFileIfExists: (requestedPath) =>
+        requestedPath.endsWith("/package.json") ? manifest : Promise.resolve(null),
+    });
+
+    const pending = startWorkbenchDocumentDebug(stale.options);
+    activeAuthority = authorityB;
+    activeAuthority = replacementAuthorityA;
+    resolveManifest('{"devDependencies":{"vitest":"latest"}}');
+    await pending;
+
+    expect(stale.openDebugPanel).not.toHaveBeenCalled();
+    expect(stale.startDebug).not.toHaveBeenCalled();
+    expect(stale.options.reportWarning).not.toHaveBeenCalled();
+  });
+
+  it("suppresses a stale JavaScript discovery rejection", async () => {
+    const path = `${ROOT}/src/server.test.ts`;
+    let rejectManifest!: (error: unknown) => void;
+    const manifest = new Promise<string | null>((_resolve, reject) => {
+      rejectManifest = reject;
+    });
+    let current = true;
+    const stale = harness(path, {
+      authority: { isCurrent: () => current },
+      isJsTest: true,
+      readTestFileIfExists: (requestedPath) =>
+        requestedPath.endsWith("/package.json") ? manifest : Promise.resolve(null),
+    });
+
+    const pending = startWorkbenchDocumentDebug(stale.options);
+    current = false;
+    rejectManifest(new Error("stale discovery"));
+    await expect(pending).resolves.toBeUndefined();
+
+    expect(stale.openDebugPanel).not.toHaveBeenCalled();
+    expect(stale.startDebug).not.toHaveBeenCalled();
+    expect(stale.options.reportWarning).not.toHaveBeenCalled();
+  });
+
+  it("stops the exact accepted session when authority expires during start", async () => {
+    const path = `${ROOT}/src/server.ts`;
+    let resolveStart!: (sessionId: number | null) => void;
+    const accepted = new Promise<number | null>((resolve) => {
+      resolveStart = resolve;
+    });
+    let current = true;
+    const stale = harness(path, {
+      authority: { isCurrent: () => current },
+      startDebugSessionAccepted: vi.fn(() => accepted),
+    });
+
+    const pending = startWorkbenchDocumentDebug(stale.options);
+    current = false;
+    resolveStart(73);
+    await pending;
+
+    expect(stale.openDebugPanel).toHaveBeenCalledOnce();
+    expect(stale.stopExactDebugSession).toHaveBeenCalledWith(73);
+  });
+
+  it("suppresses exact-session compensation rejection after authority expires", async () => {
+    const path = `${ROOT}/src/server.ts`;
+    let resolveStart!: (sessionId: number | null) => void;
+    const accepted = new Promise<number | null>((resolve) => {
+      resolveStart = resolve;
+    });
+    let current = true;
+    const stale = harness(path, {
+      authority: { isCurrent: () => current },
+      startDebugSessionAccepted: vi.fn(() => accepted),
+      stopExactDebugSession: vi.fn(async () => {
+        throw new Error("stale compensation");
+      }),
+    });
+
+    const pending = startWorkbenchDocumentDebug(stale.options);
+    current = false;
+    resolveStart(91);
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(stale.options.stopExactDebugSession).toHaveBeenCalledWith(91);
+  });
+
+  it("does not start when opening the debug panel invalidates authority", async () => {
+    const path = `${ROOT}/src/server.ts`;
+    let current = true;
+    const stale = harness(path, {
+      authority: { isCurrent: () => current },
+      openDebugPanel: vi.fn(() => {
+        current = false;
+      }),
+    });
+
+    await startWorkbenchDocumentDebug(stale.options);
+
+    expect(stale.options.openDebugPanel).toHaveBeenCalledOnce();
+    expect(stale.startDebug).not.toHaveBeenCalled();
+    expect(stale.stopExactDebugSession).not.toHaveBeenCalled();
   });
 });
 
@@ -252,6 +369,7 @@ function createOrchestrationOptions(
   return {
     activeDocumentRef: { current: null },
     activeEditorPositionRef: { current: null },
+    captureDocumentDebugAuthority: () => ({ isCurrent: () => true }),
     currentWorkspaceRootRef,
     debugGateway: {} as Parameters<typeof useWorkbenchDebugOrchestration>[0]["debugGateway"],
     hasJavaScriptTypeScriptWorkspace: () => false,

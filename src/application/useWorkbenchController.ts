@@ -56,6 +56,7 @@ import {
   useWorkbenchGitPanelsCoordinator,
 } from "./workbenchController/useWorkbenchGitCoordinator";
 import {
+  createWorkbenchRevealPathPort,
   useWorkbenchTaskDebugCoordinator,
   useWorkbenchTaskDebugNavigationCoordinator,
 } from "./workbenchController/useWorkbenchTaskDebugCoordinator";
@@ -269,13 +270,13 @@ import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfac
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
 import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
-import { workspaceRelativePath as contextMenuRelativePath } from "../domain/pathDerivation";
 
 export type {
   PhpCodeActionDescriptor,
   PhpCodeActionNewFile,
   PhpCodeActionRange,
 } from "./usePhpCodeActions";
+
 import { usePhpCodeActionProvider } from "./usePhpCodeActionProvider";
 import { usePhpCodeActionNewFileApplication } from "./usePhpCodeActionNewFileApplication";
 import { usePhpChangeSignatureWorkflow } from "./usePhpChangeSignatureWorkflow";
@@ -446,6 +447,7 @@ interface OpenWorkspacePathOptions {
 
 export type SidebarView = "files" | "git" | "php" | "scripts";
 
+const DEFAULT_REVEAL_PATH_GATEWAY = createWorkbenchRevealPathPort(invoke);
 const ignoreLanguageServerRequestCancellation = () => Promise.resolve();
 
 export function useWorkbenchController(
@@ -5510,6 +5512,7 @@ export function useWorkbenchController(
     invalidateJsTestCoverageAndResults,
     isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
+    isEditorGroupDocumentSessionAuthorityCurrent,
     isWorkspaceTrusted,
     openDocuments,
     openFile,
@@ -5517,6 +5520,7 @@ export function useWorkbenchController(
     options,
     prompter,
     readTestFileIfExists,
+    resolveActiveDocumentSessionAuthority,
     reportErrorForActiveWorkspaceRoot,
     setBottomPanelView,
     setBottomPanelVisible,
@@ -5535,25 +5539,6 @@ export function useWorkbenchController(
     workspaceTrusted,
     workspaceTrustedRef,
   });
-  const revealEntry = useCallback(
-    (entry: FileEntry) => {
-      const requestedRoot = currentWorkspaceRootRef.current;
-
-      if (!requestedRoot || contextMenuRelativePath(requestedRoot, entry.path) === null) {
-        return;
-      }
-
-      if (!isTauri()) {
-        return;
-      }
-
-      void invoke("reveal_item_in_dir", {
-        path: entry.path,
-        rootPath: requestedRoot,
-      }).catch((error) => reportErrorForActiveWorkspaceRoot(requestedRoot, "Reveal", error));
-    },
-    [reportErrorForActiveWorkspaceRoot],
-  );
   const {
     openEntryInTerminal,
     openArtisanRoutesPanel,
@@ -5562,11 +5547,14 @@ export function useWorkbenchController(
     openPhpTestResultsPanel,
     openPhpTestCase,
     openArtisanController,
+    revealEntry,
   } = useWorkbenchTaskDebugNavigationCoordinator({
     activeDocumentRef,
     currentWorkspaceRootRef,
     openNavigationTarget,
     projectSymbolSearch,
+    reportErrorForActiveWorkspaceRoot,
+    revealPathGateway: isTauri() ? DEFAULT_REVEAL_PATH_GATEWAY : null,
     runInActiveTerminal,
     setBottomPanelView,
     setBottomPanelVisible,
@@ -5575,6 +5563,7 @@ export function useWorkbenchController(
     setPhpTestRunRequestVersion,
     workspaceDescriptor,
     workspaceRoot,
+    workspaceRuntimeOwnerRef,
   });
 
   const {

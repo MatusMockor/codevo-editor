@@ -1,8 +1,17 @@
 import { useCallback, useMemo } from "react";
 import type { ArtisanControllerAction } from "../../domain/artisanRoutes";
 import type { EditorSessionOwnerKey } from "../../domain/editorSessionOwnerKey";
-import { quoteShellArgument, terminalDirectoryForEntry } from "../../domain/pathDerivation";
+import {
+  quoteShellArgument,
+  terminalDirectoryForEntry,
+  workspaceRelativePath,
+} from "../../domain/pathDerivation";
 import type { EditorDocument, FileEntry } from "../../domain/workspace";
+import {
+  editorGroupDocumentSessionWorkspaceMatches,
+  registeredDocumentSaveIdentityForEditorGroupAuthority,
+  type EditorGroupDocumentSessionAuthority,
+} from "../editorSessionDocumentAuthority";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import { navigateToArtisanController } from "../artisanRouteNavigation";
 import { useConfigureVscodeProcessTasks } from "../useConfigureVscodeProcessTasks";
@@ -17,7 +26,10 @@ import { useNodeLaunchWorkspaceCurrent } from "../useNodeLaunchWorkspaceCurrent"
 import { useWorkbenchNodePackageScripts } from "../useNodePackageScriptWorkbench";
 import { usePhpTestCaseNavigation } from "../usePhpTestCaseNavigation";
 import { useTerminalTestRunner } from "../useTerminalTestRunner";
-import { useWorkbenchDebugOrchestration } from "../useWorkbenchDebugOrchestration";
+import {
+  useWorkbenchDebugOrchestration,
+  type WorkbenchDocumentDebugAuthority,
+} from "../useWorkbenchDebugOrchestration";
 import { useWorkbenchFrameworkPanels } from "../useWorkbenchFrameworkPanels";
 import { useWorkbenchJsTestCursorDebugging } from "../useWorkbenchJsTestCursorDebugging";
 import { useWorkbenchNodeRunWithoutDebugging } from "../useWorkbenchNodeRunWithoutDebugging";
@@ -75,6 +87,9 @@ export interface WorkbenchTaskDebugCoordinatorDependencies {
   invalidateJsTestCoverageAndResults: TerminalTestRunnerDependencies["invalidateJsTestCoverageAndResults"];
   isActiveDocumentJsTest: DebugOrchestrationDependencies["isActiveDocumentJsTest"];
   isActiveDocumentPhpTest: DebugOrchestrationDependencies["isActiveDocumentPhpTest"];
+  isEditorGroupDocumentSessionAuthorityCurrent(
+    authority: EditorGroupDocumentSessionAuthority,
+  ): boolean;
   isWorkspaceTrusted: DebugOrchestrationDependencies["isWorkspaceTrusted"];
   openDocuments: readonly EditorDocument[];
   openFile: ConfigureVscodeProcessTasksDependencies["openFile"];
@@ -82,6 +97,7 @@ export interface WorkbenchTaskDebugCoordinatorDependencies {
   options: WorkbenchTaskDebugOptions;
   prompter: DebugOrchestrationDependencies["prompter"];
   readTestFileIfExists: TerminalTestRunnerDependencies["readTestFileIfExists"];
+  resolveActiveDocumentSessionAuthority(): EditorGroupDocumentSessionAuthority | null;
   reportErrorForActiveWorkspaceRoot: TerminalTestRunnerDependencies["reportErrorForActiveWorkspaceRoot"];
   setBottomPanelView: FrameworkPanelDependencies["setBottomPanelView"];
   setBottomPanelVisible: TerminalTestRunnerDependencies["setBottomPanelVisible"];
@@ -113,6 +129,7 @@ export function useWorkbenchTaskDebugCoordinator({
   invalidateJsTestCoverageAndResults,
   isActiveDocumentJsTest,
   isActiveDocumentPhpTest,
+  isEditorGroupDocumentSessionAuthorityCurrent,
   isWorkspaceTrusted,
   openDocuments,
   openFile,
@@ -120,6 +137,7 @@ export function useWorkbenchTaskDebugCoordinator({
   options,
   prompter,
   readTestFileIfExists,
+  resolveActiveDocumentSessionAuthority,
   reportErrorForActiveWorkspaceRoot,
   setBottomPanelView,
   setBottomPanelVisible,
@@ -138,6 +156,64 @@ export function useWorkbenchTaskDebugCoordinator({
   workspaceTrusted,
   workspaceTrustedRef,
 }: WorkbenchTaskDebugCoordinatorDependencies) {
+  const captureDocumentDebugAuthority = useCallback(
+    (
+      document: Pick<EditorDocument, "path">,
+      requestedRoot: string,
+      requestedWorkspaceId: string | null,
+    ): WorkbenchDocumentDebugAuthority | null => {
+      const runtimeOwner = workspaceRuntimeOwnerRef.current;
+      const editorOwnerKey = currentEditorSessionOwnerKeyRef.current;
+      const documentAuthority = resolveActiveDocumentSessionAuthority();
+      const registeredIdentity = documentAuthority
+        ? registeredDocumentSaveIdentityForEditorGroupAuthority(documentAuthority)
+        : null;
+
+      if (
+        !runtimeOwner ||
+        !requestedWorkspaceId ||
+        !editorOwnerKey ||
+        !documentAuthority ||
+        !registeredIdentity ||
+        runtimeOwner.ownerKey !== requestedWorkspaceId ||
+        registeredIdentity.workspaceId !== requestedWorkspaceId ||
+        !workspaceRootKeysEqual(runtimeOwner.executionRoot, requestedRoot) ||
+        !editorGroupDocumentSessionWorkspaceMatches(documentAuthority, requestedRoot) ||
+        documentAuthority.path !== document.path ||
+        activeDocumentRef.current?.path !== document.path
+      ) {
+        return null;
+      }
+
+      const runtimeGeneration = workspaceRuntimeOwnerClaimsRef.current.generationFor(
+        runtimeOwner.ownerKey,
+      );
+      if (runtimeGeneration === null || runtimeGeneration === undefined) {
+        return null;
+      }
+      return Object.freeze({
+        isCurrent: () =>
+          workspaceRuntimeOwnerRef.current === runtimeOwner &&
+          workspaceRootKeysEqual(runtimeOwner.executionRoot, requestedRoot) &&
+          currentEditorSessionOwnerKeyRef.current === editorOwnerKey &&
+          workspaceRuntimeOwnerClaimsRef.current.generationFor(runtimeOwner.ownerKey) ===
+            runtimeGeneration &&
+          activeDocumentRef.current?.path === document.path &&
+          isEditorGroupDocumentSessionAuthorityCurrent(documentAuthority) &&
+          editorGroupDocumentSessionWorkspaceMatches(documentAuthority, requestedRoot) &&
+          registeredDocumentSaveIdentityForEditorGroupAuthority(documentAuthority) ===
+            registeredIdentity,
+      });
+    },
+    [
+      activeDocumentRef,
+      currentEditorSessionOwnerKeyRef,
+      isEditorGroupDocumentSessionAuthorityCurrent,
+      resolveActiveDocumentSessionAuthority,
+      workspaceRuntimeOwnerClaimsRef,
+      workspaceRuntimeOwnerRef,
+    ],
+  );
   const openNodePackageScript = useWorkbenchNpmOpenScriptNavigation({
     discoveryVersion: workspaceDiscoveryVersions.nodePackageScriptDiscoveryVersion,
     documents: openDocuments,
@@ -204,6 +280,7 @@ export function useWorkbenchTaskDebugCoordinator({
   const debug = useWorkbenchDebugOrchestration({
     activeDocumentRef,
     activeEditorPositionRef,
+    captureDocumentDebugAuthority,
     configurationPickerCoordinator: nodeLaunchPickerCoordinator,
     currentWorkspaceRootRef,
     debugBreakpointStorage: options.debugBreakpointStorage,
@@ -372,6 +449,8 @@ export interface WorkbenchTaskDebugNavigationCoordinatorDependencies {
   currentWorkspaceRootRef: TerminalTestRunnerDependencies["currentWorkspaceRootRef"];
   openNavigationTarget: ReturnType<typeof useWorkbenchNavigation>["openNavigationTarget"];
   projectSymbolSearch: ArtisanNavigationDependencies["projectSymbolSearch"];
+  reportErrorForActiveWorkspaceRoot: TerminalTestRunnerDependencies["reportErrorForActiveWorkspaceRoot"];
+  revealPathGateway: WorkbenchRevealPathPort | null;
   runInActiveTerminal: ReturnType<typeof useTerminalTestRunner>["runInActiveTerminal"];
   setBottomPanelView: FrameworkPanelDependencies["setBottomPanelView"];
   setBottomPanelVisible: FrameworkPanelDependencies["setBottomPanelVisible"];
@@ -380,6 +459,28 @@ export interface WorkbenchTaskDebugNavigationCoordinatorDependencies {
   setPhpTestRunRequestVersion: FrameworkPanelDependencies["setPhpTestRunRequestVersion"];
   workspaceDescriptor: TerminalTestRunnerDependencies["workspaceDescriptor"];
   workspaceRoot: TerminalTestRunnerDependencies["workspaceRoot"];
+  workspaceRuntimeOwnerRef: TerminalTestRunnerDependencies["workspaceRuntimeOwnerRef"];
+}
+
+export interface WorkbenchRevealPathPort {
+  revealPath(request: { readonly path: string; readonly rootPath: string }): Promise<void>;
+}
+
+export interface WorkbenchRevealPathCommandPort {
+  (
+    command: "reveal_item_in_dir",
+    request: { readonly path: string; readonly rootPath: string },
+  ): Promise<unknown>;
+}
+
+export function createWorkbenchRevealPathPort(
+  invokeCommand: WorkbenchRevealPathCommandPort,
+): WorkbenchRevealPathPort {
+  return Object.freeze<WorkbenchRevealPathPort>({
+    revealPath: async (request) => {
+      await invokeCommand("reveal_item_in_dir", request);
+    },
+  });
 }
 
 export function useWorkbenchTaskDebugNavigationCoordinator({
@@ -387,6 +488,8 @@ export function useWorkbenchTaskDebugNavigationCoordinator({
   currentWorkspaceRootRef,
   openNavigationTarget,
   projectSymbolSearch,
+  reportErrorForActiveWorkspaceRoot,
+  revealPathGateway,
   runInActiveTerminal,
   setBottomPanelView,
   setBottomPanelVisible,
@@ -395,7 +498,44 @@ export function useWorkbenchTaskDebugNavigationCoordinator({
   setPhpTestRunRequestVersion,
   workspaceDescriptor,
   workspaceRoot,
+  workspaceRuntimeOwnerRef,
 }: WorkbenchTaskDebugNavigationCoordinatorDependencies) {
+  const revealEntry = useCallback(
+    (entry: FileEntry) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+      const runtimeOwner = workspaceRuntimeOwnerRef.current;
+
+      if (
+        !requestedRoot ||
+        !runtimeOwner ||
+        !workspaceRootKeysEqual(runtimeOwner.executionRoot, requestedRoot) ||
+        workspaceRelativePath(requestedRoot, entry.path) === null
+      ) {
+        return;
+      }
+
+      if (!revealPathGateway) {
+        return;
+      }
+
+      void revealPathGateway
+        .revealPath({
+          path: entry.path,
+          rootPath: requestedRoot,
+        })
+        .catch((error) => {
+          if (workspaceRuntimeOwnerRef.current !== runtimeOwner) return;
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) return;
+          reportErrorForActiveWorkspaceRoot(requestedRoot, "Reveal", error);
+        });
+    },
+    [
+      currentWorkspaceRootRef,
+      reportErrorForActiveWorkspaceRoot,
+      revealPathGateway,
+      workspaceRuntimeOwnerRef,
+    ],
+  );
   const openEntryInTerminal = useCallback(
     (entry: FileEntry) => {
       const requestedRoot = currentWorkspaceRootRef.current;
@@ -454,5 +594,6 @@ export function useWorkbenchTaskDebugNavigationCoordinator({
     openArtisanController,
     openEntryInTerminal,
     openPhpTestCase,
+    revealEntry,
   };
 }

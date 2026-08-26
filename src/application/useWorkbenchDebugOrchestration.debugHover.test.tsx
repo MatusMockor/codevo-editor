@@ -91,6 +91,7 @@ describe("workbench debug hover composition", () => {
       result = useWorkbenchDebugOrchestration({
         activeDocumentRef: { current: null },
         activeEditorPositionRef: { current: null },
+        captureDocumentDebugAuthority: () => ({ isCurrent: () => true }),
         currentWorkspaceRootRef: { current: null },
         debugTextClipboard: null,
         debugGateway: { subscribe: vi.fn(() => vi.fn()) } as never,

@@ -62,7 +62,25 @@ import {
 
 describe("useWorkbenchController workspace identity, editor groups, bookmarks, and debugger wiring", () => {
   const { getRoot, renderController } = setupWorkbenchControllerTestHarness();
-
+  const registeredIdentityGateway = (
+    descriptor: ReturnType<typeof trustedDescriptor>,
+    unregister: (workspaceId: string) => Promise<void> = vi.fn(async () => undefined),
+  ): WorkbenchWorkspaceGateways["identity"] => ({
+    getDescriptor: vi.fn(async (workspaceId) => {
+      if (workspaceId !== descriptor.workspaceId) throw new Error("Unexpected workspace identity");
+      return {
+        ...descriptor,
+        canonicalRootPath: descriptor.canonicalRoot,
+        selectedRootPath: descriptor.selectedPath,
+      };
+    }),
+    openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+    openPath: vi.fn(async (path) => {
+      if (path !== descriptor.selectedPath) throw new Error(`Unexpected workspace path: ${path}`);
+      return descriptor;
+    }),
+    unregister,
+  });
   it("fences real PHP class fallback navigation by owner at the same root", async () => {
     const sharedRoot = "/selected/navigation-owner";
     const sourcePath = `${sharedRoot}/src/Source.php`;
@@ -473,12 +491,7 @@ MissingClass::class;
         sessionId: 303,
       },
       workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-        openPath: vi.fn(async () => descriptor),
-        unregister: vi.fn(async () => undefined),
-      },
+      workspaceIdentityGateway: registeredIdentityGateway(descriptor),
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         intelligenceMode: "fullSmart",
@@ -806,12 +819,7 @@ MissingClass::class;
         sessionId: 304,
       },
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-        openPath: vi.fn(async () => descriptor),
-        unregister: vi.fn(async () => undefined),
-      },
+      workspaceIdentityGateway: registeredIdentityGateway(descriptor),
     });
 
     let openPromise: Promise<unknown> | null = null;
@@ -2025,12 +2033,7 @@ MissingClass::class;
     };
     const { dependencies, getWorkbench } = renderController({
       settingsGateway,
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-        openPath: vi.fn(async () => descriptor),
-        unregister,
-      },
+      workspaceIdentityGateway: registeredIdentityGateway(descriptor, unregister),
     });
 
     const staleWorkbench = getWorkbench();
@@ -2140,12 +2143,7 @@ MissingClass::class;
     const unregister = vi.fn(async () => undefined);
     const { dependencies, getWorkbench } = renderController({
       readTextFile: vi.fn(async () => "const clean = true;\n"),
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-        openPath: vi.fn(async () => descriptor),
-        unregister,
-      },
+      workspaceIdentityGateway: registeredIdentityGateway(descriptor, unregister),
     });
 
     await act(async () => {
@@ -2198,12 +2196,7 @@ MissingClass::class;
     };
     const unregister = vi.fn(async () => undefined);
     const { dependencies, getWorkbench } = renderController({
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-        openPath: vi.fn(async () => descriptor),
-        unregister,
-      },
+      workspaceIdentityGateway: registeredIdentityGateway(descriptor, unregister),
     });
     await act(async () => {
       await getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
@@ -2252,12 +2245,7 @@ MissingClass::class;
       .mockRejectedValueOnce(new Error("transient unregister failure"))
       .mockResolvedValue(undefined);
     const { dependencies, getWorkbench } = renderController({
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-        openPath: vi.fn(async () => descriptor),
-        unregister,
-      },
+      workspaceIdentityGateway: registeredIdentityGateway(descriptor, unregister),
     });
 
     await act(async () => {
@@ -2296,12 +2284,7 @@ MissingClass::class;
       .mockRejectedValueOnce(new Error("transient unregister failure"))
       .mockResolvedValue(undefined);
     const { getWorkbench } = renderController({
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-        openPath: vi.fn(async () => descriptor),
-        unregister,
-      },
+      workspaceIdentityGateway: registeredIdentityGateway(descriptor, unregister),
     });
 
     await act(async () => {
@@ -2539,12 +2522,7 @@ MissingClass::class;
     };
     const { dependencies, getWorkbench } = renderController({
       runtimeStatus: runningStatus,
-      workspaceIdentityGateway: {
-        getDescriptor: vi.fn(),
-        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-        openPath: vi.fn(async () => descriptor),
-        unregister: vi.fn(async () => undefined),
-      },
+      workspaceIdentityGateway: registeredIdentityGateway(descriptor),
     });
 
     await act(async () => {
@@ -3376,6 +3354,14 @@ MissingClass::class;
     });
   });
   describe("debugger wiring", () => {
+    const debugWorkspaceIdentity = trustedDescriptor("ws-debugger", "/workspace");
+    const admitDebugWorkspace = (
+      getWorkbench: ReturnType<typeof renderController>["getWorkbench"],
+    ) =>
+      act(async () => {
+        await getWorkbench().openWorkspaceRoot(debugWorkspaceIdentity.selectedPath);
+        await flushAsyncTurns();
+      });
     const expectDefaultDebugStart = (
       start: DebugGatewayHarness["start"],
       launch: Parameters<DebugGateway["start"]>[1],
@@ -3400,8 +3386,10 @@ MissingClass::class;
         debugGateway: debugGateway.gateway,
         readTextFile,
         workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceIdentityGateway: registeredIdentityGateway(debugWorkspaceIdentity),
       });
       await flushAsyncTurns();
+      await admitDebugWorkspace(getWorkbench);
 
       await act(async () => {
         await getWorkbench().openPinnedFile(fileEntry(testPath, "sum.test.ts"));
@@ -3475,8 +3463,10 @@ MissingClass::class;
         debugGateway: debugGateway.gateway,
         readTextFile,
         workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceIdentityGateway: registeredIdentityGateway(debugWorkspaceIdentity),
       });
       await flushAsyncTurns();
+      await admitDebugWorkspace(getWorkbench);
 
       await act(async () => {
         await getWorkbench().openPinnedFile(fileEntry(scriptPath, "build.js"));
@@ -3497,8 +3487,10 @@ MissingClass::class;
         appSettings: workspaceAppSettings(),
         debugGateway: debugGateway.gateway,
         workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceIdentityGateway: registeredIdentityGateway(debugWorkspaceIdentity),
       });
       await flushAsyncTurns();
+      await admitDebugWorkspace(getWorkbench);
 
       await act(async () => {
         await getWorkbench().openPinnedFile(fileEntry(scriptPath, "index.php"));
@@ -3520,8 +3512,10 @@ MissingClass::class;
         appSettings: workspaceAppSettings(),
         debugGateway: debugGateway.gateway,
         workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceIdentityGateway: registeredIdentityGateway(debugWorkspaceIdentity),
       });
       await flushAsyncTurns();
+      await admitDebugWorkspace(getWorkbench);
 
       await act(async () => {
         await getWorkbench().openPinnedFile(fileEntry(testPath, "InvoiceTest.php"));
@@ -3657,8 +3651,10 @@ MissingClass::class;
         debugGateway: debugGateway.gateway,
         readTextFile,
         workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceIdentityGateway: registeredIdentityGateway(debugWorkspaceIdentity),
       });
       await flushAsyncTurns();
+      await admitDebugWorkspace(getWorkbench);
 
       await act(async () => {
         await getWorkbench().openPinnedFile(fileEntry(testPath, "sum.test.ts"));
@@ -3667,6 +3663,9 @@ MissingClass::class;
       let pendingStart: Promise<void> = Promise.resolve();
       act(() => {
         pendingStart = runCommand(getWorkbench(), "debug.start");
+      });
+      await waitForReact(() => {
+        expect(readTextFile).toHaveBeenCalledWith("/workspace/vitest.config.ts");
       });
 
       await act(async () => {

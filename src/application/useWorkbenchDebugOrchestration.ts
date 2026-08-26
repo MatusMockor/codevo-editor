@@ -70,6 +70,11 @@ type OpenNavigationTarget = Parameters<typeof useDebugLocationOpener>[0];
 interface WorkbenchDebugOrchestrationOptions {
   activeDocumentRef: RefObject<EditorDocument | null>;
   activeEditorPositionRef: RefObject<EditorPositionRef | null>;
+  captureDocumentDebugAuthority(
+    document: Pick<EditorDocument, "path">,
+    requestedRoot: string,
+    requestedWorkspaceId: string | null,
+  ): WorkbenchDocumentDebugAuthority | null;
   currentWorkspaceRootRef: RefObject<string | null>;
   configurationPickerCoordinator?: NodeLaunchPickerCoordinator;
   debugBreakpointStorage?: BreakpointStorage;
@@ -109,9 +114,13 @@ const unavailableNodeDebugAttachCandidateGateway: NodeDebugAttachCandidateListGa
     list: () => Promise.resolve(Object.freeze({ status: "unavailable" as const })),
   });
 
+export interface WorkbenchDocumentDebugAuthority {
+  isCurrent(): boolean;
+}
+
 interface StartDocumentDebugOptions {
   activeDocumentPath(): string | null;
-  currentWorkspaceRoot(): string | null;
+  authority: WorkbenchDocumentDebugAuthority;
   document: Pick<EditorDocument, "path">;
   isJsTest: boolean;
   isPhpTest: boolean;
@@ -119,7 +128,8 @@ interface StartDocumentDebugOptions {
   readTestFileIfExists(path: string): Promise<string | null>;
   reportWarning(message: string): void;
   requestedRoot: string;
-  startDebug(launch: DebugLaunchTarget): Promise<void>;
+  startDebugSessionAccepted(launch: DebugLaunchTarget): Promise<number | null>;
+  stopExactDebugSession(sessionId: number): Promise<boolean>;
 }
 
 export function isNodeDebugConfigurationWorkspaceCurrent(
@@ -137,7 +147,7 @@ export function isNodeDebugConfigurationWorkspaceCurrent(
 
 export async function startWorkbenchDocumentDebug({
   activeDocumentPath,
-  currentWorkspaceRoot,
+  authority,
   document,
   isJsTest,
   isPhpTest,
@@ -145,49 +155,131 @@ export async function startWorkbenchDocumentDebug({
   readTestFileIfExists,
   reportWarning,
   requestedRoot,
-  startDebug,
+  startDebugSessionAccepted,
+  stopExactDebugSession,
 }: StartDocumentDebugOptions): Promise<void> {
-  if (isJsTest) {
-    const runnerContext = await detectJsTestRunnerContext(
-      requestedRoot,
-      readTestFileIfExists,
-      document.path,
-    );
+  if (!authority.isCurrent()) {
+    return;
+  }
 
-    if (!workspaceRootKeysEqual(currentWorkspaceRoot(), requestedRoot)) return;
-    if (activeDocumentPath() !== document.path) return;
+  if (isJsTest) {
+    let runnerContext;
+    try {
+      runnerContext = await detectJsTestRunnerContext(
+        requestedRoot,
+        readTestFileIfExists,
+        document.path,
+      );
+    } catch (error) {
+      if (!authority.isCurrent()) {
+        return;
+      }
+      throw error;
+    }
+
+    if (!authority.isCurrent() || activeDocumentPath() !== document.path) {
+      return;
+    }
 
     if (!runnerContext) {
       reportWarning("Debug: no vitest or jest setup detected in this workspace.");
       return;
     }
 
-    openDebugPanel();
-    await startDebug({
-      kind: "js-test-file",
-      runner: runnerContext.runner,
-      filePath: document.path,
-      packageRootPath: runnerContext.rootPath,
-    });
+    await startAuthorizedDocumentDebug(
+      authority,
+      {
+        kind: "js-test-file",
+        runner: runnerContext.runner,
+        filePath: document.path,
+        packageRootPath: runnerContext.rootPath,
+      },
+      openDebugPanel,
+      startDebugSessionAccepted,
+      stopExactDebugSession,
+    );
+    if (!authority.isCurrent()) {
+      return;
+    }
     return;
   }
 
   if (isPhpTest) {
-    openDebugPanel();
-    await startDebug({ kind: "php-test-file", filePath: document.path });
+    await startAuthorizedDocumentDebug(
+      authority,
+      { kind: "php-test-file", filePath: document.path },
+      openDebugPanel,
+      startDebugSessionAccepted,
+      stopExactDebugSession,
+    );
+    if (!authority.isCurrent()) {
+      return;
+    }
     return;
   }
 
   if (isDebuggablePhpScriptPath(document.path)) {
-    openDebugPanel();
-    await startDebug({ kind: "php-script", scriptPath: document.path });
+    await startAuthorizedDocumentDebug(
+      authority,
+      { kind: "php-script", scriptPath: document.path },
+      openDebugPanel,
+      startDebugSessionAccepted,
+      stopExactDebugSession,
+    );
+    if (!authority.isCurrent()) {
+      return;
+    }
     return;
   }
 
   if (!isDebuggableNodeScriptPath(document.path)) return;
 
+  await startAuthorizedDocumentDebug(
+    authority,
+    { kind: "node-script", scriptPath: document.path },
+    openDebugPanel,
+    startDebugSessionAccepted,
+    stopExactDebugSession,
+  );
+  if (!authority.isCurrent()) {
+    return;
+  }
+}
+
+async function startAuthorizedDocumentDebug(
+  authority: WorkbenchDocumentDebugAuthority,
+  launch: DebugLaunchTarget,
+  openDebugPanel: () => void,
+  startDebugSessionAccepted: (launch: DebugLaunchTarget) => Promise<number | null>,
+  stopExactDebugSession: (sessionId: number) => Promise<boolean>,
+): Promise<void> {
+  if (!authority.isCurrent()) {
+    return;
+  }
+
   openDebugPanel();
-  await startDebug({ kind: "node-script", scriptPath: document.path });
+  if (!authority.isCurrent()) {
+    return;
+  }
+  let sessionId: number | null;
+  try {
+    sessionId = await startDebugSessionAccepted(launch);
+  } catch (error) {
+    if (!authority.isCurrent()) {
+      return;
+    }
+    throw error;
+  }
+
+  if (authority.isCurrent() || sessionId === null) {
+    return;
+  }
+
+  try {
+    await stopExactDebugSession(sessionId);
+  } catch {
+    return;
+  }
 }
 
 function exactDebugDocumentIsClean(
@@ -205,6 +297,7 @@ function exactDebugDocumentIsClean(
 export function useWorkbenchDebugOrchestration({
   activeDocumentRef,
   activeEditorPositionRef,
+  captureDocumentDebugAuthority,
   currentWorkspaceRootRef,
   configurationPickerCoordinator,
   debugBreakpointStorage,
@@ -415,10 +508,17 @@ export function useWorkbenchDebugOrchestration({
     }),
     [hasBoundedNodeLaunchConfigurationRead],
   );
+  const configuredDocumentDebugAuthorityRef = useRef<WorkbenchDocumentDebugAuthority | null>(null);
+  const isConfiguredDocumentDebugWorkspaceCurrent = useCallback(
+    (rootPath: string, ownerKey: string) =>
+      isWorkspaceCurrent(rootPath, ownerKey) &&
+      (configuredDocumentDebugAuthorityRef.current?.isCurrent() ?? true),
+    [isWorkspaceCurrent],
+  );
   const nodeDebugTaskComposition = useNodeDebugPreLaunchComposition({
     debugGateway,
     disconnectExactDebugSession: debugSession.disconnectExactDebugSession,
-    isWorkspaceCurrent,
+    isWorkspaceCurrent: isConfiguredDocumentDebugWorkspaceCurrent,
     launchConfigurationVersion: nodeLaunchConfigurationVersion,
     serverReadyExternalUrlOpener:
       serverReadyExternalUrlOpener ?? unavailableServerReadyExternalUrlOpener,
@@ -473,6 +573,18 @@ export function useWorkbenchDebugOrchestration({
   });
   const nodeDebugTaskCompositionRef = useRef(nodeDebugTaskComposition);
   nodeDebugTaskCompositionRef.current = nodeDebugTaskComposition;
+  const stopAcceptedDocumentDebugSession = useCallback(
+    async (sessionId: number) => {
+      if (workspaceRoot) {
+        nodeDebugTaskCompositionRef.current.cancelServerReadyActionForSession(
+          workspaceRoot,
+          sessionId,
+        );
+      }
+      return debugSessionRef.current.stopExactDebugSession(sessionId);
+    },
+    [workspaceRoot],
+  );
   const nodeDebugCompoundComposition = useNodeDebugCompoundComposition({
     isWorkspaceCurrent,
     launchConfigurationVersion: nodeLaunchConfigurationVersion,
@@ -637,13 +749,40 @@ export function useWorkbenchDebugOrchestration({
   const startNodeLaunch = useConfiguredNodeLaunchStarter({
     getActiveDocumentPath: () => activeDocumentRef.current?.path ?? null,
     isDebugStartBlocked,
-    isWorkspaceCurrent,
+    isWorkspaceCurrent: isConfiguredDocumentDebugWorkspaceCurrent,
     isWorkspaceTrusted: isDebugWorkspaceTrusted,
     openDebugPanel,
     reportWarning,
     startDebug: startPreparedNodeDebug,
     workspaceFiles,
   });
+  const startNodeLaunchWithAuthority = useCallback(
+    async (
+      requestedRoot: string,
+      documentPath: string,
+      requestedWorkspaceId: string | null,
+      authority: WorkbenchDocumentDebugAuthority,
+    ) => {
+      if (configuredDocumentDebugAuthorityRef.current) {
+        return true;
+      }
+
+      configuredDocumentDebugAuthorityRef.current = authority;
+      try {
+        const started = await startNodeLaunch(requestedRoot, documentPath, requestedWorkspaceId);
+        if (!authority.isCurrent()) return true;
+        return started;
+      } catch (error) {
+        if (!authority.isCurrent()) return true;
+        throw error;
+      } finally {
+        if (configuredDocumentDebugAuthorityRef.current === authority) {
+          configuredDocumentDebugAuthorityRef.current = null;
+        }
+      }
+    },
+    [startNodeLaunch],
+  );
 
   const startOrContinueDebug = useCallback(async () => {
     const state = snapshot.state;
@@ -657,11 +796,20 @@ export function useWorkbenchDebugOrchestration({
     const requestedWorkspaceId = workspaceId;
     const document = activeDocumentRef.current;
     if (!requestedRoot || !document) return;
-    if (await startNodeLaunch(requestedRoot, document.path, requestedWorkspaceId)) return;
+    const authority = captureDocumentDebugAuthority(document, requestedRoot, requestedWorkspaceId);
+    if (!authority?.isCurrent()) return;
+    const nodeLaunchStarted = await startNodeLaunchWithAuthority(
+      requestedRoot,
+      document.path,
+      requestedWorkspaceId,
+      authority,
+    );
+    if (!authority.isCurrent()) return;
+    if (nodeLaunchStarted) return;
 
     await startWorkbenchDocumentDebug({
       activeDocumentPath: () => activeDocumentRef.current?.path ?? null,
-      currentWorkspaceRoot: () => currentWorkspaceRootRef.current,
+      authority,
       document,
       isJsTest: isActiveDocumentJsTest,
       isPhpTest: isActiveDocumentPhpTest,
@@ -669,10 +817,13 @@ export function useWorkbenchDebugOrchestration({
       readTestFileIfExists,
       reportWarning,
       requestedRoot,
-      startDebug,
+      startDebugSessionAccepted,
+      stopExactDebugSession: stopAcceptedDocumentDebugSession,
     });
+    if (!authority.isCurrent()) return;
   }, [
     activeDocumentRef,
+    captureDocumentDebugAuthority,
     currentWorkspaceRootRef,
     isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
@@ -680,9 +831,10 @@ export function useWorkbenchDebugOrchestration({
     readTestFileIfExists,
     reportWarning,
     snapshot,
-    startDebug,
-    startNodeLaunch,
+    startDebugSessionAccepted,
+    startNodeLaunchWithAuthority,
     stepDebug,
+    stopAcceptedDocumentDebugSession,
     workspaceId,
   ]);
 
