@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type FocusEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { Check, ChevronDown, TriangleAlert } from "lucide-react";
 import type { AgentPickerOption, AgentPickerTone } from "./agentPickerOption";
@@ -14,6 +15,8 @@ import type { AgentPickerOption, AgentPickerTone } from "./agentPickerOption";
 export type { AgentPickerOption, AgentPickerTone } from "./agentPickerOption";
 
 export type AgentPickerAlign = "start" | "end";
+
+export type AgentPickerVariant = "default" | "ghost";
 
 export interface AgentPickerMenuProps {
   readonly id: string;
@@ -25,6 +28,8 @@ export interface AgentPickerMenuProps {
   readonly prefix: string | null;
   readonly describedBy: string | null;
   readonly align: AgentPickerAlign;
+  readonly variant?: AgentPickerVariant;
+  readonly icon?: ReactNode;
   onChange(value: string): void;
 }
 
@@ -49,6 +54,7 @@ export function AgentPickerMenu({
   align,
   describedBy,
   disabled,
+  icon = null,
   id,
   label,
   onChange,
@@ -56,6 +62,7 @@ export function AgentPickerMenu({
   prefix,
   tone,
   value,
+  variant = "default",
 }: AgentPickerMenuProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -190,7 +197,7 @@ export function AgentPickerMenu({
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={label}
-        className={triggerClassName(tone)}
+        className={triggerClassName(tone, variant)}
         data-value={value}
         disabled={disabled}
         id={id}
@@ -200,6 +207,11 @@ export function AgentPickerMenu({
         title={selected?.description ?? undefined}
         type="button"
       >
+        {icon !== null && (
+          <span aria-hidden="true" className="agent-picker__icon">
+            {icon}
+          </span>
+        )}
         {prefix !== null && <span className="agent-picker__prefix">{prefix}:</span>}
         <span className="agent-picker__value">{selected?.label ?? UNKNOWN_VALUE_LABEL}</span>
         <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={12} />
@@ -253,9 +265,11 @@ export function AgentPickerMenu({
   );
 }
 
-function triggerClassName(tone: AgentPickerTone): string {
-  if (tone === null) return "agent-picker__trigger";
-  return `agent-picker__trigger agent-picker__trigger--${tone}`;
+function triggerClassName(tone: AgentPickerTone, variant: AgentPickerVariant): string {
+  const classes = ["agent-picker__trigger"];
+  if (variant === "ghost") classes.push("agent-picker__trigger--ghost");
+  if (tone !== null) classes.push(`agent-picker__trigger--${tone}`);
+  return classes.join(" ");
 }
 
 function optionClassName(option: AgentPickerOption, active: boolean): string {

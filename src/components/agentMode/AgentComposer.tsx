@@ -201,7 +201,7 @@ export function AgentComposer({
           placeholder={
             followUp
               ? "Reply to the agent in this thread"
-              : "Describe the change you want the agent to make"
+              : "Ask anything or describe the change you want"
           }
           value={prompt}
         />
@@ -307,23 +307,20 @@ function AgentComposerCheckout({
   onIsolationChange(isolation: AgentTaskIsolation): void;
 }) {
   return (
-    <span className="agent-composer__glyphed">
-      <span aria-hidden="true" className="agent-composer__glyph">
-        {isolationGlyph(isolation)}
-      </span>
-      <AgentPickerMenu
-        align="start"
-        describedBy={null}
-        disabled={disabled}
-        id={CHECKOUT_ID}
-        label="Checkout for this thread"
-        onChange={(value) => changeIsolation(value, onIsolationChange)}
-        options={CHECKOUT_OPTIONS}
-        prefix="Checkout"
-        tone={null}
-        value={isolation}
-      />
-    </span>
+    <AgentPickerMenu
+      align="start"
+      describedBy={null}
+      disabled={disabled}
+      icon={isolationGlyph(isolation)}
+      id={CHECKOUT_ID}
+      label="Checkout for this thread"
+      onChange={(value) => changeIsolation(value, onIsolationChange)}
+      options={CHECKOUT_OPTIONS}
+      prefix={null}
+      tone={null}
+      value={isolation}
+      variant="ghost"
+    />
   );
 }
 
@@ -365,6 +362,7 @@ function AgentComposerRepository({
       prefix="Repo"
       tone={null}
       value={target.selectedRepositoryRoot ?? ""}
+      variant="ghost"
     />
   );
 }

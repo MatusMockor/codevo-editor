@@ -1338,7 +1338,7 @@
 
 .agent-composer__box {
   display: grid;
-  border-radius: var(--agent-radius-xl);
+  border-radius: 18px;
   background: var(--agent-raised);
   box-shadow:
     0 0 0 1px var(--agent-hairline-strong),
@@ -1359,13 +1359,17 @@
   background: transparent;
   color: var(--agent-text-strong);
   font: inherit;
-  font-size: var(--agent-fs-md);
+  font-size: 14px;
   line-height: var(--agent-lh-prose);
   max-height: 180px;
-  min-height: 62px;
+  min-height: 74px;
   outline: none;
-  padding: 10px 15px 4px;
+  padding: 14px 18px 6px;
   resize: vertical;
+}
+
+.agent-composer__textarea::placeholder {
+  color: var(--agent-text-subtle);
 }
 
 /* Context line: which thread the reply continues, above the text. */
@@ -1388,9 +1392,8 @@
 .agent-composer__row {
   display: flex;
   align-items: center;
-  gap: var(--agent-space-3);
-  border-top: 1px solid var(--agent-hairline);
-  padding: var(--agent-space-3) var(--agent-space-3) var(--agent-space-3) 12px;
+  gap: var(--agent-space-2);
+  padding: 4px 10px 10px 8px;
 }
 
 /* Footer strip attached to the box: where the run lands, never what it is asked to do. */
@@ -1406,58 +1409,26 @@
   padding: 2px 8px 2px 9px;
 }
 
-.agent-composer__footer .agent-picker__trigger {
+.agent-composer__footer .agent-picker__trigger--ghost {
   height: 24px;
   max-width: 260px;
-  border-color: var(--agent-hairline);
-  background: none;
   color: var(--agent-text-subtle);
-  font-family: inherit;
   font-size: var(--agent-fs-sm);
+  font-weight: 500;
   padding: 0 6px 0 7px;
-}
-
-.agent-composer__footer .agent-picker__trigger:hover:not(:disabled) {
-  border-color: var(--agent-hairline-strong);
-  background: var(--agent-row-hover);
-  color: var(--agent-text-strong);
-}
-
-.agent-composer__footer .agent-picker--open .agent-picker__trigger {
-  border-color: var(--agent-hairline-strong);
-  background: var(--agent-row-hover);
-  color: var(--agent-text-strong);
 }
 
 .agent-composer__footer .agent-picker__prefix {
   color: var(--agent-text-subtle);
 }
 
-/* A glyph sits inside the trigger pill, so the control reads as one token. */
-.agent-composer__glyphed {
-  position: relative;
-  display: inline-flex;
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.agent-composer__glyphed .agent-picker__trigger {
-  padding-left: 24px;
-}
-
-.agent-composer__glyph {
-  position: absolute;
-  top: 50%;
-  left: 7px;
-  display: inline-flex;
-  align-items: center;
-  color: var(--agent-text-subtle);
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.agent-composer__glyph .agent-row__provider {
-  opacity: 1;
+/* Hairline between the plain-text launch triggers. */
+.agent-composer__divider {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  background: var(--agent-hairline-strong);
+  margin-inline: 6px;
 }
 
 .agent-composer__lock {
@@ -2113,7 +2084,7 @@
   display: flex;
   flex: 0 1 auto;
   align-items: center;
-  gap: var(--agent-space-2);
+  gap: 0;
   min-width: 0;
 }
 
@@ -2188,13 +2159,16 @@
 }
 
 .agent-composer__compact-panel .agent-composer__launch,
-.agent-composer__compact-panel .agent-picker,
-.agent-composer__compact-panel .agent-composer__glyphed {
+.agent-composer__compact-panel .agent-picker {
   display: flex;
   flex: none;
   flex-direction: column;
   align-items: stretch;
   width: 100%;
+}
+
+.agent-composer__compact-panel .agent-composer__divider {
+  display: none;
 }
 
 .agent-composer__compact-panel .agent-picker__trigger {
@@ -2284,6 +2258,61 @@
   border-color: color-mix(in srgb, var(--agent-danger) 55%, transparent);
   background: color-mix(in srgb, var(--agent-danger) 10%, var(--agent-fill));
   color: var(--agent-danger);
+}
+
+/* Ghost variant: plain text with an optional leading icon; no border or fill at rest. */
+.agent-picker__trigger--ghost {
+  gap: 6px;
+  height: 30px;
+  max-width: 240px;
+  border: none;
+  border-radius: var(--agent-radius-md);
+  background: transparent;
+  color: var(--agent-text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 0 7px 0 9px;
+}
+
+.agent-picker__trigger--ghost:hover:not(:disabled) {
+  background: var(--agent-row-hover);
+  color: var(--agent-text-strong);
+}
+
+.agent-picker--open .agent-picker__trigger--ghost {
+  background: var(--agent-row-hover);
+  box-shadow: none;
+}
+
+.agent-picker__trigger--ghost:focus-visible {
+  box-shadow: var(--agent-focus-ring);
+}
+
+.agent-picker__trigger--ghost.agent-picker__trigger--plan {
+  background: transparent;
+  color: var(--agent-plan);
+}
+
+.agent-picker__trigger--ghost.agent-picker__trigger--danger {
+  background: transparent;
+  color: var(--agent-danger);
+}
+
+.agent-picker__trigger--ghost.agent-picker__trigger--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--agent-danger) 10%, transparent);
+  color: var(--agent-danger);
+}
+
+.agent-picker__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--agent-text-subtle);
+}
+
+.agent-picker__icon .agent-row__provider {
+  opacity: 1;
 }
 
 .agent-picker__prefix {

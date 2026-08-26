@@ -30,7 +30,7 @@ describe("AgentLaunchControls", () => {
       effort: "default",
     });
 
-    expect(trigger("agent-launch-model").textContent).toContain("Opus");
+    expect(trigger("agent-launch-model").textContent).toBe("Claude Opus 5");
     expect(trigger("agent-launch-mode").textContent).toContain("Accept edits");
 
     open("agent-launch-model");
@@ -40,9 +40,9 @@ describe("AgentLaunchControls", () => {
     open("agent-launch-mode");
     expect(options("agent-launch-mode").map((option) => optionLabel(option))).toEqual([
       "Default permissions",
-      "Plan only",
+      "Plan mode",
       "Accept edits",
-      "Bypass permissions",
+      "Full access",
     ]);
     expect(
       options("agent-launch-mode").every(
@@ -59,7 +59,7 @@ describe("AgentLaunchControls", () => {
       onLaunchChange,
     );
 
-    expect(trigger("agent-launch-effort").textContent).toContain("High");
+    expect(trigger("agent-launch-effort").textContent).toBe("High");
     expect(trigger("agent-launch-effort").getAttribute("aria-label")).toBe(
       "Agent reasoning effort",
     );
@@ -91,14 +91,53 @@ describe("AgentLaunchControls", () => {
   it("marks the model trigger with the provider glyph without repeating it to readers", () => {
     renderControls({ provider: "claudeCode", model: "opus", mode: "default", effort: "default" });
 
-    const glyph = host.querySelector(".agent-composer__glyph");
+    const glyph = trigger("agent-launch-model").querySelector(".agent-picker__icon");
     expect(glyph?.getAttribute("aria-hidden")).toBe("true");
     expect(glyph?.querySelector(".agent-row__provider--claude")).not.toBeNull();
-    expect(glyph?.parentElement?.querySelector("button")?.id).toBe("agent-launch-model");
 
     renderControls({ provider: "codex", model: "default", mode: "default" });
 
-    expect(host.querySelector(".agent-composer__glyph .agent-row__provider--codex")).not.toBeNull();
+    expect(
+      trigger("agent-launch-model").querySelector(
+        ".agent-picker__icon .agent-row__provider--codex",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("renders plain-text ghost triggers separated by hairlines, without an effort prefix", () => {
+    renderControls({
+      provider: "claudeCode",
+      model: "default",
+      mode: "default",
+      effort: "default",
+    });
+
+    for (const id of ["agent-launch-model", "agent-launch-effort", "agent-launch-mode"]) {
+      expect(trigger(id).classList.contains("agent-picker__trigger--ghost")).toBe(true);
+      expect(trigger(id).querySelector(".agent-picker__prefix")).toBeNull();
+    }
+    expect(trigger("agent-launch-model").textContent).toBe("Claude (default)");
+    expect(trigger("agent-launch-effort").textContent).toBe("Default effort");
+    expect(trigger("agent-launch-mode").textContent).toBe("Default permissions");
+    const dividers = host.querySelectorAll(".agent-composer__divider");
+    expect(dividers).toHaveLength(2);
+    expect(dividers[0]?.getAttribute("aria-hidden")).toBe("true");
+
+    renderControls({ provider: "codex", model: "gpt-5.6-sol", mode: "workspaceWrite" });
+
+    expect(trigger("agent-launch-model").textContent).toBe("GPT-5.6 Sol");
+    expect(trigger("agent-launch-mode").textContent).toBe("Workspace write");
+    expect(host.querySelectorAll(".agent-composer__divider")).toHaveLength(1);
+  });
+
+  it("shows an open lock only for a mode that removes the safety checks", () => {
+    renderControls({ provider: "claudeCode", model: "default", mode: "plan", effort: "default" });
+    expect(trigger("agent-launch-mode").querySelector(".lucide-lock")).not.toBeNull();
+    expect(trigger("agent-launch-mode").querySelector(".lucide-lock-open")).toBeNull();
+
+    renderControls({ provider: "codex", model: "default", mode: "dangerFullAccess" });
+    expect(trigger("agent-launch-mode").textContent).toBe("Full access");
+    expect(trigger("agent-launch-mode").querySelector(".lucide-lock-open")).not.toBeNull();
   });
 
   it("lists the Codex models and execution modes", () => {
@@ -106,7 +145,7 @@ describe("AgentLaunchControls", () => {
 
     open("agent-launch-model");
     expect(options("agent-launch-model").map((option) => optionLabel(option))).toEqual([
-      "Default model",
+      "Codex (default)",
       "GPT-5.6 Sol",
       "GPT-5.5",
       "GPT-5.4",

@@ -23,6 +23,8 @@ export interface AgentLaunchChoice {
 
 export type AgentLaunchTone = "plan" | "danger" | null;
 
+export type AgentLaunchAccess = "guarded" | "open";
+
 interface LaunchText {
   readonly label: string;
   readonly meta: string;
@@ -31,22 +33,22 @@ interface LaunchText {
 
 const CLAUDE_MODEL_TEXT: Record<ClaudeModelChoice, LaunchText> = {
   default: {
-    label: "Default model",
+    label: "Claude (default)",
     meta: "default model",
     hint: "Uses the model your Claude CLI is configured to run.",
   },
   fable: {
-    label: "Fable",
+    label: "Claude Fable 5",
     meta: "fable",
     hint: "Runs the session on the latest Fable model.",
   },
   opus: {
-    label: "Opus",
+    label: "Claude Opus 5",
     meta: "opus",
     hint: "Runs the session on the latest Opus model.",
   },
   sonnet: {
-    label: "Sonnet",
+    label: "Claude Sonnet 5",
     meta: "sonnet",
     hint: "Runs the session on the latest Sonnet model.",
   },
@@ -59,7 +61,7 @@ const CLAUDE_MODE_TEXT: Record<ClaudePermissionMode, LaunchText> = {
     hint: "Uses the permission mode your Claude CLI is configured to use.",
   },
   plan: {
-    label: "Plan only",
+    label: "Plan mode",
     meta: "plan only",
     hint: "The agent plans the work and does not change files.",
   },
@@ -69,7 +71,7 @@ const CLAUDE_MODE_TEXT: Record<ClaudePermissionMode, LaunchText> = {
     hint: "File edits apply without asking; tools that still ask are denied, because the run has no input.",
   },
   bypassPermissions: {
-    label: "Bypass permissions",
+    label: "Full access",
     meta: "bypass permissions",
     hint: "Skips every permission check; the agent can run any command in this repository.",
   },
@@ -77,7 +79,7 @@ const CLAUDE_MODE_TEXT: Record<ClaudePermissionMode, LaunchText> = {
 
 const CLAUDE_EFFORT_TEXT: Record<ClaudeEffortChoice, LaunchText> = {
   default: {
-    label: "Default",
+    label: "Default effort",
     meta: "default effort",
     hint: "Uses the effort level your Claude CLI is configured to run.",
   },
@@ -110,7 +112,7 @@ const CLAUDE_EFFORT_TEXT: Record<ClaudeEffortChoice, LaunchText> = {
 
 const CODEX_MODEL_TEXT: Record<CodexModelChoice, LaunchText> = {
   default: {
-    label: "Default model",
+    label: "Codex (default)",
     meta: "default model",
     hint: "Uses the model your Codex CLI is configured to run.",
   },
@@ -265,6 +267,11 @@ export function agentLaunchTone(launch: AgentLaunchOptions): AgentLaunchTone {
   if (agentLaunchIsDangerous(launch)) return "danger";
   if (launch.provider === "claudeCode" && launch.mode === "plan") return "plan";
   return null;
+}
+
+export function agentLaunchAccess(launch: AgentLaunchOptions): AgentLaunchAccess {
+  if (agentLaunchIsDangerous(launch)) return "open";
+  return "guarded";
 }
 
 export function agentLaunchDangerNotice(launch: AgentLaunchOptions): string | null {

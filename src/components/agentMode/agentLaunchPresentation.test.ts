@@ -8,6 +8,7 @@ import {
   CODEX_MODEL_CHOICES,
 } from "../../domain/agentLaunch";
 import {
+  agentLaunchAccess,
   agentLaunchDangerConfirmLabel,
   agentLaunchDangerNotice,
   agentLaunchEffortChoices,
@@ -21,6 +22,7 @@ import {
   agentLaunchModeLabel,
   agentLaunchModelChoices,
   agentLaunchModelLabel,
+  agentLaunchModelMeta,
   agentLaunchSupportsEffort,
   agentLaunchTone,
   agentLaunchWithEffort,
@@ -98,7 +100,10 @@ describe("agentLaunchPresentation", () => {
         mode: "default",
         effort: "default",
       }),
-    ).toBe("Default model");
+    ).toBe("Claude (default)");
+    expect(agentLaunchModelLabel({ provider: "codex", model: "default", mode: "default" })).toBe(
+      "Codex (default)",
+    );
     expect(
       agentLaunchModeLabel({
         provider: "claudeCode",
@@ -112,6 +117,54 @@ describe("agentLaunchPresentation", () => {
     );
     expect(agentLaunchModeHint({ provider: "codex", model: "default", mode: "default" })).toContain(
       "configured",
+    );
+  });
+
+  it("names models and modes in human form for the composer triggers", () => {
+    const claude = (model: "fable" | "opus" | "sonnet"): AgentLaunchOptions => ({
+      provider: "claudeCode",
+      model,
+      mode: "default",
+      effort: "default",
+    });
+
+    expect(agentLaunchModelLabel(claude("fable"))).toBe("Claude Fable 5");
+    expect(agentLaunchModelLabel(claude("opus"))).toBe("Claude Opus 5");
+    expect(agentLaunchModelLabel(claude("sonnet"))).toBe("Claude Sonnet 5");
+    expect(agentLaunchModelMeta(claude("opus"))).toBe("opus");
+    expect(agentLaunchModeChoices("claudeCode").map((choice) => choice.label)).toEqual([
+      "Default permissions",
+      "Plan mode",
+      "Accept edits",
+      "Full access",
+    ]);
+    expect(agentLaunchModeChoices("codex").map((choice) => choice.label)).toEqual([
+      "Default sandbox",
+      "Read-only",
+      "Workspace write",
+      "Full access",
+    ]);
+  });
+
+  it("opens the lock only for the modes that bypass the safety checks", () => {
+    expect(
+      agentLaunchAccess({
+        provider: "claudeCode",
+        model: "opus",
+        mode: "bypassPermissions",
+        effort: "default",
+      }),
+    ).toBe("open");
+    expect(
+      agentLaunchAccess({ provider: "codex", model: "default", mode: "dangerFullAccess" }),
+    ).toBe("open");
+    for (const mode of ["default", "plan", "acceptEdits"] as const) {
+      expect(
+        agentLaunchAccess({ provider: "claudeCode", model: "opus", mode, effort: "default" }),
+      ).toBe("guarded");
+    }
+    expect(agentLaunchAccess({ provider: "codex", model: "default", mode: "readOnly" })).toBe(
+      "guarded",
     );
   });
 
@@ -192,7 +245,7 @@ describe("agentLaunchPresentation", () => {
 
     expect(effortChoices.map((choice) => choice.value)).toEqual([...CLAUDE_EFFORT_CHOICES]);
     expect(effortChoices.map((choice) => choice.label)).toEqual([
-      "Default",
+      "Default effort",
       "Low",
       "Medium",
       "High",
@@ -223,7 +276,7 @@ describe("agentLaunchPresentation", () => {
     expect(agentLaunchEffortValue(claude)).toBe("xhigh");
     expect(agentLaunchEffortValue(codex)).toBe("default");
     expect(agentLaunchEffortLabel(claude)).toBe("Extra high");
-    expect(agentLaunchEffortLabel(codex)).toBe("Default");
+    expect(agentLaunchEffortLabel(codex)).toBe("Default effort");
     expect(agentLaunchEffortMeta(claude)).toBe("xhigh");
     expect(agentLaunchEffortHint(claude)).toBe(
       agentLaunchEffortChoices().find((choice) => choice.value === "xhigh")?.hint,

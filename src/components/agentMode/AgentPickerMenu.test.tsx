@@ -28,6 +28,21 @@ describe("AgentPickerMenu", () => {
     host.remove();
   });
 
+  it("renders the ghost variant with a hidden leading icon and the same listbox", () => {
+    render({ icon: <svg data-testid="icon" />, variant: "ghost" });
+
+    expect(trigger().classList.contains("agent-picker__trigger--ghost")).toBe(true);
+    const icon = trigger().querySelector(".agent-picker__icon");
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    expect(icon?.querySelector("svg")).not.toBeNull();
+    expect(trigger().textContent).toBe("Default");
+
+    click(trigger());
+
+    expect(host.querySelector('[role="listbox"]')?.id).toBe("picker-list");
+    expect(options()).toHaveLength(3);
+  });
+
   it("shows the current value on a closed trigger and no listbox", () => {
     render({});
 

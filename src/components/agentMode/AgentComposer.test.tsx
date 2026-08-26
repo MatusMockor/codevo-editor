@@ -331,7 +331,7 @@ describe("AgentComposer", () => {
     expect(pickerValue("agent-launch-model")).toBe("opus");
     expect(pickerValue("agent-launch-effort")).toBe("high");
     expect(pickerValue("agent-launch-mode")).toBe("plan");
-    expect(host.querySelector("#agent-launch-mode")?.textContent).toContain("Plan only");
+    expect(host.querySelector("#agent-launch-mode")?.textContent).toContain("Plan mode");
     expect(
       host.querySelector("#agent-launch-mode")?.classList.contains("agent-picker__trigger--plan"),
     ).toBe(true);

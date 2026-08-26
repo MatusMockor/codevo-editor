@@ -1,6 +1,7 @@
-import { TriangleAlert } from "lucide-react";
+import { Lock, LockOpen, TriangleAlert } from "lucide-react";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
+  agentLaunchAccess,
   agentLaunchDangerConfirmLabel,
   agentLaunchDangerNotice,
   agentLaunchEffortChoices,
@@ -16,6 +17,7 @@ import {
   agentLaunchWithEffort,
   agentLaunchWithMode,
   agentLaunchWithModel,
+  type AgentLaunchAccess,
   type AgentLaunchChoice,
 } from "./agentLaunchPresentation";
 import { AgentPickerMenu } from "./AgentPickerMenu";
@@ -40,29 +42,27 @@ export function AgentLaunchControls({
 }: AgentLaunchControlsProps) {
   return (
     <div className="agent-composer__launch">
-      <span className="agent-composer__glyphed">
-        <span aria-hidden="true" className="agent-composer__glyph">
-          <AgentProviderGlyph kind={launch.provider} />
-        </span>
-        <AgentPickerMenu
-          align="start"
-          describedBy={`${MODEL_ID}-hint`}
-          disabled={disabled}
-          id={MODEL_ID}
-          label="Agent model"
-          onChange={(value) => onLaunchChange(agentLaunchWithModel(launch, value))}
-          options={agentLaunchModelChoices(launch.provider).map(toOption)}
-          prefix={null}
-          tone={null}
-          value={launch.model}
-        />
-      </span>
+      <AgentPickerMenu
+        align="start"
+        describedBy={`${MODEL_ID}-hint`}
+        disabled={disabled}
+        icon={<AgentProviderGlyph kind={launch.provider} />}
+        id={MODEL_ID}
+        label="Agent model"
+        onChange={(value) => onLaunchChange(agentLaunchWithModel(launch, value))}
+        options={agentLaunchModelChoices(launch.provider).map(toOption)}
+        prefix={null}
+        tone={null}
+        value={launch.model}
+        variant="ghost"
+      />
       <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
         {agentLaunchModelHint(launch)}
       </span>
 
       {agentLaunchSupportsEffort(launch) && (
         <>
+          <AgentLaunchDivider />
           <AgentPickerMenu
             align="start"
             describedBy={`${EFFORT_ID}-hint`}
@@ -71,9 +71,10 @@ export function AgentLaunchControls({
             label="Agent reasoning effort"
             onChange={(value) => onLaunchChange(agentLaunchWithEffort(launch, value))}
             options={agentLaunchEffortChoices().map(toOption)}
-            prefix="Effort"
+            prefix={null}
             tone={null}
             value={agentLaunchEffortValue(launch)}
+            variant="ghost"
           />
           <span className="agent-visually-hidden" id={`${EFFORT_ID}-hint`}>
             {agentLaunchEffortHint(launch)}
@@ -81,10 +82,12 @@ export function AgentLaunchControls({
         </>
       )}
 
+      <AgentLaunchDivider />
       <AgentPickerMenu
         align="start"
         describedBy={`${MODE_ID}-hint`}
         disabled={disabled}
+        icon={accessIcon(agentLaunchAccess(launch))}
         id={MODE_ID}
         label="Agent permission mode"
         onChange={(value) => onLaunchChange(agentLaunchWithMode(launch, value))}
@@ -92,12 +95,22 @@ export function AgentLaunchControls({
         prefix={null}
         tone={agentLaunchTone(launch)}
         value={launch.mode}
+        variant="ghost"
       />
       <span className="agent-visually-hidden" id={`${MODE_ID}-hint`}>
         {agentLaunchModeHint(launch)}
       </span>
     </div>
   );
+}
+
+function AgentLaunchDivider() {
+  return <span aria-hidden="true" className="agent-composer__divider" />;
+}
+
+function accessIcon(access: AgentLaunchAccess) {
+  if (access === "open") return <LockOpen size={14} />;
+  return <Lock size={14} />;
 }
 
 export function AgentLaunchWarning({
