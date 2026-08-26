@@ -4,6 +4,7 @@ import {
   useAgentThreadScripts,
   type AgentThreadScriptTarget,
 } from "../../application/useAgentThreadScripts";
+import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type {
   AgentTasksNotice,
@@ -37,6 +38,7 @@ import { useAgentViewCommands } from "./useAgentViewCommands";
 
 export interface AgentModeViewProps {
   readonly agents: AgentThreadsSurface;
+  readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
   readonly workspaceRoot: string | null;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly overflowRootPaths: ReadonlyArray<string>;
@@ -53,6 +55,7 @@ const FIND_BAR_ROWS: CSSProperties = { gridTemplateRows: "auto auto minmax(0, 1f
 export function AgentModeView({
   agents,
   chrome,
+  modelFavoritesPersistence = null,
   nowTickMs = DEFAULT_NOW_TICK_MS,
   onReleaseProject,
   onTrustProject,
@@ -265,7 +268,10 @@ export function AgentModeView({
                 reveal={find.reveal}
                 thread={selectedThread}
               />
-              <AgentComposer {...composer.composerProps} />
+              <AgentComposer
+                {...composer.composerProps}
+                modelFavoritesPersistence={modelFavoritesPersistence}
+              />
             </div>
           </div>
         </AgentClockProvider>

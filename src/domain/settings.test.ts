@@ -36,7 +36,10 @@ describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
     expect(defaultAppSettings()).toEqual({
       agentCliKind: "claudeCode",
-      agentCliPath: null,
+      agentCliPaths: { claudeCode: null, codex: null },
+      agentAppearanceVariant: "current",
+      agentModelFavoriteKeys: [],
+      agentModelFavoritesRevision: 0,
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
@@ -142,6 +145,56 @@ describe("settings defaults", () => {
 });
 
 describe("normalizeAppSettings", () => {
+  it("migrates a legacy CLI path without retaining a second runtime authority", () => {
+    expect(
+      normalizeAppSettings({ agentCliKind: "codex", agentCliPath: "/usr/local/bin/codex" }),
+    ).toMatchObject({
+      agentCliKind: "codex",
+      agentCliPaths: { claudeCode: null, codex: "/usr/local/bin/codex" },
+    });
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        normalizeAppSettings({ agentCliKind: "codex", agentCliPath: "/usr/local/bin/codex" }),
+        "agentCliPath",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps both configured paths across provider switches and fails malformed records closed", () => {
+    const paths = { claudeCode: "/usr/local/bin/claude", codex: "/usr/local/bin/codex" };
+    expect(
+      normalizeAppSettings({ agentCliKind: "claudeCode", agentCliPaths: paths }),
+    ).toMatchObject({
+      agentCliKind: "claudeCode",
+      agentCliPaths: paths,
+    });
+    expect(normalizeAppSettings({ agentCliKind: "codex", agentCliPaths: paths })).toMatchObject({
+      agentCliKind: "codex",
+      agentCliPaths: paths,
+    });
+    expect(
+      normalizeAppSettings({
+        agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: "bin/codex" },
+      }).agentCliPaths,
+    ).toEqual({ claudeCode: null, codex: null });
+  });
+
+  it("round-trips a valid favorite revision and fails malformed revisions closed", () => {
+    expect(
+      normalizeAppSettings({
+        agentModelFavoriteKeys: ["claudeCode/opus"],
+        agentModelFavoritesRevision: 12,
+      }).agentModelFavoritesRevision,
+    ).toBe(12);
+    for (const malformed of [-1, 1.5, "12", Number.POSITIVE_INFINITY, null]) {
+      expect(
+        normalizeAppSettings({
+          agentModelFavoriteKeys: ["claudeCode/opus"],
+          agentModelFavoritesRevision: malformed,
+        }),
+      ).toMatchObject({ agentModelFavoriteKeys: [], agentModelFavoritesRevision: 0 });
+    }
+  });
   it("round-trips a persisted word wrap setting", () => {
     expect(normalizeAppSettings({ wordWrapEnabled: true }).wordWrapEnabled).toBe(true);
     expect(normalizeAppSettings({ wordWrapEnabled: false }).wordWrapEnabled).toBe(false);
@@ -163,7 +216,10 @@ describe("normalizeAppSettings", () => {
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
       agentCliKind: "claudeCode",
-      agentCliPath: null,
+      agentCliPaths: { claudeCode: null, codex: null },
+      agentAppearanceVariant: "current",
+      agentModelFavoriteKeys: [],
+      agentModelFavoritesRevision: 0,
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
@@ -194,7 +250,10 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       agentCliKind: "claudeCode",
-      agentCliPath: null,
+      agentCliPaths: { claudeCode: null, codex: null },
+      agentAppearanceVariant: "current",
+      agentModelFavoriteKeys: [],
+      agentModelFavoritesRevision: 0,
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "Fira Code, monospace",
       editorFontLigatures: true,
@@ -220,7 +279,10 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       agentCliKind: "claudeCode",
-      agentCliPath: null,
+      agentCliPaths: { claudeCode: null, codex: null },
+      agentAppearanceVariant: "current",
+      agentModelFavoriteKeys: [],
+      agentModelFavoritesRevision: 0,
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
@@ -258,7 +320,10 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       agentCliKind: "claudeCode",
-      agentCliPath: null,
+      agentCliPaths: { claudeCode: null, codex: null },
+      agentAppearanceVariant: "current",
+      agentModelFavoriteKeys: [],
+      agentModelFavoritesRevision: 0,
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
@@ -310,7 +375,10 @@ describe("normalizeAppSettings", () => {
       }),
     ).toEqual({
       agentCliKind: "claudeCode",
-      agentCliPath: null,
+      agentCliPaths: { claudeCode: null, codex: null },
+      agentAppearanceVariant: "current",
+      agentModelFavoriteKeys: [],
+      agentModelFavoritesRevision: 0,
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,

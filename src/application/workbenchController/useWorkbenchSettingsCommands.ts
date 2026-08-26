@@ -30,6 +30,8 @@ interface WorkspaceSettingsIdentity {
   readonly canonicalRoot: string;
 }
 
+type AppSettingsFailurePolicy = "report" | "reportAndReject";
+
 interface WorkbenchSettingsCommandsInput {
   readonly applyJavaScriptTypeScriptSettingsChange: (
     input: JavaScriptTypeScriptSettingsChangeInput,
@@ -230,6 +232,7 @@ export function useWorkbenchSettingsCommands({
       nextAppSettings: AppSettings,
       nextWorkspaceSettings: WorkspaceSettings,
       nextTrusted: boolean | null,
+      appSettingsFailurePolicy: AppSettingsFailurePolicy = "report",
     ) => {
       const requestedRoot = workspaceRoot;
       const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
@@ -284,10 +287,12 @@ export function useWorkbenchSettingsCommands({
         );
       };
 
+      let appSettingsPersisted = false;
       try {
         const previousAppSettings = appSettingsRef.current;
         const previousWorkspaceSettings = workspaceSettingsRef.current;
         await persistAppSettings(nextAppSettings);
+        appSettingsPersisted = true;
 
         if (!requestedRoot) {
           if (!currentWorkspaceRootRef.current) {
@@ -429,8 +434,14 @@ export function useWorkbenchSettingsCommands({
         if (!requestIsCurrent()) return;
         setMessage("Settings saved.");
       } catch (error) {
-        if (requestedRoot && !requestIsCurrent()) return;
+        const rejectAppSettingsFailure =
+          !appSettingsPersisted && appSettingsFailurePolicy === "reportAndReject";
+        if (requestedRoot && !requestIsCurrent()) {
+          if (rejectAppSettingsFailure) throw error;
+          return;
+        }
         reportErrorForActiveWorkspaceRoot(requestedRoot, "Settings", error);
+        if (rejectAppSettingsFailure) throw error;
       }
     },
     [

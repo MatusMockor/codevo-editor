@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
+import { activeAgentCliPath } from "../domain/agentSettings";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { GitIntegrationGateway } from "../domain/gitIntegration";
@@ -225,7 +226,11 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     prompter: options.prompter,
     projects: agentProjects.projects,
     agentModeActive: options.agentModeActive,
-    getAgentCliPath: () => options.appSettingsRef.current.agentCliPath,
+    getAgentCliPath: () =>
+      activeAgentCliPath(
+        options.appSettingsRef.current.agentCliPaths,
+        options.appSettingsRef.current.agentCliKind,
+      ),
     getAgentCliKind: () => options.appSettingsRef.current.agentCliKind,
     getMaxConcurrentAgentTasks: () => options.appSettingsRef.current.maxConcurrentAgentTasks,
     getRepositoryStatus,

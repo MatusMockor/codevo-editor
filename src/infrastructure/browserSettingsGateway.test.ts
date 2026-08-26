@@ -5,9 +5,48 @@ import {
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
   LARGE_SMART_DOCUMENT_LINE_LIMIT,
 } from "../domain/largeDocumentPolicy";
-import { defaultWorkspaceSettings } from "../domain/settings";
+import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 
 describe("BrowserSettingsGateway", () => {
+  it("round trips favorite models with their ordering revision across reload", async () => {
+    const storage = memoryStorage();
+    const gateway = new BrowserSettingsGateway(storage);
+    const settings = {
+      ...defaultAppSettings(),
+      agentModelFavoriteKeys: ["claudeCode/opus", "codex/gpt-5.5"] as const,
+      agentModelFavoritesRevision: 19,
+    };
+
+    await gateway.saveAppSettings(settings);
+
+    await expect(gateway.loadAppSettings()).resolves.toMatchObject({
+      agentModelFavoriteKeys: ["claudeCode/opus", "codex/gpt-5.5"],
+      agentModelFavoritesRevision: 19,
+    });
+  });
+
+  it("recovers a corrupt favorite snapshot on reload", async () => {
+    const storage = memoryStorage();
+    const gateway = new BrowserSettingsGateway(storage);
+
+    for (const snapshot of [
+      {
+        agentModelFavoriteKeys: ["claudeCode/unknown"],
+        agentModelFavoritesRevision: Number.MAX_SAFE_INTEGER,
+      },
+      {
+        agentModelFavoriteKeys: ["claudeCode/opus"],
+        agentModelFavoritesRevision: "19",
+      },
+    ]) {
+      storage.setItem("editor.settings.app", JSON.stringify(snapshot));
+      await expect(gateway.loadAppSettings()).resolves.toMatchObject({
+        agentModelFavoriteKeys: [],
+        agentModelFavoritesRevision: 0,
+      });
+    }
+  });
+
   it("isolates split sessions per project even when group IDs match", async () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
     const sessionFor = (path: string) => ({
@@ -399,7 +438,10 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       agentCliKind: "claudeCode",
-      agentCliPath: null,
+      agentCliPaths: { claudeCode: null, codex: null },
+      agentAppearanceVariant: "current",
+      agentModelFavoriteKeys: [],
+      agentModelFavoritesRevision: 0,
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
@@ -496,7 +538,10 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await gateway.saveAppSettings({
-      agentCliPath: null,
+      agentCliPaths: { claudeCode: null, codex: null },
+      agentAppearanceVariant: "current",
+      agentModelFavoriteKeys: [],
+      agentModelFavoritesRevision: 0,
       agentCliKind: "claudeCode",
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "Fira Code, monospace",
@@ -604,7 +649,10 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       agentCliKind: "claudeCode",
-      agentCliPath: null,
+      agentCliPaths: { claudeCode: null, codex: null },
+      agentAppearanceVariant: "current",
+      agentModelFavoriteKeys: [],
+      agentModelFavoritesRevision: 0,
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "Fira Code, monospace",
       editorFontLigatures: true,
@@ -718,7 +766,10 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       agentCliKind: "claudeCode",
-      agentCliPath: null,
+      agentCliPaths: { claudeCode: null, codex: null },
+      agentAppearanceVariant: "current",
+      agentModelFavoriteKeys: [],
+      agentModelFavoritesRevision: 0,
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,

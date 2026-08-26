@@ -1,6 +1,9 @@
 import { type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Folder, FolderGit2, Play, Plus, Send, TriangleAlert } from "lucide-react";
-import { useAgentModelFavorites } from "../../application/useAgentModelFavorites";
+import {
+  useAgentModelFavorites,
+  type AgentModelFavoritesPersistence,
+} from "../../application/useAgentModelFavorites";
 import {
   agentLaunchIsDangerous,
   defaultAgentLaunchOptions,
@@ -55,6 +58,7 @@ export interface AgentComposerSubmission {
 }
 
 export interface AgentComposerProps {
+  readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
   readonly mode: AgentComposerMode;
   readonly target: AgentComposerTarget | null;
   readonly prompt: string;
@@ -88,6 +92,7 @@ export function AgentComposer({
   isolationReason,
   launch,
   launchProvider,
+  modelFavoritesPersistence = null,
   mode,
   onDangerousConfirmedChange,
   onIsolationChange,
@@ -106,7 +111,7 @@ export function AgentComposer({
   worktreeOnlyReason,
 }: AgentComposerProps) {
   const compact = useCompactComposerControls();
-  const favorites = useAgentModelFavorites();
+  const favorites = useAgentModelFavorites(modelFavoritesPersistence);
   const followUp = mode.kind === "followUp";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason = composerTargetReason(followUp, target);

@@ -53,7 +53,7 @@
       "rawLines": 2145,
       "structuralTokens": 14163
     },
-    "src/App.tsx": { "rawLines": 1503, "structuralTokens": 7441 },
+    "src/App.tsx": { "rawLines": 1493, "structuralTokens": 7412 },
     "src/application/useDocumentSync.ts": {
       "rawLines": 1526,
       "structuralTokens": 5300
@@ -79,8 +79,8 @@
       "structuralTokens": 7381
     },
     "src/components/SettingsDialog.tsx": {
-      "rawLines": 1439,
-      "structuralTokens": 5814
+      "rawLines": 1421,
+      "structuralTokens": 5758
     },
     "src/domain/latteLinkNavigation.ts": {
       "rawLines": 2446,

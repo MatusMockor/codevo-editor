@@ -88,6 +88,7 @@ import { WindowChrome } from "./components/WindowChrome";
 import { WorkbenchNavigationChrome } from "./components/WorkbenchNavigationChrome";
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
 import { useAppActiveLargeDocumentPresentation } from "./components/useAppActiveLargeDocumentPresentation";
+import { useAppWorkbenchThemes } from "./components/useAppWorkbenchThemes";
 import { languageServerStatusLabel } from "./domain/languageServerRuntime";
 import { defaultLargeSmartDocumentPolicy } from "./domain/largeDocumentPolicy";
 import type { EditorPosition } from "./domain/languageServerFeatures";
@@ -99,7 +100,6 @@ import {
 } from "./domain/ideActivity";
 import type { GitChangeStatus } from "./domain/git";
 import { createWorkspaceEditorSessionOwnerKey } from "./domain/editorSessionOwnerKey";
-import { monacoThemeForAppTheme, terminalThemeForAppTheme } from "./domain/settings";
 import { isDirty } from "./domain/workspace";
 import type { EditorDocument, ImageTab } from "./domain/workspace";
 import { createInitialEditorGroupsState, type EditorGroupId } from "./domain/editorGroups";
@@ -114,6 +114,7 @@ import { workbenchComposition } from "./workbenchComposition";
 import "./App.css";
 
 const {
+  agentCliVersionGateway,
   agentRootLeaseGateway,
   artisanRoutesGateway,
   cancelJavaScriptTypeScriptLanguageServerRequest,
@@ -173,15 +174,6 @@ const {
 const debugTextClipboard = new BrowserTextClipboardGateway();
 const editorChangeHunksGateway = new BrowserEditorChangeHunksGateway();
 
-// Warm the Shiki highlighter in the background as soon as the app boots so the
-// first opened file gets correct syntax colors immediately instead of showing
-// the fallback theme for ~300ms while the highlighter bundle loads and inits.
-//
-// `createAppHighlighter` is an idempotent singleton (it caches and returns the
-// same promise), so this preload only ever triggers one load. The result is
-// intentionally ignored here — `setupShikiTokenization` later awaits the same
-// cached promise on first file open (cache hit). Rejections are swallowed so a
-// preload failure can never crash boot; the real consumer still surfaces errors.
 function App() {
   const debugCommandBridges = useDebugCommandBridges();
   const prefersLightTheme = usePrefersLightTheme();
@@ -682,13 +674,9 @@ function App() {
       workbench.workspaceRoot,
     ],
   );
-  const monacoTheme = useMemo(
-    () => monacoThemeForAppTheme(workbench.appSettings.theme, prefersLightTheme),
-    [prefersLightTheme, workbench.appSettings.theme],
-  );
-  const terminalTheme = useMemo(
-    () => terminalThemeForAppTheme(workbench.appSettings.theme, prefersLightTheme),
-    [prefersLightTheme, workbench.appSettings.theme],
+  const { monacoTheme, terminalTheme } = useAppWorkbenchThemes(
+    workbench.appSettings.theme,
+    prefersLightTheme,
   );
   const agentLayout = workbench.agentWorkbench;
   const resizeAgentRightPanel = useCallback(
@@ -1117,6 +1105,7 @@ function App() {
       />
 
       <WorkbenchShellFrame
+        agentVariant={workbench.appSettings.agentAppearanceVariant}
         agent={
           workbench.workspaceRoot ? (
             <AgentWorkbenchScreen
@@ -1492,6 +1481,7 @@ function App() {
       />
 
       <WorkbenchSettingsDialogHost
+        agentCliVersionGateway={agentCliVersionGateway}
         systemFontGateway={systemFontGateway}
         workbench={workbench}
         workspaceFiles={workspaceGateways.files}

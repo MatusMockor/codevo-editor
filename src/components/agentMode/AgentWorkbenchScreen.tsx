@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, type PointerEvent } from "react";
 import { workbenchAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
+import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentSurfaceFileTreeDependencies } from "../../application/useAgentSurfaceFileTree";
 import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
 import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
 import type { useWorkbenchController } from "../../application/useWorkbenchController";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
+import { normalizeAgentModelFavoriteKeys } from "../../domain/agentSettings";
 import type { GitChangeStatus } from "../../domain/git";
 import { shortcutForCommand, type KeymapSettings } from "../../domain/keymap";
 import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
@@ -41,10 +43,13 @@ export type AgentWorkbenchScreenWorkbench = Pick<
   | "openProblemNotice"
   | "openWorkspaceRoot"
   | "previewFile"
+  | "saveWorkbenchSettings"
   | "setSidebarView"
   | "showBottomPanelView"
   | "workspaceIdentityDescriptor"
   | "workspaceRoot"
+  | "workspaceSettings"
+  | "workspaceTrust"
 > & { readonly agents: WorkbenchAgentsSurface };
 
 export interface AgentWorkbenchScreenProps {
@@ -87,8 +92,43 @@ export function AgentWorkbenchScreen({
   const { agentWorkbench, appSettings, nodePackageScripts, workspaceRoot } = workbench;
   const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
   const { openWorkspaceRoot } = workbench;
+  const { saveWorkbenchSettings } = workbench;
   const { bottomPanelView, bottomPanelVisible, hideBottomPanel, showBottomPanelView } = workbench;
   const workspaceId = workbench.workspaceIdentityDescriptor?.workspaceId ?? null;
+  const appSettingsRef = useRef(appSettings);
+  const workspaceSettingsRef = useRef(workbench.workspaceSettings);
+  const workspaceTrustRef = useRef(workbench.workspaceTrust);
+  appSettingsRef.current = appSettings;
+  workspaceSettingsRef.current = workbench.workspaceSettings;
+  workspaceTrustRef.current = workbench.workspaceTrust;
+  const saveAgentModelFavorites = useCallback(
+    async (keys: ReadonlyArray<string>, revision: number): Promise<void> => {
+      const agentModelFavoriteKeys = normalizeAgentModelFavoriteKeys(keys);
+      await saveWorkbenchSettings(
+        {
+          ...appSettingsRef.current,
+          agentModelFavoriteKeys,
+          agentModelFavoritesRevision: revision,
+        },
+        workspaceSettingsRef.current,
+        workspaceTrustRef.current?.trusted ?? null,
+        "reportAndReject",
+      );
+    },
+    [saveWorkbenchSettings],
+  );
+  const modelFavoritesPersistence = useMemo<AgentModelFavoritesPersistence>(
+    () => ({
+      keys: appSettings.agentModelFavoriteKeys,
+      revision: appSettings.agentModelFavoritesRevision,
+      save: saveAgentModelFavorites,
+    }),
+    [
+      appSettings.agentModelFavoriteKeys,
+      appSettings.agentModelFavoritesRevision,
+      saveAgentModelFavorites,
+    ],
+  );
 
   const scripts = useMemo<AgentThreadScriptRunner>(
     () => ({
@@ -257,6 +297,7 @@ export function AgentWorkbenchScreen({
       agents={workbench.agents}
       chrome={chrome}
       key={workspaceRoot ?? ""}
+      modelFavoritesPersistence={modelFavoritesPersistence}
       onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
       onTrustProject={(projectRootKey) => void projects.trustProject(projectRootKey)}
       overflowRootPaths={projects.overflowRootPaths}

@@ -64,6 +64,47 @@ describe("useWorkbenchAgents composition", () => {
     harness.unmount();
   });
 
+  it("selects the current provider path for every new dispatch", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false });
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    harness.appSettings.agentCliPaths = {
+      claudeCode: "/usr/local/bin/claude",
+      codex: "/usr/local/bin/codex",
+    };
+    await act(async () => {
+      await harness.hook().startThread({
+        projectRootKey: ACTIVE_ROOT,
+        repositoryRoot: ACTIVE_ROOT,
+        prompt: "Claude turn",
+        isolation: "worktree",
+        unsafeInPlaceConfirmationKey: null,
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+    });
+    expect(harness.startedRequests[0]).toMatchObject({
+      agentCliKind: "claudeCode",
+      agentCliPath: "/usr/local/bin/claude",
+    });
+
+    harness.appSettings.agentCliKind = "codex";
+    harness.rerender();
+    await act(async () => {
+      await harness.hook().startThread({
+        projectRootKey: ACTIVE_ROOT,
+        repositoryRoot: ACTIVE_ROOT,
+        prompt: "Codex turn",
+        isolation: "worktree",
+        unsafeInPlaceConfirmationKey: null,
+        launch: defaultAgentLaunchOptions("codex"),
+      });
+    });
+    expect(harness.startedRequests[1]).toMatchObject({
+      agentCliKind: "codex",
+      agentCliPath: "/usr/local/bin/codex",
+    });
+    harness.unmount();
+  });
+
   it("dispatches a nested repository with the replacement registered workspace identity", async () => {
     const nestedRepository = `${ACTIVE_ROOT}/packages/api`;
     const harness = renderWorkbenchAgents({
@@ -417,7 +458,7 @@ interface HarnessOptions {
 function renderWorkbenchAgents(options: HarnessOptions) {
   const appSettings: AppSettings = {
     ...defaultAppSettings(),
-    agentCliPath: CLI_PATH,
+    agentCliPaths: { claudeCode: CLI_PATH, codex: null },
     workspaceTabs: [...(options.workspaceTabs ?? [])],
   };
   const workspaceSettings: WorkspaceSettings = defaultWorkspaceSettings();

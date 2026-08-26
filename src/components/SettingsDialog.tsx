@@ -1,6 +1,7 @@
 import { Settings2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeShortcutInput } from "../domain/keymap";
+import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
 import {
   appThemeOptions,
   maxEditorFontSize,
@@ -33,7 +34,7 @@ import type {
   PhpToolAvailability,
 } from "../domain/workspace";
 import { settingsDialogSections } from "./settingsDialogModel";
-import { AgentsSettingsSection } from "./AgentsSettingsSection";
+import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 import { IndexSettings } from "./IndexSettingsSection";
 import { KeymapSettingsPanel } from "./KeymapSettingsPanel";
 import { PhpSettings } from "./PhpSettingsSection";
@@ -46,6 +47,7 @@ export interface SettingsSaveInput {
 }
 
 interface SettingsDialogProps {
+  agentCliVersionGateway?: AgentCliVersionGateway | null;
   appSettings: AppSettings;
   /**
    * Auto-detected git repository directories (workspace-root-relative, excluding
@@ -73,6 +75,7 @@ const emptySystemFontGateway: SystemFontGateway = {
 };
 
 export function SettingsDialog({
+  agentCliVersionGateway = null,
   appSettings,
   gitDetectedRepositoryMappings = [],
   initialSection = "general",
@@ -555,34 +558,13 @@ export function SettingsDialog({
               ) : null}
 
               {activeSection === "agents" ? (
-                <AgentsSettingsSection
+                <AgentsSettingsPanel
+                  agentCliVersionGateway={agentCliVersionGateway}
                   appSettings={draftAppSettings}
                   hasWorkspace={hasWorkspace}
+                  updateAppSettings={updateAppSettings}
+                  updateWorkspaceSettings={updateWorkspaceSettings}
                   workspaceSettings={draftWorkspaceSettings}
-                  onChangeAgentCliPath={(agentCliPath) =>
-                    updateAppSettings({
-                      ...draftAppSettingsRef.current,
-                      agentCliPath,
-                    })
-                  }
-                  onChangeAgentCliKind={(agentCliKind) =>
-                    updateAppSettings({
-                      ...draftAppSettingsRef.current,
-                      agentCliKind,
-                    })
-                  }
-                  onChangeMaxConcurrentAgentTasks={(maxConcurrentAgentTasks) =>
-                    updateAppSettings({
-                      ...draftAppSettingsRef.current,
-                      maxConcurrentAgentTasks,
-                    })
-                  }
-                  onChangeAgentIsolationPolicy={(agentIsolationPolicy) =>
-                    updateWorkspaceSettings({
-                      ...draftWorkspaceSettingsRef.current,
-                      agentIsolationPolicy,
-                    })
-                  }
                 />
               ) : null}
 

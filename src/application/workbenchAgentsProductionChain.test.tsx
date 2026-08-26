@@ -19,6 +19,8 @@ import {
   type WorkspaceSettingsIdentity,
 } from "../domain/settings";
 import { AgentModeView } from "../components/agentMode/AgentModeView";
+import { useAgentModelFavorites } from "./useAgentModelFavorites";
+import { normalizeAgentModelFavoriteKeys } from "../domain/agentSettings";
 import { chromeFixture } from "../components/agentMode/agentWorkbenchChromeTestFixtures";
 import { waitForReact } from "../test/reactTestLifecycle";
 import {
@@ -66,7 +68,7 @@ describe("workbench agents production chain", () => {
       gitWorktreeGateway: gitWorktreeGateway.gateway,
       appSettings: {
         ...defaultAppSettings(),
-        agentCliPath: "/usr/local/bin/claude",
+        agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
         recentWorkspacePath: "/workspace-a",
         workspaceTabs: ["/workspace-a"],
       },
@@ -93,6 +95,8 @@ describe("workbench agents production chain", () => {
     const started = agentTaskGateway.started[0];
     expect(started?.repositoryRoot).toBe("/workspace-a");
     expect(started?.workspaceId).toBe("workspace-a");
+    expect(started?.agentCliPath).toBe("/usr/local/bin/claude");
+    expect(started?.agentCliKind).toBe("claudeCode");
     expect(started?.isolation).toBe("worktree");
     const threadId = gitWorktreeGateway.added[0]?.taskId ?? "";
     expect(started?.taskId).not.toBe(threadId);
@@ -109,13 +113,91 @@ describe("workbench agents production chain", () => {
     expect(host.textContent).toContain("Fix the failing unit test.");
   });
 
+  it("rolls a favorite back when the real app-settings persistence command rejects", async () => {
+    const appSettings = {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace-a",
+      workspaceTabs: ["/workspace-a"],
+    };
+    const settingsGateway = memorySettingsGateway(appSettings);
+    let rejectFavoriteSave: ((error: unknown) => void) | null = null;
+    const saveAppSettings = vi.fn(async (settings: AppSettings) => {
+      if (settings.agentModelFavoritesRevision === 0) return;
+      if (rejectFavoriteSave !== null) return;
+      await new Promise<void>((_resolve, reject) => {
+        rejectFavoriteSave = reject;
+      });
+    });
+    const { getWorkbench } = renderController({
+      agentTaskGateway: fakeAgentTaskGateway().gateway,
+      gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
+      appSettings,
+      settingsGateway: { ...settingsGateway, saveAppSettings },
+      workspaceIdentityGateway: identityGateway(["workspace-owner-a", "workspace-owner-b"]),
+    });
+    await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+    let favorite = false;
+
+    function FavoriteProbe() {
+      const favorites = useAgentModelFavorites({
+        keys: getWorkbench().appSettings.agentModelFavoriteKeys,
+        revision: getWorkbench().appSettings.agentModelFavoritesRevision,
+        save: async (keys, revision) => {
+          const workbench = getWorkbench();
+          await workbench.saveWorkbenchSettings(
+            {
+              ...workbench.appSettings,
+              agentModelFavoriteKeys: normalizeAgentModelFavoriteKeys(keys),
+              agentModelFavoritesRevision: revision,
+            },
+            workbench.workspaceSettings,
+            workbench.workspaceTrust?.trusted ?? null,
+            "reportAndReject",
+          );
+        },
+      });
+      favorite = favorites.isFavorite("claudeCode/opus");
+      return (
+        <button onClick={() => favorites.toggle("claudeCode/opus")} type="button">
+          Toggle favorite
+        </button>
+      );
+    }
+
+    act(() => panelRoot?.render(<FavoriteProbe />));
+    await act(async () => {
+      getPanelHost().querySelector("button")?.click();
+      await flushAsyncTurns();
+    });
+    expect(favorite).toBe(true);
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot("/workspace-a");
+      await flushAsyncTurns();
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor?.workspaceId).toBe("workspace-owner-b");
+    await act(async () => {
+      rejectFavoriteSave?.(new Error("settings unavailable"));
+      await flushAsyncTurns();
+    });
+
+    expect(saveAppSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentModelFavoriteKeys: ["claudeCode/opus"],
+        agentModelFavoritesRevision: 1,
+      }),
+    );
+    expect(favorite).toBe(false);
+    expect(getWorkbench().appSettings.agentModelFavoriteKeys).toEqual([]);
+    expect(getWorkbench().appSettings.agentModelFavoritesRevision).toBe(0);
+  });
+
   it("expands the editor and collapses back to the agent layout", async () => {
     const { getWorkbench } = renderController({
       agentTaskGateway: fakeAgentTaskGateway().gateway,
       gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
       appSettings: {
         ...defaultAppSettings(),
-        agentCliPath: "/usr/local/bin/claude",
+        agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
         recentWorkspacePath: "/workspace-a",
         workspaceTabs: ["/workspace-a"],
       },
@@ -144,7 +226,7 @@ describe("workbench agents production chain", () => {
       gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
       appSettings: {
         ...defaultAppSettings(),
-        agentCliPath: "/usr/local/bin/claude",
+        agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
         recentWorkspacePath: "/workspace-a",
         workspaceTabs: ["/workspace-a"],
       },
@@ -175,7 +257,7 @@ describe("workbench agents production chain", () => {
   it("keeps the layout per workspace tab across A -> B -> A", async () => {
     const appSettings: AppSettings = {
       ...defaultAppSettings(),
-      agentCliPath: "/usr/local/bin/claude",
+      agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
       recentWorkspacePath: "/workspace-a",
       workspaceTabs: ["/workspace-a", "/workspace-b"],
     };
@@ -319,12 +401,18 @@ function fakeGitWorktreeGateway(): {
   return { gateway, added };
 }
 
-function identityGateway(): WorkbenchWorkspaceGateways["identity"] &
-  WorkspaceIdentityDescriptorResolver {
+function identityGateway(
+  workspaceIds: ReadonlyArray<string> = ["workspace-a"],
+): WorkbenchWorkspaceGateways["identity"] & WorkspaceIdentityDescriptorResolver {
   const descriptors = new Map<string, WorkspaceIdentityDescriptor>();
+  let opened = 0;
+  const nextDescriptor = (): WorkspaceIdentityDescriptor => ({
+    ...workspaceDescriptorA(),
+    workspaceId: workspaceIds[Math.min(opened, workspaceIds.length - 1)] ?? "workspace-a",
+  });
   return {
     descriptorForPath: (path) => match(path, descriptors)?.descriptor ?? null,
-    getDescriptor: vi.fn(async () => nativeDescriptor(workspaceDescriptorA())),
+    getDescriptor: vi.fn(async () => nativeDescriptor(nextDescriptor())),
     matchForPath: (path, workspaceId) => {
       const resolved = match(path, descriptors, workspaceId);
       if (!resolved) {
@@ -338,7 +426,8 @@ function identityGateway(): WorkbenchWorkspaceGateways["identity"] &
     },
     openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
     openPath: vi.fn(async () => {
-      const resolved = workspaceDescriptorA();
+      const resolved = nextDescriptor();
+      opened += 1;
       descriptors.set(resolved.workspaceId, resolved);
       return resolved;
     }),

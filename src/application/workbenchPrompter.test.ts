@@ -16,9 +16,12 @@ describe("confirmWorkbenchAction", () => {
   });
 
   it.each([
-    ["sync throw", () => {
-      throw new Error("unavailable");
-    }],
+    [
+      "sync throw",
+      () => {
+        throw new Error("unavailable");
+      },
+    ],
     ["rejected promise", () => Promise.reject(new Error("unavailable"))],
   ])("fails closed for %s", async (_label, confirm) => {
     await expect(confirmWorkbenchAction({ confirm }, "Continue?")).resolves.toBe(false);

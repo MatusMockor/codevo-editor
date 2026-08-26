@@ -11,13 +11,18 @@ import {
 import { normalizeGitCommitMessageHistory } from "./gitCommitMessageHistory";
 import {
   defaultAgentAppSettings,
+  normalizeAgentAppearanceVariant,
   normalizeAgentCliKind,
-  normalizeAgentCliPath,
+  normalizeAgentCliPaths,
+  normalizeAgentModelFavoritesSnapshot,
   normalizeAgentIsolationPolicy,
   normalizeMaxConcurrentAgentTasks,
   DEFAULT_AGENT_ISOLATION_POLICY,
   type AgentCliKind,
+  type AgentAppearanceVariant,
+  type AgentCliPaths,
   type AgentIsolationPolicy,
+  type AgentModelFavoriteKey,
 } from "./agentSettings";
 import {
   parseAgentWorkbenchLayout,
@@ -124,8 +129,11 @@ const genericEditorFontFamilies = new Set([
 ]);
 
 export interface AppSettings {
-  agentCliPath: string | null;
+  agentCliPaths: AgentCliPaths;
   agentCliKind: AgentCliKind;
+  agentAppearanceVariant: AgentAppearanceVariant;
+  agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
+  agentModelFavoritesRevision: number;
   maxConcurrentAgentTasks: number;
   editorFontFamily: string;
   editorFontLigatures: boolean;
@@ -463,10 +471,23 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   const wordWrapEnabled = normalizeBoolean(value.wordWrapEnabled, false);
   const userSnippets = normalizeUserSnippets(value.userSnippets);
   const workspaceTabs = normalizeWorkspaceTabs(value.workspaceTabs, recentWorkspacePath);
+  const agentCliKind = normalizeAgentCliKind(value.agentCliKind);
+  const agentCliPaths = normalizeAgentCliPaths(
+    value.agentCliPaths,
+    value.agentCliPath,
+    agentCliKind,
+  );
+  const agentModelFavorites = normalizeAgentModelFavoritesSnapshot(
+    value.agentModelFavoriteKeys,
+    value.agentModelFavoritesRevision,
+  );
 
   return {
-    agentCliPath: normalizeAgentCliPath(value.agentCliPath),
-    agentCliKind: normalizeAgentCliKind(value.agentCliKind),
+    agentCliPaths,
+    agentCliKind,
+    agentAppearanceVariant: normalizeAgentAppearanceVariant(value.agentAppearanceVariant),
+    agentModelFavoriteKeys: agentModelFavorites.keys,
+    agentModelFavoritesRevision: agentModelFavorites.revision,
     maxConcurrentAgentTasks: normalizeMaxConcurrentAgentTasks(value.maxConcurrentAgentTasks),
     editorFontFamily,
     editorFontLigatures,
