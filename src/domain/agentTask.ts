@@ -50,6 +50,7 @@ export interface AgentTaskOutputEvent {
 export interface StartAgentTaskRequest {
   readonly taskId: string;
   readonly workspaceId: string;
+  readonly projectRoot: string;
   readonly repositoryRoot: string;
   readonly cwd: string;
   readonly isolation: AgentTaskIsolation;
@@ -222,6 +223,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
     [
       "taskId",
       "workspaceId",
+      "projectRoot",
       "repositoryRoot",
       "cwd",
       "isolation",
@@ -247,6 +249,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
   return {
     taskId: agentTaskId(request.taskId, "request.taskId"),
     workspaceId: agentWorkspaceId(request.workspaceId, "request.workspaceId"),
+    projectRoot: agentPath(request.projectRoot, "request.projectRoot"),
     repositoryRoot,
     cwd,
     isolation,
@@ -344,7 +347,7 @@ function worktreePath(value: unknown, isolation: AgentTaskIsolation, path: strin
 }
 
 function agentPath(value: unknown, path: string): string {
-  const candidate = boundedText(value, path, MAX_AGENT_TASK_PATH_BYTES, false);
+  const candidate = boundedText(value, path, MAX_AGENT_TASK_PATH_BYTES, false, true);
   if (candidate.trim() === "") invalid(path, "a non-blank bounded path");
   return candidate;
 }

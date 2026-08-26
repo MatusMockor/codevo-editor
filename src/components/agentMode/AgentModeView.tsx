@@ -69,14 +69,14 @@ export function AgentModeView({
     [projects, agents.orphanedWorktrees, agents.threads],
   );
 
-  const navigation = useAgentThreadNavigation({ agents, groups });
+  const navigation = useAgentThreadNavigation({ agents, groups, projects });
   const { selectedThread, selectedThreadId, railScope, find } = navigation;
 
   const composer = useAgentComposerState({
     agents,
     groups,
     projects,
-    railScope,
+    railScope: navigation.composerScope,
     selectedThread,
     onClearSelectedThread: navigation.clearSelectedThread,
     onThreadStarted: navigation.selectStartedThread,

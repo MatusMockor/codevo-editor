@@ -14,10 +14,25 @@ export type ShortcutSequence =
 
 export interface ShortcutEvent {
   readonly altKey: boolean;
+  readonly code?: string;
   readonly ctrlKey: boolean;
+  readonly getModifierState?: (keyArg: "AltGraph") => boolean;
   readonly key: string;
   readonly metaKey: boolean;
   readonly shiftKey: boolean;
+}
+
+export function shortcutKeyFromKeyboardEvent(
+  event: Pick<ShortcutEvent, "altKey" | "code" | "getModifierState" | "key">,
+): string {
+  if (!event.altKey) return event.key === " " ? "Space" : event.key;
+  if (event.getModifierState?.("AltGraph")) return event.key === " " ? "Space" : event.key;
+  if (/^[A-Za-z]$/u.test(event.key)) {
+    return event.key === " " ? "Space" : event.key;
+  }
+  const codeMatch = /^Key([A-Z])$/u.exec(event.code ?? "");
+  if (!codeMatch) return event.key === " " ? "Space" : event.key;
+  return codeMatch[1] ?? event.key;
 }
 
 export interface ShortcutSequenceLookup<CommandId extends string = string> {
@@ -153,7 +168,8 @@ export function shortcutSequenceForPlatform(value: string, platform: ShortcutPla
 }
 
 export function shortcutStrokeFromKeyboardEvent(event: ShortcutEvent): ShortcutStroke | null {
-  if (isModifier(event.key) || event.key === "+") {
+  const key = shortcutKeyFromKeyboardEvent(event);
+  if (isModifier(key) || key === "+") {
     return null;
   }
 
@@ -162,7 +178,7 @@ export function shortcutStrokeFromKeyboardEvent(event: ShortcutEvent): ShortcutS
   if (event.ctrlKey) parts.push("Ctrl");
   if (event.shiftKey) parts.push("Shift");
   if (event.altKey) parts.push("Alt");
-  parts.push(event.key === " " ? "Space" : event.key);
+  parts.push(key);
   return parseShortcutStroke(parts.join("+"));
 }
 
@@ -177,7 +193,7 @@ export function matchesShortcutStroke(
     event.ctrlKey === (stroke.ctrl || primaryOnNonMac) &&
     event.altKey === stroke.alt &&
     event.shiftKey === stroke.shift &&
-    comparableKey(event.key === " " ? "Space" : event.key) === stroke.key
+    comparableKey(shortcutKeyFromKeyboardEvent(event)) === stroke.key
   );
 }
 

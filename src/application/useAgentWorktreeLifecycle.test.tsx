@@ -17,6 +17,7 @@ import {
 
 const ROOT_KEY = "/workspace/app";
 const OWNER_ID = "agent-root:0123456789abcdef";
+const RUNTIME_OWNER_ID = "workspace-replaced";
 const REPOSITORY_ROOT = "/workspace/app";
 const OWNED_WORKTREE = "/workspace/app/.worktrees/agt-1-0a1b";
 const ORPHAN_WORKTREE = "/workspace/app/.worktrees/agt-9-0a1b";
@@ -277,9 +278,167 @@ describe("useAgentWorktreeLifecycle orphans", () => {
     );
     harness.unmount();
   });
+
+  it("publishes no orphan removal result after the project owner is replaced", async () => {
+    const harness = renderLifecycle({ worktrees: [worktree(ORPHAN_WORKTREE)] });
+    await waitForReact(() => expect(harness.hook().orphanedWorktrees).toHaveLength(1));
+    const pendingRemoval = createDeferred<undefined>();
+    harness.gitWorktreeGateway.removeWorktree.mockImplementationOnce(
+      async () => pendingRemoval.promise,
+    );
+
+    let removal: Promise<void> | null = null;
+    act(() => {
+      removal = harness.hook().removeOrphanedWorktree(ORPHAN_WORKTREE);
+    });
+    await waitForReact(() => {
+      expect(harness.gitWorktreeGateway.removeWorktree).toHaveBeenCalledTimes(1);
+    });
+    harness.set({ projects: [project({ generation: 2 })] });
+    const noticeCount = harness.setNotice.mock.calls.length;
+    const reportCount = harness.reportError.mock.calls.length;
+    pendingRemoval.resolve(undefined);
+    await act(async () => {
+      await removal;
+    });
+
+    expect(harness.setNotice).toHaveBeenCalledTimes(noticeCount);
+    expect(harness.reportError).toHaveBeenCalledTimes(reportCount);
+    await waitForReact(() => {
+      expect(harness.hook().orphanedWorktrees[0]?.removing).toBe(false);
+    });
+    harness.unmount();
+  });
+
+  it("publishes no orphan removal error after the project owner is replaced", async () => {
+    const harness = renderLifecycle({ worktrees: [worktree(ORPHAN_WORKTREE)] });
+    await waitForReact(() => expect(harness.hook().orphanedWorktrees).toHaveLength(1));
+    const pendingRemoval = createDeferred<undefined>();
+    harness.gitWorktreeGateway.removeWorktree.mockImplementationOnce(
+      async () => pendingRemoval.promise,
+    );
+
+    let removal: Promise<void> | null = null;
+    act(() => {
+      removal = harness.hook().removeOrphanedWorktree(ORPHAN_WORKTREE);
+    });
+    await waitForReact(() => {
+      expect(harness.gitWorktreeGateway.removeWorktree).toHaveBeenCalledTimes(1);
+    });
+    harness.set({ projects: [project({ generation: 2 })] });
+    const noticeCount = harness.setNotice.mock.calls.length;
+    const reportCount = harness.reportError.mock.calls.length;
+    pendingRemoval.reject(new Error("remove failed"));
+    await act(async () => {
+      await removal;
+    });
+
+    expect(harness.setNotice).toHaveBeenCalledTimes(noticeCount);
+    expect(harness.reportError).toHaveBeenCalledTimes(reportCount);
+    harness.unmount();
+  });
 });
 
 describe("useAgentWorktreeLifecycle missing worktrees", () => {
+  it("keeps a freshly created worktree present while an older listing settles", async () => {
+    const harness = renderLifecycle({ worktrees: [] });
+    await waitForReact(() => {
+      expect([...harness.hook().missingWorktreeThreadIds]).toEqual(["agt-1-0a1b"]);
+    });
+    const pendingListing = createDeferred<ReadonlyArray<GitWorktreeDescriptor>>();
+    harness.gitWorktreeGateway.listWorktrees.mockImplementationOnce(
+      async () => pendingListing.promise,
+    );
+
+    let refresh: Promise<void> | null = null;
+    act(() => {
+      refresh = harness.hook().refreshOrphanedWorktrees();
+    });
+    await waitForReact(() => {
+      expect(harness.gitWorktreeGateway.listWorktrees).toHaveBeenCalledTimes(2);
+    });
+    act(() => harness.hook().noteCreatedWorktree(REPOSITORY_ROOT, OWNED_WORKTREE));
+    expect([...harness.hook().missingWorktreeThreadIds]).toEqual([]);
+
+    harness.set({ worktrees: [worktree(OWNED_WORKTREE)] });
+    await act(async () => {
+      await harness.hook().refreshOrphanedWorktrees();
+    });
+    expect([...harness.hook().missingWorktreeThreadIds]).toEqual([]);
+
+    pendingListing.resolve([]);
+    await act(async () => {
+      await refresh;
+    });
+    expect([...harness.hook().missingWorktreeThreadIds]).toEqual([]);
+
+    harness.set({ worktrees: [] });
+    await act(async () => {
+      await harness.hook().refreshOrphanedWorktrees();
+    });
+    expect([...harness.hook().missingWorktreeThreadIds]).toEqual(["agt-1-0a1b"]);
+    harness.unmount();
+  });
+
+  it("rejects a listing from before an A to B to A ownership round trip", async () => {
+    const harness = renderLifecycle();
+    await waitForReact(() => {
+      expect([...harness.hook().missingWorktreeThreadIds]).toEqual([]);
+    });
+    const pendingListing = createDeferred<ReadonlyArray<GitWorktreeDescriptor>>();
+    harness.gitWorktreeGateway.listWorktrees.mockImplementationOnce(
+      async () => pendingListing.promise,
+    );
+
+    let staleRefresh: Promise<void> | null = null;
+    act(() => {
+      staleRefresh = harness.hook().refreshOrphanedWorktrees();
+    });
+    await waitForReact(() => {
+      expect(harness.gitWorktreeGateway.listWorktrees).toHaveBeenCalledTimes(2);
+    });
+    harness.set({
+      projects: [project({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 })],
+    });
+    harness.set({ projects: [project({ generation: 3 })] });
+    pendingListing.resolve([]);
+    await act(async () => {
+      await staleRefresh;
+    });
+
+    expect([...harness.hook().missingWorktreeThreadIds]).toEqual([]);
+    harness.unmount();
+  });
+
+  it("suppresses a listing error from before an A to B to A ownership round trip", async () => {
+    const harness = renderLifecycle();
+    await waitForReact(() => expect(harness.gitWorktreeGateway.listWorktrees).toHaveBeenCalled());
+    const pendingListing = createDeferred<ReadonlyArray<GitWorktreeDescriptor>>();
+    harness.gitWorktreeGateway.listWorktrees.mockImplementationOnce(
+      async () => pendingListing.promise,
+    );
+
+    let staleRefresh: Promise<void> | null = null;
+    act(() => {
+      staleRefresh = harness.hook().refreshOrphanedWorktrees();
+    });
+    await waitForReact(() => {
+      expect(harness.gitWorktreeGateway.listWorktrees).toHaveBeenCalledTimes(2);
+    });
+    harness.set({
+      projects: [project({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 })],
+    });
+    harness.set({ projects: [project({ generation: 3 })] });
+    const reportCount = harness.reportError.mock.calls.length;
+    pendingListing.reject(new Error("stale listing failed"));
+    await act(async () => {
+      await staleRefresh;
+    });
+
+    expect(harness.reportError).toHaveBeenCalledTimes(reportCount);
+    harness.unmount();
+  });
+
   it("marks a thread whose worktree is gone or prunable", async () => {
     const harness = renderLifecycle({ worktrees: [] });
 
@@ -315,7 +474,37 @@ describe("useAgentWorktreeLifecycle missing worktrees", () => {
   });
 });
 
+function createDeferred<T>(): {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+} {
+  let resolve = (_value: T): void => undefined;
+  let reject = (_error: unknown): void => undefined;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("useAgentWorktreeLifecycle removeWorktree", () => {
+  it("removes a worktree owned by a retained runtime identity", async () => {
+    const runtimeThread = thread({
+      owner: { rootKey: ROOT_KEY, ownerId: RUNTIME_OWNER_ID, repositoryRoot: REPOSITORY_ROOT },
+    });
+    const harness = renderLifecycle({
+      projects: [project({ runtimeOwnerIds: [OWNER_ID, RUNTIME_OWNER_ID] })],
+      threads: new Map([[runtimeThread.threadId, runtimeThread]]),
+    });
+    await act(() => harness.hook().removeWorktree(runtimeThread.threadId));
+    expect(harness.gitWorktreeGateway.removeWorktree).toHaveBeenCalledWith(
+      REPOSITORY_ROOT,
+      OWNED_WORKTREE,
+      false,
+    );
+    harness.unmount();
+  });
   it("removes the worktree of a settled thread and marks it removed", async () => {
     const harness = renderLifecycle();
     await waitForReact(() => {
@@ -356,6 +545,73 @@ describe("useAgentWorktreeLifecycle removeWorktree", () => {
 
   it("keeps the removal flag off when the dirty confirmation is refused", async () => {
     const harness = renderLifecycle({ changeCount: 1, confirmResult: false });
+    await waitForReact(() => {
+      expect(harness.gitWorktreeGateway.listWorktrees).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      await harness.hook().removeWorktree("agt-1-0a1b");
+    });
+
+    expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.onWorktreeRemovalChanged).toHaveBeenLastCalledWith("agt-1-0a1b", false);
+    harness.unmount();
+  });
+
+  it("does not remove a replacement thread that starts while confirmation is pending", async () => {
+    const harness = renderLifecycle({ changeCount: 1 });
+    const pendingConfirmation = createDeferred<boolean>();
+    harness.prompter.confirm.mockImplementationOnce(() => pendingConfirmation.promise as never);
+
+    let removal: Promise<void> | null = null;
+    act(() => {
+      removal = harness.hook().removeWorktree("agt-1-0a1b");
+    });
+    await waitForReact(() => expect(harness.prompter.confirm).toHaveBeenCalledTimes(1));
+    const replacement = thread({ turns: [runningTurnFixture()] });
+    harness.set({ threads: new Map([[replacement.threadId, replacement]]) });
+    pendingConfirmation.resolve(true);
+    await act(async () => {
+      await removal;
+    });
+
+    expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.onWorktreeRemovalChanged).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("publishes no confirmation error after an A to B to A ownership round trip", async () => {
+    const harness = renderLifecycle({ changeCount: 1 });
+    const pendingConfirmation = createDeferred<boolean>();
+    harness.prompter.confirm.mockImplementationOnce(() => pendingConfirmation.promise as never);
+
+    let removal: Promise<void> | null = null;
+    act(() => {
+      removal = harness.hook().removeWorktree("agt-1-0a1b");
+    });
+    await waitForReact(() => expect(harness.prompter.confirm).toHaveBeenCalledTimes(1));
+    harness.set({
+      projects: [project({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 })],
+    });
+    harness.set({ projects: [project({ generation: 3 })] });
+    const noticeCount = harness.setNotice.mock.calls.length;
+    const reportCount = harness.reportError.mock.calls.length;
+    pendingConfirmation.reject(new Error("dialog unavailable"));
+    await act(async () => {
+      await removal;
+    });
+
+    expect(harness.setNotice).toHaveBeenCalledTimes(noticeCount);
+    expect(harness.reportError).toHaveBeenCalledTimes(reportCount);
+    expect(harness.onWorktreeRemovalChanged).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("fails closed when the dirty confirmation rejects", async () => {
+    const harness = renderLifecycle({ changeCount: 1 });
+    harness.prompter.confirm.mockImplementationOnce(
+      () => Promise.reject(new Error("dialog unavailable")) as never,
+    );
     await waitForReact(() => {
       expect(harness.gitWorktreeGateway.listWorktrees).toHaveBeenCalled();
     });

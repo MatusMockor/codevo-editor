@@ -150,9 +150,9 @@ export function AgentShipPanel({
         )}
       </section>
 
-      {worktree && (
-        <section className="agent-info__section agent-ship__row">
-          <span className="agent-microlabel">integrate</span>
+      <section className="agent-info__section agent-ship__row">
+        <span className="agent-microlabel">integrate</span>
+        {worktree && (
           <fieldset className="agent-ship__modes">
             <legend className="agent-visually-hidden">Integration mode</legend>
             <ShipModeOption
@@ -170,20 +170,20 @@ export function AgentShipPanel({
               value="merge"
             />
           </fieldset>
-          <ShipAction
-            availability={integrateAvailability}
-            icon={<GitMerge aria-hidden="true" size={12} />}
-            label={`Integrate into ${status?.primary.branch ?? "the main checkout"}`}
-            onActivate={() => actions.onIntegrate(threadId, mode)}
-            variant="main"
-          />
-          {ship.kind === "integrated" && (
-            <p className="agent-note">
-              Merged {ship.mergeSha.slice(0, 8)} into {ship.intoBranch}.
-            </p>
-          )}
-        </section>
-      )}
+        )}
+        <ShipAction
+          availability={integrateAvailability}
+          icon={<GitMerge aria-hidden="true" size={12} />}
+          label={`Integrate into ${status?.primary.branch ?? "the main checkout"}`}
+          onActivate={() => actions.onIntegrate(threadId, mode)}
+          variant="main"
+        />
+        {worktree && ship.kind === "integrated" && (
+          <p className="agent-note">
+            Merged {ship.mergeSha.slice(0, 8)} into {ship.intoBranch}.
+          </p>
+        )}
+      </section>
 
       {worktree && (
         <section className="agent-info__section agent-ship__row">

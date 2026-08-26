@@ -37,6 +37,8 @@ describe("resolveComposerTarget", () => {
       kind: "repository",
       projectRootKey: BACKGROUND_ROOT,
       repositoryRoot: BACKGROUND_ROOT,
+      ownerId: "agent-root:api",
+      generation: 1,
     });
 
     expect(target).toEqual({ projectRootKey: BACKGROUND_ROOT, repositoryRoot: BACKGROUND_ROOT });
@@ -45,7 +47,7 @@ describe("resolveComposerTarget", () => {
   it("keeps an explicit selection over the active-tab fallback", () => {
     const target = resolveComposerTarget(
       [backgroundProject(), activeProject()],
-      { projectRootKey: BACKGROUND_ROOT, repositoryRoot: BACKGROUND_ROOT },
+      selection(BACKGROUND_ROOT, "agent-root:api", 1),
       null,
       ALL_SCOPE,
     );
@@ -53,15 +55,55 @@ describe("resolveComposerTarget", () => {
     expect(target).toEqual({ projectRootKey: BACKGROUND_ROOT, repositoryRoot: BACKGROUND_ROOT });
   });
 
-  it("falls back to the active-tab project when the selection no longer exists", () => {
+  it("fails closed when an explicit selection no longer exists", () => {
     const target = resolveComposerTarget(
       [backgroundProject(), activeProject()],
-      { projectRootKey: "/workspace/gone", repositoryRoot: "/workspace/gone" },
+      selection("/workspace/gone", "agent-root:gone", 1),
       null,
       ALL_SCOPE,
     );
 
-    expect(target).toEqual({ projectRootKey: ACTIVE_ROOT, repositoryRoot: ACTIVE_ROOT });
+    expect(target).toBeNull();
+  });
+
+  it("fails closed when an explicit scope no longer exists", () => {
+    const target = resolveComposerTarget([backgroundProject(), activeProject()], null, null, {
+      kind: "repository",
+      projectRootKey: "/workspace/gone",
+      repositoryRoot: "/workspace/gone",
+      ownerId: "agent-root:gone",
+      generation: 1,
+    });
+
+    expect(target).toBeNull();
+  });
+
+  it("keeps repository scope authoritative over a stale foreign selection", () => {
+    const target = resolveComposerTarget(
+      [backgroundProject(), activeProject()],
+      selection(ACTIVE_ROOT, "agent-root:app", 1),
+      null,
+      {
+        kind: "repository",
+        projectRootKey: BACKGROUND_ROOT,
+        repositoryRoot: BACKGROUND_ROOT,
+        ownerId: "agent-root:api",
+        generation: 1,
+      },
+    );
+
+    expect(target).toEqual({ projectRootKey: BACKGROUND_ROOT, repositoryRoot: BACKGROUND_ROOT });
+  });
+
+  it("does not rebind a selection after the same roots are registered by a new generation", () => {
+    const target = resolveComposerTarget(
+      [{ ...activeProject(), generation: 2 }],
+      selection(ACTIVE_ROOT, "agent-root:app", 1),
+      null,
+      ALL_SCOPE,
+    );
+
+    expect(target).toBeNull();
   });
 
   it("follows the owner of the selected thread over any project fallback", () => {
@@ -103,6 +145,8 @@ describe("composerTargetView", () => {
 function activeProject(): AgentComposerProjectOption {
   return {
     projectRootKey: ACTIVE_ROOT,
+    ownerId: "agent-root:app",
+    generation: 1,
     label: "app",
     origin: "active-tab",
     repositories: [{ repositoryRoot: ACTIVE_ROOT, label: "app" }],
@@ -112,9 +156,21 @@ function activeProject(): AgentComposerProjectOption {
 function backgroundProject(): AgentComposerProjectOption {
   return {
     projectRootKey: BACKGROUND_ROOT,
+    ownerId: "agent-root:api",
+    generation: 1,
     label: "api-service",
     origin: "background-tab",
     repositories: [{ repositoryRoot: BACKGROUND_ROOT, label: "api-service" }],
+  };
+}
+
+function selection(root: string, ownerId: string, generation: number) {
+  return {
+    kind: "bound" as const,
+    projectRootKey: root,
+    repositoryRoot: root,
+    ownerId,
+    generation,
   };
 }
 

@@ -7,9 +7,10 @@ use std::{
     collections::{HashMap, VecDeque},
     io,
     io::Read,
+    panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Condvar, Mutex, MutexGuard,
     },
     thread::{self, JoinHandle},
@@ -28,6 +29,7 @@ pub const AGENT_TASK_OUTPUT_EVENT_CHANNEL: &str = "agent-task://output";
 pub(crate) const DUPLICATE_AGENT_TASK_ERROR: &str =
     "An agent task with this taskId already exists.";
 pub(crate) const AGENT_TASK_NOT_REGISTERED_ERROR: &str = "Agent task is not registered.";
+pub(crate) const AGENT_TASK_STARTS_CLOSED_ERROR: &str = "Agent task startup is closed.";
 pub(crate) const AGENT_TASK_TIMEOUT_MESSAGE: &str = "agent task exceeded maximum runtime";
 
 const MAX_AGENT_TASK_ID_BYTES: usize = 64;
@@ -36,6 +38,7 @@ const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(500);
 const FORCE_STOP_TIMEOUT: Duration = Duration::from_millis(500);
 const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const PUMP_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+const AGENT_TASK_START_PANIC_ERROR: &str = "Agent task startup failed unexpectedly.";
 
 #[cfg(unix)]
 pub(crate) const TERMINATE_PROCESS_GROUP_SIGNAL: i32 = libc::SIGTERM;
@@ -153,6 +156,7 @@ enum AgentProcessGroupState {
 struct AgentProcessGroup {
     state: Mutex<AgentProcessGroupState>,
     signals: Arc<dyn AgentProcessGroupSignalSender>,
+    force_requested: AtomicBool,
 }
 
 impl AgentProcessGroup {
@@ -160,6 +164,7 @@ impl AgentProcessGroup {
         Arc::new(Self {
             state: Mutex::new(AgentProcessGroupState::Active { process_group_id }),
             signals,
+            force_requested: AtomicBool::new(false),
         })
     }
 
@@ -171,7 +176,18 @@ impl AgentProcessGroup {
         if process_group_id <= 0 {
             return;
         }
-        let _ = self.signals.send(process_group_id, signal);
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _ = self.signals.send(process_group_id, signal);
+        }));
+    }
+
+    fn force_stop(&self) {
+        self.force_requested.store(true, Ordering::SeqCst);
+        self.signal(KILL_PROCESS_GROUP_SIGNAL);
+    }
+
+    fn force_requested(&self) -> bool {
+        self.force_requested.load(Ordering::SeqCst)
     }
 
     fn try_wait(&self, child: &mut dyn AgentChild) -> Result<Option<i32>, String> {
@@ -343,6 +359,7 @@ impl AgentTaskEntry {
 #[derive(Default)]
 struct AgentTaskRegistryState {
     entries: HashMap<String, AgentTaskEntry>,
+    starts_closed: bool,
     terminal_order: VecDeque<String>,
 }
 
@@ -353,6 +370,68 @@ struct AgentTaskShared {
     live_worker_threads: Arc<AtomicUsize>,
     output_emission_order: Mutex<()>,
     state: Mutex<AgentTaskRegistryState>,
+    #[cfg(test)]
+    fail_next_waiter_start: AtomicBool,
+}
+
+struct UnpublishedAgentTask<'a> {
+    registry: &'a AgentTaskRegistry,
+    task_id: String,
+    watchdog: Arc<WatchdogGate>,
+    group: Option<Arc<AgentProcessGroup>>,
+    child: Option<Box<dyn AgentChild>>,
+    committed: bool,
+}
+
+impl UnpublishedAgentTask<'_> {
+    fn group(&self) -> Option<&Arc<AgentProcessGroup>> {
+        self.group.as_ref()
+    }
+
+    fn child_mut(&mut self) -> Option<&mut Box<dyn AgentChild>> {
+        self.child.as_mut()
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for UnpublishedAgentTask<'_> {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        self.watchdog.finish();
+        if let Some(group) = self.group.as_ref() {
+            let _ = catch_unwind(AssertUnwindSafe(|| {
+                group.force_stop();
+            }));
+        }
+        if let Some(child) = self.child.as_mut() {
+            let _ = catch_unwind(AssertUnwindSafe(|| {
+                let _ = child.force_kill();
+            }));
+        }
+        let group = self.group.as_ref();
+        let child = self.child.as_mut();
+        if let (Some(group), Some(child)) = (group, child) {
+            let deadline = Instant::now() + self.registry.shared.tuning.force_timeout;
+            let _ = catch_unwind(AssertUnwindSafe(|| loop {
+                match group.try_wait(child.as_mut()) {
+                    Ok(Some(_)) => return,
+                    Err(_) => return,
+                    Ok(None) => {
+                        if Instant::now() >= deadline {
+                            return;
+                        }
+                        thread::sleep(WAIT_POLL_INTERVAL);
+                    }
+                }
+            }));
+        }
+        self.registry.remove_entry(&self.task_id);
+    }
 }
 
 impl AgentTaskShared {
@@ -424,6 +503,8 @@ impl AgentTaskRegistry {
                 live_worker_threads: Arc::new(AtomicUsize::new(0)),
                 output_emission_order: Mutex::new(()),
                 state: Mutex::new(AgentTaskRegistryState::default()),
+                #[cfg(test)]
+                fail_next_waiter_start: AtomicBool::new(false),
             }),
         }
     }
@@ -435,6 +516,13 @@ impl AgentTaskRegistry {
     #[cfg(test)]
     pub fn live_worker_thread_count(&self) -> usize {
         self.shared.live_worker_threads.load(Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    pub fn fail_next_waiter_start_for_tests(&self) {
+        self.shared
+            .fail_next_waiter_start
+            .store(true, Ordering::SeqCst);
     }
 
     pub fn start(
@@ -456,6 +544,9 @@ impl AgentTaskRegistry {
         let watchdog = Arc::new(WatchdogGate::default());
         {
             let mut state = self.shared.state();
+            if state.starts_closed {
+                return Err(AGENT_TASK_STARTS_CLOSED_ERROR.to_string());
+            }
             if state.entries.contains_key(&task_id) {
                 return Err(DUPLICATE_AGENT_TASK_ERROR.to_string());
             }
@@ -464,63 +555,104 @@ impl AgentTaskRegistry {
                 AgentTaskEntry::new(metadata, admission, Arc::clone(&watchdog)),
             );
         }
-        let mut child = match self.spawner.spawn(&plan) {
-            Ok(child) => child,
-            Err(error) => {
-                self.remove_entry(&task_id);
-                return Err(clip_failure_message(&error));
-            }
+        let start = catch_unwind(AssertUnwindSafe(|| {
+            self.start_published(task_id, plan, watchdog)
+        }));
+        match start {
+            Ok(result) => result,
+            Err(_) => Err(AGENT_TASK_START_PANIC_ERROR.to_string()),
+        }
+    }
+
+    fn start_published(
+        &self,
+        task_id: String,
+        plan: AgentTaskSpawnPlan,
+        watchdog: Arc<WatchdogGate>,
+    ) -> Result<AgentTaskStartResult, String> {
+        let mut unpublished = UnpublishedAgentTask {
+            registry: self,
+            task_id: task_id.clone(),
+            watchdog: Arc::clone(&watchdog),
+            group: None,
+            child: None,
+            committed: false,
         };
-        let group =
-            AgentProcessGroup::new(child.process_group_id(), Arc::clone(&self.shared.signals));
+        unpublished.child = Some(
+            self.spawner
+                .spawn(&plan)
+                .map_err(|error| clip_failure_message(&error))?,
+        );
+        let process_group_id = unpublished
+            .child
+            .as_ref()
+            .map(|child| child.process_group_id())
+            .ok_or_else(|| AGENT_TASK_START_PANIC_ERROR.to_string())?;
+        unpublished.group = Some(AgentProcessGroup::new(
+            process_group_id,
+            Arc::clone(&self.shared.signals),
+        ));
+        let child = unpublished
+            .child_mut()
+            .ok_or_else(|| AGENT_TASK_START_PANIC_ERROR.to_string())?;
         let readers = child
             .stdout_reader()
             .and_then(|stdout| child.stderr_reader().map(|stderr| (stdout, stderr)));
         let (stdout, stderr) = match readers {
             Ok(readers) => readers,
-            Err(error) => {
-                self.abort_unpublished(&task_id, &group, child.as_mut(), &watchdog);
-                return Err(clip_failure_message(&error));
-            }
+            Err(error) => return Err(clip_failure_message(&error)),
         };
+        let group = unpublished
+            .group()
+            .cloned()
+            .ok_or_else(|| AGENT_TASK_START_PANIC_ERROR.to_string())?;
         let stop_already_requested = {
             let mut state = self.shared.state();
             let Some(entry) = state.entries.get_mut(&task_id) else {
-                drop(state);
-                self.abort_unpublished(&task_id, &group, child.as_mut(), &watchdog);
                 return Err(AGENT_TASK_NOT_REGISTERED_ERROR.to_string());
             };
             entry.group = Some(Arc::clone(&group));
             entry.stop_requested
         };
+        if stop_already_requested {
+            return Err(AGENT_TASK_STARTS_CLOSED_ERROR.to_string());
+        }
         let stdout_pump = self.spawn_output_pump(&task_id, AgentTaskOutputStream::Stdout, stdout);
         let stderr_pump = self.spawn_output_pump(&task_id, AgentTaskOutputStream::Stderr, stderr);
         let pumps = match (stdout_pump, stderr_pump) {
             (Ok(stdout_pump), Ok(stderr_pump)) => vec![stdout_pump, stderr_pump],
             (stdout_pump, stderr_pump) => {
                 let error = collect_spawn_error(stdout_pump.err(), stderr_pump.err());
-                self.abort_unpublished(&task_id, &group, child.as_mut(), &watchdog);
                 return Err(error);
             }
         };
-        if let Err(error) = self.spawn_watchdog(&task_id, &group, &watchdog) {
-            self.abort_unpublished(&task_id, &group, child.as_mut(), &watchdog);
+        self.spawn_watchdog(&task_id, &group, &watchdog)?;
+        let child = unpublished
+            .child
+            .take()
+            .ok_or_else(|| AGENT_TASK_START_PANIC_ERROR.to_string())?;
+        if let Err((error, child)) = self.spawn_waiter(&task_id, child, &group, pumps) {
+            unpublished.child = Some(child);
             return Err(error);
         }
-        if let Err(error) = self.spawn_waiter(&task_id, child, &group, pumps) {
-            watchdog.finish();
-            group.signal(KILL_PROCESS_GROUP_SIGNAL);
-            self.remove_entry(&task_id);
-            return Err(error);
-        }
-        if stop_already_requested {
-            self.escalate_stop(Arc::clone(&group));
-        }
+        unpublished.commit();
         Ok(AgentTaskStartResult { task_id })
     }
 
     pub fn acknowledge(&self, task_id: &str) -> Result<(), String> {
-        let Some(mut events) = begin_acknowledgement(&self.shared, task_id)? else {
+        self.acknowledge_owned(task_id, None)
+    }
+
+    pub fn acknowledge_for_workspace(
+        &self,
+        task_id: &str,
+        workspace_id: &str,
+    ) -> Result<(), String> {
+        self.acknowledge_owned(task_id, Some(workspace_id))
+    }
+
+    fn acknowledge_owned(&self, task_id: &str, workspace_id: Option<&str>) -> Result<(), String> {
+        let Some(mut events) = begin_acknowledgement(&self.shared, task_id, workspace_id)? else {
             return Ok(());
         };
         loop {
@@ -535,11 +667,22 @@ impl AgentTaskRegistry {
     }
 
     pub fn stop(&self, task_id: &str) -> Result<(), String> {
+        self.stop_owned(task_id, None)
+    }
+
+    pub fn stop_for_workspace(&self, task_id: &str, workspace_id: &str) -> Result<(), String> {
+        self.stop_owned(task_id, Some(workspace_id))
+    }
+
+    fn stop_owned(&self, task_id: &str, workspace_id: Option<&str>) -> Result<(), String> {
         let group = {
             let mut state = self.shared.state();
             let Some(entry) = state.entries.get_mut(task_id) else {
                 return Ok(());
             };
+            if workspace_id.is_some_and(|expected| entry.metadata.workspace_id != expected) {
+                return Err(AGENT_TASK_NOT_REGISTERED_ERROR.to_string());
+            }
             if matches!(entry.phase, AgentTaskPhase::Terminal) {
                 return Ok(());
             }
@@ -554,13 +697,19 @@ impl AgentTaskRegistry {
     }
 
     pub fn stop_for_root(&self, root: &Path) {
-        for group in self.request_stop_groups_for_root(root) {
+        for group in self.request_stop_groups_for_root(None, root) {
+            self.escalate_stop(group);
+        }
+    }
+
+    pub fn stop_for_workspace_root(&self, workspace_id: &str, root: &Path) {
+        for group in self.request_stop_groups_for_root(Some(workspace_id), root) {
             self.escalate_stop(group);
         }
     }
 
     pub fn stop_for_root_and_reap(&self, root: &Path) -> bool {
-        let groups = self.request_stop_groups_for_root(root);
+        let groups = self.request_stop_groups_for_root(None, root);
         if groups.is_empty() {
             return true;
         }
@@ -571,18 +720,23 @@ impl AgentTaskRegistry {
             return true;
         }
         for group in &groups {
-            group.signal(KILL_PROCESS_GROUP_SIGNAL);
+            group.force_stop();
         }
         wait_for_groups_reaped(&groups, self.shared.tuning.force_timeout)
     }
 
-    fn request_stop_groups_for_root(&self, root: &Path) -> Vec<Arc<AgentProcessGroup>> {
+    fn request_stop_groups_for_root(
+        &self,
+        workspace_id: Option<&str>,
+        root: &Path,
+    ) -> Vec<Arc<AgentProcessGroup>> {
         let mut state = self.shared.state();
         state
             .entries
             .values_mut()
             .filter(|entry| {
                 !matches!(entry.phase, AgentTaskPhase::Terminal)
+                    && workspace_id.is_none_or(|expected| entry.metadata.workspace_id == expected)
                     && entry.metadata.matches_root(root)
             })
             .filter_map(|entry| {
@@ -612,9 +766,13 @@ impl AgentTaskRegistry {
             return;
         }
         for group in &groups {
-            group.signal(KILL_PROCESS_GROUP_SIGNAL);
+            group.force_stop();
         }
         wait_for_groups_reaped(&groups, self.shared.tuning.force_timeout);
+    }
+
+    pub(crate) fn close_start_admission(&self) {
+        self.shared.state().starts_closed = true;
     }
 
     fn escalate_stop(&self, group: Arc<AgentProcessGroup>) {
@@ -663,14 +821,42 @@ impl AgentTaskRegistry {
         child: Box<dyn AgentChild>,
         group: &Arc<AgentProcessGroup>,
         pumps: Vec<JoinHandle<()>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), (String, Box<dyn AgentChild>)> {
+        #[cfg(test)]
+        if self
+            .shared
+            .fail_next_waiter_start
+            .swap(false, Ordering::SeqCst)
+        {
+            return Err((
+                "Unable to start agent task worker: injected".to_string(),
+                child,
+            ));
+        }
         let shared = Arc::clone(&self.shared);
         let task_id = task_id.to_string();
         let group = Arc::clone(group);
-        self.spawn_worker("agent-task-waiter", move || {
+        let child_slot = Arc::new(Mutex::new(Some(child)));
+        let worker_child_slot = Arc::clone(&child_slot);
+        let spawn = self.spawn_worker("agent-task-waiter", move || {
+            let child = worker_child_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            let Some(child) = child else {
+                return;
+            };
             run_waiter(&shared, &task_id, child, &group, &pumps);
-        })
-        .map(|_| ())
+        });
+        if let Err(error) = spawn {
+            let child = child_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+                .expect("failed waiter spawn retains child ownership");
+            return Err((error, child));
+        }
+        Ok(())
     }
 
     fn spawn_worker<F>(&self, name: &str, work: F) -> Result<JoinHandle<()>, String>
@@ -685,31 +871,6 @@ impl AgentTaskRegistry {
                 work();
             })
             .map_err(|error| format!("Unable to start agent task worker: {error}"))
-    }
-
-    fn abort_unpublished(
-        &self,
-        task_id: &str,
-        group: &Arc<AgentProcessGroup>,
-        child: &mut dyn AgentChild,
-        watchdog: &Arc<WatchdogGate>,
-    ) {
-        watchdog.finish();
-        group.signal(KILL_PROCESS_GROUP_SIGNAL);
-        let deadline = Instant::now() + self.shared.tuning.force_timeout;
-        loop {
-            match group.try_wait(child) {
-                Ok(Some(_)) => break,
-                Err(_) => break,
-                Ok(None) => {
-                    if Instant::now() >= deadline {
-                        break;
-                    }
-                    thread::sleep(WAIT_POLL_INTERVAL);
-                }
-            }
-        }
-        self.remove_entry(task_id);
     }
 
     fn remove_entry(&self, task_id: &str) {
@@ -735,7 +896,7 @@ impl Drop for AgentTaskRegistry {
                 .collect()
         };
         for group in groups {
-            group.signal(KILL_PROCESS_GROUP_SIGNAL);
+            group.force_stop();
         }
     }
 }
@@ -886,8 +1047,45 @@ fn run_waiter(
     group: &Arc<AgentProcessGroup>,
     pumps: &[JoinHandle<()>],
 ) {
+    let waiter = catch_unwind(AssertUnwindSafe(|| {
+        run_waiter_inner(shared, task_id, child.as_mut(), group, pumps);
+    }));
+    if waiter.is_ok() {
+        return;
+    }
+    group.force_stop();
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let _ = child.force_kill();
+    }));
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        reap_bounded(group, child.as_mut(), shared.tuning.force_timeout);
+    }));
+    let completion = catch_unwind(AssertUnwindSafe(|| {
+        complete(
+            shared,
+            task_id,
+            AgentTaskStatusPayload::Failed {
+                message: AGENT_TASK_START_PANIC_ERROR.to_string(),
+            },
+        );
+    }));
+    if completion.is_err() {
+        remove_shared_entry(shared, task_id);
+    }
+}
+
+fn run_waiter_inner(
+    shared: &Arc<AgentTaskShared>,
+    task_id: &str,
+    child: &mut dyn AgentChild,
+    group: &Arc<AgentProcessGroup>,
+    pumps: &[JoinHandle<()>],
+) {
     let outcome = loop {
-        match group.try_wait(child.as_mut()) {
+        if group.force_requested() {
+            let _ = child.force_kill();
+        }
+        match group.try_wait(child) {
             Ok(Some(exit_code)) => break Ok(exit_code),
             Ok(None) => thread::sleep(WAIT_POLL_INTERVAL),
             Err(error) => break Err(error),
@@ -905,8 +1103,11 @@ fn run_waiter(
             );
         }
         Err(error) => {
-            group.signal(KILL_PROCESS_GROUP_SIGNAL);
-            reap_bounded(group, child.as_mut(), shared.tuning.force_timeout);
+            group.force_stop();
+            let _ = catch_unwind(AssertUnwindSafe(|| {
+                let _ = child.force_kill();
+            }));
+            reap_bounded(group, child, shared.tuning.force_timeout);
             complete(
                 shared,
                 task_id,
@@ -916,6 +1117,14 @@ fn run_waiter(
             );
         }
     }
+}
+
+fn remove_shared_entry(shared: &Arc<AgentTaskShared>, task_id: &str) {
+    let mut state = shared.state();
+    state.entries.remove(task_id);
+    state
+        .terminal_order
+        .retain(|candidate| candidate != task_id);
 }
 
 fn reap_bounded(group: &Arc<AgentProcessGroup>, child: &mut dyn AgentChild, timeout: Duration) {
@@ -962,7 +1171,7 @@ fn escalate_group_stop(group: &Arc<AgentProcessGroup>, graceful: Duration, force
     if wait_for_group_reaped(group, graceful) {
         return;
     }
-    group.signal(KILL_PROCESS_GROUP_SIGNAL);
+    group.force_stop();
     wait_for_group_reaped(group, force);
 }
 
@@ -1079,12 +1288,16 @@ fn record_terminal_entry(state: &mut AgentTaskRegistryState, task_id: &str) {
 fn begin_acknowledgement(
     shared: &Arc<AgentTaskShared>,
     task_id: &str,
+    workspace_id: Option<&str>,
 ) -> Result<Option<Vec<QueuedAgentTaskEvent>>, String> {
     let mut state = shared.state();
     let entry = state
         .entries
         .get_mut(task_id)
         .ok_or_else(|| AGENT_TASK_NOT_REGISTERED_ERROR.to_string())?;
+    if workspace_id.is_some_and(|expected| entry.metadata.workspace_id != expected) {
+        return Err(AGENT_TASK_NOT_REGISTERED_ERROR.to_string());
+    }
     if entry.acknowledged {
         return Ok(None);
     }

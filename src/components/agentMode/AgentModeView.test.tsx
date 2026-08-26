@@ -928,6 +928,29 @@ describe("AgentModeView", () => {
     });
   });
 
+  it("keeps a scoped background project authoritative through a global fresh thread", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    const bridge = createAgentViewCommandBridge();
+    render({
+      agents: surface({ startThread }),
+      projects: [activeProject(), backgroundProject()],
+      viewCommands: bridge,
+    });
+
+    click('button[aria-label="New thread in app"]');
+    chooseScope(OTHER_ROOT, OTHER_ROOT);
+
+    expect(host.querySelector('button[aria-label="New thread in api-service"]')).not.toBeNull();
+
+    act(() => bridge.run("agent.newThread"));
+    typePrompt("Fix the parser");
+    await submitFormAsync();
+
+    expect(startThread).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRootKey: OTHER_ROOT, repositoryRoot: OTHER_ROOT }),
+    );
+  });
+
   it("starts in the active project without a project-level picker", async () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({ agents: surface({ startThread }), projects: [activeProject()] });

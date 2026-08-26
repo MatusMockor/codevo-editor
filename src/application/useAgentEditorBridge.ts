@@ -45,6 +45,7 @@ export interface AgentEditorBridgeSurface {
 
 interface EditorTarget {
   readonly project: AgentProjectDescriptor;
+  readonly ownerId: string;
   readonly repositoryRoot: string;
   readonly targetPath: string;
 }
@@ -87,7 +88,12 @@ export function useAgentEditorBridge(
       if (project === undefined) return null;
       const targetPath = thread.target.worktreePath ?? thread.owner.repositoryRoot;
       if (!isInside(targetPath, change.path)) return null;
-      return { project, repositoryRoot: thread.owner.repositoryRoot, targetPath };
+      return {
+        project,
+        ownerId: thread.owner.ownerId,
+        repositoryRoot: thread.owner.repositoryRoot,
+        targetPath,
+      };
     },
     [],
   );
@@ -98,7 +104,7 @@ export function useAgentEditorBridge(
       if (target === null || change.status === "deleted") return;
       const editorPort = dependenciesRef.current.editor;
       if (editorPort === null) return;
-      const authority = projectAuthority(target.project);
+      const authority = projectAuthority(target.project, target.ownerId);
       const opened = await attempt(() =>
         editorPort.openFile(
           { name: fileName(change.path), path: change.path, kind: "file" },
@@ -124,7 +130,7 @@ export function useAgentEditorBridge(
       if (target === null) return;
       const editorPort = dependenciesRef.current.editor;
       if (editorPort === null) return;
-      const authority = projectAuthority(target.project);
+      const authority = projectAuthority(target.project, target.ownerId);
       const opened = await attempt(() => editorPort.openGitChange(change, target.targetPath));
       if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, target.repositoryRoot)) {
         return;

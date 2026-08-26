@@ -24,6 +24,7 @@ import {
   attempt,
   errorMessageOf,
   projectAuthority,
+  projectByOwnerId,
   projectByRootKey,
   sameProjectAuthority,
   warning,
@@ -497,17 +498,22 @@ function threadAuthority(
 ): AgentProjectAuthority | null {
   const project = projectByRootKey(projects, thread.owner.rootKey);
   if (project === undefined) return null;
-  if (project.ownerId !== thread.owner.ownerId) return null;
-  return projectAuthority(project);
+  if (
+    project.ownerId !== thread.owner.ownerId &&
+    project.runtimeOwnerIds?.includes(thread.owner.ownerId) !== true
+  )
+    return null;
+  return projectAuthority(project, thread.owner.ownerId);
 }
 
 function ownsProjectRoot(
   projects: ReadonlyArray<AgentProjectDescriptor>,
   authority: AgentProjectAuthority,
 ): boolean {
-  const project = projectByRootKey(projects, authority.rootKey);
+  const project = projectByOwnerId(projects, authority.ownerId);
   if (project === undefined) return false;
-  return sameProjectAuthority(projectAuthority(project), authority);
+  if (project.rootKey !== authority.rootKey) return false;
+  return sameProjectAuthority(projectAuthority(project, authority.ownerId), authority);
 }
 
 function slotFor(slots: Map<string, ThreadPersistSlot>, threadId: string): ThreadPersistSlot {

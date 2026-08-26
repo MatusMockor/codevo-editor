@@ -6,7 +6,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type { WorkbenchPrompter } from "./workbenchPrompter";
+import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
 import type { GitGateway, GitStashEntry } from "../domain/git";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
@@ -74,6 +74,13 @@ export function useGitStashPanel(dependencies: GitStashPanelDependencies): GitSt
   // isolation), exactly like the file-history panel.
   const gitStashRequestTokenRef = useRef(0);
   const gitStashDiffRequestTokenRef = useRef(0);
+  const gitStashEntriesRef = useRef<GitStashEntry[]>([]);
+  const gitStashDropLeasesRef = useRef<Set<GitStashEntry>>(new Set());
+
+  const publishGitStashEntries = useCallback((entries: GitStashEntry[]) => {
+    gitStashEntriesRef.current = entries;
+    setGitStashEntries(entries);
+  }, []);
 
   const closeGitStashPanel = useCallback(() => {
     // Invalidate any in-flight list/diff requests so a late resolve cannot
@@ -81,13 +88,13 @@ export function useGitStashPanel(dependencies: GitStashPanelDependencies): GitSt
     gitStashRequestTokenRef.current += 1;
     gitStashDiffRequestTokenRef.current += 1;
     setGitStashPanelOpen(false);
-    setGitStashEntries([]);
+    publishGitStashEntries([]);
     setGitStashLoading(false);
     setGitStashMessage("");
     setGitStashSelectedIndex(null);
     setGitStashDiff(null);
     setGitStashDiffLoading(false);
-  }, []);
+  }, [publishGitStashEntries]);
 
   // Reloads the stash list for the active workspace. The requested root is
   // captured up front and re-checked (with the request token) after the await
@@ -113,20 +120,20 @@ export function useGitStashPanel(dependencies: GitStashPanelDependencies): GitSt
         return;
       }
 
-      setGitStashEntries(entries);
+      publishGitStashEntries(entries);
     } catch (error) {
       if (!isCurrentRequest()) {
         return;
       }
 
-      setGitStashEntries([]);
+      publishGitStashEntries([]);
       reportError("Git Stash", error);
     } finally {
       if (isCurrentRequest()) {
         setGitStashLoading(false);
       }
     }
-  }, [currentWorkspaceRootRef, gitGateway, reportError, workspaceRoot]);
+  }, [currentWorkspaceRootRef, gitGateway, publishGitStashEntries, reportError, workspaceRoot]);
 
   const openGitStashPanel = useCallback(async () => {
     const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
@@ -141,11 +148,11 @@ export function useGitStashPanel(dependencies: GitStashPanelDependencies): GitSt
     setGitStashSelectedIndex(null);
     setGitStashDiff(null);
     setGitStashDiffLoading(false);
-    setGitStashEntries([]);
+    publishGitStashEntries([]);
     setGitStashPanelOpen(true);
 
     await refreshGitStashes();
-  }, [currentWorkspaceRootRef, refreshGitStashes, workspaceRoot]);
+  }, [currentWorkspaceRootRef, publishGitStashEntries, refreshGitStashes, workspaceRoot]);
 
   // Loads the diff for a selected stash. The requested root and stash index are
   // captured up front; after the await we re-check the active root and the diff
@@ -323,9 +330,21 @@ export function useGitStashPanel(dependencies: GitStashPanelDependencies): GitSt
         return;
       }
 
-      if (!prompter.confirm("Drop this stash? This permanently discards the stashed changes.")) {
-        return;
-      }
+      const requestedListGeneration = gitStashRequestTokenRef.current;
+      const requestedEntry = gitStashEntriesRef.current.find((entry) => entry.index === index);
+      if (requestedEntry === undefined) return;
+
+      const confirmed = await confirmWorkbenchAction(
+        prompter,
+        "Drop this stash? This permanently discards the stashed changes.",
+      );
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) return;
+      if (gitStashRequestTokenRef.current !== requestedListGeneration) return;
+      const currentEntry = gitStashEntriesRef.current.find((entry) => entry.index === index);
+      if (currentEntry !== requestedEntry) return;
+      if (!confirmed) return;
+      if (gitStashDropLeasesRef.current.has(requestedEntry)) return;
+      gitStashDropLeasesRef.current.add(requestedEntry);
 
       setGitStashLoading(true);
 
@@ -345,6 +364,7 @@ export function useGitStashPanel(dependencies: GitStashPanelDependencies): GitSt
           reportError("Git Stash", error);
         }
       } finally {
+        gitStashDropLeasesRef.current.delete(requestedEntry);
         if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitStashLoading(false);
         }

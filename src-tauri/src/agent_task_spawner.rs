@@ -4,6 +4,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::Arc,
 };
 
 pub const MAX_AGENT_PROMPT_BYTES: usize = 32 * 1024;
@@ -35,6 +36,8 @@ pub struct AgentTaskSpawnPlan {
     program: PathBuf,
     args: Vec<String>,
     cwd: PathBuf,
+    #[cfg(unix)]
+    cwd_authority: Option<Arc<fs::File>>,
     env: Vec<(String, String)>,
 }
 
@@ -49,6 +52,23 @@ impl AgentTaskSpawnPlan {
 
     pub fn cwd(&self) -> &Path {
         &self.cwd
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn with_cwd_authority(mut self, cwd_authority: Arc<fs::File>) -> Self {
+        self.cwd_authority = Some(cwd_authority);
+        self
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn with_cwd_authority(self, cwd_authority: Arc<fs::File>) -> Self {
+        drop(cwd_authority);
+        self
+    }
+
+    #[cfg(unix)]
+    fn cwd_authority(&self) -> Option<&fs::File> {
+        self.cwd_authority.as_deref()
     }
 
     pub fn env(&self) -> &[(String, String)] {
@@ -66,6 +86,8 @@ impl AgentTaskSpawnPlan {
             program,
             args,
             cwd,
+            #[cfg(unix)]
+            cwd_authority: None,
             env,
         }
     }
@@ -115,6 +137,8 @@ pub fn plan_agent_invocation(
         program: program.to_path_buf(),
         args,
         cwd: cwd.to_path_buf(),
+        #[cfg(unix)]
+        cwd_authority: None,
         env: inherited_environment(),
     })
 }
@@ -218,6 +242,7 @@ pub trait AgentChild: Send {
     fn stderr_reader(&mut self) -> Result<Box<dyn Read + Send>, String>;
     fn try_wait(&mut self) -> Result<Option<i32>, String>;
     fn process_group_id(&self) -> i32;
+    fn force_kill(&mut self) -> Result<(), String>;
 }
 
 pub trait AgentProcessSpawner: Send + Sync {
@@ -231,7 +256,6 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
         let mut command = Command::new(plan.program());
         command
             .args(plan.args())
-            .current_dir(plan.cwd())
             .env_clear()
             .envs(plan.env().iter().cloned())
             .stdin(Stdio::null())
@@ -239,9 +263,27 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
             .stderr(Stdio::piped());
         #[cfg(unix)]
         {
+            use std::os::fd::AsRawFd;
             use std::os::unix::process::CommandExt;
+
+            if let Some(cwd_authority) = plan.cwd_authority() {
+                let cwd_fd = cwd_authority.as_raw_fd();
+                unsafe {
+                    command.pre_exec(move || {
+                        if libc::fchdir(cwd_fd) == 0 {
+                            return Ok(());
+                        }
+                        Err(io::Error::last_os_error())
+                    });
+                }
+            }
+            if plan.cwd_authority().is_none() {
+                command.current_dir(plan.cwd());
+            }
             command.process_group(0);
         }
+        #[cfg(not(unix))]
+        command.current_dir(plan.cwd());
         let mut child = command
             .spawn()
             .map_err(|error| format!("Unable to launch agent task: {error}"))?;
@@ -308,6 +350,16 @@ impl AgentChild for StdAgentChild {
     fn process_group_id(&self) -> i32 {
         self.process_group_id
     }
+
+    fn force_kill(&mut self) -> Result<(), String> {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-self.process_group_id, libc::SIGKILL);
+        }
+        self.child
+            .kill()
+            .map_err(|error| format!("Unable to kill agent child: {error}"))
+    }
 }
 
 #[cfg(unix)]
@@ -363,6 +415,9 @@ mod tests {
         CodexModelChoice,
     };
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static CWD_AUTHORITY_NONCE: AtomicU64 = AtomicU64::new(0);
 
     const SESSION_ID: &str = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
 
@@ -413,6 +468,53 @@ mod tests {
             model: CodexModelChoice::Default,
             mode: CodexExecutionMode::Default,
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_cwd_authority_cannot_be_redirected_by_path_replacement() {
+        let nonce = CWD_AUTHORITY_NONCE.fetch_add(1, Ordering::SeqCst);
+        let fixture = std::env::temp_dir().join(format!(
+            "agent-task-retained-cwd-{}-{nonce}",
+            std::process::id()
+        ));
+        let original = fixture.join("original");
+        let retained = fixture.join("retained");
+        fs::create_dir_all(&original).expect("create original cwd");
+        let cwd_authority = Arc::new(fs::File::open(&original).expect("open cwd authority"));
+        let plan = AgentTaskSpawnPlan::for_tests(
+            PathBuf::from("/bin/pwd"),
+            Vec::new(),
+            original.clone(),
+            inherited_environment(),
+        )
+        .with_cwd_authority(cwd_authority);
+        fs::rename(&original, &retained).expect("move retained cwd");
+        fs::create_dir_all(&original).expect("replace original cwd path");
+
+        let mut child = StdAgentProcessSpawner
+            .spawn(&plan)
+            .expect("spawn retained cwd");
+        let mut stdout = String::new();
+        child
+            .stdout_reader()
+            .expect("stdout reader")
+            .read_to_string(&mut stdout)
+            .expect("read stdout");
+        let mut stderr = String::new();
+        child
+            .stderr_reader()
+            .expect("stderr reader")
+            .read_to_string(&mut stderr)
+            .expect("read stderr");
+        let exit_code = child.try_wait().expect("wait for pwd");
+
+        assert_eq!(exit_code, Some(0), "stderr: {stderr}");
+        assert_eq!(
+            PathBuf::from(stdout.trim()),
+            retained.canonicalize().expect("canonical retained cwd")
+        );
+        fs::remove_dir_all(&fixture).expect("remove cwd fixture");
     }
 
     #[test]

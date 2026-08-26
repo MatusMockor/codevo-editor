@@ -4,12 +4,14 @@ import type {
   AgentThreadsSurface,
   AgentThreadView,
 } from "../../application/agentThreadPorts";
+import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type {
   AgentJumpSlot,
   AgentViewCommandHandlers,
 } from "../../application/agentViewCommandBridge";
 import { useAgentThreadSearch } from "../../application/useAgentThreadSearch";
 import { terminalTurnKey } from "./agentComposerLaunch";
+import type { ComposerScope } from "./agentComposerTarget";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import { adjacentThreadId, agentThreadsInScope, orderedRailThreadIds } from "./agentModeNavigation";
 import {
@@ -29,11 +31,13 @@ export type AgentNavigationCommandHandlers = Pick<
   | "searchThreads"
   | "findInThread"
   | "threadSelected"
->;
+> &
+  Required<Pick<AgentViewCommandHandlers, "threadFindFocused">>;
 
 export interface AgentThreadNavigationOptions {
   readonly agents: Pick<AgentThreadsSurface, "threads" | "markThreadViewed">;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
+  readonly projects: ReadonlyArray<AgentProjectDescriptor>;
 }
 
 export interface AgentThreadPaletteState {
@@ -49,6 +53,7 @@ export interface AgentThreadNavigation {
   readonly selectedThreadId: string | null;
   readonly selectedThread: AgentThreadView | null;
   readonly railScope: AgentRailScope;
+  readonly composerScope: ComposerScope;
   readonly scopeEntries: ReadonlyArray<AgentRailScopeEntry>;
   readonly search: AgentThreadSearchSurface;
   readonly find: AgentThreadFindState;
@@ -67,12 +72,31 @@ export interface AgentThreadNavigation {
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
 const EMPTY_IDS: ReadonlySet<string> = new Set();
 
+interface AgentNavigationScopeAuthority {
+  readonly ownerId: string;
+  readonly generation: number;
+}
+
+interface AgentNavigationScopeState {
+  readonly railScope: AgentRailScope;
+  readonly authority: AgentNavigationScopeAuthority | null;
+}
+
 export function useAgentThreadNavigation({
   agents,
   groups,
+  projects,
 }: AgentThreadNavigationOptions): AgentThreadNavigation {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [railScope, setRailScope] = useState<AgentRailScope>({ kind: "all" });
+  const [scopeState, setScopeState] = useState<AgentNavigationScopeState>({
+    railScope: { kind: "all" },
+    authority: null,
+  });
+  const railScope = scopeState.railScope;
+  const composerScope = useMemo(
+    () => resolveComposerScope(scopeState, projects),
+    [projects, scopeState],
+  );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const centerRef = useRef<HTMLDivElement | null>(null);
 
@@ -137,6 +161,17 @@ export function useAgentThreadNavigation({
     [closeFind, requestReveal, selectedThreadId],
   );
 
+  const setRailScope = useCallback(
+    (scope: AgentRailScope) => {
+      if (scope.kind === "all") {
+        setScopeState({ railScope: scope, authority: null });
+        return;
+      }
+      setScopeState({ railScope: scope, authority: captureScopeAuthority(scope, projects) });
+    },
+    [projects],
+  );
+
   const closePalette = useCallback(() => {
     setPaletteOpen(false);
     search.clear();
@@ -179,6 +214,16 @@ export function useAgentThreadNavigation({
         if (selectedThreadId === null) return;
         openFind();
       },
+      threadFindFocused: () => {
+        if (selectedThreadId === null) return false;
+        const center = centerRef.current;
+        const session = center?.querySelector<HTMLElement>(".agent-session");
+        if (session === undefined || session === null) return false;
+        const activeElement = session.ownerDocument.activeElement;
+        if (session.contains(activeElement)) return true;
+        const findBar = center?.querySelector<HTMLElement>(".agent-find");
+        return findBar?.contains(activeElement) ?? false;
+      },
       threadSelected: () => selectedThreadId !== null,
     }),
     [openFind, orderedThreadIds, selectThread, selectedThreadId],
@@ -205,6 +250,7 @@ export function useAgentThreadNavigation({
     selectedThreadId,
     selectedThread,
     railScope,
+    composerScope,
     scopeEntries,
     search,
     find,
@@ -218,5 +264,47 @@ export function useAgentThreadNavigation({
     forgetThread,
     closeFindBar,
     newThreadTarget,
+  };
+}
+
+function captureScopeAuthority(
+  scope: Extract<AgentRailScope, { readonly kind: "repository" }>,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+): AgentNavigationScopeAuthority | null {
+  const project = projects.find((candidate) => candidate.rootKey === scope.projectRootKey) ?? null;
+  if (project === null) return null;
+  if (!project.repositories.some((repo) => repo.repositoryRoot === scope.repositoryRoot)) {
+    return null;
+  }
+  return { ownerId: project.ownerId, generation: project.generation };
+}
+
+function resolveComposerScope(
+  state: AgentNavigationScopeState,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+): ComposerScope {
+  const scope = state.railScope;
+  if (scope.kind === "all") return scope;
+  const missing = {
+    kind: "missing" as const,
+    projectRootKey: scope.projectRootKey,
+    repositoryRoot: scope.repositoryRoot,
+  };
+  const authority = state.authority;
+  if (authority === null) return missing;
+  const project = projects.find((candidate) => candidate.rootKey === scope.projectRootKey) ?? null;
+  if (project === null) return missing;
+  if (project.ownerId !== authority.ownerId || project.generation !== authority.generation) {
+    return missing;
+  }
+  if (!project.repositories.some((repo) => repo.repositoryRoot === scope.repositoryRoot)) {
+    return missing;
+  }
+  return {
+    kind: "repository",
+    projectRootKey: scope.projectRootKey,
+    repositoryRoot: scope.repositoryRoot,
+    ownerId: authority.ownerId,
+    generation: authority.generation,
   };
 }

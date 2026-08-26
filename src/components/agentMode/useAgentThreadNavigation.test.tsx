@@ -99,6 +99,40 @@ describe("useAgentThreadNavigation", () => {
     expect(current().selectedThreadId).toBe("agt-nested");
   });
 
+  it("keeps a removed repository scope bound to its original owner generation", () => {
+    const first = projectFixture({ generation: 1 });
+    render(threadsSurfaceFixture(), [first]);
+    act(() =>
+      current().setRailScope({
+        kind: "repository",
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    );
+    expect(current().composerScope.kind).toBe("repository");
+
+    render(threadsSurfaceFixture(), []);
+    expect(current().composerScope.kind).toBe("missing");
+
+    render(threadsSurfaceFixture(), [projectFixture({ generation: 2 })]);
+    expect(current().composerScope.kind).toBe("missing");
+
+    act(() =>
+      current().setRailScope({
+        kind: "repository",
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    );
+    expect(current().composerScope).toEqual({
+      kind: "repository",
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+      ownerId: projectFixture().ownerId,
+      generation: 2,
+    });
+  });
+
   it("opens the palette with titles, activates a result with a reveal, and closes it", () => {
     render(
       threadsSurfaceFixture({
@@ -159,6 +193,35 @@ describe("useAgentThreadNavigation", () => {
     expect(current().find.open).toBe(false);
   });
 
+  it("reports thread find focus only from inside the selected session", () => {
+    render(threadsSurfaceFixture({ threads: [view("agt-1")] }));
+    act(() => current().selectThread("agt-1"));
+    const sessionTarget = host.querySelector<HTMLButtonElement>("[data-session-target]");
+    const composerTarget = host.querySelector<HTMLButtonElement>("[data-composer-target]");
+    const findTarget = host.querySelector<HTMLInputElement>("[data-find-target]");
+    const railTarget = host.querySelector<HTMLButtonElement>("[data-rail-target]");
+    const monacoTarget = host.querySelector<HTMLButtonElement>("[data-monaco-target]");
+    expect(sessionTarget).not.toBeNull();
+    expect(composerTarget).not.toBeNull();
+    expect(findTarget).not.toBeNull();
+    expect(railTarget).not.toBeNull();
+    expect(monacoTarget).not.toBeNull();
+
+    for (const outsideTarget of [composerTarget, railTarget, monacoTarget]) {
+      act(() => outsideTarget?.focus());
+      expect(current().commands.threadFindFocused()).toBe(false);
+    }
+
+    act(() => sessionTarget?.focus());
+    expect(current().commands.threadFindFocused()).toBe(true);
+
+    act(() => findTarget?.focus());
+    expect(current().commands.threadFindFocused()).toBe(true);
+
+    act(() => current().clearSelectedThread());
+    expect(current().commands.threadFindFocused()).toBe(false);
+  });
+
   it("selects a started thread without closing the find bar", () => {
     render(threadsSurfaceFixture({ threads: [view("agt-1"), view("agt-2")] }));
 
@@ -212,7 +275,21 @@ describe("useAgentThreadNavigation", () => {
       () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
       [agents.orphanedWorktrees, agents.threads, projects],
     );
-    captured = useAgentThreadNavigation({ agents, groups });
-    return null;
+    captured = useAgentThreadNavigation({ agents, groups, projects });
+    return (
+      <>
+        <button data-rail-target type="button" />
+        <div ref={captured.centerRef}>
+          <section className="agent-session">
+            <button data-session-target type="button" />
+          </section>
+          <div className="agent-find">
+            <input data-find-target />
+          </div>
+          <button data-composer-target type="button" />
+        </div>
+        <button data-monaco-target type="button" />
+      </>
+    );
   }
 });

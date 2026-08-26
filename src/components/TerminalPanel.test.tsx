@@ -186,6 +186,31 @@ describe("TerminalPanel", () => {
     expect(terminalPanelMocks.sessions[0].dispose).not.toHaveBeenCalled();
   });
 
+  it("refits an active session when its containing layout changes without restarting", () => {
+    const props = {
+      isActive: true,
+      layoutRevision: 1,
+      profileId: "default",
+      rootPath: "/workspace",
+      shellIntegrationEnabled: false,
+      terminalGateway: terminalGateway(),
+      terminalTheme: terminalThemeForAppTheme("dark"),
+    };
+    act(() => root.render(<TerminalPanel {...props} />));
+    const session = terminalPanelMocks.sessions[0];
+    expect(session.fit).toHaveBeenCalledTimes(1);
+
+    act(() => root.render(<TerminalPanel {...props} layoutRevision={2} />));
+    expect(terminalPanelMocks.createTerminalSession).toHaveBeenCalledTimes(1);
+    expect(session.fit).toHaveBeenCalledTimes(2);
+
+    act(() => root.render(<TerminalPanel {...props} isActive={false} layoutRevision={3} />));
+    expect(session.fit).toHaveBeenCalledTimes(2);
+    act(() => root.render(<TerminalPanel {...props} layoutRevision={4} />));
+    expect(session.fit).toHaveBeenCalledTimes(3);
+    expect(session.dispose).not.toHaveBeenCalled();
+  });
+
   it("resolves links inside the mounted workspace and drops unsafe paths", () => {
     const onOpenLink = vi.fn();
 

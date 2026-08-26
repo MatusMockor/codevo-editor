@@ -19,12 +19,13 @@ import {
   AGENT_TASKS_SOURCE,
   attempt,
   failure,
-  isCurrentProjectOwner,
-  projectAuthority,
+  isCurrentTaskLaunchAuthority,
   projectByOwnerId,
   projectByRootKey,
+  taskLaunchAuthority,
+  type AgentProjectLaunchIdentity,
+  type AgentTaskLaunchAuthority,
   warning,
-  type AgentProjectAuthority,
 } from "./agentProjectAuthority";
 import type {
   AgentFollowUpRequest,
@@ -42,6 +43,7 @@ export interface AgentTurnAdmissionDependencies {
   readonly getMaxConcurrentAgentTasks: () => number;
   readonly isWorktreeMissing: (threadId: string) => boolean;
   readonly ensureProjectLease?: (projectRootKey: string) => Promise<boolean>;
+  readonly launchIdentityForProject: (projectRootKey: string) => AgentProjectLaunchIdentity | null;
   readonly reportError: (source: string, error: unknown) => void;
   readonly setNotice: (notice: AgentTasksNotice | null) => void;
   readonly now?: () => number;
@@ -84,7 +86,7 @@ export function countRunningTurnsInRepository(
 
 export interface AdmittedStart {
   readonly project: AgentProjectDescriptor;
-  readonly authority: AgentProjectAuthority;
+  readonly authority: AgentTaskLaunchAuthority;
   readonly prompt: string;
   readonly agentCliPath: string;
   readonly agentCliKind: AgentCliKind;
@@ -122,9 +124,14 @@ export function admitStart(
   if (launch === null) return null;
   const agentCliPath = admitCapacity(deps);
   if (agentCliPath === null) return null;
+  const launchIdentity = deps.launchIdentityForProject(project.rootKey);
+  if (launchIdentity === null) {
+    deps.setNotice(warning("This project is not registered, so an agent cannot start in it."));
+    return null;
+  }
   return {
     project,
-    authority: projectAuthority(project),
+    authority: taskLaunchAuthority(project, launchIdentity),
     prompt,
     agentCliPath,
     agentCliKind,
@@ -134,7 +141,8 @@ export function admitStart(
 
 export interface AdmittedFollowUp {
   readonly thread: AgentThread;
-  readonly authority: AgentProjectAuthority;
+  readonly authority: AgentTaskLaunchAuthority;
+  readonly projectRoot: string;
   readonly prompt: string;
   readonly agentCliPath: string;
   readonly sessionId: string;
@@ -159,9 +167,15 @@ export function admitFollowUp(
     deps.setNotice(warning("This thread is still running. Wait for the turn to finish."));
     return null;
   }
-  const project = projectByOwnerId(deps.projects, thread.owner.ownerId);
+  const project =
+    projectByOwnerId(deps.projects, thread.owner.ownerId) ??
+    projectByRootKey(deps.projects, thread.owner.rootKey);
+  const launchIdentity =
+    project === undefined ? null : deps.launchIdentityForProject(project.rootKey);
   if (
     project === undefined ||
+    launchIdentity === null ||
+    launchIdentity.workspaceId !== thread.owner.ownerId ||
     project.rootKey !== thread.owner.rootKey ||
     project.origin === "closed-tab-live-tasks" ||
     !project.repositories.some(
@@ -196,7 +210,8 @@ export function admitFollowUp(
   }
   return {
     thread,
-    authority: projectAuthority(project),
+    authority: taskLaunchAuthority(project, launchIdentity),
+    projectRoot: project.rootPath,
     prompt,
     agentCliPath,
     sessionId: thread.provider.sessionId,
@@ -264,13 +279,14 @@ export async function ensureLease(
   dependenciesRef: { readonly current: AdmissionDependencies },
   mountedRef: { readonly current: boolean },
   project: AgentProjectDescriptor,
-  authority: AgentProjectAuthority,
+  authority: AgentTaskLaunchAuthority,
+  repositoryRoot: string,
 ): Promise<boolean> {
   const ensureProjectLease = deps.ensureProjectLease;
   if (project.leaseToken !== null || ensureProjectLease === undefined) return true;
-  const repositoryRoot = project.repositories[0]?.repositoryRoot ?? project.rootPath;
   const leased = await attempt(() => ensureProjectLease(project.rootKey));
-  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return false;
+  if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot))
+    return false;
   if (!leased.ok) deps.reportError(AGENT_TASKS_SOURCE, leased.error);
   if (leased.ok && leased.value) return true;
   deps.setNotice(failure(LEASE_REFUSED_NOTICE));

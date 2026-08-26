@@ -22,6 +22,7 @@ export interface AgentViewCommandHandlers {
   jumpToThread(slot: AgentJumpSlot): void;
   searchThreads(): void;
   findInThread(): void;
+  threadFindFocused?(): boolean;
   runPreferredScript?(): void;
   openCommitMenu?(): void;
   threadSelected(): boolean;
@@ -31,6 +32,7 @@ export interface AgentViewCommandBridge {
   bind(handlers: AgentViewCommandHandlers): () => void;
   bound(): boolean;
   threadSelected(): boolean;
+  threadFindFocused(): boolean;
   surfaceBlocked(surface: AgentSurfaceKind): boolean;
   run(commandId: AgentViewCommandId): void;
 }
@@ -52,6 +54,7 @@ export function createAgentViewCommandBridge(): AgentViewCommandBridge {
     },
     bound: () => current !== null,
     threadSelected: () => current?.threadSelected() ?? false,
+    threadFindFocused: () => current?.threadFindFocused?.() ?? false,
     surfaceBlocked: (surface) => current?.surfaceBlocked(surface) ?? true,
     run(commandId) {
       const handlers = current;

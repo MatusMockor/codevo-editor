@@ -9,7 +9,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type { WorkbenchPrompter } from "./workbenchPrompter";
+import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
 import type { EditorRevealTarget } from "../domain/languageServerFeatures";
 import {
   defaultTextSearchOptions,
@@ -793,18 +793,6 @@ export function useWorkbenchTextSearch(
         ? " Only the files currently listed will be replaced. Matches beyond the displayed results will not be modified; refine your search to include them."
         : "";
 
-      if (
-        !prompter.confirm(
-          `Replace ${scopeLabel}?${cappedExclusionWarning} This rewrites files on disk and is restorable from Local History.`,
-        )
-      ) {
-        return;
-      }
-
-      if (!isRequestedRootActive()) {
-        return;
-      }
-
       requestedFlight = {
         authorityToken: requestedSearch.owner.authorityToken,
         id: nextTextReplaceFlightIdRef.current + 1,
@@ -813,6 +801,18 @@ export function useWorkbenchTextSearch(
       nextTextReplaceFlightIdRef.current = requestedFlight.id;
       activeTextReplaceFlightRef.current = requestedFlight;
       setTextReplaceFlightState(requestedFlight);
+
+      const confirmed = await confirmWorkbenchAction(
+        prompter,
+        `Replace ${scopeLabel}?${cappedExclusionWarning} This rewrites files on disk and is restorable from Local History.`,
+      );
+      if (!confirmed || !isRequestedRootActive()) {
+        if (activeTextReplaceFlightRef.current === requestedFlight) {
+          activeTextReplaceFlightRef.current = null;
+          setTextReplaceFlightState((current) => (current === requestedFlight ? null : current));
+        }
+        return;
+      }
 
       try {
         // Single-file scope is passed out-of-band as an exact path (not as an

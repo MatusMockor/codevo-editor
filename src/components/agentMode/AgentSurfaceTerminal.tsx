@@ -21,6 +21,8 @@ const LazyTerminalTabsPanel = lazy(() =>
 
 export interface AgentSurfaceTerminalProps {
   readonly thread: AgentThreadView;
+  readonly isActive: boolean;
+  readonly layoutRevision: number;
   readonly workspaceId: string;
   readonly workspaceRoot: string;
   readonly workspaceTrusted: boolean;
@@ -34,6 +36,8 @@ export interface AgentSurfaceTerminalProps {
 }
 
 export function AgentSurfaceTerminal({
+  isActive,
+  layoutRevision,
   onOpenLink,
   onTrustWorkspace,
   profileId,
@@ -105,8 +109,9 @@ export function AgentSurfaceTerminal({
     >
       <Suspense fallback={<p className="agent-note">Loading the terminal…</p>}>
         <LazyTerminalTabsPanel
-          isActive
+          isActive={isActive}
           key={ownerKey}
+          layoutRevision={layoutRevision}
           onOpenLink={onOpenLink}
           ownerKey={ownerKey}
           profileId={profileId}

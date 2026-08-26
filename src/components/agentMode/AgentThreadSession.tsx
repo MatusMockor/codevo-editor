@@ -11,6 +11,8 @@ import {
 } from "../../domain/agentThreadSearch";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import {
+  agentLaunchEffortMeta,
+  agentLaunchEffortValue,
   agentLaunchModeHint,
   agentLaunchModeMeta,
   agentLaunchModelMeta,
@@ -20,6 +22,7 @@ import { AgentRelativeTime } from "./agentClock";
 import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 import {
   agentIsolationBadgeLabel,
+  agentWorktreeRemovalLabel,
   agentTurnProjection,
   agentTurnStatusLabel,
   type AgentTurnItem,
@@ -85,6 +88,7 @@ function AgentThreadSessionBody({
   const hits = findHits ?? NO_FIND_HITS;
   const query = findQuery ?? "";
   const activeHit = findHitIndex === undefined ? null : (hits[findHitIndex] ?? null);
+  const worktreeRemovalLabel = agentWorktreeRemovalLabel(thread);
 
   const hitTurnIds = useMemo(() => new Set(hits.map((hit) => hit.turnId)), [hits]);
   const baseHighlight = useMemo<AgentTurnHighlight>(() => ({ query, current: null }), [query]);
@@ -136,9 +140,7 @@ function AgentThreadSessionBody({
             </p>
           )}
 
-          {thread.worktreeRemoved && (
-            <p className="agent-note">The worktree was removed. Its branch was kept.</p>
-          )}
+          {worktreeRemovalLabel !== null && <p className="agent-note">{worktreeRemovalLabel}</p>}
 
           {thread.changeSummary && (
             <AgentThreadChangesCue
@@ -255,6 +257,8 @@ const AgentTurnView = memo(function AgentTurnView({
 
 function AgentTurnLaunchMeta({ launch }: { readonly launch: AgentLaunchOptions }) {
   const tone = agentLaunchTone(launch);
+  const effortMeta =
+    agentLaunchEffortValue(launch) === "default" ? null : agentLaunchEffortMeta(launch);
   const modeClassName =
     tone === null ? "agent-prompt__launch" : `agent-prompt__launch agent-prompt__launch--${tone}`;
 
@@ -266,6 +270,12 @@ function AgentTurnLaunchMeta({ launch }: { readonly launch: AgentLaunchOptions }
       <span className={modeClassName} title={agentLaunchModeHint(launch)}>
         {agentLaunchModeMeta(launch)}
       </span>
+      {effortMeta !== null && (
+        <>
+          <span aria-hidden="true" className="agent-prompt__sep" />
+          <span className="agent-prompt__launch">{effortMeta}</span>
+        </>
+      )}
     </>
   );
 }

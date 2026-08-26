@@ -28,7 +28,10 @@ const LazyAgentSurfaceTerminal = lazy(() =>
 );
 
 export type AgentSurfaceDiffPanelProps = Omit<AgentSurfaceDiffProps, "thread">;
-export type AgentSurfaceTerminalPanelProps = Omit<AgentSurfaceTerminalProps, "thread">;
+export type AgentSurfaceTerminalPanelProps = Omit<
+  AgentSurfaceTerminalProps,
+  "isActive" | "layoutRevision" | "thread"
+>;
 
 export interface AgentSurfacePanelProps {
   readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
@@ -94,6 +97,7 @@ export function AgentSurfacePanel({
   useWorkbenchFrameTreeReport(treeShown);
   const tabRefs = useRef(new Map<AgentSurfaceKind, HTMLButtonElement | null>());
   const chooserShown = activeSurface === null;
+  const terminalLayoutRevision = agentSurfaceLayoutRevision(openSurfaces, hidden);
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -218,6 +222,8 @@ export function AgentSurfacePanel({
               fileTree={fileTree}
               kind={kind}
               terminal={terminal}
+              terminalActive={!hidden && activeSurface === "terminal"}
+              terminalLayoutRevision={terminalLayoutRevision}
               thread={thread}
               treeShown={treeShown}
               workspaceRoot={workspaceRoot}
@@ -239,6 +245,8 @@ interface SurfaceBodyProps {
   readonly fileTree: AgentSurfaceFileTreeProps | null;
   readonly diff: AgentSurfaceDiffPanelProps | null;
   readonly terminal: AgentSurfaceTerminalPanelProps | null;
+  readonly terminalActive: boolean;
+  readonly terminalLayoutRevision: number;
 }
 
 function SurfaceBody({
@@ -246,6 +254,8 @@ function SurfaceBody({
   fileTree,
   kind,
   terminal,
+  terminalActive,
+  terminalLayoutRevision,
   thread,
   treeShown,
   workspaceRoot,
@@ -280,7 +290,31 @@ function SurfaceBody({
   if (terminal === null) return null;
   return (
     <Suspense fallback={<p className="agent-note">Loading the terminal…</p>}>
-      <LazyAgentSurfaceTerminal {...terminal} thread={thread} />
+      <LazyAgentSurfaceTerminal
+        {...terminal}
+        isActive={terminalActive}
+        layoutRevision={terminalLayoutRevision}
+        thread={thread}
+      />
     </Suspense>
   );
+}
+
+function agentSurfaceLayoutRevision(
+  openSurfaces: ReadonlyArray<AgentSurfaceKind>,
+  hidden: boolean,
+): number {
+  const openMask = openSurfaces.reduce((mask, surface) => mask | agentSurfaceMask(surface), 0);
+  return hidden ? openMask | 8 : openMask;
+}
+
+function agentSurfaceMask(surface: AgentSurfaceKind): number {
+  switch (surface) {
+    case "files":
+      return 1;
+    case "diff":
+      return 2;
+    case "terminal":
+      return 4;
+  }
 }

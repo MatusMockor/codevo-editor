@@ -109,8 +109,8 @@ export function useDocumentCloseLifecycle(
     onRecentlyClosedTabsChange,
   } = dependencies;
 
-  const closeDocument = useCallback(
-    (path: string, options: DocumentCloseOptions = {}) => {
+  const closeDocumentUnsafe = useCallback(
+    (path: string, options: DocumentCloseOptions = {}): Promise<void> | void => {
       const document = documentTabSession.getDocument(path);
       const rootPath = currentWorkspaceRootRef.current;
       const ownerKey = currentEditorSessionOwnerKeyRef.current;
@@ -120,66 +120,83 @@ export function useDocumentCloseLifecycle(
         ? hasExternalFileConflict(rootPath, path)
         : false;
 
+      const finishClose = () => {
+        if (currentWorkspaceRootRef.current !== rootPath) return;
+        if (currentEditorSessionOwnerKeyRef.current !== ownerKey) return;
+        if (documentTabSession.getDocument(path) !== document) return;
+
+        if (rootPath) {
+          invalidateDocumentSave(rootPath, path);
+        }
+
+        if (
+          document &&
+          rootPath &&
+          ownerKey &&
+          options.recordRecentlyClosed !== false
+        ) {
+          const viewState = recentlyClosedDocumentViewState(rootPath, path);
+          recentlyClosedTabsRef.current = pushRecentlyClosedTab(
+            recentlyClosedTabsRef.current,
+            ownerKey,
+            {
+              path,
+              ...(viewState ? { viewState } : {}),
+            },
+          );
+          onRecentlyClosedTabsChange();
+        }
+
+        if (document) {
+          void syncClosedDocument(document).catch(() => undefined);
+          void syncClosedJavaScriptTypeScriptDocument(document).catch(() => undefined);
+          clearPhpLocalDiagnosticsForPath(path);
+          clearExternalFileConflict(rootPath, path);
+        }
+
+        if (externallyRemovedRoot) {
+          clearLanguageServerDiagnosticsForPath(externallyRemovedRoot, path);
+        }
+
+        if (isGitDiffDocumentPath(path)) {
+          cancelGitDiffDocument(path);
+        }
+
+        const removal = documentTabSession.removeDocument(path);
+
+        if (!removal.closedActiveDocument || !removal.nextActivePath) return;
+
+        if (isGitDiffDocumentPath(removal.nextActivePath)) {
+          loadGitDiffDocument(removal.nextActivePath);
+        }
+      };
+
       if (
-        document &&
-        options.skipConfirmation !== true &&
-        (hasExternalConflict || isDirty(document)) &&
-        !prompter.confirm(
+        !document ||
+        options.skipConfirmation === true ||
+        (!hasExternalConflict && !isDirty(document))
+      ) {
+        finishClose();
+        return;
+      }
+
+      let confirmation: Promise<boolean> | boolean;
+      try {
+        confirmation = prompter.confirm(
           hasExternalConflict
             ? "Close file with an unresolved external conflict?"
             : "Discard changes?",
-        )
-      ) {
-        return;
-      }
-
-      if (rootPath) {
-        invalidateDocumentSave(rootPath, path);
-      }
-
-      if (
-        document &&
-        rootPath &&
-        ownerKey &&
-        options.recordRecentlyClosed !== false
-      ) {
-        const viewState = recentlyClosedDocumentViewState(rootPath, path);
-        recentlyClosedTabsRef.current = pushRecentlyClosedTab(
-          recentlyClosedTabsRef.current,
-          ownerKey,
-          {
-            path,
-            ...(viewState ? { viewState } : {}),
-          },
         );
-        onRecentlyClosedTabsChange();
-      }
-
-      if (document) {
-        void syncClosedDocument(document);
-        void syncClosedJavaScriptTypeScriptDocument(document);
-        clearPhpLocalDiagnosticsForPath(path);
-        clearExternalFileConflict(rootPath, path);
-      }
-
-      if (externallyRemovedRoot) {
-        clearLanguageServerDiagnosticsForPath(externallyRemovedRoot, path);
-      }
-
-      if (isGitDiffDocumentPath(path)) {
-        cancelGitDiffDocument(path);
-      }
-
-      const removal = documentTabSession.removeDocument(path);
-
-      if (!removal.closedActiveDocument || !removal.nextActivePath) {
+      } catch {
         return;
       }
-
-      if (isGitDiffDocumentPath(removal.nextActivePath)) {
-        loadGitDiffDocument(removal.nextActivePath);
+      if (typeof confirmation === "boolean") {
+        if (confirmation === true) finishClose();
         return;
       }
+      return Promise.resolve(confirmation).then((confirmed) => {
+        if (confirmed === true) finishClose();
+      });
     },
     [
       cancelGitDiffDocument,
@@ -203,20 +220,36 @@ export function useDocumentCloseLifecycle(
     ],
   );
 
+  const closeDocument = useCallback(
+    (path: string, options: DocumentCloseOptions = {}): void => {
+      try {
+        const pending = closeDocumentUnsafe(path, options);
+        if (pending) void pending.catch(() => undefined);
+      } catch {
+        return;
+      }
+    },
+    [closeDocumentUnsafe],
+  );
+
   const closeActiveSurface = useCallback(
-    (options: DocumentCloseOptions = {}) => {
-      const currentActivePath = documentTabSession.getActivePath();
-      if (currentActivePath && isGitDiffDocumentPath(currentActivePath)) {
-        closeGitDiffPreview();
+    (options: DocumentCloseOptions = {}): void => {
+      try {
+        const currentActivePath = documentTabSession.getActivePath();
+        if (currentActivePath && isGitDiffDocumentPath(currentActivePath)) {
+          closeGitDiffPreview();
+          return;
+        }
+
+        if (currentActivePath) {
+          closeDocument(currentActivePath, options);
+          return;
+        }
+
+        closeEmptyWorkbenchSurface();
+      } catch {
         return;
       }
-
-      if (currentActivePath) {
-        closeDocument(currentActivePath, options);
-        return;
-      }
-
-      closeEmptyWorkbenchSurface();
     },
     [
       closeDocument,

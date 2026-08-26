@@ -364,6 +364,152 @@ describe("useAgentProjects background root loading", () => {
 });
 
 describe("useAgentProjects lifecycle", () => {
+  it("releases a stale lease receipt after same-generation owner promotion", async () => {
+    const harness = renderAgentProjects({ activeWorkspaceId: null, deferLease: true });
+    await waitForReact(() => expect(harness.environment.pendingLease).not.toBeNull());
+    const staleLease = harness.environment.pendingLease;
+    const initialOwnerId = harness.hook().projects[0]?.ownerId;
+
+    harness.environment.activeWorkspaceId = ACTIVE_ID;
+    harness.rerender();
+    await waitForReact(() => expect(harness.hook().projects[0]?.ownerId).not.toBe(initialOwnerId));
+    await act(async () => {
+      staleLease?.resolve({ leaseToken: 41 });
+    });
+
+    await waitForReact(() => {
+      expect(harness.lease.releaseAgentRootLease).toHaveBeenCalledWith({
+        rootPath: ACTIVE_ROOT,
+        leaseToken: 41,
+      });
+      expect(harness.environment.pendingLease).not.toBe(staleLease);
+    });
+    await act(async () => {
+      harness.environment.pendingLease?.resolve({ leaseToken: 42 });
+    });
+    await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).toBe(42));
+    harness.unmount();
+  });
+
+  it("replaces the active launch workspace while retaining a live project task owner", async () => {
+    const harness = renderAgentProjects();
+    await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
+    const previousLeaseToken = harness.hook().projects[0]?.leaseToken;
+    harness.environment.liveOwners.add(ACTIVE_ID);
+
+    harness.environment.activeWorkspaceId = "workspace-active-replaced";
+    harness.rerender();
+
+    await waitForReact(() => {
+      expect(harness.hook().launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        "workspace-active-replaced",
+      );
+    });
+    expect(harness.hook().projects[0]?.ownerId).toBe(ACTIVE_ID);
+    expect(harness.releaseProjectTasks).not.toHaveBeenCalledWith(ACTIVE_ID);
+    expect(harness.hook().projects[0]?.leaseToken).toBe(previousLeaseToken);
+    harness.unmount();
+  });
+
+  it("retains a replaced launch workspace while its task drains across A to B to A", async () => {
+    const harness = renderAgentProjects();
+    await waitForReact(() => expect(harness.hook().projects).toHaveLength(1));
+    harness.environment.liveOwners.add(ACTIVE_ID);
+    const generationA = harness.hook().launchIdentityForProject(ACTIVE_ROOT)?.generation;
+
+    harness.environment.activeWorkspaceId = "workspace-b";
+    harness.rerender();
+    await waitForReact(() => {
+      expect(harness.hook().launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe("workspace-b");
+    });
+    const generationB = harness.hook().launchIdentityForProject(ACTIVE_ROOT)?.generation;
+    expect(generationB).toBeGreaterThan(generationA ?? 0);
+    harness.environment.liveOwners.add("workspace-b");
+    harness.environment.activeWorkspaceId = ACTIVE_ID;
+    harness.rerender();
+    await waitForReact(() => {
+      expect(harness.hook().launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(ACTIVE_ID);
+    });
+    expect(harness.hook().launchIdentityForProject(ACTIVE_ROOT)?.generation).toBeGreaterThan(
+      generationB ?? 0,
+    );
+
+    harness.environment.tabs = [];
+    harness.environment.activeWorkspaceRoot = null;
+    harness.environment.activeWorkspaceId = null;
+    harness.environment.activeWorkspaceTrust = null;
+    harness.rerender();
+    await waitForReact(() => expect(harness.hook().projects).toHaveLength(1));
+
+    harness.environment.liveOwners.delete(ACTIVE_ID);
+    harness.rerender();
+    expect(harness.hook().projects).toHaveLength(1);
+    harness.environment.liveOwners.delete("workspace-b");
+    harness.rerender();
+    await waitForReact(() => expect(harness.hook().projects).toHaveLength(0));
+    harness.unmount();
+  });
+
+  it("treats active workspace trust changes as authoritative and reacquires after a grant", async () => {
+    const harness = renderAgentProjects();
+    await waitForReact(() => {
+      expect(harness.hook().projects[0]?.leaseToken).not.toBeNull();
+    });
+    const firstLeaseToken = harness.hook().projects[0]?.leaseToken;
+
+    harness.environment.activeWorkspaceTrust = { rootPath: ACTIVE_ROOT, trusted: false };
+    harness.rerender();
+
+    await waitForReact(() => {
+      expect(harness.hook().projects[0]?.trust).toBe("untrusted");
+      expect(harness.hook().projects[0]?.leaseToken).toBeNull();
+    });
+    expect(harness.lease.releaseAgentRootLease).toHaveBeenCalledWith({
+      rootPath: ACTIVE_ROOT,
+      leaseToken: firstLeaseToken,
+    });
+
+    const settingsLoadsBeforeGrant = harness.settings.loadWorkspaceSettings.mock.calls.length;
+    harness.environment.activeWorkspaceTrust = { rootPath: ACTIVE_ROOT, trusted: true };
+    harness.rerender();
+
+    await waitForReact(() => {
+      expect(harness.hook().projects[0]?.trust).toBe("trusted");
+      expect(harness.hook().projects[0]?.leaseToken).not.toBeNull();
+      expect(harness.hook().projects[0]?.leaseToken).not.toBe(firstLeaseToken);
+      expect(harness.settings.loadWorkspaceSettings.mock.calls.length).toBeGreaterThan(
+        settingsLoadsBeforeGrant,
+      );
+    });
+    harness.unmount();
+  });
+
+  it("does not let late trust lookup overwrite active A to B to A authority", async () => {
+    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT], deferTrust: true });
+    await waitForReact(() => expect(harness.environment.pendingTrust.size).toBe(2));
+    const staleActiveTrust = harness.environment.pendingTrust.get(ACTIVE_ROOT);
+    expect(staleActiveTrust).toBeDefined();
+
+    harness.environment.activeWorkspaceId = "workspace-background";
+    harness.environment.activeWorkspaceRoot = BACKGROUND_ROOT;
+    harness.environment.activeWorkspaceTrust = { rootPath: BACKGROUND_ROOT, trusted: false };
+    harness.rerender();
+    harness.environment.activeWorkspaceId = ACTIVE_ID;
+    harness.environment.activeWorkspaceRoot = ACTIVE_ROOT;
+    harness.environment.activeWorkspaceTrust = { rootPath: ACTIVE_ROOT, trusted: true };
+    harness.rerender();
+
+    await act(async () => {
+      staleActiveTrust?.resolve({ rootPath: ACTIVE_ROOT, trusted: false });
+    });
+
+    await waitForReact(() => {
+      const active = harness.hook().projects.find((candidate) => candidate.rootKey === ACTIVE_ROOT);
+      expect(active?.trust).toBe("trusted");
+    });
+    harness.unmount();
+  });
+
   it("auto-releases a closed tab without live tasks and bumps the generation on re-add", async () => {
     const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
     await waitForReact(() => {
@@ -554,6 +700,30 @@ describe("useAgentProjects lifecycle", () => {
 });
 
 describe("useAgentProjects trust actions", () => {
+  it("promotes active controller trust when trust is granted from the project menu", async () => {
+    const harness = renderAgentProjects();
+    harness.environment.activeWorkspaceTrust = { rootPath: ACTIVE_ROOT, trusted: false };
+    harness.environment.trustedByRoot.set(ACTIVE_ROOT, false);
+    harness.rerender();
+    await waitForReact(() => expect(harness.hook().projects[0]?.trust).toBe("untrusted"));
+
+    await act(async () => {
+      await harness.hook().trustProject(ACTIVE_ROOT);
+    });
+    harness.rerender();
+
+    await waitForReact(() => {
+      expect(harness.hook().projects[0]?.trust).toBe("trusted");
+      expect(harness.hook().projects[0]?.leaseToken).not.toBeNull();
+    });
+    expect(harness.activeTrustChanges).toContainEqual({
+      ownerId: ACTIVE_ID,
+      rootPath: ACTIVE_ROOT,
+      trusted: true,
+    });
+    harness.unmount();
+  });
+
   it("grants trust only after an explicit confirmation and then refreshes the root", async () => {
     const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT], confirmResult: false });
     harness.environment.trustedByRoot.set(BACKGROUND_ROOT, false);
@@ -586,6 +756,121 @@ describe("useAgentProjects trust actions", () => {
     harness.unmount();
   });
 
+  it("drops a confirmed trust request after same-root owner replacement", async () => {
+    const confirmation = createDeferred<boolean>();
+    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
+    harness.environment.trustedByRoot.set(BACKGROUND_ROOT, false);
+    await waitForReact(() => {
+      expect(
+        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT)?.trust,
+      ).toBe("untrusted");
+    });
+    harness.confirm.mockImplementationOnce(() => confirmation.promise as never);
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = harness.hook().trustProject(BACKGROUND_ROOT);
+    });
+    harness.environment.tabs = [];
+    harness.rerender();
+    await waitForReact(() => {
+      expect(
+        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT),
+      ).toBeUndefined();
+    });
+    harness.environment.tabs = [BACKGROUND_ROOT];
+    harness.rerender();
+    await waitForReact(() => {
+      expect(
+        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT)
+          ?.generation,
+      ).toBe(2);
+    });
+
+    await act(async () => {
+      confirmation.resolve(true);
+      await pending;
+    });
+
+    expect(harness.trust.setTrust).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("drops a confirmed trust request after same-generation owner promotion", async () => {
+    const confirmation = createDeferred<boolean>();
+    const harness = renderAgentProjects({ activeWorkspaceId: null });
+    harness.environment.activeWorkspaceTrust = { rootPath: ACTIVE_ROOT, trusted: false };
+    harness.environment.trustedByRoot.set(ACTIVE_ROOT, false);
+    harness.rerender();
+    await waitForReact(() => expect(harness.hook().projects[0]?.trust).toBe("untrusted"));
+    const generation = harness.hook().projects[0]?.generation;
+    const initialOwnerId = harness.hook().projects[0]?.ownerId;
+    harness.confirm.mockImplementationOnce(() => confirmation.promise as never);
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = harness.hook().trustProject(ACTIVE_ROOT);
+    });
+    harness.environment.activeWorkspaceId = ACTIVE_ID;
+    harness.rerender();
+    await waitForReact(() => {
+      expect(harness.hook().projects[0]?.generation).toBe(generation);
+      expect(harness.hook().projects[0]?.ownerId).not.toBe(initialOwnerId);
+    });
+
+    await act(async () => {
+      confirmation.resolve(true);
+      await pending;
+    });
+
+    expect(harness.trust.setTrust).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not report a stale trust failure after same-root owner replacement", async () => {
+    let rejectTrust!: (error: Error) => void;
+    const trustFailure = new Promise<WorkspaceTrustState>((_resolve, reject) => {
+      rejectTrust = reject;
+    });
+    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
+    harness.environment.trustedByRoot.set(BACKGROUND_ROOT, false);
+    await waitForReact(() => {
+      expect(
+        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT)?.trust,
+      ).toBe("untrusted");
+    });
+    harness.trust.setTrust.mockImplementationOnce(() => trustFailure);
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = harness.hook().trustProject(BACKGROUND_ROOT);
+    });
+    await waitForReact(() => expect(harness.trust.setTrust).toHaveBeenCalledOnce());
+    harness.environment.tabs = [];
+    harness.rerender();
+    await waitForReact(() => {
+      expect(
+        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT),
+      ).toBeUndefined();
+    });
+    harness.environment.tabs = [BACKGROUND_ROOT];
+    harness.rerender();
+    await waitForReact(() => {
+      expect(
+        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT)
+          ?.generation,
+      ).toBe(2);
+    });
+
+    await act(async () => {
+      rejectTrust(new Error("trust failed"));
+      await pending;
+    });
+
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("downgrades a project to untrusted after a dispatch trust rejection", async () => {
     const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
     await waitForReact(() => {
@@ -603,52 +888,109 @@ describe("useAgentProjects trust actions", () => {
     expect(project?.trust).toBe("untrusted");
     harness.unmount();
   });
+
+  it("downgrades active controller trust after a dispatch trust rejection", async () => {
+    const harness = renderAgentProjects();
+    harness.environment.activeWorkspaceTrust = { rootPath: ACTIVE_ROOT, trusted: true };
+    harness.rerender();
+    await waitForReact(() => expect(harness.hook().projects[0]?.trust).toBe("trusted"));
+    const leaseToken = harness.hook().projects[0]?.leaseToken;
+    const trustCallsBeforeRejection = harness.trust.getTrust.mock.calls.length;
+
+    act(() => harness.hook().noteDispatchTrustRejected(ACTIVE_ROOT));
+
+    await waitForReact(() => expect(harness.hook().projects[0]?.trust).toBe("untrusted"));
+    expect(harness.activeTrustChanges).toEqual([
+      { ownerId: ACTIVE_ID, rootPath: ACTIVE_ROOT, trusted: false },
+    ]);
+    expect(harness.lease.releaseAgentRootLease).toHaveBeenCalledWith({
+      rootPath: ACTIVE_ROOT,
+      leaseToken,
+    });
+    expect(harness.trust.getTrust).toHaveBeenCalledTimes(trustCallsBeforeRejection);
+    harness.unmount();
+  });
+
+  it("downgrades controller trust when a frozen background owner becomes active", async () => {
+    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
+    await waitForReact(() => {
+      expect(
+        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT)?.trust,
+      ).toBe("trusted");
+    });
+    harness.environment.activeWorkspaceId = "workspace-background";
+    harness.environment.activeWorkspaceRoot = BACKGROUND_ROOT;
+    harness.environment.activeWorkspaceTrust = { rootPath: BACKGROUND_ROOT, trusted: true };
+    harness.rerender();
+
+    act(() => harness.hook().noteDispatchTrustRejected(BACKGROUND_ROOT));
+
+    await waitForReact(() => {
+      expect(
+        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT)?.trust,
+      ).toBe("untrusted");
+    });
+    expect(harness.activeTrustChanges).toEqual([
+      { ownerId: "workspace-background", rootPath: BACKGROUND_ROOT, trusted: false },
+    ]);
+    harness.unmount();
+  });
 });
 
 interface Environment {
   enabled: boolean;
   activeWorkspaceId: string | null;
   activeWorkspaceRoot: string | null;
+  activeWorkspaceTrust: WorkspaceTrustState | null;
   tabs: ReadonlyArray<string>;
   confirmResult: boolean;
   deferTrust: boolean;
+  deferLease: boolean;
   liveOwners: Set<string>;
   trustedByRoot: Map<string, boolean>;
   descriptorsByRoot: Map<string, WorkspaceIdentityDescriptor>;
   workspaceSettingsByRoot: Map<string, WorkspaceSettings>;
   detectedByRoot: Map<string, string[]>;
   pendingTrust: Map<string, ReturnType<typeof createDeferred<WorkspaceTrustState>>>;
+  pendingLease: ReturnType<typeof createDeferred<AgentRootLeaseReceipt>> | null;
   concurrentTrustCalls: number;
   maxConcurrentTrustCalls: number;
 }
 
 interface HarnessOptions {
   enabled?: boolean;
+  activeWorkspaceId?: string | null;
   tabs?: ReadonlyArray<string>;
   confirmResult?: boolean;
   deferTrust?: boolean;
+  deferLease?: boolean;
   descriptors?: ReadonlyArray<[string, WorkspaceIdentityDescriptor]>;
 }
 
 function renderAgentProjects(options: HarnessOptions = {}) {
   const environment: Environment = {
     enabled: options.enabled ?? true,
-    activeWorkspaceId: ACTIVE_ID,
+    activeWorkspaceId:
+      options.activeWorkspaceId === undefined ? ACTIVE_ID : options.activeWorkspaceId,
     activeWorkspaceRoot: ACTIVE_ROOT,
+    activeWorkspaceTrust: null,
     tabs: options.tabs ?? [],
     confirmResult: options.confirmResult ?? true,
     deferTrust: options.deferTrust ?? false,
+    deferLease: options.deferLease ?? false,
     liveOwners: new Set<string>(),
     trustedByRoot: new Map<string, boolean>(),
     descriptorsByRoot: new Map<string, WorkspaceIdentityDescriptor>(options.descriptors ?? []),
     workspaceSettingsByRoot: new Map<string, WorkspaceSettings>(),
     detectedByRoot: new Map<string, string[]>(),
     pendingTrust: new Map(),
+    pendingLease: null,
     concurrentTrustCalls: 0,
     maxConcurrentTrustCalls: 0,
   };
 
   const calls: string[] = [];
+  const activeTrustChanges: Array<{ ownerId: string; rootPath: string; trusted: boolean }> = [];
   const appSettings: AppSettings = defaultAppSettings();
   const appSettingsRef = {
     get current(): AppSettings {
@@ -701,6 +1043,11 @@ function renderAgentProjects(options: HarnessOptions = {}) {
     acquireAgentRootLease: vi.fn(
       async (_request: { rootPath: string }): Promise<AgentRootLeaseReceipt> => {
         calls.push("acquireAgentRootLease");
+        if (environment.deferLease) {
+          const deferred = createDeferred<AgentRootLeaseReceipt>();
+          environment.pendingLease = deferred;
+          return deferred.promise;
+        }
         nextLeaseToken += 1;
         return { leaseToken: nextLeaseToken };
       },
@@ -730,6 +1077,9 @@ function renderAgentProjects(options: HarnessOptions = {}) {
     get activeWorkspaceRoot() {
       return environment.activeWorkspaceRoot;
     },
+    get activeWorkspaceTrust() {
+      return environment.activeWorkspaceTrust;
+    },
     activeWorkspaceRepositories: [activeRepository()],
     activeIsolationPolicy: "auto",
     descriptorForRoot: (rootPath: string) => environment.descriptorsByRoot.get(rootPath) ?? null,
@@ -740,6 +1090,10 @@ function renderAgentProjects(options: HarnessOptions = {}) {
     hasLiveTasksForOwner: (ownerId: string) => environment.liveOwners.has(ownerId),
     stopProjectTasks,
     releaseProjectTasks,
+    onActiveWorkspaceTrustChanged: (rootPath: string, ownerId: string, trusted: boolean) => {
+      activeTrustChanges.push({ ownerId, rootPath, trusted });
+      environment.activeWorkspaceTrust = { rootPath, trusted };
+    },
     prompter: { confirm, prompt: () => null },
     reportError,
   };
@@ -758,6 +1112,7 @@ function renderAgentProjects(options: HarnessOptions = {}) {
 
   return {
     calls,
+    activeTrustChanges,
     confirm,
     discovery,
     environment,

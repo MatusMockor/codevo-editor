@@ -231,6 +231,36 @@ describe("AgentThreadSession", () => {
     expect(host.querySelector(".agent-prompt__launch--danger")).toBeNull();
   });
 
+  it("records only a non-default Claude effort in turn metadata", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Use low effort", { kind: "exited", exitCode: 0 }, [], {
+            provider: "claudeCode",
+            model: "sonnet",
+            mode: "plan",
+            effort: "low",
+          }),
+          turn("agt-1-t2", "Use configured effort", { kind: "exited", exitCode: 0 }, [], {
+            provider: "claudeCode",
+            model: "opus",
+            mode: "acceptEdits",
+            effort: "default",
+          }),
+          turn("agt-1-t3", "Use Codex", { kind: "exited", exitCode: 0 }, [], {
+            provider: "codex",
+            model: "gpt-5.5",
+            mode: "readOnly",
+          }),
+        ],
+      }),
+    });
+
+    expect(launchMeta("agt-1-t1")).toEqual(["sonnet", "plan only", "low"]);
+    expect(launchMeta("agt-1-t2")).toEqual(["opus", "accept edits"]);
+    expect(launchMeta("agt-1-t3")).toEqual(["gpt-5.5", "read-only"]);
+  });
+
   it("badges a plan turn and a turn that bypassed the permission checks", () => {
     render({
       thread: threadView({
@@ -281,11 +311,29 @@ describe("AgentThreadSession", () => {
     );
   });
 
-  it("tells the user when the worktree was removed or disappeared", () => {
+  it("distinguishes a retained local branch from a deleted local branch and retained remote", () => {
     render({ thread: threadView({ worktreeRemoved: true }) });
 
-    expect(host.textContent).toContain("The worktree was removed. Its branch was kept.");
+    expect(host.textContent).toContain("The worktree was removed. Its local branch was kept.");
 
+    render({
+      thread: threadView({
+        branchDeleted: true,
+        pushed: { remote: "origin", branch: "agent/agt-1" },
+      }),
+    });
+
+    expect(host.textContent).toContain(
+      "The worktree and its local branch were removed. The remote branch was kept.",
+    );
+
+    render({ thread: threadView({ branchDeleted: true }) });
+
+    expect(host.textContent).toContain("The worktree and its local branch were removed.");
+    expect(host.textContent).not.toContain("The remote branch was kept.");
+  });
+
+  it("tells the user when the worktree disappeared", () => {
     render({ thread: threadView({ worktreeMissing: true }) });
 
     expect(host.textContent).toContain("The worktree for this thread no longer exists.");
@@ -557,12 +605,21 @@ function defaultProps(): AgentThreadSessionProps {
   };
 }
 
+function launchMeta(turnId: string): ReadonlyArray<string | null> {
+  const turn = document.querySelector(`[data-agent-turn="${turnId}"]`);
+  return Array.from(turn?.querySelectorAll(".agent-prompt__launch") ?? []).map(
+    (node) => node.textContent,
+  );
+}
+
 interface ThreadViewOptions {
   readonly status?: AgentTurnStatus;
   readonly turns?: ReadonlyArray<AgentTurn>;
   readonly turnsTruncated?: boolean;
   readonly worktreeRemoved?: boolean;
   readonly worktreeMissing?: boolean;
+  readonly branchDeleted?: boolean;
+  readonly pushed?: { readonly remote: string; readonly branch: string } | null;
   readonly changeSummary?: AgentTaskChangeSummary | null;
 }
 
@@ -584,11 +641,22 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
     turns,
     turnsTruncated: overrides.turnsTruncated ?? false,
     viewedAtEpochMs: null,
-    integration: null,
+    integration:
+      overrides.branchDeleted === true || overrides.pushed !== undefined
+        ? {
+            lastCommitSha: null,
+            pushed: overrides.pushed ?? null,
+            integrated: null,
+            branchDeleted: overrides.branchDeleted ?? false,
+          }
+        : null,
   };
 
   return {
-    ship: { kind: "idle", status: null, loadingStatus: false },
+    ship:
+      overrides.branchDeleted === true
+        ? { kind: "worktreeRemoved", branchDeleted: true }
+        : { kind: "idle", status: null, loadingStatus: false },
     editorAvailability: { kind: "available" },
     attention: agentThreadAttention(thread),
     unread: agentThreadUnread(thread),

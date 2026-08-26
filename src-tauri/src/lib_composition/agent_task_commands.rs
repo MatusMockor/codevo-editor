@@ -7,21 +7,32 @@ use crate::agent_task_spawner::{plan_agent_invocation, AgentCliInvocation, Agent
 use crate::agent_task_supervisor::{
     AgentTaskEventSink, AgentTaskIsolation, AgentTaskOutputEvent, AgentTaskRegistry,
     AgentTaskStartRequest as AgentTaskRegistryStartRequest, AgentTaskStartResult,
-    AgentTaskStatusEvent, AGENT_TASK_OUTPUT_EVENT_CHANNEL, AGENT_TASK_STATUS_EVENT_CHANNEL,
+    AgentTaskStatusEvent, AGENT_TASK_OUTPUT_EVENT_CHANNEL, AGENT_TASK_STARTS_CLOSED_ERROR,
+    AGENT_TASK_STATUS_EVENT_CHANNEL,
 };
 use crate::git_worktree::{ensure_worktree_path_in_base, safe_agent_task_id};
 use crate::run_blocking_command;
-use crate::workspace_registry::WorkspaceId;
+use crate::trust::WorkspaceTrustService;
+use crate::workspace_registry::{WorkspaceId, WorkspaceRegistry};
 use agent_root_lease::AgentRootLeaseRegistry;
+#[cfg(test)]
+use agent_task_start_authority::revalidate_agent_task_project_authority;
+use agent_task_start_authority::{
+    capture_agent_task_project_authority, reserve_agent_task_trust, retained_root_matches_path,
+    revalidate_agent_task_filesystem_authority, AgentTaskProjectAuthority,
+};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[path = "../agent_root_lease.rs"]
 pub(crate) mod agent_root_lease;
+#[path = "agent_task_start_authority.rs"]
+mod agent_task_start_authority;
 
 pub(crate) const MAX_AGENT_TASK_WORKSPACE_ID_BYTES: usize = 1024;
+pub(crate) const MAX_AGENT_TASK_PATH_BYTES: usize = 4096;
 pub(crate) const MAX_AGENT_ROOT_LEASE_PATH_BYTES: usize = 4096;
 pub(crate) const UNTRUSTED_AGENT_REPOSITORY_ERROR: &str =
     "Agent tasks require a trusted repository.";
@@ -29,12 +40,24 @@ pub(crate) const UNTRUSTED_AGENT_WORKTREE_ERROR: &str =
     "Agent tasks require a trusted agent worktree.";
 pub(crate) const IN_PLACE_AGENT_CWD_ERROR: &str =
     "In-place agent tasks must run at the repository root.";
+pub(crate) const UNKNOWN_AGENT_WORKSPACE_ERROR: &str =
+    "Agent task workspace is not registered or its identity changed.";
+pub(crate) const AGENT_PROJECT_ROOT_MISMATCH_ERROR: &str =
+    "Agent project root does not match the registered workspace.";
+pub(crate) const AGENT_REPOSITORY_CONTAINMENT_ERROR: &str =
+    "Agent repository must be contained within the registered project root.";
+pub(crate) const INVALID_AGENT_TASK_PATH_ERROR: &str =
+    "Agent task paths must be bounded normalized absolute paths.";
+pub(crate) const AGENT_WORKSPACE_START_BUSY_ERROR: &str =
+    "Agent task workspace is closing or busy.";
+pub(crate) const AGENT_TRUST_START_BUSY_ERROR: &str = "Agent task trust authority is busy.";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct StartAgentTaskRequest {
     task_id: String,
     workspace_id: WorkspaceId,
+    project_root: String,
     repository_root: String,
     cwd: String,
     isolation: AgentTaskIsolation,
@@ -145,28 +168,33 @@ fn ensure_agent_task_trust(
 struct PreparedAgentTaskStart {
     request: AgentTaskRegistryStartRequest,
     plan: AgentTaskSpawnPlan,
+    authority: AgentTaskProjectAuthority,
 }
 
 fn prepare_agent_task_start(
     request: &StartAgentTaskRequest,
+    authority: AgentTaskProjectAuthority,
 ) -> Result<PreparedAgentTaskStart, String> {
     if !request.launch.matches(request.agent_cli_kind) {
         return Err(AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR.to_string());
     }
     let task_id = safe_agent_task_id(&request.task_id)?;
     ensure_workspace_id_bounds(&request.workspace_id)?;
-    let repository_root = canonicalize_workspace_root(&request.repository_root)?;
-    let (cwd, worktree_path) = match request.isolation {
+    let repository_root = authority.repository_root.clone();
+    let cwd = authority.cwd.clone();
+    let worktree_path = match request.isolation {
         AgentTaskIsolation::InPlace => {
-            let cwd = canonicalize_workspace_root(&request.cwd)?;
             if cwd != repository_root {
                 return Err(IN_PLACE_AGENT_CWD_ERROR.to_string());
             }
-            (cwd, None)
+            None
         }
         AgentTaskIsolation::Worktree => {
-            let cwd = ensure_worktree_path_in_base(&repository_root, Path::new(&request.cwd))?;
-            (cwd.clone(), Some(cwd))
+            let verified_cwd = ensure_worktree_path_in_base(&repository_root, &cwd)?;
+            if verified_cwd != cwd {
+                return Err(AGENT_REPOSITORY_CONTAINMENT_ERROR.to_string());
+            }
+            Some(cwd.clone())
         }
     };
     let plan = plan_agent_invocation(
@@ -176,7 +204,8 @@ fn prepare_agent_task_start(
         &cwd,
         request.resume_session_id.as_deref(),
         request.launch,
-    )?;
+    )?
+    .with_cwd_authority(Arc::clone(&authority.cwd_authority));
 
     Ok(PreparedAgentTaskStart {
         request: AgentTaskRegistryStartRequest {
@@ -187,6 +216,7 @@ fn prepare_agent_task_start(
             worktree_path,
         },
         plan,
+        authority,
     })
 }
 
@@ -194,23 +224,60 @@ fn prepare_agent_task_start(
 pub(crate) async fn start_agent_task(
     app: AppHandle,
     request: StartAgentTaskRequest,
-    trust: GitTrustState<'_>,
     state: AgentTaskRuntimeState<'_>,
 ) -> Result<AgentTaskStartResult, String> {
-    let repository_trusted = trusted_for(&trust, &request.repository_root)?;
-    let cwd_trusted = trusted_for(&trust, &request.cwd)?;
-    ensure_agent_task_trust(repository_trusted, cwd_trusted, request.isolation)?;
+    let preparation_app = app.clone();
+    let preparation_request = request.clone();
+    let prepared = run_blocking_command(move || {
+        let authority = capture_agent_task_project_authority(
+            &preparation_app.state::<WorkspaceRegistry>(),
+            &preparation_app.state::<Mutex<WorkspaceTrustService>>(),
+            &preparation_request,
+        )?;
+        prepare_agent_task_start(&preparation_request, authority)
+    })
+    .await?;
     let admission_registry = Arc::clone(&state.admission);
     run_blocking_command(move || {
-        let prepared = prepare_agent_task_start(&request)?;
+        let PreparedAgentTaskStart {
+            request: registry_request,
+            plan,
+            authority,
+        } = prepared;
+        let workspace_registry = app.state::<WorkspaceRegistry>();
+        let trust_state = app.state::<Mutex<WorkspaceTrustService>>();
+        revalidate_agent_task_filesystem_authority(&workspace_registry, &request, &authority)?;
+        let workspace_lease = workspace_registry
+            .reserve_runtime_start(&request.workspace_id)
+            .map_err(|_| AGENT_WORKSPACE_START_BUSY_ERROR.to_string())?;
+        let trust_leases = reserve_agent_task_trust(&trust_state, &authority, request.isolation)?;
+        if !retained_root_matches_path(&authority.project_authority, &authority.project_root)
+            || !retained_root_matches_path(
+                &authority.repository_authority,
+                &authority.repository_root,
+            )
+            || !retained_root_matches_path(&authority.cwd_authority, &authority.cwd)
+        {
+            return Err(UNKNOWN_AGENT_WORKSPACE_ERROR.to_string());
+        }
         let admission = admission_registry.reserve(
             &request.workspace_id,
-            &prepared.request.repository_root,
-            prepared.plan.cwd(),
+            &registry_request.repository_root,
+            plan.cwd(),
             request.isolation,
         )?;
-        app.state::<AgentTaskRegistry>()
-            .start(prepared.request, prepared.plan, admission)
+        let result = app
+            .state::<AgentTaskRegistry>()
+            .start(registry_request, plan, admission)
+            .map_err(|error| {
+                if error == AGENT_TASK_STARTS_CLOSED_ERROR {
+                    return AGENT_WORKSPACE_START_BUSY_ERROR.to_string();
+                }
+                error
+            });
+        drop(trust_leases);
+        drop(workspace_lease);
+        result
     })
     .await
 }
@@ -222,7 +289,9 @@ pub(crate) fn acknowledge_agent_task_start(
 ) -> Result<(), String> {
     let task_id = safe_agent_task_id(&request.task_id)?;
     ensure_workspace_id_bounds(&request.workspace_id)?;
-    state.registry.acknowledge(&task_id)
+    state
+        .registry
+        .acknowledge_for_workspace(&task_id, request.workspace_id.as_str())
 }
 
 #[tauri::command]
@@ -232,7 +301,9 @@ pub(crate) fn stop_agent_task(
 ) -> Result<(), String> {
     let task_id = safe_agent_task_id(&request.task_id)?;
     ensure_workspace_id_bounds(&request.workspace_id)?;
-    state.registry.stop(&task_id)
+    state
+        .registry
+        .stop_for_workspace(&task_id, request.workspace_id.as_str())
 }
 
 #[tauri::command]
@@ -242,7 +313,9 @@ pub(crate) fn stop_agent_tasks_for_root(
 ) -> Result<(), String> {
     ensure_workspace_id_bounds(&request.workspace_id)?;
     let root = canonicalize_workspace_root(&request.repository_root)?;
-    state.registry.stop_for_root(&root);
+    state
+        .registry
+        .stop_for_workspace_root(request.workspace_id.as_str(), &root);
     Ok(())
 }
 
@@ -339,6 +412,8 @@ mod tests {
         ClaudeEffortChoice, ClaudeModelChoice, ClaudePermissionMode, CodexExecutionMode,
         CodexModelChoice,
     };
+    use crate::trust::WorkspaceTrustSnapshot;
+    use crate::workspace_registry::{ManagedWorkspaceDescriptor, UnicodeNormalizationPolicy};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -399,6 +474,7 @@ mod tests {
         StartAgentTaskRequest {
             task_id: "agt-test-0001".to_string(),
             workspace_id: workspace_id("workspace-1"),
+            project_root: workspace.root.to_string_lossy().into_owned(),
             repository_root: workspace.root.to_string_lossy().into_owned(),
             cwd: cwd.to_string_lossy().into_owned(),
             isolation,
@@ -408,6 +484,426 @@ mod tests {
             resume_session_id: None,
             launch: AgentLaunchOptions::default(),
         }
+    }
+
+    fn test_authority(request: &StartAgentTaskRequest) -> AgentTaskProjectAuthority {
+        let project_root = PathBuf::from(&request.project_root);
+        let repository_root = PathBuf::from(&request.repository_root);
+        let cwd = PathBuf::from(&request.cwd);
+        let project_authority = Arc::new(std::fs::File::open("/").expect("open test authority"));
+        let repository_authority = Arc::new(
+            project_authority
+                .try_clone()
+                .expect("clone repository authority"),
+        );
+        let cwd_authority = Arc::new(project_authority.try_clone().expect("clone cwd authority"));
+        let project_trust = WorkspaceTrustSnapshot {
+            generation: 1,
+            root_path: request.project_root.clone(),
+            trusted: true,
+        };
+        let cwd_trust = WorkspaceTrustSnapshot {
+            generation: 1,
+            root_path: request.cwd.clone(),
+            trusted: true,
+        };
+        AgentTaskProjectAuthority {
+            descriptor: ManagedWorkspaceDescriptor {
+                workspace_id: request.workspace_id.clone(),
+                selected_root_path: project_root.clone(),
+                canonical_root_path: project_root.clone(),
+                case_sensitive: Some(true),
+                unicode_normalization_policy: UnicodeNormalizationPolicy::Preserved,
+            },
+            project_root,
+            repository_root,
+            cwd,
+            project_authority,
+            repository_authority,
+            cwd_authority,
+            project_trust,
+            cwd_trust,
+        }
+    }
+
+    fn prepare_test_request(
+        request: &StartAgentTaskRequest,
+    ) -> Result<PreparedAgentTaskStart, String> {
+        prepare_agent_task_start(request, test_authority(request))
+    }
+
+    fn registered_request(
+        workspace: &TempWorkspace,
+        repository_root: &Path,
+    ) -> (
+        WorkspaceRegistry,
+        Mutex<WorkspaceTrustService>,
+        StartAgentTaskRequest,
+    ) {
+        let registry = WorkspaceRegistry::new();
+        let descriptor = registry
+            .register(&workspace.root)
+            .expect("register workspace");
+        let mut trust = WorkspaceTrustService::load(workspace.root.join("trust.json"))
+            .expect("load trust service");
+        trust
+            .set(
+                descriptor
+                    .canonical_root_path
+                    .to_str()
+                    .expect("UTF-8 workspace root"),
+                true,
+            )
+            .expect("trust workspace");
+        let mut request = start_request(workspace, repository_root, AgentTaskIsolation::InPlace);
+        request.workspace_id = descriptor.workspace_id;
+        request.project_root = descriptor
+            .canonical_root_path
+            .to_string_lossy()
+            .into_owned();
+        request.repository_root = repository_root.to_string_lossy().into_owned();
+        request.cwd = repository_root.to_string_lossy().into_owned();
+        (registry, Mutex::new(trust), request)
+    }
+
+    #[test]
+    fn registered_nested_repository_uses_the_trusted_project_authority() {
+        let workspace = TempWorkspace::create("nested-authority");
+        let repository = workspace.root.join("packages/app");
+        fs::create_dir_all(&repository).expect("create nested repository");
+        let repository = repository
+            .canonicalize()
+            .expect("canonical nested repository");
+        let (registry, trust, request) = registered_request(&workspace, &repository);
+
+        let authority = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect("authorize nested repository");
+
+        assert_eq!(authority.project_root, workspace.root);
+        assert_eq!(authority.repository_root, repository);
+    }
+
+    #[test]
+    fn registered_root_repository_behavior_is_preserved() {
+        let workspace = TempWorkspace::create("root-authority");
+        let (registry, trust, request) = registered_request(&workspace, &workspace.root);
+
+        let authority = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect("authorize root repository");
+
+        assert_eq!(authority.project_root, authority.repository_root);
+    }
+
+    #[test]
+    fn agent_task_paths_are_strict_and_bounded_before_filesystem_work() {
+        let workspace = TempWorkspace::create("path-contract");
+        let (registry, trust, request) = registered_request(&workspace, &workspace.root);
+        let invalid_paths = [
+            String::new(),
+            "relative/path".to_string(),
+            workspace
+                .root
+                .join("nested/..")
+                .to_string_lossy()
+                .into_owned(),
+            format!("{}\0suffix", workspace.root.to_string_lossy()),
+            format!("/{}", "p".repeat(MAX_AGENT_TASK_PATH_BYTES)),
+        ];
+
+        for invalid_path in invalid_paths {
+            let mut invalid_request = request.clone();
+            invalid_request.project_root = invalid_path;
+            let error = capture_agent_task_project_authority(&registry, &trust, &invalid_request)
+                .expect_err("invalid project path");
+            assert_eq!(error, INVALID_AGENT_TASK_PATH_ERROR);
+        }
+
+        let mut invalid_repository = request.clone();
+        invalid_repository.repository_root = "relative/repository".to_string();
+        let repository_error =
+            capture_agent_task_project_authority(&registry, &trust, &invalid_repository)
+                .expect_err("invalid repository path");
+        let mut invalid_cwd = request;
+        invalid_cwd.cwd = "relative/cwd".to_string();
+        let cwd_error = capture_agent_task_project_authority(&registry, &trust, &invalid_cwd)
+            .expect_err("invalid cwd path");
+
+        assert_eq!(repository_error, INVALID_AGENT_TASK_PATH_ERROR);
+        assert_eq!(cwd_error, INVALID_AGENT_TASK_PATH_ERROR);
+
+        let poisoned_trust = Mutex::new(
+            WorkspaceTrustService::load(workspace.root.join("poisoned-trust.json"))
+                .expect("load trust service"),
+        );
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = poisoned_trust.lock().expect("trust lock");
+            panic!("poison trust");
+        });
+        let mut invalid_before_trust = invalid_cwd;
+        invalid_before_trust.project_root = String::new();
+        let ordering_error =
+            capture_agent_task_project_authority(&registry, &poisoned_trust, &invalid_before_trust)
+                .expect_err("path validation precedes trust access");
+        assert_eq!(ordering_error, INVALID_AGENT_TASK_PATH_ERROR);
+    }
+
+    #[test]
+    fn untrusted_registered_project_is_rejected() {
+        let workspace = TempWorkspace::create("untrusted-project");
+        let registry = WorkspaceRegistry::new();
+        let descriptor = registry
+            .register(&workspace.root)
+            .expect("register workspace");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(workspace.root.join("trust.json"))
+                .expect("load trust service"),
+        );
+        let mut request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
+        request.workspace_id = descriptor.workspace_id;
+
+        let error = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect_err("untrusted project");
+
+        assert_eq!(error, UNTRUSTED_AGENT_REPOSITORY_ERROR);
+    }
+
+    #[test]
+    fn foreign_and_traversing_project_roots_are_rejected() {
+        let workspace = TempWorkspace::create("project-mismatch");
+        let foreign = TempWorkspace::create("foreign-project");
+        let (registry, trust, mut request) = registered_request(&workspace, &workspace.root);
+        request.project_root = foreign.root.to_string_lossy().into_owned();
+        let foreign_error = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect_err("foreign project root");
+        request.project_root = workspace
+            .root
+            .join("nested/..")
+            .to_string_lossy()
+            .into_owned();
+        let traversal_error = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect_err("traversing project root");
+
+        assert_eq!(foreign_error, AGENT_PROJECT_ROOT_MISMATCH_ERROR);
+        assert_eq!(traversal_error, INVALID_AGENT_TASK_PATH_ERROR);
+    }
+
+    #[test]
+    fn repository_outside_the_registered_project_is_rejected() {
+        let workspace = TempWorkspace::create("repository-containment");
+        let foreign = TempWorkspace::create("foreign-repository");
+        let (registry, trust, mut request) = registered_request(&workspace, &workspace.root);
+        request.repository_root = foreign.root.to_string_lossy().into_owned();
+        request.cwd = request.repository_root.clone();
+
+        let foreign_error = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect_err("foreign repository");
+        fs::create_dir_all(workspace.root.join("packages")).expect("create package directory");
+        request.repository_root = workspace
+            .root
+            .join("packages/..")
+            .to_string_lossy()
+            .into_owned();
+        request.cwd = request.repository_root.clone();
+        let traversal_error = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect_err("traversing repository");
+
+        assert_eq!(foreign_error, AGENT_REPOSITORY_CONTAINMENT_ERROR);
+        assert_eq!(traversal_error, INVALID_AGENT_TASK_PATH_ERROR);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_repository_symlinks_and_replacements_fail_closed() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = TempWorkspace::create("nested-repository-identity");
+        let foreign = TempWorkspace::create("nested-repository-foreign");
+        let nested = workspace.root.join("packages/app");
+        fs::create_dir_all(&nested).expect("create nested repository");
+        let nested = nested.canonicalize().expect("canonical nested repository");
+        let (registry, trust, mut request) = registered_request(&workspace, &nested);
+        let authority = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect("capture nested authority");
+        let retained = workspace.root.join("packages/retained-app");
+        fs::rename(&nested, &retained).expect("move nested repository");
+        fs::create_dir_all(&nested).expect("replace nested repository");
+        let replacement_error =
+            revalidate_agent_task_project_authority(&registry, &trust, &request, &authority)
+                .expect_err("replaced nested repository");
+
+        let alias = workspace.root.join("packages/foreign-alias");
+        symlink(&foreign.root, &alias).expect("create foreign repository alias");
+        request.repository_root = alias.to_string_lossy().into_owned();
+        request.cwd = request.repository_root.clone();
+        let symlink_error = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect_err("symlink repository");
+
+        assert_eq!(replacement_error, UNKNOWN_AGENT_WORKSPACE_ERROR);
+        assert_eq!(symlink_error, AGENT_REPOSITORY_CONTAINMENT_ERROR);
+    }
+
+    #[test]
+    fn replaced_worktree_cwd_invalidates_the_prepared_authority() {
+        let workspace = TempWorkspace::create("worktree-cwd-identity");
+        let worktree = workspace.worktree("agt-test-0001");
+        let retained = workspace.root.join(".worktrees/retained");
+        let (registry, trust, mut request) = registered_request(&workspace, &workspace.root);
+        request.isolation = AgentTaskIsolation::Worktree;
+        request.cwd = worktree.to_string_lossy().into_owned();
+        trust
+            .lock()
+            .expect("trust lock")
+            .set(&request.cwd, true)
+            .expect("trust worktree");
+        let authority = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect("capture worktree authority");
+        fs::rename(&worktree, &retained).expect("move worktree");
+        fs::create_dir_all(&worktree).expect("replace worktree");
+
+        let error =
+            revalidate_agent_task_project_authority(&registry, &trust, &request, &authority)
+                .expect_err("replaced worktree");
+
+        assert_eq!(error, UNKNOWN_AGENT_WORKSPACE_ERROR);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unregistered_symlink_alias_is_rejected_as_project_authority() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = TempWorkspace::create("project-symlink");
+        let alias_parent = TempWorkspace::create("project-symlink-alias");
+        let alias = alias_parent.root.join("alias");
+        symlink(&workspace.root, &alias).expect("create project alias");
+        let (registry, trust, mut request) = registered_request(&workspace, &workspace.root);
+        request.project_root = alias.to_string_lossy().into_owned();
+
+        let error = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect_err("unregistered project alias");
+
+        assert_eq!(error, AGENT_PROJECT_ROOT_MISMATCH_ERROR);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registered_selected_alias_retains_its_project_trust_authority() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = TempWorkspace::create("selected-project-alias");
+        let alias_parent = TempWorkspace::create("selected-project-alias-parent");
+        let alias = alias_parent.root.join("alias");
+        symlink(&workspace.root, &alias).expect("create selected alias");
+        let registry = WorkspaceRegistry::new();
+        let descriptor = registry.register(&alias).expect("register selected alias");
+        let mut trust = WorkspaceTrustService::load(workspace.root.join("trust.json"))
+            .expect("load trust service");
+        trust
+            .set(alias.to_str().expect("UTF-8 alias"), true)
+            .expect("trust selected alias");
+        let trust = Mutex::new(trust);
+        let mut request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
+        request.workspace_id = descriptor.workspace_id;
+        request.project_root = alias.to_string_lossy().into_owned();
+
+        let authority = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect("authorize registered selected alias");
+
+        assert_eq!(authority.project_root, workspace.root);
+        assert!(authority.project_trust.trusted);
+    }
+
+    #[test]
+    fn trust_revocation_invalidates_the_prepared_authority() {
+        let workspace = TempWorkspace::create("trust-revocation");
+        let (registry, trust, request) = registered_request(&workspace, &workspace.root);
+        let authority = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect("capture authority");
+        trust
+            .lock()
+            .expect("trust lock")
+            .set(&request.project_root, false)
+            .expect("revoke trust");
+
+        let error =
+            revalidate_agent_task_project_authority(&registry, &trust, &request, &authority)
+                .expect_err("revoked authority");
+
+        assert_eq!(error, UNTRUSTED_AGENT_REPOSITORY_ERROR);
+    }
+
+    #[test]
+    fn trust_revocation_cannot_commit_during_the_start_boundary() {
+        use std::thread;
+
+        let workspace = TempWorkspace::create("trust-start-boundary");
+        let (registry, trust, request) = registered_request(&workspace, &workspace.root);
+        let trust = Arc::new(trust);
+        let authority = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect("capture authority");
+        revalidate_agent_task_filesystem_authority(&registry, &request, &authority)
+            .expect("revalidate filesystem authority");
+        let leases = reserve_agent_task_trust(&trust, &authority, request.isolation)
+            .expect("reserve trust launch");
+        let revoker_trust = Arc::clone(&trust);
+        let project_root = request.project_root.clone();
+        let revoker = thread::spawn(move || {
+            revoker_trust
+                .lock()
+                .expect("revoker trust lock")
+                .set(&project_root, false)
+                .expect_err("launch lease blocks revoke")
+        });
+
+        let revoke_error = revoker.join().expect("join revoker");
+
+        assert_eq!(revoke_error.kind(), std::io::ErrorKind::WouldBlock);
+        drop(leases);
+        assert!(
+            !trust
+                .lock()
+                .expect("trust lock")
+                .set(&request.project_root, false)
+                .expect("revoke after launch")
+                .trusted
+        );
+    }
+
+    #[test]
+    fn removed_workspace_invalidates_the_prepared_authority() {
+        let workspace = TempWorkspace::create("removed-workspace");
+        let (registry, trust, request) = registered_request(&workspace, &workspace.root);
+        let authority = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect("capture authority");
+        registry.clear();
+
+        let error =
+            revalidate_agent_task_project_authority(&registry, &trust, &request, &authority)
+                .expect_err("removed workspace");
+
+        assert_eq!(error, UNKNOWN_AGENT_WORKSPACE_ERROR);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_workspace_path_invalidates_the_retained_descriptor() {
+        let workspace = TempWorkspace::create("replaced-workspace");
+        let moved_root = workspace.root.with_extension("retained");
+        let (registry, trust, request) = registered_request(&workspace, &workspace.root);
+        let authority = capture_agent_task_project_authority(&registry, &trust, &request)
+            .expect("capture authority");
+        fs::rename(&workspace.root, &moved_root).expect("move registered workspace");
+        fs::create_dir_all(&workspace.root).expect("replace workspace path");
+
+        let error =
+            revalidate_agent_task_project_authority(&registry, &trust, &request, &authority)
+                .expect_err("replaced workspace path");
+
+        assert!(
+            error == UNKNOWN_AGENT_WORKSPACE_ERROR || error == AGENT_PROJECT_ROOT_MISMATCH_ERROR,
+            "got: {error}"
+        );
+        fs::remove_dir_all(&moved_root).expect("remove retained workspace fixture");
     }
 
     #[test]
@@ -446,7 +942,7 @@ mod tests {
         let mut request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
         request.task_id = "Bad--Id".to_string();
 
-        let error = prepare_agent_task_start(&request).expect_err("invalid task id");
+        let error = prepare_test_request(&request).expect_err("invalid task id");
 
         assert!(error.contains("task id"), "got: {error}");
     }
@@ -457,7 +953,7 @@ mod tests {
         let elsewhere = TempWorkspace::create("in-place-elsewhere");
         let request = start_request(&workspace, &elsewhere.root, AgentTaskIsolation::InPlace);
 
-        let error = prepare_agent_task_start(&request).expect_err("cwd containment");
+        let error = prepare_test_request(&request).expect_err("cwd containment");
 
         assert_eq!(error, IN_PLACE_AGENT_CWD_ERROR);
     }
@@ -470,7 +966,7 @@ mod tests {
         fs::create_dir_all(&outside).expect("create outside directory");
         let request = start_request(&workspace, &outside, AgentTaskIsolation::Worktree);
 
-        let error = prepare_agent_task_start(&request).expect_err("worktree containment");
+        let error = prepare_test_request(&request).expect_err("worktree containment");
 
         assert!(error.contains(".worktrees"), "got: {error}");
     }
@@ -481,7 +977,7 @@ mod tests {
         let mut request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
         request.workspace_id = workspace_id(&"w".repeat(MAX_AGENT_TASK_WORKSPACE_ID_BYTES + 1));
 
-        let error = prepare_agent_task_start(&request).expect_err("workspace id bounds");
+        let error = prepare_test_request(&request).expect_err("workspace id bounds");
 
         assert!(error.contains("workspace id"), "got: {error}");
     }
@@ -494,7 +990,7 @@ mod tests {
         fs::write(&plain, "data").expect("write plain file");
         request.agent_cli_path = plain.to_string_lossy().into_owned();
 
-        let error = prepare_agent_task_start(&request).expect_err("non-executable cli");
+        let error = prepare_test_request(&request).expect_err("non-executable cli");
 
         assert!(error.contains("executable"), "got: {error}");
     }
@@ -505,7 +1001,7 @@ mod tests {
         let worktree = workspace.worktree("agt-test-0001");
         let request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
 
-        let prepared = prepare_agent_task_start(&request).expect("prepare start");
+        let prepared = prepare_test_request(&request).expect("prepare start");
 
         assert_eq!(prepared.request.task_id, "agt-test-0001");
         assert_eq!(prepared.request.workspace_id, "workspace-1");
@@ -537,7 +1033,7 @@ mod tests {
             mode: CodexExecutionMode::ReadOnly,
         };
 
-        let error = prepare_agent_task_start(&request).expect_err("cross-provider launch");
+        let error = prepare_test_request(&request).expect_err("cross-provider launch");
 
         assert_eq!(error, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR);
     }
@@ -555,7 +1051,7 @@ mod tests {
             mode: CodexExecutionMode::Default,
         };
 
-        let error = prepare_agent_task_start(&request).expect_err("cross-provider launch");
+        let error = prepare_test_request(&request).expect_err("cross-provider launch");
 
         assert_eq!(error, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR);
     }
@@ -567,7 +1063,7 @@ mod tests {
         let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
         request.agent_cli_kind = AgentCliInvocation::CodexExec;
 
-        let error = prepare_agent_task_start(&request).expect_err("cross-provider launch");
+        let error = prepare_test_request(&request).expect_err("cross-provider launch");
 
         assert_eq!(error, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR);
     }
@@ -584,7 +1080,7 @@ mod tests {
         };
         request.resume_session_id = Some("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string());
 
-        let prepared = prepare_agent_task_start(&request).expect("prepare resumed codex start");
+        let prepared = prepare_test_request(&request).expect("prepare resumed codex start");
 
         assert_eq!(
             prepared.plan.args(),
@@ -616,7 +1112,7 @@ mod tests {
 
         let refused = ensure_agent_task_trust(false, false, request.isolation)
             .expect_err("dangerous launches need a trusted repository");
-        let prepared = prepare_agent_task_start(&request).expect("prepare dangerous start");
+        let prepared = prepare_test_request(&request).expect("prepare dangerous start");
 
         assert_eq!(refused, UNTRUSTED_AGENT_REPOSITORY_ERROR);
         assert!(prepared
@@ -627,7 +1123,7 @@ mod tests {
 
     #[test]
     fn the_start_request_contract_has_no_dangerous_launch_confirmation_field() {
-        let dangerous = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"codex","resumeSessionId":null,"launch":{"provider":"codex","model":"gpt-5.6-sol","mode":"dangerFullAccess"}}"#;
+        let dangerous = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"codex","resumeSessionId":null,"launch":{"provider":"codex","model":"gpt-5.6-sol","mode":"dangerFullAccess"}}"#;
         let parsed: StartAgentTaskRequest =
             serde_json::from_str(dangerous).expect("dangerous request parses");
         assert_eq!(
@@ -663,7 +1159,7 @@ mod tests {
             effort: ClaudeEffortChoice::High,
         };
 
-        let prepared = prepare_agent_task_start(&request).expect("prepare launch start");
+        let prepared = prepare_test_request(&request).expect("prepare launch start");
 
         assert_eq!(
             prepared.plan.args(),
@@ -686,7 +1182,7 @@ mod tests {
 
     #[test]
     fn the_start_request_contract_requires_a_launch_and_rejects_unknown_fields() {
-        let complete = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"claudeCode","resumeSessionId":null,"launch":{"provider":"claudeCode","model":"opus","mode":"plan"}}"#;
+        let complete = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"claudeCode","resumeSessionId":null,"launch":{"provider":"claudeCode","model":"opus","mode":"plan"}}"#;
         let parsed: StartAgentTaskRequest =
             serde_json::from_str(complete).expect("complete request parses");
         assert_eq!(
@@ -698,8 +1194,11 @@ mod tests {
             }
         );
 
-        let missing_launch = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"claudeCode","resumeSessionId":null}"#;
+        let missing_launch = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"claudeCode","resumeSessionId":null}"#;
         assert!(serde_json::from_str::<StartAgentTaskRequest>(missing_launch).is_err());
+
+        let missing_project_root = complete.replace("\"projectRoot\":\"/repo\",", "");
+        assert!(serde_json::from_str::<StartAgentTaskRequest>(&missing_project_root).is_err());
 
         let unknown_model = complete.replace("\"opus\"", "\"claude-opus-4\"");
         assert!(serde_json::from_str::<StartAgentTaskRequest>(&unknown_model).is_err());
@@ -712,7 +1211,7 @@ mod tests {
         let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
         request.resume_session_id = Some("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string());
 
-        let prepared = prepare_agent_task_start(&request).expect("prepare resumed start");
+        let prepared = prepare_test_request(&request).expect("prepare resumed start");
 
         assert_eq!(
             prepared.plan.args(),
@@ -736,7 +1235,7 @@ mod tests {
         let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
         request.resume_session_id = Some("--dangerously-skip-permissions".to_string());
 
-        let error = prepare_agent_task_start(&request).expect_err("flag-like resume id");
+        let error = prepare_test_request(&request).expect_err("flag-like resume id");
 
         assert!(error.contains("session id"), "got: {error}");
     }
@@ -744,10 +1243,10 @@ mod tests {
     #[test]
     fn start_requests_reject_unknown_fields_and_accept_a_null_resume_session_id() {
         let unknown = serde_json::from_str::<StartAgentTaskRequest>(
-            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"extra\":1}",
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"extra\":1}",
         );
         let accepted = serde_json::from_str::<StartAgentTaskRequest>(
-            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"}}",
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"}}",
         )
         .expect("deserialize start request");
 
@@ -868,7 +1367,7 @@ mod tests {
         let workspace = TempWorkspace::create("in-place-plan");
         let request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
 
-        let prepared = prepare_agent_task_start(&request).expect("prepare start");
+        let prepared = prepare_test_request(&request).expect("prepare start");
 
         assert_eq!(prepared.request.worktree_path, None);
         assert_eq!(prepared.plan.cwd(), workspace.root.as_path());

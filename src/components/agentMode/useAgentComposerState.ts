@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { MAX_AGENT_TASK_PROMPT_BYTES, type AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
@@ -18,9 +18,10 @@ import {
   composerTargetView,
   resolveComposerTarget,
   type AgentComposerProjectOption,
+  type ComposerScope,
+  type ComposerSelection,
   type ComposerTarget,
 } from "./agentComposerTarget";
-import type { AgentRailScope } from "./agentSidebarPresentation";
 import {
   agentFollowUpBlockedReason,
   agentIsolationReasonLabel,
@@ -50,7 +51,7 @@ export interface AgentComposerStateOptions {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly selectedThread: AgentThreadView | null;
-  readonly railScope: AgentRailScope;
+  readonly railScope: ComposerScope;
   onClearSelectedThread(): void;
   onThreadStarted(threadId: string): void;
 }
@@ -72,14 +73,30 @@ export function useAgentComposerState({
   railScope,
   selectedThread,
 }: AgentComposerStateOptions): AgentComposerState {
-  const [selection, setSelection] = useState<ComposerTarget | null>(null);
+  const [selection, setSelection] = useState<ComposerSelection | null>(null);
   const [prompt, setPrompt] = useState("");
   const [isolationChoice, setIsolationChoice] = useState<IsolationChoice | null>(null);
   const [unsafeConfirmed, setUnsafeConfirmed] = useState<string | null>(null);
   const [launchChoice, setLaunchChoice] = useState<LaunchChoice | null>(null);
   const [dangerousConfirmed, setDangerousConfirmed] = useState(false);
 
-  const composerProjects = useMemo(() => composerProjectOptions(groups), [groups]);
+  const composerProjects = useMemo(
+    () => composerProjectOptions(groups, projects),
+    [groups, projects],
+  );
+  useLayoutEffect(() => {
+    if (railScope.kind !== "repository") return;
+    setSelection((current) => {
+      if (current === null) return null;
+      if (
+        current.projectRootKey === railScope.projectRootKey &&
+        current.repositoryRoot === railScope.repositoryRoot
+      ) {
+        return current;
+      }
+      return null;
+    });
+  }, [railScope]);
   const target = resolveComposerTarget(composerProjects, selection, selectedThread, railScope);
   const composerRoot = target?.repositoryRoot ?? null;
   const composerProject =
@@ -136,14 +153,30 @@ export function useAgentComposerState({
   const startNewThread = useCallback(
     (projectRootKey: string, repositoryRoot: string) => {
       onClearSelectedThread();
-      setSelection({ projectRootKey, repositoryRoot });
+      const project =
+        composerProjects.find((candidate) => candidate.projectRootKey === projectRootKey) ?? null;
+      const repository =
+        project?.repositories.find((candidate) => candidate.repositoryRoot === repositoryRoot) ??
+        null;
+      setSelection(
+        project === null || repository === null
+          ? { kind: "missing", projectRootKey, repositoryRoot }
+          : {
+              kind: "bound",
+              projectRootKey,
+              repositoryRoot,
+              ownerId: project.ownerId,
+              generation: project.generation,
+            },
+      );
       setUnsafeConfirmed(null);
     },
-    [onClearSelectedThread],
+    [composerProjects, onClearSelectedThread],
   );
 
   const clearSelection = useCallback(() => {
     onClearSelectedThread();
+    setSelection(null);
     setUnsafeConfirmed(null);
   }, [onClearSelectedThread]);
 
@@ -198,10 +231,23 @@ export function useAgentComposerState({
   const selectRepository = useCallback(
     (repositoryRoot: string) => {
       if (target === null) return;
-      setSelection({ projectRootKey: target.projectRootKey, repositoryRoot });
+      const project =
+        composerProjects.find((candidate) => candidate.projectRootKey === target.projectRootKey) ??
+        null;
+      if (project === null) return;
+      if (!project.repositories.some((candidate) => candidate.repositoryRoot === repositoryRoot)) {
+        return;
+      }
+      setSelection({
+        kind: "bound",
+        projectRootKey: target.projectRootKey,
+        repositoryRoot,
+        ownerId: project.ownerId,
+        generation: project.generation,
+      });
       setUnsafeConfirmed(null);
     },
-    [target],
+    [composerProjects, target],
   );
 
   const changeIsolation = useCallback(
@@ -257,6 +303,7 @@ export function useAgentComposerState({
 
 function composerProjectOptions(
   groups: ReadonlyArray<AgentProjectGroup>,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
 ): ReadonlyArray<AgentComposerProjectOption> {
   return groups
     .filter(
@@ -265,17 +312,26 @@ function composerProjectOptions(
         group.trust === "trusted" &&
         group.origin !== "closed-tab-live-tasks",
     )
-    .map((group) => ({
-      projectRootKey: group.projectRootKey,
-      label: group.label,
-      origin: group.origin,
-      repositories: group.repos
-        .filter((repo) => repo.repositoryResolved)
-        .map((repo) => ({
-          repositoryRoot: repo.repositoryRoot,
-          label: repo.label,
-        })),
-    }))
+    .flatMap((group) => {
+      const project =
+        projects.find((candidate) => candidate.rootKey === group.projectRootKey) ?? null;
+      if (project === null) return [];
+      return [
+        {
+          projectRootKey: group.projectRootKey,
+          ownerId: project.ownerId,
+          generation: project.generation,
+          label: group.label,
+          origin: group.origin,
+          repositories: group.repos
+            .filter((repo) => repo.repositoryResolved)
+            .map((repo) => ({
+              repositoryRoot: repo.repositoryRoot,
+              label: repo.label,
+            })),
+        },
+      ];
+    })
     .filter((option) => option.repositories.length > 0);
 }
 

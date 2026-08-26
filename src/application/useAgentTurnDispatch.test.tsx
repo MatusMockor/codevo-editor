@@ -50,7 +50,11 @@ const SESSION_ID = "sess-0001-abcd";
 
 interface Environment {
   activeRoot: string;
+  repositoryRoot: string;
+  firstRepositoryRoot: string | null;
   activeOwner: string;
+  workspaceId: string;
+  workspaceGeneration: number;
   generation: number;
   origin: AgentProjectOrigin;
   cliPath: string | null;
@@ -58,6 +62,7 @@ interface Environment {
   maxConcurrent: number;
   worktreeMissing: boolean;
   leaseToken: number | null;
+  ensureProjectLease: ((projectRootKey: string) => Promise<boolean>) | null;
   preflight: InPlacePreflight;
   currentCliVersion: string | null;
   probeCliVersion:
@@ -66,13 +71,133 @@ interface Environment {
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((promiseResolve) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
     resolve = promiseResolve;
+    reject = promiseReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 describe("useAgentTurnDispatch startThread", () => {
+  it("revalidates the exact nested repository after acquiring a project lease", async () => {
+    const nestedRepository = `${ROOT_A}/packages/api`;
+    const pendingLease = createDeferred<boolean>();
+    const ensureProjectLease = vi.fn(async () => pendingLease.promise);
+    const harness = renderDispatch({
+      repositoryRoot: nestedRepository,
+      firstRepositoryRoot: ROOT_A,
+      leaseToken: null,
+      ensureProjectLease,
+    });
+
+    let result: unknown = "pending";
+    await act(async () => {
+      const starting = harness
+        .hook()
+        .startThread(startRequest({ repositoryRoot: nestedRepository, isolation: "in-place" }));
+      await waitForReact(() => expect(ensureProjectLease).toHaveBeenCalledWith(ROOT_A));
+      harness.environment.repositoryRoot = ROOT_B;
+      pendingLease.resolve(true);
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("binds a nested repository launch to its exact project root", async () => {
+    const nestedRepository = `${ROOT_A}/packages/api`;
+    const harness = renderDispatch({ repositoryRoot: nestedRepository });
+
+    const result = await act(() =>
+      harness
+        .hook()
+        .startThread(startRequest({ repositoryRoot: nestedRepository, isolation: "in-place" })),
+    );
+
+    expect(result).not.toBeNull();
+    expect(harness.startedRequests[0]).toMatchObject({
+      workspaceId: OWNER_A,
+      projectRoot: ROOT_A,
+      repositoryRoot: nestedRepository,
+      cwd: nestedRepository,
+    });
+    harness.unmount();
+  });
+
+  it("uses the current registered workspace while an earlier task owner remains frozen", async () => {
+    const harness = renderDispatch({ workspaceId: OWNER_B });
+
+    const result = await act(() =>
+      harness.hook().startThread(startRequest({ isolation: "in-place" })),
+    );
+
+    expect(result).not.toBeNull();
+    expect(harness.startedRequests[0]?.workspaceId).toBe(OWNER_B);
+    expect(harness.thread(result?.threadId ?? "").owner.ownerId).toBe(OWNER_B);
+    expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledWith({
+      taskId: harness.startedRequests[0]?.taskId,
+      workspaceId: OWNER_B,
+    });
+    harness.unmount();
+  });
+
+  it("stops a started task when the registered workspace changes during the start await", async () => {
+    const pendingStart = createDeferred<{ taskId: string }>();
+    const harness = renderDispatch();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return pendingStart.promise;
+    });
+
+    let result: unknown = "pending";
+    await act(async () => {
+      const starting = harness.hook().startThread(startRequest({ isolation: "in-place" }));
+      await harness.waitForStartedRequests(1);
+      harness.environment.workspaceId = OWNER_B;
+      harness.environment.workspaceGeneration += 1;
+      pendingStart.resolve({ taskId: harness.startedRequests[0]?.taskId ?? "" });
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
+      taskId: harness.startedRequests[0]?.taskId,
+      workspaceId: OWNER_A,
+    });
+    harness.unmount();
+  });
+
+  it("rejects stale A to B to A launch authority after the start await", async () => {
+    const pendingStart = createDeferred<{ taskId: string }>();
+    const harness = renderDispatch();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return pendingStart.promise;
+    });
+
+    let result: unknown = "pending";
+    await act(async () => {
+      const starting = harness.hook().startThread(startRequest({ isolation: "in-place" }));
+      await harness.waitForStartedRequests(1);
+      harness.environment.workspaceId = OWNER_B;
+      harness.environment.workspaceGeneration += 1;
+      harness.environment.workspaceId = OWNER_A;
+      harness.environment.workspaceGeneration += 1;
+      pendingStart.resolve({ taskId: harness.startedRequests[0]?.taskId ?? "" });
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
+      taskId: harness.startedRequests[0]?.taskId,
+      workspaceId: OWNER_A,
+    });
+    harness.unmount();
+  });
+
   it("creates a worktree named by the thread id and starts the first turn without resume", async () => {
     const harness = renderDispatch();
 
@@ -81,6 +206,10 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(result).not.toBeNull();
     const threadId = result?.threadId ?? "";
     expect(harness.worktree.addAgentWorktree).toHaveBeenCalledWith(ROOT_A, threadId);
+    expect(harness.onWorktreeCreated).toHaveBeenCalledWith(
+      ROOT_A,
+      `${ROOT_A}/.worktrees/${threadId}`,
+    );
     const started = harness.startedRequests[0];
     expect(started?.taskId).not.toBe(threadId);
     expect(started?.cwd).toBe(`${ROOT_A}/.worktrees/${threadId}`);
@@ -99,6 +228,39 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(thread.provider).toEqual({ kind: "claudeCode", sessionId: null });
     expect(thread.title).toBe("Fix the failing test");
     expect(harness.notice()).toBeNull();
+    harness.unmount();
+  });
+
+  it("downgrades a backend-rejected worktree without reporting a generic error and permits retry", async () => {
+    const harness = renderDispatch();
+    harness.worktree.addAgentWorktree.mockRejectedValueOnce(
+      new Error("Agent worktrees require a trusted repository."),
+    );
+
+    const rejected = await act(() => harness.hook().startThread(startRequest()));
+    const retried = await act(() => harness.hook().startThread(startRequest()));
+
+    expect(rejected).toBeNull();
+    expect(retried).not.toBeNull();
+    expect(harness.onProjectDispatchTrustRejected).toHaveBeenCalledWith(ROOT_A);
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.worktree.addAgentWorktree).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it("reports an unknown worktree creation failure without downgrading the project", async () => {
+    const harness = renderDispatch();
+    const error = new Error("transport: Agent worktrees require a trusted repository. retry later");
+    harness.worktree.addAgentWorktree.mockRejectedValueOnce(error);
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+
+    expect(result).toBeNull();
+    expect(harness.onProjectDispatchTrustRejected).not.toHaveBeenCalled();
+    expect(harness.reportError).toHaveBeenCalledWith("Agents", error);
+    expect(harness.notice()?.message).toBe("The agent worktree could not be created.");
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -252,6 +414,39 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(harness.retainUncertainWorktree).not.toHaveBeenCalled();
     expect(harness.worktree.removeWorktree).toHaveBeenCalledTimes(1);
     expect(harness.state().threads.size).toBe(0);
+    harness.unmount();
+  });
+
+  it("downgrades an exact task trust rejection without a generic report or persistent notice", async () => {
+    const harness = renderDispatch();
+    harness.agent.startAgentTask.mockRejectedValueOnce(
+      new Error("Agent tasks require a trusted repository."),
+    );
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+
+    expect(result).toBeNull();
+    expect(harness.onProjectDispatchTrustRejected).toHaveBeenCalledWith(ROOT_A);
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.notice()).toBeNull();
+    expect(harness.retainUncertainWorktree).not.toHaveBeenCalled();
+    expect(harness.worktree.removeWorktree).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("does not downgrade a replacement project after a delayed task trust rejection", async () => {
+    const harness = renderDispatch();
+    harness.agent.startAgentTask.mockImplementationOnce(async () => {
+      harness.environment.generation += 1;
+      throw new Error("Agent tasks require a trusted repository.");
+    });
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+
+    expect(result).toBeNull();
+    expect(harness.onProjectDispatchTrustRejected).not.toHaveBeenCalled();
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.worktree.removeWorktree).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 
@@ -667,6 +862,125 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     harness.unmount();
   });
 
+  it("does not settle a follow-up after its project authority was replaced during start", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const pendingStart = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (payload: StartAgentTaskRequest) => {
+      harness.startedRequests.push(payload);
+      return pendingStart.promise;
+    });
+
+    let result = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+      await harness.waitForStartedRequests(2);
+      harness.environment.generation += 1;
+      pendingStart.reject(
+        new AgentTaskStartRejectedError(
+          "An agent task is already running in this working directory.",
+        ),
+      );
+      result = await sending;
+    });
+
+    expect(result).toBe(false);
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.notice()).toBeNull();
+    harness.unmount();
+  });
+
+  it("does not stop-settle a successful follow-up after its project authority was replaced", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const pendingStart = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (payload: StartAgentTaskRequest) => {
+      harness.startedRequests.push(payload);
+      return pendingStart.promise;
+    });
+
+    let result = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+      await harness.waitForStartedRequests(2);
+      harness.environment.generation += 1;
+      pendingStart.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
+      result = await sending;
+    });
+
+    expect(result).toBe(false);
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("revalidates follow-up authority after stopping an unexpected task id", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const pendingStop = createDeferred<undefined>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (payload: StartAgentTaskRequest) => {
+      harness.startedRequests.push(payload);
+      return { taskId: "agt-unexpected-0001" };
+    });
+    harness.agent.stopAgentTask.mockImplementationOnce(async () => pendingStop.promise);
+
+    let result = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+      await waitForReact(() => expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1));
+      harness.environment.generation += 1;
+      pendingStop.resolve(undefined);
+      result = await sending;
+    });
+
+    expect(result).toBe(false);
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+    expect(harness.notice()).toBeNull();
+    harness.unmount();
+  });
+
+  it("revalidates follow-up authority after acknowledgement and stop awaits", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const pendingAcknowledge = createDeferred<undefined>();
+    harness.agent.acknowledgeAgentTaskStart.mockImplementationOnce(
+      async () => pendingAcknowledge.promise,
+    );
+
+    let result = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+      await waitForReact(() =>
+        expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledTimes(2),
+      );
+      harness.environment.generation += 1;
+      pendingAcknowledge.resolve(undefined);
+      result = await sending;
+    });
+
+    expect(result).toBe(false);
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
   it("keeps the uncertain notice for a start failure the gateway could not classify", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
@@ -914,7 +1228,11 @@ function fakeParser(): AgentOutputParserPort & {
 function renderDispatch(overrides: Partial<Environment> = {}) {
   const environment: Environment = {
     activeRoot: ROOT_A,
+    repositoryRoot: ROOT_A,
+    firstRepositoryRoot: null,
     activeOwner: OWNER_A,
+    workspaceId: OWNER_A,
+    workspaceGeneration: 1,
     generation: 1,
     origin: "active-tab",
     cliPath: CLI_PATH,
@@ -922,6 +1240,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     maxConcurrent: 4,
     worktreeMissing: false,
     leaseToken: 1,
+    ensureProjectLease: null,
     preflight: { kind: "ok" },
     currentCliVersion: null,
     probeCliVersion: null,
@@ -964,7 +1283,9 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
   const parser = fakeParser();
   const preflightInPlace = vi.fn(async (): Promise<InPlacePreflight> => environment.preflight);
   const retainUncertainWorktree = vi.fn();
+  const onWorktreeCreated = vi.fn();
   const onTurnTerminal = vi.fn();
+  const onProjectDispatchTrustRejected = vi.fn();
   const reportError = vi.fn();
 
   const project = (): AgentProjectDescriptor => ({
@@ -975,7 +1296,12 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     generation: environment.generation,
     trust: "trusted",
     origin: environment.origin,
-    repositories: [repository(environment.activeRoot)],
+    repositories: [
+      ...(environment.firstRepositoryRoot === null
+        ? []
+        : [repository(environment.firstRepositoryRoot)]),
+      repository(environment.repositoryRoot),
+    ],
     isolationPolicy: "auto",
     leaseToken: environment.leaseToken,
   });
@@ -1021,12 +1347,19 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       getAgentCliPath: () => environment.cliPath,
       getAgentCliKind: () => environment.cliKind,
       getMaxConcurrentAgentTasks: () => environment.maxConcurrent,
+      launchIdentityForProject: () => ({
+        workspaceId: environment.workspaceId,
+        generation: environment.workspaceGeneration,
+      }),
+      ensureProjectLease: environment.ensureProjectLease ?? undefined,
       preflightInPlace,
       isWorktreeMissing: () => environment.worktreeMissing,
       retainUncertainWorktree,
+      onWorktreeCreated,
       currentCliVersion: () => environment.currentCliVersion,
       probeCliVersion: environment.probeCliVersion ?? undefined,
       onTurnTerminal,
+      onProjectDispatchTrustRejected,
       reportError,
       setNotice: (notice) => notices.push(notice),
       outputParser: parser,
@@ -1051,7 +1384,10 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     parser,
     preflightInPlace,
     retainUncertainWorktree,
+    onWorktreeCreated,
     onTurnTerminal,
+    onProjectDispatchTrustRejected,
+    reportError,
     startedRequests,
     actions,
     environment,
@@ -1117,6 +1453,8 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     switchToProject(rootKey: string, ownerId: string): void {
       environment.activeRoot = rootKey;
       environment.activeOwner = ownerId;
+      environment.workspaceId = ownerId;
+      environment.workspaceGeneration += 1;
       environment.generation += 1;
     },
     async startThread(): Promise<string> {

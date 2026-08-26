@@ -18,6 +18,7 @@ import {
 
 const ROOT_KEY = "/workspace/app";
 const OWNER_ID = "agent-root:0123456789abcdef";
+const RUNTIME_OWNER_ID = "workspace-replaced";
 const REPOSITORY_ROOT = "/workspace/app";
 const WORKTREE_PATH = "/workspace/app/.worktrees/agt-1-0a1b";
 const THREAD_ID = "agt-1-0a1b";
@@ -147,6 +148,18 @@ function renderChangeSummary(overrides: Partial<Environment> = {}) {
 }
 
 describe("useAgentChangeSummary changes", () => {
+  it("loads changes for a retained runtime owner", async () => {
+    const runtimeThread = thread({
+      owner: { rootKey: ROOT_KEY, ownerId: RUNTIME_OWNER_ID, repositoryRoot: REPOSITORY_ROOT },
+    });
+    const harness = renderChangeSummary({
+      projects: [project({ runtimeOwnerIds: [OWNER_ID, RUNTIME_OWNER_ID] })],
+      threads: new Map([[THREAD_ID, runtimeThread]]),
+    });
+    await act(() => harness.hook().showChanges(THREAD_ID));
+    expect(harness.summary()?.files).toHaveLength(1);
+    harness.unmount();
+  });
   it("reads the worktree changes for a thread and bounds the rows", async () => {
     const changes = Array.from({ length: MAX_AGENT_TASK_CHANGE_ROWS + 3 }, (_unused, index) =>
       changedFile(`src/file-${index}.ts`),

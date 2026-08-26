@@ -45,6 +45,7 @@ function startRequest(overrides: Record<string, unknown> = {}): Record<string, u
   return {
     taskId: "agt-1-0a1b",
     workspaceId: "ws-1",
+    projectRoot: "/repo",
     repositoryRoot: "/repo",
     cwd: "/repo",
     isolation: "in-place",
@@ -353,6 +354,10 @@ describe("validateStartAgentTaskRequest", () => {
       startRequest({ agentCliKind: "codexExec" }),
       startRequest({ taskId: "ag" }),
       startRequest({ workspaceId: "ws" }),
+      startRequest({ projectRoot: "" }),
+      startRequest({ projectRoot: "/repo\nforeign" }),
+      startRequest({ projectRoot: `/${"x".repeat(4_096)}` }),
+      startRequest({ projectRoot: undefined }),
       startRequest({ extra: 1 }),
     ];
     for (const value of rejected) {

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import { runningTurn, type AgentThread } from "../domain/agentThread";
 import type { GitGateway } from "../domain/git";
@@ -9,6 +17,7 @@ import {
 } from "../domain/gitWorktree";
 import {
   AGENT_TASKS_SOURCE,
+  attempt,
   failure,
   info,
   isCurrentProjectOwner,
@@ -19,7 +28,7 @@ import {
   warning,
 } from "./agentProjectAuthority";
 import type { AgentTasksNotice, OrphanedWorktreeView } from "./agentThreadPorts";
-import type { WorkbenchPrompter } from "./workbenchPrompter";
+import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
 
 export interface AgentWorktreeLifecycleDependencies {
   readonly gitWorktreeGateway: GitWorktreeGateway;
@@ -39,6 +48,7 @@ export interface AgentWorktreeLifecycleSurface {
   readonly missingWorktreeThreadIds: ReadonlySet<string>;
   readonly removedWorktreeThreadIds: ReadonlySet<string>;
   refreshOrphanedWorktrees(): Promise<void>;
+  noteCreatedWorktree(repositoryRoot: string, worktreePath: string): void;
   retainUncertainWorktree(worktreePath: string): void;
   markWorktreeRemoved(threadId: string): void;
   removeWorktree(threadId: string): Promise<void>;
@@ -59,6 +69,12 @@ interface RepositoryWorktreeListing {
   readonly candidates: ReadonlyArray<OrphanedWorktreeCandidate>;
 }
 
+interface CreatedWorktreeNote {
+  readonly repositoryRoot: string;
+  readonly worktreePath: string;
+  readonly sequence: number;
+}
+
 const DIRTY_WORKTREE_CONFIRMATION =
   "This worktree has uncommitted changes. Remove it and discard them?";
 
@@ -77,6 +93,9 @@ export function useAgentWorktreeLifecycle(
   const listingsRef = useRef(listings);
   listingsRef.current = listings;
   const uncertainWorktreePathsRef = useRef<ReadonlySet<string>>(new Set());
+  const createdWorktreeNotesRef = useRef<ReadonlyMap<string, CreatedWorktreeNote>>(new Map());
+  const listingSequenceRef = useRef(0);
+  const listingRefreshRef = useRef(0);
   const mountedRef = useRef(true);
 
   useLayoutEffect(() => {
@@ -91,9 +110,12 @@ export function useAgentWorktreeLifecycle(
   }, []);
 
   const refreshOrphanedWorktrees = useCallback(async (): Promise<void> => {
+    listingRefreshRef.current += 1;
+    const refreshId = listingRefreshRef.current;
+    const refreshSequence = listingSequenceRef.current;
     const projects = dependenciesRef.current.projects;
     if (projects.length === 0) {
-      if (mountedRef.current) setListings(new Map());
+      if (mountedRef.current && refreshId === listingRefreshRef.current) setListings(new Map());
       return;
     }
     const collected = new Map<string, RepositoryWorktreeListing>();
@@ -103,18 +125,24 @@ export function useAgentWorktreeLifecycle(
       const authority = projectAuthority(project);
       for (const repository of project.repositories) {
         const repositoryRoot = repository.repositoryRoot;
-        if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) break;
-        const listed = await tryOrReport(
-          () => dependenciesRef.current.gitWorktreeGateway.listWorktrees(repositoryRoot),
-          dependenciesRef,
+        if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return;
+        const listed = await attempt(() =>
+          dependenciesRef.current.gitWorktreeGateway.listWorktrees(repositoryRoot),
         );
-        if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) break;
-        if (!listed.ok) continue;
+        if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return;
+        if (refreshId !== listingRefreshRef.current) return;
+        if (!listed.ok) {
+          dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, listed.error);
+          continue;
+        }
         collected.set(repositoryRoot, repositoryListing(repositoryRoot, listed.value));
       }
     }
     if (!mountedRef.current) return;
-    setListings(collected);
+    if (refreshId !== listingRefreshRef.current) return;
+    const notes = createdWorktreeNotesRef.current;
+    setListings(mergeCreatedWorktreeNotes(collected, notes.values(), refreshSequence));
+    createdWorktreeNotesRef.current = newerCreatedWorktreeNotes(notes, refreshSequence);
   }, []);
 
   const projectsSignature = useMemo(
@@ -135,6 +163,7 @@ export function useAgentWorktreeLifecycle(
   );
 
   useEffect(() => {
+    setRemovingOrphans((current) => (current.size === 0 ? current : new Set()));
     void refreshOrphanedWorktrees();
   }, [projectsSignature, refreshOrphanedWorktrees]);
 
@@ -142,6 +171,26 @@ export function useAgentWorktreeLifecycle(
     uncertainWorktreePathsRef.current = new Set(uncertainWorktreePathsRef.current).add(
       worktreePath,
     );
+  }, []);
+
+  const noteCreatedWorktree = useCallback((repositoryRoot: string, worktreePath: string): void => {
+    if (!mountedRef.current) return;
+    const deps = dependenciesRef.current;
+    const project = owningProjectForRepository(deps.projects, repositoryRoot);
+    if (project === undefined) return;
+    if (project.trust !== "trusted") return;
+    if (!deps.loadedRootKeys.has(project.rootKey)) return;
+    listingSequenceRef.current += 1;
+    const note: CreatedWorktreeNote = {
+      repositoryRoot,
+      worktreePath,
+      sequence: listingSequenceRef.current,
+    };
+    createdWorktreeNotesRef.current = new Map(createdWorktreeNotesRef.current).set(
+      worktreePath,
+      note,
+    );
+    setListings((current) => mergeCreatedWorktreeNotes(current, [note], 0));
   }, []);
 
   const markWorktreeRemoved = useCallback(
@@ -167,7 +216,7 @@ export function useAgentWorktreeLifecycle(
       }
       const project = projectByOwnerId(deps.projects, thread.owner.ownerId);
       if (project === undefined) return;
-      const authority = projectAuthority(project);
+      const authority = projectAuthority(project, thread.owner.ownerId);
       const repositoryRoot = thread.owner.repositoryRoot;
       deps.onWorktreeRemovalChanged(threadId, true);
 
@@ -175,8 +224,40 @@ export function useAgentWorktreeLifecycle(
         const status = await deps.gitGateway.getStatus(worktreePath);
         if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return;
         const dirty = status.changes.length > 0;
-        if (dirty && !dependenciesRef.current.prompter.confirm(DIRTY_WORKTREE_CONFIRMATION)) {
-          dependenciesRef.current.onWorktreeRemovalChanged(threadId, false);
+        if (dirty) {
+          const confirmed = await confirmWorkbenchAction(
+            dependenciesRef.current.prompter,
+            DIRTY_WORKTREE_CONFIRMATION,
+          );
+          if (
+            !ownsRemovableThread(
+              dependenciesRef,
+              mountedRef,
+              authority,
+              repositoryRoot,
+              threadId,
+              thread,
+              worktreePath,
+            )
+          ) {
+            return;
+          }
+          if (!confirmed) {
+            dependenciesRef.current.onWorktreeRemovalChanged(threadId, false);
+            return;
+          }
+        }
+        if (
+          !ownsRemovableThread(
+            dependenciesRef,
+            mountedRef,
+            authority,
+            repositoryRoot,
+            threadId,
+            thread,
+            worktreePath,
+          )
+        ) {
           return;
         }
         await dependenciesRef.current.gitWorktreeGateway.removeWorktree(
@@ -184,14 +265,38 @@ export function useAgentWorktreeLifecycle(
           worktreePath,
           dirty,
         );
-        if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return;
+        if (
+          !ownsThreadTarget(
+            dependenciesRef,
+            mountedRef,
+            authority,
+            repositoryRoot,
+            threadId,
+            thread,
+            worktreePath,
+          )
+        ) {
+          return;
+        }
         dependenciesRef.current.onWorktreeRemoved(threadId);
         setRemovedWorktreeThreadIds((current) => new Set(current).add(threadId));
         dependenciesRef.current.setNotice(info("The worktree was removed. Its branch was kept."));
         void refreshOrphanedWorktrees();
       } catch (error) {
+        if (
+          !ownsThreadTarget(
+            dependenciesRef,
+            mountedRef,
+            authority,
+            repositoryRoot,
+            threadId,
+            thread,
+            worktreePath,
+          )
+        ) {
+          return;
+        }
         dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, error);
-        if (!mountedRef.current) return;
         dependenciesRef.current.onWorktreeRemovalChanged(threadId, false);
         dependenciesRef.current.setNotice(failure("The worktree could not be removed."));
       }
@@ -217,22 +322,44 @@ export function useAgentWorktreeLifecycle(
           return;
         }
         const dirty = status.changes.length > 0;
-        if (dirty && !dependenciesRef.current.prompter.confirm(DIRTY_WORKTREE_CONFIRMATION)) return;
+        if (dirty) {
+          const confirmed = await confirmWorkbenchAction(
+            dependenciesRef.current.prompter,
+            DIRTY_WORKTREE_CONFIRMATION,
+          );
+          if (
+            !isCurrentProjectOwner(dependenciesRef, mountedRef, authority, candidate.repositoryRoot)
+          ) {
+            return;
+          }
+          if (!confirmed) return;
+        }
+        if (!ownsOrphanCandidate(dependenciesRef, mountedRef, listingsRef, authority, candidate)) {
+          return;
+        }
         await dependenciesRef.current.gitWorktreeGateway.removeWorktree(
           candidate.repositoryRoot,
           worktreePath,
           dirty,
         );
-        if (!mountedRef.current) return;
+        if (
+          !isCurrentProjectOwner(dependenciesRef, mountedRef, authority, candidate.repositoryRoot)
+        )
+          return;
         dependenciesRef.current.setNotice(
           info("The orphaned worktree was removed. Its branch was kept."),
         );
       } catch (error) {
+        if (
+          !isCurrentProjectOwner(dependenciesRef, mountedRef, authority, candidate.repositoryRoot)
+        )
+          return;
         dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, error);
-        if (!mountedRef.current) return;
         dependenciesRef.current.setNotice(failure("The orphaned worktree could not be removed."));
       } finally {
-        if (mountedRef.current) {
+        if (
+          isCurrentProjectOwner(dependenciesRef, mountedRef, authority, candidate.repositoryRoot)
+        ) {
           setRemovingOrphans((current) => withoutPath(current, worktreePath));
           void refreshOrphanedWorktrees();
         }
@@ -291,12 +418,98 @@ export function useAgentWorktreeLifecycle(
     missingWorktreeThreadIds,
     removedWorktreeThreadIds,
     refreshOrphanedWorktrees,
+    noteCreatedWorktree,
     retainUncertainWorktree,
     markWorktreeRemoved,
     removeWorktree,
     removeOrphanedWorktree,
     pruneOrphanedWorktrees,
   };
+}
+
+function ownsRemovableThread(
+  dependenciesRef: MutableRefObject<AgentWorktreeLifecycleDependencies>,
+  mountedRef: MutableRefObject<boolean>,
+  authority: ReturnType<typeof projectAuthority>,
+  repositoryRoot: string,
+  threadId: string,
+  thread: AgentThread,
+  worktreePath: string,
+): boolean {
+  if (
+    !ownsThreadTarget(
+      dependenciesRef,
+      mountedRef,
+      authority,
+      repositoryRoot,
+      threadId,
+      thread,
+      worktreePath,
+    )
+  ) {
+    return false;
+  }
+  return runningTurn(thread) === null;
+}
+
+function ownsThreadTarget(
+  dependenciesRef: MutableRefObject<AgentWorktreeLifecycleDependencies>,
+  mountedRef: MutableRefObject<boolean>,
+  authority: ReturnType<typeof projectAuthority>,
+  repositoryRoot: string,
+  threadId: string,
+  thread: AgentThread,
+  worktreePath: string,
+): boolean {
+  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return false;
+  const current = dependenciesRef.current.threads.get(threadId);
+  if (current !== thread) return false;
+  if (current.owner.rootKey !== authority.rootKey) return false;
+  if (current.owner.ownerId !== authority.ownerId) return false;
+  if (current.owner.repositoryRoot !== repositoryRoot) return false;
+  if (current.target.isolation !== "worktree") return false;
+  return current.target.worktreePath === worktreePath;
+}
+
+function ownsOrphanCandidate(
+  dependenciesRef: MutableRefObject<AgentWorktreeLifecycleDependencies>,
+  mountedRef: MutableRefObject<boolean>,
+  listingsRef: MutableRefObject<ReadonlyMap<string, RepositoryWorktreeListing>>,
+  authority: ReturnType<typeof projectAuthority>,
+  candidate: OrphanedWorktreeCandidate,
+): boolean {
+  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, candidate.repositoryRoot))
+    return false;
+  const current = candidateFor(listingsRef.current, candidate.worktreePath);
+  if (current === null) return false;
+  return current.repositoryRoot === candidate.repositoryRoot;
+}
+
+function mergeCreatedWorktreeNotes(
+  listings: ReadonlyMap<string, RepositoryWorktreeListing>,
+  notes: Iterable<CreatedWorktreeNote>,
+  afterSequence: number,
+): ReadonlyMap<string, RepositoryWorktreeListing> {
+  let merged: ReadonlyMap<string, RepositoryWorktreeListing> = listings;
+  for (const note of notes) {
+    if (note.sequence <= afterSequence) continue;
+    const listing = merged.get(note.repositoryRoot) ?? emptyRepositoryListing();
+    if (listing.worktreePaths.has(note.worktreePath)) continue;
+    const worktreePaths = new Set(listing.worktreePaths).add(note.worktreePath);
+    merged = new Map(merged).set(note.repositoryRoot, { ...listing, worktreePaths });
+  }
+  return merged;
+}
+
+function newerCreatedWorktreeNotes(
+  notes: ReadonlyMap<string, CreatedWorktreeNote>,
+  afterSequence: number,
+): ReadonlyMap<string, CreatedWorktreeNote> {
+  return new Map([...notes].filter(([_path, note]) => note.sequence > afterSequence));
+}
+
+function emptyRepositoryListing(): RepositoryWorktreeListing {
+  return { worktreePaths: new Set(), prunablePaths: new Set(), candidates: [] };
 }
 
 function repositoryListing(

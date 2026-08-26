@@ -18,11 +18,13 @@ use std::{
     collections::{BTreeSet, HashMap},
     fs::File,
     path::Component,
-    sync::{atomic::AtomicU64, Mutex},
+    sync::{atomic::AtomicU64, Condvar, Mutex},
 };
 
 #[path = "workspace_registry/registration.rs"]
 pub(crate) mod registration;
+#[path = "workspace_registry/runtime_start.rs"]
+mod runtime_start;
 #[path = "workspace_registry/unregister.rs"]
 mod unregister;
 
@@ -146,6 +148,12 @@ pub struct WorkspaceRegistry {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     operations: Mutex<()>,
     #[cfg(any(target_os = "macos", target_os = "linux"))]
+    runtime_starts: Mutex<runtime_start::RuntimeStartReservations>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    runtime_start_signal: Condvar,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    next_runtime_start_token: AtomicU64,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     next_registration_token: AtomicU64,
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     next_unregister_generation: AtomicU64,
@@ -198,6 +206,9 @@ impl WorkspaceRegistry {
     pub fn clear(&self) {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
+            if self.begin_runtime_shutdown().is_err() {
+                return;
+            }
             let _operation = self.operations.lock().ok();
             let drained = if let Ok(mut workspaces) = self.workspaces.lock() {
                 workspaces.drain().map(|(_, workspace)| workspace).collect()

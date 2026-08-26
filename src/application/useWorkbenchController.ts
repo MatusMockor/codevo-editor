@@ -387,7 +387,10 @@ import {
   cachedLanguageServerRuntimeStatusForOwner,
   restoreRuntimeStatusCacheEntry,
 } from "../domain/languageServerRuntimeStatusCache";
-import { useWorkbenchControllerAgents } from "./useWorkbenchControllerAgents";
+import {
+  loadWorkspaceTrustForOwner,
+  useWorkbenchControllerAgents,
+} from "./useWorkbenchControllerAgents";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   createLegacyEditorSessionOwnerKey,
@@ -575,18 +578,19 @@ export function useWorkbenchController(
     phpFrameworkRuntimeContext,
   } = usePhpFrameworkResolution({ workspaceDescriptor });
   const hasSymfonyFramework = phpFrameworkRuntimeContext.hasProvider("symfony");
-  const [workspaceTrust, setWorkspaceTrust] = useState<WorkspaceTrustState | null>(null);
-  const workspaceTrusted = workspaceTrust?.trusted ?? false;
-  const [phpTools, setPhpTools] = useState<PhpToolAvailability | null>(null);
-  const [languageServerPlan, setLanguageServerPlan] = useState<LanguageServerPlan | null>(null);
+  const [workspaceTrust, setWorkspaceTrust] = useState(null as WorkspaceTrustState | null);
+  const workspaceTrusted = workspaceTrust ? workspaceTrust.trusted : false;
+  const [phpTools, setPhpTools] = useState(null as PhpToolAvailability | null);
+  const [languageServerPlan, setLanguageServerPlan] = useState(null as LanguageServerPlan | null);
   const [installingManagedPhpactor, setInstallingManagedPhpactor] = useState(false);
   const [installingManagedTypeScriptLanguageServer, setInstallingManagedTypeScriptLanguageServer] =
     useState(false);
   const [javaScriptTypeScriptLanguageServerPlan, setJavaScriptTypeScriptLanguageServerPlan] =
-    useState<LanguageServerPlan | null>(null);
+    useState(null as LanguageServerPlan | null);
   const [languageServerSetupOpen, setLanguageServerSetupOpen] = useState(false);
-  const [languageServerRuntimeStatus, setLanguageServerRuntimeStatus] =
-    useState<LanguageServerRuntimeStatus | null>(null);
+  const [languageServerRuntimeStatus, setLanguageServerRuntimeStatus] = useState(
+    null as LanguageServerRuntimeStatus | null,
+  );
   const [languageServerRuntimeStatusRoot, setLanguageServerRuntimeStatusRoot] = useState<
     string | null
   >(null);
@@ -594,7 +598,7 @@ export function useWorkbenchController(
   const [
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     setJavaScriptTypeScriptLanguageServerRuntimeStatus,
-  ] = useState<LanguageServerRuntimeStatus | null>(null);
+  ] = useState(null as LanguageServerRuntimeStatus | null);
   const [
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot,
@@ -1695,12 +1699,16 @@ export function useWorkbenchController(
     reportError,
     setSettingsInitialSection,
     setSettingsOpen,
+    setWorkspaceTrust,
     settingsGateway,
     workspaceIdentityByRootRef,
     workspaceIdentityDescriptor,
     workspaceRoot,
     workspaceSettingsRef,
+    workspaceTrust,
     workspaceTrustGateway,
+    workspaceTrustIntentCoordinatorRef,
+    workspaceTrustRevisionByOwnerRef,
     persistWorkspaceSettings,
   });
 
@@ -3307,21 +3315,15 @@ export function useWorkbenchController(
       };
 
       const loadTrustTask = async () => {
-        try {
-          const trust = await workspaceTrustGateway.getTrust(path);
-
-          if (!isCurrentOpenWorkspaceOwnerRequest()) {
-            return;
-          }
-
-          setWorkspaceTrust(trust);
-        } catch (error) {
-          if (!isCurrentOpenWorkspaceOwnerRequest()) {
-            return;
-          }
-
-          reportErrorForActiveWorkspaceRoot(path, "Workspace Trust", error);
-        }
+        await loadWorkspaceTrustForOwner({
+          gateway: workspaceTrustGateway,
+          isCurrent: isCurrentOpenWorkspaceOwnerRequest,
+          ownerId: admittedRuntimeOwner.ownerKey,
+          publish: setWorkspaceTrust,
+          reportError: (error) => reportErrorForActiveWorkspaceRoot(path, "Workspace Trust", error),
+          revisionByOwnerRef: workspaceTrustRevisionByOwnerRef,
+          rootPath: path,
+        });
       };
 
       // Warmup: the phpactor handshake (composer/autoload scan) is the

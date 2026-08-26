@@ -130,6 +130,8 @@ describe("AgentSurfaceTerminal", () => {
 function defaultProps(): AgentSurfaceTerminalProps {
   return {
     thread: surfaceThreadView(),
+    isActive: true,
+    layoutRevision: 0,
     workspaceId: "ws-1",
     workspaceRoot: "/workspace/app",
     workspaceTrusted: true,

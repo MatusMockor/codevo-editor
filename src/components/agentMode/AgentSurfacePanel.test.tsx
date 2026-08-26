@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { FitAddon } from "@xterm/addon-fit";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -246,6 +247,42 @@ describe("AgentSurfacePanel", () => {
     expect(host.querySelector("[data-agent-surface-terminal]")).toBeNull();
     await waitForReact(() => expect(gateway.stop).toHaveBeenCalledWith(1));
     expect(host.querySelector("[data-agent-surface-diff]")).not.toBeNull();
+  });
+
+  it("keeps an active terminal visible while inactive tabs close and hides it without stopping", async () => {
+    const gateway = fakeTerminalGateway();
+    const props = defaultProps();
+    const terminal = { ...props.terminal!, terminalGateway: gateway };
+    render({ layout: open(["files", "diff", "terminal"], "terminal"), terminal });
+    await waitForReact(() => expect(gateway.start).toHaveBeenCalledTimes(1));
+    await waitForReact(() => expect(gateway.acknowledgeStart).toHaveBeenCalledTimes(1));
+    const panel = host.querySelector<HTMLElement>(".terminal-panel");
+    const fitResults = vi.mocked(FitAddon).mock.results;
+    const fit = fitResults[fitResults.length - 1]?.value.fit as ReturnType<typeof vi.fn>;
+    const initialFitCalls = fit.mock.calls.length;
+    expect(panel?.hidden).toBe(false);
+
+    render({ layout: open(["diff", "terminal"], "terminal"), terminal });
+    expect(host.querySelector(".terminal-panel")).toBe(panel);
+    expect(panel?.hidden).toBe(false);
+    await waitForReact(() => expect(fit).toHaveBeenCalledTimes(initialFitCalls + 1));
+    render({ layout: open(["terminal"], "terminal"), terminal });
+    expect(host.querySelector(".terminal-panel")).toBe(panel);
+    expect(panel?.hidden).toBe(false);
+    await waitForReact(() => expect(fit).toHaveBeenCalledTimes(initialFitCalls + 2));
+    expect(gateway.start).toHaveBeenCalledTimes(1);
+    expect(gateway.stop).not.toHaveBeenCalled();
+
+    render({ hidden: true, layout: open(["terminal"], "terminal"), terminal });
+    expect(panel?.hidden).toBe(true);
+    await act(async () => Promise.resolve());
+    expect(fit).toHaveBeenCalledTimes(initialFitCalls + 2);
+    render({ layout: open(["terminal"], "terminal"), terminal });
+    expect(host.querySelector(".terminal-panel")).toBe(panel);
+    expect(panel?.hidden).toBe(false);
+    await waitForReact(() => expect(fit).toHaveBeenCalledTimes(initialFitCalls + 3));
+    expect(gateway.start).toHaveBeenCalledTimes(1);
+    expect(gateway.stop).not.toHaveBeenCalled();
   });
 
   it("explains a blocked open tab instead of mounting its surface", async () => {

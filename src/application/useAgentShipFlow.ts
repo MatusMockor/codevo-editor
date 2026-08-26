@@ -40,7 +40,7 @@ import {
 } from "./agentProjectAuthority";
 import { reconcile } from "./agentShipPolicy";
 import type { AgentTasksNotice } from "./agentThreadPorts";
-import type { WorkbenchPrompter } from "./workbenchPrompter";
+import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
 
 export const AGENT_SHIP_STATUS_FRESHNESS_MS = 30_000;
 export const DIRTY_WORKTREE_REMOVE_CONFIRMATION =
@@ -156,6 +156,23 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
     [],
   );
 
+  const ownsStoppedTarget = useCallback(
+    (target: ShipTarget): boolean => {
+      if (!owns(target)) return false;
+      const deps = dependenciesRef.current;
+      const thread = deps.threads.get(target.threadId);
+      if (thread === undefined) return false;
+      if (runningTurn(thread) !== null) return false;
+      if (deps.missingWorktreeThreadIds.has(target.threadId)) return false;
+      if (thread.owner.rootKey !== target.authority.rootKey) return false;
+      if (thread.owner.ownerId !== target.authority.ownerId) return false;
+      if (thread.owner.repositoryRoot !== target.repositoryRoot) return false;
+      if (thread.target.worktreePath !== target.worktreePath) return false;
+      return (thread.target.worktreePath ?? thread.owner.repositoryRoot) === target.targetPath;
+    },
+    [owns],
+  );
+
   const loadStatus = useCallback(
     (target: ShipTarget): Promise<GitShipStatus> =>
       dependenciesRef.current.gitIntegrationGateway.getShipStatus({
@@ -211,7 +228,7 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
     const worktreePath = thread.target.worktreePath;
     return {
       threadId,
-      authority: projectAuthority(project),
+      authority: projectAuthority(project, thread.owner.ownerId),
       repositoryRoot: thread.owner.repositoryRoot,
       worktreePath,
       targetPath: worktreePath ?? thread.owner.repositoryRoot,
@@ -418,14 +435,13 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
           });
           return;
         }
-        if (
-          mode === "merge" &&
-          status.relation.behindPrimary > 0 &&
-          !dependenciesRef.current.prompter.confirm(
+        if (mode === "merge" && status.relation.behindPrimary > 0) {
+          const confirmed = await confirmWorkbenchAction(
+            dependenciesRef.current.prompter,
             `The branch is ${status.relation.behindPrimary} commits behind ${primaryBranch}. Merge anyway?`,
-          )
-        ) {
-          return;
+          );
+          if (!ownsStoppedTarget(target)) return;
+          if (!confirmed) return;
         }
         apply(threadId, { kind: "integrateStarted", mode });
         const thread = dependenciesRef.current.threads.get(threadId);
@@ -468,6 +484,7 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
       loadStatus,
       nowMs,
       owns,
+      ownsStoppedTarget,
       persistReceipt,
       refreshShipStatus,
       run,
@@ -493,11 +510,13 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
         const status = await dependenciesRef.current.gitGateway.getStatus(worktreePath);
         if (!owns(target)) return;
         const dirty = status.changes.length > 0;
-        if (
-          dirty &&
-          !dependenciesRef.current.prompter.confirm(DIRTY_WORKTREE_REMOVE_CONFIRMATION)
-        ) {
-          return;
+        if (dirty) {
+          const confirmed = await confirmWorkbenchAction(
+            dependenciesRef.current.prompter,
+            DIRTY_WORKTREE_REMOVE_CONFIRMATION,
+          );
+          if (!ownsStoppedTarget(target)) return;
+          if (!confirmed) return;
         }
         apply(threadId, { kind: "removeStarted", deleteBranch: options.deleteBranch });
         await dependenciesRef.current.gitWorktreeGateway.removeWorktree(
@@ -509,7 +528,9 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
         dependenciesRef.current.onWorktreeRemoved(threadId);
         if (!options.deleteBranch || shipStatus === null) {
           apply(threadId, { kind: "removeSucceeded", branchDeleted: false });
-          dependenciesRef.current.setNotice(info("The worktree was removed. Its branch was kept."));
+          dependenciesRef.current.setNotice(
+            info("The worktree was removed. Its local branch was kept."),
+          );
           return;
         }
         const branch = shipStatus.worktree.branch;
@@ -527,9 +548,23 @@ export function useAgentShipFlow(dependencies: AgentShipFlowDependencies): Agent
         }
         apply(threadId, { kind: "removeSucceeded", branchDeleted: true });
         persistReceipt(threadId, { branchDeleted: true });
-        dependenciesRef.current.setNotice(info(`The worktree and branch ${branch} were removed.`));
+        const remoteBranchWasPushed = (receiptsRef.current.get(threadId)?.pushed ?? null) !== null;
+        const suffix = remoteBranchWasPushed ? " The remote branch was kept." : "";
+        dependenciesRef.current.setNotice(
+          info(`The worktree and local branch ${branch} were removed.${suffix}`),
+        );
       }),
-    [allowed, apply, authorityLost, currentState, freshStatus, owns, persistReceipt, run],
+    [
+      allowed,
+      apply,
+      authorityLost,
+      currentState,
+      freshStatus,
+      owns,
+      ownsStoppedTarget,
+      persistReceipt,
+      run,
+    ],
   );
 
   const resetShip = useCallback(

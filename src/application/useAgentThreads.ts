@@ -36,7 +36,11 @@ import type {
   AgentThreadsSurface,
 } from "./agentThreadPorts";
 import { projectByOwnerId } from "./agentProjectAuthority";
-import { countRunningTurns, countRunningTurnsInRepository } from "./agentTurnAdmission";
+import {
+  countRunningTurns,
+  countRunningTurnsInRepository,
+  type AgentTurnAdmissionDependencies,
+} from "./agentTurnAdmission";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
 import { useAgentCliVersion } from "./useAgentCliVersion";
 import {
@@ -75,6 +79,7 @@ export interface AgentThreadsDependencies {
   readonly getDirtyEditorDocumentCount: (repositoryRoot: string) => number;
   readonly onProjectDispatchTrustRejected?: (projectRootKey: string) => void;
   readonly ensureProjectLease?: (projectRootKey: string) => Promise<boolean>;
+  readonly launchIdentityForProject: AgentTurnAdmissionDependencies["launchIdentityForProject"];
   readonly reportError: (source: string, error: unknown) => void;
   readonly openAgentSettings: () => void;
   readonly now?: () => number;
@@ -230,12 +235,14 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     preflightInPlace: isolation.preflightInPlace,
     isWorktreeMissing,
     retainUncertainWorktree: worktrees.retainUncertainWorktree,
+    onWorktreeCreated: worktrees.noteCreatedWorktree,
     currentCliVersion: () => cliVersion.current,
     probeCliVersion: agentCliVersionGateway === undefined ? undefined : cliVersion.probe,
     onWorktreeDispatchFailed,
     onTurnTerminal,
     onProjectDispatchTrustRejected: dependencies.onProjectDispatchTrustRejected,
     ensureProjectLease: dependencies.ensureProjectLease,
+    launchIdentityForProject: dependencies.launchIdentityForProject,
     reportError,
     setNotice: setDispatchNotice,
     now: dependencies.now,
@@ -457,8 +464,10 @@ function agentThreadViews(
 ): ReadonlyArray<AgentThreadView> {
   const projectsByOwnerId = new Map<string, AgentProjectDescriptor>();
   for (const project of projects) {
-    if (projectsByOwnerId.has(project.ownerId)) continue;
-    projectsByOwnerId.set(project.ownerId, project);
+    for (const ownerId of project.runtimeOwnerIds ?? [project.ownerId]) {
+      if (projectsByOwnerId.has(ownerId)) continue;
+      projectsByOwnerId.set(ownerId, project);
+    }
   }
   const views: AgentThreadView[] = [];
   for (const thread of threads.values()) {

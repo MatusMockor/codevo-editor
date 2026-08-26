@@ -178,12 +178,17 @@ describe("AgentShipPanel", () => {
     expect(blockedReasons()).toContain("The main checkout is detached.");
   });
 
-  it("hides integration and clean up for an in-place thread", () => {
+  it("explains why integration is unavailable for an in-place thread", () => {
     render({ isolation: "in-place", ship: idle(status({})) });
 
-    expect(button("Integrate into main")).toBeUndefined();
+    expect(button("Integrate into main")?.disabled).toBe(true);
+    expect(blockedReasons()).toContain("In-place threads have nothing to integrate.");
+    expect(host.querySelectorAll('input[type="radio"]')).toHaveLength(0);
     expect(button("Remove worktree")).toBeUndefined();
     expect(button("Commit 2 files")).toBeDefined();
+
+    click("Integrate into main");
+    expect(actions.onIntegrate).not.toHaveBeenCalled();
   });
 
   it("allows deleting the branch only after the branch was integrated", () => {

@@ -268,6 +268,173 @@ describe("useWorkbenchFileOperations close intent", () => {
     });
   });
 
+  it("does not clear document metadata after ownership changes during close", async () => {
+    const closed = createDeferred<void>();
+    const document = {
+      content: "content",
+      language: "php",
+      name: "Deleted.php",
+      path: `${ROOT}/Deleted.php`,
+      savedContent: "content",
+    };
+    const documentsRef = { current: { [document.path]: document } };
+    const currentWorkspaceRootRef = { current: ROOT as string | null };
+    const closeDocument = vi.fn(async () => {
+      await closed.promise;
+      documentsRef.current = {};
+    });
+    const dependencies = makeDependencies("", {
+      activeDocumentRef: { current: document },
+      applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
+      closeDocument,
+      currentWorkspaceRootRef,
+      documentsRef,
+      prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
+    });
+    const operations = renderHook(dependencies);
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = operations().deleteActiveDocument();
+    });
+    await vi.waitFor(() => expect(closeDocument).toHaveBeenCalledOnce());
+    currentWorkspaceRootRef.current = "/replacement";
+    await act(async () => {
+      closed.resolve();
+      await pending;
+    });
+
+    expect(dependencies.forgetRecentFile).not.toHaveBeenCalled();
+    expect(dependencies.forgetRecentLocationsForPath).not.toHaveBeenCalled();
+    expect(dependencies.setBookmarks).not.toHaveBeenCalled();
+    expect(dependencies.clearLanguageServerDiagnosticsForPath).not.toHaveBeenCalled();
+  });
+
+  it("does not delete a same-path replacement after deferred pre-delete edits", async () => {
+    const preDelete = createDeferred<boolean>();
+    const original = {
+      content: "content",
+      language: "typescript",
+      name: "Deleted.ts",
+      path: `${ROOT}/Deleted.ts`,
+      savedContent: "content",
+    };
+    const replacement = { ...original, content: "replacement" };
+    const activeDocumentRef: { current: EditorDocument | null } = { current: original };
+    const documentsRef = { current: { [original.path]: original } };
+    const dependencies = makeDependencies("", {
+      activeDocumentRef,
+      applyJavaScriptTypeScriptDeleteEdits: vi.fn(() => preDelete.promise),
+      documentsRef,
+      prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
+    });
+    const operations = renderHook(dependencies);
+
+    const pending = operations().deleteActiveDocument();
+    await vi.waitFor(() =>
+      expect(dependencies.applyJavaScriptTypeScriptDeleteEdits).toHaveBeenCalledOnce(),
+    );
+    activeDocumentRef.current = replacement;
+    documentsRef.current = { [replacement.path]: replacement };
+    await act(async () => {
+      preDelete.resolve(true);
+      await pending;
+    });
+
+    expect(dependencies.workspaceFiles.deletePath).not.toHaveBeenCalled();
+    expect(dependencies.closeDocument).not.toHaveBeenCalled();
+  });
+
+  it("does not close a same-path replacement after deferred language sync", async () => {
+    const closedSync = createDeferred<void>();
+    const original: EditorDocument = {
+      content: "content",
+      language: "typescript",
+      name: "Deleted.ts",
+      path: `${ROOT}/Deleted.ts`,
+      savedContent: "content",
+    };
+    const replacement: EditorDocument = { ...original, content: "replacement" };
+    const activeDocumentRef: { current: EditorDocument | null } = { current: original };
+    const documentsRef = { current: { [original.path]: original } };
+    const syncClosedJavaScriptTypeScriptDocument = vi.fn(() => closedSync.promise);
+    const dependencies = makeDependencies("", {
+      activeDocumentRef,
+      applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
+      documentsRef,
+      prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
+      syncClosedJavaScriptTypeScriptDocument,
+    });
+    const operations = renderHook(dependencies);
+
+    const pending = operations().deleteActiveDocument();
+    await vi.waitFor(() => expect(syncClosedJavaScriptTypeScriptDocument).toHaveBeenCalledOnce());
+    activeDocumentRef.current = replacement;
+    documentsRef.current = { [replacement.path]: replacement };
+    await act(async () => {
+      closedSync.resolve();
+      await pending;
+    });
+
+    expect(dependencies.workspaceFiles.deletePath).toHaveBeenCalledOnce();
+    expect(dependencies.notifyJavaScriptTypeScriptFileDeleted).not.toHaveBeenCalled();
+    expect(dependencies.closeDocument).not.toHaveBeenCalled();
+    expect(dependencies.forgetRecentFile).not.toHaveBeenCalled();
+    expect(dependencies.forgetRecentLocationsForPath).not.toHaveBeenCalled();
+  });
+
+  it("cleans up the deleted slot after switching to a different active document", async () => {
+    const closedSync = createDeferred<void>();
+    const original: EditorDocument = {
+      content: "content",
+      language: "typescript",
+      name: "Deleted.ts",
+      path: `${ROOT}/Deleted.ts`,
+      savedContent: "content",
+    };
+    const other: EditorDocument = {
+      content: "other",
+      language: "typescript",
+      name: "Other.ts",
+      path: `${ROOT}/Other.ts`,
+      savedContent: "other",
+    };
+    const activeDocumentRef: { current: EditorDocument | null } = { current: original };
+    const documentsRef = { current: { [original.path]: original, [other.path]: other } };
+    const closeDocument = vi.fn((path: string) => {
+      const next = { ...documentsRef.current };
+      delete next[path];
+      documentsRef.current = next;
+    });
+    const syncClosedJavaScriptTypeScriptDocument = vi.fn(() => closedSync.promise);
+    const dependencies = makeDependencies("", {
+      activeDocumentRef,
+      applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
+      closeDocument,
+      documentsRef,
+      prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
+      syncClosedJavaScriptTypeScriptDocument,
+    });
+    const operations = renderHook(dependencies);
+
+    const pending = operations().deleteActiveDocument();
+    await vi.waitFor(() => expect(syncClosedJavaScriptTypeScriptDocument).toHaveBeenCalledOnce());
+    activeDocumentRef.current = other;
+    await act(async () => {
+      closedSync.resolve();
+      await pending;
+    });
+
+    expect(dependencies.notifyJavaScriptTypeScriptFileDeleted).toHaveBeenCalledWith(original.path);
+    expect(closeDocument).toHaveBeenCalledWith(original.path, {
+      recordRecentlyClosed: false,
+      skipConfirmation: true,
+    });
+    expect(dependencies.forgetRecentFile).toHaveBeenCalledWith(original.path);
+    expect(dependencies.forgetRecentLocationsForPath).toHaveBeenCalledWith(original.path);
+    expect(documentsRef.current[other.path]).toBe(other);
+  });
+
   it("does not record an externally removed document as recently closed", () => {
     const path = `${ROOT}/Removed.php`;
     const closeDocument = vi.fn();

@@ -249,9 +249,14 @@ describe("useGitStashPanel", () => {
     const stashDrop = vi.fn(async () => undefined);
     const confirm = vi.fn(() => false);
     const harness = renderStashPanel({
-      gitGateway: createFakeGitGateway({ stashDrop }),
+      gitGateway: createFakeGitGateway({
+        stashDrop,
+        stashList: vi.fn(async () => [stashEntry(0, "first")]),
+      }),
       prompter: { confirm, prompt: vi.fn(() => null) },
     });
+
+    await act(async () => harness.panel().openGitStashPanel());
 
     await act(async () => {
       await harness.panel().dropGitStash(0);
@@ -266,9 +271,14 @@ describe("useGitStashPanel", () => {
     const stashDrop = vi.fn(async () => undefined);
     const confirm = vi.fn(() => true);
     const harness = renderStashPanel({
-      gitGateway: createFakeGitGateway({ stashDrop }),
+      gitGateway: createFakeGitGateway({
+        stashDrop,
+        stashList: vi.fn(async () => [stashEntry(0, "first")]),
+      }),
       prompter: { confirm, prompt: vi.fn(() => null) },
     });
+
+    await act(async () => harness.panel().openGitStashPanel());
 
     await act(async () => {
       await harness.panel().dropGitStash(0);
@@ -276,6 +286,63 @@ describe("useGitStashPanel", () => {
 
     expect(confirm).toHaveBeenCalled();
     expect(stashDrop).toHaveBeenCalledWith(ROOT, 0);
+    harness.unmount();
+  });
+
+  it("does not drop a replacement stash after the list changes during confirmation", async () => {
+    const confirmation = createDeferred<boolean>();
+    const stashDrop = vi.fn(async () => undefined);
+    const stashList = vi
+      .fn()
+      .mockResolvedValueOnce([stashEntry(0, "first"), stashEntry(1, "second")])
+      .mockResolvedValueOnce([stashEntry(0, "second"), stashEntry(1, "first")]);
+    const harness = renderStashPanel({
+      gitGateway: createFakeGitGateway({ stashDrop, stashList }),
+      prompter: { confirm: vi.fn(() => confirmation.promise), prompt: vi.fn(() => null) },
+    });
+    await act(async () => harness.panel().openGitStashPanel());
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = harness.panel().dropGitStash(0);
+    });
+    await act(async () => harness.panel().openGitStashPanel());
+    await act(async () => {
+      confirmation.resolve(true);
+      await pending;
+    });
+
+    expect(stashDrop).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("commits at most one concurrent drop for the same stash generation", async () => {
+    const firstConfirmation = createDeferred<boolean>();
+    const secondConfirmation = createDeferred<boolean>();
+    const stashDrop = vi.fn(async () => undefined);
+    const confirm = vi
+      .fn()
+      .mockImplementationOnce(() => firstConfirmation.promise)
+      .mockImplementationOnce(() => secondConfirmation.promise);
+    const harness = renderStashPanel({
+      gitGateway: createFakeGitGateway({
+        stashDrop,
+        stashList: vi.fn(async () => [stashEntry(0, "first")]),
+      }),
+      prompter: { confirm, prompt: vi.fn(() => null) },
+    });
+    await act(async () => harness.panel().openGitStashPanel());
+
+    const first = harness.panel().dropGitStash(0);
+    const second = harness.panel().dropGitStash(0);
+    await act(async () => {
+      firstConfirmation.resolve(true);
+      secondConfirmation.resolve(true);
+      await Promise.all([first, second]);
+    });
+
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(stashDrop).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 

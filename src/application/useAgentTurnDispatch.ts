@@ -22,9 +22,10 @@ import {
   attempt,
   errorMessageOf,
   failure,
-  isCurrentProjectOwner,
+  isCurrentTaskLaunchAuthority,
   warning,
   type AgentProjectAuthority,
+  type AgentTaskLaunchAuthority,
 } from "./agentProjectAuthority";
 import type {
   AgentFollowUpRequest,
@@ -34,6 +35,7 @@ import type {
 import {
   compensateCreatedWorktree,
   createThreadWorktree,
+  isAgentDispatchTrustRejection,
   noteTrustRejection,
   type CreatedAgentWorktree,
 } from "./agentThreadWorktreeProvisioning";
@@ -75,6 +77,7 @@ export interface AgentTurnDispatchDependencies extends AgentTurnAdmissionDepende
     unsafeInPlaceConfirmationKey: string | null,
   ) => Promise<InPlacePreflight>;
   readonly retainUncertainWorktree: (worktreePath: string) => void;
+  readonly onWorktreeCreated?: (repositoryRoot: string, worktreePath: string) => void;
   readonly currentCliVersion?: () => string | null;
   readonly probeCliVersion?: (
     agentCliPath: string,
@@ -103,7 +106,8 @@ const UNEXPECTED_TASK_ID_MESSAGE = "The agent returned an unexpected task id.";
 type TurnRegistration = "before-start" | "after-start";
 
 interface TurnStart {
-  readonly authority: AgentProjectAuthority;
+  readonly authority: AgentTaskLaunchAuthority;
+  readonly projectRoot: string;
   readonly threadId: string;
   readonly repositoryRoot: string;
   readonly cwd: string;
@@ -267,7 +271,7 @@ export function useAgentTurnDispatch(
       kind: "taskStatusEvent",
       event: {
         taskId: start.turnId,
-        workspaceId: start.authority.ownerId,
+        workspaceId: start.authority.workspaceId,
         repositoryRoot: start.repositoryRoot,
         isolation: start.isolation,
         worktreePath: start.worktreePath,
@@ -280,14 +284,15 @@ export function useAgentTurnDispatch(
 
   const reportStartFailure = useCallback(
     async (start: TurnStart, error: unknown, retainUncertain: () => void): Promise<void> => {
-      const deps = dependenciesRef.current;
       const { authority, repositoryRoot } = start;
-      noteTrustRejection(deps, authority, error);
-      const definite = isDefiniteAgentTaskStartRejection(error);
-      settleRegisteredTurn(start, {
-        kind: "failed",
-        message: definite ? error.message : UNCERTAIN_START_MESSAGE,
-      });
+      const trustRejected = isAgentDispatchTrustRejection(error);
+      const definite = trustRejected || isDefiniteAgentTaskStartRejection(error);
+      if (isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+        settleRegisteredTurn(start, {
+          kind: "failed",
+          message: definite ? errorMessageOf(error) : UNCERTAIN_START_MESSAGE,
+        });
+      }
       if (!definite) retainUncertain();
       if (definite && start.createdWorktree !== null) {
         await compensateCreatedWorktree(
@@ -297,9 +302,15 @@ export function useAgentTurnDispatch(
           start.createdWorktree,
         );
       }
-      if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return;
-      deps.reportError(AGENT_TASKS_SOURCE, error);
-      deps.setNotice(failure(startFailureNotice(start, error, definite)));
+      if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot))
+        return;
+      const currentDeps = dependenciesRef.current;
+      if (trustRejected) {
+        noteTrustRejection(currentDeps, authority, error);
+        return;
+      }
+      currentDeps.reportError(AGENT_TASKS_SOURCE, error);
+      currentDeps.setNotice(failure(startFailureNotice(start, error, definite)));
     },
     [settleRegisteredTurn],
   );
@@ -308,7 +319,7 @@ export function useAgentTurnDispatch(
     async (start: TurnStart): Promise<boolean> => {
       const deps = dependenciesRef.current;
       const { authority, repositoryRoot, turnId } = start;
-      const workspaceId = authority.ownerId;
+      const workspaceId = authority.workspaceId;
       const gateway = deps.agentTaskGateway;
       const now = deps.now ?? Date.now;
       const retainUncertain = (): void => {
@@ -316,7 +327,7 @@ export function useAgentTurnDispatch(
         deps.retainUncertainWorktree(start.createdWorktree.receipt.worktreePath);
       };
       const stillOwned = (): boolean =>
-        isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot) &&
+        isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) &&
         registeredTurnAlive(start);
       const cliVersion = deps.currentCliVersion?.() ?? null;
       refreshCliVersion(deps, start);
@@ -326,6 +337,7 @@ export function useAgentTurnDispatch(
         gateway.startAgentTask({
           taskId: turnId,
           workspaceId,
+          projectRoot: start.projectRoot,
           repositoryRoot,
           cwd: start.cwd,
           isolation: start.isolation,
@@ -343,10 +355,11 @@ export function useAgentTurnDispatch(
       if (started.value.taskId !== turnId) {
         const stopped = await attempt(() => gateway.stopAgentTask({ taskId: turnId, workspaceId }));
         retainUncertain();
-        settleRegisteredTurn(start, { kind: "failed", message: UNEXPECTED_TASK_ID_MESSAGE });
-        if (isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
-          if (!stopped.ok) deps.reportError(AGENT_TASKS_SOURCE, stopped.error);
-          deps.setNotice(
+        if (isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+          settleRegisteredTurn(start, { kind: "failed", message: UNEXPECTED_TASK_ID_MESSAGE });
+          const currentDeps = dependenciesRef.current;
+          if (!stopped.ok) currentDeps.reportError(AGENT_TASKS_SOURCE, stopped.error);
+          currentDeps.setNotice(
             failure(
               stopped.ok
                 ? "The agent returned an unexpected task id. Stop was requested, but terminal cleanup is unconfirmed, so the agent or its worktree may remain."
@@ -359,7 +372,9 @@ export function useAgentTurnDispatch(
       if (!stillOwned()) {
         await attempt(() => gateway.stopAgentTask({ taskId: turnId, workspaceId }));
         retainUncertain();
-        settleRegisteredTurn(start, { kind: "stopped" });
+        if (isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+          settleRegisteredTurn(start, { kind: "stopped" });
+        }
         return false;
       }
       if (start.registration === "after-start") start.register(turn);
@@ -369,7 +384,9 @@ export function useAgentTurnDispatch(
       if (!stillOwned()) {
         await attempt(() => gateway.stopAgentTask({ taskId: turnId, workspaceId }));
         retainUncertain();
-        settleRegisteredTurn(start, { kind: "stopped" });
+        if (isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+          settleRegisteredTurn(start, { kind: "stopped" });
+        }
         return false;
       }
       if (!acknowledged.ok) {
@@ -407,7 +424,14 @@ export function useAgentTurnDispatch(
       dispatchingRef.current = true;
       setDispatching(true);
       try {
-        const leased = await ensureLease(deps, dependenciesRef, mountedRef, project, authority);
+        const leased = await ensureLease(
+          deps,
+          dependenciesRef,
+          mountedRef,
+          project,
+          authority,
+          repositoryRoot,
+        );
         if (!leased) return null;
         if (request.isolation === "in-place") {
           const preflight = await deps.preflightInPlace(
@@ -431,7 +455,7 @@ export function useAgentTurnDispatch(
           if (mountedRef.current) deps.onWorktreeDispatchFailed?.();
           return null;
         }
-        if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+        if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
           if (createdWorktree !== null) {
             await compensateCreatedWorktree(
               dependenciesRef,
@@ -443,9 +467,13 @@ export function useAgentTurnDispatch(
           return null;
         }
         const worktreePath = createdWorktree?.receipt.worktreePath ?? null;
+        if (worktreePath !== null) {
+          dependenciesRef.current.onWorktreeCreated?.(repositoryRoot, worktreePath);
+        }
         const now = deps.now ?? Date.now;
         const started = await runTurnStart({
           authority,
+          projectRoot: admitted.project.rootPath,
           threadId,
           repositoryRoot,
           cwd: worktreePath ?? repositoryRoot,
@@ -463,7 +491,7 @@ export function useAgentTurnDispatch(
             const createdAt = now();
             const thread: AgentThread = {
               threadId,
-              owner: { rootKey: authority.rootKey, ownerId: authority.ownerId, repositoryRoot },
+              owner: { rootKey: authority.rootKey, ownerId: authority.workspaceId, repositoryRoot },
               target: { isolation: request.isolation, worktreePath },
               provider: { kind: agentCliKind, sessionId: null },
               title: agentThreadTitle(prompt),
@@ -497,7 +525,7 @@ export function useAgentTurnDispatch(
       const deps = dependenciesRef.current;
       const admitted = admitFollowUp(deps, request, inFlightThreadsRef.current);
       if (admitted === null) return false;
-      const { thread, authority, prompt, agentCliPath, sessionId, launch } = admitted;
+      const { thread, authority, projectRoot, prompt, agentCliPath, sessionId, launch } = admitted;
       const repositoryRoot = thread.owner.repositoryRoot;
       const turnId = mintUnusedId(deps, new Set(usedTurnIds(deps.store.state)));
       if (turnId === null) {
@@ -509,6 +537,7 @@ export function useAgentTurnDispatch(
       try {
         return await runTurnStart({
           authority,
+          projectRoot,
           threadId: thread.threadId,
           repositoryRoot,
           cwd: thread.target.worktreePath ?? repositoryRoot,

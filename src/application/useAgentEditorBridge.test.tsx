@@ -21,6 +21,7 @@ import {
 
 const ROOT_KEY = "/workspace/app";
 const OWNER_ID = "agent-root:0123456789abcdef";
+const RUNTIME_OWNER_ID = "workspace-replaced";
 const THREAD_ID = "agt-1-0a1b";
 const WORKTREE = `${ROOT_KEY}/.worktrees/${THREAD_ID}`;
 
@@ -128,6 +129,46 @@ function renderBridge(overrides: Partial<Environment> = {}) {
 }
 
 describe("useAgentEditorBridge", () => {
+  it("opens files for a retained runtime owner", async () => {
+    const runtimeThread = thread({
+      owner: { rootKey: ROOT_KEY, ownerId: RUNTIME_OWNER_ID, repositoryRoot: ROOT_KEY },
+    });
+    const harness = renderBridge({
+      projects: [project({ runtimeOwnerIds: [OWNER_ID, RUNTIME_OWNER_ID] })],
+      threads: new Map([[THREAD_ID, runtimeThread]]),
+    });
+    await act(() => harness.hook().openChangedFile(THREAD_ID, change()));
+    expect(harness.editor.openFile).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("drops editor publication after a retained runtime owner is evicted", async () => {
+    let resolveOpen!: (opened: boolean) => void;
+    const opened = new Promise<boolean>((resolve) => {
+      resolveOpen = resolve;
+    });
+    const runtimeThread = thread({
+      owner: { rootKey: ROOT_KEY, ownerId: RUNTIME_OWNER_ID, repositoryRoot: ROOT_KEY },
+    });
+    const harness = renderBridge({
+      projects: [project({ runtimeOwnerIds: [OWNER_ID, RUNTIME_OWNER_ID] })],
+      threads: new Map([[THREAD_ID, runtimeThread]]),
+    });
+    harness.editor.openFile.mockImplementationOnce(async () => opened);
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = harness.hook().openChangedFile(THREAD_ID, change());
+    });
+    harness.set({ projects: [project({ runtimeOwnerIds: [OWNER_ID] })] });
+    await act(async () => {
+      resolveOpen(true);
+      await pending;
+    });
+
+    expect(harness.editor.openSurface).not.toHaveBeenCalled();
+    harness.unmount();
+  });
   it("opens a changed file pinned in the editor and shows the Files surface", async () => {
     const harness = renderBridge();
     expect(harness.hook().canOpenInEditor(THREAD_ID)).toEqual({ kind: "available" });

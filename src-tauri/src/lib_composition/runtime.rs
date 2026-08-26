@@ -52,7 +52,12 @@ pub fn run() {
                     return;
                 }
 
-                shutdown_runtime_processes(app, &js_test_batch_registry_for_menu);
+                if let Err(error) =
+                    shutdown_runtime_processes(app, &js_test_batch_registry_for_menu)
+                {
+                    eprintln!("Runtime process shutdown refused application quit: {error}");
+                    return;
+                }
                 app.exit(0);
             }
             TOGGLE_FONT_LIGATURES_MENU_ID => {
@@ -79,7 +84,12 @@ pub fn run() {
             }
 
             if matches!(event, WindowEvent::Destroyed) {
-                shutdown_runtime_processes(window.app_handle(), &js_test_batch_registry_for_window);
+                if let Err(error) = shutdown_runtime_processes(
+                    window.app_handle(),
+                    &js_test_batch_registry_for_window,
+                ) {
+                    eprintln!("Runtime process shutdown failed after window destruction: {error}");
+                }
             }
         })
         .manage(Mutex::new(SmartModeService::new()))
@@ -481,8 +491,21 @@ pub fn run() {
         .build(tauri::generate_context!())
         .unwrap_or_else(|error| panic!("Error building tauri application: {error}"))
         .run(move |app, event| {
-            if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
-                shutdown_runtime_processes(app, &js_test_batch_registry_for_run);
+            if let RunEvent::ExitRequested { api, .. } = &event {
+                if let Err(error) =
+                    shutdown_runtime_processes(app, &js_test_batch_registry_for_run)
+                {
+                    eprintln!("Runtime process shutdown refused application exit: {error}");
+                    api.prevent_exit();
+                    return;
+                }
+            }
+            if matches!(event, RunEvent::Exit) {
+                if let Err(error) =
+                    shutdown_runtime_processes(app, &js_test_batch_registry_for_run)
+                {
+                    eprintln!("Runtime process shutdown failed during application exit: {error}");
+                }
             }
             #[cfg(feature = "perf-capture")]
             if matches!(event, RunEvent::Exit) {

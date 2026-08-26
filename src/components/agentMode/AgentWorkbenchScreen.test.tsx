@@ -432,6 +432,7 @@ function surface(
       trustProject: async () => undefined,
       releaseProject: async () => undefined,
       ensureProjectLease: async () => true,
+      launchIdentityForProject: () => ({ workspaceId: "workspace-id", generation: 1 }),
       noteDispatchTrustRejected: () => undefined,
     },
   };

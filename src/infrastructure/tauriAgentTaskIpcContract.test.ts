@@ -27,6 +27,7 @@ import {
 const START_REQUEST: StartAgentTaskRequest = {
   taskId: "agt-1-0a1b",
   workspaceId: "ws-1",
+  projectRoot: "/repo",
   repositoryRoot: "/repo",
   cwd: "/repo/.worktrees/agt-1-0a1b",
   isolation: "worktree",
@@ -65,6 +66,13 @@ describe("invokeStartAgentTaskIpc", () => {
 
     await expect(
       invokeStartAgentTaskIpc(invokeCommand, { ...START_REQUEST, prompt: "" }),
+    ).rejects.toThrow(TypeError);
+    const { projectRoot: _projectRoot, ...withoutProjectRoot } = START_REQUEST;
+    await expect(
+      invokeStartAgentTaskIpc(
+        invokeCommand,
+        withoutProjectRoot as unknown as StartAgentTaskRequest,
+      ),
     ).rejects.toThrow(TypeError);
     await expect(
       invokeStartAgentTaskIpc(invokeCommand, {
@@ -205,6 +213,25 @@ describe("invokeStartAgentTaskIpc", () => {
       expect(isDefiniteAgentTaskStartRejection(rejection)).toBe(true);
       expect((rejection as Error).message).toBe(message);
     }
+  });
+
+  it.each([
+    "Agent task workspace is not registered or its identity changed.",
+    "Agent project root does not match the registered workspace.",
+    "Agent repository must be contained within the registered project root.",
+    "Agent task paths must be bounded normalized absolute paths.",
+    "Agent task workspace is closing or busy.",
+    "Agent task trust authority is busy.",
+    "Agent task startup is closed.",
+  ])("classifies project authority rejection as definite: %s", async (message) => {
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue(new Error(message));
+
+    const rejection = await invokeStartAgentTaskIpc(invokeCommand, START_REQUEST).catch(
+      (error: unknown) => error,
+    );
+
+    expect(rejection).toBeInstanceOf(AgentTaskStartRejectedError);
+    expect(isDefiniteAgentTaskStartRejection(rejection)).toBe(true);
   });
 
   it("keeps the domain-authored binary messages in sync with the rejection set", () => {

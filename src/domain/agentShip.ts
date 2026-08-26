@@ -133,6 +133,7 @@ export type AgentShipAvailability =
 
 export function initialAgentShipState(receipt: AgentThreadIntegration | null): AgentShipState {
   if (receipt === null) return { kind: "idle", status: null, loadingStatus: false };
+  if (receipt.branchDeleted) return { kind: "worktreeRemoved", branchDeleted: true };
   if (receipt.integrated !== null) {
     return {
       kind: "integrated",

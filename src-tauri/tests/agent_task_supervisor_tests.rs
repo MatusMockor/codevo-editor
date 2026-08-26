@@ -193,10 +193,16 @@ struct FakeChild {
     stdout: Option<Box<dyn Read + Send>>,
     stderr: Option<Box<dyn Read + Send>>,
     fail_stdout_reader: bool,
+    panic_stdout_reader: bool,
+    panic_try_wait: bool,
+    fail_try_wait: bool,
 }
 
 impl AgentChild for FakeChild {
     fn stdout_reader(&mut self) -> Result<Box<dyn Read + Send>, String> {
+        if self.panic_stdout_reader {
+            panic!("stdout reader panic injected");
+        }
         if self.fail_stdout_reader {
             return Err("stdout reader fault injected".to_string());
         }
@@ -212,11 +218,24 @@ impl AgentChild for FakeChild {
     }
 
     fn try_wait(&mut self) -> Result<Option<i32>, String> {
+        if self.panic_try_wait {
+            self.panic_try_wait = false;
+            panic!("try wait panic injected");
+        }
+        if self.fail_try_wait {
+            self.fail_try_wait = false;
+            return Err("try wait failure injected".to_string());
+        }
         Ok(self.process.exit_code())
     }
 
     fn process_group_id(&self) -> i32 {
         self.process_group_id
+    }
+
+    fn force_kill(&mut self) -> Result<(), String> {
+        self.process.set_exited(137);
+        Ok(())
     }
 }
 
@@ -227,6 +246,9 @@ struct FakeChildSpec {
     stdout_receiver: Option<mpsc::Receiver<Vec<u8>>>,
     stderr_receiver: Option<mpsc::Receiver<Vec<u8>>>,
     fail_stdout_reader: bool,
+    panic_stdout_reader: bool,
+    panic_try_wait: bool,
+    fail_try_wait: bool,
 }
 
 impl FakeChildSpec {
@@ -238,6 +260,9 @@ impl FakeChildSpec {
             stdout_receiver: None,
             stderr_receiver: None,
             fail_stdout_reader: false,
+            panic_stdout_reader: false,
+            panic_try_wait: false,
+            fail_try_wait: false,
         }
     }
 
@@ -261,6 +286,21 @@ impl FakeChildSpec {
         self
     }
 
+    fn with_stdout_reader_panic(mut self) -> Self {
+        self.panic_stdout_reader = true;
+        self
+    }
+
+    fn with_try_wait_panic(mut self) -> Self {
+        self.panic_try_wait = true;
+        self
+    }
+
+    fn with_try_wait_failure(mut self) -> Self {
+        self.fail_try_wait = true;
+        self
+    }
+
     fn build(self) -> FakeChild {
         let stdout = FakeReader {
             segments: self.stdout_segments.into_iter().collect(),
@@ -278,6 +318,9 @@ impl FakeChildSpec {
             stdout: Some(Box::new(stdout)),
             stderr: Some(Box::new(stderr)),
             fail_stdout_reader: self.fail_stdout_reader,
+            panic_stdout_reader: self.panic_stdout_reader,
+            panic_try_wait: self.panic_try_wait,
+            fail_try_wait: self.fail_try_wait,
         }
     }
 }
@@ -285,6 +328,8 @@ impl FakeChildSpec {
 enum FakeSpawnOutcome {
     Fail(String),
     Child(FakeChild),
+    Panic,
+    Blocked(mpsc::Receiver<()>, FakeChild),
 }
 
 #[derive(Default)]
@@ -299,6 +344,10 @@ impl FakeSpawner {
             .expect("outcomes lock")
             .push_back(outcome);
     }
+
+    fn pending_outcomes(&self) -> usize {
+        self.outcomes.lock().expect("outcomes lock").len()
+    }
 }
 
 impl AgentProcessSpawner for FakeSpawner {
@@ -307,6 +356,11 @@ impl AgentProcessSpawner for FakeSpawner {
         match outcome {
             Some(FakeSpawnOutcome::Fail(message)) => Err(message),
             Some(FakeSpawnOutcome::Child(child)) => Ok(Box::new(child)),
+            Some(FakeSpawnOutcome::Panic) => panic!("spawn panic injected"),
+            Some(FakeSpawnOutcome::Blocked(release, child)) => {
+                release.recv().expect("release blocked spawn");
+                Ok(Box::new(child))
+            }
             None => Err("no scripted spawn outcome".to_string()),
         }
     }
@@ -364,6 +418,22 @@ impl AgentProcessGroupSignalSender for RecordingSignalSender {
             }
         }
         Ok(())
+    }
+}
+
+struct PanickingSignalSender;
+
+impl AgentProcessGroupSignalSender for PanickingSignalSender {
+    fn send(&self, _process_group_id: i32, _signal: i32) -> Result<(), String> {
+        panic!("signal panic injected");
+    }
+}
+
+struct FailingSignalSender;
+
+impl AgentProcessGroupSignalSender for FailingSignalSender {
+    fn send(&self, _process_group_id: i32, _signal: i32) -> Result<(), String> {
+        Err("signal failure injected".to_string())
     }
 }
 
@@ -1629,6 +1699,497 @@ fn spawn_failure_releases_admission_and_entry() {
 }
 
 #[test]
+fn closed_start_admission_rejects_before_invoking_the_spawner() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("start-closed");
+    fixture
+        .spawner
+        .script(FakeSpawnOutcome::Fail("must remain queued".to_string()));
+    fixture.registry.close_start_admission();
+    let admission = fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-closed", &root)
+    };
+
+    let error = fixture
+        .registry
+        .start(request, fake_plan(&root), admission)
+        .expect_err("closed admission");
+
+    assert_eq!(error, agent_task_supervisor::AGENT_TASK_STARTS_CLOSED_ERROR);
+    assert_eq!(fixture.spawner.pending_outcomes(), 1);
+    assert!(fixture.registry.acknowledge("agt-closed").is_err());
+}
+
+#[test]
+fn panicking_spawner_releases_the_pending_entry_and_admission() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("spawn-panic");
+    fixture.spawner.script(FakeSpawnOutcome::Panic);
+    let admission = fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-spawn-panic", &root)
+    };
+
+    let error = fixture
+        .registry
+        .start(request, fake_plan(&root), admission)
+        .expect_err("panic becomes bounded error");
+
+    assert_eq!(error, "Agent task startup failed unexpectedly.");
+    assert!(fixture.registry.acknowledge("agt-spawn-panic").is_err());
+    assert!(fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace
+        )
+        .is_ok());
+}
+
+#[test]
+fn failed_signal_sender_uses_direct_child_kill_and_releases_admission() {
+    let admission_registry = Arc::new(AgentTaskAdmissionRegistry::new());
+    let sink = Arc::new(RecordingSink::default());
+    let spawner = Arc::new(FakeSpawner::default());
+    let registry = AgentTaskRegistry::with_dependencies(
+        Arc::clone(&admission_registry),
+        Arc::clone(&spawner) as Arc<dyn AgentProcessSpawner>,
+        sink as Arc<dyn AgentTaskEventSink>,
+        Arc::new(FailingSignalSender),
+        Duration::from_secs(60),
+        Duration::from_millis(10),
+        Duration::from_millis(10),
+    );
+    let root = unique_path("signal-failure");
+    let process = FakeProcess::new(None, None);
+    spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9133)
+            .with_stdout_reader_fault()
+            .build(),
+    ));
+    let admission = admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-signal-failure", &root)
+    };
+
+    let error = registry
+        .start(request, fake_plan(&root), admission)
+        .expect_err("reader fault rejects start");
+
+    assert_eq!(error, "stdout reader fault injected");
+    assert_eq!(process.exit_code(), Some(137));
+    assert!(registry.acknowledge("agt-signal-failure").is_err());
+    assert!(admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace
+        )
+        .is_ok());
+}
+
+#[test]
+fn waiter_start_failure_retains_child_for_kill_reap_and_cleanup() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("waiter-start-failure");
+    let process = FakeProcess::new(None, None);
+    fixture.signals.track(9134, &process);
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9134).build(),
+    ));
+    fixture.registry.fail_next_waiter_start_for_tests();
+    let admission = fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-waiter-start-failure", &root)
+    };
+
+    let error = fixture
+        .registry
+        .start(request, fake_plan(&root), admission)
+        .expect_err("waiter start failure");
+
+    assert_eq!(error, "Unable to start agent task worker: injected");
+    assert_eq!(process.exit_code(), Some(137));
+    assert!(fixture
+        .registry
+        .acknowledge("agt-waiter-start-failure")
+        .is_err());
+    assert!(fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace
+        )
+        .is_ok());
+}
+
+#[test]
+fn panicking_waiter_child_is_killed_reaped_and_completed_as_failed() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("waiter-panic");
+    let process = FakeProcess::new(None, None);
+    fixture.signals.track(9135, &process);
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9135)
+            .with_try_wait_panic()
+            .build(),
+    ));
+    let admission = fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-waiter-panic", &root)
+    };
+
+    fixture
+        .registry
+        .start(request, fake_plan(&root), admission)
+        .expect("start before waiter panic");
+    fixture
+        .registry
+        .acknowledge("agt-waiter-panic")
+        .expect("acknowledge waiter panic");
+
+    assert!(wait_until(EVENT_DEADLINE, || fixture
+        .sink
+        .has_terminal_status("agt-waiter-panic")));
+    assert_eq!(process.exit_code(), Some(137));
+    assert!(fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace
+        )
+        .is_ok());
+}
+
+#[test]
+fn waiter_error_with_failed_signals_uses_direct_kill_and_releases_admission() {
+    let admission_registry = Arc::new(AgentTaskAdmissionRegistry::new());
+    let sink = Arc::new(RecordingSink::default());
+    let spawner = Arc::new(FakeSpawner::default());
+    let registry = AgentTaskRegistry::with_dependencies(
+        Arc::clone(&admission_registry),
+        Arc::clone(&spawner) as Arc<dyn AgentProcessSpawner>,
+        Arc::clone(&sink) as Arc<dyn AgentTaskEventSink>,
+        Arc::new(FailingSignalSender),
+        Duration::from_secs(60),
+        Duration::from_millis(10),
+        Duration::from_millis(10),
+    );
+    let root = unique_path("waiter-error-signal-failure");
+    let process = FakeProcess::new(None, None);
+    spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9137)
+            .with_try_wait_failure()
+            .build(),
+    ));
+    let admission = admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-waiter-error", &root)
+    };
+
+    registry
+        .start(request, fake_plan(&root), admission)
+        .expect("start waiter error task");
+    registry
+        .acknowledge("agt-waiter-error")
+        .expect("acknowledge waiter error task");
+
+    assert!(wait_until(EVENT_DEADLINE, || sink
+        .has_terminal_status("agt-waiter-error")));
+    assert_eq!(process.exit_code(), Some(137));
+    assert_eq!(statuses_for(&sink, "agt-waiter-error").len(), 2);
+    assert!(admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace
+        )
+        .is_ok());
+}
+
+#[test]
+fn panicking_watchdog_signals_fall_back_to_waiter_owned_child_kill() {
+    let admission_registry = Arc::new(AgentTaskAdmissionRegistry::new());
+    let sink = Arc::new(RecordingSink::default());
+    let spawner = Arc::new(FakeSpawner::default());
+    let registry = AgentTaskRegistry::with_dependencies(
+        Arc::clone(&admission_registry),
+        Arc::clone(&spawner) as Arc<dyn AgentProcessSpawner>,
+        Arc::clone(&sink) as Arc<dyn AgentTaskEventSink>,
+        Arc::new(PanickingSignalSender),
+        Duration::from_millis(20),
+        Duration::from_millis(10),
+        Duration::from_millis(10),
+    );
+    let root = unique_path("watchdog-signal-panic");
+    let process = FakeProcess::new(None, None);
+    spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9136).build(),
+    ));
+    let admission = admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-watchdog-signal-panic", &root)
+    };
+
+    registry
+        .start(request, fake_plan(&root), admission)
+        .expect("start watchdog task");
+    registry
+        .acknowledge("agt-watchdog-signal-panic")
+        .expect("acknowledge watchdog task");
+
+    assert!(wait_until(EVENT_DEADLINE, || sink
+        .has_terminal_status("agt-watchdog-signal-panic")));
+    assert!(wait_until(EVENT_DEADLINE, || process.exit_code() == Some(137)));
+    assert!(admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace
+        )
+        .is_ok());
+}
+
+#[test]
+fn panicking_child_reader_is_killed_reaped_and_releases_admission() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("child-panic");
+    let process = FakeProcess::new(None, None);
+    fixture.signals.track(9131, &process);
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9131)
+            .with_stdout_reader_panic()
+            .build(),
+    ));
+    let admission = fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-child-panic", &root)
+    };
+
+    let error = fixture
+        .registry
+        .start(request, fake_plan(&root), admission)
+        .expect_err("panic becomes bounded error");
+
+    assert_eq!(error, "Agent task startup failed unexpectedly.");
+    assert_eq!(process.exit_code(), Some(137));
+    assert_eq!(
+        fixture.signals.signals_for(9131),
+        vec![KILL_PROCESS_GROUP_SIGNAL]
+    );
+    assert!(fixture.registry.acknowledge("agt-child-panic").is_err());
+    assert!(fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace
+        )
+        .is_ok());
+}
+
+#[test]
+fn panicking_signal_sender_cannot_strand_the_pending_entry_or_admission() {
+    let admission_registry = Arc::new(AgentTaskAdmissionRegistry::new());
+    let sink = Arc::new(RecordingSink::default());
+    let spawner = Arc::new(FakeSpawner::default());
+    let registry = AgentTaskRegistry::with_dependencies(
+        Arc::clone(&admission_registry),
+        Arc::clone(&spawner) as Arc<dyn AgentProcessSpawner>,
+        sink as Arc<dyn AgentTaskEventSink>,
+        Arc::new(PanickingSignalSender),
+        Duration::from_secs(60),
+        Duration::from_millis(10),
+        Duration::from_millis(10),
+    );
+    let root = unique_path("signal-panic");
+    let process = FakeProcess::new(None, None);
+    spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9132)
+            .with_stdout_reader_panic()
+            .build(),
+    ));
+    let admission = admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-signal-panic", &root)
+    };
+
+    let error = registry
+        .start(request, fake_plan(&root), admission)
+        .expect_err("panics become bounded error");
+
+    assert_eq!(error, "Agent task startup failed unexpectedly.");
+    assert_eq!(process.exit_code(), Some(137));
+    assert!(registry.acknowledge("agt-signal-panic").is_err());
+    assert!(admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace
+        )
+        .is_ok());
+}
+
+#[test]
+fn shutdown_marks_a_blocked_start_for_synchronous_abort_before_publish() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("blocked-shutdown");
+    let process = FakeProcess::new(None, None);
+    fixture.signals.track(9141, &process);
+    let (release_sender, release_receiver) = mpsc::channel();
+    fixture.spawner.script(FakeSpawnOutcome::Blocked(
+        release_receiver,
+        FakeChildSpec::new(&process, 9141).build(),
+    ));
+    let admission = fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-blocked-shutdown", &root)
+    };
+    let registry = Arc::new(fixture.registry);
+    let start_registry = Arc::clone(&registry);
+    let start_root = root.clone();
+    let start =
+        thread::spawn(move || start_registry.start(request, fake_plan(&start_root), admission));
+    assert!(wait_until(EVENT_DEADLINE, || fixture
+        .spawner
+        .pending_outcomes()
+        == 0));
+
+    registry.close_start_admission();
+    registry.shutdown_all();
+    release_sender.send(()).expect("release blocked spawn");
+    let error = start
+        .join()
+        .expect("join blocked start")
+        .expect_err("shutdown rejects blocked start");
+
+    assert_eq!(error, agent_task_supervisor::AGENT_TASK_STARTS_CLOSED_ERROR);
+    assert_eq!(process.exit_code(), Some(137));
+    assert_eq!(
+        fixture.signals.signals_for(9141),
+        vec![KILL_PROCESS_GROUP_SIGNAL]
+    );
+    assert!(registry.acknowledge("agt-blocked-shutdown").is_err());
+    assert!(fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace
+        )
+        .is_ok());
+}
+
+#[test]
 fn reader_fault_kills_group_and_releases_admission() {
     let fixture = fixture(Duration::from_secs(60));
     let root = unique_path("reader-fault");
@@ -1707,6 +2268,58 @@ fn duplicate_task_id_is_rejected() {
             == 0),
         "task workers did not settle"
     );
+}
+
+#[test]
+fn workspace_bound_controls_reject_foreign_task_and_root_authority() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("workspace-bound-control");
+    let process = FakeProcess::new(None, Some(0));
+    fixture.signals.track(9151, &process);
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9151).build(),
+    ));
+    let admission = fixture
+        .admission
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-workspace-bound", &root)
+    };
+    fixture
+        .registry
+        .start(request, fake_plan(&root), admission)
+        .expect("start workspace-bound task");
+
+    assert!(fixture
+        .registry
+        .acknowledge_for_workspace("agt-workspace-bound", "ws-foreign")
+        .is_err());
+    assert!(fixture
+        .registry
+        .stop_for_workspace("agt-workspace-bound", "ws-foreign")
+        .is_err());
+    fixture
+        .registry
+        .stop_for_workspace_root("ws-foreign", &root);
+    assert_eq!(process.exit_code(), None);
+
+    fixture
+        .registry
+        .acknowledge_for_workspace("agt-workspace-bound", "ws-agent-tests")
+        .expect("owner acknowledges");
+    fixture
+        .registry
+        .stop_for_workspace("agt-workspace-bound", "ws-agent-tests")
+        .expect("owner stops");
+    assert!(wait_until(EVENT_DEADLINE, || process.exit_code().is_some()));
 }
 
 #[test]

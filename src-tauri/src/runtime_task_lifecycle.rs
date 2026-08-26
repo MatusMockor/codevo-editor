@@ -56,7 +56,15 @@ impl RuntimeTaskLifecycleExt for AppHandle {
 pub(crate) fn shutdown_runtime_processes(
     app: &AppHandle,
     js_test_batches: &js_test_run::batch::JsTestBatchRegistry,
-) {
+) -> Result<(), String> {
+    if let Some(agent_tasks) = app.try_state::<AgentTaskRegistry>() {
+        agent_tasks.close_start_admission();
+    }
+    if let Some(registry) = app.try_state::<WorkspaceRegistry>() {
+        registry
+            .begin_runtime_shutdown()
+            .map_err(|error| error.to_string())?;
+    }
     if let Some(agent_tasks) = app.try_state::<AgentTaskRegistry>() {
         agent_tasks.shutdown_all();
     }
@@ -91,4 +99,5 @@ pub(crate) fn shutdown_runtime_processes(
     if let Some(registry) = app.try_state::<Arc<eslint::EslintProcessRegistry>>() {
         registry.stop_all();
     }
+    Ok(())
 }

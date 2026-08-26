@@ -1481,14 +1481,57 @@ describe("keymap", () => {
     it("still captures strong-modifier chords with a printable key", () => {
       expect(shortcutFromKeyboardEvent(keyEvent({ altKey: true, key: "/" }))).toBe("Alt+/");
     });
+
+    it.each([
+      ["∂", "KeyD", "Cmd+Alt+D"],
+      ["Dead", "KeyE", "Cmd+Alt+E"],
+    ])("captures an Alt-modified %s key through its letter code", (key, code, shortcut) => {
+      const event = keyEvent({ altKey: true, code, key, metaKey: true });
+
+      expect(shortcutFromKeyboardEvent(event)).toBe(shortcut);
+      expect(matchesShortcut(event, shortcut, "mac")).toBe(true);
+    });
+
+    it("preserves AltGr text and captures a representable transformed delimiter", () => {
+      const altGraphEvent = keyEvent({
+        altKey: true,
+        code: "KeyE",
+        ctrlKey: true,
+        getModifierState: (keyArg) => keyArg === "AltGraph",
+        key: "€",
+      });
+      const delimiterEvent = keyEvent({
+        altKey: true,
+        code: "KeyD",
+        key: "+",
+        metaKey: true,
+      });
+
+      expect(shortcutFromKeyboardEvent(altGraphEvent)).toBe("Ctrl+Alt+€");
+      expect(matchesShortcut(altGraphEvent, "Cmd+Alt+E", "windows")).toBe(false);
+      expect(shortcutFromKeyboardEvent(delimiterEvent)).toBe("Cmd+Alt+D");
+    });
+
+    it("captures a macOS Control+Option transformed key", () => {
+      const event = keyEvent({ altKey: true, code: "KeyD", ctrlKey: true, key: "∂" });
+
+      expect(shortcutFromKeyboardEvent(event)).toBe("Ctrl+Alt+D");
+      expect(matchesShortcut(event, "Ctrl+Alt+D", "mac")).toBe(true);
+    });
   });
 });
 
 function keyEvent(
-  overrides: Partial<Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">>,
+  overrides: Partial<
+    Pick<
+      KeyboardEvent,
+      "altKey" | "code" | "ctrlKey" | "getModifierState" | "key" | "metaKey" | "shiftKey"
+    >
+  >,
 ): KeyboardEvent {
   return {
     altKey: false,
+    code: "",
     ctrlKey: false,
     key: "",
     metaKey: false,

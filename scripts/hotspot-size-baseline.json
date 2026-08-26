@@ -37,7 +37,7 @@
       "rawLines": 2623,
       "structuralTokens": 15582
     },
-    "src-tauri/src/git.rs": { "rawLines": 7113, "structuralTokens": 44029 },
+    "src-tauri/src/git.rs": { "rawLines": 7039, "structuralTokens": 43809 },
     "src-tauri/src/index.rs": { "rawLines": 2089, "structuralTokens": 10272 },
     "src-tauri/src/lib.rs": { "rawLines": 210, "structuralTokens": 802 },
     "src-tauri/src/lsp_features.rs": {

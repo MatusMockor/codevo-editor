@@ -1,12 +1,13 @@
+import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
 import type { WorkbenchPrompter } from "../application/workbenchPrompter";
 import type { QuickInputCoordinator } from "../application/quickInputCoordinator";
 
 export class BrowserWorkbenchPrompter implements WorkbenchPrompter {
   constructor(private readonly quickInput: QuickInputCoordinator) {}
 
-  confirm(message: string): boolean {
+  async confirm(message: string): Promise<boolean> {
     try {
-      return window.confirm(message);
+      return await confirmDialog(message);
     } catch {
       return false;
     }

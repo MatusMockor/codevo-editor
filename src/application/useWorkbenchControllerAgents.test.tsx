@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { GitStatus } from "../domain/git";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
+import { createWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   initialAgentWorkbenchLayout,
   serializeAgentWorkbenchLayout,
@@ -18,7 +19,9 @@ import {
   type WorkspaceSettings,
 } from "../domain/settings";
 import type { AgentThreadStoreGateway } from "./agentThreadPorts";
+import { WorkspaceTrustIntentCoordinator } from "./workspaceTrustIntentCoordinator";
 import {
+  loadWorkspaceTrustForOwner,
   useWorkbenchControllerAgents,
   type WorkbenchControllerAgentsOptions,
   type WorkbenchControllerAgentsSurface,
@@ -33,7 +36,57 @@ afterEach(() => {
 const ROOT_A = "/ws/a";
 const ROOT_B = "/ws/b";
 
+describe("loadWorkspaceTrustForOwner", () => {
+  it("drops a late workspace-open result after an agent trust grant", async () => {
+    let resolveTrust!: (trust: { rootPath: string; trusted: boolean }) => void;
+    const pendingTrust = new Promise<{ rootPath: string; trusted: boolean }>((resolve) => {
+      resolveTrust = resolve;
+    });
+    const revisionByOwnerRef = { current: { "workspace-a": 0 } };
+    const publish = vi.fn();
+    const loading = loadWorkspaceTrustForOwner({
+      gateway: {
+        getTrust: vi.fn(() => pendingTrust),
+        setTrust: vi.fn(async (rootPath, trusted) => ({ rootPath, trusted })),
+      },
+      isCurrent: () => true,
+      ownerId: "workspace-a",
+      publish,
+      reportError: vi.fn(),
+      revisionByOwnerRef,
+      rootPath: ROOT_A,
+    });
+
+    revisionByOwnerRef.current["workspace-a"] = 1;
+    resolveTrust({ rootPath: ROOT_A, trusted: false });
+    await loading;
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+});
+
 describe("useWorkbenchControllerAgents layout surface", () => {
+  it("advances active trust authority when the agent project grants trust", async () => {
+    const harness = renderAgents();
+    harness.rerender({ workspaceTrust: { rootPath: ROOT_A, trusted: false } });
+    await harness.settle();
+
+    await act(async () => {
+      await harness.result().agentProjects.trustProject(ROOT_A);
+    });
+
+    expect(harness.workspaceTrustRevisionByOwnerRef.current["workspace-a"]).toBe(1);
+    expect(
+      harness.workspaceTrustIntentCoordinator.request(
+        createWorkspaceRuntimeOwner("workspace-a", ROOT_A),
+        ROOT_A,
+        false,
+      ).revision,
+    ).toBe(2);
+    expect(harness.setWorkspaceTrust).toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("forces the expanded editor without a workspace", () => {
     const harness = renderAgents({ workspaceRoot: null, editorSessionOwnerKey: null });
 
@@ -243,6 +296,9 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     acquireAgentRootLease: vi.fn(async () => ({ leaseToken: 1 })),
     releaseAgentRootLease: vi.fn(async () => undefined),
   };
+  const setWorkspaceTrust = vi.fn();
+  const workspaceTrustRevisionByOwnerRef = { current: {} as Record<string, number> };
+  const workspaceTrustIntentCoordinator = new WorkspaceTrustIntentCoordinator();
 
   let options: WorkbenchControllerAgentsOptions = {
     agentThreadStoreGateway: threadStore,
@@ -281,15 +337,19 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     reportError: vi.fn(),
     setSettingsInitialSection: vi.fn(),
     setSettingsOpen: vi.fn(),
+    setWorkspaceTrust,
     settingsGateway: { loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()) },
     workspaceIdentityByRootRef: { current: {} },
     workspaceIdentityDescriptor: { workspaceId: "workspace-a" },
     workspaceRoot: overrides.workspaceRoot === undefined ? ROOT_A : overrides.workspaceRoot,
     workspaceSettingsRef,
+    workspaceTrust: { rootPath: ROOT_A, trusted: true },
     workspaceTrustGateway: {
       getTrust: vi.fn(async (rootPath: string) => ({ rootPath, trusted: true })),
       setTrust: vi.fn(async (rootPath: string, trusted: boolean) => ({ rootPath, trusted })),
     },
+    workspaceTrustIntentCoordinatorRef: { current: workspaceTrustIntentCoordinator },
+    workspaceTrustRevisionByOwnerRef,
   };
 
   let latestResult: WorkbenchControllerAgentsSurface | null = null;
@@ -305,6 +365,9 @@ function renderAgents(overrides: HarnessOverrides = {}) {
   return {
     persisted: () => persisted,
     result: getResult,
+    setWorkspaceTrust,
+    workspaceTrustIntentCoordinator,
+    workspaceTrustRevisionByOwnerRef,
     rerender(next: Partial<WorkbenchControllerAgentsOptions>) {
       act(() => {
         options = { ...options, ...next };

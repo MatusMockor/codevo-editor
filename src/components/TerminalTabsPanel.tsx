@@ -26,6 +26,7 @@ interface TerminalRuntime {
 
 export interface TerminalTabsPanelProps {
   readonly isActive: boolean;
+  readonly layoutRevision?: number;
   readonly ownerKey: string;
   readonly profileId: string | null;
   readonly profileLabel: string | null;
@@ -243,6 +244,7 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
               isActive={props.isActive && active}
               key={tab.id}
               labelledBy={`${tab.id}-tab`}
+              layoutRevision={props.layoutRevision}
               onCwdChange={(cwd) => {
                 if (!mountedRef.current || !liveTabIdsRef.current.has(tab.id)) return;
                 updateRuntime(tab.id, (previous) => (previous ? { ...previous, cwd } : undefined));

@@ -12,6 +12,7 @@ import {
   type AgentViewCommandId,
 } from "./agentViewCommandBridge";
 import type { Command, CommandContext } from "./commandRegistry";
+import type { ShortcutScopedCommand } from "./workbenchShortcutCommandDispatcher";
 
 export interface AgentWorkbenchLayoutCommandPort {
   readonly layout: AgentWorkbenchLayout;
@@ -43,6 +44,8 @@ export function workbenchAgentCommands({
     context.hasWorkspace && viewCommands.bound();
   const withThread = (context: CommandContext): boolean =>
     inAgentMode(context) && viewCommands.threadSelected();
+  const withFocusedThread = (context: CommandContext): boolean =>
+    withThread(context) && viewCommands.threadFindFocused();
   const viewCommand = (
     id: AgentViewCommandId,
     title: string,
@@ -67,6 +70,10 @@ export function workbenchAgentCommands({
     isEnabled: (context) => context.hasWorkspace,
     run: () => agentLayout?.dispatch(action),
   });
+  const findCommand: ShortcutScopedCommand = {
+    ...viewCommand("agent.findInThread", "Find in Thread", withThread),
+    isShortcutEnabled: withFocusedThread,
+  };
 
   return [
     viewCommand("agent.newThread", "New Thread"),
@@ -76,7 +83,7 @@ export function workbenchAgentCommands({
       viewCommand(agentJumpCommandId(slot), `Jump to Thread ${slot}`),
     ),
     viewCommand("agent.searchThreads", "Search Threads"),
-    viewCommand("agent.findInThread", "Find in Thread", withThread),
+    findCommand,
     viewCommand("agent.runPreferredScript", "Run Thread Script", withThread),
     viewCommand("agent.openCommitMenu", "Commit Thread Changes", withThread),
     layoutCommand("agent.toggleRightPanel", "Toggle Right Panel", { kind: "toggleRightPanel" }),

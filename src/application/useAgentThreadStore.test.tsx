@@ -517,31 +517,40 @@ function rustRuleGateway() {
   return { gateway, files };
 }
 
-function renderRuntimeOwnedStore(files: ReadonlyMap<string, AgentThread>, gateway: unknown) {
+function renderRuntimeOwnedStore(
+  files: ReadonlyMap<string, AgentThread>,
+  gateway: unknown,
+  initialProjects: ReadonlyArray<AgentProjectDescriptor> = [project({ ownerId: RUNTIME_OWNER_ID })],
+) {
   const reportError = vi.fn();
   const setNotice = vi.fn();
   const host = document.createElement("div");
   const root = createRoot(host);
   const captured: { value: AgentThreadStoreSurface | null } = { value: null };
-  const dependencies: AgentThreadStoreDependencies = {
-    agentThreadStoreGateway: gateway as AgentThreadStoreGateway,
-    projects: [project({ ownerId: RUNTIME_OWNER_ID })],
-    agentModeActive: true,
-    reportError,
-    setNotice,
-    legacyPinStorage: { removeItem: vi.fn() },
-    minimumPersistIntervalMs: PERSIST_INTERVAL_MS,
-  };
+  let projects = initialProjects;
   function Harness() {
-    captured.value = useAgentThreadStore(dependencies);
+    captured.value = useAgentThreadStore({
+      agentThreadStoreGateway: gateway as AgentThreadStoreGateway,
+      projects,
+      agentModeActive: true,
+      reportError,
+      setNotice,
+      legacyPinStorage: { removeItem: vi.fn() },
+      minimumPersistIntervalMs: PERSIST_INTERVAL_MS,
+    });
     return null;
   }
-  act(() => root.render(<Harness />));
+  const render = () => act(() => root.render(<Harness />));
+  render();
   return {
     files,
     reportError,
     setNotice,
     hook: () => captured.value as AgentThreadStoreSurface,
+    setProjects(next: ReadonlyArray<AgentProjectDescriptor>) {
+      projects = next;
+      render();
+    },
     unmount: () => act(() => root.unmount()),
   };
 }
@@ -739,6 +748,84 @@ describe("useAgentThreadStore unread and rename", () => {
 });
 
 describe("useAgentThreadStore persistent identity", () => {
+  it("reports a retained runtime owner's delayed save failure", async () => {
+    const { gateway, files } = rustRuleGateway();
+    const pendingSave = deferred<void>();
+    gateway.saveAgentThread.mockImplementationOnce(async () => pendingSave.promise);
+    const harness = renderRuntimeOwnedStore(files, gateway, [
+      project({ ownerId: OWNER_ID, runtimeOwnerIds: [OWNER_ID, RUNTIME_OWNER_ID] }),
+    ]);
+    await waitForReact(() => expect(harness.hook().loadedRootKeys.has(ROOT_KEY)).toBe(true));
+
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "threadCreated",
+        thread: thread({
+          owner: { rootKey: ROOT_KEY, ownerId: RUNTIME_OWNER_ID, repositoryRoot: REPOSITORY_ROOT },
+        }),
+      }),
+    );
+    await waitForReact(() => expect(gateway.saveAgentThread).toHaveBeenCalledTimes(1));
+    await act(async () => pendingSave.reject(new Error("save failed")));
+
+    await waitForReact(() => expect(harness.reportError).toHaveBeenCalledTimes(1));
+    harness.unmount();
+  });
+
+  it("suppresses a delayed runtime-owner save failure after generation replacement", async () => {
+    const { gateway, files } = rustRuleGateway();
+    const pendingSave = deferred<void>();
+    gateway.saveAgentThread.mockImplementationOnce(async () => pendingSave.promise);
+    const harness = renderRuntimeOwnedStore(files, gateway, [
+      project({ ownerId: OWNER_ID, runtimeOwnerIds: [OWNER_ID, RUNTIME_OWNER_ID] }),
+    ]);
+    await waitForReact(() => expect(harness.hook().loadedRootKeys.has(ROOT_KEY)).toBe(true));
+
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "threadCreated",
+        thread: thread({
+          owner: { rootKey: ROOT_KEY, ownerId: RUNTIME_OWNER_ID, repositoryRoot: REPOSITORY_ROOT },
+        }),
+      }),
+    );
+    await waitForReact(() => expect(gateway.saveAgentThread).toHaveBeenCalledTimes(1));
+    harness.setProjects([
+      project({
+        ownerId: OWNER_ID,
+        generation: 2,
+        runtimeOwnerIds: [OWNER_ID, RUNTIME_OWNER_ID],
+      }),
+    ]);
+    await act(async () => pendingSave.reject(new Error("stale save failed")));
+
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("suppresses a delayed runtime-owner save failure after membership eviction", async () => {
+    const { gateway, files } = rustRuleGateway();
+    const pendingSave = deferred<void>();
+    gateway.saveAgentThread.mockImplementationOnce(async () => pendingSave.promise);
+    const harness = renderRuntimeOwnedStore(files, gateway, [
+      project({ ownerId: OWNER_ID, runtimeOwnerIds: [OWNER_ID, RUNTIME_OWNER_ID] }),
+    ]);
+    await waitForReact(() => expect(harness.hook().loadedRootKeys.has(ROOT_KEY)).toBe(true));
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "threadCreated",
+        thread: thread({
+          owner: { rootKey: ROOT_KEY, ownerId: RUNTIME_OWNER_ID, repositoryRoot: REPOSITORY_ROOT },
+        }),
+      }),
+    );
+    await waitForReact(() => expect(gateway.saveAgentThread).toHaveBeenCalledTimes(1));
+    harness.setProjects([project({ ownerId: OWNER_ID, runtimeOwnerIds: [OWNER_ID] })]);
+    await act(async () => pendingSave.reject(new Error("evicted save failed")));
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("loads, saves and deletes with the persistent root owner while threads carry the runtime owner", async () => {
     const { gateway, files } = rustRuleGateway();
     const persistedOwner = agentRootOwnerId(ROOT_KEY);

@@ -9,8 +9,25 @@ export interface AgentProjectAuthority {
   readonly generation: number;
 }
 
+export interface AgentTaskLaunchAuthority extends AgentProjectAuthority {
+  readonly workspaceId: string;
+  readonly workspaceGeneration: number;
+}
+
+export interface AgentProjectLaunchIdentity {
+  readonly workspaceId: string;
+  readonly generation: number;
+}
+
 export interface AgentProjectsRef {
   readonly current: { readonly projects: ReadonlyArray<AgentProjectDescriptor> };
+}
+
+export interface AgentLaunchProjectsRef {
+  readonly current: {
+    readonly projects: ReadonlyArray<AgentProjectDescriptor>;
+    readonly launchIdentityForProject: (rootKey: string) => AgentProjectLaunchIdentity | null;
+  };
 }
 
 export interface AgentErrorReporterRef {
@@ -24,11 +41,25 @@ export interface MountedRef {
 export type Attempt<TValue> =
   { readonly ok: true; readonly value: TValue } | { readonly ok: false; readonly error: unknown };
 
-export function projectAuthority(project: AgentProjectDescriptor): AgentProjectAuthority {
+export function projectAuthority(
+  project: AgentProjectDescriptor,
+  ownerId: string = project.ownerId,
+): AgentProjectAuthority {
   return {
     rootKey: project.rootKey,
-    ownerId: project.ownerId,
+    ownerId,
     generation: project.generation,
+  };
+}
+
+export function taskLaunchAuthority(
+  project: AgentProjectDescriptor,
+  identity: AgentProjectLaunchIdentity,
+): AgentTaskLaunchAuthority {
+  return {
+    ...projectAuthority(project),
+    workspaceId: identity.workspaceId,
+    workspaceGeneration: identity.generation,
   };
 }
 
@@ -43,7 +74,9 @@ export function projectByOwnerId(
   projects: ReadonlyArray<AgentProjectDescriptor>,
   ownerId: string,
 ): AgentProjectDescriptor | undefined {
-  return projects.find((project) => project.ownerId === ownerId);
+  return projects.find(
+    (project) => project.ownerId === ownerId || project.runtimeOwnerIds?.includes(ownerId) === true,
+  );
 }
 
 export function owningProjectForRepository(
@@ -83,8 +116,27 @@ export function isCurrentProjectOwner(
   const project = projectByRootKey(dependenciesRef.current.projects, authority.rootKey);
   if (project === undefined) return false;
   if (project.generation !== authority.generation) return false;
-  if (project.ownerId !== authority.ownerId) return false;
+  if (
+    project.ownerId !== authority.ownerId &&
+    project.runtimeOwnerIds?.includes(authority.ownerId) !== true
+  )
+    return false;
   return project.repositories.some((repository) => repository.repositoryRoot === repositoryRoot);
+}
+
+export function isCurrentTaskLaunchAuthority(
+  dependenciesRef: AgentLaunchProjectsRef,
+  mountedRef: MountedRef,
+  authority: AgentTaskLaunchAuthority,
+  repositoryRoot: string,
+): boolean {
+  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return false;
+  const identity = dependenciesRef.current.launchIdentityForProject(authority.rootKey);
+  if (identity === null) return false;
+  return (
+    identity.workspaceId === authority.workspaceId &&
+    identity.generation === authority.workspaceGeneration
+  );
 }
 
 export async function tryOrReport<TValue>(

@@ -89,6 +89,12 @@ impl WorkspaceRegistry {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let _operation = self.lock_operations()?;
+            if self.has_runtime_start(workspace_id)? {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "workspace runtime start is in progress",
+                ));
+            }
             let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
             let Some(workspace) = workspaces.get_mut(workspace_id) else {
                 return Err(unknown_workspace());

@@ -10,6 +10,7 @@ import {
   type AgentViewCommandHandlers,
 } from "./agentViewCommandBridge";
 import { CommandRegistry, type CommandContext } from "./commandRegistry";
+import type { ShortcutScopedCommand } from "./workbenchShortcutCommandDispatcher";
 import {
   workbenchAgentCommands,
   type AgentWorkbenchLayoutCommandPort,
@@ -57,6 +58,7 @@ const LAYOUT_COMMAND_IDS = [
 function handlers(
   threadSelected = true,
   blockedSurfaces: ReadonlyArray<AgentSurfaceKind> = [],
+  threadFindFocused = true,
 ): AgentViewCommandHandlers {
   return {
     surfaceBlocked: (surface) => blockedSurfaces.includes(surface),
@@ -66,6 +68,7 @@ function handlers(
     jumpToThread: vi.fn(),
     searchThreads: vi.fn(),
     findInThread: vi.fn(),
+    threadFindFocused: () => threadFindFocused,
     runPreferredScript: vi.fn(),
     openCommitMenu: vi.fn(),
     threadSelected: () => threadSelected,
@@ -156,6 +159,23 @@ describe("workbenchAgentCommands", () => {
     bridge.bind(handlers(true));
 
     threadScoped.forEach((id) => expect(enabledFor(id)).toBe(true));
+  });
+
+  it("keeps thread find globally available while scoping its shortcut to thread focus", () => {
+    const bridge = createAgentViewCommandBridge();
+    bridge.bind(handlers(true, [], false));
+    const commands = workbenchAgentCommands({ viewCommands: bridge });
+    const find = commands.find(
+      (command) => command.id === "agent.findInThread",
+    ) as ShortcutScopedCommand;
+
+    expect(find.isEnabled(enabledContext)).toBe(true);
+    expect(find.isShortcutEnabled(enabledContext)).toBe(false);
+
+    bridge.bind(handlers(true, [], true));
+
+    expect(find.isEnabled(enabledContext)).toBe(true);
+    expect(find.isShortcutEnabled(enabledContext)).toBe(true);
   });
 
   it("routes every view command to the bound handlers exactly once", async () => {

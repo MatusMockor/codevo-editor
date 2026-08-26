@@ -17,7 +17,7 @@ import type {
   SettingsSection,
   WorkspaceSettings,
 } from "../domain/settings";
-import type { WorkspaceTrustGateway } from "../domain/trust";
+import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import { isDirty, type EditorDocument } from "../domain/workspace";
 import {
   useAgentProjects,
@@ -66,12 +66,18 @@ export interface WorkbenchAgentsOptions {
   readonly gitRepositoryMappings: ReadonlyArray<GitRepositoryMapping>;
   readonly gitRepositoryStatuses: ReadonlyArray<GitRepositoryStatus>;
   readonly openDocuments: ReadonlyArray<EditorDocument>;
+  readonly onActiveWorkspaceTrustChanged: (
+    rootPath: string,
+    ownerId: string,
+    trusted: boolean,
+  ) => void;
   readonly prompter: WorkbenchPrompter;
   readonly reportError: (source: string, error: unknown) => void;
   readonly setSettingsInitialSection: (section: SettingsSection) => void;
   readonly setSettingsOpen: (open: boolean) => void;
   readonly workspaceId: string | null;
   readonly workspaceRoot: string | null;
+  readonly workspaceTrust: WorkspaceTrustState | null;
 }
 
 export interface WorkbenchAgentsSurface extends AgentThreadsSurface {
@@ -189,6 +195,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     appSettingsRef: options.appSettingsRef,
     activeWorkspaceId: workspaceId,
     activeWorkspaceRoot: workspaceRoot,
+    activeWorkspaceTrust: options.workspaceTrust,
     activeWorkspaceRepositories: resolvedRepositories,
     activeIsolationPolicy: options.workspaceSettingsRef.current.agentIsolationPolicy,
     descriptorForRoot,
@@ -200,6 +207,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     hasLiveTasksForOwner,
     stopProjectTasks,
     releaseProjectTasks,
+    onActiveWorkspaceTrustChanged: options.onActiveWorkspaceTrustChanged,
     prompter: options.prompter,
     reportError: options.reportError,
   });
@@ -224,6 +232,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     getDirtyEditorDocumentCount,
     onProjectDispatchTrustRejected: agentProjects.noteDispatchTrustRejected,
     ensureProjectLease: agentProjects.ensureProjectLease,
+    launchIdentityForProject: agentProjects.launchIdentityForProject,
     reportError: options.reportError,
     openAgentSettings,
   });

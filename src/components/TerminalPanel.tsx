@@ -10,6 +10,7 @@ interface TerminalPanelProps {
   labelledBy?: string;
   panelId?: string;
   isActive: boolean;
+  layoutRevision?: number;
   onCwdChange?: (cwd: string | null) => void;
   onOpenLink?: (path: string, line?: number, column?: number) => void;
   // Reports the backend session id of this terminal once it starts, and `null`
@@ -28,6 +29,7 @@ interface TerminalPanelProps {
 export function TerminalPanel({
   isActive,
   labelledBy,
+  layoutRevision = 0,
   onCwdChange,
   onOpenLink,
   onSessionReady,
@@ -189,7 +191,7 @@ export function TerminalPanel({
     }
 
     session.fit();
-  }, [isActive]);
+  }, [isActive, layoutRevision]);
 
   return (
     <div

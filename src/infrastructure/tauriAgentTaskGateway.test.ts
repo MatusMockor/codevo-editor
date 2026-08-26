@@ -11,6 +11,7 @@ import type { InvokeAgentTaskCommand } from "./tauriAgentTaskIpcContract";
 const START_REQUEST: StartAgentTaskRequest = {
   taskId: "agt-1-0a1b",
   workspaceId: "ws-1",
+  projectRoot: "/repo",
   repositoryRoot: "/repo",
   cwd: "/repo",
   isolation: "in-place",

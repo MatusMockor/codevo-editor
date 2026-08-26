@@ -59,6 +59,7 @@ describe("useAgentViewCommands", () => {
 
     expect(bridge.bound()).toBe(true);
     expect(bridge.threadSelected()).toBe(false);
+    expect(bridge.threadFindFocused()).toBe(true);
     expect(bridge.surfaceBlocked("diff")).toBe(true);
   });
 
@@ -127,6 +128,7 @@ function spyHandlers() {
     jumpToThread: vi.fn(),
     searchThreads: vi.fn(),
     findInThread: vi.fn(),
+    threadFindFocused: vi.fn(() => true),
     runPreferredScript: vi.fn(),
     openCommitMenu: vi.fn(),
     threadSelected: vi.fn(() => true),

@@ -6,6 +6,11 @@ import {
   type KeymapSettings,
 } from "../domain/keymap";
 import type { CommandContext, CommandExecutionRunner, CommandLookup } from "./commandRegistry";
+import type { Command } from "./commandRegistry";
+
+export interface ShortcutScopedCommand extends Command {
+  isShortcutEnabled(context: CommandContext): boolean;
+}
 
 interface DispatchWorkbenchShortcutCommandOptions {
   commandContext: CommandContext;
@@ -25,7 +30,10 @@ interface DispatchResolvedWorkbenchShortcutCommandsOptions {
 }
 
 const KEYMAP_COMMAND_IDS = keymapCommands.map((command) => command.id);
-const FOCUS_SCOPED_COMMAND_IDS: ReadonlySet<KeymapCommandId> = new Set(["debug.setVariable"]);
+const FOCUS_SCOPED_COMMAND_IDS: ReadonlySet<KeymapCommandId> = new Set([
+  "agent.findInThread",
+  "debug.setVariable",
+]);
 
 export function dispatchWorkbenchShortcutCommand({
   commandContext,
@@ -58,7 +66,7 @@ export function dispatchWorkbenchShortcutCommand({
     if (FOCUS_SCOPED_COMMAND_IDS.has(commandId)) {
       let enabled = false;
       try {
-        enabled = command.isEnabled(commandContext);
+        enabled = shortcutEnabled(command, commandContext);
       } catch {
         enabled = false;
       }
@@ -110,7 +118,7 @@ export function dispatchResolvedWorkbenchShortcutCommands({
     if (FOCUS_SCOPED_COMMAND_IDS.has(commandId)) {
       let enabled = false;
       try {
-        enabled = command.isEnabled(commandContext);
+        enabled = shortcutEnabled(command, commandContext);
       } catch {
         enabled = false;
       }
@@ -134,4 +142,9 @@ export function dispatchResolvedWorkbenchShortcutCommands({
   }
 
   return true;
+}
+
+function shortcutEnabled(command: Command, context: CommandContext): boolean {
+  const scoped = command as Partial<ShortcutScopedCommand>;
+  return scoped.isShortcutEnabled?.(context) ?? command.isEnabled(context);
 }

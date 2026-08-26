@@ -23,6 +23,7 @@ export function useAgentViewCommands(
       jumpToThread: (slot) => ref.current.jumpToThread(slot),
       searchThreads: () => ref.current.searchThreads(),
       findInThread: () => ref.current.findInThread(),
+      threadFindFocused: () => ref.current.threadFindFocused?.() ?? false,
       runPreferredScript: () => ref.current.runPreferredScript?.(),
       openCommitMenu: () => ref.current.openCommitMenu?.(),
       threadSelected: () => ref.current.threadSelected(),

@@ -203,6 +203,11 @@ impl AgentChild for FakeChild {
     fn process_group_id(&self) -> i32 {
         self.process_group_id
     }
+
+    fn force_kill(&mut self) -> Result<(), String> {
+        self.process.set_exited(137);
+        Ok(())
+    }
 }
 
 #[derive(Default)]

@@ -108,6 +108,29 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     },
   );
 
+  it.each([
+    ["agent.openDiffSurface", "∂", "KeyD"],
+    ["agent.toggleEditorExpanded", "Dead", "KeyE"],
+  ] as const)("dispatches %s from an Option-transformed macOS key", (commandId, key, code) => {
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Agent",
+      id: commandId,
+      isEnabled: () => true,
+      run,
+      title: commandId,
+    });
+    const harness = renderHook({ commandRegistry: registry });
+
+    const event = dispatchKeyboardEvent({ altKey: true, code, key, metaKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledOnce();
+
+    harness.unmount();
+  });
+
   it("runs the Debug Test at Cursor chord exactly once in the same Monaco editor", () => {
     const run = vi.fn();
     const registry = new CommandRegistry();

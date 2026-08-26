@@ -2,20 +2,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QuickInputCoordinator } from "../application/quickInputCoordinator";
 import { BrowserWorkbenchPrompter } from "./browserWorkbenchPrompter";
 
+const { dialogConfirm } = vi.hoisted(() => ({ dialogConfirm: vi.fn() }));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: dialogConfirm }));
+
 describe("BrowserWorkbenchPrompter", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("treats blocked confirm dialogs as declined instead of throwing", () => {
-    const confirm = vi.fn(() => {
-      throw new Error("dialog.confirm not allowed. Command not found");
-    });
-    vi.stubGlobal("window", { confirm });
+  it("treats rejected native confirm dialogs as declined instead of throwing", async () => {
+    dialogConfirm.mockRejectedValueOnce(new Error("dialog.confirm not allowed. Command not found"));
     const prompter = new BrowserWorkbenchPrompter(new QuickInputCoordinator());
 
-    expect(prompter.confirm("Discard changes?")).toBe(false);
-    expect(confirm).toHaveBeenCalledWith("Discard changes?");
+    await expect(prompter.confirm("Discard changes?")).resolves.toBe(false);
+    expect(dialogConfirm).toHaveBeenCalledWith("Discard changes?");
   });
 
   it("routes text input through the app-owned quick-input coordinator", async () => {

@@ -107,6 +107,7 @@ describe("useAgentThreads facade", () => {
 
     expect(harness.hook().threads).toHaveLength(1);
     expect(harness.hook().threads[0]?.lifecycle).toBe("running");
+    expect(harness.hook().threads[0]?.worktreeMissing).toBe(false);
     expect(harness.hook().liveTaskCount).toBe(1);
     expect(harness.hook().hasLiveTasksForOwner(OWNER)).toBe(true);
     expect(harness.hook().isolationPreview(ROOT).inPlaceGuard).toEqual({
@@ -374,6 +375,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       getAgentCliPath: () => CLI_PATH,
       getAgentCliKind: () => "claudeCode",
       getMaxConcurrentAgentTasks: () => 4,
+      launchIdentityForProject: () => ({ workspaceId: environment.ownerId, generation: 1 }),
       getRepositoryStatus: () => ({ known: true, dirty: false }),
       getDirtyEditorDocumentCount: () => 0,
       reportError,

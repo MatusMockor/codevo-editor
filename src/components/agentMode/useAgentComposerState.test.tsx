@@ -208,6 +208,174 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.mode).toEqual({ kind: "new" });
   });
 
+  it("clears the explicit composer selection when starting fresh", () => {
+    const background = projectFixture({
+      rootKey: "/workspace/other",
+      rootPath: "/workspace/other",
+      ownerId: "agent-root:other",
+      label: "other",
+      origin: "background-tab",
+      repositories: [fixtureRepository("/workspace/other", "")],
+    });
+    render(threadsSurfaceFixture(), [projectFixture(), background]);
+
+    act(() => current().composer.startNewThread("/workspace/other", "/workspace/other"));
+    expect(current().composer.target?.projectRootKey).toBe("/workspace/other");
+
+    act(() => current().composer.clearSelection());
+
+    expect(current().composer.target?.projectRootKey).toBe(SURFACE_FIXTURE_ROOT);
+  });
+
+  it("lets repository scope replace a stale selection synchronously", () => {
+    const background = projectFixture({
+      rootKey: "/workspace/other",
+      rootPath: "/workspace/other",
+      ownerId: "agent-root:other",
+      label: "other",
+      origin: "background-tab",
+      repositories: [fixtureRepository("/workspace/other", "")],
+    });
+    render(threadsSurfaceFixture(), [projectFixture(), background]);
+
+    act(() => current().composer.startNewThread(SURFACE_FIXTURE_ROOT, SURFACE_FIXTURE_ROOT));
+    act(() =>
+      current().navigation.setRailScope({
+        kind: "repository",
+        projectRootKey: "/workspace/other",
+        repositoryRoot: "/workspace/other",
+      }),
+    );
+
+    expect(current().composer.target).toEqual({
+      projectRootKey: "/workspace/other",
+      repositoryRoot: "/workspace/other",
+    });
+    expect(current().composer.composerLabel).toBe("other");
+  });
+
+  it("does not rebind a selection after its project is removed and re-added at the same roots", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    const first = projectFixture({ generation: 1 });
+    render(threadsSurfaceFixture({ startThread }), [first]);
+    act(() => current().composer.startNewThread(SURFACE_FIXTURE_ROOT, SURFACE_FIXTURE_ROOT));
+
+    render(threadsSurfaceFixture({ startThread }), []);
+    expect(current().composer.target).toBeNull();
+
+    render(threadsSurfaceFixture({ startThread }), [projectFixture({ generation: 2 })]);
+    expect(current().composer.target).toBeNull();
+    act(() => current().composer.composerProps.onPromptChange("Do not rebind"));
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+    expect(startThread).not.toHaveBeenCalled();
+  });
+
+  it("keeps a missing explicit new-thread target from falling back to the active project", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    render(threadsSurfaceFixture({ startThread }));
+
+    act(() => current().composer.startNewThread("/workspace/gone", "/workspace/gone"));
+    expect(current().composer.target).toBeNull();
+    act(() => current().composer.composerProps.onPromptChange("Do not retarget"));
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+
+    expect(startThread).not.toHaveBeenCalled();
+  });
+
+  it("does not resurrect a shadowed selection after returning the scope to all projects", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    const background = projectFixture({
+      rootKey: "/workspace/other",
+      rootPath: "/workspace/other",
+      ownerId: "agent-root:other",
+      label: "other",
+      origin: "background-tab",
+      repositories: [fixtureRepository("/workspace/other", "")],
+    });
+    render(threadsSurfaceFixture({ startThread }), [projectFixture(), background]);
+    act(() => current().composer.startNewThread("/workspace/other", "/workspace/other"));
+    act(() =>
+      current().navigation.setRailScope({
+        kind: "repository",
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    );
+    act(() => current().navigation.setRailScope({ kind: "all" }));
+
+    expect(current().composer.target).toEqual({
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+    });
+    act(() => current().composer.composerProps.onPromptChange("Use the active owner"));
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+    expect(startThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    );
+  });
+
+  it("does not launch through a repository scope rebound to a new owner generation", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+    const agents = threadsSurfaceFixture({ startThread });
+    render(agents, [projectFixture({ generation: 1 })]);
+    act(() =>
+      current().navigation.setRailScope({
+        kind: "repository",
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    );
+
+    render(agents, []);
+    render(agents, [projectFixture({ generation: 2 })]);
+    expect(current().composer.target).toBeNull();
+    act(() => current().composer.composerProps.onPromptChange("Stay with the original owner"));
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+    expect(startThread).not.toHaveBeenCalled();
+
+    act(() =>
+      current().navigation.setRailScope({
+        kind: "repository",
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    );
+    expect(current().composer.target).toEqual({
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+    });
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+    expect(startThread).toHaveBeenCalledTimes(1);
+  });
+
   function render(
     agents: AgentThreadsSurface,
     projects: ReadonlyArray<AgentProjectDescriptor> = [projectFixture()],
@@ -233,12 +401,12 @@ describe("useAgentComposerState", () => {
       () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
       [agents.orphanedWorktrees, agents.threads, projects],
     );
-    const navigation = useAgentThreadNavigation({ agents, groups });
+    const navigation = useAgentThreadNavigation({ agents, groups, projects });
     const composer = useAgentComposerState({
       agents,
       groups,
       projects,
-      railScope: navigation.railScope,
+      railScope: navigation.composerScope,
       selectedThread: navigation.selectedThread,
       onClearSelectedThread: navigation.clearSelectedThread,
       onThreadStarted: navigation.selectStartedThread,

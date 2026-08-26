@@ -235,9 +235,10 @@ describe("useWorkbenchTextSearch exclusions", () => {
 
     let first!: Promise<void>;
     let second!: Promise<void>;
-    act(() => {
+    await act(async () => {
       first = current.replaceAllInPath();
       second = current.replaceAllInPath();
+      await Promise.resolve();
     });
 
     expect(confirm).toHaveBeenCalledTimes(1);
@@ -261,8 +262,9 @@ describe("useWorkbenchTextSearch exclusions", () => {
     await renderAndSearch();
 
     let flightA!: Promise<void>;
-    act(() => {
+    await act(async () => {
       flightA = current.replaceAllInPath();
+      await Promise.resolve();
     });
     expect(current.textReplaceBusy).toBe(true);
 
@@ -273,8 +275,9 @@ describe("useWorkbenchTextSearch exclusions", () => {
     await runSearchTimer();
 
     let flightB!: Promise<void>;
-    act(() => {
+    await act(async () => {
       flightB = current.replaceAllInPath();
+      await Promise.resolve();
     });
     expect(replaceInPath).toHaveBeenCalledTimes(2);
     expect(current.textReplaceBusy).toBe(true);

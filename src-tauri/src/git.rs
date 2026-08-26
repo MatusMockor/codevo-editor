@@ -1,4 +1,3 @@
-use crate::ignore_matcher::is_default_ignored_name;
 use crate::workspace_file_commands::{FileCommandResult, WorkspaceFileRepository};
 use crate::workspace_registry::WorkspaceRegistry;
 use serde::{Deserialize, Serialize};
@@ -14,6 +13,10 @@ use std::{
 
 const MAX_DIFF_SNAPSHOT_BYTES: u64 = 2_000_000;
 static HUNK_REVERT_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+mod repository_discovery;
+
+pub use repository_discovery::{detect_git_repositories, DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH};
 
 const UNTRUSTED_GIT_CONFIG: [&str; 7] = [
     "core.fsmonitor=false",
@@ -1216,115 +1219,6 @@ pub fn empty_git_status(root: &Path) -> GitStatus {
         root_path: root.to_string_lossy().to_string(),
         upstream: None,
     }
-}
-
-/// Default bound for [`detect_git_repositories`]'s walk. Multi-repo
-/// workspaces (a PhpStorm-style "directory mapping" project) nest their
-/// repositories a handful of levels deep (e.g. `workbench/some-package`), so
-/// four levels comfortably covers real layouts without an unbounded walk.
-pub const DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH: usize = 4;
-
-const GIT_MARKER: &str = ".git";
-
-/// Directory names that are never a project's own repository and are safe to
-/// skip entirely during discovery, beyond the workspace-wide ignore list
-/// (`node_modules`, `vendor`, build/coverage output, ...). These specifically
-/// cover the temp/log/cache/storage trees Laravel and Node projects leave
-/// behind (e.g. `storage/framework`, `storage/logs`).
-const ADDITIONAL_DISCOVERY_SKIPPED_NAMES: &[&str] =
-    &["tmp", "temp", "log", "logs", "storage", "cache"];
-
-/// Finds every git repository nested inside `root`, returning root-relative,
-/// posix-separated paths in sorted (deterministic) order. `root` itself is
-/// represented by an empty string when it is a repository.
-///
-/// A repository is recognized by a `.git` entry, which may be a directory (a
-/// normal clone) or a file (a linked worktree or a submodule, both of which
-/// point at their real `.git` directory via a `gitdir:` pointer file).
-///
-/// The walk is bounded to `max_depth` directory levels below `root` and never
-/// descends into `.git` itself, the default ignored directories that never
-/// hold a project's own repository (`node_modules`, `vendor`, temp/log/cache
-/// output, ...), or a symlinked directory. Skipping symlinked directories both
-/// breaks cycles (a repository symlinking into one of its own ancestors) and
-/// avoids reporting the same physical repository twice through a vendored
-/// alias, e.g. `vendor/pkg -> ../workbench/pkg`.
-pub fn detect_git_repositories(root: &Path, max_depth: usize) -> io::Result<Vec<String>> {
-    if !root.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "Workspace root is not a directory.",
-        ));
-    }
-
-    let mut discovered = Vec::new();
-
-    if has_git_marker(root) {
-        discovered.push(String::new());
-    }
-
-    walk_for_git_repositories(root, root, 0, max_depth, &mut discovered);
-    discovered.sort();
-
-    Ok(discovered)
-}
-
-fn walk_for_git_repositories(
-    root: &Path,
-    directory: &Path,
-    depth: usize,
-    max_depth: usize,
-    discovered: &mut Vec<String>,
-) {
-    if depth >= max_depth {
-        return;
-    }
-
-    let entries = match fs::read_dir(directory) {
-        Ok(entries) => entries,
-        // An unreadable directory (permissions, a race with deletion, ...) is
-        // skipped rather than failing the whole discovery walk.
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-
-        // `symlink_metadata` never follows the entry itself, so a symlinked
-        // directory is correctly identified (and skipped) instead of being
-        // treated as the directory it points at.
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(_) => continue,
-        };
-
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            continue;
-        }
-
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-
-        if is_discovery_skipped_directory(&name) {
-            continue;
-        }
-
-        if has_git_marker(&path) {
-            if let Ok(relative) = path.strip_prefix(root) {
-                discovered.push(relative.to_string_lossy().to_string());
-            }
-        }
-
-        walk_for_git_repositories(root, &path, depth + 1, max_depth, discovered);
-    }
-}
-
-fn has_git_marker(directory: &Path) -> bool {
-    fs::symlink_metadata(directory.join(GIT_MARKER)).is_ok()
-}
-
-fn is_discovery_skipped_directory(name: &str) -> bool {
-    is_default_ignored_name(name) || ADDITIONAL_DISCOVERY_SKIPPED_NAMES.contains(&name)
 }
 
 fn is_git_repository(root: &Path, trusted: bool) -> io::Result<bool> {
@@ -4010,6 +3904,38 @@ mod tests {
                 "worktrees/feature".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn detect_git_repositories_skips_codevo_managed_worktrees() {
+        let repo = TestGitRepo::new();
+        fs::create_dir_all(repo.path().join(".worktrees/agt-test"))
+            .expect("managed worktree directory");
+        fs::write(
+            repo.path().join(".worktrees/agt-test/.git"),
+            "gitdir: ../../.git/worktrees/agt-test\n",
+        )
+        .expect("managed worktree .git file");
+
+        let repositories =
+            detect_git_repositories(repo.path(), DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH)
+                .expect("detect repositories");
+
+        assert_eq!(repositories, vec!["".to_string()]);
+    }
+
+    #[test]
+    fn detect_git_repositories_preserves_dot_worktrees_in_plain_workspaces() {
+        let repo = TestGitRepo::new();
+        fs::remove_dir_all(repo.path().join(".git")).expect("remove root .git");
+        fs::create_dir_all(repo.path().join(".worktrees/product/.git"))
+            .expect("nested product repository");
+
+        let repositories =
+            detect_git_repositories(repo.path(), DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH)
+                .expect("detect repositories");
+
+        assert_eq!(repositories, vec![".worktrees/product".to_string()]);
     }
 
     #[test]

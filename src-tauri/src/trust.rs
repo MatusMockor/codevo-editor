@@ -1,9 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
+
+const MAX_TRUST_LAUNCHES_GLOBAL: usize = 128;
+const MAX_TRUST_LAUNCHES_PER_ROOT: usize = 16;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,8 +27,28 @@ struct PersistedWorkspaceTrust {
 
 pub struct WorkspaceTrustService {
     generation: u64,
+    root_generations: HashMap<String, u64>,
     storage_path: PathBuf,
     trusted_roots: HashSet<String>,
+    launches: Arc<WorkspaceTrustLaunchRegistry>,
+}
+
+#[derive(Default)]
+struct WorkspaceTrustLaunchState {
+    tokens: HashMap<String, HashSet<u64>>,
+    total: usize,
+}
+
+#[derive(Default)]
+struct WorkspaceTrustLaunchRegistry {
+    state: Mutex<WorkspaceTrustLaunchState>,
+    next_token: AtomicU64,
+}
+
+pub(crate) struct WorkspaceTrustLaunchLease {
+    registry: Arc<WorkspaceTrustLaunchRegistry>,
+    root_path: String,
+    token: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,8 +63,10 @@ impl WorkspaceTrustService {
         if !storage_path.is_file() {
             return Ok(Self {
                 generation: 0,
+                root_generations: HashMap::new(),
                 storage_path,
                 trusted_roots: HashSet::new(),
+                launches: Arc::new(WorkspaceTrustLaunchRegistry::default()),
             });
         }
 
@@ -46,8 +75,10 @@ impl WorkspaceTrustService {
 
         Ok(Self {
             generation: 0,
+            root_generations: HashMap::new(),
             storage_path,
             trusted_roots: persisted.trusted_roots.into_iter().collect(),
+            launches: Arc::new(WorkspaceTrustLaunchRegistry::default()),
         })
     }
 
@@ -63,10 +94,36 @@ impl WorkspaceTrustService {
     pub(crate) fn snapshot(&self, root_path: &str) -> WorkspaceTrustSnapshot {
         let state = self.get(root_path);
         WorkspaceTrustSnapshot {
-            generation: self.generation,
+            generation: self
+                .root_generations
+                .get(&state.root_path)
+                .copied()
+                .unwrap_or(0),
             root_path: state.root_path,
             trusted: state.trusted,
         }
+    }
+
+    pub(crate) fn reserve_launch(
+        &self,
+        expected: &WorkspaceTrustSnapshot,
+    ) -> io::Result<WorkspaceTrustLaunchLease> {
+        let current = WorkspaceTrustSnapshot {
+            generation: self
+                .root_generations
+                .get(&expected.root_path)
+                .copied()
+                .unwrap_or(0),
+            root_path: expected.root_path.clone(),
+            trusted: self.trusted_roots.contains(&expected.root_path),
+        };
+        if current != *expected || !current.trusted {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "workspace trust authority changed",
+            ));
+        }
+        self.launches.reserve(expected.root_path.clone())
     }
 
     pub fn set(&mut self, root_path: &str, trusted: bool) -> io::Result<WorkspaceTrustState> {
@@ -86,8 +143,17 @@ impl WorkspaceTrustService {
                 return Err(error);
             }
             self.generation = next_generation;
+            self.root_generations
+                .insert(normalized_path.clone(), next_generation);
 
             return Ok(self.get(&normalized_path));
+        }
+
+        if self.launches.has_active(&normalized_path)? {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "workspace trust launch is in progress",
+            ));
         }
 
         let removed = self.trusted_roots.remove(&normalized_path);
@@ -100,6 +166,8 @@ impl WorkspaceTrustService {
             return Err(error);
         }
         self.generation = next_generation;
+        self.root_generations
+            .insert(normalized_path.clone(), next_generation);
 
         Ok(self.get(&normalized_path))
     }
@@ -142,6 +210,10 @@ impl WorkspaceTrustService {
         self.trusted_roots
             .extend(roots.iter().map(|root| (*root).to_owned()));
         self.generation = next_generation;
+        for root in roots {
+            self.root_generations
+                .insert(root.to_owned(), next_generation);
+        }
         Ok(roots.map(|root_path| WorkspaceTrustState {
             root_path: root_path.to_owned(),
             trusted: true,
@@ -159,6 +231,80 @@ impl WorkspaceTrustService {
         let content = serde_json::to_string_pretty(&PersistedWorkspaceTrust { trusted_roots })
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         fs::write(&self.storage_path, content)
+    }
+}
+
+impl WorkspaceTrustLaunchRegistry {
+    fn reserve(self: &Arc<Self>, root_path: String) -> io::Result<WorkspaceTrustLaunchLease> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        if state.total >= MAX_TRUST_LAUNCHES_GLOBAL {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "workspace trust launch capacity is exhausted",
+            ));
+        }
+        let root_count = state.tokens.get(&root_path).map_or(0, HashSet::len);
+        if root_count >= MAX_TRUST_LAUNCHES_PER_ROOT {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "workspace trust launch capacity is exhausted",
+            ));
+        }
+        let token = self
+            .next_token
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| io::Error::other("workspace trust launch token space is exhausted"))?
+            + 1;
+        state
+            .tokens
+            .entry(root_path.clone())
+            .or_default()
+            .insert(token);
+        state.total += 1;
+        Ok(WorkspaceTrustLaunchLease {
+            registry: Arc::clone(self),
+            root_path,
+            token,
+        })
+    }
+
+    fn has_active(&self, root_path: &str) -> io::Result<bool> {
+        Ok(self
+            .state
+            .lock()
+            .map_err(|error| io::Error::other(error.to_string()))?
+            .tokens
+            .get(root_path)
+            .is_some_and(|tokens| !tokens.is_empty()))
+    }
+
+    fn release(&self, root_path: &str, token: u64) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let removed = state
+            .tokens
+            .get_mut(root_path)
+            .is_some_and(|tokens| tokens.remove(&token));
+        if !removed {
+            return;
+        }
+        state.total = state.total.saturating_sub(1);
+        let empty = state.tokens.get(root_path).is_some_and(HashSet::is_empty);
+        if empty {
+            state.tokens.remove(root_path);
+        }
+    }
+}
+
+impl Drop for WorkspaceTrustLaunchLease {
+    fn drop(&mut self) {
+        self.registry.release(&self.root_path, self.token);
     }
 }
 
@@ -182,7 +328,11 @@ fn normalize_path_string(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::WorkspaceTrustService;
-    use std::{fs, time::SystemTime};
+    use std::{
+        fs,
+        panic::{catch_unwind, AssertUnwindSafe},
+        time::SystemTime,
+    };
 
     #[test]
     fn workspaces_are_untrusted_by_default() {
@@ -235,6 +385,86 @@ mod tests {
         assert!(granted.generation < revoked.generation);
         assert!(revoked.generation < regranted.generation);
         assert_ne!(granted, regranted);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn launch_lease_blocks_exact_root_revocation_and_not_an_unrelated_root() {
+        let root = create_temp_dir("trust-launch-lease");
+        let storage = root.join("trust.json");
+        let mut service = WorkspaceTrustService::load(storage).expect("load trust service");
+        service.set("/project/a", true).expect("trust a");
+        service.set("/project/b", true).expect("trust b");
+        let snapshot_a = service.snapshot("/project/a");
+        let lease = service.reserve_launch(&snapshot_a).expect("reserve launch");
+
+        let blocked = service
+            .set("/project/a", false)
+            .expect_err("active launch blocks revoke");
+        assert_eq!(blocked.kind(), std::io::ErrorKind::WouldBlock);
+        assert!(
+            !service
+                .set("/project/b", false)
+                .expect("revoke unrelated root")
+                .trusted
+        );
+        assert_eq!(service.snapshot("/project/a"), snapshot_a);
+        drop(lease);
+        assert!(
+            !service
+                .set("/project/a", false)
+                .expect("revoke after launch")
+                .trusted
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn exact_launch_tokens_survive_partial_drop_and_release_on_panic() {
+        let root = create_temp_dir("trust-launch-token");
+        let storage = root.join("trust.json");
+        let mut service = WorkspaceTrustService::load(storage).expect("load trust service");
+        service.set("/project", true).expect("trust project");
+        let snapshot = service.snapshot("/project");
+        let first = service.reserve_launch(&snapshot).expect("reserve first");
+        let second = service.reserve_launch(&snapshot).expect("reserve second");
+        drop(first);
+        assert!(service.set("/project", false).is_err());
+        drop(second);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _lease = service
+                .reserve_launch(&snapshot)
+                .expect("reserve panic lease");
+            panic!("stop");
+        }));
+
+        assert!(result.is_err());
+        assert!(
+            !service
+                .set("/project", false)
+                .expect("panic releases lease")
+                .trusted
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn launch_reservations_are_bounded_per_root() {
+        let root = create_temp_dir("trust-launch-cap");
+        let storage = root.join("trust.json");
+        let mut service = WorkspaceTrustService::load(storage).expect("load trust service");
+        service.set("/project", true).expect("trust project");
+        let snapshot = service.snapshot("/project");
+        let leases = (0..super::MAX_TRUST_LAUNCHES_PER_ROOT)
+            .map(|_| service.reserve_launch(&snapshot).expect("reserve launch"))
+            .collect::<Vec<_>>();
+
+        let error = service
+            .reserve_launch(&snapshot)
+            .err()
+            .expect("bounded launch capacity");
+        assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+        drop(leases);
         fs::remove_dir_all(root).expect("cleanup");
     }
 

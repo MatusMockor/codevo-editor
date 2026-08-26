@@ -103,7 +103,7 @@ export function useAgentChangeSummary(
         dropSummaryAuthority(threadId);
         return;
       }
-      const authority = projectAuthority(project);
+      const authority = projectAuthority(project, thread.owner.ownerId);
       const worktreePath = thread.target.worktreePath;
       const repositoryRoot = thread.owner.repositoryRoot;
 
@@ -270,7 +270,7 @@ function changeTarget(
   return {
     worktreePath: thread.target.worktreePath,
     repositoryRoot: thread.owner.repositoryRoot,
-    authority: projectAuthority(project),
+    authority: projectAuthority(project, thread.owner.ownerId),
   };
 }
 

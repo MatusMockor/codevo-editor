@@ -6,9 +6,10 @@ use super::*;
 pub(super) fn quit_application(
     app: AppHandle,
     js_test_batches: State<'_, Arc<JsTestBatchRegistry>>,
-) {
-    shutdown_runtime_processes(&app, &js_test_batches);
+) -> Result<(), String> {
+    shutdown_runtime_processes(&app, &js_test_batches)?;
     app.exit(0);
+    Ok(())
 }
 
 #[derive(serde::Deserialize)]
@@ -36,8 +37,8 @@ pub(super) fn confirm_native_shutdown(
     app: AppHandle,
     kind: NativeCloseKind,
     js_test_batches: State<'_, Arc<JsTestBatchRegistry>>,
-) {
-    shutdown_runtime_processes(&app, &js_test_batches);
+) -> Result<(), String> {
+    shutdown_runtime_processes(&app, &js_test_batches)?;
     match kind {
         NativeCloseKind::Quit => app.exit(0),
         NativeCloseKind::Close => {
@@ -46,6 +47,7 @@ pub(super) fn confirm_native_shutdown(
             }
         }
     }
+    Ok(())
 }
 
 /// Process-wide cache of system monospace font families.

@@ -8,7 +8,7 @@ import {
   type SetStateAction,
   type MutableRefObject,
 } from "react";
-import type { WorkbenchPrompter } from "./workbenchPrompter";
+import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
 import {
   gitChangeKeyForRepository,
   type GitChangedFile,
@@ -854,14 +854,31 @@ export function useGitWorkspace(
         return;
       }
 
-      if (!prompter.confirm("Revert this Git hunk? This discards local changes.")) {
-        return;
-      }
-
       if (!gitGateway.revertHunk) {
         reportError("Git", new Error("Reverting a Git hunk is unavailable."));
         return;
       }
+
+      if (!workspaceRoot) return;
+      const requestedRoot = workspaceRoot;
+      const resolved = resolveHunkRepository(mappings, requestedRoot, change);
+      if (!resolved) return;
+      const confirmationAuthority = gitOperationCurrency.reserveRead(
+        resolved.repositoryRoot,
+        resolved.repositoryRelativePath,
+        false,
+      );
+      const confirmed = await confirmWorkbenchAction(
+        prompter,
+        "Revert this Git hunk? This discards local changes.",
+      );
+      if (
+        !isActiveRoot(requestedRoot) ||
+        !gitOperationCurrency.isReadCurrent(confirmationAuthority)
+      ) {
+        return;
+      }
+      if (!confirmed) return;
 
       await runHunkOperation(
         change,
@@ -876,10 +893,14 @@ export function useGitWorkspace(
     [
       canRevertGitChange,
       gitGateway,
+      gitOperationCurrency,
+      isActiveRoot,
+      mappings,
       prompter,
       reportError,
       runHunkOperation,
       setMessage,
+      workspaceRoot,
     ],
   );
 
@@ -897,9 +918,34 @@ export function useGitWorkspace(
         return;
       }
 
-      if (!prompter.confirm("Revert selected Git changes? This discards local changes.")) {
+      const requestedRoot = workspaceRoot;
+      const { groups } = groupGitChangesByRepository(
+        mappings,
+        requestedRoot,
+        changes,
+      );
+      if (groups.length === 0) return;
+      const confirmationAuthorities = groups.flatMap((group) =>
+        group.changes.map((change) =>
+          gitOperationCurrency.reserveRead(
+            group.repositoryRoot,
+            change.relativePath,
+            false,
+          ),
+        ),
+      );
+      const confirmed = await confirmWorkbenchAction(
+        prompter,
+        "Revert selected Git changes? This discards local changes.",
+      );
+      if (!isActiveRoot(requestedRoot)) return;
+      if (
+        confirmationAuthorities.some(
+          (authority) => !gitOperationCurrency.isReadCurrent(authority),
+        )
+      )
         return;
-      }
+      if (!confirmed) return;
 
       await runFileOperation(changes, (root, groupChanges) =>
         gitGateway.revertFiles(root, groupChanges),
@@ -908,6 +954,9 @@ export function useGitWorkspace(
     [
       canRevertGitChange,
       gitGateway,
+      gitOperationCurrency,
+      isActiveRoot,
+      mappings,
       prompter,
       runFileOperation,
       setMessage,

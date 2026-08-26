@@ -11,6 +11,7 @@ import {
 import {
   dispatchResolvedWorkbenchShortcutCommands,
   dispatchWorkbenchShortcutCommand,
+  type ShortcutScopedCommand,
 } from "./workbenchShortcutCommandDispatcher";
 
 const commandContext: CommandContext = {
@@ -69,6 +70,35 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     ).toBe(false);
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(beginEdit).not.toHaveBeenCalled();
+  });
+
+  it("does not consume Cmd+F when the selected agent thread does not own focus", () => {
+    const openFind = vi.fn();
+    const event = keyboardEvent({ key: "f", metaKey: true });
+    const findCommand: ShortcutScopedCommand = {
+      category: "Agents",
+      id: "agent.findInThread",
+      isEnabled: () => true,
+      isShortcutEnabled: () => false,
+      run: openFind,
+      title: "Find in Thread",
+    };
+    const commandRegistry = registry({
+      "agent.findInThread": findCommand,
+    });
+
+    expect(
+      dispatchWorkbenchShortcutCommand({
+        commandContext,
+        commandIds: ["agent.findInThread"],
+        commandRegistry,
+        event,
+        keymap: defaultKeymapSettings("mac"),
+        runCommand: registryRunner(commandRegistry),
+      }),
+    ).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(openFind).not.toHaveBeenCalled();
   });
 
   it("routes F2 to focused Set Value first and otherwise falls through to Rename", () => {

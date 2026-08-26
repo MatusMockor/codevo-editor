@@ -705,6 +705,7 @@ export const AGENT_SHIP_BLOCKED_NOT_FAST_FORWARDABLE =
 export const AGENT_SHIP_BLOCKED_IN_PLACE = "In-place threads have nothing to integrate.";
 export const AGENT_SHIP_BLOCKED_IN_PLACE_WORKTREE = "In-place threads have no worktree to remove.";
 export const AGENT_SHIP_BLOCKED_DELETE_BRANCH = "Integrate the branch before deleting it.";
+export const AGENT_SHIP_BLOCKED_NOTHING_TO_INTEGRATE = "The branch has no commits to integrate.";
 export const AGENT_SHIP_BLOCKED_EMPTY_MESSAGE = "Write a commit message first.";
 export const AGENT_SHIP_BLOCKED_LONG_MESSAGE = "The commit message is too long.";
 export const AGENT_SHIP_AUTHORITY_LOST =
@@ -878,6 +879,17 @@ export function agentShipRemoteLabel(status: GitShipStatus): string {
   return `${status.remote.name} · ${upstream.ahead} ahead · ${upstream.behind} behind`;
 }
 
+export function agentWorktreeRemovalLabel(view: AgentThreadView): string | null {
+  const removedState = view.ship.kind === "worktreeRemoved" ? view.ship : null;
+  const branchDeleted = removedState?.branchDeleted ?? view.thread.integration?.branchDeleted;
+  if (!view.worktreeRemoved && removedState === null && branchDeleted !== true) return null;
+  if (branchDeleted !== true) return "The worktree was removed. Its local branch was kept.";
+  if (view.thread.integration?.pushed === null || view.thread.integration === null) {
+    return "The worktree and its local branch were removed.";
+  }
+  return "The worktree and its local branch were removed. The remote branch was kept.";
+}
+
 export function agentShipDefaultCommitMessage(thread: AgentThread): string {
   return truncateUtf8(agentThreadDisplayTitle(thread), MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES);
 }
@@ -961,6 +973,9 @@ function integrateAvailability(
   if (status === null) return AVAILABLE;
   if (status.primary.branch === null) return blocked(AGENT_SHIP_BLOCKED_PRIMARY_DETACHED);
   if (status.primary.dirty) return blocked(AGENT_SHIP_BLOCKED_PRIMARY_DIRTY);
+  if (status.relation.aheadOfPrimary === 0) {
+    return blocked(AGENT_SHIP_BLOCKED_NOTHING_TO_INTEGRATE);
+  }
   if (mode === "fastForward" && !status.relation.fastForwardable) {
     return blocked(AGENT_SHIP_BLOCKED_NOT_FAST_FORWARDABLE);
   }

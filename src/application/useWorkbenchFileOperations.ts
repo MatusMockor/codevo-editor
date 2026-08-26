@@ -37,7 +37,7 @@ import {
   type Bookmark,
 } from "../domain/bookmarks";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import type { WorkbenchPrompter } from "./workbenchPrompter";
+import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
 import type {
   DocumentSaveInvalidationScope,
   RunWithDocumentSaveExclusion,
@@ -97,7 +97,10 @@ export interface WorkbenchFileOperationsDependencies {
     rootPath: string | null | undefined,
     path: string,
   ) => void;
-  closeDocument: (path: string, options?: CloseDocumentOptions) => void;
+  closeDocument: (
+    path: string,
+    options?: CloseDocumentOptions,
+  ) => Promise<unknown> | void;
   forgetExternallyRemovedDocumentPath: (path: string) => void;
   forgetRecentFile: (path: string) => void;
   forgetRecentLocationsForPath: (path: string) => void;
@@ -749,7 +752,21 @@ export function useWorkbenchFileOperations(
       return;
     }
 
-    if (!prompter.confirm(`Delete ${document.name}?`)) {
+    const requestedDocumentSlot = documentsRef.current[document.path];
+    const isCurrentDeleteOwner = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+      activeDocumentRef.current === document &&
+      documentsRef.current[document.path] === requestedDocumentSlot;
+    const isCurrentDeletedSlotOwner = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+      documentsRef.current[document.path] === requestedDocumentSlot;
+
+    const confirmed = await confirmWorkbenchAction(
+      prompter,
+      `Delete ${document.name}?`,
+    );
+    if (!isCurrentDeleteOwner()) return;
+    if (!confirmed) {
       return;
     }
 
@@ -771,19 +788,10 @@ export function useWorkbenchFileOperations(
         return;
       }
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
+      if (!isCurrentDeleteOwner()) return;
 
       await runWithDocumentSaveExclusion(invalidationScope, async () => {
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
-          return;
-        }
+        if (!isCurrentDeleteOwner()) return;
         await workspaceFiles.deletePath(deletedPath);
         filePrefetchCacheRef.current.invalidate(deletedPath);
         if (
@@ -797,8 +805,15 @@ export function useWorkbenchFileOperations(
 
         if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
           await syncClosedJavaScriptTypeScriptDocument(document);
+          if (!isCurrentDeletedSlotOwner()) return;
         }
         await notifyJavaScriptTypeScriptFileDeleted(deletedPath);
+        if (!isCurrentDeletedSlotOwner()) return;
+
+        await closeDocument(deletedPath, {
+          recordRecentlyClosed: false,
+          skipConfirmation: true,
+        });
         if (
           !workspaceRootKeysEqual(
             currentWorkspaceRootRef.current,
@@ -807,11 +822,10 @@ export function useWorkbenchFileOperations(
         ) {
           return;
         }
-
-        closeDocument(deletedPath, {
-          recordRecentlyClosed: false,
-          skipConfirmation: true,
-        });
+        const remainingDocument = documentsRef.current[deletedPath];
+        if (remainingDocument !== undefined) {
+          return;
+        }
         forgetRecentFile(deletedPath);
         forgetRecentLocationsForPath(deletedPath);
         setBookmarks((current) => removeBookmarksForPath(current, deletedPath));
@@ -837,6 +851,7 @@ export function useWorkbenchFileOperations(
     clearLanguageServerDiagnosticsForPath,
     closeDocument,
     currentWorkspaceRootRef,
+    documentsRef,
     filePrefetchCacheRef,
     forgetRecentFile,
     forgetRecentLocationsForPath,

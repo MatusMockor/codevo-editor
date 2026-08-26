@@ -61,6 +61,49 @@ describe("shortcutSequence", () => {
     ).toBeNull();
   });
 
+  it.each([
+    ["∂", "KeyD", "Cmd+Alt+D"],
+    ["Dead", "KeyE", "Cmd+Alt+E"],
+  ])("normalizes an Alt-modified %s key through its letter code", (key, code, value) => {
+    const event = keyboardEvent({ altKey: true, code, key, metaKey: true });
+    const stroke = shortcutStrokeFromKeyboardEvent(event);
+
+    expect(stroke?.value).toBe(value);
+    expect(stroke && matchesShortcutStroke(event, stroke, "mac")).toBe(true);
+  });
+
+  it("preserves an Alt-modified ASCII key from a non-QWERTY layout", () => {
+    const event = keyboardEvent({ altKey: true, code: "KeyQ", key: "a", metaKey: true });
+    const stroke = shortcutStrokeFromKeyboardEvent(event);
+
+    expect(stroke?.value).toBe("Cmd+Alt+A");
+    expect(stroke && matchesShortcutStroke(event, stroke, "mac")).toBe(true);
+  });
+
+  it("preserves AltGr text and accepts a representable transformed delimiter", () => {
+    const altGraphEvent = keyboardEvent({
+      altKey: true,
+      code: "KeyE",
+      ctrlKey: true,
+      getModifierState: (keyArg) => keyArg === "AltGraph",
+      key: "€",
+    });
+    const command = parseShortcutSequence("Cmd+Alt+E")?.[0];
+    const delimiterEvent = keyboardEvent({ altKey: true, code: "KeyD", key: "+", metaKey: true });
+
+    expect(shortcutStrokeFromKeyboardEvent(altGraphEvent)?.value).toBe("Ctrl+Alt+€");
+    expect(command && matchesShortcutStroke(altGraphEvent, command, "windows")).toBe(false);
+    expect(shortcutStrokeFromKeyboardEvent(delimiterEvent)?.value).toBe("Cmd+Alt+D");
+  });
+
+  it("normalizes a macOS Control+Option transformed key", () => {
+    const event = keyboardEvent({ altKey: true, code: "KeyD", ctrlKey: true, key: "∂" });
+    const stroke = shortcutStrokeFromKeyboardEvent(event);
+
+    expect(stroke?.value).toBe("Ctrl+Alt+D");
+    expect(stroke && matchesShortcutStroke(event, stroke, "mac")).toBe(true);
+  });
+
   it("looks up exact and prefix owners in reverse command order", () => {
     const keymap = {
       comment: "Cmd+K Cmd+C",

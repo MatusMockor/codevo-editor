@@ -506,7 +506,7 @@ describe("initialAgentShipState", () => {
       lastCommitSha: COMMIT_SHA,
       pushed: { remote: "origin", branch: "agent/agt-0001" },
       integrated: { intoBranch: "main", mergeSha: MERGE_SHA, mode: "merge" },
-      branchDeleted: true,
+      branchDeleted: false,
     });
 
     expect(committed).toEqual({ kind: "committed", status: null, commitSha: COMMIT_SHA });
@@ -517,6 +517,17 @@ describe("initialAgentShipState", () => {
       mergeSha: MERGE_SHA,
       intoBranch: "main",
     });
+  });
+
+  it("restores a locally deleted branch as a completed worktree removal", () => {
+    expect(
+      initialAgentShipState({
+        lastCommitSha: COMMIT_SHA,
+        pushed: { remote: "origin", branch: "agent/agt-0001" },
+        integrated: { intoBranch: "main", mergeSha: MERGE_SHA, mode: "merge" },
+        branchDeleted: true,
+      }),
+    ).toEqual({ kind: "worktreeRemoved", branchDeleted: true });
   });
 
   it("never restores a compare URL from a receipt", () => {

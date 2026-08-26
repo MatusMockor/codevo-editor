@@ -1,6 +1,7 @@
 import {
   normalizeShortcutSequenceInput,
   parseShortcutSequence,
+  shortcutKeyFromKeyboardEvent,
   shortcutSequenceForPlatform,
 } from "./shortcutSequence";
 
@@ -1233,7 +1234,9 @@ export function findKeymapConflicts(
 
 interface KeymapCaptureEvent {
   altKey: boolean;
+  code?: string;
   ctrlKey: boolean;
+  getModifierState?: (keyArg: "AltGraph") => boolean;
   key: string;
   metaKey: boolean;
   shiftKey: boolean;
@@ -1259,20 +1262,21 @@ const CAPTURE_MODIFIER_ONLY_KEYS = new Set(["Alt", "AltGraph", "Control", "Meta"
  */
 export function shortcutFromKeyboardEvent(event: KeymapCaptureEvent): string | null {
   const hasStrongModifier = event.ctrlKey || event.altKey || event.metaKey;
+  const key = shortcutKeyFromKeyboardEvent(event);
 
   if (!hasStrongModifier && !event.shiftKey) {
     return null;
   }
 
-  if (CAPTURE_MODIFIER_ONLY_KEYS.has(event.key)) {
+  if (CAPTURE_MODIFIER_ONLY_KEYS.has(key)) {
     return null;
   }
 
-  if (event.key === "+") {
+  if (key === "+") {
     return null;
   }
 
-  if (!hasStrongModifier && (event.key.length === 1 || event.key === "Tab")) {
+  if (!hasStrongModifier && (key.length === 1 || key === "Tab")) {
     return null;
   }
 
@@ -1294,7 +1298,7 @@ export function shortcutFromKeyboardEvent(event: KeymapCaptureEvent): string | n
     parts.push("Alt");
   }
 
-  parts.push(event.key);
+  parts.push(key);
 
   return normalizeShortcutInput(parts.join("+"));
 }
@@ -1319,7 +1323,7 @@ export function matchesShortcut(
     event.ctrlKey === expectedCtrl &&
     event.altKey === parsed.alt &&
     event.shiftKey === parsed.shift &&
-    normalizeKeyboardEventKey(event.key) === parsed.key
+    normalizeKeyboardEventKey(shortcutKeyFromKeyboardEvent(event)) === parsed.key
   );
 }
 

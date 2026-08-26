@@ -32,6 +32,7 @@ import {
   agentTurnProjection,
   agentTurnStatusLabel,
   agentShipConflictFiles,
+  agentShipAvailability,
   agentShipDefaultCommitMessage,
   agentShipDefaultIntegrationMode,
   agentShipFailureActions,
@@ -900,6 +901,31 @@ describe("agent ship presentation", () => {
       }),
     ).toBe("merge");
     expect(agentShipDefaultIntegrationMode(null)).toBe("merge");
+  });
+
+  it("blocks both integration modes when the branch has no commits to integrate", () => {
+    const view = thread({});
+    const status = shipStatus();
+    const settled = {
+      ...view,
+      ship: {
+        kind: "idle" as const,
+        status: {
+          ...status,
+          relation: { ...status.relation, aheadOfPrimary: 0 },
+        },
+        loadingStatus: false,
+      },
+    };
+
+    expect(agentShipAvailability(settled).fastForward).toEqual({
+      kind: "blocked",
+      reason: "The branch has no commits to integrate.",
+    });
+    expect(agentShipAvailability(settled).merge).toEqual({
+      kind: "blocked",
+      reason: "The branch has no commits to integrate.",
+    });
   });
 
   it("prefills the commit message from the thread title", () => {

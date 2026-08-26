@@ -8,6 +8,7 @@ export interface AgentProjectDescriptor {
   readonly rootKey: string;
   readonly rootPath: string;
   readonly ownerId: string;
+  readonly runtimeOwnerIds?: ReadonlyArray<string>;
   readonly label: string;
   readonly generation: number;
   readonly trust: AgentProjectTrust;

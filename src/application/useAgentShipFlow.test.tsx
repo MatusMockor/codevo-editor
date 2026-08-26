@@ -23,6 +23,7 @@ import {
 
 const ROOT_KEY = "/workspace/app";
 const OWNER_ID = "agent-root:0123456789abcdef";
+const RUNTIME_OWNER_ID = "workspace-replaced";
 const REPOSITORY_ROOT = "/workspace/app";
 const THREAD_ID = "agt-1-0a1b";
 const WORKTREE = `${REPOSITORY_ROOT}/.worktrees/${THREAD_ID}`;
@@ -141,7 +142,7 @@ interface Environment {
   missing: ReadonlySet<string>;
   changeCount: number;
   ship: GitShipStatus;
-  confirmResult: boolean;
+  confirmResult: boolean | Promise<boolean>;
   now: number;
   withOpener: boolean;
 }
@@ -262,6 +263,18 @@ function receipts(actions: ReadonlyArray<AgentThreadsAction>) {
 }
 
 describe("useAgentShipFlow happy path", () => {
+  it("commits a worktree owned by a retained runtime identity", async () => {
+    const runtimeThread = thread({
+      owner: { rootKey: ROOT_KEY, ownerId: RUNTIME_OWNER_ID, repositoryRoot: REPOSITORY_ROOT },
+    });
+    const harness = renderFlow({
+      projects: [project({ runtimeOwnerIds: [OWNER_ID, RUNTIME_OWNER_ID] })],
+      threads: new Map([[THREAD_ID, runtimeThread]]),
+    });
+    await act(() => harness.hook().commit(THREAD_ID, "Runtime owner"));
+    expect(harness.gitGateway.commit).toHaveBeenCalled();
+    harness.unmount();
+  });
   it("commits, pushes, integrates and removes with persisted receipts", async () => {
     const harness = renderFlow();
 
@@ -332,6 +345,11 @@ describe("useAgentShipFlow happy path", () => {
     expect(harness.onWorktreeRemoved).toHaveBeenCalledWith(THREAD_ID);
     expect(harness.state()).toEqual({ kind: "worktreeRemoved", branchDeleted: true });
     expect(lastReceipt(harness.actions)).toMatchObject({ branchDeleted: true });
+    expect(harness.setNotice).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: `The worktree and local branch ${BRANCH} were removed. The remote branch was kept.`,
+      }),
+    );
     expect(harness.prompter.confirm).not.toHaveBeenCalled();
     harness.unmount();
   });
@@ -595,6 +613,78 @@ describe("useAgentShipFlow failures", () => {
 });
 
 describe("useAgentShipFlow authority and concurrency", () => {
+  it("drops a confirmed merge when the same thread id moves to another worktree", async () => {
+    const confirmation = deferred<boolean>();
+    const harness = renderFlow({
+      confirmResult: confirmation.promise,
+      ship: shipStatus({
+        relation: { aheadOfPrimary: 1, behindPrimary: 3, fastForwardable: false },
+      }),
+    });
+    const pending = harness.hook().integrate(THREAD_ID, "merge");
+    await waitForReact(() => expect(harness.prompter.confirm).toHaveBeenCalledTimes(1));
+
+    harness.set({
+      threads: new Map([
+        [
+          THREAD_ID,
+          thread({
+            target: {
+              isolation: "worktree",
+              worktreePath: `${REPOSITORY_ROOT}/.worktrees/replacement`,
+            },
+          }),
+        ],
+      ]),
+    });
+    confirmation.resolve(true);
+    await act(() => pending);
+
+    expect(harness.gitIntegrationGateway.integrateWorktreeBranch).not.toHaveBeenCalled();
+    expect(harness.actions).toEqual([]);
+    expect(harness.state()).not.toMatchObject({ kind: "failed" });
+    harness.unmount();
+  });
+
+  it("drops confirmed removal when the replacement thread starts running", async () => {
+    const confirmation = deferred<boolean>();
+    const harness = renderFlow({ confirmResult: confirmation.promise });
+    const pending = harness.hook().removeWorktree(THREAD_ID, { deleteBranch: false });
+    await waitForReact(() => expect(harness.prompter.confirm).toHaveBeenCalledTimes(1));
+
+    harness.set({
+      threads: new Map([[THREAD_ID, thread({ turns: [runningTurnFixture()] })]]),
+    });
+    confirmation.resolve(true);
+    await act(() => pending);
+
+    expect(harness.gitWorktreeGateway.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.actions).toEqual([]);
+    expect(harness.state()).toBeUndefined();
+    harness.unmount();
+  });
+
+  it("drops a confirmation after project generation replacement without publishing failure", async () => {
+    const confirmation = deferred<boolean>();
+    const harness = renderFlow({
+      confirmResult: confirmation.promise,
+      ship: shipStatus({
+        relation: { aheadOfPrimary: 1, behindPrimary: 3, fastForwardable: false },
+      }),
+    });
+    const pending = harness.hook().integrate(THREAD_ID, "merge");
+    await waitForReact(() => expect(harness.prompter.confirm).toHaveBeenCalledTimes(1));
+
+    harness.set({ projects: [project({ generation: 2 })] });
+    confirmation.resolve(true);
+    await act(() => pending);
+
+    expect(harness.gitIntegrationGateway.integrateWorktreeBranch).not.toHaveBeenCalled();
+    expect(harness.actions).toEqual([]);
+    expect(harness.state()).not.toMatchObject({ kind: "failed" });
+    harness.unmount();
+  });
+
   it("fails closed when the project generation changes between stage and commit", async () => {
     const staged = deferred<GitStatus>();
     const harness = renderFlow();

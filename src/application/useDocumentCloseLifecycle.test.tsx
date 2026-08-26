@@ -200,7 +200,7 @@ function renderLifecycle(
 }
 
 describe("useDocumentCloseLifecycle", () => {
-  it("does not invalidate a pending save when close is declined", () => {
+  it("does not invalidate a pending save when close is declined", async () => {
     const dirty = editorDocument(`${ROOT}/src/Dirty.php`, "edited", "saved");
     const harness = renderLifecycle({
       activeDocument: dirty,
@@ -211,7 +211,7 @@ describe("useDocumentCloseLifecycle", () => {
       prompter: { confirm: vi.fn(() => false), prompt: vi.fn() },
     });
 
-    act(() => harness.lifecycle().closeDocument(dirty.path));
+    await act(async () => harness.lifecycle().closeDocument(dirty.path));
 
     expect(harness.dependencies.invalidateDocumentSave).not.toHaveBeenCalled();
     expect(harness.dependencies.syncClosedDocument).not.toHaveBeenCalled();
@@ -222,7 +222,55 @@ describe("useDocumentCloseLifecycle", () => {
     harness.unmount();
   });
 
-  it("runs confirmation, invalidation, recent, cleanup, then removal", () => {
+  it("fails closed when confirmation rejects", async () => {
+    const dirty = editorDocument(
+      `${ROOT}/src/Rejected.php`,
+      "edited",
+      "saved",
+    );
+    const harness = renderLifecycle({
+      activeDocument: dirty,
+      activePath: dirty.path,
+      activeDocumentRef: { current: dirty },
+      documentsRef: { current: { [dirty.path]: dirty } },
+      openPathsRef: { current: [dirty.path] },
+      prompter: {
+        confirm: vi.fn(() =>
+          Promise.reject(new Error("dialog unavailable")),
+        ),
+        prompt: vi.fn(),
+      },
+    });
+
+    await act(async () => harness.lifecycle().closeDocument(dirty.path));
+
+    expect(harness.dependencies.invalidateDocumentSave).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.documentTabSession.removeDocument,
+    ).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("contains downstream close failures for void callers", async () => {
+    const active = editorDocument(`${ROOT}/src/Throwing.php`);
+    const harness = renderLifecycle({
+      activeDocument: active,
+      activePath: active.path,
+      activeDocumentRef: { current: active },
+      documentsRef: { current: { [active.path]: active } },
+      openPathsRef: { current: [active.path] },
+      invalidateDocumentSave: vi.fn(() => {
+        throw new Error("downstream failed");
+      }),
+    });
+
+    expect(() => harness.lifecycle().closeDocument(active.path)).not.toThrow();
+    await Promise.resolve();
+    expect(harness.dependencies.documentTabSession.removeDocument).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("runs confirmation, invalidation, recent, cleanup, then removal", async () => {
     const change = changedFile(`${ROOT}/src/Ordered.php`);
     const path = diffPath(change);
     const dirty = editorDocument(path, "edited", "saved");
@@ -236,7 +284,7 @@ describe("useDocumentCloseLifecycle", () => {
       prompter: { confirm, prompt: vi.fn() },
     });
 
-    act(() => harness.lifecycle().closeDocument(path));
+    await act(async () => harness.lifecycle().closeDocument(path));
 
     const callOrder = [
       confirm,
@@ -254,7 +302,7 @@ describe("useDocumentCloseLifecycle", () => {
     harness.unmount();
   });
 
-  it("invalidates synchronously before LSP close and live ref mutation", () => {
+  it("invalidates synchronously before LSP close and live ref mutation", async () => {
     const active = editorDocument(`${ROOT}/src/Active.php`);
     const syncClosedDocument = vi.fn(async () => undefined);
     const documentsRef = { current: { [active.path]: active } };
@@ -274,7 +322,7 @@ describe("useDocumentCloseLifecycle", () => {
       syncClosedDocument,
     });
 
-    act(() => harness.lifecycle().closeDocument(active.path));
+    await act(async () => harness.lifecycle().closeDocument(active.path));
 
     expect(invalidateDocumentSave).toHaveBeenCalledWith(ROOT, active.path);
     expect(invalidateDocumentSave.mock.invocationCallOrder[0]).toBeLessThan(
@@ -305,7 +353,7 @@ describe("useDocumentCloseLifecycle", () => {
     },
   ])(
     "uses the $expected close confirmation",
-    ({ conflict, content, expected }) => {
+    async ({ conflict, content, expected }) => {
       const active = editorDocument(`${ROOT}/src/Prompt.php`, content, "saved");
       const confirm = vi.fn(() => false);
       const harness = renderLifecycle({
@@ -318,14 +366,14 @@ describe("useDocumentCloseLifecycle", () => {
         prompter: { confirm, prompt: vi.fn() },
       });
 
-      act(() => harness.lifecycle().closeDocument(active.path));
+      await act(async () => harness.lifecycle().closeDocument(active.path));
 
       expect(confirm).toHaveBeenCalledWith(expected);
       harness.unmount();
     },
   );
 
-  it("clears a closed git diff and reselects the neighboring diff", () => {
+  it("clears a closed git diff and reselects the neighboring diff", async () => {
     const firstChange = changedFile(`${ROOT}/src/First.php`);
     const secondChange = changedFile(`${ROOT}/src/Second.php`);
     const firstPath = diffPath(firstChange);
@@ -341,7 +389,7 @@ describe("useDocumentCloseLifecycle", () => {
       previewPathRef: { current: firstPath },
     });
 
-    act(() => harness.lifecycle().closeDocument(firstPath));
+    await act(async () => harness.lifecycle().closeDocument(firstPath));
 
     expect(harness.dependencies.cancelGitDiffDocument).toHaveBeenCalledWith(
       firstPath,
@@ -354,7 +402,7 @@ describe("useDocumentCloseLifecycle", () => {
     harness.unmount();
   });
 
-  it("closes the live active document for Cmd+W before rerender", () => {
+  it("closes the live active document for Cmd+W before rerender", async () => {
     const first = editorDocument(`${ROOT}/src/First.php`);
     const second = editorDocument(`${ROOT}/src/Second.php`);
     const harness = renderLifecycle({
@@ -371,7 +419,7 @@ describe("useDocumentCloseLifecycle", () => {
     harness.dependencies.openPathsRef.current = [first.path, second.path];
     harness.dependencies.activeDocumentRef.current = second;
 
-    act(() => harness.lifecycle().closeActiveSurface());
+    await act(async () => harness.lifecycle().closeActiveSurface());
 
     expect(
       harness.dependencies.documentTabSession.getActivePath,
@@ -405,7 +453,7 @@ describe("useDocumentCloseLifecycle", () => {
       recentlyClosedDocumentViewState: () => ({ line: 12, column: 4 }),
       openRecentlyClosedDocument,
     });
-    act(() => harness.lifecycle().closeDocument(active.path));
+    await act(async () => harness.lifecycle().closeDocument(active.path));
     harness.rerender();
     expect(harness.lifecycle().canReopenClosedDocument).toBe(true);
 
@@ -443,7 +491,7 @@ describe("useDocumentCloseLifecycle", () => {
       recentlyClosedDocumentViewState: () => ({ line: 12, column: 4 }),
       openRecentlyClosedDocument,
     });
-    act(() => harness.lifecycle().closeDocument(active.path));
+    await act(async () => harness.lifecycle().closeDocument(active.path));
 
     let reopening!: Promise<void>;
     act(() => {
@@ -473,11 +521,11 @@ describe("useDocumentCloseLifecycle", () => {
     harness.dependencies.documentsRef.current = { [available.path]: available };
     harness.dependencies.openPathsRef.current = [available.path];
     harness.dependencies.activeDocumentRef.current = available;
-    act(() => harness.lifecycle().closeDocument(available.path));
+    await act(async () => harness.lifecycle().closeDocument(available.path));
     harness.dependencies.documentsRef.current = { [missing.path]: missing };
     harness.dependencies.openPathsRef.current = [missing.path];
     harness.dependencies.activeDocumentRef.current = missing;
-    act(() => harness.lifecycle().closeDocument(missing.path));
+    await act(async () => harness.lifecycle().closeDocument(missing.path));
 
     await act(async () => harness.lifecycle().reopenClosedDocument());
 
