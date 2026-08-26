@@ -172,7 +172,7 @@ describe("AgentSurfacePanel", () => {
 
     expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Files");
     expect(host.querySelectorAll('[aria-label^="Expand to editor"]')).toHaveLength(0);
-    click('[aria-label="Close surface"]');
+    click('[aria-label="Back to surfaces"]');
     click('[role="tab"]:nth-child(3)');
     expect(onCloseSurface).toHaveBeenCalledTimes(1);
     expect(onChooseSurface).toHaveBeenCalledWith("terminal");
@@ -180,6 +180,22 @@ describe("AgentSurfacePanel", () => {
       host.querySelector(".agent-surface__layout-controls [data-layout-control]"),
     ).not.toBeNull();
     expect(host.querySelector('[role="separator"][aria-orientation="vertical"]')).not.toBeNull();
+  });
+
+  it("labels the dismiss button for the state it acts on", () => {
+    const onCloseSurface = vi.fn();
+    render({ layout: { rightSurface: "diff" }, onCloseSurface });
+
+    expect(host.querySelector('[aria-label="Close panel"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Back to surfaces"]')?.getAttribute("title")).toBe(
+      "Back to surfaces",
+    );
+
+    render({ layout: { rightSurface: null }, onCloseSurface });
+
+    expect(host.querySelector('[aria-label="Back to surfaces"]')).toBeNull();
+    click('[aria-label="Close panel"]');
+    expect(onCloseSurface).toHaveBeenCalledTimes(1);
   });
 
   function filesCardDescription(): string {

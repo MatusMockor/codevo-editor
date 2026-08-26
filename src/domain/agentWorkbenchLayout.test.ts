@@ -175,6 +175,49 @@ describe("agentWorkbenchLayoutReducer", () => {
     );
   });
 
+  it("returns an open surface to the chooser and forgets it", () => {
+    AGENT_SURFACE_KINDS.forEach((surface) => {
+      const open = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
+        kind: "openSurface",
+        surface,
+      });
+      const chooser = agentWorkbenchLayoutReducer(open, { kind: "closeSurface" });
+
+      expect(chooser).toEqual(
+        layoutOf({ layout: "agent", rightPanel: "open", rightSurface: null, lastSurface: null }),
+      );
+      expect(agentWorkbenchLayoutReducer(chooser, { kind: "closeSurface" })).toEqual(
+        initialAgentWorkbenchLayout,
+      );
+      expect(agentWorkbenchLayoutReducer(chooser, { kind: "toggleRightPanel" })).toMatchObject({
+        rightPanel: "closed",
+        rightSurface: null,
+        lastSurface: null,
+      });
+    });
+  });
+
+  it("keeps the panel open on closeSurface even when another surface was remembered", () => {
+    const open = layoutOf({ rightPanel: "open", rightSurface: "terminal", lastSurface: "diff" });
+
+    expect(agentWorkbenchLayoutReducer(open, { kind: "closeSurface" })).toMatchObject({
+      rightPanel: "open",
+      rightSurface: null,
+      lastSurface: null,
+    });
+  });
+
+  it("keeps the remembered surface when the chooser closes the panel", () => {
+    const chooser = layoutOf({ rightPanel: "open", rightSurface: null, lastSurface: "diff" });
+    const closed = agentWorkbenchLayoutReducer(chooser, { kind: "closeSurface" });
+
+    expect(closed).toMatchObject({ rightPanel: "closed", rightSurface: null, lastSurface: "diff" });
+    expect(agentWorkbenchLayoutReducer(closed, { kind: "toggleRightPanel" })).toMatchObject({
+      rightPanel: "open",
+      rightSurface: "diff",
+    });
+  });
+
   it("replaces the open surface instead of stacking surfaces", () => {
     const files = agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, {
       kind: "openSurface",
@@ -597,9 +640,23 @@ describe("rightPanelToggleAction", () => {
       rightPanel: "open",
       rightSurface: "diff",
     };
+    const chooser: AgentWorkbenchLayout = { ...closedWithDiff, rightPanel: "open" };
 
-    expect(rightPanelToggleAction(open, () => false)).toEqual({ kind: "closeSurface" });
-    expect(rightPanelToggleAction(open, () => true)).toEqual({ kind: "closeSurface" });
+    expect(rightPanelToggleAction(open, () => false)).toEqual({ kind: "toggleRightPanel" });
+    expect(rightPanelToggleAction(open, () => true)).toEqual({ kind: "toggleRightPanel" });
+    expect(
+      agentWorkbenchLayoutReducer(
+        open,
+        rightPanelToggleAction(open, () => false),
+      ),
+    ).toMatchObject({ rightPanel: "closed", rightSurface: null, lastSurface: "diff" });
+    expect(rightPanelToggleAction(chooser, () => false)).toEqual({ kind: "toggleRightPanel" });
+    expect(
+      agentWorkbenchLayoutReducer(
+        chooser,
+        rightPanelToggleAction(chooser, () => false),
+      ),
+    ).toMatchObject({ rightPanel: "closed", rightSurface: null });
   });
 
   it("collapses the expanded editor through the same policy", () => {

@@ -129,7 +129,7 @@ export function rightPanelToggleAction(
   isSurfaceBlocked: AgentSurfaceBlockedPredicate,
 ): AgentWorkbenchLayoutAction {
   if (state.layout === "editor-expanded") return collapseEditorAction(state, isSurfaceBlocked);
-  if (state.rightPanel === "open") return { kind: "closeSurface" };
+  if (state.rightPanel === "open") return { kind: "toggleRightPanel" };
   if (rememberedSurfaceUnavailable(state, isSurfaceBlocked)) return { kind: "showRightPanel" };
   return { kind: "toggleRightPanel" };
 }
@@ -234,11 +234,15 @@ function openSurface(state: AgentWorkbenchLayout, surface: AgentSurfaceKind): Ag
 }
 
 function closeSurface(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
-  if (state.rightPanel === "closed" && state.rightSurface === null) {
+  if (state.rightSurface !== null) {
+    return { ...state, rightPanel: "open", rightSurface: null, lastSurface: null };
+  }
+
+  if (state.rightPanel === "closed") {
     return state;
   }
 
-  return { ...state, rightPanel: "closed", rightSurface: null };
+  return { ...state, rightPanel: "closed" };
 }
 
 function showRightPanel(state: AgentWorkbenchLayout): AgentWorkbenchLayout {

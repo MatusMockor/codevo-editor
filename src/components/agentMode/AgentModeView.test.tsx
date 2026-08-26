@@ -602,7 +602,7 @@ describe("AgentModeView", () => {
     expect(activeSurfaceTab()).toBe("Diff");
     expect(host.querySelector('[aria-label^="Expand to editor"]')).not.toBeNull();
 
-    click('[aria-label="Close surface"]');
+    click('.agent-surface [aria-label^="Toggle right panel"]');
     rerender();
     expect(host.querySelector(".agent-surface")).toBeNull();
 
@@ -610,6 +610,37 @@ describe("AgentModeView", () => {
     rerender();
     await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).not.toBeNull());
     expect(activeSurfaceTab()).toBe("Diff");
+  });
+
+  it("returns an open surface to the chooser and only then closes the panel", async () => {
+    const threads = [threadView({ threadId: "agt-1" })];
+    let layout = recordedLayoutState();
+    const rerender = (): void => {
+      layout = recordedLayoutState(reduceRecordedLayout(layout));
+      render({ chrome: chromeFixture({ layout }), agents: surface({ threads }) });
+    };
+    render({ chrome: chromeFixture({ layout }), agents: surface({ threads }) });
+
+    clickText("Refactor the parser");
+    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
+    rerender();
+    click('[aria-label="Open Files surface"]');
+    rerender();
+    expect(activeSurfaceTab()).toBe("Files");
+
+    click('[aria-label="Back to surfaces"]');
+    rerender();
+    expect(host.querySelector(".agent-surface")).not.toBeNull();
+    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
+
+    click('[aria-label="Close panel"]');
+    rerender();
+    expect(host.querySelector(".agent-surface")).toBeNull();
+
+    click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
+    rerender();
+    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
+    await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).toBeNull());
   });
 
   it("applies the same right panel policy to the ⌥⌘R command", async () => {
@@ -674,7 +705,7 @@ describe("AgentModeView", () => {
     click('.agent-surface [aria-label^="Toggle right panel"]');
     expect(layout.actions).toEqual([
       { kind: "openSurface", surface: "files" },
-      { kind: "closeSurface" },
+      { kind: "toggleRightPanel" },
     ]);
   });
 

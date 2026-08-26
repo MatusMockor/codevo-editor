@@ -218,7 +218,7 @@ describe("workbenchAgentCommands", () => {
     expect(await toggleRightPanel(closedWithDiff, ["diff"])).toEqual([{ kind: "showRightPanel" }]);
     expect(
       await toggleRightPanel({ ...closedWithDiff, rightPanel: "open", rightSurface: "diff" }, []),
-    ).toEqual([{ kind: "closeSurface" }]);
+    ).toEqual([{ kind: "toggleRightPanel" }]);
   });
 
   it("collapses the expanded editor onto an empty panel when the remembered surface is blocked", async () => {

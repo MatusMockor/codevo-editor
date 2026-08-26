@@ -1,4 +1,4 @@
-import { FolderTree, GitCompare, PanelLeft, SquareTerminal, X } from "lucide-react";
+import { ChevronLeft, FolderTree, GitCompare, PanelLeft, SquareTerminal, X } from "lucide-react";
 import { Suspense, lazy, useState, type PointerEvent, type ReactNode } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
@@ -67,6 +67,8 @@ export function AgentSurfacePanel({
   workspaceTrusted,
 }: AgentSurfacePanelProps) {
   const surface = layout.rightSurface;
+  const dismissLabel = surface === null ? "Close panel" : "Back to surfaces";
+  const DismissIcon = surface === null ? X : ChevronLeft;
   const [treeVisible, setTreeVisible] = useState(true);
   const treeShown = surface === "files" && treeVisible && fileTree !== null;
   useWorkbenchFrameTreeReport(treeShown);
@@ -132,12 +134,13 @@ export function AgentSurfacePanel({
         )}
         <div className="agent-surface__layout-controls">{layoutControls}</div>
         <button
-          aria-label="Close surface"
+          aria-label={dismissLabel}
           className="agent-iconbutton"
           onClick={onCloseSurface}
+          title={dismissLabel}
           type="button"
         >
-          <X aria-hidden="true" size={13} />
+          <DismissIcon aria-hidden="true" size={13} />
         </button>
       </header>
       <div className="agent-surface__body" data-agent-surface-body>
