@@ -160,7 +160,6 @@ export function useWorkspaceOpenRequestLifecycle({
             return;
           }
 
-          invalidateWorkspaceCloseOwnership(path, descriptor);
           await withManagedWorkspaceIdentityLease(descriptor, async (adoptIdentity) => {
             if (
               !workbenchMountedRef.current ||
@@ -168,6 +167,7 @@ export function useWorkspaceOpenRequestLifecycle({
             ) {
               return;
             }
+            invalidateWorkspaceCloseOwnership(path, descriptor);
             await performOpenWorkspacePath(
               descriptor.selectedPath,
               descriptor,
@@ -214,11 +214,11 @@ export function useWorkspaceOpenRequestLifecycle({
     try {
       const result = await workspaceIdentityGateway.openFromPicker();
       if (result.status === "cancelled") return;
-      invalidateWorkspaceCloseOwnership(result.descriptor.selectedPath, result.descriptor);
       await withManagedWorkspaceIdentityLease(result.descriptor, async (adoptIdentity) => {
         if (!workbenchMountedRef.current || openWorkspaceRequestTokenRef.current !== requestToken) {
           return;
         }
+        invalidateWorkspaceCloseOwnership(result.descriptor.selectedPath, result.descriptor);
         await performOpenWorkspacePath(
           result.descriptor.selectedPath,
           result.descriptor,
