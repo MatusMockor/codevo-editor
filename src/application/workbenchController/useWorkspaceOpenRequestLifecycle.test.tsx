@@ -131,6 +131,7 @@ function renderLifecycle(gateway: WorkspaceIdentityGateway) {
       deferredCleanupIdsRef: { current: new Set<string>() },
       identityGateway: gateway,
       identityRequestTokensRef: pendingWorkspaceIdentityRequestTokensRef,
+      latestAdmissionGenerationByIdRef: { current: {} },
       mountedRef: workbenchMountedRef,
       nextAdmissionGenerationRef: { current: 0 },
       ownedGenerationByIdRef: { current: {} },

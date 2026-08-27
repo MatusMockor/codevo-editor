@@ -91,10 +91,10 @@ import {
 import { useWorkspaceOpenRequestLifecycle } from "./workbenchController/useWorkspaceOpenRequestLifecycle";
 import { useWorkbenchWorkspaceFileChangeSubscription } from "./workbenchController/useWorkspaceFileChangeSubscription";
 import { useManagedWorkspaceIdentityOwnership } from "./workbenchController/useManagedWorkspaceIdentityOwnership";
+import { useWorkspaceIdentityAuthority } from "./workbenchController/useWorkspaceIdentityAuthority";
 import { loadCompleteWorkspaceDirectoryEntries } from "./workbenchController/useWorkspaceDirectoryLoader";
 import { useWorkspaceDirectoryExplorer } from "./workbenchController/useWorkspaceDirectoryExplorer";
 import { useWorkspaceSessionRestorer } from "./workbenchController/useWorkspaceSessionRestorer";
-import { LatestWorkspaceRequestTokenRegistry } from "./workbenchController/workspaceRequestTokenRegistry";
 import { boundedInFlightDirectoryLoadsFor } from "./workbenchController/boundedInFlightDirectoryLoads";
 import {
   boundedPendingWorkspaceSettingsLoadsFor,
@@ -104,7 +104,6 @@ import { useExternallyRemovedDocumentTombstones } from "./workbenchController/us
 import {
   clearClosedWorkspaceEditorRetainedState,
   disposeWorkspaceFileChanges,
-  ownedAndPendingWorkspaceIdentityIds,
   releaseWorkspaceRetainedResources,
   withoutClosedWorkspacePackageScripts,
 } from "./workbenchController/workspaceRetainedStateCleanup";
@@ -666,17 +665,12 @@ export function useWorkbenchController(
   const openWorkspaceRequestPathRef = useRef<string | null>(null);
   const openWorkspaceRequestInFlightTokenRef = useRef<number | null>(null);
   const workbenchMountedRef = useRef(true);
-  const pendingWorkspaceIdentityRequestTokensRef = useRef(
-    new LatestWorkspaceRequestTokenRegistry(),
-  );
-  const deferredWorkspaceIdentityCleanupIdsRef = useRef<Set<string>>(new Set());
-  const workspaceIdentityAdmissionGenerationRef = useRef(0);
-  const pendingWorkspaceIdentityAdmissionsRef = useRef<Record<string, Set<number>>>({});
-  const ownedWorkspaceIdentityIdsRef = useRef<Set<string>>(new Set());
-  const ownedWorkspaceIdentityGenerationByIdRef = useRef<Record<string, number>>({});
-  const workspaceIdentityReleaseGenerationByIdRef = useRef<Record<string, number>>({});
-  const releasedWorkspaceIdentityIdsRef = useRef<Set<string>>(new Set());
-  const workspaceIdentityUnregisterByIdRef = useRef<Record<string, Promise<void>>>({});
+  const workspaceIdentityAuthority = useWorkspaceIdentityAuthority();
+  const {
+    ownedWorkspaceIdentityGenerationByIdRef,
+    pendingWorkspaceIdentityRequestTokensRef,
+    retire: retireWorkspaceIdentityAuthority,
+  } = workspaceIdentityAuthority;
   const inFlightDirectoryLoadsRef = useRef(boundedInFlightDirectoryLoadsFor(workspaceFiles));
   const openFileRequestTokenRef = useRef(0);
   const openingFileFlagOwnerTokenRef = useRef<number | null>(null);
@@ -1069,20 +1063,22 @@ export function useWorkbenchController(
     releaseOwned: releaseOwnedWorkspaceIdentity,
     withManagedLease: withManagedWorkspaceIdentityLease,
   } = useManagedWorkspaceIdentityOwnership({
-    deferredCleanupIdsRef: deferredWorkspaceIdentityCleanupIdsRef,
+    deferredCleanupIdsRef: workspaceIdentityAuthority.deferredWorkspaceIdentityCleanupIdsRef,
     identityGateway: workspaceGateways.identity,
     identityRequestTokensRef: pendingWorkspaceIdentityRequestTokensRef,
+    latestAdmissionGenerationByIdRef:
+      workspaceIdentityAuthority.latestWorkspaceIdentityAdmissionGenerationByIdRef,
     mountedRef: workbenchMountedRef,
-    nextAdmissionGenerationRef: workspaceIdentityAdmissionGenerationRef,
+    nextAdmissionGenerationRef: workspaceIdentityAuthority.workspaceIdentityAdmissionGenerationRef,
     ownedGenerationByIdRef: ownedWorkspaceIdentityGenerationByIdRef,
-    ownedIdsRef: ownedWorkspaceIdentityIdsRef,
-    pendingAdmissionsRef: pendingWorkspaceIdentityAdmissionsRef,
-    releasedIdsRef: releasedWorkspaceIdentityIdsRef,
-    releaseGenerationByIdRef: workspaceIdentityReleaseGenerationByIdRef,
+    ownedIdsRef: workspaceIdentityAuthority.ownedWorkspaceIdentityIdsRef,
+    pendingAdmissionsRef: workspaceIdentityAuthority.pendingWorkspaceIdentityAdmissionsRef,
+    releasedIdsRef: workspaceIdentityAuthority.releasedWorkspaceIdentityIdsRef,
+    releaseGenerationByIdRef: workspaceIdentityAuthority.workspaceIdentityReleaseGenerationByIdRef,
     reportError,
     retireRuntimeOwnerClaim: retireWorkspaceRuntimeOwnerClaim,
     runtimeOwnerClaimsRef: workspaceRuntimeOwnerClaimsRef,
-    unregisterByIdRef: workspaceIdentityUnregisterByIdRef,
+    unregisterByIdRef: workspaceIdentityAuthority.workspaceIdentityUnregisterByIdRef,
   });
   const workspaceCloseGenerationByRootRef = useRef<Record<string, number>>({});
   const workspaceCloseOwnershipGenerationRef = useRef(0);
@@ -3013,6 +3009,7 @@ export function useWorkbenchController(
       loadPackageScripts,
       languageServerRuntimeStatusByRootRef,
       languageRuntimeProjectionCommands,
+      ownedWorkspaceIdentityGenerationByIdRef,
       persistAppSettings,
       persistCurrentWorkspaceSession,
       primeCachedDirectoryEntries,
@@ -3123,8 +3120,6 @@ export function useWorkbenchController(
 
   useEffect(() => {
     workbenchMountedRef.current = true;
-    const pendingWorkspaceIdentityRequestTokens = pendingWorkspaceIdentityRequestTokensRef.current;
-    const ownedWorkspaceIdentityIds = ownedWorkspaceIdentityIdsRef.current;
     const workspaceRuntimeOwnerClaims = workspaceRuntimeOwnerClaimsRef.current;
     const externallyRemovedDocumentRootByPath = externallyRemovedDocumentRootByPathRef.current;
 
@@ -3135,12 +3130,7 @@ export function useWorkbenchController(
       openWorkspaceRequestPathRef.current = null;
       openWorkspaceRequestInFlightTokenRef.current = null;
       openFileRequestTokenRef.current += 1;
-      pendingWorkspaceIdentityRequestTokens.retire();
-      const workspaceIds = ownedAndPendingWorkspaceIdentityIds(
-        ownedWorkspaceIdentityIds,
-        pendingWorkspaceIdentityAdmissionsRef.current,
-      );
-      pendingWorkspaceIdentityAdmissionsRef.current = {};
+      const workspaceIds = retireWorkspaceIdentityAuthority();
       workspaceIdentityByRootRef.current = {};
       workspaceRuntimeRootByTabRef.current = {};
       workspaceRuntimeOwnerByTabRef.current = {};
@@ -3154,6 +3144,7 @@ export function useWorkbenchController(
     documentSessionAuthorityLifecycle,
     externallyRemovedDocumentRootByPathRef,
     releaseOwnedWorkspaceIdentity,
+    retireWorkspaceIdentityAuthority,
     workspaceFileChangeGateway,
   ]);
 

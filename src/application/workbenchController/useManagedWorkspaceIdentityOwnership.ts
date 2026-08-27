@@ -6,15 +6,25 @@ import type { WorkspaceRequestTokenRegistry } from "./workspaceRequestTokenRegis
 
 type WorkspaceIdentityReleaseOutcome = "deferred" | "released";
 
-interface WorkspaceIdentityAdmissionLease {
+type WorkspaceIdentityAdmissionAuthority = {
+  readonly admissionToken: number | null;
+  readonly canonicalRoot: string;
+  readonly caseSensitive: boolean | null;
+  readonly descriptor: WorkspaceIdentityDescriptor;
   readonly generation: number;
+  readonly kind: "workspaceIdentityAdmission";
+  readonly policyCaseSensitive: boolean;
+  readonly policyUnicodeNormalization: WorkspaceIdentityDescriptor["policy"]["unicodeNormalization"];
+  readonly selectedPath: string;
+  readonly unicodeNormalizationPolicy: WorkspaceIdentityDescriptor["unicodeNormalizationPolicy"];
   readonly workspaceId: string;
-}
+};
 
 interface ManagedWorkspaceIdentityOwnershipOptions {
   readonly deferredCleanupIdsRef: MutableRefObject<Set<string>>;
   readonly identityGateway: WorkspaceIdentityGateway;
   readonly identityRequestTokensRef: MutableRefObject<WorkspaceRequestTokenRegistry>;
+  readonly latestAdmissionGenerationByIdRef: MutableRefObject<Record<string, number>>;
   readonly mountedRef: MutableRefObject<boolean>;
   readonly nextAdmissionGenerationRef: MutableRefObject<number>;
   readonly ownedGenerationByIdRef: MutableRefObject<Record<string, number>>;
@@ -34,6 +44,7 @@ export function useManagedWorkspaceIdentityOwnership({
   deferredCleanupIdsRef,
   identityGateway,
   identityRequestTokensRef,
+  latestAdmissionGenerationByIdRef,
   mountedRef,
   nextAdmissionGenerationRef,
   ownedGenerationByIdRef,
@@ -80,6 +91,18 @@ export function useManagedWorkspaceIdentityOwnership({
       const pendingUnregister = unregisterByIdRef.current[workspaceId];
       if (pendingUnregister) {
         await pendingUnregister;
+        if (pendingAdmissionsRef.current[workspaceId]?.size) {
+          return "deferred";
+        }
+        if (releaseGeneration === undefined && ownedIdsRef.current.has(workspaceId)) {
+          return "deferred";
+        }
+        if (
+          releaseGeneration !== undefined &&
+          ownedGenerationByIdRef.current[workspaceId] !== releaseGeneration
+        ) {
+          return "deferred";
+        }
         return releasedIdsRef.current.has(workspaceId) ? "released" : "deferred";
       }
 
@@ -100,10 +123,24 @@ export function useManagedWorkspaceIdentityOwnership({
       if (!requestStillCurrent) {
         return "deferred";
       }
+      if (identityRequestTokensRef.current.hasPending()) {
+        deferredCleanupIdsRef.current.add(workspaceId);
+        return "deferred";
+      }
 
       if (releaseGeneration === undefined) {
+        if (
+          ownedIdsRef.current.has(workspaceId) ||
+          pendingAdmissionsRef.current[workspaceId]?.size
+        ) {
+          return "deferred";
+        }
         releasedIdsRef.current.add(workspaceId);
         return "released";
+      }
+
+      if (pendingAdmissionsRef.current[workspaceId]?.size) {
+        return "deferred";
       }
 
       if (releaseGenerationByIdRef.current[workspaceId] === releaseGeneration) {
@@ -152,41 +189,73 @@ export function useManagedWorkspaceIdentityOwnership({
   ]);
 
   const beginAdmission = useCallback(
-    (workspaceId: string): WorkspaceIdentityAdmissionLease => {
+    (descriptor: WorkspaceIdentityDescriptor): WorkspaceIdentityAdmissionAuthority => {
       const generation = nextAdmissionGenerationRef.current + 1;
       nextAdmissionGenerationRef.current = generation;
-      const pending = pendingAdmissionsRef.current[workspaceId] ?? new Set();
+      latestAdmissionGenerationByIdRef.current[descriptor.workspaceId] = generation;
+      const pending = pendingAdmissionsRef.current[descriptor.workspaceId] ?? new Set();
       pending.add(generation);
-      pendingAdmissionsRef.current[workspaceId] = pending;
-      return { generation, workspaceId };
+      pendingAdmissionsRef.current[descriptor.workspaceId] = pending;
+      return {
+        admissionToken: descriptor.admissionToken ?? null,
+        canonicalRoot: descriptor.canonicalRoot,
+        caseSensitive: descriptor.caseSensitive,
+        descriptor,
+        generation,
+        kind: "workspaceIdentityAdmission",
+        policyCaseSensitive: descriptor.policy.caseSensitive,
+        policyUnicodeNormalization: descriptor.policy.unicodeNormalization,
+        selectedPath: descriptor.selectedPath,
+        unicodeNormalizationPolicy: descriptor.unicodeNormalizationPolicy,
+        workspaceId: descriptor.workspaceId,
+      };
     },
-    [nextAdmissionGenerationRef, pendingAdmissionsRef],
+    [latestAdmissionGenerationByIdRef, nextAdmissionGenerationRef, pendingAdmissionsRef],
   );
 
   const adoptAdmission = useCallback(
-    (lease: WorkspaceIdentityAdmissionLease) => {
-      const pending = pendingAdmissionsRef.current[lease.workspaceId];
-      pending?.delete(lease.generation);
-      if (pending?.size === 0) {
-        delete pendingAdmissionsRef.current[lease.workspaceId];
+    (authority: WorkspaceIdentityAdmissionAuthority): boolean => {
+      const pending = pendingAdmissionsRef.current[authority.workspaceId];
+      if (
+        !pending?.has(authority.generation) ||
+        latestAdmissionGenerationByIdRef.current[authority.workspaceId] !== authority.generation ||
+        !descriptorMatchesAuthority(authority)
+      ) {
+        return false;
       }
-      ownedIdsRef.current.add(lease.workspaceId);
-      releasedIdsRef.current.delete(lease.workspaceId);
-      ownedGenerationByIdRef.current[lease.workspaceId] = lease.generation;
+      pending.delete(authority.generation);
+      if (pending?.size === 0) {
+        delete pendingAdmissionsRef.current[authority.workspaceId];
+      }
+      ownedIdsRef.current.add(authority.workspaceId);
+      releasedIdsRef.current.delete(authority.workspaceId);
+      ownedGenerationByIdRef.current[authority.workspaceId] = authority.generation;
+      return true;
     },
-    [ownedGenerationByIdRef, ownedIdsRef, pendingAdmissionsRef, releasedIdsRef],
+    [
+      latestAdmissionGenerationByIdRef,
+      ownedGenerationByIdRef,
+      ownedIdsRef,
+      pendingAdmissionsRef,
+      releasedIdsRef,
+    ],
   );
 
   const releaseAdmission = useCallback(
-    async (lease: WorkspaceIdentityAdmissionLease) => {
-      const pending = pendingAdmissionsRef.current[lease.workspaceId];
-      pending?.delete(lease.generation);
+    async (authority: WorkspaceIdentityAdmissionAuthority) => {
+      const pending = pendingAdmissionsRef.current[authority.workspaceId];
+      pending?.delete(authority.generation);
       if (pending?.size === 0) {
-        delete pendingAdmissionsRef.current[lease.workspaceId];
+        delete pendingAdmissionsRef.current[authority.workspaceId];
       }
-      await unregisterIfUnused(lease.workspaceId);
+      if (
+        latestAdmissionGenerationByIdRef.current[authority.workspaceId] === authority.generation
+      ) {
+        delete latestAdmissionGenerationByIdRef.current[authority.workspaceId];
+      }
+      await unregisterIfUnused(authority.workspaceId);
     },
-    [pendingAdmissionsRef, unregisterIfUnused],
+    [latestAdmissionGenerationByIdRef, pendingAdmissionsRef, unregisterIfUnused],
   );
 
   const releaseOwned = useCallback(
@@ -211,12 +280,16 @@ export function useManagedWorkspaceIdentityOwnership({
       releaseGenerationByIdRef.current[workspaceId] = ownershipGeneration;
       const outcome = await unregisterIfUnused(workspaceId, ownershipGeneration);
       if (outcome === "released") {
+        if (latestAdmissionGenerationByIdRef.current[workspaceId] === ownershipGeneration) {
+          delete latestAdmissionGenerationByIdRef.current[workspaceId];
+        }
         retireRuntimeOwnerClaim(workspaceId, ownershipGeneration);
       }
       return outcome;
     },
     [
       ownedGenerationByIdRef,
+      latestAdmissionGenerationByIdRef,
       releasedIdsRef,
       releaseGenerationByIdRef,
       retireRuntimeOwnerClaim,
@@ -230,13 +303,15 @@ export function useManagedWorkspaceIdentityOwnership({
       descriptor: WorkspaceIdentityDescriptor,
       useLease: (adopt: () => void) => Promise<void>,
     ): Promise<void> => {
-      const lease = beginAdmission(descriptor.workspaceId);
+      const authority = beginAdmission(descriptor);
       await withWorkspaceIdentityLease(
         descriptor,
-        () => releaseAdmission(lease),
+        () => releaseAdmission(authority),
         (adoptLease) =>
           useLease(() => {
-            adoptAdmission(lease);
+            if (!adoptAdmission(authority)) {
+              return;
+            }
             adoptLease();
           }),
       );
@@ -249,4 +324,18 @@ export function useManagedWorkspaceIdentityOwnership({
     releaseOwned,
     withManagedLease,
   };
+}
+
+function descriptorMatchesAuthority(authority: WorkspaceIdentityAdmissionAuthority): boolean {
+  const descriptor = authority.descriptor;
+  return (
+    descriptor.workspaceId === authority.workspaceId &&
+    descriptor.selectedPath === authority.selectedPath &&
+    descriptor.canonicalRoot === authority.canonicalRoot &&
+    (descriptor.admissionToken ?? null) === authority.admissionToken &&
+    descriptor.caseSensitive === authority.caseSensitive &&
+    descriptor.unicodeNormalizationPolicy === authority.unicodeNormalizationPolicy &&
+    descriptor.policy.caseSensitive === authority.policyCaseSensitive &&
+    descriptor.policy.unicodeNormalization === authority.policyUnicodeNormalization
+  );
 }
