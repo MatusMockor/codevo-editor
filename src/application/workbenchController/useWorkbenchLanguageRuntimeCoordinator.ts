@@ -40,13 +40,10 @@ import {
 } from "../../domain/phpstanDiagnostics";
 import {
   isLanguageServerSessionActiveForOwner,
-  isLanguageServerSessionCurrentForOwnerOrLegacy,
   isRunningLanguageServerForWorkspace,
 } from "./languageServerStatusPolicy";
 import { isJavaScriptTypeScriptDocumentSyncableForRoot } from "./workspacePathPolicy";
 import { useChangedDocumentSyncScheduling } from "../useChangedDocumentSyncScheduling";
-import { useDiagnostics } from "../useDiagnostics";
-import { useLanguageServerDiagnosticsSubscriptions } from "../useLanguageServerDiagnosticsSubscriptions";
 import {
   runEslintFixAllInActiveFile,
   runEslintWorkspaceAnalysis,
@@ -63,58 +60,7 @@ import {
   EMPTY_PHPSTAN_DIAGNOSTICS,
 } from "../workbenchEmptyProjections";
 
-type DiagnosticsSubscriptionDependencies = Parameters<
-  typeof useLanguageServerDiagnosticsSubscriptions
->[0];
 type ChangedDocumentSyncDependencies = Parameters<typeof useChangedDocumentSyncScheduling>[0];
-type DiagnosticsDependencies = Omit<
-  Parameters<typeof useDiagnostics>[0],
-  "isLanguageServerSessionCurrentForRoot"
->;
-
-export interface WorkbenchLanguageDiagnosticsCoordinatorDependencies {
-  readonly diagnostics: DiagnosticsDependencies;
-  readonly languageServerRuntimeStatusByRootRef: {
-    readonly current: Record<string, LanguageServerRuntimeStatus>;
-  };
-  readonly languageServerRuntimeStatusRef: {
-    readonly current: LanguageServerRuntimeStatus | null;
-  };
-  readonly languageServerRuntimeStatusRootRef: { readonly current: string | null };
-  readonly workspaceRuntimeOwnerByTabRef: {
-    readonly current: Record<string, WorkspaceRuntimeOwner>;
-  };
-}
-
-export function useWorkbenchLanguageDiagnosticsCoordinator({
-  diagnostics,
-  languageServerRuntimeStatusByRootRef,
-  languageServerRuntimeStatusRef,
-  languageServerRuntimeStatusRootRef,
-  workspaceRuntimeOwnerByTabRef,
-}: WorkbenchLanguageDiagnosticsCoordinatorDependencies) {
-  const isLanguageServerSessionCurrentForRoot = useCallback(
-    (rootPath: string, sessionId: number) =>
-      isLanguageServerSessionCurrentForOwnerOrLegacy(
-        languageServerRuntimeStatusByRootRef.current,
-        workspaceRuntimeOwnerByTabRef.current[rootPath],
-        languageServerRuntimeStatusRef.current,
-        languageServerRuntimeStatusRootRef.current,
-        rootPath,
-        sessionId,
-      ),
-    [
-      languageServerRuntimeStatusByRootRef,
-      languageServerRuntimeStatusRef,
-      languageServerRuntimeStatusRootRef,
-      workspaceRuntimeOwnerByTabRef,
-    ],
-  );
-  return {
-    ...useDiagnostics({ ...diagnostics, isLanguageServerSessionCurrentForRoot }),
-    isLanguageServerSessionCurrentForRoot,
-  };
-}
 
 type EslintWorkspaceAnalysisDependencies = Parameters<typeof runEslintWorkspaceAnalysis>[0];
 type PhpstanWorkspaceAnalysisDependencies = Parameters<typeof runPhpstanWorkspaceAnalysis>[0];
@@ -1095,18 +1041,15 @@ interface JavaScriptTypeScriptRuntimeDocumentSync {
 
 export interface WorkbenchLanguageRuntimeEffectsDependencies {
   readonly changedDocumentSync: ChangedDocumentSyncDependencies;
-  readonly diagnosticsSubscriptions: DiagnosticsSubscriptionDependencies;
   readonly javaScriptTypeScript: JavaScriptTypeScriptRuntimeDocumentSync;
   readonly php: RuntimeDocumentSync;
 }
 
 export function useWorkbenchLanguageRuntimeEffects({
   changedDocumentSync,
-  diagnosticsSubscriptions,
   javaScriptTypeScript,
   php,
 }: WorkbenchLanguageRuntimeEffectsDependencies): void {
-  useLanguageServerDiagnosticsSubscriptions(diagnosticsSubscriptions);
   const phpDocumentSyncRuntimeOwnerRef = useRef<WorkspaceRuntimeOwner | null>(null);
   const javaScriptTypeScriptDocumentSyncRuntimeOwnerRef = useRef<WorkspaceRuntimeOwner | null>(
     null,

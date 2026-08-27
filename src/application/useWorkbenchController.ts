@@ -68,7 +68,6 @@ import {
 } from "./workbenchController/useWorkbenchLanguageServerRuntimeCoordinator";
 import {
   beginWorkbenchSmartModeIntent,
-  useWorkbenchLanguageDiagnosticsCoordinator,
   useWorkbenchLanguageRuntimeChannelRefs,
   useWorkbenchLanguageRuntimeEffects,
   useWorkbenchLanguageRuntimeOwnerRefs,
@@ -76,6 +75,11 @@ import {
   useWorkbenchStaticAnalysisCoordinator,
   type WorkbenchSmartModeIntentState,
 } from "./workbenchController/useWorkbenchLanguageRuntimeCoordinator";
+import {
+  useWorkbenchLanguageDiagnosticsSessionCoordinator,
+  useWorkbenchLanguageRuntimeEventOwnerResolver,
+  useWorkbenchLanguageRuntimeSubscriptionsCoordinator,
+} from "./workbenchController/useWorkbenchLanguageRuntimeSubscriptionsCoordinator";
 import {
   useManagedLanguageServerInstallCommands,
   useManagedLanguageServerInstallSubscriptions,
@@ -196,7 +200,6 @@ import {
   type WorkspaceSettingsByRootSnapshot,
 } from "./workspaceSettingsForRoot";
 import { createWorkspaceSettingsSaveCoordinator } from "./workspaceSettingsSaveCoordinator";
-import { type LanguageServerDiagnosticsRuntimeKind } from "./useLanguageServerDiagnosticsSubscriptions";
 import { WorkspaceRuntimeOwnerClaimRegistry } from "./workspaceRuntimeOwnerClaimRegistry";
 import { useWorkspaceEditFileOperations } from "./useWorkspaceEditFileOperations";
 import { useNavigationHistory, useRecentNavigation } from "./useNavigationHistory";
@@ -234,7 +237,6 @@ import type { BottomPanelView } from "../domain/bottomPanel";
 import type { IndexProgressGateway } from "../domain/indexProgress";
 import {
   type LanguageServerDiagnostic,
-  type LanguageServerDiagnosticEvent,
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
 import { createDiagnosticsCoalescer } from "../domain/diagnosticsCoalescer";
@@ -1056,24 +1058,12 @@ export function useWorkbenchController(
     },
     [releaseWorkspaceTrustOwner],
   );
-  const resolveWorkspaceRuntimeOwnerForDiagnosticsEvent = useCallback(
-    (
-      event: LanguageServerDiagnosticEvent,
-      runtimeKind: LanguageServerDiagnosticsRuntimeKind,
-    ): WorkspaceRuntimeOwner | null => {
-      if (!event.rootPath) {
-        return null;
-      }
-
-      return workspaceRuntimeOwnerClaimsRef.current.resolveDiagnosticsEvent(
-        event,
-        runtimeKind,
-        languageServerRuntimeStatusByRootRef.current,
-        javaScriptTypeScriptRuntimeStatusByRootRef.current,
-      );
-    },
-    [javaScriptTypeScriptRuntimeStatusByRootRef, languageServerRuntimeStatusByRootRef],
-  );
+  const resolveWorkspaceRuntimeOwnerForDiagnosticsEvent =
+    useWorkbenchLanguageRuntimeEventOwnerResolver({
+      javaScriptTypeScriptRuntimeStatusByRootRef,
+      languageServerRuntimeStatusByRootRef,
+      workspaceRuntimeOwnerClaimsRef,
+    });
   const {
     flushDeferredCleanup: flushDeferredWorkspaceIdentityCleanup,
     releaseOwned: releaseOwnedWorkspaceIdentity,
@@ -1663,7 +1653,7 @@ export function useWorkbenchController(
     applyJavaScriptTypeScriptLanguageServerDiagnostics,
     applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
     isLanguageServerSessionCurrentForRoot,
-  } = useWorkbenchLanguageDiagnosticsCoordinator({
+  } = useWorkbenchLanguageDiagnosticsSessionCoordinator({
     diagnostics: {
       currentWorkspaceRootRef,
       activeDocumentRef,
@@ -5234,6 +5224,25 @@ export function useWorkbenchController(
   const activeLanguageRuntimeGeneration = workspaceRuntimeOwner
     ? (workspaceRuntimeOwnerClaimsRef.current.generationFor(workspaceRuntimeOwner.ownerKey) ?? null)
     : null;
+  useWorkbenchLanguageRuntimeSubscriptionsCoordinator({
+    workspaceRoot,
+    workspaceRuntimeOwner,
+    resolveCurrentWorkspaceRuntimeOwner,
+    resolveWorkspaceRuntimeOwnerForDiagnosticsEvent,
+    currentWorkspaceRootRef,
+    diagnosticsFlushSchedulerRef,
+    languageServerDiagnosticsCoalescerRef,
+    javaScriptTypeScriptDiagnosticsCoalescerRef,
+    languageServerDiagnosticsGateway,
+    javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+    createDiagnosticsCoalescer,
+    applyLanguageServerDiagnostics,
+    applyLanguageServerDiagnosticsBatch,
+    applyJavaScriptTypeScriptLanguageServerDiagnostics,
+    applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
+    reportLanguageServerError,
+    reportJavaScriptTypeScriptLanguageServerError,
+  });
   useWorkbenchLanguageRuntimeEffects({
     changedDocumentSync: {
       documentsRef,
@@ -5241,25 +5250,6 @@ export function useWorkbenchController(
       scheduleDocumentChange,
       scheduleJavaScriptTypeScriptDocumentChange,
       subscribeChangedDocuments,
-    },
-    diagnosticsSubscriptions: {
-      workspaceRoot,
-      workspaceRuntimeOwner,
-      resolveCurrentWorkspaceRuntimeOwner,
-      resolveWorkspaceRuntimeOwnerForDiagnosticsEvent,
-      currentWorkspaceRootRef,
-      diagnosticsFlushSchedulerRef,
-      languageServerDiagnosticsCoalescerRef,
-      javaScriptTypeScriptDiagnosticsCoalescerRef,
-      languageServerDiagnosticsGateway,
-      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
-      createDiagnosticsCoalescer,
-      applyLanguageServerDiagnostics,
-      applyLanguageServerDiagnosticsBatch,
-      applyJavaScriptTypeScriptLanguageServerDiagnostics,
-      applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
-      reportLanguageServerError,
-      reportJavaScriptTypeScriptLanguageServerError,
     },
     javaScriptTypeScript: {
       activePath,
