@@ -3,7 +3,7 @@ use super::unsupported_platform;
 use super::{
     lock_error, unknown_workspace, ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry,
 };
-use std::{io, sync::atomic::Ordering};
+use std::{io, path::Path, sync::atomic::Ordering};
 
 pub(crate) struct WorkspaceUnregisterReservation<'a> {
     registry: &'a WorkspaceRegistry,
@@ -22,7 +22,7 @@ impl WorkspaceUnregisterReservation<'_> {
         self.cleanup_started = true;
     }
 
-    fn cancel(mut self) -> io::Result<()> {
+    pub(crate) fn cancel(mut self) -> io::Result<()> {
         self.registry.cancel_unregister(&self)?;
         self.settled = true;
         Ok(())
@@ -81,6 +81,31 @@ impl WorkspaceRegistry {
         &self,
         workspace_id: &WorkspaceId,
     ) -> io::Result<WorkspaceUnregisterReservation<'_>> {
+        self.reserve_unregister_matching(workspace_id, |_| true)
+    }
+
+    pub(crate) fn reserve_unregister_exact(
+        &self,
+        workspace_id: &WorkspaceId,
+        admission_token: u64,
+        selected_root_path: &Path,
+        canonical_root_path: &Path,
+    ) -> io::Result<WorkspaceUnregisterReservation<'_>> {
+        self.reserve_unregister_matching(workspace_id, |workspace| {
+            workspace.latest_admission_token == admission_token
+                && workspace
+                    .registration_admissions
+                    .contains_key(&admission_token)
+                && workspace.descriptor.selected_root_path == selected_root_path
+                && workspace.descriptor.canonical_root_path == canonical_root_path
+        })
+    }
+
+    fn reserve_unregister_matching(
+        &self,
+        workspace_id: &WorkspaceId,
+        matches_expected: impl FnOnce(&super::ManagedWorkspace) -> bool,
+    ) -> io::Result<WorkspaceUnregisterReservation<'_>> {
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = workspace_id;
@@ -99,6 +124,12 @@ impl WorkspaceRegistry {
             let Some(workspace) = workspaces.get_mut(workspace_id) else {
                 return Err(unknown_workspace());
             };
+            if !matches_expected(workspace) {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "workspace close identity is stale",
+                ));
+            }
             if workspace.unregister_generation.is_some() {
                 return Err(io::Error::new(
                     io::ErrorKind::WouldBlock,

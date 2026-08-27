@@ -88,7 +88,8 @@ pub(crate) use language_runtime_facade::{
 pub(crate) use workspace_facade::filter_lsp_locations_to_workspace;
 pub(crate) use workspace_facade::{
     absolute_workspace_candidate, canonicalize_workspace_root, clear_workspace_index,
-    dispose_workspace_root, ensure_lsp_code_action_context_payloads_in_workspace,
+    dispose_registered_workspace, dispose_workspace_root,
+    ensure_lsp_code_action_context_payloads_in_workspace,
     ensure_lsp_code_action_payload_in_workspace, ensure_lsp_path_in_workspace,
     ensure_lsp_position_in_workspace, ensure_lsp_uri_in_workspace,
     filter_bounded_lsp_locations_to_workspace, filter_lsp_code_action_to_workspace,

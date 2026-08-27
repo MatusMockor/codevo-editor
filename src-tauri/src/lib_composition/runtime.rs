@@ -256,6 +256,7 @@ pub fn run() {
             detect_git_repositories,
             project_commands::detect_php_tools,
             project_commands::detect_workspace,
+            dispose_registered_workspace,
             dispose_workspace_root,
             get_php_file_outline,
             get_git_blame,
