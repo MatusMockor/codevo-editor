@@ -188,8 +188,19 @@ const UTF8_ENCODER = new TextEncoder();
 const UTF8_DECODER = new TextDecoder("utf-8");
 const UTF8_CONTINUATION_MASK = 0b1100_0000;
 const UTF8_CONTINUATION_MARKER = 0b1000_0000;
+const UTF16_HIGH_SURROGATE_START = 0xd800;
+const UTF16_HIGH_SURROGATE_END = 0xdbff;
+const UTF16_LOW_SURROGATE_START = 0xdc00;
+const UTF16_LOW_SURROGATE_END = 0xdfff;
 const TITLE_ELLIPSIS = "…";
 const TITLE_ELLIPSIS_BYTES = UTF8_ENCODER.encode(TITLE_ELLIPSIS).byteLength;
+const agentTextByteState = new WeakMap<AgentTurnEvent, AgentTextByteState>();
+
+interface AgentTextByteState {
+  readonly byteLength: number;
+  readonly text: string;
+  readonly trailingHighSurrogate: boolean;
+}
 
 export function emptyAgentThreadsState(): AgentThreadsState {
   return { threads: new Map() };
@@ -494,9 +505,43 @@ export function coalesceAgentTextEvents(
   if (last === undefined) return null;
   if (next.kind !== "assistantText" && next.kind !== "reasoning") return null;
   if (last.kind !== next.kind) return null;
-  const text = last.text + next.text;
-  if (UTF8_ENCODER.encode(text).byteLength > MAX_AGENT_EVENT_TEXT_BYTES) return null;
-  return { kind: next.kind, text };
+  const lastState = agentTextEventByteState(last);
+  const nextState = agentTextEventByteState(next);
+  const repairsSplitScalar = lastState.trailingHighSurrogate && startsWithLowSurrogate(next.text);
+  const byteLength = lastState.byteLength + nextState.byteLength - (repairsSplitScalar ? 2 : 0);
+  if (byteLength > MAX_AGENT_EVENT_TEXT_BYTES) return null;
+  const coalesced = { kind: next.kind, text: last.text + next.text };
+  agentTextByteState.set(coalesced, {
+    byteLength,
+    text: coalesced.text,
+    trailingHighSurrogate:
+      next.text.length === 0 ? lastState.trailingHighSurrogate : endsWithHighSurrogate(next.text),
+  });
+  return coalesced;
+}
+
+function agentTextEventByteState(event: Extract<AgentTurnEvent, { readonly text: string }>) {
+  const cached = agentTextByteState.get(event);
+  if (cached?.text === event.text) return cached;
+  const state = {
+    byteLength: UTF8_ENCODER.encode(event.text).byteLength,
+    text: event.text,
+    trailingHighSurrogate: endsWithHighSurrogate(event.text),
+  };
+  agentTextByteState.set(event, state);
+  return state;
+}
+
+function startsWithLowSurrogate(text: string): boolean {
+  if (text.length === 0) return false;
+  const codeUnit = text.charCodeAt(0);
+  return codeUnit >= UTF16_LOW_SURROGATE_START && codeUnit <= UTF16_LOW_SURROGATE_END;
+}
+
+function endsWithHighSurrogate(text: string): boolean {
+  if (text.length === 0) return false;
+  const codeUnit = text.charCodeAt(text.length - 1);
+  return codeUnit >= UTF16_HIGH_SURROGATE_START && codeUnit <= UTF16_HIGH_SURROGATE_END;
 }
 
 function interruptTurn(

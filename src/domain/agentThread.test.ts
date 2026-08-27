@@ -19,6 +19,7 @@ import {
   agentThreadTitle,
   agentThreadUnread,
   agentThreadsReducer,
+  coalesceAgentTextEvents,
   emptyAgentThreadsState,
   lastUsedAgentLaunch,
   normalizeAgentThreadTitle,
@@ -137,6 +138,24 @@ function text(value: string): AgentTurnEvent {
   return { kind: "assistantText", text: value };
 }
 
+function countEncodedCodeUnits<T>(operation: () => T): {
+  readonly encodedCodeUnits: number;
+  readonly result: T;
+} {
+  const encode = TextEncoder.prototype.encode;
+  let encodedCodeUnits = 0;
+  TextEncoder.prototype.encode = function (input?: string) {
+    encodedCodeUnits += input?.length ?? 0;
+    return encode.call(this, input);
+  };
+  try {
+    const result = operation();
+    return { encodedCodeUnits, result };
+  } finally {
+    TextEncoder.prototype.encode = encode;
+  }
+}
+
 describe("agentThreadsReducer status events", () => {
   it("advances pending to running to exited, stamps the end time, then freezes", () => {
     const running = agentThreadsReducer(stateWith(thread()), statusAction());
@@ -207,6 +226,60 @@ describe("agentThreadsReducer output events", () => {
     const state = agentThreadsReducer(stateWith(thread()), appendAction([text(big), text("yy")]));
     const events = state.threads.get("agt-t1-0001")?.turns[0].events;
     expect(events).toEqual([text(big), text("yy")]);
+  });
+
+  it("encodes only incoming suffixes while preserving a split multibyte boundary", () => {
+    const measured = countEncodedCodeUnits(() => {
+      let merged = text("");
+      for (let index = 0; index < MAX_AGENT_EVENT_TEXT_BYTES; index += 1) {
+        const next = coalesceAgentTextEvents(merged, text("x"));
+        if (next === null) throw new Error("One-byte text chunk exceeded the event bound.");
+        merged = next;
+      }
+      return merged;
+    });
+    expect(measured.result).toEqual(text("x".repeat(MAX_AGENT_EVENT_TEXT_BYTES)));
+    expect(measured.encodedCodeUnits).toBeLessThanOrEqual(MAX_AGENT_EVENT_TEXT_BYTES + 1);
+
+    const highSurrogate = coalesceAgentTextEvents(text("x".repeat(16_380)), text("\ud83d"));
+    if (highSurrogate === null) throw new Error("High surrogate did not fit the event bound.");
+    const completeScalar = coalesceAgentTextEvents(highSurrogate, text("\ude00"));
+    expect(completeScalar).toEqual(text(`${"x".repeat(16_380)}😀`));
+    expect(coalesceAgentTextEvents(completeScalar ?? undefined, text("x"))).toBeNull();
+  });
+
+  it("coalesces frozen text events", () => {
+    expect(
+      coalesceAgentTextEvents(Object.freeze(text("frozen ")), Object.freeze(text("text"))),
+    ).toEqual(text("frozen text"));
+  });
+
+  it("does not share byte state across structurally equal event identities", () => {
+    const first = text("same");
+    expect(coalesceAgentTextEvents(first, text(""))).toEqual(first);
+    const equalButDistinct = text("same");
+    const measured = countEncodedCodeUnits(() =>
+      coalesceAgentTextEvents(equalButDistinct, text("!")),
+    );
+    expect(measured.result).toEqual(text("same!"));
+    expect(measured.encodedCodeUnits).toBe(5);
+  });
+
+  it("reuses byte state only while the exact event text remains unchanged", () => {
+    const reused = text("stable");
+    expect(coalesceAgentTextEvents(reused, text(""))).toEqual(reused);
+    const measured = countEncodedCodeUnits(() => coalesceAgentTextEvents(reused, text("!")));
+    expect(measured.result).toEqual(text("stable!"));
+    expect(measured.encodedCodeUnits).toBe(1);
+  });
+
+  it("recomputes byte state for a mutated reused event identity", () => {
+    const reused = { kind: "assistantText" as const, text: "short" };
+    expect(coalesceAgentTextEvents(reused, text(""))).toEqual(text("short"));
+    reused.text = "x".repeat(MAX_AGENT_EVENT_TEXT_BYTES);
+    const measured = countEncodedCodeUnits(() => coalesceAgentTextEvents(reused, text("!")));
+    expect(measured.result).toBeNull();
+    expect(measured.encodedCodeUnits).toBe(MAX_AGENT_EVENT_TEXT_BYTES + 1);
   });
 
   it("drops events past the per-turn cap and marks the turn truncated", () => {

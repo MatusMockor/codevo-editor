@@ -15,7 +15,7 @@ import type {
   AgentViewCommandBridge,
   AgentViewCommandHandlers,
 } from "../../application/agentViewCommandBridge";
-import { AgentComposer } from "./AgentComposer";
+import { AgentComposerController } from "./AgentComposerController";
 import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
 import { AgentAddProjectDialog } from "./AgentAddProjectDialog";
@@ -29,7 +29,7 @@ import { agentThreadHeaderProject, type AgentWorkbenchChrome } from "./agentWork
 import { AgentClockProvider } from "./agentClock";
 import { agentProjectGroups } from "./agentModePresentation";
 import { useAgentAddProject } from "./useAgentAddProject";
-import { useAgentComposerState } from "./useAgentComposerState";
+import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentShipActions } from "./useAgentShipActions";
 import { useAgentSurfaceLayout } from "./useAgentSurfaceLayout";
 import { REVEAL_FAILED_NOTICE, useAgentThreadMenuCommands } from "./useAgentThreadMenuCommands";
@@ -75,7 +75,7 @@ export function AgentModeView({
   const navigation = useAgentThreadNavigation({ agents, groups, projects });
   const { selectedThread, selectedThreadId, railScope, find } = navigation;
 
-  const composer = useAgentComposerState({
+  const composer = useAgentComposerControllerState({
     agents,
     groups,
     projects,
@@ -268,9 +268,11 @@ export function AgentModeView({
                 reveal={find.reveal}
                 thread={selectedThread}
               />
-              <AgentComposer
-                {...composer.composerProps}
+              <AgentComposerController
+                composerProps={composer.composerProps}
                 modelFavoritesPersistence={modelFavoritesPersistence}
+                submissionBlocked={composer.submissionBlocked}
+                submit={composer.submit}
               />
             </div>
           </div>

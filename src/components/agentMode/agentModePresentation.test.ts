@@ -46,6 +46,7 @@ import {
   compareHostLabel,
   inPlaceGuardReasonLabel,
   type AgentFollowUpContext,
+  type AgentProjectGroup,
 } from "./agentModePresentation";
 
 const ROOT = "/workspace/app";
@@ -520,6 +521,67 @@ describe("agentModePresentation", () => {
 
     expect(threadIds(groups[1]?.repos[0]?.threads)).toEqual(["agt-2", "agt-1"]);
   });
+
+  it("groups 128 projects, repositories and threads with linear owner and root reads", () => {
+    const reads = { orphanRoot: 0, ownerId: 0, projectRoot: 0, repositoryRoot: 0 };
+    const projects = Array.from({ length: 128 }, (_unused, index) => {
+      const rootPath = `/workspace/project-${index}`;
+      const descriptor = project({
+        rootKey: index === 127 ? "/workspace/project-0" : rootPath,
+        rootPath,
+        ownerId: index === 127 ? "owner-0" : `owner-${index}`,
+        label: `project-${index}`,
+        repositories: [repository("", index === 1 ? "/repo/0" : `/repo/${index}`)],
+      });
+      countPropertyReads(descriptor, "rootKey", reads, "projectRoot");
+      countPropertyReads(descriptor.repositories[0]!, "repositoryRoot", reads, "repositoryRoot");
+      return descriptor;
+    });
+    const threads = Array.from({ length: 128 }, (_unused, index) => {
+      const ownerId =
+        index === 126 ? "owner-detached" : index === 127 ? "owner-0" : `owner-${index}`;
+      const repositoryRoot =
+        index === 126 ? "/detached" : index === 2 ? "/stray/2" : `/repo/${index}`;
+      const view = thread({
+        archived: index === 3,
+        ownerId,
+        repositoryRoot,
+        threadId: `agt-${index}`,
+      });
+      countPropertyReads(view.thread.owner, "ownerId", reads, "ownerId");
+      countPropertyReads(view.thread.owner, "repositoryRoot", reads, "repositoryRoot");
+      return view;
+    });
+    const orphans = Array.from({ length: 128 }, (_unused, index) => {
+      const repositoryRoot = index === 127 ? "/detached" : `/repo/${index}`;
+      const view = orphan(repositoryRoot, `${repositoryRoot}/.worktrees/orphan-${index}`);
+      countPropertyReads(view, "repositoryRoot", reads, "orphanRoot");
+      return view;
+    });
+
+    const groups = agentProjectGroups(projects, threads, orphans);
+
+    expect(groups).toHaveLength(128);
+    expect(groups.slice(0, 3).map((group) => group.label)).toEqual([
+      "project-0",
+      "project-1",
+      "project-2",
+    ]);
+    expect(groups[0]?.repos.map((repo) => repo.repositoryRoot)).toEqual(["/repo/0", "/repo/127"]);
+    expect(groups[1]?.repos.map((repo) => repo.repositoryRoot)).toEqual(["/repo/1"]);
+    expect(groups[1]?.repos[0]?.repositoryResolved).toBe(false);
+    expect(groups[2]?.repos.map((repo) => repo.repositoryRoot)).toEqual(["/repo/2", "/stray/2"]);
+    expect(groups[groups.length - 1]?.repos.map((repo) => repo.repositoryRoot)).toEqual([
+      "/detached",
+      "/repo/1",
+    ]);
+    expect(groups[groups.length - 1]?.repos[0]?.threads[0]?.thread.threadId).toBe("agt-126");
+    expect(groupedThreadIds(groups)).toHaveLength(128);
+    expect(reads.projectRoot).toBeLessThanOrEqual(128 * 3);
+    expect(reads.ownerId).toBeLessThanOrEqual(128 * 3);
+    expect(reads.repositoryRoot).toBeLessThanOrEqual(128 * 8);
+    expect(reads.orphanRoot).toBeLessThanOrEqual(128 * 2);
+  });
 });
 
 describe("agent thread queue presentation", () => {
@@ -695,6 +757,30 @@ function orphan(repositoryRoot: string, worktreePath: string): OrphanedWorktreeV
     prunable: false,
     removing: false,
   };
+}
+
+function countPropertyReads<TValue extends object, TKey extends keyof TValue>(
+  value: TValue,
+  key: TKey,
+  reads: Record<string, number>,
+  counter: string,
+): void {
+  const stored = value[key];
+  Object.defineProperty(value, key, {
+    configurable: true,
+    get: () => {
+      reads[counter] = (reads[counter] ?? 0) + 1;
+      return stored;
+    },
+  });
+}
+
+function groupedThreadIds(groups: ReadonlyArray<AgentProjectGroup>): ReadonlyArray<string> {
+  return groups.flatMap((group) =>
+    group.repos.flatMap((repo) =>
+      [...repo.threads, ...repo.archived].map((view) => view.thread.threadId),
+    ),
+  );
 }
 
 describe("agent ship presentation", () => {

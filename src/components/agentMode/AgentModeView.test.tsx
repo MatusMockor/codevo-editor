@@ -36,7 +36,13 @@ const NOW_TICK_MS = 3_600_000;
 const ADD_PROJECT_HOME = "/Users/dev";
 const NOW = 1_700_000_600_000;
 
-const columnRenders = vi.hoisted(() => ({ session: 0 }));
+const columnRenders = vi.hoisted(() => ({
+  composer: 0,
+  header: 0,
+  session: 0,
+  sidebar: 0,
+  surface: 0,
+}));
 const sessionReveals = vi.hoisted((): Array<AgentThreadRevealRequest | null> => []);
 
 vi.mock("./AgentSurfaceDiff", () => ({
@@ -73,6 +79,50 @@ vi.mock("./AgentThreadSession", async (importOriginal) => {
       columnRenders.session += 1;
       sessionReveals.push(props.reveal ?? null);
       return <actual.AgentThreadSession {...props} />;
+    },
+  };
+});
+
+vi.mock("./AgentComposer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./AgentComposer")>();
+  return {
+    ...actual,
+    AgentComposer: (props: Parameters<typeof actual.AgentComposer>[0]) => {
+      columnRenders.composer += 1;
+      return <actual.AgentComposer {...props} />;
+    },
+  };
+});
+
+vi.mock("./AgentThreadHeader", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./AgentThreadHeader")>();
+  return {
+    ...actual,
+    AgentThreadHeader: (props: Parameters<typeof actual.AgentThreadHeader>[0]) => {
+      columnRenders.header += 1;
+      return <actual.AgentThreadHeader {...props} />;
+    },
+  };
+});
+
+vi.mock("./AgentThreadsSidebar", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./AgentThreadsSidebar")>();
+  return {
+    ...actual,
+    AgentThreadsSidebar: (props: Parameters<typeof actual.AgentThreadsSidebar>[0]) => {
+      columnRenders.sidebar += 1;
+      return <actual.AgentThreadsSidebar {...props} />;
+    },
+  };
+});
+
+vi.mock("./AgentSurfaceHost", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./AgentSurfaceHost")>();
+  return {
+    ...actual,
+    AgentSurfaceHost: (props: Parameters<typeof actual.AgentSurfaceHost>[0]) => {
+      columnRenders.surface += 1;
+      return <actual.AgentSurfaceHost {...props} />;
     },
   };
 });
@@ -1408,6 +1458,46 @@ describe("AgentModeView", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps prompt typing inside the composer render boundary with a loaded workbench", () => {
+    const selected = threadView({ threadId: "agt-0" });
+    const loadedSelected = {
+      ...selected,
+      thread: {
+        ...selected.thread,
+        turns: Array.from({ length: 64 }, (_, index) =>
+          turn("agt-0", `Turn ${index + 1}`, { kind: "exited", exitCode: 0 }),
+        ),
+      },
+    };
+    const threads = [
+      loadedSelected,
+      ...Array.from({ length: 127 }, (_, index) =>
+        threadView({ threadId: `agt-${index + 1}`, title: `Thread ${index + 1}` }),
+      ),
+    ];
+    const layout = recordedLayoutState({
+      activeSurface: "diff",
+      openSurfaces: ["diff"],
+      rightPanel: "open",
+    });
+    render({ agents: surface({ threads }), chrome: chromeFixture({ layout }) });
+    click('[data-thread-id="agt-0"]');
+
+    for (const key of Object.keys(columnRenders) as Array<keyof typeof columnRenders>) {
+      columnRenders[key] = 0;
+    }
+    for (let index = 0; index < 20; index += 1) {
+      typePrompt(`Prompt revision ${index + 1}`);
+    }
+
+    expect(columnRenders.composer).toBe(20);
+    expect(columnRenders.header).toBe(0);
+    expect(columnRenders.session).toBe(0);
+    expect(columnRenders.sidebar).toBe(0);
+    expect(columnRenders.surface).toBe(0);
+    expect(promptField().value).toBe("Prompt revision 20");
   });
 
   it("renders rail timestamps through the agent clock instead of a now prop", () => {

@@ -94,6 +94,55 @@ describe("useAgentComposerState", () => {
     expect(current().navigation.selectedThreadId).toBeNull();
   });
 
+  it("keeps prompt edits made while a submission is pending", async () => {
+    let resolveStart: ((value: { threadId: string }) => void) | null = null;
+    const pendingStart = new Promise<{ threadId: string }>((resolve) => {
+      resolveStart = resolve;
+    });
+    render(threadsSurfaceFixture({ startThread: () => pendingStart }));
+    act(() => current().composer.composerProps.onPromptChange("First prompt"));
+    act(() => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+    act(() => current().composer.composerProps.onPromptChange("Second prompt"));
+
+    await act(async () => {
+      resolveStart?.({ threadId: "agt-new" });
+      await pendingStart;
+    });
+
+    expect(current().composer.composerProps.prompt).toBe("Second prompt");
+    expect(current().navigation.selectedThreadId).toBe("agt-new");
+  });
+
+  it("does not publish a completed start after the project owner generation changes", async () => {
+    let resolveStart: ((value: { threadId: string }) => void) | null = null;
+    const pendingStart = new Promise<{ threadId: string }>((resolve) => {
+      resolveStart = resolve;
+    });
+    const agents = threadsSurfaceFixture({ startThread: () => pendingStart });
+    render(agents, [projectFixture({ generation: 1 })]);
+    act(() => current().composer.composerProps.onPromptChange("Keep exact owner"));
+    act(() => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+
+    render(agents, [projectFixture({ generation: 2 })]);
+    await act(async () => {
+      resolveStart?.({ threadId: "agt-stale" });
+      await pendingStart;
+    });
+
+    expect(current().composer.composerProps.prompt).toBe("Keep exact owner");
+    expect(current().navigation.selectedThreadId).toBeNull();
+  });
+
   it("sends a follow-up for the selected thread and clears the prompt on success", async () => {
     const sendFollowUp = vi.fn(async () => true);
     render(threadsSurfaceFixture({ threads: [surfaceThreadView()], sendFollowUp }));
@@ -114,6 +163,42 @@ describe("useAgentComposerState", () => {
       dangerousLaunchConfirmed: true,
     });
     expect(current().composer.composerProps.prompt).toBe("");
+  });
+
+  it("keeps a pending follow-up when the selected thread owner is replaced", async () => {
+    let resolveFollowUp: ((value: boolean) => void) | null = null;
+    const pendingFollowUp = new Promise<boolean>((resolve) => {
+      resolveFollowUp = resolve;
+    });
+    const original = surfaceThreadView();
+    const agents = threadsSurfaceFixture({
+      threads: [original],
+      sendFollowUp: () => pendingFollowUp,
+    });
+    render(agents);
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("Keep follow-up"));
+    act(() => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+
+    const replacement = {
+      ...original,
+      thread: {
+        ...original.thread,
+        owner: { ...original.thread.owner, rootKey: "/workspace/replaced" },
+      },
+    };
+    render({ ...agents, threads: [replacement] });
+    await act(async () => {
+      resolveFollowUp?.(true);
+      await pendingFollowUp;
+    });
+
+    expect(current().composer.composerProps.prompt).toBe("Keep follow-up");
   });
 
   it("requires the unsafe in-place confirmation key and forwards it on start", async () => {

@@ -45,6 +45,9 @@ export function useAgentThreadSearch(
   const generationRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const normalizedRef = useRef<string | null>(null);
+  const policyRef = useRef({ debounceMs, limit });
+  const observedPolicyRef = useRef({ debounceMs, limit });
+  policyRef.current = { debounceMs, limit };
 
   const cancelScheduled = useCallback((): void => {
     generationRef.current += 1;
@@ -61,13 +64,21 @@ export function useAgentThreadSearch(
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
         if (generation !== generationRef.current) return;
-        const result = searchIndex(indexRef.current, normalized, limit);
+        const result = searchIndex(indexRef.current, normalized, policyRef.current.limit);
         if (generation !== generationRef.current) return;
         setPublished(result);
         setPending(false);
-      }, debounceMs);
+      }, policyRef.current.debounceMs);
     },
-    [cancelScheduled, debounceMs, limit],
+    [cancelScheduled],
+  );
+
+  const scheduleRefresh = useCallback(
+    (normalized: string): void => {
+      if (timerRef.current !== null) return;
+      schedule(normalized);
+    },
+    [schedule],
   );
 
   const setQuery = useCallback(
@@ -90,10 +101,19 @@ export function useAgentThreadSearch(
   const clear = useCallback((): void => setQuery(""), [setQuery]);
 
   useEffect(() => {
+    const observed = observedPolicyRef.current;
+    if (observed.debounceMs === debounceMs && observed.limit === limit) return;
+    observedPolicyRef.current = { debounceMs, limit };
     const normalized = normalizedRef.current;
     if (normalized === null) return;
     schedule(normalized);
-  }, [index, schedule]);
+  }, [debounceMs, limit, schedule]);
+
+  useEffect(() => {
+    const normalized = normalizedRef.current;
+    if (normalized === null) return;
+    scheduleRefresh(normalized);
+  }, [index, scheduleRefresh]);
 
   useEffect(() => cancelScheduled, [cancelScheduled]);
 

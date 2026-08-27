@@ -495,6 +495,8 @@ export function agentProjectGroups(
   threads: ReadonlyArray<AgentThreadView>,
   orphans: ReadonlyArray<OrphanedWorktreeView>,
 ): ReadonlyArray<AgentProjectGroup> {
+  const threadsByOwner = indexThreadsByOwner(threads);
+  const orphansByRepository = indexOrphansByRepository(orphans);
   const claimedRepositoryRoots = new Set<string>();
   const claimedProjectRootKeys = new Set<string>();
   const claimedOwnerIds = new Set<string>();
@@ -508,33 +510,30 @@ export function agentProjectGroups(
     claimedProjectRootKeys.add(project.rootKey);
     const ownsThreads = !claimedOwnerIds.has(project.ownerId);
     claimedOwnerIds.add(project.ownerId);
-    const projectThreads = ownsThreads
-      ? threads.filter((view) => view.thread.owner.ownerId === project.ownerId)
-      : [];
-    groups.push(buildProjectGroup(project, projectThreads, orphans, claimedRepositoryRoots));
+    const projectThreads = ownsThreads ? (threadsByOwner.get(project.ownerId) ?? []) : [];
+    groups.push(
+      buildProjectGroup(project, projectThreads, orphansByRepository, claimedRepositoryRoots),
+    );
   }
 
-  const detachedThreads = threads.filter((view) => !knownOwnerIds.has(view.thread.owner.ownerId));
-  const detachedOrphans = orphans.filter(
-    (orphan) => !claimedRepositoryRoots.has(orphan.repositoryRoot),
-  );
-  const detachedRoots = [
-    ...new Set([
-      ...detachedThreads.map((view) => view.thread.owner.repositoryRoot),
-      ...detachedOrphans.map((orphan) => orphan.repositoryRoot),
-    ]),
-  ].sort();
+  const detachedThreadsByRepository = indexDetachedThreadsByRepository(threads, knownOwnerIds);
+  const detachedRoots = new Set(detachedThreadsByRepository.keys());
+  for (const repositoryRoot of orphansByRepository.keys()) {
+    if (claimedRepositoryRoots.has(repositoryRoot)) continue;
+    detachedRoots.add(repositoryRoot);
+  }
+  const orderedDetachedRoots = [...detachedRoots].sort();
 
-  if (detachedRoots.length === 0) {
+  if (orderedDetachedRoots.length === 0) {
     return groups;
   }
 
-  const detachedRepos = detachedRoots.map((root) =>
+  const detachedRepos = orderedDetachedRoots.map((root) =>
     buildGroup(
       root,
       root,
-      detachedThreads.filter((view) => view.thread.owner.repositoryRoot === root),
-      detachedOrphans.filter((orphan) => orphan.repositoryRoot === root),
+      detachedThreadsByRepository.get(root) ?? [],
+      claimedRepositoryRoots.has(root) ? [] : (orphansByRepository.get(root) ?? []),
       false,
     ),
   );
@@ -558,7 +557,7 @@ export function agentProjectGroups(
 function buildProjectGroup(
   project: AgentProjectDescriptor,
   projectThreads: ReadonlyArray<AgentThreadView>,
-  orphans: ReadonlyArray<OrphanedWorktreeView>,
+  orphansByRepository: ReadonlyMap<string, ReadonlyArray<OrphanedWorktreeView>>,
   claimedRepositoryRoots: Set<string>,
 ): AgentProjectGroup {
   const repositories = project.repositories.filter(
@@ -569,30 +568,25 @@ function buildProjectGroup(
   }
 
   const ownedRoots = new Set(repositories.map((repository) => repository.repositoryRoot));
+  const projectThreadsByRepository = indexThreadsByRepository(projectThreads);
   const repos = repositories.map((repository) =>
     buildGroup(
       repository.repositoryRoot,
       gitRepositoryDisplayName(repository.mapping.rootRelativePath, project.rootPath),
-      projectThreads.filter(
-        (view) => view.thread.owner.repositoryRoot === repository.repositoryRoot,
-      ),
-      orphans.filter((orphan) => orphan.repositoryRoot === repository.repositoryRoot),
+      projectThreadsByRepository.get(repository.repositoryRoot) ?? [],
+      orphansByRepository.get(repository.repositoryRoot) ?? [],
       true,
     ),
   );
 
   const strayRoots = [
-    ...new Set(
-      projectThreads
-        .map((view) => view.thread.owner.repositoryRoot)
-        .filter((root) => !ownedRoots.has(root)),
-    ),
+    ...new Set([...projectThreadsByRepository.keys()].filter((root) => !ownedRoots.has(root))),
   ].sort();
   const strayRepos = strayRoots.map((root) =>
     buildGroup(
       root,
       strayRepositoryLabel(root, project.rootPath),
-      projectThreads.filter((view) => view.thread.owner.repositoryRoot === root),
+      projectThreadsByRepository.get(root) ?? [],
       [],
       false,
     ),
@@ -613,6 +607,53 @@ function buildProjectGroup(
     repos: repoGroups,
     liveCount: totalLiveCount(repoGroups),
   };
+}
+
+function indexThreadsByOwner(
+  threads: ReadonlyArray<AgentThreadView>,
+): ReadonlyMap<string, ReadonlyArray<AgentThreadView>> {
+  return immutableArrayIndex(threads, (view) => view.thread.owner.ownerId);
+}
+
+function indexThreadsByRepository(
+  threads: ReadonlyArray<AgentThreadView>,
+): ReadonlyMap<string, ReadonlyArray<AgentThreadView>> {
+  return immutableArrayIndex(threads, (view) => view.thread.owner.repositoryRoot);
+}
+
+function indexOrphansByRepository(
+  orphans: ReadonlyArray<OrphanedWorktreeView>,
+): ReadonlyMap<string, ReadonlyArray<OrphanedWorktreeView>> {
+  return immutableArrayIndex(orphans, (orphan) => orphan.repositoryRoot);
+}
+
+function indexDetachedThreadsByRepository(
+  threads: ReadonlyArray<AgentThreadView>,
+  knownOwnerIds: ReadonlySet<string>,
+): ReadonlyMap<string, ReadonlyArray<AgentThreadView>> {
+  const detached: AgentThreadView[] = [];
+  for (const view of threads) {
+    if (knownOwnerIds.has(view.thread.owner.ownerId)) continue;
+    detached.push(view);
+  }
+  return indexThreadsByRepository(detached);
+}
+
+function immutableArrayIndex<TValue>(
+  values: ReadonlyArray<TValue>,
+  keyOf: (value: TValue) => string,
+): ReadonlyMap<string, ReadonlyArray<TValue>> {
+  const mutable = new Map<string, TValue[]>();
+  for (const value of values) {
+    const key = keyOf(value);
+    const indexed = mutable.get(key);
+    if (indexed !== undefined) {
+      indexed.push(value);
+      continue;
+    }
+    mutable.set(key, [value]);
+  }
+  return new Map([...mutable].map(([key, indexed]) => [key, Object.freeze(indexed)]));
 }
 
 function strayRepositoryLabel(repositoryRoot: string, projectRootPath: string): string {

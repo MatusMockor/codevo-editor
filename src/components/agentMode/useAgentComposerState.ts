@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { MAX_AGENT_TASK_PROMPT_BYTES, type AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
@@ -64,7 +64,41 @@ export interface AgentComposerState {
   clearSelection(): void;
 }
 
+export type AgentComposerControllerProps = Omit<
+  AgentComposerProps,
+  "onPromptChange" | "onSubmit" | "prompt" | "promptBytes" | "submitBlocked"
+>;
+
+export interface AgentComposerControllerState {
+  readonly target: ComposerTarget | null;
+  readonly composerLabel: string | null;
+  readonly composerProps: AgentComposerControllerProps;
+  readonly submissionBlocked: boolean;
+  submit(prompt: string, submission: AgentComposerSubmission): Promise<boolean>;
+  startNewThread(projectRootKey: string, repositoryRoot: string): void;
+  clearSelection(): void;
+}
+
+export type AgentComposerPromptController = Pick<
+  AgentComposerControllerState,
+  "composerProps" | "submissionBlocked" | "submit"
+>;
+
 export function useAgentComposerState({
+  ...options
+}: AgentComposerStateOptions): AgentComposerState {
+  const controller = useAgentComposerControllerState(options);
+  const composerProps = useAgentComposerPromptState(controller);
+  return {
+    target: controller.target,
+    composerLabel: controller.composerLabel,
+    composerProps,
+    startNewThread: controller.startNewThread,
+    clearSelection: controller.clearSelection,
+  };
+}
+
+export function useAgentComposerControllerState({
   agents,
   groups,
   onClearSelectedThread,
@@ -72,9 +106,8 @@ export function useAgentComposerState({
   projects,
   railScope,
   selectedThread,
-}: AgentComposerStateOptions): AgentComposerState {
+}: AgentComposerStateOptions): AgentComposerControllerState {
   const [selection, setSelection] = useState<ComposerSelection | null>(null);
-  const [prompt, setPrompt] = useState("");
   const [isolationChoice, setIsolationChoice] = useState<IsolationChoice | null>(null);
   const [unsafeConfirmed, setUnsafeConfirmed] = useState<string | null>(null);
   const [launchChoice, setLaunchChoice] = useState<LaunchChoice | null>(null);
@@ -124,8 +157,6 @@ export function useAgentComposerState({
   const guard = preview?.inPlaceGuard ?? { kind: "safe" as const };
   const confirmationKey = preview?.confirmationKey ?? null;
   const confirmed = confirmationKey !== null && unsafeConfirmed === confirmationKey;
-  const promptBytes = agentPromptByteLength(prompt);
-  const promptEmpty = prompt.trim() === "" || promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
   const composerMode = useComposerMode(selectedThread, agents);
 
   const targetRootKey = target?.projectRootKey ?? null;
@@ -144,9 +175,8 @@ export function useAgentComposerState({
     setDangerousConfirmed(false);
   }, [launchKey]);
 
-  const submitBlocked =
+  const submissionBlocked =
     agents.dispatching ||
-    promptEmpty ||
     (selectedThread === null &&
       (target === null || (isolation === "in-place" && guard.kind === "unsafe" && !confirmed)));
 
@@ -182,49 +212,54 @@ export function useAgentComposerState({
 
   const sendFollowUp = agents.sendFollowUp;
   const startThread = agents.startThread;
-  const followUpThreadId = selectedThread?.thread.threadId ?? null;
+  const submissionAuthority = composerSubmissionAuthority(selectedThread, target, composerProject);
+  const submissionAuthorityRef = useRef(submissionAuthority);
+  submissionAuthorityRef.current = submissionAuthority;
 
   const submit = useCallback(
-    (submission: AgentComposerSubmission) => {
+    async (prompt: string, submission: AgentComposerSubmission) => {
       setDangerousConfirmed(false);
-      if (followUpThreadId !== null) {
-        void sendFollowUp({
-          threadId: followUpThreadId,
-          prompt,
-          launch: submission.launch,
-          dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
-        }).then((sent) => {
-          if (!sent) return;
-          setPrompt("");
-        });
-        return;
+      const authority = submissionAuthority;
+      if (authority === null) return false;
+      switch (authority.kind) {
+        case "followUp": {
+          const sent = await sendFollowUp({
+            threadId: authority.threadId,
+            prompt,
+            launch: submission.launch,
+            dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
+          });
+          if (!sent) return false;
+          return composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority);
+        }
+        case "new": {
+          const started = await startThread({
+            projectRootKey: authority.projectRootKey,
+            repositoryRoot: authority.repositoryRoot,
+            prompt,
+            isolation,
+            unsafeInPlaceConfirmationKey: confirmed ? confirmationKey : null,
+            launch: submission.launch,
+            dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
+          });
+          if (started === null) return false;
+          if (!composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority)) {
+            return false;
+          }
+          setUnsafeConfirmed(null);
+          onThreadStarted(started.threadId);
+          return true;
+        }
       }
-      if (target === null) return;
-      void startThread({
-        projectRootKey: target.projectRootKey,
-        repositoryRoot: target.repositoryRoot,
-        prompt,
-        isolation,
-        unsafeInPlaceConfirmationKey: confirmed ? confirmationKey : null,
-        launch: submission.launch,
-        dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
-      }).then((started) => {
-        if (started === null) return;
-        setPrompt("");
-        setUnsafeConfirmed(null);
-        onThreadStarted(started.threadId);
-      });
     },
     [
       confirmationKey,
       confirmed,
-      followUpThreadId,
       isolation,
       onThreadStarted,
-      prompt,
       sendFollowUp,
       startThread,
-      target,
+      submissionAuthority,
     ],
   );
 
@@ -272,7 +307,7 @@ export function useAgentComposerState({
     [confirmationKey],
   );
 
-  const composerProps: AgentComposerProps = {
+  const composerProps: AgentComposerControllerProps = {
     dangerousConfirmed,
     dispatching: agents.dispatching,
     guard,
@@ -285,20 +320,122 @@ export function useAgentComposerState({
     onIsolationChange: changeIsolation,
     onLaunchChange: changeLaunch,
     onNewThread: clearSelection,
-    onPromptChange: setPrompt,
     onSelectRepository: selectRepository,
-    onSubmit: submit,
     onUnsafeConfirmedChange: changeUnsafeConfirmed,
-    prompt,
-    promptBytes,
-    submitBlocked,
     target: composerTargetView(composerProjects, target),
     unsafeConfirmed: confirmed,
     worktreeOnly,
     worktreeOnlyReason,
   };
 
-  return { target, composerLabel, composerProps, startNewThread, clearSelection };
+  return {
+    target,
+    composerLabel,
+    composerProps,
+    submissionBlocked,
+    submit,
+    startNewThread,
+    clearSelection,
+  };
+}
+
+export function useAgentComposerPromptState(
+  controller: AgentComposerPromptController,
+): AgentComposerProps {
+  const [prompt, setPrompt] = useState("");
+  const promptRevisionRef = useRef(0);
+  const changePrompt = useCallback((next: string) => {
+    promptRevisionRef.current += 1;
+    setPrompt(next);
+  }, []);
+  const submit = useCallback(
+    (submission: AgentComposerSubmission) => {
+      const submittedPrompt = prompt;
+      const submittedRevision = promptRevisionRef.current;
+      void controller.submit(submittedPrompt, submission).then((submitted) => {
+        if (!submitted) return;
+        if (promptRevisionRef.current !== submittedRevision) return;
+        promptRevisionRef.current += 1;
+        setPrompt("");
+      });
+    },
+    [controller, prompt],
+  );
+  const promptBytes = agentPromptByteLength(prompt);
+  const promptInvalid = prompt.trim() === "" || promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
+  return {
+    ...controller.composerProps,
+    onPromptChange: changePrompt,
+    onSubmit: submit,
+    prompt,
+    promptBytes,
+    submitBlocked: controller.submissionBlocked || promptInvalid,
+  };
+}
+
+type ComposerSubmissionAuthority =
+  | {
+      readonly kind: "followUp";
+      readonly threadId: string;
+      readonly rootKey: string;
+      readonly ownerId: string;
+      readonly repositoryRoot: string;
+    }
+  | {
+      readonly kind: "new";
+      readonly projectRootKey: string;
+      readonly repositoryRoot: string;
+      readonly ownerId: string;
+      readonly generation: number;
+    };
+
+function composerSubmissionAuthority(
+  selectedThread: AgentThreadView | null,
+  target: ComposerTarget | null,
+  project: AgentProjectDescriptor | null,
+): ComposerSubmissionAuthority | null {
+  if (selectedThread !== null) {
+    return {
+      kind: "followUp",
+      threadId: selectedThread.thread.threadId,
+      rootKey: selectedThread.thread.owner.rootKey,
+      ownerId: selectedThread.thread.owner.ownerId,
+      repositoryRoot: selectedThread.thread.owner.repositoryRoot,
+    };
+  }
+  if (target === null || project === null) return null;
+  return {
+    kind: "new",
+    projectRootKey: target.projectRootKey,
+    repositoryRoot: target.repositoryRoot,
+    ownerId: project.ownerId,
+    generation: project.generation,
+  };
+}
+
+function composerSubmissionAuthorityEqual(
+  current: ComposerSubmissionAuthority | null,
+  captured: ComposerSubmissionAuthority,
+): boolean {
+  if (current === null || current.kind !== captured.kind) return false;
+  switch (captured.kind) {
+    case "followUp":
+      if (current.kind !== "followUp") return false;
+      return (
+        current.threadId === captured.threadId &&
+        current.rootKey === captured.rootKey &&
+        current.ownerId === captured.ownerId &&
+        current.repositoryRoot === captured.repositoryRoot
+      );
+    case "new":
+      if (current.kind !== "new") return false;
+      return (
+        current.projectRootKey === captured.projectRootKey &&
+        current.repositoryRoot === captured.repositoryRoot &&
+        current.ownerId === captured.ownerId &&
+        current.generation === captured.generation
+      );
+  }
 }
 
 function composerProjectOptions(

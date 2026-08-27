@@ -6,9 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThread, AgentTurn } from "../domain/agentThread";
 import * as agentThreadSearch from "../domain/agentThreadSearch";
 import type { AgentThreadSearchSurface, AgentThreadView } from "./agentThreadPorts";
-import { AGENT_THREAD_SEARCH_DEBOUNCE_MS, useAgentThreadSearch } from "./useAgentThreadSearch";
+import {
+  AGENT_THREAD_SEARCH_DEBOUNCE_MS,
+  useAgentThreadSearch,
+  type AgentThreadSearchOptions,
+} from "./useAgentThreadSearch";
 
 const ROOT = "/workspace/app";
+const SECOND_ROOT = "/workspace/other";
 
 function turn(turnId: string, prompt: string, assistant: string): AgentTurn {
   return {
@@ -65,11 +70,15 @@ function view(entry: AgentThread): AgentThreadView {
   };
 }
 
-function renderSearch(initialViews: ReadonlyArray<AgentThreadView>) {
+function renderSearch(
+  initialViews: ReadonlyArray<AgentThreadView>,
+  initialOptions: AgentThreadSearchOptions = {},
+) {
   let views = initialViews;
+  let options = initialOptions;
   let current: AgentThreadSearchSurface | null = null;
   function Harness() {
-    current = useAgentThreadSearch(views);
+    current = useAgentThreadSearch(views, options);
     return null;
   }
 
@@ -85,6 +94,10 @@ function renderSearch(initialViews: ReadonlyArray<AgentThreadView>) {
     },
     setViews(next: ReadonlyArray<AgentThreadView>): void {
       views = next;
+      render();
+    },
+    setOptions(next: AgentThreadSearchOptions): void {
+      options = next;
       render();
     },
     type(raw: string): void {
@@ -202,6 +215,86 @@ describe("useAgentThreadSearch", () => {
     harness.fire();
     expect(harness.hook().pending).toBe(false);
     expect(harness.hook().result?.query).toBe(query.slice(0, 200).toLowerCase());
+    harness.unmount();
+  });
+
+  it("publishes within one debounce while one of 128 indexed threads streams", () => {
+    const firstRoot = Array.from({ length: 64 }, (_, index) =>
+      view(thread(`agt-a-${index}`, `First root ${index}`)),
+    );
+    const secondRoot = Array.from({ length: 64 }, (_, index) =>
+      view(
+        thread(`agt-b-${index}`, index === 0 ? "Needle stream" : `Second root ${index}`, {
+          owner: {
+            rootKey: SECOND_ROOT,
+            ownerId: "workspace-b",
+            repositoryRoot: SECOND_ROOT,
+          },
+          target: {
+            isolation: "worktree",
+            worktreePath: `${SECOND_ROOT}/.worktrees/agt-b-${index}`,
+          },
+        }),
+      ),
+    );
+    const harness = renderSearch([...firstRoot, ...secondRoot]);
+    const searchSpy = vi.spyOn(agentThreadSearch, "searchAgentThreadDocuments");
+    expect(buildSpy).toHaveBeenCalledTimes(128);
+    buildSpy.mockClear();
+
+    harness.type("needle");
+    let publishedAtMs: number | null = null;
+    for (let elapsedMs = 10; elapsedMs <= AGENT_THREAD_SEARCH_DEBOUNCE_MS; elapsedMs += 10) {
+      act(() => {
+        vi.advanceTimersByTime(10);
+      });
+      if (harness.hook().result !== null && publishedAtMs === null) publishedAtMs = elapsedMs;
+      const current = secondRoot[0]?.thread;
+      if (current === undefined) throw new Error("Missing streaming thread.");
+      const streaming = {
+        ...current,
+        updatedAtEpochMs: 2_000 + elapsedMs,
+        turns: [turn("agt-b-0-t1", "Needle prompt", `Needle output ${elapsedMs}`)],
+      };
+      secondRoot[0] = view(streaming);
+      harness.setViews([...firstRoot, ...secondRoot]);
+    }
+
+    expect(publishedAtMs).toBe(AGENT_THREAD_SEARCH_DEBOUNCE_MS);
+    expect(harness.hook().result?.matches[0]?.threadId).toBe("agt-b-0");
+    expect(searchSpy).toHaveBeenCalledTimes(1);
+    expect(buildSpy).toHaveBeenCalledTimes(12);
+    expect(buildSpy.mock.calls.every(([candidate]) => candidate.threadId === "agt-b-0")).toBe(true);
+    searchSpy.mockRestore();
+    harness.unmount();
+  });
+
+  it("restarts a pending query with the latest debounce and result limit", () => {
+    const harness = renderSearch(
+      [
+        view(thread("agt-a", "Needle alpha")),
+        view(thread("agt-b", "Needle beta")),
+        view(thread("agt-c", "Needle gamma")),
+      ],
+      { debounceMs: AGENT_THREAD_SEARCH_DEBOUNCE_MS, limit: 3 },
+    );
+    harness.type("needle");
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+
+    harness.setOptions({ debounceMs: 20, limit: 1 });
+    act(() => {
+      vi.advanceTimersByTime(19);
+    });
+    expect(harness.hook()).toMatchObject({ pending: true, result: null });
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(harness.hook().pending).toBe(false);
+    expect(harness.hook().result).toMatchObject({ query: "needle", truncated: true });
+    expect(harness.hook().result?.matches).toHaveLength(1);
     harness.unmount();
   });
 
