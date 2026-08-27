@@ -63,8 +63,8 @@
       "structuralTokens": 6637
     },
     "src/application/useWorkbenchController.ts": {
-      "rawLines": 5723,
-      "structuralTokens": 18751
+      "rawLines": 5673,
+      "structuralTokens": 18490
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 2502,

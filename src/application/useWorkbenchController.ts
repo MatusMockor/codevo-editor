@@ -105,10 +105,9 @@ import {
 } from "./workbenchController/boundedPendingWorkspaceSettingsLoads";
 import { useExternallyRemovedDocumentTombstones } from "./workbenchController/useExternallyRemovedDocumentTombstones";
 import {
-  clearClosedWorkspaceEditorRetainedState,
   disposeWorkspaceFileChanges,
   releaseWorkspaceRetainedResources,
-  withoutClosedWorkspacePackageScripts,
+  useWorkspaceTabRetainedStateCleanupPort,
 } from "./workbenchController/workspaceRetainedStateCleanup";
 import { useWorkbenchSettingsPersistence } from "./workbenchController/useWorkbenchSettingsPersistence";
 import { useInitialAppSettingsHydration } from "./workbenchController/useInitialAppSettingsHydration";
@@ -3798,115 +3797,66 @@ export function useWorkbenchController(
     workspaceRuntimeLifecycleGateway,
     agents.agentProjects,
   );
-
-  const {
-    closeApplicationWindow,
-    closeWorkspaceTab: closeWorkspaceTabWithLifecycle,
-    quitApplication,
-  } = useWorkbenchCloseLifecycle({
-    workspaceRoot,
-    dirtyCount,
+  const prepareWorkspaceTabRetainedCleanup = useWorkspaceTabRetainedStateCleanupPort({
     appSettingsRef,
-    workspaceStateCacheRef,
-    resolveCachedWorkspaceState,
-    forgetCachedWorkspaceState,
     workspaceIdentityByRootRef,
-    editorConfigCacheRef,
-    openWorkspaceRequestPathRef,
-    openWorkspaceRequestTokenRef,
-    openFileRequestTokenRef,
-    gitDiffRequestTokenRef,
-    editorGitBaselineRequestTokenRef,
-    prompter,
-    dirtyCloseDecisionPort: options.dirtyCloseDecisionPort ?? fallbackDirtyCloseDecisionPort,
-    captureDirtyCloseTargets,
-    isWorkspaceRuntimeOwnerCurrent,
-    ownerDocumentSaveRepository: ownerDocumentSaveAdapters.repository,
-    ownerResolvingDocumentSaveService,
-    requestOwnerDocumentSave,
-    workspaceCloseSession,
-    commitWorkspaceClose,
-    runWithDocumentSaveExclusion: runWithDocumentSaveExclusionDelegate,
-    persistAppSettings,
-    closeSyncedLanguageServerDocumentsForRoot,
-    closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-    stopProjectRuntimes: stopProjectRuntimesForWorkspaceClose,
-    forgetLanguageServerRuntimeStatuses: forgetLanguageServerRuntimeStatusesForWorkspaceClose,
-    forgetLatencyTrackerForRoot,
-    unregisterWorkspace: releaseOwnedWorkspaceIdentity,
-    disposeRegisteredWorkspace: registeredWorkspaceClosePorts[0],
-    prepareRegisteredWorkspaceIdentitySettlement: prepareBackendClosedWorkspaceIdentitySettlement,
-    closeRegisteredWorkspaceAgents: registeredWorkspaceClosePorts[1],
-    clearExternalFileConflictsForRoot: clearExternalFileConflictsForWorkspaceClose,
-    invalidateWorkspaceResourceCachesForRoot: clearWorkspaceResourceCachesForRoot,
-    workspaceHasExternalFileConflicts: (root) => workspaceHasExternalFileConflictsRef.current(root),
-    openWorkspacePath,
-    clearActiveWorkspace,
-    persistWorkspaceSession: persistCurrentWorkspaceSession,
-    reportError,
+    currentWorkspaceRootRef,
+    workspaceRuntimeRootByTabRef,
+    workspaceRuntimeOwnerByTabRef,
+    resolveCurrentWorkspaceRuntimeOwner,
+    setPackageScriptsByRoot,
+    forgetWorkspaceSettings: workspaceSettingsByRoot.forget,
+    hasPhpWorkspaceByOwnerRef,
+    releaseWorkspaceTrustOwner,
+    recentlyClosedTabsRef,
+    workspaceEditorViewStatesRef,
   });
 
-  const closeWorkspaceTab = useCallback(
-    async (path: string) => {
-      const identityDescriptor = workspaceIdentityByRootRef.current[path] ?? null;
-      const canonicalKey = identityDescriptor?.canonicalRoot ?? path;
-      const resolvedTabPath = identityDescriptor
-        ? (appSettingsRef.current.workspaceTabs.find(
-            (tabPath) =>
-              workspaceIdentityByRootRef.current[tabPath]?.workspaceId ===
-              identityDescriptor.workspaceId,
-          ) ?? identityDescriptor.selectedPath)
-        : path;
-      const runtimeRootPath =
-        workspaceRuntimeRootByTabRef.current[resolvedTabPath] ?? resolvedTabPath;
-      const runtimeOwner =
-        workspaceRuntimeOwnerByTabRef.current[resolvedTabPath] ??
-        workspaceRuntimeOwnerByTabRef.current[path] ??
-        (workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)
-          ? resolveCurrentWorkspaceRuntimeOwner()
-          : null);
-      await closeWorkspaceTabWithLifecycle(path);
-
-      const resolvedTabStillOpen = appSettingsRef.current.workspaceTabs.some(
-        (tabPath) =>
-          workspaceRootKeysEqual(tabPath, resolvedTabPath) ||
-          Boolean(
-            identityDescriptor &&
-            workspaceIdentityByRootRef.current[tabPath]?.workspaceId ===
-              identityDescriptor.workspaceId,
-          ),
-      );
-      if (resolvedTabStillOpen) {
-        return;
-      }
-
-      setPackageScriptsByRoot((current) =>
-        withoutClosedWorkspacePackageScripts(current, [path, resolvedTabPath, runtimeRootPath]),
-      );
-      workspaceSettingsByRoot.forget(canonicalKey);
-      delete workspaceRuntimeRootByTabRef.current[path];
-      delete workspaceRuntimeRootByTabRef.current[resolvedTabPath];
-      delete workspaceRuntimeRootByTabRef.current[runtimeRootPath];
-      delete workspaceRuntimeOwnerByTabRef.current[path];
-      delete workspaceRuntimeOwnerByTabRef.current[resolvedTabPath];
-      if (runtimeOwner) {
-        delete hasPhpWorkspaceByOwnerRef.current[runtimeOwner.ownerKey];
-        releaseWorkspaceTrustOwner(runtimeOwner.ownerKey);
-      }
-
-      recentlyClosedTabsRef.current = clearClosedWorkspaceEditorRetainedState(
-        recentlyClosedTabsRef.current,
-        workspaceEditorViewStatesRef.current,
-        identityDescriptor,
-        resolvedTabPath,
-      );
+  const { closeApplicationWindow, closeWorkspaceTab, quitApplication } = useWorkbenchCloseLifecycle(
+    {
+      workspaceRoot,
+      dirtyCount,
+      appSettingsRef,
+      workspaceStateCacheRef,
+      resolveCachedWorkspaceState,
+      forgetCachedWorkspaceState,
+      workspaceIdentityByRootRef,
+      editorConfigCacheRef,
+      openWorkspaceRequestPathRef,
+      openWorkspaceRequestTokenRef,
+      openFileRequestTokenRef,
+      gitDiffRequestTokenRef,
+      editorGitBaselineRequestTokenRef,
+      prompter,
+      dirtyCloseDecisionPort: options.dirtyCloseDecisionPort ?? fallbackDirtyCloseDecisionPort,
+      captureDirtyCloseTargets,
+      isWorkspaceRuntimeOwnerCurrent,
+      ownerDocumentSaveRepository: ownerDocumentSaveAdapters.repository,
+      ownerResolvingDocumentSaveService,
+      requestOwnerDocumentSave,
+      workspaceCloseSession,
+      commitWorkspaceClose,
+      runWithDocumentSaveExclusion: runWithDocumentSaveExclusionDelegate,
+      persistAppSettings,
+      closeSyncedLanguageServerDocumentsForRoot,
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+      stopProjectRuntimes: stopProjectRuntimesForWorkspaceClose,
+      forgetLanguageServerRuntimeStatuses: forgetLanguageServerRuntimeStatusesForWorkspaceClose,
+      forgetLatencyTrackerForRoot,
+      unregisterWorkspace: releaseOwnedWorkspaceIdentity,
+      disposeRegisteredWorkspace: registeredWorkspaceClosePorts[0],
+      prepareRegisteredWorkspaceIdentitySettlement: prepareBackendClosedWorkspaceIdentitySettlement,
+      closeRegisteredWorkspaceAgents: registeredWorkspaceClosePorts[1],
+      clearExternalFileConflictsForRoot: clearExternalFileConflictsForWorkspaceClose,
+      invalidateWorkspaceResourceCachesForRoot: clearWorkspaceResourceCachesForRoot,
+      workspaceHasExternalFileConflicts: (root) =>
+        workspaceHasExternalFileConflictsRef.current(root),
+      openWorkspacePath,
+      clearActiveWorkspace,
+      persistWorkspaceSession: persistCurrentWorkspaceSession,
+      prepareWorkspaceTabRetainedStateCleanup: prepareWorkspaceTabRetainedCleanup,
+      reportError,
     },
-    [
-      closeWorkspaceTabWithLifecycle,
-      releaseWorkspaceTrustOwner,
-      resolveCurrentWorkspaceRuntimeOwner,
-      workspaceSettingsByRoot,
-    ],
   );
 
   const {
