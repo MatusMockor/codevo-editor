@@ -45,6 +45,7 @@ import {
 } from "./workbenchController/workspacePathPolicy";
 import { useWorkbenchDiagnosticPresentation } from "./workbenchController/useWorkbenchDiagnosticPresentation";
 import { useWorkbenchEditorPresentation } from "./workbenchController/useWorkbenchEditorPresentation";
+import { useWorkbenchEditorGroupCoordinator } from "./workbenchController/useWorkbenchEditorGroupCoordinator";
 import { useWorkbenchSettingsCommands } from "./workbenchController/useWorkbenchSettingsCommands";
 import {
   useWorkbenchGitChangesCoordinator,
@@ -325,16 +326,10 @@ import { parseComposerScripts, type PackageScript } from "../domain/packageScrip
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import { recentFilesForSwitcher } from "../domain/recentFiles";
-import { type TabDropPosition } from "../domain/tabOrdering";
-import { editorGroupIdsInLayout } from "../domain/editorLayout";
 import {
-  editorGroupsReducer,
   editorGroupsUniquePaths,
   openEditorGroupPath,
-  reorderEditorGroupTabs,
-  transferEditorGroupTab,
   type EditorGroupId,
-  type EditorSplitDirection,
 } from "../domain/editorGroups";
 import { sortBookmarks, type Bookmark } from "../domain/bookmarks";
 import type { LatencyTracker } from "../domain/latencyTracker";
@@ -4284,207 +4279,31 @@ export function useWorkbenchController(
     await closeActiveEditorGroupSurfaceForCommandsRef.current();
   }, []);
 
-  const activateEditorGroup = useCallback(
-    (groupId: EditorGroupId) => {
-      updateEditorGroups((current) =>
-        editorGroupsReducer(current, { type: "activate-group", groupId }),
-      );
-    },
-    [updateEditorGroups],
-  );
-
-  const activateEditorGroupTab = useCallback(
-    (groupId: EditorGroupId, path: string) => {
-      const group = editorGroupsRef.current.groups[groupId];
-
-      if (!group || (!group.openPaths.includes(path) && group.previewPath !== path)) {
-        return;
-      }
-
-      updateEditorGroups((current) => {
-        const activated = editorGroupsReducer(current, {
-          type: "activate-group",
-          groupId,
-        });
-        return editorGroupsReducer(activated, {
-          type: "activate-tab",
-          groupId,
-          path,
-        });
-      });
-
-      if (isGitDiffDocumentPath(path)) {
-        loadGitDiffDocument(path);
-        return;
-      }
-
-      clearGitDiffPreviewState();
-    },
-    [clearGitDiffPreviewState, editorGroupsRef, loadGitDiffDocument, updateEditorGroups],
-  );
-
-  const splitActiveEditorGroup = useCallback(
-    (direction: EditorSplitDirection) => {
-      updateEditorGroups((current) => {
-        let newGroupId = `editor-${nextEditorGroupIdRef.current++}`;
-        while (Object.prototype.hasOwnProperty.call(current.groups, newGroupId)) {
-          newGroupId = `editor-${nextEditorGroupIdRef.current++}`;
-        }
-        return editorGroupsReducer(current, {
-          type: "split-group",
-          direction,
-          newGroupId,
-        });
-      });
-    },
-    [nextEditorGroupIdRef, updateEditorGroups],
-  );
-
-  const editorGroupFocusRunner = options.editorGroupFocusRunner;
-  const focusAdjacentEditorGroup = useCallback(
-    (offset: -1 | 1) => {
-      const current = editorGroupsRef.current;
-      const groupIds = editorGroupIdsInLayout(current.layout);
-      if (groupIds.length < 2) {
-        return;
-      }
-
-      const activeIndex = groupIds.indexOf(current.activeGroupId);
-      const nextIndex = (activeIndex + offset + groupIds.length) % groupIds.length;
-      const targetGroupId = groupIds[nextIndex];
-      updateEditorGroups((state) =>
-        editorGroupsReducer(state, {
-          type: "activate-group",
-          groupId: targetGroupId,
-        }),
-      );
-      editorGroupFocusRunner?.(targetGroupId);
-    },
-    [editorGroupFocusRunner, editorGroupsRef, updateEditorGroups],
-  );
-
-  const moveActiveTabToAdjacentGroup = useCallback(
-    (offset: -1 | 1) => {
-      updateEditorGroups((current) => {
-        const groupIds = editorGroupIdsInLayout(current.layout);
-        if (groupIds.length < 2) {
-          return current;
-        }
-        const sourceIndex = groupIds.indexOf(current.activeGroupId);
-        const targetIndex = (sourceIndex + offset + groupIds.length) % groupIds.length;
-        const path = current.groups[current.activeGroupId]?.activePath;
-        if (!path) {
-          return current;
-        }
-        return transferEditorGroupTab(
-          current,
-          current.activeGroupId,
-          groupIds[targetIndex],
-          path,
-          "move",
-        );
-      });
-    },
-    [updateEditorGroups],
-  );
-
-  const moveEditorGroupTab = useCallback(
-    (fromGroupId: EditorGroupId, toGroupId: EditorGroupId, path: string) => {
-      updateEditorGroups((current) =>
-        transferEditorGroupTab(current, fromGroupId, toGroupId, path, "move"),
-      );
-    },
-    [updateEditorGroups],
-  );
-
-  const reorderEditorGroupTab = useCallback(
-    (groupId: EditorGroupId, fromPath: string, toPath: string, position: TabDropPosition) => {
-      updateEditorGroups((current) =>
-        editorGroupsReducer(current, {
-          type: "reorder-tab",
-          fromPath,
-          groupId,
-          position,
-          toPath,
-        }),
-      );
-    },
-    [updateEditorGroups],
-  );
-
-  const pinEditorGroupTab = useCallback(
-    (groupId: EditorGroupId, path: string) => {
-      updateEditorGroups((current) =>
-        editorGroupsReducer(current, {
-          type: "pin-tab",
-          groupId,
-          path,
-        }),
-      );
-    },
-    [updateEditorGroups],
-  );
-
-  const resizeEditorSplit = useCallback(
-    (splitPath: readonly number[], sizes: readonly [number, number]) => {
-      updateEditorGroups((current) =>
-        editorGroupsReducer(current, {
-          type: "resize-split",
-          sizes,
-          splitPath,
-        }),
-      );
-    },
-    [updateEditorGroups],
-  );
-
-  const reorderOpenTabs = useCallback(
-    (fromPath: string, toPath: string, position: TabDropPosition) => {
-      updateEditorGroups((current) => ({
-        ...current,
-        groups: {
-          ...current.groups,
-          [current.activeGroupId]: reorderEditorGroupTabs(current.groups[current.activeGroupId], {
-            fromPath,
-            toPath,
-            position,
-          }),
-        },
-      }));
-    },
-    [updateEditorGroups],
-  );
-
-  const updateEditorViewState = useCallback(
-    (path: string, viewState: WorkspaceSessionViewState) => {
-      const rootPath = currentWorkspaceRootRef.current;
-
-      if (!rootPath || !isSessionPathInWorkspace(rootPath, path)) {
-        return;
-      }
-
-      const ownerKey = editorSessionOwnerKeyForRoot(rootPath);
-      const current = workspaceEditorViewStatesRef.current[ownerKey] ?? {};
-      const groupId = editorGroupsRef.current.activeGroupId;
-      current[groupId] = { ...(current[groupId] ?? {}), [path]: viewState };
-      workspaceEditorViewStatesRef.current[ownerKey] = current;
-    },
-    [editorGroupsRef, editorSessionOwnerKeyForRoot],
-  );
-
-  const updateEditorGroupViewState = useCallback(
-    (groupId: EditorGroupId, path: string, viewState: WorkspaceSessionViewState) => {
-      const rootPath = currentWorkspaceRootRef.current;
-      if (!rootPath || !isSessionPathInWorkspace(rootPath, path)) {
-        return;
-      }
-      const ownerKey = editorSessionOwnerKeyForRoot(rootPath);
-      const current = workspaceEditorViewStatesRef.current[ownerKey] ?? {};
-      current[groupId] = { ...(current[groupId] ?? {}), [path]: viewState };
-      workspaceEditorViewStatesRef.current[ownerKey] = current;
-    },
-    [editorSessionOwnerKeyForRoot],
-  );
+  const {
+    activateEditorGroup,
+    activateEditorGroupTab,
+    splitActiveEditorGroup,
+    focusAdjacentEditorGroup,
+    moveActiveTabToAdjacentGroup,
+    moveEditorGroupTab,
+    reorderEditorGroupTab,
+    pinEditorGroupTab,
+    resizeEditorSplit,
+    reorderOpenTabs,
+    updateEditorViewState,
+    updateEditorGroupViewState,
+  } = useWorkbenchEditorGroupCoordinator({
+    clearGitDiffPreviewState,
+    currentWorkspaceRootRef,
+    editorGroupFocusRunner: options.editorGroupFocusRunner,
+    editorGroupsRef,
+    editorSessionOwnerKeyForRoot,
+    isGitDiffDocumentPath,
+    loadGitDiffDocument,
+    nextEditorGroupIdRef,
+    updateEditorGroups,
+    workspaceEditorViewStatesRef,
+  });
 
   const setStatusBarItemVisibility = useCallback(
     async (key: keyof StatusBarItemVisibility, visible: boolean) => {
