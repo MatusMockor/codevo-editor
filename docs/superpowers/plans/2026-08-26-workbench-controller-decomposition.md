@@ -53,8 +53,25 @@ Reduce `useWorkbenchController` to a composition root without changing public be
 - Capture exact root, workspace identity, owner key, generation, and request token before every await and revalidate each after await before mutation.
 - Keep closed unions exhaustive and strict IPC unchanged.
 - Add focused tests around the new coordinator boundary when behavior is not already covered by controller preview tests.
-- For every slice: focused tests, independent adversarial read-only review, the full required gate set, one commit, and one push to `main`.
+- For every slice: focused tests, independent adversarial read-only review, the full required gate set, and one local commit to `main`. Do not push; the user pushes after the program is complete.
 - Run the Phase 3 production build once after all extraction and performance slices are integrated.
+
+## Round 2 execution record
+
+Round 2 started from `041c44e8` with 5,798 raw lines and 19,332 structural tokens in `useWorkbenchController`. It ended at `363f87ab` with 5,673 raw lines and 18,490 structural tokens, a measured reduction of 125 raw lines and 842 structural tokens. The hotspot baseline was lowered after every controller extraction and was never increased.
+
+| Responsibility | Original controller region | Extracted boundary | Commit | Raw lines | Structural tokens |
+| --- | --- | --- | --- | ---: | ---: |
+| Language runtime projection | Runtime state and derived projection around the former 893-925 and 1715-2436 regions | `useWorkbenchLanguageRuntimeProjection` | `46c69e25` | 5,771 | 19,121 |
+| Language runtime subscriptions | Late runtime-event subscription entry point formerly in the 7572-7718 region | `useWorkbenchLanguageRuntimeSubscriptionsCoordinator` | `40435a74` | 5,761 | 19,073 |
+| Incremental document sync | Changed-document scheduling shared by the controller and language runtime coordinator | `useWorkbenchChangedDocumentSyncCoordinator` | `86924142` | 5,756 | 19,041 |
+| Workspace identity authority | Workspace lifecycle identity ownership formerly centered in the 2518-3601 region | `useWorkspaceIdentityAuthority` | `e753bfec` | 5,747 | 18,918 |
+| Exact backend teardown | Rust workspace registry and runtime teardown boundary | `dispose_registered_workspace` and unregister modules | `cbd62d1d` | 5,747 | 18,918 |
+| Workspace open and restore | Open admission, startup restore, and hydration ownership | `useWorkspaceOpenRequestLifecycle` and settings hydration | `2bff5ffd` | 5,733 | 18,832 |
+| Exact close teardown | Task, lease, backend, cache, trust, and identity settlement | `registeredWorkspaceCloseCoordinator` and `useWorkbenchCloseLifecycle` | `a5e92e24` | 5,723 | 18,751 |
+| Workspace tab close | Dirty-scope preparation, teardown handoff, retained-state cleanup, and next-tab activation | `useWorkbenchWorkspaceTabCloseCoordinator` and `workspaceRetainedStateCleanup` | `363f87ab` | 5,673 | 18,490 |
+
+All eight slices received focused regression tests and an independent read-only adversarial review before their local `main` commit. The required frontend gates passed for every commit. Cargo gates were run sequentially whenever the slice touched Rust or completed a phase boundary. The production build ran once for the integrated phase. No round 2 commit was pushed.
 
 ## Correctness debts resolved during decomposition
 
