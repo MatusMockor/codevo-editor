@@ -18,6 +18,7 @@ import type { AgentShipActions } from "./AgentShipPanel";
 
 const ROOT = "/workspace/app";
 const SHA = "a".repeat(40);
+const ORIGINAL_RESIZE_OBSERVER = globalThis.ResizeObserver;
 
 describe("agentShipQuickAction", () => {
   it("offers commit while the worktree has changes", () => {
@@ -70,6 +71,8 @@ describe("AgentCommitMenu", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    vi.restoreAllMocks();
+    Object.assign(globalThis, { ResizeObserver: ORIGINAL_RESIZE_OBSERVER });
   });
 
   it("commits with the default message from the primary button", () => {
@@ -183,6 +186,178 @@ describe("AgentCommitMenu", () => {
     expect(host.querySelector('[role="dialog"]')?.textContent).toContain("Committed");
   });
 
+  it("end-aligns the popover inside a docked center column", async () => {
+    installPopoverGeometry(
+      { top: 40, left: 300, right: 940, bottom: 772 },
+      { top: 100, left: 920, width: 80, height: 24 },
+    );
+    render(threadView({ ship: idle(status({ changeCount: 2 })) }), mockedShipActions());
+
+    act(() => button("Ship options").click());
+    await act(async () => {});
+
+    const dialog = host.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog?.style.right).toBe("8px");
+    expect(dialog?.style.top).toBe("88px");
+  });
+
+  it("end-aligns the popover in a maximized center column", async () => {
+    installPopoverGeometry(
+      { top: 0, left: 0, right: 1200, bottom: 800 },
+      { top: 100, left: 1090, width: 80, height: 24 },
+    );
+    render(threadView({ ship: idle(status({ changeCount: 2 })) }), mockedShipActions());
+
+    act(() => button("Ship options").click());
+    await act(async () => {});
+
+    const dialog = host.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog?.style.right).toBe("30px");
+    expect(dialog?.style.top).toBe("128px");
+  });
+
+  it("repositions for center-frame and popover resizes and ignores a late resize", async () => {
+    const geometry = installResizablePopoverGeometry();
+    render(threadView({ ship: idle(status({ changeCount: 2 })) }), mockedShipActions());
+
+    act(() => button("Ship options").click());
+    await act(async () => {});
+
+    const dialog = host.querySelector<HTMLElement>('[role="dialog"]');
+    expect(geometry.observed()).toEqual(
+      expect.arrayContaining([host, button("Ship options"), dialog]),
+    );
+    expect(dialog?.style.right).toBe("40px");
+
+    act(() => {
+      geometry.resizeFrameAndTrigger();
+      geometry.notify();
+    });
+    expect(dialog?.style.right).toBe("40px");
+
+    act(() => {
+      geometry.growPopover();
+      geometry.notify();
+    });
+    expect(dialog?.style.right).toBe("12px");
+
+    act(() => root.render(null));
+    expect(() => geometry.notify()).not.toThrow();
+    expect(dialog?.style.right).toBe("12px");
+  });
+
+  function installPopoverGeometry(
+    frame: {
+      readonly top: number;
+      readonly left: number;
+      readonly right: number;
+      readonly bottom: number;
+    },
+    trigger: {
+      readonly top: number;
+      readonly left: number;
+      readonly width: number;
+      readonly height: number;
+    },
+  ): void {
+    Object.defineProperties(window, {
+      innerHeight: { configurable: true, value: 800 },
+      innerWidth: { configurable: true, value: 1200 },
+    });
+    host.style.transform = "translateZ(0)";
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === host) return domRect(frame);
+      if (this.getAttribute("aria-label") === "Ship options") return domRect(trigger);
+      return domRect({ top: 0, left: 0, right: 0, bottom: 0 });
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.getAttribute("role") === "dialog" ? 360 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.getAttribute("role") === "dialog" ? 180 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.getAttribute("role") === "dialog" ? 180 : 0;
+    });
+  }
+
+  function installResizablePopoverGeometry(): {
+    readonly observed: () => ReadonlyArray<Element>;
+    notify(): void;
+    resizeFrameAndTrigger(): void;
+    growPopover(): void;
+  } {
+    Object.defineProperties(window, {
+      innerHeight: { configurable: true, value: 800 },
+      innerWidth: { configurable: true, value: 1200 },
+    });
+    host.style.transform = "translateZ(0)";
+    let frame = { top: 40, left: 300, right: 940, bottom: 772 };
+    let trigger = { top: 100, left: 820, width: 80, height: 24 };
+    let popoverWidth = 240;
+    let notify = (): void => {};
+    const observed = new Set<Element>();
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        notify = () => callback([], this as unknown as ResizeObserver);
+      }
+
+      disconnect(): void {}
+
+      observe(target: Element): void {
+        observed.add(target);
+      }
+
+      unobserve(target: Element): void {
+        observed.delete(target);
+      }
+    }
+    Object.assign(globalThis, {
+      ResizeObserver: TestResizeObserver as unknown as typeof ResizeObserver,
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this === host) return domRect(frame);
+      if (this.getAttribute("aria-label") === "Ship options") return domRect(trigger);
+      return domRect({ top: 0, left: 0, right: 0, bottom: 0 });
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.getAttribute("role") === "dialog" ? popoverWidth : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.getAttribute("role") === "dialog" ? 180 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.getAttribute("role") === "dialog" ? 180 : 0;
+    });
+    return {
+      observed: () => [...observed],
+      notify: () => notify(),
+      resizeFrameAndTrigger: () => {
+        frame = { top: 40, left: 300, right: 800, bottom: 772 };
+        trigger = { top: 100, left: 680, width: 80, height: 24 };
+      },
+      growPopover: () => {
+        popoverWidth = 480;
+      },
+    };
+  }
+
   function render(thread: AgentThreadView, actions: AgentShipActions, openSignal?: number): void {
     act(() => {
       root.render(<AgentCommitMenu actions={actions} openSignal={openSignal} thread={thread} />);
@@ -210,6 +385,29 @@ describe("AgentCommitMenu", () => {
     });
   }
 });
+
+function domRect(bounds: {
+  readonly top: number;
+  readonly left: number;
+  readonly right?: number;
+  readonly bottom?: number;
+  readonly width?: number;
+  readonly height?: number;
+}): DOMRect {
+  const width = bounds.width ?? (bounds.right ?? bounds.left) - bounds.left;
+  const height = bounds.height ?? (bounds.bottom ?? bounds.top) - bounds.top;
+  return {
+    top: bounds.top,
+    left: bounds.left,
+    right: bounds.right ?? bounds.left + width,
+    bottom: bounds.bottom ?? bounds.top + height,
+    width,
+    height,
+    x: bounds.left,
+    y: bounds.top,
+    toJSON: () => bounds,
+  } as DOMRect;
+}
 
 function mockedShipActions(): AgentShipActions {
   return {

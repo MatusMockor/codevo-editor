@@ -192,10 +192,18 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
 
 function ThreadStatus({ thread }: { readonly thread: AgentThreadView }) {
   const tone = agentThreadTone(thread.lifecycle, lastAgentTurnStatus(thread.thread));
+  const label = agentThreadLifecycleLabel(thread.lifecycle);
   return (
-    <span className={`agent-thread-head__status agent-thread-head__status--${tone}`}>
+    <span
+      aria-label={label}
+      className={`agent-thread-head__status agent-thread-head__status--${tone}`}
+      role="status"
+      title={label}
+    >
       <span aria-hidden="true" className={`agent-dot agent-dot--${tone}`} />
-      {agentThreadLifecycleLabel(thread.lifecycle)}
+      <span aria-hidden="true" className="agent-thread-head__status-label">
+        {label}
+      </span>
     </span>
   );
 }

@@ -42,10 +42,29 @@ describe("AgentThreadHeader", () => {
     expect(host.querySelector("h2.agent-crumbs__heading")?.textContent).toBe(
       "A very long thread title that keeps going",
     );
-    expect(host.querySelector(".agent-thread-head__status")?.textContent).toBe("Idle");
+    const status = host.querySelector<HTMLElement>(".agent-thread-head__status");
+    expect(status?.textContent).toBe("Idle");
+    expect(status?.getAttribute("aria-label")).toBe("Idle");
+    expect(status?.getAttribute("role")).toBe("status");
+    expect(status?.title).toBe("Idle");
+    expect(host.querySelector(".agent-thread-head__status-label")?.textContent).toBe("Idle");
     expect(button("Run dev")).toBeDefined();
     expect(button("Open in Editor")).toBeDefined();
     expect(button("Commit")).toBeDefined();
+  });
+
+  it("keeps collapsed header actions named and discoverable by tooltip", () => {
+    render({});
+
+    const run = button("Run dev");
+    const open = button("Open in Editor");
+    const commit = button("Commit");
+    expect(run.title).toBe("Run dev in the terminal panel");
+    expect(open.title).toBe("Open the checkout in the editor");
+    expect(commit.title).toBe("Commit");
+    expect(run.querySelector(".agent-split__label")?.textContent).toBe("dev");
+    expect(open.querySelector(".agent-split__label")?.textContent).toBe("Open");
+    expect(commit.querySelector(".agent-split__label")?.textContent).toBe("Commit");
   });
 
   it("starts a new thread in the project from the project crumb", () => {

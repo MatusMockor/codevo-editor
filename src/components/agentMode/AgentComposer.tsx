@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useRef, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Folder, FolderGit2, Play, Plus, Send, TriangleAlert } from "lucide-react";
 import {
   useAgentModelFavorites,
@@ -110,7 +110,8 @@ export function AgentComposer({
   worktreeOnly,
   worktreeOnlyReason,
 }: AgentComposerProps) {
-  const compact = useCompactComposerControls();
+  const composerRef = useRef<HTMLFormElement>(null);
+  const compact = useCompactComposerControls(composerRef);
   const favorites = useAgentModelFavorites(modelFavoritesPersistence);
   const followUp = mode.kind === "followUp";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
@@ -183,6 +184,7 @@ export function AgentComposer({
       aria-label={followUp ? "Follow up on agent thread" : "New agent thread"}
       className="agent-composer"
       onSubmit={submit}
+      ref={composerRef}
     >
       <div className="agent-composer__box">
         {followUp && (

@@ -81,14 +81,16 @@ export function agentPopoverPosition(
   metrics: AgentPopoverMetrics = AGENT_POPOVER_METRICS,
 ): AgentPopoverPosition {
   const height = Math.max(popover.scrollHeight, popover.offsetHeight);
-  const roomBelow = viewport.height - anchor.bottom - metrics.gap - metrics.margin;
-  const roomAbove = anchor.top - metrics.gap - metrics.margin;
+  const roomBelow = frame.bottom - anchor.bottom - metrics.gap - metrics.margin;
+  const roomAbove = anchor.top - frame.top - metrics.gap - metrics.margin;
   const up = roomBelow < height && roomAbove > roomBelow;
-  const start = align === "start" ? anchor.left : viewport.width - anchor.right;
-  const inset = clampInset(start, popover.offsetWidth, viewport.width, metrics.margin);
+  const frameStart = align === "start" ? frame.left : viewport.width - frame.right;
+  const frameEnd = align === "start" ? frame.right : viewport.width - frame.left;
+  const anchorInset = align === "start" ? anchor.left : viewport.width - anchor.right;
+  const inset = clampInset(anchorInset, popover.offsetWidth, frameStart, frameEnd, metrics.margin);
   return {
     placement: up ? "up" : "down",
-    inset: align === "start" ? inset - frame.left : inset - (viewport.width - frame.right),
+    inset: inset - frameStart,
     offset: up ? frame.bottom - anchor.top + metrics.gap : anchor.bottom + metrics.gap - frame.top,
     minWidth: Math.min(anchor.width, metrics.maxWidth),
     maxHeight: Math.max(metrics.minHeight, Math.min(metrics.maxHeight, up ? roomAbove : roomBelow)),
@@ -161,6 +163,7 @@ export function useAgentPopoverPlacement(
     if (trigger === null) return;
     let block: HTMLElement | null | undefined;
     const place = (): void => {
+      if (!active) return;
       const popover = popoverRef.current;
       if (popover === null) return;
       if (block === undefined) block = agentPopoverContainingBlock(popover);
@@ -176,11 +179,14 @@ export function useAgentPopoverPlacement(
         current !== null && samePopoverPosition(current, next) ? current : next,
       );
     };
+    let active = true;
     place();
-    const observer = observeSize(trigger, place);
+    const popover = popoverRef.current;
+    const observer = observeSizes([trigger, popover, block ?? null], place);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     return () => {
+      active = false;
       observer?.disconnect();
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
@@ -317,14 +323,30 @@ function edge(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function observeSize(element: HTMLElement, place: () => void): ResizeObserver | null {
+function observeSizes(
+  elements: ReadonlyArray<HTMLElement | null>,
+  place: () => void,
+): ResizeObserver | null {
   if (typeof ResizeObserver === "undefined") return null;
   const observer = new ResizeObserver(() => place());
-  observer.observe(element);
+  const observed = new Set<HTMLElement>();
+  elements.forEach((element) => {
+    if (element === null) return;
+    if (observed.has(element)) return;
+    observed.add(element);
+    observer.observe(element);
+  });
   return observer;
 }
 
-function clampInset(inset: number, width: number, viewportWidth: number, margin: number): number {
-  const limit = Math.max(margin, viewportWidth - margin - width);
-  return Math.min(Math.max(inset, margin), limit);
+function clampInset(
+  inset: number,
+  width: number,
+  frameStart: number,
+  frameEnd: number,
+  margin: number,
+): number {
+  const minimum = frameStart + margin;
+  const maximum = Math.max(minimum, frameEnd - margin - width);
+  return Math.min(Math.max(inset, minimum), maximum);
 }

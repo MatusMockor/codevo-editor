@@ -118,6 +118,37 @@ describe("agentPopoverPosition", () => {
     });
   });
 
+  it("clamps end-aligned popovers inside a docked center column", () => {
+    const frame: AgentPopoverFrame = { top: 40, left: 300, right: 940, bottom: 772 };
+    const anchor = rect({ top: 100, left: 920, width: 80 });
+    const position = place(anchor, "end", frame, popover(360));
+
+    expect(agentPopoverStyle(position, "end")).toMatchObject({
+      top: anchor.bottom + GAP - frame.top,
+      right: MARGIN,
+    });
+  });
+
+  it("keeps an end-aligned popover anchored in a maximized center column", () => {
+    const frame: AgentPopoverFrame = { top: 0, left: 0, right: 1200, bottom: 800 };
+    const anchor = rect({ top: 100, left: 1090, width: 80 });
+    const position = place(anchor, "end", frame, popover(360));
+
+    expect(agentPopoverStyle(position, "end")).toMatchObject({
+      top: anchor.bottom + GAP,
+      right: VIEWPORT.width - anchor.right,
+    });
+  });
+
+  it("uses the center column rather than the viewport to choose vertical placement", () => {
+    const frame: AgentPopoverFrame = { top: 100, left: 300, right: 940, bottom: 500 };
+    const anchor = rect({ top: 430, left: 800, width: 80 });
+    const position = place(anchor, "end", frame, popover(360, 180));
+
+    expect(position.placement).toBe("up");
+    expect(position.maxHeight).toBe(318);
+  });
+
   it("treats the default frame as the viewport", () => {
     const anchor = rect({ top: 100, left: 200 });
     expect(place(anchor)).toEqual(

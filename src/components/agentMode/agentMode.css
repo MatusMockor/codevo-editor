@@ -125,6 +125,8 @@
   min-width: 0;
   min-height: 0;
   background: transparent;
+  container-name: agent-center;
+  container-type: inline-size;
 }
 
 .agent-num {
@@ -3065,6 +3067,7 @@
   flex: none;
   align-items: center;
   gap: var(--agent-space-4);
+  min-width: 0;
   min-height: 44px;
   border-bottom: 1px solid var(--agent-hairline);
   padding: 6px 16px 6px 20px;
@@ -3198,6 +3201,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--agent-space-3);
+  min-width: 0;
 }
 
 /* Split control: main action plus a chevron opening an anchored menu. */
@@ -3277,13 +3281,51 @@
   white-space: nowrap;
 }
 
-@media (max-width: 1024px) {
+@container agent-center (max-width: 900px) {
   .agent-split__label {
     display: none;
   }
 
   .agent-split__main {
     padding: 0 8px;
+  }
+}
+
+@container agent-center (max-width: 600px) {
+  .agent-thread-head {
+    gap: var(--agent-space-2);
+    padding-inline: 8px;
+  }
+
+  .agent-thread-head__actions {
+    gap: 2px;
+  }
+
+  .agent-thread-head__status-label {
+    display: none;
+  }
+}
+
+@container agent-center (max-width: 420px) {
+  .agent-crumbs__label,
+  .agent-crumbs__sep {
+    display: none;
+  }
+
+  .agent-crumbs__project {
+    padding-inline: 2px;
+  }
+}
+
+@supports not (container-type: inline-size) {
+  @media (max-width: 1024px) {
+    .agent-split__label {
+      display: none;
+    }
+
+    .agent-split__main {
+      padding: 0 8px;
+    }
   }
 }
 
@@ -3306,7 +3348,7 @@
   gap: 1px;
   width: max-content;
   min-width: 180px;
-  max-width: min(320px, calc(100vw - 16px));
+  max-width: min(320px, calc(100% - 16px));
   max-height: min(320px, calc(100vh - 16px));
   padding: 4px;
 }
@@ -3395,8 +3437,9 @@
 }
 
 .agent-popover--ship {
+  box-sizing: border-box;
   width: 360px;
-  max-width: calc(100vw - 16px);
+  max-width: calc(100% - 16px);
   padding: 4px 12px 12px;
 }
 
@@ -3463,6 +3506,8 @@
   flex-direction: column;
   border-left: 1px solid var(--agent-hairline);
   background: var(--agent-canvas);
+  container-name: agent-surface;
+  container-type: inline-size;
 }
 
 .agent-surface__resize {
@@ -3488,7 +3533,9 @@
 
 .agent-surface__tabs {
   display: flex;
+  overflow: hidden;
   min-width: 0;
+  flex: 0 1 auto;
   align-items: center;
   gap: 2px;
 }
@@ -3526,6 +3573,7 @@
 .agent-surface__tabitem {
   display: inline-flex;
   height: 24px;
+  min-width: 0;
   max-width: 160px;
   align-items: center;
   border-radius: var(--agent-radius-sm);
@@ -3549,6 +3597,9 @@
   display: inline-flex;
   height: 100%;
   min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  overflow: hidden;
   align-items: center;
   padding: 0 4px 0 6px;
   border: 0;
@@ -3616,6 +3667,7 @@
 
 .agent-surface__layout-controls {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: 2px;
 }
@@ -3626,6 +3678,10 @@
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
+}
+
+.agent-surface__head > .agent-iconbutton {
+  flex: none;
 }
 
 .agent-surface__subhead {
@@ -3774,6 +3830,44 @@
   color: var(--agent-text-muted);
   font-size: var(--agent-fs-2xs);
   gap: 6px;
+}
+
+@container agent-surface (max-width: 480px) {
+  .agent-surface__head {
+    min-width: 0;
+  }
+
+  .agent-surface__tabs {
+    flex: 0 1 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .agent-surface__tabitem {
+    flex: none;
+  }
+
+  .agent-surface__tab > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .agent-surface__editor-tabs {
+    max-width: 100%;
+  }
+
+  .agent-surface-empty {
+    padding: 16px;
+  }
+
+  .agent-surface-empty__cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* Files: a bounded tree pane on the left and the editor well on the right. */

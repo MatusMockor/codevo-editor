@@ -58,6 +58,36 @@ describe("agent mode responsive layout contract", () => {
     );
   });
 
+  it("collapses header action labels from the center column before wrapping the header", () => {
+    const center = rule(".agent-mode__center");
+    const compactActions = block(appCss, "@container agent-center (max-width: 900px)");
+    const narrowHeader = block(appCss, "@container agent-center (max-width: 600px)");
+
+    expect(center).toContain("container-name: agent-center");
+    expect(center).toContain("container-type: inline-size");
+    expect(rule(".agent-split__label", compactActions)).toContain("display: none");
+    expect(rule(".agent-thread-head", narrowHeader)).toContain("padding-inline: 8px");
+    expect(rule(".agent-thread-head__actions", narrowHeader)).not.toContain("flex-wrap");
+    expect(rule(".agent-thread-head__status-label", narrowHeader)).toContain("display: none");
+    expect(rule(".agent-crumbs__heading")).toContain("text-overflow: ellipsis");
+  });
+
+  it("adapts the surface chooser and header from the surface inline size", () => {
+    const surface = rule(".agent-surface {");
+    const narrow = block(appCss, "@container agent-surface (max-width: 480px)");
+
+    expect(surface).toContain("container-name: agent-surface");
+    expect(surface).toContain("container-type: inline-size");
+    expect(rule(".agent-surface-empty__cards", narrow)).toContain(
+      "grid-template-columns: minmax(0, 1fr)",
+    );
+    expect(rule(".agent-surface__tab > span", narrow)).toContain("clip-path: inset(50%)");
+    expect(rule(".agent-surface__tabs", narrow)).toContain("overflow-x: auto");
+    expect(rule(".agent-surface__tabs")).toContain("overflow: hidden");
+    expect(rule(".agent-surface__layout-controls")).toContain("flex: none");
+    expect(rule(".agent-surface__head > .agent-iconbutton")).toContain("flex: none");
+  });
+
   it("collapses the file tree column when the surface reports no tree", () => {
     expect(rule('.workbench-frame[data-tree="hidden"]', shellCss)).toContain(
       "--agent-surface-tree-width: 0px",
@@ -135,6 +165,8 @@ describe("agent mode responsive layout contract", () => {
   });
 
   it("keeps the ship panel bounded inside the session column", () => {
+    expect(rule(".agent-popover--ship")).toContain("max-width: calc(100% - 16px)");
+    expect(rule(".agent-popover--ship")).not.toContain("100vw");
     expect(rule(".agent-ship__message")).toContain("max-height: 120px");
     expect(rule(".agent-ship__conflicts")).toContain("overflow-y: auto");
     expect(rule(".agent-files__row")).toContain("flex-wrap: wrap");

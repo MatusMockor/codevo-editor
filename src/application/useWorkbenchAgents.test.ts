@@ -34,6 +34,16 @@ const ACTIVE_ID = "workspace-active";
 const BACKGROUND_ROOT = "/ws/api";
 const CLI_PATH = "/usr/local/bin/claude";
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, reject, resolve };
+}
+
 describe("useWorkbenchAgents composition", () => {
   it("serves the M1 single active project without project gateways", async () => {
     const harness = renderWorkbenchAgents({ withProjectGateways: false });
@@ -209,6 +219,235 @@ describe("useWorkbenchAgents composition", () => {
 
     expect(harness.startedRequests[0]?.workspaceId).toBe(agentRootOwnerId(BACKGROUND_ROOT));
     expect(harness.hook().threads).toHaveLength(1);
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("keeps trust rejections out of Problems across grant and retry", async () => {
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: true,
+      workspaceTabs: [ACTIVE_ROOT, BACKGROUND_ROOT],
+    });
+    await waitForReact(() => {
+      const background = harness
+        .hook()
+        .agentProjects.projects.find((project) => project.rootKey === BACKGROUND_ROOT);
+      expect(background?.trust).toBe("trusted");
+      expect(background?.leaseToken).not.toBeNull();
+    });
+    harness.worktree.addAgentWorktree.mockRejectedValueOnce(
+      new Error("Agent worktrees require a trusted repository."),
+    );
+
+    await act(async () => {
+      expect(
+        await harness.hook().startThread({
+          projectRootKey: BACKGROUND_ROOT,
+          repositoryRoot: BACKGROUND_ROOT,
+          prompt: "Check trust",
+          isolation: "worktree",
+          unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ).toBeNull();
+    });
+    await waitForReact(() => {
+      const background = harness
+        .hook()
+        .agentProjects.projects.find((project) => project.rootKey === BACKGROUND_ROOT);
+      expect(background?.trust).toBe("untrusted");
+      expect(background?.leaseToken).toBeNull();
+    });
+    expect(harness.reportError).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await harness.hook().agentProjects.trustProject(BACKGROUND_ROOT);
+    });
+    await waitForReact(() => {
+      const background = harness
+        .hook()
+        .agentProjects.projects.find((project) => project.rootKey === BACKGROUND_ROOT);
+      expect(background?.trust).toBe("trusted");
+      expect(background?.leaseToken).not.toBeNull();
+    });
+    await act(async () => {
+      expect(
+        await harness.hook().startThread({
+          projectRootKey: BACKGROUND_ROOT,
+          repositoryRoot: BACKGROUND_ROOT,
+          prompt: "Retry after trust",
+          isolation: "worktree",
+          unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ).not.toBeNull();
+    });
+
+    expect(harness.trust.setTrust).toHaveBeenCalledWith(BACKGROUND_ROOT, true);
+    expect(harness.worktree.addAgentWorktree).toHaveBeenCalledTimes(2);
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("drops a late trust rejection across an active workspace A to B to A replacement", async () => {
+    const worktree = createDeferred<{
+      readonly worktreePath: string;
+      readonly branch: string;
+      readonly trusted: boolean;
+    }>();
+    const harness = renderWorkbenchAgents({ withProjectGateways: true });
+    await waitForReact(() => {
+      expect(harness.hook().agentProjects.projects[0]?.trust).toBe("trusted");
+      expect(harness.hook().agentProjects.launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        ACTIVE_ID,
+      );
+    });
+    harness.worktree.addAgentWorktree.mockImplementationOnce(() => worktree.promise);
+
+    let pending!: ReturnType<WorkbenchAgentsSurface["startThread"]>;
+    act(() => {
+      pending = harness.hook().startThread({
+        projectRootKey: ACTIVE_ROOT,
+        repositoryRoot: ACTIVE_ROOT,
+        prompt: "Check stale trust",
+        isolation: "worktree",
+        unsafeInPlaceConfirmationKey: null,
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+    });
+    await waitForReact(() => expect(harness.worktree.addAgentWorktree).toHaveBeenCalledOnce());
+
+    harness.setWorkspaceId("workspace-b");
+    harness.rerender();
+    await waitForReact(() => {
+      expect(harness.hook().agentProjects.launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        "workspace-b",
+      );
+    });
+    harness.setWorkspaceId(ACTIVE_ID);
+    harness.rerender();
+    await waitForReact(() => {
+      expect(harness.hook().agentProjects.launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        ACTIVE_ID,
+      );
+    });
+
+    await act(async () => {
+      worktree.reject(new Error("Agent worktrees require a trusted repository."));
+      expect(await pending).toBeNull();
+    });
+
+    expect(harness.hook().agentProjects.projects[0]?.trust).toBe("trusted");
+    expect(harness.activeTrustChanged).not.toHaveBeenCalled();
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("drops an untrusted worktree cleanup notice across an active workspace A to B to A replacement", async () => {
+    const cleanup = createDeferred<undefined>();
+    const harness = renderWorkbenchAgents({ withProjectGateways: true });
+    await waitForReact(() => {
+      expect(harness.hook().agentProjects.launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        ACTIVE_ID,
+      );
+    });
+    harness.worktree.addAgentWorktree.mockResolvedValueOnce({
+      worktreePath: `${ACTIVE_ROOT}/.worktrees/stale`,
+      branch: "agent/stale",
+      trusted: false,
+    });
+    harness.worktree.removeWorktree.mockImplementationOnce(() => cleanup.promise);
+
+    let pending!: ReturnType<WorkbenchAgentsSurface["startThread"]>;
+    act(() => {
+      pending = harness.hook().startThread({
+        projectRootKey: ACTIVE_ROOT,
+        repositoryRoot: ACTIVE_ROOT,
+        prompt: "Check stale cleanup",
+        isolation: "worktree",
+        unsafeInPlaceConfirmationKey: null,
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+    });
+    await waitForReact(() => expect(harness.worktree.removeWorktree).toHaveBeenCalledOnce());
+
+    harness.setWorkspaceId("workspace-b");
+    harness.rerender();
+    await waitForReact(() => {
+      expect(harness.hook().agentProjects.launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        "workspace-b",
+      );
+    });
+    harness.setWorkspaceId(ACTIVE_ID);
+    harness.rerender();
+    await waitForReact(() => {
+      expect(harness.hook().agentProjects.launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        ACTIVE_ID,
+      );
+    });
+
+    await act(async () => {
+      cleanup.resolve(undefined);
+      expect(await pending).toBeNull();
+    });
+
+    expect(harness.hook().notice).toBeNull();
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("reports orphaned cleanup to the retained project after an active workspace replacement", async () => {
+    const cleanup = createDeferred<undefined>();
+    const cleanupError = new Error("cleanup failed");
+    const harness = renderWorkbenchAgents({ withProjectGateways: true });
+    await waitForReact(() => {
+      expect(harness.hook().agentProjects.launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        ACTIVE_ID,
+      );
+    });
+    harness.worktree.addAgentWorktree.mockResolvedValueOnce({
+      worktreePath: `${ACTIVE_ROOT}/.worktrees/orphaned`,
+      branch: "agent/orphaned",
+      trusted: false,
+    });
+    harness.worktree.removeWorktree.mockImplementationOnce(() => cleanup.promise);
+
+    let pending!: ReturnType<WorkbenchAgentsSurface["startThread"]>;
+    act(() => {
+      pending = harness.hook().startThread({
+        projectRootKey: ACTIVE_ROOT,
+        repositoryRoot: ACTIVE_ROOT,
+        prompt: "Check orphan accounting",
+        isolation: "worktree",
+        unsafeInPlaceConfirmationKey: null,
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+    });
+    await waitForReact(() => expect(harness.worktree.removeWorktree).toHaveBeenCalledOnce());
+
+    harness.setWorkspaceId("workspace-b");
+    harness.rerender();
+    await waitForReact(() => {
+      expect(harness.hook().agentProjects.launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        "workspace-b",
+      );
+    });
+    harness.setWorkspaceId(ACTIVE_ID);
+    harness.rerender();
+    await waitForReact(() => {
+      expect(harness.hook().agentProjects.launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        ACTIVE_ID,
+      );
+    });
+
+    await act(async () => {
+      cleanup.reject(cleanupError);
+      expect(await pending).toBeNull();
+    });
+
+    expect(harness.reportError).toHaveBeenCalledWith("Agents", cleanupError);
+    expect(harness.hook().notice?.message).toContain("orphaned");
     harness.unmount();
   });
 

@@ -9,8 +9,10 @@ import {
   errorMessageOf,
   failure,
   isCurrentProjectOwner,
+  isCurrentTaskLaunchAuthority,
   type AgentProjectAuthority,
-  type AgentProjectsRef,
+  type AgentLaunchProjectsRef,
+  type AgentTaskLaunchAuthority,
   type MountedRef,
 } from "./agentProjectAuthority";
 import type { AgentTasksNotice } from "./agentThreadPorts";
@@ -27,7 +29,7 @@ export interface CreatedAgentWorktree {
   readonly repositoryRoot: string;
 }
 
-type WorktreeDependenciesRef = AgentProjectsRef & {
+type WorktreeDependenciesRef = AgentLaunchProjectsRef & {
   readonly current: AgentThreadWorktreeDependencies;
 };
 
@@ -41,16 +43,18 @@ const UNTRUSTED_WORKTREE_NOTICE =
 export async function createThreadWorktree(
   dependenciesRef: WorktreeDependenciesRef,
   mountedRef: MountedRef,
-  authority: AgentProjectAuthority,
+  authority: AgentTaskLaunchAuthority,
   repositoryRoot: string,
   threadId: string,
 ): Promise<CreatedAgentWorktree | null> {
   const deps = dependenciesRef.current;
-  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return null;
+  if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot))
+    return null;
   const gateway = deps.gitWorktreeGateway;
   const receipt = await attempt(() => gateway.addAgentWorktree(repositoryRoot, threadId));
   if (!receipt.ok) {
-    if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return null;
+    if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot))
+      return null;
     const currentDeps = dependenciesRef.current;
     const trustRejected = noteTrustRejection(currentDeps, authority, receipt.error);
     if (trustRejected) return null;
@@ -59,14 +63,15 @@ export async function createThreadWorktree(
     return null;
   }
   const created: CreatedAgentWorktree = { receipt: receipt.value, repositoryRoot };
-  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+  if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
     await compensateCreatedWorktree(dependenciesRef, mountedRef, authority, created);
     return null;
   }
   if (receipt.value.trusted) return created;
   const cleaned = await compensateCreatedWorktree(dependenciesRef, mountedRef, authority, created);
-  if (!mountedRef.current) return null;
-  deps.setNotice(
+  if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot))
+    return null;
+  dependenciesRef.current.setNotice(
     failure(
       cleaned ? UNTRUSTED_WORKTREE_NOTICE : orphanedWorktreeNotice(UNTRUSTED_WORKTREE_NOTICE),
     ),
@@ -77,7 +82,7 @@ export async function createThreadWorktree(
 export async function compensateCreatedWorktree(
   dependenciesRef: WorktreeDependenciesRef,
   mountedRef: MountedRef,
-  authority: AgentProjectAuthority,
+  authority: AgentTaskLaunchAuthority,
   created: CreatedAgentWorktree,
 ): Promise<boolean> {
   const removed = await attempt(() =>
