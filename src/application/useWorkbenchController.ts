@@ -101,6 +101,7 @@ import {
   withoutClosedWorkspacePackageScripts,
 } from "./workbenchController/workspaceRetainedStateCleanup";
 import { useWorkbenchSettingsPersistence } from "./workbenchController/useWorkbenchSettingsPersistence";
+import { useInitialAppSettingsHydration } from "./workbenchController/useInitialAppSettingsHydration";
 import {
   useWorkbenchLatencyReporting,
   useWorkbenchLatencyTrackerForRoot,
@@ -5228,40 +5229,13 @@ export function useWorkbenchController(
     workspaceRoot,
   );
 
-  useEffect(() => {
-    if (hasRestoredRef.current) {
-      return;
-    }
-
-    hasRestoredRef.current = true;
-    let active = true;
-
-    settingsGateway
-      .loadAppSettings()
-      .then((settings) => {
-        if (!active) {
-          return;
-        }
-
-        applyAppSettings(settings);
-        const workspacePath = settings.recentWorkspacePath ?? settings.workspaceTabs[0] ?? null;
-
-        if (!workspacePath) {
-          return;
-        }
-
-        if (!active) {
-          return;
-        }
-
-        void openWorkspacePath(workspacePath);
-      })
-      .catch((error) => reportError("Settings", error));
-
-    return () => {
-      active = false;
-    };
-  }, [applyAppSettings, openWorkspacePath, reportError, settingsGateway]);
+  useInitialAppSettingsHydration({
+    applyAppSettings,
+    hasRestoredRef,
+    openWorkspacePath,
+    reportError,
+    settingsGateway,
+  });
 
   useWorkbenchWorkspaceFileChangeSubscription({
     currentWorkspaceRootRef,
