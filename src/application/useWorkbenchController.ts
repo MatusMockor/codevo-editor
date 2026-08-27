@@ -46,6 +46,7 @@ import {
 import { useWorkbenchDiagnosticPresentation } from "./workbenchController/useWorkbenchDiagnosticPresentation";
 import { useWorkbenchEditorPresentation } from "./workbenchController/useWorkbenchEditorPresentation";
 import { useWorkbenchEditorGroupCoordinator } from "./workbenchController/useWorkbenchEditorGroupCoordinator";
+import { useWorkbenchEditorDocumentCoordinator } from "./workbenchController/useWorkbenchEditorDocumentCoordinator";
 import { useWorkbenchSettingsCommands } from "./workbenchController/useWorkbenchSettingsCommands";
 import {
   useWorkbenchGitChangesCoordinator,
@@ -114,7 +115,6 @@ import { useFloatingSurfaces } from "./useFloatingSurfaces";
 import { gitChangeForDiffDocumentPath, isGitDiffDocumentPath } from "./useGitDiffWorkspace";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
 import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
-import { useWorkbenchCommandContext } from "./useWorkbenchCommandContext";
 import { useWorkbenchDirtyCloseDecisionPort } from "./useWorkbenchDirtyCloseDecisionPort";
 import { useOptionalWorkspaceTextReader } from "./useOptionalWorkspaceTextReader";
 import { useActiveWorkspaceOwners } from "./useActiveWorkspaceOwners";
@@ -129,7 +129,6 @@ import { useWorkbenchWorkspacePackageGraph } from "./useWorkbenchWorkspacePackag
 import { useWorkbenchIndexLifecycle } from "./useWorkbenchIndexLifecycle";
 import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
-import { useWorkbenchActiveDocumentEditing } from "./useWorkbenchActiveDocumentEditing";
 import { useWorkbenchEditorConfigCoordinator } from "./useWorkbenchEditorConfigCoordinator";
 import { refreshEditorConfigAfterDocumentSave } from "./editorConfigInvalidation";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
@@ -169,7 +168,6 @@ import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifec
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
 import { useWorkbenchNavigationState } from "./useWorkbenchNavigationState";
-import { useWorkbenchNavigation } from "./useWorkbenchNavigation";
 import { useWorkbenchClassOpen } from "./useWorkbenchClassOpen";
 import { useWorkbenchQuickOpen } from "./useWorkbenchQuickOpen";
 import { useWorkbenchSearchEverywhere } from "./useWorkbenchSearchEverywhere";
@@ -210,7 +208,6 @@ import { useNavigationHistory, useRecentNavigation } from "./useNavigationHistor
 import { useLanguageServerDocumentSyncState } from "./useLanguageServerDocumentSyncState";
 import { usePhpFrameworkResolution } from "./usePhpFrameworkResolution";
 import { usePhpOutline } from "./usePhpOutline";
-import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfaceCommand";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
 import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
@@ -221,7 +218,6 @@ export type {
   PhpCodeActionRange,
 } from "./usePhpCodeActions";
 
-import { usePhpCodeActionNewFileApplication } from "./usePhpCodeActionNewFileApplication";
 import { usePhpChangeSignatureWorkflow } from "./usePhpChangeSignatureWorkflow";
 import {
   createWorkbenchNotice,
@@ -272,13 +268,7 @@ import {
 } from "./workbenchDefaultGateways";
 import { type EslintDiagnosticsByRoot, type EslintFix } from "../domain/eslintDiagnostics";
 import { type PhpstanDiagnosticsByRoot } from "../domain/phpstanDiagnostics";
-import {
-  isMarkdownDocument,
-  markdownPreviewPath,
-  renderMarkdownPreview,
-  type MarkdownPreviewTab,
-} from "../domain/markdownPreview";
-import { applyEditorChangeRevert, type EditorChangeHunk } from "../domain/editorChangeMarkers";
+import { renderMarkdownPreview } from "../domain/markdownPreview";
 import {
   type LanguageServerRuntimeGateway,
   type LanguageServerRuntimeStatus,
@@ -303,11 +293,6 @@ import {
   type PhpFileStructureScope,
 } from "../domain/phpFileOutline";
 import { emptyPhpTree, type PhpTreeGateway } from "../domain/phpTree";
-import { phpTestClassPlan, renderPhpTestSkeleton } from "../domain/phpTestGen";
-import {
-  phpTestPartnerMissingMessage,
-  phpTestNavigationTargets,
-} from "../domain/phpTestNavigation";
 import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
 import { emptyRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import {
@@ -326,21 +311,14 @@ import { parseComposerScripts, type PackageScript } from "../domain/packageScrip
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import { recentFilesForSwitcher } from "../domain/recentFiles";
-import {
-  editorGroupsUniquePaths,
-  openEditorGroupPath,
-  type EditorGroupId,
-} from "../domain/editorGroups";
+import { editorGroupsUniquePaths, type EditorGroupId } from "../domain/editorGroups";
 import { sortBookmarks, type Bookmark } from "../domain/bookmarks";
 import type { LatencyTracker } from "../domain/latencyTracker";
 import {
-  createWorkspaceTextFileWithContent,
   getFileName,
-  getParentPath,
   isDirty,
   joinWorkspacePath,
   workspaceRelativePath,
-  visibleEditorPaths,
   type EditorDocument,
   type FileEntry,
   type IntelligenceMode,
@@ -4352,477 +4330,133 @@ export function useWorkbenchController(
     workspaceSettingsRef,
   });
 
-  const updateActiveDocument = useWorkbenchActiveDocumentEditing({
-    activeDocument,
-    activeDocumentRef,
-    activePhpFrameworkProviders,
-    invalidatePhpFrameworkBindingCacheRef,
-    isPhpFrameworkBindingDependencyPathRef,
-    phpFrameworkRuntimeContext,
-    pinDocument,
-    reportChangedDocuments,
-    resetPhpFrameworkMorphMapModelTypeCacheRef,
-    setDocuments,
-    updateDocumentContent,
-    updateLocalPhpDiagnostics,
-  });
-
-  const openMarkdownPreview = useCallback(async () => {
-    const source = activeDocumentRef.current;
-    const requestedRoot = currentWorkspaceRootRef.current;
-
-    if (!requestedRoot || !isMarkdownDocument(source)) {
-      return;
-    }
-
-    if (!isSessionPathInWorkspace(requestedRoot, source.path)) {
-      return;
-    }
-
-    const path = markdownPreviewPath(source.path);
-    const existing = markdownPreviewTabsRef.current[path];
-
-    if (existing) {
-      setActivePath(path);
-      return;
-    }
-
-    const preview: MarkdownPreviewTab = {
-      content: source.content,
-      html: "",
-      name: `${source.name} Preview`,
-      path,
-      sourcePath: source.path,
-    };
-    const nextMarkdownPreviews = {
-      ...markdownPreviewTabsRef.current,
-      [path]: preview,
-    };
-    const nextOpenPaths = [
-      ...new Set([
-        ...visibleEditorPaths(openPathsRef.current, previewPathRef.current),
-        source.path,
-        path,
-      ]),
-    ];
-    markdownPreviewTabsRef.current = nextMarkdownPreviews;
-    openPathsRef.current = nextOpenPaths;
-    previewPathRef.current = null;
-    activeDocumentRef.current = null;
-    setMarkdownPreviewTabs(nextMarkdownPreviews);
-    updateEditorGroups((current) => ({
-      ...current,
-      groups: {
-        ...current.groups,
-        [current.activeGroupId]: openEditorGroupPath(current.groups[current.activeGroupId], {
-          nextActivePath: path,
-          nextOpenPaths,
-          nextPreviewPath: null,
-        }),
-      },
-    }));
-
-    try {
-      const html = await markdownPreviewRenderer(source.content);
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      const current = markdownPreviewTabsRef.current[path];
-
-      if (!current || current.sourcePath !== source.path) {
-        return;
-      }
-
-      const renderedPreview = { ...current, html };
-      const renderedPreviews = {
-        ...markdownPreviewTabsRef.current,
-        [path]: renderedPreview,
-      };
-      markdownPreviewTabsRef.current = renderedPreviews;
-      setMarkdownPreviewTabs(renderedPreviews);
-    } catch (error) {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      reportErrorForActiveWorkspaceRoot(requestedRoot, "Markdown Preview", error);
-    }
-  }, [
-    activeDocumentRef,
-    markdownPreviewRenderer,
-    markdownPreviewTabsRef,
-    openPathsRef,
-    previewPathRef,
-    reportErrorForActiveWorkspaceRoot,
-    setActivePath,
-    setMarkdownPreviewTabs,
-    updateEditorGroups,
-  ]);
-
-  useEffect(() => {
-    if (!workspaceRoot) {
-      return;
-    }
-
-    const timeoutIds: number[] = [];
-
-    openMarkdownPreviews.forEach((preview) => {
-      const source = documents[preview.sourcePath];
-
-      if (!source || source.content === preview.content) {
-        return;
-      }
-
-      const requestedRoot = workspaceRoot;
-      const content = source.content;
-      const timeoutId = window.setTimeout(() => {
-        void markdownPreviewRenderer(content)
-          .then((html) => {
-            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-              return;
-            }
-
-            const current = markdownPreviewTabsRef.current[preview.path];
-
-            if (!current || current.sourcePath !== preview.sourcePath) {
-              return;
-            }
-
-            if (!openPathsRef.current.includes(preview.path)) {
-              return;
-            }
-
-            if (documentsRef.current[preview.sourcePath]?.content !== content) {
-              return;
-            }
-
-            const renderedPreview = { ...current, content, html };
-            const renderedPreviews = {
-              ...markdownPreviewTabsRef.current,
-              [preview.path]: renderedPreview,
-            };
-            markdownPreviewTabsRef.current = renderedPreviews;
-            setMarkdownPreviewTabs(renderedPreviews);
-          })
-          .catch((error) => {
-            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-              return;
-            }
-
-            reportErrorForActiveWorkspaceRoot(requestedRoot, "Markdown Preview", error);
-          });
-      }, 300);
-      timeoutIds.push(timeoutId);
-    });
-
-    return () => {
-      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
-    };
-  }, [
-    documents,
-    documentsRef,
-    markdownPreviewRenderer,
-    markdownPreviewTabsRef,
-    openMarkdownPreviews,
-    openPathsRef,
-    reportErrorForActiveWorkspaceRoot,
-    setMarkdownPreviewTabs,
-    workspaceRoot,
-  ]);
-
-  const revertActiveEditorChangeHunk = useCallback(
-    (hunk: EditorChangeHunk) => {
-      if (!activeDocument) {
-        return;
-      }
-      const content = applyEditorChangeRevert(activeDocument.content, hunk);
-      if (content !== activeDocument.content) {
-        updateActiveDocument(content);
-      }
-    },
-    [activeDocument, updateActiveDocument],
-  );
-
-  // PhpStorm-style "Create Test" (Ctrl+Shift+T): from the active PHP class,
-  // derive the matching PHPUnit test path/namespace via PSR-4, render a skeleton
-  // (one `test<Method>()` per public instance method) and open it. Conservative:
-  // an existing test is opened, never overwritten; non-class sources / classes
-  // without public instance methods produce no file. Per-workspace isolation:
-  // the requested root is captured up front and re-checked after every await so
-  // a tab switch mid-flight drops the (now stale) generation.
-  const generateTestForActiveDocument = useCallback(async () => {
-    const requestedRoot = workspaceRoot;
-    const requestedDescriptor = workspaceDescriptor;
-    const requestedDocument = activeDocumentRef.current;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-    if (!requestedRoot || !requestedDescriptor?.php || !requestedDocument) {
-      return;
-    }
-
-    if (requestedDocument.language !== "php") {
-      return;
-    }
-
-    const plan = phpTestClassPlan({
-      psr4Roots: requestedDescriptor.php.psr4Roots,
-      source: requestedDocument.content,
-    });
-
-    if (!plan) {
-      setMessage("Generate test: no testable class in the active file.");
-      return;
-    }
-
-    const testPath = joinWorkspacePath(requestedRoot, plan.relativePath);
-
-    try {
-      const existingTest = await readTestFileIfExists(testPath);
-
-      if (!isRequestedRootActive()) {
-        return;
-      }
-
-      if (existingTest !== null) {
-        await openFile({
-          kind: "file",
-          name: getFileName(testPath),
-          path: testPath,
-        });
-        return;
-      }
-
-      const parentPath = getParentPath(testPath);
-      await workspaceFiles.createDirectory(parentPath);
-
-      if (!isRequestedRootActive()) {
-        return;
-      }
-
-      await createWorkspaceTextFileWithContent(
-        workspaceFiles,
-        testPath,
-        renderPhpTestSkeleton(plan),
-      );
-
-      if (!isRequestedRootActive()) {
-        return;
-      }
-
-      await notifyJavaScriptTypeScriptWatchedFilesChanged([
-        {
-          changeType: "created",
-          path: testPath,
-        },
-      ]);
-
-      if (!isRequestedRootActive()) {
-        return;
-      }
-
-      setExpandedDirectories((current) => new Set(current).add(parentPath));
-      await refreshDirectory(parentPath);
-
-      if (!isRequestedRootActive()) {
-        return;
-      }
-
-      await openFile({
-        kind: "file",
-        name: getFileName(testPath),
-        path: testPath,
-      });
-    } catch (error) {
-      reportErrorForActiveWorkspaceRoot(requestedRoot, "Generate Test", error);
-    }
-  }, [
-    activeDocumentRef,
-    notifyJavaScriptTypeScriptWatchedFilesChanged,
-    setExpandedDirectories,
-    openFile,
-    readTestFileIfExists,
-    refreshDirectory,
-    reportErrorForActiveWorkspaceRoot,
-    workspaceDescriptor,
-    workspaceFiles,
-    workspaceRoot,
-  ]);
-
-  const applyPhpCodeActionNewFile = usePhpCodeActionNewFileApplication({
-    workspaceRoot,
-    currentWorkspaceRootRef,
-    workspaceFiles,
-    workspaceIdentityDescriptorRef,
-    workspaceOwnerFiles,
-    workspaceRuntimeOwnerClaimsRef,
-    workspaceRuntimeOwnerRef,
-    setExpandedDirectories,
-    notifyJavaScriptTypeScriptWatchedFilesChanged,
-    openFile,
-    readTestFileIfExists,
-    refreshDirectory,
-    reportErrorForActiveWorkspaceRoot,
-  });
-
-  // PhpStorm-style "Go to Test / Test Subject": from the active PHP file, decide
-  // (via PSR-4) whether it is a TEST or a production SUBJECT and jump to its
-  // partner. From a source class, both Unit and Feature suites are probed and the
-  // first existing test wins; from a test, the single derived subject is opened.
-  // The partner is opened (never created); a missing partner only notifies. Per
-  // the per-workspace isolation rule the requested root is captured up front and
-  // re-checked after every await so a tab switch mid-flight drops the navigation.
-  const goToTestForActiveDocument = useCallback(async () => {
-    const requestedRoot = workspaceRoot;
-    const requestedDescriptor = workspaceDescriptor;
-    const requestedDocument = activeDocumentRef.current;
-    const isRequestedRootActive = () =>
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-    if (!requestedRoot || !requestedDescriptor?.php || !requestedDocument) {
-      return;
-    }
-
-    if (requestedDocument.language !== "php") {
-      return;
-    }
-
-    const relativePath = workspaceRelativePath(requestedRoot, requestedDocument.path);
-
-    if (!relativePath) {
-      return;
-    }
-
-    const navigation = phpTestNavigationTargets({
-      psr4Roots: requestedDescriptor.php.psr4Roots,
-      relativePath,
-    });
-
-    if (!navigation) {
-      setMessage("Go to test: no test mapping for the active file.");
-      return;
-    }
-
-    try {
-      for (const candidate of navigation.candidates) {
-        const candidatePath = joinWorkspacePath(requestedRoot, candidate);
-        const existing = await readTestFileIfExists(candidatePath);
-
-        if (!isRequestedRootActive()) {
-          return;
-        }
-
-        if (existing === null) {
-          continue;
-        }
-
-        await openFile({
-          kind: "file",
-          name: getFileName(candidatePath),
-          path: candidatePath,
-        });
-        return;
-      }
-
-      setMessage(phpTestPartnerMissingMessage(navigation.direction));
-    } catch (error) {
-      reportErrorForActiveWorkspaceRoot(requestedRoot, "Go to Test", error);
-    }
-  }, [
-    activeDocumentRef,
-    openFile,
-    readTestFileIfExists,
-    reportErrorForActiveWorkspaceRoot,
-    workspaceDescriptor,
-    workspaceRoot,
-  ]);
-
-  const navigationSurfaceIdentity = useMemo(
-    () => ({ activeGroupId, activePath, editorSessionOwnerKey }),
-    [activeGroupId, activePath, editorSessionOwnerKey],
-  );
-  const captureNavigationCommandScope = useCallback(
-    (): EditorSurfaceCommandInvocationScope =>
-      editorSurfaceCommandRunner?.captureScope?.() ?? {
-        documentPath: activeDocumentRef.current?.path ?? null,
-        modelIdentity: null,
-        ownerKey: currentEditorSessionOwnerKeyRef.current,
-        surfaceIdentity: navigationSurfaceIdentity,
-      },
-    [
-      activeDocumentRef,
-      currentEditorSessionOwnerKeyRef,
-      navigationSurfaceIdentity,
-      editorSurfaceCommandRunner,
-    ],
-  );
-  const isNavigationCommandScopeCurrent = useCallback(
-    (scope: EditorSurfaceCommandInvocationScope) => {
-      if (scope.ownerKey !== currentEditorSessionOwnerKeyRef.current) {
-        return false;
-      }
-
-      if (scope.documentPath !== (activeDocumentRef.current?.path ?? null)) {
-        return false;
-      }
-
-      if (!scope.modelIdentity) {
-        return scope.surfaceIdentity === navigationSurfaceIdentity;
-      }
-
-      return editorSurfaceCommandRunner?.isScopeCurrent?.(scope) ?? false;
-    },
-    [
-      activeDocumentRef,
-      currentEditorSessionOwnerKeyRef,
-      navigationSurfaceIdentity,
-      editorSurfaceCommandRunner,
-    ],
-  );
-  const { commandContext, commandContextRef } = useWorkbenchCommandContext({
-    activeDocument,
-    captureEditorSurfaceScope: captureNavigationCommandScope,
-    workspaceRoot,
-  });
-
   const {
     activateSearchEverywhereItem,
+    applyPhpCodeActionNewFile,
+    captureNavigationCommandScope,
+    commandContext,
+    generateTestForActiveDocument,
+    goToNextProblem,
+    goToPreviousProblem,
+    goToTestForActiveDocument,
+    isNavigationCommandScopeCurrent,
+    navigationSurfaceIdentity,
     openClassSearchResult,
     openCurrentFileLocation,
+    openMarkdownPreview,
     openNavigationTarget,
     openPathForNavigation,
     openProblemNotice,
     openRecentFile,
     openSearchResult,
     openWorkspaceSymbolResult,
-    goToNextProblem,
-    goToPreviousProblem,
     readNavigationFileContent,
-  } = useWorkbenchNavigation({
-    activeDocumentRef,
-    activeEditorPositionRef,
-    commandContextRef,
-    currentWorkspaceRootRef,
-    documentsRef,
-    noticesRef,
-    workspaceFiles,
-    openFile,
-    currentNavigationLocation,
-    forgetRecentFile,
-    recordNavigationLocationSnapshot,
-    reportError,
-    setClassOpenOpen,
-    setEditorRevealTarget,
-    setMessage,
-    setQuickOpenOpen,
-    setRecentFilesSwitcherOpen,
-    setSearchEverywhereOpen,
-    setWorkspaceSymbolsOpen,
+    revertActiveEditorChangeHunk,
+    updateActiveDocument,
+  } = useWorkbenchEditorDocumentCoordinator({
+    activeEditing: {
+      activeDocument,
+      activeDocumentRef,
+      activePhpFrameworkProviders,
+      invalidatePhpFrameworkBindingCacheRef,
+      isPhpFrameworkBindingDependencyPathRef,
+      phpFrameworkRuntimeContext,
+      pinDocument,
+      reportChangedDocuments,
+      resetPhpFrameworkMorphMapModelTypeCacheRef,
+      setDocuments,
+      updateDocumentContent,
+      updateLocalPhpDiagnostics,
+    },
+    authority: {
+      activeDocumentRef,
+      currentWorkspaceRootRef,
+      isDocumentSessionLifecycleAuthorityCurrent,
+      isEditorGroupDocumentSessionAuthorityCurrent,
+      resolveActiveDocumentSessionAuthority,
+      resolveDocumentSessionLifecycleAuthority,
+      workspaceIdentityDescriptorRef,
+      workspaceRuntimeOwnerClaimsRef,
+      workspaceRuntimeOwnerRef,
+    },
+    commandContext: {
+      activeDocument,
+      workspaceRoot,
+    },
+    markdown: {
+      documents,
+      documentsRef,
+      markdownPreviewRenderer,
+      markdownPreviewTabsRef,
+      openMarkdownPreviews,
+      openPathsRef,
+      previewPathRef,
+      reportErrorForActiveWorkspaceRoot,
+      setActivePath,
+      setMarkdownPreviewTabs,
+      updateEditorGroups,
+      workspaceRoot,
+    },
+    navigation: {
+      activeDocumentRef,
+      activeEditorPositionRef,
+      currentWorkspaceRootRef,
+      documentsRef,
+      noticesRef,
+      workspaceFiles,
+      openFile,
+      currentNavigationLocation,
+      forgetRecentFile,
+      recordNavigationLocationSnapshot,
+      reportError,
+      setClassOpenOpen,
+      setEditorRevealTarget,
+      setMessage,
+      setQuickOpenOpen,
+      setRecentFilesSwitcherOpen,
+      setSearchEverywhereOpen,
+      setWorkspaceSymbolsOpen,
+    },
+    navigationScope: {
+      activeDocumentRef,
+      activeGroupId,
+      activePath,
+      currentEditorSessionOwnerKeyRef,
+      editorSessionOwnerKey,
+      editorSurfaceCommandRunner,
+    },
+    openSymbolPanelNavigationTargetRef,
+    phpCodeAction: {
+      workspaceRoot,
+      currentWorkspaceRootRef,
+      workspaceFiles,
+      workspaceIdentityDescriptorRef,
+      workspaceOwnerFiles,
+      workspaceRuntimeOwnerClaimsRef,
+      workspaceRuntimeOwnerRef,
+      setExpandedDirectories,
+      notifyJavaScriptTypeScriptWatchedFilesChanged,
+      openFile,
+      readTestFileIfExists,
+      refreshDirectory,
+      reportErrorForActiveWorkspaceRoot,
+    },
+    testNavigation: {
+      activeDocumentRef,
+      currentWorkspaceRootRef,
+      notifyJavaScriptTypeScriptWatchedFilesChanged,
+      openFile,
+      readTestFileIfExists,
+      refreshDirectory,
+      reportErrorForActiveWorkspaceRoot,
+      setExpandedDirectories,
+      setMessage,
+      workspaceDescriptor,
+      workspaceFiles,
+      workspaceOwnerFiles,
+      workspaceRoot,
+    },
   });
-  openSymbolPanelNavigationTargetRef.current = openNavigationTarget;
-
   const {
     hideBottomPanel,
     registerActiveTerminalSession,
