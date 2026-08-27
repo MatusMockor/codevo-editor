@@ -41,7 +41,10 @@ import {
   type EditorGroupsState,
 } from "../domain/editorGroups";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
-import type { DocumentCloseOptions } from "./useDocumentLifecycle";
+import type {
+  DocumentCloseOptions,
+  DocumentLifecycleWorkspaceAuthority,
+} from "./useDocumentCloseLifecycle";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 
 interface EditorCloseIdentity {
@@ -49,6 +52,7 @@ interface EditorCloseIdentity {
   readonly documentIdentity: string;
   readonly ownership: DocumentSaveOwnership;
   readonly path: string;
+  readonly workspaceAuthority: DocumentLifecycleWorkspaceAuthority;
 }
 
 type EditorCloseTarget = CapturedDirtyCloseTarget<EditorCloseIdentity>;
@@ -87,6 +91,8 @@ export interface WorkbenchEditorGroupCloseLifecycleDependencies {
   runWithIssuedWriteDrain: RunWithDocumentSaveExclusion;
   resolveDocumentSaveOwnership: ResolveDocumentSaveOwnership;
   resolveWorkspaceRuntimeOwner: (rootPath: string) => WorkspaceRuntimeOwner | null;
+  captureWorkspaceAuthority: (rootPath: string) => DocumentLifecycleWorkspaceAuthority | null;
+  isWorkspaceAuthorityCurrent: (authority: DocumentLifecycleWorkspaceAuthority) => boolean;
   dirtyCloseDecisionPort: DirtyCloseDecisionPort;
   hasExternalFileConflict: (rootPath: string | null, path: string) => boolean;
   onDidCloseEditorPaths?: (paths: readonly string[]) => void;
@@ -128,6 +134,8 @@ export function useWorkbenchEditorGroupCloseLifecycle(
     runWithIssuedWriteDrain,
     resolveDocumentSaveOwnership,
     resolveWorkspaceRuntimeOwner,
+    captureWorkspaceAuthority,
+    isWorkspaceAuthorityCurrent,
     dirtyCloseDecisionPort,
     hasExternalFileConflict,
     onDidCloseEditorPaths,
@@ -278,12 +286,20 @@ export function useWorkbenchEditorGroupCloseLifecycle(
         return false;
       }
       const currentOwner = resolveWorkspaceRuntimeOwner(rootPath);
-      return (
-        currentOwner?.ownerKey === owner.ownerKey &&
-        currentOwner.executionRoot === owner.executionRoot
+      if (currentOwner !== owner) {
+        return false;
+      }
+      const authority = captureWorkspaceAuthority(rootPath);
+      return Boolean(
+        authority && authority.owner === owner && isWorkspaceAuthorityCurrent(authority),
       );
     },
-    [currentWorkspaceRootRef, resolveWorkspaceRuntimeOwner],
+    [
+      captureWorkspaceAuthority,
+      currentWorkspaceRootRef,
+      isWorkspaceAuthorityCurrent,
+      resolveWorkspaceRuntimeOwner,
+    ],
   );
 
   const targetState = useCallback(
@@ -344,6 +360,9 @@ export function useWorkbenchEditorGroupCloseLifecycle(
       }
 
       for (const target of targets) {
+        if (!isWorkspaceAuthorityCurrent(target.identity.workspaceAuthority)) {
+          return { status: "stale", target, reason: "owner-replaced" };
+        }
         if (!ownerIsCurrent(target.owner)) {
           return { status: "stale", target, reason: "owner-replaced" };
         }
@@ -366,7 +385,14 @@ export function useWorkbenchEditorGroupCloseLifecycle(
       scope.commit();
       return { status: "committed", result: undefined };
     },
-    [documentsRef, editorGroupsRef, externalAliasesAreCurrent, ownerIsCurrent, targetState],
+    [
+      documentsRef,
+      editorGroupsRef,
+      externalAliasesAreCurrent,
+      isWorkspaceAuthorityCurrent,
+      ownerIsCurrent,
+      targetState,
+    ],
   );
 
   const runWithTargetWriteDrains = useCallback(
@@ -446,9 +472,15 @@ export function useWorkbenchEditorGroupCloseLifecycle(
           if (!externalAliasesAreCurrent(scope)) {
             return { status: "stale" };
           }
+          if (!isWorkspaceAuthorityCurrent(target.identity.workspaceAuthority)) {
+            return { status: "stale" };
+          }
 
           const saveResult = await saveDocument(target.identity.path);
           if (!externalAliasesAreCurrent(scope)) {
+            return { status: "stale" };
+          }
+          if (!isWorkspaceAuthorityCurrent(target.identity.workspaceAuthority)) {
             return { status: "stale" };
           }
           if (saveResult.status === "saved") {
@@ -502,6 +534,7 @@ export function useWorkbenchEditorGroupCloseLifecycle(
       dirtyCloseDecisionPort,
       documentsRef,
       externalAliasesAreCurrent,
+      isWorkspaceAuthorityCurrent,
       ownerIsCurrent,
       runWithTargetWriteDrains,
       saveDocument,
@@ -524,6 +557,10 @@ export function useWorkbenchEditorGroupCloseLifecycle(
       }
       const owner = resolveWorkspaceRuntimeOwner(rootPath);
       if (!owner) {
+        return null;
+      }
+      const workspaceAuthority = captureWorkspaceAuthority(rootPath);
+      if (!workspaceAuthority || workspaceAuthority.owner !== owner) {
         return null;
       }
 
@@ -552,7 +589,7 @@ export function useWorkbenchEditorGroupCloseLifecycle(
         targets.push({
           owner,
           targetId: `${owner.ownerKey}\0${documentIdentity}\0${path}`,
-          identity: { document, documentIdentity, ownership, path },
+          identity: { document, documentIdentity, ownership, path, workspaceAuthority },
         });
       }
 
@@ -585,6 +622,7 @@ export function useWorkbenchEditorGroupCloseLifecycle(
     },
     [
       currentWorkspaceRootRef,
+      captureWorkspaceAuthority,
       documentsRef,
       editorGroupsRef,
       hasExternalFileConflict,

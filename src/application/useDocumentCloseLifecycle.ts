@@ -8,10 +8,12 @@ import {
 import type { EditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import type { WorkspaceSessionViewState } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
+import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import { isDirty } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { DocumentTabSessionPort } from "./documentTabSessionPort";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
 
 export interface DocumentCloseSessionPort {
   getActivePath: DocumentTabSessionPort["getActivePath"];
@@ -24,6 +26,22 @@ export interface DocumentCloseOptions {
   skipConfirmation?: boolean;
 }
 
+export type DocumentLifecycleWorkspaceAuthority =
+  | {
+      readonly kind: "registered";
+      readonly claimGeneration: number;
+      readonly identity: WorkspaceIdentityDescriptor;
+      readonly owner: WorkspaceRuntimeOwner;
+      readonly rootPath: string;
+    }
+  | {
+      readonly editorSessionOwnerKey: EditorSessionOwnerKey | null;
+      readonly kind: "legacy";
+      readonly owner: WorkspaceRuntimeOwner | null;
+      readonly requestGeneration: number;
+      readonly rootPath: string;
+    };
+
 export interface DocumentCloseLifecycleDependencies {
   workspaceRoot: string | null;
   editorSessionOwnerKey: EditorSessionOwnerKey | null;
@@ -31,17 +49,15 @@ export interface DocumentCloseLifecycleDependencies {
 
   currentEditorSessionOwnerKeyRef: MutableRefObject<EditorSessionOwnerKey | null>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  externallyRemovedDocumentRootByPathRef: MutableRefObject<
-    Record<string, string>
-  >;
+  captureWorkspaceAuthority: (rootPath: string) => DocumentLifecycleWorkspaceAuthority | null;
+  isWorkspaceAuthorityCurrent: (authority: DocumentLifecycleWorkspaceAuthority) => boolean;
+  externallyRemovedDocumentRootByPathRef: MutableRefObject<Record<string, string>>;
   recentlyClosedTabsRef: MutableRefObject<RecentlyClosedTabs>;
 
   prompter: WorkbenchPrompter;
   invalidateDocumentSave: (rootPath: string, path: string) => void;
   syncClosedDocument: (document: EditorDocument) => Promise<void>;
-  syncClosedJavaScriptTypeScriptDocument: (
-    document: EditorDocument,
-  ) => Promise<void>;
+  syncClosedJavaScriptTypeScriptDocument: (document: EditorDocument) => Promise<void>;
   clearPhpLocalDiagnosticsForPath: (diagnosticPath: string) => void;
   clearLanguageServerDiagnosticsForPath: (
     rootPath: string | null | undefined,
@@ -63,6 +79,7 @@ export interface DocumentCloseLifecycleDependencies {
   openRecentlyClosedDocument: (
     rootPath: string,
     path: string,
+    shouldCommit?: () => boolean,
   ) => Promise<boolean>;
   restoreRecentlyClosedDocumentViewState: (
     rootPath: string,
@@ -88,6 +105,8 @@ export function useDocumentCloseLifecycle(
     documentTabSession,
     currentEditorSessionOwnerKeyRef,
     currentWorkspaceRootRef,
+    captureWorkspaceAuthority,
+    isWorkspaceAuthorityCurrent,
     externallyRemovedDocumentRootByPathRef,
     recentlyClosedTabsRef,
     prompter,
@@ -113,14 +132,15 @@ export function useDocumentCloseLifecycle(
     (path: string, options: DocumentCloseOptions = {}): Promise<void> | void => {
       const document = documentTabSession.getDocument(path);
       const rootPath = currentWorkspaceRootRef.current;
+      const workspaceAuthority = rootPath ? captureWorkspaceAuthority(rootPath) : null;
       const ownerKey = currentEditorSessionOwnerKeyRef.current;
-      const externallyRemovedRoot =
-        externallyRemovedDocumentRootByPathRef.current[path];
-      const hasExternalConflict = document
-        ? hasExternalFileConflict(rootPath, path)
-        : false;
+      const externallyRemovedRoot = externallyRemovedDocumentRootByPathRef.current[path];
+      const hasExternalConflict = document ? hasExternalFileConflict(rootPath, path) : false;
 
       const finishClose = () => {
+        if (rootPath && (!workspaceAuthority || !isWorkspaceAuthorityCurrent(workspaceAuthority))) {
+          return;
+        }
         if (currentWorkspaceRootRef.current !== rootPath) return;
         if (currentEditorSessionOwnerKeyRef.current !== ownerKey) return;
         if (documentTabSession.getDocument(path) !== document) return;
@@ -129,12 +149,7 @@ export function useDocumentCloseLifecycle(
           invalidateDocumentSave(rootPath, path);
         }
 
-        if (
-          document &&
-          rootPath &&
-          ownerKey &&
-          options.recordRecentlyClosed !== false
-        ) {
+        if (document && rootPath && ownerKey && options.recordRecentlyClosed !== false) {
           const viewState = recentlyClosedDocumentViewState(rootPath, path);
           recentlyClosedTabsRef.current = pushRecentlyClosedTab(
             recentlyClosedTabsRef.current,
@@ -200,6 +215,7 @@ export function useDocumentCloseLifecycle(
     },
     [
       cancelGitDiffDocument,
+      captureWorkspaceAuthority,
       clearExternalFileConflict,
       clearLanguageServerDiagnosticsForPath,
       clearPhpLocalDiagnosticsForPath,
@@ -209,6 +225,7 @@ export function useDocumentCloseLifecycle(
       externallyRemovedDocumentRootByPathRef,
       hasExternalFileConflict,
       invalidateDocumentSave,
+      isWorkspaceAuthorityCurrent,
       isGitDiffDocumentPath,
       loadGitDiffDocument,
       onRecentlyClosedTabsChange,
@@ -267,53 +284,65 @@ export function useDocumentCloseLifecycle(
     if (!rootPath || !ownerKey) {
       return;
     }
+    const workspaceAuthority = captureWorkspaceAuthority(rootPath);
+    if (!workspaceAuthority) {
+      return;
+    }
 
     while (hasRecentlyClosedTabs(recentlyClosedTabsRef.current, ownerKey)) {
-      const popped = popRecentlyClosedTab(
-        recentlyClosedTabsRef.current,
-        ownerKey,
-      );
-      recentlyClosedTabsRef.current = popped.tabs;
-      onRecentlyClosedTabsChange();
+      if (!isWorkspaceAuthorityCurrent(workspaceAuthority)) {
+        return;
+      }
+      const capturedRecentlyClosedTabs = recentlyClosedTabsRef.current;
+      const popped = popRecentlyClosedTab(capturedRecentlyClosedTabs, ownerKey);
 
       if (!popped.entry) {
         return;
       }
 
       if (documentTabSession.getDocument(popped.entry.path)) {
+        if (recentlyClosedTabsRef.current !== capturedRecentlyClosedTabs) {
+          return;
+        }
+        recentlyClosedTabsRef.current = popped.tabs;
+        onRecentlyClosedTabsChange();
         continue;
       }
 
-      const opened = await openRecentlyClosedDocument(
-        rootPath,
-        popped.entry.path,
+      const opened = await openRecentlyClosedDocument(rootPath, popped.entry.path, () =>
+        isWorkspaceAuthorityCurrent(workspaceAuthority),
       );
 
       if (
+        !isWorkspaceAuthorityCurrent(workspaceAuthority) ||
+        recentlyClosedTabsRef.current !== capturedRecentlyClosedTabs ||
         currentEditorSessionOwnerKeyRef.current !== ownerKey ||
         !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)
       ) {
         return;
       }
+      recentlyClosedTabsRef.current = popped.tabs;
+      onRecentlyClosedTabsChange();
 
       if (!opened) {
         continue;
       }
 
       if (popped.entry.viewState) {
-        restoreRecentlyClosedDocumentViewState(
-          rootPath,
-          popped.entry.path,
-          popped.entry.viewState,
-        );
+        if (!isWorkspaceAuthorityCurrent(workspaceAuthority)) {
+          return;
+        }
+        restoreRecentlyClosedDocumentViewState(rootPath, popped.entry.path, popped.entry.viewState);
       }
 
       return;
     }
   }, [
+    captureWorkspaceAuthority,
     currentEditorSessionOwnerKeyRef,
     currentWorkspaceRootRef,
     documentTabSession,
+    isWorkspaceAuthorityCurrent,
     onRecentlyClosedTabsChange,
     openRecentlyClosedDocument,
     recentlyClosedTabsRef,

@@ -1,12 +1,6 @@
 // @vitest-environment jsdom
 
-import {
-  act,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type SetStateAction,
-} from "react";
+import { act, useLayoutEffect, useRef, useState, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -34,10 +28,7 @@ import {
   type WorkbenchDocumentTabs,
   type WorkbenchDocumentTabsDependencies,
 } from "./useWorkbenchDocumentTabs";
-import {
-  useEditorSessionState,
-  type EditorSessionState,
-} from "./useEditorSessionState";
+import { useEditorSessionState, type EditorSessionState } from "./useEditorSessionState";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -137,24 +128,20 @@ function renderHarness(options: HarnessOptions = {}) {
   const workspaceFiles = {
     readImageFile: options.readImage,
     readTextFile: readText,
-    readTextFileSnapshot: options.readSnapshot ?? (async (path: string) => ({
-      content: await readText(path),
-      revision: null,
-    })),
+    readTextFileSnapshot:
+      options.readSnapshot ??
+      (async (path: string) => ({
+        content: await readText(path),
+        revision: null,
+      })),
   } as unknown as WorkspaceFileGateway;
 
   function Harness() {
     const session = useEditorSessionState();
     const [isOpeningFile, setIsOpeningFile] = useState(false);
-    const [selectedGitChange, setSelectedGitChange] = useState(
-      options.selectedGitChange ?? null,
-    );
-    const [gitDiffPreview, setGitDiffPreview] = useState(
-      options.gitDiffPreview ?? null,
-    );
-    const [gitDiffLoading, setGitDiffLoading] = useState(
-      options.gitDiffLoading ?? false,
-    );
+    const [selectedGitChange, setSelectedGitChange] = useState(options.selectedGitChange ?? null);
+    const [gitDiffPreview, setGitDiffPreview] = useState(options.gitDiffPreview ?? null);
+    const [gitDiffLoading, setGitDiffLoading] = useState(options.gitDiffLoading ?? false);
     const [message, setMessage] = useState(options.message ?? null);
     const initializedRef = useRef(false);
     const currentWorkspaceRootRef = useRef<string | null>(ROOT_A);
@@ -162,9 +149,7 @@ function renderHarness(options: HarnessOptions = {}) {
       createWorkspaceRuntimeOwner("workspace-a", ROOT_A),
     );
     const gitDiffRequestTokenRef = useRef(0);
-    const selectedGitChangeRef = useRef<GitChangedFile | null>(
-      options.selectedGitChange ?? null,
-    );
+    const selectedGitChangeRef = useRef<GitChangedFile | null>(options.selectedGitChange ?? null);
     const clearGitDiffPreviewState = () => {
       selectedGitChangeRef.current = null;
       setSelectedGitChange(null);
@@ -173,9 +158,7 @@ function renderHarness(options: HarnessOptions = {}) {
       setMessage(null);
     };
     const loadGitDiffDocument = (path: string) => {
-      const change = options.gitChanges?.find(
-        (candidate) => candidate.path === path,
-      );
+      const change = options.gitChanges?.find((candidate) => candidate.path === path);
 
       if (!change) {
         return;
@@ -209,7 +192,8 @@ function renderHarness(options: HarnessOptions = {}) {
       }
 
       initializedRef.current = true;
-      const editorGroups = options.editorGroups ??
+      const editorGroups =
+        options.editorGroups ??
         createInitialEditorGroupsState("editor-main", {
           activePath: options.activePath ?? null,
           openPaths: options.openPaths ?? [],
@@ -232,8 +216,7 @@ function renderHarness(options: HarnessOptions = {}) {
         workspaceTabs: [ROOT_A, ROOT_B],
       }),
       currentWorkspaceRootRef,
-      resolveCurrentWorkspaceRuntimeOwner: () =>
-        currentWorkspaceRuntimeOwnerRef.current,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentWorkspaceRuntimeOwnerRef.current,
       documentTabSession: session.documentTabSession,
       emptyDocumentRefreshTimeoutsRef: useRef(new Set()),
       filePrefetchCacheRef: useRef(filePrefetchCache),
@@ -261,8 +244,7 @@ function renderHarness(options: HarnessOptions = {}) {
 
     captured.api = useWorkbenchDocumentTabs(dependencies);
     captured.currentWorkspaceRootRef = currentWorkspaceRootRef;
-    captured.currentWorkspaceRuntimeOwnerRef =
-      currentWorkspaceRuntimeOwnerRef;
+    captured.currentWorkspaceRuntimeOwnerRef = currentWorkspaceRuntimeOwnerRef;
     captured.gitDiffRequestTokenRef = gitDiffRequestTokenRef;
     captured.session = session;
     captured.state = {
@@ -284,16 +266,15 @@ function renderHarness(options: HarnessOptions = {}) {
 
   return {
     api: () => captured.api as WorkbenchDocumentTabs,
-    currentWorkspaceRootRef: () =>
-      captured.currentWorkspaceRootRef as { current: string | null },
-    gitDiffRequestTokenRef: () =>
-      captured.gitDiffRequestTokenRef as { current: number },
+    currentWorkspaceRootRef: () => captured.currentWorkspaceRootRef as { current: string | null },
+    currentWorkspaceRuntimeOwnerRef: () =>
+      captured.currentWorkspaceRuntimeOwnerRef as { current: WorkspaceRuntimeOwner | null },
+    gitDiffRequestTokenRef: () => captured.gitDiffRequestTokenRef as { current: number },
     filePrefetchCache,
-    mutateDocuments: (
-      update: SetStateAction<Record<string, EditorDocument>>,
-    ) => act(() => {
-      captured.session?.setDocuments(update);
-    }),
+    mutateDocuments: (update: SetStateAction<Record<string, EditorDocument>>) =>
+      act(() => {
+        captured.session?.setDocuments(update);
+      }),
     recordCurrentNavigationLocation,
     recordRecentFile,
     reportError,
@@ -443,9 +424,7 @@ describe("useWorkbenchDocumentTabs", () => {
 
     expect(prefetchedOpened).toBe(true);
     expect(harness.state().isOpeningFile).toBe(false);
-    expect(harness.state().documents[prefetchedPath]?.content).toBe(
-      "prefetched",
-    );
+    expect(harness.state().documents[prefetchedPath]?.content).toBe("prefetched");
     void hungOpen;
     harness.unmount();
   });
@@ -462,9 +441,7 @@ describe("useWorkbenchDocumentTabs", () => {
 
     let foreignOpened = true;
     await act(async () => {
-      foreignOpened = await harness.api().openFile(
-        entry(`${ROOT_B}/foreign.ts`),
-      );
+      foreignOpened = await harness.api().openFile(entry(`${ROOT_B}/foreign.ts`));
     });
 
     expect(foreignOpened).toBe(false);
@@ -539,9 +516,7 @@ describe("useWorkbenchDocumentTabs", () => {
       [replacementPath]: document(replacementPath, "content"),
     });
     expect(harness.syncClosedDocument).not.toHaveBeenCalled();
-    expect(
-      harness.syncClosedJavaScriptTypeScriptDocument,
-    ).not.toHaveBeenCalled();
+    expect(harness.syncClosedJavaScriptTypeScriptDocument).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -616,9 +591,7 @@ describe("useWorkbenchDocumentTabs", () => {
       [dirtyPath, nextDirtyPath].sort(),
     );
     expect(dirtyHarness.syncClosedDocument).not.toHaveBeenCalled();
-    expect(
-      dirtyHarness.syncClosedJavaScriptTypeScriptDocument,
-    ).not.toHaveBeenCalled();
+    expect(dirtyHarness.syncClosedJavaScriptTypeScriptDocument).not.toHaveBeenCalled();
     dirtyHarness.unmount();
 
     const cleanPath = `${ROOT_A}/clean.ts`;
@@ -637,12 +610,8 @@ describe("useWorkbenchDocumentTabs", () => {
     expect(Object.keys(cleanHarness.state().documents)).toEqual([nextCleanPath]);
     expect(cleanHarness.syncClosedDocument).toHaveBeenCalledOnce();
     expect(cleanHarness.syncClosedDocument).toHaveBeenCalledWith(cleanDocument);
-    expect(
-      cleanHarness.syncClosedJavaScriptTypeScriptDocument,
-    ).toHaveBeenCalledOnce();
-    expect(
-      cleanHarness.syncClosedJavaScriptTypeScriptDocument,
-    ).toHaveBeenCalledWith(cleanDocument);
+    expect(cleanHarness.syncClosedJavaScriptTypeScriptDocument).toHaveBeenCalledOnce();
+    expect(cleanHarness.syncClosedJavaScriptTypeScriptDocument).toHaveBeenCalledWith(cleanDocument);
     cleanHarness.unmount();
   });
 
@@ -665,12 +634,8 @@ describe("useWorkbenchDocumentTabs", () => {
     expect(harness.state().imageTabs).toHaveProperty(imagePath);
     expect(harness.syncClosedDocument).toHaveBeenCalledOnce();
     expect(harness.syncClosedDocument).toHaveBeenCalledWith(preview);
-    expect(
-      harness.syncClosedJavaScriptTypeScriptDocument,
-    ).toHaveBeenCalledOnce();
-    expect(
-      harness.syncClosedJavaScriptTypeScriptDocument,
-    ).toHaveBeenCalledWith(preview);
+    expect(harness.syncClosedJavaScriptTypeScriptDocument).toHaveBeenCalledOnce();
+    expect(harness.syncClosedJavaScriptTypeScriptDocument).toHaveBeenCalledWith(preview);
     harness.unmount();
   });
 
@@ -694,12 +659,8 @@ describe("useWorkbenchDocumentTabs", () => {
 
       expect(harness.syncClosedDocument).toHaveBeenCalledOnce();
       expect(harness.syncClosedDocument).toHaveBeenCalledWith(preview);
-      expect(
-        harness.syncClosedJavaScriptTypeScriptDocument,
-      ).toHaveBeenCalledOnce();
-      expect(
-        harness.syncClosedJavaScriptTypeScriptDocument,
-      ).toHaveBeenCalledWith(preview);
+      expect(harness.syncClosedJavaScriptTypeScriptDocument).toHaveBeenCalledOnce();
+      expect(harness.syncClosedJavaScriptTypeScriptDocument).toHaveBeenCalledWith(preview);
       harness.unmount();
     },
   );
@@ -759,9 +720,7 @@ describe("useWorkbenchDocumentTabs", () => {
     const opening = harness.api().openFile(entry(path));
 
     harness.currentWorkspaceRootRef().current = ROOT_B;
-    harness.replaceWorkspaceRuntimeOwner(
-      createWorkspaceRuntimeOwner("workspace-b", ROOT_B),
-    );
+    harness.replaceWorkspaceRuntimeOwner(createWorkspaceRuntimeOwner("workspace-b", ROOT_B));
     await act(async () => read.resolve("foreign content"));
     await expect(opening).resolves.toBe(false);
 
@@ -792,6 +751,28 @@ describe("useWorkbenchDocumentTabs", () => {
       content: "",
       savedContent: "",
     });
+    harness.unmount();
+  });
+
+  it("lets an exact reopen predicate reject same-id A1 to B to A2 before commit", async () => {
+    const path = `${ROOT_A}/reopen.ts`;
+    const read = deferred<string>();
+    const harness = renderHarness({ readText: () => read.promise });
+    const ownerA1 = harness.currentWorkspaceRuntimeOwnerRef().current;
+    const opening = harness
+      .api()
+      .openPinnedFile(
+        entry(path),
+        () => harness.currentWorkspaceRuntimeOwnerRef().current === ownerA1,
+      );
+
+    harness.replaceWorkspaceRuntimeOwner(createWorkspaceRuntimeOwner("workspace-b", ROOT_A));
+    harness.replaceWorkspaceRuntimeOwner(createWorkspaceRuntimeOwner("workspace-a", ROOT_A));
+    await act(async () => read.resolve("stale reopen"));
+    await expect(opening).resolves.toBe(false);
+
+    expect(harness.state().documents[path]).toBeUndefined();
+    expect(harness.recordRecentFile).not.toHaveBeenCalledWith(entry(path));
     harness.unmount();
   });
 
@@ -953,10 +934,12 @@ describe("useWorkbenchDocumentTabs", () => {
     });
 
     act(() => {
-      harness.api().openReadOnlyDocument(
-        { ...document(pinnedPath, "pinned"), language: "php" },
-        { pin: true },
-      );
+      harness
+        .api()
+        .openReadOnlyDocument(
+          { ...document(pinnedPath, "pinned"), language: "php" },
+          { pin: true },
+        );
     });
     expect(harness.state()).toMatchObject({
       activePath: pinnedPath,
@@ -997,12 +980,10 @@ describe("useWorkbenchDocumentTabs", () => {
     expect(harness.syncClosedDocument).toHaveBeenCalledWith(
       expect.objectContaining({ path: firstPath }),
     );
-    expect(
-      harness.syncClosedJavaScriptTypeScriptDocument,
-    ).toHaveBeenCalledOnce();
-    expect(
-      harness.syncClosedJavaScriptTypeScriptDocument,
-    ).toHaveBeenCalledWith(expect.objectContaining({ path: firstPath }));
+    expect(harness.syncClosedJavaScriptTypeScriptDocument).toHaveBeenCalledOnce();
+    expect(harness.syncClosedJavaScriptTypeScriptDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ path: firstPath }),
+    );
     harness.unmount();
   });
 
@@ -1012,8 +993,7 @@ describe("useWorkbenchDocumentTabs", () => {
     const firstPath = `${ROOT_A}/first.ts`;
     const secondPath = `${ROOT_A}/second.ts`;
     const harness = renderHarness({
-      readText: (path) =>
-        path === firstPath ? firstRead.promise : secondRead.promise,
+      readText: (path) => (path === firstPath ? firstRead.promise : secondRead.promise),
     });
     const firstOpen = harness.api().openFile(entry(firstPath));
     const secondOpen = harness.api().openFile(entry(secondPath));

@@ -9,6 +9,10 @@ import { emptyRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import type { EditorDocument } from "../domain/workspace";
 import { nextActiveEditorPathAfterClose } from "../domain/workspace";
 import {
+  createLegacyWorkspaceRuntimeOwner,
+  createWorkspaceRuntimeOwner,
+} from "../domain/workspaceRuntimeOwner";
+import {
   useDocumentCloseLifecycle,
   type DocumentCloseLifecycle,
   type DocumentCloseLifecycleDependencies,
@@ -18,11 +22,7 @@ import {
 const ROOT = "/workspace";
 const OWNER_KEY = createEditorSessionOwnerKey("workspace", ROOT);
 
-function editorDocument(
-  path: string,
-  content = "saved",
-  savedContent = content,
-): EditorDocument {
+function editorDocument(path: string, content = "saved", savedContent = content): EditorDocument {
   return {
     content,
     language: "php",
@@ -64,9 +64,7 @@ interface Harness {
   unmount: () => void;
 }
 
-function renderLifecycle(
-  overrides: Partial<TestDependencies> = {},
-): Harness {
+function renderLifecycle(overrides: Partial<TestDependencies> = {}): Harness {
   const container = document.createElement("div");
   const root = createRoot(container);
   const captured: { current: DocumentCloseLifecycle | null } = {
@@ -74,9 +72,7 @@ function renderLifecycle(
   };
   const defaultDocument = editorDocument(`${ROOT}/src/A.php`);
   const activeDocument =
-    "activeDocument" in overrides
-      ? (overrides.activeDocument ?? null)
-      : defaultDocument;
+    "activeDocument" in overrides ? (overrides.activeDocument ?? null) : defaultDocument;
   const documentsRef = overrides.documentsRef ?? {
     current: activeDocument ? { [activeDocument.path]: activeDocument } : {},
   };
@@ -90,54 +86,46 @@ function renderLifecycle(
   const currentWorkspaceRootRef = overrides.currentWorkspaceRootRef ?? {
     current: ROOT,
   };
-  const currentEditorSessionOwnerKeyRef =
-    overrides.currentEditorSessionOwnerKeyRef ?? { current: OWNER_KEY };
+  const currentEditorSessionOwnerKeyRef = overrides.currentEditorSessionOwnerKeyRef ?? {
+    current: OWNER_KEY,
+  };
   const recentlyClosedTabsRef = overrides.recentlyClosedTabsRef ?? {
     current: emptyRecentlyClosedTabs(),
   };
-  const documentTabSession: DocumentCloseSessionPort =
-    overrides.documentTabSession ??
-    {
-      getActivePath: vi.fn(() => activeDocumentRef.current?.path ?? null),
-      getDocument: vi.fn((path: string) => documentsRef.current[path] ?? null),
-      removeDocument: vi.fn((path: string) => {
-        const removedDocument = documentsRef.current[path] ?? null;
-        const activePath = activeDocumentRef.current?.path ?? null;
+  const workspaceOwner = createLegacyWorkspaceRuntimeOwner(ROOT);
+  const documentTabSession: DocumentCloseSessionPort = overrides.documentTabSession ?? {
+    getActivePath: vi.fn(() => activeDocumentRef.current?.path ?? null),
+    getDocument: vi.fn((path: string) => documentsRef.current[path] ?? null),
+    removeDocument: vi.fn((path: string) => {
+      const removedDocument = documentsRef.current[path] ?? null;
+      const activePath = activeDocumentRef.current?.path ?? null;
 
-        if (!removedDocument) {
-          return {
-            closedActiveDocument: false,
-            nextActivePath: activePath,
-            removedDocument: null,
-          };
-        }
+      if (!removedDocument) {
+        return {
+          closedActiveDocument: false,
+          nextActivePath: activePath,
+          removedDocument: null,
+        };
+      }
 
-        const closedActiveDocument = activePath === path;
-        const nextActivePath = closedActiveDocument
-          ? nextActiveEditorPathAfterClose(
-              path,
-              openPathsRef.current,
-              previewPathRef.current,
-            )
-          : activePath;
-        const nextDocuments = { ...documentsRef.current };
-        delete nextDocuments[path];
-        documentsRef.current = nextDocuments;
-        openPathsRef.current = openPathsRef.current.filter(
-          (openPath) => openPath !== path,
-        );
-        if (previewPathRef.current === path) {
-          previewPathRef.current = null;
-        }
-        if (closedActiveDocument) {
-          activeDocumentRef.current = nextActivePath
-            ? (nextDocuments[nextActivePath] ?? null)
-            : null;
-        }
+      const closedActiveDocument = activePath === path;
+      const nextActivePath = closedActiveDocument
+        ? nextActiveEditorPathAfterClose(path, openPathsRef.current, previewPathRef.current)
+        : activePath;
+      const nextDocuments = { ...documentsRef.current };
+      delete nextDocuments[path];
+      documentsRef.current = nextDocuments;
+      openPathsRef.current = openPathsRef.current.filter((openPath) => openPath !== path);
+      if (previewPathRef.current === path) {
+        previewPathRef.current = null;
+      }
+      if (closedActiveDocument) {
+        activeDocumentRef.current = nextActivePath ? (nextDocuments[nextActivePath] ?? null) : null;
+      }
 
-        return { closedActiveDocument, nextActivePath, removedDocument };
-      }),
-    };
+      return { closedActiveDocument, nextActivePath, removedDocument };
+    }),
+  };
 
   const dependencies: TestDependencies = {
     workspaceRoot: ROOT,
@@ -147,6 +135,15 @@ function renderLifecycle(
     documentTabSession,
     currentWorkspaceRootRef,
     currentEditorSessionOwnerKeyRef,
+    captureWorkspaceAuthority: () => ({
+      editorSessionOwnerKey: OWNER_KEY,
+      kind: "legacy",
+      owner: workspaceOwner,
+      requestGeneration: 1,
+      rootPath: ROOT,
+    }),
+    isWorkspaceAuthorityCurrent: (authority) =>
+      authority.owner === workspaceOwner && currentWorkspaceRootRef.current === ROOT,
     activeDocumentRef,
     documentsRef,
     openPathsRef,
@@ -178,9 +175,7 @@ function renderLifecycle(
     return null;
   }
 
-  const rerender = (
-    nextOverrides: Partial<TestDependencies> = {},
-  ) => {
+  const rerender = (nextOverrides: Partial<TestDependencies> = {}) => {
     Object.assign(dependencies, nextOverrides);
     act(() => root.render(<TestComponent />));
   };
@@ -215,19 +210,13 @@ describe("useDocumentCloseLifecycle", () => {
 
     expect(harness.dependencies.invalidateDocumentSave).not.toHaveBeenCalled();
     expect(harness.dependencies.syncClosedDocument).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.documentTabSession.removeDocument,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.documentTabSession.removeDocument).not.toHaveBeenCalled();
     expect(harness.dependencies.documentsRef.current[dirty.path]).toBe(dirty);
     harness.unmount();
   });
 
   it("fails closed when confirmation rejects", async () => {
-    const dirty = editorDocument(
-      `${ROOT}/src/Rejected.php`,
-      "edited",
-      "saved",
-    );
+    const dirty = editorDocument(`${ROOT}/src/Rejected.php`, "edited", "saved");
     const harness = renderLifecycle({
       activeDocument: dirty,
       activePath: dirty.path,
@@ -235,9 +224,7 @@ describe("useDocumentCloseLifecycle", () => {
       documentsRef: { current: { [dirty.path]: dirty } },
       openPathsRef: { current: [dirty.path] },
       prompter: {
-        confirm: vi.fn(() =>
-          Promise.reject(new Error("dialog unavailable")),
-        ),
+        confirm: vi.fn(() => Promise.reject(new Error("dialog unavailable"))),
         prompt: vi.fn(),
       },
     });
@@ -245,9 +232,7 @@ describe("useDocumentCloseLifecycle", () => {
     await act(async () => harness.lifecycle().closeDocument(dirty.path));
 
     expect(harness.dependencies.invalidateDocumentSave).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.documentTabSession.removeDocument,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.documentTabSession.removeDocument).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -296,9 +281,7 @@ describe("useDocumentCloseLifecycle", () => {
       harness.dependencies.documentTabSession.removeDocument,
     ].map((mock) => vi.mocked(mock).mock.invocationCallOrder[0]);
     expect(callOrder).toEqual([...callOrder].sort((left, right) => left - right));
-    expect(
-      harness.dependencies.documentTabSession.removeDocument,
-    ).toHaveBeenCalledOnce();
+    expect(harness.dependencies.documentTabSession.removeDocument).toHaveBeenCalledOnce();
     harness.unmount();
   });
 
@@ -329,12 +312,9 @@ describe("useDocumentCloseLifecycle", () => {
       syncClosedDocument.mock.invocationCallOrder[0],
     );
     expect(invalidateDocumentSave.mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(harness.dependencies.documentTabSession.removeDocument).mock
-        .invocationCallOrder[0],
+      vi.mocked(harness.dependencies.documentTabSession.removeDocument).mock.invocationCallOrder[0],
     );
-    expect(
-      harness.dependencies.documentTabSession.removeDocument,
-    ).toHaveBeenCalledOnce();
+    expect(harness.dependencies.documentTabSession.removeDocument).toHaveBeenCalledOnce();
     expect(documentsRef.current[active.path]).toBeUndefined();
     expect(activeDocumentRef.current).toBeNull();
     harness.unmount();
@@ -351,27 +331,24 @@ describe("useDocumentCloseLifecycle", () => {
       content: "saved",
       expected: "Close file with an unresolved external conflict?",
     },
-  ])(
-    "uses the $expected close confirmation",
-    async ({ conflict, content, expected }) => {
-      const active = editorDocument(`${ROOT}/src/Prompt.php`, content, "saved");
-      const confirm = vi.fn(() => false);
-      const harness = renderLifecycle({
-        activeDocument: active,
-        activePath: active.path,
-        activeDocumentRef: { current: active },
-        documentsRef: { current: { [active.path]: active } },
-        openPathsRef: { current: [active.path] },
-        hasExternalFileConflict: vi.fn(() => conflict),
-        prompter: { confirm, prompt: vi.fn() },
-      });
+  ])("uses the $expected close confirmation", async ({ conflict, content, expected }) => {
+    const active = editorDocument(`${ROOT}/src/Prompt.php`, content, "saved");
+    const confirm = vi.fn(() => false);
+    const harness = renderLifecycle({
+      activeDocument: active,
+      activePath: active.path,
+      activeDocumentRef: { current: active },
+      documentsRef: { current: { [active.path]: active } },
+      openPathsRef: { current: [active.path] },
+      hasExternalFileConflict: vi.fn(() => conflict),
+      prompter: { confirm, prompt: vi.fn() },
+    });
 
-      await act(async () => harness.lifecycle().closeDocument(active.path));
+    await act(async () => harness.lifecycle().closeDocument(active.path));
 
-      expect(confirm).toHaveBeenCalledWith(expected);
-      harness.unmount();
-    },
-  );
+    expect(confirm).toHaveBeenCalledWith(expected);
+    harness.unmount();
+  });
 
   it("clears a closed git diff and reselects the neighboring diff", async () => {
     const firstChange = changedFile(`${ROOT}/src/First.php`);
@@ -391,12 +368,8 @@ describe("useDocumentCloseLifecycle", () => {
 
     await act(async () => harness.lifecycle().closeDocument(firstPath));
 
-    expect(harness.dependencies.cancelGitDiffDocument).toHaveBeenCalledWith(
-      firstPath,
-    );
-    expect(harness.dependencies.loadGitDiffDocument).toHaveBeenCalledWith(
-      secondPath,
-    );
+    expect(harness.dependencies.cancelGitDiffDocument).toHaveBeenCalledWith(firstPath);
+    expect(harness.dependencies.loadGitDiffDocument).toHaveBeenCalledWith(secondPath);
     expect(harness.dependencies.activeDocumentRef.current).toBe(second);
     expect(harness.dependencies.openPathsRef.current).toEqual([secondPath]);
     harness.unmount();
@@ -421,16 +394,9 @@ describe("useDocumentCloseLifecycle", () => {
 
     await act(async () => harness.lifecycle().closeActiveSurface());
 
-    expect(
-      harness.dependencies.documentTabSession.getActivePath,
-    ).toHaveBeenCalled();
-    expect(harness.dependencies.invalidateDocumentSave).toHaveBeenCalledWith(
-      ROOT,
-      second.path,
-    );
-    expect(harness.dependencies.syncClosedDocument).toHaveBeenCalledWith(
-      second,
-    );
+    expect(harness.dependencies.documentTabSession.getActivePath).toHaveBeenCalled();
+    expect(harness.dependencies.invalidateDocumentSave).toHaveBeenCalledWith(ROOT, second.path);
+    expect(harness.dependencies.syncClosedDocument).toHaveBeenCalledWith(second);
     expect(harness.dependencies.activeDocumentRef.current).toBe(first);
     harness.unmount();
   });
@@ -467,9 +433,7 @@ describe("useDocumentCloseLifecycle", () => {
       await reopening;
     });
 
-    expect(
-      harness.dependencies.restoreRecentlyClosedDocumentViewState,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.restoreRecentlyClosedDocumentViewState).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -497,16 +461,89 @@ describe("useDocumentCloseLifecycle", () => {
     act(() => {
       reopening = harness.lifecycle().reopenClosedDocument();
     });
-    harness.dependencies.currentEditorSessionOwnerKeyRef.current =
-      createEditorSessionOwnerKey("replacement", ROOT);
+    harness.dependencies.currentEditorSessionOwnerKeyRef.current = createEditorSessionOwnerKey(
+      "replacement",
+      ROOT,
+    );
     await act(async () => {
       resolveOpen(true);
       await reopening;
     });
 
-    expect(
-      harness.dependencies.restoreRecentlyClosedDocumentViewState,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.restoreRecentlyClosedDocumentViewState).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("retains a closed entry and blocks its open across registered A1 to B to A2", async () => {
+    const ownerA1 = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const ownerB = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    const ownerA2 = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const ownerRef = { current: ownerA1 };
+    const claimGenerationRef = { current: 1 };
+    let finishOpen!: () => void;
+    const ambientOpen = vi.fn();
+    const openRecentlyClosedDocument = vi.fn(
+      async (_root: string, _path: string, shouldCommit?: () => boolean) =>
+        new Promise<boolean>((resolve) => {
+          finishOpen = () => {
+            const current = shouldCommit?.() !== false;
+            if (current) {
+              ambientOpen();
+            }
+            resolve(current);
+          };
+        }),
+    );
+    const active = editorDocument(`${ROOT}/src/Reopen.php`);
+    const harness = renderLifecycle({
+      activeDocument: active,
+      activePath: active.path,
+      activeDocumentRef: { current: active },
+      captureWorkspaceAuthority: () => ({
+        kind: "registered",
+        claimGeneration: claimGenerationRef.current,
+        identity: {
+          admissionToken: 1,
+          canonicalRoot: ROOT,
+          caseSensitive: true,
+          policy: { caseSensitive: true, unicodeNormalization: "none" },
+          selectedPath: ROOT,
+          unicodeNormalizationPolicy: "preserved",
+          workspaceId: ownerRef.current.ownerKey,
+        },
+        owner: ownerRef.current,
+        rootPath: ROOT,
+      }),
+      documentsRef: { current: { [active.path]: active } },
+      isWorkspaceAuthorityCurrent: (authority) =>
+        authority.owner === ownerRef.current &&
+        authority.kind === "registered" &&
+        authority.claimGeneration === claimGenerationRef.current,
+      openPathsRef: { current: [active.path] },
+      openRecentlyClosedDocument,
+      recentlyClosedDocumentViewState: () => ({ line: 12, column: 4 }),
+    });
+    await act(async () => harness.lifecycle().closeDocument(active.path));
+    harness.rerender();
+    expect(harness.lifecycle().canReopenClosedDocument).toBe(true);
+
+    let reopening!: Promise<void>;
+    act(() => {
+      reopening = harness.lifecycle().reopenClosedDocument();
+    });
+    ownerRef.current = ownerB;
+    claimGenerationRef.current = 2;
+    ownerRef.current = ownerA2;
+    claimGenerationRef.current = 3;
+    await act(async () => {
+      finishOpen();
+      await reopening;
+    });
+    harness.rerender();
+
+    expect(ambientOpen).not.toHaveBeenCalled();
+    expect(harness.dependencies.restoreRecentlyClosedDocumentViewState).not.toHaveBeenCalled();
+    expect(harness.lifecycle().canReopenClosedDocument).toBe(true);
     harness.unmount();
   });
 
@@ -530,8 +567,8 @@ describe("useDocumentCloseLifecycle", () => {
     await act(async () => harness.lifecycle().reopenClosedDocument());
 
     expect(openRecentlyClosedDocument.mock.calls).toEqual([
-      [ROOT, missing.path],
-      [ROOT, available.path],
+      [ROOT, missing.path, expect.any(Function)],
+      [ROOT, available.path, expect.any(Function)],
     ]);
     harness.unmount();
   });

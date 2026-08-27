@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { DirtyCloseDecision } from "../domain/dirtyClose";
+import { createEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import {
   createInitialEditorGroupsState,
   editorGroupsReducer,
@@ -12,15 +13,15 @@ import {
 import type { EslintDiagnosticsByRoot } from "../domain/eslintDiagnostics";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import type { PhpstanDiagnosticsByRoot } from "../domain/phpstanDiagnostics";
-import type {
-  EditorDocument,
-  ImageTab,
-  WorkspaceFileRevision,
-} from "../domain/workspace";
-import { createLegacyWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
+import type { EditorDocument, ImageTab, WorkspaceFileRevision } from "../domain/workspace";
+import {
+  createLegacyWorkspaceRuntimeOwner,
+  createWorkspaceRuntimeOwner,
+} from "../domain/workspaceRuntimeOwner";
 import { legacyDocumentSaveOwnership } from "./documentSaveIdentity";
 import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import type { DocumentSaveResult } from "./documentSaveService";
+import type { DocumentLifecycleWorkspaceAuthority } from "./useDocumentCloseLifecycle";
 import {
   useWorkbenchEditorGroupCloseLifecycle,
   type WorkbenchEditorGroupCloseLifecycle,
@@ -29,6 +30,27 @@ import {
 
 const ROOT = "/workspace";
 const WORKSPACE_ID = "workspace:test";
+
+function registeredAuthority(
+  owner: ReturnType<typeof createWorkspaceRuntimeOwner>,
+  claimGeneration: number,
+): DocumentLifecycleWorkspaceAuthority {
+  return {
+    kind: "registered",
+    claimGeneration,
+    identity: {
+      admissionToken: claimGeneration,
+      canonicalRoot: ROOT,
+      caseSensitive: true,
+      policy: { caseSensitive: true, unicodeNormalization: "none" },
+      selectedPath: ROOT,
+      unicodeNormalizationPolicy: "preserved",
+      workspaceId: owner.ownerKey,
+    },
+    owner,
+    rootPath: ROOT,
+  };
+}
 
 function revision(contentHash: string): WorkspaceFileRevision {
   return {
@@ -41,11 +63,7 @@ function revision(contentHash: string): WorkspaceFileRevision {
   };
 }
 
-function document(
-  path: string,
-  content = "saved",
-  savedContent = content,
-): EditorDocument {
+function document(path: string, content = "saved", savedContent = content): EditorDocument {
   return {
     content,
     language: "php",
@@ -115,8 +133,7 @@ interface Harness {
   openPathsRef: { current: string[] };
   phpstanDiagnostics: () => PhpstanDiagnosticsByRoot;
   saveDocument: ReturnType<typeof vi.fn>;
-  runWithIssuedWriteDrain: RunWithDocumentSaveExclusion &
-    ReturnType<typeof vi.fn>;
+  runWithIssuedWriteDrain: RunWithDocumentSaveExclusion & ReturnType<typeof vi.fn>;
   unmount: () => void;
 }
 
@@ -134,9 +151,7 @@ function renderLifecycle(
   const previewPathRef = { current: activeGroup?.previewPath ?? null };
   const documentsRef = { current: documents };
   const activeDocumentRef = {
-    current: activeGroup?.activePath
-      ? documents[activeGroup.activePath] ?? null
-      : null,
+    current: activeGroup?.activePath ? (documents[activeGroup.activePath] ?? null) : null,
   };
   const imageTabsRef: { current: Record<string, ImageTab> } = { current: {} };
   const markdownPreviewTabsRef: {
@@ -155,31 +170,33 @@ function renderLifecycle(
     activeDocumentRef.current = saved;
     return { status: "saved", document: saved, contentIsCurrent: true };
   });
-  const runWithIssuedWriteDrain = vi.fn(async (
-    _scope: unknown,
-    operation: () => Promise<unknown>,
-  ) => operation()) as unknown as RunWithDocumentSaveExclusion &
-    ReturnType<typeof vi.fn>;
+  const runWithIssuedWriteDrain = vi.fn(
+    async (_scope: unknown, operation: () => Promise<unknown>) => operation(),
+  ) as unknown as RunWithDocumentSaveExclusion & ReturnType<typeof vi.fn>;
   let eslintDiagnostics: EslintDiagnosticsByRoot = {
     [ROOT]: Object.fromEntries(
-      Object.keys(documents).map((path) => [
-        path,
-        [{ identifier: "eslint.rule", line: 1 }],
-      ]),
+      Object.keys(documents).map((path) => [path, [{ identifier: "eslint.rule", line: 1 }]]),
     ),
   };
   let phpstanDiagnostics: PhpstanDiagnosticsByRoot = {
     [ROOT]: Object.fromEntries(
-      Object.keys(documents).map((path) => [
-        path,
-        [{ identifier: "phpstan.rule", line: 1 }],
-      ]),
+      Object.keys(documents).map((path) => [path, [{ identifier: "phpstan.rule", line: 1 }]]),
     ),
   };
+  const workspaceOwner = createLegacyWorkspaceRuntimeOwner(ROOT);
 
   const dependencies: WorkbenchEditorGroupCloseLifecycleDependencies = {
     workspaceRoot: ROOT,
     currentWorkspaceRootRef,
+    captureWorkspaceAuthority: () => ({
+      editorSessionOwnerKey: createEditorSessionOwnerKey("legacy", ROOT),
+      kind: "legacy",
+      owner: workspaceOwner,
+      requestGeneration: 1,
+      rootPath: ROOT,
+    }),
+    isWorkspaceAuthorityCurrent: (authority) =>
+      authority.owner === workspaceOwner && currentWorkspaceRootRef.current === ROOT,
     editorGroupsRef,
     openPathsRef,
     previewPathRef,
@@ -188,24 +205,17 @@ function renderLifecycle(
     imageTabsRef,
     markdownPreviewTabsRef,
     setImageTabs: (update) => {
-      imageTabsRef.current = typeof update === "function"
-        ? update(imageTabsRef.current)
-        : update;
+      imageTabsRef.current = typeof update === "function" ? update(imageTabsRef.current) : update;
     },
     setMarkdownPreviewTabs: (update) => {
-      markdownPreviewTabsRef.current = typeof update === "function"
-        ? update(markdownPreviewTabsRef.current)
-        : update;
+      markdownPreviewTabsRef.current =
+        typeof update === "function" ? update(markdownPreviewTabsRef.current) : update;
     },
     setEslintDiagnosticsByRoot: (update) => {
-      eslintDiagnostics = typeof update === "function"
-        ? update(eslintDiagnostics)
-        : update;
+      eslintDiagnostics = typeof update === "function" ? update(eslintDiagnostics) : update;
     },
     setPhpstanDiagnosticsByRoot: (update) => {
-      phpstanDiagnostics = typeof update === "function"
-        ? update(phpstanDiagnostics)
-        : update;
+      phpstanDiagnostics = typeof update === "function" ? update(phpstanDiagnostics) : update;
     },
     updateEditorGroups: (update) => {
       editorGroupsRef.current = update(editorGroupsRef.current);
@@ -214,10 +224,8 @@ function renderLifecycle(
     closeTextSurface,
     saveDocument,
     runWithIssuedWriteDrain,
-    resolveDocumentSaveOwnership: (rootPath, path) =>
-      legacyDocumentSaveOwnership(rootPath, path),
-    resolveWorkspaceRuntimeOwner: (rootPath) =>
-      createLegacyWorkspaceRuntimeOwner(rootPath),
+    resolveDocumentSaveOwnership: (rootPath, path) => legacyDocumentSaveOwnership(rootPath, path),
+    resolveWorkspaceRuntimeOwner: () => workspaceOwner,
     dirtyCloseDecisionPort: { decideDirtyClose },
     hasExternalFileConflict: () => false,
     prompter: { confirm: vi.fn(() => true), prompt: vi.fn() },
@@ -260,15 +268,14 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       [path]: document(path, "edited", "saved"),
     });
 
-    await expect(
-      harness.lifecycle.closeDocumentInEditorGroup("editor-side", path),
-    ).resolves.toBe("closed");
+    await expect(harness.lifecycle.closeDocumentInEditorGroup("editor-side", path)).resolves.toBe(
+      "closed",
+    );
 
     expect(harness.decideDirtyClose).not.toHaveBeenCalled();
     expect(harness.saveDocument).not.toHaveBeenCalled();
     expect(harness.closeTextDocument).not.toHaveBeenCalled();
-    expect(harness.editorGroupsRef.current.groups["editor-side"]?.openPaths)
-      .toEqual([]);
+    expect(harness.editorGroupsRef.current.groups["editor-side"]?.openPaths).toEqual([]);
     harness.unmount();
   });
 
@@ -301,25 +308,22 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       },
     );
 
-    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe(
-      "closed",
-    );
+    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe("closed");
 
-    expect(decideDirtyClose).toHaveBeenCalledWith(expect.objectContaining({
-      scope: "group",
-      documentNames: ["final.php"],
-    }));
+    expect(decideDirtyClose).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: "group",
+        documentNames: ["final.php"],
+      }),
+    );
     expect(harness.saveDocument).toHaveBeenCalledOnce();
     expect(harness.saveDocument).toHaveBeenCalledWith(finalPath);
     expect(harness.closeTextDocument).toHaveBeenCalledOnce();
     expect(harness.closeTextDocument).toHaveBeenCalledWith(finalPath, {
       skipConfirmation: true,
     });
-    expect(harness.editorGroupsRef.current.groups["editor-side"]?.openPaths)
-      .toEqual([sharedPath]);
-    expect(harness.documentsRef.current[sharedPath]?.savedContent).toBe(
-      "saved",
-    );
+    expect(harness.editorGroupsRef.current.groups["editor-side"]?.openPaths).toEqual([sharedPath]);
+    expect(harness.documentsRef.current[sharedPath]?.savedContent).toBe("saved");
     expect(onDidCloseEditorPaths).toHaveBeenCalledWith([finalPath]);
     harness.unmount();
   });
@@ -333,10 +337,12 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     await expect(harness.lifecycle.closeDocument(path)).resolves.toBe("closed");
 
     expect(harness.decideDirtyClose).toHaveBeenCalledOnce();
-    expect(harness.decideDirtyClose).toHaveBeenCalledWith(expect.objectContaining({
-      scope: "tab",
-      documentNames: ["dirty.php"],
-    }));
+    expect(harness.decideDirtyClose).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: "tab",
+        documentNames: ["dirty.php"],
+      }),
+    );
     expect(harness.saveDocument).not.toHaveBeenCalled();
     expect(harness.closeTextDocument).toHaveBeenCalledWith(path, {
       skipConfirmation: true,
@@ -362,9 +368,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     const eslint = harness.eslintDiagnostics();
     const phpstan = harness.phpstanDiagnostics();
 
-    await expect(harness.lifecycle.closeDocument(path)).resolves.toBe(
-      "cancelled",
-    );
+    await expect(harness.lifecycle.closeDocument(path)).resolves.toBe("cancelled");
 
     expect(harness.editorGroupsRef.current).toBe(state);
     expect(harness.closeTextDocument).not.toHaveBeenCalled();
@@ -457,10 +461,10 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       const live = harness.documentsRef.current[path]!;
       const saved = { ...live, savedContent: live.content };
       harness.documentsRef.current = { [path]: saved };
-      harness.editorGroupsRef.current = editorGroupsReducer(
-        harness.editorGroupsRef.current,
-        { type: "promote-dirty-tab", path },
-      );
+      harness.editorGroupsRef.current = editorGroupsReducer(harness.editorGroupsRef.current, {
+        type: "promote-dirty-tab",
+        path,
+      });
       return { status: "saved", document: saved, contentIsCurrent: true };
     });
     const harness = renderLifecycle(
@@ -568,23 +572,89 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
   it("returns stale when the captured owner is replaced", async () => {
     const path = `${ROOT}/dirty.php`;
     const pending = deferredDecision();
-    let ownerRoot = ROOT;
+    const ownerA1 = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const ownerB = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    const ownerA2 = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const ownerRef = { current: ownerA1 };
+    const generationRef = { current: 1 };
+    const decideDirtyClose = vi.fn(() => pending.promise);
     const harness = renderLifecycle(
       stateWithPaths([path]),
       { [path]: document(path, "edited", "saved") },
       {
-        dirtyCloseDecisionPort: {
-          decideDirtyClose: vi.fn(() => pending.promise),
-        },
-        resolveWorkspaceRuntimeOwner: () =>
-          createLegacyWorkspaceRuntimeOwner(ownerRoot),
+        captureWorkspaceAuthority: () =>
+          registeredAuthority(ownerRef.current, generationRef.current),
+        dirtyCloseDecisionPort: { decideDirtyClose },
+        isWorkspaceAuthorityCurrent: (authority) =>
+          authority.owner === ownerRef.current &&
+          authority.kind === "registered" &&
+          authority.claimGeneration === generationRef.current,
+        resolveWorkspaceRuntimeOwner: () => ownerRef.current,
       },
     );
     const close = harness.lifecycle.closeDocument(path);
-    ownerRoot = "/replacement";
+    expect(decideDirtyClose).toHaveBeenCalledOnce();
+    ownerRef.current = ownerB;
+    generationRef.current = 2;
+    ownerRef.current = ownerA2;
+    generationRef.current = 3;
     pending.resolve("discard");
 
     await expect(close).resolves.toBe("stale");
+    expect(harness.closeTextDocument).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not save after same-id A1 to B to A2 in the target revalidation await", async () => {
+    const path = `${ROOT}/dirty.php`;
+    const ownerA1 = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const ownerB = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    const ownerA2 = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const ownerRef = { current: ownerA1 };
+    const generationRef = { current: 1 };
+    const saveDocument = vi.fn(async (): Promise<DocumentSaveResult> => ({ status: "stale" }));
+    let armTransition = false;
+    let transitionScheduled = false;
+    const decideDirtyClose = vi.fn(async () => {
+      armTransition = true;
+      return "save" as const;
+    });
+    const harness = renderLifecycle(
+      stateWithPaths([path]),
+      { [path]: document(path, "edited", "saved") },
+      {
+        captureWorkspaceAuthority: () =>
+          registeredAuthority(ownerRef.current, generationRef.current),
+        dirtyCloseDecisionPort: { decideDirtyClose },
+        isWorkspaceAuthorityCurrent: (authority) =>
+          authority.owner === ownerRef.current &&
+          authority.kind === "registered" &&
+          authority.claimGeneration === generationRef.current,
+        resolveWorkspaceRuntimeOwner: () => ownerRef.current,
+        saveDocument,
+      },
+    );
+    const documents = harness.documentsRef.current;
+    harness.documentsRef.current = new Proxy(documents, {
+      get(target, property, receiver) {
+        if (property === path && armTransition && !transitionScheduled) {
+          transitionScheduled = true;
+          queueMicrotask(() => {
+            ownerRef.current = ownerB;
+            generationRef.current = 2;
+            ownerRef.current = ownerA2;
+            generationRef.current = 3;
+          });
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    await expect(harness.lifecycle.closeDocument(path)).resolves.toBe("stale");
+
+    expect(decideDirtyClose).toHaveBeenCalledOnce();
+    expect(transitionScheduled).toBe(true);
+    expect(saveDocument).not.toHaveBeenCalled();
     expect(harness.closeTextDocument).not.toHaveBeenCalled();
     harness.unmount();
   });
@@ -611,15 +681,15 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       },
     );
 
-    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe(
-      "closed",
-    );
+    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe("closed");
 
     expect(decideDirtyClose).toHaveBeenCalledOnce();
-    expect(decideDirtyClose).toHaveBeenCalledWith(expect.objectContaining({
-      scope: "group",
-      documentNames: ["alias-a.php", "alias-b.php"],
-    }));
+    expect(decideDirtyClose).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: "group",
+        documentNames: ["alias-a.php", "alias-b.php"],
+      }),
+    );
     expect(harness.saveDocument).toHaveBeenCalledOnce();
     expect(harness.saveDocument).toHaveBeenCalledWith(first);
     expect(harness.closeTextDocument).toHaveBeenCalledTimes(2);
@@ -663,15 +733,15 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       },
     );
 
-    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe(
-      "stale",
-    );
+    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe("stale");
 
     expect(saveDocument).toHaveBeenCalledOnce();
     expect(saveDocument).toHaveBeenCalledWith(first);
     expect(harness.editorGroupsRef.current).toBe(state);
-    expect(harness.editorGroupsRef.current.groups["editor-main"]?.openPaths)
-      .toEqual([first, second]);
+    expect(harness.editorGroupsRef.current.groups["editor-main"]?.openPaths).toEqual([
+      first,
+      second,
+    ]);
     expect(harness.closeTextDocument).not.toHaveBeenCalled();
     harness.unmount();
   });
@@ -695,16 +765,16 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       },
     );
 
-    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe(
-      "stale",
-    );
+    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe("stale");
 
     expect(harness.decideDirtyClose).not.toHaveBeenCalled();
     expect(harness.saveDocument).not.toHaveBeenCalled();
     expect(harness.closeTextDocument).not.toHaveBeenCalled();
     expect(harness.editorGroupsRef.current).toBe(state);
-    expect(harness.editorGroupsRef.current.groups["editor-main"]?.openPaths)
-      .toEqual([first, second]);
+    expect(harness.editorGroupsRef.current.groups["editor-main"]?.openPaths).toEqual([
+      first,
+      second,
+    ]);
     harness.unmount();
   });
 
@@ -727,9 +797,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       },
     );
 
-    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe(
-      "stale",
-    );
+    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe("stale");
 
     expect(harness.decideDirtyClose).not.toHaveBeenCalled();
     expect(harness.saveDocument).not.toHaveBeenCalled();
@@ -759,9 +827,10 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
         },
       );
 
-      const close = scope === "tab"
-        ? harness.lifecycle.closeDocumentInEditorGroup("editor-main", first)
-        : harness.lifecycle.closeActiveEditorGroup();
+      const close =
+        scope === "tab"
+          ? harness.lifecycle.closeDocumentInEditorGroup("editor-main", first)
+          : harness.lifecycle.closeActiveEditorGroup();
 
       await expect(close).resolves.toBe("stale");
       expect(harness.decideDirtyClose).not.toHaveBeenCalled();
@@ -795,10 +864,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       },
     );
 
-    const close = harness.lifecycle.closeDocumentInEditorGroup(
-      "editor-main",
-      first,
-    );
+    const close = harness.lifecycle.closeDocumentInEditorGroup("editor-main", first);
     harness.documentsRef.current = {
       ...harness.documentsRef.current,
       [second]: document(second, "newer external edit", "saved"),
@@ -809,9 +875,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     expect(harness.saveDocument).not.toHaveBeenCalled();
     expect(harness.closeTextDocument).not.toHaveBeenCalled();
     expect(harness.editorGroupsRef.current).toBe(state);
-    expect(harness.documentsRef.current[second]?.content).toBe(
-      "newer external edit",
-    );
+    expect(harness.documentsRef.current[second]?.content).toBe("newer external edit");
     harness.unmount();
   });
 
@@ -858,9 +922,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     await expect(close).resolves.toBe("stale");
     expect(harness.closeTextDocument).not.toHaveBeenCalled();
     expect(harness.editorGroupsRef.current).toBe(state);
-    expect(harness.documentsRef.current[second]?.content).toBe(
-      "newer external edit",
-    );
+    expect(harness.documentsRef.current[second]?.content).toBe("newer external edit");
     harness.unmount();
   });
 
@@ -901,13 +963,12 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     const drain = new Promise<void>((resolve) => {
       releaseDrain = resolve;
     });
-    const runWithIssuedWriteDrain = vi.fn(async (
-      _scope: unknown,
-      operation: () => Promise<unknown>,
-    ) => {
-      await drain;
-      return operation();
-    }) as unknown as RunWithDocumentSaveExclusion & ReturnType<typeof vi.fn>;
+    const runWithIssuedWriteDrain = vi.fn(
+      async (_scope: unknown, operation: () => Promise<unknown>) => {
+        await drain;
+        return operation();
+      },
+    ) as unknown as RunWithDocumentSaveExclusion & ReturnType<typeof vi.fn>;
     const harness = renderLifecycle(
       stateWithPaths([path]),
       { [path]: document(path, "edited", "saved") },
@@ -954,9 +1015,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       },
     );
 
-    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe(
-      "blocked",
-    );
+    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe("blocked");
 
     expect(harness.editorGroupsRef.current).toBe(state);
     expect(harness.closeTextDocument).not.toHaveBeenCalled();
@@ -985,9 +1044,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     const eslint = harness.eslintDiagnostics();
     const phpstan = harness.phpstanDiagnostics();
 
-    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe(
-      "blocked",
-    );
+    await expect(harness.lifecycle.closeActiveEditorGroup()).resolves.toBe("blocked");
 
     expect(harness.editorGroupsRef.current).toBe(state);
     expect(harness.openPathsRef.current).toEqual([first, second]);
@@ -1001,9 +1058,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     const clean = renderLifecycle(stateWithPaths([cleanPath]), {
       [cleanPath]: document(cleanPath),
     });
-    await expect(clean.lifecycle.closeDocument(cleanPath)).resolves.toBe(
-      "closed",
-    );
+    await expect(clean.lifecycle.closeDocument(cleanPath)).resolves.toBe("closed");
     expect(clean.decideDirtyClose).not.toHaveBeenCalled();
     clean.unmount();
 
@@ -1017,9 +1072,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
         path: imagePath,
       },
     };
-    await expect(image.lifecycle.closeDocument(imagePath)).resolves.toBe(
-      "closed",
-    );
+    await expect(image.lifecycle.closeDocument(imagePath)).resolves.toBe("closed");
     expect(image.imageTabsRef.current[imagePath]).toBeUndefined();
     expect(image.closeTextDocument).not.toHaveBeenCalled();
     image.unmount();

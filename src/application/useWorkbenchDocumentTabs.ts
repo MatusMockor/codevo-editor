@@ -1,14 +1,6 @@
-import {
-  useCallback,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
+import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { FilePrefetchCache } from "../domain/filePrefetchCache";
-import {
-  isPrefetchableContentSize,
-  shouldPrefetchFileContent,
-} from "../domain/filePrefetchCache";
+import { isPrefetchableContentSize, shouldPrefetchFileContent } from "../domain/filePrefetchCache";
 import type { AppSettings } from "../domain/settings";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
@@ -73,9 +65,7 @@ export interface WorkbenchDocumentTabsDependencies {
   openingFileFlagOwnerTokenRef: MutableRefObject<number | null>;
   emptyDocumentRefreshTimeoutsRef: MutableRefObject<Set<number>>;
   filePrefetchCacheRef: MutableRefObject<FilePrefetchCache>;
-  filePrefetchTimersRef: MutableRefObject<
-    Map<string, ReturnType<typeof setTimeout>>
-  >;
+  filePrefetchTimersRef: MutableRefObject<Map<string, ReturnType<typeof setTimeout>>>;
 
   setIsOpeningFile: Dispatch<SetStateAction<boolean>>;
 
@@ -95,13 +85,8 @@ export interface WorkbenchDocumentTabsDependencies {
     language: EditorDocument["language"],
   ) => void;
   syncClosedDocument: (document: EditorDocument) => Promise<void>;
-  syncClosedJavaScriptTypeScriptDocument: (
-    document: EditorDocument,
-  ) => Promise<void>;
-  workspacePathBelongsToRoot: (
-    path: string,
-    workspaceRoot: string | null | undefined,
-  ) => boolean;
+  syncClosedJavaScriptTypeScriptDocument: (document: EditorDocument) => Promise<void>;
+  workspacePathBelongsToRoot: (path: string, workspaceRoot: string | null | undefined) => boolean;
   reportError: (source: string, error: unknown) => void;
   reportErrorForActiveWorkspaceRoot: (
     rootPath: string | null | undefined,
@@ -115,11 +100,8 @@ export interface WorkbenchDocumentTabs {
   pinDocument: (path: string) => void;
   openFile: (entry: FileEntry, options?: OpenFileOptions) => Promise<boolean>;
   previewFile: (entry: FileEntry) => Promise<void>;
-  openPinnedFile: (entry: FileEntry) => Promise<boolean>;
-  openReadOnlyDocument: (
-    document: EditorDocument,
-    options?: OpenReadOnlyDocumentOptions,
-  ) => void;
+  openPinnedFile: (entry: FileEntry, shouldCommit?: () => boolean) => Promise<boolean>;
+  openReadOnlyDocument: (document: EditorDocument, options?: OpenReadOnlyDocumentOptions) => void;
   prefetchFile: (entry: FileEntry) => void;
   cancelFilePrefetch: (entry: FileEntry) => void;
 }
@@ -204,17 +186,12 @@ export function useWorkbenchDocumentTabs(
     async (entry: FileEntry, options: OpenFileOptions = {}) => {
       const requestToken = openFileRequestTokenRef.current + 1;
       openFileRequestTokenRef.current = requestToken;
-      replaceOpeningFileOwner(
-        openingFileFlagOwnerTokenRef,
-        setIsOpeningFile,
-        null,
-      );
+      replaceOpeningFileOwner(openingFileFlagOwnerTokenRef, setIsOpeningFile, null);
       forgetExternallyRemovedDocumentPath(entry.path);
       const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
       const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
       const requestedOwnerStillCurrent = () =>
-        requestedOwner?.ownerKey ===
-        resolveCurrentWorkspaceRuntimeOwner()?.ownerKey;
+        requestedOwner?.ownerKey === resolveCurrentWorkspaceRuntimeOwner()?.ownerKey;
       const shouldRecordNavigation = options.recordNavigation !== false;
       const shouldPin = options.pin === true;
       const readTextFileForEmptyDocumentRefresh = async (
@@ -262,9 +239,7 @@ export function useWorkbenchDocumentTabs(
           const commit = documentTabSession.commitImageOpen(image);
           if (commit.replacedDocument) {
             void syncClosedDocument(commit.replacedDocument);
-            void syncClosedJavaScriptTypeScriptDocument(
-              commit.replacedDocument,
-            );
+            void syncClosedJavaScriptTypeScriptDocument(commit.replacedDocument);
           }
           recordRecentFile({ name: entry.name, path: entry.path });
           return true;
@@ -313,18 +288,14 @@ export function useWorkbenchDocumentTabs(
               return;
             }
 
-            if (
-              refreshedContent === "" ||
-              !requestedOwnerStillCurrent()
-            ) {
+            if (refreshedContent === "" || !requestedOwnerStillCurrent()) {
               return;
             }
 
-            const refreshedDocument =
-              documentTabSession.refreshCleanDocument(
-                targetPath,
-                refreshedContent,
-              );
+            const refreshedDocument = documentTabSession.refreshCleanDocument(
+              targetPath,
+              refreshedContent,
+            );
 
             if (!refreshedDocument) {
               return;
@@ -372,11 +343,10 @@ export function useWorkbenchDocumentTabs(
             liveDocument?.savedContent === "" && liveDocument.content === "";
 
           if (refreshedContent !== "" && stillEmptyAndUnedited) {
-            const refreshedDocument =
-              documentTabSession.refreshCleanDocument(
-                entry.path,
-                refreshedContent,
-              );
+            const refreshedDocument = documentTabSession.refreshCleanDocument(
+              entry.path,
+              refreshedContent,
+            );
 
             if (refreshedDocument) {
               refreshLocalPhpDiagnosticsForContent(
@@ -390,10 +360,7 @@ export function useWorkbenchDocumentTabs(
           }
         }
 
-        if (
-          shouldRecordNavigation &&
-          documentTabSession.getActivePath() !== entry.path
-        ) {
+        if (shouldRecordNavigation && documentTabSession.getActivePath() !== entry.path) {
           recordCurrentNavigationLocation();
         }
 
@@ -423,27 +390,15 @@ export function useWorkbenchDocumentTabs(
       }
 
       const clearOpeningFileForRequest = () => {
-        releaseOpeningFileOwner(
-          openingFileFlagOwnerTokenRef,
-          setIsOpeningFile,
-          requestToken,
-        );
+        releaseOpeningFileOwner(openingFileFlagOwnerTokenRef, setIsOpeningFile, requestToken);
       };
 
       try {
-        const prefetchedContent = filePrefetchCacheRef.current.get(
-          requestedRoot,
-          entry.path,
-        );
-        const hasUsablePrefetchedContent =
-          prefetchedContent !== null && prefetchedContent !== "";
+        const prefetchedContent = filePrefetchCacheRef.current.get(requestedRoot, entry.path);
+        const hasUsablePrefetchedContent = prefetchedContent !== null && prefetchedContent !== "";
 
         if (!hasUsablePrefetchedContent) {
-          replaceOpeningFileOwner(
-            openingFileFlagOwnerTokenRef,
-            setIsOpeningFile,
-            requestToken,
-          );
+          replaceOpeningFileOwner(openingFileFlagOwnerTokenRef, setIsOpeningFile, requestToken);
         }
 
         const snapshot =
@@ -487,16 +442,10 @@ export function useWorkbenchDocumentTabs(
 
         if (commit.replacedDocument) {
           void syncClosedDocument(commit.replacedDocument);
-          void syncClosedJavaScriptTypeScriptDocument(
-            commit.replacedDocument,
-          );
+          void syncClosedJavaScriptTypeScriptDocument(commit.replacedDocument);
         }
 
-        refreshLocalPhpDiagnosticsForContent(
-          document.path,
-          document.content,
-          document.language,
-        );
+        refreshLocalPhpDiagnosticsForContent(document.path, document.content, document.language);
 
         recordRecentFile({ name: entry.name, path: entry.path });
         filePrefetchCacheRef.current.invalidate(entry.path);
@@ -566,8 +515,7 @@ export function useWorkbenchDocumentTabs(
       }
 
       const requestedOwnerStillCurrent = () =>
-        requestedOwner?.ownerKey ===
-        resolveCurrentWorkspaceRuntimeOwner()?.ownerKey;
+        requestedOwner?.ownerKey === resolveCurrentWorkspaceRuntimeOwner()?.ownerKey;
 
       if (!requestedOwnerStillCurrent()) {
         return;
@@ -602,12 +550,7 @@ export function useWorkbenchDocumentTabs(
         // real open path remains the source of truth.
       }
     },
-    [
-      documentTabSession,
-      filePrefetchCacheRef,
-      resolveCurrentWorkspaceRuntimeOwner,
-      workspaceFiles,
-    ],
+    [documentTabSession, filePrefetchCacheRef, resolveCurrentWorkspaceRuntimeOwner, workspaceFiles],
   );
 
   const prefetchFile = useCallback(
@@ -667,8 +610,8 @@ export function useWorkbenchDocumentTabs(
   );
 
   const openPinnedFile = useCallback(
-    async (entry: FileEntry) => {
-      return openFile(entry, { pin: true });
+    async (entry: FileEntry, shouldCommit?: () => boolean) => {
+      return openFile(entry, { pin: true, shouldCommit });
     },
     [openFile],
   );
@@ -682,10 +625,7 @@ export function useWorkbenchDocumentTabs(
       };
 
       recordCurrentNavigationLocation();
-      const commit = documentTabSession.openReadOnlyDocument(
-        nextDocument,
-        options.pin === true,
-      );
+      const commit = documentTabSession.openReadOnlyDocument(nextDocument, options.pin === true);
 
       if (commit.replacedDocument) {
         void syncClosedDocument(commit.replacedDocument);

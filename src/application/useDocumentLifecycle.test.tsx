@@ -18,6 +18,7 @@ import {
   type WorkspaceFileGateway,
 } from "../domain/workspace";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
+import { createLegacyWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import { emptyRecentlyClosedTabs, hasRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import { createRegisteredDocumentSaveIdentity } from "./documentSaveIdentity";
 import type { DocumentCloseSessionPort } from "./useDocumentCloseLifecycle";
@@ -280,6 +281,7 @@ function renderLifecycle(
       return { closedActiveDocument, nextActivePath, removedDocument };
     },
   };
+  const workspaceOwner = createLegacyWorkspaceRuntimeOwner(ROOT);
 
   const deps: DocumentLifecycleDependencies = {
     workspaceRoot: ROOT,
@@ -291,6 +293,15 @@ function renderLifecycle(
     documentTabSession,
     workspaceSettings: defaultWorkspaceSettings(),
     currentWorkspaceRootRef: rootRef,
+    captureWorkspaceAuthority: () => ({
+      editorSessionOwnerKey: OWNER_KEY,
+      kind: "legacy",
+      owner: workspaceOwner,
+      requestGeneration: 1,
+      rootPath: ROOT,
+    }),
+    isWorkspaceAuthorityCurrent: (authority) =>
+      authority.owner === workspaceOwner && rootRef.current === ROOT,
     workspaceRequestTokenRef,
     activeDocumentRef,
     documentsRef,
@@ -2206,7 +2217,11 @@ describe("useDocumentLifecycle", () => {
       act(() => harness.lifecycle().closeDocument(document.path));
       await act(async () => harness.lifecycle().reopenClosedDocument());
 
-      expect(harness.openRecentlyClosedDocument).toHaveBeenCalledWith(ROOT, document.path);
+      expect(harness.openRecentlyClosedDocument).toHaveBeenCalledWith(
+        ROOT,
+        document.path,
+        expect.any(Function),
+      );
       expect(harness.restoreRecentlyClosedDocumentViewState).toHaveBeenCalledWith(
         ROOT,
         document.path,
@@ -2233,8 +2248,8 @@ describe("useDocumentLifecycle", () => {
       await act(async () => harness.lifecycle().reopenClosedDocument());
 
       expect(openRecentlyClosedDocument.mock.calls).toEqual([
-        [ROOT, deleted.path],
-        [ROOT, available.path],
+        [ROOT, deleted.path, expect.any(Function)],
+        [ROOT, available.path, expect.any(Function)],
       ]);
       expect(harness.lifecycle().canReopenClosedDocument).toBe(false);
       harness.unmount();
@@ -2256,7 +2271,11 @@ describe("useDocumentLifecycle", () => {
       await act(async () => harness.lifecycle().reopenClosedDocument());
 
       expect(harness.openRecentlyClosedDocument).toHaveBeenCalledTimes(1);
-      expect(harness.openRecentlyClosedDocument).toHaveBeenCalledWith(ROOT, available.path);
+      expect(harness.openRecentlyClosedDocument).toHaveBeenCalledWith(
+        ROOT,
+        available.path,
+        expect.any(Function),
+      );
       expect(harness.lifecycle().canReopenClosedDocument).toBe(false);
       harness.unmount();
     });

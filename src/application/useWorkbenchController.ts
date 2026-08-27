@@ -47,6 +47,7 @@ import { useWorkbenchEditorPresentation } from "./workbenchController/useWorkben
 import { useWorkbenchEditorGroupCoordinator } from "./workbenchController/useWorkbenchEditorGroupCoordinator";
 import { useWorkbenchEditorDocumentCoordinator } from "./workbenchController/useWorkbenchEditorDocumentCoordinator";
 import { useWorkbenchDocumentSaveAuthorityCoordinator } from "./workbenchController/useWorkbenchDocumentSaveAuthorityCoordinator";
+import { useWorkbenchDocumentLifecycleCoordinator } from "./workbenchController/useWorkbenchDocumentLifecycleCoordinator";
 import { useWorkbenchSettingsCommands } from "./workbenchController/useWorkbenchSettingsCommands";
 import {
   useWorkbenchGitChangesCoordinator,
@@ -134,16 +135,10 @@ import { refreshEditorConfigAfterDocumentSave } from "./editorConfigInvalidation
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
 import { useBookmarks } from "./useBookmarks";
 import { useLocalHistory } from "./useLocalHistory";
-import { useDocumentLifecycle } from "./useDocumentLifecycle";
 import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
-import {
-  createEslintFixOnSaveParticipant,
-  orderedDocumentSaveParticipants,
-} from "./documentSaveParticipants";
-import { createPrettierSaveParticipant } from "./prettierSaveParticipant";
 import { type ResolveDocumentSaveOwnership } from "./documentSaveIdentity";
 import { DocumentSelfWriteCoordinator } from "./documentSelfWriteCoordinator";
-import { useWorkbenchEditorGroupCloseLifecycle } from "./useWorkbenchEditorGroupCloseLifecycle";
+import type { DocumentLifecycleWorkspaceAuthority } from "./useDocumentCloseLifecycle";
 import { isSessionPathInWorkspace } from "./documentSessionState";
 import {
   useWorkspaceStateCache,
@@ -310,7 +305,6 @@ import { editorGroupsUniquePaths, type EditorGroupId } from "../domain/editorGro
 import { sortBookmarks, type Bookmark } from "../domain/bookmarks";
 import type { LatencyTracker } from "../domain/latencyTracker";
 import {
-  getFileName,
   isDirty,
   joinWorkspacePath,
   type EditorDocument,
@@ -947,6 +941,98 @@ export function useWorkbenchController(
     [workspaceGateways.identity, workspaceSettingsByRoot],
   );
   const workspaceRuntimeOwnerClaimsRef = useRef(new WorkspaceRuntimeOwnerClaimRegistry());
+  const resolveDocumentLifecycleWorkspaceOwner = useCallback(
+    (rootPath: string) =>
+      resolveWorkspaceRuntimeOwner(rootPath) ??
+      (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)
+        ? workspaceRuntimeOwnerRef.current
+        : null),
+    [currentWorkspaceRootRef, resolveWorkspaceRuntimeOwner, workspaceRuntimeOwnerRef],
+  );
+  const captureDocumentLifecycleWorkspaceAuthority = useCallback(
+    (rootPath: string): DocumentLifecycleWorkspaceAuthority | null => {
+      const owner = resolveDocumentLifecycleWorkspaceOwner(rootPath);
+      const identity = admittedWorkspaceIdentityForRoot(
+        workspaceIdentityByRootRef.current,
+        workspaceGateways.identity,
+        rootPath,
+      );
+      const claimGeneration = owner
+        ? workspaceRuntimeOwnerClaimsRef.current.generationFor(owner.ownerKey)
+        : undefined;
+      if (identity) {
+        if (
+          !owner ||
+          identity.workspaceId !== owner.ownerKey ||
+          typeof identity.admissionToken !== "number" ||
+          typeof claimGeneration !== "number"
+        ) {
+          return null;
+        }
+        return {
+          kind: "registered",
+          claimGeneration,
+          identity,
+          owner,
+          rootPath,
+        };
+      }
+      if (typeof claimGeneration === "number") {
+        return null;
+      }
+      if (owner && owner.ownerKey !== normalizedWorkspaceRootKey(rootPath)) {
+        return null;
+      }
+      const editorSessionOwnerKey = currentEditorSessionOwnerKeyRef.current;
+      return {
+        editorSessionOwnerKey,
+        kind: "legacy",
+        owner,
+        requestGeneration: openWorkspaceRequestTokenRef.current,
+        rootPath,
+      };
+    },
+    [
+      currentEditorSessionOwnerKeyRef,
+      resolveDocumentLifecycleWorkspaceOwner,
+      workspaceGateways.identity,
+    ],
+  );
+  const isDocumentLifecycleWorkspaceAuthorityCurrent = useCallback(
+    (authority: DocumentLifecycleWorkspaceAuthority): boolean => {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, authority.rootPath)) {
+        return false;
+      }
+      const identity = admittedWorkspaceIdentityForRoot(
+        workspaceIdentityByRootRef.current,
+        workspaceGateways.identity,
+        authority.rootPath,
+      );
+      if (authority.kind === "registered") {
+        return (
+          resolveDocumentLifecycleWorkspaceOwner(authority.rootPath) === authority.owner &&
+          identity?.workspaceId === authority.identity.workspaceId &&
+          identity.admissionToken === authority.identity.admissionToken &&
+          workspaceRootKeysEqual(identity.canonicalRoot, authority.identity.canonicalRoot) &&
+          workspaceRuntimeOwnerClaimsRef.current.generationFor(authority.owner.ownerKey) ===
+            authority.claimGeneration
+        );
+      }
+      return (
+        !identity &&
+        currentEditorSessionOwnerKeyRef.current === authority.editorSessionOwnerKey &&
+        openWorkspaceRequestTokenRef.current === authority.requestGeneration &&
+        (!authority.owner ||
+          workspaceRuntimeOwnerClaimsRef.current.generationFor(authority.owner.ownerKey) == null)
+      );
+    },
+    [
+      currentEditorSessionOwnerKeyRef,
+      currentWorkspaceRootRef,
+      resolveDocumentLifecycleWorkspaceOwner,
+      workspaceGateways.identity,
+    ],
+  );
   workspaceRuntimeOwnerGenerationForIndexRef.current = (ownerKey) =>
     workspaceRuntimeOwnerClaimsRef.current.generationFor(ownerKey);
   const releaseWorkspaceTrustOwner = useCallback((ownerKey: string) => {
@@ -3892,201 +3978,125 @@ export function useWorkbenchController(
     ],
   );
 
-  const recentlyClosedDocumentViewState = useCallback(
-    (rootPath: string, path: string) =>
-      workspaceEditorViewStatesRef.current[editorSessionOwnerKeyForRoot(rootPath)]?.[
-        editorGroupsRef.current.activeGroupId
-      ]?.[path],
-    [editorGroupsRef, editorSessionOwnerKeyForRoot],
-  );
-
-  const onRecentlyClosedTabsChange = useCallback(() => {
-    setRecentlyClosedTabsVersion((current) => current + 1);
-  }, []);
-
-  const openRecentlyClosedDocument = useCallback(
-    async (rootPath: string, path: string) => {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-        return false;
-      }
-
-      return openPinnedFile({
-        kind: "file",
-        name: getFileName(path),
-        path,
-      });
-    },
-    [openPinnedFile],
-  );
-
-  const restoreRecentlyClosedDocumentViewState = useCallback(
-    (rootPath: string, path: string, viewState: WorkspaceSessionViewState) => {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-        return;
-      }
-
-      const ownerKey = editorSessionOwnerKeyForRoot(rootPath);
-      const current = workspaceEditorViewStatesRef.current[ownerKey] ?? {};
-      const groupId = editorGroupsRef.current.activeGroupId;
-      current[groupId] = { ...(current[groupId] ?? {}), [path]: viewState };
-      workspaceEditorViewStatesRef.current[ownerKey] = current;
-      setRestoredEditorViewStateRevision((revision) => revision + 1);
-      setEditorRevealTarget({
-        path,
-        position: { column: viewState.column, lineNumber: viewState.line },
-      });
-    },
-    [editorGroupsRef, editorSessionOwnerKeyForRoot, setEditorRevealTarget],
-  );
-
-  const workspaceTrustedRef = useRef(workspaceTrusted);
-  workspaceTrustedRef.current = workspaceTrusted;
-  const isWorkspaceTrusted = useCallback(() => workspaceTrustedRef.current, []);
-  const prettierFormattingGateway =
-    options.prettierFormattingGateway ?? defaultPrettierFormattingGateway;
-  const saveParticipants = useMemo(
-    () =>
-      orderedDocumentSaveParticipants({
-        eslintFixOnSave: createEslintFixOnSaveParticipant({
-          analyseDocument: (rootPath, path, content, binaryPath) =>
-            eslintDiagnosticsGateway.analyseDocument(rootPath, path, content, binaryPath),
-          isWorkspaceTrusted,
-        }),
-        prettierFormatOnSave: createPrettierSaveParticipant({
-          prettierFormatting: prettierFormattingGateway,
-          isWorkspaceTrusted,
-        }),
-      }),
-    [isWorkspaceTrusted, prettierFormattingGateway],
-  );
-
   const {
     captureLocalHistorySnapshot,
     requestOwnerDocumentSave: requestCoordinatedOwnerDocumentSave,
-    saveDocument,
     saveActiveDocument,
     onActiveLiveDocumentSaveBindingChange,
     runWithDocumentSaveExclusion,
-    runWithIssuedWriteDrain,
-    closeDocument: closeTextDocument,
-    closeActiveSurface: closeTextSurface,
     reopenClosedDocument,
     canReopenClosedDocument,
-  } = useDocumentLifecycle({
-    workspaceRoot,
-    editorSessionOwnerKey,
-    documentTabSession,
-    activeDocument,
-    documents,
-    openPaths,
-    activePath,
-    previewPath,
-    workspaceSettings,
-    currentEditorSessionOwnerKeyRef,
-    currentWorkspaceRootRef,
-    workspaceRequestTokenRef: openWorkspaceRequestTokenRef,
-    activeDocumentRef,
-    documentsRef,
-    openPathsRef,
-    previewPathRef,
-    filePrefetchCacheRef,
-    externallyRemovedDocumentRootByPathRef,
-    recentlyClosedTabsRef,
-    setDocuments,
-    setPreviewPath,
-    setOpenPaths,
-    setActivePath,
-    setMessage,
-    localHistoryGateway,
-    workspaceFiles,
-    workspaceOwnerRelativeFiles: workspaceOwnerFiles,
-    resolveDocumentSaveOwnership,
-    prompter,
-    formattedContentForSave,
-    optimizedImportsContentForSave,
-    organizedImportsContentForSave,
-    resolveEditorConfigForFile,
-    syncSavedDocument: syncSavedDocumentForRoot,
-    syncSavedJavaScriptTypeScriptDocument: syncSavedJavaScriptTypeScriptDocumentForRoot,
-    syncClosedDocument,
-    syncClosedJavaScriptTypeScriptDocument,
-    clearPhpLocalDiagnosticsForPath,
-    clearLanguageServerDiagnosticsForPath,
-    cancelGitDiffDocument,
-    loadGitDiffDocument,
-    closeGitDiffPreview,
-    closeEmptyWorkbenchSurface: closeApplicationWindow,
-    isGitDiffDocumentPath,
-    reportErrorForActiveWorkspaceRoot,
-    hasExternalFileConflict,
-    beginDocumentSelfWrite: (rootPath, path, content) => {
-      const ownership = resolveDocumentSaveOwnership(rootPath, path);
-      return ownership ? documentSelfWrites.begin(ownership, content) : null;
-    },
-    beginRegisteredDocumentSelfWrite: documentSelfWrites.begin.bind(documentSelfWrites),
-    clearExternalFileConflict: externalFileConflicts.clearConflict,
-    detectSaveConflict: externalFileConflicts.detectSaveConflict,
-    runEslintAnalysisOnSave,
-    runPhpstanAnalysisOnSave,
-    onDidSaveDocument: refreshEditorConfigAfterSave,
-    saveParticipants,
-    recentlyClosedDocumentViewState,
-    openRecentlyClosedDocument,
-    restoreRecentlyClosedDocumentViewState,
-    onRecentlyClosedTabsChange,
-    activeLiveDocumentSaveCoordinator: options.activeLiveDocumentSaveCoordinator,
-  });
-  requestOwnerDocumentSaveRef.current = requestCoordinatedOwnerDocumentSave;
-  runWithDocumentSaveExclusionRef.current = runWithDocumentSaveExclusion;
-  runWithIssuedWriteDrainRef.current = runWithIssuedWriteDrain;
-
-  const {
-    closeDocument,
     closeDocumentInEditorGroup,
     closeActiveEditorGroup,
-    closeActiveEditorGroupSurface,
-  } = useWorkbenchEditorGroupCloseLifecycle({
-    workspaceRoot,
-    currentWorkspaceRootRef,
-    editorGroupsRef,
-    openPathsRef,
-    previewPathRef,
-    activeDocumentRef,
-    documentsRef,
-    imageTabsRef,
-    markdownPreviewTabsRef,
-    setImageTabs,
-    setMarkdownPreviewTabs,
-    setEslintDiagnosticsByRoot,
-    setPhpstanDiagnosticsByRoot,
-    updateEditorGroups,
-    closeTextDocument,
-    closeTextSurface,
-    saveDocument,
-    runWithIssuedWriteDrain,
-    resolveDocumentSaveOwnership,
-    resolveWorkspaceRuntimeOwner,
-    dirtyCloseDecisionPort: options.dirtyCloseDecisionPort ?? fallbackDirtyCloseDecisionPort,
-    hasExternalFileConflict,
-    onDidCloseEditorPaths: options.onDidCloseEditorPaths,
-    prompter,
+    closeDocument,
+    isWorkspaceTrusted,
+    runCloseActiveEditorGroup,
+    runCloseActiveEditorGroupSurface,
+    runCloseDocument,
+    workspaceTrustedRef,
+  } = useWorkbenchDocumentLifecycleCoordinator({
+    closeLifecycle: {
+      workspaceRoot,
+      currentWorkspaceRootRef,
+      captureWorkspaceAuthority: captureDocumentLifecycleWorkspaceAuthority,
+      isWorkspaceAuthorityCurrent: isDocumentLifecycleWorkspaceAuthorityCurrent,
+      editorGroupsRef,
+      openPathsRef,
+      previewPathRef,
+      activeDocumentRef,
+      documentsRef,
+      imageTabsRef,
+      markdownPreviewTabsRef,
+      setImageTabs,
+      setMarkdownPreviewTabs,
+      setEslintDiagnosticsByRoot,
+      setPhpstanDiagnosticsByRoot,
+      updateEditorGroups,
+      resolveDocumentSaveOwnership,
+      resolveWorkspaceRuntimeOwner,
+      dirtyCloseDecisionPort: options.dirtyCloseDecisionPort ?? fallbackDirtyCloseDecisionPort,
+      hasExternalFileConflict,
+      onDidCloseEditorPaths: options.onDidCloseEditorPaths,
+      prompter,
+    },
+    eslintDiagnostics: eslintDiagnosticsGateway,
+    lifecycle: {
+      workspaceRoot,
+      editorSessionOwnerKey,
+      documentTabSession,
+      activeDocument,
+      documents,
+      openPaths,
+      activePath,
+      previewPath,
+      workspaceSettings,
+      currentEditorSessionOwnerKeyRef,
+      currentWorkspaceRootRef,
+      captureWorkspaceAuthority: captureDocumentLifecycleWorkspaceAuthority,
+      isWorkspaceAuthorityCurrent: isDocumentLifecycleWorkspaceAuthorityCurrent,
+      workspaceRequestTokenRef: openWorkspaceRequestTokenRef,
+      activeDocumentRef,
+      documentsRef,
+      openPathsRef,
+      previewPathRef,
+      filePrefetchCacheRef,
+      externallyRemovedDocumentRootByPathRef,
+      recentlyClosedTabsRef,
+      setDocuments,
+      setPreviewPath,
+      setOpenPaths,
+      setActivePath,
+      setMessage,
+      localHistoryGateway,
+      workspaceFiles,
+      workspaceOwnerRelativeFiles: workspaceOwnerFiles,
+      resolveDocumentSaveOwnership,
+      prompter,
+      formattedContentForSave,
+      optimizedImportsContentForSave,
+      organizedImportsContentForSave,
+      resolveEditorConfigForFile,
+      syncSavedDocument: syncSavedDocumentForRoot,
+      syncSavedJavaScriptTypeScriptDocument: syncSavedJavaScriptTypeScriptDocumentForRoot,
+      syncClosedDocument,
+      syncClosedJavaScriptTypeScriptDocument,
+      clearPhpLocalDiagnosticsForPath,
+      clearLanguageServerDiagnosticsForPath,
+      cancelGitDiffDocument,
+      loadGitDiffDocument,
+      closeGitDiffPreview,
+      closeEmptyWorkbenchSurface: closeApplicationWindow,
+      isGitDiffDocumentPath,
+      reportErrorForActiveWorkspaceRoot,
+      hasExternalFileConflict,
+      beginDocumentSelfWrite: (rootPath, path, content) => {
+        const ownership = resolveDocumentSaveOwnership(rootPath, path);
+        return ownership ? documentSelfWrites.begin(ownership, content) : null;
+      },
+      beginRegisteredDocumentSelfWrite: documentSelfWrites.begin.bind(documentSelfWrites),
+      clearExternalFileConflict: externalFileConflicts.clearConflict,
+      detectSaveConflict: externalFileConflicts.detectSaveConflict,
+      runEslintAnalysisOnSave,
+      runPhpstanAnalysisOnSave,
+      onDidSaveDocument: refreshEditorConfigAfterSave,
+      activeLiveDocumentSaveCoordinator: options.activeLiveDocumentSaveCoordinator,
+    },
+    prettierFormatting: options.prettierFormattingGateway ?? defaultPrettierFormattingGateway,
+    recentlyClosedDocuments: {
+      currentWorkspaceRootRef,
+      editorGroupsRef,
+      editorSessionOwnerKeyForRoot,
+      openPinnedFile,
+      setEditorRevealTarget,
+      setRestoredEditorViewStateRevision,
+      setRecentlyClosedTabsVersion,
+      workspaceEditorViewStatesRef,
+    },
+    requestOwnerDocumentSaveRef,
+    runWithDocumentSaveExclusionRef,
+    runWithIssuedWriteDrainRef,
+    workspaceTrusted,
   });
-  const closeDocumentForCommandsRef = useRef(closeDocument);
-  const closeActiveEditorGroupForCommandsRef = useRef(closeActiveEditorGroup);
-  const closeActiveEditorGroupSurfaceForCommandsRef = useRef(closeActiveEditorGroupSurface);
-  closeDocumentForCommandsRef.current = closeDocument;
-  closeActiveEditorGroupForCommandsRef.current = closeActiveEditorGroup;
-  closeActiveEditorGroupSurfaceForCommandsRef.current = closeActiveEditorGroupSurface;
-  const runCloseDocument = useCallback(
-    (path: string) => closeDocumentForCommandsRef.current(path),
-    [],
-  );
-  const runCloseActiveEditorGroup = useCallback(async () => {
-    await closeActiveEditorGroupForCommandsRef.current();
-  }, []);
-  const runCloseActiveEditorGroupSurface = useCallback(async () => {
-    await closeActiveEditorGroupSurfaceForCommandsRef.current();
-  }, []);
 
   const {
     activateEditorGroup,
