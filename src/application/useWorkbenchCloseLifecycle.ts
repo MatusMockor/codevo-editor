@@ -2,11 +2,19 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import type { EditorConfigFile } from "../domain/editorConfig";
+import { editorGroupsUniquePaths, type EditorGroupsState } from "../domain/editorGroups";
 import { createEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
+import { documentNeedsAttention } from "../domain/externalFileConflict";
 import type { AppSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
-import type { ProjectRuntimeStopResult } from "../domain/workspaceRuntimeLifecycle";
-import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
+import type {
+  ProjectRuntimeStopResult,
+  WorkspaceRuntimeLifecycleGateway,
+} from "../domain/workspaceRuntimeLifecycle";
+import type {
+  RegisteredWorkspaceRuntimeDisposalResult,
+  RegisteredWorkspaceRuntimeDisposalTarget,
+} from "../domain/workspaceRuntimeLifecycle";
 import { isDirty } from "../domain/workspace";
 import type { CloseCompletion } from "../domain/dirtyClose";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -31,6 +39,18 @@ import { OwnerResolvingDocumentSaveService } from "./ownerResolvingDocumentSaveS
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { WorkspaceStateCache } from "./useWorkspaceStateCache";
+import type {
+  AgentProjectsSurface,
+  AgentWorkspaceProjectCloseResult,
+  AgentWorkspaceProjectCloseSettlement,
+} from "./useAgentProjects";
+import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
+import type { BackendClosedWorkspaceIdentitySettlement } from "./workbenchController/useManagedWorkspaceIdentityOwnership";
+import {
+  prepareRegisteredWorkspaceClose,
+  RegisteredWorkspaceCloseCoordinator,
+  type RegisteredWorkspaceCloseResult,
+} from "./registeredWorkspaceCloseCoordinator";
 
 interface CachedWorkspaceDirtyState {
   editorSurface: {
@@ -112,6 +132,16 @@ export interface WorkbenchCloseLifecycleDependencies {
   forgetLanguageServerRuntimeStatuses: (rootPath: string) => void;
   forgetLatencyTrackerForRoot: (rootPath: string) => void;
   unregisterWorkspace: (workspaceId: string) => Promise<WorkspaceIdentityReleaseOutcome | void>;
+  disposeRegisteredWorkspace: (
+    target: RegisteredWorkspaceRuntimeDisposalTarget,
+  ) => Promise<RegisteredWorkspaceRuntimeDisposalResult>;
+  prepareRegisteredWorkspaceIdentitySettlement: (
+    descriptor: WorkspaceIdentityDescriptor,
+  ) => BackendClosedWorkspaceIdentitySettlement | null;
+  closeRegisteredWorkspaceAgents: (
+    descriptor: WorkspaceIdentityDescriptor,
+    isCurrent: () => boolean,
+  ) => Promise<AgentWorkspaceProjectCloseResult>;
   clearExternalFileConflictsForRoot: (rootPath: string) => void;
   invalidateWorkspaceResourceCachesForRoot: (rootPath: string) => void;
   workspaceHasExternalFileConflicts: (rootPath: string) => boolean;
@@ -127,12 +157,100 @@ export interface WorkbenchCloseLifecycle {
   quitApplication: () => void;
 }
 
+export function registeredWorkspaceDisposalPort(
+  gateway: WorkspaceRuntimeLifecycleGateway,
+): WorkbenchCloseLifecycleDependencies["disposeRegisteredWorkspace"] {
+  return async (target) => {
+    const disposeRegisteredWorkspace = gateway.disposeRegisteredWorkspace;
+    if (!disposeRegisteredWorkspace) {
+      throw new Error("Registered workspace disposal is unavailable.");
+    }
+    return disposeRegisteredWorkspace.call(gateway, target);
+  };
+}
+
+export function registeredWorkspaceAgentClosePort(
+  projects: AgentProjectsSurface,
+): WorkbenchCloseLifecycleDependencies["closeRegisteredWorkspaceAgents"] {
+  return async (descriptor, isCurrent) => {
+    const closeWorkspaceProject = projects.closeWorkspaceProject;
+    if (!closeWorkspaceProject) {
+      return {
+        status: "closed",
+        settlement: {
+          complete: async () => undefined,
+          finalizeBackendClosed: () => undefined,
+        },
+      };
+    }
+    return closeWorkspaceProject(descriptor, isCurrent);
+  };
+}
+
+export function useRegisteredWorkspaceClosePorts(
+  gateway: WorkspaceRuntimeLifecycleGateway,
+  projects: AgentProjectsSurface,
+) {
+  return useMemo(
+    () =>
+      [
+        registeredWorkspaceDisposalPort(gateway),
+        registeredWorkspaceAgentClosePort(projects),
+      ] as const,
+    [gateway, projects],
+  );
+}
+
+export function createWorkspaceCloseSessionPort(
+  currentWorkspaceRootRef: MutableRefObject<string | null>,
+  documentsRef: MutableRefObject<Record<string, EditorDocument>>,
+  editorGroupsRef: MutableRefObject<EditorGroupsState>,
+  workspaceHasExternalFileConflicts: (rootPath: string) => boolean,
+): WorkspaceCloseSessionPort {
+  return {
+    current: () => {
+      const activeRoot = currentWorkspaceRootRef.current;
+      if (!activeRoot) return { activeRoot: null, needsAttention: false };
+      const hasDirtyDocument = editorGroupsUniquePaths(editorGroupsRef.current).some((path) => {
+        const document = documentsRef.current[path];
+        return Boolean(document && !document.readOnly && isDirty(document));
+      });
+      return {
+        activeRoot,
+        needsAttention: documentNeedsAttention(
+          hasDirtyDocument,
+          workspaceHasExternalFileConflicts(activeRoot),
+        ),
+      };
+    },
+  };
+}
+
+export function useWorkspaceCloseSessionPort(
+  currentWorkspaceRootRef: MutableRefObject<string | null>,
+  documentsRef: MutableRefObject<Record<string, EditorDocument>>,
+  editorGroupsRef: MutableRefObject<EditorGroupsState>,
+  workspaceHasExternalFileConflictsRef: MutableRefObject<(rootPath: string) => boolean>,
+): WorkspaceCloseSessionPort {
+  return useMemo(
+    () =>
+      createWorkspaceCloseSessionPort(
+        currentWorkspaceRootRef,
+        documentsRef,
+        editorGroupsRef,
+        workspaceHasExternalFileConflictsRef.current,
+      ),
+    [currentWorkspaceRootRef, documentsRef, editorGroupsRef, workspaceHasExternalFileConflictsRef],
+  );
+}
+
 const NATIVE_CLOSE_REQUEST_EVENT = "mockor-native-close-requested";
 
 type NativeCloseKind = "close" | "quit";
 type CloseScopeGuard = () => boolean;
 type CloseCommit = (scopeIsCurrent: CloseScopeGuard) => Promise<boolean>;
 type WorkspaceDisposalResult =
+  | "backend-closed-local-stale"
   | "disposed"
   | "identity-release-deferred"
   | "identity-release-failed"
@@ -178,6 +296,9 @@ export function useWorkbenchCloseLifecycle(
     forgetLanguageServerRuntimeStatuses,
     forgetLatencyTrackerForRoot,
     unregisterWorkspace,
+    disposeRegisteredWorkspace,
+    prepareRegisteredWorkspaceIdentitySettlement,
+    closeRegisteredWorkspaceAgents,
     clearExternalFileConflictsForRoot,
     invalidateWorkspaceResourceCachesForRoot,
     openWorkspacePath,
@@ -186,9 +307,21 @@ export function useWorkbenchCloseLifecycle(
     reportError,
   } = dependencies;
   const closeCoordinator = useMemo(() => new CloseCoordinator(), []);
+  const registeredWorkspaceCloseCoordinator = useMemo(
+    () => new RegisteredWorkspaceCloseCoordinator(closeCoordinator),
+    [closeCoordinator],
+  );
+  const closeLifecycleActiveRef = useRef(true);
   const nativeCloseInFlightRef = useRef(false);
   const workspaceCloseInFlightRef = useRef(new Map<string, Promise<void>>());
   const nativeCloseRequestRef = useRef<(payload: unknown) => void>(() => undefined);
+
+  useEffect(() => {
+    closeLifecycleActiveRef.current = true;
+    return () => {
+      closeLifecycleActiveRef.current = false;
+    };
+  }, []);
 
   const persistCurrentWorkspaceSession = useCallback(async () => {
     if (!workspaceRoot) {
@@ -462,11 +595,124 @@ export function useWorkbenchCloseLifecycle(
       ownership: WorkspaceCloseOwnership,
       scopeIsCurrent: CloseScopeGuard,
     ): Promise<WorkspaceDisposalResult> => {
-      if (!ownership.isCurrent() || !scopeIsCurrent()) {
+      const closeIsCurrent = () =>
+        closeLifecycleActiveRef.current && ownership.isCurrent() && scopeIsCurrent();
+      if (!closeIsCurrent()) {
         return "stale";
       }
+      const settleIdentityDescriptor = () => {
+        if (!identityDescriptor) return;
+        for (const [rootPath, descriptor] of Object.entries(workspaceIdentityByRootRef.current)) {
+          if (descriptor.workspaceId !== identityDescriptor.workspaceId) continue;
+          delete workspaceIdentityByRootRef.current[rootPath];
+        }
+        agentSettlement?.finalizeBackendClosed();
+      };
 
-      if (identityDescriptor) {
+      let registeredRuntimeClosed = false;
+      let identitySettlement: BackendClosedWorkspaceIdentitySettlement | null = null;
+      let agentSettlement: AgentWorkspaceProjectCloseSettlement | null = null;
+      if (identityDescriptor?.admissionToken !== undefined) {
+        identitySettlement = prepareRegisteredWorkspaceIdentitySettlement(identityDescriptor);
+        if (!identitySettlement) {
+          reportError("Workspace", new Error("Registered workspace close authority is stale."));
+          return "identity-release-failed";
+        }
+        const exactCloseIsCurrent = () =>
+          closeIsCurrent() && identitySettlement?.isCurrent() === true;
+        const preparation = prepareRegisteredWorkspaceClose(
+          identityDescriptor,
+          exactCloseIsCurrent,
+        );
+        switch (preparation.status) {
+          case "invalid":
+            reportError("Workspace", new Error("Registered workspace close authority is invalid."));
+            return "identity-release-failed";
+          case "legacy":
+            return "identity-release-failed";
+          case "ready": {
+            let agentResult: AgentWorkspaceProjectCloseResult;
+            try {
+              agentResult = await closeRegisteredWorkspaceAgents(
+                identityDescriptor,
+                preparation.lease.isCurrent,
+              );
+            } catch (error) {
+              if (!exactCloseIsCurrent()) {
+                return "stale";
+              }
+              reportError("Runtime cleanup", error);
+              return "runtime-stop-incomplete";
+            }
+            switch (agentResult.status) {
+              case "stale":
+                return "stale";
+              case "lease-release-incomplete":
+              case "task-stop-incomplete":
+                reportError(
+                  "Runtime cleanup",
+                  new Error(`Agent workspace cleanup ${agentResult.status}.`),
+                );
+                return "runtime-stop-incomplete";
+              case "closed":
+                agentSettlement = agentResult.settlement;
+                break;
+              default: {
+                const exhaustive: never = agentResult;
+                return exhaustive;
+              }
+            }
+            if (!exactCloseIsCurrent()) {
+              await agentSettlement.complete("backend-not-closed");
+              return "stale";
+            }
+            let result: RegisteredWorkspaceCloseResult;
+            try {
+              result = await registeredWorkspaceCloseCoordinator.close({
+                lease: preparation.lease,
+                closeDocuments: [
+                  () => closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
+                  () => closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
+                ],
+                disposeRegisteredWorkspace,
+              });
+            } catch (error) {
+              if (!closeIsCurrent()) {
+                return "stale";
+              }
+              reportError("Runtime cleanup", error);
+              return "runtime-stop-incomplete";
+            }
+            if (result.status === "stale") {
+              await agentSettlement.complete("backend-not-closed");
+              return "stale";
+            }
+            if (result.status === "incomplete") {
+              await agentSettlement.complete("backend-not-closed");
+              if (!exactCloseIsCurrent()) return "stale";
+              reportError("Runtime cleanup", new Error(result.errors.join("\n")));
+              return "runtime-stop-incomplete";
+            }
+            await agentSettlement.complete("backend-closed");
+            registeredRuntimeClosed = true;
+            if (!identitySettlement.canSettleClosed()) {
+              agentSettlement.finalizeBackendClosed();
+              return "stale";
+            }
+            if (!closeIsCurrent()) {
+              identitySettlement.settle(settleIdentityDescriptor);
+              return "backend-closed-local-stale";
+            }
+            break;
+          }
+          default: {
+            const exhaustive: never = preparation;
+            return exhaustive;
+          }
+        }
+      }
+
+      if (identityDescriptor && !registeredRuntimeClosed) {
         try {
           const releaseOutcome = await unregisterWorkspace(identityDescriptor.workspaceId);
           if (releaseOutcome === "deferred") {
@@ -477,7 +723,7 @@ export function useWorkbenchCloseLifecycle(
           return "identity-release-failed";
         }
 
-        if (!ownership.isCurrent() || !scopeIsCurrent()) {
+        if (!closeIsCurrent()) {
           return "stale";
         }
       }
@@ -485,34 +731,43 @@ export function useWorkbenchCloseLifecycle(
       const runtimeStop = {
         result: "stopped" as ProjectRuntimeStopResult,
       };
-      await closeCoordinator.close({
-        closeDocuments: [
-          () =>
-            ownership.isCurrent() && scopeIsCurrent()
-              ? closeSyncedLanguageServerDocumentsForRoot(targetRootPath)
-              : Promise.resolve(),
-          () =>
-            ownership.isCurrent() && scopeIsCurrent()
-              ? closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath)
-              : Promise.resolve(),
-        ],
-        disposeRuntime: async () => {
-          if (!ownership.isCurrent() || !scopeIsCurrent()) {
-            return;
-          }
+      if (!registeredRuntimeClosed) {
+        await closeCoordinator.close({
+          closeDocuments: [
+            () =>
+              closeIsCurrent()
+                ? closeSyncedLanguageServerDocumentsForRoot(targetRootPath)
+                : Promise.resolve(),
+            () =>
+              closeIsCurrent()
+                ? closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath)
+                : Promise.resolve(),
+          ],
+          disposeRuntime: async () => {
+            if (!closeIsCurrent()) {
+              return;
+            }
 
-          try {
-            runtimeStop.result = await stopRuntimeForOwnedClose(
-              stopProjectRuntimes,
-              targetRootPath,
-              ownership,
-            );
-          } catch (error) {
-            runtimeStop.result = "incomplete";
-            reportError("Runtime cleanup", error);
-          }
-        },
-      });
+            try {
+              const result = await stopRuntimeForOwnedClose(
+                stopProjectRuntimes,
+                targetRootPath,
+                ownership,
+              );
+              if (!closeIsCurrent()) {
+                return;
+              }
+              runtimeStop.result = result;
+            } catch (error) {
+              if (!closeIsCurrent()) {
+                return;
+              }
+              runtimeStop.result = "incomplete";
+              reportError("Runtime cleanup", error);
+            }
+          },
+        });
+      }
 
       if (runtimeStop.result === "incomplete") {
         return "runtime-stop-incomplete";
@@ -522,14 +777,14 @@ export function useWorkbenchCloseLifecycle(
         return "stale";
       }
 
-      if (!ownership.isCurrent() || !scopeIsCurrent()) {
+      if (!closeIsCurrent()) {
         return "stale";
       }
 
       forgetCachedWorkspaceState(tabPath, identityDescriptor);
       const resourceRoots = workspaceResourceRoots(tabPath, targetRootPath, identityDescriptor);
       for (const rootPath of resourceRoots) {
-        if (!ownership.isCurrent() || !scopeIsCurrent()) {
+        if (!closeIsCurrent()) {
           return "stale";
         }
 
@@ -537,18 +792,14 @@ export function useWorkbenchCloseLifecycle(
         clearExternalFileConflictsForRoot(rootPath);
       }
 
-      if (identityDescriptor) {
-        for (const [rootPath, descriptor] of Object.entries(workspaceIdentityByRootRef.current)) {
-          if (descriptor.workspaceId !== identityDescriptor.workspaceId) {
-            continue;
-          }
-
-          delete workspaceIdentityByRootRef.current[rootPath];
-        }
-      }
-
       forgetLatencyTrackerForRoot(targetRootPath);
       forgetLanguageServerRuntimeStatuses(targetRootPath);
+
+      if (identitySettlement) {
+        if (!identitySettlement.settle(settleIdentityDescriptor)) return "stale";
+        return "disposed";
+      }
+      settleIdentityDescriptor();
       return "disposed";
     },
     [
@@ -561,6 +812,10 @@ export function useWorkbenchCloseLifecycle(
       forgetLanguageServerRuntimeStatuses,
       forgetLatencyTrackerForRoot,
       stopProjectRuntimes,
+      disposeRegisteredWorkspace,
+      prepareRegisteredWorkspaceIdentitySettlement,
+      closeRegisteredWorkspaceAgents,
+      registeredWorkspaceCloseCoordinator,
       workspaceIdentityByRootRef,
       unregisterWorkspace,
       reportError,
@@ -569,13 +824,20 @@ export function useWorkbenchCloseLifecycle(
 
   const restoreSettingsAfterIdentityReleaseFailure = useCallback(
     async (settings: AppSettings, ownership: WorkspaceCloseOwnership): Promise<void> => {
-      if (!ownership.isCurrent()) {
+      const compensationIsCurrent = () => closeLifecycleActiveRef.current && ownership.isCurrent();
+      if (!compensationIsCurrent()) {
         return;
       }
 
       try {
         await persistAppSettings(settings);
+        if (!compensationIsCurrent()) {
+          return;
+        }
       } catch (error) {
+        if (!compensationIsCurrent()) {
+          return;
+        }
         reportError("Settings", error);
       }
     },
@@ -660,6 +922,10 @@ export function useWorkbenchCloseLifecycle(
           await restoreSettingsAfterIdentityReleaseFailure(currentSettings, ownership);
           return false;
         }
+        if (disposalResult === "backend-closed-local-stale") {
+          await restoreSettingsAfterIdentityReleaseFailure(currentSettings, ownership);
+          return false;
+        }
         if (
           disposalResult !== "identity-release-failed" &&
           disposalResult !== "identity-release-deferred" &&
@@ -720,6 +986,12 @@ export function useWorkbenchCloseLifecycle(
       );
       if (disposalResult === "stale") {
         await restoreSettingsAfterIdentityReleaseFailure(currentSettings, ownership);
+        return false;
+      }
+      if (disposalResult === "backend-closed-local-stale") {
+        await restoreSettingsAfterIdentityReleaseFailure(currentSettings, ownership);
+        if (!closeLifecycleActiveRef.current || !ownership.isCurrent()) return false;
+        await openWorkspacePath(targetRootPath);
         return false;
       }
       if (

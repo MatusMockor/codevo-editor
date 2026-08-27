@@ -22,7 +22,6 @@ describe("domain dependency direction", () => {
     const applicationDirectory = join(process.cwd(), "src", "application");
     const legacyExceptions = new Set([
       "useLanguageServerFeatureErrorReporting.ts -> ../infrastructure/globalErrorSafetyNet",
-      "useWorkbenchCloseLifecycle.ts -> ../infrastructure/tauriWorkspaceIdentityGateway",
       "useWorkbenchController.ts -> ../components/composerManifestMonacoProviders",
       "useWorkbenchController.ts -> ../components/npmManifestMonacoProviders",
       "useWorkbenchController.ts -> ../infrastructure/globalErrorSafetyNet",

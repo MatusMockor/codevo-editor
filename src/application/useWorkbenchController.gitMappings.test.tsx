@@ -38,7 +38,7 @@ import {
 } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway } from "../domain/trust";
-import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
+import { exactWorkspaceRuntimeLifecycleGateway } from "../test/workbenchControllerTestHarness";
 import { trustedDescriptor } from "./useWorkbenchController.preview/testSupport";
 
 type WorkbenchController = ReturnType<typeof useWorkbenchController>;
@@ -465,9 +465,8 @@ function buildDependencies({
     subscribeOutput: vi.fn(async () => () => undefined),
     writeInput: vi.fn(async () => undefined),
   };
-  const workspaceRuntimeLifecycleGateway: WorkspaceRuntimeLifecycleGateway = {
-    disposeWorkspace: vi.fn(async () => undefined),
-  };
+  const disposeWorkspace = vi.fn(async (_rootPath: string) => undefined);
+  const workspaceRuntimeLifecycleGateway = exactWorkspaceRuntimeLifecycleGateway(disposeWorkspace);
   const resolvedSettingsGateway: SettingsGateway = settingsGateway ?? {
     loadAppSettings: vi.fn(async () => appSettings),
     loadWorkspaceSettings: vi.fn(async () => workspaceSettings),

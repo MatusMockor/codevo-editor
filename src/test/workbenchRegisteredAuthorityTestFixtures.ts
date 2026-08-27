@@ -10,6 +10,7 @@ import {
 } from "../domain/languageServerRuntime";
 import type { IntelligenceMode } from "../domain/workspace";
 import type { WorkbenchWorkspaceGateways } from "../application/useWorkbenchController";
+import type { WorkspaceIdentityDescriptor } from "../application/workspaceIdentityGatewayPort";
 import {
   flushAsyncTurns,
   setupWorkbenchControllerTestHarness,
@@ -29,6 +30,13 @@ export function trustedDescriptor(workspaceId: string, root: string, admissionTo
       unicodeNormalization: "none" as const,
     },
   };
+}
+
+export function legacyTrustedDescriptor(
+  workspaceId: string,
+  root: string,
+): WorkspaceIdentityDescriptor {
+  return { ...trustedDescriptor(workspaceId, root), admissionToken: undefined };
 }
 
 export function registeredIdentityFixture(): WorkbenchWorkspaceGateways["identity"] {
@@ -62,7 +70,7 @@ export function registeredIdentityFixture(): WorkbenchWorkspaceGateways["identit
 }
 
 export function singleRegisteredIdentityFixture(
-  descriptor: ReturnType<typeof trustedDescriptor>,
+  descriptor: WorkspaceIdentityDescriptor,
   unregister: (workspaceId: string) => Promise<void> = vi.fn(async () => undefined),
 ): WorkbenchWorkspaceGateways["identity"] {
   return {

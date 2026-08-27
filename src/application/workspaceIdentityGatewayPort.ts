@@ -47,6 +47,7 @@ export interface WorkspaceIdentityGateway {
   openPath?(path: string): Promise<WorkspaceIdentityDescriptor>;
   getDescriptor(workspaceId: string): Promise<NativeWorkspaceDescriptor>;
   unregister(workspaceId: string): Promise<void>;
+  settleClosedDescriptor?(descriptor: WorkspaceIdentityDescriptor): boolean;
 }
 
 export interface WorkspaceIdentityPathMatch {

@@ -29,6 +29,7 @@ import {
   inMemoryBreakpointStorage,
   it,
   javaScriptTypeScriptWorkspaceDescriptor,
+  legacyTrustedDescriptor,
   type LanguageServerDiagnosticEvent,
   type LanguageServerDiagnosticsGateway,
   type LanguageServerFeaturesGateway,
@@ -60,10 +61,10 @@ import {
   workspaceSettingsKey,
   type WorkbenchWorkspaceGateways,
   type WorkspaceDescriptor,
-  type WorkspaceRuntimeLifecycleGateway,
   type WorkspaceTrustGateway,
   type WorkspaceTrustState,
 } from "./testSupport";
+import { exactWorkspaceRuntimeLifecycleGateway } from "../../test/workbenchControllerTestHarness";
 
 describe("useWorkbenchController workspace identity, editor groups, bookmarks, and debugger wiring", () => {
   const { getRoot, renderController } = setupRegisteredWorkbenchControllerTestHarness();
@@ -2046,11 +2047,11 @@ MissingClass::class;
   it("coalesces sequential same-id aliases into one selected workspace tab", async () => {
     const canonicalRoot = "/real/sequential";
     const descriptorA = {
-      ...trustedDescriptor("ws-sequential", "/link/sequential-a"),
+      ...legacyTrustedDescriptor("ws-sequential", "/link/sequential-a"),
       canonicalRoot,
     };
     const descriptorB = {
-      ...trustedDescriptor("ws-sequential", "/link/sequential-b"),
+      ...legacyTrustedDescriptor("ws-sequential", "/link/sequential-b"),
       canonicalRoot,
     };
     const otherDescriptor = trustedDescriptor("ws-sequential-other", "/workspace-other");
@@ -2144,8 +2145,6 @@ MissingClass::class;
     });
     vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(false);
     vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
-    vi.mocked(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).mockClear();
-
     await act(async () => {
       await getWorkbench().closeWorkspaceTab(descriptor.canonicalRoot);
     });
@@ -2222,7 +2221,7 @@ MissingClass::class;
   });
   it("retains identity ownership after unregister failure and retries on close", async () => {
     const descriptor = {
-      ...trustedDescriptor("ws-close-unregister-retry", "/link/retry-close"),
+      ...legacyTrustedDescriptor("ws-close-unregister-retry", "/link/retry-close"),
       canonicalRoot: "/real/retry-close",
     };
     const unregister = vi
@@ -2261,7 +2260,7 @@ MissingClass::class;
   });
   it("retains failed identity ownership for one unmount retry", async () => {
     const descriptor = {
-      ...trustedDescriptor("ws-close-unregister-unmount", "/link/retry-unmount"),
+      ...legacyTrustedDescriptor("ws-close-unregister-unmount", "/link/retry-unmount"),
       canonicalRoot: "/real/retry-unmount",
     };
     const unregister = vi
@@ -2289,10 +2288,9 @@ MissingClass::class;
     expect(unregister).toHaveBeenLastCalledWith(descriptor.workspaceId);
   });
   it("defers close cleanup until unrelated admission release succeeds", async () => {
-    const descriptorA = trustedDescriptor(
-      "ws-deferred-release-success",
-      "/workspace-deferred-success",
-    );
+    const descriptorA = {
+      ...legacyTrustedDescriptor("ws-deferred-release-success", "/workspace-deferred-success"),
+    };
     const descriptorB = trustedDescriptor(
       "ws-unrelated-admission-success",
       "/workspace-unrelated-success",
@@ -2355,10 +2353,9 @@ MissingClass::class;
     ).toHaveBeenCalledExactlyOnceWith(descriptorA.selectedPath);
   });
   it("preserves deferred close state after unrelated admission release fails and retries", async () => {
-    const descriptorA = trustedDescriptor(
-      "ws-deferred-release-failure",
-      "/workspace-deferred-failure",
-    );
+    const descriptorA = {
+      ...legacyTrustedDescriptor("ws-deferred-release-failure", "/workspace-deferred-failure"),
+    };
     const descriptorB = trustedDescriptor(
       "ws-unrelated-admission-failure",
       "/workspace-unrelated-failure",
@@ -3925,31 +3922,30 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(getWorkbench().openDocuments.map((document) => document.path)).not.toContain(diffPath);
   });
   it("ignores inactive workspace runtime dispose errors after switching project tabs", async () => {
-    const workspaceRuntimeLifecycleGateway: WorkspaceRuntimeLifecycleGateway = {
-      disposeWorkspace: vi.fn(async (rootPath) => {
-        if (rootPath === "/workspace-a") {
-          throw new Error("stale runtime dispose");
-        }
-      }),
-    };
-    const { getWorkbench } = renderController({
+    const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace-a",
         runtimePolicy: "suspendOnBackground",
         workspaceTabs: ["/workspace-a", "/workspace-b"],
       },
-      workspaceRuntimeLifecycleGateway,
+      workspaceRuntimeLifecycleGateway: exactWorkspaceRuntimeLifecycleGateway(
+        vi.fn(async (rootPath) => {
+          if (rootPath === "/workspace-a") throw new Error("stale runtime dispose");
+        }),
+      ),
     });
     await flushAsyncTurns();
-    vi.mocked(workspaceRuntimeLifecycleGateway.disposeWorkspace).mockClear();
+    vi.mocked(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).mockClear();
 
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");
     });
     await flushAsyncTurns();
 
-    expect(workspaceRuntimeLifecycleGateway.disposeWorkspace).toHaveBeenCalledWith("/workspace-a");
+    expect(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(
       getWorkbench().notices.some(

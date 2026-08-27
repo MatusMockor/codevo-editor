@@ -200,6 +200,7 @@ interface Harness {
     prompt: ReturnType<typeof vi.fn>;
   };
   reportError: ReturnType<typeof vi.fn>;
+  replaceCapturedDocument: (document: EditorDocument) => void;
   runWithDocumentSaveExclusion: DocumentSaveExclusionMock;
   stopProjectRuntimes: ReturnType<typeof vi.fn>;
   unmount: () => void;
@@ -303,6 +304,22 @@ function renderLifecycle(
     closeSyncedJavaScriptTypeScriptDocumentsForRoot,
     closeSyncedLanguageServerDocumentsForRoot,
     dirtyCount: 0,
+    disposeRegisteredWorkspace: vi.fn(async () => ({ status: "closed" as const })),
+    prepareRegisteredWorkspaceIdentitySettlement: () => ({
+      canSettleClosed: () => true,
+      isCurrent: () => true,
+      settle: (settleLocalIdentity) => {
+        settleLocalIdentity();
+        return true;
+      },
+    }),
+    closeRegisteredWorkspaceAgents: vi.fn(async () => ({
+      status: "closed" as const,
+      settlement: {
+        complete: async () => undefined,
+        finalizeBackendClosed: () => undefined,
+      },
+    })),
     dirtyCloseDecisionPort: {
       decideDirtyClose: async ({ scope }) =>
         dependencies.prompter.confirm(
@@ -442,6 +459,9 @@ function renderLifecycle(
     persistAppSettings,
     prompter: dependencies.prompter as Harness["prompter"],
     reportError: dependencies.reportError as Harness["reportError"],
+    replaceCapturedDocument: (document) => {
+      capturedDocument = document;
+    },
     runWithDocumentSaveExclusion:
       dependencies.runWithDocumentSaveExclusion as DocumentSaveExclusionMock,
     stopProjectRuntimes,
@@ -771,6 +791,268 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     expect(unregisterWorkspace).toHaveBeenCalledOnce();
     expect(unregisterWorkspace).toHaveBeenCalledWith("ws-a");
+  });
+
+  it("uses one exact backend teardown after synced didClose for a registered descriptor", async () => {
+    const events: string[] = [];
+    const descriptor = { ...workspaceIdentity(), admissionToken: 17 };
+    const unregisterWorkspace = vi.fn(async () => undefined);
+    const stopProjectRuntimes = vi.fn(async () => "stopped" as const);
+    const disposeRegisteredWorkspace = vi.fn(async () => {
+      events.push("backend");
+      return { status: "closed" as const };
+    });
+    const harness = renderLifecycle({
+      closeRegisteredWorkspaceAgents: vi.fn(async () => {
+        events.push("agents");
+        return {
+          status: "closed" as const,
+          settlement: {
+            complete: async () => undefined,
+            finalizeBackendClosed: () => undefined,
+          },
+        };
+      }),
+      closeSyncedLanguageServerDocumentsForRoot: vi.fn(async () => {
+        events.push("php-did-close");
+      }),
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot: vi.fn(async () => {
+        events.push("typescript-did-close");
+      }),
+      disposeRegisteredWorkspace,
+      prepareRegisteredWorkspaceIdentitySettlement: () => ({
+        canSettleClosed: () => true,
+        isCurrent: () => true,
+        settle: (settleLocalIdentity) => {
+          settleLocalIdentity();
+          events.push("identity-settled");
+          return true;
+        },
+      }),
+      stopProjectRuntimes,
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+    });
+
+    expect(events).toEqual([
+      "agents",
+      "php-did-close",
+      "typescript-did-close",
+      "backend",
+      "identity-settled",
+    ]);
+    expect(disposeRegisteredWorkspace).toHaveBeenCalledOnce();
+    expect(disposeRegisteredWorkspace).toHaveBeenCalledWith({
+      workspaceId: descriptor.workspaceId,
+      admissionToken: 17,
+      selectedRootPath: descriptor.selectedPath,
+      canonicalRootPath: descriptor.canonicalRoot,
+    });
+    expect(unregisterWorkspace).not.toHaveBeenCalled();
+    expect(stopProjectRuntimes).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("keeps documents and backend identity alive when exact agent drain is incomplete", async () => {
+    const descriptor = { ...workspaceIdentity(), admissionToken: 19 };
+    const disposeRegisteredWorkspace = vi.fn(async () => ({ status: "closed" as const }));
+    const closeDocuments = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      closeRegisteredWorkspaceAgents: vi.fn(async () => ({
+        status: "lease-release-incomplete" as const,
+      })),
+      closeSyncedLanguageServerDocumentsForRoot: closeDocuments,
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot: closeDocuments,
+      disposeRegisteredWorkspace,
+      workspaceIdentityByRootRef: {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+    });
+
+    expect(closeDocuments).not.toHaveBeenCalled();
+    expect(disposeRegisteredWorkspace).not.toHaveBeenCalled();
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(descriptor.selectedPath);
+    expect(harness.reportError).toHaveBeenCalledWith(
+      "Runtime cleanup",
+      expect.objectContaining({ message: "Agent workspace cleanup lease-release-incomplete." }),
+    );
+    harness.unmount();
+  });
+
+  it("restores the tab and identity when exact backend teardown is incomplete", async () => {
+    const descriptor = { ...workspaceIdentity(), admissionToken: 23 };
+    const unregisterWorkspace = vi.fn(async () => undefined);
+    const stopProjectRuntimes = vi.fn(async () => "stopped" as const);
+    const disposeRegisteredWorkspace = vi.fn(async () => ({
+      status: "incomplete" as const,
+      errors: ["terminal cleanup failed"],
+    }));
+    const workspaceIdentityByRootRef = {
+      current: {
+        [descriptor.selectedPath]: descriptor,
+        [descriptor.canonicalRoot]: descriptor,
+      },
+    };
+    const harness = renderLifecycle({
+      disposeRegisteredWorkspace,
+      stopProjectRuntimes,
+      unregisterWorkspace,
+      workspaceIdentityByRootRef,
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+    });
+
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(descriptor.selectedPath);
+    expect(workspaceIdentityByRootRef.current[descriptor.selectedPath]).toBe(descriptor);
+    expect(disposeRegisteredWorkspace).toHaveBeenCalledOnce();
+    expect(unregisterWorkspace).not.toHaveBeenCalled();
+    expect(stopProjectRuntimes).not.toHaveBeenCalled();
+    expect(harness.reportError).toHaveBeenCalledWith(
+      "Runtime cleanup",
+      expect.objectContaining({ message: "terminal cleanup failed" }),
+    );
+    harness.unmount();
+  });
+
+  it("does not restore stale settings after unmount during exact backend teardown", async () => {
+    const descriptor = { ...workspaceIdentity(), admissionToken: 29 };
+    const backendStarted = createDeferred<void>();
+    const backend = createDeferred<{ status: "closed" }>();
+    const disposeRegisteredWorkspace = vi.fn(async () => {
+      backendStarted.resolve();
+      return backend.promise;
+    });
+    const clearActiveWorkspace = vi.fn(async () => undefined);
+    const openWorkspacePath = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      clearActiveWorkspace,
+      disposeRegisteredWorkspace,
+      openWorkspacePath,
+      workspaceIdentityByRootRef: {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+    });
+    let closing!: Promise<void>;
+
+    act(() => {
+      closing = harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+    });
+    await backendStarted.promise;
+    act(() => harness.unmount());
+    backend.resolve({ status: "closed" });
+    await act(async () => {
+      await closing;
+    });
+
+    expect(harness.persistAppSettings).toHaveBeenCalledOnce();
+    expect(harness.appSettingsRef.current.workspaceTabs).not.toContain(descriptor.selectedPath);
+    expect(clearActiveWorkspace).not.toHaveBeenCalled();
+    expect(openWorkspacePath).not.toHaveBeenCalled();
+  });
+
+  it("settles confirmed backend identity truth after close scope becomes stale", async () => {
+    const descriptor = { ...workspaceIdentity(), admissionToken: 31 };
+    const backendStarted = createDeferred<void>();
+    const backend = createDeferred<{ status: "closed" }>();
+    let closeScopeCurrent = true;
+    const workspaceIdentityByRootRef = {
+      current: {
+        [descriptor.selectedPath]: descriptor,
+        [descriptor.canonicalRoot]: descriptor,
+      },
+    };
+    const settle = vi.fn((settleLocalIdentity: () => void) => {
+      settleLocalIdentity();
+      return true;
+    });
+    const harness = renderLifecycle({
+      commitWorkspaceClose: () => ({ isCurrent: () => closeScopeCurrent }),
+      disposeRegisteredWorkspace: vi.fn(async () => {
+        backendStarted.resolve();
+        return backend.promise;
+      }),
+      prepareRegisteredWorkspaceIdentitySettlement: () => ({
+        canSettleClosed: () => true,
+        isCurrent: () => true,
+        settle,
+      }),
+      workspaceIdentityByRootRef,
+    });
+    let closing!: Promise<void>;
+
+    act(() => {
+      closing = harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+    });
+    await backendStarted.promise;
+    closeScopeCurrent = false;
+    backend.resolve({ status: "closed" });
+    await act(async () => closing);
+
+    expect(settle).toHaveBeenCalledOnce();
+    expect(workspaceIdentityByRootRef.current[descriptor.selectedPath]).toBeUndefined();
+    expect(harness.appSettingsRef.current.workspaceTabs).not.toContain(descriptor.selectedPath);
+    harness.unmount();
+  });
+
+  it("re-registers the active workspace and preserves settings after a late dirty edit", async () => {
+    const descriptor = {
+      ...workspaceIdentity(WORKSPACE_B, "/real/workspace-b"),
+      admissionToken: 37,
+    };
+    const backendStarted = createDeferred<void>();
+    const backend = createDeferred<{ status: "closed" }>();
+    const openWorkspacePath = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      dirtyCount: 1,
+      disposeRegisteredWorkspace: vi.fn(async () => {
+        backendStarted.resolve();
+        return backend.promise;
+      }),
+      openWorkspacePath,
+      workspaceIdentityByRootRef: {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+    });
+    let closing!: Promise<void>;
+
+    act(() => {
+      closing = harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+    });
+    await backendStarted.promise;
+    harness.replaceCapturedDocument({
+      ...dirtyDocument(`${WORKSPACE_B}/late.php`),
+      content: "late edit",
+    });
+    backend.resolve({ status: "closed" });
+    await act(async () => closing);
+
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(descriptor.selectedPath);
+    expect(openWorkspacePath).toHaveBeenCalledWith(descriptor.selectedPath);
+    harness.unmount();
   });
 
   it("preserves workspace resources when identity unregister fails", async () => {

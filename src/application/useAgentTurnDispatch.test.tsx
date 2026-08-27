@@ -29,6 +29,7 @@ import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type { AgentTasksNotice, AgentThreadStoreSurface } from "./agentThreadPorts";
+import { AGENT_TASKS_SOURCE } from "./agentProjectAuthority";
 import type { AgentOutputParserPort } from "./agentTurnOutputStream";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
 import {
@@ -1224,6 +1225,23 @@ describe("useAgentTurnDispatch stop and project release", () => {
       workspaceId: OWNER_A,
       repositoryRoot: ROOT_A,
     });
+    harness.unmount();
+  });
+
+  it("attempts every repository root and rejects when any project task drain fails", async () => {
+    const harness = renderDispatch();
+    await harness.startThread();
+    harness.agent.stopAgentTasksForRoot.mockRejectedValueOnce(new Error("stop failed"));
+
+    await expect(harness.hook().stopProjectTasks(OWNER_A, ["/elsewhere"])).rejects.toThrow(
+      "Agent project task drain failed.",
+    );
+
+    expect(harness.agent.stopAgentTasksForRoot).toHaveBeenCalledTimes(2);
+    expect(harness.reportError).toHaveBeenCalledWith(
+      AGENT_TASKS_SOURCE,
+      expect.objectContaining({ message: "stop failed" }),
+    );
     harness.unmount();
   });
 });

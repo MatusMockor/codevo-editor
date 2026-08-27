@@ -31,10 +31,10 @@ import {
   vi,
   waitForReact,
   workspaceRootKeysEqual,
-  type WorkspaceRuntimeLifecycleGateway,
   Deferred,
   EditorActiveLiveDocumentSaveCoordinator,
 } from "./testSupport";
+import { exactWorkspaceRuntimeLifecycleGateway } from "../../test/workbenchControllerTestHarness";
 
 const initialRevision = (path: string) => ({
   contentHash: `test:${path}`,
@@ -727,17 +727,16 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     const path = "/workspace-a/src/User.php";
     const openFile = createDeferred<string>();
     const disposeWorkspace = createDeferred<void>();
-    const workspaceRuntimeLifecycleGateway: WorkspaceRuntimeLifecycleGateway = {
-      disposeWorkspace: vi.fn((rootPath) =>
-        rootPath === "/workspace-a" ? disposeWorkspace.promise : Promise.resolve(),
-      ),
-    };
     const { dependencies, getWorkbench } = renderController({
       appSettings: workspacePairSettings,
       readTextFile: vi.fn(async (requestedPath: string) =>
         requestedPath === path ? openFile.promise : `<?php\n// ${requestedPath}\n`,
       ),
-      workspaceRuntimeLifecycleGateway,
+      workspaceRuntimeLifecycleGateway: exactWorkspaceRuntimeLifecycleGateway(
+        vi.fn((rootPath) =>
+          rootPath === "/workspace-a" ? disposeWorkspace.promise : Promise.resolve(),
+        ),
+      ),
     });
     await flushAsyncTurns();
 
@@ -756,7 +755,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       await Promise.resolve();
     });
     await waitForReact(() => {
-      expect(workspaceRuntimeLifecycleGateway.disposeWorkspace).toHaveBeenCalledWith(
+      expect(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).toHaveBeenCalledWith(
         "/workspace-a",
       );
     });

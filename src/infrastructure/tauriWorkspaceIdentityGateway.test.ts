@@ -75,6 +75,41 @@ describe("TauriWorkspaceIdentityGateway", () => {
     expect(gateway.descriptorForPath("/real/project/src/App.ts")?.workspaceId).toBe("ws-path");
   });
 
+  it("settles only the exact backend-closed descriptor from local routing caches", async () => {
+    invoke
+      .mockResolvedValueOnce(
+        registration({
+          workspaceId: "ws-path",
+          selectedRootPath: "/alias-one/project",
+          canonicalRootPath: "/real/project",
+          caseSensitive: true,
+          unicodeNormalizationPolicy: "preserved",
+        }),
+      )
+      .mockResolvedValueOnce(
+        registration(
+          {
+            workspaceId: "ws-path",
+            selectedRootPath: "/alias-two/project",
+            canonicalRootPath: "/real/project",
+            caseSensitive: true,
+            unicodeNormalizationPolicy: "preserved",
+          },
+          2,
+        ),
+      );
+    const gateway = new TauriWorkspaceIdentityGateway();
+    const first = await gateway.openPath("/alias-one/project");
+    const second = await gateway.openPath("/alias-two/project");
+
+    expect(gateway.settleClosedDescriptor(first)).toBe(false);
+    expect(gateway.descriptorForPath("/alias-two/project/src/App.ts")).toBe(second);
+    expect(gateway.settleClosedDescriptor(second)).toBe(true);
+    expect(gateway.descriptorForPath("/alias-one/project/src/App.ts")).toBeNull();
+    expect(gateway.descriptorForPath("/alias-two/project/src/App.ts")).toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith("unregister_workspace", expect.anything());
+  });
+
   it("reuses path matches until workspace identity routing changes", async () => {
     invoke
       .mockResolvedValueOnce(

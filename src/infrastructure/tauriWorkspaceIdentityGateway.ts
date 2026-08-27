@@ -267,6 +267,15 @@ export class TauriWorkspaceIdentityGateway
     });
   }
 
+  settleClosedDescriptor(descriptor: WorkspaceIdentityDescriptor): boolean {
+    const current = this.descriptors.get(descriptor.workspaceId);
+    if (!current || !workspaceIdentityDescriptorsEqual(current, descriptor)) return false;
+    this.descriptors.delete(descriptor.workspaceId);
+    this.aliases.delete(descriptor.workspaceId);
+    this.invalidatePathMatches();
+    return true;
+  }
+
   dispose(): void {
     if (this.disposed) {
       return;
@@ -489,6 +498,22 @@ export class TauriWorkspaceIdentityGateway
       throw new Error("Workspace registration rollback was not confirmed.");
     }
   }
+}
+
+function workspaceIdentityDescriptorsEqual(
+  left: WorkspaceIdentityDescriptor,
+  right: WorkspaceIdentityDescriptor,
+): boolean {
+  return (
+    left.workspaceId === right.workspaceId &&
+    left.admissionToken === right.admissionToken &&
+    left.selectedPath === right.selectedPath &&
+    left.canonicalRoot === right.canonicalRoot &&
+    left.caseSensitive === right.caseSensitive &&
+    left.unicodeNormalizationPolicy === right.unicodeNormalizationPolicy &&
+    left.policy.caseSensitive === right.policy.caseSensitive &&
+    left.policy.unicodeNormalization === right.policy.unicodeNormalization
+  );
 }
 
 function positiveInteger(value: number | undefined, fallback: number): number {

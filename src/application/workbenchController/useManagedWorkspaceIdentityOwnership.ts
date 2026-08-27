@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useRef, type MutableRefObject } from "react";
 import type { WorkspaceIdentityDescriptor } from "../workspaceIdentityGatewayPort";
 import type { WorkspaceIdentityGateway } from "../workspaceIdentityGatewayPort";
 import { withWorkspaceIdentityLease } from "./workspaceIdentityPolicy";
@@ -19,6 +19,12 @@ type WorkspaceIdentityAdmissionAuthority = {
   readonly unicodeNormalizationPolicy: WorkspaceIdentityDescriptor["unicodeNormalizationPolicy"];
   readonly workspaceId: string;
 };
+
+export interface BackendClosedWorkspaceIdentitySettlement {
+  canSettleClosed: () => boolean;
+  isCurrent: () => boolean;
+  settle: (settleLocalIdentity: () => void) => boolean;
+}
 
 interface ManagedWorkspaceIdentityOwnershipOptions {
   readonly deferredCleanupIdsRef: MutableRefObject<Set<string>>;
@@ -57,6 +63,7 @@ export function useManagedWorkspaceIdentityOwnership({
   runtimeOwnerClaimsRef,
   unregisterByIdRef,
 }: ManagedWorkspaceIdentityOwnershipOptions) {
+  const ownedAuthorityByIdRef = useRef<Record<string, WorkspaceIdentityAdmissionAuthority>>({});
   const unregisterIfUnused = useCallback(
     async (
       workspaceId: string,
@@ -152,6 +159,7 @@ export function useManagedWorkspaceIdentityOwnership({
 
       ownedIdsRef.current.delete(workspaceId);
       delete ownedGenerationByIdRef.current[workspaceId];
+      delete ownedAuthorityByIdRef.current[workspaceId];
       releasedIdsRef.current.add(workspaceId);
       return "released";
     },
@@ -230,6 +238,7 @@ export function useManagedWorkspaceIdentityOwnership({
       ownedIdsRef.current.add(authority.workspaceId);
       releasedIdsRef.current.delete(authority.workspaceId);
       ownedGenerationByIdRef.current[authority.workspaceId] = authority.generation;
+      ownedAuthorityByIdRef.current[authority.workspaceId] = authority;
       return true;
     },
     [
@@ -298,6 +307,66 @@ export function useManagedWorkspaceIdentityOwnership({
     ],
   );
 
+  const prepareBackendClosedSettlement = useCallback(
+    (descriptor: WorkspaceIdentityDescriptor): BackendClosedWorkspaceIdentitySettlement | null => {
+      const authority = ownedAuthorityByIdRef.current[descriptor.workspaceId];
+      if (!authority || !descriptorMatchesAuthority(authority, descriptor)) {
+        return null;
+      }
+      const generation = authority.generation;
+      let settled = false;
+      const isExactOwner = (): boolean =>
+        !settled &&
+        ownedIdsRef.current.has(authority.workspaceId) &&
+        ownedGenerationByIdRef.current[authority.workspaceId] === generation &&
+        latestAdmissionGenerationByIdRef.current[authority.workspaceId] === generation &&
+        ownedAuthorityByIdRef.current[authority.workspaceId] === authority &&
+        !pendingAdmissionsRef.current[authority.workspaceId]?.size &&
+        unregisterByIdRef.current[authority.workspaceId] === undefined &&
+        descriptorMatchesAuthority(authority, descriptor);
+      const isCurrent = (): boolean =>
+        mountedRef.current && !identityRequestTokensRef.current.hasPending() && isExactOwner();
+      const settle = (settleLocalIdentity: () => void): boolean => {
+        if (!isExactOwner()) {
+          return false;
+        }
+        const claimedGeneration = runtimeOwnerClaimsRef.current.generationFor(
+          authority.workspaceId,
+        );
+        if (claimedGeneration !== undefined) {
+          retireRuntimeOwnerClaim(authority.workspaceId, claimedGeneration);
+        }
+        identityGateway.settleClosedDescriptor?.(descriptor);
+        settleLocalIdentity();
+        ownedIdsRef.current.delete(authority.workspaceId);
+        delete ownedGenerationByIdRef.current[authority.workspaceId];
+        delete latestAdmissionGenerationByIdRef.current[authority.workspaceId];
+        delete releaseGenerationByIdRef.current[authority.workspaceId];
+        delete ownedAuthorityByIdRef.current[authority.workspaceId];
+        deferredCleanupIdsRef.current.delete(authority.workspaceId);
+        releasedIdsRef.current.add(authority.workspaceId);
+        settled = true;
+        return true;
+      };
+      return { canSettleClosed: isExactOwner, isCurrent, settle };
+    },
+    [
+      deferredCleanupIdsRef,
+      identityGateway,
+      identityRequestTokensRef,
+      latestAdmissionGenerationByIdRef,
+      mountedRef,
+      ownedGenerationByIdRef,
+      ownedIdsRef,
+      pendingAdmissionsRef,
+      releasedIdsRef,
+      releaseGenerationByIdRef,
+      retireRuntimeOwnerClaim,
+      runtimeOwnerClaimsRef,
+      unregisterByIdRef,
+    ],
+  );
+
   const withManagedLease = useCallback(
     async (
       descriptor: WorkspaceIdentityDescriptor,
@@ -321,13 +390,16 @@ export function useManagedWorkspaceIdentityOwnership({
 
   return {
     flushDeferredCleanup,
+    prepareBackendClosedSettlement,
     releaseOwned,
     withManagedLease,
   };
 }
 
-function descriptorMatchesAuthority(authority: WorkspaceIdentityAdmissionAuthority): boolean {
-  const descriptor = authority.descriptor;
+function descriptorMatchesAuthority(
+  authority: WorkspaceIdentityAdmissionAuthority,
+  descriptor = authority.descriptor,
+): boolean {
   return (
     descriptor.workspaceId === authority.workspaceId &&
     descriptor.selectedPath === authority.selectedPath &&

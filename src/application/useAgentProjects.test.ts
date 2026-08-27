@@ -623,6 +623,126 @@ describe("useAgentProjects lifecycle", () => {
     harness.unmount();
   });
 
+  it("drains exact workspace tasks and awaits its lease before removing the project", async () => {
+    const harness = renderAgentProjects();
+    await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
+    const closeWorkspaceProject = harness.hook().closeWorkspaceProject;
+    if (!closeWorkspaceProject) throw new Error("Exact workspace close is unavailable");
+
+    let result: Awaited<ReturnType<typeof closeWorkspaceProject>> | undefined;
+    await act(async () => {
+      result = await closeWorkspaceProject(descriptorFor(ACTIVE_ROOT, ACTIVE_ID), () => true);
+    });
+
+    expect(result?.status).toBe("closed");
+    if (result?.status !== "closed") throw new Error("Exact workspace close did not drain");
+    const settlement = result.settlement;
+    await act(async () => {
+      await settlement.complete("backend-closed");
+      settlement.finalizeBackendClosed();
+    });
+    expect(harness.calls).toEqual([
+      "acquireAgentRootLease",
+      "stopProjectTasks",
+      "releaseProjectTasks",
+      "releaseAgentRootLease",
+    ]);
+    expect(harness.hook().launchIdentityForProject(ACTIVE_ROOT)).toBeNull();
+    await waitForReact(() => expect(harness.hook().projects).toHaveLength(0));
+    harness.unmount();
+  });
+
+  it("does not release the exact lease when task drain is incomplete", async () => {
+    const harness = renderAgentProjects();
+    await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
+    harness.stopProjectTasks.mockRejectedValueOnce(new Error("task still running"));
+    const closeWorkspaceProject = harness.hook().closeWorkspaceProject;
+    if (!closeWorkspaceProject) throw new Error("Exact workspace close is unavailable");
+
+    const result = await closeWorkspaceProject(descriptorFor(ACTIVE_ROOT, ACTIVE_ID), () => true);
+
+    expect(result).toEqual({ status: "task-stop-incomplete" });
+    expect(harness.lease.releaseAgentRootLease).not.toHaveBeenCalled();
+    expect(harness.hook().projects).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("fails closed when exact authority changes while task drain is pending", async () => {
+    const harness = renderAgentProjects();
+    await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
+    const stopped = createDeferred<void>();
+    harness.stopProjectTasks.mockImplementationOnce(() => stopped.promise);
+    const closeWorkspaceProject = harness.hook().closeWorkspaceProject;
+    if (!closeWorkspaceProject) throw new Error("Exact workspace close is unavailable");
+    let current = true;
+    const closing = closeWorkspaceProject(descriptorFor(ACTIVE_ROOT, ACTIVE_ID), () => current);
+
+    current = false;
+    stopped.resolve();
+    const result = await closing;
+
+    expect(result).toEqual({ status: "stale" });
+    expect(harness.releaseProjectTasks).not.toHaveBeenCalled();
+    expect(harness.lease.releaseAgentRootLease).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("keeps an uncertain released lease quarantined and permits an exact retry", async () => {
+    const harness = renderAgentProjects();
+    await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
+    harness.lease.releaseAgentRootLease.mockRejectedValueOnce(new Error("uncertain release"));
+    const closeWorkspaceProject = harness.hook().closeWorkspaceProject;
+    if (!closeWorkspaceProject) throw new Error("Exact workspace close is unavailable");
+    const exact = descriptorFor(ACTIVE_ROOT, ACTIVE_ID);
+
+    const first = await closeWorkspaceProject(exact, () => true);
+
+    expect(first).toEqual({ status: "lease-release-incomplete" });
+    expect(harness.hook().launchIdentityForProject(ACTIVE_ROOT)).toBeNull();
+    expect(await harness.hook().ensureProjectLease(ACTIVE_ROOT)).toBe(false);
+
+    const retry = await closeWorkspaceProject(exact, () => true);
+    expect(retry.status).toBe("closed");
+    if (retry.status !== "closed") throw new Error("Exact workspace retry did not drain");
+    await act(async () => {
+      await retry.settlement.complete("backend-closed");
+      retry.settlement.finalizeBackendClosed();
+    });
+    expect(harness.lease.releaseAgentRootLease).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it("quarantines A2 until A1 lease release settles and then acquires a fresh lease", async () => {
+    const harness = renderAgentProjects();
+    await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
+    const released = createDeferred<void>();
+    harness.lease.releaseAgentRootLease.mockImplementationOnce(() => released.promise);
+    const closeWorkspaceProject = harness.hook().closeWorkspaceProject;
+    if (!closeWorkspaceProject) throw new Error("Exact workspace close is unavailable");
+    const closing = closeWorkspaceProject(descriptorFor(ACTIVE_ROOT, ACTIVE_ID), () => true);
+    await waitForReact(() => expect(harness.lease.releaseAgentRootLease).toHaveBeenCalledOnce());
+
+    harness.environment.activeWorkspaceId = "workspace-a2";
+    harness.rerender();
+    expect(harness.hook().launchIdentityForProject(ACTIVE_ROOT)).toBeNull();
+    released.resolve();
+    const result = await closing;
+    expect(result.status).toBe("closed");
+    if (result.status !== "closed") throw new Error("A1 lease release did not settle");
+    await act(async () => {
+      await result.settlement.complete("backend-closed");
+      result.settlement.finalizeBackendClosed();
+    });
+
+    await waitForReact(() =>
+      expect(harness.hook().launchIdentityForProject(ACTIVE_ROOT)?.workspaceId).toBe(
+        "workspace-a2",
+      ),
+    );
+    expect(harness.lease.acquireAgentRootLease).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
   it("keeps a releasing project with live tasks until its owner drains", async () => {
     const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
     await waitForReact(() => {

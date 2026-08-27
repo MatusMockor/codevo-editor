@@ -162,9 +162,10 @@ import {
   WorkspaceDocumentCloseCoordinator,
 } from "./workspaceSessionSwitchLifecycle";
 import {
+  useRegisteredWorkspaceClosePorts,
   useWorkbenchCloseLifecycle,
+  useWorkspaceCloseSessionPort,
   type WorkspaceCloseOwnership,
-  type WorkspaceCloseSessionPort,
 } from "./useWorkbenchCloseLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
@@ -242,7 +243,6 @@ import {
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
 import { createDiagnosticsCoalescer } from "../domain/diagnosticsCoalescer";
-import { documentNeedsAttention } from "../domain/externalFileConflict";
 import {
   isLanguageServerDocument,
   type LanguageServerDocumentSyncGateway,
@@ -307,11 +307,10 @@ import type { PackageScript } from "../domain/packageScripts";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import { recentFilesForSwitcher } from "../domain/recentFiles";
-import { editorGroupsUniquePaths, type EditorGroupId } from "../domain/editorGroups";
+import { type EditorGroupId } from "../domain/editorGroups";
 import { sortBookmarks, type Bookmark } from "../domain/bookmarks";
 import type { LatencyTracker } from "../domain/latencyTracker";
 import {
-  isDirty,
   type EditorDocument,
   type FileEntry,
   type IntelligenceMode,
@@ -1063,6 +1062,7 @@ export function useWorkbenchController(
     });
   const {
     flushDeferredCleanup: flushDeferredWorkspaceIdentityCleanup,
+    prepareBackendClosedSettlement: prepareBackendClosedWorkspaceIdentitySettlement,
     releaseOwned: releaseOwnedWorkspaceIdentity,
     withManagedLease: withManagedWorkspaceIdentityLease,
   } = useManagedWorkspaceIdentityOwnership({
@@ -3788,28 +3788,15 @@ export function useWorkbenchController(
     },
     [beginWorkspaceClose, currentEditorSessionOwnerKeyRef, documentSessionAuthorityLifecycle],
   );
-  const workspaceCloseSession = useMemo<WorkspaceCloseSessionPort>(
-    () => ({
-      current: () => {
-        const activeRoot = currentWorkspaceRootRef.current;
-        if (!activeRoot) {
-          return { activeRoot: null, needsAttention: false };
-        }
-
-        const hasDirtyDocument = editorGroupsUniquePaths(editorGroupsRef.current).some((path) => {
-          const document = documentsRef.current[path];
-          return Boolean(document && !document.readOnly && isDirty(document));
-        });
-        return {
-          activeRoot,
-          needsAttention: documentNeedsAttention(
-            hasDirtyDocument,
-            workspaceHasExternalFileConflictsRef.current(activeRoot),
-          ),
-        };
-      },
-    }),
-    [documentsRef, editorGroupsRef],
+  const workspaceCloseSession = useWorkspaceCloseSessionPort(
+    currentWorkspaceRootRef,
+    documentsRef,
+    editorGroupsRef,
+    workspaceHasExternalFileConflictsRef,
+  );
+  const registeredWorkspaceClosePorts = useRegisteredWorkspaceClosePorts(
+    workspaceRuntimeLifecycleGateway,
+    agents.agentProjects,
   );
 
   const {
@@ -3847,6 +3834,9 @@ export function useWorkbenchController(
     forgetLanguageServerRuntimeStatuses: forgetLanguageServerRuntimeStatusesForWorkspaceClose,
     forgetLatencyTrackerForRoot,
     unregisterWorkspace: releaseOwnedWorkspaceIdentity,
+    disposeRegisteredWorkspace: registeredWorkspaceClosePorts[0],
+    prepareRegisteredWorkspaceIdentitySettlement: prepareBackendClosedWorkspaceIdentitySettlement,
+    closeRegisteredWorkspaceAgents: registeredWorkspaceClosePorts[1],
     clearExternalFileConflictsForRoot: clearExternalFileConflictsForWorkspaceClose,
     invalidateWorkspaceResourceCachesForRoot: clearWorkspaceResourceCachesForRoot,
     workspaceHasExternalFileConflicts: (root) => workspaceHasExternalFileConflictsRef.current(root),

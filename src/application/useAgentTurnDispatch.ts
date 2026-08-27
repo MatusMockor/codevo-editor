@@ -615,6 +615,7 @@ export function useAgentTurnDispatch(
         if (runningTurn(thread) === null) continue;
         roots.add(thread.owner.repositoryRoot);
       }
+      let incomplete = false;
       for (const repositoryRoot of roots) {
         const stopped = await attempt(() =>
           dependenciesRef.current.agentTaskGateway.stopAgentTasksForRoot({
@@ -622,8 +623,11 @@ export function useAgentTurnDispatch(
             repositoryRoot,
           }),
         );
-        if (!stopped.ok) dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, stopped.error);
+        if (stopped.ok) continue;
+        incomplete = true;
+        dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, stopped.error);
       }
+      if (incomplete) throw new Error("Agent project task drain failed.");
     },
     [],
   );

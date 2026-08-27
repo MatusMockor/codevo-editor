@@ -62,9 +62,27 @@ export interface AgentProjectsSurface {
   refreshProject(rootKey: string): Promise<void>;
   trustProject(rootKey: string): Promise<void>;
   releaseProject(rootKey: string): Promise<void>;
+  closeWorkspaceProject?(
+    descriptor: WorkspaceIdentityDescriptor,
+    isCurrent: () => boolean,
+  ): Promise<AgentWorkspaceProjectCloseResult>;
   ensureProjectLease(rootKey: string): Promise<boolean>;
   launchIdentityForProject(rootKey: string): AgentProjectLaunchIdentity | null;
   noteDispatchTrustRejected(rootKey: string): void;
+}
+
+export type AgentWorkspaceProjectCloseResult =
+  | {
+      readonly status: "closed";
+      readonly settlement: AgentWorkspaceProjectCloseSettlement;
+    }
+  | { readonly status: "lease-release-incomplete" }
+  | { readonly status: "stale" }
+  | { readonly status: "task-stop-incomplete" };
+
+export interface AgentWorkspaceProjectCloseSettlement {
+  complete(outcome: "backend-closed" | "backend-not-closed"): Promise<void>;
+  finalizeBackendClosed(): void;
 }
 
 const AGENT_PROJECTS_SOURCE = "Agents";
@@ -108,6 +126,10 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
   const overflowRef = useRef<ReadonlyArray<string>>([]);
   const generationSeedsRef = useRef(new Map<string, number>());
   const ownerIdsRef = useRef(new Map<string, string>());
+  const closeAuthoritiesRef = useRef(
+    new Map<string, { readonly workspaceId: string; readonly workspaceGeneration: number }>(),
+  );
+  const closedWorkspaceIdsByRootRef = useRef(new Map<string, string>());
   const activeLoadsRef = useRef(0);
   const loadQueueRef = useRef<Array<() => void>>([]);
   const mountedRef = useRef(true);
@@ -116,7 +138,13 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
   const launchIdentityForProject = useCallback(
     (rootKey: string): AgentProjectLaunchIdentity | null => {
       const entry = entriesRef.current.get(rootKey);
-      if (entry === undefined || entry.releasing || entry.workspaceId === null) return null;
+      if (
+        entry === undefined ||
+        entry.releasing ||
+        closeAuthoritiesRef.current.has(rootKey) ||
+        entry.workspaceId === null
+      )
+        return null;
       return { workspaceId: entry.workspaceId, generation: entry.workspaceGeneration };
     },
     [],
@@ -348,6 +376,21 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
     let changed = false;
 
     for (const candidate of admission.admitted) {
+      const closeAuthority = closeAuthoritiesRef.current.get(candidate.rootKey);
+      const candidateWorkspaceId =
+        candidate.rootKey === activeKey
+          ? deps.activeWorkspaceId
+          : (deps.descriptorForRoot(candidate.rootPath)?.workspaceId ?? null);
+      const closedWorkspaceId = closedWorkspaceIdsByRootRef.current.get(candidate.rootKey);
+      if (
+        closedWorkspaceId !== undefined &&
+        (candidateWorkspaceId === null || candidateWorkspaceId === closedWorkspaceId)
+      )
+        continue;
+      if (closedWorkspaceId !== undefined) {
+        closedWorkspaceIdsByRootRef.current.delete(candidate.rootKey);
+      }
+      if (closeAuthority !== undefined) continue;
       const existing = current.get(candidate.rootKey);
       if (existing !== undefined) {
         let entry = existing;
@@ -356,10 +399,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
             entry = { ...entry, admitted: true };
             changed = true;
           }
-          const currentWorkspaceId =
-            candidate.rootKey === activeKey
-              ? deps.activeWorkspaceId
-              : (deps.descriptorForRoot(candidate.rootPath)?.workspaceId ?? null);
+          const currentWorkspaceId = candidateWorkspaceId;
           const retainedWorkspaceIds = [...entry.retiredWorkspaceIds];
           const workspaceIdentityChanged = currentWorkspaceId !== entry.observedWorkspaceId;
           const workspaceIdentityCanRecover =
@@ -464,8 +504,16 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
     }
 
     const dropped: string[] = [];
+    const admittedRootKeys = new Set(admission.admitted.map((candidate) => candidate.rootKey));
+    for (const rootKey of closedWorkspaceIdsByRootRef.current.keys()) {
+      if (!admittedRootKeys.has(rootKey)) closedWorkspaceIdsByRootRef.current.delete(rootKey);
+    }
     for (const [rootKey, entry] of current) {
       if (next.has(rootKey)) continue;
+      if (closeAuthoritiesRef.current.has(rootKey)) {
+        next.set(rootKey, entry);
+        continue;
+      }
       const draining = entry.releasing || !entry.admitted;
       if (!draining && !entryHasLiveTasks(deps, entry)) {
         dropped.push(rootKey);
@@ -608,11 +656,158 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
     [dropEntry, entryFor, patchEntry],
   );
 
+  const closeWorkspaceProject = useCallback(
+    async (
+      descriptor: WorkspaceIdentityDescriptor,
+      isCurrent: () => boolean,
+    ): Promise<AgentWorkspaceProjectCloseResult> => {
+      if (!isCurrent() || !mountedRef.current) return { status: "stale" };
+      const selectedKey = normalizedWorkspaceRootKey(descriptor.selectedPath);
+      const canonicalKey = normalizedWorkspaceRootKey(descriptor.canonicalRoot);
+      const entry = [...entriesRef.current.values()].find(
+        (candidate) =>
+          candidate.workspaceId === descriptor.workspaceId &&
+          (candidate.rootKey === selectedKey || candidate.rootKey === canonicalKey),
+      );
+      if (entry === undefined) {
+        return {
+          status: "closed",
+          settlement: {
+            complete: async () => undefined,
+            finalizeBackendClosed: () => undefined,
+          },
+        };
+      }
+      const rootKey = entry.rootKey;
+      const generation = entry.generation;
+      const workspaceGeneration = entry.workspaceGeneration;
+      const leaseToken = entry.leaseToken;
+      const retainedCloseAuthority = closeAuthoritiesRef.current.get(rootKey);
+      if (
+        retainedCloseAuthority !== undefined &&
+        (retainedCloseAuthority.workspaceId !== descriptor.workspaceId ||
+          retainedCloseAuthority.workspaceGeneration !== workspaceGeneration)
+      )
+        return { status: "stale" };
+      const closeAuthority = retainedCloseAuthority ?? {
+        workspaceId: descriptor.workspaceId,
+        workspaceGeneration,
+      };
+      closeAuthoritiesRef.current.set(rootKey, closeAuthority);
+      const clearCloseAuthority = (): void => {
+        if (closeAuthoritiesRef.current.get(rootKey) !== closeAuthority) return;
+        closeAuthoritiesRef.current.delete(rootKey);
+      };
+      const ownerIds = entryOwnerIds(entry);
+      const repositoryRoots = (entry.repositories ?? []).map(
+        (repository) => repository.repositoryRoot,
+      );
+      const exactEntry = (): AgentProjectEntry | null => {
+        if (!isCurrent() || !mountedRef.current) return null;
+        const current = entryFor(rootKey, generation);
+        if (current === null) return null;
+        if (current.workspaceId !== descriptor.workspaceId) return null;
+        if (current.workspaceGeneration !== workspaceGeneration) return null;
+        if (closeAuthoritiesRef.current.get(rootKey) !== closeAuthority) return null;
+        return current;
+      };
+      const capturedEntry = (): AgentProjectEntry | null => {
+        const current = entriesRef.current.get(rootKey);
+        if (current === undefined || current.generation !== generation) return null;
+        if (current.workspaceId !== descriptor.workspaceId) return null;
+        if (current.workspaceGeneration !== workspaceGeneration) return null;
+        if (closeAuthoritiesRef.current.get(rootKey) !== closeAuthority) return null;
+        return current;
+      };
+      for (const ownerId of ownerIds) {
+        const stopped = await attempt(() =>
+          dependenciesRef.current.stopProjectTasks(ownerId, repositoryRoots),
+        );
+        if (exactEntry() === null) {
+          clearCloseAuthority();
+          return { status: "stale" };
+        }
+        if (!stopped.ok) {
+          dependenciesRef.current.reportError(AGENT_PROJECTS_SOURCE, stopped.error);
+          clearCloseAuthority();
+          return { status: "task-stop-incomplete" };
+        }
+      }
+      const current = exactEntry();
+      if (current === null) {
+        clearCloseAuthority();
+        return { status: "stale" };
+      }
+      for (const ownerId of ownerIds) {
+        dependenciesRef.current.releaseProjectTasks(ownerId);
+      }
+      if (entryHasLiveTasks(dependenciesRef.current, current)) {
+        clearCloseAuthority();
+        return { status: "task-stop-incomplete" };
+      }
+      if (leaseToken !== null) {
+        const released = await attempt(() =>
+          dependenciesRef.current.agentRootLeaseGateway.releaseAgentRootLease({
+            rootPath: entry.rootPath,
+            leaseToken,
+          }),
+        );
+        if (!released.ok) {
+          dependenciesRef.current.reportError(AGENT_PROJECTS_SOURCE, released.error);
+          return { status: "lease-release-incomplete" };
+        }
+        const rootEntry = entriesRef.current.get(rootKey);
+        const releasedEntry = rootEntry?.generation === generation ? rootEntry : null;
+        if (releasedEntry?.leaseToken === leaseToken) {
+          const next = new Map(entriesRef.current);
+          next.set(rootKey, { ...releasedEntry, leaseToken: null });
+          entriesRef.current = next;
+        }
+        if (exactEntry() === null) {
+          clearCloseAuthority();
+          if (mountedRef.current && releasedEntry?.leaseToken === leaseToken) {
+            await acquireEntryLease(rootKey, generation, releasedEntry.ownerId);
+          }
+          return { status: "stale" };
+        }
+      }
+      if (exactEntry() === null) {
+        clearCloseAuthority();
+        return { status: "stale" };
+      }
+      return {
+        status: "closed",
+        settlement: {
+          complete: async (outcome) => {
+            const current = capturedEntry();
+            clearCloseAuthority();
+            if (current === null) return;
+            if (outcome === "backend-not-closed") {
+              await acquireEntryLease(rootKey, generation, current.ownerId);
+              return;
+            }
+            const next = new Map(entriesRef.current);
+            next.delete(rootKey);
+            entriesRef.current = next;
+            publish();
+          },
+          finalizeBackendClosed: () => {
+            closedWorkspaceIdsByRootRef.current.set(rootKey, descriptor.workspaceId);
+            clearCloseAuthority();
+            publish();
+          },
+        },
+      };
+    },
+    [acquireEntryLease, entryFor],
+  );
+
   const ensureProjectLease = useCallback(
     async (rootKey: string): Promise<boolean> => {
       if (!dependenciesRef.current.enabled) return true;
       const entry = entriesRef.current.get(rootKey);
-      if (entry === undefined || entry.releasing) return false;
+      if (entry === undefined || entry.releasing || closeAuthoritiesRef.current.has(rootKey))
+        return false;
       return acquireEntryLease(rootKey, entry.generation, entry.ownerId);
     },
     [acquireEntryLease],
@@ -666,6 +861,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       refreshProject,
       trustProject,
       releaseProject,
+      closeWorkspaceProject,
       ensureProjectLease,
       launchIdentityForProject,
       noteDispatchTrustRejected,
@@ -678,6 +874,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       projects,
       refreshProject,
       releaseProject,
+      closeWorkspaceProject,
       trustProject,
     ],
   );

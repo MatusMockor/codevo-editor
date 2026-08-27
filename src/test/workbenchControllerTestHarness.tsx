@@ -1170,9 +1170,8 @@ function createControllerDependencies(
       })),
     },
     terminalGateway: createStoppedTerminalGateway(),
-    workspaceRuntimeLifecycleGateway: workspaceRuntimeLifecycleGateway ?? {
-      disposeWorkspace: vi.fn(async () => undefined),
-    },
+    workspaceRuntimeLifecycleGateway:
+      workspaceRuntimeLifecycleGateway ?? defaultWorkspaceRuntimeLifecycleGateway(),
     workspaceGateways,
     workspaceTrustGateway: workspaceTrustGateway ?? {
       getTrust: vi.fn(async (rootPath) => ({
@@ -1185,6 +1184,29 @@ function createControllerDependencies(
       })),
     },
   };
+}
+
+function defaultWorkspaceRuntimeLifecycleGateway(): WorkspaceRuntimeLifecycleGateway {
+  const disposeWorkspace = vi.fn(async (_rootPath: string) => undefined);
+  return exactWorkspaceRuntimeLifecycleGateway(disposeWorkspace);
+}
+
+export function exactWorkspaceRuntimeLifecycleGateway(
+  disposeWorkspace: WorkspaceRuntimeLifecycleGateway["disposeWorkspace"],
+): WorkspaceRuntimeLifecycleGateway {
+  return {
+    disposeWorkspace,
+    disposeRegisteredWorkspace: async (target) => {
+      await disposeWorkspace(target.selectedRootPath);
+      return { status: "closed" };
+    },
+  };
+}
+
+export function expectNoExplicitRuntimeStops(dependencies: ControllerDependencies): void {
+  expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalled();
+  expect(dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop).not.toHaveBeenCalled();
+  expect(dependencies.terminalGateway.stopRoot).not.toHaveBeenCalled();
 }
 
 function fakeAgentRootLeaseGateway(): NonNullable<

@@ -9,6 +9,7 @@ import {
   describe,
   emptyLanguageServerCapabilities,
   expect,
+  expectNoExplicitRuntimeStops,
   featuresGateway,
   fileEntry,
   type FileEntry,
@@ -3874,7 +3875,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       }),
     );
   });
-  it("falls back to explicit runtime stops when inactive project disposal fails", async () => {
+  it("keeps an inactive registered project when exact disposal is uncertain", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -3905,13 +3906,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).toHaveBeenCalledWith(
       "/workspace-b",
     );
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith("/workspace-b");
-    expect(dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop).toHaveBeenCalledWith(
-      "/workspace-b",
-    );
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith("/workspace-b");
+    expectNoExplicitRuntimeStops(dependencies);
     expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
-    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-a"]);
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-a", "/workspace-b"]);
   });
   it("does not dispose an inactive PHP project runtime before closing synced documents", async () => {
     const path = "/workspace-a/app/Models/User.php";
@@ -4063,7 +4060,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       }),
     );
   });
-  it("falls back to explicit runtime stops when active project disposal fails", async () => {
+  it("keeps an active registered project when exact disposal is uncertain", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -4084,13 +4081,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).toHaveBeenCalledWith(
       "/workspace-a",
     );
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith("/workspace-a");
-    expect(dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop).toHaveBeenCalledWith(
-      "/workspace-a",
-    );
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith("/workspace-a");
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
-    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-b"]);
+    expectNoExplicitRuntimeStops(dependencies);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-a", "/workspace-b"]);
   });
   it("clears the workbench and stops runtime when the last project tab closes", async () => {
     const { gateway: indexProgressGateway, publishMetadataScanCompletion } = indexHarness();
@@ -4348,7 +4341,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(getWorkbench().workspaceRoot).toBeNull();
     expect(getWorkbench().languageServerDiagnosticsByPath).toEqual({});
   });
-  it("falls back to explicit runtime stops when last project disposal fails", async () => {
+  it("keeps the last registered project when exact disposal is uncertain", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -4369,13 +4362,9 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).toHaveBeenCalledWith(
       "/workspace",
     );
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith("/workspace");
-    expect(dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop).toHaveBeenCalledWith(
-      "/workspace",
-    );
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith("/workspace");
-    expect(getWorkbench().workspaceRoot).toBeNull();
-    expect(getWorkbench().workspaceTabs).toEqual([]);
+    expectNoExplicitRuntimeStops(dependencies);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace"]);
   });
 });
 
