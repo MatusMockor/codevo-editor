@@ -6,7 +6,7 @@ use std::{
     fs, io,
     io::Read,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Stdio},
     sync::Arc,
 };
 
@@ -254,7 +254,11 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
         {
             return Err("Agent CLI executable identity changed before launch.".to_string());
         }
-        let mut command = Command::new(plan.program());
+        let mut bound = plan
+            .executable_identity
+            .bound_command()
+            .map_err(|_| "Agent CLI executable identity changed before launch.".to_string())?;
+        let command = bound.command_mut();
         command
             .args(plan.args())
             .env_clear()
@@ -285,9 +289,15 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
         }
         #[cfg(not(unix))]
         command.current_dir(plan.cwd());
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("Unable to launch agent task: {error}"))?;
+        let mut child = match bound.spawn() {
+            Ok(child) => child,
+            Err(agent_provider::process::BoundExecutableSpawnFailure::IdentityChanged) => {
+                return Err("Agent CLI executable identity changed before launch.".to_string());
+            }
+            Err(agent_provider::process::BoundExecutableSpawnFailure::Spawn(error)) => {
+                return Err(format!("Unable to launch agent task: {error}"));
+            }
+        };
         let Ok(process_group_id) = i32::try_from(child.id()) else {
             let _ = child.kill();
             let _ = reap_child(&mut child);

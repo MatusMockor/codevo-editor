@@ -1,13 +1,29 @@
-import { useCallback, useEffect, useMemo, useRef, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 import { workbenchAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentSurfaceFileTreeDependencies } from "../../application/useAgentSurfaceFileTree";
 import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
+import type {
+  AgentProviderManagementSurface,
+  SelectedAgentProviderAuthority,
+} from "../../application/useAgentProviderManagement";
 import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
 import type { useWorkbenchController } from "../../application/useWorkbenchController";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import { normalizeAgentModelFavoriteKeys } from "../../domain/agentSettings";
-import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
+import {
+  defaultAgentProviderPreferences,
+  type PersistedAgentProviderSettingsAuthority,
+} from "../../domain/agentProviderSettings";
+import type { AgentCliKind } from "../../domain/agentTask";
 import type { GitChangeStatus } from "../../domain/git";
 import { shortcutForCommand, type KeymapSettings } from "../../domain/keymap";
 import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
@@ -73,6 +89,14 @@ export const ADD_PROJECT_REFUSED_REASON = "Unable to add that project.";
 const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGateway();
 const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
   new TauriDirectoryListingGateway();
+interface PersistedProviderProjection {
+  readonly authorities: Readonly<
+    Partial<Record<AgentCliKind, PersistedAgentProviderSettingsAuthority>>
+  >;
+  readonly enabled: Readonly<Record<AgentCliKind, boolean>>;
+  readonly selectedAuthority: SelectedAgentProviderAuthority | null;
+  readonly selectedProvider: AgentCliKind;
+}
 
 export function AgentWorkbenchScreen({
   activeFileRevealSignal,
@@ -93,12 +117,25 @@ export function AgentWorkbenchScreen({
   const { agentWorkbench, appSettings, nodePackageScripts, workspaceRoot } = workbench;
   const providerPreferences =
     appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
-  const providerEnabled = useMemo(
+  const optimisticProviderEnabled = useMemo(
     () => ({
       claudeCode: providerPreferences.claudeCode.enabled,
       codex: providerPreferences.codex.enabled,
     }),
     [providerPreferences.claudeCode.enabled, providerPreferences.codex.enabled],
+  );
+  const persistedProviderProjection = usePersistedProviderProjection(
+    workbench.agents.providerManagement,
+    optimisticProviderEnabled,
+    appSettings.agentCliKind,
+  );
+  const providerEnabled = persistedProviderProjection.enabled;
+  const agents = useMemo<WorkbenchAgentsSurface>(
+    () => ({
+      ...workbench.agents,
+      agentCliKind: persistedProviderProjection.selectedProvider,
+    }),
+    [persistedProviderProjection.selectedProvider, workbench.agents],
   );
   const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
   const { openWorkspaceRoot } = workbench;
@@ -304,7 +341,7 @@ export function AgentWorkbenchScreen({
 
   return (
     <AgentModeView
-      agents={workbench.agents}
+      agents={agents}
       chrome={chrome}
       key={workspaceRoot ?? ""}
       modelFavoritesPersistence={modelFavoritesPersistence}
@@ -317,6 +354,129 @@ export function AgentWorkbenchScreen({
       workspaceRoot={workspaceRoot}
     />
   );
+}
+
+function usePersistedProviderProjection(
+  management: AgentProviderManagementSurface,
+  optimisticEnabled: Readonly<Record<AgentCliKind, boolean>>,
+  selectedProvider: AgentCliKind,
+): PersistedProviderProjection {
+  const claudeCodeAuthority = management.authority("claudeCode");
+  const codexAuthority = management.authority("codex");
+  const selectedAuthority = management.selectedProviderAuthority;
+  const [projection, setProjection] = useState(() =>
+    initialPersistedProviderProjection(
+      { claudeCode: claudeCodeAuthority, codex: codexAuthority },
+      optimisticEnabled,
+      selectedProvider,
+      selectedAuthority,
+    ),
+  );
+  useLayoutEffect(() => {
+    setProjection((current) =>
+      projectPersistedProviders(
+        current,
+        { claudeCode: claudeCodeAuthority, codex: codexAuthority },
+        optimisticEnabled,
+        selectedProvider,
+        selectedAuthority,
+      ),
+    );
+  }, [claudeCodeAuthority, codexAuthority, optimisticEnabled, selectedAuthority, selectedProvider]);
+  return projection;
+}
+
+function projectPersistedProviders(
+  previous: PersistedProviderProjection | null,
+  currentAuthorities: Readonly<
+    Record<AgentCliKind, PersistedAgentProviderSettingsAuthority | null>
+  >,
+  optimisticEnabled: Readonly<Record<AgentCliKind, boolean>>,
+  selectedProvider: AgentCliKind,
+  selectedAuthority: SelectedAgentProviderAuthority | null,
+): PersistedProviderProjection {
+  if (selectedAuthority === null) {
+    return initialPersistedProviderProjection(
+      currentAuthorities,
+      optimisticEnabled,
+      selectedProvider,
+      null,
+    );
+  }
+  const retained =
+    previous?.selectedAuthority === null || previous === null
+      ? initialPersistedProviderProjection(
+          currentAuthorities,
+          optimisticEnabled,
+          selectedProvider,
+          selectedAuthority,
+        )
+      : previous;
+  let authorities = { ...retained.authorities };
+  let enabled = retained.enabled;
+  ({ authorities, enabled } = retainProviderAuthority(
+    "claudeCode",
+    authorities,
+    enabled,
+    currentAuthorities.claudeCode,
+  ));
+  ({ authorities, enabled } = retainProviderAuthority(
+    "codex",
+    authorities,
+    enabled,
+    currentAuthorities.codex,
+  ));
+  return {
+    authorities,
+    enabled,
+    selectedAuthority,
+    selectedProvider: selectedAuthority.provider,
+  };
+}
+
+function initialPersistedProviderProjection(
+  currentAuthorities: Readonly<
+    Record<AgentCliKind, PersistedAgentProviderSettingsAuthority | null>
+  >,
+  optimisticEnabled: Readonly<Record<AgentCliKind, boolean>>,
+  selectedProvider: AgentCliKind,
+  selectedAuthority: SelectedAgentProviderAuthority | null,
+): PersistedProviderProjection {
+  const authorities = {
+    ...(currentAuthorities.claudeCode === null
+      ? {}
+      : { claudeCode: currentAuthorities.claudeCode }),
+    ...(currentAuthorities.codex === null ? {} : { codex: currentAuthorities.codex }),
+  };
+  return {
+    authorities,
+    enabled: {
+      claudeCode: currentAuthorities.claudeCode?.preference.enabled ?? optimisticEnabled.claudeCode,
+      codex: currentAuthorities.codex?.preference.enabled ?? optimisticEnabled.codex,
+    },
+    selectedAuthority,
+    selectedProvider: selectedAuthority?.provider ?? selectedProvider,
+  };
+}
+
+function retainProviderAuthority(
+  provider: AgentCliKind,
+  authorities: Partial<Record<AgentCliKind, PersistedAgentProviderSettingsAuthority>>,
+  enabled: Readonly<Record<AgentCliKind, boolean>>,
+  current: PersistedAgentProviderSettingsAuthority | null,
+): {
+  authorities: Partial<Record<AgentCliKind, PersistedAgentProviderSettingsAuthority>>;
+  enabled: Readonly<Record<AgentCliKind, boolean>>;
+} {
+  if (current === null) return { authorities, enabled };
+  const retained = authorities[provider];
+  if (retained !== undefined && current.settingsRevision < retained.settingsRevision) {
+    return { authorities, enabled };
+  }
+  return {
+    authorities: { ...authorities, [provider]: current },
+    enabled: { ...enabled, [provider]: current.preference.enabled },
+  };
 }
 
 function layoutShortcuts(keymap: KeymapSettings): AgentPanelLayoutShortcuts {

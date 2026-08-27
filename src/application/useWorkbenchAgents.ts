@@ -189,6 +189,21 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
 
   const threadsSurfaceRef = useRef<AgentThreadsSurface | null>(null);
   const providerOperationSequenceRef = useRef(0);
+  const providerWorkspaceOwnerRef = useRef({
+    generation: 0,
+    workspaceId,
+    workspaceRoot,
+  });
+  if (
+    providerWorkspaceOwnerRef.current.workspaceId !== workspaceId ||
+    providerWorkspaceOwnerRef.current.workspaceRoot !== workspaceRoot
+  ) {
+    providerWorkspaceOwnerRef.current = {
+      generation: providerWorkspaceOwnerRef.current.generation + 1,
+      workspaceId,
+      workspaceRoot,
+    };
+  }
   const projectGateways = options.agentProjectGateways;
 
   const hasLiveTasksForOwner = useCallback(
@@ -255,6 +270,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     liveTurnCount,
     reportError: options.reportError,
     mintOperationId: mintProviderOperationId,
+    workspaceGeneration: providerWorkspaceOwnerRef.current.generation,
   });
 
   const threads = useAgentThreads({

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_PROVIDER_DISABLED_NOTICE,
+  AGENT_PROVIDER_NOT_CONFIGURED_NOTICE,
   AGENT_PROVIDER_REGISTRATION_FAILED_NOTICE,
   AGENT_PROVIDER_UNREGISTERED_NOTICE,
   AGENT_PROVIDER_UPDATING_NOTICE,
@@ -27,6 +28,15 @@ describe("agent provider admission authority", () => {
         AGENT_PROVIDER_DISABLED_NOTICE,
       ],
       [{ ...READY, disposition: { kind: "updating" } }, "updating", AGENT_PROVIDER_UPDATING_NOTICE],
+      [
+        {
+          provider: "claudeCode",
+          revision: 4,
+          disposition: { kind: "policyUnavailable", reason: "notConfigured" },
+        },
+        "notConfigured",
+        AGENT_PROVIDER_NOT_CONFIGURED_NOTICE,
+      ],
       [
         {
           provider: "claudeCode",

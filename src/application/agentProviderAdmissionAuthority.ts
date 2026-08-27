@@ -6,7 +6,7 @@ export type AgentProviderAdmissionDisposition =
   | { readonly kind: "updating" }
   | {
       readonly kind: "policyUnavailable";
-      readonly reason: "unregistered" | "registrationFailed";
+      readonly reason: "notConfigured" | "unregistered" | "registrationFailed";
     };
 
 export type AgentProviderAdmissionAuthority =
@@ -34,7 +34,7 @@ export type AgentProviderAdmissionAuthority =
       readonly revision: number;
       readonly disposition: {
         readonly kind: "policyUnavailable";
-        readonly reason: "unregistered" | "registrationFailed";
+        readonly reason: "notConfigured" | "unregistered" | "registrationFailed";
       };
     };
 
@@ -54,7 +54,8 @@ export type AgentProviderAdmissionDecision =
     }
   | {
       readonly kind: "rejected";
-      readonly reason: "disabled" | "updating" | "unregistered" | "registrationFailed";
+      readonly reason:
+        "disabled" | "updating" | "notConfigured" | "unregistered" | "registrationFailed";
       readonly message: string;
     };
 
@@ -64,6 +65,8 @@ export const AGENT_PROVIDER_UPDATING_NOTICE =
   "This provider is updating. Wait for the update to finish.";
 export const AGENT_PROVIDER_UNREGISTERED_NOTICE =
   "Provider settings are not registered yet. Retry provider setup.";
+export const AGENT_PROVIDER_NOT_CONFIGURED_NOTICE =
+  "Configure this provider's CLI path in Settings before starting a turn.";
 export const AGENT_PROVIDER_REGISTRATION_FAILED_NOTICE =
   "Provider settings could not be registered. Retry in Settings.";
 
@@ -118,9 +121,15 @@ function malformedAuthority(authority: AgentProviderAdmissionAuthority): never {
 }
 
 function unavailableDecision(
-  reason: "unregistered" | "registrationFailed",
+  reason: "notConfigured" | "unregistered" | "registrationFailed",
 ): AgentProviderAdmissionDecision {
   switch (reason) {
+    case "notConfigured":
+      return {
+        kind: "rejected",
+        reason,
+        message: AGENT_PROVIDER_NOT_CONFIGURED_NOTICE,
+      };
     case "unregistered":
       return {
         kind: "rejected",

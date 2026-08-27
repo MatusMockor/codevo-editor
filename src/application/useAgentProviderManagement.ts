@@ -72,6 +72,7 @@ export interface AgentProviderSettingsIntent {
 
 export interface AgentProviderManagementSurface {
   readonly providers: Readonly<Record<AgentCliKind, AgentProviderManagementView>>;
+  readonly selectedProviderAuthority: SelectedAgentProviderAuthority | null;
   readonly toast: AgentProviderManagementToast | null;
   admissionAuthority(provider: AgentCliKind): AgentProviderAdmissionAuthority;
   authority(provider: AgentCliKind): PersistedAgentProviderSettingsAuthority | null;
@@ -87,6 +88,18 @@ export interface AgentProviderManagementSurface {
   ): Promise<AgentProviderUpdateRefusal | null>;
 }
 
+export interface SelectedAgentProviderAuthority {
+  readonly settingsRevision: number;
+  readonly provider: AgentCliKind;
+}
+
+interface SelectedAgentProviderAuthorityPublication extends SelectedAgentProviderAuthority {
+  readonly workspaceGeneration: number;
+  readonly policyGateway: AgentProviderPolicyGateway;
+  readonly healthGateway: AgentProviderHealthGateway;
+  readonly updateGateway: AgentProviderUpdateGateway;
+}
+
 export interface AgentProviderManagementDependencies {
   readonly appSettingsRef: MutableRefObject<AppSettings>;
   readonly applyAppSettings: (settings: AppSettings) => void;
@@ -98,6 +111,7 @@ export interface AgentProviderManagementDependencies {
   readonly reportError: (source: string, error: unknown) => void;
   readonly mintOperationId: (provider: AgentCliKind) => string;
   readonly settingsHydrated: boolean;
+  readonly workspaceGeneration: number;
 }
 
 interface ProviderRuntime {
@@ -113,6 +127,8 @@ interface ProviderOwner {
   readonly configurationRevision: number;
   readonly settingsRevision: number;
   readonly providerGeneration: number;
+  readonly workspaceGeneration: number;
+  readonly lifecycleGeneration: number;
   readonly cliPath: string;
   readonly healthGateway: AgentProviderHealthGateway;
   readonly updateGateway: AgentProviderUpdateGateway;
@@ -127,7 +143,9 @@ interface QueuedIntent extends AgentProviderSettingsIntent {
   readonly hydrationGeneration: number;
   readonly revision: number;
   readonly proposed: ProviderFields;
-  readonly selectedChanged: boolean;
+  readonly cliPathOwned: boolean;
+  readonly preferenceOwned: boolean;
+  readonly selectedOwned: boolean;
   readonly proposedSelected: AgentCliKind;
   readonly preservedUpdateOperationId: string | null;
 }
@@ -135,6 +153,7 @@ interface QueuedIntent extends AgentProviderSettingsIntent {
 interface PersistedProviderSlice {
   readonly fields: Readonly<Record<AgentCliKind, ProviderFields>>;
   readonly selectedProvider: AgentCliKind;
+  readonly selectedSettingsRevision: number;
 }
 
 const initialRuntime = (): Record<AgentCliKind, ProviderRuntime> => ({
@@ -159,6 +178,8 @@ export function useAgentProviderManagement(
 ): AgentProviderManagementSurface {
   const [runtime, setRuntime] = useState(initialRuntime);
   const [toast, setToast] = useState<AgentProviderManagementToast | null>(null);
+  const [selectedProviderAuthorityPublication, setSelectedProviderAuthorityPublication] =
+    useState<SelectedAgentProviderAuthorityPublication | null>(null);
   const dependenciesRef = useRef(dependencies);
   const runtimeRef = useRef(runtime);
   const toastRef = useRef(toast);
@@ -170,7 +191,11 @@ export function useAgentProviderManagement(
   const hydrationReadyRef = useRef(false);
   const hydrationSettledRef = useRef(false);
   const settingsRevisionRef = useRef(1);
-  const fieldRevisionRef = useRef<Record<AgentCliKind, number>>({ claudeCode: 0, codex: 0 });
+  const cliPathRevisionRef = useRef<Record<AgentCliKind, number>>({ claudeCode: 0, codex: 0 });
+  const preferenceRevisionRef = useRef<Record<AgentCliKind, number>>({
+    claudeCode: 0,
+    codex: 0,
+  });
   const selectedRevisionRef = useRef(0);
   const updateOperationRef = useRef<Partial<Record<AgentCliKind, string>>>({});
   const persistedSliceRef = useRef<PersistedProviderSlice>({
@@ -179,6 +204,7 @@ export function useAgentProviderManagement(
       codex: providerFields(dependencies.appSettingsRef.current, "codex"),
     },
     selectedProvider: dependencies.appSettingsRef.current.agentCliKind,
+    selectedSettingsRevision: 1,
   });
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const inFlightHealthRef = useRef<
@@ -233,6 +259,8 @@ export function useAgentProviderManagement(
       configurationRevision: providerRuntime.configurationRevision,
       settingsRevision: providerRuntime.policy.settingsRevision,
       providerGeneration: providerRuntime.policy.providerGeneration,
+      workspaceGeneration: dependenciesRef.current.workspaceGeneration,
+      lifecycleGeneration: hydrationGenerationRef.current,
       cliPath: authority.cliPath,
       healthGateway: dependenciesRef.current.healthGateway,
       updateGateway: dependenciesRef.current.updateGateway,
@@ -248,6 +276,8 @@ export function useAgentProviderManagement(
         current.configurationRevision === owner.configurationRevision &&
         current.settingsRevision === owner.settingsRevision &&
         current.providerGeneration === owner.providerGeneration &&
+        current.workspaceGeneration === owner.workspaceGeneration &&
+        current.lifecycleGeneration === owner.lifecycleGeneration &&
         current.cliPath === owner.cliPath &&
         current.healthGateway === owner.healthGateway &&
         current.updateGateway === owner.updateGateway
@@ -282,14 +312,15 @@ export function useAgentProviderManagement(
           });
           if (!ownerIsCurrent(owner)) return null;
           if (runtimeRef.current[provider].healthGeneration !== healthGeneration) return null;
-          publish(provider, (current) => ({ ...current, health: { kind: "ready", ...result } }));
+          const checked = checkedHealthResult(result, authorityRef.current[provider]);
+          publish(provider, (current) => ({ ...current, health: { kind: "ready", ...checked } }));
           if (!ownerIsCurrent(owner)) return null;
-          if (result.update.kind !== "available") return result;
+          if (checked.update.kind !== "available") return checked;
           const preference = authorityRef.current[provider]?.preference;
           if (preference === undefined) return null;
-          if (preference.dismissedUpdateVersion === result.update.availableVersion) return result;
-          setToast({ kind: "updateAvailable", provider, version: result.update.availableVersion });
-          return result;
+          if (preference.dismissedUpdateVersion === checked.update.availableVersion) return checked;
+          setToast({ kind: "updateAvailable", provider, version: checked.update.availableVersion });
+          return checked;
         } catch (error) {
           if (!ownerIsCurrent(owner)) return null;
           if (runtimeRef.current[provider].healthGeneration !== healthGeneration) return null;
@@ -317,18 +348,15 @@ export function useAgentProviderManagement(
       if (owner === null) return;
       const interval = authorityRef.current[provider]?.preference.healthCheckIntervalSeconds ?? 0;
       if (interval === 0) return;
-      const configurationRevision = owner.configurationRevision;
       timerRef.current[provider] = setTimeout(() => {
-        const current = currentOwner(provider);
-        if (current?.configurationRevision !== configurationRevision) return;
+        if (!ownerIsCurrent(owner)) return;
         void refreshHealth(provider).finally(() => {
-          const after = currentOwner(provider);
-          if (after?.configurationRevision !== configurationRevision) return;
+          if (!ownerIsCurrent(owner)) return;
           scheduleHealth(provider);
         });
       }, interval * 1_000);
     },
-    [clearTimer, currentOwner, refreshHealth],
+    [clearTimer, currentOwner, ownerIsCurrent, refreshHealth],
   );
 
   const register = useCallback(
@@ -359,6 +387,7 @@ export function useAgentProviderManagement(
         ),
       }));
       const gateway = dependenciesRef.current.policyGateway;
+      const lifecycleGeneration = hydrationGenerationRef.current;
       const fields =
         exactFields ?? providerFields(dependenciesRef.current.appSettingsRef.current, provider);
       let effectiveSettingsRevision = settingsRevision;
@@ -366,6 +395,7 @@ export function useAgentProviderManagement(
       try {
         const currentPolicy = await gateway.currentAgentProviderPolicy({ provider });
         if (!mountedRef.current) return false;
+        if (hydrationGenerationRef.current !== lifecycleGeneration) return false;
         if (dependenciesRef.current.policyGateway !== gateway) return false;
         if (!registrationIsCurrent(provider, configurationRevision, settingsRevision, runtimeRef)) {
           return false;
@@ -412,6 +442,7 @@ export function useAgentProviderManagement(
           checkForUpdates: fields.preference.checkForUpdates,
         });
         if (!mountedRef.current) return false;
+        if (hydrationGenerationRef.current !== lifecycleGeneration) return false;
         if (dependenciesRef.current.policyGateway !== gateway) return false;
         if (
           !registrationIsCurrent(
@@ -437,6 +468,7 @@ export function useAgentProviderManagement(
         return true;
       } catch (error) {
         if (!mountedRef.current) return false;
+        if (hydrationGenerationRef.current !== lifecycleGeneration) return false;
         if (dependenciesRef.current.policyGateway !== gateway) return false;
         if (
           !registrationIsCurrent(
@@ -468,6 +500,49 @@ export function useAgentProviderManagement(
     [clearTimer, publish, refreshHealth, scheduleHealth],
   );
 
+  const publishSelectedProviderAuthority = useCallback(
+    (provider: AgentCliKind, settingsRevision: number, lifecycleGeneration: number): boolean => {
+      if (!mountedRef.current) return false;
+      if (!hydrationReadyRef.current) return false;
+      if (hydrationGenerationRef.current !== lifecycleGeneration) return false;
+      if (persistedSliceRef.current.selectedProvider !== provider) return false;
+      if (authorityFor(provider, authorityRef, runtimeRef) === null) return false;
+      setSelectedProviderAuthorityPublication({
+        provider,
+        settingsRevision,
+        workspaceGeneration: dependenciesRef.current.workspaceGeneration,
+        policyGateway: dependenciesRef.current.policyGateway,
+        healthGateway: dependenciesRef.current.healthGateway,
+        updateGateway: dependenciesRef.current.updateGateway,
+      });
+      return true;
+    },
+    [],
+  );
+
+  const establishSelectedProviderAuthority = useCallback(
+    async (
+      provider: AgentCliKind,
+      settingsRevision: number,
+      lifecycleGeneration: number,
+    ): Promise<boolean> => {
+      if (hydrationGenerationRef.current !== lifecycleGeneration) return false;
+      if (persistedSliceRef.current.selectedProvider !== provider) return false;
+      if (authorityFor(provider, authorityRef, runtimeRef) === null) {
+        const registered = await register(
+          provider,
+          settingsRevision,
+          persistedSliceRef.current.fields[provider],
+        );
+        if (!registered) return false;
+        if (hydrationGenerationRef.current !== lifecycleGeneration) return false;
+        if (persistedSliceRef.current.selectedProvider !== provider) return false;
+      }
+      return publishSelectedProviderAuthority(provider, settingsRevision, lifecycleGeneration);
+    },
+    [publishSelectedProviderAuthority, register],
+  );
+
   const saveWithOutcome = useCallback(
     (
       intent: AgentProviderSettingsIntent,
@@ -486,12 +561,15 @@ export function useAgentProviderManagement(
         hydrationGeneration: hydrationGenerationRef.current,
         revision: settingsRevisionRef.current,
         proposed,
-        selectedChanged: proposedSelected !== settings.agentCliKind,
+        cliPathOwned: intent.cliPath !== undefined,
+        preferenceOwned: intent.preference !== undefined,
+        selectedOwned: intent.selectedProvider !== undefined,
         proposedSelected,
         preservedUpdateOperationId,
       };
-      fieldRevisionRef.current[intent.provider] = queued.revision;
-      if (queued.selectedChanged) selectedRevisionRef.current = queued.revision;
+      if (queued.cliPathOwned) cliPathRevisionRef.current[intent.provider] = queued.revision;
+      if (queued.preferenceOwned) preferenceRevisionRef.current[intent.provider] = queued.revision;
+      if (queued.selectedOwned) selectedRevisionRef.current = queued.revision;
       dependenciesRef.current.applyAppSettings(applyIntent(settings, queued));
       let resolveResult: (value: AgentProviderSettingsSaveOutcome) => void = () => undefined;
       const result = new Promise<AgentProviderSettingsSaveOutcome>((resolve) => {
@@ -507,7 +585,8 @@ export function useAgentProviderManagement(
             queued,
             persistedSliceRef,
             dependenciesRef,
-            fieldRevisionRef,
+            cliPathRevisionRef,
+            preferenceRevisionRef,
             selectedRevisionRef,
           );
           resolveResult({ kind: "rejected", reason: "staleAuthority" });
@@ -530,41 +609,63 @@ export function useAgentProviderManagement(
               queued,
               persistedSliceRef,
               dependenciesRef,
-              fieldRevisionRef,
+              cliPathRevisionRef,
+              preferenceRevisionRef,
               selectedRevisionRef,
             );
             resolveResult({ kind: "rejected", reason: "staleAuthority" });
             return;
           }
           if (dependenciesRef.current.settingsGateway !== settingsGateway) {
-            resolveResult({ kind: "rejected", reason: "staleAuthority" });
-            return;
-          }
-          persistedSliceRef.current = commitPersistedIntent(persistedSliceRef.current, queued);
-          const registered = await register(
-            queued.provider,
-            queued.revision,
-            queued.proposed,
-            queued.preservedUpdateOperationId,
-          );
-          resolveResult({ kind: "persisted", policyRegistered: registered });
-        } catch (error) {
-          if (mountedRef.current && dependenciesRef.current.settingsGateway === settingsGateway) {
             rollbackIntent(
               queued,
               persistedSliceRef,
               dependenciesRef,
-              fieldRevisionRef,
+              cliPathRevisionRef,
+              preferenceRevisionRef,
               selectedRevisionRef,
             );
-            dependenciesRef.current.reportError("Agent provider settings", error);
+            resolveResult({ kind: "rejected", reason: "staleAuthority" });
+            return;
           }
+          persistedSliceRef.current = commitPersistedIntent(persistedSliceRef.current, queued);
+          const persistedFields = persistedSliceRef.current.fields[queued.provider];
+          const registered = await register(
+            queued.provider,
+            queued.revision,
+            persistedFields,
+            queued.preservedUpdateOperationId,
+          );
+          if (registered && queued.selectedOwned) {
+            await establishSelectedProviderAuthority(
+              persistedSliceRef.current.selectedProvider,
+              persistedSliceRef.current.selectedSettingsRevision,
+              queued.hydrationGeneration,
+            );
+          }
+          resolveResult({ kind: "persisted", policyRegistered: registered });
+        } catch (error) {
+          if (mountedRef.current) {
+            rollbackIntent(
+              queued,
+              persistedSliceRef,
+              dependenciesRef,
+              cliPathRevisionRef,
+              preferenceRevisionRef,
+              selectedRevisionRef,
+            );
+          }
+          if (!mountedRef.current || dependenciesRef.current.settingsGateway !== settingsGateway) {
+            resolveResult({ kind: "rejected", reason: "staleAuthority" });
+            return;
+          }
+          dependenciesRef.current.reportError("Agent provider settings", error);
           resolveResult({ kind: "rejected", reason: "persistenceFailed" });
         }
       });
       return result;
     },
-    [register],
+    [establishSelectedProviderAuthority, register],
   );
 
   const save = useCallback(
@@ -618,11 +719,22 @@ export function useAgentProviderManagement(
       if (updateOwner === null) return "policyUnavailable";
       try {
         const gateway = updateOwner.updateGateway;
-        const result = await gateway.updateAgentProvider({
+        const updatePromise = gateway.updateAgentProvider({
           provider,
           providerGeneration: updateOwner.providerGeneration,
           operationId,
         });
+        if (!ownerIsCurrent(updateOwner)) return null;
+        publish(provider, (current) => ({
+          ...current,
+          updateState: {
+            kind: "running",
+            operationId,
+            outputTail: "",
+            outputTruncated: false,
+          },
+        }));
+        const result = await updatePromise;
         if (dependenciesRef.current.updateGateway !== gateway) return null;
         if (!ownerIsCurrent(updateOwner)) return null;
         if (result.kind === "failed") {
@@ -743,8 +855,9 @@ export function useAgentProviderManagement(
   useEffect(() => {
     mountedRef.current = true;
     hydrationReadyRef.current = false;
+    hydrationGenerationRef.current += 1;
+    setSelectedProviderAuthorityPublication(null);
     if (!dependencies.settingsHydrated) {
-      if (hydrationSettledRef.current) hydrationGenerationRef.current += 1;
       hydrationSettledRef.current = false;
       authorityRef.current = {};
       const next = initialRuntime();
@@ -755,7 +868,6 @@ export function useAgentProviderManagement(
       };
     }
     if (!hydrationSettledRef.current) {
-      hydrationGenerationRef.current += 1;
       hydrationSettledRef.current = true;
       persistedSliceRef.current = {
         fields: {
@@ -763,15 +875,31 @@ export function useAgentProviderManagement(
           codex: providerFields(dependencies.appSettingsRef.current, "codex"),
         },
         selectedProvider: dependencies.appSettingsRef.current.agentCliKind,
+        selectedSettingsRevision: settingsRevisionRef.current,
       };
     }
     hydrationReadyRef.current = true;
+    const lifecycleGeneration = hydrationGenerationRef.current;
+    const selectedProvider = persistedSliceRef.current.selectedProvider;
+    const selectedSettingsRevision = persistedSliceRef.current.selectedSettingsRevision;
     for (const provider of PROVIDERS) {
-      void register(
+      const registration = register(
         provider,
-        settingsRevisionRef.current,
+        selectedSettingsRevision,
         persistedSliceRef.current.fields[provider],
       );
+      if (provider !== selectedProvider) {
+        void registration;
+        continue;
+      }
+      void registration.then((registered) => {
+        if (!registered) return;
+        publishSelectedProviderAuthority(
+          selectedProvider,
+          selectedSettingsRevision,
+          lifecycleGeneration,
+        );
+      });
     }
     return () => {
       mountedRef.current = false;
@@ -787,11 +915,32 @@ export function useAgentProviderManagement(
     dependencies.policyGateway,
     dependencies.settingsHydrated,
     dependencies.updateGateway,
+    dependencies.workspaceGeneration,
+    publishSelectedProviderAuthority,
     register,
   ]);
 
   const claudeLiveTurnCount = dependencies.liveTurnCount("claudeCode");
   const codexLiveTurnCount = dependencies.liveTurnCount("codex");
+  const selectedProviderAuthority = useMemo(
+    () =>
+      currentSelectedProviderAuthority(
+        selectedProviderAuthorityPublication,
+        dependencies.settingsHydrated,
+        dependencies.workspaceGeneration,
+        dependencies.policyGateway,
+        dependencies.healthGateway,
+        dependencies.updateGateway,
+      ),
+    [
+      dependencies.healthGateway,
+      dependencies.policyGateway,
+      dependencies.settingsHydrated,
+      dependencies.updateGateway,
+      dependencies.workspaceGeneration,
+      selectedProviderAuthorityPublication,
+    ],
+  );
 
   const providers = useMemo(
     (): Readonly<Record<AgentCliKind, AgentProviderManagementView>> => ({
@@ -830,6 +979,7 @@ export function useAgentProviderManagement(
   return useMemo(
     () => ({
       providers,
+      selectedProviderAuthority,
       toast,
       admissionAuthority,
       authority: readAuthority,
@@ -846,6 +996,7 @@ export function useAgentProviderManagement(
       dismissToast,
       dismissUpdate,
       providers,
+      selectedProviderAuthority,
       readAuthority,
       refresh,
       retryRegistration,
@@ -859,6 +1010,23 @@ export function useAgentProviderManagement(
 
 function preferences(settings: AppSettings) {
   return settings.agentProviderPreferences ?? defaultAgentProviderPreferences();
+}
+
+function currentSelectedProviderAuthority(
+  publication: SelectedAgentProviderAuthorityPublication | null,
+  settingsHydrated: boolean,
+  workspaceGeneration: number,
+  policyGateway: AgentProviderPolicyGateway,
+  healthGateway: AgentProviderHealthGateway,
+  updateGateway: AgentProviderUpdateGateway,
+): SelectedAgentProviderAuthority | null {
+  if (publication === null) return null;
+  if (!settingsHydrated) return null;
+  if (publication.workspaceGeneration !== workspaceGeneration) return null;
+  if (publication.policyGateway !== policyGateway) return null;
+  if (publication.healthGateway !== healthGateway) return null;
+  if (publication.updateGateway !== updateGateway) return null;
+  return { provider: publication.provider, settingsRevision: publication.settingsRevision };
 }
 
 function providerFields(settings: AppSettings, provider: AgentCliKind): ProviderFields {
@@ -880,12 +1048,16 @@ function proposedFields(
 function applyIntent(settings: AppSettings, intent: QueuedIntent): AppSettings {
   return {
     ...settings,
-    agentCliKind: intent.proposedSelected,
-    agentCliPaths: { ...settings.agentCliPaths, [intent.provider]: intent.proposed.cliPath },
-    agentProviderPreferences: {
-      ...preferences(settings),
-      [intent.provider]: intent.proposed.preference,
-    },
+    agentCliKind: intent.selectedOwned ? intent.proposedSelected : settings.agentCliKind,
+    agentCliPaths: intent.cliPathOwned
+      ? { ...settings.agentCliPaths, [intent.provider]: intent.proposed.cliPath }
+      : settings.agentCliPaths,
+    agentProviderPreferences: intent.preferenceOwned
+      ? {
+          ...preferences(settings),
+          [intent.provider]: intent.proposed.preference,
+        }
+      : preferences(settings),
   };
 }
 
@@ -913,9 +1085,19 @@ function commitPersistedIntent(
   persisted: PersistedProviderSlice,
   intent: QueuedIntent,
 ): PersistedProviderSlice {
+  const previous = persisted.fields[intent.provider];
   return {
-    fields: { ...persisted.fields, [intent.provider]: intent.proposed },
-    selectedProvider: intent.selectedChanged ? intent.proposedSelected : persisted.selectedProvider,
+    fields: {
+      ...persisted.fields,
+      [intent.provider]: {
+        cliPath: intent.cliPathOwned ? intent.proposed.cliPath : previous.cliPath,
+        preference: intent.preferenceOwned ? intent.proposed.preference : previous.preference,
+      },
+    },
+    selectedProvider: intent.selectedOwned ? intent.proposedSelected : persisted.selectedProvider,
+    selectedSettingsRevision: intent.selectedOwned
+      ? intent.revision
+      : persisted.selectedSettingsRevision,
   };
 }
 
@@ -923,22 +1105,25 @@ function rollbackIntent(
   intent: QueuedIntent,
   persistedSliceRef: MutableRefObject<PersistedProviderSlice>,
   dependenciesRef: MutableRefObject<AgentProviderManagementDependencies>,
-  fieldRevisionRef: MutableRefObject<Record<AgentCliKind, number>>,
+  cliPathRevisionRef: MutableRefObject<Record<AgentCliKind, number>>,
+  preferenceRevisionRef: MutableRefObject<Record<AgentCliKind, number>>,
   selectedRevisionRef: MutableRefObject<number>,
 ): void {
   const current = dependenciesRef.current.appSettingsRef.current;
-  const rollbackProvider = fieldRevisionRef.current[intent.provider] === intent.revision;
-  const rollbackSelected =
-    intent.selectedChanged && selectedRevisionRef.current === intent.revision;
-  if (!rollbackProvider && !rollbackSelected) return;
+  const rollbackCliPath =
+    intent.cliPathOwned && cliPathRevisionRef.current[intent.provider] === intent.revision;
+  const rollbackPreference =
+    intent.preferenceOwned && preferenceRevisionRef.current[intent.provider] === intent.revision;
+  const rollbackSelected = intent.selectedOwned && selectedRevisionRef.current === intent.revision;
+  if (!rollbackCliPath && !rollbackPreference && !rollbackSelected) return;
   const persisted = persistedSliceRef.current;
   dependenciesRef.current.applyAppSettings({
     ...current,
     agentCliKind: rollbackSelected ? persisted.selectedProvider : current.agentCliKind,
-    agentCliPaths: rollbackProvider
+    agentCliPaths: rollbackCliPath
       ? { ...current.agentCliPaths, [intent.provider]: persisted.fields[intent.provider].cliPath }
       : current.agentCliPaths,
-    agentProviderPreferences: rollbackProvider
+    agentProviderPreferences: rollbackPreference
       ? {
           ...preferences(current),
           [intent.provider]: persisted.fields[intent.provider].preference,
@@ -1047,6 +1232,13 @@ function admissionAuthorityFor(
   if (runtime.health.kind === "disabled") {
     return { provider, revision: runtime.configurationRevision, disposition: { kind: "disabled" } };
   }
+  if (runtime.policy.kind === "registered" && persisted?.cliPath === null) {
+    return {
+      provider,
+      revision: runtime.configurationRevision,
+      disposition: { kind: "policyUnavailable", reason: "notConfigured" },
+    };
+  }
   if (runtime.policy.kind === "failed") {
     return {
       provider,
@@ -1081,6 +1273,14 @@ function admissionAuthorityFor(
     cliPath: persisted.cliPath,
     providerGeneration: runtime.policy.providerGeneration,
   };
+}
+
+function checkedHealthResult(
+  result: AgentProviderHealthProbeResult,
+  persisted: PersistedAgentProviderSettingsAuthority | undefined,
+): AgentProviderHealthProbeResult {
+  if (persisted?.preference.checkForUpdates !== false) return result;
+  return { ...result, update: { kind: "checksDisabled" } };
 }
 
 function updateRefusal(

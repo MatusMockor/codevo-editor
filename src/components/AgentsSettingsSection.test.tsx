@@ -61,14 +61,14 @@ describe("AgentsSettingsSection agent CLI path input", () => {
     expect(onChangeAgentCliPath).toHaveBeenLastCalledWith("claudeCode", null);
   });
 
-  it("keeps an invalid relative path local while typing and fails closed on blur", () => {
+  it("keeps an invalid relative path local without clearing the persisted path on blur", () => {
     const onChangeAgentCliPath = vi.fn();
     render({ onChangeAgentCliPath }, "/usr/local/bin/claude");
     setValue(cliPathInput(), "bin/claude");
     expect(onChangeAgentCliPath).not.toHaveBeenCalled();
     expect(host.textContent).toContain("Enter an absolute executable path");
     act(() => cliPathInput().dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
-    expect(onChangeAgentCliPath).toHaveBeenCalledWith("claudeCode", null);
+    expect(onChangeAgentCliPath).not.toHaveBeenCalled();
   });
 
   it("shows independent provider health and persists appearance and favorite clearing", () => {
@@ -180,6 +180,7 @@ function providerManagement(): AgentProviderManagementSurface {
         liveTurnCount: 0,
       },
     },
+    selectedProviderAuthority: { settingsRevision: 1, provider: "claudeCode" },
     toast: null,
     admissionAuthority: (provider) => ({
       provider,

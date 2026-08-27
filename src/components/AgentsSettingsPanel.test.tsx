@@ -187,6 +187,7 @@ function management(): AgentProviderManagementSurface {
         liveTurnCount: 0,
       },
     },
+    selectedProviderAuthority: null,
     toast: null,
     admissionAuthority: (provider) => ({
       provider,

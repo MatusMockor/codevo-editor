@@ -68,6 +68,7 @@ describe("useAgentProviderManagement", () => {
     expect(harness.dependencies.policyGateway.registerAgentProviderPolicy).not.toHaveBeenCalled();
     expect(harness.healthCalls).toHaveLength(0);
     expect(harness.hook().authority("claudeCode")).toBeNull();
+    expect(harness.hook().selectedProviderAuthority).toBeNull();
     await expect(harness.hook().save({ provider: "claudeCode", cliPath: PATH_B })).resolves.toBe(
       false,
     );
@@ -81,6 +82,7 @@ describe("useAgentProviderManagement", () => {
     const persisted = deferred<void>();
     const harness = renderManagement();
     await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    const selectedAuthority = harness.hook().selectedProviderAuthority;
     vi.mocked(harness.dependencies.settingsGateway.saveAppSettings).mockReturnValueOnce(
       persisted.promise,
     );
@@ -89,14 +91,21 @@ describe("useAgentProviderManagement", () => {
 
     let save!: Promise<boolean>;
     act(() => {
-      save = harness.hook().save({ provider: "claudeCode", cliPath: PATH_B });
+      save = harness.hook().save({
+        provider: "claudeCode",
+        cliPath: PATH_B,
+        selectedProvider: "codex",
+      });
     });
+    expect(harness.hook().selectedProviderAuthority).toEqual(selectedAuthority);
     await act(async () => undefined);
     harness.replaceDependencies({ settingsHydrated: false });
+    expect(harness.hook().selectedProviderAuthority).toBeNull();
     await act(async () => persisted.resolve());
     await expect(save).resolves.toBe(false);
 
     expect(harness.settings().agentCliPaths.claudeCode).toBe(PATH_A);
+    expect(harness.settings().agentCliKind).toBe("claudeCode");
     expect(
       vi.mocked(harness.dependencies.policyGateway.registerAgentProviderPolicy).mock.calls.length,
     ).toBe(registrations);
@@ -129,7 +138,7 @@ describe("useAgentProviderManagement", () => {
       expectedProviderGeneration: null,
       enabled: true,
       cliPath: PATH_A,
-      checkForUpdates: false,
+      checkForUpdates: true,
     });
     expect(harness.healthCalls).toHaveLength(2);
 
@@ -145,6 +154,96 @@ describe("useAgentProviderManagement", () => {
       settingsRevision: 1,
       cliPath: PATH_A,
     });
+    expect(harness.hook().selectedProviderAuthority).toEqual({
+      provider: "claudeCode",
+      settingsRevision: 1,
+    });
+    harness.unmount();
+  });
+
+  it("publishes only persisted queued selected-provider receipts", async () => {
+    const settings = configuredSettings();
+    settings.agentCliKind = "codex";
+    const firstSave = deferred<void>();
+    const secondSave = deferred<void>();
+    const harness = renderManagement(settings);
+    await waitForReact(() =>
+      expect(harness.hook().selectedProviderAuthority).toEqual({
+        provider: "codex",
+        settingsRevision: 1,
+      }),
+    );
+    vi.mocked(harness.dependencies.settingsGateway.saveAppSettings)
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockImplementationOnce(() => secondSave.promise);
+
+    let first!: Promise<boolean>;
+    let second!: Promise<boolean>;
+    act(() => {
+      first = harness.hook().save({ provider: "claudeCode", selectedProvider: "claudeCode" });
+      second = harness.hook().save({ provider: "codex", selectedProvider: "codex" });
+    });
+    expect(harness.settings().agentCliKind).toBe("codex");
+    expect(harness.hook().selectedProviderAuthority?.provider).toBe("codex");
+
+    await act(async () => firstSave.resolve());
+    await expect(first).resolves.toBe(true);
+    await waitForReact(() =>
+      expect(harness.dependencies.settingsGateway.saveAppSettings).toHaveBeenCalledTimes(2),
+    );
+    expect(harness.settings().agentCliKind).toBe("codex");
+    expect(harness.hook().selectedProviderAuthority).toEqual({
+      provider: "claudeCode",
+      settingsRevision: 2,
+    });
+
+    await act(async () => secondSave.reject(new Error("second failed")));
+    await expect(second).resolves.toBe(false);
+    expect(harness.settings().agentCliKind).toBe("claudeCode");
+    expect(harness.hook().selectedProviderAuthority).toEqual({
+      provider: "claudeCode",
+      settingsRevision: 2,
+    });
+    harness.unmount();
+  });
+
+  it("reports a registered pathless provider as not configured", async () => {
+    const settings = configuredSettings();
+    settings.agentCliPaths = { ...settings.agentCliPaths, claudeCode: null };
+    const harness = renderManagement(settings);
+    await waitForReact(() =>
+      expect(harness.dependencies.policyGateway.registerAgentProviderPolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "claudeCode", cliPath: null }),
+      ),
+    );
+
+    expect(harness.hook().admissionAuthority("claudeCode").disposition).toEqual({
+      kind: "policyUnavailable",
+      reason: "notConfigured",
+    });
+    harness.unmount();
+  });
+
+  it("coerces hostile update availability when persisted checks are disabled", async () => {
+    const settings = configuredSettings();
+    settings.agentProviderPreferences = {
+      ...settings.agentProviderPreferences,
+      claudeCode: {
+        ...defaultAgentProviderPreferences().claudeCode,
+        checkForUpdates: false,
+      },
+    };
+    const harness = renderManagement(settings);
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+
+    expect(harness.hook().providers.claudeCode.health).toMatchObject({
+      kind: "ready",
+      update: { kind: "checksDisabled" },
+    });
+    expect(harness.hook().toast).toBeNull();
+    await expect(harness.hook().update("claudeCode", "1.1.0")).resolves.toBe("noUpdateAvailable");
+    expect(harness.dependencies.updateGateway.updateAgentProvider).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -154,12 +253,16 @@ describe("useAgentProviderManagement", () => {
       receipt: { provider, settingsRevision: 7, providerGeneration: 4 },
       enabled: true,
       cliPath: provider === "claudeCode" ? PATH_A : "/usr/local/bin/codex",
-      checkForUpdates: false,
+      checkForUpdates: true,
     }));
     await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
 
     expect(harness.dependencies.policyGateway.registerAgentProviderPolicy).not.toHaveBeenCalled();
     expect(harness.hook().authority("claudeCode")?.settingsRevision).toBe(7);
+    expect(harness.hook().selectedProviderAuthority).toEqual({
+      provider: "claudeCode",
+      settingsRevision: 1,
+    });
     expect(harness.hook().admissionAuthority("claudeCode")).toMatchObject({
       providerGeneration: 4,
       disposition: { kind: "ready" },
@@ -173,7 +276,7 @@ describe("useAgentProviderManagement", () => {
       receipt: { provider, settingsRevision: 7, providerGeneration: 4 },
       enabled: true,
       cliPath: provider === "claudeCode" ? "/old/claude" : "/old/codex",
-      checkForUpdates: false,
+      checkForUpdates: true,
     }));
     await waitForReact(() =>
       expect(harness.dependencies.policyGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(
@@ -187,7 +290,7 @@ describe("useAgentProviderManagement", () => {
       expectedProviderGeneration: 4,
       enabled: true,
       cliPath: PATH_A,
-      checkForUpdates: false,
+      checkForUpdates: true,
     });
     harness.unmount();
   });
@@ -294,11 +397,17 @@ describe("useAgentProviderManagement", () => {
     const registrationCount = vi.mocked(
       harness.dependencies.policyGateway.registerAgentProviderPolicy,
     ).mock.calls.length;
+    const selectedAuthority = harness.hook().selectedProviderAuthority;
 
     let save!: Promise<boolean>;
     act(() => {
-      save = harness.hook().save({ provider: "claudeCode", cliPath: PATH_B });
+      save = harness.hook().save({
+        provider: "claudeCode",
+        cliPath: PATH_B,
+        selectedProvider: "codex",
+      });
     });
+    expect(harness.hook().selectedProviderAuthority).toEqual(selectedAuthority);
     await act(async () => undefined);
     harness.replaceDependencies({
       settingsGateway: { saveAppSettings: vi.fn(async () => undefined) },
@@ -306,11 +415,106 @@ describe("useAgentProviderManagement", () => {
     await act(async () => staleSave.resolve());
     await expect(save).resolves.toBe(false);
 
+    expect(harness.settings().agentCliPaths.claudeCode).toBe(PATH_A);
+    expect(harness.settings().agentCliKind).toBe("claudeCode");
     expect(harness.hook().authority("claudeCode")?.cliPath).toBe(PATH_A);
+    expect(harness.hook().selectedProviderAuthority).toEqual(selectedAuthority);
     expect(
       vi.mocked(harness.dependencies.policyGateway.registerAgentProviderPolicy).mock.calls.length,
     ).toBe(registrationCount);
     expect(harness.errors).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("rolls back exact owned fields when a replaced settings gateway rejects", async () => {
+    const staleSave = deferred<void>();
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    vi.mocked(harness.dependencies.settingsGateway.saveAppSettings).mockReturnValueOnce(
+      staleSave.promise,
+    );
+    let save!: Promise<boolean>;
+    act(() => {
+      save = harness.hook().save({
+        provider: "claudeCode",
+        cliPath: PATH_B,
+        selectedProvider: "codex",
+      });
+    });
+    await act(async () => undefined);
+    harness.replaceDependencies({
+      settingsGateway: { saveAppSettings: vi.fn(async () => undefined) },
+    });
+    harness.dependencies.applyAppSettings({ ...harness.settings(), theme: "light" });
+    await act(async () => staleSave.reject(new Error("retired gateway")));
+    await expect(save).resolves.toBe(false);
+
+    expect(harness.settings().agentCliPaths.claudeCode).toBe(PATH_A);
+    expect(harness.settings().agentCliKind).toBe("claudeCode");
+    expect(harness.settings().theme).toBe("light");
+    expect(harness.errors).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("preserves a newer same-provider preference when a replaced path save rejects", async () => {
+    const staleSave = deferred<void>();
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    vi.mocked(harness.dependencies.settingsGateway.saveAppSettings).mockReturnValueOnce(
+      staleSave.promise,
+    );
+    const preference = {
+      ...harness.settings().agentProviderPreferences!.claudeCode,
+      healthCheckIntervalSeconds: 0,
+    };
+    let pathSave!: Promise<boolean>;
+    let preferenceSave!: Promise<boolean>;
+    act(() => {
+      pathSave = harness.hook().save({ provider: "claudeCode", cliPath: PATH_B });
+      preferenceSave = harness.hook().save({ provider: "claudeCode", preference });
+    });
+    await act(async () => undefined);
+    harness.replaceDependencies({
+      settingsGateway: { saveAppSettings: vi.fn(async () => undefined) },
+    });
+    await act(async () => staleSave.reject(new Error("retired gateway")));
+    await expect(pathSave).resolves.toBe(false);
+    await expect(preferenceSave).resolves.toBe(true);
+
+    expect(harness.settings().agentCliPaths.claudeCode).toBe(PATH_A);
+    expect(harness.settings().agentProviderPreferences?.claudeCode).toEqual(preference);
+    harness.unmount();
+  });
+
+  it("preserves a newer same-provider path when a replaced preference save rejects", async () => {
+    const staleSave = deferred<void>();
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    vi.mocked(harness.dependencies.settingsGateway.saveAppSettings).mockReturnValueOnce(
+      staleSave.promise,
+    );
+    const preference = {
+      ...harness.settings().agentProviderPreferences!.claudeCode,
+      healthCheckIntervalSeconds: 0,
+    };
+    let preferenceSave!: Promise<boolean>;
+    let pathSave!: Promise<boolean>;
+    act(() => {
+      preferenceSave = harness.hook().save({ provider: "claudeCode", preference });
+      pathSave = harness.hook().save({ provider: "claudeCode", cliPath: PATH_B });
+    });
+    await act(async () => undefined);
+    harness.replaceDependencies({
+      settingsGateway: { saveAppSettings: vi.fn(async () => undefined) },
+    });
+    await act(async () => staleSave.reject(new Error("retired gateway")));
+    await expect(preferenceSave).resolves.toBe(false);
+    await expect(pathSave).resolves.toBe(true);
+
+    expect(harness.settings().agentProviderPreferences?.claudeCode.healthCheckIntervalSeconds).toBe(
+      300,
+    );
+    expect(harness.settings().agentCliPaths.claudeCode).toBe(PATH_B);
     harness.unmount();
   });
 
@@ -404,6 +608,52 @@ describe("useAgentProviderManagement", () => {
     expect(harness.healthCalls).toHaveLength(3);
   });
 
+  it("retires probes and timers across workspace A to B to A generations", async () => {
+    vi.useFakeTimers();
+    const settings = configuredSettings();
+    settings.agentProviderPreferences = {
+      ...settings.agentProviderPreferences,
+      claudeCode: {
+        ...settings.agentProviderPreferences.claudeCode,
+        healthCheckIntervalSeconds: 1,
+      },
+    };
+    const harness = renderManagement(settings);
+    await act(async () => undefined);
+    await act(async () => undefined);
+    expect(harness.healthCalls).toHaveLength(2);
+    const staleA = harness.healthCalls[0];
+
+    harness.replaceDependencies({ workspaceGeneration: 1 });
+    expect(harness.hook().selectedProviderAuthority).toBeNull();
+    await act(async () => undefined);
+    await act(async () => undefined);
+    expect(harness.healthCalls).toHaveLength(4);
+    const staleB = harness.healthCalls[2];
+
+    harness.replaceDependencies({ workspaceGeneration: 2 });
+    expect(harness.hook().selectedProviderAuthority).toBeNull();
+    await act(async () => undefined);
+    await act(async () => undefined);
+    expect(harness.healthCalls).toHaveLength(6);
+    const currentA = harness.healthCalls[4];
+    if (staleA === undefined || staleB === undefined || currentA === undefined) {
+      throw new Error("Expected health probes for each workspace generation.");
+    }
+
+    await act(async () => staleA.resolve(availableHealth("1.0.0", "9.0.0")));
+    await act(async () => staleB.resolve(availableHealth("1.0.0", "8.0.0")));
+    expect(harness.hook().toast).toBeNull();
+    await act(async () => currentA.resolve(currentHealth("2.0.0")));
+    expect(harness.hook().providers.claudeCode.health).toMatchObject({
+      kind: "ready",
+      installedVersion: "2.0.0",
+    });
+    await act(async () => vi.advanceTimersByTime(1_000));
+    expect(harness.healthCalls).toHaveLength(7);
+    harness.unmount();
+  });
+
   it("does not authorize a probe when persisted policy registration fails", async () => {
     const harness = renderManagement();
     await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
@@ -437,6 +687,32 @@ describe("useAgentProviderManagement", () => {
     expect(harness.hook().providers.claudeCode.policy).toMatchObject({
       kind: "failed",
       reason: "generationConflict",
+    });
+    harness.unmount();
+  });
+
+  it("preserves selected authority when the persisted selection cannot register", async () => {
+    const harness = renderManagement();
+    await waitForReact(() =>
+      expect(harness.hook().selectedProviderAuthority).toEqual({
+        provider: "claudeCode",
+        settingsRevision: 1,
+      }),
+    );
+    vi.mocked(harness.dependencies.policyGateway.registerAgentProviderPolicy).mockRejectedValueOnce(
+      "generationConflict",
+    );
+
+    let saved!: Promise<boolean>;
+    act(() => {
+      saved = harness.hook().save({ provider: "codex", selectedProvider: "codex" });
+    });
+    await expect(saved).resolves.toBe(true);
+
+    expect(harness.settings().agentCliKind).toBe("codex");
+    expect(harness.hook().selectedProviderAuthority).toEqual({
+      provider: "claudeCode",
+      settingsRevision: 1,
     });
     harness.unmount();
   });
@@ -484,6 +760,7 @@ describe("useAgentProviderManagement", () => {
       ...defaultAgentProviderPreferences(),
       claudeCode: {
         ...defaultAgentProviderPreferences().claudeCode,
+        checkForUpdates: true,
         dismissedUpdateVersion: "0.9.0",
       },
     };
@@ -506,7 +783,7 @@ describe("useAgentProviderManagement", () => {
     act(() => {
       updatePromise = harness.hook().update("claudeCode", "1.1.0");
     });
-    expect(harness.hook().providers.claudeCode.updateState.kind).toBe("starting");
+    expect(harness.hook().providers.claudeCode.updateState.kind).toBe("running");
     expect(harness.hook().admissionAuthority("claudeCode")).toMatchObject({
       revision: revisionBeforeUpdate + 1,
       disposition: { kind: "updating" },
@@ -518,7 +795,7 @@ describe("useAgentProviderManagement", () => {
         installedVersion: "1.1.0",
       }),
     );
-    expect(harness.hook().providers.claudeCode.updateState.kind).toBe("starting");
+    expect(harness.hook().providers.claudeCode.updateState.kind).toBe("running");
     expect(harness.healthCalls).toHaveLength(3);
     await settleHealth(harness, 2, currentHealth("1.1.0"));
     await expect(updatePromise).resolves.toBeNull();
@@ -554,7 +831,7 @@ describe("useAgentProviderManagement", () => {
     act(() => {
       update = harness.hook().update("claudeCode", "1.1.0");
     });
-    expect(harness.hook().providers.claudeCode.updateState.kind).toBe("starting");
+    expect(harness.hook().providers.claudeCode.updateState.kind).toBe("running");
     let save!: Promise<boolean>;
     act(() => {
       save = harness.hook().save({ provider: "claudeCode", cliPath: PATH_B });
@@ -582,6 +859,7 @@ describe("useAgentProviderManagement", () => {
       ...defaultAgentProviderPreferences(),
       claudeCode: {
         ...defaultAgentProviderPreferences().claudeCode,
+        checkForUpdates: true,
         dismissedUpdateVersion: "0.9.0",
       },
     };
@@ -720,6 +998,7 @@ function renderManagement(
     reportError: (source, error) => errors.push({ source, error }),
     mintOperationId: (provider) => `${provider}-update`,
     settingsHydrated,
+    workspaceGeneration: 0,
   };
   let currentDependencies = dependencies;
   const container = document.createElement("div");
@@ -750,10 +1029,14 @@ function renderManagement(
 }
 
 function configuredSettings(): AppSettings {
+  const defaults = defaultAgentProviderPreferences();
   return {
     ...defaultAppSettings(),
     agentCliPaths: { claudeCode: PATH_A, codex: "/usr/local/bin/codex" },
-    agentProviderPreferences: defaultAgentProviderPreferences(),
+    agentProviderPreferences: {
+      claudeCode: { ...defaults.claudeCode, checkForUpdates: true },
+      codex: { ...defaults.codex, checkForUpdates: true },
+    },
   };
 }
 

@@ -11,6 +11,11 @@ import { agentWorkbenchHydration } from "../../application/useWorkbenchControlle
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import {
+  defaultAgentProviderPreferences,
+  type PersistedAgentProviderSettingsAuthority,
+} from "../../domain/agentProviderSettings";
+import type { AgentCliKind } from "../../domain/agentTask";
+import {
   agentThreadAttention,
   agentThreadUnread,
   type AgentThread,
@@ -99,6 +104,133 @@ describe("AgentWorkbenchScreen", () => {
       host.querySelector<HTMLButtonElement>('button[aria-label="dev (running elsewhere)"]'),
     ).not.toBeNull();
     expect(host.querySelector('button[aria-label="Toggle terminal panel (⌘J)"]')).not.toBeNull();
+  });
+
+  it("keeps provider runtime UI on persisted authority until registration succeeds", () => {
+    const preferences = defaultAgentProviderPreferences();
+    const initialPreferences = {
+      ...preferences,
+      codex: { ...preferences.codex, enabled: false },
+    };
+    let authorities: Partial<Record<AgentCliKind, PersistedAgentProviderSettingsAuthority>> = {
+      claudeCode: providerAuthority("claudeCode", 1, true),
+      codex: providerAuthority("codex", 1, false),
+    };
+    let selectedProviderAuthority: AgentProviderManagementSurface["selectedProviderAuthority"] = {
+      settingsRevision: 1,
+      provider: "claudeCode",
+    };
+    const management = providerManagement({
+      authority: (provider) => authorities[provider] ?? null,
+      admissionAuthority: (provider) => ({
+        provider,
+        revision: 1,
+        disposition: { kind: "ready" },
+        cliPath: `/usr/local/bin/${provider}`,
+        providerGeneration: 1,
+      }),
+    });
+    Object.defineProperty(management, "selectedProviderAuthority", {
+      get: () => selectedProviderAuthority,
+    });
+    const persistedAgents = {
+      ...surface(ROOT_A),
+      agentCliKind: "claudeCode" as const,
+      providerManagement: management,
+    };
+    const persistedSettings = {
+      ...defaultAppSettings(),
+      agentCliKind: "claudeCode" as const,
+      agentProviderPreferences: initialPreferences,
+    };
+
+    render(createWorkbench(ROOT_A, { agents: persistedAgents, appSettings: persistedSettings }));
+
+    expect(providerFooter("claudeCode")).not.toBeNull();
+    expect(providerFooter("codex")).toBeNull();
+    expect(modelPicker().textContent).toContain("Claude (default)");
+    expect(prompt().disabled).toBe(false);
+    click('button[aria-label="Agent model"]');
+    expect(host.querySelector('button[aria-label="Claude Code models"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Codex models"]')).toBeNull();
+
+    authorities = {};
+    const pendingPreferences = {
+      ...initialPreferences,
+      claudeCode: { ...initialPreferences.claudeCode, enabled: false },
+    };
+    const pendingAgents = { ...persistedAgents, agentCliKind: "codex" as const };
+    render(
+      createWorkbench(ROOT_A, {
+        agents: pendingAgents,
+        appSettings: {
+          ...persistedSettings,
+          agentCliKind: "codex",
+          agentProviderPreferences: pendingPreferences,
+        },
+      }),
+    );
+
+    expect(providerFooter("claudeCode")).not.toBeNull();
+    expect(providerFooter("codex")).toBeNull();
+    expect(modelPicker().textContent).toContain("Claude (default)");
+    expect(modelPicker().disabled).toBe(false);
+    expect(prompt().disabled).toBe(false);
+    expect(host.querySelector('button[aria-label="Claude Code models"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Codex models"]')).toBeNull();
+
+    authorities = {
+      claudeCode: providerAuthority("claudeCode", 2, true),
+      codex: providerAuthority("codex", 1, false),
+    };
+    render(
+      createWorkbench(ROOT_A, {
+        agents: pendingAgents,
+        appSettings: {
+          ...persistedSettings,
+          agentCliKind: "codex",
+          agentProviderPreferences: pendingPreferences,
+        },
+      }),
+    );
+
+    expect(modelPicker().textContent).toContain("Claude (default)");
+    expect(prompt().disabled).toBe(false);
+
+    selectedProviderAuthority = { settingsRevision: 3, provider: "codex" };
+    authorities = {
+      claudeCode: providerAuthority("claudeCode", 2, false),
+      codex: providerAuthority("codex", 1, false),
+    };
+    render(
+      createWorkbench(ROOT_A, {
+        agents: pendingAgents,
+        appSettings: {
+          ...persistedSettings,
+          agentCliKind: "codex",
+          agentProviderPreferences: pendingPreferences,
+        },
+      }),
+    );
+
+    expect(providerFooter("claudeCode")).toBeNull();
+    expect(providerFooter("codex")).toBeNull();
+    expect(modelPicker().textContent).toContain("Codex (default)");
+    expect(modelPicker().disabled).toBe(true);
+    expect(prompt().disabled).toBe(true);
+
+    selectedProviderAuthority = null;
+    authorities = {};
+    render(
+      createWorkbench(ROOT_A, {
+        agents: persistedAgents,
+        appSettings: persistedSettings,
+      }),
+    );
+
+    expect(providerFooter("claudeCode")).not.toBeNull();
+    expect(modelPicker().textContent).toContain("Claude (default)");
+    expect(prompt().disabled).toBe(false);
   });
 
   it("toggles the bottom panel through the controller authority only", () => {
@@ -319,6 +451,22 @@ describe("AgentWorkbenchScreen", () => {
     act(() => element?.click());
   }
 
+  function modelPicker(): HTMLButtonElement {
+    const picker = host.querySelector<HTMLButtonElement>('button[aria-label="Agent model"]');
+    expect(picker).not.toBeNull();
+    return picker!;
+  }
+
+  function prompt(): HTMLTextAreaElement {
+    const textarea = host.querySelector<HTMLTextAreaElement>("#agent-prompt");
+    expect(textarea).not.toBeNull();
+    return textarea!;
+  }
+
+  function providerFooter(provider: AgentCliKind): HTMLElement | null {
+    return host.querySelector(`[data-provider="${provider}"]`);
+  }
+
   function clickMenuItem(label: string): void {
     const item = [...host.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
       (candidate) => candidate.textContent === label,
@@ -440,7 +588,9 @@ function surface(
   };
 }
 
-function providerManagement(): AgentProviderManagementSurface {
+function providerManagement(
+  overrides: Partial<AgentProviderManagementSurface> = {},
+): AgentProviderManagementSurface {
   return {
     providers: {
       claudeCode: {
@@ -456,6 +606,7 @@ function providerManagement(): AgentProviderManagementSurface {
         liveTurnCount: 0,
       },
     },
+    selectedProviderAuthority: null,
     toast: null,
     admissionAuthority: (provider) => ({
       provider,
@@ -470,6 +621,25 @@ function providerManagement(): AgentProviderManagementSurface {
     save: async () => false,
     saveWithOutcome: async () => ({ kind: "rejected", reason: "notHydrated" }),
     update: async () => "policyUnavailable",
+    ...overrides,
+  };
+}
+
+function providerAuthority(
+  provider: AgentCliKind,
+  settingsRevision: number,
+  enabled: boolean,
+): PersistedAgentProviderSettingsAuthority {
+  return {
+    provider,
+    settingsRevision,
+    preference: {
+      enabled,
+      healthCheckIntervalSeconds: 300,
+      checkForUpdates: false,
+      dismissedUpdateVersion: null,
+    },
+    cliPath: `/usr/local/bin/${provider}`,
   };
 }
 

@@ -138,6 +138,8 @@ function management(
         liveTurnCount: 0,
       },
     },
+    selectedProviderAuthority:
+      overrides.authorityMissing === true ? null : { settingsRevision: 1, provider: "claudeCode" },
     toast: null,
     admissionAuthority: (provider) => ({
       provider,

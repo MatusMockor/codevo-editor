@@ -581,7 +581,7 @@ fn probe_npm(
             AgentProviderUpdateUnavailableReason::ProbeFailed,
         );
     }
-    if !cli_identity.canonical_path.starts_with(&package_root) {
+    if !npm_cli_artifact_matches(&package_root, &cli_identity.canonical_path, lease.provider) {
         return InstallerProbeOutcome::NotOwned;
     }
     let inventory_plan = AgentProviderProcessPlan::package_manager(
@@ -697,7 +697,12 @@ fn probe_brew(
             AgentProviderUpdateUnavailableReason::ProbeFailed,
         );
     }
-    if !cli_identity.canonical_path.starts_with(&caskroom) {
+    if !brew_cli_artifact_matches(
+        &caskroom,
+        &cli_identity.canonical_path,
+        lease.provider,
+        installed_version,
+    ) {
         return InstallerProbeOutcome::NotOwned;
     }
     let outdated_plan = AgentProviderProcessPlan::package_manager(
@@ -773,6 +778,32 @@ fn bounded_absolute_path(output: &[u8]) -> Option<std::path::PathBuf> {
     }
     let path = Path::new(path);
     path.is_absolute().then(|| path.to_path_buf())
+}
+
+fn npm_cli_artifact_matches(
+    package_root: &Path,
+    cli_path: &Path,
+    provider: AgentCliInvocation,
+) -> bool {
+    let expected = match provider {
+        AgentCliInvocation::ClaudeCode => package_root.join("cli.js"),
+        AgentCliInvocation::CodexExec => package_root.join("bin").join("codex.js"),
+    };
+    cli_path == expected
+}
+
+fn brew_cli_artifact_matches(
+    caskroom: &Path,
+    cli_path: &Path,
+    provider: AgentCliInvocation,
+    installed_version: &str,
+) -> bool {
+    let version_root = caskroom.join(installed_version);
+    let expected = match provider {
+        AgentCliInvocation::ClaudeCode => version_root.join("claude"),
+        AgentCliInvocation::CodexExec => version_root.join("bin").join("codex"),
+    };
+    cli_path == expected
 }
 
 fn availability(
@@ -1281,5 +1312,59 @@ mod tests {
             }),
             AgentProviderUpdateUnavailableReason::ProbeFailed
         );
+    }
+
+    #[test]
+    fn managed_installer_ownership_requires_the_exact_provider_artifact() {
+        let npm_root = Path::new("/managed/node_modules/@openai/codex");
+        assert!(npm_cli_artifact_matches(
+            npm_root,
+            Path::new("/managed/node_modules/@openai/codex/bin/codex.js"),
+            AgentCliInvocation::CodexExec,
+        ));
+        for rejected in [
+            "/managed/node_modules/@openai/codex/bin/other",
+            "/managed/node_modules/@openai/codex/vendor/codex",
+            "/managed/node_modules/@openai/codex/bin/codex.js/child",
+            "/managed/node_modules/@openai/other/bin/codex.js",
+        ] {
+            assert!(!npm_cli_artifact_matches(
+                npm_root,
+                Path::new(rejected),
+                AgentCliInvocation::CodexExec,
+            ));
+        }
+
+        let brew_root = Path::new("/opt/homebrew/Caskroom/codex");
+        assert!(brew_cli_artifact_matches(
+            brew_root,
+            Path::new("/opt/homebrew/Caskroom/codex/0.150.1/bin/codex"),
+            AgentCliInvocation::CodexExec,
+            "0.150.1",
+        ));
+        for rejected in [
+            "/opt/homebrew/Caskroom/codex/0.150.1/other",
+            "/opt/homebrew/Caskroom/codex/0.150.1/codex",
+            "/opt/homebrew/Caskroom/codex/0.149.0/bin/codex",
+            "/opt/homebrew/Caskroom/other/0.150.1/bin/codex",
+        ] {
+            assert!(!brew_cli_artifact_matches(
+                brew_root,
+                Path::new(rejected),
+                AgentCliInvocation::CodexExec,
+                "0.150.1",
+            ));
+        }
+        assert!(npm_cli_artifact_matches(
+            Path::new("/managed/node_modules/@anthropic-ai/claude-code"),
+            Path::new("/managed/node_modules/@anthropic-ai/claude-code/cli.js"),
+            AgentCliInvocation::ClaudeCode,
+        ));
+        assert!(brew_cli_artifact_matches(
+            Path::new("/opt/homebrew/Caskroom/claude-code"),
+            Path::new("/opt/homebrew/Caskroom/claude-code/2.1.231/claude"),
+            AgentCliInvocation::ClaudeCode,
+            "2.1.231",
+        ));
     }
 }

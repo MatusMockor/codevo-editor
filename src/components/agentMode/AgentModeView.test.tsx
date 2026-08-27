@@ -2687,6 +2687,7 @@ function providerManagement(): AgentProviderManagementSurface {
         liveTurnCount: 0,
       },
     },
+    selectedProviderAuthority: { settingsRevision: 1, provider: "claudeCode" },
     toast: null,
     admissionAuthority: (provider) => ({
       provider,

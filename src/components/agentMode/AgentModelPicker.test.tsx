@@ -373,6 +373,7 @@ function management(
         liveTurnCount: 0,
       },
     },
+    selectedProviderAuthority: null,
     toast: null,
     admissionAuthority: (provider) =>
       enabled[provider]

@@ -9,6 +9,7 @@ import {
   type AgentWorkbenchLayoutMode,
 } from "./domain/agentWorkbenchLayout";
 import { workbenchAgentViewCommandBridge } from "./application/agentViewCommandBridge";
+import type { AgentProviderManagementSurface } from "./application/useAgentProviderManagement";
 import { initialIndexProgress } from "./domain/indexProgress";
 import type { EditorDocument } from "./domain/workspace";
 import { buildJsTestExplorerTree, type JsTestExplorerTestNode } from "./domain/jsTestExplorerTree";
@@ -927,6 +928,7 @@ describe("App command routing", () => {
         agentCliKind: "claudeCode",
         agentCliVersion: null,
         agentProjects: { projects: [], overflowRootPaths: [] },
+        providerManagement: providerManagement(),
       },
     };
     await act(async () => {
@@ -1151,6 +1153,7 @@ function createWorkbench() {
         agentCliKind: "claudeCode",
         agentCliVersion: null,
         agentProjects: { projects: [], overflowRootPaths: [] },
+        providerManagement: providerManagement(),
       },
       activePath: null,
       appSettings: {
@@ -1268,6 +1271,40 @@ function createWorkbench() {
       },
     },
   );
+}
+
+function providerManagement(): AgentProviderManagementSurface {
+  return {
+    providers: {
+      claudeCode: {
+        health: { kind: "notConfigured" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+      codex: {
+        health: { kind: "notConfigured" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+    },
+    selectedProviderAuthority: null,
+    toast: null,
+    admissionAuthority: (provider) => ({
+      provider,
+      revision: 0,
+      disposition: { kind: "policyUnavailable", reason: "unregistered" },
+    }),
+    authority: () => null,
+    dismissToast: () => undefined,
+    dismissUpdate: async () => false,
+    refresh: async () => undefined,
+    retryRegistration: async () => undefined,
+    save: async () => false,
+    saveWithOutcome: async () => ({ kind: "rejected", reason: "notHydrated" }),
+    update: async () => "policyUnavailable",
+  };
 }
 
 function jsTestTarget(filter: string, lineNumber: number): TestGutterTarget {

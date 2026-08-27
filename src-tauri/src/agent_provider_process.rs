@@ -36,6 +36,15 @@ pub struct ExecutableIdentity {
     pub inode: u64,
     digest: [u8; 32],
     descriptor: Arc<fs::File>,
+    launch: ExecutableLaunch,
+}
+
+#[derive(Clone, Debug)]
+enum ExecutableLaunch {
+    Native,
+    Script {
+        interpreter: Box<ExecutableIdentity>,
+    },
 }
 
 impl PartialEq for ExecutableIdentity {
@@ -45,6 +54,7 @@ impl PartialEq for ExecutableIdentity {
             && self.modified_epoch_ms == other.modified_epoch_ms
             && self.digest == other.digest
             && same_platform_identity(self, other)
+            && launch_identity_matches(&self.launch, &other.launch)
     }
 }
 
@@ -52,6 +62,16 @@ impl Eq for ExecutableIdentity {}
 
 impl ExecutableIdentity {
     pub fn retained_is_current(&self) -> bool {
+        if !self.retained_shallow_is_current() {
+            return false;
+        }
+        match &self.launch {
+            ExecutableLaunch::Native => true,
+            ExecutableLaunch::Script { interpreter } => interpreter.retained_is_current(),
+        }
+    }
+
+    fn retained_shallow_is_current(&self) -> bool {
         let Ok(metadata) = self.descriptor.metadata() else {
             return false;
         };
@@ -65,7 +85,98 @@ impl ExecutableIdentity {
         {
             return false;
         }
-        platform_metadata_matches(self, &metadata)
+        if !platform_metadata_matches(self, &metadata) {
+            return false;
+        }
+        true
+    }
+
+    fn path_is_current_shallow(&self) -> bool {
+        let Ok(canonical_path) = fs::canonicalize(&self.canonical_path) else {
+            return false;
+        };
+        if canonical_path != self.canonical_path {
+            return false;
+        }
+        let Ok(descriptor) = open_executable(&canonical_path) else {
+            return false;
+        };
+        let Ok(metadata) = descriptor.metadata() else {
+            return false;
+        };
+        if !metadata.is_file()
+            || !is_executable(&metadata)
+            || metadata.len() != self.size_bytes
+            || !platform_metadata_matches(self, &metadata)
+        {
+            return false;
+        }
+        let modified_epoch_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .and_then(|value| u64::try_from(value.as_millis()).ok());
+        if modified_epoch_ms != Some(self.modified_epoch_ms) {
+            return false;
+        }
+        executable_digest(&descriptor, metadata.len()).ok().as_ref() == Some(&self.digest)
+    }
+
+    pub fn bound_command(&self) -> Result<BoundExecutableCommand, String> {
+        if !self.retained_is_current() {
+            return Err("Provider executable identity changed before launch.".to_string());
+        }
+        bound_command(self)
+    }
+}
+
+fn launch_identity_matches(left: &ExecutableLaunch, right: &ExecutableLaunch) -> bool {
+    match (left, right) {
+        (ExecutableLaunch::Native, ExecutableLaunch::Native) => true,
+        (
+            ExecutableLaunch::Script { interpreter: left },
+            ExecutableLaunch::Script { interpreter: right },
+        ) => left == right,
+        _ => false,
+    }
+}
+
+pub struct BoundExecutableCommand {
+    command: Command,
+    dependencies: Vec<ExecutableIdentity>,
+    artifact: ExecutableIdentity,
+    #[cfg(test)]
+    before_artifact_validation: Option<Box<dyn FnOnce() + Send>>,
+}
+
+#[derive(Debug)]
+pub enum BoundExecutableSpawnFailure {
+    IdentityChanged,
+    Spawn(io::Error),
+}
+
+impl BoundExecutableCommand {
+    pub fn command_mut(&mut self) -> &mut Command {
+        &mut self.command
+    }
+
+    pub fn spawn(&mut self) -> Result<Child, BoundExecutableSpawnFailure> {
+        for dependency in &self.dependencies {
+            if !dependency.retained_shallow_is_current() || !dependency.path_is_current_shallow() {
+                return Err(BoundExecutableSpawnFailure::IdentityChanged);
+            }
+        }
+        #[cfg(test)]
+        if let Some(barrier) = self.before_artifact_validation.take() {
+            barrier();
+        }
+        if !self.artifact.retained_shallow_is_current() || !self.artifact.path_is_current_shallow()
+        {
+            return Err(BoundExecutableSpawnFailure::IdentityChanged);
+        }
+        self.command
+            .spawn()
+            .map_err(BoundExecutableSpawnFailure::Spawn)
     }
 }
 
@@ -314,6 +425,13 @@ pub fn executable_identity(path: &str) -> Result<ExecutableIdentity, String> {
 }
 
 pub fn executable_identity_path(path: &Path) -> Result<ExecutableIdentity, String> {
+    executable_identity_path_with_depth(path, 0)
+}
+
+fn executable_identity_path_with_depth(
+    path: &Path,
+    interpreter_depth: usize,
+) -> Result<ExecutableIdentity, String> {
     if !path.is_absolute() {
         return Err("Provider executable path must be absolute.".to_string());
     }
@@ -330,6 +448,7 @@ pub fn executable_identity_path(path: &Path) -> Result<ExecutableIdentity, Strin
         return Err("Provider executable is too large.".to_string());
     }
     let digest = executable_digest(&descriptor, metadata.len())?;
+    let launch = executable_launch(&descriptor, interpreter_depth)?;
     let modified_epoch_ms = metadata
         .modified()
         .ok()
@@ -346,7 +465,111 @@ pub fn executable_identity_path(path: &Path) -> Result<ExecutableIdentity, Strin
         inode: std::os::unix::fs::MetadataExt::ino(&metadata),
         digest,
         descriptor: Arc::new(descriptor),
+        launch,
     })
+}
+
+fn executable_launch(
+    descriptor: &fs::File,
+    interpreter_depth: usize,
+) -> Result<ExecutableLaunch, String> {
+    let shebang = read_shebang(descriptor)?;
+    let Some(shebang) = shebang else {
+        return Ok(ExecutableLaunch::Native);
+    };
+    if interpreter_depth != 0 {
+        return Err("Provider script interpreter is unsupported.".to_string());
+    }
+    let interpreter_path = resolve_shebang_interpreter(&shebang)?;
+    let interpreter = executable_identity_path_with_depth(&interpreter_path, 1)?;
+    Ok(ExecutableLaunch::Script {
+        interpreter: Box::new(interpreter),
+    })
+}
+
+fn read_shebang(descriptor: &fs::File) -> Result<Option<String>, String> {
+    let mut reader = descriptor
+        .try_clone()
+        .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
+    reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
+    let mut prefix = [0_u8; 512];
+    let count = reader
+        .read(&mut prefix)
+        .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
+    if !prefix[..count].starts_with(b"#!") {
+        return Ok(None);
+    }
+    let end = prefix[..count]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .ok_or_else(|| "Provider script shebang is invalid.".to_string())?;
+    let line = std::str::from_utf8(&prefix[2..end])
+        .map_err(|_| "Provider script shebang is invalid.".to_string())?
+        .trim_end_matches('\r')
+        .trim();
+    if line.is_empty() || line.len() > 256 {
+        return Err("Provider script shebang is invalid.".to_string());
+    }
+    Ok(Some(line.to_string()))
+}
+
+fn resolve_shebang_interpreter(shebang: &str) -> Result<PathBuf, String> {
+    let fields = shebang.split_ascii_whitespace().collect::<Vec<_>>();
+    if fields.len() == 1 {
+        let path = Path::new(fields[0]);
+        if path.is_absolute() {
+            return Ok(path.to_path_buf());
+        }
+        return Err("Provider script interpreter is unsupported.".to_string());
+    }
+    if fields.len() != 2 || fields[0] != "/usr/bin/env" {
+        return Err("Provider script interpreter is unsupported.".to_string());
+    }
+    let name = fields[1];
+    if name.is_empty()
+        || name.len() > 64
+        || name.contains('/')
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err("Provider script interpreter is unsupported.".to_string());
+    }
+    resolve_path_executable(name)
+        .ok_or_else(|| "Provider script interpreter is unavailable.".to_string())
+}
+
+fn resolve_path_executable(name: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path)
+        .take(64)
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
+fn bound_command(identity: &ExecutableIdentity) -> Result<BoundExecutableCommand, String> {
+    match &identity.launch {
+        ExecutableLaunch::Native => Ok(BoundExecutableCommand {
+            command: Command::new(&identity.canonical_path),
+            dependencies: Vec::new(),
+            artifact: identity.clone(),
+            #[cfg(test)]
+            before_artifact_validation: None,
+        }),
+        ExecutableLaunch::Script { interpreter } => {
+            let mut command = Command::new(&interpreter.canonical_path);
+            command.arg(&identity.canonical_path);
+            Ok(BoundExecutableCommand {
+                command,
+                dependencies: vec![(**interpreter).clone()],
+                artifact: identity.clone(),
+                #[cfg(test)]
+                before_artifact_validation: None,
+            })
+        }
+    }
 }
 
 fn executable_digest(descriptor: &fs::File, size: u64) -> Result<[u8; 32], String> {
@@ -448,7 +671,11 @@ pub fn execute_agent_provider_plan_cancellable(
             "Provider operation was cancelled.".to_string(),
         ));
     }
-    let mut command = Command::new(&plan.program);
+    let mut bound = plan
+        .identity
+        .bound_command()
+        .map_err(AgentProviderProcessFailure::Uncertain)?;
+    let command = bound.command_mut();
     command
         .args(plan.args.iter())
         .current_dir(&plan.cwd)
@@ -462,9 +689,17 @@ pub fn execute_agent_provider_plan_cancellable(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let child = command
-        .spawn()
-        .map_err(|error| AgentProviderProcessFailure::Spawn(error.to_string()))?;
+    let child = match bound.spawn() {
+        Ok(child) => child,
+        Err(BoundExecutableSpawnFailure::IdentityChanged) => {
+            return Err(AgentProviderProcessFailure::Uncertain(
+                "Provider executable identity changed before launch.".to_string(),
+            ));
+        }
+        Err(BoundExecutableSpawnFailure::Spawn(error)) => {
+            return Err(AgentProviderProcessFailure::Spawn(error.to_string()));
+        }
+    };
     OwnedProviderChild::new(child, plan.timeout, plan.output_limit).settle(cancelled)
 }
 
@@ -801,6 +1036,78 @@ mod tests {
             Err(AgentProviderProcessFailure::Uncertain(_))
         ));
         thread.join().expect("canceller");
+        fs::remove_file(cli).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn final_spawn_revalidation_rejects_a_captured_script_path_swap() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cli = executable("printf captured");
+        let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
+        let mut bound = identity.bound_command().expect("bound command");
+        let replacement = cli.with_extension("replacement");
+        let swapped_cli = cli.clone();
+        let retained = replacement.clone();
+        bound.before_artifact_validation = Some(Box::new(move || {
+            fs::rename(&swapped_cli, &retained).expect("retain original");
+            fs::write(&swapped_cli, "#!/bin/sh\nprintf replaced\n").expect("replacement");
+            fs::set_permissions(&swapped_cli, fs::Permissions::from_mode(0o755))
+                .expect("permissions");
+        }));
+        assert!(matches!(
+            bound.spawn(),
+            Err(BoundExecutableSpawnFailure::IdentityChanged)
+        ));
+        fs::remove_file(cli).expect("replacement cleanup");
+        fs::remove_file(replacement).expect("original cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn env_shebang_uses_the_captured_interpreter_under_a_hostile_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = NONCE.fetch_add(1, Ordering::SeqCst);
+        let fixture = env::temp_dir().join(format!(
+            "codevo-provider-hostile-path-{}-{nonce}",
+            std::process::id()
+        ));
+        let hostile = fixture.join("hostile");
+        fs::create_dir_all(&hostile).expect("hostile path");
+        let cli = fixture.join("provider");
+        fs::write(&cli, "#!/usr/bin/env sh\nprintf captured\n").expect("provider");
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).expect("provider mode");
+        let hostile_shell = hostile.join("sh");
+        fs::write(&hostile_shell, "#!/bin/sh\nprintf hostile\n").expect("hostile shell");
+        fs::set_permissions(&hostile_shell, fs::Permissions::from_mode(0o755))
+            .expect("hostile mode");
+        let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
+        let mut bound = identity.bound_command().expect("bound command");
+        let output = bound
+            .command_mut()
+            .env_clear()
+            .env("PATH", &hostile)
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn captured interpreter")
+            .wait_with_output()
+            .expect("captured output");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"captured");
+        fs::remove_dir_all(fixture).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unsupported_shebang_arguments_fail_closed() {
+        let cli = executable("exit 0");
+        fs::write(&cli, "#!/usr/bin/env -S sh\nexit 0\n").expect("unsupported script");
+        assert_eq!(
+            executable_identity(cli.to_str().expect("path")).expect_err("unsupported"),
+            "Provider script interpreter is unsupported."
+        );
         fs::remove_file(cli).expect("cleanup");
     }
 }

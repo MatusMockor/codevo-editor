@@ -283,9 +283,18 @@ fn valid_auth_label(value: &str) -> Option<String> {
         return None;
     }
     let lowered = value.to_ascii_lowercase();
-    if ["token", "bearer", "sk-", "api_key", "apikey"]
-        .iter()
-        .any(|marker| lowered.contains(marker))
+    if [
+        "token",
+        "bearer",
+        "sk-",
+        "api_key",
+        "apikey",
+        "ghp_",
+        "github_pat_",
+        "npm_",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
     {
         return None;
     }
@@ -294,7 +303,19 @@ fn valid_auth_label(value: &str) -> Option<String> {
 
 pub fn parse_npm_installed_version(output: &[u8], provider: AgentCliInvocation) -> Option<String> {
     let value = bounded_json(output)?;
-    let dependencies = value.as_object()?.get("dependencies")?.as_object()?;
+    let root = value.as_object()?;
+    if root.len() != 2
+        || root
+            .keys()
+            .any(|key| !matches!(key.as_str(), "name" | "dependencies"))
+    {
+        return None;
+    }
+    let name = root.get("name")?.as_str()?;
+    if name.is_empty() || name.len() > MAX_AGENT_PROVIDER_LABEL_BYTES {
+        return None;
+    }
+    let dependencies = root.get("dependencies")?.as_object()?;
     if dependencies
         .keys()
         .any(|name| name != CLAUDE_NPM_PACKAGE && name != CODEX_NPM_PACKAGE)
@@ -573,7 +594,7 @@ fn secret_pattern() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| {
         Regex::new(
-            r"(?i)(?:authorization\s*:\s*bearer\s+\S+|bearer\s+[a-z0-9._~+/=-]+|(?:_?auth_?token|token|api[_-]?key|authorization)\s*[:=]\s*\S+|sk-[a-z0-9_-]{4,}|https?://[^\s/@:]+:[^\s/@]+@)",
+            r"(?i)(?:authorization\s*:\s*bearer\s+\S+|bearer\s+[a-z0-9._~+/=-]+|(?:_?auth_?token|token|api[_-]?key|authorization)\s*[:=]\s*\S+|sk-[a-z0-9_-]{4,}|ghp_[a-z0-9]{4,}|github_pat_[a-z0-9_]{4,}|npm_[a-z0-9]{4,}|https?://[^\s/@:]+:[^\s/@]+@)",
         )
         .expect("closed provider secret pattern")
     })
@@ -644,21 +665,35 @@ mod tests {
     fn package_manager_json_is_exact_and_bounded() {
         assert_eq!(
             parse_npm_installed_version(
-                br#"{"dependencies":{"@openai/codex":{"version":"0.150.1"}}}"#,
+                br#"{"name":"lib","dependencies":{"@openai/codex":{"version":"0.150.1"}}}"#,
                 AgentCliInvocation::CodexExec
             ),
             Some("0.150.1".to_string())
         );
         assert_eq!(
             parse_npm_installed_version(
-                br#"{"dependencies":{"@openai/codex":{"version":"0.150.1","extra":1}}}"#,
+                br#"{"name":"lib","dependencies":{"@openai/codex":{"version":"0.150.1","extra":1}}}"#,
                 AgentCliInvocation::CodexExec
             ),
             None
         );
         assert_eq!(
             parse_npm_installed_version(
-                br#"{"dependencies":{"@openai/codex":{"version":"0.150.1","version":"9.9.9"}}}"#,
+                br#"{"name":"lib","dependencies":{"@openai/codex":{"version":"0.150.1","version":"9.9.9"}}}"#,
+                AgentCliInvocation::CodexExec
+            ),
+            None
+        );
+        assert_eq!(
+            parse_npm_installed_version(
+                br#"{"dependencies":{"@openai/codex":{"version":"0.150.1"}}}"#,
+                AgentCliInvocation::CodexExec
+            ),
+            None
+        );
+        assert_eq!(
+            parse_npm_installed_version(
+                br#"{"name":"lib","dependencies":{"@openai/codex":{"version":"0.150.1"}},"future":true}"#,
                 AgentCliInvocation::CodexExec
             ),
             None
@@ -720,12 +755,22 @@ mod tests {
         let output = "\0".repeat(MAX_AGENT_PROVIDER_UPDATE_TAIL_BYTES);
         let tail = sanitized_tail(
             output.as_bytes(),
-            b"Authorization: Bearer secret-value\nsk-live-secret\n_authToken=npm-secret\nhttps://user:password@example.com",
+            b"Authorization: Bearer secret-value\nsk-live-secret\n_authToken=npm-secret\nghp_abcdef123456\ngithub_pat_abcdef_123456\nnpm_abcdef123456\nhttps://user:password@example.com",
         );
         assert!(tail.len() <= MAX_AGENT_PROVIDER_UPDATE_TAIL_BYTES);
         assert!(!tail.contains('\0'));
         assert!(!tail.contains("secret"), "{tail}");
         assert!(!tail.contains("password"), "{tail}");
         assert!(tail.contains("[redacted]"));
+        for secret in ["ghp_", "github_pat_", "npm_"] {
+            assert!(!tail.contains(secret), "{tail}");
+        }
+        for label in [
+            "ghp_abcdef123456",
+            "github_pat_abcdef_123456",
+            "npm_abcdef123456",
+        ] {
+            assert_eq!(valid_auth_label(label), None);
+        }
     }
 }

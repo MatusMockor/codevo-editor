@@ -147,6 +147,31 @@ describe("AgentProviderSettingsCard", () => {
     expect(onChangeCheckForUpdates).toHaveBeenCalledWith(true);
   });
 
+  it("retains an invalid non-empty CLI path on blur without clearing the saved path", () => {
+    const onChangePath = vi.fn();
+    render(management(), { onChangePath });
+
+    setInput('input[placeholder="/usr/local/bin/claude"]', "relative/bin/claude");
+    blur('input[placeholder="/usr/local/bin/claude"]');
+
+    expect(input('input[placeholder="/usr/local/bin/claude"]').value).toBe("relative/bin/claude");
+    expect(input('input[placeholder="/usr/local/bin/claude"]').getAttribute("aria-invalid")).toBe(
+      "true",
+    );
+    expect(host.textContent).toContain("Enter an absolute executable path.");
+    expect(onChangePath).not.toHaveBeenCalled();
+  });
+
+  it("clears the saved CLI path when the input is explicitly emptied", () => {
+    const onChangePath = vi.fn();
+    render(management(), { onChangePath });
+
+    setInput('input[placeholder="/usr/local/bin/claude"]', "   ");
+    blur('input[placeholder="/usr/local/bin/claude"]');
+
+    expect(onChangePath).toHaveBeenCalledWith(null);
+  });
+
   it("refreshes manually and refuses an update while that provider has a live turn", () => {
     const surface = management({ liveTurnCount: 1 });
     render(surface);
@@ -305,6 +330,7 @@ function management(
         liveTurnCount: 0,
       },
     },
+    selectedProviderAuthority: { settingsRevision: 1, provider: "claudeCode" },
     toast: null,
     admissionAuthority: (provider) => ({
       provider,

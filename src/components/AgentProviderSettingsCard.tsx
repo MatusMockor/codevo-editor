@@ -83,7 +83,11 @@ export function AgentProviderSettingsCard({
           aria-describedby={`${provider}-cli-health`}
           aria-invalid={invalidPath || undefined}
           disabled={!preference.enabled}
-          onBlur={() => onChangePath(normalizeAgentCliPath(draft))}
+          onBlur={() => {
+            const normalizedPath = normalizeAgentCliPath(draft);
+            if (draft.trim() !== "" && normalizedPath === null) return;
+            onChangePath(normalizedPath);
+          }}
           onChange={(event) => setDraft(event.currentTarget.value)}
           placeholder={providerPlaceholder(provider)}
           spellCheck={false}

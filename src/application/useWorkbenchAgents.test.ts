@@ -162,6 +162,57 @@ describe("useWorkbenchAgents composition", () => {
     harness.unmount();
   });
 
+  it("reports a configured-path refusal for a registered pathless provider", async () => {
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      providerConfigured: false,
+    });
+    await waitForReact(() =>
+      expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "claudeCode", cliPath: null }),
+      ),
+    );
+
+    await act(async () => {
+      expect(
+        await harness.hook().startThread({
+          projectRootKey: ACTIVE_ROOT,
+          repositoryRoot: ACTIVE_ROOT,
+          prompt: "Do not start",
+          isolation: "worktree",
+          unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toBe(
+      "Configure this provider's CLI path in Settings before starting a turn.",
+    );
+    harness.unmount();
+  });
+
+  it("re-registers provider ownership across workspace A to B to A replacements", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false });
+    await waitForReact(() =>
+      expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(2),
+    );
+
+    harness.setWorkspaceId("workspace-b");
+    harness.rerender();
+    await waitForReact(() =>
+      expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(4),
+    );
+
+    harness.setWorkspaceId(ACTIVE_ID);
+    harness.rerender();
+    await waitForReact(() =>
+      expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(6),
+    );
+    harness.unmount();
+  });
+
   it("dispatches a nested repository with the replacement registered workspace identity", async () => {
     const nestedRepository = `${ACTIVE_ROOT}/packages/api`;
     const harness = renderWorkbenchAgents({
@@ -773,6 +824,7 @@ describe("useWorkbenchAgents composition", () => {
 
 interface HarnessOptions {
   withProjectGateways: boolean;
+  providerConfigured?: boolean;
   providerEnabled?: boolean;
   workspaceTabs?: ReadonlyArray<string>;
   refusedLeaseRoots?: ReadonlyArray<string>;
@@ -783,7 +835,10 @@ interface HarnessOptions {
 function renderWorkbenchAgents(options: HarnessOptions) {
   const appSettings: AppSettings = {
     ...defaultAppSettings(),
-    agentCliPaths: { claudeCode: CLI_PATH, codex: null },
+    agentCliPaths: {
+      claudeCode: options.providerConfigured === false ? null : CLI_PATH,
+      codex: null,
+    },
     workspaceTabs: [...(options.workspaceTabs ?? [])],
     agentProviderPreferences: {
       claudeCode: {
