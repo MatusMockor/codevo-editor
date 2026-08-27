@@ -1,18 +1,19 @@
 import { useEffect, type RefObject } from "react";
 import type { AppSettings, SettingsGateway } from "../../domain/settings";
+import type { WorkspaceStartupRestoreIntent } from "./useWorkspaceOpenRequestLifecycle";
 
 export interface InitialAppSettingsHydrationOptions {
   readonly hasRestoredRef: RefObject<boolean>;
   readonly settingsGateway: Pick<SettingsGateway, "loadAppSettings">;
   applyAppSettings(settings: AppSettings): void;
-  openWorkspacePath(path: string): void | Promise<void>;
+  beginStartupRestore(): WorkspaceStartupRestoreIntent;
   reportError(scope: string, error: unknown): void;
 }
 
 export function useInitialAppSettingsHydration({
   applyAppSettings,
+  beginStartupRestore,
   hasRestoredRef,
-  openWorkspacePath,
   reportError,
   settingsGateway,
 }: InitialAppSettingsHydrationOptions): void {
@@ -20,33 +21,39 @@ export function useInitialAppSettingsHydration({
     if (hasRestoredRef.current) return;
     hasRestoredRef.current = true;
     let active = true;
-    let settingsLoad: Promise<AppSettings>;
+    const startupRestore = beginStartupRestore();
 
-    try {
-      settingsLoad = settingsGateway.loadAppSettings();
-    } catch (error) {
-      reportError("Settings", error);
-      return () => {
-        active = false;
-      };
-    }
-
-    settingsLoad
-      .then((settings) => {
-        if (!active) return;
-        applyAppSettings(settings);
-        const workspacePath = settings.recentWorkspacePath ?? settings.workspaceTabs[0] ?? null;
-        if (workspacePath === null) return;
-        if (!active) return;
-        void openWorkspacePath(workspacePath);
-      })
-      .catch((error: unknown) => {
+    void (async () => {
+      let settings: AppSettings;
+      try {
+        settings = await settingsGateway.loadAppSettings();
+      } catch (error) {
         if (!active) return;
         reportError("Settings", error);
-      });
+        return;
+      }
+      if (!active) return;
+      try {
+        applyAppSettings(settings);
+      } catch (error) {
+        if (!active) return;
+        reportError("Settings", error);
+        return;
+      }
+      const workspacePath = settings.recentWorkspacePath ?? settings.workspaceTabs[0] ?? null;
+      if (workspacePath === null) return;
+      if (!active || !startupRestore.isCurrent()) return;
+      try {
+        await startupRestore.openWorkspacePath(workspacePath);
+        if (!active || !startupRestore.isCurrent()) return;
+      } catch (error) {
+        if (!active || !startupRestore.isCurrent()) return;
+        reportError("Settings", error);
+      }
+    })();
 
     return () => {
       active = false;
     };
-  }, [applyAppSettings, hasRestoredRef, openWorkspacePath, reportError, settingsGateway]);
+  }, [applyAppSettings, beginStartupRestore, hasRestoredRef, reportError, settingsGateway]);
 }

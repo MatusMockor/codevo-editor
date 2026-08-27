@@ -88,7 +88,10 @@ import {
   useWorkbenchLanguageRuntimeProjectionRefBridge,
   useWorkbenchLanguageRuntimeProjectionState,
 } from "./workbenchController/useWorkbenchLanguageRuntimeProjection";
-import { useWorkspaceOpenRequestLifecycle } from "./workbenchController/useWorkspaceOpenRequestLifecycle";
+import {
+  useWorkspacePackageScriptHydration,
+  useWorkspaceOpenRequestLifecycle,
+} from "./workbenchController/useWorkspaceOpenRequestLifecycle";
 import { useWorkbenchWorkspaceFileChangeSubscription } from "./workbenchController/useWorkspaceFileChangeSubscription";
 import { useManagedWorkspaceIdentityOwnership } from "./workbenchController/useManagedWorkspaceIdentityOwnership";
 import { useWorkspaceIdentityAuthority } from "./workbenchController/useWorkspaceIdentityAuthority";
@@ -300,7 +303,7 @@ import {
   type WorkspaceSettings,
 } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
-import { parseComposerScripts, type PackageScript } from "../domain/packageScripts";
+import type { PackageScript } from "../domain/packageScripts";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import { recentFilesForSwitcher } from "../domain/recentFiles";
@@ -309,7 +312,6 @@ import { sortBookmarks, type Bookmark } from "../domain/bookmarks";
 import type { LatencyTracker } from "../domain/latencyTracker";
 import {
   isDirty,
-  joinWorkspacePath,
   type EditorDocument,
   type FileEntry,
   type IntelligenceMode,
@@ -323,6 +325,7 @@ import { useResolvedEditorCursorStore } from "./useCursorCommandAvailability";
 
 interface OpenWorkspacePathOptions {
   cachePreviousWorkspace?: boolean;
+  isOpenIntentCurrent?: () => boolean;
 }
 
 export type SidebarView = "files" | "git" | "php" | "scripts";
@@ -2232,37 +2235,11 @@ export function useWorkbenchController(
     ],
   );
 
-  const loadPackageScripts = useCallback(
-    async (
-      rootPath: string,
-      entries: readonly FileEntry[],
-      isMutationOwnerCurrent?: () => boolean,
-    ) => {
-      const hasComposerManifest = entries.some(
-        (entry) => entry.kind === "file" && entry.name === "composer.json",
-      );
-      const hasArtisan = entries.some((entry) => entry.kind === "file" && entry.name === "artisan");
-      const composerJson = await (hasComposerManifest
-        ? readTestFileIfExists(joinWorkspacePath(rootPath, "composer.json"))
-        : Promise.resolve(null));
-
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
-        (isMutationOwnerCurrent && !isMutationOwnerCurrent())
-      ) {
-        return;
-      }
-
-      setPackageScriptsByRoot((current) => ({
-        ...current,
-        [rootPath]: {
-          composerScripts: composerJson ? parseComposerScripts(composerJson) : [],
-          hasArtisan,
-        },
-      }));
-    },
-    [readTestFileIfExists],
-  );
+  const loadPackageScripts = useWorkspacePackageScriptHydration({
+    currentWorkspaceRootRef,
+    readFileIfExists: readTestFileIfExists,
+    setPackageScriptsByRoot,
+  });
 
   const restoreWorkspaceSession = useWorkspaceSessionRestorer({
     currentWorkspaceRootRef,
@@ -2290,8 +2267,9 @@ export function useWorkbenchController(
     async (
       path: string,
       identityDescriptor: WorkspaceIdentityDescriptor | null,
-      adoptIdentity: (() => void) | null,
+      adoptIdentity: (() => number | null) | null,
       requestToken: number,
+      commitOpenWorkspaceRequest: (path: string, admissionGeneration: number | null) => void,
       options: OpenWorkspacePathOptions = {},
     ) => {
       const shouldCachePreviousWorkspace = options.cachePreviousWorkspace !== false;
@@ -2304,7 +2282,8 @@ export function useWorkbenchController(
       const isCurrentOpenWorkspaceRequest = () =>
         workbenchMountedRef.current &&
         openWorkspaceRequestTokenRef.current === requestToken &&
-        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path);
+        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path) &&
+        (!options.isOpenIntentCurrent || options.isOpenIntentCurrent());
       const previousRootPath = currentWorkspaceRootRef.current;
       const canonicalKey = identityDescriptor?.canonicalRoot ?? path;
       const workspaceSettingsLoadKey = normalizedWorkspaceRootKey(canonicalKey);
@@ -2567,13 +2546,14 @@ export function useWorkbenchController(
         }
       }
 
+      const adoptedAdmissionGeneration = adoptIdentity?.() ?? null;
+      if (adoptIdentity && adoptedAdmissionGeneration === null) return;
       documentSessionAuthorityLifecycle.deactivate();
       if (identityDescriptor) {
         const previousIdentity =
           workspaceIdentityByRootRef.current[path] ??
           cachedWorkspaceState?.workspaceIdentityDescriptor ??
           null;
-        adoptIdentity?.();
         if (cachedWorkspaceState) {
           cachedWorkspaceState.workspaceIdentityDescriptor = identityDescriptor;
         }
@@ -2613,7 +2593,11 @@ export function useWorkbenchController(
       const admittedRuntimeOwner = workspaceRuntimeOwnerFor(path, identityDescriptor);
       const explicitRuntimeOwner = identityDescriptor ? admittedRuntimeOwner : undefined;
       const admittedRuntimeGeneration = identityDescriptor
-        ? (ownedWorkspaceIdentityGenerationByIdRef.current[identityDescriptor.workspaceId] ?? null)
+        ? (adoptedAdmissionGeneration ??
+          (adoptIdentity
+            ? null
+            : (ownedWorkspaceIdentityGenerationByIdRef.current[identityDescriptor.workspaceId] ??
+              null)))
         : null;
       workspaceRuntimeOwnerRef.current = admittedRuntimeOwner;
       const isCurrentOpenWorkspaceOwnerRequest = () => {
@@ -2645,6 +2629,7 @@ export function useWorkbenchController(
       }
       currentWorkspaceRootRef.current = path;
       currentEditorSessionOwnerKeyRef.current = nextOwnerKey;
+      commitOpenWorkspaceRequest(path, admittedRuntimeGeneration);
       const openSmartModeIntent = beginWorkbenchSmartModeIntent({
         currentWorkspaceRootRef,
         identity: identityDescriptor,
@@ -3094,6 +3079,7 @@ export function useWorkbenchController(
 
   const {
     activateWorkspaceTab,
+    beginStartupRestore,
     beginWorkspaceClose,
     openWorkspace,
     openWorkspacePath,
@@ -3104,6 +3090,7 @@ export function useWorkbenchController(
     openWorkspaceRequestInFlightTokenRef,
     openWorkspaceRequestPathRef,
     openWorkspaceRequestTokenRef,
+    ownedWorkspaceIdentityGenerationByIdRef,
     pendingWorkspaceIdentityRequestTokensRef,
     performOpenWorkspacePath,
     reportError,
@@ -3154,7 +3141,6 @@ export function useWorkbenchController(
     },
     [loadDirectory],
   );
-
   const refreshWorkspace = useCallback(async () => {
     if (!workspaceRoot) {
       return;
@@ -5185,8 +5171,8 @@ export function useWorkbenchController(
 
   useInitialAppSettingsHydration({
     applyAppSettings,
+    beginStartupRestore,
     hasRestoredRef,
-    openWorkspacePath,
     reportError,
     settingsGateway,
   });

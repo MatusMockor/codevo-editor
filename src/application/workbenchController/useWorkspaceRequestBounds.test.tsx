@@ -54,6 +54,7 @@ describe("workspace request bounds", () => {
         openWorkspaceRequestInFlightTokenRef: { current: null },
         openWorkspaceRequestPathRef: { current: null },
         openWorkspaceRequestTokenRef: { current: 0 },
+        ownedWorkspaceIdentityGenerationByIdRef: { current: {} },
         pendingWorkspaceIdentityRequestTokensRef: { current: registry },
         performOpenWorkspacePath: async () => undefined,
         reportError: vi.fn(),

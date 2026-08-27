@@ -8,6 +8,10 @@ import {
   useInitialAppSettingsHydration,
   type InitialAppSettingsHydrationOptions,
 } from "./useInitialAppSettingsHydration";
+import type {
+  WorkspaceOpenOutcome,
+  WorkspaceStartupRestoreIntent,
+} from "./useWorkspaceOpenRequestLifecycle";
 
 describe("useInitialAppSettingsHydration", () => {
   let host: HTMLDivElement;
@@ -40,8 +44,8 @@ describe("useInitialAppSettingsHydration", () => {
 
     expect(options.settingsGateway.loadAppSettings).toHaveBeenCalledTimes(1);
     expect(options.applyAppSettings).toHaveBeenCalledTimes(1);
-    expect(options.openWorkspacePath).toHaveBeenCalledTimes(1);
-    expect(options.openWorkspacePath).toHaveBeenCalledWith("/workspace/recent");
+    expect(options.startupOpenWorkspacePath).toHaveBeenCalledTimes(1);
+    expect(options.startupOpenWorkspacePath).toHaveBeenCalledWith("/workspace/recent");
     expect(options.reportError).not.toHaveBeenCalled();
   });
 
@@ -55,7 +59,7 @@ describe("useInitialAppSettingsHydration", () => {
     render(options);
     await flush();
 
-    expect(options.openWorkspacePath).toHaveBeenCalledWith("/workspace/tab");
+    expect(options.startupOpenWorkspacePath).toHaveBeenCalledWith("/workspace/tab");
   });
 
   it("reports a mounted settings rejection once", async () => {
@@ -67,7 +71,7 @@ describe("useInitialAppSettingsHydration", () => {
     expect(options.reportError).toHaveBeenCalledTimes(1);
     expect(options.reportError).toHaveBeenCalledWith("Settings", failure);
     expect(options.applyAppSettings).not.toHaveBeenCalled();
-    expect(options.openWorkspacePath).not.toHaveBeenCalled();
+    expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
   });
 
   it.each(["apply", "open"] as const)(
@@ -80,7 +84,7 @@ describe("useInitialAppSettingsHydration", () => {
           recentWorkspacePath: "/workspace/recent",
         }),
       );
-      const options: InitialAppSettingsHydrationOptions = {
+      const options: HydrationTestOptions = {
         ...base,
         applyAppSettings:
           operation === "apply"
@@ -88,19 +92,20 @@ describe("useInitialAppSettingsHydration", () => {
                 throw failure;
               })
             : base.applyAppSettings,
-        openWorkspacePath:
+        startupOpenWorkspacePath:
           operation === "open"
-            ? vi.fn(() => {
+            ? vi.fn<(path: string) => Promise<WorkspaceOpenOutcome>>(() => {
                 throw failure;
               })
-            : base.openWorkspacePath,
+            : base.startupOpenWorkspacePath,
       };
+      options.startupRestore.openWorkspacePath = options.startupOpenWorkspacePath;
       render(options);
       await flush();
 
       expect(options.reportError).toHaveBeenCalledTimes(1);
       expect(options.reportError).toHaveBeenCalledWith("Settings", failure);
-      if (operation === "apply") expect(options.openWorkspacePath).not.toHaveBeenCalled();
+      if (operation === "apply") expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
       if (operation === "open") expect(options.applyAppSettings).toHaveBeenCalledTimes(1);
     },
   );
@@ -108,7 +113,7 @@ describe("useInitialAppSettingsHydration", () => {
   it("reports a synchronous settings load failure once", async () => {
     const failure = new Error("load failed");
     const base = hydrationOptions(Promise.resolve(defaultAppSettings()));
-    const options: InitialAppSettingsHydrationOptions = {
+    const options: HydrationTestOptions = {
       ...base,
       settingsGateway: {
         loadAppSettings: vi.fn(() => {
@@ -122,7 +127,7 @@ describe("useInitialAppSettingsHydration", () => {
     expect(options.reportError).toHaveBeenCalledTimes(1);
     expect(options.reportError).toHaveBeenCalledWith("Settings", failure);
     expect(options.applyAppSettings).not.toHaveBeenCalled();
-    expect(options.openWorkspacePath).not.toHaveBeenCalled();
+    expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
   });
 
   it.each(["resolve", "reject"] as const)("ignores a late %s after unmount", async (settlement) => {
@@ -140,28 +145,100 @@ describe("useInitialAppSettingsHydration", () => {
     if (settlement === "reject") await reject(pending, new Error("late failure"));
 
     expect(options.applyAppSettings).not.toHaveBeenCalled();
-    expect(options.openWorkspacePath).not.toHaveBeenCalled();
+    expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
     expect(options.reportError).not.toHaveBeenCalled();
   });
 
-  function render(options: InitialAppSettingsHydrationOptions): void {
+  it("lets a manual open permanently win over delayed startup settings", async () => {
+    const pending = deferred<AppSettings>();
+    const options = hydrationOptions(pending.promise);
+    render(options);
+    options.startupRestoreCurrent.current = false;
+
+    await resolve(pending, {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace/startup",
+    });
+
+    expect(options.applyAppSettings).toHaveBeenCalledTimes(1);
+    expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
+  });
+
+  it("awaits and reports an asynchronous startup open rejection", async () => {
+    const failure = new Error("open rejected");
+    const options = hydrationOptions(
+      Promise.resolve({
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace/recent",
+      }),
+    );
+    options.startupOpenWorkspacePath.mockRejectedValueOnce(failure);
+
+    render(options);
+    await flush();
+    await flush();
+
+    expect(options.reportError).toHaveBeenCalledExactlyOnceWith("Settings", failure);
+  });
+
+  it("ignores a startup open rejection after unmount", async () => {
+    const opening = deferred<WorkspaceOpenOutcome>();
+    const options = hydrationOptions(
+      Promise.resolve({
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace/recent",
+      }),
+    );
+    options.startupOpenWorkspacePath.mockReturnValueOnce(opening.promise);
+    render(options);
+    await vi.waitFor(() => expect(options.startupOpenWorkspacePath).toHaveBeenCalledOnce());
+    act(() => root.unmount());
+
+    await reject(opening, new Error("late open rejection"));
+
+    expect(options.reportError).not.toHaveBeenCalled();
+  });
+
+  function render(options: HydrationTestOptions): void {
     act(() => root.render(<Harness options={options} />));
   }
 });
 
-function Harness({ options }: { readonly options: InitialAppSettingsHydrationOptions }) {
+function Harness({ options }: { readonly options: HydrationTestOptions }) {
   const hasRestoredRef = useRef(false);
   useInitialAppSettingsHydration({ ...options, hasRestoredRef });
   return null;
 }
 
-function hydrationOptions(result: Promise<AppSettings>): InitialAppSettingsHydrationOptions {
+interface HydrationTestOptions extends InitialAppSettingsHydrationOptions {
+  readonly startupOpenWorkspacePath: ReturnType<
+    typeof vi.fn<(path: string) => Promise<WorkspaceOpenOutcome>>
+  >;
+  readonly startupRestore: WorkspaceStartupRestoreIntent;
+  readonly startupRestoreCurrent: { current: boolean };
+}
+
+function hydrationOptions(result: Promise<AppSettings>): HydrationTestOptions {
+  const startupRestoreCurrent = { current: true };
+  const startupOpenWorkspacePath = vi.fn<(path: string) => Promise<WorkspaceOpenOutcome>>(
+    async () => ({ kind: "stale", requestToken: 0 }),
+  );
+  const startupRestore = {
+    generation: 1,
+    kind: "workspaceStartupRestoreIntent" as const,
+    userIntentGeneration: 0,
+    isCurrent: () => startupRestoreCurrent.current,
+    openWorkspacePath: startupOpenWorkspacePath,
+  };
   return {
     hasRestoredRef: { current: false },
     settingsGateway: { loadAppSettings: vi.fn<() => Promise<AppSettings>>(() => result) },
     applyAppSettings: vi.fn<(settings: AppSettings) => void>(),
-    openWorkspacePath: vi.fn<(path: string) => Promise<void>>(async () => undefined),
+    beginStartupRestore: vi.fn(() => startupRestore),
     reportError: vi.fn<(scope: string, error: unknown) => void>(),
+    startupOpenWorkspacePath,
+    startupRestore,
+    startupRestoreCurrent,
   };
 }
 
