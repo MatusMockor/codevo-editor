@@ -80,6 +80,10 @@ import {
   useManagedLanguageServerInstallCommands,
   useManagedLanguageServerInstallSubscriptions,
 } from "./workbenchController/useManagedLanguageServerInstallLifecycle";
+import {
+  useWorkbenchLanguageRuntimeProjectionRefBridge,
+  useWorkbenchLanguageRuntimeProjectionState,
+} from "./workbenchController/useWorkbenchLanguageRuntimeProjection";
 import { useWorkspaceOpenRequestLifecycle } from "./workbenchController/useWorkspaceOpenRequestLifecycle";
 import { useWorkbenchWorkspaceFileChangeSubscription } from "./workbenchController/useWorkspaceFileChangeSubscription";
 import { useManagedWorkspaceIdentityOwnership } from "./workbenchController/useManagedWorkspaceIdentityOwnership";
@@ -240,7 +244,7 @@ import {
   type LanguageServerDocumentSyncGateway,
   type SessionBoundLanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
-import type { LanguageServerGateway, LanguageServerPlan } from "../domain/languageServer";
+import type { LanguageServerGateway } from "../domain/languageServer";
 import {
   canUseLanguageServerFeature,
   type EditorPosition,
@@ -260,10 +264,7 @@ import {
 import { type EslintDiagnosticsByRoot, type EslintFix } from "../domain/eslintDiagnostics";
 import { type PhpstanDiagnosticsByRoot } from "../domain/phpstanDiagnostics";
 import { renderMarkdownPreview } from "../domain/markdownPreview";
-import {
-  type LanguageServerRuntimeGateway,
-  type LanguageServerRuntimeStatus,
-} from "../domain/languageServerRuntime";
+import { type LanguageServerRuntimeGateway } from "../domain/languageServerRuntime";
 import {
   cachedLanguageServerRuntimeStatusForOwner,
   restoreRuntimeStatusCacheEntry,
@@ -311,7 +312,6 @@ import {
   type EditorDocument,
   type FileEntry,
   type IntelligenceMode,
-  type PhpToolAvailability,
   type WorkspaceDescriptor,
   type WorkspaceFileGateway,
   type WorkspaceOwnerFileGateway,
@@ -434,29 +434,30 @@ export function useWorkbenchController(
   const hasSymfonyFramework = phpFrameworkRuntimeContext.hasProvider("symfony");
   const [workspaceTrust, setWorkspaceTrust] = useState(null as WorkspaceTrustState | null);
   const workspaceTrusted = workspaceTrust ? workspaceTrust.trusted : false;
-  const [phpTools, setPhpTools] = useState(null as PhpToolAvailability | null);
-  const [languageServerPlan, setLanguageServerPlan] = useState(null as LanguageServerPlan | null);
-  const [installingManagedPhpactor, setInstallingManagedPhpactor] = useState(false);
-  const [installingManagedTypeScriptLanguageServer, setInstallingManagedTypeScriptLanguageServer] =
-    useState(false);
-  const [javaScriptTypeScriptLanguageServerPlan, setJavaScriptTypeScriptLanguageServerPlan] =
-    useState(null as LanguageServerPlan | null);
-  const [languageServerSetupOpen, setLanguageServerSetupOpen] = useState(false);
-  const [languageServerRuntimeStatus, setLanguageServerRuntimeStatus] = useState(
-    null as LanguageServerRuntimeStatus | null,
-  );
-  const [languageServerRuntimeStatusRoot, setLanguageServerRuntimeStatusRoot] = useState<
-    string | null
-  >(null);
-  const [phpIdeReadinessVersion, setPhpIdeReadinessVersion] = useState(0);
-  const [
+  const {
+    commands: languageRuntimeProjectionCommands,
+    installingManagedPhpactor,
+    installingManagedTypeScriptLanguageServer,
+    javaScriptTypeScriptLanguageServerPlan,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
-    setJavaScriptTypeScriptLanguageServerRuntimeStatus,
-  ] = useState(null as LanguageServerRuntimeStatus | null);
-  const [
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    languageServerPlan,
+    languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
+    languageServerSetupOpen,
+    phpIdeReadinessVersion,
+    phpTools,
+    setInstallingManagedPhpactor,
+    setInstallingManagedTypeScriptLanguageServer,
+    setJavaScriptTypeScriptLanguageServerPlan,
+    setJavaScriptTypeScriptLanguageServerRuntimeStatus,
     setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-  ] = useState<string | null>(null);
+    setLanguageServerPlan,
+    setLanguageServerRuntimeStatus,
+    setLanguageServerRuntimeStatusRoot,
+    setLanguageServerSetupOpen,
+    setPhpTools,
+  } = useWorkbenchLanguageRuntimeProjectionState();
   const [languageServerDiagnosticsByPath, setLanguageServerDiagnosticsByPath] = useState<
     Record<string, LanguageServerDiagnostic[]>
   >({});
@@ -1237,8 +1238,8 @@ export function useWorkbenchController(
     }
 
     lastPhpIdeReadinessSignatureRef.current = phpIdeReadinessSignature;
-    setPhpIdeReadinessVersion((current) => current + 1);
-  }, [phpIdeReadinessSignature]);
+    languageRuntimeProjectionCommands.bumpPhpIdeReadinessVersion();
+  }, [languageRuntimeProjectionCommands, phpIdeReadinessSignature]);
 
   useEffect(
     () => () => {
@@ -1251,27 +1252,16 @@ export function useWorkbenchController(
     [],
   );
 
-  useEffect(() => {
-    languageServerRuntimeStatusRef.current = languageServerRuntimeStatus;
-    languageServerRuntimeStatusRootRef.current = languageServerRuntimeStatusRoot;
-  }, [
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRef,
-    languageServerRuntimeStatusRoot,
-    languageServerRuntimeStatusRootRef,
-  ]);
-
-  useEffect(() => {
-    javaScriptTypeScriptLanguageServerRuntimeStatusRef.current =
-      javaScriptTypeScriptLanguageServerRuntimeStatus;
-    javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current =
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot;
-  }, [
+  useWorkbenchLanguageRuntimeProjectionRefBridge({
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRef,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
-  ]);
+    languageServerRuntimeStatus,
+    languageServerRuntimeStatusRef,
+    languageServerRuntimeStatusRoot,
+    languageServerRuntimeStatusRootRef,
+  });
 
   useEffect(() => {
     intelligenceModeRef.current = intelligenceMode;
@@ -2139,14 +2129,7 @@ export function useWorkbenchController(
       setWorkspaceDescriptor(null);
       setPackageScriptsByRoot({});
       setWorkspaceTrust(null);
-      setPhpTools(null);
-      setLanguageServerPlan(null);
-      setJavaScriptTypeScriptLanguageServerPlan(null);
-      setLanguageServerRuntimeStatus(null);
-      setLanguageServerRuntimeStatusRoot(null);
-      setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
-      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
-      setInstallingManagedTypeScriptLanguageServer(false);
+      languageRuntimeProjectionCommands.reset();
       setEntriesByDirectory({});
       setLoadingDirectories(new Set());
       resetDirectoryExplorerLifecycle();
@@ -2197,15 +2180,12 @@ export function useWorkbenchController(
       setCallHierarchyView(null);
       setTypeHierarchyView(null);
       setReferencesView(null);
-      setLanguageServerSetupOpen(false);
-      setInstallingManagedPhpactor(false);
       setSettingsOpen(false);
       setMessage(null);
       setNotices([]);
       clearLanguageServerDiagnostics();
       clearJavaScriptTypeScriptLanguageServerDiagnostics();
       clearPhpLocalDiagnostics();
-      setPhpIdeReadinessVersion(0);
       applyWorkspaceSettings(defaultWorkspaceSettings());
       setIntelligenceMode("basic");
       intelligenceModeRef.current = "basic";
@@ -2223,6 +2203,7 @@ export function useWorkbenchController(
       languageServerDiagnosticsByRootRef,
       languageServerDiagnosticsCoalescerRef,
       languageServerRuntimeStatusByRootRef,
+      languageRuntimeProjectionCommands,
       clearPhpLocalDiagnostics,
       clearPhpstanDiagnosticsForRoot,
       clearWorkspaceStateCache,
@@ -2753,23 +2734,12 @@ export function useWorkbenchController(
       applyWorkspaceSettings(workspaceSettings);
       setIntelligenceMode(workspaceSettings.intelligenceMode);
       setWorkspaceDescriptor(null);
-      setPhpTools(null);
       setWorkspaceTrust(null);
-      setLanguageServerPlan(null);
-      setJavaScriptTypeScriptLanguageServerPlan(null);
       const cachedPhpStatus = cachedLanguageServerRuntimeStatusForOwner(
         languageServerRuntimeStatusByRootRef.current,
         admittedRuntimeOwner,
       );
-      if (cachedPhpStatus) {
-        setLanguageServerRuntimeStatus(cachedPhpStatus);
-        setLanguageServerRuntimeStatusRoot(path);
-      } else {
-        setLanguageServerRuntimeStatus(null);
-        setLanguageServerRuntimeStatusRoot(null);
-      }
-      setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
-      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
+      languageRuntimeProjectionCommands.prepareWorkspace(cachedPhpStatus, path);
       setPhpTree(emptyPhpTree());
       setPhpTreeExpandedNodeIds(new Set());
       setPhpTreeLoading(false);
@@ -2803,7 +2773,6 @@ export function useWorkbenchController(
       lastPhpFileOutlineRefreshKeyRef.current = null;
       lastPhpIdeReadinessSignatureRef.current = null;
       resetPhpFrameworkCachesRef.current();
-      setPhpIdeReadinessVersion(0);
       restoreIndexRoot(cachedWorkspaceState?.indexProgress.rootPath ?? null);
       autoStartedLanguageServerRootRef.current = null;
       phpLanguageServerAutostartAttemptsByRootRef.current = {};
@@ -3053,6 +3022,7 @@ export function useWorkbenchController(
       loadDirectory,
       loadPackageScripts,
       languageServerRuntimeStatusByRootRef,
+      languageRuntimeProjectionCommands,
       persistAppSettings,
       persistCurrentWorkspaceSession,
       primeCachedDirectoryEntries,
@@ -3116,7 +3086,10 @@ export function useWorkbenchController(
       setEditorRevealTarget,
       setExpandedDirectories,
       setImplementationChooser,
+      setInstallingManagedTypeScriptLanguageServer,
+      setLanguageServerPlan,
       setNotices,
+      setInstallingManagedPhpactor,
       setQuickOpenOpen,
       setRecentFiles,
       setRecentFilesSwitcherOpen,
