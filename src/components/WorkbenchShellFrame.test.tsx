@@ -83,6 +83,7 @@ describe("WorkbenchShellFrame", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1_280 });
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);

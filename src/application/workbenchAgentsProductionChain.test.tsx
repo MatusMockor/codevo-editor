@@ -21,6 +21,7 @@ import {
 import { AgentModeView } from "../components/agentMode/AgentModeView";
 import { useAgentModelFavorites } from "./useAgentModelFavorites";
 import { normalizeAgentModelFavoriteKeys } from "../domain/agentSettings";
+import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
 import { chromeFixture } from "../components/agentMode/agentWorkbenchChromeTestFixtures";
 import { waitForReact } from "../test/reactTestLifecycle";
 import {
@@ -33,7 +34,10 @@ import type {
   WorkspaceIdentityDescriptor,
 } from "./workspaceIdentityGatewayPort";
 import type { WorkspaceIdentityDescriptorResolver } from "../infrastructure/tauriWorkspaceIdentityGateway";
-import type { WorkbenchWorkspaceGateways } from "./workbenchControllerContracts";
+import type {
+  WorkbenchControllerOptions,
+  WorkbenchWorkspaceGateways,
+} from "./workbenchControllerContracts";
 
 describe("workbench agents production chain", () => {
   const { renderController } = setupWorkbenchControllerTestHarness();
@@ -62,9 +66,11 @@ describe("workbench agents production chain", () => {
 
   it("starts in the agent layout and dispatches a thread through the real hook chain", async () => {
     const agentTaskGateway = fakeAgentTaskGateway();
+    const agentProviderGateway = fakeAgentProviderGateway();
     const gitWorktreeGateway = fakeGitWorktreeGateway();
     const { getWorkbench } = renderController({
       agentTaskGateway: agentTaskGateway.gateway,
+      agentProviderGateway,
       gitWorktreeGateway: gitWorktreeGateway.gateway,
       appSettings: {
         ...defaultAppSettings(),
@@ -76,6 +82,9 @@ describe("workbench agents production chain", () => {
     });
     await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
     await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
+    await waitForReact(() =>
+      expect(getWorkbench().agents.providerManagement.authority("claudeCode")).not.toBeNull(),
+    );
     expect(getWorkbench().agentWorkbench.effectiveLayout).toBe("agent");
     expect(getWorkbench().sidebarView).toBe("files");
 
@@ -320,6 +329,8 @@ describe("workbench agents production chain", () => {
 
   function renderAgentMode(workbench: WorkbenchController): void {
     const mountedRoot = panelRoot;
+    const preferences =
+      workbench.appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
     expect(mountedRoot).not.toBeNull();
     act(() => {
       mountedRoot?.render(
@@ -333,6 +344,10 @@ describe("workbench agents production chain", () => {
             void workbench.agents.agentProjects.trustProject(projectRootKey)
           }
           overflowRootPaths={workbench.agents.agentProjects.overflowRootPaths}
+          providerEnabled={{
+            claudeCode: preferences.claudeCode.enabled,
+            codex: preferences.codex.enabled,
+          }}
           projects={workbench.agents.agentProjects.projects}
           workspaceRoot={workbench.workspaceRoot}
         />,
@@ -378,6 +393,31 @@ function fakeAgentTaskGateway(): {
       undefined,
   };
   return { gateway, started, acknowledged };
+}
+
+function fakeAgentProviderGateway(): NonNullable<
+  WorkbenchControllerOptions["agentProviderGateway"]
+> {
+  return {
+    currentAgentProviderPolicy: async ({ provider }) => ({ kind: "unregistered", provider }),
+    registerAgentProviderPolicy: async (request) => ({
+      provider: request.provider,
+      settingsRevision: request.settingsRevision,
+      providerGeneration: 1,
+    }),
+    probeAgentProviderHealth: async () => ({
+      installedVersion: "1.0.0",
+      auth: { kind: "unknown" },
+      update: { kind: "checksDisabled" },
+      checkedAtEpochMs: 1,
+    }),
+    updateAgentProvider: async () => ({
+      kind: "failed",
+      reason: "admissionRefused",
+      outputTail: "",
+      outputTruncated: false,
+    }),
+  };
 }
 
 function fakeGitWorktreeGateway(): {

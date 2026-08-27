@@ -3,9 +3,9 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
+import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
-import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
-import { waitForReact } from "../test/reactTestLifecycle";
 import { AgentsSettingsSection, type AgentsSettingsSectionProps } from "./AgentsSettingsSection";
 
 describe("AgentsSettingsSection agent CLI path input", () => {
@@ -71,18 +71,10 @@ describe("AgentsSettingsSection agent CLI path input", () => {
     expect(onChangeAgentCliPath).toHaveBeenCalledWith("claudeCode", null);
   });
 
-  it("shows independent CLI versions and persists appearance and favorite clearing", async () => {
-    const gateway: AgentCliVersionGateway = {
-      probeAgentCliVersion: vi.fn(async ({ agentCliKind }) => ({
-        version: agentCliKind === "claudeCode" ? "2.1.245" : "0.149.1",
-        probedAtEpochMs: 1,
-        binaryFingerprint: { sizeBytes: 1, modifiedEpochMs: 1 },
-      })),
-    };
+  it("shows independent provider health and persists appearance and favorite clearing", () => {
     const onChangeAgentAppearanceVariant = vi.fn();
     const onClearAgentModelFavorites = vi.fn();
     render({
-      agentCliVersionGateway: gateway,
       appSettings: {
         ...defaultAppSettings(),
         agentCliPaths: { claudeCode: "/bin/claude", codex: "/bin/codex" },
@@ -92,11 +84,9 @@ describe("AgentsSettingsSection agent CLI path input", () => {
       onClearAgentModelFavorites,
     });
 
-    await waitForReact(() => expect(host.textContent).toContain("Version 2.1.245"));
+    expect(host.textContent).toContain("Version 2.1.245");
     expect(host.textContent).toContain("Version 0.149.1");
     setValue(cliPathInput(), "/opt/bin/claude");
-    expect(host.textContent).toContain("Save the path to check its version");
-    expect(host.textContent).not.toContain("Version 2.1.245");
     const appearance = [...host.querySelectorAll("select")].find(
       (select) => select.parentElement?.textContent?.includes("Agent appearance") === true,
     );
@@ -123,11 +113,15 @@ describe("AgentsSettingsSection agent CLI path input", () => {
       hasWorkspace: true,
       workspaceSettings: defaultWorkspaceSettings(),
       onChangeAgentCliPath: () => undefined,
+      onChangeAgentProviderCheckForUpdates: () => undefined,
+      onChangeAgentProviderEnabled: () => undefined,
+      onChangeAgentProviderHealthCheckInterval: () => undefined,
       onChangeAgentCliKind: () => undefined,
       onChangeAgentAppearanceVariant: () => undefined,
       onClearAgentModelFavorites: () => undefined,
       onChangeMaxConcurrentAgentTasks: () => undefined,
       onChangeAgentIsolationPolicy: () => undefined,
+      providerManagement: providerManagement(),
       ...overrides,
     };
     act(() => root.render(createElement(AgentsSettingsSection, props)));
@@ -157,3 +151,53 @@ describe("AgentsSettingsSection agent CLI path input", () => {
     });
   }
 });
+
+function providerManagement(): AgentProviderManagementSurface {
+  return {
+    providers: {
+      claudeCode: {
+        health: {
+          kind: "ready",
+          installedVersion: "2.1.245",
+          auth: { kind: "signedIn", label: null },
+          update: { kind: "checksDisabled" },
+          checkedAtEpochMs: 1,
+        },
+        policy: { kind: "registered", settingsRevision: 1, providerGeneration: 1 },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+      codex: {
+        health: {
+          kind: "ready",
+          installedVersion: "0.149.1",
+          auth: { kind: "unknown" },
+          update: { kind: "checksDisabled" },
+          checkedAtEpochMs: 1,
+        },
+        policy: { kind: "registered", settingsRevision: 1, providerGeneration: 1 },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+    },
+    toast: null,
+    admissionAuthority: (provider) => ({
+      provider,
+      revision: 1,
+      disposition: { kind: "disabled" },
+    }),
+    authority: (provider) => ({
+      settingsRevision: 1,
+      provider,
+      preference: defaultAgentProviderPreferences()[provider],
+      cliPath: provider === "claudeCode" ? "/bin/claude" : "/bin/codex",
+    }),
+    dismissToast: () => undefined,
+    dismissUpdate: async () => true,
+    refresh: async () => undefined,
+    retryRegistration: async () => undefined,
+    save: async () => true,
+    saveWithOutcome: async () => ({ kind: "persisted", policyRegistered: true }),
+    update: async () => null,
+  };
+}

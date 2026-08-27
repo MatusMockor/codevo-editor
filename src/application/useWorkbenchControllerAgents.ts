@@ -1,11 +1,17 @@
 import {
   useCallback,
   useMemo,
+  useState,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
 } from "react";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
+import type {
+  AgentProviderHealthGateway,
+  AgentProviderPolicyGateway,
+  AgentProviderUpdateGateway,
+} from "../domain/agentProviderHealth";
 import type { GitChangedFile, GitGateway } from "../domain/git";
 import type { GitRepositoryMapping, GitRepositoryStatus } from "../domain/gitRepositoryMapping";
 import type {
@@ -89,11 +95,16 @@ export interface WorkbenchControllerAgentsOptions {
   readonly agentLayoutAvailable?: boolean;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly appSettingsRef: { readonly current: AppSettings };
+  readonly applyAppSettings: (settings: AppSettings) => void;
   readonly bottomPanelVisible: boolean;
   readonly editorSessionOwnerKey: string | null;
   readonly options: Pick<
     WorkbenchControllerOptions,
-    "agentCliVersionGateway" | "agentRootLeaseGateway" | "agentTaskGateway" | "gitWorktreeGateway"
+    | "agentCliVersionGateway"
+    | "agentProviderGateway"
+    | "agentRootLeaseGateway"
+    | "agentTaskGateway"
+    | "gitWorktreeGateway"
   >;
   readonly openFileRef: WorkbenchControllerOpenFileRef;
   readonly openGitChange: WorkbenchControllerOpenGitChange;
@@ -111,7 +122,7 @@ export interface WorkbenchControllerAgentsOptions {
   readonly setSettingsInitialSection: (section: SettingsSection) => void;
   readonly setSettingsOpen: (open: boolean) => void;
   readonly setWorkspaceTrust: Dispatch<SetStateAction<WorkspaceTrustState | null>>;
-  readonly settingsGateway: Pick<SettingsGateway, "loadWorkspaceSettings">;
+  readonly settingsGateway: Pick<SettingsGateway, "loadWorkspaceSettings" | "saveAppSettings">;
   readonly workspaceIdentityByRootRef: {
     readonly current: Readonly<Record<string, WorkspaceIdentityDescriptor>>;
   };
@@ -127,11 +138,23 @@ export interface WorkbenchControllerAgentsOptions {
 }
 
 export interface WorkbenchControllerAgentsSurface
-  extends WorkbenchAgentsSurface, AgentWorkbenchLayoutSurface {}
+  extends WorkbenchAgentsSurface, AgentWorkbenchLayoutSurface {
+  markAppSettingsHydrated(hydrated: true): void;
+}
+
+const unavailableAgentProviderGateway: AgentProviderPolicyGateway &
+  AgentProviderHealthGateway &
+  AgentProviderUpdateGateway = {
+  currentAgentProviderPolicy: () => Promise.reject(new Error("Provider gateway is unavailable.")),
+  registerAgentProviderPolicy: () => Promise.reject(new Error("Provider gateway is unavailable.")),
+  probeAgentProviderHealth: () => Promise.reject(new Error("Provider gateway is unavailable.")),
+  updateAgentProvider: () => Promise.reject(new Error("Provider gateway is unavailable.")),
+};
 
 export function useWorkbenchControllerAgents(
   options: WorkbenchControllerAgentsOptions,
 ): WorkbenchControllerAgentsSurface {
+  const [appSettingsHydrated, setAppSettingsHydrated] = useState(false);
   const layoutPersistence = useAgentWorkbenchLayoutPersistence(
     options.workspaceRoot,
     options.persistWorkspaceSettings,
@@ -203,6 +226,7 @@ export function useWorkbenchControllerAgents(
   );
 
   const agents = useWorkbenchAgents({
+    agentProviderGateway: options.options.agentProviderGateway ?? unavailableAgentProviderGateway,
     agentCliVersionGateway: options.options.agentCliVersionGateway,
     agentTaskGateway: options.options.agentTaskGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway,
@@ -211,6 +235,9 @@ export function useWorkbenchControllerAgents(
     agentProjectGateways,
     agentModeActive,
     appSettingsRef: options.appSettingsRef,
+    applyAppSettings: options.applyAppSettings,
+    settingsHydrated: appSettingsHydrated,
+    settingsPersistenceGateway: options.settingsGateway,
     workspaceSettingsRef: options.workspaceSettingsRef,
     gitGateway: options.gitGateway,
     gitRepositoryMappings: options.gitRepositoryMappings,
@@ -227,8 +254,13 @@ export function useWorkbenchControllerAgents(
   });
 
   return useMemo(
-    () => ({ ...agents, agentModeActive, agentWorkbench }),
-    [agentModeActive, agentWorkbench, agents],
+    () => ({
+      ...agents,
+      agentModeActive,
+      agentWorkbench,
+      markAppSettingsHydrated: setAppSettingsHydrated,
+    }),
+    [agentModeActive, agentWorkbench, agents, setAppSettingsHydrated],
   );
 }
 

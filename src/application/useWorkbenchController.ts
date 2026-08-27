@@ -588,9 +588,7 @@ export function useWorkbenchController(
   const replaceJavaScriptTestProblemNotices = useReplaceJavaScriptTestProblemNotices(setNotices);
   const reportError = useCallback(
     (source: string, error: unknown) => {
-      if (isBenignError(error)) {
-        return;
-      }
+      if (isBenignError(error)) return;
 
       const nextMessage = String(error);
       setMessage(nextMessage);
@@ -818,17 +816,15 @@ export function useWorkbenchController(
     workspaceRuntimeOwnerGeneration: resolveWorkspaceRuntimeOwnerGenerationForIndex,
     workspaceRuntimeOwnerRef,
   });
-  const artisanMakePaletteOpen = Boolean(
+  const artisanMakePaletteOpen = !!(
     workspaceRoot &&
     artisanMakePaletteRoot &&
-    workspaceRootKeysEqual(workspaceRoot, artisanMakePaletteRoot),
+    workspaceRootKeysEqual(workspaceRoot, artisanMakePaletteRoot)
   );
   const openArtisanMakePalette = useCallback(() => {
     const rootPath = currentWorkspaceRootRef.current;
 
-    if (!rootPath) {
-      return;
-    }
+    if (!rootPath) return;
 
     setArtisanMakePaletteRoot(rootPath);
   }, []);
@@ -1217,13 +1213,9 @@ export function useWorkbenchController(
   ]);
 
   useEffect(() => {
-    if (!phpIdeReadinessSignature) {
-      return;
-    }
+    if (!phpIdeReadinessSignature) return;
 
-    if (lastPhpIdeReadinessSignatureRef.current === phpIdeReadinessSignature) {
-      return;
-    }
+    if (lastPhpIdeReadinessSignatureRef.current === phpIdeReadinessSignature) return;
 
     lastPhpIdeReadinessSignatureRef.current = phpIdeReadinessSignature;
     languageRuntimeProjectionCommands.bumpPhpIdeReadinessVersion();
@@ -1599,6 +1591,7 @@ export function useWorkbenchController(
   });
 
   const agents = useWorkbenchControllerAgents({
+    applyAppSettings,
     appSettingsRef,
     bottomPanelVisible,
     options,
@@ -2641,7 +2634,7 @@ export function useWorkbenchController(
         workspaceRuntimeOwnerRef,
       });
       const isCurrentOpenWorkspaceSmartModeRequest = () =>
-        isCurrentOpenWorkspaceOwnerRequest() && Boolean(openSmartModeIntent?.isCurrent());
+        isCurrentOpenWorkspaceOwnerRequest() && !!openSmartModeIntent?.isCurrent();
       const activateCurrentDocumentSessionAuthority = () =>
         documentSessionAuthorityLifecycle.activate({
           descriptor: identityDescriptor,
@@ -2650,9 +2643,8 @@ export function useWorkbenchController(
             workbenchMountedRef.current &&
             workspaceRootKeysEqual(currentWorkspaceRootRef.current, path) &&
             currentEditorSessionOwnerKeyRef.current === nextOwnerKey &&
-            Boolean(
-              identityDescriptor && workspaceIdentityByRootRef.current[path] === identityDescriptor,
-            ),
+            !!identityDescriptor &&
+            workspaceIdentityByRootRef.current[path] === identityDescriptor,
           ownerKey: identityDescriptor ? nextOwnerKey : null,
           resolveOwnership: resolveDocumentSaveOwnership,
           rootPath: path,
@@ -5113,6 +5105,7 @@ export function useWorkbenchController(
     applyAppSettings,
     beginStartupRestore,
     hasRestoredRef,
+    onAppSettingsHydrated: agents.markAppSettingsHydrated,
     reportError,
     settingsGateway,
   });

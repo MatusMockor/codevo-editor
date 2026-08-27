@@ -20,6 +20,7 @@ import {
   normalizeMaxConcurrentAgentTasks,
   nextAgentModelFavoritesRevision,
 } from "./agentSettings";
+import { defaultAgentProviderPreferences } from "./agentProviderSettings";
 
 describe("defaultAgentAppSettings", () => {
   it("defaults to no configured CLI, Claude Code, and four concurrent tasks", () => {
@@ -29,6 +30,7 @@ describe("defaultAgentAppSettings", () => {
       agentAppearanceVariant: "current",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 4,
     });
   });

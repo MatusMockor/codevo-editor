@@ -54,6 +54,7 @@ function startRequest(overrides: Record<string, unknown> = {}): Record<string, u
     agentCliKind: "claudeCode",
     resumeSessionId: null,
     launch: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
+    providerGeneration: 1,
     ...overrides,
   };
 }
@@ -341,7 +342,10 @@ describe("validateStartAgentTaskRequest", () => {
   });
 
   it("rejects out-of-bounds and inconsistent requests", () => {
+    const withoutProviderGeneration = startRequest();
+    delete withoutProviderGeneration.providerGeneration;
     const rejected: readonly unknown[] = [
+      withoutProviderGeneration,
       startRequest({ resumeSessionId: "-flag-looking-id" }),
       startRequest({ resumeSessionId: "short" }),
       startRequest({ resumeSessionId: "a".repeat(129) }),
@@ -358,6 +362,10 @@ describe("validateStartAgentTaskRequest", () => {
       startRequest({ projectRoot: "/repo\nforeign" }),
       startRequest({ projectRoot: `/${"x".repeat(4_096)}` }),
       startRequest({ projectRoot: undefined }),
+      startRequest({ providerGeneration: 0 }),
+      startRequest({ providerGeneration: -1 }),
+      startRequest({ providerGeneration: 1.5 }),
+      startRequest({ providerGeneration: Number.MAX_SAFE_INTEGER + 1 }),
       startRequest({ extra: 1 }),
     ];
     for (const value of rejected) {

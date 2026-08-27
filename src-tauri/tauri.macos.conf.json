@@ -7,9 +7,10 @@
         "title": "Codevo Editor",
         "width": 1280,
         "height": 820,
-        "minWidth": 960,
+        "minWidth": 900,
         "minHeight": 640,
         "decorations": true,
+        "transparent": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "trafficLightPosition": {

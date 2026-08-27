@@ -202,6 +202,9 @@ describe("AgentSurfacePanel", () => {
     expect(close?.querySelector("svg")?.getAttribute("width")).toBe("14");
     expect(cssRule(agentModeCss, ".agent-surface__tab-close {")).toContain("width: 20px");
     expect(cssRule(agentModeCss, ".agent-surface__tab-close:hover {")).toContain("background:");
+    expect(cssRule(agentModeCss, ".workbench-frame {")).toContain(
+      "--agent-surface-focus-gutter: 4px",
+    );
 
     click('[role="tab"]#agent-surface-tab-diff');
     expect(onActivateSurface).toHaveBeenCalledWith("diff");

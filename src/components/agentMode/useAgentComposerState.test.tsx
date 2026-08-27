@@ -165,6 +165,33 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.prompt).toBe("");
   });
 
+  it("keeps a follow-up bound to the provider that owns the selected thread", async () => {
+    const sendFollowUp = vi.fn(async () => true);
+    render(
+      threadsSurfaceFixture({
+        agentCliKind: "codex",
+        threads: [surfaceThreadView()],
+        sendFollowUp,
+      }),
+    );
+
+    act(() => current().navigation.selectThread("agt-1"));
+    expect(current().composer.composerProps.launchProvider).toBe("claudeCode");
+    expect(current().composer.composerProps.mode).toMatchObject({
+      kind: "followUp",
+      blockedReason: null,
+    });
+  });
+
+  it("falls back to the first enabled provider without changing persisted selection", () => {
+    const agents = threadsSurfaceFixture({ agentCliKind: "codex" });
+    render(agents, [projectFixture()], { claudeCode: true, codex: false });
+
+    expect(agents.agentCliKind).toBe("codex");
+    expect(current().composer.composerProps.launchProvider).toBe("claudeCode");
+    expect(current().composer.composerProps.launch.provider).toBe("claudeCode");
+  });
+
   it("keeps a pending follow-up when the selected thread owner is replaced", async () => {
     let resolveFollowUp: ((value: boolean) => void) | null = null;
     const pendingFollowUp = new Promise<boolean>((resolve) => {
@@ -464,9 +491,15 @@ describe("useAgentComposerState", () => {
   function render(
     agents: AgentThreadsSurface,
     projects: ReadonlyArray<AgentProjectDescriptor> = [projectFixture()],
+    providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>> = {
+      claudeCode: true,
+      codex: true,
+    },
   ): void {
     act(() => {
-      root.render(<Harness agents={agents} projects={projects} />);
+      root.render(
+        <Harness agents={agents} projects={projects} providerEnabled={providerEnabled} />,
+      );
     });
   }
 
@@ -478,9 +511,11 @@ describe("useAgentComposerState", () => {
   function Harness({
     agents,
     projects,
+    providerEnabled,
   }: {
     readonly agents: AgentThreadsSurface;
     readonly projects: ReadonlyArray<AgentProjectDescriptor>;
+    readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>>;
   }) {
     const groups = useMemo(
       () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
@@ -496,6 +531,7 @@ describe("useAgentComposerState", () => {
       agents,
       groups,
       projects,
+      providerEnabled,
       railScope: navigation.composerScope,
       selectedThread: navigation.selectedThread,
       onClearSelectedThread: navigation.clearSelectedThread,

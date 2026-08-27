@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const appCss = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
 const shellCss = readFileSync(resolve(import.meta.dirname, "../workbenchShellFrame.css"), "utf8");
+const rootCss = readFileSync(resolve(import.meta.dirname, "../../App.css"), "utf8");
 
 function block(source: string, marker: string): string {
   const start = source.indexOf(marker);
@@ -34,6 +35,28 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-composer")).not.toMatch(/position:\s*absolute/);
     expect(rule(".agent-composer")).toContain("max-height: min(44vh, 320px)");
     expect(rule(".agent-session__body")).not.toMatch(/padding:[^;]*148px/);
+  });
+
+  it("keeps the frame bounded and gives the thread column a real minimum track", () => {
+    const frame = rule('.workbench-frame[data-layout="agent"] {', shellCss);
+    expect(frame).toContain("overflow: hidden");
+    expect(frame.replace(/\s+/g, " ")).toContain(
+      "grid-template-columns: var(--agent-rail-track) minmax(var(--agent-center-min-width), 1fr) var(--agent-right-panel-width)",
+    );
+    expect(rule('.workbench-frame[data-layout="agent"] > [data-slot="agent"]', shellCss)).toContain(
+      "overflow: hidden",
+    );
+  });
+
+  it("paints every window root and shell with an opaque full-size background", () => {
+    const roots = block(rootCss, "html,");
+    const shell = rule(".app-shell {", rootCss);
+    expect(roots).toContain("min-width: 100%");
+    expect(roots).toContain("min-height: 100%");
+    expect(roots).toContain("background: var(--color-app)");
+    expect(shell).toContain("min-width: 100%");
+    expect(shell).toContain("min-height: 100%");
+    expect(shell).toContain("background: var(--color-app)");
   });
 
   it("narrows the thread rail before adapting thread navigation", () => {
@@ -83,9 +106,18 @@ describe("agent mode responsive layout contract", () => {
     );
     expect(rule(".agent-surface__tab > span", narrow)).toContain("clip-path: inset(50%)");
     expect(rule(".agent-surface__tabs", narrow)).toContain("overflow-x: auto");
+    expect(rule(".agent-surface__tabs", narrow)).toContain(
+      "padding: var(--agent-surface-focus-gutter)",
+    );
+    expect(rule(".agent-surface__tabs", narrow)).toContain("scroll-padding-inline");
     expect(rule(".agent-surface__tabs")).toContain("overflow: hidden");
     expect(rule(".agent-surface__layout-controls")).toContain("flex: none");
     expect(rule(".agent-surface__head > .agent-iconbutton")).toContain("flex: none");
+  });
+
+  it("reserves the largest variant focus-ring spread inside the surface scrollport", () => {
+    expect(rule(".workbench-frame {")).toContain("--agent-surface-focus-gutter: 4px");
+    expect(rule('.workbench-frame[data-agent-variant="studio"]')).toContain("0 0 0 4px");
   });
 
   it("collapses the file tree column when the surface reports no tree", () => {
@@ -102,7 +134,7 @@ describe("agent mode responsive layout contract", () => {
   it("places the docked bottom panel under the thread column beside a full-height right panel", () => {
     const frame = rule('.workbench-frame[data-layout="agent"] {', shellCss);
     expect(frame.replace(/\s+/g, " ")).toContain(
-      "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr) var(--agent-right-panel-width)",
+      "grid-template-columns: var(--agent-rail-track) minmax(var(--agent-center-min-width), 1fr) var(--agent-right-panel-width)",
     );
     expect(frame).toContain("grid-template-rows: minmax(0, 1fr) var(--agent-bottom-panel-height)");
 

@@ -6,6 +6,8 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAgentModelFavorites } from "../../application/useAgentModelFavorites";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
+import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import { AgentModelPicker } from "./AgentModelPicker";
 import type { AgentModelChoice } from "./agentLaunchPresentation";
@@ -188,13 +190,48 @@ describe("AgentModelPicker", () => {
     expect(host.querySelector('[role="dialog"]')).toBeNull();
   });
 
+  it("does not open when its provider is disabled", () => {
+    render(CLAUDE, vi.fn(), false, management({ claudeCode: false, codex: true }));
+    expect(trigger().disabled).toBe(true);
+    open();
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("omits disabled providers from the model rail", () => {
+    render(CLAUDE, vi.fn(), false, management({ claudeCode: true, codex: false }));
+    open();
+    expect(host.querySelector('[data-provider="claudeCode"]')).not.toBeNull();
+    expect(host.querySelector('[data-provider="codex"]')).toBeNull();
+  });
+
+  it("keeps persisted enablement separate from unavailable registration authority", () => {
+    const base = management({ claudeCode: true, codex: true });
+    const unavailable: AgentProviderManagementSurface = {
+      ...base,
+      authority: () => null,
+      admissionAuthority: (provider) => ({
+        provider,
+        revision: 2,
+        disposition: { kind: "policyUnavailable", reason: "registrationFailed" },
+      }),
+    };
+    render(CLAUDE, vi.fn(), false, unavailable, { claudeCode: true, codex: true });
+
+    expect(trigger().disabled).toBe(true);
+    expect(trigger().title).toBe("Provider policy registration failed");
+  });
+
   function Harness({
     disabled,
     launch,
     onSelect,
+    providerEnabled,
+    providerManagement,
   }: {
     readonly launch: AgentLaunchOptions;
     readonly disabled: boolean;
+    readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>> | null;
+    readonly providerManagement: AgentProviderManagementSurface | null;
     onSelect(model: AgentModelChoice): void;
   }) {
     const favorites = useAgentModelFavorites();
@@ -208,6 +245,8 @@ describe("AgentModelPicker", () => {
         label="Agent model"
         launch={current}
         onSelect={onSelect}
+        providerEnabled={providerEnabled}
+        providerManagement={providerManagement}
       />
     );
   }
@@ -216,8 +255,29 @@ describe("AgentModelPicker", () => {
     launch: AgentLaunchOptions,
     onSelect: (model: AgentModelChoice) => void = () => undefined,
     disabled = false,
+    providerManagement: AgentProviderManagementSurface | null = null,
+    providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>> | null = null,
   ): void {
-    act(() => root.render(<Harness disabled={disabled} launch={launch} onSelect={onSelect} />));
+    act(() =>
+      root.render(
+        <Harness
+          disabled={disabled}
+          launch={launch}
+          onSelect={onSelect}
+          providerEnabled={
+            providerEnabled ??
+            (providerManagement === null
+              ? null
+              : {
+                  claudeCode:
+                    providerManagement.authority("claudeCode")?.preference.enabled ?? false,
+                  codex: providerManagement.authority("codex")?.preference.enabled ?? false,
+                })
+          }
+          providerManagement={providerManagement}
+        />,
+      ),
+    );
   }
 
   function trigger(): HTMLButtonElement {
@@ -293,6 +353,56 @@ describe("AgentModelPicker", () => {
     return element ?? document.createElement("button");
   }
 });
+
+function management(
+  enabled: Readonly<Record<"claudeCode" | "codex", boolean>>,
+): AgentProviderManagementSurface {
+  const preferences = defaultAgentProviderPreferences();
+  return {
+    providers: {
+      claudeCode: {
+        health: enabled.claudeCode ? { kind: "notConfigured" } : { kind: "disabled" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+      codex: {
+        health: enabled.codex ? { kind: "notConfigured" } : { kind: "disabled" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+    },
+    toast: null,
+    admissionAuthority: (provider) =>
+      enabled[provider]
+        ? {
+            provider,
+            revision: 1,
+            disposition: { kind: "ready" },
+            cliPath: `/bin/${provider}`,
+            providerGeneration: 1,
+          }
+        : {
+            provider,
+            revision: 1,
+            disposition: { kind: "disabled" },
+          },
+    authority: (provider) => ({
+      settingsRevision: 1,
+      provider,
+      preference: { ...preferences[provider], enabled: enabled[provider] },
+      cliPath: `/bin/${provider}`,
+    }),
+    dismissToast: vi.fn(),
+    dismissUpdate: vi.fn(async () => true),
+    refresh: vi.fn(async () => undefined),
+    retryRegistration: vi.fn(async () => undefined),
+    save: vi.fn(async () => true),
+    saveWithOutcome: vi.fn(async () => ({ kind: "persisted" as const, policyRegistered: true })),
+    update: vi.fn(async () => null),
+  };
+}
 
 describe("AgentModelPicker search styling contract", () => {
   const css = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");

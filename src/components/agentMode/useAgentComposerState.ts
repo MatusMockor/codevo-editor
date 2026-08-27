@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import { MAX_AGENT_TASK_PROMPT_BYTES, type AgentTaskIsolation } from "../../domain/agentTask";
+import {
+  MAX_AGENT_TASK_PROMPT_BYTES,
+  type AgentCliKind,
+  type AgentTaskIsolation,
+} from "../../domain/agentTask";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import type {
   AgentComposerMode,
@@ -48,6 +52,7 @@ export type AgentComposerSurface = Pick<
 
 export interface AgentComposerStateOptions {
   readonly agents: AgentComposerSurface;
+  readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly selectedThread: AgentThreadView | null;
@@ -59,14 +64,25 @@ export interface AgentComposerStateOptions {
 export interface AgentComposerState {
   readonly target: ComposerTarget | null;
   readonly composerLabel: string | null;
-  readonly composerProps: AgentComposerProps;
+  readonly composerProps: AgentComposerPromptProps;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
   clearSelection(): void;
 }
 
 export type AgentComposerControllerProps = Omit<
   AgentComposerProps,
-  "onPromptChange" | "onSubmit" | "prompt" | "promptBytes" | "submitBlocked"
+  | "onOpenProviderSettings"
+  | "onPromptChange"
+  | "onSubmit"
+  | "prompt"
+  | "promptBytes"
+  | "providerEnabled"
+  | "submitBlocked"
+>;
+
+export type AgentComposerPromptProps = Omit<
+  AgentComposerProps,
+  "onOpenProviderSettings" | "providerEnabled"
 >;
 
 export interface AgentComposerControllerState {
@@ -104,6 +120,7 @@ export function useAgentComposerControllerState({
   onClearSelectedThread,
   onThreadStarted,
   projects,
+  providerEnabled,
   railScope,
   selectedThread,
 }: AgentComposerStateOptions): AgentComposerControllerState {
@@ -157,14 +174,13 @@ export function useAgentComposerControllerState({
   const guard = preview?.inPlaceGuard ?? { kind: "safe" as const };
   const confirmationKey = preview?.confirmationKey ?? null;
   const confirmed = confirmationKey !== null && unsafeConfirmed === confirmationKey;
-  const composerMode = useComposerMode(selectedThread, agents);
-
   const targetRootKey = target?.projectRootKey ?? null;
   const launchScope = useMemo(
     () => resolveLaunchScope(selectedThread, targetRootKey),
     [selectedThread, targetRootKey],
   );
-  const agentCliKind = agents.agentCliKind;
+  const agentCliKind = composerProviderKind(selectedThread, agents.agentCliKind, providerEnabled);
+  const composerMode = useComposerMode(selectedThread, agents, agentCliKind);
   const lastUsedLaunch = agents.lastUsedLaunch;
   const composerLaunch = useMemo(
     () => resolveComposerLaunch(launchChoice, launchScope, agentCliKind, lastUsedLaunch),
@@ -339,9 +355,21 @@ export function useAgentComposerControllerState({
   };
 }
 
+function composerProviderKind(
+  selectedThread: AgentThreadView | null,
+  selectedProvider: AgentCliKind,
+  providerEnabled: Readonly<Record<AgentCliKind, boolean>>,
+): AgentCliKind {
+  if (selectedThread !== null) return selectedThread.thread.provider.kind;
+  if (providerEnabled[selectedProvider]) return selectedProvider;
+  if (providerEnabled.claudeCode) return "claudeCode";
+  if (providerEnabled.codex) return "codex";
+  return selectedProvider;
+}
+
 export function useAgentComposerPromptState(
   controller: AgentComposerPromptController,
-): AgentComposerProps {
+): AgentComposerPromptProps {
   const [prompt, setPrompt] = useState("");
   const promptRevisionRef = useRef(0);
   const changePrompt = useCallback((next: string) => {
@@ -475,19 +503,21 @@ function composerProjectOptions(
 function useComposerMode(
   selectedThread: AgentThreadView | null,
   agents: AgentComposerSurface,
+  agentCliKind: AgentCliKind,
 ): AgentComposerMode {
-  const { agentCliConfigured, agentCliKind, liveTaskCount, maxConcurrentAgentTasks } = agents;
+  const { agentCliConfigured, liveTaskCount, maxConcurrentAgentTasks } = agents;
+  const providerConfigured = selectedThread === null ? agentCliConfigured : true;
   return useMemo<AgentComposerMode>(() => {
     if (selectedThread === null) return { kind: "new" };
     return {
       kind: "followUp",
       threadTitle: agentThreadDisplayTitle(selectedThread.thread),
       blockedReason: agentFollowUpBlockedReason(selectedThread, {
-        agentCliConfigured,
+        agentCliConfigured: providerConfigured,
         agentCliKind,
         liveTaskCount,
         maxConcurrentAgentTasks,
       }),
     };
-  }, [agentCliConfigured, agentCliKind, liveTaskCount, maxConcurrentAgentTasks, selectedThread]);
+  }, [agentCliKind, liveTaskCount, maxConcurrentAgentTasks, providerConfigured, selectedThread]);
 }

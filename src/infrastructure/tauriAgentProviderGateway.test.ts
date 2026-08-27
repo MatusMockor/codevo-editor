@@ -1,0 +1,216 @@
+import { describe, expect, it, vi } from "vitest";
+import type {
+  AgentProviderGenerationRequest,
+  AgentProviderPolicyRegistrationRequest,
+  AgentProviderUpdateRequest,
+} from "../domain/agentProviderHealth";
+import {
+  GET_AGENT_PROVIDER_POLICY_IPC_COMMAND,
+  PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND,
+  REGISTER_AGENT_PROVIDER_POLICY_IPC_COMMAND,
+  TauriAgentProviderGateway,
+  UPDATE_AGENT_PROVIDER_IPC_COMMAND,
+  type AgentProviderRuntimeDetector,
+  type InvokeAgentProviderCommand,
+} from "./tauriAgentProviderGateway";
+
+const available: AgentProviderRuntimeDetector = () => true;
+const unavailable: AgentProviderRuntimeDetector = () => false;
+
+const REGISTRATION: AgentProviderPolicyRegistrationRequest = {
+  provider: "codex",
+  settingsRevision: 7,
+  expectedProviderGeneration: 2,
+  enabled: true,
+  cliPath: "/usr/local/bin/codex",
+  checkForUpdates: true,
+};
+
+const GENERATION: AgentProviderGenerationRequest = {
+  provider: "codex",
+  providerGeneration: 3,
+};
+
+const UPDATE: AgentProviderUpdateRequest = {
+  ...GENERATION,
+  operationId: "provider-update-1234",
+};
+
+describe("TauriAgentProviderGateway", () => {
+  it("pins the exact synchronous Rust command names", () => {
+    expect(REGISTER_AGENT_PROVIDER_POLICY_IPC_COMMAND).toBe("register_agent_provider_policy");
+    expect(GET_AGENT_PROVIDER_POLICY_IPC_COMMAND).toBe("get_agent_provider_policy");
+    expect(PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND).toBe("probe_agent_provider_health");
+    expect(UPDATE_AGENT_PROVIDER_IPC_COMMAND).toBe("update_agent_provider");
+  });
+
+  it("registers provider policy with exact compare-and-swap authority", async () => {
+    const receipt = { provider: "codex", settingsRevision: 7, providerGeneration: 3 } as const;
+    const invokeCommand = vi.fn<InvokeAgentProviderCommand>().mockResolvedValue(receipt);
+    const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+
+    await expect(gateway.registerAgentProviderPolicy(REGISTRATION)).resolves.toEqual(receipt);
+    expect(invokeCommand).toHaveBeenCalledWith(REGISTER_AGENT_PROVIDER_POLICY_IPC_COMMAND, {
+      request: REGISTRATION,
+    });
+  });
+
+  it("accepts a newer stored receipt for an idempotent reload reacquire", async () => {
+    const receipt = { provider: "codex", settingsRevision: 11, providerGeneration: 5 } as const;
+    const invokeCommand = vi.fn<InvokeAgentProviderCommand>().mockResolvedValue(receipt);
+    const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+
+    await expect(
+      gateway.registerAgentProviderPolicy({
+        ...REGISTRATION,
+        settingsRevision: 1,
+        expectedProviderGeneration: 5,
+      }),
+    ).resolves.toEqual(receipt);
+  });
+
+  it("reads nested registered and exact unregistered provider snapshots", async () => {
+    const invokeCommand = vi
+      .fn<InvokeAgentProviderCommand>()
+      .mockResolvedValueOnce({
+        kind: "registered",
+        receipt: { provider: "codex", settingsRevision: 7, providerGeneration: 3 },
+        enabled: true,
+        cliPath: "/usr/local/bin/codex",
+        checkForUpdates: true,
+      })
+      .mockResolvedValueOnce({ kind: "unregistered" });
+    const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+
+    await expect(gateway.currentAgentProviderPolicy({ provider: "codex" })).resolves.toMatchObject({
+      kind: "registered",
+      receipt: { providerGeneration: 3 },
+    });
+    await expect(gateway.currentAgentProviderPolicy({ provider: "claudeCode" })).resolves.toEqual({
+      kind: "unregistered",
+    });
+    expect(invokeCommand.mock.calls).toEqual([
+      [GET_AGENT_PROVIDER_POLICY_IPC_COMMAND, { request: { provider: "codex" } }],
+      [GET_AGENT_PROVIDER_POLICY_IPC_COMMAND, { request: { provider: "claudeCode" } }],
+    ]);
+  });
+
+  it("probes health with only exact registered provider authority", async () => {
+    const result = {
+      installedVersion: "0.150.1",
+      auth: { kind: "signedIn", label: "ChatGPT Plus" },
+      update: { kind: "current", installedVersion: "0.150.1" },
+      checkedAtEpochMs: 1_700_000_000_000,
+    } as const;
+    const invokeCommand = vi.fn<InvokeAgentProviderCommand>().mockResolvedValue(result);
+    const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+
+    await expect(gateway.probeAgentProviderHealth(GENERATION)).resolves.toEqual(result);
+    expect(invokeCommand).toHaveBeenCalledWith(PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND, {
+      request: GENERATION,
+    });
+  });
+
+  it("returns the bounded synchronous update result", async () => {
+    const result = {
+      kind: "failed",
+      reason: "outputLimitExceeded",
+      outputTail: "bounded tail",
+      outputTruncated: true,
+    } as const;
+    const invokeCommand = vi.fn<InvokeAgentProviderCommand>().mockResolvedValue(result);
+    const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+
+    await expect(gateway.updateAgentProvider(UPDATE)).resolves.toEqual(result);
+    expect(invokeCommand).toHaveBeenCalledWith(UPDATE_AGENT_PROVIDER_IPC_COMMAND, {
+      request: UPDATE,
+    });
+  });
+
+  it("rejects malformed outbound requests before transport", async () => {
+    const invokeCommand = vi.fn<InvokeAgentProviderCommand>();
+    const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+
+    await expect(
+      gateway.registerAgentProviderPolicy({ ...REGISTRATION, token: "secret" } as never),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      gateway.currentAgentProviderPolicy({ provider: "cursor" } as never),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      gateway.probeAgentProviderHealth({ ...GENERATION, providerGeneration: -1 }),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      gateway.updateAgentProvider({ ...UPDATE, availableVersion: "0.151.0" } as never),
+    ).rejects.toThrow(TypeError);
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects foreign or malformed transport results", async () => {
+    const invokeCommand = vi
+      .fn<InvokeAgentProviderCommand>()
+      .mockResolvedValueOnce({ provider: "claudeCode", settingsRevision: 7, providerGeneration: 3 })
+      .mockResolvedValueOnce({ provider: "codex", settingsRevision: 6, providerGeneration: 3 })
+      .mockResolvedValueOnce({
+        kind: "registered",
+        receipt: { provider: "claudeCode", settingsRevision: 7, providerGeneration: 3 },
+        enabled: true,
+        cliPath: "/usr/local/bin/claude",
+        checkForUpdates: false,
+      })
+      .mockResolvedValueOnce({
+        installedVersion: "0.150.1",
+        auth: { kind: "signedOut", token: "secret" },
+        update: { kind: "current", installedVersion: "0.150.1" },
+        checkedAtEpochMs: 1,
+      })
+      .mockResolvedValueOnce({
+        kind: "failed",
+        reason: "outputLimitExceeded",
+        outputTail: "tail",
+        outputTruncated: false,
+      });
+    const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+
+    await expect(gateway.registerAgentProviderPolicy(REGISTRATION)).rejects.toThrow(
+      /receipt\.provider/,
+    );
+    await expect(gateway.registerAgentProviderPolicy(REGISTRATION)).rejects.toThrow(
+      /receipt\.settingsRevision/,
+    );
+    await expect(gateway.currentAgentProviderPolicy({ provider: "codex" })).rejects.toThrow(
+      /result\.receipt\.provider/,
+    );
+    await expect(gateway.probeAgentProviderHealth(GENERATION)).rejects.toThrow(TypeError);
+    await expect(gateway.updateAgentProvider(UPDATE)).rejects.toThrow(TypeError);
+  });
+
+  it.each(["generationConflict", "revisionConflict", "staleRevision"])(
+    "preserves the exact backend policy rejection: %s",
+    async (rejection) => {
+      const invokeCommand = vi.fn<InvokeAgentProviderCommand>().mockRejectedValue(rejection);
+      const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+
+      await expect(gateway.registerAgentProviderPolicy(REGISTRATION)).rejects.toBe(rejection);
+    },
+  );
+
+  it("fails truthfully without the native runtime", async () => {
+    const invokeCommand = vi.fn<InvokeAgentProviderCommand>();
+    const gateway = new TauriAgentProviderGateway(invokeCommand, unavailable);
+
+    await expect(gateway.registerAgentProviderPolicy(REGISTRATION)).rejects.toThrow(
+      "Agent provider operations require the native runtime.",
+    );
+    await expect(gateway.currentAgentProviderPolicy({ provider: "codex" })).rejects.toThrow(
+      "Agent provider operations require the native runtime.",
+    );
+    await expect(gateway.probeAgentProviderHealth(GENERATION)).rejects.toThrow(
+      "Agent provider operations require the native runtime.",
+    );
+    await expect(gateway.updateAgentProvider(UPDATE)).rejects.toThrow(
+      "Agent provider operations require the native runtime.",
+    );
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+});

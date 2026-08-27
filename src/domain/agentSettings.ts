@@ -5,6 +5,10 @@ import {
   type CodexModelChoice,
 } from "./agentLaunch";
 import type { AgentCliKind, AgentIsolationPolicy } from "./agentTask";
+import {
+  defaultAgentProviderPreferences,
+  type AgentProviderPreferences,
+} from "./agentProviderSettings";
 
 export type { AgentCliKind, AgentIsolationPolicy };
 
@@ -34,6 +38,7 @@ export interface AgentAppSettings {
   readonly agentAppearanceVariant: AgentAppearanceVariant;
   readonly agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
   readonly agentModelFavoritesRevision: number;
+  readonly agentProviderPreferences: AgentProviderPreferences;
   readonly maxConcurrentAgentTasks: number;
 }
 
@@ -51,6 +56,7 @@ export function defaultAgentAppSettings(): AgentAppSettings {
     agentAppearanceVariant: DEFAULT_AGENT_APPEARANCE_VARIANT,
     agentModelFavoriteKeys: [],
     agentModelFavoritesRevision: 0,
+    agentProviderPreferences: defaultAgentProviderPreferences(),
     maxConcurrentAgentTasks: DEFAULT_MAX_CONCURRENT_AGENT_TASKS,
   };
 }

@@ -11,6 +11,7 @@ import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPromp
 import { TauriAgentRootLeaseGateway } from "./infrastructure/tauriAgentRootLeaseGateway";
 import { TauriAgentCliVersionGateway } from "./infrastructure/tauriAgentCliVersionGateway";
 import { TauriAgentTaskGateway } from "./infrastructure/tauriAgentTaskGateway";
+import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
 import { TauriDebugGateway } from "./infrastructure/tauriDebugGateway";
 import { TauriGitWorktreeGateway } from "./infrastructure/tauriGitWorktreeGateway";
@@ -87,6 +88,7 @@ export function createWorkbenchComposition() {
 
   return {
     agentCliVersionGateway: new TauriAgentCliVersionGateway(),
+    agentProviderGateway: new TauriAgentProviderGateway(),
     agentRootLeaseGateway: new TauriAgentRootLeaseGateway(),
     agentTaskGateway: new TauriAgentTaskGateway(),
     cursorStore: new EditorCursorStore(),

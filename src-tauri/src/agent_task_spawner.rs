@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+
+#[path = "agent_provider.rs"]
+pub mod agent_provider;
 use std::{
     fs, io,
     io::Read,
@@ -34,6 +37,7 @@ pub enum AgentCliInvocation {
 #[derive(Clone, Debug)]
 pub struct AgentTaskSpawnPlan {
     program: PathBuf,
+    executable_identity: agent_provider::process::ExecutableIdentity,
     args: Vec<String>,
     cwd: PathBuf,
     #[cfg(unix)]
@@ -82,7 +86,15 @@ impl AgentTaskSpawnPlan {
         cwd: PathBuf,
         env: Vec<(String, String)>,
     ) -> Self {
+        let identity_program = match program.is_file() {
+            true => program.clone(),
+            false => std::env::current_exe().expect("test executable path"),
+        };
         Self {
+            executable_identity: agent_provider::process::executable_identity(
+                identity_program.to_str().expect("test executable path"),
+            )
+            .expect("test executable identity"),
             program,
             args,
             cwd,
@@ -117,12 +129,8 @@ pub fn plan_agent_invocation(
     if !program.is_absolute() {
         return Err("Agent CLI path must be absolute.".to_string());
     }
-    let metadata =
-        fs::metadata(program).map_err(|_| agent_cli_binary_unavailable_error(invocation))?;
-    if !metadata.is_file() {
-        return Err(agent_cli_binary_unavailable_error(invocation));
-    }
-    ensure_executable(&metadata, invocation)?;
+    let executable_identity = agent_provider::process::executable_identity(cli_path)
+        .map_err(|_| agent_cli_binary_unavailable_error(invocation))?;
     if prompt.is_empty() {
         return Err("Agent prompt must not be empty.".to_string());
     }
@@ -134,7 +142,8 @@ pub fn plan_agent_invocation(
     }
     let args = agent_invocation_args(invocation, prompt, resume_session_id, launch);
     Ok(AgentTaskSpawnPlan {
-        program: program.to_path_buf(),
+        program: executable_identity.canonical_path.clone(),
+        executable_identity,
         args,
         cwd: cwd.to_path_buf(),
         #[cfg(unix)]
@@ -217,26 +226,6 @@ pub fn agent_cli_binary_unavailable_error(invocation: AgentCliInvocation) -> Str
     }
 }
 
-#[cfg(unix)]
-fn ensure_executable(
-    metadata: &fs::Metadata,
-    invocation: AgentCliInvocation,
-) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    if metadata.permissions().mode() & 0o111 == 0 {
-        return Err(agent_cli_binary_unavailable_error(invocation));
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn ensure_executable(
-    _metadata: &fs::Metadata,
-    _invocation: AgentCliInvocation,
-) -> Result<(), String> {
-    Ok(())
-}
-
 pub trait AgentChild: Send {
     fn stdout_reader(&mut self) -> Result<Box<dyn Read + Send>, String>;
     fn stderr_reader(&mut self) -> Result<Box<dyn Read + Send>, String>;
@@ -253,6 +242,18 @@ pub struct StdAgentProcessSpawner;
 
 impl AgentProcessSpawner for StdAgentProcessSpawner {
     fn spawn(&self, plan: &AgentTaskSpawnPlan) -> Result<Box<dyn AgentChild>, String> {
+        if !plan.executable_identity.retained_is_current()
+            || agent_provider::process::executable_identity(
+                plan.program()
+                    .to_str()
+                    .ok_or_else(|| "Agent CLI path is invalid.".to_string())?,
+            )
+            .ok()
+            .as_ref()
+                != Some(&plan.executable_identity)
+        {
+            return Err("Agent CLI executable identity changed before launch.".to_string());
+        }
         let mut command = Command::new(plan.program());
         command
             .args(plan.args())
@@ -515,6 +516,77 @@ mod tests {
             retained.canonicalize().expect("canonical retained cwd")
         );
         fs::remove_dir_all(&fixture).expect("remove cwd fixture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_cli_identity_rejects_path_replacement_before_spawn() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = CWD_AUTHORITY_NONCE.fetch_add(1, Ordering::SeqCst);
+        let fixture = std::env::temp_dir().join(format!(
+            "agent-task-retained-cli-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&fixture).expect("fixture");
+        let cli = fixture.join("claude");
+        fs::write(&cli, "#!/bin/sh\nexit 0\n").expect("cli");
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).expect("permissions");
+        let plan = plan_agent_invocation(
+            cli.to_str().expect("path"),
+            AgentCliInvocation::ClaudeCode,
+            "stop",
+            &fixture,
+            None,
+            claude_default(),
+        )
+        .expect("plan");
+        fs::rename(&cli, fixture.join("retained")).expect("rename");
+        fs::write(&cli, "#!/bin/sh\nexit 7\n").expect("replacement");
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).expect("permissions");
+
+        let error = match StdAgentProcessSpawner.spawn(&plan) {
+            Ok(_) => panic!("replacement accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error,
+            "Agent CLI executable identity changed before launch."
+        );
+        fs::remove_dir_all(fixture).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_plan_removes_configured_symlink_indirection() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let nonce = CWD_AUTHORITY_NONCE.fetch_add(1, Ordering::SeqCst);
+        let fixture = std::env::temp_dir().join(format!(
+            "agent-task-cli-symlink-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&fixture).expect("fixture");
+        let retained = fixture.join("retained");
+        fs::write(&retained, "#!/bin/sh\nexit 0\n").expect("cli");
+        fs::set_permissions(&retained, fs::Permissions::from_mode(0o755)).expect("permissions");
+        let configured = fixture.join("configured");
+        symlink(&retained, &configured).expect("symlink");
+        let plan = plan_agent_invocation(
+            configured.to_str().expect("path"),
+            AgentCliInvocation::ClaudeCode,
+            "stop",
+            &fixture,
+            None,
+            claude_default(),
+        )
+        .expect("plan");
+
+        assert_eq!(
+            plan.program,
+            retained.canonicalize().expect("canonical cli")
+        );
+        fs::remove_dir_all(fixture).expect("cleanup");
     }
 
     #[test]

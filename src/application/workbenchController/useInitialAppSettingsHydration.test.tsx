@@ -44,6 +44,7 @@ describe("useInitialAppSettingsHydration", () => {
 
     expect(options.settingsGateway.loadAppSettings).toHaveBeenCalledTimes(1);
     expect(options.applyAppSettings).toHaveBeenCalledTimes(1);
+    expect(options.onAppSettingsHydrated).toHaveBeenCalledTimes(1);
     expect(options.startupOpenWorkspacePath).toHaveBeenCalledTimes(1);
     expect(options.startupOpenWorkspacePath).toHaveBeenCalledWith("/workspace/recent");
     expect(options.reportError).not.toHaveBeenCalled();
@@ -62,7 +63,7 @@ describe("useInitialAppSettingsHydration", () => {
     expect(options.startupOpenWorkspacePath).toHaveBeenCalledWith("/workspace/tab");
   });
 
-  it("reports a mounted settings rejection once", async () => {
+  it("applies fail-closed defaults and completes hydration after a mounted settings rejection", async () => {
     const failure = new Error("settings unavailable");
     const options = hydrationOptions(Promise.reject(failure));
     render(options);
@@ -70,7 +71,8 @@ describe("useInitialAppSettingsHydration", () => {
 
     expect(options.reportError).toHaveBeenCalledTimes(1);
     expect(options.reportError).toHaveBeenCalledWith("Settings", failure);
-    expect(options.applyAppSettings).not.toHaveBeenCalled();
+    expect(options.applyAppSettings).toHaveBeenCalledWith(defaultAppSettings());
+    expect(options.onAppSettingsHydrated).toHaveBeenCalledWith(true);
     expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
   });
 
@@ -106,11 +108,13 @@ describe("useInitialAppSettingsHydration", () => {
       expect(options.reportError).toHaveBeenCalledTimes(1);
       expect(options.reportError).toHaveBeenCalledWith("Settings", failure);
       if (operation === "apply") expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
+      if (operation === "apply") expect(options.onAppSettingsHydrated).not.toHaveBeenCalled();
+      if (operation === "open") expect(options.onAppSettingsHydrated).toHaveBeenCalledTimes(1);
       if (operation === "open") expect(options.applyAppSettings).toHaveBeenCalledTimes(1);
     },
   );
 
-  it("reports a synchronous settings load failure once", async () => {
+  it("applies fail-closed defaults after a synchronous settings load failure", async () => {
     const failure = new Error("load failed");
     const base = hydrationOptions(Promise.resolve(defaultAppSettings()));
     const options: HydrationTestOptions = {
@@ -126,7 +130,8 @@ describe("useInitialAppSettingsHydration", () => {
 
     expect(options.reportError).toHaveBeenCalledTimes(1);
     expect(options.reportError).toHaveBeenCalledWith("Settings", failure);
-    expect(options.applyAppSettings).not.toHaveBeenCalled();
+    expect(options.applyAppSettings).toHaveBeenCalledWith(defaultAppSettings());
+    expect(options.onAppSettingsHydrated).toHaveBeenCalledWith(true);
     expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
   });
 
@@ -145,6 +150,7 @@ describe("useInitialAppSettingsHydration", () => {
     if (settlement === "reject") await reject(pending, new Error("late failure"));
 
     expect(options.applyAppSettings).not.toHaveBeenCalled();
+    expect(options.onAppSettingsHydrated).not.toHaveBeenCalled();
     expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
     expect(options.reportError).not.toHaveBeenCalled();
   });
@@ -235,6 +241,7 @@ function hydrationOptions(result: Promise<AppSettings>): HydrationTestOptions {
     settingsGateway: { loadAppSettings: vi.fn<() => Promise<AppSettings>>(() => result) },
     applyAppSettings: vi.fn<(settings: AppSettings) => void>(),
     beginStartupRestore: vi.fn(() => startupRestore),
+    onAppSettingsHydrated: vi.fn(),
     reportError: vi.fn<(scope: string, error: unknown) => void>(),
     startupOpenWorkspacePath,
     startupRestore,

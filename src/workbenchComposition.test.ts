@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { LiveDocumentRuntime } from "./application/liveDocumentRuntime";
 import { TauriIncrementalLanguageServerDocumentSyncGateway } from "./infrastructure/tauriIncrementalLanguageServerDocumentSyncGateway";
+import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { createWorkbenchComposition, workbenchComposition } from "./workbenchComposition";
 
 describe("workbench live-document runtime composition", () => {
@@ -31,5 +32,13 @@ describe("workbench live-document runtime composition", () => {
     expect(first.javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway).not.toBe(
       second.javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway,
     );
+  });
+
+  it("constructs one independent provider gateway per workbench", () => {
+    const first = createWorkbenchComposition();
+    const second = createWorkbenchComposition();
+
+    expect(first.agentProviderGateway).toBeInstanceOf(TauriAgentProviderGateway);
+    expect(first.agentProviderGateway).not.toBe(second.agentProviderGateway);
   });
 });

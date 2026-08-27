@@ -9,6 +9,7 @@ import {
 } from "react";
 import { ChevronDown, Search, Star } from "lucide-react";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
@@ -35,6 +36,8 @@ export interface AgentModelPickerProps {
   readonly disabled: boolean;
   readonly describedBy: string | null;
   readonly favorites: AgentModelFavorites;
+  readonly providerEnabled?: Readonly<Record<AgentCliKind, boolean>> | null;
+  readonly providerManagement?: AgentProviderManagementSurface | null;
   onSelect(model: AgentModelChoice): void;
 }
 
@@ -50,8 +53,17 @@ export function AgentModelPicker({
   label,
   launch,
   onSelect,
+  providerEnabled = null,
+  providerManagement = null,
 }: AgentModelPickerProps) {
-  const popover = useAgentPopover("start", disabled);
+  const selectedProviderEnabled = providerIsEnabled(providerEnabled, launch.provider);
+  const providerUnavailableReason = providerAvailabilityReason(
+    providerManagement,
+    launch.provider,
+    selectedProviderEnabled,
+  );
+  const pickerDisabled = disabled || providerUnavailableReason !== null;
+  const popover = useAgentPopover("start", pickerDisabled);
   const { hide, open, popoverRef, show } = popover;
   const [filter, setFilter] = useState<AgentModelFilter>("all");
   const [query, setQuery] = useState("");
@@ -59,7 +71,14 @@ export function AgentModelPicker({
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listId = `${id}-list`;
   const dialogId = `${id}-dialog`;
-  const rows = useMemo(() => agentModelRows(launch.provider), [launch.provider]);
+  const rows = useMemo(
+    () => (selectedProviderEnabled ? agentModelRows(launch.provider) : []),
+    [launch.provider, selectedProviderEnabled],
+  );
+  const providers = useMemo(
+    () => PROVIDERS.filter((provider) => providerIsEnabled(providerEnabled, provider)),
+    [providerEnabled],
+  );
   const visible = useMemo(
     () => filterAgentModelRows(rows, filter, favorites.keys, query),
     [favorites.keys, filter, query, rows],
@@ -69,7 +88,7 @@ export function AgentModelPicker({
   const modifier = agentPlatformModifier().glyph;
 
   const openPicker = useCallback(() => {
-    if (disabled) return;
+    if (pickerDisabled) return;
     setQuery("");
     setFilter("all");
     setActiveIndex(
@@ -79,16 +98,16 @@ export function AgentModelPicker({
       ),
     );
     show();
-  }, [disabled, launch.model, rows, show]);
+  }, [launch.model, pickerDisabled, rows, show]);
 
   const choose = useCallback(
     (row: AgentModelRow) => {
-      if (disabled) return;
+      if (pickerDisabled) return;
       hide(true);
       if (row.value === launch.model) return;
       onSelect(row.value);
     },
-    [disabled, hide, launch.model, onSelect],
+    [hide, launch.model, onSelect, pickerDisabled],
   );
 
   useLayoutEffect(() => {
@@ -167,12 +186,12 @@ export function AgentModelPicker({
         aria-label={label}
         className="agent-picker__trigger agent-picker__trigger--ghost"
         data-value={launch.model}
-        disabled={disabled}
+        disabled={pickerDisabled}
         id={id}
         onClick={() => (open ? hide(false) : openPicker())}
         onKeyDown={onTriggerKeyDown}
         ref={popover.triggerRef}
-        title={agentLaunchModelHint(launch)}
+        title={providerUnavailableReason ?? agentLaunchModelHint(launch)}
         type="button"
       >
         <span aria-hidden="true" className="agent-picker__icon">
@@ -203,7 +222,7 @@ export function AgentModelPicker({
             >
               <Star aria-hidden="true" size={14} />
             </button>
-            {PROVIDERS.map((provider) => (
+            {providers.map((provider) => (
               <AgentProviderRailItem
                 active={filter === "all"}
                 current={provider === launch.provider}
@@ -339,6 +358,42 @@ function AgentProviderRailItem({
 function favoriteLabel(row: AgentModelRow, favorite: boolean): string {
   if (favorite) return `Remove ${row.label} from favorites`;
   return `Add ${row.label} to favorites`;
+}
+
+function providerIsEnabled(
+  enabled: Readonly<Record<AgentCliKind, boolean>> | null,
+  provider: AgentCliKind,
+): boolean {
+  if (enabled === null) return true;
+  return enabled[provider];
+}
+
+function providerAvailabilityReason(
+  management: AgentProviderManagementSurface | null,
+  provider: AgentCliKind,
+  enabled: boolean,
+): string | null {
+  if (!enabled) return "Enable this provider in settings";
+  if (management === null) return null;
+  const disposition = management.admissionAuthority(provider).disposition;
+  switch (disposition.kind) {
+    case "ready":
+      return null;
+    case "disabled":
+      return "This provider is disabled";
+    case "updating":
+      return "This provider is updating";
+    case "policyUnavailable":
+      return disposition.reason === "unregistered"
+        ? "Provider policy is not registered"
+        : "Provider policy registration failed";
+    default:
+      return unsupportedAdmissionDisposition(disposition);
+  }
+}
+
+function unsupportedAdmissionDisposition(disposition: never): never {
+  throw new TypeError(`Unsupported provider disposition: ${String(disposition)}`);
 }
 
 function emptyMessage(filter: AgentModelFilter, query: string): string {

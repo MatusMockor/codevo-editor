@@ -47,6 +47,44 @@ describe("agentSurfaceHostPlacement", () => {
 });
 
 describe("workbenchShellPlacement", () => {
+  it.each([
+    { viewportWidth: 1_180, expectedWidth: 540, responsiveMaximized: false },
+    { viewportWidth: 1_000, expectedWidth: 392, responsiveMaximized: false },
+    { viewportWidth: 720, expectedWidth: 540, responsiveMaximized: true },
+  ])(
+    "keeps the centre and right panel disjoint at $viewportWidth pixels",
+    ({ expectedWidth, responsiveMaximized, viewportWidth }) => {
+      const placement = workbenchShellPlacement({
+        bottomPanelVisible: false,
+        effectiveLayout: "agent",
+        layout: layoutOf({
+          rightPanel: "open",
+          openSurfaces: ["files"],
+          activeSurface: "files",
+          rightPanelWidth: 540,
+        }),
+        viewportWidth,
+      });
+
+      expect(placement).toMatchObject({
+        responsiveMaximized,
+        rightPanelMaximized: responsiveMaximized,
+        rightPanelWidth: expectedWidth,
+      });
+    },
+  );
+
+  it("clamps a restored wide panel against the rail and minimum centre width", () => {
+    expect(
+      workbenchShellPlacement({
+        bottomPanelVisible: false,
+        effectiveLayout: "agent",
+        layout: layoutOf({ rightPanel: "open", rightPanelWidth: 700 }),
+        viewportWidth: 1_180,
+      }),
+    ).toMatchObject({ rightPanelWidth: 572, responsiveMaximized: false });
+  });
+
   it("hides the editor while the panel is closed even when the files tab stays open", () => {
     const placement = workbenchShellPlacement({
       bottomPanelVisible: false,
@@ -65,6 +103,8 @@ describe("workbenchShellPlacement", () => {
       rightPanelHidden: true,
       surfacesMounted: true,
       rightPanelMaximized: false,
+      responsiveMaximized: false,
+      responsiveRestore: "none",
       rail: "expanded",
       rightPanelWidth: 0,
       bottomPanelHeight: 0,
@@ -102,6 +142,8 @@ describe("workbenchShellPlacement", () => {
       rightPanelHidden: false,
       surfacesMounted: true,
       rightPanelMaximized: true,
+      responsiveMaximized: false,
+      responsiveRestore: "none",
       rail: "collapsed",
       rightPanelWidth: 620,
       bottomPanelHeight: 200,
@@ -121,6 +163,8 @@ describe("workbenchShellPlacement", () => {
       rightPanelHidden: true,
       surfacesMounted: false,
       rightPanelMaximized: false,
+      responsiveMaximized: false,
+      responsiveRestore: "none",
       rail: "expanded",
       rightPanelWidth: 0,
       bottomPanelHeight: 0,

@@ -54,6 +54,7 @@ import { useAgentThreadStore } from "./useAgentThreadStore";
 import { useAgentTurnDispatch } from "./useAgentTurnDispatch";
 import { useAgentWorktreeLifecycle } from "./useAgentWorktreeLifecycle";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+import type { AgentProviderAdmissionAuthorityReader } from "./agentProviderAdmissionAuthority";
 
 export type AgentThreadsGitGateway = Pick<
   GitGateway,
@@ -74,6 +75,7 @@ export interface AgentThreadsDependencies {
   readonly agentModeActive: boolean;
   readonly getAgentCliPath: () => string | null;
   readonly getAgentCliKind: () => AgentCliKind;
+  readonly getAgentProviderAdmissionAuthority: AgentProviderAdmissionAuthorityReader;
   readonly getMaxConcurrentAgentTasks: () => number;
   readonly getRepositoryStatus: (repositoryRoot: string) => AgentRepositoryStatusSnapshot;
   readonly getDirtyEditorDocumentCount: (repositoryRoot: string) => number;
@@ -231,6 +233,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     store,
     getAgentCliPath: dependencies.getAgentCliPath,
     getAgentCliKind: dependencies.getAgentCliKind,
+    getAgentProviderAdmissionAuthority: dependencies.getAgentProviderAdmissionAuthority,
     getMaxConcurrentAgentTasks: dependencies.getMaxConcurrentAgentTasks,
     preflightInPlace: isolation.preflightInPlace,
     isWorktreeMissing,
@@ -374,6 +377,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     agentCliVersion: cliVersion.current,
     liveTaskCount: countRunningTurns(store.state),
     maxConcurrentAgentTasks,
+    pendingTurnCount: dispatch.pendingTurnCount,
     markThreadViewed,
     markThreadUnread,
     renameThread,

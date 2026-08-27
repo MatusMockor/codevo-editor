@@ -7,6 +7,7 @@ import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgent
 import type { useWorkbenchController } from "../../application/useWorkbenchController";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import { normalizeAgentModelFavoriteKeys } from "../../domain/agentSettings";
+import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import type { GitChangeStatus } from "../../domain/git";
 import { shortcutForCommand, type KeymapSettings } from "../../domain/keymap";
 import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
@@ -90,6 +91,15 @@ export function AgentWorkbenchScreen({
 }: AgentWorkbenchScreenProps) {
   const projects = workbench.agents.agentProjects;
   const { agentWorkbench, appSettings, nodePackageScripts, workspaceRoot } = workbench;
+  const providerPreferences =
+    appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
+  const providerEnabled = useMemo(
+    () => ({
+      claudeCode: providerPreferences.claudeCode.enabled,
+      codex: providerPreferences.codex.enabled,
+    }),
+    [providerPreferences.claudeCode.enabled, providerPreferences.codex.enabled],
+  );
   const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
   const { openWorkspaceRoot } = workbench;
   const { saveWorkbenchSettings } = workbench;
@@ -301,6 +311,7 @@ export function AgentWorkbenchScreen({
       onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
       onTrustProject={(projectRootKey) => void projects.trustProject(projectRootKey)}
       overflowRootPaths={projects.overflowRootPaths}
+      providerEnabled={providerEnabled}
       projects={projects.projects}
       viewCommands={workbenchAgentViewCommandBridge}
       workspaceRoot={workspaceRoot}

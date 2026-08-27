@@ -3,6 +3,8 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
+import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
@@ -31,7 +33,7 @@ describe("AgentsSettingsPanel", () => {
     act(() =>
       root.render(
         createElement(AgentsSettingsPanel, {
-          agentCliVersionGateway: null,
+          providerManagement: management(),
           appSettings: {
             ...defaultAppSettings(),
             agentModelFavoriteKeys: ["claudeCode/opus"],
@@ -60,7 +62,7 @@ describe("AgentsSettingsPanel", () => {
     act(() =>
       root.render(
         createElement(AgentsSettingsPanel, {
-          agentCliVersionGateway: null,
+          providerManagement: management(),
           appSettings: {
             ...defaultAppSettings(),
             agentModelFavoriteKeys: ["claudeCode/opus"],
@@ -91,7 +93,7 @@ describe("AgentsSettingsPanel", () => {
     act(() =>
       root.render(
         createElement(AgentsSettingsPanel, {
-          agentCliVersionGateway: null,
+          providerManagement: management(),
           appSettings: {
             ...recovered,
             agentModelFavoriteKeys: ["claudeCode/opus"],
@@ -114,4 +116,95 @@ describe("AgentsSettingsPanel", () => {
       expect.objectContaining({ agentModelFavoriteKeys: [], agentModelFavoritesRevision: 2 }),
     );
   });
+
+  it("updates only the selected provider preference and clears its dismissed version", () => {
+    const updateAppSettings = vi.fn();
+    const appSettings = {
+      ...defaultAppSettings(),
+      agentProviderPreferences: {
+        claudeCode: {
+          enabled: true,
+          healthCheckIntervalSeconds: 300,
+          checkForUpdates: false,
+          dismissedUpdateVersion: "2.2.0",
+        },
+        codex: {
+          enabled: false,
+          healthCheckIntervalSeconds: 60,
+          checkForUpdates: false,
+          dismissedUpdateVersion: null,
+        },
+      },
+    };
+    act(() =>
+      root.render(
+        <AgentsSettingsPanel
+          appSettings={appSettings}
+          hasWorkspace={false}
+          providerManagement={management()}
+          updateAppSettings={updateAppSettings}
+          updateWorkspaceSettings={vi.fn()}
+          workspaceSettings={defaultWorkspaceSettings()}
+        />,
+      ),
+    );
+
+    const card = host.querySelector('[aria-label="Claude Code provider"]');
+    const checkbox = card?.querySelector<HTMLInputElement>(
+      ".agent-provider-card__updates-toggle input",
+    );
+    act(() => {
+      checkbox?.click();
+    });
+
+    expect(updateAppSettings).toHaveBeenCalledWith({
+      ...appSettings,
+      agentProviderPreferences: {
+        ...appSettings.agentProviderPreferences,
+        claudeCode: {
+          ...appSettings.agentProviderPreferences.claudeCode,
+          checkForUpdates: true,
+          dismissedUpdateVersion: null,
+        },
+      },
+    });
+  });
 });
+
+function management(): AgentProviderManagementSurface {
+  return {
+    providers: {
+      claudeCode: {
+        health: { kind: "notConfigured" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+      codex: {
+        health: { kind: "disabled" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+    },
+    toast: null,
+    admissionAuthority: (provider) => ({
+      provider,
+      revision: 1,
+      disposition: { kind: "disabled" },
+    }),
+    authority: (provider) => ({
+      settingsRevision: 1,
+      provider,
+      preference: defaultAgentProviderPreferences()[provider],
+      cliPath: null,
+    }),
+    dismissToast: () => undefined,
+    dismissUpdate: async () => true,
+    refresh: async () => undefined,
+    retryRegistration: async () => undefined,
+    save: async () => true,
+    saveWithOutcome: async () => ({ kind: "persisted", policyRegistered: true }),
+    update: async () => null,
+  };
+}

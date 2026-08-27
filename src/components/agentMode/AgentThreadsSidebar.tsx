@@ -1,8 +1,10 @@
 import { memo, useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { PanelLeftClose } from "lucide-react";
 import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
 import { AgentRailHeader } from "./AgentRailHeader";
+import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
 import { useJumpHints, useStableCallback } from "./agentRailHooks";
 import { AgentThreadList } from "./AgentThreadList";
 import { AgentThreadSearchResults } from "./AgentThreadSearchResults";
@@ -38,6 +40,9 @@ export interface AgentThreadsSidebarProps {
   readonly scopeEntries: ReadonlyArray<AgentRailScopeEntry>;
   readonly overflowRootPaths: ReadonlyArray<string>;
   readonly selectedThreadId: string | null;
+  readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>>;
+  readonly providerManagement: AgentProviderManagementSurface;
+  onOpenProviderSettings(): void;
   onCollapseSidebar?(): void;
   onSelectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
   onTogglePin(threadId: string): void;
@@ -58,6 +63,9 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   onCollapseSidebar,
   onNewThread,
   onProjectCommand,
+  providerEnabled,
+  providerManagement,
+  onOpenProviderSettings,
   onReleaseProject,
   onSelectThread,
   onThreadMenuCommand,
@@ -251,6 +259,11 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
           />
         )}
       </div>
+      <AgentProviderRailFooter
+        management={providerManagement}
+        onOpenSettings={onOpenProviderSettings}
+        providerEnabled={providerEnabled}
+      />
     </aside>
   );
 });

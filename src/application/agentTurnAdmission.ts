@@ -34,12 +34,20 @@ import type {
   AgentThreadStoreSurface,
 } from "./agentThreadPorts";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
+import {
+  decideAgentProviderAdmission,
+  isCurrentAgentProviderAdmissionAuthority,
+  type AgentProviderAdmissionAuthority,
+  type AgentProviderAdmissionAuthorityReader,
+  type ReadyAgentProviderAdmissionAuthority,
+} from "./agentProviderAdmissionAuthority";
 
 export interface AgentTurnAdmissionDependencies {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly store: AgentThreadStoreSurface;
   readonly getAgentCliPath: () => string | null;
   readonly getAgentCliKind: () => AgentCliKind;
+  readonly getAgentProviderAdmissionAuthority: AgentProviderAdmissionAuthorityReader;
   readonly getMaxConcurrentAgentTasks: () => number;
   readonly isWorktreeMissing: (threadId: string) => boolean;
   readonly ensureProjectLease?: (projectRootKey: string) => Promise<boolean>;
@@ -90,6 +98,7 @@ export interface AdmittedStart {
   readonly prompt: string;
   readonly agentCliPath: string;
   readonly agentCliKind: AgentCliKind;
+  readonly providerAuthority: ReadyAgentProviderAdmissionAuthority;
   readonly launch: AgentLaunchOptions;
 }
 
@@ -119,11 +128,11 @@ export function admitStart(
   }
   const prompt = admitPrompt(deps, request.prompt);
   if (prompt === null) return null;
-  const agentCliKind = normalizeAgentCliKind(deps.getAgentCliKind());
+  const agentCliKind = normalizeAgentCliKind(request.launch.provider);
   const launch = admitLaunch(deps, request, agentCliKind);
   if (launch === null) return null;
-  const agentCliPath = admitCapacity(deps);
-  if (agentCliPath === null) return null;
+  const providerAdmission = admitCapacity(deps, agentCliKind);
+  if (providerAdmission === null) return null;
   const launchIdentity = deps.launchIdentityForProject(project.rootKey);
   if (launchIdentity === null) {
     deps.setNotice(warning("This project is not registered, so an agent cannot start in it."));
@@ -133,8 +142,9 @@ export function admitStart(
     project,
     authority: taskLaunchAuthority(project, launchIdentity),
     prompt,
-    agentCliPath,
+    agentCliPath: providerAdmission.cliPath,
     agentCliKind,
+    providerAuthority: providerAdmission,
     launch,
   };
 }
@@ -145,6 +155,7 @@ export interface AdmittedFollowUp {
   readonly projectRoot: string;
   readonly prompt: string;
   readonly agentCliPath: string;
+  readonly providerAuthority: ReadyAgentProviderAdmissionAuthority;
   readonly sessionId: string;
   readonly launch: AgentLaunchOptions;
 }
@@ -187,19 +198,10 @@ export function admitFollowUp(
   }
   const prompt = admitPrompt(deps, request.prompt);
   if (prompt === null) return null;
-  const currentKind = normalizeAgentCliKind(deps.getAgentCliKind());
-  if (thread.provider.kind !== currentKind) {
-    deps.setNotice(
-      warning(
-        `This thread was started with ${cliKindLabel(thread.provider.kind)}; start a new thread.`,
-      ),
-    );
-    return null;
-  }
   const launch = admitLaunch(deps, request, thread.provider.kind);
   if (launch === null) return null;
-  const agentCliPath = admitCapacity(deps);
-  if (agentCliPath === null) return null;
+  const providerAdmission = admitCapacity(deps, thread.provider.kind);
+  if (providerAdmission === null) return null;
   if (thread.provider.sessionId === null) {
     deps.setNotice(warning("This thread has no resumable session; start a new thread."));
     return null;
@@ -213,7 +215,8 @@ export function admitFollowUp(
     authority: taskLaunchAuthority(project, launchIdentity),
     projectRoot: project.rootPath,
     prompt,
-    agentCliPath,
+    agentCliPath: providerAdmission.cliPath,
+    providerAuthority: providerAdmission,
     sessionId: thread.provider.sessionId,
     launch,
   };
@@ -254,7 +257,10 @@ function admitPrompt(deps: AdmissionDependencies, raw: string): string | null {
   return prompt;
 }
 
-function admitCapacity(deps: AdmissionDependencies): string | null {
+function admitCapacity(
+  deps: AdmissionDependencies,
+  provider: AgentCliKind,
+): ReadyAgentProviderAdmissionAuthority | null {
   const limit = normalizeMaxConcurrentAgentTasks(deps.getMaxConcurrentAgentTasks());
   if (countRunningTurns(deps.store.state) >= limit) {
     deps.setNotice(
@@ -262,7 +268,17 @@ function admitCapacity(deps: AdmissionDependencies): string | null {
     );
     return null;
   }
-  const agentCliPath = normalizeAgentCliPath(deps.getAgentCliPath());
+  const authority = readProviderAdmissionAuthority(deps, provider);
+  if (authority.provider !== provider) {
+    deps.setNotice(failure(LAUNCH_PROVIDER_MISMATCH_NOTICE));
+    return null;
+  }
+  const decision = decideAgentProviderAdmission(authority);
+  if (decision.kind === "rejected") {
+    deps.setNotice(warning(decision.message));
+    return null;
+  }
+  const agentCliPath = normalizeAgentCliPath(decision.authority.cliPath);
   if (agentCliPath === null) {
     deps.setNotice({
       kind: "warning",
@@ -271,7 +287,23 @@ function admitCapacity(deps: AdmissionDependencies): string | null {
     });
     return null;
   }
-  return agentCliPath;
+  return { ...decision.authority, cliPath: agentCliPath };
+}
+
+export function providerAdmissionIsCurrent(
+  deps: AdmissionDependencies,
+  captured: ReadyAgentProviderAdmissionAuthority,
+): boolean {
+  const read = (provider: AgentCliKind): AgentProviderAdmissionAuthority =>
+    readProviderAdmissionAuthority(deps, provider);
+  return isCurrentAgentProviderAdmissionAuthority(read, captured);
+}
+
+function readProviderAdmissionAuthority(
+  deps: AdmissionDependencies,
+  provider: AgentCliKind,
+): AgentProviderAdmissionAuthority {
+  return deps.getAgentProviderAdmissionAuthority(provider);
 }
 
 export async function ensureLease(
@@ -281,12 +313,14 @@ export async function ensureLease(
   project: AgentProjectDescriptor,
   authority: AgentTaskLaunchAuthority,
   repositoryRoot: string,
+  additionalAuthorityIsCurrent?: () => boolean,
 ): Promise<boolean> {
   const ensureProjectLease = deps.ensureProjectLease;
   if (project.leaseToken !== null || ensureProjectLease === undefined) return true;
   const leased = await attempt(() => ensureProjectLease(project.rootKey));
   if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot))
     return false;
+  if (additionalAuthorityIsCurrent !== undefined && !additionalAuthorityIsCurrent()) return false;
   if (!leased.ok) deps.reportError(AGENT_TASKS_SOURCE, leased.error);
   if (leased.ok && leased.value) return true;
   deps.setNotice(failure(LEASE_REFUSED_NOTICE));
@@ -341,21 +375,6 @@ function defaultEntropyHex4(): string {
   crypto.getRandomValues(bytes);
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
-function cliKindLabel(kind: AgentCliKind): string {
-  switch (kind) {
-    case "claudeCode":
-      return "Claude Code";
-    case "codex":
-      return "Codex";
-    default:
-      return unsupportedCliKind(kind);
-  }
-}
-
-function unsupportedCliKind(kind: never): never {
-  throw new TypeError(`Unsupported agent CLI kind: ${String(kind)}.`);
-}
-
 function unsupportedPreflight(preflight: never): never {
   throw new TypeError(`Unsupported in-place preflight: ${JSON.stringify(preflight)}.`);
 }

@@ -1,5 +1,7 @@
 #[path = "agent_cli_version_commands.rs"]
 mod agent_cli_version_commands;
+#[path = "agent_provider_commands.rs"]
+mod agent_provider_commands;
 #[path = "agent_task_commands.rs"]
 mod agent_task_commands;
 #[path = "agent_thread_store_commands.rs"]

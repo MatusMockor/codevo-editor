@@ -3,6 +3,12 @@ import type {
   AgentWorkbenchLayout,
   AgentWorkbenchLayoutMode,
 } from "../domain/agentWorkbenchLayout";
+import {
+  responsiveAgentPanelPlacement,
+  type ResponsivePanelRestore,
+} from "../domain/agentWorkbenchResponsiveLayout";
+
+export type { ResponsivePanelRestore } from "../domain/agentWorkbenchResponsiveLayout";
 
 export const WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE = "--agent-right-panel-committed";
 export const WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE = "--agent-bottom-panel-committed";
@@ -20,6 +26,7 @@ export interface WorkbenchShellPlacementInput {
     | "bottomPanelHeight"
   >;
   readonly bottomPanelVisible: boolean;
+  readonly viewportWidth?: number;
 }
 
 export interface WorkbenchShellPlacement {
@@ -28,6 +35,8 @@ export interface WorkbenchShellPlacement {
   readonly rightPanelHidden: boolean;
   readonly surfacesMounted: boolean;
   readonly rightPanelMaximized: boolean;
+  readonly responsiveMaximized: boolean;
+  readonly responsiveRestore: ResponsivePanelRestore;
   readonly rail: AgentRailState;
   readonly rightPanelWidth: number;
   readonly bottomPanelHeight: number;
@@ -61,6 +70,7 @@ export function workbenchShellPlacement({
   bottomPanelVisible,
   effectiveLayout,
   layout,
+  viewportWidth = Number.POSITIVE_INFINITY,
 }: WorkbenchShellPlacementInput): WorkbenchShellPlacement {
   if (effectiveLayout === "editor-expanded") {
     return {
@@ -69,6 +79,8 @@ export function workbenchShellPlacement({
       rightPanelHidden: true,
       surfacesMounted: false,
       rightPanelMaximized: false,
+      responsiveMaximized: false,
+      responsiveRestore: "none",
       rail: "expanded",
       rightPanelWidth: 0,
       bottomPanelHeight: 0,
@@ -77,15 +89,38 @@ export function workbenchShellPlacement({
 
   const host = agentSurfaceHostPlacement({ ...layout, layout: effectiveLayout });
   const rightPanelHidden = host.hidden;
-
-  return {
+  const placement: WorkbenchShellPlacement = {
     layout: effectiveLayout,
     editorHidden: rightPanelHidden || layout.activeSurface !== "files",
     rightPanelHidden,
     surfacesMounted: host.mounted,
     rightPanelMaximized: !rightPanelHidden && layout.rightPanelMaximized,
+    responsiveMaximized: false,
+    responsiveRestore: "none",
     rail: layout.rail,
     rightPanelWidth: rightPanelHidden ? 0 : layout.rightPanelWidth,
     bottomPanelHeight: bottomPanelVisible ? layout.bottomPanelHeight : 0,
+  };
+  return responsiveWorkbenchShellPlacement(placement, viewportWidth);
+}
+
+export function responsiveWorkbenchShellPlacement(
+  placement: WorkbenchShellPlacement,
+  viewportWidth: number,
+): WorkbenchShellPlacement {
+  if (placement.layout !== "agent") return placement;
+  const responsive = responsiveAgentPanelPlacement({
+    hidden: placement.rightPanelHidden,
+    maximized: placement.rightPanelMaximized,
+    rail: placement.rail,
+    requestedWidth: placement.rightPanelWidth,
+    viewportWidth,
+  });
+  return {
+    ...placement,
+    rightPanelMaximized: placement.rightPanelMaximized || responsive.maximized,
+    responsiveMaximized: responsive.maximized,
+    responsiveRestore: responsive.restore,
+    rightPanelWidth: responsive.width,
   };
 }

@@ -9,6 +9,8 @@ describe("desktop window chrome config", () => {
 
     expect(windowConfig.label).toBe("main");
     expect(windowConfig.decorations).toBe(false);
+    expect(windowConfig.transparent).toBe(false);
+    expect(windowConfig.minWidth).toBe(900);
   });
 
   it("preserves native macOS traffic-light controls with an overlay title bar", () => {
@@ -19,8 +21,10 @@ describe("desktop window chrome config", () => {
       decorations: true,
       hiddenTitle: true,
       label: "main",
+      minWidth: 900,
       titleBarStyle: "Overlay",
       trafficLightPosition: { x: 14, y: 20 },
+      transparent: false,
     });
   });
 

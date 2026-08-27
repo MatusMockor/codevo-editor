@@ -6,12 +6,15 @@ import {
 import { WorkbenchFramePortalContext } from "./workbenchFramePortal";
 import { WorkbenchFrameTreeContext } from "./workbenchFrameTreeReport";
 import { WorkbenchEditorTabsPortalProvider } from "./workbenchEditorTabsPortal";
+import { WorkbenchFrameResponsiveContext } from "./workbenchFrameResponsiveContext";
 import {
   WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE,
   WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE,
+  responsiveWorkbenchShellPlacement,
   workbenchFrameTreeState,
   type WorkbenchShellPlacement,
 } from "./workbenchShellPlacement";
+import { useViewportWidth } from "./useViewportWidth";
 
 export interface WorkbenchShellFrameProps {
   readonly placement: WorkbenchShellPlacement;
@@ -30,36 +33,48 @@ export function WorkbenchShellFrame({
   editor,
   placement,
 }: WorkbenchShellFrameProps) {
+  const [workbenchElement, setWorkbenchElement] = useState<HTMLElement | null>(null);
+  const viewportWidth = useViewportWidth(workbenchElement);
+  const responsivePlacement = responsiveWorkbenchShellPlacement(placement, viewportWidth);
   const [treeReportedVisible, setTreeReportedVisible] = useState(false);
   const [frameElement, setFrameElement] = useState<HTMLDivElement | null>(null);
   const style = {
-    [WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE]: `${placement.rightPanelWidth}px`,
-    [WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE]: `${placement.bottomPanelHeight}px`,
+    [WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE]: `${responsivePlacement.rightPanelWidth}px`,
+    [WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE]: `${responsivePlacement.bottomPanelHeight}px`,
   } as CSSProperties;
 
   return (
-    <section className="editor-workbench" data-layout={placement.layout} style={style}>
+    <section
+      className="editor-workbench"
+      data-layout={responsivePlacement.layout}
+      ref={setWorkbenchElement}
+      style={style}
+    >
       {chrome}
       <div
         className="workbench-frame"
         data-agent-variant={agentVariant}
-        data-layout={placement.layout}
-        data-rail={placement.rail}
-        data-right-panel={placement.rightPanelMaximized ? "maximized" : "docked"}
-        data-tree={workbenchFrameTreeState(placement, treeReportedVisible)}
+        data-layout={responsivePlacement.layout}
+        data-rail={responsivePlacement.rail}
+        data-right-panel={responsivePlacement.rightPanelMaximized ? "maximized" : "docked"}
+        data-tree={workbenchFrameTreeState(responsivePlacement, treeReportedVisible)}
         ref={setFrameElement}
       >
         <WorkbenchEditorTabsPortalProvider>
           <WorkbenchFramePortalContext.Provider value={frameElement}>
             <WorkbenchFrameTreeContext.Provider value={setTreeReportedVisible}>
-              {agent}
+              <WorkbenchFrameResponsiveContext.Provider
+                value={responsivePlacement.responsiveRestore}
+              >
+                {agent}
+              </WorkbenchFrameResponsiveContext.Provider>
             </WorkbenchFrameTreeContext.Provider>
           </WorkbenchFramePortalContext.Provider>
           <div
-            aria-hidden={placement.editorHidden || undefined}
+            aria-hidden={responsivePlacement.editorHidden || undefined}
             className="editor-mode-surface"
             data-slot="editor"
-            hidden={placement.editorHidden}
+            hidden={responsivePlacement.editorHidden}
           >
             {editor}
           </div>

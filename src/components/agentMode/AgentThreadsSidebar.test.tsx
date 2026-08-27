@@ -4,6 +4,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadSearchSurface, AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
+import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import type { AgentThreadSearchResult } from "../../domain/agentThreadSearch";
@@ -54,6 +56,13 @@ describe("AgentThreadsSidebar", () => {
     expect(host.querySelector(".agent-rail__title")).toBeNull();
     expect(host.querySelector(".agent-rail__filters")).toBeNull();
     expect(host.textContent).not.toContain("running");
+  });
+
+  it("places provider status after the independently scrolling thread list", () => {
+    render();
+
+    const scroll = host.querySelector(".agent-rail__scroll");
+    expect(scroll?.nextElementSibling).toBe(host.querySelector(".agent-provider-footer"));
   });
 
   it("lists every thread as one flat recency-sorted card list", () => {
@@ -610,6 +619,9 @@ describe("AgentThreadsSidebar", () => {
       scopeEntries: agentRailScopeEntries(groups),
       overflowRootPaths: [],
       selectedThreadId: null,
+      providerManagement: providerManagement(),
+      providerEnabled: { claudeCode: true, codex: true },
+      onOpenProviderSettings: vi.fn(),
       onSelectThread: vi.fn(),
       onTogglePin: vi.fn(),
       onChangeScope: vi.fn(),
@@ -656,6 +668,45 @@ describe("AgentThreadsSidebar", () => {
     });
   }
 });
+
+function providerManagement(): AgentProviderManagementSurface {
+  const preferences = defaultAgentProviderPreferences();
+  return {
+    providers: {
+      claudeCode: {
+        health: { kind: "notConfigured" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+      codex: {
+        health: { kind: "notConfigured" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+    },
+    toast: null,
+    admissionAuthority: (provider) => ({
+      provider,
+      revision: 1,
+      disposition: { kind: "disabled" },
+    }),
+    authority: (provider) => ({
+      settingsRevision: 1,
+      provider,
+      preference: preferences[provider],
+      cliPath: `/bin/${provider}`,
+    }),
+    dismissToast: vi.fn(),
+    dismissUpdate: vi.fn(async () => true),
+    refresh: vi.fn(async () => undefined),
+    retryRegistration: vi.fn(async () => undefined),
+    save: vi.fn(async () => true),
+    saveWithOutcome: vi.fn(async () => ({ kind: "persisted" as const, policyRegistered: true })),
+    update: vi.fn(async () => null),
+  };
+}
 
 let savedUserAgent: PropertyDescriptor | undefined;
 

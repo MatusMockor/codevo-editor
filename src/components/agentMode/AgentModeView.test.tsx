@@ -10,6 +10,7 @@ import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/ag
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
@@ -19,6 +20,8 @@ import type { AgentTurnEvent } from "../../domain/agentThread";
 import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import { workbenchAgentCommands } from "../../application/workbenchAgentCommands";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
+import { WorkbenchFrameResponsiveContext } from "../workbenchFrameResponsiveContext";
+import type { ResponsivePanelRestore } from "../../domain/agentWorkbenchResponsiveLayout";
 import {
   chromeFixture,
   recordedLayoutState,
@@ -203,6 +206,32 @@ describe("AgentModeView", () => {
 
     expect(configureAgentCli).toHaveBeenCalledTimes(1);
     expect(dismissNotice).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes an available provider update toast through exact management actions", async () => {
+    const management = providerManagement();
+    const update = vi.fn(async () => null);
+    const dismissUpdate = vi.fn(async () => true);
+    const withToast: AgentProviderManagementSurface = {
+      ...management,
+      toast: { kind: "updateAvailable", provider: "codex", version: "0.150.1" },
+      dismissUpdate,
+      update,
+    };
+    render({ agents: surface({ providerManagement: withToast }) });
+
+    expect(host.textContent).toContain("Update available: Codex v0.150.1");
+    await act(async () => {
+      buttonWithText("Update").click();
+      await Promise.resolve();
+    });
+    expect(update).toHaveBeenCalledWith("codex", "0.150.1");
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification"]')?.click();
+      await Promise.resolve();
+    });
+    expect(dismissUpdate).toHaveBeenCalledWith("codex", "0.150.1");
   });
 
   it("keeps a notice without a settings action free of the deep link", () => {
@@ -492,7 +521,7 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(true);
   });
 
-  it("blocks a follow-up whose provider no longer matches the configured CLI", () => {
+  it("keeps a follow-up bound to its original provider after the default changes", () => {
     render({
       agents: surface({
         agentCliKind: "codex",
@@ -503,8 +532,8 @@ describe("AgentModeView", () => {
     clickText("Refactor the parser");
     typePrompt("Also update the tests");
 
-    expect(host.textContent).toContain("This thread was started with Claude Code");
-    expect(submitButton().disabled).toBe(true);
+    expect(host.textContent).not.toContain("This thread was started with Claude Code");
+    expect(submitButton().disabled).toBe(false);
   });
 
   it("blocks a follow-up while the concurrent agent limit is reached", () => {
@@ -701,6 +730,40 @@ describe("AgentModeView", () => {
     rerender();
     expect(host.querySelector(".agent-surface")).toBeNull();
     expect(reduceRecordedLayout(layout)).toMatchObject({ rightPanel: "closed", openSurfaces: [] });
+  });
+
+  it.each([
+    { responsivePanelRestore: "collapseRail", expectedKind: "toggleRail" },
+    { responsivePanelRestore: "closePanel", expectedKind: "toggleRightPanel" },
+  ] as const)(
+    "makes a responsive maximized panel restore through $expectedKind",
+    ({ expectedKind, responsivePanelRestore }) => {
+      const layout = recordedLayoutState({
+        rightPanel: "open",
+        openSurfaces: ["files"],
+        activeSurface: "files",
+      });
+      render({ chrome: chromeFixture({ layout }) }, responsivePanelRestore);
+
+      click('.agent-surface [aria-label="Restore panel"]');
+
+      expect(layout.actions).toContainEqual({ kind: expectedKind });
+      expect(layout.actions).not.toContainEqual({ kind: "toggleMaximized" });
+    },
+  );
+
+  it("clears a persisted maximize preference while restoring a responsive panel", () => {
+    const layout = recordedLayoutState({
+      rightPanel: "open",
+      rightPanelMaximized: true,
+      openSurfaces: ["files"],
+      activeSurface: "files",
+    });
+    render({ chrome: chromeFixture({ layout }) }, "collapseRail");
+
+    click('.agent-surface [aria-label="Restore panel"]');
+
+    expect(layout.actions).toEqual([{ kind: "toggleMaximized" }, { kind: "toggleRail" }]);
   });
 
   it("keeps the tabs and the surfaces mounted while the panel is closed", async () => {
@@ -1565,6 +1628,7 @@ describe("AgentModeView", () => {
       onTrustProject: () => undefined,
       nowTickMs: 1_000_000_000,
       overflowRootPaths: [] as ReadonlyArray<string>,
+      providerEnabled: { claudeCode: true, codex: true },
       projects: [defaultActiveProject()],
       viewCommands: bridge,
     };
@@ -2157,8 +2221,17 @@ describe("AgentModeView", () => {
     expect(button?.disabled).toBe(true);
   });
 
-  function render(overrides: Partial<AgentModeViewProps> = {}): void {
-    act(() => root.render(<AgentModeView {...defaultProps()} {...overrides} />));
+  function render(
+    overrides: Partial<AgentModeViewProps> = {},
+    responsiveRestore: ResponsivePanelRestore = "none",
+  ): void {
+    act(() =>
+      root.render(
+        <WorkbenchFrameResponsiveContext.Provider value={responsiveRestore}>
+          <AgentModeView {...defaultProps()} {...overrides} />
+        </WorkbenchFrameResponsiveContext.Provider>,
+      ),
+    );
   }
 
   function resetColumnRenders(): void {
@@ -2286,6 +2359,14 @@ describe("AgentModeView", () => {
     );
     expect(item).toBeDefined();
     act(() => item?.click());
+  }
+
+  function buttonWithText(label: string): HTMLButtonElement {
+    const button = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => candidate.textContent?.trim() === label,
+    );
+    if (button === undefined) throw new Error(`Button not found: ${label}`);
+    return button;
   }
 
   function scopeOptionLabels(): readonly string[] {
@@ -2469,6 +2550,7 @@ function defaultProps(): AgentModeViewProps {
     onReleaseProject: () => undefined,
     onTrustProject: () => undefined,
     overflowRootPaths: [],
+    providerEnabled: { claudeCode: true, codex: true },
     projects: [defaultActiveProject()],
     workspaceRoot: ROOT,
     nowTickMs: NOW_TICK_MS,
@@ -2521,7 +2603,11 @@ function backgroundProject(): AgentProjectDescriptor {
   };
 }
 
-function surface(overrides: Partial<AgentThreadsSurface>): AgentThreadsSurface {
+function surface(
+  overrides: Partial<
+    AgentThreadsSurface & { readonly providerManagement: AgentProviderManagementSurface }
+  >,
+): AgentThreadsSurface & { readonly providerManagement: AgentProviderManagementSurface } {
   return {
     threads: [],
     repositories: [repository(ROOT, ""), repository(NESTED, "packages/api")],
@@ -2533,6 +2619,7 @@ function surface(overrides: Partial<AgentThreadsSurface>): AgentThreadsSurface {
     agentCliVersion: null,
     liveTaskCount: 0,
     maxConcurrentAgentTasks: 4,
+    pendingTurnCount: () => 0,
     isolationPreview: (repositoryRoot: string) => ({
       repositoryRoot,
       recommended: { kind: "in-place" },
@@ -2573,7 +2660,54 @@ function surface(overrides: Partial<AgentThreadsSurface>): AgentThreadsSurface {
     renameThread: () => undefined,
     threadCopyDetail: () => null,
     lastUsedLaunch: () => null,
+    providerManagement: providerManagement(),
     ...overrides,
+  };
+}
+
+function providerManagement(): AgentProviderManagementSurface {
+  const preference = {
+    enabled: true,
+    healthCheckIntervalSeconds: 300,
+    checkForUpdates: false,
+    dismissedUpdateVersion: null,
+  };
+  return {
+    providers: {
+      claudeCode: {
+        health: { kind: "notConfigured" },
+        policy: { kind: "registered", settingsRevision: 1, providerGeneration: 1 },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+      codex: {
+        health: { kind: "notConfigured" },
+        policy: { kind: "registered", settingsRevision: 1, providerGeneration: 1 },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+    },
+    toast: null,
+    admissionAuthority: (provider) => ({
+      provider,
+      revision: 1,
+      disposition: { kind: "ready" },
+      cliPath: provider === "claudeCode" ? "/usr/bin/claude" : "/usr/bin/codex",
+      providerGeneration: 1,
+    }),
+    authority: (provider) => ({
+      provider,
+      settingsRevision: 1,
+      preference,
+      cliPath: provider === "claudeCode" ? "/usr/bin/claude" : "/usr/bin/codex",
+    }),
+    dismissToast: () => undefined,
+    dismissUpdate: async () => true,
+    refresh: async () => undefined,
+    retryRegistration: async () => undefined,
+    save: async () => true,
+    saveWithOutcome: async () => ({ kind: "persisted", policyRegistered: true }),
+    update: async () => null,
   };
 }
 

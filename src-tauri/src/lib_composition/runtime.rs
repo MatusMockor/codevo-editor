@@ -141,7 +141,10 @@ pub fn run() {
                 ),
             ));
             app.manage(Arc::new(
-                agent_cli_version_commands::agent_cli_version::AgentCliVersionRegistry::new(),
+                agent_task_spawner::agent_provider::agent_cli_version::AgentCliVersionRegistry::new(),
+            ));
+            app.manage(Arc::new(
+                agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry::new(),
             ));
             app.manage(Arc::new(
                 git_integration_commands::IntegrationLocks::default(),
@@ -479,6 +482,10 @@ pub fn run() {
             agent_thread_store_commands::save_agent_thread,
             agent_thread_store_commands::delete_agent_thread,
             agent_cli_version_commands::probe_agent_cli_version,
+            agent_provider_commands::register_agent_provider_policy,
+            agent_provider_commands::get_agent_provider_policy,
+            agent_provider_commands::probe_agent_provider_health,
+            agent_provider_commands::update_agent_provider,
             git_integration_commands::get_git_ship_status,
             git_integration_commands::push_git_branch_upstream,
             git_integration_commands::integrate_git_worktree_branch,

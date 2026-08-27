@@ -1,4 +1,5 @@
 use crate::{
+    agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry,
     agent_task_supervisor::AgentTaskRegistry,
     debug_adapter::DebugSessionRegistry,
     eslint,
@@ -14,6 +15,7 @@ use crate::{
     LegacyLocalHistoryWorkspaceAuthorizer,
 };
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 pub(crate) trait RuntimeTaskLifecycleExt {
@@ -57,6 +59,11 @@ pub(crate) fn shutdown_runtime_processes(
     app: &AppHandle,
     js_test_batches: &js_test_run::batch::JsTestBatchRegistry,
 ) -> Result<(), String> {
+    if let Some(provider_runtime) = app.try_state::<Arc<AgentProviderRuntimeRegistry>>() {
+        if !provider_runtime.shutdown_operations(Duration::from_secs(2)) {
+            return Err("Provider operations did not stop before shutdown.".to_string());
+        }
+    }
     if let Some(agent_tasks) = app.try_state::<AgentTaskRegistry>() {
         agent_tasks.close_start_admission();
     }

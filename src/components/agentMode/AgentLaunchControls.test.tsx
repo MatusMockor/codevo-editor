@@ -4,6 +4,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
+import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import { AgentLaunchControls, AgentLaunchWarning } from "./AgentLaunchControls";
 
@@ -231,6 +233,18 @@ describe("AgentLaunchControls", () => {
     expect(host.querySelector('[role="listbox"]')).toBeNull();
   });
 
+  it("disables the model picker when the selected provider is disabled", () => {
+    renderControls(
+      { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
+      () => undefined,
+      false,
+      disabledClaudeManagement(),
+    );
+
+    expect(trigger("agent-launch-model").disabled).toBe(true);
+    expect(trigger("agent-launch-mode").disabled).toBe(false);
+  });
+
   it("stays silent for a safe mode and warns for a dangerous one", () => {
     const onConfirmedChange = vi.fn();
     renderWarning(
@@ -257,6 +271,7 @@ describe("AgentLaunchControls", () => {
     launch: AgentLaunchOptions,
     onLaunchChange: (next: AgentLaunchOptions) => void = () => undefined,
     disabled = false,
+    providerManagement: AgentProviderManagementSurface | null = null,
   ): void {
     act(() =>
       root.render(
@@ -265,6 +280,8 @@ describe("AgentLaunchControls", () => {
           favorites={NO_FAVORITES}
           launch={launch}
           onLaunchChange={onLaunchChange}
+          providerEnabled={{ claudeCode: true, codex: true }}
+          providerManagement={providerManagement}
         />,
       ),
     );
@@ -323,3 +340,45 @@ describe("AgentLaunchControls", () => {
     act(() => option?.click());
   }
 });
+
+function disabledClaudeManagement(): AgentProviderManagementSurface {
+  const preferences = defaultAgentProviderPreferences();
+  return {
+    providers: {
+      claudeCode: {
+        health: { kind: "disabled" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+      codex: {
+        health: { kind: "notConfigured" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+    },
+    toast: null,
+    admissionAuthority: (provider) => ({
+      provider,
+      revision: 1,
+      disposition: { kind: "disabled" },
+    }),
+    authority: (provider) => ({
+      settingsRevision: 1,
+      provider,
+      preference: {
+        ...preferences[provider],
+        enabled: provider !== "claudeCode",
+      },
+      cliPath: `/bin/${provider}`,
+    }),
+    dismissToast: vi.fn(),
+    dismissUpdate: vi.fn(async () => true),
+    refresh: vi.fn(async () => undefined),
+    retryRegistration: vi.fn(async () => undefined),
+    save: vi.fn(async () => true),
+    saveWithOutcome: vi.fn(async () => ({ kind: "persisted" as const, policyRegistered: true })),
+    update: vi.fn(async () => null),
+  };
+}

@@ -1,5 +1,5 @@
 import type { AppSettings, SettingsSection, WorkspaceSettings } from "../domain/settings";
-import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
+import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import type { SystemFontGateway } from "../domain/systemFonts";
 import type { WorkspaceTrustState } from "../domain/trust";
 import type { PhpToolAvailability, WorkspaceDescriptor } from "../domain/workspace";
@@ -35,14 +35,14 @@ export interface WorkbenchSettingsModel {
 }
 
 export interface WorkbenchSettingsDialogHostProps {
-  readonly agentCliVersionGateway?: AgentCliVersionGateway | null;
+  readonly providerManagement?: AgentProviderManagementSurface | null;
   readonly systemFontGateway: SystemFontGateway;
   readonly workbench: WorkbenchSettingsModel;
   readonly workspaceFiles: NodeLaunchConfigurationFileGateway;
 }
 
 export function WorkbenchSettingsDialogHost({
-  agentCliVersionGateway = null,
+  providerManagement = null,
   systemFontGateway,
   workbench,
   workspaceFiles,
@@ -59,7 +59,6 @@ export function WorkbenchSettingsDialogHost({
   return (
     <>
       <SettingsDialog
-        agentCliVersionGateway={agentCliVersionGateway}
         appSettings={workbench.appSettings}
         gitDetectedRepositoryMappings={workbench.gitRepositoryMappings
           .map((mapping) => mapping.rootRelativePath)
@@ -74,6 +73,7 @@ export function WorkbenchSettingsDialogHost({
           workbench.saveWorkbenchSettings(appSettings, workspaceSettings, trusted)
         }
         phpTools={workbench.phpTools}
+        providerManagement={providerManagement}
         systemFontGateway={systemFontGateway}
         workspaceDescriptor={workbench.workspaceDescriptor}
         workspaceRoot={workbench.workspaceRoot}

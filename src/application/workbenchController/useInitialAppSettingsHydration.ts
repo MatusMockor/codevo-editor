@@ -1,5 +1,5 @@
 import { useEffect, type RefObject } from "react";
-import type { AppSettings, SettingsGateway } from "../../domain/settings";
+import { defaultAppSettings, type AppSettings, type SettingsGateway } from "../../domain/settings";
 import type { WorkspaceStartupRestoreIntent } from "./useWorkspaceOpenRequestLifecycle";
 
 export interface InitialAppSettingsHydrationOptions {
@@ -7,6 +7,7 @@ export interface InitialAppSettingsHydrationOptions {
   readonly settingsGateway: Pick<SettingsGateway, "loadAppSettings">;
   applyAppSettings(settings: AppSettings): void;
   beginStartupRestore(): WorkspaceStartupRestoreIntent;
+  onAppSettingsHydrated(hydrated: true): void;
   reportError(scope: string, error: unknown): void;
 }
 
@@ -14,6 +15,7 @@ export function useInitialAppSettingsHydration({
   applyAppSettings,
   beginStartupRestore,
   hasRestoredRef,
+  onAppSettingsHydrated,
   reportError,
   settingsGateway,
 }: InitialAppSettingsHydrationOptions): void {
@@ -30,7 +32,7 @@ export function useInitialAppSettingsHydration({
       } catch (error) {
         if (!active) return;
         reportError("Settings", error);
-        return;
+        settings = defaultAppSettings();
       }
       if (!active) return;
       try {
@@ -40,6 +42,8 @@ export function useInitialAppSettingsHydration({
         reportError("Settings", error);
         return;
       }
+      if (!active) return;
+      onAppSettingsHydrated(true);
       const workspacePath = settings.recentWorkspacePath ?? settings.workspaceTabs[0] ?? null;
       if (workspacePath === null) return;
       if (!active || !startupRestore.isCurrent()) return;
@@ -55,5 +59,12 @@ export function useInitialAppSettingsHydration({
     return () => {
       active = false;
     };
-  }, [applyAppSettings, beginStartupRestore, hasRestoredRef, reportError, settingsGateway]);
+  }, [
+    applyAppSettings,
+    beginStartupRestore,
+    hasRestoredRef,
+    onAppSettingsHydrated,
+    reportError,
+    settingsGateway,
+  ]);
 }

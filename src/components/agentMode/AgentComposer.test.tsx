@@ -3,6 +3,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
+import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "../../domain/agentTask";
 import {
   AgentComposer,
@@ -72,6 +74,63 @@ describe("AgentComposer", () => {
     pressAccelerator();
 
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("blocks submission when the selected provider is disabled", () => {
+    const onSubmit = vi.fn();
+    const onOpenProviderSettings = vi.fn();
+    render({
+      onSubmit,
+      onOpenProviderSettings,
+      prompt: "Fix it",
+      providerEnabled: { claudeCode: false, codex: false },
+      providerManagement: disabledProvidersManagement(),
+    });
+
+    expect(submitButton().disabled).toBe(true);
+    expect(host.querySelector(".agent-composer__reason")?.textContent).toContain(
+      "Enable an agent provider in Settings before starting a turn.",
+    );
+    expect(trigger("agent-launch-model").disabled).toBe(true);
+    expect(trigger("agent-launch-effort").disabled).toBe(true);
+    expect(trigger("agent-launch-mode").disabled).toBe(true);
+    expect(trigger(CHECKOUT_ID).disabled).toBe(true);
+    expect(trigger(REPOSITORY_ID).disabled).toBe(true);
+    expect(host.querySelector<HTMLTextAreaElement>("#agent-prompt")?.disabled).toBe(true);
+    const settings = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Open provider settings",
+    );
+    act(() => settings?.click());
+    expect(onOpenProviderSettings).toHaveBeenCalledTimes(1);
+    submitForm();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("disables unsafe in-place confirmation when all providers are disabled", () => {
+    render({
+      guard: { kind: "unsafe", reasons: ["dirty-tree"] },
+      prompt: "Fix it",
+      providerEnabled: { claudeCode: false, codex: false },
+      providerManagement: disabledProvidersManagement(),
+    });
+
+    expect(checkbox("agent-unsafe-confirm").disabled).toBe(true);
+  });
+
+  it("disables dangerous launch confirmation when all providers are disabled", () => {
+    render({
+      launch: {
+        provider: "claudeCode",
+        model: "default",
+        mode: "bypassPermissions",
+        effort: "default",
+      },
+      prompt: "Fix it",
+      providerEnabled: { claudeCode: false, codex: false },
+      providerManagement: disabledProvidersManagement(),
+    });
+
+    expect(checkbox("agent-launch-danger-confirm").disabled).toBe(true);
   });
 
   it("blocks a project that has no repository and names it", () => {
@@ -606,6 +665,7 @@ function defaultProps(): AgentComposerProps {
     dangerousConfirmed: false,
     dispatching: false,
     submitBlocked: false,
+    providerEnabled: { claudeCode: true, codex: true },
     mode: { kind: "new" },
     onSelectRepository: () => undefined,
     onPromptChange: () => undefined,
@@ -614,6 +674,46 @@ function defaultProps(): AgentComposerProps {
     onLaunchChange: () => undefined,
     onDangerousConfirmedChange: () => undefined,
     onNewThread: () => undefined,
+    onOpenProviderSettings: () => undefined,
     onSubmit: () => undefined,
+  };
+}
+
+function disabledProvidersManagement(): AgentProviderManagementSurface {
+  const preferences = defaultAgentProviderPreferences();
+  return {
+    providers: {
+      claudeCode: {
+        health: { kind: "disabled" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+      codex: {
+        health: { kind: "disabled" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+    },
+    toast: null,
+    admissionAuthority: (provider) => ({
+      provider,
+      revision: 1,
+      disposition: { kind: "disabled" },
+    }),
+    authority: (provider) => ({
+      settingsRevision: 1,
+      provider,
+      preference: { ...preferences[provider], enabled: false },
+      cliPath: null,
+    }),
+    dismissToast: vi.fn(),
+    dismissUpdate: vi.fn(async () => true),
+    refresh: vi.fn(async () => undefined),
+    retryRegistration: vi.fn(async () => undefined),
+    save: vi.fn(async () => true),
+    saveWithOutcome: vi.fn(async () => ({ kind: "persisted" as const, policyRegistered: true })),
+    update: vi.fn(async () => null),
   };
 }

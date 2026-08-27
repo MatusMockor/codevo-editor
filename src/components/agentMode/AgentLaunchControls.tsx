@@ -1,6 +1,8 @@
 import { Lock, LockOpen, TriangleAlert } from "lucide-react";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentCliKind } from "../../domain/agentTask";
 import {
   agentLaunchAccess,
   agentLaunchDangerConfirmLabel,
@@ -33,6 +35,8 @@ export interface AgentLaunchControlsProps {
   readonly launch: AgentLaunchOptions;
   readonly disabled: boolean;
   readonly favorites: AgentModelFavorites;
+  readonly providerEnabled?: Readonly<Record<AgentCliKind, boolean>> | null;
+  readonly providerManagement?: AgentProviderManagementSurface | null;
   onLaunchChange(next: AgentLaunchOptions): void;
 }
 
@@ -41,6 +45,8 @@ export function AgentLaunchControls({
   favorites,
   launch,
   onLaunchChange,
+  providerEnabled = null,
+  providerManagement = null,
 }: AgentLaunchControlsProps) {
   return (
     <div className="agent-composer__launch">
@@ -52,6 +58,8 @@ export function AgentLaunchControls({
         label="Agent model"
         launch={launch}
         onSelect={(model) => onLaunchChange(agentLaunchWithModel(launch, model))}
+        providerEnabled={providerEnabled}
+        providerManagement={providerManagement}
       />
       <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
         {agentLaunchModelHint(launch)}
@@ -112,11 +120,13 @@ function accessIcon(access: AgentLaunchAccess) {
 
 export function AgentLaunchWarning({
   confirmed,
+  disabled = false,
   launch,
   onConfirmedChange,
 }: {
   readonly launch: AgentLaunchOptions;
   readonly confirmed: boolean;
+  readonly disabled?: boolean;
   onConfirmedChange(confirmed: boolean): void;
 }) {
   const notice = agentLaunchDangerNotice(launch);
@@ -132,6 +142,7 @@ export function AgentLaunchWarning({
       <label className="agent-composer__checkbox" htmlFor={DANGER_ID}>
         <input
           checked={confirmed}
+          disabled={disabled}
           id={DANGER_ID}
           onChange={(event) => onConfirmedChange(event.target.checked)}
           type="checkbox"

@@ -695,8 +695,11 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  min-width: 100%;
+  min-height: 100%;
   margin: 0;
   overflow: hidden;
+  background: var(--color-app);
 }
 
 button,
@@ -721,6 +724,8 @@ button {
   display: grid;
   width: 100%;
   height: 100%;
+  min-width: 100%;
+  min-height: 100%;
   grid-template-columns: 46px minmax(180px, var(--sidebar-width, 300px)) minmax(0, 1fr);
   grid-template-rows: var(--window-chrome-height) minmax(0, 1fr) 28px;
   background: var(--color-app);
@@ -7656,4 +7661,110 @@ kbd {
 .editor-split-resizer:hover,
 .editor-split-resizer:focus-visible {
   background: var(--accent, #6fb7ad);
+}
+
+.agent-provider-settings {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-provider-card {
+  background: color-mix(in srgb, var(--panel-bg) 94%, var(--text-primary));
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.agent-provider-card__header,
+.agent-provider-card__actions,
+.agent-provider-card__input-unit {
+  align-items: center;
+  display: flex;
+}
+
+.agent-provider-card__header,
+.agent-provider-card__actions {
+  justify-content: space-between;
+}
+
+.agent-provider-card__header > span,
+.agent-provider-card__controls,
+.agent-provider-card__interval {
+  display: grid;
+  gap: 5px;
+}
+
+.agent-provider-card__header small,
+.agent-provider-card__status,
+.agent-provider-card__interval small,
+.agent-provider-card__result small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.agent-provider-card__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+}
+
+.agent-provider-card__policy {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  font-size: 11px;
+  gap: 8px;
+}
+
+.agent-provider-card__policy--failed {
+  color: var(--status-error);
+}
+
+.agent-provider-card__input-unit {
+  gap: 8px;
+}
+
+.agent-provider-card__input-unit input {
+  max-width: 112px;
+}
+
+.agent-provider-card__updates-toggle {
+  justify-self: start;
+}
+
+.agent-provider-card__actions {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.agent-provider-card__actions button {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.agent-provider-card__result {
+  border-radius: 6px;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.agent-provider-card__result--success {
+  background: color-mix(in srgb, var(--status-success) 12%, transparent);
+  color: var(--status-success);
+}
+
+.agent-provider-card__result--failed {
+  background: color-mix(in srgb, var(--status-error) 12%, transparent);
+  color: var(--status-error);
+}
+
+.agent-provider-card__result pre {
+  color: inherit;
+  margin: 6px 0 0;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
 }

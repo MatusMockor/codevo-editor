@@ -115,6 +115,7 @@ import "./App.css";
 
 const {
   agentCliVersionGateway,
+  agentProviderGateway,
   agentRootLeaseGateway,
   artisanRoutesGateway,
   cancelJavaScriptTypeScriptLanguageServerRequest,
@@ -243,6 +244,8 @@ function App() {
     settingsGateway,
     workbenchPrompter,
     {
+      agentCliVersionGateway,
+      agentProviderGateway,
       agentRootLeaseGateway,
       editorMenuCommandRunner,
       editorCursorStore: cursorStore,
@@ -694,8 +697,7 @@ function App() {
     startBottomPanelResize,
     startSidebarResize,
   } = useWorkbenchResizeHandles({
-    rightPanelWidth: agentLayout.layout.rightPanelWidth,
-    bottomPanelHeight: agentLayout.layout.bottomPanelHeight,
+    layout: agentLayout.layout,
     onResizeRightPanel: resizeAgentRightPanel,
     onResizeBottomPanel: resizeAgentBottomPanel,
   });
@@ -1481,7 +1483,7 @@ function App() {
       />
 
       <WorkbenchSettingsDialogHost
-        agentCliVersionGateway={agentCliVersionGateway}
+        providerManagement={workbench.agents.providerManagement}
         systemFontGateway={systemFontGateway}
         workbench={workbench}
         workspaceFiles={workspaceGateways.files}

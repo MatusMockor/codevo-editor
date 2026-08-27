@@ -59,6 +59,7 @@ export interface StartAgentTaskRequest {
   readonly agentCliKind: AgentCliKind;
   readonly resumeSessionId: string | null;
   readonly launch: AgentLaunchOptions;
+  readonly providerGeneration: number;
 }
 
 export interface StartAgentTaskResult {
@@ -232,6 +233,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
       "agentCliKind",
       "resumeSessionId",
       "launch",
+      "providerGeneration",
     ],
     "request",
   );
@@ -258,6 +260,10 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
     agentCliKind: cliKind,
     resumeSessionId: optionalAgentSessionId(request.resumeSessionId, "request.resumeSessionId"),
     launch,
+    providerGeneration: positiveSafeInteger(
+      request.providerGeneration,
+      "request.providerGeneration",
+    ),
   };
 }
 
@@ -395,6 +401,13 @@ function booleanFlag(value: unknown, path: string): boolean {
 function unsignedSafeInteger(value: unknown, path: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
     invalid(path, "a non-negative safe integer");
+  }
+  return value as number;
+}
+
+function positiveSafeInteger(value: unknown, path: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    invalid(path, "a positive safe integer");
   }
   return value as number;
 }

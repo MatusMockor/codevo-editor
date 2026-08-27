@@ -20,6 +20,7 @@ const START_REQUEST: StartAgentTaskRequest = {
   agentCliKind: "claudeCode",
   resumeSessionId: null,
   launch: defaultAgentLaunchOptions("claudeCode"),
+  providerGeneration: 1,
 };
 
 const available: AgentTaskRuntimeDetector = () => true;
@@ -51,6 +52,7 @@ describe("TauriAgentTaskGateway", () => {
       .fn<InvokeAgentTaskCommand>()
       .mockRejectedValueOnce("Too many agent tasks are starting or running.")
       .mockRejectedValueOnce("Agent tasks require a trusted repository.")
+      .mockRejectedValueOnce("Agent provider settings changed. Retry the operation.")
       .mockRejectedValueOnce("Failed to spawn the agent process.");
     const gateway = new TauriAgentTaskGateway(invokeCommand, vi.fn(), available);
 
@@ -60,6 +62,10 @@ describe("TauriAgentTaskGateway", () => {
     await expect(gateway.startAgentTask(START_REQUEST)).rejects.toMatchObject({
       name: "AgentTaskStartRejectedError",
       message: "Agent tasks require a trusted repository.",
+    });
+    await expect(gateway.startAgentTask(START_REQUEST)).rejects.toMatchObject({
+      name: "AgentTaskStartRejectedError",
+      message: "Agent provider settings changed. Retry the operation.",
     });
     await expect(gateway.startAgentTask(START_REQUEST)).rejects.toSatisfy(
       (error: unknown) => !(error instanceof AgentTaskStartRejectedError),

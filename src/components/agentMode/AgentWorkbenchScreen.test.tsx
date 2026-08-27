@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import { useAgentWorkbenchLayout } from "../../application/useAgentWorkbenchLayout";
 import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { agentWorkbenchHydration } from "../../application/useWorkbenchControllerAgents";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
@@ -425,6 +426,7 @@ function surface(
 ): WorkbenchAgentsSurface {
   return {
     ...threadsSurface(workspaceRoot, worktreePath),
+    providerManagement: providerManagement(),
     agentProjects: {
       projects: [project(workspaceRoot)],
       overflowRootPaths: [],
@@ -435,6 +437,39 @@ function surface(
       launchIdentityForProject: () => ({ workspaceId: "workspace-id", generation: 1 }),
       noteDispatchTrustRejected: () => undefined,
     },
+  };
+}
+
+function providerManagement(): AgentProviderManagementSurface {
+  return {
+    providers: {
+      claudeCode: {
+        health: { kind: "notConfigured" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+      codex: {
+        health: { kind: "notConfigured" },
+        policy: { kind: "unregistered" },
+        updateState: { kind: "idle" },
+        liveTurnCount: 0,
+      },
+    },
+    toast: null,
+    admissionAuthority: (provider) => ({
+      provider,
+      revision: 0,
+      disposition: { kind: "policyUnavailable", reason: "unregistered" },
+    }),
+    authority: () => null,
+    dismissToast: () => undefined,
+    dismissUpdate: async () => false,
+    refresh: async () => undefined,
+    retryRegistration: async () => undefined,
+    save: async () => false,
+    saveWithOutcome: async () => ({ kind: "rejected", reason: "notHydrated" }),
+    update: async () => "policyUnavailable",
   };
 }
 
@@ -469,6 +504,7 @@ function threadsSurface(root: string, worktreePath: string | null): AgentThreads
     agentCliVersion: null,
     liveTaskCount: 0,
     maxConcurrentAgentTasks: 4,
+    pendingTurnCount: () => 0,
     isolationPreview: (repositoryRoot: string) => ({
       repositoryRoot,
       recommended: { kind: "in-place" },

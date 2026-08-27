@@ -1,7 +1,7 @@
 import { Settings2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeShortcutInput } from "../domain/keymap";
-import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
+import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import {
   appThemeOptions,
   maxEditorFontSize,
@@ -34,11 +34,12 @@ import type {
   PhpToolAvailability,
 } from "../domain/workspace";
 import { settingsDialogSections } from "./settingsDialogModel";
-import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
+import { AgentSettingsDialogSection } from "./AgentSettingsDialogSection";
 import { IndexSettings } from "./IndexSettingsSection";
 import { KeymapSettingsPanel } from "./KeymapSettingsPanel";
 import { PhpSettings } from "./PhpSettingsSection";
 import { SnippetsSettings } from "./SnippetsSettingsSection";
+import { settingsDialogDraftPersistence } from "./settingsDialogDraftPersistence";
 
 export interface SettingsSaveInput {
   appSettings: AppSettings;
@@ -47,7 +48,7 @@ export interface SettingsSaveInput {
 }
 
 interface SettingsDialogProps {
-  agentCliVersionGateway?: AgentCliVersionGateway | null;
+  providerManagement?: AgentProviderManagementSurface | null;
   appSettings: AppSettings;
   /**
    * Auto-detected git repository directories (workspace-root-relative, excluding
@@ -75,7 +76,6 @@ const emptySystemFontGateway: SystemFontGateway = {
 };
 
 export function SettingsDialog({
-  agentCliVersionGateway = null,
   appSettings,
   gitDetectedRepositoryMappings = [],
   initialSection = "general",
@@ -86,6 +86,7 @@ export function SettingsDialog({
   onRestartJavaScriptTypeScriptService,
   onSave,
   phpTools,
+  providerManagement = null,
   systemFontGateway = emptySystemFontGateway,
   workspaceDescriptor,
   workspaceRoot,
@@ -140,31 +141,21 @@ export function SettingsDialog({
     return null;
   }
 
-  const saveDraft = (input: Partial<SettingsSaveInput>) => {
-    void onSave({
-      appSettings: input.appSettings ?? draftAppSettingsRef.current,
-      trusted: hasWorkspace ? (input.trusted ?? draftTrustedRef.current) : null,
-      workspaceSettings: input.workspaceSettings ?? draftWorkspaceSettingsRef.current,
-    }).catch(() => undefined);
-  };
-
-  const updateAppSettings = (nextSettings: AppSettings) => {
-    draftAppSettingsRef.current = nextSettings;
-    setDraftAppSettings(nextSettings);
-    saveDraft({ appSettings: nextSettings });
-  };
-
-  const updateWorkspaceSettings = (nextSettings: WorkspaceSettings) => {
-    draftWorkspaceSettingsRef.current = nextSettings;
-    setDraftWorkspaceSettings(nextSettings);
-    saveDraft({ workspaceSettings: nextSettings });
-  };
-
-  const updateTrusted = (trusted: boolean) => {
-    draftTrustedRef.current = trusted;
-    setDraftTrusted(trusted);
-    saveDraft({ trusted });
-  };
+  const {
+    save: saveDraft,
+    updateAppSettings,
+    updateTrusted,
+    updateWorkspaceSettings,
+  } = settingsDialogDraftPersistence({
+    appSettingsRef: draftAppSettingsRef,
+    hasWorkspace,
+    onSave,
+    setAppSettings: setDraftAppSettings,
+    setTrusted: setDraftTrusted,
+    setWorkspaceSettings: setDraftWorkspaceSettings,
+    trustedRef: draftTrustedRef,
+    workspaceSettingsRef: draftWorkspaceSettingsRef,
+  });
 
   return (
     <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
@@ -558,12 +549,17 @@ export function SettingsDialog({
               ) : null}
 
               {activeSection === "agents" ? (
-                <AgentsSettingsPanel
-                  agentCliVersionGateway={agentCliVersionGateway}
+                <AgentSettingsDialogSection
                   appSettings={draftAppSettings}
+                  appSettingsRef={draftAppSettingsRef}
                   hasWorkspace={hasWorkspace}
-                  updateAppSettings={updateAppSettings}
-                  updateWorkspaceSettings={updateWorkspaceSettings}
+                  onPersistAppSettings={(settings) => saveDraft({ appSettings: settings })}
+                  onPublishAppSettings={(settings) => {
+                    draftAppSettingsRef.current = settings;
+                    setDraftAppSettings(settings);
+                  }}
+                  onUpdateWorkspaceSettings={updateWorkspaceSettings}
+                  providerManagement={providerManagement}
                   workspaceSettings={draftWorkspaceSettings}
                 />
               ) : null}

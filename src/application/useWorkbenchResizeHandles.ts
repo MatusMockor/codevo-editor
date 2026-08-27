@@ -6,7 +6,13 @@ import {
   MIN_AGENT_RIGHT_PANEL_WIDTH,
   clampAgentBottomPanelHeight,
   clampAgentRightPanelWidth,
+  type AgentRailState,
+  type AgentWorkbenchLayout,
 } from "../domain/agentWorkbenchLayout";
+import {
+  AGENT_CENTER_MIN_WIDTH,
+  agentWorkbenchRailWidth,
+} from "../domain/agentWorkbenchResponsiveLayout";
 
 export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 520;
@@ -22,8 +28,7 @@ export const AGENT_RIGHT_PANEL_WIDTH_VARIABLE = "--agent-right-panel-width";
 export const AGENT_BOTTOM_PANEL_HEIGHT_VARIABLE = "--agent-bottom-panel-height";
 
 export interface AgentPanelResizeCommit {
-  readonly rightPanelWidth: number;
-  readonly bottomPanelHeight: number;
+  readonly layout: Pick<AgentWorkbenchLayout, "rail" | "rightPanelWidth" | "bottomPanelHeight">;
   onResizeRightPanel(width: number): void;
   onResizeBottomPanel(height: number): void;
 }
@@ -45,10 +50,19 @@ export function maxWorkbenchBottomPanelHeight(viewportHeight: number): number {
   );
 }
 
-export function maxAgentRightPanelWidth(viewportWidth: number): number {
+export function maxAgentRightPanelWidth(
+  viewportWidth: number,
+  rail: AgentRailState = "expanded",
+): number {
+  const railWidth = agentWorkbenchRailWidth(rail, viewportWidth);
+  const availableWidth = viewportWidth - railWidth - AGENT_CENTER_MIN_WIDTH;
   return Math.max(
     MIN_AGENT_RIGHT_PANEL_WIDTH,
-    Math.min(viewportWidth * AGENT_RIGHT_PANEL_VIEWPORT_RATIO, MAX_AGENT_RIGHT_PANEL_WIDTH),
+    Math.min(
+      viewportWidth * AGENT_RIGHT_PANEL_VIEWPORT_RATIO,
+      availableWidth,
+      MAX_AGENT_RIGHT_PANEL_WIDTH,
+    ),
   );
 }
 
@@ -105,8 +119,9 @@ export function useWorkbenchResizeHandles(
   );
 
   const { onResizeBottomPanel, onResizeRightPanel } = agentPanels;
-  const agentRightPanelWidth = agentPanels.rightPanelWidth;
-  const agentBottomPanelHeight = agentPanels.bottomPanelHeight;
+  const agentRightPanelWidth = agentPanels.layout.rightPanelWidth;
+  const agentRail = agentPanels.layout.rail;
+  const agentBottomPanelHeight = agentPanels.layout.bottomPanelHeight;
 
   const startAgentRightPanelResize = useCallback(
     (event: PointerEvent<HTMLElement>) => {
@@ -121,7 +136,7 @@ export function useWorkbenchResizeHandles(
           width = clamp(
             startWidth + startX - moveEvent.clientX,
             MIN_AGENT_RIGHT_PANEL_WIDTH,
-            maxAgentRightPanelWidth(window.innerWidth),
+            maxAgentRightPanelWidth(frame?.clientWidth || window.innerWidth, agentRail),
           );
           frame?.style.setProperty(AGENT_RIGHT_PANEL_WIDTH_VARIABLE, `${width}px`);
         },
@@ -131,7 +146,7 @@ export function useWorkbenchResizeHandles(
         },
       );
     },
-    [agentRightPanelWidth, onResizeRightPanel],
+    [agentRail, agentRightPanelWidth, onResizeRightPanel],
   );
 
   const startAgentBottomPanelResize = useCallback(

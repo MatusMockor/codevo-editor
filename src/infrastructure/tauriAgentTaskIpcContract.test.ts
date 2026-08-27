@@ -36,6 +36,7 @@ const START_REQUEST: StartAgentTaskRequest = {
   agentCliKind: "claudeCode",
   resumeSessionId: null,
   launch: defaultAgentLaunchOptions("claudeCode"),
+  providerGeneration: 1,
 };
 
 describe("agent task IPC command names", () => {
@@ -223,6 +224,9 @@ describe("invokeStartAgentTaskIpc", () => {
     "Agent task workspace is closing or busy.",
     "Agent task trust authority is busy.",
     "Agent task startup is closed.",
+    "Agent provider settings changed. Retry the operation.",
+    "Enable this provider in Settings before starting a turn.",
+    "This provider is updating. Wait for the update to finish.",
   ])("classifies project authority rejection as definite: %s", async (message) => {
     const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue(new Error(message));
 

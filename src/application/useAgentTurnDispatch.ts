@@ -45,10 +45,12 @@ import {
   admitStart,
   ensureLease,
   mintUnusedId,
+  providerAdmissionIsCurrent,
   reportPreflight,
   usedTurnIds,
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
+import type { ReadyAgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
 import {
   acceptAgentTurnOutput,
   createAgentTurnOutputStream,
@@ -92,6 +94,7 @@ export interface AgentTurnDispatchDependencies extends AgentTurnAdmissionDepende
 
 export interface AgentTurnDispatchSurface {
   readonly dispatching: boolean;
+  pendingTurnCount(provider: AgentCliKind): number;
   startThread(request: AgentThreadStartRequest): Promise<AgentThreadStartResult | null>;
   sendFollowUp(request: AgentFollowUpRequest): Promise<boolean>;
   stop(threadId: string): Promise<void>;
@@ -118,6 +121,7 @@ interface TurnStart {
   readonly turnId: string;
   readonly agentCliPath: string;
   readonly agentCliKind: AgentCliKind;
+  readonly providerAuthority: ReadyAgentProviderAdmissionAuthority;
   readonly resumeSessionId: string | null;
   readonly launch: AgentLaunchOptions;
   readonly createdWorktree: CreatedAgentWorktree | null;
@@ -136,6 +140,7 @@ export function useAgentTurnDispatch(
   const streamsRef = useRef<Map<string, AgentTurnOutputStream>>(new Map());
   const frameRef = useRef<(() => void) | null>(null);
   const sessionWarnedThreadsRef = useRef<Set<string>>(new Set());
+  const pendingTurnCountsRef = useRef<Record<AgentCliKind, number>>({ claudeCode: 0, codex: 0 });
 
   useLayoutEffect(() => {
     dependenciesRef.current = dependencies;
@@ -152,6 +157,19 @@ export function useAgentTurnDispatch(
     (): AgentOutputParserPort => dependenciesRef.current.outputParser ?? domainAgentOutputParser,
     [],
   );
+
+  const pendingTurnCount = useCallback(
+    (provider: AgentCliKind): number => pendingTurnCountsRef.current[provider],
+    [],
+  );
+
+  const beginPendingTurn = useCallback((provider: AgentCliKind): void => {
+    adjustPendingTurnCount(pendingTurnCountsRef.current, provider, 1);
+  }, []);
+
+  const endPendingTurn = useCallback((provider: AgentCliKind): void => {
+    adjustPendingTurnCount(pendingTurnCountsRef.current, provider, -1);
+  }, []);
 
   const flushStreams = useCallback((): void => {
     frameRef.current?.();
@@ -265,7 +283,6 @@ export function useAgentTurnDispatch(
   );
 
   const registeredTurnAlive = useCallback((start: TurnStart): boolean => {
-    if (start.registration === "after-start") return true;
     const thread = dependenciesRef.current.store.currentState().threads.get(start.threadId);
     if (thread === undefined || thread.archived) return false;
     return thread.turns.some((turn) => turn.turnId === start.turnId);
@@ -273,7 +290,6 @@ export function useAgentTurnDispatch(
 
   const settleRegisteredTurn = useCallback((start: TurnStart, status: AgentTaskStatus): void => {
     streamsRef.current.delete(start.turnId);
-    if (start.registration === "after-start") return;
     const deps = dependenciesRef.current;
     const thread = deps.store.currentState().threads.get(start.threadId);
     const turn = thread?.turns.find((candidate) => candidate.turnId === start.turnId);
@@ -297,15 +313,13 @@ export function useAgentTurnDispatch(
 
   const reportStartFailure = useCallback(
     async (start: TurnStart, error: unknown, retainUncertain: () => void): Promise<void> => {
-      const { authority, repositoryRoot } = start;
+      const { authority } = start;
       const trustRejected = isAgentDispatchTrustRejection(error);
       const definite = trustRejected || isDefiniteAgentTaskStartRejection(error);
-      if (isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
-        settleRegisteredTurn(start, {
-          kind: "failed",
-          message: definite ? errorMessageOf(error) : UNCERTAIN_START_MESSAGE,
-        });
-      }
+      settleRegisteredTurn(start, {
+        kind: "failed",
+        message: definite ? errorMessageOf(error) : UNCERTAIN_START_MESSAGE,
+      });
       if (!definite) retainUncertain();
       if (definite && start.createdWorktree !== null) {
         await compensateCreatedWorktree(
@@ -315,8 +329,7 @@ export function useAgentTurnDispatch(
           start.createdWorktree,
         );
       }
-      if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot))
-        return;
+      if (!turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return;
       const currentDeps = dependenciesRef.current;
       if (trustRejected) {
         noteTrustRejection(currentDeps, authority, error);
@@ -340,12 +353,21 @@ export function useAgentTurnDispatch(
         deps.retainUncertainWorktree(start.createdWorktree.receipt.worktreePath);
       };
       const stillOwned = (): boolean =>
-        isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) &&
-        registeredTurnAlive(start);
+        turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start) &&
+        (!turnRegistered || registeredTurnAlive(start));
+      let turnRegistered = false;
+      if (!turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return false;
       const cliVersion = deps.currentCliVersion?.() ?? null;
       refreshCliVersion(deps, start);
       const turn = pendingTurn(turnId, start.prompt, now(), start.launch, cliVersion);
-      if (start.registration === "before-start") start.register(turn);
+      if (start.registration === "before-start") {
+        start.register(turn);
+        turnRegistered = true;
+      }
+      if (!stillOwned()) {
+        settleRegisteredTurn(start, { kind: "stopped" });
+        return false;
+      }
       const started = await attempt(() =>
         gateway.startAgentTask({
           taskId: turnId,
@@ -357,6 +379,7 @@ export function useAgentTurnDispatch(
           prompt: start.prompt,
           agentCliPath: start.agentCliPath,
           agentCliKind: start.agentCliKind,
+          providerGeneration: start.providerAuthority.providerGeneration,
           resumeSessionId: start.resumeSessionId,
           launch: start.launch,
         }),
@@ -368,8 +391,8 @@ export function useAgentTurnDispatch(
       if (started.value.taskId !== turnId) {
         const stopped = await attempt(() => gateway.stopAgentTask({ taskId: turnId, workspaceId }));
         retainUncertain();
-        if (isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
-          settleRegisteredTurn(start, { kind: "failed", message: UNEXPECTED_TASK_ID_MESSAGE });
+        settleRegisteredTurn(start, { kind: "failed", message: UNEXPECTED_TASK_ID_MESSAGE });
+        if (turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start)) {
           const currentDeps = dependenciesRef.current;
           if (!stopped.ok) currentDeps.reportError(AGENT_TASKS_SOURCE, stopped.error);
           currentDeps.setNotice(
@@ -385,29 +408,37 @@ export function useAgentTurnDispatch(
       if (!stillOwned()) {
         await attempt(() => gateway.stopAgentTask({ taskId: turnId, workspaceId }));
         retainUncertain();
-        if (isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
-          settleRegisteredTurn(start, { kind: "stopped" });
-        }
+        settleRegisteredTurn(start, { kind: "stopped" });
         return false;
       }
-      if (start.registration === "after-start") start.register(turn);
+      if (start.registration === "after-start") {
+        start.register(turn);
+        turnRegistered = true;
+      }
+      if (!stillOwned()) {
+        await attempt(() => gateway.stopAgentTask({ taskId: turnId, workspaceId }));
+        retainUncertain();
+        settleRegisteredTurn(start, { kind: "stopped" });
+        return false;
+      }
       const acknowledged = await attempt(() =>
         gateway.acknowledgeAgentTaskStart({ taskId: turnId, workspaceId }),
       );
       if (!stillOwned()) {
         await attempt(() => gateway.stopAgentTask({ taskId: turnId, workspaceId }));
         retainUncertain();
-        if (isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
-          settleRegisteredTurn(start, { kind: "stopped" });
-        }
+        settleRegisteredTurn(start, { kind: "stopped" });
         return false;
       }
       if (!acknowledged.ok) {
-        deps.reportError(AGENT_TASKS_SOURCE, acknowledged.error);
-        deps.setNotice(warning("The agent started but its live output could not be attached."));
+        const currentDeps = dependenciesRef.current;
+        currentDeps.reportError(AGENT_TASKS_SOURCE, acknowledged.error);
+        currentDeps.setNotice(
+          warning("The agent started but its live output could not be attached."),
+        );
         return true;
       }
-      deps.setNotice(null);
+      dependenciesRef.current.setNotice(null);
       return true;
     },
     [registeredTurnAlive, reportStartFailure, settleRegisteredTurn],
@@ -418,7 +449,8 @@ export function useAgentTurnDispatch(
       const deps = dependenciesRef.current;
       const admitted = admitStart(deps, request);
       if (admitted === null) return null;
-      const { authority, project, prompt, agentCliPath, agentCliKind, launch } = admitted;
+      const { authority, project, prompt, agentCliPath, agentCliKind, providerAuthority, launch } =
+        admitted;
       const repositoryRoot = request.repositoryRoot;
       if (dispatchingRef.current) {
         deps.setNotice(warning("A dispatch is already in progress."));
@@ -435,6 +467,7 @@ export function useAgentTurnDispatch(
         return null;
       }
       dispatchingRef.current = true;
+      beginPendingTurn(agentCliKind);
       setDispatching(true);
       try {
         const leased = await ensureLease(
@@ -444,14 +477,17 @@ export function useAgentTurnDispatch(
           project,
           authority,
           repositoryRoot,
+          () => providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority),
         );
         if (!leased) return null;
+        if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) return null;
         if (request.isolation === "in-place") {
           const preflight = await deps.preflightInPlace(
             repositoryRoot,
             authority,
             request.unsafeInPlaceConfirmationKey,
           );
+          if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) return null;
           if (!reportPreflight(deps, preflight)) return null;
         }
         const createdWorktree =
@@ -465,10 +501,18 @@ export function useAgentTurnDispatch(
               )
             : null;
         if (request.isolation === "worktree" && createdWorktree === null) {
-          if (mountedRef.current) deps.onWorktreeDispatchFailed?.();
+          if (
+            mountedRef.current &&
+            providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
+          ) {
+            deps.onWorktreeDispatchFailed?.();
+          }
           return null;
         }
-        if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+        if (
+          !isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) ||
+          !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
+        ) {
           if (createdWorktree !== null) {
             await compensateCreatedWorktree(
               dependenciesRef,
@@ -480,8 +524,30 @@ export function useAgentTurnDispatch(
           return null;
         }
         const worktreePath = createdWorktree?.receipt.worktreePath ?? null;
+        if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) {
+          if (createdWorktree !== null) {
+            await compensateCreatedWorktree(
+              dependenciesRef,
+              mountedRef,
+              authority,
+              createdWorktree,
+            );
+          }
+          return null;
+        }
         if (worktreePath !== null) {
           dependenciesRef.current.onWorktreeCreated?.(repositoryRoot, worktreePath);
+        }
+        if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) {
+          if (createdWorktree !== null) {
+            await compensateCreatedWorktree(
+              dependenciesRef,
+              mountedRef,
+              authority,
+              createdWorktree,
+            );
+          }
+          return null;
         }
         const now = deps.now ?? Date.now;
         const started = await runTurnStart({
@@ -496,6 +562,7 @@ export function useAgentTurnDispatch(
           turnId,
           agentCliPath,
           agentCliKind,
+          providerAuthority,
           resumeSessionId: null,
           launch,
           createdWorktree,
@@ -521,16 +588,23 @@ export function useAgentTurnDispatch(
             dependenciesRef.current.store.dispatchAction({ kind: "threadCreated", thread });
           },
         });
-        if (!started && request.isolation === "worktree" && mountedRef.current) {
+        if (
+          !started &&
+          request.isolation === "worktree" &&
+          mountedRef.current &&
+          isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) &&
+          providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
+        ) {
           deps.onWorktreeDispatchFailed?.();
         }
         return started ? { threadId } : null;
       } finally {
+        endPendingTurn(agentCliKind);
         dispatchingRef.current = false;
         if (mountedRef.current) setDispatching(false);
       }
     },
-    [registerStream, runTurnStart],
+    [beginPendingTurn, endPendingTurn, registerStream, runTurnStart],
   );
 
   const sendFollowUp = useCallback(
@@ -538,7 +612,16 @@ export function useAgentTurnDispatch(
       const deps = dependenciesRef.current;
       const admitted = admitFollowUp(deps, request, inFlightThreadsRef.current);
       if (admitted === null) return false;
-      const { thread, authority, projectRoot, prompt, agentCliPath, sessionId, launch } = admitted;
+      const {
+        thread,
+        authority,
+        projectRoot,
+        prompt,
+        agentCliPath,
+        providerAuthority,
+        sessionId,
+        launch,
+      } = admitted;
       const repositoryRoot = thread.owner.repositoryRoot;
       const turnId = mintUnusedId(deps, new Set(usedTurnIds(deps.store.state)));
       if (turnId === null) {
@@ -546,6 +629,7 @@ export function useAgentTurnDispatch(
         return false;
       }
       inFlightThreadsRef.current.add(thread.threadId);
+      beginPendingTurn(thread.provider.kind);
       setDispatching(true);
       try {
         return await runTurnStart({
@@ -560,6 +644,7 @@ export function useAgentTurnDispatch(
           turnId,
           agentCliPath,
           agentCliKind: thread.provider.kind,
+          providerAuthority,
           resumeSessionId: sessionId,
           launch,
           createdWorktree: null,
@@ -574,11 +659,12 @@ export function useAgentTurnDispatch(
           },
         });
       } finally {
+        endPendingTurn(thread.provider.kind);
         inFlightThreadsRef.current.delete(thread.threadId);
         if (mountedRef.current) setDispatching(inFlightThreadsRef.current.size > 0);
       }
     },
-    [registerStream, runTurnStart],
+    [beginPendingTurn, endPendingTurn, registerStream, runTurnStart],
   );
 
   const stop = useCallback(async (threadId: string): Promise<void> => {
@@ -632,7 +718,42 @@ export function useAgentTurnDispatch(
     [],
   );
 
-  return { dispatching, startThread, sendFollowUp, stop, hasLiveTasksForOwner, stopProjectTasks };
+  return {
+    dispatching,
+    pendingTurnCount,
+    startThread,
+    sendFollowUp,
+    stop,
+    hasLiveTasksForOwner,
+    stopProjectTasks,
+  };
+}
+
+function adjustPendingTurnCount(
+  counts: Record<AgentCliKind, number>,
+  provider: AgentCliKind,
+  delta: 1 | -1,
+): void {
+  switch (provider) {
+    case "claudeCode":
+      counts.claudeCode = adjustedPendingTurnCount(counts.claudeCode, delta);
+      return;
+    case "codex":
+      counts.codex = adjustedPendingTurnCount(counts.codex, delta);
+      return;
+    default:
+      unsupportedPendingTurnProvider(provider);
+  }
+}
+
+function adjustedPendingTurnCount(current: number, delta: 1 | -1): number {
+  const next = current + delta;
+  if (next >= 0) return next;
+  throw new Error("Pending provider turn count underflow.");
+}
+
+function unsupportedPendingTurnProvider(provider: never): never {
+  throw new TypeError(`Unsupported pending turn provider: ${String(provider)}.`);
 }
 
 function statusEventMatchesStream(
@@ -643,6 +764,24 @@ function statusEventMatchesStream(
   if (event.repositoryRoot !== stream.repositoryRoot) return false;
   if (event.isolation !== stream.isolation) return false;
   return event.worktreePath === stream.worktreePath;
+}
+
+function turnStartAuthorityIsCurrent(
+  dependenciesRef: { readonly current: AgentTurnDispatchDependencies },
+  mountedRef: { readonly current: boolean },
+  start: TurnStart,
+): boolean {
+  if (
+    !isCurrentTaskLaunchAuthority(
+      dependenciesRef,
+      mountedRef,
+      start.authority,
+      start.repositoryRoot,
+    )
+  ) {
+    return false;
+  }
+  return providerAdmissionIsCurrent(dependenciesRef.current, start.providerAuthority);
 }
 
 function noteSessionChange(

@@ -4,6 +4,7 @@ import {
   useAgentModelFavorites,
   type AgentModelFavoritesPersistence,
 } from "../../application/useAgentModelFavorites";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import {
   agentLaunchIsDangerous,
   defaultAgentLaunchOptions,
@@ -74,6 +75,8 @@ export interface AgentComposerProps {
   readonly dangerousConfirmed: boolean;
   readonly dispatching: boolean;
   readonly submitBlocked: boolean;
+  readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
+  readonly providerManagement?: AgentProviderManagementSurface | null;
   onSelectRepository(repositoryRoot: string): void;
   onPromptChange(prompt: string): void;
   onIsolationChange(isolation: AgentTaskIsolation): void;
@@ -81,6 +84,7 @@ export interface AgentComposerProps {
   onLaunchChange(launch: AgentLaunchOptions): void;
   onDangerousConfirmedChange(confirmed: boolean): void;
   onNewThread(): void;
+  onOpenProviderSettings(): void;
   onSubmit(submission: AgentComposerSubmission): void;
 }
 
@@ -98,12 +102,15 @@ export function AgentComposer({
   onIsolationChange,
   onLaunchChange,
   onNewThread,
+  onOpenProviderSettings,
   onPromptChange,
   onSelectRepository,
   onSubmit,
   onUnsafeConfirmedChange,
   prompt,
   promptBytes,
+  providerEnabled,
+  providerManagement = null,
   submitBlocked,
   target,
   unsafeConfirmed,
@@ -121,8 +128,14 @@ export function AgentComposer({
     launch.provider === launchProvider ? launch : defaultAgentLaunchOptions(launchProvider);
   const dangerousLaunch = agentLaunchIsDangerous(effectiveLaunch);
   const dangerousLaunchConfirmed = dangerousLaunch && dangerousConfirmed;
+  const providerReason =
+    providerEnabled[effectiveLaunch.provider] === false
+      ? "Enable an agent provider in Settings before starting a turn."
+      : null;
+  const allProvidersDisabled = !providerEnabled.claudeCode && !providerEnabled.codex;
   const blocked =
     submitBlocked ||
+    providerReason !== null ||
     blockedReason !== null ||
     targetReason !== null ||
     (dangerousLaunch && !dangerousLaunchConfirmed);
@@ -130,6 +143,7 @@ export function AgentComposer({
   const caption = composerCaption({
     blockedReason,
     isolationReason,
+    providerReason,
     targetReason,
     worktreeOnly,
     worktreeOnlyReason,
@@ -137,22 +151,24 @@ export function AgentComposer({
 
   const launchControls = (
     <AgentLaunchControls
-      disabled={dispatching}
+      disabled={dispatching || allProvidersDisabled}
       favorites={favorites}
       launch={effectiveLaunch}
       onLaunchChange={onLaunchChange}
+      providerEnabled={providerEnabled}
+      providerManagement={providerManagement}
     />
   );
 
   const targetControls = followUp ? null : (
     <>
       <AgentComposerCheckout
-        disabled={dispatching || worktreeOnly}
+        disabled={dispatching || worktreeOnly || allProvidersDisabled}
         isolation={isolation}
         onIsolationChange={onIsolationChange}
       />
       <AgentComposerRepository
-        disabled={dispatching}
+        disabled={dispatching || allProvidersDisabled}
         onSelectRepository={onSelectRepository}
         target={target}
       />
@@ -205,6 +221,7 @@ export function AgentComposer({
         </label>
         <textarea
           className="agent-composer__textarea"
+          disabled={allProvidersDisabled}
           id="agent-prompt"
           onChange={(event) => onPromptChange(event.target.value)}
           onKeyDown={onKeyDown}
@@ -230,6 +247,7 @@ export function AgentComposer({
             <label className="agent-composer__checkbox" htmlFor="agent-unsafe-confirm">
               <input
                 checked={unsafeConfirmed}
+                disabled={allProvidersDisabled}
                 id="agent-unsafe-confirm"
                 onChange={(event) => onUnsafeConfirmedChange(event.target.checked)}
                 type="checkbox"
@@ -241,6 +259,7 @@ export function AgentComposer({
 
         <AgentLaunchWarning
           confirmed={dangerousConfirmed}
+          disabled={allProvidersDisabled}
           launch={effectiveLaunch}
           onConfirmedChange={onDangerousConfirmedChange}
         />
@@ -248,7 +267,7 @@ export function AgentComposer({
         <div className="agent-composer__row">
           {compact ? (
             <AgentComposerCompactMenu
-              disabled={dispatching}
+              disabled={dispatching || allProvidersDisabled}
               summary={agentLaunchMetaLabel(effectiveLaunch)}
             >
               {launchControls}
@@ -280,7 +299,16 @@ export function AgentComposer({
           </button>
         </div>
 
-        {caption && <p className="agent-composer__reason">{caption}</p>}
+        {caption && (
+          <p className="agent-composer__reason">
+            <span>{caption}</span>
+            {providerReason === null ? null : (
+              <button onClick={onOpenProviderSettings} type="button">
+                Open provider settings
+              </button>
+            )}
+          </p>
+        )}
 
         {(followUp || !compact) && <div className="agent-composer__footer">{footer}</div>}
       </div>
@@ -415,17 +443,20 @@ function composerTargetReason(
 function composerCaption({
   blockedReason,
   isolationReason,
+  providerReason,
   targetReason,
   worktreeOnly,
   worktreeOnlyReason,
 }: {
   readonly blockedReason: string | null;
   readonly isolationReason: string | null;
+  readonly providerReason: string | null;
   readonly targetReason: string | null;
   readonly worktreeOnly: boolean;
   readonly worktreeOnlyReason: string | null;
 }): string | null {
   if (blockedReason !== null) return blockedReason;
+  if (providerReason !== null) return providerReason;
   if (targetReason !== null) return targetReason;
   if (worktreeOnly) return worktreeOnlyReason;
   return isolationReason;

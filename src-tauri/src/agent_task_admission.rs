@@ -90,6 +90,7 @@ impl AgentTaskAdmissionRegistry {
         Ok(AgentTaskAdmission {
             id,
             registry: Arc::clone(self),
+            _runtime_lease: None,
         })
     }
 
@@ -130,6 +131,14 @@ fn ensure_cwd_exclusive(state: &AdmissionState, cwd: &Path) -> Result<(), String
 pub struct AgentTaskAdmission {
     id: u64,
     registry: Arc<AgentTaskAdmissionRegistry>,
+    _runtime_lease: Option<Box<dyn Send>>,
+}
+
+impl AgentTaskAdmission {
+    pub fn with_runtime_lease(mut self, runtime_lease: impl Send + 'static) -> Self {
+        self._runtime_lease = Some(Box::new(runtime_lease));
+        self
+    }
 }
 
 impl Drop for AgentTaskAdmission {

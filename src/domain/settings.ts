@@ -25,6 +25,10 @@ import {
   type AgentModelFavoriteKey,
 } from "./agentSettings";
 import {
+  normalizeAgentProviderPreferences,
+  type AgentProviderPreferences,
+} from "./agentProviderSettings";
+import {
   parseAgentWorkbenchLayout,
   parsePersistedAgentBottomPanel,
   serializeAgentWorkbenchLayout,
@@ -134,6 +138,7 @@ export interface AppSettings {
   agentAppearanceVariant: AgentAppearanceVariant;
   agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
   agentModelFavoritesRevision: number;
+  agentProviderPreferences: AgentProviderPreferences;
   maxConcurrentAgentTasks: number;
   editorFontFamily: string;
   editorFontLigatures: boolean;
@@ -488,6 +493,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     agentAppearanceVariant: normalizeAgentAppearanceVariant(value.agentAppearanceVariant),
     agentModelFavoriteKeys: agentModelFavorites.keys,
     agentModelFavoritesRevision: agentModelFavorites.revision,
+    agentProviderPreferences: normalizeAgentProviderPreferences(value.agentProviderPreferences),
     maxConcurrentAgentTasks: normalizeMaxConcurrentAgentTasks(value.maxConcurrentAgentTasks),
     editorFontFamily,
     editorFontLigatures,

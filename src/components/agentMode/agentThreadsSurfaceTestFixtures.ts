@@ -50,6 +50,7 @@ export function threadsSurfaceFixture(
     agentCliVersion: null,
     liveTaskCount: 0,
     maxConcurrentAgentTasks: 4,
+    pendingTurnCount: () => 0,
     isolationPreview: (repositoryRoot: string) => ({
       repositoryRoot,
       recommended: { kind: "in-place" },

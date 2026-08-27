@@ -3,6 +3,7 @@ use crate::agent_task_admission::AgentTaskAdmissionRegistry;
 use crate::agent_task_spawner::agent_launch::{
     AgentLaunchOptions, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR,
 };
+use crate::agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry;
 use crate::agent_task_spawner::{plan_agent_invocation, AgentCliInvocation, AgentTaskSpawnPlan};
 use crate::agent_task_supervisor::{
     AgentTaskEventSink, AgentTaskIsolation, AgentTaskOutputEvent, AgentTaskRegistry,
@@ -66,6 +67,7 @@ pub(crate) struct StartAgentTaskRequest {
     agent_cli_kind: AgentCliInvocation,
     resume_session_id: Option<String>,
     launch: AgentLaunchOptions,
+    provider_generation: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -175,6 +177,9 @@ fn prepare_agent_task_start(
     request: &StartAgentTaskRequest,
     authority: AgentTaskProjectAuthority,
 ) -> Result<PreparedAgentTaskStart, String> {
+    if request.provider_generation == 0 {
+        return Err("Agent provider generation is invalid.".to_string());
+    }
     if !request.launch.matches(request.agent_cli_kind) {
         return Err(AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR.to_string());
     }
@@ -260,12 +265,21 @@ pub(crate) async fn start_agent_task(
         {
             return Err(UNKNOWN_AGENT_WORKSPACE_ERROR.to_string());
         }
-        let admission = admission_registry.reserve(
-            &request.workspace_id,
-            &registry_request.repository_root,
-            plan.cwd(),
-            request.isolation,
-        )?;
+        let provider_turn = app
+            .state::<Arc<AgentProviderRuntimeRegistry>>()
+            .acquire_turn(
+                request.agent_cli_kind,
+                request.provider_generation,
+                &request.agent_cli_path,
+            )?;
+        let admission = admission_registry
+            .reserve(
+                &request.workspace_id,
+                &registry_request.repository_root,
+                plan.cwd(),
+                request.isolation,
+            )?
+            .with_runtime_lease(provider_turn);
         let result = app
             .state::<AgentTaskRegistry>()
             .start(registry_request, plan, admission)
@@ -483,6 +497,7 @@ mod tests {
             agent_cli_kind: AgentCliInvocation::ClaudeCode,
             resume_session_id: None,
             launch: AgentLaunchOptions::default(),
+            provider_generation: 1,
         }
     }
 
@@ -1039,6 +1054,18 @@ mod tests {
     }
 
     #[test]
+    fn prepare_rejects_a_zero_provider_generation_before_planning() {
+        let workspace = TempWorkspace::create("provider-generation");
+        let mut request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
+        request.provider_generation = 0;
+
+        assert_eq!(
+            prepare_test_request(&request).expect_err("zero generation"),
+            "Agent provider generation is invalid."
+        );
+    }
+
+    #[test]
     fn prepare_rejects_a_provider_mismatch_before_any_path_or_process_work() {
         let workspace = TempWorkspace::create("launch-mismatch-early");
         let mut request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
@@ -1123,7 +1150,7 @@ mod tests {
 
     #[test]
     fn the_start_request_contract_has_no_dangerous_launch_confirmation_field() {
-        let dangerous = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"codex","resumeSessionId":null,"launch":{"provider":"codex","model":"gpt-5.6-sol","mode":"dangerFullAccess"}}"#;
+        let dangerous = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"codex","resumeSessionId":null,"launch":{"provider":"codex","model":"gpt-5.6-sol","mode":"dangerFullAccess"},"providerGeneration":1}"#;
         let parsed: StartAgentTaskRequest =
             serde_json::from_str(dangerous).expect("dangerous request parses");
         assert_eq!(
@@ -1182,7 +1209,7 @@ mod tests {
 
     #[test]
     fn the_start_request_contract_requires_a_launch_and_rejects_unknown_fields() {
-        let complete = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"claudeCode","resumeSessionId":null,"launch":{"provider":"claudeCode","model":"opus","mode":"plan"}}"#;
+        let complete = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"claudeCode","resumeSessionId":null,"launch":{"provider":"claudeCode","model":"opus","mode":"plan"},"providerGeneration":1}"#;
         let parsed: StartAgentTaskRequest =
             serde_json::from_str(complete).expect("complete request parses");
         assert_eq!(
@@ -1243,10 +1270,10 @@ mod tests {
     #[test]
     fn start_requests_reject_unknown_fields_and_accept_a_null_resume_session_id() {
         let unknown = serde_json::from_str::<StartAgentTaskRequest>(
-            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"extra\":1}",
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1,\"extra\":1}",
         );
         let accepted = serde_json::from_str::<StartAgentTaskRequest>(
-            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"}}",
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1}",
         )
         .expect("deserialize start request");
 

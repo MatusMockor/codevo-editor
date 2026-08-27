@@ -23,6 +23,7 @@ import {
   WORKSPACE_SESSION_VERSION,
 } from "./settings";
 import { initialAgentWorkbenchLayout, serializeAgentWorkbenchLayout } from "./agentWorkbenchLayout";
+import { defaultAgentProviderPreferences } from "./agentProviderSettings";
 import { defaultKeymapSettings } from "./keymap";
 import {
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
@@ -40,6 +41,7 @@ describe("settings defaults", () => {
       agentAppearanceVariant: "current",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
@@ -145,6 +147,63 @@ describe("settings defaults", () => {
 });
 
 describe("normalizeAppSettings", () => {
+  it("persists only normalized provider preferences", () => {
+    expect(
+      normalizeAppSettings({
+        agentProviderPreferences: {
+          claudeCode: {
+            enabled: false,
+            healthCheckIntervalSeconds: 0,
+            checkForUpdates: true,
+            dismissedUpdateVersion: "2.1.245",
+          },
+          codex: {
+            enabled: true,
+            healthCheckIntervalSeconds: 86_400,
+            checkForUpdates: false,
+            dismissedUpdateVersion: null,
+          },
+        },
+      }).agentProviderPreferences,
+    ).toEqual({
+      claudeCode: {
+        enabled: false,
+        healthCheckIntervalSeconds: 0,
+        checkForUpdates: true,
+        dismissedUpdateVersion: "2.1.245",
+      },
+      codex: {
+        enabled: true,
+        healthCheckIntervalSeconds: 86_400,
+        checkForUpdates: false,
+        dismissedUpdateVersion: null,
+      },
+    });
+  });
+
+  it("drops runtime provider state and fails secret-bearing preferences closed", () => {
+    const normalized = normalizeAppSettings({
+      agentProviderPreferences: {
+        claudeCode: {
+          enabled: true,
+          healthCheckIntervalSeconds: 300,
+          checkForUpdates: false,
+          dismissedUpdateVersion: null,
+          auth: { kind: "signedIn", token: "secret" },
+        },
+        codex: {
+          enabled: true,
+          healthCheckIntervalSeconds: 300,
+          checkForUpdates: false,
+          dismissedUpdateVersion: null,
+        },
+      },
+      agentProviderHealth: { token: "secret" },
+    });
+    expect(normalized.agentProviderPreferences).toEqual(defaultAgentProviderPreferences());
+    expect(Object.prototype.hasOwnProperty.call(normalized, "agentProviderHealth")).toBe(false);
+  });
+
   it("migrates a legacy CLI path without retaining a second runtime authority", () => {
     expect(
       normalizeAppSettings({ agentCliKind: "codex", agentCliPath: "/usr/local/bin/codex" }),
@@ -220,6 +279,7 @@ describe("normalizeAppSettings", () => {
       agentAppearanceVariant: "current",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
@@ -254,6 +314,7 @@ describe("normalizeAppSettings", () => {
       agentAppearanceVariant: "current",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "Fira Code, monospace",
       editorFontLigatures: true,
@@ -283,6 +344,7 @@ describe("normalizeAppSettings", () => {
       agentAppearanceVariant: "current",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
@@ -324,6 +386,7 @@ describe("normalizeAppSettings", () => {
       agentAppearanceVariant: "current",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
@@ -379,6 +442,7 @@ describe("normalizeAppSettings", () => {
       agentAppearanceVariant: "current",
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,

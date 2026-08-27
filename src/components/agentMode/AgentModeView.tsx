@@ -5,7 +5,12 @@ import {
   type AgentThreadScriptTarget,
 } from "../../application/useAgentThreadScripts";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
+import type {
+  AgentProviderManagementSurface,
+  AgentProviderManagementToast,
+} from "../../application/useAgentProviderManagement";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import type { AgentCliKind } from "../../domain/agentTask";
 import type {
   AgentTasksNotice,
   AgentThreadsSurface,
@@ -35,6 +40,9 @@ import { useAgentSurfaceLayout } from "./useAgentSurfaceLayout";
 import { REVEAL_FAILED_NOTICE, useAgentThreadMenuCommands } from "./useAgentThreadMenuCommands";
 import { useAgentThreadNavigation } from "./useAgentThreadNavigation";
 import { useAgentViewCommands } from "./useAgentViewCommands";
+import { useWorkbenchFrameResponsiveRestore } from "../useWorkbenchFrameResponsiveRestore";
+import { AgentProviderUpdateToast } from "../AgentProviderUpdateToast";
+import { createAgentProviderUpdateToastView } from "../agentProviderUpdateToastRenderer";
 import {
   useAgentLatestCallback,
   useAgentSurfacePresentationView,
@@ -43,11 +51,14 @@ import {
 } from "./useAgentThreadPresentationViews";
 
 export interface AgentModeViewProps {
-  readonly agents: AgentThreadsSurface;
+  readonly agents: AgentThreadsSurface & {
+    readonly providerManagement: AgentProviderManagementSurface;
+  };
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
   readonly workspaceRoot: string | null;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly overflowRootPaths: ReadonlyArray<string>;
+  readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly nowTickMs?: number;
   readonly viewCommands?: AgentViewCommandBridge | null;
   readonly chrome: AgentWorkbenchChrome;
@@ -66,6 +77,7 @@ export function AgentModeView({
   onReleaseProject,
   onTrustProject,
   overflowRootPaths,
+  providerEnabled,
   projects,
   viewCommands = null,
   workspaceRoot,
@@ -96,6 +108,7 @@ export function AgentModeView({
     agents,
     groups,
     projects,
+    providerEnabled,
     railScope: navigation.composerScope,
     selectedThread,
     onClearSelectedThread: navigation.clearSelectedThread,
@@ -127,7 +140,7 @@ export function AgentModeView({
 
   const shipActions = useAgentShipActions({ agents, selectedThread });
   const surface = useAgentSurfaceLayout({ chrome, selectedThread, workspaceRoot });
-  const { layout, openSurface, toggleRail, toggleRightPanel } = surface;
+  const { layout, openSurface, toggleMaximized, toggleRail, toggleRightPanel } = surface;
   const onShowTerminalPanel = chrome.onShowTerminalPanel;
   const scriptsTarget = useMemo(
     () => (selectedThread === null ? null : scriptTarget(selectedThread)),
@@ -206,13 +219,18 @@ export function AgentModeView({
   );
   useAgentViewCommands(viewCommands, commandHandlers);
 
-  const notice = localNotice ?? agents.notice;
+  const managementNotice = providerNotice(agents.providerManagement.toast);
+  const notice = localNotice ?? agents.notice ?? managementNotice;
   const dismissNotice = useCallback(() => {
     if (localNotice !== null) {
       setLocalNotice(null);
       return;
     }
-    agents.dismissNotice();
+    if (agents.notice !== null) {
+      agents.dismissNotice();
+      return;
+    }
+    agents.providerManagement.dismissToast();
   }, [agents, localNotice]);
 
   const addProject = useAgentAddProject({
@@ -238,11 +256,38 @@ export function AgentModeView({
     () => agentThreadHeaderProject(selectedThread, groups, projects, headerFallback),
     [groups, headerFallback, projects, selectedThread],
   );
+  const responsivePanelRestore = useWorkbenchFrameResponsiveRestore();
+  const toggleResponsivePanel = useCallback(() => {
+    switch (responsivePanelRestore) {
+      case "none":
+        toggleMaximized();
+        return;
+      case "collapseRail":
+        if (layout.rightPanelMaximized) toggleMaximized();
+        toggleRail();
+        return;
+      case "closePanel":
+        if (layout.rightPanelMaximized) toggleMaximized();
+        toggleRightPanel();
+        return;
+      default:
+        responsivePanelRestore satisfies never;
+    }
+  }, [
+    layout.rightPanelMaximized,
+    responsivePanelRestore,
+    toggleMaximized,
+    toggleRail,
+    toggleRightPanel,
+  ]);
   const layoutControls = useMemo(
     () => (
       <AgentPanelLayoutControls
         bottomPanelOpen={chrome.bottomPanelVisible}
-        maximize={{ maximized: layout.rightPanelMaximized, onToggle: surface.toggleMaximized }}
+        maximize={{
+          maximized: layout.rightPanelMaximized || responsivePanelRestore !== "none",
+          onToggle: toggleResponsivePanel,
+        }}
         onExpandEditor={null}
         onToggleBottomPanel={chrome.onToggleBottomPanel}
         onToggleRightPanel={toggleRightPanel}
@@ -255,7 +300,8 @@ export function AgentModeView({
       chrome.onToggleBottomPanel,
       chrome.shortcuts,
       layout.rightPanelMaximized,
-      surface.toggleMaximized,
+      responsivePanelRestore,
+      toggleResponsivePanel,
       toggleRightPanel,
     ],
   );
@@ -275,9 +321,35 @@ export function AgentModeView({
       agents.showFileDiff,
     ],
   );
+  const updateToast = agents.providerManagement.toast;
+  const updateToastView =
+    updateToast?.kind === "updateAvailable"
+      ? createAgentProviderUpdateToastView(updateToast.provider, updateToast.version)
+      : null;
 
   return (
     <>
+      {updateToastView === null ? null : (
+        <AgentProviderUpdateToast
+          onDismiss={() => {
+            void agents.providerManagement.dismissUpdate(
+              updateToastView.provider,
+              updateToastView.availableVersion,
+            );
+          }}
+          onOpenSettings={() => {
+            agents.providerManagement.dismissToast();
+            agents.configureAgentCli();
+          }}
+          onUpdate={() => {
+            void agents.providerManagement.update(
+              updateToastView.provider,
+              updateToastView.availableVersion,
+            );
+          }}
+          view={updateToastView}
+        />
+      )}
       <section aria-label="Agent mode" className="agent-mode" data-slot="agent">
         {notice && (
           <AgentNoticeBar
@@ -309,6 +381,7 @@ export function AgentModeView({
                 onChangeScope={navigation.setRailScope}
                 onCollapseSidebar={toggleRail}
                 onNewThread={newThread}
+                onOpenProviderSettings={agents.configureAgentCli}
                 onProjectCommand={projectMenuCommand}
                 onReleaseProject={releaseProject}
                 onSelectThread={navigation.selectThread}
@@ -316,6 +389,8 @@ export function AgentModeView({
                 onTogglePin={togglePin}
                 onTrustProject={trustProject}
                 overflowRootPaths={overflowRootPaths}
+                providerEnabled={providerEnabled}
+                providerManagement={agents.providerManagement}
                 scope={railScope}
                 scopeEntries={navigation.scopeEntries}
                 search={navigation.search}
@@ -370,6 +445,9 @@ export function AgentModeView({
               <AgentComposerController
                 composerProps={composerProps}
                 modelFavoritesPersistence={modelFavoritesPersistence}
+                onOpenProviderSettings={agents.configureAgentCli}
+                providerManagement={agents.providerManagement}
+                providerEnabled={providerEnabled}
                 submissionBlocked={composer.submissionBlocked}
                 submit={submitComposer}
               />
@@ -415,6 +493,47 @@ export function AgentModeView({
       )}
     </>
   );
+}
+
+function providerNotice(toast: AgentProviderManagementToast | null): AgentTasksNotice | null {
+  if (toast === null) return null;
+  switch (toast.kind) {
+    case "updateAvailable":
+      return null;
+    case "updateSucceeded":
+      return {
+        kind: "info",
+        message: `${providerLabel(toast.provider)} updated to v${toast.version}.`,
+        action: null,
+      };
+    case "updateFailed":
+      return {
+        kind: "error",
+        message: `${providerLabel(toast.provider)} update failed. Open Settings for details.`,
+        action: null,
+      };
+    default:
+      return unsupportedProviderManagementToast(toast);
+  }
+}
+
+function providerLabel(provider: "claudeCode" | "codex"): string {
+  switch (provider) {
+    case "claudeCode":
+      return "Claude Code";
+    case "codex":
+      return "Codex";
+    default:
+      return unsupportedProvider(provider);
+  }
+}
+
+function unsupportedProviderManagementToast(toast: never): never {
+  throw new TypeError(`Unsupported provider management toast: ${String(toast)}`);
+}
+
+function unsupportedProvider(provider: never): never {
+  throw new TypeError(`Unsupported provider: ${String(provider)}`);
 }
 
 function scriptTarget(view: AgentThreadView): AgentThreadScriptTarget {

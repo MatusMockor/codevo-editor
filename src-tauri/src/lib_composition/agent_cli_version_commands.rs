@@ -1,12 +1,9 @@
-use crate::run_blocking_command;
-use agent_cli_version::{
+use crate::agent_task_spawner::agent_provider::agent_cli_version::{
     now_epoch_ms, AgentCliVersionProbeRequest, AgentCliVersionProbeResult, AgentCliVersionRegistry,
 };
+use crate::run_blocking_command;
 use std::sync::Arc;
 use tauri::State;
-
-#[path = "../agent_cli_version.rs"]
-pub(crate) mod agent_cli_version;
 
 #[tauri::command]
 pub(crate) async fn probe_agent_cli_version(
@@ -20,7 +17,7 @@ pub(crate) async fn probe_agent_cli_version(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_cli_version::AgentCliBinaryFingerprint;
+    use crate::agent_task_spawner::agent_provider::agent_cli_version::AgentCliBinaryFingerprint;
     use serde_json::json;
 
     #[test]

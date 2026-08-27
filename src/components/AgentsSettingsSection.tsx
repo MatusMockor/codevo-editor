@@ -1,19 +1,15 @@
-import { useEffect, useState } from "react";
 import {
   AGENT_APPEARANCE_VARIANTS,
   MAX_CONCURRENT_AGENT_TASKS_LIMIT,
   MIN_CONCURRENT_AGENT_TASKS_LIMIT,
-  normalizeAgentCliPath,
   type AgentAppearanceVariant,
   type AgentCliKind,
   type AgentIsolationPolicy,
 } from "../domain/agentSettings";
-import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
-import {
-  useAgentSettingsCliVersions,
-  type AgentSettingsCliProbeState,
-} from "../application/useAgentSettingsCliVersions";
+import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
 import type { AppSettings, WorkspaceSettings } from "../domain/settings";
+import { AgentProviderSettingsCard } from "./AgentProviderSettingsCard";
+import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import { boundedPositiveIntegerInputValue } from "./settingsDialogModel";
 
 const agentCliKindOptions: ReadonlyArray<{ readonly id: AgentCliKind; readonly label: string }> = [
@@ -54,10 +50,13 @@ function isAgentAppearanceVariant(value: string): value is AgentAppearanceVarian
 
 export interface AgentsSettingsSectionProps {
   readonly appSettings: AppSettings;
-  readonly agentCliVersionGateway?: AgentCliVersionGateway | null;
+  readonly providerManagement: AgentProviderManagementSurface;
   readonly hasWorkspace: boolean;
   readonly workspaceSettings: WorkspaceSettings;
   onChangeAgentCliPath(kind: AgentCliKind, value: string | null): void;
+  onChangeAgentProviderCheckForUpdates(kind: AgentCliKind, value: boolean): void;
+  onChangeAgentProviderEnabled(kind: AgentCliKind, value: boolean): void;
+  onChangeAgentProviderHealthCheckInterval(kind: AgentCliKind, value: number): void;
   onChangeAgentCliKind(value: AgentCliKind): void;
   onChangeAgentAppearanceVariant(value: AgentAppearanceVariant): void;
   onClearAgentModelFavorites(): void;
@@ -67,41 +66,55 @@ export interface AgentsSettingsSectionProps {
 
 export function AgentsSettingsSection({
   appSettings,
-  agentCliVersionGateway = null,
   hasWorkspace,
   onChangeAgentAppearanceVariant,
   onChangeAgentCliKind,
   onChangeAgentCliPath,
+  onChangeAgentProviderCheckForUpdates,
+  onChangeAgentProviderEnabled,
+  onChangeAgentProviderHealthCheckInterval,
   onClearAgentModelFavorites,
   onChangeAgentIsolationPolicy,
   onChangeMaxConcurrentAgentTasks,
+  providerManagement,
   workspaceSettings,
 }: AgentsSettingsSectionProps) {
-  const versions = useAgentSettingsCliVersions(agentCliVersionGateway, appSettings.agentCliPaths);
+  const preferences = appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
   return (
     <div className="settings-group">
-      <AgentCliPathField
-        kind="claudeCode"
-        label="Claude CLI path"
-        onChange={onChangeAgentCliPath}
-        path={appSettings.agentCliPaths.claudeCode}
-        placeholder="/usr/local/bin/claude"
-        probe={versions.claudeCode}
-      />
-
-      <AgentCliPathField
-        kind="codex"
-        label="Codex CLI path"
-        onChange={onChangeAgentCliPath}
-        path={appSettings.agentCliPaths.codex}
-        placeholder="/usr/local/bin/codex"
-        probe={versions.codex}
-      />
-
-      <p className="settings-hint">
-        Absolute path to the agent CLI executable. Agents authenticate from your own environment;
-        the IDE never stores API keys.
-      </p>
+      <div className="settings-subgroup agent-provider-settings">
+        <span>Providers</span>
+        <AgentProviderSettingsCard
+          management={providerManagement}
+          onChangeCheckForUpdates={(value) =>
+            onChangeAgentProviderCheckForUpdates("claudeCode", value)
+          }
+          onChangeEnabled={(value) => onChangeAgentProviderEnabled("claudeCode", value)}
+          onChangeHealthCheckIntervalSeconds={(value) =>
+            onChangeAgentProviderHealthCheckInterval("claudeCode", value)
+          }
+          onChangePath={(value) => onChangeAgentCliPath("claudeCode", value)}
+          path={appSettings.agentCliPaths.claudeCode}
+          preference={preferences.claudeCode}
+          provider="claudeCode"
+        />
+        <AgentProviderSettingsCard
+          management={providerManagement}
+          onChangeCheckForUpdates={(value) => onChangeAgentProviderCheckForUpdates("codex", value)}
+          onChangeEnabled={(value) => onChangeAgentProviderEnabled("codex", value)}
+          onChangeHealthCheckIntervalSeconds={(value) =>
+            onChangeAgentProviderHealthCheckInterval("codex", value)
+          }
+          onChangePath={(value) => onChangeAgentCliPath("codex", value)}
+          path={appSettings.agentCliPaths.codex}
+          preference={preferences.codex}
+          provider="codex"
+        />
+        <p className="settings-hint">
+          Provider commands authenticate from your environment. Codevo never stores API keys or
+          tokens. Update checks stay offline unless you enable them for a provider.
+        </p>
+      </div>
 
       <label className="settings-field">
         <span>Agent CLI</span>
@@ -203,74 +216,4 @@ export function AgentsSettingsSection({
       </p>
     </div>
   );
-}
-
-function AgentCliPathField({
-  kind,
-  label,
-  onChange,
-  path,
-  placeholder,
-  probe,
-}: {
-  readonly kind: AgentCliKind;
-  readonly label: string;
-  readonly path: string | null;
-  readonly placeholder: string;
-  readonly probe: AgentSettingsCliProbeState;
-  onChange(kind: AgentCliKind, value: string | null): void;
-}) {
-  const [draft, setDraft] = useState(path ?? "");
-  useEffect(() => setDraft(path ?? ""), [path]);
-  return (
-    <label className="settings-field">
-      <span>{label}</span>
-      <input
-        aria-describedby={`${kind}-cli-validation`}
-        onBlur={() => onChange(kind, normalizeAgentCliPath(draft))}
-        onChange={(event) => setDraft(event.currentTarget.value)}
-        placeholder={placeholder}
-        spellCheck={false}
-        value={draft}
-      />
-      <span className="settings-hint" id={`${kind}-cli-validation`} role="status">
-        {agentCliDraftLabel(draft, path, probe)}
-      </span>
-    </label>
-  );
-}
-
-function agentCliProbeLabel(probe: AgentSettingsCliProbeState): string {
-  switch (probe.kind) {
-    case "notConfigured":
-      return "Not configured";
-    case "invalidPath":
-      return "Enter an absolute executable path";
-    case "probing":
-      return "Checking version…";
-    case "ready":
-      return `Version ${probe.version}`;
-    case "unknownVersion":
-      return "Executable found; version unavailable";
-    case "failed":
-      return "Executable could not be validated";
-    default:
-      return unsupportedProbe(probe);
-  }
-}
-
-function agentCliDraftLabel(
-  draft: string,
-  persistedPath: string | null,
-  probe: AgentSettingsCliProbeState,
-): string {
-  if (draft.trim() === "") return "Not configured";
-  const normalized = normalizeAgentCliPath(draft);
-  if (normalized === null) return "Enter an absolute executable path";
-  if (normalized !== persistedPath) return "Save the path to check its version";
-  return agentCliProbeLabel(probe);
-}
-
-function unsupportedProbe(probe: never): never {
-  throw new TypeError(`Unsupported agent CLI probe state: ${String(probe)}`);
 }

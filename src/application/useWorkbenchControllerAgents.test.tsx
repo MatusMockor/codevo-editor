@@ -110,6 +110,17 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     harness.unmount();
   });
 
+  it("registers provider policy only after exact app settings hydration", async () => {
+    const harness = renderAgents();
+    expect(harness.agentProviderGateway.registerAgentProviderPolicy).not.toHaveBeenCalled();
+
+    act(() => harness.result().markAppSettingsHydrated(true));
+    await harness.settle();
+
+    expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
   it("dispatches layout actions and derives the agent mode flag", () => {
     const harness = renderAgents();
 
@@ -299,13 +310,44 @@ function renderAgents(overrides: HarnessOverrides = {}) {
   const setWorkspaceTrust = vi.fn();
   const workspaceTrustRevisionByOwnerRef = { current: {} as Record<string, number> };
   const workspaceTrustIntentCoordinator = new WorkspaceTrustIntentCoordinator();
+  const agentProviderGateway = {
+    currentAgentProviderPolicy: vi.fn(
+      async ({ provider }: { provider: "claudeCode" | "codex" }) => ({
+        kind: "unregistered" as const,
+        provider,
+      }),
+    ),
+    registerAgentProviderPolicy: vi.fn(
+      async (request: { provider: "claudeCode" | "codex"; settingsRevision: number }) => ({
+        provider: request.provider,
+        settingsRevision: request.settingsRevision,
+        providerGeneration: 1,
+      }),
+    ),
+    probeAgentProviderHealth: vi.fn(async () => ({
+      installedVersion: "1.0.0",
+      auth: { kind: "unknown" as const },
+      update: { kind: "checksDisabled" as const },
+      checkedAtEpochMs: 1,
+    })),
+    updateAgentProvider: vi.fn(async () => ({
+      kind: "failed" as const,
+      reason: "admissionRefused" as const,
+      outputTail: "",
+      outputTruncated: false,
+    })),
+  };
 
   let options: WorkbenchControllerAgentsOptions = {
+    applyAppSettings: (settings) => {
+      appSettingsRef.current = settings;
+    },
     agentThreadStoreGateway: threadStore,
     appSettingsRef,
     bottomPanelVisible: overrides.bottomPanelVisible ?? false,
     editorSessionOwnerKey: overrides.editorSessionOwnerKey ?? ROOT_A,
     options: {
+      agentProviderGateway,
       agentRootLeaseGateway: overrides.withLeaseGateway === false ? undefined : leaseGateway,
       agentTaskGateway,
       gitWorktreeGateway,
@@ -338,7 +380,10 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     setSettingsInitialSection: vi.fn(),
     setSettingsOpen: vi.fn(),
     setWorkspaceTrust,
-    settingsGateway: { loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()) },
+    settingsGateway: {
+      loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
+      saveAppSettings: vi.fn(async () => undefined),
+    },
     workspaceIdentityByRootRef: { current: {} },
     workspaceIdentityDescriptor: { workspaceId: "workspace-a" },
     workspaceRoot: overrides.workspaceRoot === undefined ? ROOT_A : overrides.workspaceRoot,
@@ -363,6 +408,7 @@ function renderAgents(overrides: HarnessOverrides = {}) {
   act(() => root.render(<Harness />));
 
   return {
+    agentProviderGateway,
     persisted: () => persisted,
     result: getResult,
     setWorkspaceTrust,

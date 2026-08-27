@@ -24,6 +24,7 @@ import {
 } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
 import {
+  agentProviderUpdateOperationId,
   useWorkbenchAgents,
   type WorkbenchAgentsOptions,
   type WorkbenchAgentsSurface,
@@ -33,6 +34,17 @@ const ACTIVE_ROOT = "/ws/active";
 const ACTIVE_ID = "workspace-active";
 const BACKGROUND_ROOT = "/ws/api";
 const CLI_PATH = "/usr/local/bin/claude";
+
+describe("agentProviderUpdateOperationId", () => {
+  it.each([
+    ["claudeCode", "claudeCode-update-1"],
+    ["codex", "codex-update-1"],
+  ] as const)("mints the first bounded %s update id", (provider, expected) => {
+    expect(agentProviderUpdateOperationId(provider, 1)).toBe(expected);
+    expect(expected.length).toBeGreaterThanOrEqual(8);
+    expect(expected.length).toBeLessThanOrEqual(128);
+  });
+});
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -96,8 +108,15 @@ describe("useWorkbenchAgents composition", () => {
       agentCliPath: "/usr/local/bin/claude",
     });
 
-    harness.appSettings.agentCliKind = "codex";
-    harness.rerender();
+    await act(async () => {
+      expect(
+        await harness.hook().providerManagement.save({
+          provider: "codex",
+          cliPath: "/usr/local/bin/codex",
+          selectedProvider: "codex",
+        }),
+      ).toBe(true);
+    });
     await act(async () => {
       await harness.hook().startThread({
         projectRootKey: ACTIVE_ROOT,
@@ -112,6 +131,34 @@ describe("useWorkbenchAgents composition", () => {
       agentCliKind: "codex",
       agentCliPath: "/usr/local/bin/codex",
     });
+    harness.unmount();
+  });
+
+  it("registers persisted disabled policy before rejecting dispatch", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false, providerEnabled: false });
+    await waitForReact(() =>
+      expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "claudeCode", enabled: false }),
+      ),
+    );
+
+    await act(async () => {
+      expect(
+        await harness.hook().startThread({
+          projectRootKey: ACTIVE_ROOT,
+          repositoryRoot: ACTIVE_ROOT,
+          prompt: "Do not start",
+          isolation: "worktree",
+          unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toBe(
+      "Enable this provider in Settings before starting a turn.",
+    );
     harness.unmount();
   });
 
@@ -629,6 +676,44 @@ describe("useWorkbenchAgents composition", () => {
     harness.unmount();
   });
 
+  it("projects an admitted unpublished turn into provider update exclusion", async () => {
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: true,
+      workspaceTabs: [ACTIVE_ROOT, BACKGROUND_ROOT],
+      refusedLeaseRoots: [BACKGROUND_ROOT],
+    });
+    await waitForReact(() => {
+      const background = harness
+        .hook()
+        .agentProjects.projects.find((project) => project.rootKey === BACKGROUND_ROOT);
+      expect(background?.leaseToken).toBeNull();
+    });
+    harness.refusedLeaseRoots.delete(BACKGROUND_ROOT);
+    const pendingLease = createDeferred<{ readonly leaseToken: number }>();
+    harness.lease.acquireAgentRootLease.mockImplementationOnce(() => pendingLease.promise);
+
+    let pending!: ReturnType<WorkbenchAgentsSurface["startThread"]>;
+    act(() => {
+      pending = harness.hook().startThread({
+        projectRootKey: BACKGROUND_ROOT,
+        repositoryRoot: BACKGROUND_ROOT,
+        prompt: "Wait for the lease",
+        isolation: "worktree",
+        unsafeInPlaceConfirmationKey: null,
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+    });
+
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.providers.claudeCode.liveTurnCount).toBe(1),
+    );
+    await act(async () => {
+      pendingLease.resolve({ leaseToken: 101 });
+      await pending;
+    });
+    harness.unmount();
+  });
+
   it("releases a background project by stopping its tasks through the agent gateway", async () => {
     const harness = renderWorkbenchAgents({
       withProjectGateways: true,
@@ -688,6 +773,7 @@ describe("useWorkbenchAgents composition", () => {
 
 interface HarnessOptions {
   withProjectGateways: boolean;
+  providerEnabled?: boolean;
   workspaceTabs?: ReadonlyArray<string>;
   refusedLeaseRoots?: ReadonlyArray<string>;
   workspaceTrust?: WorkspaceTrustState | null;
@@ -699,8 +785,23 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     ...defaultAppSettings(),
     agentCliPaths: { claudeCode: CLI_PATH, codex: null },
     workspaceTabs: [...(options.workspaceTabs ?? [])],
+    agentProviderPreferences: {
+      claudeCode: {
+        enabled: options.providerEnabled ?? true,
+        healthCheckIntervalSeconds: 300,
+        checkForUpdates: false,
+        dismissedUpdateVersion: null,
+      },
+      codex: {
+        enabled: true,
+        healthCheckIntervalSeconds: 300,
+        checkForUpdates: false,
+        dismissedUpdateVersion: null,
+      },
+    },
   };
   const workspaceSettings: WorkspaceSettings = defaultWorkspaceSettings();
+  const appSettingsRef = { current: appSettings };
   const startedRequests: StartAgentTaskRequest[] = [];
   let statusHandler: ((event: AgentTaskStatusEvent) => void) | null = null;
 
@@ -774,6 +875,33 @@ function renderWorkbenchAgents(options: HarnessOptions) {
   };
 
   const reportError = vi.fn();
+  const agentProviderGateway = {
+    currentAgentProviderPolicy: vi.fn(
+      async ({ provider }: { provider: "claudeCode" | "codex" }) => ({
+        kind: "unregistered" as const,
+        provider,
+      }),
+    ),
+    registerAgentProviderPolicy: vi.fn(
+      async (request: { provider: "claudeCode" | "codex"; settingsRevision: number }) => ({
+        provider: request.provider,
+        settingsRevision: request.settingsRevision,
+        providerGeneration: 1,
+      }),
+    ),
+    probeAgentProviderHealth: vi.fn(async () => ({
+      installedVersion: "1.0.0",
+      auth: { kind: "unknown" as const },
+      update: { kind: "checksDisabled" as const },
+      checkedAtEpochMs: 1,
+    })),
+    updateAgentProvider: vi.fn(async () => ({
+      kind: "failed" as const,
+      reason: "admissionRefused" as const,
+      outputTail: "",
+      outputTruncated: false,
+    })),
+  };
   let activeWorkspaceId = ACTIVE_ID;
   let activeWorkspaceTrust = options.workspaceTrust ?? null;
   const activeTrustChanged = vi.fn((rootPath: string, ownerId: string, trusted: boolean) => {
@@ -781,6 +909,7 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     activeWorkspaceTrust = { rootPath, trusted };
   });
   const workbenchOptions: WorkbenchAgentsOptions = {
+    agentProviderGateway,
     agentTaskGateway: agent as unknown as AgentTaskGateway,
     agentThreadStoreGateway: threadStore,
     gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
@@ -801,7 +930,13 @@ function renderWorkbenchAgents(options: HarnessOptions) {
           }),
         }
       : undefined,
-    appSettingsRef: { current: appSettings },
+    appSettingsRef,
+    applyAppSettings: (settings) => {
+      Object.assign(appSettings, settings);
+      appSettingsRef.current = appSettings;
+    },
+    settingsPersistenceGateway: { saveAppSettings: vi.fn(async () => undefined) },
+    settingsHydrated: true,
     workspaceSettingsRef: { current: workspaceSettings },
     gitGateway: git,
     gitIntegrationGateway: {
@@ -843,6 +978,7 @@ function renderWorkbenchAgents(options: HarnessOptions) {
 
   return {
     agent,
+    agentProviderGateway,
     activeTrustChanged,
     appSettings,
     git,

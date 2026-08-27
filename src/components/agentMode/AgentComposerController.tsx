@@ -1,5 +1,7 @@
 import { memo } from "react";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
+import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
+import type { AgentCliKind } from "../../domain/agentTask";
 import { agentLaunchOptionsEqual } from "../../domain/agentLaunch";
 import { AgentComposer } from "./AgentComposer";
 import {
@@ -11,13 +13,19 @@ import {
 export interface AgentComposerControllerProps {
   readonly composerProps: AgentComposerPresentation;
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
+  readonly providerManagement: AgentProviderManagementSurface;
+  readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly submissionBlocked: boolean;
   readonly submit: AgentComposerPromptController["submit"];
+  onOpenProviderSettings(): void;
 }
 
 export const AgentComposerController = memo(function AgentComposerController({
   composerProps,
   modelFavoritesPersistence = null,
+  onOpenProviderSettings,
+  providerManagement,
+  providerEnabled,
   submissionBlocked,
   submit,
 }: AgentComposerControllerProps) {
@@ -27,7 +35,13 @@ export const AgentComposerController = memo(function AgentComposerController({
     submit,
   });
   return (
-    <AgentComposer {...controlledProps} modelFavoritesPersistence={modelFavoritesPersistence} />
+    <AgentComposer
+      {...controlledProps}
+      modelFavoritesPersistence={modelFavoritesPersistence}
+      onOpenProviderSettings={onOpenProviderSettings}
+      providerEnabled={providerEnabled}
+      providerManagement={providerManagement}
+    />
   );
 }, agentComposerControllerPropsEqual);
 
@@ -39,6 +53,9 @@ function agentComposerControllerPropsEqual(
   const rightProps = right.composerProps;
   return (
     left.modelFavoritesPersistence === right.modelFavoritesPersistence &&
+    left.onOpenProviderSettings === right.onOpenProviderSettings &&
+    left.providerManagement === right.providerManagement &&
+    left.providerEnabled === right.providerEnabled &&
     left.submissionBlocked === right.submissionBlocked &&
     left.submit === right.submit &&
     leftProps.dangerousConfirmed === rightProps.dangerousConfirmed &&

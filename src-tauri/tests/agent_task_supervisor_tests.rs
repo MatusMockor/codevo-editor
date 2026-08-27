@@ -670,7 +670,10 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
         CLAUDE_LAUNCH,
     )
     .expect("claude plan");
-    assert_eq!(claude.program(), cli.as_path());
+    assert_eq!(
+        claude.program(),
+        cli.canonicalize().expect("canonical CLI path")
+    );
     assert_eq!(
         claude.args(),
         [

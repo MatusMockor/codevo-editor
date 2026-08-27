@@ -1,5 +1,5 @@
-use super::super::agent_cli_version_commands::agent_cli_version::parse_agent_cli_version;
 use crate::agent_task_spawner::agent_launch::AgentLaunchOptions;
+use crate::agent_task_spawner::agent_provider::agent_cli_version::parse_agent_cli_version;
 use crate::agent_task_spawner::{
     validate_resume_session_id, AgentCliInvocation, MAX_AGENT_PROMPT_BYTES,
 };

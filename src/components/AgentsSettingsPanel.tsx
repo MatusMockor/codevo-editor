@@ -1,10 +1,14 @@
-import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
 import { nextAgentModelFavoritesRevision, type AgentCliKind } from "../domain/agentSettings";
+import {
+  defaultAgentProviderPreferences,
+  type AgentProviderPreference,
+} from "../domain/agentProviderSettings";
+import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import type { AppSettings, WorkspaceSettings } from "../domain/settings";
 import { AgentsSettingsSection } from "./AgentsSettingsSection";
 
 export interface AgentsSettingsPanelProps {
-  readonly agentCliVersionGateway: AgentCliVersionGateway | null;
+  readonly providerManagement: AgentProviderManagementSurface;
   readonly appSettings: AppSettings;
   readonly hasWorkspace: boolean;
   readonly workspaceSettings: WorkspaceSettings;
@@ -13,9 +17,9 @@ export interface AgentsSettingsPanelProps {
 }
 
 export function AgentsSettingsPanel({
-  agentCliVersionGateway,
   appSettings,
   hasWorkspace,
+  providerManagement,
   updateAppSettings,
   updateWorkspaceSettings,
   workspaceSettings,
@@ -37,9 +41,22 @@ export function AgentsSettingsPanel({
     });
   };
 
+  const changeProviderPreference = (
+    provider: AgentCliKind,
+    change: (preference: AgentProviderPreference) => AgentProviderPreference,
+  ): void => {
+    const preferences = appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
+    updateAppSettings({
+      ...appSettings,
+      agentProviderPreferences: {
+        ...preferences,
+        [provider]: change(preferences[provider]),
+      },
+    });
+  };
+
   return (
     <AgentsSettingsSection
-      agentCliVersionGateway={agentCliVersionGateway}
       appSettings={appSettings}
       hasWorkspace={hasWorkspace}
       onChangeAgentAppearanceVariant={(agentAppearanceVariant) =>
@@ -47,6 +64,22 @@ export function AgentsSettingsPanel({
       }
       onChangeAgentCliKind={(agentCliKind) => updateAppSettings({ ...appSettings, agentCliKind })}
       onChangeAgentCliPath={changeCliPath}
+      onChangeAgentProviderCheckForUpdates={(provider, checkForUpdates) =>
+        changeProviderPreference(provider, (preference) => ({
+          ...preference,
+          checkForUpdates,
+          dismissedUpdateVersion: null,
+        }))
+      }
+      onChangeAgentProviderEnabled={(provider, enabled) =>
+        changeProviderPreference(provider, (preference) => ({ ...preference, enabled }))
+      }
+      onChangeAgentProviderHealthCheckInterval={(provider, healthCheckIntervalSeconds) =>
+        changeProviderPreference(provider, (preference) => ({
+          ...preference,
+          healthCheckIntervalSeconds,
+        }))
+      }
       onChangeAgentIsolationPolicy={(agentIsolationPolicy) =>
         updateWorkspaceSettings({ ...workspaceSettings, agentIsolationPolicy })
       }
@@ -54,6 +87,7 @@ export function AgentsSettingsPanel({
         updateAppSettings({ ...appSettings, maxConcurrentAgentTasks })
       }
       onClearAgentModelFavorites={clearAgentModelFavorites}
+      providerManagement={providerManagement}
       workspaceSettings={workspaceSettings}
     />
   );

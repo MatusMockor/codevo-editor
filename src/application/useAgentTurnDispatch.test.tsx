@@ -28,10 +28,22 @@ import {
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import { waitForReact } from "../test/reactTestLifecycle";
-import type { AgentTasksNotice, AgentThreadStoreSurface } from "./agentThreadPorts";
+import type {
+  AgentTasksNotice,
+  AgentThreadStartResult,
+  AgentThreadStoreSurface,
+} from "./agentThreadPorts";
 import { AGENT_TASKS_SOURCE } from "./agentProjectAuthority";
 import type { AgentOutputParserPort } from "./agentTurnOutputStream";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
+import {
+  AGENT_PROVIDER_DISABLED_NOTICE,
+  AGENT_PROVIDER_REGISTRATION_FAILED_NOTICE,
+  AGENT_PROVIDER_UNREGISTERED_NOTICE,
+  AGENT_PROVIDER_UPDATING_NOTICE,
+  type AgentProviderAdmissionAuthority,
+  type AgentProviderAdmissionDisposition,
+} from "./agentProviderAdmissionAuthority";
 import {
   DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE,
   LAUNCH_PROVIDER_MISMATCH_NOTICE,
@@ -60,6 +72,9 @@ interface Environment {
   origin: AgentProjectOrigin;
   cliPath: string | null;
   cliKind: AgentCliKind;
+  providerRevision: Record<AgentCliKind, number>;
+  providerGeneration: Record<AgentCliKind, number>;
+  providerDisposition: Record<AgentCliKind, AgentProviderAdmissionDisposition>;
   maxConcurrent: number;
   worktreeMissing: boolean;
   leaseToken: number | null;
@@ -81,6 +96,214 @@ function createDeferred<T>() {
 }
 
 describe("useAgentTurnDispatch startThread", () => {
+  it("tracks the exact provider while a new turn is pending before publication", async () => {
+    const lease = createDeferred<boolean>();
+    const ensureProjectLease = vi.fn(async () => lease.promise);
+    const harness = renderDispatch({
+      cliKind: "claudeCode",
+      leaseToken: null,
+      ensureProjectLease,
+      providerDisposition: {
+        claudeCode: { kind: "disabled" },
+        codex: { kind: "ready" },
+      },
+    });
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness.hook().startThread(
+        startRequest({
+          isolation: "in-place",
+          launch: defaultAgentLaunchOptions("codex"),
+        }),
+      );
+      await waitForReact(() => expect(ensureProjectLease).toHaveBeenCalledWith(ROOT_A));
+      expect(harness.hook().pendingTurnCount("claudeCode")).toBe(0);
+      expect(harness.hook().pendingTurnCount("codex")).toBe(1);
+      expect(harness.state().threads.size).toBe(0);
+      lease.resolve(true);
+      result = await starting;
+    });
+
+    expect(result).not.toBeNull();
+    expect(harness.hook().pendingTurnCount("codex")).toBe(0);
+    harness.unmount();
+  });
+
+  it.each([
+    ["disabled", { kind: "disabled" }, AGENT_PROVIDER_DISABLED_NOTICE],
+    ["updating", { kind: "updating" }, AGENT_PROVIDER_UPDATING_NOTICE],
+    [
+      "unregistered",
+      { kind: "policyUnavailable", reason: "unregistered" },
+      AGENT_PROVIDER_UNREGISTERED_NOTICE,
+    ],
+    [
+      "registration-failed",
+      { kind: "policyUnavailable", reason: "registrationFailed" },
+      AGENT_PROVIDER_REGISTRATION_FAILED_NOTICE,
+    ],
+  ] as const)(
+    "rejects a %s provider before starting a new thread",
+    async (_label, disposition, message) => {
+      const harness = renderDispatch({
+        providerDisposition: {
+          claudeCode: disposition,
+          codex: { kind: "ready" },
+        },
+      });
+
+      const result = await act(() => harness.hook().startThread(startRequest()));
+
+      expect(result).toBeNull();
+      expect(harness.notice()?.message).toBe(message);
+      expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
+      expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+      harness.unmount();
+    },
+  );
+
+  it("rejects an A to B to A provider revision after project lease acquisition", async () => {
+    const lease = createDeferred<boolean>();
+    const ensureProjectLease = vi.fn(async () => lease.promise);
+    const harness = renderDispatch({
+      leaseToken: null,
+      ensureProjectLease,
+    });
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness.hook().startThread(startRequest({ isolation: "in-place" }));
+      await waitForReact(() => expect(ensureProjectLease).toHaveBeenCalledWith(ROOT_A));
+      replaceProviderAtoBtoA(harness.environment);
+      lease.resolve(true);
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.preflightInPlace).not.toHaveBeenCalled();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("rejects an A to B to A provider revision after in-place preflight", async () => {
+    const preflight = createDeferred<InPlacePreflight>();
+    const harness = renderDispatch();
+    harness.preflightInPlace.mockImplementationOnce(async () => preflight.promise);
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness.hook().startThread(startRequest({ isolation: "in-place" }));
+      await waitForReact(() => expect(harness.preflightInPlace).toHaveBeenCalledTimes(1));
+      replaceProviderAtoBtoA(harness.environment);
+      preflight.resolve({ kind: "ok" });
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("compensates the exact worktree after an A to B to A provider revision", async () => {
+    const worktree = createDeferred<{
+      worktreePath: string;
+      branch: string;
+      trusted: boolean;
+    }>();
+    const harness = renderDispatch();
+    harness.worktree.addAgentWorktree.mockImplementationOnce(async () => worktree.promise);
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness.hook().startThread(startRequest());
+      await waitForReact(() => expect(harness.worktree.addAgentWorktree).toHaveBeenCalledTimes(1));
+      replaceProviderAtoBtoA(harness.environment);
+      worktree.resolve({
+        worktreePath: `${ROOT_A}/.worktrees/provider-race`,
+        branch: "agent/provider-race",
+        trusted: true,
+      });
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.worktree.removeWorktree).toHaveBeenCalledWith(
+      ROOT_A,
+      `${ROOT_A}/.worktrees/provider-race`,
+      false,
+    );
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("compensates a worktree when provider authority changes before task start", async () => {
+    const harness = renderDispatch();
+    harness.onWorktreeCreated.mockImplementationOnce(() => {
+      replaceProviderAtoBtoA(harness.environment);
+    });
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+
+    expect(result).toBeNull();
+    expect(harness.worktree.removeWorktree).toHaveBeenCalledTimes(1);
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("stops a started task after an A to B to A provider revision during start", async () => {
+    const started = createDeferred<{ taskId: string }>();
+    const harness = renderDispatch();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return started.promise;
+    });
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness.hook().startThread(startRequest());
+      await harness.waitForStartedRequests(1);
+      replaceProviderAtoBtoA(harness.environment);
+      started.resolve({ taskId: harness.startedRequests[0]?.taskId ?? "" });
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
+      taskId: harness.startedRequests[0]?.taskId,
+      workspaceId: OWNER_A,
+    });
+    expect(harness.retainUncertainWorktree).toHaveBeenCalledTimes(1);
+    expect(harness.agent.acknowledgeAgentTaskStart).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("stops a started task after an A to B to A provider revision during acknowledgement", async () => {
+    const acknowledged = createDeferred<undefined>();
+    const harness = renderDispatch();
+    harness.agent.acknowledgeAgentTaskStart.mockImplementationOnce(
+      async () => acknowledged.promise,
+    );
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness.hook().startThread(startRequest());
+      await waitForReact(() =>
+        expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledTimes(1),
+      );
+      expect(harness.hook().pendingTurnCount("claudeCode")).toBe(1);
+      replaceProviderAtoBtoA(harness.environment);
+      acknowledged.resolve(undefined);
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.retainUncertainWorktree).toHaveBeenCalledTimes(1);
+    expect(harness.hook().pendingTurnCount("claudeCode")).toBe(0);
+    harness.unmount();
+  });
+
   it("revalidates the exact nested repository after acquiring a project lease", async () => {
     const nestedRepository = `${ROOT_A}/packages/api`;
     const pendingLease = createDeferred<boolean>();
@@ -217,6 +440,7 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(started?.resumeSessionId).toBeNull();
     expect(started?.workspaceId).toBe(OWNER_A);
     expect(started?.agentCliKind).toBe("claudeCode");
+    expect(started?.providerGeneration).toBe(1);
     expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledWith({
       taskId: started?.taskId,
       workspaceId: OWNER_A,
@@ -517,20 +741,26 @@ describe("useAgentTurnDispatch launch admission", () => {
     harness.unmount();
   });
 
-  it("rejects a launch whose provider differs from the agent CLI kind before the gateway call", async () => {
-    const harness = renderDispatch();
-
-    const result = await act(() =>
-      harness.hook().startThread(startRequest({ launch: defaultAgentLaunchOptions("codex") })),
-    );
-
-    expect(result).toBeNull();
-    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
-    expect(harness.notice()).toEqual({
-      kind: "error",
-      message: LAUNCH_PROVIDER_MISMATCH_NOTICE,
-      action: null,
+  it("starts with the explicit enabled launch provider when the persisted selection is disabled", async () => {
+    const harness = renderDispatch({
+      cliKind: "codex",
+      providerDisposition: {
+        claudeCode: { kind: "ready" },
+        codex: { kind: "disabled" },
+      },
     });
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+
+    expect(result).not.toBeNull();
+    expect(harness.startedRequests[0]).toMatchObject({
+      agentCliKind: "claudeCode",
+      agentCliPath: CLI_PATH,
+      providerGeneration: 1,
+      launch: defaultAgentLaunchOptions("claudeCode"),
+    });
+    expect(harness.thread(result?.threadId ?? "").provider.kind).toBe("claudeCode");
+    expect(harness.notice()).toBeNull();
     harness.unmount();
   });
 
@@ -712,6 +942,100 @@ describe("useAgentTurnDispatch output stream", () => {
 });
 
 describe("useAgentTurnDispatch sendFollowUp", () => {
+  it.each([
+    ["disabled", { kind: "disabled" }, AGENT_PROVIDER_DISABLED_NOTICE],
+    ["updating", { kind: "updating" }, AGENT_PROVIDER_UPDATING_NOTICE],
+    [
+      "unregistered",
+      { kind: "policyUnavailable", reason: "unregistered" },
+      AGENT_PROVIDER_UNREGISTERED_NOTICE,
+    ],
+    [
+      "registration-failed",
+      { kind: "policyUnavailable", reason: "registrationFailed" },
+      AGENT_PROVIDER_REGISTRATION_FAILED_NOTICE,
+    ],
+  ] as const)(
+    "rejects a follow-up when its provider is %s",
+    async (_label, disposition, message) => {
+      const harness = renderDispatch();
+      const threadId = await harness.settleThreadWithSession();
+      harness.environment.providerDisposition.claudeCode = disposition;
+      harness.environment.providerRevision.claudeCode += 1;
+      harness.agent.startAgentTask.mockClear();
+
+      const sent = await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      );
+
+      expect(sent).toBe(false);
+      expect(harness.notice()?.message).toBe(message);
+      expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+      harness.unmount();
+    },
+  );
+
+  it("rejects a late follow-up start after an A to B to A provider revision", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const started = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return started.promise;
+    });
+
+    let sent = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+      await harness.waitForStartedRequests(2);
+      replaceProviderAtoBtoA(harness.environment);
+      started.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
+      sent = await sending;
+    });
+
+    expect(sent).toBe(false);
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+    harness.unmount();
+  });
+
+  it("rejects a follow-up after an A to B to A provider revision during acknowledgement", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const acknowledged = createDeferred<undefined>();
+    harness.agent.acknowledgeAgentTaskStart.mockImplementationOnce(
+      async () => acknowledged.promise,
+    );
+
+    let sent = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+      await waitForReact(() =>
+        expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledTimes(2),
+      );
+      replaceProviderAtoBtoA(harness.environment);
+      acknowledged.resolve(undefined);
+      sent = await sending;
+    });
+
+    expect(sent).toBe(false);
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+    harness.unmount();
+  });
+
   it("resumes the captured session in the thread worktree with a new turn id", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
@@ -903,7 +1227,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     harness.unmount();
   });
 
-  it("does not settle a follow-up after its project authority was replaced during start", async () => {
+  it("settles only its exact follow-up after project authority was replaced during start", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
     const pendingStart = createDeferred<{ taskId: string }>();
@@ -930,13 +1254,16 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     });
 
     expect(result).toBe(false);
-    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+    expect(harness.turn(threadId, 1).status).toEqual({
+      kind: "failed",
+      message: "An agent task is already running in this working directory.",
+    });
     expect(harness.reportError).not.toHaveBeenCalled();
     expect(harness.notice()).toBeNull();
     harness.unmount();
   });
 
-  it("does not stop-settle a successful follow-up after its project authority was replaced", async () => {
+  it("stop-settles its exact successful follow-up after project authority was replaced", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
     const pendingStart = createDeferred<{ taskId: string }>();
@@ -959,7 +1286,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     });
 
     expect(result).toBe(false);
-    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
     expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
@@ -988,7 +1315,10 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     });
 
     expect(result).toBe(false);
-    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+    expect(harness.turn(threadId, 1).status).toEqual({
+      kind: "failed",
+      message: "The agent returned an unexpected task id.",
+    });
     expect(harness.notice()).toBeNull();
     harness.unmount();
   });
@@ -1017,7 +1347,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     });
 
     expect(result).toBe(false);
-    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
     expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
@@ -1118,7 +1448,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     harness.unmount();
   });
 
-  it("blocks a follow-up when the configured provider differs from the thread provider", async () => {
+  it("uses the thread provider when the selected draft provider differs", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
     harness.environment.cliKind = "codex";
@@ -1129,11 +1459,13 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
           .hook()
           .sendFollowUp({ threadId, prompt: "x", launch: defaultAgentLaunchOptions("claudeCode") }),
       ),
-    ).toBe(false);
+    ).toBe(true);
 
-    expect(harness.notice()?.message).toBe(
-      "This thread was started with Claude Code; start a new thread.",
-    );
+    expect(harness.startedRequests[1]).toMatchObject({
+      agentCliKind: "claudeCode",
+      agentCliPath: CLI_PATH,
+      providerGeneration: 1,
+    });
     harness.unmount();
   });
 
@@ -1295,6 +1627,9 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     origin: "active-tab",
     cliPath: CLI_PATH,
     cliKind: "claudeCode",
+    providerRevision: { claudeCode: 1, codex: 1 },
+    providerGeneration: { claudeCode: 1, codex: 1 },
+    providerDisposition: { claudeCode: { kind: "ready" }, codex: { kind: "ready" } },
     maxConcurrent: 4,
     worktreeMissing: false,
     leaseToken: 1,
@@ -1404,6 +1739,9 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       store,
       getAgentCliPath: () => environment.cliPath,
       getAgentCliKind: () => environment.cliKind,
+      getAgentProviderAdmissionAuthority: (
+        provider: AgentCliKind,
+      ): AgentProviderAdmissionAuthority => providerAuthority(environment, provider),
       getMaxConcurrentAgentTasks: () => environment.maxConcurrent,
       launchIdentityForProject: () => ({
         workspaceId: environment.workspaceId,
@@ -1560,4 +1898,48 @@ function threadIdForTurn(state: AgentThreadsState, turnId: string): string {
     if (thread.turns.some((turn) => turn.turnId === turnId)) return thread.threadId;
   }
   return "unknown";
+}
+
+function replaceProviderAtoBtoA(environment: Environment): void {
+  const cliPath = environment.cliPath;
+  environment.cliPath = "/opt/provider-b/claude";
+  environment.providerRevision.claudeCode += 1;
+  environment.cliPath = cliPath;
+  environment.providerRevision.claudeCode += 1;
+}
+
+function providerAuthority(
+  environment: Environment,
+  provider: AgentCliKind,
+): AgentProviderAdmissionAuthority {
+  const revision = environment.providerRevision[provider];
+  const disposition = environment.providerDisposition[provider];
+  switch (disposition.kind) {
+    case "ready":
+      return {
+        provider,
+        revision,
+        disposition,
+        cliPath: provider === "claudeCode" ? (environment.cliPath ?? "") : "/usr/local/bin/codex",
+        providerGeneration: environment.providerGeneration[provider],
+      };
+    case "updating":
+      return {
+        provider,
+        revision,
+        disposition,
+        cliPath: provider === "claudeCode" ? (environment.cliPath ?? "") : "/usr/local/bin/codex",
+        providerGeneration: environment.providerGeneration[provider],
+      };
+    case "disabled":
+      return { provider, revision, disposition };
+    case "policyUnavailable":
+      return { provider, revision, disposition };
+    default:
+      return unsupportedProviderDisposition(disposition);
+  }
+}
+
+function unsupportedProviderDisposition(disposition: never): never {
+  throw new TypeError(`Unsupported provider disposition: ${JSON.stringify(disposition)}.`);
 }

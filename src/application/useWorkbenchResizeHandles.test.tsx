@@ -2,8 +2,11 @@
 
 import { act, type PointerEvent as ReactPointerEvent } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { MIN_AGENT_BOTTOM_PANEL_HEIGHT } from "../domain/agentWorkbenchLayout";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  MIN_AGENT_BOTTOM_PANEL_HEIGHT,
+  type AgentWorkbenchLayout,
+} from "../domain/agentWorkbenchLayout";
 import {
   DEFAULT_BOTTOM_PANEL_HEIGHT,
   DEFAULT_SIDEBAR_WIDTH,
@@ -17,6 +20,10 @@ import {
 } from "./useWorkbenchResizeHandles";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+beforeEach(() => {
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1_280 });
+});
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -110,6 +117,36 @@ describe("useWorkbenchResizeHandles", () => {
     harness.unmount();
   });
 
+  it("reserves the rail and a 360 pixel centre while sizing the right panel", () => {
+    expect(maxAgentRightPanelWidth(1_180)).toBe(572);
+    expect(maxAgentRightPanelWidth(1_000)).toBe(392);
+    expect(maxAgentRightPanelWidth(720)).toBe(360);
+  });
+
+  it.each([
+    { viewportWidth: 1_000, expectedWidth: 540 },
+    { viewportWidth: 900, expectedWidth: 492 },
+  ])(
+    "keeps a collapsed-rail panel stable at $viewportWidth pixels",
+    ({ expectedWidth, viewportWidth }) => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: viewportWidth });
+      const commit = recordingCommit({ rail: "collapsed", rightPanelWidth: 540 });
+      const harness = renderHandles(commit);
+
+      act(() =>
+        harness.result().startAgentRightPanelResize(pointerEvent(harness.handle(), 800, 0)),
+      );
+      act(() => dispatchPointerMove(800, 0));
+
+      expect(harness.frame().style.getPropertyValue("--agent-right-panel-width")).toBe(
+        `${expectedWidth}px`,
+      );
+      act(() => dispatchPointerUp());
+      expect(commit.widths).toEqual([expectedWidth]);
+      harness.unmount();
+    },
+  );
+
   it("settles the agent drag when the window loses focus", () => {
     const commit = recordingCommit();
     const harness = renderHandles(commit);
@@ -131,18 +168,23 @@ describe("useWorkbenchResizeHandles", () => {
   });
 });
 
-function recordingCommit(): AgentPanelResizeCommit & {
+function recordingCommit(
+  overrides: Partial<Pick<AgentWorkbenchLayout, "rail" | "rightPanelWidth">> = {},
+): AgentPanelResizeCommit & {
   readonly widths: number[];
   readonly heights: number[];
 } {
   const widths: number[] = [];
   const heights: number[] = [];
   return {
-    bottomPanelHeight: 320,
     heights,
+    layout: {
+      bottomPanelHeight: 320,
+      rail: overrides.rail ?? "expanded",
+      rightPanelWidth: overrides.rightPanelWidth ?? 540,
+    },
     onResizeBottomPanel: (height) => heights.push(height),
     onResizeRightPanel: (width) => widths.push(width),
-    rightPanelWidth: 540,
     widths,
   };
 }

@@ -173,6 +173,7 @@ export interface AgentThreadsSurface {
   readonly agentCliVersion: string | null;
   readonly liveTaskCount: number;
   readonly maxConcurrentAgentTasks: number;
+  pendingTurnCount(provider: AgentCliKind): number;
   markThreadViewed(threadId: string): void;
   markThreadUnread(threadId: string): void;
   renameThread(threadId: string, title: string): void;

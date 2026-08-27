@@ -88,6 +88,7 @@ export type WorkbenchCommitPhase = Parameters<ProfilerOnRenderCallback>[1];
 export interface RenderControllerOptions {
   activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
   agentRootLeaseGateway?: WorkbenchControllerOptions["agentRootLeaseGateway"];
+  agentProviderGateway?: WorkbenchControllerOptions["agentProviderGateway"];
   agentTaskGateway?: WorkbenchControllerOptions["agentTaskGateway"];
   gitWorktreeGateway?: WorkbenchControllerOptions["gitWorktreeGateway"];
   appSettings?: ReturnType<typeof defaultAppSettings>;
@@ -198,6 +199,7 @@ export function setupWorkbenchControllerTestHarness() {
   function renderController({
     activeLiveDocumentSaveCoordinator = fallbackLiveSaveCoordinator(),
     agentRootLeaseGateway = fakeAgentRootLeaseGateway(),
+    agentProviderGateway = fakeAgentProviderGateway(),
     agentTaskGateway,
     gitWorktreeGateway,
     appSettings = defaultAppSettings(),
@@ -312,6 +314,7 @@ export function setupWorkbenchControllerTestHarness() {
     dependencies.controllerOptions.debugBreakpointStorage = debugBreakpointStorage;
     dependencies.controllerOptions.debugGateway = debugGateway;
     dependencies.controllerOptions.agentRootLeaseGateway = agentRootLeaseGateway;
+    dependencies.controllerOptions.agentProviderGateway = agentProviderGateway;
     dependencies.controllerOptions.agentTaskGateway = agentTaskGateway;
     dependencies.controllerOptions.gitWorktreeGateway = gitWorktreeGateway;
 
@@ -358,6 +361,31 @@ export function setupWorkbenchControllerTestHarness() {
   }
 
   return { getHost, getRoot, renderController, renderRegisteredController };
+}
+
+function fakeAgentProviderGateway(): NonNullable<
+  WorkbenchControllerOptions["agentProviderGateway"]
+> {
+  return {
+    currentAgentProviderPolicy: async () => ({ kind: "unregistered" }),
+    registerAgentProviderPolicy: async (request) => ({
+      provider: request.provider,
+      settingsRevision: request.settingsRevision,
+      providerGeneration: 1,
+    }),
+    probeAgentProviderHealth: async () => ({
+      installedVersion: null,
+      auth: { kind: "unknown" },
+      update: { kind: "checksDisabled" },
+      checkedAtEpochMs: 1,
+    }),
+    updateAgentProvider: async () => ({
+      kind: "failed",
+      reason: "admissionRefused",
+      outputTail: "",
+      outputTruncated: false,
+    }),
+  };
 }
 
 function fallbackLiveSaveCoordinator(): EditorActiveLiveDocumentSaveAdmissionPort {

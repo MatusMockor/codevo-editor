@@ -3,6 +3,11 @@ import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
 import { activeAgentCliPath } from "../domain/agentSettings";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
+import type {
+  AgentProviderHealthGateway,
+  AgentProviderPolicyGateway,
+  AgentProviderUpdateGateway,
+} from "../domain/agentProviderHealth";
 import type { GitIntegrationGateway } from "../domain/gitIntegration";
 import {
   repositoryRootForMapping,
@@ -20,6 +25,7 @@ import type {
 } from "../domain/settings";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import { isDirty, type EditorDocument } from "../domain/workspace";
+import { runningTurn } from "../domain/agentThread";
 import {
   useAgentProjects,
   type AgentProjectsSurface,
@@ -34,6 +40,10 @@ import type { AgentEditorBridgePort } from "./useAgentEditorBridge";
 import type { ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import { useAgentThreads, type AgentThreadsGitGateway } from "./useAgentThreads";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
+import {
+  useAgentProviderManagement,
+  type AgentProviderManagementSurface,
+} from "./useAgentProviderManagement";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import {
   defaultAgentTaskGateway,
@@ -53,6 +63,9 @@ export interface WorkbenchAgentProjectGateways {
 
 export interface WorkbenchAgentsOptions {
   readonly agentTaskGateway?: AgentTaskGateway;
+  readonly agentProviderGateway: AgentProviderPolicyGateway &
+    AgentProviderHealthGateway &
+    AgentProviderUpdateGateway;
   readonly agentCliVersionGateway?: AgentCliVersionGateway;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly gitWorktreeGateway?: GitWorktreeGateway;
@@ -62,6 +75,9 @@ export interface WorkbenchAgentsOptions {
   readonly agentProjectGateways?: WorkbenchAgentProjectGateways;
   readonly agentModeActive: boolean;
   readonly appSettingsRef: { readonly current: AppSettings };
+  readonly applyAppSettings: (settings: AppSettings) => void;
+  readonly settingsHydrated: boolean;
+  readonly settingsPersistenceGateway: Pick<SettingsGateway, "saveAppSettings">;
   readonly workspaceSettingsRef: { readonly current: WorkspaceSettings };
   readonly gitGateway: AgentThreadsGitGateway;
   readonly gitRepositoryMappings: ReadonlyArray<GitRepositoryMapping>;
@@ -83,6 +99,7 @@ export interface WorkbenchAgentsOptions {
 
 export interface WorkbenchAgentsSurface extends AgentThreadsSurface {
   readonly agentProjects: AgentProjectsSurface;
+  readonly providerManagement: AgentProviderManagementSurface;
 }
 
 const unwiredGatewayError = (): Error =>
@@ -171,6 +188,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   }, [setSettingsInitialSection, setSettingsOpen]);
 
   const threadsSurfaceRef = useRef<AgentThreadsSurface | null>(null);
+  const providerOperationSequenceRef = useRef(0);
   const projectGateways = options.agentProjectGateways;
 
   const hasLiveTasksForOwner = useCallback(
@@ -184,6 +202,19 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   );
   const releaseProjectTasks = useCallback((ownerId: string): void => {
     threadsSurfaceRef.current?.releaseProjectTasks(ownerId);
+  }, []);
+  const liveTurnCount = useCallback((provider: "claudeCode" | "codex"): number => {
+    const surface = threadsSurfaceRef.current;
+    const threads = surface?.threads ?? [];
+    const published = threads.reduce((count, view) => {
+      if (view.thread.provider.kind !== provider) return count;
+      return runningTurn(view.thread) === null ? count : count + 1;
+    }, 0);
+    return published + (surface?.pendingTurnCount(provider) ?? 0);
+  }, []);
+  const mintProviderOperationId = useCallback((provider: "claudeCode" | "codex"): string => {
+    providerOperationSequenceRef.current += 1;
+    return agentProviderUpdateOperationId(provider, providerOperationSequenceRef.current);
   }, []);
   const descriptorForRoot = useCallback(
     (rootPath: string): WorkspaceIdentityDescriptor | null =>
@@ -213,6 +244,19 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     reportError: options.reportError,
   });
 
+  const providerManagement = useAgentProviderManagement({
+    appSettingsRef: options.appSettingsRef,
+    applyAppSettings: options.applyAppSettings,
+    settingsGateway: options.settingsPersistenceGateway,
+    settingsHydrated: options.settingsHydrated,
+    policyGateway: options.agentProviderGateway,
+    healthGateway: options.agentProviderGateway,
+    updateGateway: options.agentProviderGateway,
+    liveTurnCount,
+    reportError: options.reportError,
+    mintOperationId: mintProviderOperationId,
+  });
+
   const threads = useAgentThreads({
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
     agentCliVersionGateway: options.agentCliVersionGateway,
@@ -232,6 +276,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
         options.appSettingsRef.current.agentCliKind,
       ),
     getAgentCliKind: () => options.appSettingsRef.current.agentCliKind,
+    getAgentProviderAdmissionAuthority: providerManagement.admissionAuthority,
     getMaxConcurrentAgentTasks: () => options.appSettingsRef.current.maxConcurrentAgentTasks,
     getRepositoryStatus,
     getDirtyEditorDocumentCount,
@@ -246,5 +291,15 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     threadsSurfaceRef.current = threads;
   });
 
-  return useMemo(() => ({ ...threads, agentProjects }), [agentProjects, threads]);
+  return useMemo(
+    () => ({ ...threads, agentProjects, providerManagement }),
+    [agentProjects, providerManagement, threads],
+  );
+}
+
+export function agentProviderUpdateOperationId(
+  provider: "claudeCode" | "codex",
+  sequence: number,
+): string {
+  return `${provider}-update-${sequence}`;
 }
