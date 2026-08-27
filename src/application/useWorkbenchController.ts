@@ -5221,9 +5221,6 @@ export function useWorkbenchController(
     reportError,
   });
 
-  const activeLanguageRuntimeGeneration = workspaceRuntimeOwner
-    ? (workspaceRuntimeOwnerClaimsRef.current.generationFor(workspaceRuntimeOwner.ownerKey) ?? null)
-    : null;
   useWorkbenchLanguageRuntimeSubscriptionsCoordinator({
     workspaceRoot,
     workspaceRuntimeOwner,
@@ -5244,39 +5241,37 @@ export function useWorkbenchController(
     reportJavaScriptTypeScriptLanguageServerError,
   });
   useWorkbenchLanguageRuntimeEffects({
+    activePath,
     changedDocumentSync: {
-      documentsRef,
+      currentWorkspaceRootRef,
       incrementalSyncRef: javaScriptTypeScriptIncrementalSyncRef,
+      isDocumentSessionLifecycleAuthorityCurrent,
+      resolveDocumentSessionLifecycleAuthority,
       scheduleDocumentChange,
       scheduleJavaScriptTypeScriptDocumentChange,
       subscribeChangedDocuments,
+      workspaceIdentityDescriptorRef,
+      workspaceRuntimeOwnerRef,
     },
+    documentsRef,
     javaScriptTypeScript: {
-      activePath,
       documentSyncRuntimeSignatureRef: javaScriptTypeScriptDocumentSyncRuntimeSignatureRef,
-      documentsRef,
       languageServerRuntimeStatus: javaScriptTypeScriptLanguageServerRuntimeStatus,
       languageServerRuntimeStatusRoot: javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-      openDocumentPaths,
       resetLanguageServerDocuments: resetJavaScriptTypeScriptLanguageServerDocuments,
-      runtimeGeneration: activeLanguageRuntimeGeneration,
-      runtimeOwner: workspaceRuntimeOwner,
       syncOpenDocument: syncOpenJavaScriptTypeScriptDocument,
-      workspaceRoot,
     },
+    openDocumentPaths,
     php: {
-      activePath,
       documentSyncRuntimeSignatureRef,
-      documentsRef,
       languageServerRuntimeStatus,
       languageServerRuntimeStatusRoot,
-      openDocumentPaths,
       resetLanguageServerDocuments,
-      runtimeGeneration: activeLanguageRuntimeGeneration,
-      runtimeOwner: workspaceRuntimeOwner,
       syncOpenDocument,
-      workspaceRoot,
     },
+    runtimeOwner: workspaceRuntimeOwner,
+    workspaceRuntimeOwnerClaimsRef,
+    workspaceRoot,
   });
 
   const {

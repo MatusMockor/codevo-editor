@@ -131,6 +131,55 @@ describe("useChangedDocumentSyncScheduling", () => {
     });
     harness.unmount();
   });
+
+  it("does not schedule a fallback after unmount", async () => {
+    const document = {
+      ...editorDocument("/workspace", "server.ts"),
+      language: "typescript" as const,
+    };
+    const claim = deferredClaim(9);
+    const harness = renderHarness(() => claim.value);
+
+    act(() => {
+      harness.session().setDocuments({ [document.path]: document });
+      harness.session().reportChangedDocuments([document.path]);
+    });
+    harness.unmount();
+    claim.resolve(false);
+    await claim.settled;
+
+    expect(harness.scheduleJavaScriptTypeScript).not.toHaveBeenCalled();
+  });
+
+  it("lets only the latest path epoch schedule a same-lifecycle fallback", async () => {
+    const first = {
+      ...editorDocument("/workspace", "server.ts"),
+      content: "first dirty snapshot",
+      language: "typescript" as const,
+    };
+    const latest = { ...first, content: "latest dirty snapshot" };
+    const staleClaim = deferredClaim(10);
+    let claimCount = 0;
+    const harness = renderHarness(() => {
+      claimCount += 1;
+      return claimCount === 1 ? staleClaim.value : null;
+    });
+
+    act(() => {
+      harness.session().setDocuments({ [first.path]: first });
+      harness.session().reportChangedDocuments([first.path]);
+      harness.session().setDocuments({ [latest.path]: latest });
+      harness.session().reportChangedDocuments([latest.path]);
+    });
+    await act(async () => {
+      staleClaim.resolve(false);
+      await staleClaim.settled;
+    });
+
+    expect(harness.scheduleJavaScriptTypeScript).toHaveBeenCalledOnce();
+    expect(harness.scheduleJavaScriptTypeScript).toHaveBeenCalledWith(latest);
+    harness.unmount();
+  });
 });
 
 function renderHarness(
@@ -141,19 +190,22 @@ function renderHarness(
   const captured: { current: EditorSessionState | null } = { current: null };
   const schedulePhp = vi.fn<(document: EditorDocument) => void>();
   const scheduleJavaScriptTypeScript = vi.fn<(document: EditorDocument) => void>();
+  const captureAuthority = () => ({ isCurrent: () => true });
+  const incrementalSyncRef = claim
+    ? {
+        current: {
+          claimLegacyChange: claim,
+        },
+      }
+    : undefined;
 
   function Probe() {
     const session = useEditorSessionState();
     captured.current = session;
     useChangedDocumentSyncScheduling({
+      captureAuthority,
       documentsRef: session.documentsRef,
-      incrementalSyncRef: claim
-        ? {
-            current: {
-              claimLegacyChange: claim,
-            },
-          }
-        : undefined,
+      incrementalSyncRef,
       scheduleDocumentChange: schedulePhp,
       scheduleJavaScriptTypeScriptDocumentChange: scheduleJavaScriptTypeScript,
       subscribeChangedDocuments: session.subscribeChangedDocuments,

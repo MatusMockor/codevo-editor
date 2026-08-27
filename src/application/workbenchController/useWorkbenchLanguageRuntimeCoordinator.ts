@@ -43,7 +43,10 @@ import {
   isRunningLanguageServerForWorkspace,
 } from "./languageServerStatusPolicy";
 import { isJavaScriptTypeScriptDocumentSyncableForRoot } from "./workspacePathPolicy";
-import { useChangedDocumentSyncScheduling } from "../useChangedDocumentSyncScheduling";
+import {
+  useWorkbenchChangedDocumentSyncCoordinator,
+  type WorkbenchChangedDocumentSyncCoordinatorDependencies,
+} from "./useWorkbenchChangedDocumentSyncCoordinator";
 import {
   runEslintFixAllInActiveFile,
   runEslintWorkspaceAnalysis,
@@ -59,8 +62,6 @@ import {
   EMPTY_ESLINT_FIXES,
   EMPTY_PHPSTAN_DIAGNOSTICS,
 } from "../workbenchEmptyProjections";
-
-type ChangedDocumentSyncDependencies = Parameters<typeof useChangedDocumentSyncScheduling>[0];
 
 type EslintWorkspaceAnalysisDependencies = Parameters<typeof runEslintWorkspaceAnalysis>[0];
 type PhpstanWorkspaceAnalysisDependencies = Parameters<typeof runPhpstanWorkspaceAnalysis>[0];
@@ -1012,43 +1013,48 @@ export function useWorkbenchLanguageRuntimeChannelRefs(
 }
 
 interface RuntimeDocumentSync {
-  readonly activePath: string | null;
   readonly documentSyncRuntimeSignatureRef: { current: string | null };
-  readonly documentsRef: { readonly current: Record<string, EditorDocument> };
   readonly languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   readonly languageServerRuntimeStatusRoot: string | null;
-  readonly openDocumentPaths: readonly string[];
   resetLanguageServerDocuments(): void;
-  readonly runtimeGeneration: number | null;
-  readonly runtimeOwner: WorkspaceRuntimeOwner | null;
   syncOpenDocument(document: EditorDocument): Promise<void>;
-  readonly workspaceRoot: string | null;
 }
 
 interface JavaScriptTypeScriptRuntimeDocumentSync {
-  readonly activePath: string | null;
   readonly documentSyncRuntimeSignatureRef: { current: string | null };
-  readonly documentsRef: { readonly current: Record<string, EditorDocument> };
   readonly languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   readonly languageServerRuntimeStatusRoot: string | null;
-  readonly openDocumentPaths: readonly string[];
   resetLanguageServerDocuments(): void;
-  readonly runtimeGeneration: number | null;
-  readonly runtimeOwner: WorkspaceRuntimeOwner | null;
   syncOpenDocument(document: EditorDocument): Promise<void>;
-  readonly workspaceRoot: string | null;
 }
 
 export interface WorkbenchLanguageRuntimeEffectsDependencies {
-  readonly changedDocumentSync: ChangedDocumentSyncDependencies;
+  readonly activePath: string | null;
+  readonly changedDocumentSync: Omit<
+    WorkbenchChangedDocumentSyncCoordinatorDependencies,
+    "documentsRef" | "workspaceRuntimeOwnerClaimsRef"
+  >;
+  readonly documentsRef: { readonly current: Record<string, EditorDocument> };
   readonly javaScriptTypeScript: JavaScriptTypeScriptRuntimeDocumentSync;
+  readonly openDocumentPaths: readonly string[];
   readonly php: RuntimeDocumentSync;
+  readonly runtimeOwner: WorkspaceRuntimeOwner | null;
+  readonly workspaceRoot: string | null;
+  readonly workspaceRuntimeOwnerClaimsRef: {
+    readonly current: { generationFor(ownerKey: string): number | null | undefined };
+  };
 }
 
 export function useWorkbenchLanguageRuntimeEffects({
+  activePath,
   changedDocumentSync,
+  documentsRef,
   javaScriptTypeScript,
+  openDocumentPaths,
   php,
+  runtimeOwner,
+  workspaceRoot,
+  workspaceRuntimeOwnerClaimsRef,
 }: WorkbenchLanguageRuntimeEffectsDependencies): void {
   const phpDocumentSyncRuntimeOwnerRef = useRef<WorkspaceRuntimeOwner | null>(null);
   const javaScriptTypeScriptDocumentSyncRuntimeOwnerRef = useRef<WorkspaceRuntimeOwner | null>(
@@ -1056,28 +1062,22 @@ export function useWorkbenchLanguageRuntimeEffects({
   );
 
   const {
-    activePath: phpActivePath,
     documentSyncRuntimeSignatureRef,
-    documentsRef,
     languageServerRuntimeStatus,
     languageServerRuntimeStatusRoot,
-    openDocumentPaths,
     resetLanguageServerDocuments,
-    runtimeGeneration,
-    runtimeOwner,
     syncOpenDocument,
-    workspaceRoot,
   } = php;
   const {
-    activePath: javaScriptTypeScriptActivePath,
     documentSyncRuntimeSignatureRef: javaScriptTypeScriptDocumentSyncRuntimeSignatureRef,
     languageServerRuntimeStatus: javaScriptTypeScriptLanguageServerRuntimeStatus,
     languageServerRuntimeStatusRoot: javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     resetLanguageServerDocuments: resetJavaScriptTypeScriptLanguageServerDocuments,
-    runtimeGeneration: javaScriptTypeScriptRuntimeGeneration,
-    runtimeOwner: javaScriptTypeScriptRuntimeOwner,
     syncOpenDocument: syncOpenJavaScriptTypeScriptDocument,
   } = javaScriptTypeScript;
+  const runtimeGeneration = runtimeOwner
+    ? (workspaceRuntimeOwnerClaimsRef.current.generationFor(runtimeOwner.ownerKey) ?? null)
+    : null;
 
   useEffect(() => {
     const runtimeSignature = languageRuntimeDocumentSyncSignature(
@@ -1107,7 +1107,7 @@ export function useWorkbenchLanguageRuntimeEffects({
     }
 
     openDocumentsForSync({
-      activePath: phpActivePath,
+      activePath,
       documentsRef,
       openDocumentPaths,
     }).forEach((document) => {
@@ -1119,7 +1119,7 @@ export function useWorkbenchLanguageRuntimeEffects({
     languageServerRuntimeStatus,
     languageServerRuntimeStatusRoot,
     openDocumentPaths,
-    phpActivePath,
+    activePath,
     resetLanguageServerDocuments,
     runtimeGeneration,
     runtimeOwner,
@@ -1132,10 +1132,10 @@ export function useWorkbenchLanguageRuntimeEffects({
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       workspaceRoot,
-      javaScriptTypeScriptRuntimeOwner,
-      javaScriptTypeScriptRuntimeGeneration,
+      runtimeOwner,
+      runtimeGeneration,
     );
-    if (!runtimeSignature || !workspaceRoot || !javaScriptTypeScriptRuntimeOwner) {
+    if (!runtimeSignature || !workspaceRoot || !runtimeOwner) {
       javaScriptTypeScriptDocumentSyncRuntimeOwnerRef.current = null;
       resetJavaScriptTypeScriptLanguageServerDocuments();
       return;
@@ -1146,16 +1146,16 @@ export function useWorkbenchLanguageRuntimeEffects({
         javaScriptTypeScriptDocumentSyncRuntimeSignatureRef.current,
         runtimeSignature,
         javaScriptTypeScriptDocumentSyncRuntimeOwnerRef.current,
-        javaScriptTypeScriptRuntimeOwner,
+        runtimeOwner,
       )
     ) {
       resetJavaScriptTypeScriptLanguageServerDocuments();
       javaScriptTypeScriptDocumentSyncRuntimeSignatureRef.current = runtimeSignature;
-      javaScriptTypeScriptDocumentSyncRuntimeOwnerRef.current = javaScriptTypeScriptRuntimeOwner;
+      javaScriptTypeScriptDocumentSyncRuntimeOwnerRef.current = runtimeOwner;
     }
 
     openDocumentsForSync({
-      activePath: javaScriptTypeScriptActivePath,
+      activePath,
       documentsRef,
       openDocumentPaths,
     })
@@ -1165,19 +1165,23 @@ export function useWorkbenchLanguageRuntimeEffects({
       });
   }, [
     documentsRef,
-    javaScriptTypeScriptActivePath,
+    activePath,
     javaScriptTypeScriptDocumentSyncRuntimeSignatureRef,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     openDocumentPaths,
     resetJavaScriptTypeScriptLanguageServerDocuments,
-    javaScriptTypeScriptRuntimeGeneration,
-    javaScriptTypeScriptRuntimeOwner,
+    runtimeGeneration,
+    runtimeOwner,
     syncOpenJavaScriptTypeScriptDocument,
     workspaceRoot,
   ]);
 
-  useChangedDocumentSyncScheduling(changedDocumentSync);
+  useWorkbenchChangedDocumentSyncCoordinator({
+    ...changedDocumentSync,
+    documentsRef,
+    workspaceRuntimeOwnerClaimsRef,
+  });
 
   useEffect(
     () => () => {
@@ -1225,7 +1229,10 @@ function openDocumentsForSync({
   activePath,
   documentsRef,
   openDocumentPaths,
-}: Pick<RuntimeDocumentSync, "activePath" | "documentsRef" | "openDocumentPaths">) {
+}: Pick<
+  WorkbenchLanguageRuntimeEffectsDependencies,
+  "activePath" | "documentsRef" | "openDocumentPaths"
+>) {
   const documents = openDocumentPaths
     .map((path) => documentsRef.current[path])
     .filter((document): document is EditorDocument => Boolean(document));
