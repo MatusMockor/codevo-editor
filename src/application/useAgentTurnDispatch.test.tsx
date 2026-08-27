@@ -617,7 +617,14 @@ describe("useAgentTurnDispatch output stream", () => {
 
     const kinds = harness.actions.map((action) => action.kind);
     const terminalIndex = kinds.lastIndexOf("taskStatusEvent");
+    const statusActions = harness.actionsOf("taskStatusEvent");
     expect(kinds[terminalIndex - 1]).toBe("turnEventsAppended");
+    expect(statusActions[statusActions.length - 1]).toMatchObject({ threadId });
+    expect(
+      harness
+        .actionsOf("turnEventsAppended")
+        .every((action) => action.kind === "turnEventsAppended" && action.threadId === threadId),
+    ).toBe(true);
     expect(harness.parser.finish).toHaveBeenCalledTimes(1);
     expect(harness.turn(threadId, 0).status).toEqual({ kind: "exited", exitCode: 0 });
     expect(harness.turn(threadId, 0).lastOutputSequence).toBe(502);
@@ -666,6 +673,39 @@ describe("useAgentTurnDispatch output stream", () => {
 
     expect(harness.turn(threadId, 0).status).toEqual({ kind: "pending" });
     expect(harness.parser.finish).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("keeps the stream live for stale or foreign terminal status authority", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+
+    await act(async () => {
+      harness.emitStatus(turnId, 1, { kind: "running" });
+      harness.emitStatus(turnId, 1, { kind: "exited", exitCode: 0 });
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 }, OWNER_A, {
+        repositoryRoot: ROOT_B,
+      });
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 }, OWNER_A, {
+        isolation: "in-place",
+        worktreePath: null,
+      });
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 }, OWNER_A, {
+        worktreePath: `${ROOT_A}/.worktrees/foreign`,
+      });
+      harness.emitOutput(turnId, 1, "still live");
+    });
+    await waitForReact(() => expect(harness.turn(threadId, 0).lastOutputSequence).toBe(1));
+
+    expect(harness.turn(threadId, 0).status).toEqual({ kind: "running" });
+    expect(harness.onTurnTerminal).not.toHaveBeenCalled();
+
+    await act(async () => {
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    expect(harness.turn(threadId, 0).status).toEqual({ kind: "exited", exitCode: 0 });
+    expect(harness.onTurnTerminal).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 });
@@ -1434,6 +1474,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       sequence: number,
       status: AgentTaskStatus,
       workspaceId: string = OWNER_A,
+      overrides: Partial<AgentTaskStatusEvent> = {},
     ): void {
       expect(statusHandler).not.toBeNull();
       statusHandler?.({
@@ -1444,6 +1485,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
         worktreePath: `${ROOT_A}/.worktrees/${threadIdForTurn(latestState, taskId)}`,
         sequence,
         status,
+        ...overrides,
       });
     },
     emitOutput(taskId: string, sequence: number, chunk: string): void {

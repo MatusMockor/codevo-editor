@@ -11,6 +11,7 @@ import {
   type AgentTaskStatusEvent,
 } from "../domain/agentTask";
 import {
+  agentTaskStatusActionAccepted,
   agentThreadTitle,
   runningTurn,
   type AgentThread,
@@ -183,11 +184,19 @@ export function useAgentTurnDispatch(
   const handleStatusEvent = useCallback(
     (event: AgentTaskStatusEvent): void => {
       const deps = dependenciesRef.current;
-      const now = deps.now ?? Date.now;
-      const terminal = isTerminalAgentTaskStatus(event.status);
       const stream = streamsRef.current.get(event.taskId);
-      const owned = stream !== undefined && stream.ownerId === event.workspaceId;
-      if (terminal && owned) {
+      if (stream === undefined) return;
+      if (!statusEventMatchesStream(stream, event)) return;
+      const now = deps.now ?? Date.now;
+      const action = {
+        kind: "taskStatusEvent",
+        threadId: stream.threadId,
+        event,
+        nowEpochMs: now(),
+      } as const;
+      if (!agentTaskStatusActionAccepted(deps.store.currentState(), action)) return;
+      const terminal = isTerminalAgentTaskStatus(event.status);
+      if (terminal) {
         flushStreams();
         const finished = finishAgentTurnOutput(parser(), stream);
         if (finished !== null) {
@@ -202,8 +211,8 @@ export function useAgentTurnDispatch(
         streamsRef.current.delete(event.taskId);
         if (resumeRejected(stream, event)) deps.setNotice(warning(RESUME_REJECTED_NOTICE));
       }
-      deps.store.dispatchAction({ kind: "taskStatusEvent", event, nowEpochMs: now() });
-      if (terminal && owned) deps.onTurnTerminal?.(event);
+      deps.store.dispatchAction(action);
+      if (terminal) deps.onTurnTerminal?.(event);
     },
     [flushStreams, parser],
   );
@@ -244,6 +253,9 @@ export function useAgentTurnDispatch(
           threadId: thread.threadId,
           turnId,
           ownerId: thread.owner.ownerId,
+          repositoryRoot: thread.owner.repositoryRoot,
+          isolation: thread.target.isolation,
+          worktreePath: thread.target.worktreePath,
           kind: thread.provider.kind,
           resumed,
         }),
@@ -269,6 +281,7 @@ export function useAgentTurnDispatch(
     const now = deps.now ?? Date.now;
     deps.store.dispatchAction({
       kind: "taskStatusEvent",
+      threadId: start.threadId,
       event: {
         taskId: start.turnId,
         workspaceId: start.authority.workspaceId,
@@ -616,6 +629,16 @@ export function useAgentTurnDispatch(
   );
 
   return { dispatching, startThread, sendFollowUp, stop, hasLiveTasksForOwner, stopProjectTasks };
+}
+
+function statusEventMatchesStream(
+  stream: AgentTurnOutputStream,
+  event: AgentTaskStatusEvent,
+): boolean {
+  if (event.workspaceId !== stream.ownerId) return false;
+  if (event.repositoryRoot !== stream.repositoryRoot) return false;
+  if (event.isolation !== stream.isolation) return false;
+  return event.worktreePath === stream.worktreePath;
 }
 
 function noteSessionChange(

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { ChevronDown, Folder } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentThreadScriptsSurface } from "../../application/useAgentThreadScripts";
@@ -53,7 +53,7 @@ interface MenuAnchor {
   readonly y: number;
 }
 
-export function AgentThreadHeader(props: AgentThreadHeaderProps) {
+export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThreadHeaderProps) {
   const { layout, onNewThread, onRenameThread, onThreadMenuCommand, project, thread } = props;
   const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -188,7 +188,7 @@ export function AgentThreadHeader(props: AgentThreadHeaderProps) {
       )}
     </header>
   );
-}
+});
 
 function ThreadStatus({ thread }: { readonly thread: AgentThreadView }) {
   const tone = agentThreadTone(thread.lifecycle, lastAgentTurnStatus(thread.thread));

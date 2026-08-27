@@ -115,17 +115,27 @@ function stateWith(...threads: readonly AgentThread[]): AgentThreadsState {
 function statusAction(
   overrides: Partial<AgentTaskStatusEvent> = {},
   nowEpochMs = 5_000,
-): AgentThreadsAction {
-  return { kind: "taskStatusEvent", event: statusEvent(overrides), nowEpochMs };
+): Extract<AgentThreadsAction, { kind: "taskStatusEvent" }> {
+  return {
+    kind: "taskStatusEvent",
+    threadId: "agt-t1-0001",
+    event: statusEvent(overrides),
+    nowEpochMs,
+  };
 }
 
 function appendAction(
   events: ReadonlyArray<AgentTurnEvent>,
   overrides: Partial<Extract<AgentThreadsAction, { kind: "turnEventsAppended" }>> = {},
-): AgentThreadsAction {
+): Extract<AgentThreadsAction, { kind: "turnEventsAppended" }> {
   return {
     kind: "turnEventsAppended",
+    threadId: "agt-t1-0001",
     turnId: "agt-1-0a1b",
+    workspaceId: "ws-1",
+    repositoryRoot: "/repo",
+    isolation: "in-place",
+    worktreePath: null,
     outputSequence: 1,
     events,
     sessionId: null,
@@ -186,10 +196,17 @@ describe("agentThreadsReducer status events", () => {
       { sequence: 6, workspaceId: "ws-2" },
       { sequence: 6, repositoryRoot: "/other" },
       { sequence: 6, isolation: "worktree", worktreePath: "/repo/.worktrees/a" },
+      { sequence: 6, worktreePath: "/unexpected" },
     ];
     for (const overrides of dropped) {
       expect(agentThreadsReducer(state, statusAction(overrides))).toBe(state);
     }
+    expect(
+      agentThreadsReducer(state, {
+        ...statusAction({ sequence: 6 }),
+        threadId: "agt-other",
+      }),
+    ).toBe(state);
   });
 
   it("drops a worktree status event that reports a different worktree path", () => {
@@ -207,6 +224,62 @@ describe("agentThreadsReducer status events", () => {
 });
 
 describe("agentThreadsReducer output events", () => {
+  it("updates one exact live turn without inspecting unrelated turn arrays", () => {
+    let unrelatedReads = 0;
+    const threads = new Map<string, AgentThread>();
+    for (let threadIndex = 0; threadIndex < 128; threadIndex += 1) {
+      const threadId = `agt-thread-${threadIndex}`;
+      const turns = Array.from({ length: MAX_AGENT_TURNS_PER_THREAD }, (_, turnIndex) =>
+        turn({ turnId: `${threadId}-turn-${turnIndex}` }),
+      );
+      const guarded = new Proxy(turns, {
+        get(target, property, receiver) {
+          unrelatedReads += 1;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      threads.set(
+        threadId,
+        thread({
+          threadId,
+          turns: threadIndex === 127 ? turns : guarded,
+        }),
+      );
+    }
+    let state: AgentThreadsState = { threads };
+    const threadId = "agt-thread-127";
+    const turnId = `${threadId}-turn-${MAX_AGENT_TURNS_PER_THREAD - 1}`;
+
+    for (let sequence = 1; sequence <= 120; sequence += 1) {
+      state = agentThreadsReducer(
+        state,
+        appendAction([text(`frame ${sequence}`)], { threadId, turnId, outputSequence: sequence }),
+      );
+    }
+
+    expect(unrelatedReads).toBe(0);
+    expect(
+      state.threads.get(threadId)?.turns[MAX_AGENT_TURNS_PER_THREAD - 1]?.lastOutputSequence,
+    ).toBe(120);
+  });
+
+  it("drops mismatched live output authority with the same state identity", () => {
+    const state = stateWith(thread());
+    const mismatches: ReadonlyArray<
+      Partial<Extract<AgentThreadsAction, { kind: "turnEventsAppended" }>>
+    > = [
+      { threadId: "agt-other" },
+      { turnId: "agt-other-turn" },
+      { workspaceId: "ws-other" },
+      { repositoryRoot: "/other" },
+      { isolation: "worktree", worktreePath: "/repo/.worktrees/other" },
+      { worktreePath: "/unexpected" },
+    ];
+    for (const mismatch of mismatches) {
+      expect(agentThreadsReducer(state, appendAction([text("late")], mismatch))).toBe(state);
+    }
+  });
+
   it("coalesces consecutive assistant text and keeps other kinds separate", () => {
     const first = agentThreadsReducer(
       stateWith(thread()),

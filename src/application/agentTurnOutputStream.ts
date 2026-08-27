@@ -1,5 +1,6 @@
 import type {
   AgentCliKind,
+  AgentTaskIsolation,
   AgentTaskOutputEvent,
   AgentTaskOutputStream,
 } from "../domain/agentTask";
@@ -41,6 +42,9 @@ export interface AgentTurnOutputStream {
   readonly threadId: string;
   readonly turnId: string;
   readonly ownerId: string;
+  readonly repositoryRoot: string;
+  readonly isolation: AgentTaskIsolation;
+  readonly worktreePath: string | null;
   readonly resumed: boolean;
   parser: AgentOutputParserState;
   lastSequence: number;
@@ -60,6 +64,9 @@ export function createAgentTurnOutputStream(
     readonly threadId: string;
     readonly turnId: string;
     readonly ownerId: string;
+    readonly repositoryRoot: string;
+    readonly isolation: AgentTaskIsolation;
+    readonly worktreePath: string | null;
     readonly kind: AgentCliKind;
     readonly resumed: boolean;
   },
@@ -68,6 +75,9 @@ export function createAgentTurnOutputStream(
     threadId: identity.threadId,
     turnId: identity.turnId,
     ownerId: identity.ownerId,
+    repositoryRoot: identity.repositoryRoot,
+    isolation: identity.isolation,
+    worktreePath: identity.worktreePath,
     resumed: identity.resumed,
     parser: parser.create(identity.kind),
     lastSequence: 0,
@@ -107,7 +117,12 @@ export function drainAgentTurnOutput(
   }
   const action: TurnEventsAppendedAction = {
     kind: "turnEventsAppended",
+    threadId: stream.threadId,
     turnId: stream.turnId,
+    workspaceId: stream.ownerId,
+    repositoryRoot: stream.repositoryRoot,
+    isolation: stream.isolation,
+    worktreePath: stream.worktreePath,
     outputSequence,
     events: stream.pendingEvents,
     sessionId: stream.pendingSessionId,

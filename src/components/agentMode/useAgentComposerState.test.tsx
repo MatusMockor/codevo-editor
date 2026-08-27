@@ -486,7 +486,12 @@ describe("useAgentComposerState", () => {
       () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
       [agents.orphanedWorktrees, agents.threads, projects],
     );
-    const navigation = useAgentThreadNavigation({ agents, groups, projects });
+    const navigation = useAgentThreadNavigation({
+      agents,
+      groups,
+      presentationThreads: agents.threads,
+      projects,
+    });
     const composer = useAgentComposerState({
       agents,
       groups,

@@ -275,7 +275,12 @@ describe("useAgentThreadNavigation", () => {
       () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
       [agents.orphanedWorktrees, agents.threads, projects],
     );
-    captured = useAgentThreadNavigation({ agents, groups, projects });
+    captured = useAgentThreadNavigation({
+      agents,
+      groups,
+      presentationThreads: agents.threads,
+      projects,
+    });
     return (
       <>
         <button data-rail-target type="button" />

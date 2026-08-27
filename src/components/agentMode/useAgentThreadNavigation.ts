@@ -36,6 +36,7 @@ export type AgentNavigationCommandHandlers = Pick<
 
 export interface AgentThreadNavigationOptions {
   readonly agents: Pick<AgentThreadsSurface, "threads" | "markThreadViewed">;
+  readonly presentationThreads: ReadonlyArray<AgentThreadView>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
 }
@@ -85,6 +86,7 @@ interface AgentNavigationScopeState {
 export function useAgentThreadNavigation({
   agents,
   groups,
+  presentationThreads,
   projects,
 }: AgentThreadNavigationOptions): AgentThreadNavigation {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -105,6 +107,10 @@ export function useAgentThreadNavigation({
   const scopedViews = useMemo(
     () => agentThreadsInScope(threadViews, railScope),
     [railScope, threadViews],
+  );
+  const scopedPresentationViews = useMemo(
+    () => agentThreadsInScope(presentationThreads, railScope),
+    [presentationThreads, railScope],
   );
   const search = useAgentThreadSearch(scopedViews);
   const paletteTitles = useMemo(
@@ -191,8 +197,8 @@ export function useAgentThreadNavigation({
   }, [closeFind]);
 
   const orderedThreadIds = useMemo(
-    () => orderedRailThreadIds(scopedViews, railScope),
-    [railScope, scopedViews],
+    () => orderedRailThreadIds(scopedPresentationViews, railScope),
+    [railScope, scopedPresentationViews],
   );
   const openFind = find.openBar;
   const commands = useMemo<AgentNavigationCommandHandlers>(

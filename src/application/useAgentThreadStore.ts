@@ -73,7 +73,11 @@ interface ThreadPersistSlot {
 export function useAgentThreadStore(
   dependencies: AgentThreadStoreDependencies,
 ): AgentThreadStoreSurface {
-  const [state, dispatch] = useReducer(agentThreadsReducer, undefined, emptyAgentThreadsState);
+  const [state, publishState] = useReducer(
+    (_current: AgentThreadsState, next: AgentThreadsState) => next,
+    undefined,
+    emptyAgentThreadsState,
+  );
   const [loadedRootKeys, setLoadedRootKeys] = useState<ReadonlySet<string>>(() => new Set());
 
   const dependenciesRef = useRef(dependencies);
@@ -217,8 +221,10 @@ export function useAgentThreadStore(
   }, [flushPersistQueue, state]);
 
   const dispatchAction = useCallback((action: AgentThreadsAction): void => {
-    const intent = persistIntent(stateRef.current, action);
-    stateRef.current = agentThreadsReducer(stateRef.current, action);
+    const current = stateRef.current;
+    const next = agentThreadsReducer(current, action);
+    const intent = persistIntent(current, next, action);
+    stateRef.current = next;
     for (const [threadId, urgency] of intent.saves) {
       const existing = dirtyRef.current.get(threadId);
       if (existing === "immediate") continue;
@@ -233,7 +239,7 @@ export function useAgentThreadStore(
       }
       deleteQueueRef.current.push(intent.remove);
     }
-    dispatch(action);
+    publishState(next);
   }, []);
 
   const togglePin = useCallback(
@@ -356,7 +362,12 @@ interface PersistIntent {
 
 const NO_PERSIST: PersistIntent = Object.freeze({ saves: Object.freeze([]), remove: null });
 
-function persistIntent(state: AgentThreadsState, action: AgentThreadsAction): PersistIntent {
+function persistIntent(
+  state: AgentThreadsState,
+  next: AgentThreadsState,
+  action: AgentThreadsAction,
+): PersistIntent {
+  if (next === state) return NO_PERSIST;
   switch (action.kind) {
     case "threadCreated":
       return saveIntent(action.thread.threadId, "immediate");
@@ -365,13 +376,14 @@ function persistIntent(state: AgentThreadsState, action: AgentThreadsAction): Pe
     case "taskStatusEvent":
       return liveTurnIntent(
         state,
+        action.threadId,
         action.event.taskId,
         isTerminalAgentTaskStatus(action.event.status) ? "immediate" : "coalesced",
       );
     case "turnEventsAppended":
-      return sessionCaptureIntent(state, action.turnId, action.sessionId);
+      return sessionCaptureIntent(state, action.threadId, action.turnId, action.sessionId);
     case "turnInterrupted":
-      return liveTurnIntent(state, action.turnId, "immediate");
+      return liveTurnIntentByTurnId(state, action.turnId, "immediate");
     case "threadViewed":
       return threadViewedIntent(state, action.threadId, action.atEpochMs);
     case "threadMarkedUnread":
@@ -422,6 +434,18 @@ function threadViewedIntent(
 
 function liveTurnIntent(
   state: AgentThreadsState,
+  threadId: string,
+  turnId: string,
+  urgency: PersistUrgency,
+): PersistIntent {
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return NO_PERSIST;
+  if (!thread.turns.some((turn) => turn.turnId === turnId)) return NO_PERSIST;
+  return saveIntent(thread.threadId, urgency);
+}
+
+function liveTurnIntentByTurnId(
+  state: AgentThreadsState,
   turnId: string,
   urgency: PersistUrgency,
 ): PersistIntent {
@@ -432,11 +456,13 @@ function liveTurnIntent(
 
 function sessionCaptureIntent(
   state: AgentThreadsState,
+  threadId: string,
   turnId: string,
   sessionId: string | null,
 ): PersistIntent {
-  const thread = threadByLiveTurnId(state, turnId);
-  if (thread === null) return NO_PERSIST;
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return NO_PERSIST;
+  if (!thread.turns.some((turn) => turn.turnId === turnId)) return NO_PERSIST;
   const captured = sessionId !== null && thread.provider.sessionId === null;
   return saveIntent(thread.threadId, captured ? "immediate" : "coalesced");
 }

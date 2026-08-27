@@ -2,7 +2,7 @@
 
 import { defaultAgentLaunchOptions } from "../../domain/agentLaunch";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
-import { act } from "react";
+import { act, memo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
@@ -38,10 +38,13 @@ const NOW = 1_700_000_600_000;
 
 const columnRenders = vi.hoisted(() => ({
   composer: 0,
+  diff: 0,
+  files: 0,
   header: 0,
   session: 0,
   sidebar: 0,
   surface: 0,
+  terminal: 0,
 }));
 const sessionReveals = vi.hoisted((): Array<AgentThreadRevealRequest | null> => []);
 
@@ -52,6 +55,7 @@ vi.mock("./AgentSurfaceDiff", () => ({
     onOpenChangedFile(threadId: string, change: unknown): void;
     onOpenChangedFileDiff(threadId: string, change: unknown): void;
   }) => {
+    columnRenders.diff += 1;
     const threadId = props.thread.thread.threadId;
     const change = props.summary?.files[0];
     return (
@@ -71,15 +75,37 @@ vi.mock("./AgentSurfaceDiff", () => ({
   },
 }));
 
+vi.mock("./AgentSurfaceFileTree", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./AgentSurfaceFileTree")>();
+  return {
+    ...actual,
+    AgentSurfaceFileTree: memo((props: Parameters<typeof actual.AgentSurfaceFileTree>[0]) => {
+      columnRenders.files += 1;
+      return <actual.AgentSurfaceFileTree {...props} />;
+    }),
+  };
+});
+
+vi.mock("./AgentSurfaceTerminal", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./AgentSurfaceTerminal")>();
+  return {
+    ...actual,
+    AgentSurfaceTerminal: memo((props: Parameters<typeof actual.AgentSurfaceTerminal>[0]) => {
+      columnRenders.terminal += 1;
+      return <actual.AgentSurfaceTerminal {...props} />;
+    }),
+  };
+});
+
 vi.mock("./AgentThreadSession", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./AgentThreadSession")>();
   return {
     ...actual,
-    AgentThreadSession: (props: Parameters<typeof actual.AgentThreadSession>[0]) => {
+    AgentThreadSession: memo((props: Parameters<typeof actual.AgentThreadSession>[0]) => {
       columnRenders.session += 1;
       sessionReveals.push(props.reveal ?? null);
       return <actual.AgentThreadSession {...props} />;
-    },
+    }),
   };
 });
 
@@ -98,10 +124,10 @@ vi.mock("./AgentThreadHeader", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./AgentThreadHeader")>();
   return {
     ...actual,
-    AgentThreadHeader: (props: Parameters<typeof actual.AgentThreadHeader>[0]) => {
+    AgentThreadHeader: memo((props: Parameters<typeof actual.AgentThreadHeader>[0]) => {
       columnRenders.header += 1;
       return <actual.AgentThreadHeader {...props} />;
-    },
+    }),
   };
 });
 
@@ -109,10 +135,10 @@ vi.mock("./AgentThreadsSidebar", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./AgentThreadsSidebar")>();
   return {
     ...actual,
-    AgentThreadsSidebar: (props: Parameters<typeof actual.AgentThreadsSidebar>[0]) => {
+    AgentThreadsSidebar: memo((props: Parameters<typeof actual.AgentThreadsSidebar>[0]) => {
       columnRenders.sidebar += 1;
       return <actual.AgentThreadsSidebar {...props} />;
-    },
+    }),
   };
 });
 
@@ -120,10 +146,10 @@ vi.mock("./AgentSurfaceHost", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./AgentSurfaceHost")>();
   return {
     ...actual,
-    AgentSurfaceHost: (props: Parameters<typeof actual.AgentSurfaceHost>[0]) => {
+    AgentSurfaceHost: memo((props: Parameters<typeof actual.AgentSurfaceHost>[0]) => {
       columnRenders.surface += 1;
       return <actual.AgentSurfaceHost {...props} />;
-    },
+    }),
   };
 });
 
@@ -1500,6 +1526,182 @@ describe("AgentModeView", () => {
     expect(promptField().value).toBe("Prompt revision 20");
   });
 
+  it("contains streamed event renders within the active turn across a loaded workbench", async () => {
+    const settledTurns = Array.from({ length: 63 }, (_, index) => ({
+      ...turn("agt-0", `Turn ${index + 1}`, { kind: "exited", exitCode: 0 }),
+      turnId: `agt-0-t${index + 1}`,
+    }));
+    const activeTurn = {
+      ...turn("agt-0", "Stream this result", { kind: "running" }),
+      turnId: "agt-0-t64",
+    };
+    const selected = threadView({ threadId: "agt-0", status: { kind: "running" } });
+    const loadedSelected: AgentThreadView = {
+      ...selected,
+      thread: { ...selected.thread, turns: [...settledTurns, activeTurn] },
+    };
+    const otherThreads = Array.from({ length: 127 }, (_, index) => {
+      const view = threadView({
+        threadId: `agt-${index + 1}`,
+        title: `Thread ${index + 1}`,
+        status: index === 0 ? { kind: "running" } : { kind: "exited", exitCode: 0 },
+      });
+      if (index !== 0) return view;
+      return {
+        ...view,
+        thread: { ...view.thread, updatedAtEpochMs: view.thread.updatedAtEpochMs + 60 },
+      };
+    });
+    const layout = recordedLayoutState({
+      activeSurface: "diff",
+      openSurfaces: ["files", "diff", "terminal"],
+      rightPanel: "open",
+    });
+    const bridge = createAgentViewCommandBridge();
+    const revealPath = vi.fn(async () => undefined);
+    const common = {
+      chrome: chromeFixture({ layout, revealPath }),
+      onReleaseProject: () => undefined,
+      onTrustProject: () => undefined,
+      nowTickMs: 1_000_000_000,
+      overflowRootPaths: [] as ReadonlyArray<string>,
+      projects: [defaultActiveProject()],
+      viewCommands: bridge,
+    };
+    const baseAgents = surface({ threads: [loadedSelected, ...otherThreads] });
+    render({ ...common, agents: baseAgents });
+    click('[data-thread-id="agt-0"]');
+    await waitForReact(() => {
+      expect(host.querySelector('[data-mock-diff="agt-0"]')).not.toBeNull();
+    });
+
+    resetColumnRenders();
+    let streamed = loadedSelected;
+    for (let index = 1; index <= 120; index += 1) {
+      const nextActiveTurn: AgentTurn = {
+        ...activeTurn,
+        events: [{ kind: "assistantText", text: `Stream chunk ${index}` }],
+        lastOutputSequence: index,
+      };
+      streamed = {
+        ...streamed,
+        thread: {
+          ...streamed.thread,
+          updatedAtEpochMs: streamed.thread.updatedAtEpochMs + 1,
+          turns: [...settledTurns, nextActiveTurn],
+        },
+      };
+      render({
+        ...common,
+        agents: { ...baseAgents, threads: [streamed, ...otherThreads] },
+        onReleaseProject: () => undefined,
+        onTrustProject: () => undefined,
+      });
+    }
+
+    expect(host.textContent).toContain("Stream chunk 120");
+    expect(columnRenders.session).toBe(120);
+    expect(columnRenders.sidebar).toBe(0);
+    expect(columnRenders.header).toBe(0);
+    expect(columnRenders.composer).toBe(0);
+    expect(columnRenders.surface).toBe(0);
+    expect(columnRenders.files).toBe(0);
+    expect(columnRenders.diff).toBe(0);
+    expect(columnRenders.terminal).toBe(0);
+    expect(threadOrder()[0]).toBe("agt-1");
+    act(() => bridge.run("agent.jumpToThread.1"));
+    expect(selectedSessionId()).toBe("agt-1");
+    click('[data-thread-id="agt-0"]');
+
+    act(() => bridge.run("agent.findInThread"));
+    typeInto(findField(), "Stream chunk 120");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, AGENT_THREAD_FIND_DEBOUNCE_MS + 10));
+    });
+    expect(host.querySelector(".agent-find__count")?.textContent).toBe("1 of 1");
+    click('[aria-label="Close find bar"]');
+
+    typeSearch("Stream chunk 120");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 160));
+    });
+    expect(searchResultTitles().join(" ")).toContain("Stream chunk 120");
+    typeSearch("");
+
+    resetColumnRenders();
+    const settled: AgentThreadView = {
+      ...streamed,
+      lifecycle: "settled",
+      attention: "settled",
+      thread: {
+        ...streamed.thread,
+        turns: [
+          ...settledTurns,
+          { ...activeTurn, status: { kind: "exited", exitCode: 0 }, endedAtEpochMs: NOW },
+        ],
+      },
+    };
+    render({ ...common, agents: { ...baseAgents, threads: [settled, ...otherThreads] } });
+    expect(columnRenders.sidebar).toBe(1);
+    expect(columnRenders.header).toBe(1);
+    expect(columnRenders.composer).toBe(1);
+    expect(columnRenders.surface).toBe(0);
+
+    resetColumnRenders();
+    const changed: AgentThreadView = {
+      ...settled,
+      changeSummary: {
+        loading: false,
+        error: null,
+        files: [changedFile("src/stream.ts")],
+        truncated: false,
+        removing: false,
+        diff: null,
+      },
+    };
+    render({ ...common, agents: { ...baseAgents, threads: [changed, ...otherThreads] } });
+    expect(columnRenders.sidebar).toBe(1);
+    expect(columnRenders.surface).toBe(1);
+    expect(columnRenders.composer).toBe(0);
+
+    resetColumnRenders();
+    const replacedRoot: AgentThreadView = {
+      ...changed,
+      thread: {
+        ...changed.thread,
+        owner: {
+          rootKey: `${ROOT}:replacement`,
+          ownerId: "agent-root:replacement",
+          repositoryRoot: OTHER_ROOT,
+        },
+        target: { isolation: "in-place", worktreePath: null },
+      },
+    };
+    render({ ...common, agents: { ...baseAgents, threads: [replacedRoot, ...otherThreads] } });
+    expect(columnRenders.sidebar).toBe(1);
+    expect(columnRenders.header).toBe(1);
+    expect(columnRenders.composer).toBe(1);
+    expect(columnRenders.surface).toBe(1);
+    click('[aria-label="Open options"]');
+    clickMenuItem("Reveal in Finder");
+    expect(revealPath).toHaveBeenLastCalledWith(OTHER_ROOT);
+
+    resetColumnRenders();
+    render({
+      ...common,
+      agents: { ...baseAgents, threads: [changed, ...otherThreads] },
+      onReleaseProject: () => undefined,
+      onTrustProject: () => undefined,
+    });
+    expect(columnRenders.sidebar).toBe(1);
+    expect(columnRenders.header).toBe(1);
+    expect(columnRenders.composer).toBe(1);
+    expect(columnRenders.surface).toBe(1);
+    click('[aria-label="Open options"]');
+    clickMenuItem("Reveal in Finder");
+    expect(revealPath).toHaveBeenLastCalledWith(`${ROOT}/.worktrees/agt-0`);
+  });
+
   it("renders rail timestamps through the agent clock instead of a now prop", () => {
     render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
 
@@ -1957,6 +2159,12 @@ describe("AgentModeView", () => {
 
   function render(overrides: Partial<AgentModeViewProps> = {}): void {
     act(() => root.render(<AgentModeView {...defaultProps()} {...overrides} />));
+  }
+
+  function resetColumnRenders(): void {
+    for (const key of Object.keys(columnRenders) as Array<keyof typeof columnRenders>) {
+      columnRenders[key] = 0;
+    }
   }
 
   function surfaceTabs(): string[] {

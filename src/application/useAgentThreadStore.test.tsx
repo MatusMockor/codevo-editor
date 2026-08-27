@@ -371,6 +371,7 @@ describe("useAgentThreadStore persistence", () => {
       act(() =>
         harness.hook().dispatchAction({
           kind: "taskStatusEvent",
+          threadId: created.threadId,
           event: statusEvent(sequence),
           nowEpochMs: 20,
         }),
@@ -384,6 +385,85 @@ describe("useAgentThreadStore persistence", () => {
     await waitForReact(() => {
       expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1);
     });
+    harness.unmount();
+  });
+
+  it("publishes the precomputed live output snapshot without reducing it twice", async () => {
+    const harness = await renderLoadedStore();
+    const created = thread({ turns: [turn("agt-1-0a1c")] });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1));
+
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "turnEventsAppended",
+        threadId: created.threadId,
+        turnId: "agt-1-0a1c",
+        workspaceId: OWNER_ID,
+        repositoryRoot: REPOSITORY_ROOT,
+        isolation: "worktree",
+        worktreePath: `${REPOSITORY_ROOT}/.worktrees/agt-1-0a1b`,
+        outputSequence: 1,
+        events: [{ kind: "assistantText", text: "frame" }],
+        sessionId: null,
+        supervisorTruncated: false,
+      }),
+    );
+
+    expect(harness.hook().state).toBe(harness.hook().currentState());
+    expect(harness.hook().state.threads.get(created.threadId)?.turns[0]?.events).toEqual([
+      { kind: "assistantText", text: "frame" },
+    ]);
+    harness.unmount();
+  });
+
+  it("does not persist rejected live status or output commands", async () => {
+    const harness = await renderLoadedStore();
+    const created = thread({ turns: [turn("agt-1-0a1c")] });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => expect(harness.gateway.saveAgentThread).toHaveBeenCalledTimes(1));
+    harness.gateway.saveAgentThread.mockClear();
+    const before = harness.hook().state;
+
+    act(() => {
+      harness.hook().dispatchAction({
+        kind: "taskStatusEvent",
+        threadId: created.threadId,
+        event: statusEvent(0),
+        nowEpochMs: 20,
+      });
+      harness.hook().dispatchAction({
+        kind: "taskStatusEvent",
+        threadId: created.threadId,
+        event: statusEvent(1, { workspaceId: OTHER_OWNER_ID }),
+        nowEpochMs: 20,
+      });
+      harness.hook().dispatchAction({
+        kind: "taskStatusEvent",
+        threadId: "agt-unknown",
+        event: statusEvent(1),
+        nowEpochMs: 20,
+      });
+      harness.hook().dispatchAction({
+        kind: "turnEventsAppended",
+        threadId: created.threadId,
+        turnId: "agt-1-0a1c",
+        workspaceId: OTHER_OWNER_ID,
+        repositoryRoot: REPOSITORY_ROOT,
+        isolation: "worktree",
+        worktreePath: `${REPOSITORY_ROOT}/.worktrees/agt-1-0a1b`,
+        outputSequence: 1,
+        events: [{ kind: "assistantText", text: "foreign" }],
+        sessionId: "11111111-2222-3333-4444-555555555555",
+        supervisorTruncated: false,
+      });
+    });
+
+    expect(harness.hook().state).toBe(before);
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, PERSIST_INTERVAL_MS * 2));
+    });
+    expect(harness.gateway.saveAgentThread).not.toHaveBeenCalled();
     harness.unmount();
   });
 

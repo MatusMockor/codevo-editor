@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import type { AgentThreadView, AgentThreadsSurface } from "../../application/agentThreadPorts";
 import {
   useAgentSurfaceFileTree,
@@ -38,7 +38,7 @@ const UNAVAILABLE_FILES: AgentSurfaceFileTreeDependencies["files"] = {
   readDirectory: () => Promise.reject(new Error("The file tree is not available here.")),
 };
 
-export function AgentSurfaceHost({
+export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   agents,
   chooserAutoFocus,
   chrome,
@@ -146,7 +146,7 @@ export function AgentSurfaceHost({
       />
     </div>
   );
-}
+});
 
 function fileTreeTarget(
   workspaceId: string | null,

@@ -150,12 +150,18 @@ export type AgentThreadsAction =
   | { readonly kind: "turnStarted"; readonly threadId: string; readonly turn: AgentTurn }
   | {
       readonly kind: "taskStatusEvent";
+      readonly threadId: string;
       readonly event: AgentTaskStatusEvent;
       readonly nowEpochMs: number;
     }
   | {
       readonly kind: "turnEventsAppended";
+      readonly threadId: string;
       readonly turnId: string;
+      readonly workspaceId: string;
+      readonly repositoryRoot: string;
+      readonly isolation: AgentTaskIsolation;
+      readonly worktreePath: string | null;
       readonly outputSequence: number;
       readonly events: ReadonlyArray<AgentTurnEvent>;
       readonly sessionId: string | null;
@@ -315,7 +321,7 @@ export function agentThreadsReducer(
     case "turnStarted":
       return startTurn(state, action.threadId, action.turn);
     case "taskStatusEvent":
-      return applyTurnStatusEvent(state, action.event, action.nowEpochMs);
+      return applyTurnStatusEvent(state, action);
     case "turnEventsAppended":
       return appendTurnEvents(state, action);
     case "turnInterrupted":
@@ -412,21 +418,13 @@ function retainTurnsForNewTurn(
 
 function applyTurnStatusEvent(
   state: AgentThreadsState,
-  event: AgentTaskStatusEvent,
-  nowEpochMs: number,
+  action: Extract<AgentThreadsAction, { kind: "taskStatusEvent" }>,
 ): AgentThreadsState {
-  const location = findTurn(state, event.taskId);
+  const location = acceptedTaskStatusLocation(state, action);
   if (location === null) return state;
   const { thread, index } = location;
   const turn = thread.turns[index];
-  if (event.workspaceId !== thread.owner.ownerId) return state;
-  if (event.repositoryRoot !== thread.owner.repositoryRoot) return state;
-  if (event.isolation !== thread.target.isolation) return state;
-  if (thread.target.worktreePath !== null && event.worktreePath !== thread.target.worktreePath) {
-    return state;
-  }
-  if (isTerminalAgentTurnStatus(turn.status)) return state;
-  if (event.sequence <= turn.lastStatusSequence) return state;
+  const { event } = action;
   const terminal = isTerminalAgentTaskStatus(event.status);
   return replaceTurn(
     state,
@@ -436,20 +434,49 @@ function applyTurnStatusEvent(
       ...turn,
       status: event.status,
       lastStatusSequence: event.sequence,
-      endedAtEpochMs: terminal ? nowEpochMs : turn.endedAtEpochMs,
+      endedAtEpochMs: terminal ? action.nowEpochMs : turn.endedAtEpochMs,
     },
-    nowEpochMs,
+    action.nowEpochMs,
   );
+}
+
+export function agentTaskStatusActionAccepted(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "taskStatusEvent" }>,
+): boolean {
+  return acceptedTaskStatusLocation(state, action) !== null;
+}
+
+function acceptedTaskStatusLocation(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "taskStatusEvent" }>,
+): TurnLocation | null {
+  const location = findTurnInThread(state, action.threadId, action.event.taskId);
+  if (location === null) return null;
+  const { thread, index } = location;
+  const turn = thread.turns[index];
+  const { event } = action;
+  if (event.workspaceId !== thread.owner.ownerId) return null;
+  if (event.repositoryRoot !== thread.owner.repositoryRoot) return null;
+  if (event.isolation !== thread.target.isolation) return null;
+  if (event.worktreePath !== thread.target.worktreePath) return null;
+  if (isTerminalAgentTurnStatus(turn.status)) return null;
+  if (event.sequence <= turn.lastStatusSequence) return null;
+  return location;
 }
 
 function appendTurnEvents(
   state: AgentThreadsState,
   action: Extract<AgentThreadsAction, { kind: "turnEventsAppended" }>,
 ): AgentThreadsState {
-  const location = findTurn(state, action.turnId);
+  const location = findTurnInThread(state, action.threadId, action.turnId);
   if (location === null) return state;
   const { thread, index } = location;
   const turn = thread.turns[index];
+  if (action.workspaceId !== thread.owner.ownerId) return state;
+  if (action.repositoryRoot !== thread.owner.repositoryRoot) return state;
+  if (action.isolation !== thread.target.isolation) return state;
+  if (action.worktreePath !== thread.target.worktreePath) return state;
   if (isTerminalAgentTurnStatus(turn.status)) return state;
   if (action.outputSequence <= turn.lastOutputSequence) return state;
   const merged = mergeTurnEvents(turn.events, action.events);
@@ -649,6 +676,18 @@ function findTurn(state: AgentThreadsState, turnId: string): TurnLocation | null
     if (index !== -1) return { thread, index };
   }
   return null;
+}
+
+function findTurnInThread(
+  state: AgentThreadsState,
+  threadId: string,
+  turnId: string,
+): TurnLocation | null {
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return null;
+  const index = thread.turns.findIndex((turn) => turn.turnId === turnId);
+  if (index === -1) return null;
+  return { thread, index };
 }
 
 function replaceTurn(

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { memo, useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { PanelLeftClose } from "lucide-react";
 import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
@@ -50,7 +50,7 @@ export interface AgentThreadsSidebarProps {
   onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
 }
 
-export function AgentThreadsSidebar({
+export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   addProjectAvailable,
   groups,
   onAddProject,
@@ -253,7 +253,7 @@ export function AgentThreadsSidebar({
       </div>
     </aside>
   );
-}
+});
 
 function rovingThreadId(
   request: string | null,

@@ -55,6 +55,9 @@ function createStream(parser: AgentOutputParserPort) {
     threadId: THREAD_ID,
     turnId: TURN_ID,
     ownerId: "ws-1",
+    repositoryRoot: "/repo",
+    isolation: "in-place",
+    worktreePath: null,
     kind: "claudeCode",
     resumed: false,
   });
@@ -119,6 +122,14 @@ describe("agent turn output pending bounds", () => {
 
     const action = drainAgentTurnOutput(stream, 1);
     expect(action).not.toBeNull();
+    expect(action).toMatchObject({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      workspaceId: "ws-1",
+      repositoryRoot: "/repo",
+      isolation: "in-place",
+      worktreePath: null,
+    });
     expect(action?.supervisorTruncated).toBe(true);
     expect(stream.pendingDropped).toBe(false);
 

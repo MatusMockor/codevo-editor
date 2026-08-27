@@ -35,6 +35,12 @@ import { useAgentSurfaceLayout } from "./useAgentSurfaceLayout";
 import { REVEAL_FAILED_NOTICE, useAgentThreadMenuCommands } from "./useAgentThreadMenuCommands";
 import { useAgentThreadNavigation } from "./useAgentThreadNavigation";
 import { useAgentViewCommands } from "./useAgentViewCommands";
+import {
+  useAgentLatestCallback,
+  useAgentSurfacePresentationView,
+  useAgentThreadScriptPresentation,
+  useAgentThreadPresentationViews,
+} from "./useAgentThreadPresentationViews";
 
 export interface AgentModeViewProps {
   readonly agents: AgentThreadsSurface;
@@ -67,13 +73,24 @@ export function AgentModeView({
   const [localNotice, setLocalNotice] = useState<AgentTasksNotice | null>(null);
   const [commitMenuOpenSignal, setCommitMenuOpenSignal] = useState(0);
 
+  const presentationThreads = useAgentThreadPresentationViews(agents.threads);
   const groups = useMemo(
-    () => agentProjectGroups(projects, agents.threads, agents.orphanedWorktrees),
-    [projects, agents.orphanedWorktrees, agents.threads],
+    () => agentProjectGroups(projects, presentationThreads, agents.orphanedWorktrees),
+    [projects, agents.orphanedWorktrees, presentationThreads],
   );
 
-  const navigation = useAgentThreadNavigation({ agents, groups, projects });
-  const { selectedThread, selectedThreadId, railScope, find } = navigation;
+  const navigation = useAgentThreadNavigation({
+    agents,
+    groups,
+    presentationThreads,
+    projects,
+  });
+  const { selectedThread: sessionThread, selectedThreadId, railScope, find } = navigation;
+  const selectedThread =
+    selectedThreadId === null
+      ? null
+      : (presentationThreads.find((view) => view.thread.threadId === selectedThreadId) ?? null);
+  const surfaceThread = useAgentSurfacePresentationView(selectedThread);
 
   const composer = useAgentComposerControllerState({
     agents,
@@ -84,24 +101,54 @@ export function AgentModeView({
     onClearSelectedThread: navigation.clearSelectedThread,
     onThreadStarted: navigation.selectStartedThread,
   });
+  const submitComposer = useAgentLatestCallback(composer.submit);
+  const changeDangerousConfirmed = useAgentLatestCallback(
+    composer.composerProps.onDangerousConfirmedChange,
+  );
+  const changeIsolation = useAgentLatestCallback(composer.composerProps.onIsolationChange);
+  const changeLaunch = useAgentLatestCallback(composer.composerProps.onLaunchChange);
+  const clearComposer = useAgentLatestCallback(composer.composerProps.onNewThread);
+  const selectComposerRepository = useAgentLatestCallback(
+    composer.composerProps.onSelectRepository,
+  );
+  const changeUnsafeConfirmed = useAgentLatestCallback(
+    composer.composerProps.onUnsafeConfirmedChange,
+  );
+  const composerProps = {
+    ...composer.composerProps,
+    onDangerousConfirmedChange: changeDangerousConfirmed,
+    onIsolationChange: changeIsolation,
+    onLaunchChange: changeLaunch,
+    onNewThread: clearComposer,
+    onSelectRepository: selectComposerRepository,
+    onUnsafeConfirmedChange: changeUnsafeConfirmed,
+  };
   const startNewThread = composer.startNewThread;
 
   const shipActions = useAgentShipActions({ agents, selectedThread });
   const surface = useAgentSurfaceLayout({ chrome, selectedThread, workspaceRoot });
   const { layout, openSurface, toggleRail, toggleRightPanel } = surface;
   const onShowTerminalPanel = chrome.onShowTerminalPanel;
+  const scriptsTarget = useMemo(
+    () => (selectedThread === null ? null : scriptTarget(selectedThread)),
+    [selectedThread],
+  );
   const scripts = useAgentThreadScripts({
-    target: selectedThread === null ? null : scriptTarget(selectedThread),
+    target: scriptsTarget,
     workspaceRoot,
     runner: chrome.scripts,
     onBeforeRun: onShowTerminalPanel,
   });
+  const headerScripts = useAgentThreadScriptPresentation(scripts);
+  const showChanges = agents.showChanges;
+  const trustProject = useAgentLatestCallback(onTrustProject);
+  const releaseProject = useAgentLatestCallback(onReleaseProject);
   const reviewInDiff = useCallback(
     (threadId: string) => {
-      void agents.showChanges(threadId);
+      void showChanges(threadId);
       openSurface("diff");
     },
-    [agents, openSurface],
+    [openSurface, showChanges],
   );
 
   const menu = useAgentThreadMenuCommands({
@@ -109,12 +156,23 @@ export function AgentModeView({
     groups,
     revealPath: chrome.revealPath,
     reportNotice: setLocalNotice,
-    onTrustProject,
-    onReleaseProject,
+    onTrustProject: trustProject,
+    onReleaseProject: releaseProject,
     onFilterScope: navigation.setRailScope,
     onThreadRemoved: navigation.forgetThread,
     startNewThread,
   });
+  const renameThread = useAgentLatestCallback(agents.renameThread);
+  const togglePin = useAgentLatestCallback(agents.togglePin);
+  const threadMenuCommand = useAgentLatestCallback(menu.handleThreadMenuCommand);
+  const projectMenuCommand = useAgentLatestCallback(menu.handleProjectCommand);
+  const newThread = useAgentLatestCallback(startNewThread);
+  const activateSurface = useAgentLatestCallback(surface.activateSurface);
+  const closeSurfaceTab = useAgentLatestCallback(surface.closeSurfaceTab);
+  const expandEditor = useAgentLatestCallback(surface.expandEditor);
+  const openSurfaceCommand = useAgentLatestCallback(openSurface);
+  const toggleRightPanelCommand = useAgentLatestCallback(toggleRightPanel);
+  const revealFailed = useCallback(() => setLocalNotice(REVEAL_FAILED_NOTICE), []);
 
   const navigationCommands = navigation.commands;
   const newThreadTarget = navigation.newThreadTarget;
@@ -164,17 +222,58 @@ export function AgentModeView({
     workspaceRoot,
   });
 
-  const headerProject = agentThreadHeaderProject(selectedThread, groups, projects, composer.target);
-  const layoutControls = (
-    <AgentPanelLayoutControls
-      bottomPanelOpen={chrome.bottomPanelVisible}
-      maximize={{ maximized: layout.rightPanelMaximized, onToggle: surface.toggleMaximized }}
-      onExpandEditor={null}
-      onToggleBottomPanel={chrome.onToggleBottomPanel}
-      onToggleRightPanel={toggleRightPanel}
-      rightPanelOpen
-      shortcuts={chrome.shortcuts}
-    />
+  const composerTargetProjectRootKey = composer.target?.projectRootKey ?? null;
+  const composerTargetRepositoryRoot = composer.target?.repositoryRoot ?? null;
+  const headerFallback = useMemo(
+    () =>
+      composerTargetProjectRootKey === null || composerTargetRepositoryRoot === null
+        ? null
+        : {
+            projectRootKey: composerTargetProjectRootKey,
+            repositoryRoot: composerTargetRepositoryRoot,
+          },
+    [composerTargetProjectRootKey, composerTargetRepositoryRoot],
+  );
+  const headerProject = useMemo(
+    () => agentThreadHeaderProject(selectedThread, groups, projects, headerFallback),
+    [groups, headerFallback, projects, selectedThread],
+  );
+  const layoutControls = useMemo(
+    () => (
+      <AgentPanelLayoutControls
+        bottomPanelOpen={chrome.bottomPanelVisible}
+        maximize={{ maximized: layout.rightPanelMaximized, onToggle: surface.toggleMaximized }}
+        onExpandEditor={null}
+        onToggleBottomPanel={chrome.onToggleBottomPanel}
+        onToggleRightPanel={toggleRightPanel}
+        rightPanelOpen
+        shortcuts={chrome.shortcuts}
+      />
+    ),
+    [
+      chrome.bottomPanelVisible,
+      chrome.onToggleBottomPanel,
+      chrome.shortcuts,
+      layout.rightPanelMaximized,
+      surface.toggleMaximized,
+      toggleRightPanel,
+    ],
+  );
+  const surfaceAgents = useMemo(
+    () => ({
+      showChanges: agents.showChanges,
+      showFileDiff: agents.showFileDiff,
+      hideFileDiff: agents.hideFileDiff,
+      openChangedFile: agents.openChangedFile,
+      openChangedFileDiff: agents.openChangedFileDiff,
+    }),
+    [
+      agents.hideFileDiff,
+      agents.openChangedFile,
+      agents.openChangedFileDiff,
+      agents.showChanges,
+      agents.showFileDiff,
+    ],
   );
 
   return (
@@ -209,13 +308,13 @@ export function AgentModeView({
                 onAddProject={addProject.openDialog}
                 onChangeScope={navigation.setRailScope}
                 onCollapseSidebar={toggleRail}
-                onNewThread={startNewThread}
-                onProjectCommand={menu.handleProjectCommand}
-                onReleaseProject={onReleaseProject}
+                onNewThread={newThread}
+                onProjectCommand={projectMenuCommand}
+                onReleaseProject={releaseProject}
                 onSelectThread={navigation.selectThread}
-                onThreadMenuCommand={menu.handleThreadMenuCommand}
-                onTogglePin={(threadId) => agents.togglePin(threadId)}
-                onTrustProject={onTrustProject}
+                onThreadMenuCommand={threadMenuCommand}
+                onTogglePin={togglePin}
+                onTrustProject={trustProject}
                 overflowRootPaths={overflowRootPaths}
                 scope={railScope}
                 scopeEntries={navigation.scopeEntries}
@@ -233,18 +332,18 @@ export function AgentModeView({
                 bottomPanelOpen={chrome.bottomPanelVisible}
                 commitMenuOpenSignal={commitMenuOpenSignal}
                 layout={layout}
-                onExpandEditor={surface.expandEditor}
-                onNewThread={startNewThread}
+                onExpandEditor={expandEditor}
+                onNewThread={newThread}
                 onOpenScriptsView={chrome.onOpenScriptsView}
-                onOpenSurface={openSurface}
-                onRenameThread={(threadId, title) => agents.renameThread(threadId, title)}
-                onRevealFailed={() => setLocalNotice(REVEAL_FAILED_NOTICE)}
+                onOpenSurface={openSurfaceCommand}
+                onRenameThread={renameThread}
+                onRevealFailed={revealFailed}
                 onRevealPath={chrome.revealPath}
-                onThreadMenuCommand={menu.handleThreadMenuCommand}
+                onThreadMenuCommand={threadMenuCommand}
                 onToggleBottomPanel={chrome.onToggleBottomPanel}
-                onToggleRightPanel={toggleRightPanel}
+                onToggleRightPanel={toggleRightPanelCommand}
                 project={headerProject}
-                scripts={scripts}
+                scripts={headerScripts}
                 shipActions={shipActions}
                 shortcuts={chrome.shortcuts}
                 thread={selectedThread}
@@ -266,13 +365,13 @@ export function AgentModeView({
                 findQuery={find.open ? find.query : undefined}
                 onReviewInDiff={reviewInDiff}
                 reveal={find.reveal}
-                thread={selectedThread}
+                thread={sessionThread}
               />
               <AgentComposerController
-                composerProps={composer.composerProps}
+                composerProps={composerProps}
                 modelFavoritesPersistence={modelFavoritesPersistence}
                 submissionBlocked={composer.submissionBlocked}
-                submit={composer.submit}
+                submit={submitComposer}
               />
             </div>
           </div>
@@ -300,17 +399,17 @@ export function AgentModeView({
       </section>
       {surface.surfaceHost.mounted && (
         <AgentSurfaceHost
-          agents={agents}
+          agents={surfaceAgents}
           chooserAutoFocus={surface.chooserRequested}
           chrome={chrome}
           hidden={surface.surfaceHost.hidden}
           layout={layout}
           layoutControls={layoutControls}
-          onActivateSurface={surface.activateSurface}
-          onClosePanel={toggleRightPanel}
-          onCloseSurfaceTab={surface.closeSurfaceTab}
-          onOpenSurface={openSurface}
-          thread={selectedThread}
+          onActivateSurface={activateSurface}
+          onClosePanel={toggleRightPanelCommand}
+          onCloseSurfaceTab={closeSurfaceTab}
+          onOpenSurface={openSurfaceCommand}
+          thread={surfaceThread}
           workspaceRoot={workspaceRoot}
         />
       )}
