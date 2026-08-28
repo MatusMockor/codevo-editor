@@ -7,14 +7,20 @@ describe("workbench Node run composition", () => {
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     const rootController = readFileSync(
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
-    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
-    const rootBinding = rootController.slice(
-      rootController.lastIndexOf("  const {", rootBindingEnd),
+    const rootBindingEnd = editorNavigationCoordinator.indexOf(
+      "} = useWorkbenchTaskDebugCoordinator({",
+    );
+    const rootBinding = editorNavigationCoordinator.slice(
+      editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
     const commandsStart = rootController.indexOf(
@@ -24,6 +30,7 @@ describe("workbench Node run composition", () => {
       commandsStart,
       rootController.indexOf("\n  });", commandsStart),
     );
+    const publicSurface = coordinatorPublicSurface(editorNavigationCoordinator);
     const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));
 
     expect(controller).toContain(
@@ -34,9 +41,16 @@ describe("workbench Node run composition", () => {
     );
     expect(controller).toContain("nodeRunWithoutDebugging,");
     expect(app).toContain("nodeRunTaskGateway,");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("publicSurface: editorNavigationSurface,");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}nodeRunWithoutDebugging,$/mu);
-    expect(commands).toMatch(/^ {4}nodeRunWithoutDebugging,$/mu);
-    expect(projection).toMatch(/^ {4}nodeRunWithoutDebugging,$/mu);
+    expect(commands).toMatch(
+      /^ {4}nodeRunWithoutDebugging: taskDebug\.nodeRunWithoutDebugging,$/mu,
+    );
+    expect(publicSurface).toMatch(/^ {6}nodeRunWithoutDebugging,$/mu);
+    expect(projection).toMatch(/^ {4}\.\.\.editorNavigationSurface,$/mu);
   });
 
   it("gates the command capability against active debug ownership", () => {
@@ -44,11 +58,17 @@ describe("workbench Node run composition", () => {
       new URL("./useWorkbenchNodeRunWithoutDebugging.ts", import.meta.url),
       "utf8",
     );
+    const rootController = readFileSync(
+      new URL("./useWorkbenchController.ts", import.meta.url),
+      "utf8",
+    );
 
     expect(composition).toContain("canRun: canRunNodeWithoutDebugging({");
     expect(composition).toContain("debugSessionKind: debugSession.snapshot.state.kind,");
     expect(composition).toContain("debugStartPending: debugSession.debugStartPending,");
     expect(composition).toContain("isDebuggableNodeScriptPath(activeDocument.path)");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
   });
 
   it("shares one instance-scoped picker coordinator between Debug and Run", () => {
@@ -56,14 +76,25 @@ describe("workbench Node run composition", () => {
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const orchestration = readFileSync(
       new URL("./useWorkbenchDebugOrchestration.ts", import.meta.url),
+      "utf8",
+    );
+    const rootController = readFileSync(
+      new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
 
     expect(controller.match(/useMemo\(createNodeLaunchPickerCoordinator, \[\]\)/g)).toHaveLength(1);
     expect(controller).toContain("configurationPickerCoordinator: nodeLaunchPickerCoordinator,");
     expect(orchestration).toContain("coordinator: configurationPickerCoordinator,");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
   });
 
   it("renders only the sanitized Run picker projection at App overlay level", () => {
@@ -72,16 +103,26 @@ describe("workbench Node run composition", () => {
       new URL("../components/NodeRunConfigurationPickerHost.tsx", import.meta.url),
       "utf8",
     );
+    const rootController = readFileSync(
+      new URL("./useWorkbenchController.ts", import.meta.url),
+      "utf8",
+    );
 
     expect(app).toContain("<NodeRunConfigurationPickerHost");
     expect(app).toContain("launcher={workbench.nodeRunWithoutDebugging.configurationLauncher}");
     expect(host).toContain('intent="run"');
     expect(host).not.toContain("startTarget");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
   });
 
   it("routes command, toolbar gear, and Settings edit through one controlled dialog", () => {
     const controller = readFileSync(
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
+      "utf8",
+    );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
       "utf8",
     );
     const rootController = readFileSync(
@@ -98,10 +139,14 @@ describe("workbench Node run composition", () => {
     );
 
     expect(controller).toContain("const nodeLaunchConfigurationsSurface =");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
+    expect(rootController).toContain("configureNodeLaunchConfigurations:");
     expect(rootController).toContain(
-      "configureNodeLaunchConfigurations: nodeLaunchConfigurationsSurface.openNodeLaunchConfigurations,",
+      "taskDebug.nodeLaunchConfigurationsSurface.openNodeLaunchConfigurations,",
     );
-    expect(rootController).toContain("...nodeLaunchConfigurationsSurface,");
+    expect(rootController).toContain("...taskDebug.nodeLaunchConfigurationsSurface,");
     expect(panels).toContain(
       "openNodeLaunchConfigurations: workbench.openNodeLaunchConfigurations,",
     );
@@ -113,3 +158,8 @@ describe("workbench Node run composition", () => {
     expect(host.match(/<NodeLaunchConfigurationsDialog/g)).toHaveLength(1);
   });
 });
+
+function coordinatorPublicSurface(source: string): string {
+  const start = source.indexOf("publicSurface: {");
+  return source.slice(start, source.indexOf("\n    statusBar:", start));
+}

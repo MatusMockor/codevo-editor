@@ -7,6 +7,10 @@ describe("workbench inline breakpoint composition", () => {
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const controllerOptions = readFileSync(
       new URL("./workbenchDebugControllerOptions.ts", import.meta.url),
       "utf8",
@@ -22,9 +26,11 @@ describe("workbench inline breakpoint composition", () => {
     const start = controller.indexOf("const debugInlineBreakpoint = useDebugInlineBreakpoint({");
     const end = controller.indexOf("\n  });", start);
     const composition = controller.slice(start, end);
-    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
-    const rootBinding = rootController.slice(
-      rootController.lastIndexOf("  const {", rootBindingEnd),
+    const rootBindingEnd = editorNavigationCoordinator.indexOf(
+      "} = useWorkbenchTaskDebugCoordinator({",
+    );
+    const rootBinding = editorNavigationCoordinator.slice(
+      editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
     const commandsStart = rootController.indexOf(
@@ -34,6 +40,7 @@ describe("workbench inline breakpoint composition", () => {
       commandsStart,
       rootController.indexOf("\n  });", commandsStart),
     );
+    const publicSurface = coordinatorPublicSurface(editorNavigationCoordinator);
     const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));
 
     expect(start).toBeGreaterThanOrEqual(0);
@@ -53,15 +60,24 @@ describe("workbench inline breakpoint composition", () => {
     expect(composition).not.toContain("debugGateway");
     expect(composition).not.toContain("isWorkspaceTrusted");
     expect(controller).toContain("debugInlineBreakpoint,");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("publicSurface: editorNavigationSurface,");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}debugInlineBreakpoint,$/mu);
-    expect(commands).toMatch(/^ {4}debugInlineBreakpoint,$/mu);
-    expect(projection).toMatch(/^ {4}debugInlineBreakpoint,$/mu);
+    expect(commands).toMatch(/^ {4}debugInlineBreakpoint: taskDebug\.debugInlineBreakpoint,$/mu);
+    expect(publicSurface).toMatch(/^ {6}debugInlineBreakpoint,$/mu);
+    expect(projection).toMatch(/^ {4}\.\.\.editorNavigationSurface,$/mu);
   });
 
   it("routes only the active scoped editor reader into the controller", () => {
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     const scoped = readFileSync(
       new URL("../components/ScopedEditorSurface.tsx", import.meta.url),
+      "utf8",
+    );
+    const rootController = readFileSync(
+      new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
 
@@ -73,5 +89,12 @@ describe("workbench inline breakpoint composition", () => {
     expect(app).toContain("onDebugInlineBreakpointCaptureReaderChange={");
     expect(app).toContain("updateDebugInlineBreakpointCaptureReader");
     expect(scoped).toContain("onDebugInlineBreakpointCaptureReaderChange(groupId, reader)");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
   });
 });
+
+function coordinatorPublicSurface(source: string): string {
+  const start = source.indexOf("publicSurface: {");
+  return source.slice(start, source.indexOf("\n    statusBar:", start));
+}

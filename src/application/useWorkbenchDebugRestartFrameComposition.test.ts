@@ -7,6 +7,10 @@ describe("workbench Restart Frame composition", () => {
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const rootController = readFileSync(
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
@@ -14,9 +18,11 @@ describe("workbench Restart Frame composition", () => {
     const start = controller.indexOf("const debugRestartFrame = useDebugRestartFrame({");
     const end = controller.indexOf("\n  });", start);
     const composition = controller.slice(start, end);
-    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
-    const rootBinding = rootController.slice(
-      rootController.lastIndexOf("  const {", rootBindingEnd),
+    const rootBindingEnd = editorNavigationCoordinator.indexOf(
+      "} = useWorkbenchTaskDebugCoordinator({",
+    );
+    const rootBinding = editorNavigationCoordinator.slice(
+      editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
     const commandsStart = rootController.indexOf(
@@ -26,6 +32,7 @@ describe("workbench Restart Frame composition", () => {
       commandsStart,
       rootController.indexOf("\n  });", commandsStart),
     );
+    const publicSurface = coordinatorPublicSurface(editorNavigationCoordinator);
     const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));
 
     expect(start).toBeGreaterThanOrEqual(0);
@@ -41,9 +48,14 @@ describe("workbench Restart Frame composition", () => {
     expect(composition).toContain("restartFrame: debug.debugSession.restartFrame,");
     expect(controller).toContain("const debugRestartFrame = useDebugRestartFrame({");
     expect(controller.match(/debugRestartFrame,/g)).toHaveLength(1);
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("publicSurface: editorNavigationSurface,");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}debugRestartFrame,$/mu);
-    expect(commands).toMatch(/^ {4}debugRestartFrame,$/mu);
-    expect(projection).toMatch(/^ {4}debugRestartFrame,$/mu);
+    expect(commands).toMatch(/^ {4}debugRestartFrame: taskDebug\.debugRestartFrame,$/mu);
+    expect(publicSurface).toMatch(/^ {6}debugRestartFrame,$/mu);
+    expect(projection).toMatch(/^ {4}\.\.\.editorNavigationSurface,$/mu);
 
     const panelComposition = readFileSync(
       new URL("../components/useAppTestDebugPanels.ts", import.meta.url),
@@ -52,3 +64,8 @@ describe("workbench Restart Frame composition", () => {
     expect(panelComposition).toContain("debugRestartFrame: workbench.debugRestartFrame,");
   });
 });
+
+function coordinatorPublicSurface(source: string): string {
+  const start = source.indexOf("publicSurface: {");
+  return source.slice(start, source.indexOf("\n    statusBar:", start));
+}

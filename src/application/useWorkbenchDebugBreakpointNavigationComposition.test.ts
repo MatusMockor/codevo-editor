@@ -7,6 +7,10 @@ describe("workbench breakpoint navigation composition", () => {
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const controllerOptions = readFileSync(
       new URL("./workbenchDebugControllerOptions.ts", import.meta.url),
       "utf8",
@@ -30,7 +34,7 @@ describe("workbench breakpoint navigation composition", () => {
       ownerPredicateStart,
     );
     const ownerPredicates = controller.slice(ownerPredicateStart, ownerPredicateEnd);
-    const rootBinding = coordinatorBinding(rootController);
+    const rootBinding = coordinatorBinding(editorNavigationCoordinator);
     const commands = commandRegistryComposition(rootController);
 
     expect(start).toBeGreaterThanOrEqual(0);
@@ -61,12 +65,21 @@ describe("workbench breakpoint navigation composition", () => {
     expect(composition).not.toContain("isWorkspaceTrusted");
     expect(composition).not.toContain("snapshot");
     expect(controller).toContain("debugBreakpointNavigation,");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}debugBreakpointNavigation,$/mu);
-    expect(commands).toMatch(/^ {4}debugBreakpointNavigation,$/mu);
+    expect(commands).toMatch(
+      /^ {4}debugBreakpointNavigation: taskDebug\.debugBreakpointNavigation,$/mu,
+    );
   });
 
   it("routes only the active scoped editor reader into the controller", () => {
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const rootController = readFileSync(
+      new URL("./useWorkbenchController.ts", import.meta.url),
+      "utf8",
+    );
 
     expect(app).toContain(
       "updateDebugBreakpointNavigationCapture: updateDebugBreakpointNavigationCaptureReader,",
@@ -77,6 +90,8 @@ describe("workbench breakpoint navigation composition", () => {
     expect(app).toContain("debugBreakpointNavigationCaptureReader,");
     expect(app).toContain("onDebugBreakpointNavigationCaptureReaderChange={");
     expect(app).toContain("updateDebugBreakpointNavigationCaptureReader");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
   });
 });
 

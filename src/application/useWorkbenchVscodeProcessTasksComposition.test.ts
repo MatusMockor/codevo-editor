@@ -6,13 +6,18 @@ describe("VS Code process-task workbench composition", () => {
     const app = source("../App.tsx");
     const composition = source("../workbenchComposition.ts");
     const controller = source("./workbenchController/useWorkbenchTaskDebugCoordinator.ts");
+    const editorNavigationCoordinator = source(
+      "./workbenchController/useWorkbenchEditorNavigationCoordinator.ts",
+    );
     const controllerContracts = source("./workbenchControllerContracts.ts");
     const taskComposition = source("./useWorkbenchVscodeProcessTasks.ts");
     const sidebar = source("../components/WorkbenchSidebar.tsx");
     const rootController = source("./useWorkbenchController.ts");
-    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
-    const rootBinding = rootController.slice(
-      rootController.lastIndexOf("  const {", rootBindingEnd),
+    const rootBindingEnd = editorNavigationCoordinator.indexOf(
+      "} = useWorkbenchTaskDebugCoordinator({",
+    );
+    const rootBinding = editorNavigationCoordinator.slice(
+      editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
     const commandsStart = rootController.indexOf(
@@ -22,6 +27,7 @@ describe("VS Code process-task workbench composition", () => {
       commandsStart,
       rootController.indexOf("\n  });", commandsStart),
     );
+    const publicSurface = coordinatorPublicSurface(editorNavigationCoordinator);
     const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));
 
     expect(composition).toContain(
@@ -44,14 +50,26 @@ describe("VS Code process-task workbench composition", () => {
     );
     expect(sidebar).toContain("vscodeProcessTasks={workbench.vscodeProcessTasks}");
     expect(controller).not.toContain("VscodeProcessTasksPanel");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("publicSurface: editorNavigationSurface,");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}vscodeProcessTaskComposition,$/mu);
     expect(commands).toMatch(
-      /^ {4}vscodeProcessTasksWorkbench: vscodeProcessTaskComposition\.commands,$/mu,
+      /^ {4}vscodeProcessTasksWorkbench: taskDebug\.vscodeProcessTaskComposition\.commands,$/mu,
     );
-    expect(projection).toMatch(/^ {4}vscodeProcessTasks: vscodeProcessTaskComposition\.state,$/mu);
+    expect(publicSurface).toMatch(
+      /^ {6}vscodeProcessTasks: vscodeProcessTaskComposition\.state,$/mu,
+    );
+    expect(projection).toMatch(/^ {4}\.\.\.editorNavigationSurface,$/mu);
   });
 });
 
 function source(relativePath: string): string {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
+}
+
+function coordinatorPublicSurface(source: string): string {
+  const start = source.indexOf("publicSurface: {");
+  return source.slice(start, source.indexOf("\n    statusBar:", start));
 }

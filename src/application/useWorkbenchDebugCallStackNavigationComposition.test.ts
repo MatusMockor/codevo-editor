@@ -7,6 +7,10 @@ describe("workbench Call Stack navigation composition", () => {
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const rootController = readFileSync(
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
@@ -16,9 +20,11 @@ describe("workbench Call Stack navigation composition", () => {
     );
     const end = controller.indexOf("\n  });", start);
     const composition = controller.slice(start, end);
-    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
-    const rootBinding = rootController.slice(
-      rootController.lastIndexOf("  const {", rootBindingEnd),
+    const rootBindingEnd = editorNavigationCoordinator.indexOf(
+      "} = useWorkbenchTaskDebugCoordinator({",
+    );
+    const rootBinding = editorNavigationCoordinator.slice(
+      editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
     const commandsStart = rootController.indexOf(
@@ -36,7 +42,12 @@ describe("workbench Call Stack navigation composition", () => {
     expect(composition).toContain("getSnapshot: () => debug.debugSession.snapshot,");
     expect(composition).toContain("selectFrame: debug.debugSession.selectFrame,");
     expect(controller).toContain("debugCallStackNavigation,");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}debugCallStackNavigation,$/mu);
-    expect(commands).toMatch(/^ {4}debugCallStackNavigation,$/mu);
+    expect(commands).toMatch(
+      /^ {4}debugCallStackNavigation: taskDebug\.debugCallStackNavigation,$/mu,
+    );
   });
 });

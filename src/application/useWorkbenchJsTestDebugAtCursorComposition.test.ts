@@ -7,6 +7,10 @@ describe("workbench JavaScript Debug Test at Cursor composition", () => {
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const hook = readFileSync(
       new URL("./useWorkbenchJsTestCursorDebugging.ts", import.meta.url),
       "utf8",
@@ -18,9 +22,11 @@ describe("workbench JavaScript Debug Test at Cursor composition", () => {
     const start = controller.indexOf("const cursorDebug = useWorkbenchJsTestCursorDebugging({");
     const end = controller.indexOf("});", start);
     const composition = controller.slice(start, end);
-    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
-    const rootBinding = rootController.slice(
-      rootController.lastIndexOf("  const {", rootBindingEnd),
+    const rootBindingEnd = editorNavigationCoordinator.indexOf(
+      "} = useWorkbenchTaskDebugCoordinator({",
+    );
+    const rootBinding = editorNavigationCoordinator.slice(
+      editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
     const commandsStart = rootController.indexOf(
@@ -46,11 +52,14 @@ describe("workbench JavaScript Debug Test at Cursor composition", () => {
     expect(hook).toContain("readTextFileBounded: readBounded,");
     expect(hook).toContain("ownerKey !== ownerKey");
     expect(hook).toContain("captureReader !== activationReader");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}debugWatchAtCursor,$/mu);
     expect(rootBinding).toMatch(/^ {4}jsTestDebugAtCursor,$/mu);
     expect(rootBinding).toMatch(/^ {4}jsTestRunSelection,$/mu);
-    expect(commands).toMatch(/^ {4}debugWatchAtCursor,$/mu);
-    expect(commands).toMatch(/^ {4}jsTestDebugAtCursor,$/mu);
-    expect(commands).toMatch(/^ {4}jsTestRunSelection,$/mu);
+    expect(commands).toMatch(/^ {4}debugWatchAtCursor: taskDebug\.debugWatchAtCursor,$/mu);
+    expect(commands).toMatch(/^ {4}jsTestDebugAtCursor: taskDebug\.jsTestDebugAtCursor,$/mu);
+    expect(commands).toMatch(/^ {4}jsTestRunSelection: taskDebug\.jsTestRunSelection,$/mu);
   });
 });

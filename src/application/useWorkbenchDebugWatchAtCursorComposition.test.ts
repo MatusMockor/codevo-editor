@@ -7,6 +7,10 @@ describe("workbench Debug Add to Watch at Cursor composition", () => {
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const controllerOptions = readFileSync(
       new URL("./workbenchDebugControllerOptions.ts", import.meta.url),
       "utf8",
@@ -19,9 +23,11 @@ describe("workbench Debug Add to Watch at Cursor composition", () => {
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
-    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
-    const rootBinding = rootController.slice(
-      rootController.lastIndexOf("  const {", rootBindingEnd),
+    const rootBindingEnd = editorNavigationCoordinator.indexOf(
+      "} = useWorkbenchTaskDebugCoordinator({",
+    );
+    const rootBinding = editorNavigationCoordinator.slice(
+      editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
     const commandsStart = rootController.indexOf(
@@ -43,7 +49,10 @@ describe("workbench Debug Add to Watch at Cursor composition", () => {
     expect(controller).toContain("captureReader: options.debugWatchAtCursorCaptureReader,");
     expect(controller).toContain("currentEditorSessionOwnerKeyRef.current === ownerKey");
     expect(controller).toContain("...cursorDebug,");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}debugWatchAtCursor,$/mu);
-    expect(commands).toMatch(/^ {4}debugWatchAtCursor,$/mu);
+    expect(commands).toMatch(/^ {4}debugWatchAtCursor: taskDebug\.debugWatchAtCursor,$/mu);
   });
 });

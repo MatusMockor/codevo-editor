@@ -66,7 +66,7 @@ describe("docked text search composition", () => {
   it("wires every paging value through the controller and App", () => {
     const controllerReturn = sourceSection(
       controllerSource,
-      "  return {\n    activeDocument,",
+      "  return {\n    ...editorNavigationSurface,\n    activeDocument,",
       "    workspaceTrust,\n  };",
     );
     const appSearch = sourceSection(appSource, textSearchStart, textSearchEnd);

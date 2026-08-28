@@ -8,11 +8,16 @@ describe("server-ready action workbench composition", () => {
     const controllerOptions = source("./workbenchDebugControllerOptions.ts");
     const rootController = source("./useWorkbenchController.ts");
     const coordinator = source("./workbenchController/useWorkbenchTaskDebugCoordinator.ts");
+    const editorNavigationCoordinator = source(
+      "./workbenchController/useWorkbenchEditorNavigationCoordinator.ts",
+    );
     const orchestration = source("./useWorkbenchDebugOrchestration.ts");
-    const coordinatorCallStart = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
-    const coordinatorCall = rootController.slice(
+    const coordinatorCallStart = editorNavigationCoordinator.indexOf(
+      "} = useWorkbenchTaskDebugCoordinator({",
+    );
+    const coordinatorCall = editorNavigationCoordinator.slice(
       coordinatorCallStart,
-      rootController.indexOf("\n  });", coordinatorCallStart),
+      editorNavigationCoordinator.indexOf("\n  });", coordinatorCallStart),
     );
     const coordinatorOptionsStart = coordinator.indexOf("type WorkbenchTaskDebugOptions = Pick<");
     const coordinatorOptions = coordinator.slice(
@@ -26,8 +31,8 @@ describe("server-ready action workbench composition", () => {
       debugCompositionStart,
       coordinator.indexOf("\n  });", debugCompositionStart),
     );
-    const rootBinding = rootController.slice(
-      rootController.lastIndexOf("  const {", coordinatorCallStart),
+    const rootBinding = editorNavigationCoordinator.slice(
+      editorNavigationCoordinator.lastIndexOf("  const {", coordinatorCallStart),
       coordinatorCallStart,
     );
     const projection = rootController.slice(rootController.indexOf("\n  return {"));
@@ -49,7 +54,7 @@ describe("server-ready action workbench composition", () => {
     );
     expect(coordinatorOptions).toContain('  | "serverReadyExternalUrlOpener"');
     expect(coordinator).toContain("options: WorkbenchTaskDebugOptions;");
-    expect(coordinatorCall).toMatch(/^ {4}options,$/mu);
+    expect(coordinatorCall).toMatch(/^ {4}options: taskOptions,$/mu);
     expect(debugComposition).toContain(
       "serverReadyExternalUrlOpener: options.serverReadyExternalUrlOpener,",
     );
@@ -57,7 +62,11 @@ describe("server-ready action workbench composition", () => {
       "serverReadyExternalUrlOpener ?? unavailableServerReadyExternalUrlOpener,",
     );
     expect(coordinator).toContain("...debug,");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}debugSession,$/mu);
+    expect(projection).toMatch(/^ {4}\.\.\.editorNavigationSurface,$/mu);
     expect(projection).toContain("debugSession: {");
     expect(app).not.toContain("TauriServerReadyExternalUrlOpener");
     expect(coordinator).not.toContain("TauriServerReadyExternalUrlOpener");

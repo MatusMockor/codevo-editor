@@ -12,6 +12,10 @@ describe("workbench Copy Call Stack composition", () => {
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const controllerOptions = readFileSync(
       new URL("./workbenchDebugControllerOptions.ts", import.meta.url),
       "utf8",
@@ -27,9 +31,11 @@ describe("workbench Copy Call Stack composition", () => {
     const start = orchestration.indexOf("const debugCopyStackTrace = useDebugCopyStackTrace({");
     const end = orchestration.indexOf("\n  });", start);
     const composition = orchestration.slice(start, end);
-    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
-    const rootBinding = rootController.slice(
-      rootController.lastIndexOf("  const {", rootBindingEnd),
+    const rootBindingEnd = editorNavigationCoordinator.indexOf(
+      "} = useWorkbenchTaskDebugCoordinator({",
+    );
+    const rootBinding = editorNavigationCoordinator.slice(
+      editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
     const commandsStart = rootController.indexOf(
@@ -39,6 +45,7 @@ describe("workbench Copy Call Stack composition", () => {
       commandsStart,
       rootController.indexOf("\n  });", commandsStart),
     );
+    const publicSurface = coordinatorPublicSurface(editorNavigationCoordinator);
     const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));
 
     expect(start).toBeGreaterThanOrEqual(0);
@@ -72,9 +79,14 @@ describe("workbench Copy Call Stack composition", () => {
     expect(composition).not.toContain("stopDebug");
     expect(orchestration).toContain("debugCopyStackTrace,");
     expect(controller).toContain("...debug,");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("publicSurface: editorNavigationSurface,");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}debugCopyStackTrace,$/mu);
-    expect(commands).toMatch(/^ {4}debugCopyStackTrace,$/mu);
-    expect(projection).toMatch(/^ {4}debugCopyStackTrace,$/mu);
+    expect(commands).toMatch(/^ {4}debugCopyStackTrace: taskDebug\.debugCopyStackTrace,$/mu);
+    expect(publicSurface).toMatch(/^ {6}debugCopyStackTrace,$/mu);
+    expect(projection).toMatch(/^ {4}\.\.\.editorNavigationSurface,$/mu);
   });
 
   it("projects only the narrow command capability into the Debug panel", () => {
@@ -86,6 +98,10 @@ describe("workbench Copy Call Stack composition", () => {
       new URL("../components/useDebugPanelProps.ts", import.meta.url),
       "utf8",
     );
+    const rootController = readFileSync(
+      new URL("./useWorkbenchController.ts", import.meta.url),
+      "utf8",
+    );
 
     expect(panelComposition).toContain("debugCopyStackTrace: workbench.debugCopyStackTrace,");
     expect(panelProps).toContain("readonly debugCopyStackTrace?: DebugCopyStackTraceCommand;");
@@ -93,5 +109,12 @@ describe("workbench Copy Call Stack composition", () => {
     expect(panelComposition).not.toContain("state.frames");
     expect(panelComposition).not.toContain("condition");
     expect(panelComposition).not.toContain("logMessage");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
   });
 });
+
+function coordinatorPublicSurface(source: string): string {
+  const start = source.indexOf("publicSurface: {");
+  return source.slice(start, source.indexOf("\n    statusBar:", start));
+}

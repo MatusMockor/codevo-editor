@@ -102,6 +102,7 @@ Round 3 starts at `d47d7f92` with 5,660 raw lines and 18,447 structural tokens. 
    - Destination: `useWorkbenchEditorNavigationCoordinator.ts`.
    - Boundary: editor commands, task/debug navigation, auxiliary panels, local history, framework navigation, language navigation, navigation history, and file operations.
    - Net reduction budget: at least 535 raw lines and 1,338 structural tokens.
+   - Completed after `19c0cc62`: 5,065 to 4,407 raw lines and 16,531 to 15,105 structural tokens. Independent adversarial review: clean.
 
 4. Settings, commands, and late effects
    - Range: 4683-5180.

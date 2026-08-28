@@ -8,6 +8,10 @@ describe("workbench Copy Value composition", () => {
       new URL("./workbenchController/useWorkbenchTaskDebugCoordinator.ts", import.meta.url),
       "utf8",
     );
+    const editorNavigationCoordinator = readFileSync(
+      new URL("./workbenchController/useWorkbenchEditorNavigationCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const controllerOptions = readFileSync(
       new URL("./workbenchDebugControllerOptions.ts", import.meta.url),
       "utf8",
@@ -48,9 +52,11 @@ describe("workbench Copy Value composition", () => {
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
-    const rootBindingEnd = rootController.indexOf("} = useWorkbenchTaskDebugCoordinator({");
-    const rootBinding = rootController.slice(
-      rootController.lastIndexOf("  const {", rootBindingEnd),
+    const rootBindingEnd = editorNavigationCoordinator.indexOf(
+      "} = useWorkbenchTaskDebugCoordinator({",
+    );
+    const rootBinding = editorNavigationCoordinator.slice(
+      editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
     const projection = rootController.slice(rootController.indexOf("\n  return {"));
@@ -92,7 +98,11 @@ describe("workbench Copy Value composition", () => {
     expect(commandBridges).toContain("return useMemo(() => {");
     expect(commandBridges).toContain("const copyValue = createDebugCopyValueCommandBridge();");
     expect(controller).toContain("...debug,");
+    expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
+    expect(rootController).toContain("taskDebug,");
+    expect(editorNavigationCoordinator).toContain("taskDebug: {");
     expect(rootBinding).toMatch(/^ {4}debugSession,$/mu);
+    expect(projection).toMatch(/^ {4}\.\.\.editorNavigationSurface,$/mu);
     expect(projection).toContain("debugSession: {");
   });
 });
