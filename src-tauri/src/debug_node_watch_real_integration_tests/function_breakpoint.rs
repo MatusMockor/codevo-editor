@@ -16,9 +16,10 @@ fn private_registry_watch_installs_first_generation_function_breakpoint_before_i
     fs::write(
         &script,
         concat!(
-            "globalThis.qaImmediate = function qaImmediate() { ",
+            "const fs = require('node:fs'); ",
             "const revision = require('./revision.js'); ",
-            "require('node:fs').writeFileSync('function-ran', String(revision)); ",
+            "globalThis.qaImmediate = function qaImmediate() { ",
+            "fs.writeFileSync('function-ran', String(revision)); ",
             "}; globalThis.qaImmediate();\n",
             "setInterval(() => {}, 1000);\n",
         ),
@@ -62,6 +63,7 @@ fn private_registry_watch_installs_first_generation_function_breakpoint_before_i
     let DebugStartResponse::Ok { session_id } = response else {
         panic!("function-breakpoint watch factory did not register: {response:?}");
     };
+    let session = ExactWatchSessionGuard::new(Arc::clone(&registry), session_id);
     registry
         .control_for_session(session_id, &root_key, |adapter| adapter.confirm_launch())
         .expect("registered watch session")
@@ -97,9 +99,7 @@ fn private_registry_watch_installs_first_generation_function_breakpoint_before_i
         .expect("registered watch session")
         .expect("continue first-generation function breakpoint");
     wait_for_file_contents(&marker, "1");
-    // Native watch installs dependency watchers asynchronously after require().
-    thread::sleep(Duration::from_millis(250));
-    write_revision(&dependency, 2);
+    trigger_function_watch_replacement(&dependency, &sink);
     let (replacement_reason, replacement_frames) = wait_for_watch_stopped(&sink, 1);
     assert_eq!(replacement_reason, DebugStopReason::Breakpoint);
     assert!(
@@ -140,6 +140,67 @@ fn private_registry_watch_installs_first_generation_function_breakpoint_before_i
     );
     drop(events);
 
-    assert!(registry.stop_by_id(session_id));
-    wait_for_terminated_event(&sink, session_id);
+    session.stop(&sink);
+}
+
+struct ExactWatchSessionGuard {
+    registry: Arc<DebugSessionRegistry>,
+    session_id: Option<u64>,
+}
+
+impl ExactWatchSessionGuard {
+    fn new(registry: Arc<DebugSessionRegistry>, session_id: u64) -> Self {
+        Self {
+            registry,
+            session_id: Some(session_id),
+        }
+    }
+
+    fn stop(mut self, sink: &WatchEventSink) {
+        let session_id = self.session_id.take().expect("owned watch session");
+        assert!(self.registry.stop_by_id(session_id));
+        wait_for_terminated_event(sink, session_id);
+    }
+}
+
+impl Drop for ExactWatchSessionGuard {
+    fn drop(&mut self) {
+        let Some(session_id) = self.session_id.take() else {
+            return;
+        };
+        self.registry.stop_by_id(session_id);
+    }
+}
+
+fn trigger_function_watch_replacement(dependency: &Path, sink: &WatchEventSink) -> u32 {
+    let initial_event_count = lock_recover(&sink.0).len();
+    let deadline = Instant::now() + PROBE_TIMEOUT;
+    for revision in 2..=17 {
+        write_revision(dependency, revision);
+        let observation_deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < observation_deadline && Instant::now() < deadline {
+            let replacement_observed =
+                lock_recover(&sink.0)
+                    .iter()
+                    .skip(initial_event_count)
+                    .any(|event| match &event.payload {
+                        DebugEventPayload::FunctionBreakpointsVerified { .. } => true,
+                        DebugEventPayload::Output { text, .. } => {
+                            text.starts_with("Debugger ending on ")
+                        }
+                        _ => false,
+                    });
+            if replacement_observed {
+                return revision;
+            }
+            thread::sleep(POLL_INTERVAL);
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+    }
+    panic!(
+        "timed out causally triggering function-breakpoint watch replacement; events: {:?}",
+        lock_recover(&sink.0).as_slice()
+    );
 }

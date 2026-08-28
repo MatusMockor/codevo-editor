@@ -46,6 +46,34 @@ impl Drop for TempWorkspace {
     }
 }
 
+struct OwnedDebugSession<'a> {
+    registry: &'a DebugSessionRegistry,
+    session_id: Option<u64>,
+}
+
+impl<'a> OwnedDebugSession<'a> {
+    fn new(registry: &'a DebugSessionRegistry, session_id: u64) -> Self {
+        Self {
+            registry,
+            session_id: Some(session_id),
+        }
+    }
+
+    fn stop(mut self) {
+        let session_id = self.session_id.take().expect("owned debug session");
+        assert!(self.registry.stop_by_id(session_id));
+    }
+}
+
+impl Drop for OwnedDebugSession<'_> {
+    fn drop(&mut self) {
+        let Some(session_id) = self.session_id.take() else {
+            return;
+        };
+        self.registry.stop_by_id(session_id);
+    }
+}
+
 #[test]
 fn real_node_global_dotted_function_breakpoint_verifies_and_pauses() {
     let _admission = crate::debug_node_process::real_node_test_admission::acquire();
@@ -67,7 +95,7 @@ fn real_node_global_dotted_function_breakpoint_verifies_and_pauses() {
             "globalThis.codevoQa = { target() { console.log('FUNCTION_BREAKPOINT_HIT'); } };\n",
             "debugger;\n",
             "globalThis.codevoQa.target();\n",
-            "setTimeout(() => {}, 25);\n",
+            "setInterval(() => {}, 1000);\n",
         ),
     )
     .expect("write function-breakpoint target");
@@ -100,6 +128,7 @@ fn real_node_global_dotted_function_breakpoint_verifies_and_pauses() {
             },
         )
         .expect("start real function-breakpoint session");
+    let session = OwnedDebugSession::new(&registry, session_id);
 
     let first_stop = wait_for_stopped(&sink, 0);
     assert_eq!(first_stop.reason, DebugStopReason::Breakpoint);
@@ -136,7 +165,7 @@ fn real_node_global_dotted_function_breakpoint_verifies_and_pauses() {
         function_stop.frames
     );
 
-    assert!(registry.stop_by_id(session_id));
+    session.stop();
 }
 
 #[test]
@@ -161,7 +190,7 @@ fn real_node_late_defined_function_breakpoint_verifies_before_immediate_call() {
         concat!(
             "globalThis.qaFunction = function qaFunction() { console.log('LATE_FUNCTION_HIT'); };\n",
             "globalThis.qaFunction();\n",
-            "setTimeout(() => {}, 25);\n",
+            "setInterval(() => {}, 1000);\n",
         ),
     )
     .expect("write late function-breakpoint target");
@@ -193,6 +222,7 @@ fn real_node_late_defined_function_breakpoint_verifies_before_immediate_call() {
             },
         )
         .expect("start real late function-breakpoint session");
+    let session = OwnedDebugSession::new(&registry, session_id);
 
     let entry = wait_for_stopped(&sink, 0);
     assert_eq!(entry.reason, DebugStopReason::Entry);
@@ -241,7 +271,7 @@ fn real_node_late_defined_function_breakpoint_verifies_before_immediate_call() {
         "the hidden late-binding step must not leak a visible pause"
     );
 
-    assert!(registry.stop_by_id(session_id));
+    session.stop();
 }
 
 #[test]
@@ -262,7 +292,7 @@ fn real_node_preloaded_late_function_breakpoint_hits_without_visible_entry_pause
             "globalThis.qaFunction = function qaFunction() { console.log('PRELOADED_HIT'); };\n",
             "(function qaFunction() { console.log('FOREIGN_SAME_NAME'); })();\n",
             "globalThis.qaFunction();\n",
-            "setTimeout(() => {}, 25);\n",
+            "setInterval(() => {}, 1000);\n",
         ),
     )
     .expect("write preloaded function-breakpoint target");
@@ -300,6 +330,7 @@ fn real_node_preloaded_late_function_breakpoint_hits_without_visible_entry_pause
             },
         )
         .expect("start preloaded function-breakpoint session");
+    let session = OwnedDebugSession::new(&registry, session_id);
 
     wait_for_function_breakpoint_verification(&sink, "qa-preloaded-function");
     let function_stop = wait_for_stopped(&sink, 0);
@@ -337,7 +368,7 @@ fn real_node_preloaded_late_function_breakpoint_hits_without_visible_entry_pause
     );
     drop(events);
 
-    assert!(registry.stop_by_id(session_id));
+    session.stop();
 }
 
 #[test]
@@ -364,7 +395,7 @@ fn real_node_preloaded_same_line_definition_and_immediate_call_hits_function_bre
             "const localLarge = large; return localLarge.length; }; ",
             "globalThis.qaFunction(); ",
             "console.log('QA_FUNCTION_HIT', marker, typeof http); ",
-            "setTimeout(() => {}, 25);\n",
+            "setInterval(() => {}, 1000);\n",
         ),
     )
     .expect("write same-line function-breakpoint target");
@@ -402,6 +433,7 @@ fn real_node_preloaded_same_line_definition_and_immediate_call_hits_function_bre
             },
         )
         .expect("start same-line function-breakpoint session");
+    let session = OwnedDebugSession::new(&registry, session_id);
 
     wait_for_function_breakpoint_verification(&sink, "qa-same-line-function");
     let function_stop = wait_for_stopped(&sink, 0);
@@ -424,7 +456,7 @@ fn real_node_preloaded_same_line_definition_and_immediate_call_hits_function_bre
         "function output must not run before the debugger stops"
     );
 
-    assert!(registry.stop_by_id(session_id));
+    session.stop();
 }
 
 #[derive(Clone, Debug)]

@@ -10,7 +10,12 @@ fn production_watch_stack_replays_breakpoint_and_exception_filter_into_fresh_tar
     let script = workspace.0.join("server.js");
     let dependency = workspace.0.join("revision.js");
     let marker = workspace.0.join("target.json");
-    write_debug_target(&script);
+    let checkpoint_gate = workspace.0.join("checkpoint-gate");
+    fs::write(
+        &script,
+        "const fs = require('node:fs');\nconst revision = require('./revision.js');\ntry { throw new RangeError('must stay hidden'); } catch {} fs.writeFileSync('target.json', JSON.stringify({ pid: process.pid, revision })); console.log('watch-output', revision);\nfunction checkpoint() {\n  const observed = revision;\n  return observed;\n}\nfunction waitForCheckpointGate() {\n  if (fs.existsSync('checkpoint-gate')) { checkpoint(); return; }\n  setImmediate(waitForCheckpointGate);\n}\nif (revision === 1) checkpoint();\nelse waitForCheckpointGate();\nsetInterval(() => {}, 1000);\n",
+    )
+    .expect("write production watch debug target with checkpoint gate");
     write_revision(&dependency, 1);
     let script = script
         .canonicalize()
@@ -150,11 +155,11 @@ fn production_watch_stack_replays_breakpoint_and_exception_filter_into_fresh_tar
     );
     assert_eq!(resumed_floor, live_replacement_pause.pause_epoch + 1);
 
-    // Node installs dependency watchers asynchronously after the entry module
-    // starts. Keep the proof bounded while avoiding a same-tick mutation race.
-    thread::sleep(Duration::from_millis(250));
-    write_revision(&dependency, 2);
-    let second = wait_for_marker_with_events(&marker, 2, &sink, &reconnect_effects);
+    let replacement_event_floor = lock_recover(&sink.0).len();
+    let replacement_revision =
+        trigger_policy_watch_replacement(&dependency, &sink, &reconnect_effects);
+    let second =
+        wait_for_marker_with_events(&marker, replacement_revision, &sink, &reconnect_effects);
     assert_ne!(second.pid, first.pid, "watch target PID was not replaced");
     assert_ne!(second.pid, supervisor_pid);
     assert!(
@@ -164,6 +169,16 @@ fn production_watch_stack_replays_breakpoint_and_exception_filter_into_fresh_tar
     );
     assert_eq!(process_group(second.pid), process_group_id);
     wait_for_generation_activation(&reconnect_effects, 2);
+    wait_for_replayed_policy_verification(
+        &sink,
+        &reconnect_effects,
+        replacement_event_floor,
+        &script_path,
+        6,
+        2,
+    );
+    fs::write(&checkpoint_gate, replacement_revision.to_string())
+        .expect("release replacement checkpoint after policy activation");
     let reconnect_floor = wait_for_pause_epoch(
         &watch_adapter,
         resumed_floor + 1,
@@ -205,4 +220,76 @@ fn production_watch_stack_replays_breakpoint_and_exception_filter_into_fresh_tar
         !registry.finish_session(session_id, None),
         "logical watch finish callback must remove the exact harness session once"
     );
+}
+
+fn trigger_policy_watch_replacement(
+    dependency: &Path,
+    sink: &WatchEventSink,
+    reconnect_effects: &Mutex<Vec<WatchReconnectEffect>>,
+) -> u32 {
+    let initial_effect_count = lock_recover(reconnect_effects).len();
+    let deadline = Instant::now() + PROBE_TIMEOUT;
+    for revision in 2..=17 {
+        write_revision(dependency, revision);
+        let observation_deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < observation_deadline && Instant::now() < deadline {
+            let replacement_observed = lock_recover(reconnect_effects)
+                .iter()
+                .skip(initial_effect_count)
+                .any(|effect| {
+                    matches!(
+                        effect,
+                        WatchReconnectEffect::AwaitingReplacement(_)
+                            | WatchReconnectEffect::Activated(_)
+                    )
+                });
+            if replacement_observed {
+                return revision;
+            }
+            thread::sleep(POLL_INTERVAL);
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+    }
+    panic!(
+        "timed out causally triggering policy-replay watch replacement; reconnect effects: {:?}; events: {:?}",
+        lock_recover(reconnect_effects).as_slice(),
+        lock_recover(&sink.0).as_slice()
+    );
+}
+
+fn wait_for_replayed_policy_verification(
+    sink: &WatchEventSink,
+    reconnect_effects: &Mutex<Vec<WatchReconnectEffect>>,
+    event_floor: usize,
+    script_path: &str,
+    line_number: u32,
+    generation: u64,
+) {
+    let deadline = Instant::now() + PROBE_TIMEOUT;
+    loop {
+        let policy_verified = lock_recover(&sink.0).iter().skip(event_floor).any(|event| {
+            matches!(
+                &event.payload,
+                DebugEventPayload::BreakpointsVerified {
+                    file_path,
+                    breakpoints,
+                } if file_path == script_path && breakpoints.iter().any(|breakpoint| {
+                    breakpoint.verified && breakpoint.line_number == line_number
+                })
+            )
+        });
+        if policy_verified {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "timed out waiting for generation {generation} policy activation at line {line_number}; reconnect effects: {:?}; events: {:?}",
+                lock_recover(reconnect_effects).as_slice(),
+                lock_recover(&sink.0).as_slice()
+            );
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
 }
