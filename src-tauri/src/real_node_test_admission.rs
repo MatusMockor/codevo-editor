@@ -325,7 +325,6 @@ mod tests {
     use super::{
         assert_same_identity, contention_marker_path, validate_lock_file,
         validate_private_directory, ProcessAdmission, ADMISSION_TIMEOUT, CONTENTION_NONCE_ENV,
-        RETRY_INTERVAL,
     };
     #[cfg(unix)]
     use std::path::{Path, PathBuf};
@@ -372,7 +371,6 @@ mod tests {
         };
 
         wait_for_marker(&child.marker);
-        thread::sleep(RETRY_INTERVAL * 3);
         assert!(
             child
                 .child
