@@ -29,6 +29,7 @@ use unpublished_child::UnpublishedTerminalChild;
 mod portable_pty_spawner;
 #[cfg(test)]
 use portable_pty_spawner::finish_portable_spawn;
+pub(crate) use portable_pty_spawner::spawn_prepared_command_with_child;
 pub use portable_pty_spawner::PortablePtySpawner;
 
 #[derive(Clone, Debug)]
@@ -194,6 +195,33 @@ impl TerminalSupervisor {
             next_task_id: AtomicU64::new(1),
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub(crate) fn start_semantic_session(
+        &self,
+        cwd: PathBuf,
+        size: TerminalSize,
+        spawner: &dyn TerminalPtySpawner,
+        sink: Arc<dyn TerminalEventSink>,
+    ) -> Result<TerminalRuntimeStatus, String> {
+        self.start_with_options(
+            TerminalLaunchRoots::workspace_root(cwd),
+            None,
+            None,
+            TerminalStartOptions {
+                #[cfg(test)]
+                fault: None,
+                profile: TerminalProfile {
+                    command: None,
+                    id: "semantic".to_string(),
+                    label: "Semantic operation".to_string(),
+                },
+                shell_integration_base_dir: None,
+                size,
+            },
+            spawner,
+            sink,
+        )
     }
 
     pub fn acknowledge_start(&self, session_id: u64) -> Result<(), String> {
@@ -783,6 +811,8 @@ fn shell_label(shell: &str) -> String {
 mod tests {
     #[path = "terminal_session_ownership_tests.rs"]
     mod ownership_tests;
+    #[path = "terminal_session_stuck_waiter_tests.rs"]
+    mod stuck_waiter_tests;
 
     use super::{
         command_builder, finish_portable_spawn, prepare_shell_integration,
@@ -1071,35 +1101,6 @@ mod tests {
         assert!(sink
             .statuses()
             .contains(&TerminalRuntimeStatus::Stopped { session_id: 1 }));
-    }
-
-    #[test]
-    fn process_tree_terminator_escalates_without_blocking_on_stuck_waiter() {
-        let child = RecordingTerminalChild::blocking();
-        let killed = child.killed();
-        let signals = Arc::new(Mutex::new(Vec::new()));
-        let signal_sender = RecordingProcessGroupSignalSender {
-            signals: Arc::clone(&signals),
-        };
-        let mut terminator = ProcessTreeTerminator::with_dependencies(
-            42,
-            child.clone_killer(),
-            Box::new(signal_sender),
-            Duration::from_millis(10),
-            Duration::from_millis(10),
-        );
-        let waiter = thread::spawn(|| thread::sleep(Duration::from_millis(100)));
-        let started = Instant::now();
-
-        terminator.terminate(Some(&waiter));
-
-        assert!(started.elapsed() < Duration::from_millis(80));
-        assert_eq!(
-            signals.lock().expect("signals").as_slice(),
-            &[(42, libc::SIGTERM), (42, libc::SIGKILL)]
-        );
-        assert_eq!(*killed.lock().expect("killed"), 0);
-        waiter.join().expect("waiter");
     }
 
     #[cfg(unix)]

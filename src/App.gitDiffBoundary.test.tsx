@@ -7,6 +7,10 @@ import { initialAgentWorkbenchLayout } from "./domain/agentWorkbenchLayout";
 import type { GitFileDiff } from "./domain/git";
 import { createEmptyDebugWatches } from "./test/debugWatchMocks";
 
+vi.mock("./components/monacoRuntimeLoader", () => ({
+  initializeMonacoRuntime: vi.fn(async () => undefined),
+}));
+
 vi.mock("./application/useWorkbenchController", () => ({
   useWorkbenchController: () => createWorkbench(),
 }));
@@ -79,6 +83,9 @@ describe("App Git diff render boundary", () => {
       root.render(<App />);
       await Promise.resolve();
     });
+    await vi.waitFor(() => {
+      expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    });
 
     expect(host.querySelector('[role="alert"]')?.textContent).toContain(
       "Could not render this diff",
@@ -93,6 +100,9 @@ describe("App Git diff render boundary", () => {
     await act(async () => {
       root.render(<App />);
       await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(host.querySelector('[role="alert"]')).not.toBeNull();
     });
 
     expect(host.querySelector('[role="alert"]')?.textContent).toContain(

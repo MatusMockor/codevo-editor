@@ -2,6 +2,8 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadSearchSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
@@ -21,6 +23,7 @@ import {
 const ROOT = "/workspace/app";
 const OTHER = "/workspace/api";
 const NOW = 1_700_000_600_000;
+const AGENT_MODE_CSS = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
 
 describe("AgentThreadsSidebar", () => {
   let host: HTMLDivElement;
@@ -63,6 +66,83 @@ describe("AgentThreadsSidebar", () => {
 
     const scroll = host.querySelector(".agent-rail__scroll");
     expect(scroll?.nextElementSibling).toBe(host.querySelector(".agent-provider-footer"));
+  });
+
+  it("keeps usage viewport-bound and provider actions compact in narrow rails", () => {
+    expect(cssRule(".agent-usage-layer")).toContain("position: fixed");
+    expect(cssRule(".agent-usage-popover")).toContain("max-height: calc(100vh - 96px)");
+    expect(AGENT_MODE_CSS).toContain("@media (max-width: 700px)");
+    expect(AGENT_MODE_CSS).toContain("@container (max-width: 280px)");
+    expect(AGENT_MODE_CSS).toContain("flex-direction: column");
+    expect(cssRule(".agent-provider-footer__providers {")).toContain("overflow: hidden");
+  });
+
+  it("routes source control and opens and closes the real usage panel", () => {
+    const onOpenSourceControl = vi.fn();
+    render({ onOpenSourceControl });
+    const usageButton = host.querySelector<HTMLButtonElement>('button[aria-label="Open Usage"]');
+    expect(usageButton?.hasAttribute("aria-controls")).toBe(false);
+
+    click('button[aria-label="Open Source Control"]');
+    click('button[aria-label="Open Usage"]');
+
+    expect(onOpenSourceControl).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('section[aria-label="Usage"]')).not.toBeNull();
+    expect(usageButton?.getAttribute("aria-expanded")).toBe("true");
+    expect(usageButton?.getAttribute("aria-controls")).toBe("agent-usage-panel-dialog");
+    expect(document.activeElement).toBe(
+      document.querySelector('[role="dialog"][aria-label="Usage details"]'),
+    );
+
+    act(() => {
+      document
+        .querySelector('[role="dialog"][aria-label="Usage details"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+    });
+    expect(document.querySelector('section[aria-label="Usage"]')).toBeNull();
+    expect(document.activeElement).toBe(usageButton);
+    expect(usageButton?.hasAttribute("aria-controls")).toBe(false);
+
+    click('button[aria-label="Open Usage"]');
+    act(() =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close Usage"]')?.click(),
+    );
+    expect(document.querySelector('section[aria-label="Usage"]')).toBeNull();
+    expect(document.activeElement).toBe(usageButton);
+
+    click('button[aria-label="Open Usage"]');
+    act(() => document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+    expect(document.querySelector('section[aria-label="Usage"]')).toBeNull();
+    expect(document.activeElement).toBe(usageButton);
+  });
+
+  it("moves focus to Expand after outside-mousedown closes Usage before Collapse clicks", async () => {
+    render({
+      onCollapseSidebar: () =>
+        root.render(
+          <button aria-label="Expand sidebar" type="button">
+            Expand
+          </button>,
+        ),
+    });
+    click('button[aria-label="Open Usage"]');
+    expect(document.activeElement).toBe(
+      document.querySelector('[role="dialog"][aria-label="Usage details"]'),
+    );
+    const collapse = host.querySelector<HTMLButtonElement>('button[aria-label="Collapse sidebar"]');
+    expect(collapse).not.toBeNull();
+
+    await act(async () => {
+      collapse?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      collapse?.focus();
+      collapse?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      collapse?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await Promise.resolve();
+
+    expect(document.querySelector('section[aria-label="Usage"]')).toBeNull();
+    expect(document.activeElement).toBe(host.querySelector('button[aria-label="Expand sidebar"]'));
   });
 
   it("lists every thread as one flat recency-sorted card list", () => {
@@ -622,6 +702,7 @@ describe("AgentThreadsSidebar", () => {
       providerManagement: providerManagement(),
       providerEnabled: { claudeCode: true, codex: true },
       onOpenProviderSettings: vi.fn(),
+      onOpenSourceControl: vi.fn(),
       onSelectThread: vi.fn(),
       onTogglePin: vi.fn(),
       onChangeScope: vi.fn(),
@@ -658,6 +739,14 @@ describe("AgentThreadsSidebar", () => {
     const element = host.querySelector<HTMLElement>(selector);
     expect(element).not.toBeNull();
     act(() => element?.click());
+  }
+
+  function cssRule(selector: string): string {
+    const start = AGENT_MODE_CSS.indexOf(selector);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const bodyStart = AGENT_MODE_CSS.indexOf("{", start);
+    const end = AGENT_MODE_CSS.indexOf("}", bodyStart);
+    return AGENT_MODE_CSS.slice(bodyStart + 1, end);
   }
 
   function key(element: HTMLElement, keyName: string): void {

@@ -1,9 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   parseAgentProviderCurrentPolicyResult,
   parseAgentProviderHealthProbeResult,
   parseAgentProviderPolicyRegistrationReceipt,
   parseAgentProviderUpdateResult,
+  parseAgentProviderUpdateProgressEvent,
   validateAgentProviderCurrentPolicyRequest,
   validateAgentProviderHealthProbeRequest,
   validateAgentProviderPolicyRegistrationRequest,
@@ -19,12 +21,14 @@ import {
   type AgentProviderUpdateGateway,
   type AgentProviderUpdateRequest,
   type AgentProviderUpdateResult,
+  type AgentProviderUpdateProgressEvent,
 } from "../domain/agentProviderHealth";
 
 export const REGISTER_AGENT_PROVIDER_POLICY_IPC_COMMAND = "register_agent_provider_policy" as const;
 export const GET_AGENT_PROVIDER_POLICY_IPC_COMMAND = "get_agent_provider_policy" as const;
 export const PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND = "probe_agent_provider_health" as const;
 export const UPDATE_AGENT_PROVIDER_IPC_COMMAND = "update_agent_provider" as const;
+export const AGENT_PROVIDER_UPDATE_PROGRESS_EVENT = "agent-provider-update://progress" as const;
 
 export type InvokeAgentProviderCommand = (
   command: string,
@@ -32,9 +36,15 @@ export type InvokeAgentProviderCommand = (
 ) => Promise<unknown>;
 
 export type AgentProviderRuntimeDetector = () => boolean;
+export type ListenToAgentProviderUpdateProgress = (
+  event: string,
+  handler: (event: { readonly payload: unknown }) => void,
+) => Promise<() => void>;
 
 const invokeAgentProviderCommand: InvokeAgentProviderCommand = (command, args) =>
   invoke(command, args);
+const listenToAgentProviderUpdateProgress: ListenToAgentProviderUpdateProgress = (event, handler) =>
+  listen<unknown>(event, handler);
 
 export class TauriAgentProviderGateway
   implements AgentProviderPolicyGateway, AgentProviderHealthGateway, AgentProviderUpdateGateway
@@ -42,6 +52,7 @@ export class TauriAgentProviderGateway
   constructor(
     private readonly invokeCommand: InvokeAgentProviderCommand = invokeAgentProviderCommand,
     private readonly isRuntimeAvailable: AgentProviderRuntimeDetector = isTauri,
+    private readonly listenToProgress: ListenToAgentProviderUpdateProgress = listenToAgentProviderUpdateProgress,
   ) {}
 
   async currentAgentProviderPolicy(
@@ -99,6 +110,20 @@ export class TauriAgentProviderGateway
     return parseAgentProviderUpdateResult(
       await this.invokeCommand(UPDATE_AGENT_PROVIDER_IPC_COMMAND, { request: validated }),
     );
+  }
+
+  async subscribeAgentProviderUpdateProgress(
+    listener: (event: AgentProviderUpdateProgressEvent) => void,
+    onError: (error: unknown) => void,
+  ): Promise<() => void> {
+    this.requireRuntime();
+    return this.listenToProgress(AGENT_PROVIDER_UPDATE_PROGRESS_EVENT, (event) => {
+      try {
+        listener(parseAgentProviderUpdateProgressEvent(event.payload));
+      } catch (error) {
+        onError(error);
+      }
+    });
   }
 
   private requireRuntime(): void {

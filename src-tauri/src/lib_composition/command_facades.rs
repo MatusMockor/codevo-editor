@@ -2,6 +2,10 @@
 mod agent_cli_version_commands;
 #[path = "agent_provider_commands.rs"]
 mod agent_provider_commands;
+#[path = "../agent_provider_sign_in.rs"]
+mod agent_provider_sign_in;
+#[path = "agent_provider_sign_in_commands.rs"]
+mod agent_provider_sign_in_commands;
 #[path = "agent_task_commands.rs"]
 mod agent_task_commands;
 #[path = "agent_thread_store_commands.rs"]
@@ -16,6 +20,8 @@ mod git_worktree_commands;
 mod language_features_facade;
 #[path = "language_runtime_facade.rs"]
 mod language_runtime_facade;
+#[path = "../startup_metrics.rs"]
+mod startup_metrics;
 #[path = "workspace_facade.rs"]
 mod workspace_facade;
 #[path = "workspace_services.rs"]

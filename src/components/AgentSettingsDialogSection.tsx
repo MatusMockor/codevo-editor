@@ -1,15 +1,20 @@
 import type { MutableRefObject } from "react";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
+import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
 import type { AgentCliKind } from "../domain/agentTask";
 import type { AppSettings, WorkspaceSettings } from "../domain/settings";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 
-interface AgentSettingsDialogSectionProps {
+export interface AgentSettingsDialogProviderControls {
+  readonly providerManagement?: AgentProviderManagementSurface | null;
+  readonly providerSignIn?: AgentProviderSignInSurface | null;
+}
+
+export interface AgentSettingsDialogSectionProps extends AgentSettingsDialogProviderControls {
   readonly appSettings: AppSettings;
   readonly appSettingsRef: MutableRefObject<AppSettings>;
   readonly hasWorkspace: boolean;
-  readonly providerManagement: AgentProviderManagementSurface | null;
   readonly workspaceSettings: WorkspaceSettings;
   onPersistAppSettings(settings: AppSettings): void;
   onPublishAppSettings(settings: AppSettings): void;
@@ -23,7 +28,8 @@ export function AgentSettingsDialogSection({
   onPersistAppSettings,
   onPublishAppSettings,
   onUpdateWorkspaceSettings,
-  providerManagement,
+  providerManagement = null,
+  providerSignIn = null,
   workspaceSettings,
 }: AgentSettingsDialogSectionProps) {
   const updateAgentAppSettings = (nextSettings: AppSettings): void => {
@@ -60,12 +66,24 @@ export function AgentSettingsDialogSection({
       appSettings={appSettings}
       hasWorkspace={hasWorkspace}
       providerManagement={providerManagement ?? unavailableProviderManagement}
+      providerSignIn={providerSignIn ?? unavailableProviderSignIn}
       updateAppSettings={updateAgentAppSettings}
       updateWorkspaceSettings={onUpdateWorkspaceSettings}
       workspaceSettings={workspaceSettings}
     />
   );
 }
+
+const unavailableProviderSignIn: AgentProviderSignInSurface = {
+  states: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
+  terminalIntents: { claudeCode: null, codex: null },
+  blockedReason: () => "Provider sign-in is unavailable.",
+  isActive: () => false,
+  request: () => false,
+  cancelStart: () => undefined,
+  start: async () => null,
+  settle: async () => undefined,
+};
 
 function persistProviderIntent(
   provider: AgentCliKind,

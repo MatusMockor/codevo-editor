@@ -12,6 +12,7 @@ const STORED_TURN = {
   eventsTruncated: false,
   lastStatusSequence: 0,
   lastOutputSequence: 0,
+  streamMetrics: null,
   cliVersion: null,
 } as const;
 
@@ -107,6 +108,36 @@ describe("agentThreadWire cliVersion", () => {
       expect(() =>
         parseAgentThread(storedThreadWithTurn({ ...STORED_TURN, launch: null, cliVersion })),
       ).toThrow(/thread\.turns\[0\]\.cliVersion/);
+    }
+  });
+});
+
+describe("agentThreadWire stream metrics", () => {
+  it("reads a schema-v1 turn written before stream metrics as null", () => {
+    const { streamMetrics: _streamMetrics, ...legacyTurn } = STORED_TURN;
+    const parsed = parseAgentThread(storedThreadWithTurn({ ...legacyTurn, launch: null }));
+
+    expect(parsed.turns[0].streamMetrics).toBeNull();
+  });
+
+  it("round-trips exact stream metrics and rejects malformed or unknown fields", () => {
+    const stored = storedThreadWithTurn({
+      ...STORED_TURN,
+      launch: null,
+      streamMetrics: { receivedUtf8Bytes: 7, complete: false },
+    });
+    expect(serializeAgentThread(parseAgentThread(stored))).toEqual(stored);
+
+    for (const streamMetrics of [
+      { receivedUtf8Bytes: -1, complete: true },
+      { receivedUtf8Bytes: 1.5, complete: true },
+      { receivedUtf8Bytes: Number.MAX_SAFE_INTEGER + 1, complete: true },
+      { receivedUtf8Bytes: 1, complete: "yes" },
+      { receivedUtf8Bytes: 1, complete: true, extra: true },
+    ]) {
+      expect(() =>
+        parseAgentThread(storedThreadWithTurn({ ...STORED_TURN, launch: null, streamMetrics })),
+      ).toThrow(/streamMetrics/);
     }
   });
 });

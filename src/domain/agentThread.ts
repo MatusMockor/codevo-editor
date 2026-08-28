@@ -17,6 +17,7 @@ export const MAX_AGENT_THREADS_PER_ROOT = 64;
 export const MAX_AGENT_TURNS_PER_THREAD = 64;
 export const MAX_AGENT_EVENTS_PER_TURN = 512;
 export const MAX_AGENT_EVENT_TEXT_BYTES = 16 * 1_024;
+export const MAX_AGENT_EVENT_BYTES_PER_TURN = 512 * 1_024;
 export const MAX_AGENT_TOOL_SUMMARY_BYTES = 512;
 export const MAX_AGENT_TOOL_ID_BYTES = 256;
 export const MAX_AGENT_TOOL_NAME_BYTES = 256;
@@ -52,6 +53,11 @@ export type AgentTurnStatus = AgentTaskStatus | { readonly kind: "interrupted" }
 export interface AgentTurnUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+}
+
+export interface AgentTurnStreamMetrics {
+  readonly receivedUtf8Bytes: number;
+  readonly complete: boolean;
 }
 
 export type AgentTurnEvent =
@@ -93,6 +99,7 @@ export interface AgentTurn {
   readonly eventsTruncated: boolean;
   readonly lastStatusSequence: number;
   readonly lastOutputSequence: number;
+  readonly streamMetrics?: AgentTurnStreamMetrics | null;
   readonly launch: AgentLaunchOptions | null;
   readonly cliVersion: string | null;
 }
@@ -166,6 +173,7 @@ export type AgentThreadsAction =
       readonly events: ReadonlyArray<AgentTurnEvent>;
       readonly sessionId: string | null;
       readonly supervisorTruncated: boolean;
+      readonly streamMetricsDelta?: AgentTurnStreamMetrics | null;
     }
   | { readonly kind: "turnInterrupted"; readonly turnId: string; readonly nowEpochMs: number }
   | {
@@ -201,11 +209,17 @@ const UTF16_LOW_SURROGATE_END = 0xdfff;
 const TITLE_ELLIPSIS = "…";
 const TITLE_ELLIPSIS_BYTES = UTF8_ENCODER.encode(TITLE_ELLIPSIS).byteLength;
 const agentTextByteState = new WeakMap<AgentTurnEvent, AgentTextByteState>();
+const agentEventByteState = new WeakMap<AgentTurnEvent, AgentEventByteState>();
 
 interface AgentTextByteState {
   readonly byteLength: number;
   readonly text: string;
   readonly trailingHighSurrogate: boolean;
+}
+
+interface AgentEventByteState {
+  readonly byteLength: number;
+  readonly values: ReadonlyArray<string>;
 }
 
 export function emptyAgentThreadsState(): AgentThreadsState {
@@ -364,7 +378,7 @@ function loadThreads(
     if (thread.owner.rootKey !== owner.rootKey) continue;
     if (thread.owner.ownerId !== owner.ownerId) continue;
     if (threads.has(thread.threadId)) continue;
-    threads.set(thread.threadId, markInterruptedTurns(thread));
+    threads.set(thread.threadId, boundAgentThreadEvents(markInterruptedTurns(thread)));
   }
   evictThreadsForRoot(threads, owner.rootKey);
   return { threads };
@@ -375,16 +389,29 @@ function markInterruptedTurns(thread: AgentThread): AgentThread {
   return {
     ...thread,
     turns: thread.turns.map((turn) =>
-      isTerminalAgentTurnStatus(turn.status) ? turn : { ...turn, status: { kind: "interrupted" } },
+      isTerminalAgentTurnStatus(turn.status)
+        ? turn
+        : {
+            ...turn,
+            status: { kind: "interrupted" },
+            streamMetrics: interruptedStreamMetrics(turn.streamMetrics ?? null),
+          },
     ),
   };
+}
+
+function interruptedStreamMetrics(
+  streamMetrics: AgentTurnStreamMetrics | null,
+): AgentTurnStreamMetrics | null {
+  if (streamMetrics === null) return null;
+  return streamMetrics.complete ? { ...streamMetrics, complete: false } : streamMetrics;
 }
 
 function createThread(state: AgentThreadsState, thread: AgentThread): AgentThreadsState {
   if (state.threads.has(thread.threadId)) return state;
   if (thread.turns.some((turn) => findTurn(state, turn.turnId) !== null)) return state;
   const threads = new Map(state.threads);
-  threads.set(thread.threadId, thread);
+  threads.set(thread.threadId, boundAgentThreadEvents(thread));
   evictThreadsForRoot(threads, thread.owner.rootKey);
   return { threads };
 }
@@ -397,9 +424,10 @@ function startTurn(state: AgentThreadsState, threadId: string, turn: AgentTurn):
   if (findTurn(state, turn.turnId) !== null) return state;
   const retained = retainTurnsForNewTurn(thread);
   if (retained === null) return state;
+  const boundedTurn = boundAgentTurnEvents(turn);
   return replaceThread(state, {
     ...thread,
-    turns: [...retained.turns, turn],
+    turns: [...retained.turns, boundedTurn],
     turnsTruncated: thread.turnsTruncated || retained.evicted,
     updatedAtEpochMs: Math.max(thread.updatedAtEpochMs, turn.startedAtEpochMs),
   });
@@ -479,18 +507,46 @@ function appendTurnEvents(
   if (action.worktreePath !== thread.target.worktreePath) return state;
   if (isTerminalAgentTurnStatus(turn.status)) return state;
   if (action.outputSequence <= turn.lastOutputSequence) return state;
-  const merged = mergeTurnEvents(turn.events, action.events);
+  const merged = turn.eventsTruncated
+    ? { events: turn.events, truncated: false }
+    : mergeTurnEvents(turn.events, action.events);
   const updatedTurn: AgentTurn = {
     ...turn,
     events: merged.events,
     eventsTruncated: turn.eventsTruncated || merged.truncated || action.supervisorTruncated,
     lastOutputSequence: action.outputSequence,
+    streamMetrics: mergeAgentTurnStreamMetrics(
+      turn.streamMetrics ?? null,
+      action.streamMetricsDelta ?? null,
+    ),
   };
   const provider = providerWithSession(thread.provider, action.sessionId);
   const turns = thread.turns.map((candidate, position) =>
     position === index ? updatedTurn : candidate,
   );
   return replaceThread(state, { ...thread, provider, turns });
+}
+
+function mergeAgentTurnStreamMetrics(
+  current: AgentTurnStreamMetrics | null,
+  delta: AgentTurnStreamMetrics | null,
+): AgentTurnStreamMetrics | null {
+  if (delta === null) return current;
+  if (!validStreamMetricBytes(delta.receivedUtf8Bytes) || typeof delta.complete !== "boolean") {
+    return current === null ? null : { ...current, complete: false };
+  }
+  if (current === null) return delta;
+  if (!validStreamMetricBytes(current.receivedUtf8Bytes)) return null;
+  const receivedUtf8Bytes = current.receivedUtf8Bytes + delta.receivedUtf8Bytes;
+  if (!validStreamMetricBytes(receivedUtf8Bytes)) return { ...current, complete: false };
+  return {
+    receivedUtf8Bytes,
+    complete: current.complete && delta.complete,
+  };
+}
+
+function validStreamMetricBytes(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
 }
 
 function providerWithSession(
@@ -509,20 +565,119 @@ function mergeTurnEvents(
 ): { readonly events: ReadonlyArray<AgentTurnEvent>; readonly truncated: boolean } {
   if (incoming.length === 0) return { events: existing, truncated: false };
   const events = [...existing];
+  let retainedBytes = agentTurnEventsUtf8Bytes(events);
   let truncated = false;
   for (const event of incoming) {
+    if (truncated) continue;
     const coalesced = coalesceAgentTextEvents(events[events.length - 1], event);
     if (coalesced !== null) {
+      const previous = events[events.length - 1];
+      if (previous === undefined) continue;
+      const nextBytes =
+        retainedBytes - agentTurnEventUtf8Bytes(previous) + agentTurnEventUtf8Bytes(coalesced);
+      if (nextBytes > MAX_AGENT_EVENT_BYTES_PER_TURN) {
+        truncated = true;
+        continue;
+      }
       events[events.length - 1] = coalesced;
+      retainedBytes = nextBytes;
       continue;
     }
-    if (events.length >= MAX_AGENT_EVENTS_PER_TURN) {
+    const eventBytes = agentTurnEventUtf8Bytes(event);
+    if (
+      events.length >= MAX_AGENT_EVENTS_PER_TURN ||
+      retainedBytes + eventBytes > MAX_AGENT_EVENT_BYTES_PER_TURN
+    ) {
       truncated = true;
       continue;
     }
     events.push(event);
+    retainedBytes += eventBytes;
   }
   return { events, truncated };
+}
+
+export function agentTurnEventUtf8Bytes(event: AgentTurnEvent): number {
+  if (event.kind === "assistantText" || event.kind === "reasoning" || event.kind === "result") {
+    return agentTextEventByteState(event).byteLength;
+  }
+  const values = agentTurnEventStrings(event);
+  const cached = agentEventByteState.get(event);
+  if (cached !== undefined && sameStrings(cached.values, values)) return cached.byteLength;
+  const byteLength = values.reduce(
+    (total, value) => total + UTF8_ENCODER.encode(value).byteLength,
+    0,
+  );
+  agentEventByteState.set(event, { byteLength, values });
+  return byteLength;
+}
+
+function agentTurnEventsUtf8Bytes(events: ReadonlyArray<AgentTurnEvent>): number {
+  return events.reduce((total, event) => total + agentTurnEventUtf8Bytes(event), 0);
+}
+
+function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
+  switch (event.kind) {
+    case "toolCall":
+      return [event.toolId, event.name, event.inputSummary];
+    case "toolResult":
+      return [event.toolId, event.outputSummary];
+    case "error":
+      return [event.message];
+    case "unknownLine":
+      return [event.raw];
+    case "assistantText":
+    case "reasoning":
+    case "result":
+      return [event.text];
+    default:
+      return unsupportedTurnEvent(event);
+  }
+}
+
+function sameStrings(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function boundAgentThreadEvents(thread: AgentThread): AgentThread {
+  let changed = false;
+  const turns = thread.turns.map((turn) => {
+    const bounded = boundAgentTurnEvents(turn);
+    if (bounded !== turn) changed = true;
+    return bounded;
+  });
+  return changed ? { ...thread, turns } : thread;
+}
+
+function boundAgentTurnEvents(turn: AgentTurn): AgentTurn {
+  const retained: AgentTurnEvent[] = [];
+  let retainedBytes = 0;
+  let truncated = turn.eventsTruncated;
+  for (const event of turn.events) {
+    const eventBytes = agentTurnEventUtf8Bytes(event);
+    if (
+      retained.length >= MAX_AGENT_EVENTS_PER_TURN ||
+      retainedBytes + eventBytes > MAX_AGENT_EVENT_BYTES_PER_TURN
+    ) {
+      truncated = true;
+      break;
+    }
+    retained.push(event);
+    retainedBytes += eventBytes;
+  }
+  if (
+    retained.length === turn.events.length &&
+    truncated === turn.eventsTruncated &&
+    turn.streamMetrics !== undefined
+  ) {
+    return turn;
+  }
+  return {
+    ...turn,
+    events: retained,
+    eventsTruncated: truncated,
+    streamMetrics: turn.streamMetrics ?? null,
+  };
 }
 
 export function coalesceAgentTextEvents(
@@ -589,6 +744,7 @@ function interruptTurn(
       ...turn,
       status: { kind: "interrupted" },
       endedAtEpochMs: nowEpochMs,
+      streamMetrics: interruptedStreamMetrics(turn.streamMetrics ?? null),
     },
     nowEpochMs,
   );
@@ -747,6 +903,10 @@ function firstNonEmptyLine(prompt: string): string {
 
 function unsupportedTurnStatus(status: never): never {
   throw new TypeError(`Unsupported agent turn status: ${JSON.stringify(status)}.`);
+}
+
+function unsupportedTurnEvent(event: never): never {
+  throw new TypeError(`Unsupported agent turn event: ${JSON.stringify(event)}.`);
 }
 
 function unsupportedAction(action: never): never {

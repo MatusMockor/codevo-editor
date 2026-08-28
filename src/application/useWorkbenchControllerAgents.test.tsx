@@ -348,6 +348,8 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     agentThreadStoreGateway: threadStore,
     appSettingsRef,
     bottomPanelVisible: overrides.bottomPanelVisible ?? false,
+    setBottomPanelView: vi.fn(),
+    setBottomPanelVisible: vi.fn(),
     editorSessionOwnerKey: overrides.editorSessionOwnerKey ?? ROOT_A,
     options: {
       agentProviderGateway,
@@ -395,6 +397,9 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     workspaceTrustGateway: {
       getTrust: vi.fn(async (rootPath: string) => ({ rootPath, trusted: true })),
       setTrust: vi.fn(async (rootPath: string, trusted: boolean) => ({ rootPath, trusted })),
+    },
+    terminalGateway: {
+      stop: vi.fn(async (sessionId) => ({ kind: "stopped" as const, sessionId })),
     },
     workspaceTrustIntentCoordinatorRef: { current: workspaceTrustIntentCoordinator },
     workspaceTrustRevisionByOwnerRef,

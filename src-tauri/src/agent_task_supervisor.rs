@@ -109,6 +109,10 @@ pub trait AgentTaskEventSink: Send + Sync {
 
 pub trait AgentProcessGroupSignalSender: Send + Sync {
     fn send(&self, process_group_id: i32, signal: i32) -> Result<(), String>;
+
+    fn send_after_observed_exit(&self, process_group_id: i32, signal: i32) -> Result<(), String> {
+        self.send(process_group_id, signal)
+    }
 }
 
 struct SystemAgentProcessGroupSignalSender;
@@ -116,21 +120,113 @@ struct SystemAgentProcessGroupSignalSender;
 impl AgentProcessGroupSignalSender for SystemAgentProcessGroupSignalSender {
     #[cfg(unix)]
     fn send(&self, process_group_id: i32, signal: i32) -> Result<(), String> {
-        let result = unsafe { libc::kill(-process_group_id, signal) };
-        if result == 0 {
-            return Ok(());
-        }
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ESRCH) {
-            return Ok(());
-        }
-        Err(format!("Unable to signal agent process group: {error}"))
+        send_unix_process_group_signal_with(
+            process_group_id,
+            signal,
+            |group, signal| {
+                if unsafe { libc::kill(-group, signal) } == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                }
+            },
+            macos_group_contains_only_leader,
+            false,
+        )
+    }
+
+    #[cfg(unix)]
+    fn send_after_observed_exit(&self, process_group_id: i32, signal: i32) -> Result<(), String> {
+        send_unix_process_group_signal_with(
+            process_group_id,
+            signal,
+            |group, signal| {
+                if unsafe { libc::kill(-group, signal) } == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error().raw_os_error().unwrap_or(0))
+                }
+            },
+            macos_group_contains_only_leader,
+            cfg!(target_os = "macos"),
+        )
     }
 
     #[cfg(not(unix))]
     fn send(&self, _process_group_id: i32, _signal: i32) -> Result<(), String> {
         Err("Process-group signals are unavailable on this platform.".to_string())
     }
+}
+
+#[cfg(unix)]
+fn send_unix_process_group_signal_with(
+    process_group_id: i32,
+    signal: i32,
+    kill_group: impl FnOnce(i32, i32) -> Result<(), i32>,
+    zombie_only_probe: impl FnOnce(i32) -> bool,
+    allow_macos_zombie_exception: bool,
+) -> Result<(), String> {
+    match kill_group(process_group_id, signal) {
+        Ok(()) | Err(libc::ESRCH) => Ok(()),
+        Err(libc::EPERM) if allow_macos_zombie_exception && zombie_only_probe(process_group_id) => {
+            Ok(())
+        }
+        Err(error_code) => Err(format!(
+            "Unable to signal agent process group: {}",
+            io::Error::from_raw_os_error(error_code)
+        )),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_group_contains_only_leader(process_group_id: i32) -> bool {
+    const PROC_PGRP_ONLY: u32 = 2;
+    #[link(name = "proc")]
+    unsafe extern "C" {
+        fn proc_listpids(
+            process_type: u32,
+            type_info: u32,
+            buffer: *mut libc::c_void,
+            buffer_size: i32,
+        ) -> i32;
+    }
+
+    let Ok(group) = u32::try_from(process_group_id) else {
+        return false;
+    };
+    let required = unsafe { proc_listpids(PROC_PGRP_ONLY, group, std::ptr::null_mut(), 0) };
+    if required <= 0 {
+        return false;
+    }
+    let mut pids = vec![0_i32; required as usize / std::mem::size_of::<i32>() + 1];
+    let bytes = unsafe {
+        proc_listpids(
+            PROC_PGRP_ONLY,
+            group,
+            pids.as_mut_ptr().cast(),
+            i32::try_from(pids.len() * std::mem::size_of::<i32>()).unwrap_or(i32::MAX),
+        )
+    };
+    if bytes <= 0 {
+        return false;
+    }
+    let returned = bytes as usize;
+    let capacity = pids.len() * std::mem::size_of::<i32>();
+    if returned >= capacity || !returned.is_multiple_of(std::mem::size_of::<i32>()) {
+        return false;
+    }
+    let count = returned / std::mem::size_of::<i32>();
+    let members: Vec<i32> = pids[..count]
+        .iter()
+        .copied()
+        .filter(|pid| *pid > 0)
+        .collect();
+    !members.is_empty() && members.iter().all(|pid| *pid == process_group_id)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn macos_group_contains_only_leader(_process_group_id: i32) -> bool {
+    false
 }
 
 #[derive(Clone, Debug)]
@@ -148,15 +244,18 @@ pub struct AgentTaskStartResult {
     pub task_id: String,
 }
 
+#[derive(Clone, Copy)]
 enum AgentProcessGroupState {
     Active { process_group_id: i32 },
-    Reaped,
+    Released,
+    CleanupUncertain,
 }
 
 struct AgentProcessGroup {
     state: Mutex<AgentProcessGroupState>,
     signals: Arc<dyn AgentProcessGroupSignalSender>,
     force_requested: AtomicBool,
+    cleanup_verified: AtomicBool,
 }
 
 impl AgentProcessGroup {
@@ -165,42 +264,101 @@ impl AgentProcessGroup {
             state: Mutex::new(AgentProcessGroupState::Active { process_group_id }),
             signals,
             force_requested: AtomicBool::new(false),
+            cleanup_verified: AtomicBool::new(false),
         })
     }
 
-    fn signal(&self, signal: i32) {
+    fn signal(&self, signal: i32) -> Result<(), String> {
         let state = self.state();
-        let AgentProcessGroupState::Active { process_group_id } = *state else {
-            return;
+        let process_group_id = match *state {
+            AgentProcessGroupState::Active { process_group_id } => process_group_id,
+            AgentProcessGroupState::Released | AgentProcessGroupState::CleanupUncertain => {
+                return Ok(())
+            }
         };
         if process_group_id <= 0 {
-            return;
+            return Err("Agent process-group authority is invalid.".to_string());
         }
-        let _ = catch_unwind(AssertUnwindSafe(|| {
-            let _ = self.signals.send(process_group_id, signal);
-        }));
+        catch_unwind(AssertUnwindSafe(|| {
+            self.signals.send(process_group_id, signal)
+        }))
+        .map_err(|_| "Agent process-group signal sender panicked.".to_string())?
     }
 
-    fn force_stop(&self) {
+    fn force_stop(&self) -> Result<(), String> {
         self.force_requested.store(true, Ordering::SeqCst);
-        self.signal(KILL_PROCESS_GROUP_SIGNAL);
+        let result = self.signal(KILL_PROCESS_GROUP_SIGNAL);
+        if result.is_ok() {
+            self.cleanup_verified.store(true, Ordering::SeqCst);
+        }
+        result
+    }
+
+    fn force_stop_after_observed_exit(&self) -> Result<(), String> {
+        self.force_requested.store(true, Ordering::SeqCst);
+        let process_group_id = match *self.state() {
+            AgentProcessGroupState::Active { process_group_id } if process_group_id > 0 => {
+                process_group_id
+            }
+            AgentProcessGroupState::Active { .. } => {
+                return Err("Agent process-group authority is invalid.".to_string())
+            }
+            AgentProcessGroupState::Released | AgentProcessGroupState::CleanupUncertain => {
+                return Ok(())
+            }
+        };
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            self.signals
+                .send_after_observed_exit(process_group_id, KILL_PROCESS_GROUP_SIGNAL)
+        }))
+        .map_err(|_| "Agent process-group signal sender panicked.".to_string())?;
+        if result.is_ok() {
+            self.cleanup_verified.store(true, Ordering::SeqCst);
+        }
+        result
     }
 
     fn force_requested(&self) -> bool {
         self.force_requested.load(Ordering::SeqCst)
     }
 
-    fn try_wait(&self, child: &mut dyn AgentChild) -> Result<Option<i32>, String> {
-        let mut state = self.state();
-        let exit = child.try_wait()?;
-        if exit.is_some() {
-            *state = AgentProcessGroupState::Reaped;
+    fn observe_exit(&self, child: &mut dyn AgentChild) -> Result<bool, String> {
+        child.observe_exit()
+    }
+
+    fn reap(&self, child: &mut dyn AgentChild) -> Result<i32, String> {
+        // The unreaped leader is the identity anchor that makes this group signal safe.
+        // Clean the whole group before surrendering that anchor on every exit path.
+        let cleanup = if self.cleanup_verified.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            self.force_stop_after_observed_exit()
+        };
+        let reaped = child.reap();
+        match (cleanup, reaped) {
+            (Ok(()), Ok(exit_code)) => {
+                *self.state() = AgentProcessGroupState::Released;
+                Ok(exit_code)
+            }
+            (Err(cleanup_error), Ok(_)) => {
+                *self.state() = AgentProcessGroupState::CleanupUncertain;
+                Err(format!(
+                    "Agent process-group cleanup failed: {cleanup_error}"
+                ))
+            }
+            (_, Err(reap_error)) => Err(reap_error),
         }
-        Ok(exit)
+    }
+
+    fn try_wait(&self, child: &mut dyn AgentChild) -> Result<Option<i32>, String> {
+        if !self.observe_exit(child)? {
+            return Ok(None);
+        }
+        self.reap(child).map(Some)
     }
 
     fn is_reaped(&self) -> bool {
-        matches!(*self.state(), AgentProcessGroupState::Reaped)
+        matches!(*self.state(), AgentProcessGroupState::Released)
     }
 
     fn state(&self) -> MutexGuard<'_, AgentProcessGroupState> {
@@ -255,6 +413,54 @@ impl WorkerThreadGuard {
 impl Drop for WorkerThreadGuard {
     fn drop(&mut self) {
         self.counter.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+struct AgentOutputPumps {
+    cancellation: Arc<AtomicBool>,
+    handles: Vec<JoinHandle<()>>,
+}
+
+impl AgentOutputPumps {
+    fn new(cancellation: Arc<AtomicBool>, handles: Vec<JoinHandle<()>>) -> Self {
+        Self {
+            cancellation,
+            handles,
+        }
+    }
+
+    fn cancel(&self) {
+        self.cancellation.store(true, Ordering::SeqCst);
+    }
+
+    fn settled_within(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.handles.iter().all(JoinHandle::is_finished) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(WAIT_POLL_INTERVAL);
+        }
+    }
+
+    fn join(&mut self) -> bool {
+        let mut clean = true;
+        for handle in self.handles.drain(..) {
+            if handle.join().is_err() {
+                clean = false;
+            }
+        }
+        clean
+    }
+}
+
+impl Drop for AgentOutputPumps {
+    fn drop(&mut self) {
+        self.cancel();
+        self.join();
     }
 }
 
@@ -328,6 +534,7 @@ struct AgentTaskEntry {
     output_events_published: u64,
     output_truncation_published: bool,
     stop_requested: bool,
+    watchdog_timed_out: bool,
     group: Option<Arc<AgentProcessGroup>>,
     watchdog: Arc<WatchdogGate>,
 }
@@ -350,6 +557,7 @@ impl AgentTaskEntry {
             output_events_published: 0,
             output_truncation_published: false,
             stop_requested: false,
+            watchdog_timed_out: false,
             group: None,
             watchdog,
         }
@@ -405,7 +613,7 @@ impl Drop for UnpublishedAgentTask<'_> {
         self.watchdog.finish();
         if let Some(group) = self.group.as_ref() {
             let _ = catch_unwind(AssertUnwindSafe(|| {
-                group.force_stop();
+                let _ = group.force_stop();
             }));
         }
         if let Some(child) = self.child.as_mut() {
@@ -617,13 +825,30 @@ impl AgentTaskRegistry {
         if stop_already_requested {
             return Err(AGENT_TASK_STARTS_CLOSED_ERROR.to_string());
         }
-        let stdout_pump = self.spawn_output_pump(&task_id, AgentTaskOutputStream::Stdout, stdout);
-        let stderr_pump = self.spawn_output_pump(&task_id, AgentTaskOutputStream::Stderr, stderr);
+        let output_cancellation = Arc::new(AtomicBool::new(false));
+        let stdout_pump = self.spawn_output_pump(
+            &task_id,
+            AgentTaskOutputStream::Stdout,
+            stdout,
+            Arc::clone(&output_cancellation),
+        );
+        let stderr_pump = self.spawn_output_pump(
+            &task_id,
+            AgentTaskOutputStream::Stderr,
+            stderr,
+            Arc::clone(&output_cancellation),
+        );
         let pumps = match (stdout_pump, stderr_pump) {
-            (Ok(stdout_pump), Ok(stderr_pump)) => vec![stdout_pump, stderr_pump],
-            (stdout_pump, stderr_pump) => {
-                let error = collect_spawn_error(stdout_pump.err(), stderr_pump.err());
+            (Ok(stdout_pump), Ok(stderr_pump)) => {
+                AgentOutputPumps::new(output_cancellation, vec![stdout_pump, stderr_pump])
+            }
+            (Ok(pump), Err(error)) | (Err(error), Ok(pump)) => {
+                output_cancellation.store(true, Ordering::SeqCst);
+                let _ = pump.join();
                 return Err(error);
+            }
+            (Err(first), Err(second)) => {
+                return Err(collect_spawn_error(Some(first), Some(second)))
             }
         };
         self.spawn_watchdog(&task_id, &group, &watchdog)?;
@@ -714,13 +939,13 @@ impl AgentTaskRegistry {
             return true;
         }
         for group in &groups {
-            group.signal(TERMINATE_PROCESS_GROUP_SIGNAL);
+            let _ = group.signal(TERMINATE_PROCESS_GROUP_SIGNAL);
         }
         if wait_for_groups_reaped(&groups, self.shared.tuning.graceful_timeout) {
             return true;
         }
         for group in &groups {
-            group.force_stop();
+            let _ = group.force_stop();
         }
         wait_for_groups_reaped(&groups, self.shared.tuning.force_timeout)
     }
@@ -760,13 +985,13 @@ impl AgentTaskRegistry {
                 .collect()
         };
         for group in &groups {
-            group.signal(TERMINATE_PROCESS_GROUP_SIGNAL);
+            let _ = group.signal(TERMINATE_PROCESS_GROUP_SIGNAL);
         }
         if wait_for_groups_reaped(&groups, self.shared.tuning.graceful_timeout) {
             return;
         }
         for group in &groups {
-            group.force_stop();
+            let _ = group.force_stop();
         }
         wait_for_groups_reaped(&groups, self.shared.tuning.force_timeout);
     }
@@ -791,11 +1016,12 @@ impl AgentTaskRegistry {
         task_id: &str,
         stream: AgentTaskOutputStream,
         reader: Box<dyn Read + Send>,
+        cancellation: Arc<AtomicBool>,
     ) -> Result<JoinHandle<()>, String> {
         let shared = Arc::clone(&self.shared);
         let task_id = task_id.to_string();
         self.spawn_worker("agent-task-output", move || {
-            run_output_pump(&shared, &task_id, stream, reader);
+            run_output_pump(&shared, &task_id, stream, reader, &cancellation);
         })
     }
 
@@ -820,7 +1046,7 @@ impl AgentTaskRegistry {
         task_id: &str,
         child: Box<dyn AgentChild>,
         group: &Arc<AgentProcessGroup>,
-        pumps: Vec<JoinHandle<()>>,
+        pumps: AgentOutputPumps,
     ) -> Result<(), (String, Box<dyn AgentChild>)> {
         #[cfg(test)]
         if self
@@ -828,6 +1054,12 @@ impl AgentTaskRegistry {
             .fail_next_waiter_start
             .swap(false, Ordering::SeqCst)
         {
+            let _ = group.force_stop();
+            let mut child = child;
+            let _ = child.force_kill();
+            let mut pumps = pumps;
+            pumps.cancel();
+            let _ = pumps.join();
             return Err((
                 "Unable to start agent task worker: injected".to_string(),
                 child,
@@ -836,8 +1068,11 @@ impl AgentTaskRegistry {
         let shared = Arc::clone(&self.shared);
         let task_id = task_id.to_string();
         let group = Arc::clone(group);
+        let worker_group = Arc::clone(&group);
         let child_slot = Arc::new(Mutex::new(Some(child)));
         let worker_child_slot = Arc::clone(&child_slot);
+        let pumps_slot = Arc::new(Mutex::new(Some(pumps)));
+        let worker_pumps_slot = Arc::clone(&pumps_slot);
         let spawn = self.spawn_worker("agent-task-waiter", move || {
             let child = worker_child_slot
                 .lock()
@@ -846,14 +1081,31 @@ impl AgentTaskRegistry {
             let Some(child) = child else {
                 return;
             };
-            run_waiter(&shared, &task_id, child, &group, &pumps);
+            let pumps = worker_pumps_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            let Some(pumps) = pumps else {
+                return;
+            };
+            run_waiter(&shared, &task_id, child, &worker_group, pumps);
         });
         if let Err(error) = spawn {
-            let child = child_slot
+            let _ = group.force_stop();
+            let mut child = child_slot
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take()
                 .expect("failed waiter spawn retains child ownership");
+            let _ = child.force_kill();
+            if let Some(mut pumps) = pumps_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                pumps.cancel();
+                let _ = pumps.join();
+            }
             return Err((error, child));
         }
         Ok(())
@@ -896,7 +1148,7 @@ impl Drop for AgentTaskRegistry {
                 .collect()
         };
         for group in groups {
-            group.force_stop();
+            let _ = group.force_stop();
         }
     }
 }
@@ -929,14 +1181,26 @@ fn run_output_pump(
     task_id: &str,
     stream: AgentTaskOutputStream,
     mut reader: Box<dyn Read + Send>,
+    cancellation: &AtomicBool,
 ) {
     let mut buffer = vec![0_u8; MAX_AGENT_OUTPUT_CHUNK_BYTES];
     loop {
+        if cancellation.load(Ordering::SeqCst) {
+            return;
+        }
         match reader.read(&mut buffer) {
             Ok(0) => return,
             Ok(count) => publish_output(shared, task_id, stream, &buffer[..count]),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => return,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(WAIT_POLL_INTERVAL);
+            }
+            Err(_) => {
+                if !cancellation.load(Ordering::SeqCst) {
+                    publish_output_incomplete_marker(shared, task_id, stream);
+                }
+                return;
+            }
         }
     }
 }
@@ -1027,6 +1291,44 @@ fn publish_output_chunk(
     }
 }
 
+fn publish_output_incomplete_marker(
+    shared: &Arc<AgentTaskShared>,
+    task_id: &str,
+    stream: AgentTaskOutputStream,
+) {
+    let _emission_order = shared
+        .output_emission_order
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let emit = {
+        let mut state = shared.state();
+        let Some(entry) = state.entries.get_mut(task_id) else {
+            return;
+        };
+        if matches!(entry.phase, AgentTaskPhase::Terminal) || entry.output_truncation_published {
+            return;
+        }
+        entry.output_sequence += 1;
+        entry.output_truncation_published = true;
+        let event = AgentTaskOutputEvent {
+            task_id: task_id.to_string(),
+            sequence: entry.output_sequence,
+            stream,
+            chunk: String::new(),
+            truncated: true,
+        };
+        if entry.acknowledged && !entry.flushing {
+            Some(event)
+        } else {
+            push_queued(entry, QueuedAgentTaskEvent::Output(event));
+            None
+        }
+    };
+    if let Some(event) = emit {
+        shared.sink.output(event);
+    }
+}
+
 fn push_queued(entry: &mut AgentTaskEntry, event: QueuedAgentTaskEvent) {
     if entry.queued.len() >= MAX_QUEUED_AGENT_TASK_EVENTS {
         let position = entry
@@ -1045,18 +1347,20 @@ fn run_waiter(
     task_id: &str,
     mut child: Box<dyn AgentChild>,
     group: &Arc<AgentProcessGroup>,
-    pumps: &[JoinHandle<()>],
+    mut pumps: AgentOutputPumps,
 ) {
     let waiter = catch_unwind(AssertUnwindSafe(|| {
-        run_waiter_inner(shared, task_id, child.as_mut(), group, pumps);
+        run_waiter_inner(shared, task_id, child.as_mut(), group, &mut pumps);
     }));
     if waiter.is_ok() {
         return;
     }
-    group.force_stop();
+    let _ = group.force_stop();
+    pumps.cancel();
     let _ = catch_unwind(AssertUnwindSafe(|| {
         let _ = child.force_kill();
     }));
+    let _ = pumps.join();
     let _ = catch_unwind(AssertUnwindSafe(|| {
         reap_bounded(group, child.as_mut(), shared.tuning.force_timeout);
     }));
@@ -1079,34 +1383,58 @@ fn run_waiter_inner(
     task_id: &str,
     child: &mut dyn AgentChild,
     group: &Arc<AgentProcessGroup>,
-    pumps: &[JoinHandle<()>],
+    pumps: &mut AgentOutputPumps,
 ) {
     let outcome = loop {
         if group.force_requested() {
             let _ = child.force_kill();
         }
-        match group.try_wait(child) {
-            Ok(Some(exit_code)) => break Ok(exit_code),
-            Ok(None) => thread::sleep(WAIT_POLL_INTERVAL),
+        match group.observe_exit(child) {
+            Ok(true) => break Ok(()),
+            Ok(false) => thread::sleep(WAIT_POLL_INTERVAL),
             Err(error) => break Err(error),
         }
     };
     match outcome {
-        Ok(exit_code) => {
-            for pump in pumps {
-                wait_for_thread(pump, PUMP_DRAIN_TIMEOUT);
+        Ok(()) => {
+            if !pumps.settled_within(PUMP_DRAIN_TIMEOUT) {
+                publish_output_incomplete_marker(shared, task_id, AgentTaskOutputStream::Stdout);
+                let _ = group.force_stop();
+                pumps.cancel();
             }
-            complete(
-                shared,
-                task_id,
-                AgentTaskStatusPayload::Exited { exit_code },
-            );
+            if !pumps.join() {
+                publish_output_incomplete_marker(shared, task_id, AgentTaskOutputStream::Stdout);
+                let _ = group.force_stop();
+            }
+            match group.reap(child) {
+                Ok(exit_code) => complete(
+                    shared,
+                    task_id,
+                    AgentTaskStatusPayload::Exited { exit_code },
+                ),
+                Err(error) => {
+                    let _ = group.force_stop();
+                    let _ = catch_unwind(AssertUnwindSafe(|| {
+                        let _ = child.force_kill();
+                    }));
+                    reap_bounded(group, child, shared.tuning.force_timeout);
+                    complete(
+                        shared,
+                        task_id,
+                        AgentTaskStatusPayload::Failed {
+                            message: format!("Agent task reap failed: {error}"),
+                        },
+                    );
+                }
+            }
         }
         Err(error) => {
-            group.force_stop();
+            let _ = group.force_stop();
+            pumps.cancel();
             let _ = catch_unwind(AssertUnwindSafe(|| {
                 let _ = child.force_kill();
             }));
+            let _ = pumps.join();
             reap_bounded(group, child, shared.tuning.force_timeout);
             complete(
                 shared,
@@ -1152,13 +1480,21 @@ fn run_watchdog(
     if watchdog.wait_finished(shared.tuning.max_runtime) {
         return;
     }
-    complete(
-        shared,
-        task_id,
-        AgentTaskStatusPayload::Failed {
-            message: AGENT_TASK_TIMEOUT_MESSAGE.to_string(),
-        },
-    );
+    let should_stop = {
+        let mut state = shared.state();
+        let Some(entry) = state.entries.get_mut(task_id) else {
+            return;
+        };
+        if matches!(entry.phase, AgentTaskPhase::Terminal) {
+            false
+        } else {
+            entry.watchdog_timed_out = true;
+            true
+        }
+    };
+    if !should_stop {
+        return;
+    }
     escalate_group_stop(
         group,
         shared.tuning.graceful_timeout,
@@ -1167,11 +1503,11 @@ fn run_watchdog(
 }
 
 fn escalate_group_stop(group: &Arc<AgentProcessGroup>, graceful: Duration, force: Duration) {
-    group.signal(TERMINATE_PROCESS_GROUP_SIGNAL);
+    let _ = group.signal(TERMINATE_PROCESS_GROUP_SIGNAL);
     if wait_for_group_reaped(group, graceful) {
         return;
     }
-    group.force_stop();
+    let _ = group.force_stop();
     wait_for_group_reaped(group, force);
 }
 
@@ -1201,19 +1537,6 @@ fn wait_for_groups_reaped(groups: &[Arc<AgentProcessGroup>], timeout: Duration) 
     }
 }
 
-fn wait_for_thread(thread: &JoinHandle<()>, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if thread.is_finished() {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        thread::sleep(WAIT_POLL_INTERVAL);
-    }
-}
-
 fn complete(shared: &Arc<AgentTaskShared>, task_id: &str, payload: AgentTaskStatusPayload) {
     let emit = {
         let mut state = shared.state();
@@ -1228,7 +1551,8 @@ fn complete(shared: &Arc<AgentTaskShared>, task_id: &str, payload: AgentTaskStat
             entry.phase = AgentTaskPhase::Terminal;
             entry.admission.take();
             entry.watchdog.finish();
-            let status = resolve_terminal_status(entry.stop_requested, payload);
+            let status =
+                resolve_terminal_status(entry.stop_requested, entry.watchdog_timed_out, payload);
             if entry.acknowledged && !entry.flushing {
                 entry.status_sequence += 1;
                 Some(entry.metadata.status_event(entry.status_sequence, status))
@@ -1256,8 +1580,14 @@ fn complete(shared: &Arc<AgentTaskShared>, task_id: &str, payload: AgentTaskStat
 
 fn resolve_terminal_status(
     stop_requested: bool,
+    watchdog_timed_out: bool,
     payload: AgentTaskStatusPayload,
 ) -> AgentTaskStatusPayload {
+    if watchdog_timed_out {
+        return AgentTaskStatusPayload::Failed {
+            message: AGENT_TASK_TIMEOUT_MESSAGE.to_string(),
+        };
+    }
     if let AgentTaskStatusPayload::Failed { message } = payload {
         return AgentTaskStatusPayload::Failed {
             message: clip_failure_message(&message),
@@ -1357,4 +1687,63 @@ fn clip_failure_message(message: &str) -> String {
         end -= 1;
     }
     message[..end].to_string()
+}
+
+#[cfg(all(test, unix))]
+mod signal_sender_tests {
+    use super::send_unix_process_group_signal_with;
+
+    #[test]
+    fn esrch_is_an_empty_group_success_without_a_probe() {
+        let result = send_unix_process_group_signal_with(
+            41,
+            libc::SIGKILL,
+            |_, _| Err(libc::ESRCH),
+            |_| panic!("ESRCH must not probe membership"),
+            false,
+        );
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn macos_eperm_is_success_only_after_positive_zombie_only_proof() {
+        let result = send_unix_process_group_signal_with(
+            42,
+            libc::SIGKILL,
+            |_, _| Err(libc::EPERM),
+            |group| group == 42,
+            true,
+        );
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn substantive_eperm_is_never_cleanup_success() {
+        for (is_macos, zombie_only) in [(false, true), (true, false)] {
+            let result = send_unix_process_group_signal_with(
+                43,
+                libc::SIGKILL,
+                |_, _| Err(libc::EPERM),
+                |_| zombie_only,
+                is_macos,
+            );
+            assert!(result
+                .expect_err("substantive EPERM must fail closed")
+                .contains("Operation not permitted"));
+        }
+    }
+
+    #[test]
+    fn live_leader_only_eperm_cannot_use_the_post_observation_exception() {
+        let result = send_unix_process_group_signal_with(
+            44,
+            libc::SIGKILL,
+            |_, _| Err(libc::EPERM),
+            |_| true,
+            false,
+        );
+        assert!(result
+            .expect_err("a live leader must fail closed even if it is the only group member")
+            .contains("Operation not permitted"));
+    }
 }

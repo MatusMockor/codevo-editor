@@ -9,6 +9,7 @@ import {
 } from "./agentThreadWire";
 import {
   MAX_AGENT_EVENTS_PER_TURN,
+  MAX_AGENT_EVENT_BYTES_PER_TURN,
   MAX_AGENT_EVENT_TEXT_BYTES,
   MAX_AGENT_THREADS_PER_ROOT,
   MAX_AGENT_THREAD_TITLE_BYTES,
@@ -19,6 +20,7 @@ import {
   agentThreadTitle,
   agentThreadUnread,
   agentThreadsReducer,
+  agentTurnEventUtf8Bytes,
   coalesceAgentTextEvents,
   emptyAgentThreadsState,
   lastUsedAgentLaunch,
@@ -47,6 +49,7 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     eventsTruncated: false,
     lastStatusSequence: 0,
     lastOutputSequence: 0,
+    streamMetrics: null,
     launch: null,
     cliVersion: null,
     ...overrides,
@@ -140,6 +143,7 @@ function appendAction(
     events,
     sessionId: null,
     supervisorTruncated: false,
+    streamMetricsDelta: null,
     ...overrides,
   };
 }
@@ -366,6 +370,121 @@ describe("agentThreadsReducer output events", () => {
     expect(updated?.eventsTruncated).toBe(true);
   });
 
+  it("caps aggregate UTF-8 event bytes across repeated output drains", () => {
+    const wideText = "€".repeat(Math.floor(MAX_AGENT_EVENT_TEXT_BYTES / 3));
+    let state = stateWith(thread());
+    let sequence = 0;
+
+    while (sequence < 100) {
+      sequence += 1;
+      state = agentThreadsReducer(
+        state,
+        appendAction(
+          [sequence % 2 === 0 ? { kind: "reasoning", text: wideText } : text(wideText)],
+          { outputSequence: sequence },
+        ),
+      );
+    }
+
+    const updated = state.threads.get("agt-t1-0001")?.turns[0];
+    const retainedBytes =
+      updated?.events.reduce((total, event) => total + agentTurnEventUtf8Bytes(event), 0) ?? 0;
+    expect(retainedBytes).toBeLessThanOrEqual(MAX_AGENT_EVENT_BYTES_PER_TURN);
+    expect(updated?.eventsTruncated).toBe(true);
+    expect(updated?.lastOutputSequence).toBe(sequence);
+  });
+
+  it("counts every retained event string and rejects a multibyte overflow deterministically", () => {
+    const metadataEvent = {
+      kind: "toolCall" as const,
+      toolId: "é".repeat(64),
+      name: "工具",
+      inputSummary: "😀".repeat(32),
+    };
+    expect(agentTurnEventUtf8Bytes(metadataEvent)).toBe(
+      new TextEncoder().encode(
+        metadataEvent.toolId + metadataEvent.name + metadataEvent.inputSummary,
+      ).byteLength,
+    );
+
+    const almostFull = Array.from(
+      { length: MAX_AGENT_EVENT_BYTES_PER_TURN / MAX_AGENT_EVENT_TEXT_BYTES },
+      (_, index) =>
+        index === MAX_AGENT_EVENT_BYTES_PER_TURN / MAX_AGENT_EVENT_TEXT_BYTES - 1
+          ? index % 2 === 0
+            ? text("x".repeat(MAX_AGENT_EVENT_TEXT_BYTES - 2))
+            : { kind: "reasoning" as const, text: "x".repeat(MAX_AGENT_EVENT_TEXT_BYTES - 2) }
+          : index % 2 === 0
+            ? text("x".repeat(MAX_AGENT_EVENT_TEXT_BYTES))
+            : { kind: "reasoning" as const, text: "x".repeat(MAX_AGENT_EVENT_TEXT_BYTES) },
+    );
+    const overflow = text("€");
+    const state = agentThreadsReducer(stateWith(thread()), appendAction([...almostFull, overflow]));
+    const updated = state.threads.get("agt-t1-0001")?.turns[0];
+    expect(updated?.events).toEqual(almostFull);
+    expect(updated?.eventsTruncated).toBe(true);
+
+    const later = agentThreadsReducer(
+      state,
+      appendAction([text("x")], { outputSequence: 2, sessionId: "session-0001" }),
+    ).threads.get("agt-t1-0001");
+    expect(later?.turns[0].events).toBe(updated?.events);
+    expect(later?.turns[0].events).toEqual(almostFull);
+    expect(later?.turns[0].lastOutputSequence).toBe(2);
+    expect(later?.provider.sessionId).toBe("session-0001");
+  });
+
+  it("aggregates raw stream byte deltas independently from the retained event prefix", () => {
+    const first = agentThreadsReducer(
+      stateWith(thread()),
+      appendAction([text("retained")], {
+        streamMetricsDelta: { receivedUtf8Bytes: 3, complete: true },
+      }),
+    );
+    const truncated = agentThreadsReducer(
+      first,
+      appendAction([], {
+        outputSequence: 2,
+        supervisorTruncated: true,
+        streamMetricsDelta: { receivedUtf8Bytes: 4, complete: false },
+      }),
+    );
+    const later = agentThreadsReducer(
+      truncated,
+      appendAction([text("not retained")], {
+        outputSequence: 3,
+        streamMetricsDelta: { receivedUtf8Bytes: 1, complete: true },
+      }),
+    );
+
+    const updated = later.threads.get("agt-t1-0001")?.turns[0];
+    expect(updated?.events).toEqual([text("retained")]);
+    expect(updated?.streamMetrics).toEqual({ receivedUtf8Bytes: 8, complete: false });
+  });
+
+  it("fails closed when a raw stream byte delta would overflow safe integer accounting", () => {
+    const state = stateWith(
+      thread({
+        turns: [
+          turn({
+            streamMetrics: { receivedUtf8Bytes: Number.MAX_SAFE_INTEGER - 1, complete: true },
+          }),
+        ],
+      }),
+    );
+    const updated = agentThreadsReducer(
+      state,
+      appendAction([], {
+        streamMetricsDelta: { receivedUtf8Bytes: 2, complete: true },
+      }),
+    ).threads.get("agt-t1-0001")?.turns[0];
+
+    expect(updated?.streamMetrics).toEqual({
+      receivedUtf8Bytes: Number.MAX_SAFE_INTEGER - 1,
+      complete: false,
+    });
+  });
+
   it("drops stale, duplicate, unknown, and post-terminal output", () => {
     const state = agentThreadsReducer(stateWith(thread()), appendAction([text("a")]));
     expect(agentThreadsReducer(state, appendAction([text("b")]))).toBe(state);
@@ -414,7 +533,11 @@ describe("agentThreadsReducer output events", () => {
 describe("agentThreadsReducer turn lifecycle", () => {
   it("refuses a second turn while one is running and accepts one after settlement", () => {
     const running = stateWith(thread());
-    const next = turn({ turnId: "agt-2-0a1b", startedAtEpochMs: 9_000 });
+    const next = turn({
+      turnId: "agt-2-0a1b",
+      startedAtEpochMs: 9_000,
+      streamMetrics: undefined,
+    });
     expect(
       agentThreadsReducer(running, { kind: "turnStarted", threadId: "agt-t1-0001", turn: next }),
     ).toBe(running);
@@ -432,6 +555,7 @@ describe("agentThreadsReducer turn lifecycle", () => {
     ]);
     expect(updated?.updatedAtEpochMs).toBe(9_000);
     expect(runningTurn(updated as AgentThread)?.turnId).toBe("agt-2-0a1b");
+    expect(runningTurn(updated as AgentThread)?.streamMetrics).toBeNull();
   });
 
   it("refuses a turn on an archived thread and a duplicate turn id", () => {
@@ -469,7 +593,11 @@ describe("agentThreadsReducer turn lifecycle", () => {
   });
 
   it("marks a running turn interrupted once and ignores repeats", () => {
-    const state = stateWith(thread());
+    const state = stateWith(
+      thread({
+        turns: [turn({ streamMetrics: { receivedUtf8Bytes: 5, complete: true } })],
+      }),
+    );
     const interrupted = agentThreadsReducer(state, {
       kind: "turnInterrupted",
       turnId: "agt-1-0a1b",
@@ -478,6 +606,7 @@ describe("agentThreadsReducer turn lifecycle", () => {
     const updated = interrupted.threads.get("agt-t1-0001")?.turns[0];
     expect(updated?.status).toEqual({ kind: "interrupted" });
     expect(updated?.endedAtEpochMs).toBe(4_000);
+    expect(updated?.streamMetrics).toEqual({ receivedUtf8Bytes: 5, complete: false });
     expect(
       agentThreadsReducer(interrupted, {
         kind: "turnInterrupted",
@@ -508,7 +637,13 @@ describe("agentThreadsReducer loaded", () => {
         }),
         thread({
           threadId: "agt-disk-0001",
-          turns: [turn({ turnId: "agt-d-0a1b", status: { kind: "running" } })],
+          turns: [
+            turn({
+              turnId: "agt-d-0a1b",
+              status: { kind: "running" },
+              streamMetrics: { receivedUtf8Bytes: 7, complete: true },
+            }),
+          ],
         }),
         settledThread({
           threadId: "agt-bad-0001",
@@ -523,9 +658,36 @@ describe("agentThreadsReducer loaded", () => {
     ]);
     expect(loaded.threads.get("agt-run-0001")).toBe(inMemoryRunning);
     expect(loaded.threads.get("agt-disk-0001")?.turns[0].status).toEqual({ kind: "interrupted" });
+    expect(loaded.threads.get("agt-disk-0001")?.turns[0].streamMetrics).toEqual({
+      receivedUtf8Bytes: 7,
+      complete: false,
+    });
     expect(agentThreadLifecycle(loaded.threads.get("agt-disk-0001") as AgentThread)).toBe(
       "settled",
     );
+  });
+
+  it("bounds aggregate event bytes while hydrating persisted threads", () => {
+    const wideText = "€".repeat(Math.floor(MAX_AGENT_EVENT_TEXT_BYTES / 3));
+    const events = Array.from({ length: 100 }, (_, index) =>
+      index % 2 === 0 ? text(wideText) : { kind: "reasoning" as const, text: wideText },
+    );
+    const loaded = agentThreadsReducer(emptyAgentThreadsState(), {
+      kind: "loaded",
+      owner: { rootKey: "/workspace", ownerId: "ws-1" },
+      threads: [
+        settledThread({
+          threadId: "agt-disk-0001",
+          turns: [turn({ turnId: "agt-d-0a1b", events })],
+        }),
+      ],
+    });
+
+    const hydrated = loaded.threads.get("agt-disk-0001")?.turns[0];
+    const retainedBytes =
+      hydrated?.events.reduce((total, event) => total + agentTurnEventUtf8Bytes(event), 0) ?? 0;
+    expect(retainedBytes).toBeLessThanOrEqual(MAX_AGENT_EVENT_BYTES_PER_TURN);
+    expect(hydrated?.eventsTruncated).toBe(true);
   });
 });
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import {
   buildGitHistoryDiffDocumentPath,
   isGitHistoryDiffDocumentPath,
@@ -12,6 +13,8 @@ import type {
 } from "../domain/git";
 import type { EditorDocument } from "../domain/workspace";
 
+export const MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS = 16;
+
 export interface GitHistoryDiffDocumentState {
   diff: GitFileDiff | null;
   isLoading: boolean;
@@ -20,6 +23,19 @@ export interface GitHistoryDiffDocumentState {
 interface GitHistoryDiffDocumentStore {
   documents: Record<string, GitHistoryDiffDocumentState>;
   ownerKey: string | null;
+  recency: readonly string[];
+}
+
+interface GitHistoryDiffRequestLease {
+  ownerKey: string;
+  token: symbol;
+}
+
+interface GitHistoryDiffReloadRecipe {
+  commitHash: string;
+  oldPath: string | null;
+  ownerKey: string;
+  path: string;
 }
 
 export interface UseGitHistoryDiffDocumentsOptions {
@@ -38,6 +54,7 @@ export interface GitHistoryDiffDocumentsController {
     oldPath: string | null,
     files?: FileChange[],
   ): Promise<void>;
+  reloadDocumentPath(documentPath: string): Promise<void>;
 }
 
 /**
@@ -58,21 +75,31 @@ export function useGitHistoryDiffDocuments({
   const ownerKey = gitHistoryDiffOwnerKey(workspaceRoot, ownerId);
   const ownerKeyRef = useRef(ownerKey);
   ownerKeyRef.current = ownerKey;
-  const requestTokensRef = useRef(new Map<string, symbol>());
+  const requestTokensRef = useRef(new Map<string, GitHistoryDiffRequestLease>());
+  const reloadRecipesRef = useRef(new Map<string, GitHistoryDiffReloadRecipe>());
   const [store, setStore] = useState<GitHistoryDiffDocumentStore>(() => ({
     documents: {},
     ownerKey,
+    recency: [],
   }));
+  const storeRef = useRef(store);
+  storeRef.current = store;
 
   useEffect(() => {
-    requestTokensRef.current.clear();
-    setStore((current) => {
-      if (current.ownerKey === ownerKey) {
-        return current;
-      }
+    const requestTokens = requestTokensRef.current;
+    const reloadRecipes = reloadRecipesRef.current;
+    if (storeRef.current.ownerKey !== ownerKey) {
+      const next = emptyHistoryDocumentStore(ownerKey);
+      storeRef.current = next;
+      setStore(next);
+    }
 
-      return { documents: {}, ownerKey };
-    });
+    removeForeignOwnerEntries(requestTokens, ownerKey);
+    removeForeignOwnerEntries(reloadRecipes, ownerKey);
+    return () => {
+      removeOwnerEntries(requestTokens, ownerKey);
+      removeOwnerEntries(reloadRecipes, ownerKey);
+    };
   }, [ownerKey]);
 
   const documentsByPath = useMemo(
@@ -81,38 +108,47 @@ export function useGitHistoryDiffDocuments({
   );
 
   const closeDocumentPaths = useCallback((paths: readonly string[]) => {
+    const closeOwner = ownerKey;
+    if (!closeOwner || ownerKeyRef.current !== closeOwner) {
+      return;
+    }
+
     const closedPaths = new Set(paths.filter(isGitHistoryDiffDocumentPath));
     if (closedPaths.size === 0) {
       return;
     }
 
     for (const path of closedPaths) {
-      requestTokensRef.current.delete(path);
+      deleteOwnedEntry(requestTokensRef.current, path, closeOwner);
+      deleteOwnedEntry(reloadRecipesRef.current, path, closeOwner);
     }
 
-    setStore((current) => {
-      if (current.ownerKey !== ownerKeyRef.current) {
-        return current;
+    const current = storeRef.current;
+    if (current.ownerKey !== ownerKeyRef.current) {
+      return;
+    }
+
+    const documents = { ...current.documents };
+    let changed = false;
+    for (const path of closedPaths) {
+      if (!documents[path]) {
+        continue;
       }
 
-      const documents = { ...current.documents };
-      let changed = false;
-      for (const path of closedPaths) {
-        if (!documents[path]) {
-          continue;
-        }
+      delete documents[path];
+      changed = true;
+    }
 
-        delete documents[path];
-        changed = true;
-      }
+    if (!changed) {
+      return;
+    }
 
-      if (!changed) {
-        return current;
-      }
-
-      return { ...current, documents };
+    publishHistoryDocumentStore(storeRef, setStore, {
+      ...current,
+      documents,
+      recency: current.recency.filter((path) => !closedPaths.has(path)),
     });
-  }, []);
+  }, [ownerKey]);
 
   const openCommitDiff = useCallback(
     async (
@@ -136,16 +172,30 @@ export function useGitHistoryDiffDocuments({
         path,
         oldPath,
       );
-      const requestToken = Symbol(documentPath);
-      requestTokensRef.current.set(documentPath, requestToken);
       onOpenDocument(historyDiffDocument(documentPath, path));
-      setStore((current) => ({
-        documents: {
-          ...(current.ownerKey === requestedOwner ? current.documents : {}),
-          [documentPath]: { diff: null, isLoading: true },
-        },
+      if (ownerKeyRef.current !== requestedOwner) {
+        return;
+      }
+
+      const requestToken = Symbol(documentPath);
+      requestTokensRef.current.set(documentPath, {
         ownerKey: requestedOwner,
-      }));
+        token: requestToken,
+      });
+      reloadRecipesRef.current.set(documentPath, {
+        commitHash,
+        oldPath,
+        ownerKey: requestedOwner,
+        path,
+      });
+      const insertion = insertHistoryDocument(storeRef.current, requestedOwner, documentPath, {
+        diff: null,
+        isLoading: true,
+      });
+      for (const evictedPath of insertion.evictedPaths) {
+        deleteOwnedEntry(requestTokensRef.current, evictedPath, requestedOwner);
+      }
+      publishHistoryDocumentStore(storeRef, setStore, insertion.store);
 
       try {
         const payload = await gateway.getCommitDiff(
@@ -166,12 +216,14 @@ export function useGitHistoryDiffDocuments({
         }
 
         const diff = gitFileDiffFromHistoryPayload(payload, path, oldPath);
-        setStore((current) => updateHistoryDocument(
-          current,
-          requestedOwner,
-          documentPath,
-          { diff, isLoading: false },
-        ));
+        publishHistoryDocumentStore(
+          storeRef,
+          setStore,
+          updateHistoryDocument(storeRef.current, requestedOwner, documentPath, {
+            diff,
+            isLoading: false,
+          }),
+        );
       } catch (error) {
         if (!requestIsCurrent(
           requestTokensRef.current,
@@ -184,14 +236,17 @@ export function useGitHistoryDiffDocuments({
         }
 
         console.error("Failed to load commit file diff.", error);
-        setStore((current) => updateHistoryDocument(
-          current,
-          requestedOwner,
-          documentPath,
-          { diff: null, isLoading: false },
-        ));
+        publishHistoryDocumentStore(
+          storeRef,
+          setStore,
+          updateHistoryDocument(storeRef.current, requestedOwner, documentPath, {
+            diff: null,
+            isLoading: false,
+          }),
+        );
       } finally {
-        if (requestTokensRef.current.get(documentPath) === requestToken) {
+        const lease = requestTokensRef.current.get(documentPath);
+        if (lease?.ownerKey === requestedOwner && lease.token === requestToken) {
           requestTokensRef.current.delete(documentPath);
         }
       }
@@ -199,10 +254,23 @@ export function useGitHistoryDiffDocuments({
     [gateway, onOpenDocument, ownerKey, workspaceRoot],
   );
 
+  const reloadDocumentPath = useCallback(
+    async (documentPath: string) => {
+      const recipe = reloadRecipesRef.current.get(documentPath);
+      if (!recipe || recipe.ownerKey !== ownerKeyRef.current) {
+        return;
+      }
+
+      await openCommitDiff(recipe.commitHash, recipe.path, recipe.oldPath);
+    },
+    [openCommitDiff],
+  );
+
   return {
     closeDocumentPaths,
     documentsByPath,
     openCommitDiff,
+    reloadDocumentPath,
   };
 }
 
@@ -260,14 +328,15 @@ function gitFileDiffFromHistoryPayload(
 }
 
 function requestIsCurrent(
-  tokens: ReadonlyMap<string, symbol>,
+  tokens: ReadonlyMap<string, GitHistoryDiffRequestLease>,
   currentOwner: string | null,
   documentPath: string,
   requestToken: symbol,
   requestedOwner: string,
 ): boolean {
+  const lease = tokens.get(documentPath);
   return currentOwner === requestedOwner &&
-    tokens.get(documentPath) === requestToken;
+    lease?.ownerKey === requestedOwner && lease.token === requestToken;
 }
 
 function updateHistoryDocument(
@@ -287,6 +356,96 @@ function updateHistoryDocument(
       [documentPath]: document,
     },
   };
+}
+
+function emptyHistoryDocumentStore(ownerKey: string | null): GitHistoryDiffDocumentStore {
+  return { documents: {}, ownerKey, recency: [] };
+}
+
+function insertHistoryDocument(
+  current: GitHistoryDiffDocumentStore,
+  ownerKey: string,
+  documentPath: string,
+  document: GitHistoryDiffDocumentState,
+): {
+  evictedPaths: readonly string[];
+  store: GitHistoryDiffDocumentStore;
+} {
+  const sameOwner = current.ownerKey === ownerKey;
+  const documents = {
+    ...(sameOwner ? current.documents : {}),
+    [documentPath]: document,
+  };
+  let recency = [
+    ...(sameOwner ? current.recency.filter((path) => path !== documentPath) : []),
+    documentPath,
+  ];
+  const evictedPaths: string[] = [];
+
+  while (recency.length > MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS) {
+    const candidates = recency.filter((path) => path !== documentPath);
+    // Keep the newly opened tab and in-flight work whenever a settled LRU
+    // victim exists. If every older entry is loading, evict the oldest one to
+    // preserve the hard bound and invalidate its token at the call site.
+    const victim = candidates.find((path) => !documents[path]?.isLoading) ?? candidates[0];
+    if (!victim) {
+      break;
+    }
+
+    delete documents[victim];
+    recency = recency.filter((path) => path !== victim);
+    evictedPaths.push(victim);
+  }
+
+  return {
+    evictedPaths,
+    store: { documents, ownerKey, recency },
+  };
+}
+
+function publishHistoryDocumentStore(
+  storeRef: MutableRefObject<GitHistoryDiffDocumentStore>,
+  setStore: Dispatch<SetStateAction<GitHistoryDiffDocumentStore>>,
+  next: GitHistoryDiffDocumentStore,
+): void {
+  if (next === storeRef.current) {
+    return;
+  }
+
+  storeRef.current = next;
+  setStore(next);
+}
+
+function deleteOwnedEntry<T extends { ownerKey: string }>(
+  entries: Map<string, T>,
+  key: string,
+  ownerKey: string,
+): void {
+  if (entries.get(key)?.ownerKey === ownerKey) {
+    entries.delete(key);
+  }
+}
+
+function removeOwnerEntries<T extends { ownerKey: string }>(
+  entries: Map<string, T>,
+  ownerKey: string | null,
+): void {
+  for (const [key, entry] of entries) {
+    if (entry.ownerKey === ownerKey) {
+      entries.delete(key);
+    }
+  }
+}
+
+function removeForeignOwnerEntries<T extends { ownerKey: string }>(
+  entries: Map<string, T>,
+  ownerKey: string | null,
+): void {
+  for (const [key, entry] of entries) {
+    if (entry.ownerKey !== ownerKey) {
+      entries.delete(key);
+    }
+  }
 }
 
 function fileNameForPath(path: string): string {

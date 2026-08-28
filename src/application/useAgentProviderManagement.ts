@@ -8,12 +8,15 @@ import {
   type MutableRefObject,
 } from "react";
 import {
+  appendAgentProviderUpdateOutputTail,
+  MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES,
   type AgentProviderHealthGateway,
   type AgentProviderHealthProbeResult,
   type AgentProviderHealthState,
   type AgentProviderPolicyGateway,
   type AgentProviderPolicyRegistrationState,
   type AgentProviderUpdateGateway,
+  type AgentProviderUpdateProgressEvent,
   type AgentProviderUpdateState,
 } from "../domain/agentProviderHealth";
 import {
@@ -27,6 +30,7 @@ import type { AppSettings, SettingsGateway } from "../domain/settings";
 import type { AgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
 
 const PROVIDERS: readonly AgentCliKind[] = ["claudeCode", "codex"];
+const AGENT_PROVIDER_UPDATE_PROGRESS_SUBSCRIBE_TIMEOUT_MS = 1_000;
 
 export type AgentProviderManagementToast =
   | {
@@ -47,6 +51,7 @@ export type AgentProviderUpdateRefusal =
   | "policyUnavailable"
   | "noUpdateAvailable"
   | "turnActive"
+  | "signInActive"
   | "alreadyUpdating";
 
 export type AgentProviderSettingsSaveOutcome =
@@ -61,6 +66,7 @@ export interface AgentProviderManagementView {
   readonly policy: AgentProviderPolicyRegistrationState;
   readonly updateState: AgentProviderUpdateState;
   readonly liveTurnCount: number;
+  readonly signInActive?: boolean;
 }
 
 export interface AgentProviderSettingsIntent {
@@ -79,6 +85,7 @@ export interface AgentProviderManagementSurface {
   dismissToast(): void;
   dismissUpdate(provider: AgentCliKind, version: string): Promise<boolean>;
   refresh(provider: AgentCliKind): Promise<void>;
+  refreshWithOutcome?(provider: AgentCliKind): Promise<boolean>;
   retryRegistration(provider: AgentCliKind): Promise<void>;
   save(intent: AgentProviderSettingsIntent): Promise<boolean>;
   saveWithOutcome(intent: AgentProviderSettingsIntent): Promise<AgentProviderSettingsSaveOutcome>;
@@ -108,6 +115,7 @@ export interface AgentProviderManagementDependencies {
   readonly healthGateway: AgentProviderHealthGateway;
   readonly updateGateway: AgentProviderUpdateGateway;
   readonly liveTurnCount: (provider: AgentCliKind) => number;
+  readonly signInActive: (provider: AgentCliKind) => boolean;
   readonly reportError: (source: string, error: unknown) => void;
   readonly mintOperationId: (provider: AgentCliKind) => string;
   readonly settingsHydrated: boolean;
@@ -198,6 +206,9 @@ export function useAgentProviderManagement(
   });
   const selectedRevisionRef = useRef(0);
   const updateOperationRef = useRef<Partial<Record<AgentCliKind, string>>>({});
+  const updateProgressUnlistenRef = useRef<
+    Partial<Record<AgentCliKind, { readonly operationId: string; readonly unlisten: () => void }>>
+  >({});
   const persistedSliceRef = useRef<PersistedProviderSlice>({
     fields: {
       claudeCode: providerFields(dependencies.appSettingsRef.current, "claudeCode"),
@@ -701,6 +712,7 @@ export function useAgentProviderManagement(
         dependenciesRef.current.appSettingsRef.current,
         runtimeRef.current[provider],
         dependenciesRef.current.liveTurnCount(provider),
+        dependenciesRef.current.signInActive(provider),
       );
       if (refusal !== null) return refusal;
       const owner = currentOwner(provider);
@@ -717,33 +729,118 @@ export function useAgentProviderManagement(
       }));
       const updateOwner = currentOwner(provider);
       if (updateOwner === null) return "policyUnavailable";
+      let progressClosed = false;
+      let nextProgressSequence = 1;
+      let unlistenProgress: (() => void) | null = null;
+      const operationIsCurrent = (): boolean =>
+        updateOperationRef.current[provider] === operationId && ownerIsCurrent(updateOwner);
+      const progressIsCurrent = (): boolean => !progressClosed && operationIsCurrent();
+      const markProgressUncertain = (error: unknown): void => {
+        if (!progressIsCurrent()) return;
+        progressClosed = true;
+        publish(provider, (current) => ({
+          ...current,
+          updateState: runningUpdateWith(current.updateState, operationId, "", true),
+        }));
+        dependenciesRef.current.reportError("Agent provider update progress", error);
+      };
+      const onProgress = (event: AgentProviderUpdateProgressEvent): void => {
+        if (!progressIsCurrent()) return;
+        if (
+          event.provider !== provider ||
+          event.providerGeneration !== updateOwner.providerGeneration ||
+          event.operationId !== operationId
+        ) {
+          return;
+        }
+        if (event.sequence !== nextProgressSequence) {
+          markProgressUncertain(
+            new Error("Agent provider update progress was duplicated, reordered, or incomplete."),
+          );
+          return;
+        }
+        nextProgressSequence += 1;
+        publish(provider, (current) => ({
+          ...current,
+          updateState: runningUpdateWith(
+            current.updateState,
+            operationId,
+            `${event.data}\n`,
+            event.truncated,
+          ),
+        }));
+      };
       try {
         const gateway = updateOwner.updateGateway;
+        if (gateway.subscribeAgentProviderUpdateProgress === undefined) {
+          markProgressUncertain(new Error("Agent provider update progress is unavailable."));
+        } else {
+          try {
+            const subscriptionPromise = gateway.subscribeAgentProviderUpdateProgress(
+              onProgress,
+              markProgressUncertain,
+            );
+            const subscription = await boundedProgressSubscription(subscriptionPromise);
+            if (subscription.kind === "timedOut") {
+              markProgressUncertain(
+                new Error("Agent provider update progress listener timed out."),
+              );
+              void subscriptionPromise
+                .then((lateUnlisten) => lateUnlisten())
+                .catch(() => undefined);
+            } else {
+              unlistenProgress = idempotentUnlisten(subscription.unlisten);
+            }
+            if (unlistenProgress !== null) {
+              if (!operationIsCurrent()) {
+                unlistenProgress();
+                unlistenProgress = null;
+                return null;
+              }
+              updateProgressUnlistenRef.current[provider] = {
+                operationId,
+                unlisten: unlistenProgress,
+              };
+            }
+          } catch (error) {
+            markProgressUncertain(error);
+          }
+        }
+        if (!ownerIsCurrent(updateOwner)) return null;
+        publish(provider, (current) => ({
+          ...current,
+          updateState: runningUpdateWith(current.updateState, operationId, "", false),
+        }));
         const updatePromise = gateway.updateAgentProvider({
           provider,
           providerGeneration: updateOwner.providerGeneration,
           operationId,
         });
-        if (!ownerIsCurrent(updateOwner)) return null;
-        publish(provider, (current) => ({
-          ...current,
-          updateState: {
-            kind: "running",
-            operationId,
-            outputTail: "",
-            outputTruncated: false,
-          },
-        }));
         const result = await updatePromise;
         if (dependenciesRef.current.updateGateway !== gateway) return null;
         if (!ownerIsCurrent(updateOwner)) return null;
         if (result.kind === "failed") {
+          const streamed = currentUpdateOutput(
+            runtimeRef.current[provider].updateState,
+            operationId,
+          );
+          const finalSummary = result.outputTail === "" ? "" : `${result.outputTail}\n`;
+          const combinedOutputBytes = new TextEncoder().encode(
+            `${streamed.outputTail}${finalSummary}`,
+          ).byteLength;
           delete updateOperationRef.current[provider];
           publish(provider, (current) => ({
             ...current,
             configurationRevision: current.configurationRevision + 1,
             healthGeneration: current.healthGeneration + 1,
-            updateState: result,
+            updateState: {
+              ...result,
+              outputTail: appendAgentProviderUpdateOutputTail(streamed.outputTail, finalSummary),
+              outputTruncated:
+                result.outputTruncated ||
+                streamed.outputTruncated ||
+                combinedOutputBytes > MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES,
+            },
           }));
           scheduleHealth(provider);
           setToast({ kind: "updateFailed", provider });
@@ -759,15 +856,23 @@ export function useAgentProviderManagement(
         const health = await refreshHealth(provider);
         if (!ownerIsCurrent(settledOwner)) return null;
         if (health === null) {
+          const streamed = currentUpdateOutput(
+            runtimeRef.current[provider].updateState,
+            operationId,
+          );
           delete updateOperationRef.current[provider];
-          publishUpdateFailure(provider, "uncertain", publish);
+          publishUpdateFailure(provider, "uncertain", streamed, publish);
           scheduleHealth(provider);
           setToast({ kind: "updateFailed", provider });
           return null;
         }
         if (health.installedVersion !== result.installedVersion) {
+          const streamed = currentUpdateOutput(
+            runtimeRef.current[provider].updateState,
+            operationId,
+          );
           delete updateOperationRef.current[provider];
-          publishUpdateFailure(provider, "versionMismatch", publish);
+          publishUpdateFailure(provider, "versionMismatch", streamed, publish);
           scheduleHealth(provider);
           setToast({ kind: "updateFailed", provider });
           return null;
@@ -799,6 +904,7 @@ export function useAgentProviderManagement(
         return null;
       } catch (error) {
         if (!ownerIsCurrent(updateOwner)) return null;
+        const streamed = currentUpdateOutput(runtimeRef.current[provider].updateState, operationId);
         delete updateOperationRef.current[provider];
         publish(provider, (current) => ({
           ...current,
@@ -807,14 +913,27 @@ export function useAgentProviderManagement(
           updateState: {
             kind: "failed",
             reason: "uncertain",
-            outputTail: "",
-            outputTruncated: false,
+            outputTail: streamed.outputTail,
+            outputTruncated: streamed.outputTruncated,
           },
         }));
         scheduleHealth(provider);
         setToast({ kind: "updateFailed", provider });
         dependenciesRef.current.reportError("Agent provider update", error);
         return null;
+      } finally {
+        progressClosed = true;
+        const registeredUnlisten = updateProgressUnlistenRef.current[provider];
+        if (registeredUnlisten?.operationId === operationId) {
+          delete updateProgressUnlistenRef.current[provider];
+        }
+        if (unlistenProgress !== null) {
+          try {
+            unlistenProgress();
+          } catch (error) {
+            dependenciesRef.current.reportError("Agent provider update progress cleanup", error);
+          }
+        }
       }
     },
     [
@@ -907,6 +1026,14 @@ export function useAgentProviderManagement(
       for (const provider of PROVIDERS) clearTimer(provider);
       inFlightHealthRef.current = {};
       updateOperationRef.current = {};
+      for (const subscription of Object.values(updateProgressUnlistenRef.current)) {
+        try {
+          subscription?.unlisten();
+        } catch (error) {
+          dependenciesRef.current.reportError("Agent provider update progress cleanup", error);
+        }
+      }
+      updateProgressUnlistenRef.current = {};
     };
   }, [
     clearTimer,
@@ -922,6 +1049,8 @@ export function useAgentProviderManagement(
 
   const claudeLiveTurnCount = dependencies.liveTurnCount("claudeCode");
   const codexLiveTurnCount = dependencies.liveTurnCount("codex");
+  const claudeSignInActive = dependencies.signInActive("claudeCode");
+  const codexSignInActive = dependencies.signInActive("codex");
   const selectedProviderAuthority = useMemo(
     () =>
       currentSelectedProviderAuthority(
@@ -949,15 +1078,17 @@ export function useAgentProviderManagement(
         policy: runtime.claudeCode.policy,
         updateState: runtime.claudeCode.updateState,
         liveTurnCount: claudeLiveTurnCount,
+        signInActive: claudeSignInActive,
       },
       codex: {
         health: runtime.codex.health,
         policy: runtime.codex.policy,
         updateState: runtime.codex.updateState,
         liveTurnCount: codexLiveTurnCount,
+        signInActive: codexSignInActive,
       },
     }),
-    [claudeLiveTurnCount, codexLiveTurnCount, runtime],
+    [claudeLiveTurnCount, claudeSignInActive, codexLiveTurnCount, codexSignInActive, runtime],
   );
 
   const admissionAuthority = useCallback(
@@ -975,6 +1106,10 @@ export function useAgentProviderManagement(
     },
     [refreshHealth],
   );
+  const refreshWithOutcome = useCallback(
+    async (provider: AgentCliKind): Promise<boolean> => (await refreshHealth(provider)) !== null,
+    [refreshHealth],
+  );
 
   return useMemo(
     () => ({
@@ -986,6 +1121,7 @@ export function useAgentProviderManagement(
       dismissToast,
       dismissUpdate,
       refresh,
+      refreshWithOutcome,
       retryRegistration,
       save,
       saveWithOutcome,
@@ -999,6 +1135,7 @@ export function useAgentProviderManagement(
       selectedProviderAuthority,
       readAuthority,
       refresh,
+      refreshWithOutcome,
       retryRegistration,
       save,
       saveWithOutcome,
@@ -1010,6 +1147,72 @@ export function useAgentProviderManagement(
 
 function preferences(settings: AppSettings) {
   return settings.agentProviderPreferences ?? defaultAgentProviderPreferences();
+}
+
+function runningUpdateWith(
+  state: AgentProviderUpdateState,
+  operationId: string,
+  addition: string,
+  truncated: boolean,
+): Extract<AgentProviderUpdateState, { readonly kind: "running" }> {
+  const current = currentUpdateOutput(state, operationId);
+  const exceededTail =
+    new TextEncoder().encode(`${current.outputTail}${addition}`).byteLength >
+    MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES;
+  return {
+    kind: "running",
+    operationId,
+    outputTail: appendAgentProviderUpdateOutputTail(current.outputTail, addition),
+    outputTruncated: current.outputTruncated || truncated || exceededTail,
+  };
+}
+
+function currentUpdateOutput(
+  state: AgentProviderUpdateState,
+  operationId: string,
+): { readonly outputTail: string; readonly outputTruncated: boolean } {
+  if (state.kind !== "running" || state.operationId !== operationId) {
+    return { outputTail: "", outputTruncated: false };
+  }
+  return { outputTail: state.outputTail, outputTruncated: state.outputTruncated };
+}
+
+function idempotentUnlisten(unlisten: () => void): () => void {
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    unlisten();
+  };
+}
+
+function boundedProgressSubscription(
+  subscription: Promise<() => void>,
+): Promise<
+  { readonly kind: "subscribed"; readonly unlisten: () => void } | { readonly kind: "timedOut" }
+> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ kind: "timedOut" });
+    }, AGENT_PROVIDER_UPDATE_PROGRESS_SUBSCRIBE_TIMEOUT_MS);
+    subscription.then(
+      (unlisten) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ kind: "subscribed", unlisten });
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function currentSelectedProviderAuthority(
@@ -1288,6 +1491,7 @@ function updateRefusal(
   settings: AppSettings,
   runtime: ProviderRuntime,
   liveTurnCount: number,
+  signInActive: boolean,
 ): AgentProviderUpdateRefusal | null {
   if (!preferences(settings)[provider].enabled) return "disabled";
   if (settings.agentCliPaths[provider] === null) return "notConfigured";
@@ -1296,6 +1500,7 @@ function updateRefusal(
     return "alreadyUpdating";
   }
   if (liveTurnCount > 0) return "turnActive";
+  if (signInActive) return "signInActive";
   if (runtime.health.kind !== "ready" || runtime.health.update.kind !== "available") {
     return "noUpdateAvailable";
   }
@@ -1319,6 +1524,7 @@ function updateStateBeforeRegistration(state: AgentProviderUpdateState): AgentPr
 function publishUpdateFailure(
   provider: AgentCliKind,
   reason: "uncertain" | "versionMismatch",
+  output: { readonly outputTail: string; readonly outputTruncated: boolean },
   publish: (
     provider: AgentCliKind,
     transform: (current: ProviderRuntime) => ProviderRuntime,
@@ -1329,8 +1535,8 @@ function publishUpdateFailure(
     updateState: {
       kind: "failed",
       reason,
-      outputTail: "",
-      outputTruncated: false,
+      outputTail: output.outputTail,
+      outputTruncated: output.outputTruncated,
     },
   }));
 }

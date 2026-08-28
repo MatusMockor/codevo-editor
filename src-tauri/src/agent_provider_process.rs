@@ -24,6 +24,7 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const READER_GRACE: Duration = Duration::from_millis(250);
 const UPDATE_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_PROVIDER_EXECUTABLE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_PROVIDER_ENV_VALUE_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct ExecutableIdentity {
@@ -135,6 +136,16 @@ impl ExecutableIdentity {
         }
         bound_command(self)
     }
+
+    pub fn is_current_for_spawn(&self) -> bool {
+        if !self.retained_shallow_is_current() || !self.path_is_current_shallow_with(|| false) {
+            return false;
+        }
+        match &self.launch {
+            ExecutableLaunch::Native => true,
+            ExecutableLaunch::Script { interpreter } => interpreter.is_current_for_spawn(),
+        }
+    }
 }
 
 fn launch_identity_matches(left: &ExecutableLaunch, right: &ExecutableLaunch) -> bool {
@@ -168,12 +179,13 @@ impl BoundExecutableCommand {
     }
 
     pub fn spawn(&mut self) -> Result<Child, BoundExecutableSpawnFailure> {
-        self.spawn_cancellable(|| false)
+        self.spawn_cancellable(|| false, || true)
     }
 
     fn spawn_cancellable(
         &mut self,
         cancelled: impl Fn() -> bool,
+        before_spawn: impl FnOnce() -> bool,
     ) -> Result<Child, BoundExecutableSpawnFailure> {
         if cancelled() {
             return Err(BoundExecutableSpawnFailure::IdentityChanged);
@@ -188,6 +200,27 @@ impl BoundExecutableCommand {
         #[cfg(test)]
         if let Some(barrier) = self.before_artifact_validation.take() {
             barrier();
+        }
+        if !self.artifact.retained_shallow_is_current_with(&cancelled)
+            || !self.artifact.path_is_current_shallow_with(&cancelled)
+        {
+            return Err(BoundExecutableSpawnFailure::IdentityChanged);
+        }
+        if cancelled() {
+            return Err(BoundExecutableSpawnFailure::IdentityChanged);
+        }
+        if !before_spawn() {
+            return Err(BoundExecutableSpawnFailure::IdentityChanged);
+        }
+        if cancelled() {
+            return Err(BoundExecutableSpawnFailure::IdentityChanged);
+        }
+        for dependency in &self.dependencies {
+            if !dependency.retained_shallow_is_current_with(&cancelled)
+                || !dependency.path_is_current_shallow_with(&cancelled)
+            {
+                return Err(BoundExecutableSpawnFailure::IdentityChanged);
+            }
         }
         if !self.artifact.retained_shallow_is_current_with(&cancelled)
             || !self.artifact.path_is_current_shallow_with(&cancelled)
@@ -228,6 +261,60 @@ pub struct AgentProviderProcessPlan {
     env: Box<[(String, String)]>,
     timeout: Duration,
     output_limit: usize,
+    requires_update_authorization: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentProviderSignInRecipe {
+    identity: ExecutableIdentity,
+    program: PathBuf,
+    args: Box<[String]>,
+    env: Box<[(String, String)]>,
+}
+
+impl AgentProviderSignInRecipe {
+    pub fn new(cli_path: &str, provider: AgentCliInvocation) -> Result<Self, String> {
+        let identity = executable_identity(cli_path)?;
+        let semantic_args = match provider {
+            AgentCliInvocation::ClaudeCode => vec!["auth", "login"],
+            AgentCliInvocation::CodexExec => vec!["login"],
+        };
+        let semantic_args = semantic_args
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let (program, args) = match &identity.launch {
+            ExecutableLaunch::Native => (identity.canonical_path.clone(), semantic_args),
+            ExecutableLaunch::Script { interpreter } => {
+                let mut args = Vec::with_capacity(semantic_args.len() + 1);
+                args.push(identity.canonical_path.to_string_lossy().into_owned());
+                args.extend(semantic_args);
+                (interpreter.canonical_path.clone(), args)
+            }
+        };
+        Ok(Self {
+            identity,
+            program,
+            args: args.into_boxed_slice(),
+            env: sign_in_environment().into_boxed_slice(),
+        })
+    }
+
+    pub fn program(&self) -> &Path {
+        &self.program
+    }
+
+    pub fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    pub fn env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
+    pub fn identity_is_current(&self) -> bool {
+        self.identity.is_current_for_spawn()
+    }
 }
 
 impl AgentProviderProcessPlan {
@@ -267,6 +354,7 @@ impl AgentProviderProcessPlan {
             args,
             AGENT_PROVIDER_PROBE_TIMEOUT,
             MAX_AGENT_PROVIDER_OUTPUT_BYTES,
+            false,
         ))
     }
 
@@ -274,6 +362,11 @@ impl AgentProviderProcessPlan {
         identity: ExecutableIdentity,
         intent: AgentProviderProcessIntent,
     ) -> Result<Self, String> {
+        let requires_update_authorization = matches!(
+            &intent,
+            AgentProviderProcessIntent::NpmUpdate { .. }
+                | AgentProviderProcessIntent::BrewUpdate(_)
+        );
         let (args, timeout, output_limit) = match intent {
             AgentProviderProcessIntent::NpmGlobalRoot => (
                 vec!["root".to_string(), "--global".to_string()],
@@ -342,7 +435,13 @@ impl AgentProviderProcessPlan {
             ),
             _ => return Err("Package manager cannot run this operation.".to_string()),
         };
-        Ok(Self::new_strings(identity, args, timeout, output_limit))
+        Ok(Self::new_strings(
+            identity,
+            args,
+            timeout,
+            output_limit,
+            requires_update_authorization,
+        ))
     }
 
     fn new(
@@ -350,12 +449,14 @@ impl AgentProviderProcessPlan {
         args: Vec<&str>,
         timeout: Duration,
         output_limit: usize,
+        requires_update_authorization: bool,
     ) -> Self {
         Self::new_strings(
             identity,
             args.into_iter().map(str::to_string).collect(),
             timeout,
             output_limit,
+            requires_update_authorization,
         )
     }
 
@@ -364,6 +465,7 @@ impl AgentProviderProcessPlan {
         args: Vec<String>,
         timeout: Duration,
         output_limit: usize,
+        requires_update_authorization: bool,
     ) -> Self {
         let cwd = identity
             .canonical_path
@@ -376,6 +478,7 @@ impl AgentProviderProcessPlan {
             env: provider_environment().into_boxed_slice(),
             timeout,
             output_limit,
+            requires_update_authorization,
         }
     }
 
@@ -424,6 +527,26 @@ fn provider_environment() -> Vec<(String, String)> {
         "npm_config_update_notifier".to_string(),
         "false".to_string(),
     ));
+    result
+}
+
+fn sign_in_environment() -> Vec<(String, String)> {
+    let mut result = inherited_environment()
+        .into_iter()
+        .filter(|(_, value)| value.len() <= MAX_PROVIDER_ENV_VALUE_BYTES)
+        .collect::<Vec<_>>();
+    for key in [
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+    ] {
+        if let Ok(value) = env::var(key) {
+            if value.len() <= MAX_PROVIDER_ENV_VALUE_BYTES {
+                result.push((key.to_string(), value));
+            }
+        }
+    }
     result
 }
 
@@ -688,6 +811,28 @@ pub struct AgentProviderProcessOutput {
     pub stderr: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentProviderProcessOutputStream {
+    Stdout,
+    Stderr,
+}
+
+pub trait AgentProviderProcessOutputSink: Send + Sync {
+    fn emit(&self, stream: AgentProviderProcessOutputStream, data: &[u8]) -> Result<(), ()>;
+
+    fn finish(&self, _stream: AgentProviderProcessOutputStream) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
+struct NoopAgentProviderProcessOutputSink;
+
+impl AgentProviderProcessOutputSink for NoopAgentProviderProcessOutputSink {
+    fn emit(&self, _stream: AgentProviderProcessOutputStream, _data: &[u8]) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 pub fn execute_agent_provider_plan(
     plan: &AgentProviderProcessPlan,
@@ -698,6 +843,58 @@ pub fn execute_agent_provider_plan(
 pub fn execute_agent_provider_plan_cancellable(
     plan: &AgentProviderProcessPlan,
     cancelled: impl Fn() -> bool,
+) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
+    if plan.requires_update_authorization {
+        return Err(AgentProviderProcessFailure::Uncertain(
+            "Provider update plan requires spawn authorization.".to_string(),
+        ));
+    }
+    execute_agent_provider_plan_cancellable_inner(
+        plan,
+        cancelled,
+        || true,
+        Arc::new(NoopAgentProviderProcessOutputSink),
+    )
+}
+
+#[cfg(test)]
+pub fn execute_agent_provider_update_plan_cancellable(
+    plan: &AgentProviderProcessPlan,
+    cancelled: impl Fn() -> bool,
+    before_spawn: impl FnOnce() -> bool,
+) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
+    if !plan.requires_update_authorization {
+        return Err(AgentProviderProcessFailure::Uncertain(
+            "Provider probe plan cannot use update spawn authorization.".to_string(),
+        ));
+    }
+    execute_agent_provider_update_plan_cancellable_with_output_sink(
+        plan,
+        cancelled,
+        before_spawn,
+        Arc::new(NoopAgentProviderProcessOutputSink),
+    )
+}
+
+pub fn execute_agent_provider_update_plan_cancellable_with_output_sink(
+    plan: &AgentProviderProcessPlan,
+    cancelled: impl Fn() -> bool,
+    before_spawn: impl FnOnce() -> bool,
+    output_sink: Arc<dyn AgentProviderProcessOutputSink>,
+) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
+    if !plan.requires_update_authorization {
+        return Err(AgentProviderProcessFailure::Uncertain(
+            "Provider probe plan cannot use update spawn authorization.".to_string(),
+        ));
+    }
+    execute_agent_provider_plan_cancellable_inner(plan, cancelled, before_spawn, output_sink)
+}
+
+fn execute_agent_provider_plan_cancellable_inner(
+    plan: &AgentProviderProcessPlan,
+    cancelled: impl Fn() -> bool,
+    before_spawn: impl FnOnce() -> bool,
+    output_sink: Arc<dyn AgentProviderProcessOutputSink>,
 ) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
     let deadline = Instant::now() + plan.timeout;
     if cancelled() {
@@ -721,29 +918,30 @@ pub fn execute_agent_provider_plan_cancellable(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let child = match bound.spawn_cancellable(|| cancelled() || Instant::now() >= deadline) {
-        Ok(child) => child,
-        Err(BoundExecutableSpawnFailure::IdentityChanged) => {
-            if cancelled() {
+    let child =
+        match bound.spawn_cancellable(|| cancelled() || Instant::now() >= deadline, before_spawn) {
+            Ok(child) => child,
+            Err(BoundExecutableSpawnFailure::IdentityChanged) => {
+                if cancelled() {
+                    return Err(AgentProviderProcessFailure::Uncertain(
+                        "Provider operation was cancelled.".to_string(),
+                    ));
+                }
+                if Instant::now() >= deadline {
+                    return Err(AgentProviderProcessFailure::TimedOut {
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    });
+                }
                 return Err(AgentProviderProcessFailure::Uncertain(
-                    "Provider operation was cancelled.".to_string(),
+                    "Provider executable identity changed before launch.".to_string(),
                 ));
             }
-            if Instant::now() >= deadline {
-                return Err(AgentProviderProcessFailure::TimedOut {
-                    stdout: Vec::new(),
-                    stderr: Vec::new(),
-                });
+            Err(BoundExecutableSpawnFailure::Spawn(error)) => {
+                return Err(AgentProviderProcessFailure::Spawn(error.to_string()));
             }
-            return Err(AgentProviderProcessFailure::Uncertain(
-                "Provider executable identity changed before launch.".to_string(),
-            ));
-        }
-        Err(BoundExecutableSpawnFailure::Spawn(error)) => {
-            return Err(AgentProviderProcessFailure::Spawn(error.to_string()));
-        }
-    };
-    OwnedProviderChild::new(child, deadline, plan.output_limit).settle(cancelled)
+        };
+    OwnedProviderChild::new(child, deadline, plan.output_limit).settle(cancelled, output_sink)
 }
 
 struct OwnedProviderChild {
@@ -768,6 +966,7 @@ impl OwnedProviderChild {
     fn settle(
         mut self,
         cancelled: impl Fn() -> bool,
+        output_sink: Arc<dyn AgentProviderProcessOutputSink>,
     ) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let retained_bytes = Arc::new(AtomicUsize::new(0));
@@ -779,6 +978,8 @@ impl OwnedProviderChild {
                 Arc::clone(&bytes_read),
                 Arc::clone(&retained_bytes),
                 Arc::clone(&output_exceeded),
+                AgentProviderProcessOutputStream::Stdout,
+                Arc::clone(&output_sink),
             )
         });
         let stderr = self.child.stderr.take().map(|reader| {
@@ -788,6 +989,8 @@ impl OwnedProviderChild {
                 Arc::clone(&bytes_read),
                 Arc::clone(&retained_bytes),
                 Arc::clone(&output_exceeded),
+                AgentProviderProcessOutputStream::Stderr,
+                Arc::clone(&output_sink),
             )
         });
         let mut exceeded = false;
@@ -867,20 +1070,37 @@ fn spawn_reader<R: Read + Send + 'static>(
     bytes_read: Arc<AtomicUsize>,
     retained_bytes: Arc<AtomicUsize>,
     output_exceeded: Arc<AtomicBool>,
+    stream: AgentProviderProcessOutputStream,
+    output_sink: Arc<dyn AgentProviderProcessOutputSink>,
 ) -> thread::JoinHandle<Vec<u8>> {
     thread::spawn(move || {
         let mut output = Vec::new();
         let mut buffer = [0_u8; 4096];
         loop {
-            let Ok(count) = reader.read(&mut buffer) else {
-                return output;
+            let count = match reader.read(&mut buffer) {
+                Ok(count) => count,
+                Err(_) => {
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        output_sink.finish(stream)
+                    }));
+                    return output;
+                }
             };
             if count == 0 {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    output_sink.finish(stream)
+                }));
                 return output;
             }
             let previous = bytes_read.fetch_add(count, Ordering::AcqRel);
             if previous.saturating_add(count) > limit {
                 output_exceeded.store(true, Ordering::Release);
+            }
+            let published = count.min(limit.saturating_sub(previous));
+            if published > 0 {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    output_sink.emit(stream, &buffer[..published])
+                }));
             }
             let mut retained = retained_bytes.load(Ordering::Acquire);
             loop {
@@ -941,267 +1161,5 @@ fn kill_group(process_group_id: Option<i32>) {
 fn kill_group(_process_group_id: Option<i32>) {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NONCE: AtomicU64 = AtomicU64::new(0);
-
-    fn executable(body: &str) -> PathBuf {
-        let nonce = NONCE.fetch_add(1, Ordering::SeqCst);
-        let path = env::temp_dir().join(format!(
-            "codevo-provider-process-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("script");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("executable");
-        }
-        path
-    }
-
-    #[test]
-    fn semantic_plans_have_fixed_arguments() {
-        let cli = executable("exit 0");
-        let plan = AgentProviderProcessPlan::provider(
-            cli.to_str().expect("path"),
-            AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::ClaudeCode),
-        )
-        .expect("plan");
-        assert_eq!(plan.args(), ["auth", "status", "--json"]);
-        let manager = executable_identity(cli.to_str().expect("path")).expect("manager identity");
-        let npm = AgentProviderProcessPlan::package_manager(
-            manager.clone(),
-            AgentProviderProcessIntent::NpmAvailableVersion(AgentCliInvocation::CodexExec),
-        )
-        .expect("npm plan");
-        assert_eq!(npm.args(), ["view", "@openai/codex", "version", "--json"]);
-        let caskroom = AgentProviderProcessPlan::package_manager(
-            manager.clone(),
-            AgentProviderProcessIntent::BrewCaskroom(AgentCliInvocation::ClaudeCode),
-        )
-        .expect("caskroom plan");
-        assert_eq!(caskroom.args(), ["--caskroom", "claude-code"]);
-        let outdated = AgentProviderProcessPlan::package_manager(
-            manager.clone(),
-            AgentProviderProcessIntent::BrewOutdated(AgentCliInvocation::CodexExec),
-        )
-        .expect("outdated plan");
-        assert_eq!(
-            outdated.args(),
-            ["outdated", "--json=v2", "--cask", "codex"]
-        );
-        let update = AgentProviderProcessPlan::package_manager(
-            manager,
-            AgentProviderProcessIntent::BrewUpdate(AgentCliInvocation::ClaudeCode),
-        )
-        .expect("update plan");
-        assert_eq!(update.args(), ["upgrade", "--cask", "claude-code"]);
-        fs::remove_file(cli).expect("cleanup");
-    }
-
-    #[test]
-    fn output_is_bounded_and_nonzero_is_explicit() {
-        let cli = executable("head -c 32000 /dev/zero; exit 3");
-        let plan = AgentProviderProcessPlan::provider(
-            cli.to_str().expect("path"),
-            AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
-        )
-        .expect("plan");
-        let AgentProviderProcessFailure::Exited { stdout, .. } =
-            execute_agent_provider_plan(&plan).expect_err("nonzero")
-        else {
-            panic!("wrong failure");
-        };
-        assert!(stdout.len() <= MAX_AGENT_PROVIDER_OUTPUT_BYTES);
-        fs::remove_file(cli).expect("cleanup");
-    }
-
-    #[test]
-    fn combined_update_output_limit_is_a_hard_failure() {
-        let cli = executable("head -c 700000 /dev/zero & head -c 700000 /dev/zero >&2 & wait");
-        let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
-        let plan = AgentProviderProcessPlan::package_manager(
-            identity,
-            AgentProviderProcessIntent::NpmUpdate {
-                provider: AgentCliInvocation::CodexExec,
-                version: "0.150.1".to_string(),
-            },
-        )
-        .expect("plan");
-        let AgentProviderProcessFailure::OutputLimitExceeded { stdout, stderr } =
-            execute_agent_provider_plan(&plan).expect_err("output cap")
-        else {
-            panic!("wrong failure");
-        };
-        assert!(stdout.len() + stderr.len() <= UPDATE_OUTPUT_BYTES);
-        fs::remove_file(cli).expect("cleanup");
-    }
-
-    #[test]
-    fn timeout_kills_the_owned_process_group() {
-        let cli = executable("sleep 30 & wait");
-        let mut plan = AgentProviderProcessPlan::provider(
-            cli.to_str().expect("path"),
-            AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
-        )
-        .expect("plan");
-        plan.timeout = Duration::from_millis(100);
-        assert!(matches!(
-            execute_agent_provider_plan(&plan),
-            Err(AgentProviderProcessFailure::TimedOut { .. })
-        ));
-        fs::remove_file(cli).expect("cleanup");
-    }
-
-    #[test]
-    fn validation_uses_the_process_deadline_before_spawn() {
-        let marker = env::temp_dir().join(format!(
-            "codevo-provider-deadline-marker-{}-{}",
-            std::process::id(),
-            NONCE.fetch_add(1, Ordering::SeqCst)
-        ));
-        let cli = executable(&format!("touch '{}'; exit 0", marker.display()));
-        let mut plan = AgentProviderProcessPlan::provider(
-            cli.to_str().expect("path"),
-            AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
-        )
-        .expect("plan");
-        plan.timeout = Duration::ZERO;
-        assert!(matches!(
-            execute_agent_provider_plan(&plan),
-            Err(AgentProviderProcessFailure::TimedOut { .. })
-        ));
-        assert!(!marker.exists());
-        fs::remove_file(cli).expect("cleanup");
-    }
-
-    #[test]
-    fn cancellation_during_digest_validation_prevents_spawn() {
-        let marker = env::temp_dir().join(format!(
-            "codevo-provider-cancel-marker-{}-{}",
-            std::process::id(),
-            NONCE.fetch_add(1, Ordering::SeqCst)
-        ));
-        let body = format!(
-            "touch '{}'; exit 0\n{}",
-            marker.display(),
-            "\n".repeat(128 * 1024)
-        );
-        let cli = executable(&body);
-        let plan = AgentProviderProcessPlan::provider(
-            cli.to_str().expect("path"),
-            AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
-        )
-        .expect("plan");
-        let polls = AtomicUsize::new(0);
-        let result = execute_agent_provider_plan_cancellable(&plan, || {
-            polls.fetch_add(1, Ordering::AcqRel) >= 3
-        });
-        assert!(matches!(
-            result,
-            Err(AgentProviderProcessFailure::Uncertain(message))
-                if message == "Provider operation was cancelled."
-        ));
-        assert!(polls.load(Ordering::Acquire) >= 4);
-        assert!(!marker.exists());
-        fs::remove_file(cli).expect("cleanup");
-    }
-
-    #[test]
-    fn owner_cancellation_reaps_the_process_group() {
-        let cli = executable("sleep 30 & wait");
-        let plan = AgentProviderProcessPlan::provider(
-            cli.to_str().expect("path"),
-            AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
-        )
-        .expect("plan");
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let setter = Arc::clone(&cancelled);
-        let thread = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(50));
-            setter.store(true, Ordering::Release);
-        });
-        assert!(matches!(
-            execute_agent_provider_plan_cancellable(&plan, || cancelled.load(Ordering::Acquire)),
-            Err(AgentProviderProcessFailure::Uncertain(_))
-        ));
-        thread.join().expect("canceller");
-        fs::remove_file(cli).expect("cleanup");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn final_spawn_revalidation_rejects_a_captured_script_path_swap() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let cli = executable("printf captured");
-        let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
-        let mut bound = identity.bound_command().expect("bound command");
-        let replacement = cli.with_extension("replacement");
-        let swapped_cli = cli.clone();
-        let retained = replacement.clone();
-        bound.before_artifact_validation = Some(Box::new(move || {
-            fs::rename(&swapped_cli, &retained).expect("retain original");
-            fs::write(&swapped_cli, "#!/bin/sh\nprintf replaced\n").expect("replacement");
-            fs::set_permissions(&swapped_cli, fs::Permissions::from_mode(0o755))
-                .expect("permissions");
-        }));
-        assert!(matches!(
-            bound.spawn(),
-            Err(BoundExecutableSpawnFailure::IdentityChanged)
-        ));
-        fs::remove_file(cli).expect("replacement cleanup");
-        fs::remove_file(replacement).expect("original cleanup");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn env_shebang_uses_the_captured_interpreter_under_a_hostile_path() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let nonce = NONCE.fetch_add(1, Ordering::SeqCst);
-        let fixture = env::temp_dir().join(format!(
-            "codevo-provider-hostile-path-{}-{nonce}",
-            std::process::id()
-        ));
-        let hostile = fixture.join("hostile");
-        fs::create_dir_all(&hostile).expect("hostile path");
-        let cli = fixture.join("provider");
-        fs::write(&cli, "#!/usr/bin/env sh\nprintf captured\n").expect("provider");
-        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).expect("provider mode");
-        let hostile_shell = hostile.join("sh");
-        fs::write(&hostile_shell, "#!/bin/sh\nprintf hostile\n").expect("hostile shell");
-        fs::set_permissions(&hostile_shell, fs::Permissions::from_mode(0o755))
-            .expect("hostile mode");
-        let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
-        let mut bound = identity.bound_command().expect("bound command");
-        let output = bound
-            .command_mut()
-            .env_clear()
-            .env("PATH", &hostile)
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("spawn captured interpreter")
-            .wait_with_output()
-            .expect("captured output");
-        assert!(output.status.success());
-        assert_eq!(output.stdout, b"captured");
-        fs::remove_dir_all(fixture).expect("cleanup");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn unsupported_shebang_arguments_fail_closed() {
-        let cli = executable("exit 0");
-        fs::write(&cli, "#!/usr/bin/env -S sh\nexit 0\n").expect("unsupported script");
-        assert_eq!(
-            executable_identity(cli.to_str().expect("path")).expect_err("unsupported"),
-            "Provider script interpreter is unsupported."
-        );
-        fs::remove_file(cli).expect("cleanup");
-    }
-}
+#[path = "agent_provider_process_tests.rs"]
+mod tests;

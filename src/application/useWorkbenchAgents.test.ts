@@ -193,6 +193,45 @@ describe("useWorkbenchAgents composition", () => {
     harness.unmount();
   });
 
+  it("reveals the production terminal route and excludes same-provider updates during sign-in", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false });
+    await waitForReact(() =>
+      expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(2),
+    );
+
+    act(() => {
+      expect(harness.hook().providerSignIn.request("claudeCode")).toBe(true);
+    });
+
+    expect(harness.revealTerminal).toHaveBeenCalledTimes(1);
+    expect(harness.hook().providerSignIn.terminalIntents.claudeCode).not.toBeNull();
+    expect(harness.hook().providerSignIn.terminalIntents.codex).toBeNull();
+    expect(harness.hook().providerManagement.providers.claudeCode.signInActive).toBe(true);
+    expect(harness.hook().providerManagement.providers.codex.signInActive).toBe(false);
+    harness.unmount();
+  });
+
+  it("reports a real post-sign-in probe rejection without claiming refresh completion", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false });
+    await waitForReact(() =>
+      expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(2),
+    );
+    act(() => expect(harness.hook().providerSignIn.request("claudeCode")).toBe(true));
+    const intent = harness.hook().providerSignIn.terminalIntents.claudeCode!;
+    await act(async () => harness.hook().providerSignIn.start(intent, { cols: 80, rows: 24 }));
+    harness.agentProviderGateway.probeAgentProviderHealth.mockRejectedValueOnce(
+      new Error("probe rejected"),
+    );
+
+    await act(async () => harness.hook().providerSignIn.settle(intent, 77, 0));
+
+    expect(harness.hook().providerSignIn.states.claudeCode).toMatchObject({
+      kind: "settled",
+      healthRefresh: "failed",
+    });
+    harness.unmount();
+  });
+
   it("re-registers provider ownership across workspace A to B to A replacements", async () => {
     const harness = renderWorkbenchAgents({ withProjectGateways: false });
     await waitForReact(() =>
@@ -933,6 +972,7 @@ function renderWorkbenchAgents(options: HarnessOptions) {
   };
 
   const reportError = vi.fn();
+  const revealTerminal = vi.fn();
   const agentProviderGateway = {
     currentAgentProviderPolicy: vi.fn(
       async ({ provider }: { provider: "claudeCode" | "codex" }) => ({
@@ -968,6 +1008,14 @@ function renderWorkbenchAgents(options: HarnessOptions) {
   });
   const workbenchOptions: WorkbenchAgentsOptions = {
     agentProviderGateway,
+    agentProviderSignInGateway: {
+      startAgentProviderSignIn: vi.fn(async (request) => ({
+        kind: "started" as const,
+        provider: request.provider,
+        providerGeneration: request.providerGeneration,
+        sessionId: 77,
+      })),
+    },
     agentTaskGateway: agent as unknown as AgentTaskGateway,
     agentThreadStoreGateway: threadStore,
     gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
@@ -1011,12 +1059,16 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     onActiveWorkspaceTrustChanged: activeTrustChanged,
     prompter: { confirm: () => true, prompt: () => null },
     reportError,
+    revealTerminal,
     setSettingsInitialSection: vi.fn(),
     setSettingsOpen: vi.fn(),
     get workspaceId() {
       return activeWorkspaceId;
     },
     workspaceRoot: ACTIVE_ROOT,
+    terminalGateway: {
+      stop: vi.fn(async (sessionId) => ({ kind: "stopped" as const, sessionId })),
+    },
     get workspaceTrust() {
       return activeWorkspaceTrust;
     },
@@ -1043,6 +1095,7 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     lease,
     refusedLeaseRoots,
     reportError,
+    revealTerminal,
     settingsGateway,
     startedRequests,
     trust,

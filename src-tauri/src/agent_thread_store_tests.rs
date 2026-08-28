@@ -60,9 +60,42 @@ fn settled_turn(turn_id: &str) -> AgentTurn {
         events_truncated: false,
         last_status_sequence: 1,
         last_output_sequence: 1,
+        stream_metrics: None,
         launch: None,
         cli_version: None,
     }
+}
+
+#[test]
+fn stream_metrics_are_backward_compatible_exact_and_bounded() {
+    let mut document = thread_document(ROOT_KEY, "agt-thread-0001", 10);
+    document.thread.turns[0].stream_metrics = Some(AgentTurnStreamMetrics {
+        received_utf8_bytes: 7,
+        complete: false,
+    });
+    let encoded = serde_json::to_value(&document).expect("serialize metrics");
+    let decoded: AgentThreadDocument =
+        serde_json::from_value(encoded.clone()).expect("deserialize metrics");
+    assert_eq!(decoded, document);
+
+    let mut legacy = encoded.clone();
+    legacy["thread"]["turns"][0]
+        .as_object_mut()
+        .expect("turn object")
+        .remove("streamMetrics");
+    let legacy: AgentThreadDocument =
+        serde_json::from_value(legacy).expect("deserialize legacy turn");
+    assert_eq!(legacy.thread.turns[0].stream_metrics, None);
+
+    let mut unknown = encoded;
+    unknown["thread"]["turns"][0]["streamMetrics"]["extra"] = json!(true);
+    assert!(serde_json::from_value::<AgentThreadDocument>(unknown).is_err());
+
+    document.thread.turns[0].stream_metrics = Some(AgentTurnStreamMetrics {
+        received_utf8_bytes: MAX_AGENT_STREAM_METRIC_BYTES + 1,
+        complete: true,
+    });
+    assert!(validate_agent_thread_document(ROOT_KEY, &document).is_err());
 }
 
 fn running_turn(turn_id: &str) -> AgentTurn {

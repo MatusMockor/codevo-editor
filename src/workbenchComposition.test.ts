@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { LiveDocumentRuntime } from "./application/liveDocumentRuntime";
 import { TauriIncrementalLanguageServerDocumentSyncGateway } from "./infrastructure/tauriIncrementalLanguageServerDocumentSyncGateway";
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
+import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
 import { createWorkbenchComposition, workbenchComposition } from "./workbenchComposition";
 
 describe("workbench live-document runtime composition", () => {
@@ -40,5 +41,7 @@ describe("workbench live-document runtime composition", () => {
 
     expect(first.agentProviderGateway).toBeInstanceOf(TauriAgentProviderGateway);
     expect(first.agentProviderGateway).not.toBe(second.agentProviderGateway);
+    expect(first.agentProviderSignInGateway).toBeInstanceOf(TauriAgentProviderSignInGateway);
+    expect(first.agentProviderSignInGateway).not.toBe(second.agentProviderSignInGateway);
   });
 });

@@ -60,6 +60,12 @@ pub(crate) fn shutdown_runtime_processes(
     js_test_batches: &js_test_run::batch::JsTestBatchRegistry,
 ) -> Result<(), String> {
     if let Some(provider_runtime) = app.try_state::<Arc<AgentProviderRuntimeRegistry>>() {
+        provider_runtime.close_operation_admission();
+    }
+    if let Some(supervisor) = app.try_state::<TerminalSupervisor>() {
+        supervisor.stop_all();
+    }
+    if let Some(provider_runtime) = app.try_state::<Arc<AgentProviderRuntimeRegistry>>() {
         if !provider_runtime.shutdown_operations(Duration::from_secs(2)) {
             return Err("Provider operations did not stop before shutdown.".to_string());
         }

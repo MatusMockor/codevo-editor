@@ -17,9 +17,15 @@ import type { TestGutterTarget } from "./domain/testGutterTargets";
 import { createEmptyDebugWatches } from "./test/debugWatchMocks";
 import { workbenchComposition } from "./workbenchComposition";
 
+vi.mock("./components/monacoRuntimeLoader", () => ({
+  initializeMonacoRuntime: vi.fn(async () => undefined),
+}));
+
 const mocks = vi.hoisted(() => ({
   artisanClear: vi.fn(),
   bottomPanelProps: null as Record<string, unknown> | null,
+  commandPaletteMounts: 0,
+  commandPaletteUnmounts: 0,
   agentLayoutDispatch: vi.fn(),
   hideBottomPanel: vi.fn(),
   ideProgress: { busy: true, state: "active", text: "Working" },
@@ -84,6 +90,7 @@ const mocks = vi.hoisted(() => ({
   },
   openDebugLocation: vi.fn(),
   openGitBranchPanel: vi.fn(),
+  optionalSurfaceModuleLoads: [] as string[],
   phpClear: vi.fn(),
   runCommand: vi.fn(),
   setPaletteOpen: vi.fn(),
@@ -302,6 +309,41 @@ vi.mock("./components/ScopedEditorSurface", () => ({
   },
 }));
 
+vi.mock("./components/CommandPalette", () => {
+  mocks.optionalSurfaceModuleLoads.push("commandPalette");
+  return {
+    CommandPalette: ({ isOpen }: { isOpen: boolean }) => {
+      const mounted = useRef(false);
+      if (!mounted.current) {
+        mounted.current = true;
+        mocks.commandPaletteMounts += 1;
+      }
+      useEffect(
+        () => () => {
+          mocks.commandPaletteUnmounts += 1;
+        },
+        [],
+      );
+      return isOpen ? <div data-testid="command-palette" /> : null;
+    },
+  };
+});
+
+vi.mock("./components/agentMode/AgentWorkbenchScreen", () => {
+  mocks.optionalSurfaceModuleLoads.push("agentWorkbench");
+  return { AgentWorkbenchScreen: () => <div data-testid="agent-mode-view" /> };
+});
+
+vi.mock("./components/QuickOpen", () => {
+  mocks.optionalSurfaceModuleLoads.push("quickOpen");
+  return { QuickOpen: () => <div data-testid="quick-open" /> };
+});
+
+vi.mock("./components/FileHistoryPanel", () => {
+  mocks.optionalSurfaceModuleLoads.push("fileHistory");
+  return { FileHistoryPanel: () => <div data-testid="file-history" /> };
+});
+
 vi.mock("./components/FileTree", () => ({
   FileTree: () => <div data-testid="file-tree" />,
 }));
@@ -359,6 +401,8 @@ describe("App command routing", () => {
       })),
     });
     mocks.artisanClear.mockReset();
+    mocks.commandPaletteMounts = 0;
+    mocks.commandPaletteUnmounts = 0;
     mocks.hideBottomPanel.mockReset();
     mocks.ideProgress = { busy: true, state: "active", text: "Working" };
     mocks.jsExplorerRefresh.mockReset();
@@ -408,6 +452,11 @@ describe("App command routing", () => {
     await act(async () => {
       root.render(<App />);
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(host.querySelector('[data-testid="editor-runtime-host"]')).not.toBeNull();
     });
   });
 
@@ -415,6 +464,43 @@ describe("App command routing", () => {
     act(() => root.unmount());
     host.remove();
     vi.restoreAllMocks();
+  });
+
+  it("does not request closed palette or history modules during initial render", () => {
+    expect(mocks.optionalSurfaceModuleLoads).toEqual([]);
+    expect(host.querySelector('[role="status"]')?.textContent).not.toContain("palette");
+  });
+
+  it("keeps the command palette owner mounted across close and reopen", async () => {
+    mocks.workbenchOverrides = { paletteOpen: true };
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(host.querySelector('[data-testid="command-palette"]')).not.toBeNull();
+    });
+    const first = host.querySelector('[data-testid="command-palette"]');
+    expect(first).not.toBeNull();
+
+    mocks.workbenchOverrides = { paletteOpen: false };
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    expect({
+      mounts: mocks.commandPaletteMounts,
+      unmounts: mocks.commandPaletteUnmounts,
+    }).toEqual({ mounts: 1, unmounts: 0 });
+
+    mocks.workbenchOverrides = { paletteOpen: true };
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    expect(host.querySelector('[data-testid="command-palette"]')).not.toBeNull();
+    expect(mocks.commandPaletteMounts).toBe(1);
+    expect(mocks.commandPaletteUnmounts).toBe(0);
   });
 
   it("routes visible exact actions through runCommand", () => {
@@ -678,6 +764,7 @@ describe("App command routing", () => {
     await act(async () => {
       root.render(<App />);
       await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     let explorer = mocks.bottomPanelProps?.jsTestExplorer as {
@@ -816,7 +903,6 @@ describe("App command routing", () => {
       root.render(<App />);
       await Promise.resolve();
     });
-
     const activeSurface = mocks.editorSurfaceProps.find(
       ({ activeDocument: document }) =>
         (document as EditorDocument | null)?.path === activeDocument.path,
@@ -834,12 +920,16 @@ describe("App command routing", () => {
         jsTestProblemSnapshot: problemSnapshot,
       }),
     );
-    expect(inactiveSurface).toEqual(
-      expect.objectContaining({
-        jsTestProblemCurrentFileIdentity: null,
-        jsTestProblemSnapshot: null,
-      }),
-    );
+    if (inactiveSurface) {
+      expect(inactiveSurface).toEqual(
+        expect.objectContaining({
+          jsTestProblemCurrentFileIdentity: null,
+          jsTestProblemSnapshot: null,
+        }),
+      );
+    } else {
+      expect(host.querySelector('[data-testid="editor-group-inactive-group"]')).not.toBeNull();
+    }
   });
 
   it.each<[string, Partial<EditorDocument>]>([

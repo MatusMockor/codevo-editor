@@ -16,12 +16,17 @@ import {
 } from "../domain/terminalTabSet";
 import type { TerminalTheme } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
+import type {
+  AgentProviderSignInSurface,
+  AgentProviderSignInTerminalIntent,
+} from "../application/useAgentProviderSignIn";
 import { TerminalPanel } from "./TerminalPanel";
 
 interface TerminalRuntime {
   readonly cwd: string | null;
   readonly profileId: string | null;
   readonly sessionId: number | null;
+  readonly signInIntent?: AgentProviderSignInTerminalIntent;
 }
 
 export interface TerminalTabsPanelProps {
@@ -34,6 +39,7 @@ export interface TerminalTabsPanelProps {
   readonly shellIntegrationEnabled: boolean;
   readonly terminalGateway: TerminalGateway;
   readonly terminalTheme: TerminalTheme;
+  readonly providerSignIn?: AgentProviderSignInSurface;
   onActiveCwdChange?(cwd: string | null): void;
   onActiveProfileChange?(profileId: string | null): void;
   onActiveSessionReady?(sessionId: number | null): void;
@@ -98,7 +104,9 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
 
   const publishActive = (tabId: string | null, source = runtimeRef.current) => {
     const current = tabId ? source.get(tabId) : null;
-    onActiveSessionReadyRef.current?.(current?.sessionId ?? null);
+    onActiveSessionReadyRef.current?.(
+      current?.signInIntent === undefined ? (current?.sessionId ?? null) : null,
+    );
     onActiveCwdChangeRef.current?.(current?.cwd ?? null);
     onActiveProfileChangeRef.current?.(current?.profileId ?? null);
   };
@@ -174,7 +182,8 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
     const tabId = activeTabIdRef.current;
     if (!tabId || !liveTabIdsRef.current.has(tabId)) return;
     const current = runtimeRef.current.get(tabId);
-    if (!current || current.profileId === props.profileId) return;
+    if (!current || current.signInIntent !== undefined || current.profileId === props.profileId)
+      return;
     const next = new Map(runtimeRef.current);
     next.set(tabId, {
       cwd: null,
@@ -186,6 +195,45 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
     onActiveSessionReadyRef.current?.(null);
     onActiveCwdChangeRef.current?.(null);
   }, [props.profileId]);
+
+  useEffect(() => {
+    if (!props.providerSignIn) return;
+    for (const provider of ["claudeCode", "codex"] as const) {
+      const intent = props.providerSignIn.terminalIntents[provider];
+      if (intent === null) continue;
+      const id = signInTabId(intent);
+      if (liveTabIdsRef.current.has(id)) continue;
+      if (liveTabIdsRef.current.size >= MAX_TERMINAL_TABS) {
+        const evictedTabId = [...tabs.mruTabIds]
+          .reverse()
+          .find(
+            (tabId) =>
+              liveTabIdsRef.current.has(tabId) &&
+              signInTabIsEvictable(runtimeRef.current.get(tabId), props.providerSignIn),
+          );
+        if (!evictedTabId) continue;
+        liveTabIdsRef.current.delete(evictedTabId);
+        updateRuntime(evictedTabId, () => undefined);
+        dispatch({ ownerKey: props.ownerKey, tabId: evictedTabId, type: "close" });
+      }
+      const tab = createTerminalTab(
+        id,
+        provider === "claudeCode" ? "Claude sign-in" : "Codex sign-in",
+      );
+      if (!tab) continue;
+      liveTabIdsRef.current.add(id);
+      activeTabIdRef.current = id;
+      updateRuntime(id, () => ({
+        cwd: null,
+        profileId: null,
+        sessionId: null,
+        signInIntent: intent,
+      }));
+      onActiveSessionReadyRef.current?.(null);
+      onActiveCwdChangeRef.current?.(null);
+      dispatch({ ownerKey: props.ownerKey, tab, type: "create" });
+    }
+  }, [props.ownerKey, props.providerSignIn, props.providerSignIn?.terminalIntents, tabs.mruTabIds]);
 
   return (
     <section aria-label="Terminal tabs" style={styles.shell}>
@@ -214,7 +262,10 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
                 </button>
                 <button
                   aria-label={`Close ${tab.title}`}
-                  disabled={tabs.tabs.length === 1}
+                  disabled={
+                    tabs.tabs.length === 1 ||
+                    signInTabIsAwaitingSession(runtime.get(tab.id), props.providerSignIn)
+                  }
                   onClick={() => close(tab.id)}
                   style={styles.close}
                   type="button"
@@ -265,11 +316,35 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
                 updateRuntime(tab.id, (previous) =>
                   previous ? { ...previous, sessionId } : undefined,
                 );
-                if (activeTabIdRef.current === tab.id) onActiveSessionReadyRef.current?.(sessionId);
+                if (activeTabIdRef.current === tab.id) {
+                  onActiveSessionReadyRef.current?.(
+                    metadata?.signInIntent === undefined ? sessionId : null,
+                  );
+                }
               }}
               panelId={`${tab.id}-panel`}
               profileId={metadata?.profileId ?? null}
               rootPath={props.rootPath}
+              semanticSession={
+                metadata?.signInIntent && props.providerSignIn
+                  ? {
+                      key: signInTabId(metadata.signInIntent),
+                      cancelStart: () => props.providerSignIn!.cancelStart(metadata.signInIntent!),
+                      start: async (size) => {
+                        const result = await props.providerSignIn!.start(
+                          metadata.signInIntent!,
+                          size,
+                        );
+                        if (result?.kind !== "started") {
+                          throw new Error("Provider sign-in terminal did not start.");
+                        }
+                        return { kind: "starting", sessionId: result.sessionId };
+                      },
+                      settle: (sessionId, exitCode) =>
+                        props.providerSignIn!.settle(metadata.signInIntent!, sessionId, exitCode),
+                    }
+                  : undefined
+              }
               shellIntegrationEnabled={props.shellIntegrationEnabled}
               terminalGateway={props.terminalGateway}
               terminalTheme={props.terminalTheme}
@@ -278,6 +353,50 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
         })}
       </div>
     </section>
+  );
+}
+
+function signInTabId(intent: AgentProviderSignInTerminalIntent): string {
+  return `provider-sign-in-${intent.provider}-${intent.intentId}`;
+}
+
+function signInTabIsAwaitingSession(
+  runtime: TerminalRuntime | undefined,
+  providerSignIn: AgentProviderSignInSurface | undefined,
+): boolean {
+  const intent = runtime?.signInIntent;
+  if (intent === undefined || runtime?.sessionId !== null) return false;
+  const state = providerSignIn?.states[intent.provider];
+  const currentIntent = providerSignIn?.terminalIntents[intent.provider];
+  return (
+    currentIntent !== null &&
+    currentIntent !== undefined &&
+    signInIntentsAreEqual(currentIntent, intent) &&
+    (state?.kind === "starting" || state?.kind === "running") &&
+    state.providerGeneration === intent.providerGeneration
+  );
+}
+
+function signInTabIsEvictable(
+  runtime: TerminalRuntime | undefined,
+  providerSignIn: AgentProviderSignInSurface | undefined,
+): boolean {
+  const intent = runtime?.signInIntent;
+  if (intent === undefined) return true;
+  if (providerSignIn === undefined) return false;
+  const currentIntent = providerSignIn.terminalIntents[intent.provider];
+  return currentIntent === null || !signInIntentsAreEqual(currentIntent, intent);
+}
+
+function signInIntentsAreEqual(
+  current: AgentProviderSignInTerminalIntent,
+  candidate: AgentProviderSignInTerminalIntent,
+): boolean {
+  return (
+    current.intentId === candidate.intentId &&
+    current.provider === candidate.provider &&
+    current.providerGeneration === candidate.providerGeneration &&
+    current.revision === candidate.revision
   );
 }
 

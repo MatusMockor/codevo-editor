@@ -13,9 +13,9 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const WORKSPACE_ROOT: &str = "/workspace";
@@ -213,13 +213,24 @@ fn revoking_a_watch_does_not_wait_for_a_blocking_emitter() {
             )],
         });
     });
+    let mut publish_thread = TestThreadJoinGuard::new(publish_thread);
     emitter.wait_until_entered();
 
-    let started = Instant::now();
-    authority.revoke();
+    let (revoked_tx, revoked_rx) = std::sync::mpsc::channel();
+    let revoke_authority = Arc::clone(&authority);
+    let revoke_thread = std::thread::spawn(move || {
+        revoke_authority.revoke();
+        revoked_tx.send(()).expect("revoke completion");
+    });
+    let mut revoke_thread = TestThreadJoinGuard::new(revoke_thread);
+    let release_guard = BlockingEmitterReleaseGuard(emitter.clone());
 
-    assert!(started.elapsed() < Duration::from_millis(100));
-    publish_thread.join().expect("publish thread");
+    revoked_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("watch revocation waited for the independently blocked emitter");
+    revoke_thread.join("revoke thread");
+    release_guard.0.release();
+    publish_thread.join("publish thread");
 }
 
 #[test]
@@ -890,27 +901,76 @@ impl WorkspaceFileChangeEmitter for PartialEmitter {
     }
 }
 
+#[derive(Default)]
+struct BlockingEmitterState {
+    entered: bool,
+    released: bool,
+}
+
 #[derive(Clone, Default)]
 struct BlockingEmitter {
-    entered: Arc<AtomicBool>,
+    state: Arc<(Mutex<BlockingEmitterState>, Condvar)>,
+}
+
+struct BlockingEmitterReleaseGuard(BlockingEmitter);
+
+impl Drop for BlockingEmitterReleaseGuard {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+struct TestThreadJoinGuard(Option<std::thread::JoinHandle<()>>);
+
+impl TestThreadJoinGuard {
+    fn new(thread: std::thread::JoinHandle<()>) -> Self {
+        Self(Some(thread))
+    }
+
+    fn join(&mut self, label: &str) {
+        if let Some(thread) = self.0.take() {
+            thread.join().unwrap_or_else(|_| panic!("{label} panicked"));
+        }
+    }
+}
+
+impl Drop for TestThreadJoinGuard {
+    fn drop(&mut self) {
+        if let Some(thread) = self.0.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl BlockingEmitter {
     fn wait_until_entered(&self) {
-        for _ in 0..100 {
-            if self.entered.load(Ordering::Acquire) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(5));
+        let (lock, gate) = &*self.state;
+        let state = lock.lock().expect("blocking emitter state");
+        let (state, _timeout) = gate
+            .wait_timeout_while(state, Duration::from_secs(5), |state| !state.entered)
+            .expect("blocking emitter entered gate");
+        assert!(state.entered, "blocking emitter was not entered");
+    }
+
+    fn release(&self) {
+        let (lock, gate) = &*self.state;
+        {
+            let mut state = lock.lock().expect("blocking emitter state");
+            state.released = true;
         }
-        panic!("blocking emitter was not entered");
+        gate.notify_all();
     }
 }
 
 impl WorkspaceFileChangeEmitter for BlockingEmitter {
     fn emit_file_changes(&self, _payloads: &[WorkspaceFileChangedPayload]) -> Result<(), usize> {
-        self.entered.store(true, Ordering::Release);
-        std::thread::sleep(Duration::from_millis(250));
+        let (lock, gate) = &*self.state;
+        let mut state = lock.lock().expect("blocking emitter state");
+        state.entered = true;
+        gate.notify_all();
+        let _state = gate
+            .wait_while(state, |state| !state.released)
+            .expect("blocking emitter release gate");
         Ok(())
     }
 }

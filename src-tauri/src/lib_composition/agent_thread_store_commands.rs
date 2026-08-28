@@ -219,6 +219,7 @@ mod tests {
                     events_truncated: false,
                     last_status_sequence: 0,
                     last_output_sequence: 0,
+                    stream_metrics: None,
                     launch: None,
                     cli_version: None,
                 }],

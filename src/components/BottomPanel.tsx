@@ -13,6 +13,7 @@ import type {
 import type { IndexHealthLogEntry, IndexProgressState } from "../domain/indexProgress";
 import type { TerminalTheme } from "../domain/settings";
 import type { TerminalGateway, TerminalProfile } from "../domain/terminal";
+import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import { IndexHealthPanel } from "./IndexHealthPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
 import { GitHistoryPanel } from "./GitHistoryPanel";
@@ -115,6 +116,7 @@ interface BottomPanelProps {
   terminalOwnerKey?: string | null;
   terminalShellIntegrationEnabled: boolean;
   terminalTheme: TerminalTheme;
+  providerSignIn?: AgentProviderSignInSurface;
   workspaceTrusted: boolean;
   workspacePackageDiscovery?: ProblemsWorkspacePackageDiscovery;
   workspaceRoot: string | null;
@@ -197,6 +199,7 @@ export function BottomPanel({
   terminalOwnerKey = null,
   terminalShellIntegrationEnabled,
   terminalTheme,
+  providerSignIn,
   workspaceTrusted,
   workspacePackageDiscovery,
   workspaceRoot,
@@ -451,11 +454,7 @@ export function BottomPanel({
       </header>
       <div className="bottom-panel-body">
         {search ? (
-          <div
-            aria-label="Search"
-            hidden={effectiveActiveView !== "search"}
-            role="tabpanel"
-          >
+          <div aria-label="Search" hidden={effectiveActiveView !== "search"} role="tabpanel">
             {search}
           </div>
         ) : null}
@@ -514,6 +513,7 @@ export function BottomPanel({
               rootPath={workspaceRoot}
               terminalGateway={terminalGateway}
               terminalTheme={terminalTheme}
+              providerSignIn={providerSignIn}
             />
           </Suspense>
         ) : null}

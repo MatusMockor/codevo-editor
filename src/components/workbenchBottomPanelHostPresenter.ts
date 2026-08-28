@@ -35,7 +35,7 @@ export type BottomPanelHostWorkbench = Pick<
   | "workspaceDescriptor"
   | "workspacePackageDiscovery"
   | "workspaceRoot"
->;
+> & { readonly agents?: Pick<Workbench["agents"], "providerSignIn"> };
 
 export interface BottomPanelHostGateways {
   readonly gitHistoryGateway: BottomPanelHostProps["gitHistoryGateway"];
@@ -119,6 +119,7 @@ export function workbenchBottomPanelHostProps(input: BottomPanelHostInput): Bott
     terminalOwnerKey: input.terminalOwnerKey,
     terminalShellIntegrationEnabled: workbench.appSettings.terminalShellIntegrationEnabled,
     terminalTheme: input.terminalTheme,
+    providerSignIn: workbench.agents?.providerSignIn,
     workspacePackageDiscovery: workbench.workspacePackageDiscovery,
     workspaceRoot: workbench.workspaceRoot,
     workspaceTrusted: input.workspaceTrusted,

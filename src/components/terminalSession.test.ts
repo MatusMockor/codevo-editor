@@ -559,6 +559,71 @@ describe("createTerminalSession", () => {
       "Open a trusted workspace to start a terminal.\r\n",
     );
   });
+
+  it("attaches a pre-authorized semantic session and reports its exact settlement", async () => {
+    const startSession = vi.fn(async () => ({ kind: "starting" as const, sessionId: 91 }));
+    const onSessionReady = vi.fn();
+    const onSessionSettled = vi.fn();
+    const harness = terminalHarness({
+      onSessionReady,
+      onSessionSettled,
+      rootPath: null,
+      startSession,
+    });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+
+    expect(startSession).toHaveBeenCalledExactlyOnceWith({ cols: 80, rows: 24 });
+    expect(harness.gateway.start).not.toHaveBeenCalled();
+    expect(harness.gateway.acknowledgeStart).toHaveBeenCalledExactlyOnceWith(91);
+    expect(onSessionReady).toHaveBeenCalledWith(91);
+
+    harness.emitStatus({ kind: "exited", sessionId: 91, exitCode: 0 });
+    expect(onSessionSettled).toHaveBeenCalledExactlyOnceWith(91, 0);
+    expect(onSessionReady).toHaveBeenLastCalledWith(null);
+  });
+
+  it("settles a semantic session fail-closed when start acknowledgement fails", async () => {
+    const onSessionSettled = vi.fn();
+    const harness = terminalHarness({
+      onSessionSettled,
+      startSession: vi.fn(async () => ({ kind: "starting" as const, sessionId: 92 })),
+    });
+    vi.mocked(harness.gateway.acknowledgeStart).mockRejectedValueOnce(new Error("disconnected"));
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+
+    expect(harness.gateway.stop).toHaveBeenCalledWith(92);
+    expect(onSessionSettled).toHaveBeenCalledExactlyOnceWith(92, null);
+  });
+
+  it.each(["output", "status"] as const)(
+    "cancels semantic startup when the %s subscription rejects",
+    async (subscription) => {
+      const onSessionStartFailed = vi.fn();
+      const startSession = vi.fn(async () => ({ kind: "starting" as const, sessionId: 93 }));
+      const harness = terminalHarness({ onSessionStartFailed, startSession });
+      if (subscription === "output") {
+        vi.mocked(harness.gateway.subscribeOutput).mockRejectedValueOnce(
+          new Error("output denied"),
+        );
+      } else {
+        vi.mocked(harness.gateway.subscribeStatus!).mockRejectedValueOnce(
+          new Error("status denied"),
+        );
+      }
+
+      createTerminalSession(harness.options);
+      await harness.flushAsync();
+
+      expect(startSession).not.toHaveBeenCalled();
+      expect(onSessionStartFailed).toHaveBeenCalledTimes(1);
+      if (subscription === "output") expect(harness.unsubscribeStatus).toHaveBeenCalledTimes(1);
+      else expect(harness.unsubscribeOutput).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 function terminalHarness(
@@ -566,9 +631,12 @@ function terminalHarness(
     onCwdChange: (cwd: string | null) => void;
     onOpenLink: (path: string, line?: number, column?: number) => void;
     onSessionReady: (sessionId: number | null) => void;
+    onSessionSettled: (sessionId: number, exitCode: number | null) => void;
+    onSessionStartFailed: () => void;
     platform: KeymapPlatform;
     rootPath: string | null;
     shellIntegrationEnabled: boolean;
+    startSession: (size: { cols: number; rows: number }) => Promise<TerminalRuntimeStatus>;
   }> = {},
 ) {
   let resizeCallback: ResizeObserverCallback | null = null;
@@ -772,10 +840,13 @@ function terminalHarness(
       onCwdChange: overrides.onCwdChange,
       onOpenLink: overrides.onOpenLink,
       onSessionReady: overrides.onSessionReady,
+      onSessionSettled: overrides.onSessionSettled,
+      onSessionStartFailed: overrides.onSessionStartFailed,
       platform: overrides.platform,
       profileId: "default",
       rootPath: "rootPath" in overrides ? (overrides.rootPath ?? null) : "/workspace",
       shellIntegrationEnabled: overrides.shellIntegrationEnabled ?? false,
+      startSession: overrides.startSession,
       scheduleFrame: (callback: FrameRequestCallback) => {
         frameCallbacks.push(callback);
         return frameCallbacks.length;
@@ -796,6 +867,8 @@ function terminalHarness(
       } as KeyboardEvent),
     resizeDisposable,
     resizeObserver,
+    unsubscribeOutput,
+    unsubscribeStatus,
     startSession: async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       for (const callback of frameCallbacks.splice(0)) {
@@ -825,8 +898,6 @@ function terminalHarness(
       });
       return provided;
     },
-    unsubscribeOutput,
-    unsubscribeStatus,
   };
 }
 

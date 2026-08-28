@@ -6,6 +6,9 @@ export const MAX_AGENT_PROVIDER_AUTH_LABEL_BYTES = 256;
 export const MIN_AGENT_PROVIDER_OPERATION_ID_BYTES = 8;
 export const MAX_AGENT_PROVIDER_OPERATION_ID_BYTES = 128;
 export const MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES = 32 * 1024;
+export const MAX_AGENT_PROVIDER_UPDATE_PROGRESS_DATA_BYTES = 4 * 1024;
+export const MAX_AGENT_PROVIDER_UPDATE_PROGRESS_EVENTS = 4_096;
+export const MAX_AGENT_PROVIDER_UPDATE_OBSERVED_BYTES = 1024 * 1024;
 
 export type ClaudeAuthStatusCapability = "json" | "text" | "unavailable";
 
@@ -194,7 +197,28 @@ export type AgentProviderUpdateState =
 
 export interface AgentProviderUpdateGateway {
   updateAgentProvider(request: AgentProviderUpdateRequest): Promise<AgentProviderUpdateResult>;
+  subscribeAgentProviderUpdateProgress?(
+    listener: (event: AgentProviderUpdateProgressEvent) => void,
+    onError: (error: unknown) => void,
+  ): Promise<() => void>;
 }
+
+export interface AgentProviderUpdateProgressEvent extends AgentProviderUpdateRequest {
+  readonly sequence: number;
+  readonly stream: "stdout" | "stderr";
+  readonly data: AgentProviderUpdateActivityProjection;
+  readonly truncated: boolean;
+  readonly redacted: true;
+}
+
+export type AgentProviderUpdateActivityProjection =
+  | `Installer stdout activity: ${number} bytes.`
+  | `Installer stderr activity: ${number} bytes.`
+  | "Additional installer activity withheld.";
+
+const AGENT_PROVIDER_UPDATE_WITHHELD_ACTIVITY = "Additional installer activity withheld." as const;
+const AGENT_PROVIDER_UPDATE_ACTIVITY_PATTERN =
+  /^Installer (stdout|stderr) activity: ([1-9][0-9]{0,3}) bytes\.$/;
 
 export function validateAgentProviderPolicyRegistrationRequest(
   value: unknown,
@@ -321,19 +345,124 @@ export function parseAgentProviderUpdateResult(value: unknown): AgentProviderUpd
     if (reason === "outputLimitExceeded" && !outputTruncated) {
       return invalid("result.outputTruncated", "expected true after output cap exhaustion");
     }
+    if (reason !== "outputLimitExceeded" && outputTruncated) {
+      return invalid("result.outputTruncated", "expected false without output cap exhaustion");
+    }
     return {
       kind: "failed",
       reason,
-      outputTail: boundedString(
-        result.outputTail,
-        MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES,
-        "result.outputTail",
-        true,
-      ),
+      outputTail: parseAgentProviderUpdateOutputSummary(result.outputTail),
       outputTruncated,
     };
   }
   return invalid("result.kind", "expected succeeded or failed");
+}
+
+function parseAgentProviderUpdateOutputSummary(value: unknown): string {
+  const outputTail = boundedString(
+    value,
+    MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES,
+    "result.outputTail",
+  );
+  const match =
+    /^Installer output withheld \(stdout: (0|[1-9][0-9]*) bytes, stderr: (0|[1-9][0-9]*) bytes\)\.$/.exec(
+      outputTail,
+    );
+  if (match === null) {
+    return invalid("result.outputTail", "expected an opaque installer output summary");
+  }
+  const stdoutBytes = Number(match[1]);
+  const stderrBytes = Number(match[2]);
+  if (
+    !Number.isSafeInteger(stdoutBytes) ||
+    !Number.isSafeInteger(stderrBytes) ||
+    stdoutBytes > MAX_AGENT_PROVIDER_UPDATE_OBSERVED_BYTES ||
+    stderrBytes > MAX_AGENT_PROVIDER_UPDATE_OBSERVED_BYTES ||
+    stdoutBytes + stderrBytes > MAX_AGENT_PROVIDER_UPDATE_OBSERVED_BYTES
+  ) {
+    return invalid(
+      "result.outputTail",
+      `expected at most ${MAX_AGENT_PROVIDER_UPDATE_OBSERVED_BYTES} observed bytes`,
+    );
+  }
+  return outputTail;
+}
+
+export function parseAgentProviderUpdateProgressEvent(
+  value: unknown,
+): AgentProviderUpdateProgressEvent {
+  const event = object(value, "event");
+  exactKeys(
+    event,
+    [
+      "provider",
+      "providerGeneration",
+      "operationId",
+      "sequence",
+      "stream",
+      "data",
+      "truncated",
+      "redacted",
+    ],
+    "event",
+  );
+  const sequence = positiveInteger(event.sequence, "event.sequence");
+  if (sequence > MAX_AGENT_PROVIDER_UPDATE_PROGRESS_EVENTS) {
+    return invalid(
+      "event.sequence",
+      `expected at most ${MAX_AGENT_PROVIDER_UPDATE_PROGRESS_EVENTS}`,
+    );
+  }
+  if (event.stream !== "stdout" && event.stream !== "stderr") {
+    return invalid("event.stream", "expected stdout or stderr");
+  }
+  const redacted = bool(event.redacted, "event.redacted");
+  if (!redacted) return invalid("event.redacted", "expected opaque installer activity");
+  const truncated = bool(event.truncated, "event.truncated");
+  const data = boundedString(
+    event.data,
+    MAX_AGENT_PROVIDER_UPDATE_PROGRESS_DATA_BYTES,
+    "event.data",
+  );
+  if (data === AGENT_PROVIDER_UPDATE_WITHHELD_ACTIVITY) {
+    if (!truncated) return invalid("event.truncated", "expected true for withheld activity");
+  } else {
+    const activity = AGENT_PROVIDER_UPDATE_ACTIVITY_PATTERN.exec(data);
+    if (activity === null) return invalid("event.data", "expected opaque installer activity");
+    if (activity[1] !== event.stream) {
+      return invalid("event.data", "expected activity for the declared stream");
+    }
+    const byteCount = Number(activity[2]);
+    if (byteCount > MAX_AGENT_PROVIDER_UPDATE_PROGRESS_DATA_BYTES) {
+      return invalid(
+        "event.data",
+        `expected activity for at most ${MAX_AGENT_PROVIDER_UPDATE_PROGRESS_DATA_BYTES} bytes`,
+      );
+    }
+    if (truncated) return invalid("event.truncated", "expected false for bounded activity");
+  }
+  return {
+    provider: provider(event.provider, "event.provider"),
+    providerGeneration: positiveInteger(event.providerGeneration, "event.providerGeneration"),
+    operationId: operationId(event.operationId, "event.operationId"),
+    sequence,
+    stream: event.stream,
+    data: data as AgentProviderUpdateActivityProjection,
+    truncated,
+    redacted,
+  };
+}
+
+export function appendAgentProviderUpdateOutputTail(current: string, addition: string): string {
+  const combined = `${current}${addition}`;
+  const bytes = new TextEncoder().encode(combined);
+  if (bytes.byteLength <= MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES) return combined;
+  const minimumStart = bytes.byteLength - MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES;
+  const nextLineBreak = bytes.indexOf(0x0a, minimumStart);
+  const retained = bytes.slice(nextLineBreak < 0 ? minimumStart : nextLineBreak + 1);
+  let start = 0;
+  while (start < retained.byteLength && (retained[start] & 0xc0) === 0x80) start += 1;
+  return new TextDecoder().decode(retained.slice(start));
 }
 
 function generationRequest(value: unknown, path: string): AgentProviderGenerationRequest {

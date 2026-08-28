@@ -44,6 +44,11 @@ import {
   editorQaBridgeEnabled,
 } from "./editorQaBridge";
 
+const monacoRuntimeMocks = vi.hoisted(() => ({ ready: Promise.resolve() }));
+vi.mock("./monacoRuntimeLoader", () => ({
+  initializeMonacoRuntime: vi.fn(() => monacoRuntimeMocks.ready),
+}));
+
 interface FakeModel {
   getAlternativeVersionId?: ReturnType<typeof vi.fn>;
   deltaDecorations?: ReturnType<typeof vi.fn>;

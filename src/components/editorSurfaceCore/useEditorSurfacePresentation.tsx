@@ -1,8 +1,9 @@
-import Editor, { type OnMount } from "@monaco-editor/react";
+import type { OnMount } from "@monaco-editor/react";
 import { ChevronDown, ChevronUp, RotateCcw, X } from "lucide-react";
 import {
   useCallback,
   useMemo,
+  Suspense,
   type Dispatch,
   type MutableRefObject,
   type ReactElement,
@@ -54,6 +55,16 @@ import { SurroundWithPicker } from "../SurroundWithPicker";
 import { applySurroundWith, type SurroundWithRequest } from "./editorCommands";
 import { getTabId, getTabPanelId } from "../tabIds";
 import type { LargeSmartDocumentPresentationMode } from "./useLargeSmartDocumentMetricsLifecycle";
+import { initializeMonacoRuntime } from "../monacoRuntimeLoader";
+import { retryableLazy } from "../retryableLazy";
+
+const LazyMonacoEditor = retryableLazy<
+  import("react").ComponentProps<typeof import("@monaco-editor/react").default>
+>(async () => {
+  await initializeMonacoRuntime();
+  const module = await import("@monaco-editor/react");
+  return { default: module.default };
+}, "editor");
 
 interface EditorSurfacePresentationOptions {
   readonly activateEditorGroupFromInteraction: () => void;
@@ -392,27 +403,29 @@ export function useEditorSurfacePresentation({
           {largeDocumentNotice}
         </div>
       ) : null}
-      <Editor
-        beforeMount={handleBeforeMount}
-        height="100%"
-        keepCurrentModel
-        language={activeDocument?.language ?? PLACEHOLDER_LANGUAGE}
-        loading={EDITOR_LOADING_PLACEHOLDER}
-        onMount={handleMount}
-        options={editorOptions}
-        path={editorSurfaceModelPath(workspaceRoot, activeDocument, PLACEHOLDER_PATH)}
-        theme={beforeMountTheme}
-        value={editorSurfaceControlledValue(
-          runtime,
-          groupId,
-          activeDocument && monaco
-            ? modelForPath(monaco, workspaceRoot, activeDocument.path)
-            : null,
-          activeDocument,
-          activeDocumentContentReady,
-          isOpeningFile,
-        )}
-      />
+      <Suspense fallback={EDITOR_LOADING_PLACEHOLDER}>
+        <LazyMonacoEditor
+          beforeMount={handleBeforeMount}
+          height="100%"
+          keepCurrentModel
+          language={activeDocument?.language ?? PLACEHOLDER_LANGUAGE}
+          loading={EDITOR_LOADING_PLACEHOLDER}
+          onMount={handleMount}
+          options={editorOptions}
+          path={editorSurfaceModelPath(workspaceRoot, activeDocument, PLACEHOLDER_PATH)}
+          theme={beforeMountTheme}
+          value={editorSurfaceControlledValue(
+            runtime,
+            groupId,
+            activeDocument && monaco
+              ? modelForPath(monaco, workspaceRoot, activeDocument.path)
+              : null,
+            activeDocument,
+            activeDocumentContentReady,
+            isOpeningFile,
+          )}
+        />
+      </Suspense>
       {overlay}
       <EditorBreakpointGutterMenu
         actions={breakpointActions}

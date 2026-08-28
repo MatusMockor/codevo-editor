@@ -7,12 +7,19 @@ import type {
   AgentProviderCurrentPolicyResult,
   AgentProviderHealthProbeResult,
   AgentProviderPolicyRegistrationRequest,
+  AgentProviderUpdateProgressEvent,
+  AgentProviderUpdateGateway,
   AgentProviderUpdateResult,
 } from "../domain/agentProviderHealth";
 import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
 import type { AgentCliKind } from "../domain/agentTask";
 import { defaultAppSettings, type AppSettings } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
+import { AgentProviderSettingsCard } from "../components/AgentProviderSettingsCard";
+import {
+  TauriAgentProviderGateway,
+  type ListenToAgentProviderUpdateProgress,
+} from "../infrastructure/tauriAgentProviderGateway";
 import {
   useAgentProviderManagement,
   type AgentProviderManagementDependencies,
@@ -29,6 +36,7 @@ interface Deferred<T> {
 }
 
 interface Harness {
+  readonly container: HTMLDivElement;
   readonly settings: () => AppSettings;
   readonly hook: () => AgentProviderManagementSurface;
   readonly dependencies: AgentProviderManagementDependencies;
@@ -622,7 +630,7 @@ describe("useAgentProviderManagement", () => {
         updateAgentProvider: vi.fn(async () => ({
           kind: "failed" as const,
           reason: "uncertain" as const,
-          outputTail: "",
+          outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
           outputTruncated: false,
         })),
       },
@@ -888,6 +896,574 @@ describe("useAgentProviderManagement", () => {
     harness.unmount();
   });
 
+  it("refuses only the provider whose sign-in session is active", async () => {
+    const settings = configuredSettings();
+    settings.agentProviderPreferences = {
+      claudeCode: {
+        ...defaultAgentProviderPreferences().claudeCode,
+        checkForUpdates: true,
+      },
+      codex: {
+        ...defaultAgentProviderPreferences().codex,
+        checkForUpdates: true,
+      },
+    };
+    const harness = renderManagement(settings);
+    harness.replaceDependencies({ signInActive: (provider) => provider === "claudeCode" });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    await settleHealth(harness, 1, codexAvailableHealth("2.0.0", "2.1.0"));
+
+    expect(harness.hook().providers.claudeCode.signInActive).toBe(true);
+    expect(harness.hook().providers.codex.signInActive).toBe(false);
+    await expect(harness.hook().update("claudeCode", "1.1.0")).resolves.toBe("signInActive");
+    await expect(harness.hook().update("codex", "2.1.0")).resolves.toBeNull();
+    expect(harness.dependencies.updateGateway.updateAgentProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "codex" }),
+    );
+    harness.unmount();
+  });
+
+  it("does not let another provider's live turn block an available update", async () => {
+    const harness = renderManagement(configuredSettings(), (provider) =>
+      provider === "codex" ? 1 : 0,
+    );
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockResolvedValueOnce({
+      kind: "failed",
+      reason: "admissionRefused",
+      outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
+      outputTruncated: false,
+    });
+
+    let update!: Promise<unknown>;
+    await act(async () => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+      await expect(update).resolves.toBeNull();
+    });
+
+    expect(harness.dependencies.updateGateway.updateAgentProvider).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("publishes a bounded failed update tail without re-probing", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockResolvedValueOnce({
+      kind: "failed",
+      reason: "exited",
+      outputTail: "Installer output withheld (stdout: 42 bytes, stderr: 17 bytes).",
+      outputTruncated: false,
+    });
+
+    let update!: Promise<unknown>;
+    await act(async () => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+      await expect(update).resolves.toBeNull();
+    });
+
+    expect(harness.hook().providers.claudeCode.updateState).toEqual({
+      kind: "failed",
+      reason: "exited",
+      outputTail: "Installer output withheld (stdout: 42 bytes, stderr: 17 bytes).\n",
+      outputTruncated: true,
+    });
+    expect(harness.hook().toast).toEqual({ kind: "updateFailed", provider: "claudeCode" });
+    expect(harness.healthCalls).toHaveLength(2);
+    harness.unmount();
+  });
+
+  it("subscribes before IPC, streams exact ordered progress, and retains the failure tail", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    const calls: string[] = [];
+    const result = deferred<AgentProviderUpdateResult>();
+    const unlisten = vi.fn(() => calls.push("unlisten"));
+    let listener: ((event: AgentProviderUpdateProgressEvent) => void) | null = null;
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockImplementationOnce(
+      async () => {
+        calls.push("invoke");
+        return result.promise;
+      },
+    );
+    harness.dependencies.updateGateway.subscribeAgentProviderUpdateProgress = vi.fn(
+      async (next) => {
+        calls.push("listen");
+        listener = next;
+        return unlisten;
+      },
+    );
+
+    let update!: Promise<unknown>;
+    act(() => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+    });
+    await waitForReact(() => expect(calls).toEqual(["listen", "invoke"]));
+    expect(harness.hook().providers.claudeCode.updateState.kind).toBe("running");
+
+    act(() => {
+      listener?.({
+        provider: "codex",
+        providerGeneration: 1,
+        operationId: "claudeCode-update",
+        sequence: 1,
+        stream: "stdout",
+        data: "Installer stdout activity: 17 bytes.",
+        truncated: false,
+        redacted: true,
+      });
+      listener?.({
+        provider: "claudeCode",
+        providerGeneration: 2,
+        operationId: "claudeCode-update",
+        sequence: 1,
+        stream: "stdout",
+        data: "Installer stdout activity: 19 bytes.",
+        truncated: false,
+        redacted: true,
+      });
+      listener?.({
+        provider: "claudeCode",
+        providerGeneration: 1,
+        operationId: "different-operation",
+        sequence: 1,
+        stream: "stdout",
+        data: "Installer stdout activity: 18 bytes.",
+        truncated: false,
+        redacted: true,
+      });
+      listener?.({
+        provider: "claudeCode",
+        providerGeneration: 1,
+        operationId: "claudeCode-update",
+        sequence: 1,
+        stream: "stdout",
+        data: "Installer stdout activity: 17 bytes.",
+        truncated: false,
+        redacted: true,
+      });
+    });
+    expect(harness.hook().providers.claudeCode.updateState).toMatchObject({
+      kind: "running",
+      outputTail: "Installer stdout activity: 17 bytes.\n",
+      outputTruncated: false,
+    });
+
+    act(() => {
+      listener?.({
+        provider: "claudeCode",
+        providerGeneration: 1,
+        operationId: "claudeCode-update",
+        sequence: 3,
+        stream: "stderr",
+        data: "Installer stderr activity: 17 bytes.",
+        truncated: false,
+        redacted: true,
+      });
+    });
+    expect(harness.hook().providers.claudeCode.updateState).toMatchObject({
+      kind: "running",
+      outputTail: "Installer stdout activity: 17 bytes.\n",
+      outputTruncated: true,
+    });
+
+    await act(async () =>
+      result.resolve({
+        kind: "failed",
+        reason: "exited",
+        outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 17 bytes).",
+        outputTruncated: false,
+      }),
+    );
+    await expect(update).resolves.toBeNull();
+    expect(harness.hook().providers.claudeCode.updateState).toEqual({
+      kind: "failed",
+      reason: "exited",
+      outputTail:
+        "Installer stdout activity: 17 bytes.\nInstaller output withheld (stdout: 0 bytes, stderr: 17 bytes).\n",
+      outputTruncated: true,
+    });
+    expect(unlisten).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("cleans the active progress listener when its gateway authority is replaced", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    const result = deferred<AgentProviderUpdateResult>();
+    const unlisten = vi.fn();
+    harness.dependencies.updateGateway.subscribeAgentProviderUpdateProgress = vi.fn(
+      async () => unlisten,
+    );
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockReturnValueOnce(
+      result.promise,
+    );
+
+    let update!: Promise<unknown>;
+    act(() => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+    });
+    await waitForReact(() =>
+      expect(harness.dependencies.updateGateway.updateAgentProvider).toHaveBeenCalledTimes(1),
+    );
+    harness.replaceDependencies({
+      updateGateway: {
+        updateAgentProvider: vi.fn(async () => ({
+          kind: "failed" as const,
+          reason: "uncertain" as const,
+          outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
+          outputTruncated: false,
+        })),
+      },
+    });
+    expect(unlisten).toHaveBeenCalledTimes(1);
+
+    await act(async () =>
+      result.resolve({
+        kind: "succeeded",
+        previousVersion: "1.0.0",
+        installedVersion: "1.1.0",
+      }),
+    );
+    await expect(update).resolves.toBeNull();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("unlistens a late subscription that resolves after unmount without invoking", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    const subscription = deferred<() => void>();
+    const unlisten = vi.fn();
+    harness.dependencies.updateGateway.subscribeAgentProviderUpdateProgress = vi.fn(
+      async () => subscription.promise,
+    );
+
+    let update!: Promise<unknown>;
+    act(() => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+    });
+    await waitForReact(() =>
+      expect(
+        harness.dependencies.updateGateway.subscribeAgentProviderUpdateProgress,
+      ).toHaveBeenCalledTimes(1),
+    );
+    harness.unmount();
+    subscription.resolve(unlisten);
+    await expect(update).resolves.toBeNull();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+    expect(harness.dependencies.updateGateway.updateAgentProvider).not.toHaveBeenCalled();
+  });
+
+  it("keeps backend settlement truthful when the progress listener cannot start", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    harness.dependencies.updateGateway.subscribeAgentProviderUpdateProgress = vi.fn(async () => {
+      throw new Error("listen failed");
+    });
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockResolvedValueOnce({
+      kind: "succeeded",
+      previousVersion: "1.0.0",
+      installedVersion: "1.1.0",
+    });
+
+    let update!: Promise<unknown>;
+    act(() => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, currentHealth("1.1.0"));
+    await expect(update).resolves.toBeNull();
+    expect(harness.hook().providers.claudeCode.updateState).toMatchObject({
+      kind: "succeeded",
+      installedVersion: "1.1.0",
+    });
+    expect(harness.errors).toEqual([
+      { source: "Agent provider update progress", error: expect.any(Error) },
+    ]);
+    harness.unmount();
+  });
+
+  it("does not let a never-settling progress subscription block the update IPC", async () => {
+    vi.useFakeTimers();
+    const harness = renderManagement();
+    await act(async () => undefined);
+    expect(harness.healthCalls).toHaveLength(2);
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    harness.dependencies.updateGateway.subscribeAgentProviderUpdateProgress = vi.fn(
+      () => new Promise<() => void>(() => undefined),
+    );
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockResolvedValueOnce({
+      kind: "failed",
+      reason: "timedOut",
+      outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
+      outputTruncated: false,
+    });
+
+    let update!: Promise<unknown>;
+    act(() => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+    });
+    expect(harness.dependencies.updateGateway.updateAgentProvider).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await expect(update).resolves.toBeNull();
+    expect(harness.dependencies.updateGateway.updateAgentProvider).toHaveBeenCalledTimes(1);
+    expect(harness.hook().providers.claudeCode.updateState).toMatchObject({
+      kind: "failed",
+      reason: "timedOut",
+      outputTruncated: true,
+    });
+    expect(harness.errors[0]?.source).toBe("Agent provider update progress");
+    harness.unmount();
+  });
+
+  it("still invokes and re-probes when progress fails during listener establishment", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    harness.dependencies.updateGateway.subscribeAgentProviderUpdateProgress = vi.fn(
+      async (_listener, onError) => {
+        onError(new TypeError("malformed first progress event"));
+        return vi.fn();
+      },
+    );
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockResolvedValueOnce({
+      kind: "succeeded",
+      previousVersion: "1.0.0",
+      installedVersion: "1.1.0",
+    });
+
+    let update!: Promise<unknown>;
+    act(() => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+    });
+    await waitForReact(() =>
+      expect(harness.dependencies.updateGateway.updateAgentProvider).toHaveBeenCalledTimes(1),
+    );
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, currentHealth("1.1.0"));
+    await expect(update).resolves.toBeNull();
+    expect(harness.hook().providers.claudeCode.updateState.kind).toBe("succeeded");
+    expect(harness.errors[0]?.source).toBe("Agent provider update progress");
+    harness.unmount();
+  });
+
+  it("retains streamed diagnostics when post-update version verification fails", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    const result = deferred<AgentProviderUpdateResult>();
+    let listener: ((event: AgentProviderUpdateProgressEvent) => void) | null = null;
+    harness.dependencies.updateGateway.subscribeAgentProviderUpdateProgress = vi.fn(
+      async (next) => {
+        listener = next;
+        return vi.fn();
+      },
+    );
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockReturnValueOnce(
+      result.promise,
+    );
+
+    let update!: Promise<unknown>;
+    act(() => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+    });
+    await waitForReact(() => expect(listener).not.toBeNull());
+    act(() => {
+      listener?.({
+        provider: "claudeCode",
+        providerGeneration: 1,
+        operationId: "claudeCode-update",
+        sequence: 1,
+        stream: "stderr",
+        data: "Installer stderr activity: 27 bytes.",
+        truncated: false,
+        redacted: true,
+      });
+    });
+    await act(async () =>
+      result.resolve({
+        kind: "succeeded",
+        previousVersion: "1.0.0",
+        installedVersion: "1.1.0",
+      }),
+    );
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, currentHealth("1.0.0"));
+    await expect(update).resolves.toBeNull();
+    expect(harness.hook().providers.claudeCode.updateState).toEqual({
+      kind: "failed",
+      reason: "versionMismatch",
+      outputTail: "Installer stderr activity: 27 bytes.\n",
+      outputTruncated: false,
+    });
+    harness.unmount();
+  });
+
+  it("runs a local fake transport through parsing, orchestration, and the visible progress tail", async () => {
+    const result = deferred<unknown>();
+    let rawListener: ((event: { readonly payload: unknown }) => void) | null = null;
+    const listenToProgress: ListenToAgentProviderUpdateProgress = async (_event, listener) => {
+      rawListener = listener;
+      return () => undefined;
+    };
+    const invoke = vi.fn(async () => result.promise);
+    const gateway = new TauriAgentProviderGateway(invoke, () => true, listenToProgress);
+    const harness = renderManagement(configuredSettings(), () => 0, true, undefined, {
+      updateGateway: gateway,
+      renderCard: true,
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+    expect(harness.hook().toast).toEqual({
+      kind: "updateAvailable",
+      provider: "claudeCode",
+      version: "1.1.0",
+    });
+
+    let update!: Promise<unknown>;
+    act(() => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+    });
+    await waitForReact(() => expect(invoke).toHaveBeenCalledTimes(1));
+    expect(rawListener).not.toBeNull();
+    act(() => {
+      rawListener?.({
+        payload: {
+          provider: "claudeCode",
+          providerGeneration: 1,
+          operationId: "claudeCode-update",
+          sequence: 1,
+          stream: "stdout",
+          data: "Installer stdout activity: 32 bytes.",
+          truncated: false,
+          redacted: true,
+        },
+      });
+    });
+    expect(harness.container.textContent).toContain("Installer stdout activity: 32 bytes.");
+    expect(harness.container.textContent).toContain("Installing update");
+    act(() => {
+      for (let sequence = 2; sequence <= 1_000; sequence += 1) {
+        rawListener?.({
+          payload: {
+            provider: "claudeCode",
+            providerGeneration: 1,
+            operationId: "claudeCode-update",
+            sequence,
+            stream: "stdout",
+            data: "Installer stdout activity: 4096 bytes.",
+            truncated: false,
+            redacted: true,
+          },
+        });
+      }
+    });
+    const running = harness.hook().providers.claudeCode.updateState;
+    expect(running.kind).toBe("running");
+    if (running.kind !== "running") throw new Error("Expected running update progress.");
+    expect(new TextEncoder().encode(running.outputTail).byteLength).toBeLessThanOrEqual(32 * 1024);
+    expect(running.outputTail).not.toContain("�");
+    expect(running.outputTruncated).toBe(true);
+
+    await act(async () =>
+      result.resolve({
+        kind: "succeeded",
+        previousVersion: "1.0.0",
+        installedVersion: "1.1.0",
+      }),
+    );
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, currentHealth("1.1.0"));
+    await expect(update).resolves.toBeNull();
+    expect(harness.container.textContent).toContain("Updated from 1.0.0 to 1.1.0");
+    harness.unmount();
+  });
+
+  it("retains only opaque streamed activity and the opaque failed-result summary end to end", async () => {
+    const result = deferred<unknown>();
+    let rawListener: ((event: { readonly payload: unknown }) => void) | null = null;
+    const gateway = new TauriAgentProviderGateway(
+      vi.fn(async () => result.promise),
+      () => true,
+      async (_event, listener) => {
+        rawListener = listener;
+        return () => undefined;
+      },
+    );
+    const harness = renderManagement(configuredSettings(), () => 0, true, undefined, {
+      updateGateway: gateway,
+      renderCard: true,
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
+
+    let update!: Promise<unknown>;
+    act(() => {
+      update = harness.hook().update("claudeCode", "1.1.0");
+    });
+    await waitForReact(() => expect(rawListener).not.toBeNull());
+    act(() => {
+      rawListener?.({
+        payload: {
+          provider: "claudeCode",
+          providerGeneration: 1,
+          operationId: "claudeCode-update",
+          sequence: 1,
+          stream: "stderr",
+          data: "Installer stderr activity: 128 bytes.",
+          truncated: false,
+          redacted: true,
+        },
+      });
+      for (let sequence = 2; sequence <= 839; sequence += 1) {
+        rawListener?.({
+          payload: {
+            provider: "claudeCode",
+            providerGeneration: 1,
+            operationId: "claudeCode-update",
+            sequence,
+            stream: "stdout",
+            data: "Installer stdout activity: 4096 bytes.",
+            truncated: false,
+            redacted: true,
+          },
+        });
+      }
+    });
+    expect(harness.hook().providers.claudeCode.updateState).toMatchObject({
+      kind: "running",
+      outputTruncated: false,
+    });
+    await act(async () =>
+      result.resolve({
+        kind: "failed",
+        reason: "exited",
+        outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 128 bytes).",
+        outputTruncated: false,
+      }),
+    );
+    await expect(update).resolves.toBeNull();
+    const text = harness.container.textContent ?? "";
+    expect(text).toContain("Installer stdout activity: 4096 bytes.");
+    expect(text).toContain("Installer output withheld (stdout: 0 bytes, stderr: 128 bytes).");
+    expect(harness.hook().providers.claudeCode.updateState).toMatchObject({
+      outputTail: expect.stringMatching(/^Installer (?:stdout|stderr) activity:/),
+    });
+    expect(harness.hook().providers.claudeCode.updateState).toMatchObject({
+      kind: "failed",
+      outputTruncated: true,
+    });
+    expect(text).not.toMatch(/password|AWS_|Cookie:|pid=|argv=|HOME=|\/Users\//);
+    harness.unmount();
+  });
+
   it("retires a pending update when provider configuration is registered again", async () => {
     const harness = renderManagement();
     await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
@@ -957,7 +1533,7 @@ describe("useAgentProviderManagement", () => {
     expect(harness.settings().agentProviderPreferences?.claudeCode.dismissedUpdateVersion).toBe(
       "0.9.0",
     );
-    expect(harness.errors[0]?.source).toBe("Agent provider settings");
+    expect(harness.errors.some(({ source }) => source === "Agent provider settings")).toBe(true);
     harness.unmount();
   });
 
@@ -977,6 +1553,22 @@ describe("useAgentProviderManagement", () => {
       "1.1.0",
     );
     await waitForReact(() => expect(harness.hook().toast).toBeNull());
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, availableHealth("1.0.0", "1.1.0"));
+    expect(harness.hook().toast).toBeNull();
+
+    let refreshed!: Promise<void>;
+    act(() => {
+      refreshed = harness.hook().refresh("claudeCode");
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(4));
+    await settleHealth(harness, 3, availableHealth("1.0.0", "1.2.0"));
+    await expect(refreshed).resolves.toBeUndefined();
+    expect(harness.hook().toast).toEqual({
+      kind: "updateAvailable",
+      provider: "claudeCode",
+      version: "1.2.0",
+    });
     harness.unmount();
   });
 
@@ -1020,6 +1612,10 @@ function renderManagement(
   ) => AgentProviderCurrentPolicyResult | Promise<AgentProviderCurrentPolicyResult> = () => ({
     kind: "unregistered",
   }),
+  options: {
+    readonly updateGateway?: AgentProviderUpdateGateway;
+    readonly renderCard?: boolean;
+  } = {},
 ): Harness {
   let settings = initialSettings;
   let hook: AgentProviderManagementSurface | null = null;
@@ -1056,15 +1652,16 @@ function renderManagement(
         return call.promise;
       }),
     },
-    updateGateway: {
+    updateGateway: options.updateGateway ?? {
       updateAgentProvider: vi.fn(async () => ({
         kind: "failed" as const,
         reason: "uncertain" as const,
-        outputTail: "",
+        outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
         outputTruncated: false,
       })),
     },
     liveTurnCount,
+    signInActive: () => false,
     reportError: (source, error) => errors.push({ source, error }),
     mintOperationId: (provider) => `${provider}-update`,
     settingsHydrated,
@@ -1074,13 +1671,25 @@ function renderManagement(
   const container = document.createElement("div");
   const root = createRoot(container);
 
-  function Hook(): null {
+  function Hook() {
     hook = useAgentProviderManagement(currentDependencies);
-    return null;
+    if (!options.renderCard) return null;
+    const preference = preferencesForTest(settings).claudeCode;
+    return createElement(AgentProviderSettingsCard, {
+      management: hook,
+      path: settings.agentCliPaths.claudeCode,
+      preference,
+      provider: "claudeCode",
+      onChangeCheckForUpdates: () => undefined,
+      onChangeEnabled: () => undefined,
+      onChangeHealthCheckIntervalSeconds: () => undefined,
+      onChangePath: () => undefined,
+    });
   }
 
   act(() => root.render(createElement(Hook)));
   return {
+    container,
     settings: () => settings,
     hook: () => {
       if (hook === null) throw new Error("Hook did not render.");
@@ -1096,6 +1705,10 @@ function renderManagement(
     },
     unmount: () => act(() => root.unmount()),
   };
+}
+
+function preferencesForTest(settings: AppSettings) {
+  return settings.agentProviderPreferences ?? defaultAgentProviderPreferences();
 }
 
 function configuredSettings(): AppSettings {

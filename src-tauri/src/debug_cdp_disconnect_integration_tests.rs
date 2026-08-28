@@ -4,6 +4,7 @@ use crate::debug_adapter::{
     DebugSetVariableRequest, DebugVariablePageRequest,
 };
 use crate::debug_breakpoint_policy::DebugBreakpointAdapterKind;
+use crate::debug_node_process::real_node_test_admission::RealNodeTestAdmission;
 use crate::debug_session_registry::DebugSessionMode;
 use std::collections::HashMap;
 use std::fs;
@@ -12,7 +13,7 @@ use std::net::{TcpListener, TcpStream};
 use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -65,9 +66,16 @@ impl Drop for ChildGuard {
     }
 }
 
-struct SpawnedNodeInspector {
+struct SpawnedNodeInspector<'a> {
+    _admission: &'a RealNodeTestAdmission,
     child: ChildGuard,
     port: u16,
+}
+
+// Implementing Drop prevents callers from moving the child guard out of this
+// admission-borrowing owner and extending the process beyond the admission.
+impl Drop for SpawnedNodeInspector<'_> {
+    fn drop(&mut self) {}
 }
 
 enum NodeInspectorMode {
@@ -95,12 +103,12 @@ enum DefaultInspectorPortOwnership {
     External,
 }
 
-struct DefaultInspectorPortLease {
-    _serial: MutexGuard<'static, ()>,
+struct DefaultInspectorPortLease<'a> {
+    _admission: &'a RealNodeTestAdmission,
     ownership: DefaultInspectorPortOwnership,
 }
 
-impl DefaultInspectorPortLease {
+impl DefaultInspectorPortLease<'_> {
     fn assert_occupied(&self) {
         match &self.ownership {
             DefaultInspectorPortOwnership::Owned(listener) => {
@@ -132,12 +140,9 @@ fn node_available() -> bool {
         .is_ok_and(|status| status.success())
 }
 
-fn occupy_default_inspector_port() -> DefaultInspectorPortLease {
-    static SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
-    let serial = SERIAL
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("default inspector port test lease");
+fn occupy_default_inspector_port(
+    admission: &RealNodeTestAdmission,
+) -> DefaultInspectorPortLease<'_> {
     let ownership = match TcpListener::bind("127.0.0.1:9229") {
         Ok(listener) => DefaultInspectorPortOwnership::Owned(listener),
         Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
@@ -146,7 +151,7 @@ fn occupy_default_inspector_port() -> DefaultInspectorPortLease {
         Err(error) => panic!("occupy default inspector port: {error}"),
     };
     DefaultInspectorPortLease {
-        _serial: serial,
+        _admission: admission,
         ownership,
     }
 }
@@ -223,7 +228,12 @@ fn read_inspector_readiness(mut stderr: impl Read, sender: mpsc::SyncSender<Insp
     }
 }
 
-fn spawn_node(mode: NodeInspectorMode, script: &Path, marker: &Path) -> SpawnedNodeInspector {
+fn spawn_node<'a>(
+    admission: &'a RealNodeTestAdmission,
+    mode: NodeInspectorMode,
+    script: &Path,
+    marker: &Path,
+) -> SpawnedNodeInspector<'a> {
     let child = Command::new("node")
         .arg(mode.argument())
         .arg(script)
@@ -252,7 +262,11 @@ fn spawn_node(mode: NodeInspectorMode, script: &Path, marker: &Path) -> SpawnedN
             panic!("Node inspector readiness reader disconnected")
         }
     };
-    SpawnedNodeInspector { child, port }
+    SpawnedNodeInspector {
+        _admission: admission,
+        child,
+        port,
+    }
 }
 
 fn attach_and_disconnect(root: &Path, port: u16) {
@@ -295,27 +309,31 @@ fn external_running_node_survives_transport_disconnect() {
     if !node_available() {
         return;
     }
-    let default_port = occupy_default_inspector_port();
+    let admission = crate::debug_node_process::real_node_test_admission::acquire();
+    let default_port = occupy_default_inspector_port(&admission);
     default_port.assert_occupied();
     let (root, script, marker) = fixture("running");
-    let SpawnedNodeInspector { mut child, port } =
-        spawn_node(NodeInspectorMode::Running, &script, &marker);
+    let mut inspector = spawn_node(&admission, NodeInspectorMode::Running, &script, &marker);
     default_port.assert_occupied();
-    assert_ne!(port, 9229, "Node reused the occupied default port");
+    assert_ne!(
+        inspector.port, 9229,
+        "Node reused the occupied default port"
+    );
     wait_until(Duration::from_secs(5), || marker.is_file(), "Node script");
 
-    attach_and_disconnect(&root, port);
+    attach_and_disconnect(&root, inspector.port);
 
-    assert!(child
+    assert!(inspector
+        .child
         .child
         .try_wait()
         .expect("inspect Node status")
         .is_none());
     assert_eq!(
         fs::read_to_string(&marker).expect("read PID marker"),
-        child.child.id().to_string()
+        inspector.child.child.id().to_string()
     );
-    drop(child);
+    drop(inspector);
     fs::remove_dir_all(root).expect("remove Node fixture");
 }
 
@@ -324,37 +342,46 @@ fn inspect_brk_node_progresses_and_survives_disconnect() {
     if !node_available() {
         return;
     }
-    let default_port = occupy_default_inspector_port();
+    let admission = crate::debug_node_process::real_node_test_admission::acquire();
+    let default_port = occupy_default_inspector_port(&admission);
     default_port.assert_occupied();
     let (root, script, marker) = fixture("inspect-brk");
-    let SpawnedNodeInspector { mut child, port } =
-        spawn_node(NodeInspectorMode::BreakBeforeStart, &script, &marker);
+    let mut inspector = spawn_node(
+        &admission,
+        NodeInspectorMode::BreakBeforeStart,
+        &script,
+        &marker,
+    );
     default_port.assert_occupied();
-    assert_ne!(port, 9229, "Node reused the occupied default port");
+    assert_ne!(
+        inspector.port, 9229,
+        "Node reused the occupied default port"
+    );
     wait_until(
         Duration::from_secs(5),
-        || TcpStream::connect(("127.0.0.1", port)).is_ok(),
+        || TcpStream::connect(("127.0.0.1", inspector.port)).is_ok(),
         "paused Node inspector",
     );
     assert!(!marker.exists(), "inspect-brk target ran before disconnect");
 
-    attach_and_disconnect(&root, port);
+    attach_and_disconnect(&root, inspector.port);
 
     wait_until(
         Duration::from_secs(5),
         || marker.is_file(),
         "inspect-brk target to continue after disconnect",
     );
-    assert!(child
+    assert!(inspector
+        .child
         .child
         .try_wait()
         .expect("inspect-brk status")
         .is_none());
     assert_eq!(
         fs::read_to_string(&marker).expect("read PID marker"),
-        child.child.id().to_string()
+        inspector.child.child.id().to_string()
     );
-    drop(child);
+    drop(inspector);
     fs::remove_dir_all(root).expect("remove Node fixture");
 }
 
@@ -363,6 +390,7 @@ fn real_node_set_variable_updates_scope_and_object_property() {
     if !node_available() {
         return;
     }
+    let _admission = crate::debug_node_process::real_node_test_admission::acquire();
     let (root, script, _marker) = fixture("set-variable");
     fs::write(
         &script,
@@ -654,6 +682,7 @@ fn real_node_static_set_expression_mutates_exact_pinned_parents_and_runs_rhs_onc
     if !node_available() {
         return;
     }
+    let _admission = crate::debug_node_process::real_node_test_admission::acquire();
     let (root, script, _marker) = fixture("set-expression-static");
     fs::write(
         &script,

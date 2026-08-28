@@ -150,12 +150,16 @@ interface TerminalSessionOptions {
   // xterm internals. Always scoped to a single mounted terminal, so it can
   // never leak another tab's session id.
   onSessionReady?(sessionId: number | null): void;
+  onSessionSettled?(sessionId: number, exitCode: number | null): void;
+  onSessionStartFailed?(): void;
   onCwdChange?(cwd: string | null): void;
   onOpenLink?(path: string, line?: number, column?: number): void;
   platform?: KeymapPlatform;
   profileId: string | null;
   rootPath: string | null;
   shellIntegrationEnabled: boolean;
+  startSession?(size: TerminalSize): Promise<TerminalRuntimeStatus>;
+  stopSessionOnDispose?: boolean;
   scheduleFrame(callback: FrameRequestCallback): number;
   terminal: XtermTerminal;
 }
@@ -167,12 +171,16 @@ export function createTerminalSession({
   gateway,
   host,
   onSessionReady,
+  onSessionSettled,
+  onSessionStartFailed,
   onCwdChange,
   onOpenLink,
   platform = detectKeymapPlatform(),
   profileId,
   rootPath,
   shellIntegrationEnabled,
+  startSession,
+  stopSessionOnDispose = true,
   scheduleFrame,
   terminal,
 }: TerminalSessionOptions): TerminalSession {
@@ -407,10 +415,12 @@ export function createTerminalSession({
       return;
     }
 
+    const settledSessionId = sessionId;
     sessionId = null;
     pendingInput.splice(0);
     pendingResize = null;
     onSessionReady?.(null);
+    onSessionSettled?.(settledSessionId, status.kind === "exited" ? status.exitCode : null);
   };
 
   terminal.loadAddon(fitAddon);
@@ -482,16 +492,26 @@ export function createTerminalSession({
   });
   resizeObserver.observe(host);
 
-  if (!rootPath) {
+  if (!rootPath && !startSession) {
     terminal.write("Open a trusted workspace to start a terminal.\r\n");
   }
 
-  if (rootPath) {
-    void Promise.all([
+  if (rootPath || startSession) {
+    void Promise.allSettled([
       gateway.subscribeOutput(handleOutput),
       gateway.subscribeStatus?.(handleStatus) ?? Promise.resolve(() => undefined),
     ])
-      .then(([outputListener, statusListener]) => {
+      .then(([outputResult, statusResult]) => {
+        if (outputResult.status === "rejected" || statusResult.status === "rejected") {
+          if (outputResult.status === "fulfilled") outputResult.value();
+          if (statusResult.status === "fulfilled") statusResult.value();
+          if (outputResult.status === "rejected") reportError(outputResult.reason);
+          if (statusResult.status === "rejected") reportError(statusResult.reason);
+          onSessionStartFailed?.();
+          return false;
+        }
+        const outputListener = outputResult.value;
+        const statusListener = statusResult.value;
         if (disposed) {
           outputListener();
           statusListener();
@@ -508,8 +528,15 @@ export function createTerminalSession({
         }
 
         scheduleFit(() => {
-          void gateway
-            .start(rootPath, currentSize(), profileId || undefined, shellIntegrationEnabled)
+          const launch = startSession
+            ? startSession(currentSize())
+            : gateway.start(
+                rootPath!,
+                currentSize(),
+                profileId || undefined,
+                shellIntegrationEnabled,
+              );
+          void launch
             .then(async (status) => {
               const startedSessionId = terminalSessionId(status);
 
@@ -519,7 +546,10 @@ export function createTerminalSession({
               }
 
               if (disposed) {
-                void gateway.stop(startedSessionId).catch(reportError);
+                void gateway
+                  .stop(startedSessionId)
+                  .then(() => onSessionSettled?.(startedSessionId, null))
+                  .catch(reportError);
                 return;
               }
 
@@ -530,13 +560,20 @@ export function createTerminalSession({
                 if (sessionId === startedSessionId) {
                   sessionId = null;
                 }
-                void gateway.stop(startedSessionId).catch(reportError);
+                onSessionReady?.(null);
+                void gateway
+                  .stop(startedSessionId)
+                  .then(() => onSessionSettled?.(startedSessionId, null))
+                  .catch(reportError);
                 reportError(error);
                 return;
               }
 
               if (disposed) {
-                void gateway.stop(startedSessionId).catch(reportError);
+                void gateway
+                  .stop(startedSessionId)
+                  .then(() => onSessionSettled?.(startedSessionId, null))
+                  .catch(reportError);
                 return;
               }
               if (sessionId !== startedSessionId) {
@@ -549,8 +586,7 @@ export function createTerminalSession({
             })
             .catch(reportError);
         });
-      })
-      .catch(reportError);
+      });
   }
 
   return {
@@ -597,7 +633,7 @@ export function createTerminalSession({
 
       terminal.dispose();
 
-      if (!activeSessionId) {
+      if (!activeSessionId || !stopSessionOnDispose) {
         return;
       }
 

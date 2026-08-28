@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  appendAgentProviderUpdateOutputTail,
   parseAgentProviderCurrentPolicyResult,
   parseAgentProviderHealthProbeResult,
   parseAgentProviderPolicyRegistrationReceipt,
   parseAgentProviderUpdateResult,
+  parseAgentProviderUpdateProgressEvent,
   validateAgentProviderHealthProbeRequest,
   validateAgentProviderCurrentPolicyRequest,
   validateAgentProviderPolicyRegistrationRequest,
@@ -169,6 +171,37 @@ describe("provider health contracts", () => {
     ).toMatchObject({ update: { installer: { kind: "homebrew", cask: "claude-code" } } });
   });
 
+  it.each(["unknownInstaller", "unsupportedProbe", "invalidVersion", "probeFailed"] as const)(
+    "parses the closed %s update-unavailable reason",
+    (reason) => {
+      expect(
+        parseAgentProviderHealthProbeResult("codex", {
+          installedVersion: "0.149.1",
+          auth: { kind: "signedOut" },
+          update: { kind: "unavailable", reason },
+          checkedAtEpochMs: 1,
+        }),
+      ).toMatchObject({ update: { kind: "unavailable", reason } });
+    },
+  );
+
+  it("rejects unknown, missing, and extra update-unavailable reason fields", () => {
+    const base = {
+      installedVersion: "0.149.1",
+      auth: { kind: "signedOut" },
+      checkedAtEpochMs: 1,
+    };
+    for (const update of [
+      { kind: "unavailable", reason: "futureReason" },
+      { kind: "unavailable" },
+      { kind: "unavailable", reason: "unknownInstaller", detail: "npm missing" },
+    ]) {
+      expect(() => parseAgentProviderHealthProbeResult("codex", { ...base, update })).toThrow(
+        TypeError,
+      );
+    }
+  });
+
   it("fails extra keys, credentials, oversized labels, and contradictions closed", () => {
     const base = {
       installedVersion: "0.149.1",
@@ -249,7 +282,7 @@ describe("provider update contracts", () => {
       parseAgentProviderUpdateResult({
         kind: "failed",
         reason: "outputLimitExceeded",
-        outputTail: "bounded tail",
+        outputTail: "Installer output withheld (stdout: 524288 bytes, stderr: 524288 bytes).",
         outputTruncated: true,
       }),
     ).toMatchObject({ reason: "outputLimitExceeded", outputTruncated: true });
@@ -260,7 +293,7 @@ describe("provider update contracts", () => {
       parseAgentProviderUpdateResult({
         kind: "failed",
         reason: "exited",
-        outputTail: "failure",
+        outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 7 bytes).",
         outputTruncated: false,
         pid: 1,
       }),
@@ -285,9 +318,92 @@ describe("provider update contracts", () => {
       parseAgentProviderUpdateResult({
         kind: "failed",
         reason: "outputLimitExceeded",
-        outputTail: "bounded",
+        outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
         outputTruncated: false,
       }),
     ).toThrow(TypeError);
+    for (const outputTail of [
+      "password=hunter2",
+      "AWS_SECRET_ACCESS_KEY=secret",
+      "Cookie: session=secret",
+      "pid=1234",
+      "argv=[npm, install]",
+      "HOME=/Users/private",
+      "/Users/private/project",
+      "raw installer line\n",
+      "Installer output withheld (stdout: 01 bytes, stderr: 0 bytes).",
+      "Installer output withheld (stdout: 1048577 bytes, stderr: 0 bytes).",
+      "Installer output withheld (stdout: 600000 bytes, stderr: 600000 bytes).",
+    ]) {
+      expect(() =>
+        parseAgentProviderUpdateResult({
+          kind: "failed",
+          reason: "exited",
+          outputTail,
+          outputTruncated: false,
+        }),
+      ).toThrow(TypeError);
+    }
+  });
+
+  it("parses only the strict opaque progress projection", () => {
+    const progress = {
+      ...authority,
+      sequence: 1,
+      stream: "stdout",
+      data: "Installer stdout activity: 1 bytes.",
+      truncated: false,
+      redacted: true,
+    } as const;
+    expect(parseAgentProviderUpdateProgressEvent(progress)).toEqual(progress);
+    expect(
+      parseAgentProviderUpdateProgressEvent({
+        ...progress,
+        data: "Installer stdout activity: 4096 bytes.",
+      }),
+    ).toMatchObject({ data: "Installer stdout activity: 4096 bytes." });
+    expect(
+      parseAgentProviderUpdateProgressEvent({
+        ...progress,
+        data: "Additional installer activity withheld.",
+        truncated: true,
+      }),
+    ).toMatchObject({ truncated: true });
+    for (const malformed of [
+      { ...progress, sequence: 0 },
+      { ...progress, sequence: 4_097 },
+      { ...progress, stream: "combined" },
+      { ...progress, data: "Installer stdout activity: 0 bytes." },
+      { ...progress, data: "Installer stdout activity: 4097 bytes." },
+      { ...progress, data: "Installer stdout activity: 01 bytes." },
+      { ...progress, data: "Installer stderr activity: 1 bytes." },
+      { ...progress, truncated: true },
+      { ...progress, data: "Additional installer activity withheld." },
+      { ...progress, redacted: false },
+      { ...progress, redacted: "true" },
+      { ...progress, pid: 42 },
+    ]) {
+      expect(() => parseAgentProviderUpdateProgressEvent(malformed)).toThrow(TypeError);
+    }
+    for (const data of [
+      "password=hunter2",
+      "AWS_SECRET_ACCESS_KEY=secret",
+      "Cookie: session=secret",
+      "pid=1234",
+      "argv=[npm, install]",
+      "HOME=/Users/private",
+      "/Users/private/project",
+      "raw installer line\n",
+    ]) {
+      expect(() => parseAgentProviderUpdateProgressEvent({ ...progress, data })).toThrow(TypeError);
+    }
+  });
+
+  it("retains a bounded tail of opaque activity projections", () => {
+    const line = "Installer stdout activity: 4096 bytes.\n";
+    const tail = appendAgentProviderUpdateOutputTail(line, line.repeat(1_000));
+    expect(new TextEncoder().encode(tail).byteLength).toBeLessThanOrEqual(32 * 1024);
+    expect(tail.startsWith(line)).toBe(true);
+    expect(tail.endsWith(line)).toBe(true);
   });
 });

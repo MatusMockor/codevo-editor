@@ -1,5 +1,7 @@
 use std::{
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -14,9 +16,6 @@ const COMPOSER_COMMAND: &str = if cfg!(windows) {
 const MANAGED_PHP_ACTOR_VERSION: &str = "2026.05.30.2";
 const CODEVO_EDITOR_PHPACTOR_PATH: &str = "CODEVO_EDITOR_PHPACTOR_PATH";
 const LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH: &str = "MOCKOR_EDITOR_PHPACTOR_PATH";
-
-#[cfg(test)]
-static PHPACTOR_ENV_VAR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub const MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT: &str =
     "php://managed-phpactor-install-completed";
@@ -38,6 +37,21 @@ where
 {
     std::thread::spawn(move || {
         let error = install_managed_phpactor().err();
+        sink.emit_completion(root, error);
+    });
+}
+
+#[cfg(test)]
+fn spawn_managed_phpactor_install_with_override_lookup<S, F>(
+    root: String,
+    sink: S,
+    override_lookup: F,
+) where
+    S: ManagedPhpactorInstallEventSink,
+    F: Fn(&str) -> Option<OsString> + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let error = install_managed_phpactor_with_override_lookup(&override_lookup).err();
         sink.emit_completion(root, error);
     });
 }
@@ -146,7 +160,13 @@ fn managed_php_ini_is_current(ini_path: &Path) -> bool {
 }
 
 pub(crate) fn install_managed_phpactor() -> Result<(), String> {
-    let phpactor_root = managed_phpactor_root()?;
+    install_managed_phpactor_with_override_lookup(&|name| env::var_os(name))
+}
+
+fn install_managed_phpactor_with_override_lookup(
+    override_lookup: &impl Fn(&str) -> Option<OsString>,
+) -> Result<(), String> {
+    let phpactor_root = managed_phpactor_root_with_override_lookup(override_lookup)?;
 
     // Always (re)materialise the minimal php.ini so a freshly installed engine —
     // or one whose config drifted — launches with a clean, isolated interpreter.
@@ -365,7 +385,13 @@ fn normalized_workspace_root_key(path: &str) -> String {
 }
 
 fn managed_phpactor_root() -> Result<PathBuf, String> {
-    if let Some(managed_root) = managed_phpactor_root_from_override() {
+    managed_phpactor_root_with_override_lookup(&|name| env::var_os(name))
+}
+
+fn managed_phpactor_root_with_override_lookup(
+    override_lookup: &impl Fn(&str) -> Option<OsString>,
+) -> Result<PathBuf, String> {
+    if let Some(managed_root) = managed_phpactor_root_from_override_with_lookup(override_lookup) {
         fs::create_dir_all(&managed_root)
             .map_err(|error| format!("Unable to create managed PHPactor directory: {error}"))?;
 
@@ -393,9 +419,11 @@ fn managed_phpactor_root() -> Result<PathBuf, String> {
     Ok(selected_root)
 }
 
-fn managed_phpactor_root_from_override() -> Option<PathBuf> {
-    let path = env::var_os(CODEVO_EDITOR_PHPACTOR_PATH)
-        .or_else(|| env::var_os(LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH))
+fn managed_phpactor_root_from_override_with_lookup(
+    mut lookup: impl FnMut(&str) -> Option<OsString>,
+) -> Option<PathBuf> {
+    let path = lookup(CODEVO_EDITOR_PHPACTOR_PATH)
+        .or_else(|| lookup(LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH))
         .map(PathBuf::from)?;
     let binary_name = path
         .file_name()
@@ -493,33 +521,40 @@ mod install_worker_tests {
 
     #[test]
     fn spawned_install_reports_completion_with_requesting_root() {
-        let _lock = PHPACTOR_ENV_VAR_TEST_LOCK
-            .lock()
-            .expect("lock PHPactor environment");
         let (sender, receiver) = mpsc::channel();
         let temp_dir = std::env::temp_dir().join(format!(
             "mockor-managed-phpactor-test-{}",
             std::process::id()
         ));
-        // Point the install at an isolated, composer-less directory so the
-        // worker resolves quickly without mutating any real managed root.
-        std::env::set_var(CODEVO_EDITOR_PHPACTOR_PATH, &temp_dir);
-
-        spawn_managed_phpactor_install(
+        fs::create_dir_all(&temp_dir).expect("create isolated install root");
+        let blocked_root = temp_dir.join("not-a-directory");
+        fs::write(&blocked_root, "file blocks directory creation")
+            .expect("write blocked install root");
+        let worker_root = blocked_root.clone();
+        // Point the install at a path that cannot become a directory so the
+        // worker fails quickly without mutating any real managed root.
+        spawn_managed_phpactor_install_with_override_lookup(
             "/workspace-a".to_string(),
             ChannelSink {
                 sender: sender.clone(),
             },
+            move |name| {
+                (name == CODEVO_EDITOR_PHPACTOR_PATH).then(|| worker_root.clone().into_os_string())
+            },
         );
 
-        let (root, _error) = receiver
+        let (root, error) = receiver
             .recv_timeout(std::time::Duration::from_secs(30))
             .expect("install worker should report completion");
 
-        std::env::remove_var(CODEVO_EDITOR_PHPACTOR_PATH);
-        let _ = fs::remove_dir_all(&temp_dir);
-
+        fs::remove_dir_all(&temp_dir).expect("cleanup isolated install root");
         assert_eq!(root, "/workspace-a");
+        assert!(
+            error.as_deref().is_some_and(
+                |message| message.contains("Unable to create managed PHPactor directory")
+            ),
+            "the per-call override should isolate the worker from the real managed root"
+        );
     }
 }
 
@@ -692,24 +727,27 @@ mod tests {
 
     #[test]
     fn managed_root_supports_legacy_override_and_prefers_codevo_override() {
-        let _lock = PHPACTOR_ENV_VAR_TEST_LOCK
-            .lock()
-            .expect("lock PHPactor environment");
         let legacy_binary = PathBuf::from("/legacy/phpactor/vendor/bin/phpactor");
         let codevo_root = PathBuf::from("/codevo/managed-root");
 
-        env::remove_var(CODEVO_EDITOR_PHPACTOR_PATH);
-        env::set_var(LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH, &legacy_binary);
         assert_eq!(
-            managed_phpactor_root_from_override(),
+            managed_phpactor_root_from_override_with_lookup(|name| {
+                (name == LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH)
+                    .then(|| legacy_binary.clone().into_os_string())
+            }),
             Some(PathBuf::from("/legacy/phpactor"))
         );
 
-        env::set_var(CODEVO_EDITOR_PHPACTOR_PATH, &codevo_root);
-        assert_eq!(managed_phpactor_root_from_override(), Some(codevo_root));
-
-        env::remove_var(CODEVO_EDITOR_PHPACTOR_PATH);
-        env::remove_var(LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH);
+        assert_eq!(
+            managed_phpactor_root_from_override_with_lookup(|name| match name {
+                CODEVO_EDITOR_PHPACTOR_PATH => Some(codevo_root.clone().into_os_string()),
+                LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH => {
+                    Some(legacy_binary.clone().into_os_string())
+                }
+                _ => None,
+            }),
+            Some(codevo_root)
+        );
     }
 
     #[test]

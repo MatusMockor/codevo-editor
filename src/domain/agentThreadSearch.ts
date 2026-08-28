@@ -34,6 +34,7 @@ export interface AgentThreadSearchDocument {
   readonly updatedAtEpochMs: number;
   readonly titleLower: string;
   readonly segments: ReadonlyArray<AgentThreadSearchSegment>;
+  readonly byteLength: number;
   readonly truncated: boolean;
 }
 
@@ -126,6 +127,7 @@ export function buildAgentThreadSearchDocument(thread: AgentThread): AgentThread
     updatedAtEpochMs: thread.updatedAtEpochMs,
     titleLower: title.lower,
     segments: [title, ...collected],
+    byteLength: bytes,
     truncated,
   };
 }
@@ -143,10 +145,10 @@ export function searchAgentThreadDocuments(
   let matching = 0;
   let documentsTruncated = false;
   for (const doc of docs) {
+    if (doc.truncated) documentsTruncated = true;
     const match = bestDocumentMatch(doc, normalized);
     if (match === null) continue;
     matching += 1;
-    if (doc.truncated) documentsTruncated = true;
     insertRankedSearchResult(
       ranked,
       {

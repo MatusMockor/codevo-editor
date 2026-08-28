@@ -12,6 +12,7 @@ import { useActiveEditorCursorSnapshot } from "./application/useEditorCursorSnap
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(),
   largeFileContent: { current: null as string | null },
+  monacoRuntimeReady: Promise.resolve(),
   onCursorPositionChange: {
     current: null as ((position: { column: number; lineNumber: number }) => void) | null,
   },
@@ -25,6 +26,10 @@ const mocks = vi.hoisted(() => ({
         ) => void)
       | null,
   },
+}));
+
+vi.mock("./components/monacoRuntimeLoader", () => ({
+  initializeMonacoRuntime: vi.fn(() => mocks.monacoRuntimeReady),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({

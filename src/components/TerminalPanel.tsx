@@ -3,8 +3,11 @@ import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import type { TerminalTheme } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
+import type { TerminalRuntimeStatus, TerminalSize } from "../domain/terminal";
 import { createTerminalSession, type TerminalSession } from "./terminalSession";
 import "@xterm/xterm/css/xterm.css";
+
+export const TERMINAL_SCROLLBACK_LINES = 2_000;
 
 interface TerminalPanelProps {
   labelledBy?: string;
@@ -24,6 +27,12 @@ interface TerminalPanelProps {
   terminalGateway: TerminalGateway;
   shellIntegrationEnabled: boolean;
   terminalTheme: TerminalTheme;
+  semanticSession?: {
+    readonly key: string;
+    cancelStart(): void;
+    start(size: TerminalSize): Promise<TerminalRuntimeStatus>;
+    settle(sessionId: number, exitCode: number | null): Promise<void>;
+  };
 }
 
 export function TerminalPanel({
@@ -39,6 +48,7 @@ export function TerminalPanel({
   terminalGateway,
   shellIntegrationEnabled,
   terminalTheme,
+  semanticSession,
 }: TerminalPanelProps) {
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const sessionRef = useRef<TerminalSession | null>(null);
@@ -56,6 +66,9 @@ export function TerminalPanel({
   onCwdChangeRef.current = onCwdChange;
   const rootPathRef = useRef(rootPath);
   rootPathRef.current = rootPath;
+  const semanticSessionRef = useRef(semanticSession);
+  semanticSessionRef.current = semanticSession;
+  const semanticSessionKey = semanticSession?.key ?? null;
 
   useEffect(() => {
     const host = terminalHostRef.current;
@@ -70,12 +83,17 @@ export function TerminalPanel({
       fontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: 13,
       lineHeight: 1.25,
-      scrollback: 2000,
+      scrollback: TERMINAL_SCROLLBACK_LINES,
       theme: terminalThemeRef.current,
     });
     terminalRef.current = terminal;
     const fitAddon = new FitAddon();
     const sessionRootPath = rootPath;
+    const mountedSemanticSession =
+      semanticSessionRef.current?.key === semanticSessionKey
+        ? semanticSessionRef.current
+        : undefined;
+    let semanticSessionId: number | null = null;
     let generationActive = true;
     const session = createTerminalSession({
       cancelFrame: (frameId) => cancelAnimationFrame(frameId),
@@ -104,13 +122,23 @@ export function TerminalPanel({
         onOpenLinkRef.current?.(resolvedPath, line, column);
       },
       onSessionReady: (sessionId) => {
+        if (generationActive) semanticSessionId = sessionId;
         if (generationActive && rootPathRef.current === sessionRootPath) {
           onSessionReadyRef.current?.(sessionId);
         }
       },
+      onSessionSettled: (sessionId, exitCode) => {
+        semanticSessionId = null;
+        void mountedSemanticSession?.settle(sessionId, exitCode);
+      },
+      onSessionStartFailed: () => mountedSemanticSession?.cancelStart(),
       profileId,
       rootPath,
       shellIntegrationEnabled,
+      startSession: mountedSemanticSession
+        ? (size) => mountedSemanticSession.start(size)
+        : undefined,
+      stopSessionOnDispose: mountedSemanticSession === undefined,
       scheduleFrame: (callback) => requestAnimationFrame(callback),
       terminal: {
         get cols() {
@@ -164,10 +192,18 @@ export function TerminalPanel({
       terminalRef.current = null;
       sessionRef.current = null;
       session.dispose();
+      if (semanticSessionId !== null) {
+        const sessionId = semanticSessionId;
+        semanticSessionId = null;
+        void terminalGateway
+          .stop(sessionId)
+          .then(() => mountedSemanticSession?.settle(sessionId, null))
+          .catch(() => undefined);
+      }
       onSessionReadyRef.current?.(null);
       onCwdChangeRef.current?.(null);
     };
-  }, [profileId, rootPath, shellIntegrationEnabled, terminalGateway]);
+  }, [profileId, rootPath, semanticSessionKey, shellIntegrationEnabled, terminalGateway]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -192,6 +228,11 @@ export function TerminalPanel({
 
     session.fit();
   }, [isActive, layoutRevision]);
+
+  useEffect(() => {
+    if (!isActive || semanticSessionKey === null) return;
+    terminalRef.current?.focus();
+  }, [isActive, semanticSessionKey]);
 
   return (
     <div

@@ -21,6 +21,11 @@ const providerMocks = vi.hoisted(() => ({
   configure: vi.fn(),
   register: vi.fn(() => ({ dispose: vi.fn() })),
 }));
+const monacoRuntimeMocks = vi.hoisted(() => ({ ready: Promise.resolve() }));
+
+vi.mock("./monacoRuntimeLoader", () => ({
+  initializeMonacoRuntime: vi.fn(() => monacoRuntimeMocks.ready),
+}));
 
 vi.mock("@monaco-editor/react", async () => {
   const React = await import("react");

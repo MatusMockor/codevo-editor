@@ -27,6 +27,7 @@ pub const MAX_AGENT_TOOL_SUMMARY_BYTES: usize = 512;
 pub const MAX_AGENT_THREAD_TITLE_BYTES: usize = 256;
 pub const MAX_AGENT_THREAD_FILE_BYTES: usize = 1024 * 1024;
 pub const MAX_AGENT_THREAD_ROOT_BYTES: u64 = 16 * 1024 * 1024;
+pub const MAX_AGENT_STREAM_METRIC_BYTES: u64 = 9_007_199_254_740_991;
 pub const MAX_UNREADABLE_REPORTS: usize = 16;
 pub const MAX_AGENT_INTEGRATION_REF_BYTES: usize = 512;
 
@@ -130,10 +131,19 @@ pub struct AgentTurn {
     pub events_truncated: bool,
     pub last_status_sequence: u64,
     pub last_output_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_metrics: Option<AgentTurnStreamMetrics>,
     #[serde(default)]
     pub launch: Option<AgentLaunchOptions>,
     #[serde(default)]
     pub cli_version: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentTurnStreamMetrics {
+    pub received_utf8_bytes: u64,
+    pub complete: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -501,6 +511,13 @@ fn validate_agent_turn(turn: &AgentTurn) -> Result<(), String> {
     }
     for event in &turn.events {
         validate_agent_turn_event(event)?;
+    }
+    if turn
+        .stream_metrics
+        .as_ref()
+        .is_some_and(|metrics| metrics.received_utf8_bytes > MAX_AGENT_STREAM_METRIC_BYTES)
+    {
+        return Err("Agent turn stream metrics exceed the supported byte count.".to_string());
     }
     validate_agent_turn_cli_version(turn.cli_version.as_deref())?;
     Ok(())

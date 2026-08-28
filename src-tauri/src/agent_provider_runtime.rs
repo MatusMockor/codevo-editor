@@ -19,6 +19,10 @@ pub const AGENT_PROVIDER_STALE_ERROR: &str =
     "Agent provider settings changed. Retry the operation.";
 pub const AGENT_PROVIDER_TURN_ACTIVE_ERROR: &str =
     "Stop this provider's active turns before updating.";
+pub const AGENT_PROVIDER_SIGN_IN_ACTIVE_ERROR: &str =
+    "This provider is signing in. Wait for sign-in to finish.";
+pub const AGENT_PROVIDER_ALREADY_SIGNING_IN_ERROR: &str =
+    "This provider already has an active sign-in session.";
 pub const AGENT_PROVIDER_REVISION_CONFLICT_ERROR: &str = "revisionConflict";
 pub const AGENT_PROVIDER_STALE_REVISION_ERROR: &str = "staleRevision";
 pub const AGENT_PROVIDER_GENERATION_CONFLICT_ERROR: &str = "generationConflict";
@@ -45,6 +49,7 @@ struct ProviderConfiguration {
     turn_count: usize,
     health_count: usize,
     updating: bool,
+    signing_in: bool,
     candidate: Option<AgentProviderUpdateCandidate>,
     claude_auth_capability: Option<ClaudeAuthCapabilityCache>,
 }
@@ -58,6 +63,7 @@ impl ProviderConfiguration {
             turn_count: 0,
             health_count: 0,
             updating: false,
+            signing_in: false,
             candidate: None,
             claude_auth_capability: None,
         }
@@ -137,10 +143,12 @@ impl AgentProviderRuntimeRegistry {
             return Err(AGENT_PROVIDER_GENERATION_CONFLICT_ERROR.to_string());
         }
         let turn_count = previous.map_or(0, |configuration| configuration.turn_count);
+        let signing_in = previous.is_some_and(|configuration| configuration.signing_in);
         state.next_generation = state.next_generation.wrapping_add(1).max(1);
         let provider_generation = state.next_generation;
         *configuration_slot_mut(&mut state, provider) = Some(ProviderConfiguration {
             turn_count,
+            signing_in,
             ..ProviderConfiguration::new(policy, settings_revision, provider_generation)
         });
         Ok(AgentProviderPolicyReceipt {
@@ -168,6 +176,9 @@ impl AgentProviderRuntimeRegistry {
         }
         if configuration.updating {
             return Err(AGENT_PROVIDER_UPDATING_ERROR.to_string());
+        }
+        if configuration.signing_in {
+            return Err(AGENT_PROVIDER_SIGN_IN_ACTIVE_ERROR.to_string());
         }
         configuration.turn_count = configuration.turn_count.saturating_add(1);
         Ok(ProviderTurnLease {
@@ -335,6 +346,9 @@ impl AgentProviderRuntimeRegistry {
         if configuration.turn_count > 0 {
             return Err(AGENT_PROVIDER_TURN_ACTIVE_ERROR.to_string());
         }
+        if configuration.signing_in {
+            return Err(AGENT_PROVIDER_SIGN_IN_ACTIVE_ERROR.to_string());
+        }
         if configuration.health_count > 0 || configuration.updating {
             return Err(AGENT_PROVIDER_UPDATING_ERROR.to_string());
         }
@@ -351,6 +365,68 @@ impl AgentProviderRuntimeRegistry {
             operation_id: operation_id.to_string(),
             candidate,
         })
+    }
+
+    pub fn acquire_sign_in(
+        self: &Arc<Self>,
+        provider: AgentCliInvocation,
+        generation: u64,
+    ) -> Result<ProviderSignInLease, String> {
+        let mut state = self.state();
+        if state.starts_closed {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        let configuration = configuration_mut(&mut state, provider)
+            .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
+        if configuration.generation != generation {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        if !configuration.policy.enabled {
+            return Err(AGENT_PROVIDER_DISABLED_ERROR.to_string());
+        }
+        let cli_path = configuration
+            .policy
+            .cli_path
+            .clone()
+            .ok_or_else(|| "Agent provider CLI path is not configured.".to_string())?;
+        if configuration.turn_count > 0 {
+            return Err(AGENT_PROVIDER_TURN_ACTIVE_ERROR.to_string());
+        }
+        if configuration.updating {
+            return Err(AGENT_PROVIDER_UPDATING_ERROR.to_string());
+        }
+        if configuration.signing_in {
+            return Err(AGENT_PROVIDER_ALREADY_SIGNING_IN_ERROR.to_string());
+        }
+        configuration.signing_in = true;
+        Ok(ProviderSignInLease {
+            registry: Arc::clone(self),
+            provider,
+            generation,
+            cli_path,
+        })
+    }
+
+    pub fn revalidate_sign_in_authority(
+        &self,
+        provider: AgentCliInvocation,
+        generation: u64,
+        cli_path: &str,
+    ) -> Result<(), String> {
+        let state = self.state();
+        let configuration = configuration(&state, provider)
+            .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
+        if state.starts_closed
+            || configuration.generation != generation
+            || configuration.policy.cli_path.as_deref() != Some(cli_path)
+            || !configuration.policy.enabled
+            || !configuration.signing_in
+            || configuration.turn_count > 0
+            || configuration.updating
+        {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(())
     }
 
     pub fn update_is_current(&self, lease: &ProviderUpdateLease) -> bool {
@@ -388,7 +464,7 @@ impl AgentProviderRuntimeRegistry {
         self.close_operation_admission();
         let deadline = Instant::now() + timeout;
         let mut state = self.state();
-        while state.health_count > 0 || state.update_active {
+        while state.health_count > 0 || state.update_active || sign_in_active(&state) {
             let now = Instant::now();
             if now >= deadline {
                 return false;
@@ -398,7 +474,9 @@ impl AgentProviderRuntimeRegistry {
                 return false;
             };
             state = next;
-            if result.timed_out() && (state.health_count > 0 || state.update_active) {
+            if result.timed_out()
+                && (state.health_count > 0 || state.update_active || sign_in_active(&state))
+            {
                 return false;
             }
         }
@@ -440,11 +518,31 @@ impl AgentProviderRuntimeRegistry {
         configuration.candidate = None;
     }
 
+    fn release_sign_in(&self, provider: AgentCliInvocation) {
+        let mut state = self.state();
+        let Some(configuration) = configuration_mut(&mut state, provider) else {
+            return;
+        };
+        configuration.signing_in = false;
+        self.settlement.notify_all();
+    }
+
     fn state(&self) -> MutexGuard<'_, ProviderRuntimeState> {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
+
+fn sign_in_active(state: &ProviderRuntimeState) -> bool {
+    state
+        .claude_code
+        .as_ref()
+        .is_some_and(|configuration| configuration.signing_in)
+        || state
+            .codex
+            .as_ref()
+            .is_some_and(|configuration| configuration.signing_in)
 }
 
 fn validate_policy(policy: &AgentProviderPolicy) -> Result<(), String> {
@@ -623,6 +721,29 @@ impl Drop for ProviderUpdateLease {
     }
 }
 
+pub struct ProviderSignInLease {
+    registry: Arc<AgentProviderRuntimeRegistry>,
+    pub provider: AgentCliInvocation,
+    pub generation: u64,
+    pub cli_path: String,
+}
+
+impl std::fmt::Debug for ProviderSignInLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderSignInLease")
+            .field("provider", &self.provider)
+            .field("generation", &self.generation)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for ProviderSignInLease {
+    fn drop(&mut self) {
+        self.registry.release_sign_in(self.provider);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -738,6 +859,214 @@ mod tests {
                 "/cli/claude",
             )
             .is_ok());
+    }
+
+    #[test]
+    fn sign_in_excludes_same_provider_turns_duplicates_and_updates() {
+        let registry = Arc::new(AgentProviderRuntimeRegistry::new());
+        let claude = registry
+            .register_policy(
+                AgentCliInvocation::ClaudeCode,
+                1,
+                None,
+                policy("/cli/claude"),
+            )
+            .expect("claude policy");
+        let codex = registry
+            .register_policy(AgentCliInvocation::CodexExec, 1, None, policy("/cli/codex"))
+            .expect("codex policy");
+
+        let sign_in = registry
+            .acquire_sign_in(AgentCliInvocation::ClaudeCode, claude.provider_generation)
+            .expect("sign in");
+        assert_eq!(sign_in.cli_path, "/cli/claude");
+        assert_eq!(
+            registry
+                .acquire_sign_in(AgentCliInvocation::ClaudeCode, claude.provider_generation,)
+                .err(),
+            Some(AGENT_PROVIDER_ALREADY_SIGNING_IN_ERROR.to_string())
+        );
+        assert_eq!(
+            registry
+                .acquire_turn(
+                    AgentCliInvocation::ClaudeCode,
+                    claude.provider_generation,
+                    "/cli/claude",
+                )
+                .err(),
+            Some(AGENT_PROVIDER_SIGN_IN_ACTIVE_ERROR.to_string())
+        );
+        assert_eq!(
+            registry
+                .acquire_update(
+                    AgentCliInvocation::ClaudeCode,
+                    claude.provider_generation,
+                    "operation-sign-in",
+                )
+                .err(),
+            Some(AGENT_PROVIDER_SIGN_IN_ACTIVE_ERROR.to_string())
+        );
+        assert!(registry
+            .acquire_turn(
+                AgentCliInvocation::CodexExec,
+                codex.provider_generation,
+                "/cli/codex",
+            )
+            .is_ok());
+
+        drop(sign_in);
+        assert!(registry
+            .acquire_turn(
+                AgentCliInvocation::ClaudeCode,
+                claude.provider_generation,
+                "/cli/claude",
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn turn_and_update_exclude_sign_in_and_every_failed_acquisition_releases() {
+        let registry = Arc::new(AgentProviderRuntimeRegistry::new());
+        let receipt = registry
+            .register_policy(
+                AgentCliInvocation::ClaudeCode,
+                1,
+                None,
+                policy("/cli/claude"),
+            )
+            .expect("policy");
+        let turn = registry
+            .acquire_turn(
+                AgentCliInvocation::ClaudeCode,
+                receipt.provider_generation,
+                "/cli/claude",
+            )
+            .expect("turn");
+        assert_eq!(
+            registry
+                .acquire_sign_in(AgentCliInvocation::ClaudeCode, receipt.provider_generation,)
+                .err(),
+            Some(AGENT_PROVIDER_TURN_ACTIVE_ERROR.to_string())
+        );
+        drop(turn);
+
+        let health = registry
+            .acquire_health(
+                AgentCliInvocation::ClaudeCode,
+                receipt.provider_generation,
+                "/cli/claude",
+            )
+            .expect("health");
+        let identity = executable_identity_fixture();
+        registry
+            .cache_candidate(
+                &health,
+                Some(AgentProviderUpdateCandidate {
+                    cli_path: "/cli/claude".to_string(),
+                    cli_identity: identity.clone(),
+                    installed_version: "1.0.0".to_string(),
+                    available_version: "1.1.0".to_string(),
+                    installer: ResolvedAgentProviderInstaller::Npm {
+                        program: identity,
+                        package_name: "@anthropic-ai/claude-code".to_string(),
+                    },
+                }),
+            )
+            .expect("candidate");
+        drop(health);
+        let update = registry
+            .acquire_update(
+                AgentCliInvocation::ClaudeCode,
+                receipt.provider_generation,
+                "operation-update",
+            )
+            .expect("update");
+        assert_eq!(
+            registry
+                .acquire_sign_in(AgentCliInvocation::ClaudeCode, receipt.provider_generation,)
+                .err(),
+            Some(AGENT_PROVIDER_UPDATING_ERROR.to_string())
+        );
+        drop(update);
+        assert!(registry
+            .acquire_sign_in(AgentCliInvocation::ClaudeCode, receipt.provider_generation,)
+            .is_ok());
+    }
+
+    #[test]
+    fn sign_in_revalidation_fails_closed_after_policy_replacement_but_lease_still_excludes() {
+        let registry = Arc::new(AgentProviderRuntimeRegistry::new());
+        let first = registry
+            .register_policy(AgentCliInvocation::CodexExec, 1, None, policy("/cli/a"))
+            .expect("first");
+        let sign_in = registry
+            .acquire_sign_in(AgentCliInvocation::CodexExec, first.provider_generation)
+            .expect("sign in");
+        let second = registry
+            .register_policy(
+                AgentCliInvocation::CodexExec,
+                2,
+                Some(first.provider_generation),
+                policy("/cli/b"),
+            )
+            .expect("replacement");
+        assert_eq!(
+            registry.revalidate_sign_in_authority(
+                sign_in.provider,
+                sign_in.generation,
+                &sign_in.cli_path,
+            ),
+            Err(AGENT_PROVIDER_STALE_ERROR.to_string())
+        );
+        assert_eq!(
+            registry
+                .acquire_sign_in(AgentCliInvocation::CodexExec, second.provider_generation)
+                .err(),
+            Some(AGENT_PROVIDER_ALREADY_SIGNING_IN_ERROR.to_string())
+        );
+        drop(sign_in);
+        assert!(registry
+            .acquire_sign_in(AgentCliInvocation::CodexExec, second.provider_generation)
+            .is_ok());
+    }
+
+    #[test]
+    fn disabled_pathless_and_stale_sign_in_requests_fail_closed_without_stranding_a_lease() {
+        let registry = Arc::new(AgentProviderRuntimeRegistry::new());
+        let mut disabled = policy("/cli/claude");
+        disabled.enabled = false;
+        let first = registry
+            .register_policy(AgentCliInvocation::ClaudeCode, 1, None, disabled)
+            .expect("disabled policy");
+        assert_eq!(
+            registry
+                .acquire_sign_in(AgentCliInvocation::ClaudeCode, first.provider_generation)
+                .err(),
+            Some(AGENT_PROVIDER_DISABLED_ERROR.to_string())
+        );
+        let pathless = AgentProviderPolicy {
+            enabled: true,
+            cli_path: None,
+            check_for_updates: false,
+        };
+        let second = registry
+            .register_policy(
+                AgentCliInvocation::ClaudeCode,
+                2,
+                Some(first.provider_generation),
+                pathless,
+            )
+            .expect("pathless policy");
+        assert!(registry
+            .acquire_sign_in(AgentCliInvocation::ClaudeCode, second.provider_generation)
+            .err()
+            .is_some_and(|error| error.contains("not configured")));
+        assert_eq!(
+            registry
+                .acquire_sign_in(AgentCliInvocation::ClaudeCode, first.provider_generation)
+                .err(),
+            Some(AGENT_PROVIDER_STALE_ERROR.to_string())
+        );
     }
 
     #[test]

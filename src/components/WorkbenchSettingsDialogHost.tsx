@@ -1,5 +1,6 @@
 import type { AppSettings, SettingsSection, WorkspaceSettings } from "../domain/settings";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
+import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import type { SystemFontGateway } from "../domain/systemFonts";
 import type { WorkspaceTrustState } from "../domain/trust";
 import type { PhpToolAvailability, WorkspaceDescriptor } from "../domain/workspace";
@@ -32,6 +33,7 @@ export interface WorkbenchSettingsModel {
   readonly workspaceRoot: string | null;
   readonly workspaceSettings: WorkspaceSettings;
   readonly workspaceTrust: WorkspaceTrustState | null;
+  readonly agents?: { readonly providerSignIn: AgentProviderSignInSurface };
 }
 
 export interface WorkbenchSettingsDialogHostProps {
@@ -74,6 +76,7 @@ export function WorkbenchSettingsDialogHost({
         }
         phpTools={workbench.phpTools}
         providerManagement={providerManagement}
+        providerSignIn={workbench.agents?.providerSignIn ?? null}
         systemFontGateway={systemFontGateway}
         workspaceDescriptor={workbench.workspaceDescriptor}
         workspaceRoot={workbench.workspaceRoot}

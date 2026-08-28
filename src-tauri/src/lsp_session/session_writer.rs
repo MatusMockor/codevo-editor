@@ -663,6 +663,14 @@ mod tests {
     struct DeadlineBlockingStrategy {
         entered: Mutex<Option<mpsc::Sender<()>>>,
         gate: Condvar,
+        released: Mutex<bool>,
+    }
+
+    impl DeadlineBlockingStrategy {
+        fn release_with_timeout(&self) {
+            *self.released.lock().expect("released") = true;
+            self.gate.notify_all();
+        }
     }
 
     impl MessageWriteStrategy for DeadlineBlockingStrategy {
@@ -670,24 +678,69 @@ mod tests {
             &self,
             _writer: &mut dyn Write,
             _payload: &[u8],
-            deadline: Instant,
+            _deadline: Instant,
         ) -> io::Result<()> {
             if let Some(entered) = self.entered.lock().expect("entered").take() {
                 let _ = entered.send(());
             }
-            let guard = self.entered.lock().expect("gate lock");
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            let (_guard, wait) = self
+            let released = self.released.lock().expect("released");
+            let _released = self
                 .gate
-                .wait_timeout(guard, remaining)
-                .expect("deadline wait");
-            if wait.timed_out() {
-                Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "language-server stdin write timed out",
-                ))
-            } else {
-                Ok(())
+                .wait_while(released, |released| !*released)
+                .expect("release-only wait");
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "language-server stdin write timed out",
+            ))
+        }
+    }
+
+    struct DeadlineStrategyThreadGuard {
+        occupied: Option<std::thread::JoinHandle<io::Result<()>>>,
+        strategy: Arc<DeadlineBlockingStrategy>,
+        waiting: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl DeadlineStrategyThreadGuard {
+        fn new(
+            strategy: Arc<DeadlineBlockingStrategy>,
+            occupied: std::thread::JoinHandle<io::Result<()>>,
+        ) -> Self {
+            Self {
+                occupied: Some(occupied),
+                strategy,
+                waiting: None,
+            }
+        }
+
+        fn install_waiting(&mut self, waiting: std::thread::JoinHandle<()>) {
+            self.waiting = Some(waiting);
+        }
+
+        fn join_waiting(&mut self) {
+            if let Some(waiting) = self.waiting.take() {
+                waiting.join().expect("waiting write");
+            }
+        }
+
+        fn release_and_join_occupied(&mut self) -> io::Result<()> {
+            self.strategy.release_with_timeout();
+            self.occupied
+                .take()
+                .expect("occupied write handle")
+                .join()
+                .expect("occupied write")
+        }
+    }
+
+    impl Drop for DeadlineStrategyThreadGuard {
+        fn drop(&mut self) {
+            self.strategy.release_with_timeout();
+            if let Some(waiting) = self.waiting.take() {
+                let _ = waiting.join();
+            }
+            if let Some(occupied) = self.occupied.take() {
+                let _ = occupied.join();
             }
         }
     }
@@ -698,32 +751,49 @@ mod tests {
         let strategy = Arc::new(DeadlineBlockingStrategy {
             entered: Mutex::new(Some(entered_tx)),
             gate: Condvar::new(),
+            released: Mutex::new(false),
         });
-        let writer = SessionMessageWriter::from_strategy(Box::new(NoopWriter), strategy);
+        let writer = SessionMessageWriter::from_strategy(Box::new(NoopWriter), strategy.clone());
         let occupied_writer = Arc::clone(&writer);
         let occupied = std::thread::spawn(move || {
-            occupied_writer.write_message(b"occupied", Duration::from_millis(80))
+            occupied_writer.write_message(b"occupied", Duration::from_secs(60))
         });
+        let mut thread_guard = DeadlineStrategyThreadGuard::new(Arc::clone(&strategy), occupied);
         entered_rx
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(Duration::from_secs(5))
             .expect("first write owns mutex");
 
-        let started = Instant::now();
-        assert_eq!(
-            writer
+        let waiting_writer = Arc::clone(&writer);
+        let (waiting_started_tx, waiting_started_rx) = mpsc::channel();
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        let waiting = std::thread::spawn(move || {
+            waiting_started_tx
+                .send(())
+                .expect("waiting write start signal");
+            let result = waiting_writer
                 .write_message(b"waiting", Duration::from_millis(10))
-                .expect_err("mutex wait timeout")
-                .kind(),
-            io::ErrorKind::TimedOut
-        );
-        assert!(started.elapsed() < Duration::from_millis(60));
+                .map_err(|error| error.kind());
+            waiting_tx.send(result).expect("waiting write result");
+        });
+        thread_guard.install_waiting(waiting);
+        waiting_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("waiting write did not start");
         assert_eq!(
-            occupied
-                .join()
-                .expect("occupied write")
-                .expect_err("timeout")
+            waiting_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("waiting write hung while the writer mutex remained occupied"),
+            Err(io::ErrorKind::TimedOut)
+        );
+        thread_guard.join_waiting();
+
+        assert_eq!(
+            thread_guard
+                .release_and_join_occupied()
+                .expect_err("occupied timeout")
                 .kind(),
-            io::ErrorKind::TimedOut
+            io::ErrorKind::TimedOut,
+            "the occupied write fails only after the test releases its independent gate"
         );
     }
 

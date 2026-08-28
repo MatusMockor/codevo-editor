@@ -1,3 +1,9 @@
+import {
+  createStartupShell,
+  startupShellPaintWasObserved,
+  waitForStartupShellPaint,
+} from "./startupShell";
+
 const rootElement = document.getElementById("root");
 
 if (!rootElement) {
@@ -74,12 +80,29 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 async function bootstrap(): Promise<void> {
+  appRoot.replaceChildren(createStartupShell());
+  const startupShellPaintOutcome = await waitForStartupShellPaint();
+  if (startupShellPaintWasObserved(startupShellPaintOutcome)) {
+    performance.mark("codevo-startup-shell-painted");
+    const paintEntries = performance.getEntriesByName("codevo-startup-shell-painted", "mark");
+    const rendererElapsedMs = paintEntries[paintEntries.length - 1]?.startTime;
+    const paintEpochMs = performance.timeOrigin + (rendererElapsedMs ?? Number.NaN);
+    if (rendererElapsedMs !== undefined && Number.isFinite(paintEpochMs)) {
+      void import("./startupTelemetry")
+        .then(({ logStartupShellPaint }) => {
+          logStartupShellPaint(rendererElapsedMs, paintEpochMs);
+        })
+        .catch(() => {
+          // Telemetry is evidence-only and cannot own startup success.
+        });
+    }
+  }
+
   const [
     { default: React },
     ReactDOM,
     { default: App },
     { ErrorBoundary },
-    monacoEnvironment,
     { installGlobalErrorSafetyNet },
     { strictModeEnabled },
   ] = await Promise.all([
@@ -87,12 +110,10 @@ async function bootstrap(): Promise<void> {
     import("react-dom/client"),
     import("./App"),
     import("./components/ErrorBoundary"),
-    import("./infrastructure/monacoEnvironment"),
     import("./infrastructure/globalErrorSafetyNet"),
     import("./perfLaneRenderMode"),
   ]);
 
-  monacoEnvironment.configureMonacoEnvironment();
   appRoot.replaceChildren();
   // Root-level boundary: ANY render/lifecycle crash anywhere in the app
   // (not just inside the git diff view) now renders a recoverable fallback

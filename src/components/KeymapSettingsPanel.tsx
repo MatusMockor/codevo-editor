@@ -5,7 +5,6 @@ import {
   detectKeymapPlatform,
   findKeymapSequenceConflicts,
   keymapCommands,
-  rebindableKeymapCommands,
   shortcutForCommand,
   shortcutSequenceForPlatform,
   shortcutFromKeyboardEvent,
@@ -56,17 +55,42 @@ export function KeymapSettingsPanel({
     [appSettings.keymap, resolvedPlatform],
   );
 
-  const visibleCommands = useMemo(() => {
+  const visibleCategories = useMemo(() => {
     const normalizedFilter = filter.trim().toLowerCase();
-    if (!normalizedFilter) return rebindableKeymapCommands;
+    const commands = normalizedFilter
+      ? keymapCommands.filter((command) => {
+          const currentShortcut = shortcutForCommand(
+            appSettings.keymap,
+            command.id,
+            resolvedPlatform,
+          );
+          const defaultShortcut = defaultShortcutForCommand(command.id, resolvedPlatform);
+          return `${command.label} ${command.category} ${command.id} ${currentShortcut} ${defaultShortcut}`
+            .toLowerCase()
+            .includes(normalizedFilter);
+        })
+      : keymapCommands;
+    const grouped = new Map<string, (typeof keymapCommands)[number][]>();
 
-    return rebindableKeymapCommands.filter((command) => {
-      const shortcut = appSettings.keymap[command.id] || defaultShortcutForCommand(command.id);
-      return `${command.label} ${command.category} ${command.id} ${shortcut}`
-        .toLowerCase()
-        .includes(normalizedFilter);
-    });
-  }, [appSettings.keymap, filter]);
+    for (const command of commands) {
+      const categoryCommands = grouped.get(command.category);
+      if (categoryCommands) {
+        categoryCommands.push(command);
+      } else {
+        grouped.set(command.category, [command]);
+      }
+    }
+
+    return [...grouped.entries()].map(([category, categoryCommands]) => ({
+      category,
+      commands: categoryCommands,
+    }));
+  }, [appSettings.keymap, filter, resolvedPlatform]);
+
+  const visibleCommandCount = visibleCategories.reduce(
+    (count, category) => count + category.commands.length,
+    0,
+  );
 
   return (
     <div className="settings-group">
@@ -81,103 +105,151 @@ export function KeymapSettingsPanel({
         />
       </div>
 
-      {visibleCommands.length === 0 ? (
-        <div className="keymap-empty">No matching shortcuts</div>
-      ) : null}
+      {visibleCommandCount === 0 ? <div className="keymap-empty">No matching shortcuts</div> : null}
 
-      {visibleCommands.map((command) => {
-        const conflicts = findKeymapSequenceConflicts(conflictKeymap, command.id)
-          .map((conflict) => {
-            const owner = keymapCommands.find((candidate) => candidate.id === conflict.id);
-            return owner ? { ...conflict, label: owner.label } : null;
-          })
-          .filter((conflict): conflict is NonNullable<typeof conflict> => conflict !== null)
-          .sort(
-            (left, right) =>
-              (left.kind === "exact" ? 0 : 1) - (right.kind === "exact" ? 0 : 1) ||
-              (commandOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
-                (commandOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER),
-          );
-        const exactConflicts = conflicts.filter((conflict) => conflict.kind === "exact");
-        const prefixConflicts = conflicts.filter((conflict) => conflict.kind === "prefix");
-        const isWaitingForSecondStroke = pendingChord?.commandId === command.id;
+      {visibleCategories.map(({ category, commands }, categoryIndex) => (
+        <section
+          aria-labelledby={`keymap-category-${categoryIndex}`}
+          className="settings-subgroup keymap-category"
+          key={category}
+        >
+          <span id={`keymap-category-${categoryIndex}`}>{category}</span>
+          {commands.map((command) => {
+            const conflicts = findKeymapSequenceConflicts(conflictKeymap, command.id)
+              .map((conflict) => {
+                const owner = keymapCommands.find((candidate) => candidate.id === conflict.id);
+                return owner ? { ...conflict, label: owner.label } : null;
+              })
+              .filter((conflict): conflict is NonNullable<typeof conflict> => conflict !== null)
+              .sort(
+                (left, right) =>
+                  (left.kind === "exact" ? 0 : 1) - (right.kind === "exact" ? 0 : 1) ||
+                  (commandOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+                    (commandOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+              );
+            const exactConflicts = conflicts.filter((conflict) => conflict.kind === "exact");
+            const prefixConflicts = conflicts.filter((conflict) => conflict.kind === "prefix");
+            const isWaitingForSecondStroke = pendingChord?.commandId === command.id;
+            const isRebindable = !("rebindable" in command);
+            const currentShortcut = shortcutForCommand(
+              appSettings.keymap,
+              command.id,
+              resolvedPlatform,
+            );
+            const defaultShortcut = defaultShortcutForCommand(command.id, resolvedPlatform);
 
-        return (
-          <label className="settings-field keymap-field" key={command.id}>
-            <span>
-              <strong>{command.label}</strong>
-              <small>{command.category}</small>
-            </span>
-            <input
-              aria-describedby={isWaitingForSecondStroke ? `${command.id}-chord-hint` : undefined}
-              onBlur={(event) => {
-                setPendingChord((current) => (current?.commandId === command.id ? null : current));
-                onChangeShortcut(command.id, event.currentTarget.value);
-              }}
-              onChange={(event) => {
-                setPendingChord((current) => (current?.commandId === command.id ? null : current));
-                onChangeShortcut(command.id, event.currentTarget.value);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" && isWaitingForSecondStroke) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onChangeShortcut(command.id, pendingChord.originalShortcut);
-                  setPendingChord(null);
-                  return;
-                }
+            return (
+              <div className="keymap-command" key={command.id}>
+                <label className="settings-field keymap-field">
+                  <span>
+                    <strong>{command.label}</strong>
+                    <small>{command.id}</small>
+                  </span>
+                  <input
+                    aria-describedby={
+                      isWaitingForSecondStroke ? `${command.id}-chord-hint` : undefined
+                    }
+                    disabled={!isRebindable}
+                    onBlur={(event) => {
+                      if (!isRebindable) return;
+                      setPendingChord((current) =>
+                        current?.commandId === command.id ? null : current,
+                      );
+                      onChangeShortcut(command.id, event.currentTarget.value);
+                    }}
+                    onChange={(event) => {
+                      if (!isRebindable) return;
+                      setPendingChord((current) =>
+                        current?.commandId === command.id ? null : current,
+                      );
+                      onChangeShortcut(command.id, event.currentTarget.value);
+                    }}
+                    onKeyDown={(event) => {
+                      if (!isRebindable) return;
+                      if (event.key === "Escape" && isWaitingForSecondStroke) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onChangeShortcut(command.id, pendingChord.originalShortcut);
+                        setPendingChord(null);
+                        return;
+                      }
 
-                const stroke = shortcutStrokeFromKeyboardEvent(event);
-                const captured = isWaitingForSecondStroke
-                  ? (stroke?.value ?? null)
-                  : (shortcutFromKeyboardEvent(event) ??
-                    (stroke && isSafeBareFirstStroke(event.key) ? stroke.value : null));
-                if (!captured) return;
+                      const stroke = shortcutStrokeFromKeyboardEvent(event);
+                      const captured = isWaitingForSecondStroke
+                        ? (stroke?.value ?? null)
+                        : (shortcutFromKeyboardEvent(event) ??
+                          (stroke && isSafeBareFirstStroke(event.key) ? stroke.value : null));
+                      if (!captured) return;
 
-                event.preventDefault();
-                event.stopPropagation();
-                if (isWaitingForSecondStroke) {
-                  onChangeShortcut(command.id, `${pendingChord.firstStroke} ${captured}`);
-                  setPendingChord(null);
-                  return;
-                }
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (isWaitingForSecondStroke) {
+                        onChangeShortcut(command.id, `${pendingChord.firstStroke} ${captured}`);
+                        setPendingChord(null);
+                        return;
+                      }
 
-                setPendingChord({
-                  commandId: command.id,
-                  firstStroke: captured,
-                  originalShortcut: appSettings.keymap[command.id],
-                });
-                // Keep single-stroke capture immediate. A second stroke while
-                // the same field remains focused upgrades it to a sequence.
-                onChangeShortcut(command.id, captured);
-              }}
-              placeholder={defaultShortcutForCommand(command.id)}
-              spellCheck={false}
-              value={appSettings.keymap[command.id]}
-            />
-            {isWaitingForSecondStroke ? (
-              <small className="keymap-chord-hint" id={`${command.id}-chord-hint`} role="status">
-                Waiting for second key… Press Escape to cancel.
-              </small>
-            ) : null}
-            {conflicts.length > 0 ? (
-              <small className="keymap-conflict" role="alert">
-                <TriangleAlert aria-hidden="true" size={12} />
-                <span>
-                  {exactConflicts.length > 0
-                    ? `Also used by ${exactConflicts.map((conflict) => conflict.label).join(", ")}. `
-                    : null}
-                  {prefixConflicts.length > 0
-                    ? `Shares a first key with ${prefixConflicts
-                        .map((conflict) => conflict.label)
-                        .join(", ")}.`
-                    : null}
-                </span>
-              </small>
-            ) : null}
-          </label>
-        );
-      })}
+                      setPendingChord({
+                        commandId: command.id,
+                        firstStroke: captured,
+                        originalShortcut: currentShortcut,
+                      });
+                      // Keep single-stroke capture immediate. A second stroke while
+                      // the same field remains focused upgrades it to a sequence.
+                      onChangeShortcut(command.id, captured);
+                    }}
+                    placeholder={defaultShortcut}
+                    readOnly={!isRebindable}
+                    spellCheck={false}
+                    value={currentShortcut}
+                  />
+                  {!isRebindable ? (
+                    <small>Reserved by editor navigation and cannot be rebound.</small>
+                  ) : null}
+                  {isWaitingForSecondStroke ? (
+                    <small
+                      className="keymap-chord-hint"
+                      id={`${command.id}-chord-hint`}
+                      role="status"
+                    >
+                      Waiting for second key… Press Escape to cancel.
+                    </small>
+                  ) : null}
+                  {conflicts.length > 0 ? (
+                    <small className="keymap-conflict" role="alert">
+                      <TriangleAlert aria-hidden="true" size={12} />
+                      <span>
+                        {exactConflicts.length > 0
+                          ? `Also used by ${exactConflicts
+                              .map((conflict) => conflict.label)
+                              .join(", ")}. `
+                          : null}
+                        {prefixConflicts.length > 0
+                          ? `Shares a first key with ${prefixConflicts
+                              .map((conflict) => conflict.label)
+                              .join(", ")}.`
+                          : null}
+                      </span>
+                    </small>
+                  ) : null}
+                </label>
+                {isRebindable ? (
+                  <div className="settings-actions">
+                    <button
+                      aria-label={`Reset ${command.label} (${command.id}) to default`}
+                      disabled={currentShortcut === defaultShortcut}
+                      onClick={() => onChangeShortcut(command.id, defaultShortcut)}
+                      type="button"
+                    >
+                      Reset to Default
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </section>
+      ))}
     </div>
   );
 }

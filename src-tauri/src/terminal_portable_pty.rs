@@ -7,33 +7,52 @@ pub struct PortablePtySpawner;
 
 impl TerminalPtySpawner for PortablePtySpawner {
     fn spawn(&self, request: &TerminalLaunchRequest) -> Result<SpawnedTerminal, String> {
-        let size = request.size.normalized();
-        let pty_system = native_pty_system();
-        let pair = pty_system
-            .openpty(pty_size(size))
-            .map_err(|error| format!("Failed to open terminal PTY: {error}"))?;
-        let mut command = command_builder(
+        let command = command_builder(
             &request.profile,
             request.shell_integration_base_dir.as_deref(),
         );
-        command.cwd(request.cwd.as_os_str());
-        #[cfg(unix)]
-        if let Some(directory) = request.cwd_directory.as_ref() {
-            command.cwd_fd(
-                directory
-                    .try_clone()
-                    .map_err(|error| format!("Failed to retain terminal directory: {error}"))?,
-            );
-        }
-        command.env("TERM", "xterm-256color");
-
-        let child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| format!("Failed to start terminal shell: {error}"))?;
-        let child: Box<dyn TerminalChild> = Box::new(PortableTerminalChild { child });
-        finish_portable_spawn(child, pair.master)
+        spawn_prepared_command(request, command, || Ok(()))
     }
+}
+
+pub(crate) fn spawn_prepared_command(
+    request: &TerminalLaunchRequest,
+    command: CommandBuilder,
+    before_spawn: impl FnOnce() -> Result<(), String>,
+) -> Result<SpawnedTerminal, String> {
+    spawn_prepared_command_with_child(request, command, before_spawn, |child| child)
+}
+
+pub(crate) fn spawn_prepared_command_with_child(
+    request: &TerminalLaunchRequest,
+    mut command: CommandBuilder,
+    before_spawn: impl FnOnce() -> Result<(), String>,
+    wrap_child: impl FnOnce(Box<dyn TerminalChild>) -> Box<dyn TerminalChild>,
+) -> Result<SpawnedTerminal, String> {
+    let size = request.size.normalized();
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(pty_size(size))
+        .map_err(|error| format!("Failed to open terminal PTY: {error}"))?;
+    command.cwd(request.cwd.as_os_str());
+    #[cfg(unix)]
+    if let Some(directory) = request.cwd_directory.as_ref() {
+        command.cwd_fd(
+            directory
+                .try_clone()
+                .map_err(|error| format!("Failed to retain terminal directory: {error}"))?,
+        );
+    }
+    command.env("TERM", "xterm-256color");
+    before_spawn()?;
+
+    let child = pair
+        .slave
+        .spawn_command(command)
+        .map_err(|error| format!("Failed to start terminal shell: {error}"))?;
+    let child: Box<dyn TerminalChild> = Box::new(PortableTerminalChild { child });
+    let child = wrap_child(child);
+    finish_portable_spawn(child, pair.master)
 }
 
 pub(super) fn finish_portable_spawn(

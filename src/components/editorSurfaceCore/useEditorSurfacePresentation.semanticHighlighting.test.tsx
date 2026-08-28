@@ -15,6 +15,10 @@ import {
   useEditorSurfacePresentation,
 } from "./useEditorSurfacePresentation";
 
+vi.mock("../monacoRuntimeLoader", () => ({
+  initializeMonacoRuntime: vi.fn(async () => undefined),
+}));
+
 const monacoEditorProbe = vi.hoisted(() => ({
   optionsHistory: [] as Record<string, unknown>[],
 }));

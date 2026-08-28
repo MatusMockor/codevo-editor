@@ -229,7 +229,14 @@ pub fn agent_cli_binary_unavailable_error(invocation: AgentCliInvocation) -> Str
 pub trait AgentChild: Send {
     fn stdout_reader(&mut self) -> Result<Box<dyn Read + Send>, String>;
     fn stderr_reader(&mut self) -> Result<Box<dyn Read + Send>, String>;
-    fn try_wait(&mut self) -> Result<Option<i32>, String>;
+    fn observe_exit(&mut self) -> Result<bool, String>;
+    fn reap(&mut self) -> Result<i32, String>;
+    fn try_wait(&mut self) -> Result<Option<i32>, String> {
+        if !self.observe_exit()? {
+            return Ok(None);
+        }
+        self.reap().map(Some)
+    }
     fn process_group_id(&self) -> i32;
     fn force_kill(&mut self) -> Result<(), String>;
 }
@@ -306,6 +313,7 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
         Ok(Box::new(StdAgentChild {
             child,
             process_group_id,
+            observed_exit_code: None,
         }))
     }
 }
@@ -313,6 +321,7 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
 struct StdAgentChild {
     child: Child,
     process_group_id: i32,
+    observed_exit_code: Option<i32>,
 }
 
 impl AgentChild for StdAgentChild {
@@ -322,6 +331,7 @@ impl AgentChild for StdAgentChild {
             .stdout
             .take()
             .ok_or_else(|| "Agent stdout pipe is unavailable.".to_string())?;
+        configure_agent_output_reader(&stdout)?;
         Ok(Box::new(stdout))
     }
 
@@ -331,31 +341,36 @@ impl AgentChild for StdAgentChild {
             .stderr
             .take()
             .ok_or_else(|| "Agent stderr pipe is unavailable.".to_string())?;
+        configure_agent_output_reader(&stderr)?;
         Ok(Box::new(stderr))
     }
 
     #[cfg(unix)]
-    fn try_wait(&mut self) -> Result<Option<i32>, String> {
-        if !observe_exit_without_reaping(&self.child)
-            .map_err(|error| format!("Unable to observe agent exit: {error}"))?
-        {
-            return Ok(None);
-        }
-        unsafe {
-            libc::kill(-self.process_group_id, libc::SIGKILL);
-        }
-        let status = reap_child(&mut self.child)
-            .map_err(|error| format!("Unable to reap agent: {error}"))?;
-        Ok(Some(exit_code_of(status)))
+    fn observe_exit(&mut self) -> Result<bool, String> {
+        observe_exit_without_reaping(&self.child)
+            .map_err(|error| format!("Unable to observe agent exit: {error}"))
     }
 
     #[cfg(not(unix))]
-    fn try_wait(&mut self) -> Result<Option<i32>, String> {
+    fn observe_exit(&mut self) -> Result<bool, String> {
+        if self.observed_exit_code.is_some() {
+            return Ok(true);
+        }
         let status = self
             .child
             .try_wait()
             .map_err(|error| format!("Unable to observe agent exit: {error}"))?;
-        Ok(status.map(exit_code_of))
+        self.observed_exit_code = status.map(exit_code_of);
+        Ok(self.observed_exit_code.is_some())
+    }
+
+    fn reap(&mut self) -> Result<i32, String> {
+        if let Some(exit_code) = self.observed_exit_code.take() {
+            return Ok(exit_code);
+        }
+        let status = reap_child(&mut self.child)
+            .map_err(|error| format!("Unable to reap agent: {error}"))?;
+        Ok(exit_code_of(status))
     }
 
     fn process_group_id(&self) -> i32 {
@@ -371,6 +386,25 @@ impl AgentChild for StdAgentChild {
             .kill()
             .map_err(|error| format!("Unable to kill agent child: {error}"))
     }
+}
+
+#[cfg(unix)]
+fn configure_agent_output_reader(reader: &impl std::os::fd::AsRawFd) -> Result<(), String> {
+    let descriptor = reader.as_raw_fd();
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+    {
+        return Err(format!(
+            "Unable to configure agent output pipe: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn configure_agent_output_reader<T>(_reader: &T) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(unix)]

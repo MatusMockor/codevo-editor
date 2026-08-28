@@ -62,18 +62,21 @@ export interface AgentModeViewProps {
   readonly nowTickMs?: number;
   readonly viewCommands?: AgentViewCommandBridge | null;
   readonly chrome: AgentWorkbenchChrome;
+  onOpenSourceControl?(): void;
   onTrustProject(projectRootKey: string): void;
   onReleaseProject(projectRootKey: string): void;
 }
 
 const DEFAULT_NOW_TICK_MS = 30_000;
 const FIND_BAR_ROWS: CSSProperties = { gridTemplateRows: "auto auto minmax(0, 1fr) auto" };
+const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
 
 export function AgentModeView({
   agents,
   chrome,
   modelFavoritesPersistence = null,
   nowTickMs = DEFAULT_NOW_TICK_MS,
+  onOpenSourceControl = NOOP_OPEN_SOURCE_CONTROL,
   onReleaseProject,
   onTrustProject,
   overflowRootPaths,
@@ -382,6 +385,7 @@ export function AgentModeView({
                 onCollapseSidebar={toggleRail}
                 onNewThread={newThread}
                 onOpenProviderSettings={agents.configureAgentCli}
+                onOpenSourceControl={onOpenSourceControl}
                 onProjectCommand={projectMenuCommand}
                 onReleaseProject={releaseProject}
                 onSelectThread={navigation.selectThread}

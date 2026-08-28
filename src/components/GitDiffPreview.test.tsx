@@ -17,6 +17,11 @@ import type { EditorDocument } from "../domain/workspace";
 import { EditorArea } from "./EditorArea";
 import { GitDiffPreview } from "./GitDiffPreview";
 
+const monacoRuntimeLoaderMocks = vi.hoisted(() => ({ ready: Promise.resolve() }));
+vi.mock("./monacoRuntimeLoader", () => ({
+  initializeMonacoRuntime: vi.fn(() => monacoRuntimeLoaderMocks.ready),
+}));
+
 interface MockTextModel {
   attach(): void;
   detach(): void;

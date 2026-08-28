@@ -12,6 +12,11 @@ const appGitDiffClickMocks = vi.hoisted(() => ({
   diffEditorProps: [] as Array<Record<string, unknown>>,
   diffErrorMessage: null as string | null,
   loadGitFileHunks: vi.fn(),
+  monacoRuntimeReady: Promise.resolve(),
+}));
+
+vi.mock("./components/monacoRuntimeLoader", () => ({
+  initializeMonacoRuntime: vi.fn(() => appGitDiffClickMocks.monacoRuntimeReady),
 }));
 
 vi.mock("@monaco-editor/react", async () => {
@@ -255,6 +260,9 @@ describe("App Git diff click path", () => {
         root.render(<App />);
         await Promise.resolve();
       });
+      await vi.waitFor(() => {
+        expect(host.textContent).not.toContain("Loading editor runtime");
+      });
 
       const changeButton = changeRowButton(host, change.relativePath);
       expect(changeButton).toBeDefined();
@@ -296,6 +304,9 @@ describe("App Git diff click path", () => {
     await act(async () => {
       root.render(<App />);
       await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(host.textContent).not.toContain("Loading editor runtime");
     });
 
     const readmeButton = changeRowButton(host, "README.md");

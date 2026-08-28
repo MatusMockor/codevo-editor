@@ -868,6 +868,108 @@ describe("SettingsDialog", () => {
     expect(inputWithLabel("Save File").placeholder).toBe("Ctrl+S");
   });
 
+  it("groups and visibly identifies every keymap command, including reserved shortcuts", async () => {
+    await act(async () => {
+      root.render(
+        <KeymapSettingsPanel
+          appSettings={{ ...defaultAppSettings(), keymap: defaultKeymapSettings("mac") }}
+          onChangeShortcut={vi.fn()}
+          platform="mac"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.querySelectorAll(".keymap-category")).toHaveLength(19);
+    expect(host.querySelectorAll(".keymap-field")).toHaveLength(156);
+    expect(host.textContent).toContain("editor.save");
+    expect(host.textContent).toContain("editor.nextRecentlyUsedEditor");
+
+    const nextMru = inputWithLabel("Open Next Recently Used Editor");
+    const previousMru = inputWithLabel("Open Previous Recently Used Editor");
+    expect(nextMru.value).toBe("Ctrl+Tab");
+    expect(nextMru.disabled).toBe(true);
+    expect(nextMru.readOnly).toBe(true);
+    expect(previousMru.disabled).toBe(true);
+    expect(previousMru.readOnly).toBe(true);
+    expect(nextMru.closest(".keymap-field")?.textContent).toContain(
+      "Reserved by editor navigation",
+    );
+  });
+
+  it("distinguishes reset actions for commands with duplicate visible labels", async () => {
+    await act(async () => {
+      root.render(
+        <KeymapSettingsPanel
+          appSettings={{
+            ...defaultAppSettings(),
+            keymap: {
+              ...defaultKeymapSettings("mac"),
+              "javascript.sortImports": "Cmd+Alt+J",
+              "typescript.sortImports": "Cmd+Alt+T",
+            },
+          }}
+          onChangeShortcut={vi.fn()}
+          platform="mac"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(resetShortcutButton("Sort Imports", "typescript.sortImports")).not.toBe(
+      resetShortcutButton("Sort Imports", "javascript.sortImports"),
+    );
+  });
+
+  it("resets one customized shortcut to its platform default without rewriting the keymap", async () => {
+    stubNavigatorPlatform("Linux x86_64");
+    const onSave = vi.fn(async () => undefined);
+    const initialKeymap = {
+      ...defaultKeymapSettings("linux"),
+      "editor.closeTab": "Ctrl+Alt+W",
+      "editor.save": "F12",
+    };
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={{ ...defaultAppSettings(), keymap: initialKeymap }}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      resetShortcutButton("Save File", "editor.save").click();
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: {
+          ...initialKeymap,
+          "editor.save": "Ctrl+S",
+        },
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+    expect(inputWithLabel("Save File").value).toBe("Ctrl+S");
+    expect(resetShortcutButton("Save File", "editor.save").disabled).toBe(true);
+  });
+
   it("filters keymap commands by the search box", async () => {
     await act(async () => {
       root.render(
@@ -1471,7 +1573,7 @@ describe("SettingsDialog", () => {
     );
   });
 
-  it("warns about reserved MRU shortcuts without rendering editable MRU rows", async () => {
+  it("warns about reserved MRU shortcuts while rendering them read-only", async () => {
     await act(async () => {
       root.render(
         <KeymapSettingsPanel
@@ -1489,11 +1591,8 @@ describe("SettingsDialog", () => {
       await Promise.resolve();
     });
 
-    const labels = Array.from(host.querySelectorAll(".keymap-field strong")).map(
-      (label) => label.textContent,
-    );
-    expect(labels).not.toContain("Open Next Recently Used Editor");
-    expect(labels).not.toContain("Open Previous Recently Used Editor");
+    expect(inputWithLabel("Open Next Recently Used Editor").disabled).toBe(true);
+    expect(inputWithLabel("Open Previous Recently Used Editor").disabled).toBe(true);
     expect(keymapConflictWarning("Save File")?.textContent).toContain(
       "Also used by Open Next Recently Used Editor",
     );
@@ -2796,7 +2895,9 @@ describe("SettingsDialog", () => {
 
   function inputWithLabel(labelText: string): HTMLInputElement {
     const labels = Array.from(host.querySelectorAll("label"));
-    const label = labels.find((item) => item.textContent?.includes(labelText));
+    const label =
+      labels.find((item) => item.querySelector("strong")?.textContent === labelText) ??
+      labels.find((item) => item.textContent?.includes(labelText));
     const input = label?.querySelector<HTMLInputElement>("input");
 
     if (!input) {
@@ -2821,6 +2922,18 @@ describe("SettingsDialog", () => {
     const field = fields.find((item) => item.querySelector("strong")?.textContent === commandLabel);
 
     return field?.querySelector(".keymap-conflict") ?? null;
+  }
+
+  function resetShortcutButton(commandLabel: string, commandId: string): HTMLButtonElement {
+    const button = host.querySelector<HTMLButtonElement>(
+      `button[aria-label="Reset ${commandLabel} (${commandId}) to default"]`,
+    );
+
+    if (!button) {
+      throw new Error(`${commandLabel} reset button was not rendered.`);
+    }
+
+    return button;
   }
 
   function changeInputValue(input: HTMLInputElement, value: string, eventName = "input"): void {

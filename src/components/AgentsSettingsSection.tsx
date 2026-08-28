@@ -10,6 +10,7 @@ import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings
 import type { AppSettings, WorkspaceSettings } from "../domain/settings";
 import { AgentProviderSettingsCard } from "./AgentProviderSettingsCard";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
+import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import { boundedPositiveIntegerInputValue } from "./settingsDialogModel";
 
 const agentCliKindOptions: ReadonlyArray<{ readonly id: AgentCliKind; readonly label: string }> = [
@@ -51,6 +52,7 @@ function isAgentAppearanceVariant(value: string): value is AgentAppearanceVarian
 export interface AgentsSettingsSectionProps {
   readonly appSettings: AppSettings;
   readonly providerManagement: AgentProviderManagementSurface;
+  readonly providerSignIn?: AgentProviderSignInSurface;
   readonly hasWorkspace: boolean;
   readonly workspaceSettings: WorkspaceSettings;
   onChangeAgentCliPath(kind: AgentCliKind, value: string | null): void;
@@ -77,6 +79,7 @@ export function AgentsSettingsSection({
   onChangeAgentIsolationPolicy,
   onChangeMaxConcurrentAgentTasks,
   providerManagement,
+  providerSignIn = unavailableProviderSignIn,
   workspaceSettings,
 }: AgentsSettingsSectionProps) {
   const preferences = appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
@@ -104,6 +107,13 @@ export function AgentsSettingsSection({
           path={appSettings.agentCliPaths.claudeCode}
           preference={preferences.claudeCode}
           provider="claudeCode"
+          signIn={{
+            blockedReason: providerSignIn.blockedReason("claudeCode"),
+            state: providerSignIn.states.claudeCode,
+            onSignIn: () => {
+              providerSignIn.request("claudeCode");
+            },
+          }}
         />
         <AgentProviderSettingsCard
           management={providerManagement}
@@ -116,6 +126,13 @@ export function AgentsSettingsSection({
           path={appSettings.agentCliPaths.codex}
           preference={preferences.codex}
           provider="codex"
+          signIn={{
+            blockedReason: providerSignIn.blockedReason("codex"),
+            state: providerSignIn.states.codex,
+            onSignIn: () => {
+              providerSignIn.request("codex");
+            },
+          }}
         />
         <p className="settings-hint">
           Provider commands authenticate from your environment. Codevo never stores API keys or
@@ -233,3 +250,14 @@ export function AgentsSettingsSection({
     </div>
   );
 }
+
+const unavailableProviderSignIn: AgentProviderSignInSurface = {
+  states: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
+  terminalIntents: { claudeCode: null, codex: null },
+  blockedReason: () => "Provider sign-in is unavailable.",
+  isActive: () => false,
+  request: () => false,
+  cancelStart: () => undefined,
+  start: async () => null,
+  settle: async () => undefined,
+};

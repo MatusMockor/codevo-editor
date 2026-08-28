@@ -277,6 +277,7 @@
 
 /* Left rail: T3-style flat thread list. Header chrome, search, scope, then cards. */
 .agent-rail {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: var(--agent-rail-min-width);
@@ -4259,6 +4260,7 @@
 }
 
 .agent-provider-footer {
+  container-type: inline-size;
   align-items: center;
   border-top: 1px solid var(--agent-hairline);
   display: flex;
@@ -4276,14 +4278,18 @@
 }
 
 .agent-provider-footer__providers {
-  gap: 8px;
+  flex: 1 1 auto;
+  gap: 4px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .agent-provider-footer__provider {
   color: var(--agent-text-muted);
+  flex: 1 1 0;
   gap: 4px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .agent-provider-footer__glyph {
@@ -4307,6 +4313,7 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--agent-fs-xs);
+  flex: 0 0 auto;
   padding: 2px 4px;
 }
 
@@ -4319,8 +4326,172 @@
   opacity: 0.45;
 }
 
-.agent-provider-footer__settings {
+.agent-provider-footer__navigation {
+  align-items: center;
+  display: flex;
   flex: 0 0 auto;
+  gap: 2px;
+}
+
+.agent-provider-footer__navigation .agent-iconbutton {
+  height: 26px;
+  width: 26px;
+}
+
+@container (max-width: 280px) {
+  .agent-provider-footer {
+    align-items: flex-end;
+  }
+
+  .agent-provider-footer__label {
+    display: none;
+  }
+
+  .agent-provider-footer__providers {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .agent-provider-footer__provider {
+    flex: 0 0 auto;
+    gap: 2px;
+    width: 100%;
+  }
+
+  .agent-provider-footer__action {
+    max-width: 44px;
+    overflow: hidden;
+    padding-inline: 2px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.app-shell > .agent-usage-layer {
+  --agent-accent: var(--color-accent);
+  --agent-hairline: var(--color-border);
+  --agent-hairline-strong: var(--color-border-strong);
+  --agent-live-soft: var(--color-accent-soft);
+  --agent-raised: var(--color-surface);
+  --agent-row-hover: var(--color-hover);
+  --agent-row-radius: 6px;
+  --agent-shadow-alpha: 0.28;
+  --agent-text: var(--color-text);
+  --agent-text-strong: var(--color-text-strong);
+  --agent-text-muted: var(--color-text-muted);
+  --agent-text-subtle: var(--color-text-subtle);
+  --agent-fs-xs: 11px;
+  --agent-fs-md: 13px;
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  pointer-events: none;
+}
+
+.agent-usage-popover {
+  position: fixed;
+  z-index: 1;
+  bottom: 48px;
+  left: min(288px, 18vw);
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  border: 1px solid var(--agent-hairline-strong);
+  border-radius: var(--agent-radius-lg);
+  background: var(--agent-raised);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, var(--agent-shadow-alpha));
+  color: var(--agent-text);
+  outline: none;
+  pointer-events: auto;
+}
+
+.agent-usage-popover__close {
+  position: sticky;
+  z-index: 1;
+  top: 4px;
+  float: right;
+  margin: 4px;
+  background: var(--agent-raised);
+}
+
+.agent-usage-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.agent-usage-panel h2,
+.agent-usage-panel h3,
+.agent-usage-panel h4,
+.agent-usage-panel p,
+.agent-usage-panel dl {
+  margin: 0;
+}
+
+.agent-usage-panel__header {
+  display: grid;
+  gap: 4px;
+  padding-right: 28px;
+}
+
+.agent-usage-panel__header h2 {
+  color: var(--agent-text-strong);
+  font-size: var(--agent-fs-md);
+}
+
+.agent-usage-panel__header p,
+.agent-usage-panel p,
+.agent-usage-panel dl {
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  line-height: 1.45;
+}
+
+.agent-usage-panel__periods {
+  display: flex;
+  gap: 4px;
+}
+
+.agent-usage-panel__periods button {
+  border: 1px solid var(--agent-hairline);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--agent-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--agent-fs-xs);
+  padding: 4px 7px;
+}
+
+.agent-usage-panel__periods button[aria-selected="true"] {
+  border-color: var(--agent-accent);
+  background: var(--agent-live-soft);
+  color: var(--agent-text-strong);
+}
+
+.agent-usage-panel [role="tabpanel"],
+.agent-usage-panel [role="tabpanel"] > section,
+.agent-usage-panel [aria-label$=" projects"],
+.agent-usage-panel [aria-label$=" projects"] > section,
+.agent-usage-panel dl {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-usage-panel [role="tabpanel"] > section {
+  border-top: 1px solid var(--agent-hairline);
+  padding-top: 8px;
+}
+
+@media (max-width: 700px) {
+  .agent-usage-popover {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    max-height: calc(100vh - 24px);
+  }
 }
 
 .agent-provider-spin {

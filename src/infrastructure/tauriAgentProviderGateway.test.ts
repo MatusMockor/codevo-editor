@@ -5,6 +5,7 @@ import type {
   AgentProviderUpdateRequest,
 } from "../domain/agentProviderHealth";
 import {
+  AGENT_PROVIDER_UPDATE_PROGRESS_EVENT,
   GET_AGENT_PROVIDER_POLICY_IPC_COMMAND,
   PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND,
   REGISTER_AGENT_PROVIDER_POLICY_IPC_COMMAND,
@@ -12,6 +13,7 @@ import {
   UPDATE_AGENT_PROVIDER_IPC_COMMAND,
   type AgentProviderRuntimeDetector,
   type InvokeAgentProviderCommand,
+  type ListenToAgentProviderUpdateProgress,
 } from "./tauriAgentProviderGateway";
 
 const available: AgentProviderRuntimeDetector = () => true;
@@ -42,6 +44,7 @@ describe("TauriAgentProviderGateway", () => {
     expect(GET_AGENT_PROVIDER_POLICY_IPC_COMMAND).toBe("get_agent_provider_policy");
     expect(PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND).toBe("probe_agent_provider_health");
     expect(UPDATE_AGENT_PROVIDER_IPC_COMMAND).toBe("update_agent_provider");
+    expect(AGENT_PROVIDER_UPDATE_PROGRESS_EVENT).toBe("agent-provider-update://progress");
   });
 
   it("registers provider policy with exact compare-and-swap authority", async () => {
@@ -115,7 +118,7 @@ describe("TauriAgentProviderGateway", () => {
     const result = {
       kind: "failed",
       reason: "outputLimitExceeded",
-      outputTail: "bounded tail",
+      outputTail: "Installer output withheld (stdout: 524288 bytes, stderr: 524288 bytes).",
       outputTruncated: true,
     } as const;
     const invokeCommand = vi.fn<InvokeAgentProviderCommand>().mockResolvedValue(result);
@@ -125,6 +128,50 @@ describe("TauriAgentProviderGateway", () => {
     expect(invokeCommand).toHaveBeenCalledWith(UPDATE_AGENT_PROVIDER_IPC_COMMAND, {
       request: UPDATE,
     });
+  });
+
+  it("subscribes to strict progress and reports malformed payloads", async () => {
+    let handler: ((event: { readonly payload: unknown }) => void) | undefined;
+    const unlisten = vi.fn();
+    const listenToProgress = vi.fn<ListenToAgentProviderUpdateProgress>(async (_event, next) => {
+      handler = next;
+      return unlisten;
+    });
+    const gateway = new TauriAgentProviderGateway(vi.fn(), available, listenToProgress);
+    const listener = vi.fn();
+    const onError = vi.fn();
+
+    await expect(gateway.subscribeAgentProviderUpdateProgress(listener, onError)).resolves.toBe(
+      unlisten,
+    );
+    expect(listenToProgress).toHaveBeenCalledWith(
+      AGENT_PROVIDER_UPDATE_PROGRESS_EVENT,
+      expect.any(Function),
+    );
+    handler?.({
+      payload: {
+        ...UPDATE,
+        sequence: 1,
+        stream: "stderr",
+        data: "Installer stderr activity: 11 bytes.",
+        truncated: false,
+        redacted: true,
+      },
+    });
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ sequence: 1 }));
+
+    handler?.({
+      payload: {
+        ...UPDATE,
+        sequence: 2,
+        stream: "stdout",
+        data: "password=hunter2",
+        truncated: false,
+        redacted: true,
+      },
+    });
+    expect(onError).toHaveBeenCalledWith(expect.any(TypeError));
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it("rejects malformed outbound requests before transport", async () => {
@@ -167,7 +214,7 @@ describe("TauriAgentProviderGateway", () => {
       .mockResolvedValueOnce({
         kind: "failed",
         reason: "outputLimitExceeded",
-        outputTail: "tail",
+        outputTail: "Installer output withheld (stdout: 1 bytes, stderr: 0 bytes).",
         outputTruncated: false,
       });
     const gateway = new TauriAgentProviderGateway(invokeCommand, available);

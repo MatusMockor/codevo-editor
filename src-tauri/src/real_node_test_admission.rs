@@ -325,16 +325,17 @@ mod tests {
     use super::{
         assert_same_identity, contention_marker_path, validate_lock_file,
         validate_private_directory, ProcessAdmission, ADMISSION_TIMEOUT, CONTENTION_NONCE_ENV,
+        RETRY_INTERVAL,
     };
     #[cfg(unix)]
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     #[cfg(unix)]
     use std::process::{Child, Command, Stdio};
     #[cfg(unix)]
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     #[cfg(unix)]
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     #[test]
     fn panic_releases_admission_and_poisoned_lock_is_recoverable() {
@@ -352,6 +353,7 @@ mod tests {
     #[test]
     fn cross_process_contender_waits_for_release_then_acquires() {
         let admission = acquire();
+        let deadline = Instant::now() + ADMISSION_TIMEOUT;
         let nonce = subprocess_nonce();
         let marker = contention_marker_path(nonce.as_ref());
         let _ = std::fs::remove_file(&marker);
@@ -370,7 +372,7 @@ mod tests {
             marker,
         };
 
-        wait_for_marker(&child.marker);
+        wait_for_contention(&mut child, deadline);
         assert!(
             child
                 .child
@@ -381,7 +383,7 @@ mod tests {
         );
 
         drop(admission);
-        let status = wait_for_child(&mut child.child);
+        let status = wait_for_child(&mut child.child, deadline);
         assert!(status.success(), "admission contender failed: {status}");
     }
 
@@ -392,6 +394,35 @@ mod tests {
             return;
         }
         let _admission = acquire();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn contention_wait_fails_closed_when_contender_exits_before_signaling() {
+        let nonce = subprocess_nonce();
+        let marker = contention_marker_path(nonce.as_ref());
+        let _ = std::fs::remove_file(&marker);
+        let mut child = ChildCleanup {
+            child: Command::new("/usr/bin/false")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn early-exit admission contender"),
+            marker,
+        };
+
+        assert_panics(|| {
+            wait_for_contention(&mut child, Instant::now() + ADMISSION_TIMEOUT);
+        });
+        assert!(
+            child
+                .child
+                .try_wait()
+                .expect("inspect reaped early-exit admission contender")
+                .is_some(),
+            "early-exit admission contender was left running"
+        );
     }
 
     #[cfg(unix)]
@@ -484,24 +515,32 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn wait_for_marker(marker: &Path) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !marker.is_file() {
+    fn wait_for_contention(child: &mut ChildCleanup, deadline: Instant) {
+        loop {
+            if child.marker.is_file() {
+                return;
+            }
+            if let Some(status) = child
+                .child
+                .try_wait()
+                .expect("inspect admission contender before contention")
+            {
+                panic!("admission contender exited before observing lock contention: {status}");
+            }
             assert!(
                 Instant::now() < deadline,
                 "timed out waiting for admission contender to observe lock contention"
             );
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(RETRY_INTERVAL);
         }
     }
 
     #[cfg(unix)]
-    fn wait_for_child(child: &mut Child) -> std::process::ExitStatus {
-        let deadline = Instant::now() + Duration::from_secs(15);
+    fn wait_for_child(child: &mut Child, deadline: Instant) -> std::process::ExitStatus {
         loop {
             match child.try_wait().expect("inspect admission contender") {
                 Some(status) => return status,
-                None if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+                None if Instant::now() < deadline => thread::sleep(RETRY_INTERVAL),
                 None => panic!("timed out waiting for admission contender to finish"),
             }
         }

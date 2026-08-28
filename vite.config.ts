@@ -41,6 +41,32 @@ export default defineConfig(async ({ mode }) => {
     envDir: false,
     base: "./",
 
+    build: {
+      rolldownOptions: {
+        preserveEntrySignatures: "allow-extension",
+        output: {
+          strictExecutionOrder: true,
+          codeSplitting: {
+            includeDependenciesRecursively: false,
+            groups: [
+              {
+                entriesAware: true,
+                maxSize: 450 * 1024,
+                name: "vendor",
+                test: /node_modules/,
+              },
+              {
+                entriesAware: true,
+                maxSize: 450 * 1024,
+                name: "app",
+                test: /\/src\//,
+              },
+            ],
+          },
+        },
+      },
+    },
+
     test: {
       execArgv: [
         "--max-old-space-size=6144",

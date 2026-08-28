@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildGitHistoryDiffDocumentPath } from "../domain/editorDocumentSchemes";
 import type { DiffPayload, GitHistoryGateway } from "../domain/git";
 import type { EditorDocument } from "../domain/workspace";
 import {
+  MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS,
   useGitHistoryDiffDocuments,
   type GitHistoryDiffDocumentsController,
 } from "./useGitHistoryDiffDocuments";
@@ -212,12 +213,224 @@ describe("useGitHistoryDiffDocuments", () => {
       readOnly: true,
     } satisfies Partial<EditorDocument>));
   });
+
+  it("does not retain a reload recipe when opening the editor document throws", async () => {
+    const getCommitDiff = vi.fn(async () =>
+      payload("first", "src/First.php", "content"));
+    const harness = await renderHarness(root, {
+      getCommitDiff,
+      onOpenDocument: () => {
+        throw new Error("open failed");
+      },
+    });
+
+    await act(async () => {
+      await expect(harness.api().openCommitDiff(
+        "first",
+        "src/First.php",
+        null,
+      )).rejects.toThrow("open failed");
+      await harness.api().reloadDocumentPath(firstPath());
+    });
+
+    expect(getCommitDiff).not.toHaveBeenCalled();
+    expect(harness.api().documentsByPath).toEqual({});
+  });
+
+  it("evicts the least-recently-opened settled payload at the fixed capacity", async () => {
+    const harness = await renderHarness(root, {
+      getCommitDiff: vi.fn(async (_root, commitHash, path) =>
+        payload(commitHash, path, `content ${commitHash}`),
+      ),
+    });
+
+    for (let index = 0; index < MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS; index += 1) {
+      await act(async () => {
+        await harness.api().openCommitDiff(`commit-${index}`, `src/File${index}.php`, null);
+      });
+    }
+
+    await act(async () => {
+      await harness.api().openCommitDiff("commit-0", "src/File0.php", null);
+      await harness.api().openCommitDiff("commit-overflow", "src/Overflow.php", null);
+    });
+
+    expect(Object.keys(harness.api().documentsByPath)).toHaveLength(
+      MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS,
+    );
+    expect(harness.api().documentsByPath[historyPath(0)]).toBeDefined();
+    expect(harness.api().documentsByPath[historyPath(1)]).toBeUndefined();
+  });
+
+  it("reloads an evicted history tab through the activation API", async () => {
+    const getCommitDiff = vi.fn(async (_root, commitHash, path) =>
+      payload(commitHash, path, `content ${commitHash}`),
+    );
+    const harness = await renderHarness(root, { getCommitDiff });
+
+    for (let index = 0; index <= MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS; index += 1) {
+      await act(async () => {
+        await harness.api().openCommitDiff(`commit-${index}`, `src/File${index}.php`, null);
+      });
+    }
+    expect(harness.api().documentsByPath[historyPath(0)]).toBeUndefined();
+
+    await act(async () => {
+      await harness.api().reloadDocumentPath(historyPath(0));
+    });
+
+    expect(getCommitDiff).toHaveBeenCalledTimes(MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS + 2);
+    expect(harness.api().documentsByPath[historyPath(0)]).toMatchObject({
+      diff: { modifiedContent: "content commit-0" },
+      isLoading: false,
+    });
+    expect(Object.keys(harness.api().documentsByPath)).toHaveLength(
+      MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS,
+    );
+  });
+
+  it("ignores a late close callback from a replaced owner with the same path", async () => {
+    const ownerA = deferred<DiffPayload>();
+    const ownerB = deferred<DiffPayload>();
+    const getCommitDiff = vi.fn()
+      .mockImplementationOnce(async () => ownerA.promise)
+      .mockImplementationOnce(async () => ownerB.promise);
+    const harness = await renderHarness(root, { getCommitDiff });
+    let ownerARequest!: Promise<void>;
+    let ownerBRequest!: Promise<void>;
+
+    await act(async () => {
+      ownerARequest = harness.api().openCommitDiff(
+        "first",
+        "src/First.php",
+        null,
+      );
+    });
+    const staleClose = harness.api().closeDocumentPaths;
+    await harness.render({ ownerId: "owner-b" });
+    await act(async () => {
+      ownerBRequest = harness.api().openCommitDiff(
+        "first",
+        "src/First.php",
+        null,
+      );
+      staleClose([firstPath()]);
+      ownerB.resolve(payload("first", "src/First.php", "owner b"));
+      await ownerBRequest;
+      ownerA.resolve(payload("first", "src/First.php", "owner a late"));
+      await ownerARequest;
+    });
+
+    expect(harness.api().documentsByPath[firstPath()]).toMatchObject({
+      diff: { modifiedContent: "owner b" },
+      isLoading: false,
+    });
+  });
+
+  it("keeps a new-owner request started before passive effects settle", async () => {
+    const pending = deferred<DiffPayload>();
+    const harness = await renderHarness(root, {
+      getCommitDiff: vi.fn(async () => pending.promise),
+    });
+    let request!: Promise<void>;
+
+    await harness.render({
+      ownerId: "owner-b",
+      openOnLayout(controller) {
+        request = controller.openCommitDiff("first", "src/First.php", null);
+      },
+    });
+    await act(async () => {
+      pending.resolve(payload("first", "src/First.php", "owner b"));
+      await request;
+    });
+
+    expect(harness.api().documentsByPath[firstPath()]).toMatchObject({
+      diff: { modifiedContent: "owner b" },
+      isLoading: false,
+    });
+  });
+
+  it("invalidates an older loading request evicted to enforce the hard bound", async () => {
+    const requests = Array.from({ length: MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS + 1 }, () =>
+      deferred<DiffPayload>(),
+    );
+    const getCommitDiff = vi.fn(async () => requests[getCommitDiff.mock.calls.length - 1].promise);
+    const harness = await renderHarness(root, { getCommitDiff });
+    const pendingRequests: Promise<void>[] = [];
+
+    await act(async () => {
+      for (let index = 0; index < requests.length; index += 1) {
+        pendingRequests.push(
+          harness.api().openCommitDiff(`commit-${index}`, `src/File${index}.php`, null),
+        );
+      }
+    });
+
+    expect(Object.keys(harness.api().documentsByPath)).toHaveLength(
+      MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS,
+    );
+    expect(harness.api().documentsByPath[historyPath(0)]).toBeUndefined();
+
+    await act(async () => {
+      requests[0].resolve(payload("commit-0", "src/File0.php", "late"));
+      await pendingRequests[0];
+    });
+
+    expect(harness.api().documentsByPath[historyPath(0)]).toBeUndefined();
+
+    await act(async () => {
+      for (let index = 1; index < requests.length; index += 1) {
+        requests[index].resolve(
+          payload(`commit-${index}`, `src/File${index}.php`, `content ${index}`),
+        );
+      }
+      await Promise.all(pendingRequests.slice(1));
+    });
+  });
+
+  it("evicts a settled payload before an older loading request", async () => {
+    const pending = deferred<DiffPayload>();
+    const getCommitDiff = vi.fn(async (_root, commitHash, path) => {
+      if (commitHash === "commit-0") {
+        return pending.promise;
+      }
+
+      return payload(commitHash, path, `content ${commitHash}`);
+    });
+    const harness = await renderHarness(root, { getCommitDiff });
+    let pendingRequest!: Promise<void>;
+
+    await act(async () => {
+      pendingRequest = harness.api().openCommitDiff("commit-0", "src/File0.php", null);
+    });
+    for (let index = 1; index < MAX_RETAINED_GIT_HISTORY_DIFF_DOCUMENTS; index += 1) {
+      await act(async () => {
+        await harness.api().openCommitDiff(`commit-${index}`, `src/File${index}.php`, null);
+      });
+    }
+    await act(async () => {
+      await harness.api().openCommitDiff("commit-overflow", "src/Overflow.php", null);
+    });
+
+    expect(harness.api().documentsByPath[historyPath(0)]).toEqual({
+      diff: null,
+      isLoading: true,
+    });
+    expect(harness.api().documentsByPath[historyPath(1)]).toBeUndefined();
+
+    await act(async () => {
+      pending.resolve(payload("commit-0", "src/File0.php", "loaded"));
+      await pendingRequest;
+    });
+  });
 });
 
 interface HarnessOptions {
   getCommitDiff: GitHistoryGateway["getCommitDiff"];
   onOpenDocument?: (document: EditorDocument) => void;
   ownerId?: string;
+  openOnLayout?: (controller: GitHistoryDiffDocumentsController) => void;
   workspaceRoot?: string | null;
 }
 
@@ -226,7 +439,7 @@ async function renderHarness(root: Root, initial: HarnessOptions) {
   let controller: GitHistoryDiffDocumentsController | null = null;
 
   function Harness() {
-    controller = useGitHistoryDiffDocuments({
+    const nextController = useGitHistoryDiffDocuments({
       gateway: { getCommitDiff: options.getCommitDiff },
       onOpenDocument: options.onOpenDocument ?? (() => undefined),
       ownerId: options.ownerId ?? "owner-a",
@@ -234,6 +447,16 @@ async function renderHarness(root: Root, initial: HarnessOptions) {
         ? ROOT
         : options.workspaceRoot,
     });
+    controller = nextController;
+    const openOnLayout = options.openOnLayout;
+    useLayoutEffect(() => {
+      if (!openOnLayout) {
+        return;
+      }
+
+      options = { ...options, openOnLayout: undefined };
+      openOnLayout(nextController);
+    }, [nextController, openOnLayout]);
     return null;
   }
 
@@ -280,6 +503,10 @@ function firstPath(): string {
 
 function secondPath(): string {
   return buildGitHistoryDiffDocumentPath("second", "src/Second.php", null);
+}
+
+function historyPath(index: number): string {
+  return buildGitHistoryDiffDocumentPath(`commit-${index}`, `src/File${index}.php`, null);
 }
 
 function deferred<T>() {

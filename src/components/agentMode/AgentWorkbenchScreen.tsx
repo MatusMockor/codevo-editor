@@ -196,6 +196,11 @@ export function AgentWorkbenchScreen({
     setSidebarView("scripts");
   }, [agentWorkbench, setSidebarView]);
 
+  const openSourceControl = useCallback(() => {
+    agentWorkbench.dispatch({ kind: "expandEditor" });
+    setSidebarView("git");
+  }, [agentWorkbench, setSidebarView]);
+
   const showTerminalPanel = useCallback(() => {
     showBottomPanelView("terminal");
   }, [showBottomPanelView]);
@@ -345,6 +350,7 @@ export function AgentWorkbenchScreen({
       chrome={chrome}
       key={workspaceRoot ?? ""}
       modelFavoritesPersistence={modelFavoritesPersistence}
+      onOpenSourceControl={openSourceControl}
       onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
       onTrustProject={(projectRootKey) => void projects.trustProject(projectRootKey)}
       overflowRootPaths={projects.overflowRootPaths}

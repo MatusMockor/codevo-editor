@@ -14,6 +14,8 @@ import {
 import type { AgentTaskStatusEvent } from "../domain/agentTask";
 import {
   MAX_AGENT_EVENTS_PER_TURN,
+  MAX_AGENT_EVENT_BYTES_PER_TURN,
+  agentTurnEventUtf8Bytes,
   coalesceAgentTextEvents,
   type AgentThreadsAction,
   type AgentThreadsState,
@@ -46,12 +48,18 @@ export interface AgentTurnOutputStream {
   readonly isolation: AgentTaskIsolation;
   readonly worktreePath: string | null;
   readonly resumed: boolean;
+  readonly outputSubscriptionEpoch: number | null;
   parser: AgentOutputParserState;
   lastSequence: number;
   pendingEvents: AgentTurnEvent[];
+  pendingEventBytes: number;
+  eventRetentionStopped: boolean;
   pendingSessionId: string | null;
   pendingTruncated: boolean;
   pendingDropped: boolean;
+  pendingReceivedUtf8Bytes: number;
+  pendingStreamMetricsObserved: boolean;
+  rawStreamComplete: boolean;
   sawSessionId: boolean;
   sawResult: boolean;
 }
@@ -69,6 +77,7 @@ export function createAgentTurnOutputStream(
     readonly worktreePath: string | null;
     readonly kind: AgentCliKind;
     readonly resumed: boolean;
+    readonly outputSubscriptionEpoch?: number | null;
   },
 ): AgentTurnOutputStream {
   return {
@@ -79,12 +88,20 @@ export function createAgentTurnOutputStream(
     isolation: identity.isolation,
     worktreePath: identity.worktreePath,
     resumed: identity.resumed,
+    outputSubscriptionEpoch:
+      identity.outputSubscriptionEpoch === undefined ? 0 : identity.outputSubscriptionEpoch,
     parser: parser.create(identity.kind),
     lastSequence: 0,
     pendingEvents: [],
+    pendingEventBytes: 0,
+    eventRetentionStopped: false,
     pendingSessionId: null,
     pendingTruncated: false,
     pendingDropped: false,
+    pendingReceivedUtf8Bytes: 0,
+    pendingStreamMetricsObserved: false,
+    rawStreamComplete:
+      identity.outputSubscriptionEpoch === undefined || identity.outputSubscriptionEpoch !== null,
     sawSessionId: false,
     sawResult: false,
   };
@@ -97,9 +114,15 @@ export function acceptAgentTurnOutput(
 ): boolean {
   if (event.taskId !== stream.turnId) return false;
   if (event.sequence <= stream.lastSequence) return false;
+  if (event.sequence !== stream.lastSequence + 1) stream.rawStreamComplete = false;
   stream.lastSequence = event.sequence;
+  recordRawStreamChunk(stream, event.chunk);
   stream.pendingTruncated = stream.pendingTruncated || event.truncated;
   absorb(stream, parser.feed(stream.parser, event.stream, event.chunk));
+  if (event.truncated) {
+    stream.eventRetentionStopped = true;
+    stream.rawStreamComplete = false;
+  }
   return true;
 }
 
@@ -111,7 +134,8 @@ export function drainAgentTurnOutput(
     stream.pendingEvents.length === 0 &&
     stream.pendingSessionId === null &&
     !stream.pendingTruncated &&
-    !stream.pendingDropped
+    !stream.pendingDropped &&
+    !stream.pendingStreamMetricsObserved
   ) {
     return null;
   }
@@ -127,19 +151,46 @@ export function drainAgentTurnOutput(
     events: stream.pendingEvents,
     sessionId: stream.pendingSessionId,
     supervisorTruncated: stream.pendingTruncated || stream.pendingDropped,
+    streamMetricsDelta: stream.pendingStreamMetricsObserved
+      ? {
+          receivedUtf8Bytes: stream.pendingReceivedUtf8Bytes,
+          complete: stream.rawStreamComplete,
+        }
+      : null,
   };
   stream.pendingEvents = [];
+  stream.pendingEventBytes = 0;
   stream.pendingSessionId = null;
   stream.pendingTruncated = false;
   stream.pendingDropped = false;
+  stream.pendingReceivedUtf8Bytes = 0;
+  stream.pendingStreamMetricsObserved = false;
   return action;
+}
+
+const RAW_STREAM_ENCODER = new TextEncoder();
+
+function recordRawStreamChunk(stream: AgentTurnOutputStream, chunk: string): void {
+  stream.pendingStreamMetricsObserved = true;
+  const chunkBytes = RAW_STREAM_ENCODER.encode(chunk).byteLength;
+  const receivedUtf8Bytes = stream.pendingReceivedUtf8Bytes + chunkBytes;
+  if (!Number.isSafeInteger(receivedUtf8Bytes)) {
+    stream.rawStreamComplete = false;
+    return;
+  }
+  stream.pendingReceivedUtf8Bytes = receivedUtf8Bytes;
 }
 
 export function finishAgentTurnOutput(
   parser: AgentOutputParserPort,
   stream: AgentTurnOutputStream,
+  completionKnownClean = true,
 ): TurnEventsAppendedAction | null {
   absorb(stream, parser.finish(stream.parser));
+  if (!completionKnownClean) stream.rawStreamComplete = false;
+  if (stream.lastSequence === 0 || !completionKnownClean) {
+    stream.pendingStreamMetricsObserved = true;
+  }
   return drainAgentTurnOutput(stream, stream.lastSequence + 1);
 }
 
@@ -155,17 +206,33 @@ function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): v
 }
 
 function appendPendingEvent(stream: AgentTurnOutputStream, event: AgentTurnEvent): void {
+  if (stream.eventRetentionStopped) return;
   const last = stream.pendingEvents[stream.pendingEvents.length - 1];
   const coalesced = coalesceAgentTextEvents(last, event);
   if (coalesced !== null) {
+    if (last === undefined) return;
+    const nextBytes =
+      stream.pendingEventBytes - agentTurnEventUtf8Bytes(last) + agentTurnEventUtf8Bytes(coalesced);
+    if (nextBytes > MAX_AGENT_EVENT_BYTES_PER_TURN) {
+      stream.pendingDropped = true;
+      stream.eventRetentionStopped = true;
+      return;
+    }
     stream.pendingEvents[stream.pendingEvents.length - 1] = coalesced;
+    stream.pendingEventBytes = nextBytes;
     return;
   }
-  if (stream.pendingEvents.length >= MAX_AGENT_EVENTS_PER_TURN) {
+  const eventBytes = agentTurnEventUtf8Bytes(event);
+  if (
+    stream.pendingEvents.length >= MAX_AGENT_EVENTS_PER_TURN ||
+    stream.pendingEventBytes + eventBytes > MAX_AGENT_EVENT_BYTES_PER_TURN
+  ) {
     stream.pendingDropped = true;
+    stream.eventRetentionStopped = true;
     return;
   }
   stream.pendingEvents.push(event);
+  stream.pendingEventBytes += eventBytes;
 }
 
 const SESSION_CHANGED_NOTICE =

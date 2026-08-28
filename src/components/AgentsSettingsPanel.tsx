@@ -4,6 +4,7 @@ import {
   type AgentProviderPreference,
 } from "../domain/agentProviderSettings";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
+import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import type { AppSettings, WorkspaceSettings } from "../domain/settings";
 import { AgentsSettingsSection } from "./AgentsSettingsSection";
 
@@ -37,6 +38,7 @@ function providerIsConfigured(
 
 export interface AgentsSettingsPanelProps {
   readonly providerManagement: AgentProviderManagementSurface;
+  readonly providerSignIn?: AgentProviderSignInSurface;
   readonly appSettings: AppSettings;
   readonly hasWorkspace: boolean;
   readonly workspaceSettings: WorkspaceSettings;
@@ -48,6 +50,7 @@ export function AgentsSettingsPanel({
   appSettings,
   hasWorkspace,
   providerManagement,
+  providerSignIn,
   updateAppSettings,
   updateWorkspaceSettings,
   workspaceSettings,
@@ -136,6 +139,7 @@ export function AgentsSettingsPanel({
       }
       onClearAgentModelFavorites={clearAgentModelFavorites}
       providerManagement={providerManagement}
+      providerSignIn={providerSignIn}
       workspaceSettings={workspaceSettings}
     />
   );

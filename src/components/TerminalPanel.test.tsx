@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { terminalThemeForAppTheme, type TerminalTheme } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
-import { TerminalPanel } from "./TerminalPanel";
+import { TERMINAL_SCROLLBACK_LINES, TerminalPanel } from "./TerminalPanel";
 
 interface FakeTerminal {
   buffer: {
@@ -18,6 +18,7 @@ interface FakeTerminal {
   attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
   cols: number;
   dispose: ReturnType<typeof vi.fn>;
+  focus: ReturnType<typeof vi.fn>;
   loadAddon: ReturnType<typeof vi.fn>;
   onData: ReturnType<typeof vi.fn>;
   onResize: ReturnType<typeof vi.fn>;
@@ -26,6 +27,7 @@ interface FakeTerminal {
   registerMarker: ReturnType<typeof vi.fn>;
   registerDecoration: ReturnType<typeof vi.fn>;
   options: {
+    scrollback?: number;
     theme?: TerminalTheme;
   };
   rows: number;
@@ -42,6 +44,9 @@ interface FakeSessionOptions {
   onCwdChange(cwd: string | null): void;
   onOpenLink(path: string, line?: number, column?: number): void;
   onSessionReady(sessionId: number | null): void;
+  onSessionStartFailed(): void;
+  onSessionSettled(sessionId: number, exitCode: number | null): void;
+  startSession?(size: { cols: number; rows: number }): Promise<unknown>;
   terminal: {
     buffer: {
       active: {
@@ -84,7 +89,7 @@ vi.mock("@xterm/addon-fit", () => ({
 }));
 
 vi.mock("@xterm/xterm", () => ({
-  Terminal: vi.fn(function TerminalMock(options: { theme?: TerminalTheme }) {
+  Terminal: vi.fn(function TerminalMock(options: { scrollback?: number; theme?: TerminalTheme }) {
     const terminal = {
       cols: 80,
       buffer: {
@@ -96,6 +101,7 @@ vi.mock("@xterm/xterm", () => ({
       },
       attachCustomKeyEventHandler: vi.fn(),
       dispose: vi.fn(),
+      focus: vi.fn(),
       loadAddon: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
       onResize: vi.fn(() => ({ dispose: vi.fn() })),
@@ -142,6 +148,23 @@ describe("TerminalPanel", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+  });
+
+  it("bounds retained terminal scrollback", () => {
+    act(() => {
+      root.render(
+        <TerminalPanel
+          isActive
+          profileId="default"
+          rootPath="/workspace"
+          shellIntegrationEnabled={false}
+          terminalGateway={terminalGateway()}
+          terminalTheme={terminalThemeForAppTheme("dark")}
+        />,
+      );
+    });
+
+    expect(terminalPanelMocks.terminals[0]?.options.scrollback).toBe(TERMINAL_SCROLLBACK_LINES);
   });
 
   it("updates the xterm theme without restarting the terminal session", () => {
@@ -209,6 +232,76 @@ describe("TerminalPanel", () => {
     act(() => root.render(<TerminalPanel {...props} layoutRevision={4} />));
     expect(session.fit).toHaveBeenCalledTimes(3);
     expect(session.dispose).not.toHaveBeenCalled();
+  });
+
+  it("attaches an exact semantic session and forwards only its settlement", async () => {
+    const cancelStart = vi.fn();
+    const start = vi.fn(async () => ({ kind: "starting" as const, sessionId: 71 }));
+    const settle = vi.fn(async () => undefined);
+    const gateway = terminalGateway();
+    const theme = terminalThemeForAppTheme("dark");
+
+    act(() => {
+      root.render(
+        <TerminalPanel
+          isActive
+          profileId={null}
+          rootPath="/workspace"
+          semanticSession={{ key: "claude-1", cancelStart, start, settle }}
+          shellIntegrationEnabled={false}
+          terminalGateway={gateway}
+          terminalTheme={theme}
+        />,
+      );
+    });
+
+    const options = terminalPanelMocks.createTerminalSession.mock
+      .calls[0]?.[0] as FakeSessionOptions;
+    expect(terminalPanelMocks.terminals[0]?.focus).toHaveBeenCalledTimes(1);
+    options.onSessionStartFailed();
+    expect(cancelStart).toHaveBeenCalledTimes(1);
+    await expect(options.startSession?.({ cols: 90, rows: 30 })).resolves.toEqual({
+      kind: "starting",
+      sessionId: 71,
+    });
+    options.onSessionSettled(71, 0);
+    expect(start).toHaveBeenCalledExactlyOnceWith({ cols: 90, rows: 30 });
+    expect(settle).toHaveBeenCalledExactlyOnceWith(71, 0);
+
+    act(() => {
+      root.render(
+        <TerminalPanel
+          isActive
+          profileId={null}
+          rootPath="/workspace"
+          semanticSession={{ key: "codex-2", cancelStart: () => undefined, start, settle }}
+          shellIntegrationEnabled={false}
+          terminalGateway={gateway}
+          terminalTheme={theme}
+        />,
+      );
+    });
+    expect(terminalPanelMocks.sessions[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(terminalPanelMocks.createTerminalSession).toHaveBeenCalledTimes(2);
+
+    const replacement = terminalPanelMocks.createTerminalSession.mock
+      .calls[1]?.[0] as FakeSessionOptions;
+    replacement.onSessionReady(72);
+    act(() => {
+      root.render(
+        <TerminalPanel
+          isActive
+          profileId="default"
+          rootPath="/workspace"
+          shellIntegrationEnabled={false}
+          terminalGateway={gateway}
+          terminalTheme={theme}
+        />,
+      );
+    });
+    await act(async () => Promise.resolve());
+    expect(gateway.stop).toHaveBeenCalledWith(72);
+    expect(settle).toHaveBeenLastCalledWith(72, null);
   });
 
   it("resolves links inside the mounted workspace and drops unsafe paths", () => {

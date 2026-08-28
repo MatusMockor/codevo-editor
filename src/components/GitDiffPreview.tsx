@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  use,
 } from "react";
 import type * as Monaco from "monaco-editor";
 import { createRoot } from "react-dom/client";
@@ -24,6 +25,7 @@ import {
   applyImmediateFallbackTheme,
   setupShikiTokenization,
 } from "../infrastructure/shikiHighlighter";
+import { initializeMonacoRuntime } from "./monacoRuntimeLoader";
 
 interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
@@ -509,6 +511,8 @@ function ManagedGitDiffEditor({ onMount, onRelease, ...props }: ManagedGitDiffEd
     },
     [],
   );
+
+  use(initializeMonacoRuntime());
 
   return (
     <DiffEditor

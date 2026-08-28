@@ -6,6 +6,7 @@ use crate::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let startup_metrics = startup_metrics::StartupMetrics::new();
     #[cfg(all(feature = "perf-capture", target_os = "macos"))]
     perf_capture::claim_process_group().unwrap_or_else(|message| panic!("{message}"));
 
@@ -93,6 +94,7 @@ pub fn run() {
             }
         })
         .manage(Mutex::new(SmartModeService::new()))
+        .manage(startup_metrics)
         .manage(NativeCloseListenerState::default())
         .manage(PhpLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
@@ -183,6 +185,7 @@ pub fn run() {
             perf_capture::perf_capture_submit,
             #[cfg(feature = "perf-capture")]
             perf_capture::perf_capture_prepare_fixture_trust,
+            startup_metrics::log_startup_shell_painted,
             amend_git_commit,
             reword_git_commit,
             clear_workspace_index,
@@ -486,6 +489,7 @@ pub fn run() {
             agent_provider_commands::get_agent_provider_policy,
             agent_provider_commands::probe_agent_provider_health,
             agent_provider_commands::update_agent_provider,
+            agent_provider_sign_in_commands::start_agent_provider_sign_in,
             git_integration_commands::get_git_ship_status,
             git_integration_commands::push_git_branch_upstream,
             git_integration_commands::integrate_git_worktree_branch,

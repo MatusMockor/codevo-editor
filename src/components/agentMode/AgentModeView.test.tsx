@@ -208,6 +208,21 @@ describe("AgentModeView", () => {
     expect(dismissNotice).toHaveBeenCalledTimes(1);
   });
 
+  it("routes rail settings and source control through their real workbench actions", () => {
+    const configureAgentCli = vi.fn();
+    const onOpenSourceControl = vi.fn();
+    render({
+      agents: surface({ configureAgentCli }),
+      onOpenSourceControl,
+    });
+
+    click('button[aria-label="Open provider settings"]');
+    click('button[aria-label="Open Source Control"]');
+
+    expect(configureAgentCli).toHaveBeenCalledTimes(1);
+    expect(onOpenSourceControl).toHaveBeenCalledTimes(1);
+  });
+
   it("routes an available provider update toast through exact management actions", async () => {
     const management = providerManagement();
     const update = vi.fn(async () => null);

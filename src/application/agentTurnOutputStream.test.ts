@@ -7,7 +7,9 @@ import {
 import type { AgentTaskOutputEvent } from "../domain/agentTask";
 import {
   MAX_AGENT_EVENTS_PER_TURN,
+  MAX_AGENT_EVENT_BYTES_PER_TURN,
   MAX_AGENT_EVENT_TEXT_BYTES,
+  agentTurnEventUtf8Bytes,
   agentThreadsReducer,
   emptyAgentThreadsState,
   type AgentThread,
@@ -46,8 +48,12 @@ function scriptedParser(script: (chunk: string) => FeedScript): AgentOutputParse
   };
 }
 
-function outputEvent(sequence: number, chunk: string): AgentTaskOutputEvent {
-  return { taskId: TURN_ID, sequence, stream: "stdout", chunk, truncated: false };
+function outputEvent(
+  sequence: number,
+  chunk: string,
+  overrides: Partial<AgentTaskOutputEvent> = {},
+): AgentTaskOutputEvent {
+  return { taskId: TURN_ID, sequence, stream: "stdout", chunk, truncated: false, ...overrides };
 }
 
 function createStream(parser: AgentOutputParserPort) {
@@ -85,6 +91,7 @@ function stateWithRunningTurn(): AgentThreadsState {
         eventsTruncated: false,
         lastStatusSequence: 0,
         lastOutputSequence: 0,
+        streamMetrics: null,
         launch: null,
         cliVersion: null,
       },
@@ -162,6 +169,55 @@ describe("agent turn output pending bounds", () => {
     expect(stream.pendingDropped).toBe(false);
   });
 
+  it("caps pending aggregate UTF-8 bytes and resets its accounting after each drain", () => {
+    const wideText = "€".repeat(Math.floor(MAX_AGENT_EVENT_TEXT_BYTES / 3));
+    const parser = scriptedParser((chunk) => ({
+      events: [
+        chunk === "session"
+          ? { kind: "assistantText", text: "x" }
+          : Number(chunk) % 2 === 0
+            ? { kind: "reasoning", text: wideText }
+            : { kind: "assistantText", text: wideText },
+      ],
+      sessionId: chunk === "session" ? "session-0001" : null,
+    }));
+    const stream = createStream(parser);
+
+    for (let index = 1; index <= 100; index += 1) {
+      acceptAgentTurnOutput(parser, stream, outputEvent(index, String(index)));
+    }
+
+    const retainedBytes = stream.pendingEvents.reduce(
+      (total, event) => total + agentTurnEventUtf8Bytes(event),
+      0,
+    );
+    expect(retainedBytes).toBeLessThanOrEqual(MAX_AGENT_EVENT_BYTES_PER_TURN);
+    expect(stream.pendingEventBytes).toBe(retainedBytes);
+    expect(stream.pendingDropped).toBe(true);
+    expect(stream.eventRetentionStopped).toBe(true);
+
+    const saturated = drainAgentTurnOutput(stream, 1);
+    expect(saturated?.supervisorTruncated).toBe(true);
+    expect(saturated?.streamMetricsDelta).toEqual({
+      receivedUtf8Bytes: new TextEncoder().encode(
+        Array.from({ length: 100 }, (_, index) => String(index + 1)).join(""),
+      ).byteLength,
+      complete: true,
+    });
+    expect(stream.pendingEvents).toEqual([]);
+    expect(stream.pendingEventBytes).toBe(0);
+
+    acceptAgentTurnOutput(parser, stream, outputEvent(101, "session"));
+    expect(stream.pendingEvents).toEqual([]);
+    expect(stream.pendingEventBytes).toBe(0);
+    expect(drainAgentTurnOutput(stream, 2)).toMatchObject({
+      events: [],
+      outputSequence: 2,
+      sessionId: "session-0001",
+      streamMetricsDelta: { receivedUtf8Bytes: 7, complete: true },
+    });
+  });
+
   it("keeps capturing the session id and result sighting while dropping events", () => {
     const parser = scriptedParser((chunk) => ({
       events: [
@@ -183,6 +239,96 @@ describe("agent turn output pending bounds", () => {
     expect(stream.sawSessionId).toBe(true);
     expect(stream.sawResult).toBe(true);
     expect(drainAgentTurnOutput(stream, 1)?.sessionId).toBe("11111111-2222-3333-4444-555555555555");
+  });
+
+  it("counts accepted raw UTF-8 chunks exactly once across drains and ignores foreign order", () => {
+    const parser = scriptedParser(() => ({ events: [], sessionId: null }));
+    const stream = createStream(parser);
+
+    expect(acceptAgentTurnOutput(parser, stream, outputEvent(1, "€"))).toBe(true);
+    expect(acceptAgentTurnOutput(parser, stream, outputEvent(1, "duplicate"))).toBe(false);
+    expect(acceptAgentTurnOutput(parser, stream, outputEvent(0, "reordered"))).toBe(false);
+    expect(
+      acceptAgentTurnOutput(
+        parser,
+        stream,
+        outputEvent(2, "foreign", { taskId: "agt-foreign-0001" }),
+      ),
+    ).toBe(false);
+    expect(drainAgentTurnOutput(stream, 1)?.streamMetricsDelta).toEqual({
+      receivedUtf8Bytes: 3,
+      complete: true,
+    });
+
+    expect(acceptAgentTurnOutput(parser, stream, outputEvent(2, "😀"))).toBe(true);
+    expect(drainAgentTurnOutput(stream, 2)?.streamMetricsDelta).toEqual({
+      receivedUtf8Bytes: 4,
+      complete: true,
+    });
+  });
+
+  it("marks a first-sequence gap incomplete while still counting the accepted chunk", () => {
+    const parser = scriptedParser(() => ({ events: [], sessionId: null }));
+    const stream = createStream(parser);
+
+    expect(acceptAgentTurnOutput(parser, stream, outputEvent(2, "€"))).toBe(true);
+    expect(drainAgentTurnOutput(stream, 2)?.streamMetricsDelta).toEqual({
+      receivedUtf8Bytes: 3,
+      complete: false,
+    });
+  });
+
+  it("keeps a post-drain sequence gap incomplete while counting later chunks", () => {
+    const parser = scriptedParser(() => ({ events: [], sessionId: null }));
+    const stream = createStream(parser);
+
+    expect(acceptAgentTurnOutput(parser, stream, outputEvent(1, "a"))).toBe(true);
+    expect(drainAgentTurnOutput(stream, 1)?.streamMetricsDelta).toEqual({
+      receivedUtf8Bytes: 1,
+      complete: true,
+    });
+
+    expect(acceptAgentTurnOutput(parser, stream, outputEvent(3, "€"))).toBe(true);
+    expect(drainAgentTurnOutput(stream, 3)?.streamMetricsDelta).toEqual({
+      receivedUtf8Bytes: 3,
+      complete: false,
+    });
+    expect(acceptAgentTurnOutput(parser, stream, outputEvent(4, "x"))).toBe(true);
+    expect(drainAgentTurnOutput(stream, 4)?.streamMetricsDelta).toEqual({
+      receivedUtf8Bytes: 1,
+      complete: false,
+    });
+  });
+
+  it("marks raw stream metrics incomplete only for upstream truncation", () => {
+    const parser = scriptedParser((chunk) => ({
+      events: [{ kind: "assistantText", text: chunk }],
+      sessionId: null,
+    }));
+    const stream = createStream(parser);
+
+    acceptAgentTurnOutput(parser, stream, outputEvent(1, "€", { truncated: true }));
+    const action = drainAgentTurnOutput(stream, 1);
+    expect(action?.streamMetricsDelta).toEqual({ receivedUtf8Bytes: 3, complete: false });
+    expect(action?.supervisorTruncated).toBe(true);
+  });
+
+  it("fails closed when pending raw byte accounting exceeds a safe integer", () => {
+    const parser = scriptedParser(() => ({ events: [], sessionId: null }));
+    const stream = createStream(parser);
+    stream.pendingReceivedUtf8Bytes = Number.MAX_SAFE_INTEGER;
+
+    expect(acceptAgentTurnOutput(parser, stream, outputEvent(1, "x"))).toBe(true);
+    expect(drainAgentTurnOutput(stream, 1)?.streamMetricsDelta).toEqual({
+      receivedUtf8Bytes: Number.MAX_SAFE_INTEGER,
+      complete: false,
+    });
+
+    expect(acceptAgentTurnOutput(parser, stream, outputEvent(2, "y"))).toBe(true);
+    expect(drainAgentTurnOutput(stream, 2)?.streamMetricsDelta).toEqual({
+      receivedUtf8Bytes: 1,
+      complete: false,
+    });
   });
 });
 

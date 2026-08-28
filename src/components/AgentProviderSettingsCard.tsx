@@ -11,6 +11,7 @@ import type {
   AgentProviderUpdateAvailability,
   AgentProviderUpdateState,
 } from "../domain/agentProviderHealth";
+import type { AgentProviderSignInState } from "../domain/agentProviderSignIn";
 import {
   MAX_AGENT_PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS,
   MIN_AGENT_PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS,
@@ -26,10 +27,17 @@ export interface AgentProviderSettingsCardProps {
   readonly path: string | null;
   readonly preference: AgentProviderPreference;
   readonly provider: AgentCliKind;
+  readonly signIn?: AgentProviderSignInCardControl;
   onChangeCheckForUpdates(value: boolean): void;
   onChangeEnabled(value: boolean): void;
   onChangeHealthCheckIntervalSeconds(value: number): void;
   onChangePath(value: string | null): void;
+}
+
+export interface AgentProviderSignInCardControl {
+  readonly blockedReason: string | null;
+  readonly state: AgentProviderSignInState;
+  onSignIn(): void;
 }
 
 export function AgentProviderSettingsCard({
@@ -41,6 +49,7 @@ export function AgentProviderSettingsCard({
   path,
   preference,
   provider,
+  signIn,
 }: AgentProviderSettingsCardProps) {
   const [draft, setDraft] = useState(path ?? "");
   const [nowEpochMs, setNowEpochMs] = useState(() => Date.now());
@@ -49,7 +58,12 @@ export function AgentProviderSettingsCard({
   const invalidPath = draft.trim() !== "" && normalizeAgentCliPath(draft) === null;
   const updating = view.updateState.kind === "starting" || view.updateState.kind === "running";
   const available = availableUpdate(view.health);
-  const updateBlockedReason = providerUpdateBlockedReason(provider, view, available);
+  const updateAvailabilityMessage = providerUpdateAvailabilityMessage(view.health);
+  const signingIn = signIn?.state.kind === "starting" || signIn?.state.kind === "running";
+  const updateBlockedReason = providerUpdateBlockedReason(provider, view, available, signingIn);
+  const signInBlockedReason =
+    signIn === undefined ? "Provider sign-in is not connected." : signIn.blockedReason;
+  const signInStatusId = `${provider}-sign-in-status`;
 
   useEffect(() => setDraft(path ?? ""), [path]);
   useEffect(() => {
@@ -144,7 +158,32 @@ export function AgentProviderSettingsCard({
         </label>
       </div>
 
+      {updateAvailabilityMessage === null ? null : (
+        <p className="agent-provider-card__result" role="status">
+          {updateAvailabilityMessage}
+        </p>
+      )}
+
+      <ProviderSignInStatus
+        blockedReason={signInBlockedReason}
+        id={signInStatusId}
+        state={signIn?.state ?? { kind: "idle" }}
+      />
+
       <div className="agent-provider-card__actions">
+        <button
+          aria-describedby={signInStatusId}
+          aria-busy={signingIn || undefined}
+          disabled={signInBlockedReason !== null}
+          onClick={() => signIn?.onSignIn()}
+          title={signInBlockedReason ?? undefined}
+          type="button"
+        >
+          {signingIn ? (
+            <LoaderCircle aria-hidden="true" className="agent-provider-spin" size={13} />
+          ) : null}
+          {signingIn ? "Signing in…" : "Sign in"}
+        </button>
         <button
           aria-busy={view.health.kind === "checking" || undefined}
           disabled={!preference.enabled || view.health.kind === "checking" || updating}
@@ -175,6 +214,88 @@ export function AgentProviderSettingsCard({
       <ProviderUpdateResult state={view.updateState} />
     </section>
   );
+}
+
+function ProviderSignInStatus({
+  blockedReason,
+  id,
+  state,
+}: {
+  readonly blockedReason: string | null;
+  readonly id: string;
+  readonly state: AgentProviderSignInState;
+}) {
+  if (state.kind === "failed") {
+    return (
+      <p
+        className="agent-provider-card__result agent-provider-card__result--failed"
+        id={id}
+        role="alert"
+      >
+        {providerSignInFailureLabel(state.reason)}
+      </p>
+    );
+  }
+  if (state.kind === "settled") {
+    const terminalResult =
+      state.exitCode === 0
+        ? "Sign-in terminal closed."
+        : `Sign-in terminal exited${state.exitCode === null ? "." : ` with code ${state.exitCode}.`}`;
+    const refreshResult =
+      state.healthRefresh === "refreshing"
+        ? "Refreshing authentication status…"
+        : state.healthRefresh === "complete"
+          ? "Authentication status refreshed."
+          : "Authentication status could not be refreshed.";
+    return (
+      <p
+        className={`agent-provider-card__result${state.healthRefresh === "failed" ? " agent-provider-card__result--failed" : ""}`}
+        id={id}
+        role={state.healthRefresh === "failed" ? "alert" : "status"}
+      >
+        {terminalResult} {refreshResult}
+      </p>
+    );
+  }
+  if (state.kind === "starting" || state.kind === "running") {
+    return (
+      <p className="agent-provider-card__result" id={id} role="status">
+        Complete sign-in in the terminal.
+      </p>
+    );
+  }
+  return blockedReason === null ? (
+    <span id={id} />
+  ) : (
+    <p className="agent-provider-card__result" id={id} role="status">
+      {blockedReason}
+    </p>
+  );
+}
+
+function providerSignInFailureLabel(
+  reason: Extract<AgentProviderSignInState, { readonly kind: "failed" }>["reason"],
+): string {
+  switch (reason) {
+    case "disabled":
+      return "Sign-in was refused because the provider is disabled.";
+    case "notConfigured":
+      return "Sign-in was refused because the CLI path is not configured.";
+    case "turnActive":
+      return "Sign-in was refused because a provider turn is running.";
+    case "updating":
+      return "Sign-in was refused because the provider is updating.";
+    case "alreadySigningIn":
+      return "A provider sign-in session is already running.";
+    case "staleAuthority":
+      return "Provider settings changed before sign-in could start.";
+    case "spawnFailed":
+      return "The sign-in terminal could not start.";
+    case "uncertain":
+      return "The sign-in result is uncertain. Refresh provider status before retrying.";
+    default:
+      return unsupportedSignInFailure(reason);
+  }
 }
 
 function ProviderPolicyStatus({
@@ -277,14 +398,51 @@ function availableUpdate(
   return health.update;
 }
 
+function providerUpdateAvailabilityMessage(health: AgentProviderHealthState): string | null {
+  if (health.kind !== "ready") return null;
+  switch (health.update.kind) {
+    case "checksDisabled":
+    case "checking":
+    case "available":
+      return null;
+    case "current":
+      return "Up to date.";
+    case "unavailable":
+      return providerUpdateUnavailableMessage(health.update.reason);
+    default:
+      return unsupportedUpdateAvailability(health.update);
+  }
+}
+
+function providerUpdateUnavailableMessage(
+  reason: Extract<AgentProviderUpdateAvailability, { readonly kind: "unavailable" }>["reason"],
+): string {
+  switch (reason) {
+    case "unknownInstaller":
+      return "Update check unavailable: installer could not be identified.";
+    case "unsupportedProbe":
+      return "Update check unavailable: provider does not support update checks.";
+    case "invalidVersion":
+      return "Update check unavailable: provider returned an invalid version.";
+    case "probeFailed":
+      return "Update check unavailable: update probe failed.";
+    default:
+      return unsupportedUpdateUnavailableReason(reason);
+  }
+}
+
 function providerUpdateBlockedReason(
   provider: AgentCliKind,
   view: AgentProviderManagementView,
   available: Extract<AgentProviderUpdateAvailability, { readonly kind: "available" }> | null,
+  signingIn: boolean,
 ): string | null {
   if (available === null) return "No update is available.";
   if (view.policy.kind !== "registered") return "Register the provider policy first.";
   if (view.liveTurnCount > 0) return `Stop running ${providerLabel(provider)} turns first.`;
+  if (signingIn || view.signInActive === true) {
+    return `Wait for ${providerLabel(provider)} sign-in to finish.`;
+  }
   if (view.updateState.kind === "starting" || view.updateState.kind === "running") {
     return "The provider is already updating.";
   }
@@ -469,6 +627,18 @@ function unsupportedUpdateState(state: never): never {
   throw new TypeError(`Unsupported provider update state: ${String(state)}`);
 }
 
+function unsupportedUpdateAvailability(availability: never): never {
+  throw new TypeError(`Unsupported provider update availability: ${String(availability)}`);
+}
+
+function unsupportedUpdateUnavailableReason(reason: never): never {
+  throw new TypeError(`Unsupported provider update unavailable reason: ${String(reason)}`);
+}
+
 function unsupportedUpdateFailure(reason: never): never {
   throw new TypeError(`Unsupported provider update failure: ${String(reason)}`);
+}
+
+function unsupportedSignInFailure(reason: never): never {
+  throw new TypeError(`Unsupported provider sign-in failure: ${String(reason)}`);
 }

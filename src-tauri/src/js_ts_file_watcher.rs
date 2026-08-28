@@ -661,9 +661,9 @@ mod tests {
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
-            Arc, Mutex,
+            Arc, Condvar, Mutex,
         },
-        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     const WORKSPACE_ROOT: &str = "/workspace";
@@ -935,9 +935,9 @@ mod tests {
 
     #[test]
     fn stopping_a_watch_does_not_wait_for_a_blocking_delivery_target() {
-        let registry = JavaScriptTypeScriptWorkspaceWatchRegistry::new();
+        let registry = Arc::new(JavaScriptTypeScriptWorkspaceWatchRegistry::new());
         let watcher = RecordingWatcher::default();
-        let target = BlockingDeliveryTarget::default();
+        let target = GateBlockingDeliveryTarget::default();
         let root = temp_workspace("watch-blocking-target");
         registry
             .start_with_watcher(&path_string(&root), &watcher, |root_key, authority| {
@@ -957,10 +957,21 @@ mod tests {
         });
         target.wait_until_entered();
 
-        let started = Instant::now();
-        registry.stop(&path_string(&root));
+        let stop_registry = Arc::clone(&registry);
+        let stop_root = root.clone();
+        let (stopped_tx, stopped_rx) = std::sync::mpsc::channel();
+        let stop_thread = std::thread::spawn(move || {
+            stop_registry.stop(&path_string(&stop_root));
+            stopped_tx.send(()).expect("stop completion");
+        });
+        let mut stop_thread = TestThreadJoinGuard::new(stop_thread);
+        let release_guard = GateBlockingDeliveryReleaseGuard(target.clone());
 
-        assert!(started.elapsed() < Duration::from_millis(100));
+        stopped_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("watch stop waited for the independently blocked delivery target");
+        stop_thread.join("stop thread");
+        release_guard.0.release();
     }
 
     #[test]
@@ -1344,6 +1355,84 @@ mod tests {
 
         fn attempts(&self) -> usize {
             self.attempts.load(Ordering::Acquire)
+        }
+    }
+
+    #[derive(Default)]
+    struct GateBlockingDeliveryState {
+        entered: bool,
+        released: bool,
+    }
+
+    #[derive(Clone, Default)]
+    struct GateBlockingDeliveryTarget {
+        state: Arc<(Mutex<GateBlockingDeliveryState>, Condvar)>,
+    }
+
+    struct GateBlockingDeliveryReleaseGuard(GateBlockingDeliveryTarget);
+
+    impl Drop for GateBlockingDeliveryReleaseGuard {
+        fn drop(&mut self) {
+            self.0.release();
+        }
+    }
+
+    struct TestThreadJoinGuard(Option<std::thread::JoinHandle<()>>);
+
+    impl TestThreadJoinGuard {
+        fn new(thread: std::thread::JoinHandle<()>) -> Self {
+            Self(Some(thread))
+        }
+
+        fn join(&mut self, label: &str) {
+            if let Some(thread) = self.0.take() {
+                thread.join().unwrap_or_else(|_| panic!("{label} panicked"));
+            }
+        }
+    }
+
+    impl Drop for TestThreadJoinGuard {
+        fn drop(&mut self) {
+            if let Some(thread) = self.0.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    impl GateBlockingDeliveryTarget {
+        fn wait_until_entered(&self) {
+            let (lock, gate) = &*self.state;
+            let state = lock.lock().expect("blocking target state");
+            let (state, _timeout) = gate
+                .wait_timeout_while(state, Duration::from_secs(5), |state| !state.entered)
+                .expect("blocking target entered gate");
+            assert!(state.entered, "blocking target was not entered");
+        }
+
+        fn release(&self) {
+            let (lock, gate) = &*self.state;
+            {
+                let mut state = lock.lock().expect("blocking target state");
+                state.released = true;
+            }
+            gate.notify_all();
+        }
+    }
+
+    impl JavaScriptTypeScriptWatchDeliveryTarget for GateBlockingDeliveryTarget {
+        fn deliver(
+            &self,
+            _root_path: &str,
+            _delivery: &mut JavaScriptTypeScriptWatchDelivery,
+        ) -> bool {
+            let (lock, gate) = &*self.state;
+            let mut state = lock.lock().expect("blocking target state");
+            state.entered = true;
+            gate.notify_all();
+            let _state = gate
+                .wait_while(state, |state| !state.released)
+                .expect("blocking target release gate");
+            true
         }
     }
 

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_TERMINAL_TABS } from "../domain/terminalTabSet";
 import type { TerminalGateway } from "../domain/terminal";
 import { terminalThemeForAppTheme } from "../domain/settings";
+import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 
 interface CapturedTerminal {
   readonly isActive: boolean;
@@ -15,6 +16,11 @@ interface CapturedTerminal {
   onCwdChange?(cwd: string | null): void;
   onOpenLink?(path: string, line?: number, column?: number): void;
   onSessionReady?(sessionId: number | null): void;
+  readonly semanticSession?: {
+    readonly key: string;
+    start(size: { cols: number; rows: number }): Promise<unknown>;
+    settle(sessionId: number, exitCode: number | null): void;
+  };
 }
 
 const mocks = vi.hoisted(() => ({
@@ -200,6 +206,117 @@ describe("TerminalTabsPanel", () => {
     expect(host.querySelectorAll('[role="tab"]')).toHaveLength(1);
   });
 
+  it("creates isolated interactive tabs for concurrent provider sign-ins", async () => {
+    const start = vi.fn(async (intent) => ({
+      kind: "started" as const,
+      provider: intent.provider,
+      providerGeneration: intent.providerGeneration,
+      sessionId: intent.provider === "claudeCode" ? 41 : 42,
+    }));
+    const settle = vi.fn(async () => undefined);
+    const providerSignIn = {
+      states: {
+        claudeCode: { kind: "starting", provider: "claudeCode", providerGeneration: 1 },
+        codex: { kind: "starting", provider: "codex", providerGeneration: 2 },
+      },
+      terminalIntents: {
+        claudeCode: signInIntent("claudeCode", 1, 1),
+        codex: signInIntent("codex", 2, 2),
+      },
+      blockedReason: () => null,
+      isActive: () => true,
+      request: () => true,
+      cancelStart: () => undefined,
+      start,
+      settle,
+    } satisfies AgentProviderSignInSurface;
+
+    render("workspace-a", sessions, false, null, undefined, "zsh", profiles, providerSignIn);
+
+    expect(tab("Claude sign-in")).toBeTruthy();
+    expect(tab("Codex sign-in").getAttribute("aria-selected")).toBe("true");
+    const semantic = [...mocks.mounted.values()]
+      .map((terminal) => terminal.semanticSession)
+      .filter((session) => session !== undefined);
+    expect(semantic).toHaveLength(2);
+    expect(new Set(semantic.map((session) => session.key)).size).toBe(2);
+
+    act(() => {
+      [...mocks.mounted.values()]
+        .find((terminal) => terminal.semanticSession?.key.includes("codex"))
+        ?.onSessionReady?.(42);
+    });
+    expect(sessions).toHaveBeenLastCalledWith(null);
+
+    await expect(semantic[0]!.start({ cols: 80, rows: 24 })).resolves.toMatchObject({
+      kind: "starting",
+    });
+    semantic[1]!.settle(42, 0);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(settle).toHaveBeenCalledWith(providerSignIn.terminalIntents.codex, 42, 0);
+  });
+
+  it("keeps semantic sign-in presentable when regular terminal tabs reached the bound", () => {
+    render();
+    for (let index = 1; index < MAX_TERMINAL_TABS; index += 1) click("New Terminal");
+    expect(host.querySelectorAll('[role="tab"]')).toHaveLength(MAX_TERMINAL_TABS);
+
+    const intent = signInIntent("claudeCode", 9, 1);
+    const providerSignIn = {
+      states: {
+        claudeCode: { kind: "starting", provider: "claudeCode", providerGeneration: 1 },
+        codex: { kind: "idle" },
+      },
+      terminalIntents: { claudeCode: intent, codex: null },
+      blockedReason: () => null,
+      isActive: (provider) => provider === "claudeCode",
+      request: () => true,
+      cancelStart: () => undefined,
+      start: vi.fn(async () => null),
+      settle: vi.fn(async () => undefined),
+    } satisfies AgentProviderSignInSurface;
+    render("workspace-a", sessions, false, null, undefined, "zsh", profiles, providerSignIn);
+
+    expect(host.querySelectorAll('[role="tab"]')).toHaveLength(MAX_TERMINAL_TABS);
+    expect(tab("Claude sign-in").getAttribute("aria-selected")).toBe("true");
+    expect(
+      [...host.querySelectorAll('[role="tab"]')].some((item) => item.textContent === "Terminal 1"),
+    ).toBe(false);
+  });
+
+  it("evicts old same-generation semantic tabs by exact intent at the bound", () => {
+    for (let intentId = 1; intentId <= MAX_TERMINAL_TABS + 1; intentId += 1) {
+      const intent = signInIntent("claudeCode", intentId, 1);
+      render(
+        "workspace-a",
+        sessions,
+        false,
+        null,
+        undefined,
+        "zsh",
+        profiles,
+        signInSurface(intent, "starting"),
+      );
+      render(
+        "workspace-a",
+        sessions,
+        false,
+        null,
+        undefined,
+        "zsh",
+        profiles,
+        signInSurface(null, "settled"),
+      );
+    }
+
+    const semanticKeys = [...mocks.mounted.values()]
+      .map((terminal) => terminal.semanticSession?.key)
+      .filter((key) => key !== undefined);
+    expect(host.querySelectorAll('[role="tab"]')).toHaveLength(MAX_TERMINAL_TABS);
+    expect(semanticKeys).toContain("provider-sign-in-claudeCode-17");
+    expect(semanticKeys).not.toContain("provider-sign-in-claudeCode-1");
+  });
+
   function render(
     ownerKey = "workspace-a",
     onSessionReady = sessions,
@@ -208,6 +325,7 @@ describe("TerminalTabsPanel", () => {
     onOpenLink?: (path: string, line?: number, column?: number) => void,
     profileId: string | null = "zsh",
     onProfileChange = profiles,
+    providerSignIn?: AgentProviderSignInSurface,
   ) {
     const panel = (
       <TerminalTabsPanel
@@ -224,6 +342,7 @@ describe("TerminalTabsPanel", () => {
         shellIntegrationEnabled={false}
         terminalGateway={{} as TerminalGateway}
         terminalTheme={terminalThemeForAppTheme("dark")}
+        providerSignIn={providerSignIn}
       />
     );
     act(() => {
@@ -249,3 +368,45 @@ describe("TerminalTabsPanel", () => {
     return result;
   }
 });
+
+function signInIntent(
+  provider: "claudeCode" | "codex",
+  intentId: number,
+  providerGeneration: number,
+) {
+  return {
+    intentId,
+    provider,
+    providerGeneration,
+    revision: 1,
+  } as const;
+}
+
+function signInSurface(
+  intent: ReturnType<typeof signInIntent> | null,
+  state: "starting" | "settled",
+): AgentProviderSignInSurface {
+  return {
+    states: {
+      claudeCode:
+        state === "starting"
+          ? { kind: "starting", provider: "claudeCode", providerGeneration: 1 }
+          : {
+              kind: "settled",
+              provider: "claudeCode",
+              providerGeneration: 1,
+              sessionId: 1,
+              exitCode: 0,
+              healthRefresh: "complete",
+            },
+      codex: { kind: "idle" },
+    },
+    terminalIntents: { claudeCode: intent, codex: null },
+    blockedReason: () => null,
+    isActive: () => state === "starting",
+    request: () => true,
+    cancelStart: () => undefined,
+    start: vi.fn(async () => null),
+    settle: vi.fn(async () => undefined),
+  };
+}

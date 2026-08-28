@@ -7,6 +7,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
+import type { BottomPanelView } from "../domain/bottomPanel";
 import type {
   AgentProviderHealthGateway,
   AgentProviderPolicyGateway,
@@ -35,6 +36,7 @@ import {
 import {
   useWorkbenchAgents,
   type WorkbenchAgentProjectGateways,
+  type WorkbenchAgentsOptions,
   type WorkbenchAgentsSurface,
 } from "./useWorkbenchAgents";
 import type { WorkbenchControllerOptions } from "./workbenchControllerContracts";
@@ -97,11 +99,14 @@ export interface WorkbenchControllerAgentsOptions {
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly applyAppSettings: (settings: AppSettings) => void;
   readonly bottomPanelVisible: boolean;
+  readonly setBottomPanelView: Dispatch<SetStateAction<BottomPanelView>>;
+  readonly setBottomPanelVisible: Dispatch<SetStateAction<boolean>>;
   readonly editorSessionOwnerKey: string | null;
   readonly options: Pick<
     WorkbenchControllerOptions,
     | "agentCliVersionGateway"
     | "agentProviderGateway"
+    | "agentProviderSignInGateway"
     | "agentRootLeaseGateway"
     | "agentTaskGateway"
     | "gitWorktreeGateway"
@@ -131,6 +136,7 @@ export interface WorkbenchControllerAgentsOptions {
   readonly workspaceSettingsRef: { readonly current: WorkspaceSettings };
   readonly workspaceTrust: WorkspaceTrustState | null;
   readonly workspaceTrustGateway: WorkspaceTrustGateway;
+  readonly terminalGateway: WorkbenchAgentsOptions["terminalGateway"];
   readonly workspaceTrustIntentCoordinatorRef: {
     readonly current: WorkspaceTrustIntentCoordinator;
   };
@@ -191,8 +197,16 @@ export function useWorkbenchControllerAgents(
   const activeWorkspaceRoot = options.workspaceRoot;
   const activeWorkspaceId = options.workspaceIdentityDescriptor?.workspaceId ?? null;
   const setWorkspaceTrust = options.setWorkspaceTrust;
+  const setSettingsOpen = options.setSettingsOpen;
+  const setBottomPanelView = options.setBottomPanelView;
+  const setBottomPanelVisible = options.setBottomPanelVisible;
   const workspaceTrustIntentCoordinatorRef = options.workspaceTrustIntentCoordinatorRef;
   const workspaceTrustRevisionByOwnerRef = options.workspaceTrustRevisionByOwnerRef;
+  const revealTerminal = useCallback((): void => {
+    setSettingsOpen(false);
+    setBottomPanelView("terminal");
+    setBottomPanelVisible(true);
+  }, [setBottomPanelView, setBottomPanelVisible, setSettingsOpen]);
 
   const handleActiveWorkspaceTrustChanged = useCallback(
     (rootPath: string, ownerId: string, trusted: boolean): void => {
@@ -227,6 +241,7 @@ export function useWorkbenchControllerAgents(
 
   const agents = useWorkbenchAgents({
     agentProviderGateway: options.options.agentProviderGateway ?? unavailableAgentProviderGateway,
+    agentProviderSignInGateway: options.options.agentProviderSignInGateway,
     agentCliVersionGateway: options.options.agentCliVersionGateway,
     agentTaskGateway: options.options.agentTaskGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway,
@@ -246,11 +261,13 @@ export function useWorkbenchControllerAgents(
     onActiveWorkspaceTrustChanged: handleActiveWorkspaceTrustChanged,
     prompter: options.prompter,
     reportError: options.reportError,
+    revealTerminal,
     setSettingsInitialSection: options.setSettingsInitialSection,
     setSettingsOpen: options.setSettingsOpen,
     workspaceId: options.workspaceIdentityDescriptor?.workspaceId ?? null,
     workspaceRoot: options.workspaceRoot,
     workspaceTrust: options.workspaceTrust,
+    terminalGateway: options.terminalGateway,
   });
 
   return useMemo(

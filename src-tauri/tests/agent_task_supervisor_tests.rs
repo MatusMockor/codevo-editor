@@ -158,6 +158,7 @@ struct FakeReader {
     segments: VecDeque<Vec<u8>>,
     receiver: Option<mpsc::Receiver<Vec<u8>>>,
     process: Arc<FakeProcess>,
+    error_after_segments: bool,
 }
 
 impl FakeReader {
@@ -177,10 +178,15 @@ impl Read for FakeReader {
             return Ok(self.deliver(segment, buffer));
         }
         if let Some(receiver) = &self.receiver {
-            let Ok(segment) = receiver.recv() else {
-                return Ok(0);
+            return match receiver.recv_timeout(Duration::from_millis(10)) {
+                Ok(segment) => Ok(self.deliver(segment, buffer)),
+                Err(mpsc::RecvTimeoutError::Timeout) => Err(io::ErrorKind::WouldBlock.into()),
+                Err(mpsc::RecvTimeoutError::Disconnected) => Ok(0),
             };
-            return Ok(self.deliver(segment, buffer));
+        }
+        if self.error_after_segments {
+            self.error_after_segments = false;
+            return Err(io::Error::other("output read failure injected"));
         }
         self.process.wait_exited_blocking();
         Ok(0)
@@ -217,7 +223,7 @@ impl AgentChild for FakeChild {
             .ok_or_else(|| "stderr already taken".to_string())
     }
 
-    fn try_wait(&mut self) -> Result<Option<i32>, String> {
+    fn observe_exit(&mut self) -> Result<bool, String> {
         if self.panic_try_wait {
             self.panic_try_wait = false;
             panic!("try wait panic injected");
@@ -226,7 +232,13 @@ impl AgentChild for FakeChild {
             self.fail_try_wait = false;
             return Err("try wait failure injected".to_string());
         }
-        Ok(self.process.exit_code())
+        Ok(self.process.exit_code().is_some())
+    }
+
+    fn reap(&mut self) -> Result<i32, String> {
+        self.process
+            .exit_code()
+            .ok_or_else(|| "fake child was reaped before exit".to_string())
     }
 
     fn process_group_id(&self) -> i32 {
@@ -245,6 +257,7 @@ struct FakeChildSpec {
     stdout_segments: Vec<Vec<u8>>,
     stdout_receiver: Option<mpsc::Receiver<Vec<u8>>>,
     stderr_receiver: Option<mpsc::Receiver<Vec<u8>>>,
+    stdout_error_after_segments: bool,
     fail_stdout_reader: bool,
     panic_stdout_reader: bool,
     panic_try_wait: bool,
@@ -259,6 +272,7 @@ impl FakeChildSpec {
             stdout_segments: Vec::new(),
             stdout_receiver: None,
             stderr_receiver: None,
+            stdout_error_after_segments: false,
             fail_stdout_reader: false,
             panic_stdout_reader: false,
             panic_try_wait: false,
@@ -278,6 +292,11 @@ impl FakeChildSpec {
 
     fn with_stderr_receiver(mut self, receiver: mpsc::Receiver<Vec<u8>>) -> Self {
         self.stderr_receiver = Some(receiver);
+        self
+    }
+
+    fn with_stdout_read_error_after_segments(mut self) -> Self {
+        self.stdout_error_after_segments = true;
         self
     }
 
@@ -306,11 +325,13 @@ impl FakeChildSpec {
             segments: self.stdout_segments.into_iter().collect(),
             receiver: self.stdout_receiver,
             process: Arc::clone(&self.process),
+            error_after_segments: self.stdout_error_after_segments,
         };
         let stderr = FakeReader {
             segments: VecDeque::new(),
             receiver: self.stderr_receiver,
             process: Arc::clone(&self.process),
+            error_after_segments: false,
         };
         FakeChild {
             process: self.process,
@@ -1236,6 +1257,195 @@ fn events_after_acknowledge_emit_live() {
     assert!(matches!(
         statuses.last().map(|event| &event.status),
         Some(AgentTaskStatusPayload::Exited { exit_code: 0 })
+    ));
+}
+
+#[test]
+fn output_reader_failure_publishes_one_ordered_incomplete_marker() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("reader-failure");
+    let cwd = root.join(".worktrees/agt-reader-failure");
+    let process = FakeProcess::new(Some(0), None);
+    fixture.signals.track(9108, &process);
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9108)
+            .with_stdout_read_error_after_segments()
+            .build(),
+    ));
+
+    dispatch(&fixture, "agt-reader-failure", &root, &cwd).expect("start task");
+    assert!(
+        wait_until(EVENT_DEADLINE, || fixture
+            .registry
+            .live_worker_thread_count()
+            == 0),
+        "task workers did not settle"
+    );
+    fixture
+        .registry
+        .acknowledge("agt-reader-failure")
+        .expect("acknowledge");
+
+    let outputs = outputs_for(&fixture.sink, "agt-reader-failure");
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0].sequence, 1);
+    assert_eq!(outputs[0].chunk, "");
+    assert!(outputs[0].truncated);
+}
+
+#[test]
+fn output_bytes_then_reader_failure_publish_data_before_one_incomplete_marker() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("bytes-reader-failure");
+    let cwd = root.join(".worktrees/agt-bytes-reader-failure");
+    let process = FakeProcess::new(Some(0), None);
+    fixture.signals.track(9109, &process);
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9109)
+            .with_stdout_segments(vec![b"hello".to_vec()])
+            .with_stdout_read_error_after_segments()
+            .build(),
+    ));
+
+    dispatch(&fixture, "agt-bytes-reader-failure", &root, &cwd).expect("start task");
+    assert!(
+        wait_until(EVENT_DEADLINE, || fixture
+            .registry
+            .live_worker_thread_count()
+            == 0),
+        "task workers did not settle"
+    );
+    fixture
+        .registry
+        .acknowledge("agt-bytes-reader-failure")
+        .expect("acknowledge");
+
+    let outputs = outputs_for(&fixture.sink, "agt-bytes-reader-failure");
+    assert_eq!(outputs.len(), 2);
+    assert_eq!(outputs[0].sequence, 1);
+    assert_eq!(outputs[0].chunk, "hello");
+    assert!(!outputs[0].truncated);
+    assert_eq!(outputs[1].sequence, 2);
+    assert_eq!(outputs[1].chunk, "");
+    assert!(outputs[1].truncated);
+}
+
+#[test]
+fn stalled_grandchild_output_descriptor_marks_stream_incomplete_before_terminal() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("stalled-grandchild-output");
+    let cwd = root.join(".worktrees/agt-stalled-grandchild-output");
+    let process = FakeProcess::new(None, None);
+    fixture.signals.track(9110, &process);
+    let (_escaped_descriptor_owner, stdout_receiver) = mpsc::channel::<Vec<u8>>();
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9110)
+            .with_stdout_receiver(stdout_receiver)
+            .build(),
+    ));
+
+    dispatch(&fixture, "agt-stalled-grandchild-output", &root, &cwd).expect("start task");
+    fixture
+        .registry
+        .acknowledge("agt-stalled-grandchild-output")
+        .expect("acknowledge");
+    process.set_exited(0);
+
+    assert!(
+        wait_until(EVENT_DEADLINE, || fixture
+            .sink
+            .has_terminal_status("agt-stalled-grandchild-output")),
+        "task did not reach terminal after the pump drain timeout"
+    );
+    let outputs = outputs_for(&fixture.sink, "agt-stalled-grandchild-output");
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0].sequence, 1);
+    assert_eq!(outputs[0].chunk, "");
+    assert!(outputs[0].truncated);
+
+    assert!(
+        wait_until(EVENT_DEADLINE, || fixture
+            .registry
+            .live_worker_thread_count()
+            == 0),
+        "stalled output pump did not settle after forced descendant cleanup"
+    );
+    assert!(fixture
+        .signals
+        .signals_for(9110)
+        .contains(&KILL_PROCESS_GROUP_SIGNAL));
+    let signals = Arc::clone(&fixture.signals);
+    drop(fixture);
+    assert_eq!(
+        signals
+            .signals_for(9110)
+            .into_iter()
+            .filter(|signal| *signal == KILL_PROCESS_GROUP_SIGNAL)
+            .count(),
+        1,
+        "released process-group authority must not signal a recycled id during registry drop"
+    );
+}
+
+#[test]
+fn failed_group_kill_cannot_strand_a_cancellable_escaped_output_reader() {
+    let admission_registry = Arc::new(AgentTaskAdmissionRegistry::new());
+    let sink = Arc::new(RecordingSink::default());
+    let spawner = Arc::new(FakeSpawner::default());
+    let registry = AgentTaskRegistry::with_dependencies(
+        Arc::clone(&admission_registry),
+        Arc::clone(&spawner) as Arc<dyn AgentProcessSpawner>,
+        Arc::clone(&sink) as Arc<dyn AgentTaskEventSink>,
+        Arc::new(FailingSignalSender),
+        Duration::from_secs(60),
+        Duration::from_millis(10),
+        Duration::from_millis(10),
+    );
+    let root = unique_path("failed-kill-escaped-output");
+    let process = FakeProcess::new(None, None);
+    let (_escaped_descriptor_owner, stdout_receiver) = mpsc::channel::<Vec<u8>>();
+    spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9111)
+            .with_stdout_receiver(stdout_receiver)
+            .build(),
+    ));
+    let admission = admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &root,
+            &root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let request = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::InPlace,
+        worktree_path: None,
+        ..start_request("agt-failed-kill-output", &root)
+    };
+
+    registry
+        .start(request, fake_plan(&root), admission)
+        .expect("start task");
+    registry
+        .acknowledge("agt-failed-kill-output")
+        .expect("acknowledge");
+    process.set_exited(0);
+
+    assert!(wait_until(EVENT_DEADLINE, || sink
+        .has_terminal_status("agt-failed-kill-output")));
+    assert!(wait_until(EVENT_DEADLINE, || registry
+        .live_worker_thread_count()
+        == 0));
+    let outputs = outputs_for(&sink, "agt-failed-kill-output");
+    assert_eq!(outputs.len(), 1);
+    assert!(outputs[0].truncated);
+    assert_eq!(outputs[0].chunk, "");
+    assert!(matches!(
+        statuses_for(&sink, "agt-failed-kill-output")
+            .last()
+            .map(|event| &event.status),
+        Some(AgentTaskStatusPayload::Failed { message })
+            if message.contains("process-group cleanup failed")
     ));
 }
 
@@ -2426,6 +2636,72 @@ fn real_process_full_lifecycle_streams_output_and_exit_code() {
         .collect();
     assert_eq!(stdout, "out");
     assert_eq!(stderr, "err");
+}
+
+#[cfg(unix)]
+#[test]
+fn normal_leader_exit_cleans_same_group_descendant_after_prompt_eof() {
+    let shell = probe_binary(&["/bin/sh"]).expect("POSIX shell");
+    let cwd = unique_path("normal-exit-descendant");
+    fs::create_dir_all(&cwd).expect("real cwd");
+    let pid_file = cwd.join("descendant.pid");
+    let admission_registry = Arc::new(AgentTaskAdmissionRegistry::new());
+    let sink = Arc::new(RecordingSink::default());
+    let registry = AgentTaskRegistry::new(
+        Arc::clone(&admission_registry),
+        Arc::new(StdAgentProcessSpawner),
+        Arc::clone(&sink) as Arc<dyn AgentTaskEventSink>,
+    );
+    let admission = admission_registry
+        .reserve(
+            &workspace("ws-agent-tests"),
+            &cwd,
+            &cwd,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("real admission");
+    let plan = AgentTaskSpawnPlan::for_tests(
+        shell,
+        vec![
+            "-c".to_string(),
+            "sleep 30 </dev/null >/dev/null 2>&1 & echo $! > descendant.pid; exit 0".to_string(),
+        ],
+        cwd.clone(),
+        Vec::new(),
+    );
+    registry
+        .start(
+            start_request("agt-normal-exit-descendant", &cwd),
+            plan,
+            admission,
+        )
+        .expect("real start");
+    registry
+        .acknowledge("agt-normal-exit-descendant")
+        .expect("real acknowledge");
+    assert!(wait_until(Duration::from_secs(10), || sink
+        .has_terminal_status("agt-normal-exit-descendant")));
+    assert!(matches!(
+        statuses_for(&sink, "agt-normal-exit-descendant")
+            .last()
+            .map(|event| &event.status),
+        Some(AgentTaskStatusPayload::Exited { exit_code: 0 })
+    ));
+    let descendant: i32 = fs::read_to_string(&pid_file)
+        .expect("descendant pid")
+        .trim()
+        .parse()
+        .expect("numeric descendant pid");
+    let gone = wait_until(Duration::from_secs(5), || {
+        let result = unsafe { libc::kill(descendant, 0) };
+        result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    });
+    if !gone {
+        unsafe {
+            libc::kill(descendant, libc::SIGKILL);
+        }
+    }
+    assert!(gone, "same-group descendant survived normal leader exit");
 }
 
 #[test]

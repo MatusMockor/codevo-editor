@@ -10,6 +10,7 @@ import {
   gitChangeForDiffDocumentPath,
   gitChangesReferToSameDiff,
   gitDiffDocumentPath,
+  MAX_RETAINED_GIT_DIFF_PAYLOADS,
   useGitDiffWorkspace,
   type GitDiffWorkspace,
   type GitDiffWorkspaceDependencies,
@@ -542,6 +543,155 @@ describe("useGitDiffWorkspace", () => {
     harness.unmount();
   });
 
+  it("evicts least-recently-used inactive payloads and reloads retained documents", async () => {
+    const changes = Array.from({ length: MAX_RETAINED_GIT_DIFF_PAYLOADS + 1 }, (_, index) =>
+      changedFile(`src/File${index}.ts`),
+    );
+    const harness = renderGitDiffWorkspace();
+
+    for (const change of changes.slice(0, MAX_RETAINED_GIT_DIFF_PAYLOADS)) {
+      await act(async () => {
+        await harness.git().openGitChange(change);
+      });
+    }
+    await act(async () => {
+      harness.git().loadGitDiffDocument(gitDiffDocumentPath(changes[0]));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await harness.git().openGitChange(changes[MAX_RETAINED_GIT_DIFF_PAYLOADS]);
+    });
+
+    const retainedPayloads = Object.values(harness.git().gitDiffDocuments).filter(
+      (documentState) => documentState.diff !== null,
+    );
+    const evictedPath = gitDiffDocumentPath(changes[1]);
+    expect(retainedPayloads).toHaveLength(MAX_RETAINED_GIT_DIFF_PAYLOADS);
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(changes[0])]?.diff).toEqual(
+      diff(changes[0]),
+    );
+    expect(harness.git().gitDiffDocuments[evictedPath]).toMatchObject({
+      change: changes[1],
+      diff: null,
+      isLoading: false,
+    });
+
+    await act(async () => {
+      harness.git().loadGitDiffDocument(evictedPath);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.git().gitDiffDocuments[evictedPath]?.diff).toEqual(diff(changes[1]));
+    expect(
+      Object.values(harness.git().gitDiffDocuments).filter(
+        (documentState) => documentState.diff !== null,
+      ),
+    ).toHaveLength(MAX_RETAINED_GIT_DIFF_PAYLOADS);
+    harness.unmount();
+  });
+
+  it("protects loading documents and discards a late payload when the cache is full", async () => {
+    const loadingChange = changedFile("src/Loading.ts");
+    const loadingRequest = createDeferred<GitFileDiff>();
+    const getDiff = vi
+      .fn<GitGateway["getDiff"]>()
+      .mockReturnValueOnce(loadingRequest.promise)
+      .mockImplementation(async (_root, change) => diff(change));
+    const harness = renderGitDiffWorkspace({
+      gitGateway: createFakeGitGateway(getDiff),
+    });
+    let loadingOpen!: Promise<void>;
+
+    act(() => {
+      loadingOpen = harness.git().openGitChange(loadingChange);
+    });
+    for (let index = 0; index < MAX_RETAINED_GIT_DIFF_PAYLOADS; index += 1) {
+      await act(async () => {
+        await harness.git().openGitChange(changedFile(`src/Settled${index}.ts`));
+      });
+    }
+
+    const loadingPath = gitDiffDocumentPath(loadingChange);
+    expect(harness.git().gitDiffDocuments[loadingPath]).toMatchObject({
+      diff: null,
+      isLoading: true,
+    });
+    await act(async () => {
+      loadingRequest.resolve(diff(loadingChange));
+      await loadingOpen;
+    });
+
+    expect(harness.git().gitDiffDocuments[loadingPath]).toMatchObject({
+      diff: null,
+      isLoading: false,
+    });
+    expect(
+      Object.values(harness.git().gitDiffDocuments).filter(
+        (documentState) => documentState.diff !== null,
+      ),
+    ).toHaveLength(MAX_RETAINED_GIT_DIFF_PAYLOADS);
+    expect(harness.git().gitDiffPreview?.change).not.toBe(loadingChange);
+    harness.unmount();
+  });
+
+  it("keeps the hard payload cap while every retained document reloads", async () => {
+    const retainedChanges = Array.from({ length: MAX_RETAINED_GIT_DIFF_PAYLOADS }, (_, index) =>
+      changedFile(`src/Reload${index}.ts`),
+    );
+    const reloads = retainedChanges.map(() => createDeferred<GitFileDiff>());
+    const overflowChange = changedFile("src/Overflow.ts");
+    const getDiff = vi.fn<GitGateway["getDiff"]>(async (_root, change) => diff(change));
+    const harness = renderGitDiffWorkspace({
+      gitGateway: createFakeGitGateway(getDiff),
+    });
+
+    for (const change of retainedChanges) {
+      await act(async () => {
+        await harness.git().openGitChange(change);
+      });
+    }
+    reloads.forEach((reload) => getDiff.mockReturnValueOnce(reload.promise));
+    act(() => {
+      retainedChanges.forEach((change) => {
+        harness.git().loadGitDiffDocument(gitDiffDocumentPath(change));
+      });
+    });
+    await act(async () => {
+      await harness.git().openGitChange(overflowChange);
+    });
+
+    expect(
+      Object.values(harness.git().gitDiffDocuments).filter(
+        (documentState) => documentState.diff !== null,
+      ),
+    ).toHaveLength(1);
+    expect(
+      retainedChanges.every((change) => {
+        const documentState = harness.git().gitDiffDocuments[gitDiffDocumentPath(change)];
+        return documentState?.isLoading === true && documentState.diff === null;
+      }),
+    ).toBe(true);
+
+    await act(async () => {
+      reloads.forEach((reload, index) => reload.resolve(diff(retainedChanges[index])));
+      await Promise.all(reloads.map((reload) => reload.promise));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      Object.values(harness.git().gitDiffDocuments).filter(
+        (documentState) => documentState.diff !== null,
+      ),
+    ).toHaveLength(MAX_RETAINED_GIT_DIFF_PAYLOADS);
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(overflowChange)]?.diff).toEqual(
+      diff(overflowChange),
+    );
+    harness.unmount();
+  });
+
   it("does not render again when an inactive diff preview is cleared", () => {
     const harness = renderGitDiffWorkspace();
     const rendersBefore = harness.renderCount();
@@ -761,6 +911,40 @@ describe("useGitDiffWorkspace", () => {
       diff(secondChange),
     );
     expect(harness.git().gitDiffLoading).toBe(false);
+    harness.unmount();
+  });
+
+  it("rejects a canceled response after the same diff path is reopened", async () => {
+    const staleChange = changedFile("src/App.tsx");
+    const currentChange = { ...staleChange, status: "renamed" as const };
+    const staleRequest = createDeferred<GitFileDiff>();
+    const currentRequest = createDeferred<GitFileDiff>();
+    const getDiff = vi
+      .fn<GitGateway["getDiff"]>()
+      .mockReturnValueOnce(staleRequest.promise)
+      .mockReturnValueOnce(currentRequest.promise);
+    const harness = renderGitDiffWorkspace({
+      gitGateway: createFakeGitGateway(getDiff),
+    });
+    const path = gitDiffDocumentPath(staleChange);
+    let staleOpen!: Promise<void>;
+    let currentOpen!: Promise<void>;
+
+    act(() => {
+      staleOpen = harness.git().openGitChange(staleChange);
+      harness.git().cancelGitDiffDocument(path);
+      currentOpen = harness.git().openGitChange(currentChange);
+    });
+    await act(async () => {
+      currentRequest.resolve(diff(currentChange));
+      await currentOpen;
+      staleRequest.resolve(diff(staleChange));
+      await staleOpen;
+    });
+
+    expect(harness.git().gitDiffDocuments[path]?.change).toBe(currentChange);
+    expect(harness.git().gitDiffDocuments[path]?.diff).toEqual(diff(currentChange));
+    expect(harness.git().gitDiffPreview).toEqual(diff(currentChange));
     harness.unmount();
   });
 

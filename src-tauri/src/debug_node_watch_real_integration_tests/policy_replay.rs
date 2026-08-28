@@ -177,8 +177,6 @@ fn production_watch_stack_replays_breakpoint_and_exception_filter_into_fresh_tar
         6,
         2,
     );
-    fs::write(&checkpoint_gate, replacement_revision.to_string())
-        .expect("release replacement checkpoint after policy activation");
     let reconnect_floor = wait_for_pause_epoch(
         &watch_adapter,
         resumed_floor + 1,
@@ -188,6 +186,8 @@ fn production_watch_stack_replays_breakpoint_and_exception_filter_into_fresh_tar
         reconnect_floor > resumed_floor,
         "target close and the hidden replacement exception must advance the pause lineage"
     );
+    fs::write(&checkpoint_gate, replacement_revision.to_string())
+        .expect("release replacement checkpoint after capturing its reconnect floor");
     let second_pause =
         wait_for_breakpoint_state(&sink, &reconnect_effects, &script_path, 6, 2, 1, 2);
     assert_eq!(

@@ -196,8 +196,14 @@ impl AgentChild for FakeChild {
             .ok_or_else(|| "stderr already taken".to_string())
     }
 
-    fn try_wait(&mut self) -> Result<Option<i32>, String> {
-        Ok(self.process.exit_code())
+    fn observe_exit(&mut self) -> Result<bool, String> {
+        Ok(self.process.exit_code().is_some())
+    }
+
+    fn reap(&mut self) -> Result<i32, String> {
+        self.process
+            .exit_code()
+            .ok_or_else(|| "fake child was reaped before exit".to_string())
     }
 
     fn process_group_id(&self) -> i32 {

@@ -1,4 +1,5 @@
-import { LoaderCircle, RefreshCw, Settings } from "lucide-react";
+import { BarChart3, GitBranch, LoaderCircle, RefreshCw, Settings } from "lucide-react";
+import type { Ref } from "react";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type {
   AgentProviderHealthState,
@@ -10,15 +11,23 @@ import { AgentProviderGlyph } from "./AgentProviderGlyph";
 export interface AgentProviderRailFooterProps {
   readonly management: AgentProviderManagementSurface;
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
+  readonly usageButtonRef?: Ref<HTMLButtonElement>;
+  readonly usageOpen: boolean;
+  onOpenSourceControl(): void;
   onOpenSettings(): void;
+  onOpenUsage(): void;
 }
 
 const PROVIDERS: ReadonlyArray<AgentCliKind> = ["claudeCode", "codex"];
 
 export function AgentProviderRailFooter({
   management,
+  onOpenSourceControl,
   onOpenSettings,
+  onOpenUsage,
   providerEnabled,
+  usageButtonRef,
+  usageOpen,
 }: AgentProviderRailFooterProps) {
   return (
     <footer className="agent-provider-footer">
@@ -32,15 +41,38 @@ export function AgentProviderRailFooter({
           />
         ))}
       </div>
-      <button
-        aria-label="Open provider settings"
-        className="agent-iconbutton agent-provider-footer__settings"
-        onClick={onOpenSettings}
-        title="Provider settings"
-        type="button"
-      >
-        <Settings aria-hidden="true" size={14} />
-      </button>
+      <nav aria-label="Agent navigation" className="agent-provider-footer__navigation">
+        <button
+          aria-label="Open Source Control"
+          className="agent-iconbutton"
+          onClick={onOpenSourceControl}
+          title="Source Control"
+          type="button"
+        >
+          <GitBranch aria-hidden="true" size={14} />
+        </button>
+        <button
+          aria-controls={usageOpen ? "agent-usage-panel-dialog" : undefined}
+          aria-expanded={usageOpen}
+          aria-label="Open Usage"
+          className="agent-iconbutton"
+          onClick={onOpenUsage}
+          ref={usageButtonRef}
+          title="Usage"
+          type="button"
+        >
+          <BarChart3 aria-hidden="true" size={14} />
+        </button>
+        <button
+          aria-label="Open provider settings"
+          className="agent-iconbutton"
+          onClick={onOpenSettings}
+          title="Settings > Agents"
+          type="button"
+        >
+          <Settings aria-hidden="true" size={14} />
+        </button>
+      </nav>
     </footer>
   );
 }

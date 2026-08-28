@@ -186,6 +186,139 @@ describe("AgentProviderSettingsCard", () => {
     expect(surface.update).not.toHaveBeenCalled();
   });
 
+  it("starts provider sign-in through the injected semantic control", () => {
+    const onSignIn = vi.fn();
+    render(management(), {
+      signIn: {
+        blockedReason: null,
+        onSignIn,
+        state: { kind: "idle" },
+      },
+    });
+
+    const signIn = button("Sign in");
+    expect(signIn.disabled).toBe(false);
+    act(() => signIn.click());
+    expect(onSignIn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "Configure a valid Claude Code CLI path before signing in.",
+    "Register Claude Code provider settings before signing in.",
+    "Stop running Claude Code turns before signing in.",
+    "Wait for the Claude Code update to finish before signing in.",
+    "Claude Code sign-in is already running.",
+  ])("disables sign-in with its exact reason: %s", (blockedReason) => {
+    render(management(), {
+      signIn: {
+        blockedReason,
+        onSignIn: vi.fn(),
+        state: { kind: "idle" },
+      },
+    });
+
+    const signIn = button("Sign in");
+    expect(signIn.disabled).toBe(true);
+    expect(signIn.title).toBe(blockedReason);
+    expect(signIn.getAttribute("aria-describedby")).toBe("claudeCode-sign-in-status");
+    expect(host.querySelector("#claudeCode-sign-in-status")?.textContent).toBe(blockedReason);
+  });
+
+  it("shows the active sign-in lifecycle without claiming authentication", () => {
+    render(management(), {
+      signIn: {
+        blockedReason: "Claude Code sign-in is already running.",
+        onSignIn: vi.fn(),
+        state: {
+          kind: "running",
+          provider: "claudeCode",
+          providerGeneration: 1,
+          sessionId: 9,
+        },
+      },
+    });
+
+    const signIn = button("Signing in…");
+    expect(signIn.disabled).toBe(true);
+    expect(signIn.getAttribute("aria-busy")).toBe("true");
+    expect(host.textContent).not.toContain("Sign-in complete");
+    expect(button("Update to 2.2.0").disabled).toBe(true);
+    expect(button("Update to 2.2.0").title).toContain("sign-in");
+  });
+
+  it("renders failed and settled sign-in outcomes without claiming authentication", () => {
+    render(management(), {
+      signIn: {
+        blockedReason: null,
+        onSignIn: vi.fn(),
+        state: {
+          kind: "failed",
+          provider: "claudeCode",
+          providerGeneration: 1,
+          reason: "uncertain",
+        },
+      },
+    });
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      "sign-in result is uncertain",
+    );
+
+    render(management(), {
+      signIn: {
+        blockedReason: null,
+        onSignIn: vi.fn(),
+        state: {
+          kind: "settled",
+          provider: "claudeCode",
+          providerGeneration: 1,
+          sessionId: 9,
+          exitCode: 7,
+          healthRefresh: "complete",
+        },
+      },
+    });
+    expect(host.querySelector("#claudeCode-sign-in-status")?.textContent).toContain(
+      "exited with code 7",
+    );
+    expect(host.textContent).not.toContain("Signed in successfully");
+  });
+
+  it("announces refreshing until the post-sign-in health probe completes", () => {
+    const base = {
+      blockedReason: null,
+      onSignIn: vi.fn(),
+      state: {
+        kind: "settled" as const,
+        provider: "claudeCode" as const,
+        providerGeneration: 1,
+        sessionId: 9,
+        exitCode: 0,
+        healthRefresh: "refreshing" as const,
+      },
+    };
+    render(management(), { signIn: base });
+    expect(host.querySelector("#claudeCode-sign-in-status")?.textContent).toContain(
+      "Refreshing authentication status",
+    );
+    expect(host.textContent).not.toContain("Authentication status refreshed");
+
+    render(management(), {
+      signIn: { ...base, state: { ...base.state, healthRefresh: "complete" } },
+    });
+    expect(host.textContent).toContain("Authentication status refreshed");
+  });
+
+  it("blocks Update while this provider sign-in is active", () => {
+    const update = vi.fn(async () => null);
+    render({ ...management({ signInActive: true }), update });
+
+    const updateButton = button("Update to 2.2.0");
+    expect(updateButton.title).toContain("sign-in");
+    expect(updateButton.disabled).toBe(true);
+    act(() => updateButton.click());
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("submits the exact currently displayed update version after an offer changes", () => {
     const update = vi.fn(async () => null);
     render({ ...management(), update });
@@ -202,20 +335,71 @@ describe("AgentProviderSettingsCard", () => {
     expect(update).not.toHaveBeenCalledWith("claudeCode", "2.2.0");
   });
 
-  it("renders bounded updater progress and failure output truthfully", () => {
+  it.each([
+    ["unknownInstaller", "Update check unavailable: installer could not be identified."],
+    ["unsupportedProbe", "Update check unavailable: provider does not support update checks."],
+    ["invalidVersion", "Update check unavailable: provider returned an invalid version."],
+    ["probeFailed", "Update check unavailable: update probe failed."],
+  ] as const)("renders the %s update check failure without an Update action", (reason, label) => {
+    render(
+      management({
+        health: {
+          kind: "ready",
+          installedVersion: "2.1.245",
+          auth: { kind: "signedIn", label: null },
+          update: { kind: "unavailable", reason },
+          checkedAtEpochMs: Date.now(),
+        },
+      }),
+    );
+
+    expect(host.textContent).toContain(label);
+    expect(
+      [...host.querySelectorAll("button")].some((candidate) =>
+        /Update/.test(candidate.textContent ?? ""),
+      ),
+    ).toBe(false);
+  });
+
+  it("renders a current update check as up to date", () => {
+    render(
+      management({
+        health: {
+          kind: "ready",
+          installedVersion: "2.1.245",
+          auth: { kind: "signedIn", label: null },
+          update: { kind: "current", installedVersion: "2.1.245" },
+          checkedAtEpochMs: Date.now(),
+        },
+      }),
+    );
+
+    expect(host.textContent).toContain("Up to date.");
+    expect(
+      [...host.querySelectorAll("button")].some((candidate) =>
+        /Update/.test(candidate.textContent ?? ""),
+      ),
+    ).toBe(false);
+  });
+
+  it("renders a truthful running indicator and bounded final failure output", () => {
     render(
       management({
         updateState: {
           kind: "running",
           operationId: "provider-update-1",
-          outputTail: "Installing package",
-          outputTruncated: false,
+          outputTail:
+            "Installer stdout activity: 4096 bytes.\nInstaller stderr activity: 128 bytes.\n",
+          outputTruncated: true,
         },
       }),
     );
     expect(host.textContent).toContain("Updating Claude Code");
     expect(host.textContent).toContain("Installing update");
-    expect(host.querySelector("pre")?.textContent).toBe("Installing package");
+    expect(host.querySelector("pre")?.textContent).toBe(
+      "Installer stdout activity: 4096 bytes.\nInstaller stderr activity: 128 bytes.\n",
+    );
+    expect(host.textContent).toContain("Output was truncated");
     expect(host.querySelector('[aria-busy="true"]')).not.toBeNull();
 
     render(
@@ -223,14 +407,15 @@ describe("AgentProviderSettingsCard", () => {
         updateState: {
           kind: "failed",
           reason: "timedOut",
-          outputTail: "network timeout",
-          outputTruncated: true,
+          outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 15 bytes).",
+          outputTruncated: false,
         },
       }),
     );
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("The update timed out.");
-    expect(host.querySelector("pre")?.textContent).toBe("network timeout");
-    expect(host.textContent).toContain("Output was truncated");
+    expect(host.querySelector("pre")?.textContent).toBe(
+      "Installer output withheld (stdout: 0 bytes, stderr: 15 bytes).",
+    );
   });
 
   function render(

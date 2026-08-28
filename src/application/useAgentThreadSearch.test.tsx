@@ -8,6 +8,8 @@ import * as agentThreadSearch from "../domain/agentThreadSearch";
 import type { AgentThreadSearchSurface, AgentThreadView } from "./agentThreadPorts";
 import {
   AGENT_THREAD_SEARCH_DEBOUNCE_MS,
+  MAX_AGENT_THREAD_SEARCH_INDEX_BYTES,
+  MAX_AGENT_THREAD_SEARCH_INDEX_DOCUMENTS,
   useAgentThreadSearch,
   type AgentThreadSearchOptions,
 } from "./useAgentThreadSearch";
@@ -189,6 +191,77 @@ describe("useAgentThreadSearch", () => {
     harness.type("gateway");
     harness.fire();
     expect(harness.hook().result?.matches.map((match) => match.threadId)).toEqual(["agt-b"]);
+    harness.unmount();
+  });
+
+  it("retains only the newest bounded document set with deterministic thread-id ties", () => {
+    const oldest = view(thread("agt-old", "Needle oldest", { updatedAtEpochMs: 1 }));
+    const tied = Array.from({ length: MAX_AGENT_THREAD_SEARCH_INDEX_DOCUMENTS + 1 }, (_, index) =>
+      view(
+        thread(`agt-${String(index).padStart(3, "0")}`, `Needle ${index}`, {
+          updatedAtEpochMs: 10,
+        }),
+      ),
+    );
+    const harness = renderSearch([oldest, ...tied].reverse());
+
+    harness.type("needle");
+    harness.fire();
+
+    expect(buildSpy).toHaveBeenCalledTimes(MAX_AGENT_THREAD_SEARCH_INDEX_DOCUMENTS);
+    expect(buildSpy).not.toHaveBeenCalledWith(oldest.thread);
+    expect(buildSpy).not.toHaveBeenCalledWith(tied[tied.length - 1]?.thread);
+    expect(harness.hook().result?.documentsTruncated).toBe(true);
+    harness.unmount();
+  });
+
+  it("caps retained UTF-8 document bytes and releases evicted document references", () => {
+    const payload = "字".repeat(20 * 1_024);
+    const entries = Array.from({ length: 100 }, (_, index) =>
+      view(
+        thread(
+          `agt-byte-${String(index).padStart(3, "0")}`,
+          index === 0 ? "Oldest marker" : `Needle ${index}`,
+          {
+            updatedAtEpochMs: index,
+            turns: [turn(`turn-${index}`, payload, "done")],
+          },
+        ),
+      ),
+    );
+    const harness = renderSearch(entries);
+
+    const builtDocuments = buildSpy.mock.results.map((call) => call.value);
+    const retainedDocuments = builtDocuments.slice(0, -1);
+    const retainedBytes = retainedDocuments.reduce((total, document) => {
+      return total + (document?.byteLength ?? 0);
+    }, 0);
+    const attemptedBytes = builtDocuments.reduce((total, document) => {
+      return total + (document?.byteLength ?? 0);
+    }, 0);
+    expect(retainedBytes).toBeLessThanOrEqual(MAX_AGENT_THREAD_SEARCH_INDEX_BYTES);
+    expect(attemptedBytes).toBeGreaterThan(MAX_AGENT_THREAD_SEARCH_INDEX_BYTES);
+    expect(buildSpy.mock.calls.length).toBeLessThan(entries.length);
+
+    harness.type("oldest marker");
+    harness.fire();
+    expect(harness.hook().result?.matches).toEqual([]);
+    expect(harness.hook().result?.documentsTruncated).toBe(true);
+
+    const previouslyRetained = entries[entries.length - 1];
+    buildSpy.mockClear();
+    harness.setViews([view(thread("agt-replacement", "Needle replacement"))]);
+    expect(buildSpy).toHaveBeenCalledTimes(1);
+    if (previouslyRetained === undefined) throw new Error("Missing retained fixture.");
+    harness.setViews([previouslyRetained]);
+    expect(buildSpy).toHaveBeenCalledTimes(2);
+
+    harness.type("needle");
+    harness.fire();
+    expect(harness.hook().result?.matches.map((match) => match.threadId)).toEqual([
+      previouslyRetained.thread.threadId,
+    ]);
+    expect(harness.hook().result?.documentsTruncated).toBe(false);
     harness.unmount();
   });
 

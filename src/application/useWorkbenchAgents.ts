@@ -3,6 +3,8 @@ import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
 import { activeAgentCliPath } from "../domain/agentSettings";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
+import type { AgentProviderSignInGateway } from "../domain/agentProviderSignIn";
+import type { TerminalGateway } from "../domain/terminal";
 import type {
   AgentProviderHealthGateway,
   AgentProviderPolicyGateway,
@@ -44,6 +46,8 @@ import {
   useAgentProviderManagement,
   type AgentProviderManagementSurface,
 } from "./useAgentProviderManagement";
+import { useAgentProviderSignIn, type AgentProviderSignInSurface } from "./useAgentProviderSignIn";
+import type { ReadyAgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import {
   defaultAgentTaskGateway,
@@ -66,6 +70,7 @@ export interface WorkbenchAgentsOptions {
   readonly agentProviderGateway: AgentProviderPolicyGateway &
     AgentProviderHealthGateway &
     AgentProviderUpdateGateway;
+  readonly agentProviderSignInGateway?: AgentProviderSignInGateway;
   readonly agentCliVersionGateway?: AgentCliVersionGateway;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly gitWorktreeGateway?: GitWorktreeGateway;
@@ -90,16 +95,19 @@ export interface WorkbenchAgentsOptions {
   ) => void;
   readonly prompter: WorkbenchPrompter;
   readonly reportError: (source: string, error: unknown) => void;
+  readonly revealTerminal: () => void;
   readonly setSettingsInitialSection: (section: SettingsSection) => void;
   readonly setSettingsOpen: (open: boolean) => void;
   readonly workspaceId: string | null;
   readonly workspaceRoot: string | null;
   readonly workspaceTrust: WorkspaceTrustState | null;
+  readonly terminalGateway: Pick<TerminalGateway, "stop">;
 }
 
 export interface WorkbenchAgentsSurface extends AgentThreadsSurface {
   readonly agentProjects: AgentProjectsSurface;
   readonly providerManagement: AgentProviderManagementSurface;
+  readonly providerSignIn: AgentProviderSignInSurface;
 }
 
 const unwiredGatewayError = (): Error =>
@@ -121,6 +129,10 @@ const unwiredDiscoveryGateway: AgentRepositoryDiscoveryGateway = {
 const unwiredLeaseGateway: AgentRootLeaseGateway = {
   acquireAgentRootLease: () => Promise.reject(unwiredGatewayError()),
   releaseAgentRootLease: () => Promise.reject(unwiredGatewayError()),
+};
+
+const unwiredAgentProviderSignInGateway: AgentProviderSignInGateway = {
+  startAgentProviderSignIn: () => Promise.reject(unwiredGatewayError()),
 };
 
 export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAgentsSurface {
@@ -188,6 +200,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   }, [setSettingsInitialSection, setSettingsOpen]);
 
   const threadsSurfaceRef = useRef<AgentThreadsSurface | null>(null);
+  const providerManagementRef = useRef<AgentProviderManagementSurface | null>(null);
   const providerOperationSequenceRef = useRef(0);
   const providerWorkspaceOwnerRef = useRef({
     generation: 0,
@@ -259,6 +272,47 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     reportError: options.reportError,
   });
 
+  const readProviderAuthority = useCallback((provider: "claudeCode" | "codex") => {
+    const management = providerManagementRef.current;
+    if (management === null) {
+      return unavailableProviderSignInAuthority(provider);
+    }
+    return management.admissionAuthority(provider);
+  }, []);
+  const refreshProvider = useCallback(
+    async (
+      provider: "claudeCode" | "codex",
+      authority: ReadyAgentProviderAdmissionAuthority,
+    ): Promise<"complete" | "failed" | "stale"> => {
+      const management = providerManagementRef.current;
+      if (management === null || !providerAuthorityMatches(management, authority)) return "stale";
+      const preSignInProbeWasPending = management.providers[provider].health.kind === "checking";
+      const refresh = management.refreshWithOutcome;
+      if (refresh === undefined) return "failed";
+      let refreshed = await refresh(provider);
+      const current = providerManagementRef.current;
+      if (current === null || !providerAuthorityMatches(current, authority)) return "stale";
+      if (preSignInProbeWasPending) {
+        const freshRefresh = current.refreshWithOutcome;
+        if (freshRefresh === undefined) return "failed";
+        refreshed = await freshRefresh(provider);
+        const final = providerManagementRef.current;
+        if (final === null || !providerAuthorityMatches(final, authority)) return "stale";
+      }
+      return refreshed ? "complete" : "failed";
+    },
+    [],
+  );
+  const providerSignIn = useAgentProviderSignIn({
+    gateway: options.agentProviderSignInGateway ?? unwiredAgentProviderSignInGateway,
+    readAuthority: readProviderAuthority,
+    liveTurnCount,
+    terminalUnavailableReason: () => null,
+    revealTerminal: options.revealTerminal,
+    stopSession: (sessionId) => options.terminalGateway.stop(sessionId).then(() => undefined),
+    refresh: refreshProvider,
+  });
+
   const providerManagement = useAgentProviderManagement({
     appSettingsRef: options.appSettingsRef,
     applyAppSettings: options.applyAppSettings,
@@ -268,6 +322,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     healthGateway: options.agentProviderGateway,
     updateGateway: options.agentProviderGateway,
     liveTurnCount,
+    signInActive: providerSignIn.isActive,
     reportError: options.reportError,
     mintOperationId: mintProviderOperationId,
     workspaceGeneration: providerWorkspaceOwnerRef.current.generation,
@@ -305,11 +360,35 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
 
   useLayoutEffect(() => {
     threadsSurfaceRef.current = threads;
+    providerManagementRef.current = providerManagement;
   });
 
   return useMemo(
-    () => ({ ...threads, agentProjects, providerManagement }),
-    [agentProjects, providerManagement, threads],
+    () => ({ ...threads, agentProjects, providerManagement, providerSignIn }),
+    [agentProjects, providerManagement, providerSignIn, threads],
+  );
+}
+
+function unavailableProviderSignInAuthority(provider: "claudeCode" | "codex") {
+  return {
+    provider,
+    revision: 0,
+    disposition: { kind: "policyUnavailable", reason: "unregistered" },
+  } as const;
+}
+
+function providerAuthorityMatches(
+  management: AgentProviderManagementSurface,
+  captured: ReadyAgentProviderAdmissionAuthority,
+): boolean {
+  const current = management.admissionAuthority(captured.provider);
+  return (
+    current.disposition.kind === "ready" &&
+    "cliPath" in current &&
+    "providerGeneration" in current &&
+    current.revision === captured.revision &&
+    current.providerGeneration === captured.providerGeneration &&
+    current.cliPath === captured.cliPath
   );
 }
 

@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node ./scripts/check-initial-bundle-budget.mjs",
+    "build:budget:test": "vitest run ./scripts/check-initial-bundle-budget.test.mjs",
     "check": "tsc --noEmit",
     "clippy:check": "node ./scripts/check-clippy-warning-budget.mjs",
     "lint": "eslint src vite.config.ts --max-warnings 0",

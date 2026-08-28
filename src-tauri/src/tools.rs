@@ -1,6 +1,8 @@
 use serde::Serialize;
 use std::{
-    env, fs, io,
+    env,
+    ffi::OsString,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -71,8 +73,14 @@ const LEGACY_MOCKOR_EDITOR_PHP_PATH: &str = "MOCKOR_EDITOR_PHP_PATH";
 /// report an unavailable isolated managed launch instead of invoking PHPactor
 /// directly without `codevo-php.ini`.
 pub fn php_executable_path() -> Option<String> {
+    php_executable_path_with_lookup(|name| env::var_os(name))
+}
+
+fn php_executable_path_with_lookup(
+    mut lookup: impl FnMut(&str) -> Option<OsString>,
+) -> Option<String> {
     let configured_path =
-        env::var_os(CODEVO_EDITOR_PHP_PATH).or_else(|| env::var_os(LEGACY_MOCKOR_EDITOR_PHP_PATH));
+        lookup(CODEVO_EDITOR_PHP_PATH).or_else(|| lookup(LEGACY_MOCKOR_EDITOR_PHP_PATH));
 
     if let Some(path) = configured_path.map(PathBuf::from) {
         if is_executable_file(&path) {
@@ -80,7 +88,7 @@ pub fn php_executable_path() -> Option<String> {
         }
     }
 
-    find_path_tool("php").map(|location| location.path)
+    find_path_tool_in_path("php", lookup("PATH")?).map(|location| location.path)
 }
 
 impl PhpToolDetector for LocalPhpToolDetector {
@@ -359,8 +367,18 @@ fn managed_tool_env_var(prefix: &str, name: &str) -> String {
 }
 
 fn managed_tool_override(name: &str) -> Option<PathBuf> {
-    env::var_os(managed_tool_env_var("CODEVO_EDITOR", name))
-        .or_else(|| env::var_os(managed_tool_env_var("MOCKOR_EDITOR", name)))
+    managed_tool_override_with_lookup(name, |name| env::var_os(name))
+}
+
+fn managed_tool_override_with_lookup(
+    name: &str,
+    mut lookup: impl FnMut(&str) -> Option<OsString>,
+) -> Option<PathBuf> {
+    let codevo_name = managed_tool_env_var("CODEVO_EDITOR", name);
+    let legacy_name = managed_tool_env_var("MOCKOR_EDITOR", name);
+
+    lookup(&codevo_name)
+        .or_else(|| lookup(&legacy_name))
         .map(PathBuf::from)
 }
 
@@ -559,6 +577,10 @@ fn find_workspace_vendor_tool(name: &str, root: &Path) -> Option<ToolLocation> {
 fn find_path_tool(name: &str) -> Option<ToolLocation> {
     let path_var = env::var_os("PATH")?;
 
+    find_path_tool_in_path(name, path_var)
+}
+
+fn find_path_tool_in_path(name: &str, path_var: OsString) -> Option<ToolLocation> {
     env::split_paths(&path_var).find_map(|directory| {
         executable_names(name).into_iter().find_map(|executable| {
             let path = directory.join(&executable);
@@ -627,19 +649,16 @@ mod tests {
         find_javascript_typescript_tool, find_tool_with_managed_locations, find_typescript_server,
         find_typescript_server_with_fallback, find_typescript_server_with_message,
         find_vue_typescript_plugin, find_vue_typescript_plugin_in_node_modules,
-        javascript_typescript_managed_tool_roots, managed_home_dirs, managed_tool_override,
-        managed_tool_roots, php_executable_path, typescript_server_from_workspace_resolution,
-        JavaScriptTypeScriptToolPreference, ToolLocation, ToolSource, CODEVO_EDITOR_PHP_PATH,
-        LEGACY_MOCKOR_EDITOR_PHP_PATH,
+        javascript_typescript_managed_tool_roots, managed_home_dirs,
+        managed_tool_override_with_lookup, managed_tool_roots, php_executable_path_with_lookup,
+        typescript_server_from_workspace_resolution, JavaScriptTypeScriptToolPreference,
+        ToolLocation, ToolSource, CODEVO_EDITOR_PHP_PATH, LEGACY_MOCKOR_EDITOR_PHP_PATH,
     };
     use crate::workspace_typescript::WorkspaceTypeScriptResolution;
-    use std::{env, fs, sync::Mutex, time::SystemTime};
-
-    static ENV_VAR_TEST_LOCK: Mutex<()> = Mutex::new(());
+    use std::{ffi::OsString, fs, time::SystemTime};
 
     #[test]
     fn php_path_supports_legacy_override_and_prefers_codevo_override() {
-        let _lock = ENV_VAR_TEST_LOCK.lock().expect("lock environment");
         let legacy_dir = create_temp_dir("legacy-php-override");
         let codevo_dir = create_temp_dir("codevo-php-override");
         let legacy_php = legacy_dir.join("php");
@@ -649,43 +668,49 @@ mod tests {
         make_executable(&legacy_php);
         make_executable(&codevo_php);
 
-        env::remove_var(CODEVO_EDITOR_PHP_PATH);
-        env::set_var(LEGACY_MOCKOR_EDITOR_PHP_PATH, &legacy_php);
         assert_eq!(
-            php_executable_path(),
+            php_executable_path_with_lookup(|name| {
+                (name == LEGACY_MOCKOR_EDITOR_PHP_PATH).then(|| legacy_php.clone().into_os_string())
+            }),
             Some(legacy_php.to_string_lossy().to_string())
         );
 
-        env::set_var(CODEVO_EDITOR_PHP_PATH, &codevo_php);
         assert_eq!(
-            php_executable_path(),
+            php_executable_path_with_lookup(|name| match name {
+                CODEVO_EDITOR_PHP_PATH => Some(codevo_php.clone().into_os_string()),
+                LEGACY_MOCKOR_EDITOR_PHP_PATH => Some(legacy_php.clone().into_os_string()),
+                _ => None,
+            }),
             Some(codevo_php.to_string_lossy().to_string())
         );
 
-        env::remove_var(CODEVO_EDITOR_PHP_PATH);
-        env::remove_var(LEGACY_MOCKOR_EDITOR_PHP_PATH);
         fs::remove_dir_all(legacy_dir).expect("cleanup legacy PHP override");
         fs::remove_dir_all(codevo_dir).expect("cleanup Codevo PHP override");
     }
 
     #[test]
     fn dynamic_tool_override_supports_legacy_name_and_prefers_codevo_name() {
-        let _lock = ENV_VAR_TEST_LOCK.lock().expect("lock environment");
         let tool_name = "branding-compatibility-test";
         let legacy_name = "MOCKOR_EDITOR_BRANDING_COMPATIBILITY_TEST_PATH";
         let codevo_name = "CODEVO_EDITOR_BRANDING_COMPATIBILITY_TEST_PATH";
         let legacy_path = std::path::PathBuf::from("/legacy/tool");
         let codevo_path = std::path::PathBuf::from("/codevo/tool");
 
-        env::remove_var(codevo_name);
-        env::set_var(legacy_name, &legacy_path);
-        assert_eq!(managed_tool_override(tool_name), Some(legacy_path));
+        assert_eq!(
+            managed_tool_override_with_lookup(tool_name, |name| {
+                (name == legacy_name).then(|| OsString::from(&legacy_path))
+            }),
+            Some(legacy_path.clone())
+        );
 
-        env::set_var(codevo_name, &codevo_path);
-        assert_eq!(managed_tool_override(tool_name), Some(codevo_path));
-
-        env::remove_var(codevo_name);
-        env::remove_var(legacy_name);
+        assert_eq!(
+            managed_tool_override_with_lookup(tool_name, |name| match name {
+                name if name == codevo_name => Some(OsString::from(&codevo_path)),
+                name if name == legacy_name => Some(OsString::from(&legacy_path)),
+                _ => None,
+            }),
+            Some(codevo_path)
+        );
     }
 
     #[test]

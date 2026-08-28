@@ -81,6 +81,7 @@ interface Environment {
   ensureProjectLease: ((projectRootKey: string) => Promise<boolean>) | null;
   preflight: InPlacePreflight;
   currentCliVersion: string | null;
+  outputSubscriptionGate: Promise<void> | null;
   probeCliVersion:
     ((agentCliPath: string, agentCliKind: AgentCliKind) => Promise<string | null>) | null;
 }
@@ -449,6 +450,7 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(thread.turns).toHaveLength(1);
     expect(thread.turns[0]?.turnId).toBe(started?.taskId);
     expect(thread.turns[0]?.status).toEqual({ kind: "pending" });
+    expect(thread.turns[0]?.streamMetrics).toBeNull();
     expect(thread.target.worktreePath).toBe(`${ROOT_A}/.worktrees/${threadId}`);
     expect(thread.provider).toEqual({ kind: "claudeCode", sessionId: null });
     expect(thread.title).toBe("Fix the failing test");
@@ -823,6 +825,70 @@ describe("useAgentTurnDispatch launch admission", () => {
 });
 
 describe("useAgentTurnDispatch output stream", () => {
+  it("persists exact clean zero-output metrics before a terminal status", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+
+    await act(async () => {
+      harness.emitStatus(turnId, 1, { kind: "exited", exitCode: 0 });
+    });
+
+    expect(harness.turn(threadId, 0).streamMetrics).toEqual({
+      receivedUtf8Bytes: 0,
+      complete: true,
+    });
+    const actions = harness.actionsOf("turnEventsAppended");
+    expect(actions[actions.length - 1]).toMatchObject({
+      turnId,
+      streamMetricsDelta: { receivedUtf8Bytes: 0, complete: true },
+    });
+    expect(harness.turn(threadId, 0).status).toEqual({ kind: "exited", exitCode: 0 });
+    harness.unmount();
+  });
+
+  it("marks zero-output metrics incomplete when supervisor completion is uncertain", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+
+    await act(async () => {
+      harness.emitStatus(turnId, 1, { kind: "failed", message: "wait failed" });
+    });
+
+    expect(harness.turn(threadId, 0).streamMetrics).toEqual({
+      receivedUtf8Bytes: 0,
+      complete: false,
+    });
+    expect(harness.turn(threadId, 0).status).toEqual({
+      kind: "failed",
+      message: "wait failed",
+    });
+    harness.unmount();
+  });
+
+  it("keeps a turn incomplete when output subscription became ready only after it started", async () => {
+    const outputSubscription = createDeferred<void>();
+    const harness = renderDispatch({ outputSubscriptionGate: outputSubscription.promise });
+    const threadId = await harness.startThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+
+    await act(async () => {
+      outputSubscription.resolve();
+      await outputSubscription.promise;
+      await Promise.resolve();
+    });
+    await act(async () => {
+      harness.emitStatus(turnId, 1, { kind: "exited", exitCode: 0 });
+    });
+
+    expect(harness.turn(threadId, 0).streamMetrics).toEqual({
+      receivedUtf8Bytes: 0,
+      complete: false,
+    });
+    harness.unmount();
+  });
+
   it("captures the session id, batches chunks per frame, and flushes before the terminal status", async () => {
     const harness = renderDispatch();
     const threadId = await harness.startThread();
@@ -1636,6 +1702,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     ensureProjectLease: null,
     preflight: { kind: "ok" },
     currentCliVersion: null,
+    outputSubscriptionGate: null,
     probeCliVersion: null,
     ...overrides,
   };
@@ -1659,6 +1726,9 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       return () => undefined;
     }),
     subscribeAgentTaskOutput: vi.fn(async (handler: (event: AgentTaskOutputEvent) => void) => {
+      if (environment.outputSubscriptionGate !== null) {
+        await environment.outputSubscriptionGate;
+      }
       outputHandler = handler;
       return () => undefined;
     }),

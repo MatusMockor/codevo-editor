@@ -223,6 +223,20 @@ describe("buildAgentThreadSearchDocument", () => {
     expect(doc.segments).toHaveLength(1);
     expect(doc.truncated).toBe(false);
   });
+
+  it("records the retained UTF-8 bytes for global index accounting", () => {
+    const doc = documentOf({
+      title: "Router 字",
+      turns: [turn({ prompt: "emoji 😀", events: [{ kind: "assistantText", text: "done" }] })],
+    });
+
+    expect(doc.byteLength).toBe(
+      doc.segments.reduce(
+        (total, entry) => total + new TextEncoder().encode(entry.text).byteLength,
+        0,
+      ),
+    );
+  });
 });
 
 describe("searchAgentThreadDocuments", () => {
@@ -386,7 +400,7 @@ describe("searchAgentThreadDocuments", () => {
     expect(range?.start).not.toBe(match?.segmentStart);
   });
 
-  it("flags when any matching document was truncated", () => {
+  it("flags when any searched document was truncated, even without a retained match", () => {
     const complete = documentOf({ title: "router one" });
     const clipped = { ...documentOf({ title: "router two" }), truncated: true };
 
@@ -395,7 +409,7 @@ describe("searchAgentThreadDocuments", () => {
     expect(
       searchAgentThreadDocuments([{ ...clipped, titleLower: "other" }], "router")
         .documentsTruncated,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("marks the matched range inside the returned snippet", () => {

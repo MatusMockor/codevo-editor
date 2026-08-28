@@ -13,6 +13,11 @@ import {
 import { surfaceChangedFile, surfaceSummary, surfaceThreadView } from "./agentSurfaceTestFixtures";
 
 const diffEditorMocks = vi.hoisted(() => ({ props: [] as Array<Record<string, unknown>> }));
+const monacoRuntimeMocks = vi.hoisted(() => ({ ready: Promise.resolve() }));
+
+vi.mock("../monacoRuntimeLoader", () => ({
+  initializeMonacoRuntime: vi.fn(() => monacoRuntimeMocks.ready),
+}));
 
 vi.mock("@monaco-editor/react", () => ({
   DiffEditor: (props: Record<string, unknown>) => {

@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
+import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { AgentsSettingsSection, type AgentsSettingsSectionProps } from "./AgentsSettingsSection";
@@ -177,6 +178,33 @@ describe("AgentsSettingsSection agent CLI path input", () => {
     expect(picker.disabled).toBe(true);
     expect([...picker.options].map((option) => option.value)).toEqual([""]);
     expect(picker.textContent).toBe("No enabled providers");
+  });
+
+  it("routes each provider card to its exact sign-in authority", () => {
+    const request = vi.fn(() => true);
+    const providerSignIn = {
+      states: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
+      terminalIntents: { claudeCode: null, codex: null },
+      blockedReason: () => null,
+      isActive: () => false,
+      request,
+      cancelStart: () => undefined,
+      start: vi.fn(async () => null),
+      settle: vi.fn(async () => undefined),
+    } satisfies AgentProviderSignInSurface;
+    render({ providerSignIn });
+
+    const cards = host.querySelectorAll<HTMLElement>(".agent-provider-card");
+    const claudeSignIn = [...(cards[0]?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent?.trim() === "Sign in",
+    );
+    const codexSignIn = [...(cards[1]?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent?.trim() === "Sign in",
+    );
+    act(() => claudeSignIn?.click());
+    act(() => codexSignIn?.click());
+
+    expect(request.mock.calls).toEqual([["claudeCode"], ["codex"]]);
   });
 
   function render(

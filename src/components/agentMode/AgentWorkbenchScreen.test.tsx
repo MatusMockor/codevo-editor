@@ -106,6 +106,16 @@ describe("AgentWorkbenchScreen", () => {
     expect(host.querySelector('button[aria-label="Toggle terminal panel (⌘J)"]')).not.toBeNull();
   });
 
+  it("opens the real source control sidebar from the rail footer", () => {
+    const workbench = createWorkbench(ROOT_A);
+    render(workbench);
+
+    click('button[aria-label="Open Source Control"]');
+
+    expect(workbench.agentWorkbench.actions).toEqual([{ kind: "expandEditor" }]);
+    expect(workbench.setSidebarView).toHaveBeenCalledWith("git");
+  });
+
   it("keeps provider runtime UI on persisted authority until registration succeeds", () => {
     const preferences = defaultAgentProviderPreferences();
     const initialPreferences = {
@@ -575,6 +585,16 @@ function surface(
   return {
     ...threadsSurface(workspaceRoot, worktreePath),
     providerManagement: providerManagement(),
+    providerSignIn: {
+      states: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
+      terminalIntents: { claudeCode: null, codex: null },
+      blockedReason: () => null,
+      isActive: () => false,
+      request: () => false,
+      cancelStart: () => undefined,
+      start: async () => null,
+      settle: async () => undefined,
+    },
     agentProjects: {
       projects: [project(workspaceRoot)],
       overflowRootPaths: [],

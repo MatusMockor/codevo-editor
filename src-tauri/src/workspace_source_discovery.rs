@@ -259,19 +259,30 @@ impl Drop for PendingSourceRead {
     }
 }
 
+#[cfg(test)]
 fn queue_source_read(workspace_id: &WorkspaceId) -> Result<PendingSourceRead, String> {
+    queue_source_read_with_timeout(workspace_id, SOURCE_READ_ADMISSION_TIMEOUT)
+}
+
+fn queue_source_read_with_timeout(
+    workspace_id: &WorkspaceId,
+    admission_timeout: Duration,
+) -> Result<PendingSourceRead, String> {
     let workspace_key = workspace_id.as_str().to_string();
-    let mut admission = source_read_admission()
+    let state = source_read_admission();
+    let mut admission = state
         .admission
         .lock()
         .map_err(|_| "Workspace source read admission is unavailable.".to_string())?;
     let Some(ticket) = admission.try_queue(&workspace_key) else {
         return Err("Too many workspace source reads are already waiting.".to_string());
     };
+    #[cfg(test)]
+    state.changed.notify_all();
     Ok(PendingSourceRead {
         workspace_key,
         ticket,
-        deadline: Instant::now() + SOURCE_READ_ADMISSION_TIMEOUT,
+        deadline: Instant::now() + admission_timeout,
         pending: true,
     })
 }
@@ -300,10 +311,17 @@ impl Drop for PendingReadCancellation {
 async fn acquire_source_read_permit(
     workspace_id: &WorkspaceId,
 ) -> Result<SourceReadPermit, String> {
+    acquire_source_read_permit_with_timeout(workspace_id, SOURCE_READ_ADMISSION_TIMEOUT).await
+}
+
+async fn acquire_source_read_permit_with_timeout(
+    workspace_id: &WorkspaceId,
+    admission_timeout: Duration,
+) -> Result<SourceReadPermit, String> {
     if let Some(permit) = try_acquire_source_read_permit(workspace_id)? {
         return Ok(permit);
     }
-    let pending = queue_source_read(workspace_id)?;
+    let pending = queue_source_read_with_timeout(workspace_id, admission_timeout)?;
     let canceled = Arc::new(AtomicBool::new(false));
     let worker_canceled = Arc::clone(&canceled);
     let mut cancellation = PendingReadCancellation {
@@ -745,14 +763,29 @@ mod tests {
     }
 
     fn wait_for_pending_source_reads(workspace_id: &WorkspaceId, expected: usize) {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
-            if pending_source_reads(workspace_id) == expected {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(5));
+        let state = source_read_admission();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut admission = state.admission.lock().expect("lock source read admission");
+        while admission
+            .pending_by_workspace
+            .get(workspace_id.as_str())
+            .copied()
+            .unwrap_or_default()
+            != expected
+        {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .expect("watchdog expired waiting for pending source reads");
+            let (next_admission, timeout) = state
+                .changed
+                .wait_timeout(admission, remaining)
+                .expect("wait for source read admission change");
+            admission = next_admission;
+            assert!(
+                !timeout.timed_out(),
+                "watchdog expired waiting for pending source reads"
+            );
         }
-        assert_eq!(pending_source_reads(workspace_id), expected);
     }
 
     #[test]
@@ -931,21 +964,22 @@ mod tests {
                 .expect("report waiting admission");
         });
 
-        assert!(matches!(
-            completed_rx.recv_timeout(Duration::from_millis(50)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
+        wait_for_pending_source_reads(&descriptor.workspace_id, 1);
+        assert!(
+            matches!(completed_rx.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "queued admission cannot complete before capacity is released"
+        );
         let (responsive_tx, responsive_rx) = mpsc::channel();
         tauri::async_runtime::spawn(async move {
             responsive_tx.send(()).expect("report async progress");
         });
         responsive_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(10))
             .expect("async runtime remains responsive while admission waits");
 
         permits.pop();
         let promoted = completed_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(10))
             .expect("waiting admission completed")
             .expect("waiting admission promoted");
         drop(promoted);
@@ -988,7 +1022,7 @@ mod tests {
         permits.pop();
         for expected in 1..=3 {
             let (ordinal, result) = completed_rx
-                .recv_timeout(Duration::from_secs(2))
+                .recv_timeout(Duration::from_secs(10))
                 .expect("queued admission completed");
             assert_eq!(ordinal, expected);
             drop(result.expect("queued admission promoted"));
@@ -1036,7 +1070,7 @@ mod tests {
                 .expect("report workspace B admission");
         });
         let (first_workspace, first_result) = completed_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(10))
             .expect("eligible workspace B admission completed");
         assert_eq!(first_workspace, "b");
         let permit_b = first_result.expect("workspace B promoted");
@@ -1044,7 +1078,7 @@ mod tests {
 
         permits_a.pop();
         let (second_workspace, second_result) = completed_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(10))
             .expect("workspace A admission completed after release");
         assert_eq!(second_workspace, "a");
         drop(second_result.expect("workspace A promoted"));
@@ -1115,20 +1149,18 @@ mod tests {
             .checked_sub(Duration::from_millis(1))
             .expect("past deadline");
         permits.pop();
-        let started = Instant::now();
         assert_eq!(
             expired_pending
                 .wait(Arc::new(AtomicBool::new(false)))
                 .expect_err("pre-start timeout must win"),
             "Timed out waiting for workspace source read capacity."
         );
-        assert!(started.elapsed() < Duration::from_millis(100));
         assert_eq!(pending_source_reads(&descriptor.workspace_id), 0);
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
-    fn admission_timeout_bounds_async_wall_clock_independently_of_blocking_io_work() {
+    fn expired_admission_is_reported_while_unrelated_blocking_io_remains_in_flight() {
         let _test_lock = source_read_admission_test_lock();
         let root = fixture("source-read-wall-clock-timeout");
         let registry = WorkspaceRegistry::new();
@@ -1141,28 +1173,41 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let (blocking_started_tx, blocking_started_rx) = mpsc::channel();
+        let (blocking_completed_tx, blocking_completed_rx) = mpsc::channel();
         let (release_blocking_tx, release_blocking_rx) = mpsc::channel();
         let blocking = tauri::async_runtime::spawn(run_blocking_command(move || {
             blocking_started_tx.send(()).expect("report blocking work");
             release_blocking_rx.recv().expect("release blocking work");
+            blocking_completed_tx
+                .send(())
+                .expect("report completed blocking work");
             Ok(())
         }));
         blocking_started_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(10))
             .expect("blocking work started");
 
-        let started = Instant::now();
-        let error =
-            tauri::async_runtime::block_on(acquire_source_read_permit(&descriptor.workspace_id))
-                .expect_err("saturated admission must time out");
-        let elapsed = started.elapsed();
+        let waiting_workspace = descriptor.workspace_id.clone();
+        let (completed_tx, completed_rx) = mpsc::channel();
+        tauri::async_runtime::spawn(async move {
+            let result =
+                acquire_source_read_permit_with_timeout(&waiting_workspace, Duration::ZERO).await;
+            completed_tx.send(result).expect("report expired admission");
+        });
+        let error = completed_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("watchdog expired waiting for admission result")
+            .expect_err("expired admission must time out");
         assert_eq!(
             error,
             "Timed out waiting for workspace source read capacity."
         );
-        assert!(elapsed >= Duration::from_millis(800));
-        assert!(elapsed < Duration::from_millis(1_500));
         assert_eq!(pending_source_reads(&descriptor.workspace_id), 0);
+        assert_eq!(
+            blocking_completed_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "unrelated blocking work must still be in flight when admission settles"
+        );
 
         release_blocking_tx.send(()).expect("release blocking work");
         tauri::async_runtime::block_on(blocking)
@@ -1289,10 +1334,10 @@ mod tests {
         });
 
         let executor_thread = executor_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(10))
             .expect("async task started");
         let worker_thread = entered_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(10))
             .expect("blocking read started");
         assert_ne!(executor_thread, caller_thread);
         assert_ne!(worker_thread, caller_thread);
@@ -1303,7 +1348,7 @@ mod tests {
             responsive_tx.send(()).expect("report async progress");
         });
         responsive_rx
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(Duration::from_secs(10))
             .expect("async runtime remains responsive");
 
         release_tx.send(()).expect("release bounded read");

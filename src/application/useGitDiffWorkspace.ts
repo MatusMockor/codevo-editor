@@ -15,6 +15,8 @@ import type { DocumentTabSessionPort } from "./documentTabSessionPort";
 
 export { isGitDiffDocumentPath };
 
+export const MAX_RETAINED_GIT_DIFF_PAYLOADS = 8;
+
 export interface OpenGitChangeOptions {
   pin?: boolean;
   repositoryRoot?: string;
@@ -82,6 +84,9 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
   const gitDiffDocumentsRef = useRef<Record<string, GitDiffDocumentState>>({});
   const gitDiffRequestTokenRef = useRef(0);
   const requestTokenByDocumentPathRef = useRef<Record<string, number>>({});
+  const nextDocumentRequestTokenRef = useRef(0);
+  const payloadRecencyByDocumentPathRef = useRef(new Map<string, number>());
+  const nextPayloadRecencyRef = useRef(0);
   const selectedGitChangeRef = useRef<GitChangedFile | null>(null);
   const selectedGitDiffDocumentPathRef = useRef<string | null>(null);
 
@@ -96,6 +101,8 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
     selectedGitDiffDocumentPathRef.current = null;
     setSelectedGitChange(null);
     setGitDiffPreview(null);
+    requestTokenByDocumentPathRef.current = {};
+    payloadRecencyByDocumentPathRef.current.clear();
     gitDiffDocumentsRef.current = {};
     setGitDiffDocuments({});
   }, []);
@@ -115,12 +122,52 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
         current: Record<string, GitDiffDocumentState>,
       ) => Record<string, GitDiffDocumentState>,
     ) => {
-      const next = update(gitDiffDocumentsRef.current);
+      let next = update(gitDiffDocumentsRef.current);
+      const payloadPaths = Object.keys(next).filter((path) => next[path]?.diff !== null);
+      if (payloadPaths.length > MAX_RETAINED_GIT_DIFF_PAYLOADS) {
+        const evictablePaths = payloadPaths
+          .filter(
+            (path) =>
+              path !== selectedGitDiffDocumentPathRef.current && next[path]?.isLoading === false,
+          )
+          .sort((left, right) => {
+            const recencyDifference =
+              (payloadRecencyByDocumentPathRef.current.get(left) ?? 0) -
+              (payloadRecencyByDocumentPathRef.current.get(right) ?? 0);
+            if (recencyDifference !== 0) {
+              return recencyDifference;
+            }
+            return left < right ? -1 : left > right ? 1 : 0;
+          });
+        let retainedPayloadCount = payloadPaths.length;
+        for (const path of evictablePaths) {
+          if (retainedPayloadCount <= MAX_RETAINED_GIT_DIFF_PAYLOADS) {
+            break;
+          }
+
+          const retained = next[path];
+          if (!retained) {
+            continue;
+          }
+          next = {
+            ...next,
+            [path]: { ...retained, diff: null },
+          };
+          delete requestTokenByDocumentPathRef.current[path];
+          payloadRecencyByDocumentPathRef.current.delete(path);
+          retainedPayloadCount -= 1;
+        }
+      }
       gitDiffDocumentsRef.current = next;
       setGitDiffDocuments(next);
     },
     [],
   );
+
+  const touchGitDiffPayload = useCallback((path: string) => {
+    nextPayloadRecencyRef.current += 1;
+    payloadRecencyByDocumentPathRef.current.set(path, nextPayloadRecencyRef.current);
+  }, []);
 
   const getGitDiffDocument = useCallback(
     (path: string) => gitDiffDocumentsRef.current[path] ?? null,
@@ -139,8 +186,8 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
 
   const cancelGitDiffDocument = useCallback(
     (path: string) => {
-      requestTokenByDocumentPathRef.current[path] =
-        (requestTokenByDocumentPathRef.current[path] ?? 0) + 1;
+      delete requestTokenByDocumentPathRef.current[path];
+      payloadRecencyByDocumentPathRef.current.delete(path);
       updateGitDiffDocuments((current) => {
         if (!current[path]) {
           return current;
@@ -212,8 +259,10 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
       const owningWorkspaceRoot = workspaceRoot;
       const requestedRoot = existing.repositoryRoot;
       const workspaceRequestToken = gitDiffRequestTokenRef.current;
-      const requestToken = (requestTokenByDocumentPathRef.current[path] ?? 0) + 1;
+      const requestToken = nextDocumentRequestTokenRef.current + 1;
+      nextDocumentRequestTokenRef.current = requestToken;
       requestTokenByDocumentPathRef.current[path] = requestToken;
+      touchGitDiffPayload(path);
       if (activate) {
         recordCurrentNavigationLocation();
       }
@@ -221,7 +270,7 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
       selectedGitDiffDocumentPathRef.current = path;
       selectedGitChangeRef.current = retainedChange;
       setSelectedGitChange(retainedChange);
-      setGitDiffPreview(existing.diff);
+      setGitDiffPreview(null);
       setGitDiffLoading(true);
 
       if (activate) {
@@ -231,7 +280,7 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
         ...current,
         [path]: {
           change: retainedChange,
-          diff: current[path]?.diff ?? null,
+          diff: null,
           documentPath: path,
           isLoading: true,
           repositoryRoot: requestedRoot,
@@ -299,6 +348,10 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
           if (selectedGitDiffDocumentPathRef.current === path) {
             setGitDiffLoading(false);
           }
+          delete requestTokenByDocumentPathRef.current[path];
+          if (gitDiffDocumentsRef.current[path]?.diff === null) {
+            payloadRecencyByDocumentPathRef.current.delete(path);
+          }
         });
     },
     [
@@ -308,6 +361,7 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
       recordCurrentNavigationLocation,
       reportError,
       setMessage,
+      touchGitDiffPayload,
       updateGitDiffDocuments,
       workspaceRoot,
     ],
@@ -341,8 +395,10 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
       const owningWorkspaceRoot = workspaceRoot;
       const document = gitDiffDocument(change);
       const workspaceRequestToken = gitDiffRequestTokenRef.current;
-      const requestToken = (requestTokenByDocumentPathRef.current[document.path] ?? 0) + 1;
+      const requestToken = nextDocumentRequestTokenRef.current + 1;
+      nextDocumentRequestTokenRef.current = requestToken;
       requestTokenByDocumentPathRef.current[document.path] = requestToken;
+      touchGitDiffPayload(document.path);
       recordCurrentNavigationLocation();
       const commit = documentTabSession.openReadOnlyDocument(document, options.pin === true);
       if (commit.replacedDocument) {
@@ -360,7 +416,7 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
         ...current,
         [document.path]: {
           change,
-          diff: current[document.path]?.diff ?? null,
+          diff: null,
           documentPath: document.path,
           isLoading: true,
           repositoryRoot: requestedRoot,
@@ -423,6 +479,12 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
         if (requestIsCurrent && selectedGitDiffDocumentPathRef.current === document.path) {
           setGitDiffLoading(false);
         }
+        if (requestIsCurrent) {
+          delete requestTokenByDocumentPathRef.current[document.path];
+          if (gitDiffDocumentsRef.current[document.path]?.diff === null) {
+            payloadRecencyByDocumentPathRef.current.delete(document.path);
+          }
+        }
       }
     },
     [
@@ -434,6 +496,7 @@ export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies):
       recordCurrentNavigationLocation,
       reportError,
       setMessage,
+      touchGitDiffPayload,
       updateGitDiffDocuments,
       workspaceRoot,
     ],

@@ -34,6 +34,7 @@ import {
   type AgentThreadTarget,
   type AgentTurn,
   type AgentTurnEvent,
+  type AgentTurnStreamMetrics,
   type AgentTurnStatus,
   type AgentTurnUsage,
 } from "./agentThread";
@@ -101,6 +102,7 @@ function serializeTurn(turn: AgentTurn): Record<string, unknown> {
     eventsTruncated: turn.eventsTruncated,
     lastStatusSequence: turn.lastStatusSequence,
     lastOutputSequence: turn.lastOutputSequence,
+    streamMetrics: turn.streamMetrics ?? null,
     launch: turn.launch === null ? null : serializeAgentLaunchOptions(turn.launch),
     cliVersion: turn.cliVersion,
   };
@@ -338,7 +340,7 @@ function parseTurn(value: unknown, path: string): AgentTurn {
       "lastStatusSequence",
       "lastOutputSequence",
     ],
-    ["launch", "cliVersion"],
+    ["launch", "cliVersion", "streamMetrics"],
     path,
   );
   return {
@@ -353,8 +355,19 @@ function parseTurn(value: unknown, path: string): AgentTurn {
     eventsTruncated: booleanFlag(turn.eventsTruncated, `${path}.eventsTruncated`),
     lastStatusSequence: unsignedSafeInteger(turn.lastStatusSequence, `${path}.lastStatusSequence`),
     lastOutputSequence: unsignedSafeInteger(turn.lastOutputSequence, `${path}.lastOutputSequence`),
+    streamMetrics: parseStreamMetrics(turn.streamMetrics, `${path}.streamMetrics`),
     launch: parseLaunch(turn.launch, `${path}.launch`),
     cliVersion: parseCliVersion(turn.cliVersion, `${path}.cliVersion`),
+  };
+}
+
+function parseStreamMetrics(value: unknown, path: string): AgentTurnStreamMetrics | null {
+  if (value === undefined || value === null) return null;
+  const metrics = record(value, path);
+  exactKeys(metrics, ["receivedUtf8Bytes", "complete"], path);
+  return {
+    receivedUtf8Bytes: unsignedSafeInteger(metrics.receivedUtf8Bytes, `${path}.receivedUtf8Bytes`),
+    complete: booleanFlag(metrics.complete, `${path}.complete`),
   };
 }
 

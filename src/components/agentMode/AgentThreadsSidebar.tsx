@@ -1,10 +1,20 @@
-import { memo, useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { PanelLeftClose } from "lucide-react";
+import {
+  memo,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
+import { PanelLeftClose, X } from "lucide-react";
+import { createPortal } from "react-dom";
 import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
 import { AgentRailHeader } from "./AgentRailHeader";
 import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
+import { AgentUsagePanel } from "./AgentUsagePanel";
 import { useJumpHints, useStableCallback } from "./agentRailHooks";
 import { AgentThreadList } from "./AgentThreadList";
 import { AgentThreadSearchResults } from "./AgentThreadSearchResults";
@@ -43,6 +53,7 @@ export interface AgentThreadsSidebarProps {
   readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>>;
   readonly providerManagement: AgentProviderManagementSurface;
   onOpenProviderSettings(): void;
+  onOpenSourceControl(): void;
   onCollapseSidebar?(): void;
   onSelectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
   onTogglePin(threadId: string): void;
@@ -66,6 +77,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   providerEnabled,
   providerManagement,
   onOpenProviderSettings,
+  onOpenSourceControl,
   onReleaseProject,
   onSelectThread,
   onThreadMenuCommand,
@@ -80,9 +92,27 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   const [archivedExpanded, setArchivedExpanded] = useState(false);
   const [archivedShown, setArchivedShown] = useState(ARCHIVED_PAGE_COUNT);
   const [focusRequest, setFocusRequest] = useState<string | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
   const jumpHints = useJumpHints();
+  const railRef = useRef<HTMLElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const usageDialogRef = useRef<HTMLDivElement | null>(null);
+  const usageButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const closeUsage = useCallback(() => {
+    setUsageOpen(false);
+    usageButtonRef.current?.focus();
+  }, []);
+
+  useLayoutEffect(() => {
+    const rail = railRef.current;
+    const trigger = usageButtonRef.current;
+    return () => {
+      if (rail?.contains(document.activeElement) !== true) return;
+      queueMicrotask(() => focusUsageSuccessor(trigger));
+    };
+  }, []);
 
   const selectThread = useStableCallback(onSelectThread);
   const togglePin = useStableCallback(onTogglePin);
@@ -90,6 +120,33 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
 
   const views = useMemo(() => agentRailViews(groups), [groups]);
   const projectLabels = useMemo(() => agentRailProjectLabels(groups), [groups]);
+  const usageProjectLabels = useMemo(
+    () => new Map(groups.map((group) => [group.projectRootKey, group.label])),
+    [groups],
+  );
+
+  useLayoutEffect(() => {
+    if (!usageOpen) return;
+    const dialog = usageDialogRef.current;
+    const trigger = usageButtonRef.current;
+    dialog?.focus();
+    const closeOutside = (event: MouseEvent) => {
+      if (dialog?.contains(event.target as Node)) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest('button[aria-label="Open Usage"]') !== null
+      ) {
+        return;
+      }
+      closeUsage();
+    };
+    document.addEventListener("mousedown", closeOutside);
+    return () => {
+      document.removeEventListener("mousedown", closeOutside);
+      if (dialog?.contains(document.activeElement) !== true) return;
+      queueMicrotask(() => focusUsageSuccessor(trigger));
+    };
+  }, [closeUsage, usageOpen]);
   const sections = useMemo(
     () => agentRailSections(views, scope, archivedExpanded, archivedShown),
     [archivedExpanded, archivedShown, scope, views],
@@ -195,7 +252,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   );
 
   return (
-    <aside aria-label="Agent threads" className="agent-rail">
+    <aside aria-label="Agent threads" className="agent-rail" ref={railRef}>
       <div className="agent-rail__chrome">
         <button
           aria-expanded="true"
@@ -261,9 +318,47 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
       </div>
       <AgentProviderRailFooter
         management={providerManagement}
+        onOpenSourceControl={onOpenSourceControl}
         onOpenSettings={onOpenProviderSettings}
+        onOpenUsage={() => (usageOpen ? closeUsage() : setUsageOpen(true))}
         providerEnabled={providerEnabled}
+        usageButtonRef={usageButtonRef}
+        usageOpen={usageOpen}
       />
+      {usageOpen
+        ? createPortal(
+            <div className="agent-usage-layer">
+              <div
+                aria-label="Usage details"
+                className="agent-usage-popover"
+                id="agent-usage-panel-dialog"
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  closeUsage();
+                }}
+                ref={usageDialogRef}
+                role="dialog"
+                tabIndex={-1}
+              >
+                <button
+                  aria-label="Close Usage"
+                  className="agent-iconbutton agent-usage-popover__close"
+                  onClick={closeUsage}
+                  title="Close Usage"
+                  type="button"
+                >
+                  <X aria-hidden="true" size={14} />
+                </button>
+                <AgentUsagePanel
+                  projectLabels={usageProjectLabels}
+                  threads={views.map((view) => view.thread)}
+                />
+              </div>
+            </div>,
+            document.querySelector(".app-shell") ?? document.body,
+          )
+        : null}
     </aside>
   );
 });
@@ -303,4 +398,20 @@ function focusRow(list: HTMLDivElement | null, threadId: string): void {
     row.focus();
     return;
   }
+}
+
+function focusUsageSuccessor(trigger: HTMLButtonElement | null): void {
+  if (isConnectedVisibleButton(trigger)) {
+    trigger.focus();
+    return;
+  }
+  const expand = document.querySelector<HTMLButtonElement>('button[aria-label="Expand sidebar"]');
+  if (isConnectedVisibleButton(expand)) expand.focus();
+}
+
+function isConnectedVisibleButton(button: HTMLButtonElement | null): button is HTMLButtonElement {
+  if (button === null || !button.isConnected || button.disabled || button.hidden) return false;
+  if (button.closest('[hidden], [aria-hidden="true"]') !== null) return false;
+  const style = getComputedStyle(button);
+  return style.display !== "none" && style.visibility !== "hidden";
 }

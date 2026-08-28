@@ -12,6 +12,8 @@ import {
 import type { AgentThreadSearchSurface, AgentThreadView } from "./agentThreadPorts";
 
 export const AGENT_THREAD_SEARCH_DEBOUNCE_MS = 120;
+export const MAX_AGENT_THREAD_SEARCH_INDEX_DOCUMENTS = 128;
+export const MAX_AGENT_THREAD_SEARCH_INDEX_BYTES = 4 * 1_024 * 1_024;
 
 export interface AgentThreadSearchOptions {
   readonly debounceMs?: number;
@@ -23,9 +25,12 @@ interface IndexedThread {
   readonly document: AgentThreadSearchDocument;
 }
 
-type SearchIndex = ReadonlyMap<string, IndexedThread>;
+interface SearchIndex {
+  readonly entries: ReadonlyMap<string, IndexedThread>;
+  readonly documentsTruncated: boolean;
+}
 
-const EMPTY_INDEX: SearchIndex = new Map();
+const EMPTY_INDEX: SearchIndex = { entries: new Map(), documentsTruncated: false };
 
 export function useAgentThreadSearch(
   views: ReadonlyArray<AgentThreadView>,
@@ -128,24 +133,33 @@ export function useAgentThreadSearch(
 
 function reconcileIndex(previous: SearchIndex, views: ReadonlyArray<AgentThreadView>): SearchIndex {
   const next = new Map<string, IndexedThread>();
-  let changed = views.length !== previous.size;
-  for (const view of views) {
+  let retainedBytes = 0;
+  const candidates = [...views].sort(compareViewsForRetention);
+  for (const view of candidates) {
+    if (next.size >= MAX_AGENT_THREAD_SEARCH_INDEX_DOCUMENTS) break;
     const thread = view.thread;
-    const cached = previous.get(thread.threadId);
-    if (cached !== undefined && cached.thread === thread) {
-      next.set(thread.threadId, cached);
-      continue;
-    }
-    changed = true;
-    next.set(thread.threadId, { thread, document: buildAgentThreadSearchDocument(thread) });
+    const cached = previous.entries.get(thread.threadId);
+    const entry =
+      cached !== undefined && cached.thread === thread
+        ? cached
+        : { thread, document: buildAgentThreadSearchDocument(thread) };
+    if (retainedBytes + entry.document.byteLength > MAX_AGENT_THREAD_SEARCH_INDEX_BYTES) break;
+    retainedBytes += entry.document.byteLength;
+    next.set(thread.threadId, entry);
   }
-  return changed ? next : previous;
+  const documentsTruncated = next.size < views.length;
+  if (documentsTruncated === previous.documentsTruncated && sameEntries(previous.entries, next)) {
+    return previous;
+  }
+  return { entries: next, documentsTruncated };
 }
 
 function searchIndex(index: SearchIndex, query: string, limit: number): AgentThreadSearchResult {
   const documents: AgentThreadSearchDocument[] = [];
-  for (const entry of index.values()) documents.push(entry.document);
-  return searchAgentThreadDocuments(documents, query, limit);
+  for (const entry of index.entries.values()) documents.push(entry.document);
+  const result = searchAgentThreadDocuments(documents, query, limit);
+  if (!index.documentsTruncated || result.documentsTruncated) return result;
+  return { ...result, documentsTruncated: true };
 }
 
 function retainKnownThreads(
@@ -153,7 +167,32 @@ function retainKnownThreads(
   index: SearchIndex,
 ): AgentThreadSearchResult | null {
   if (result === null) return null;
-  const matches = result.matches.filter((match) => index.has(match.threadId));
-  if (matches.length === result.matches.length) return result;
-  return { ...result, matches };
+  const matches = result.matches.filter((match) => index.entries.has(match.threadId));
+  const documentsTruncated = result.documentsTruncated || index.documentsTruncated;
+  if (
+    matches.length === result.matches.length &&
+    documentsTruncated === result.documentsTruncated
+  ) {
+    return result;
+  }
+  return { ...result, matches, documentsTruncated };
+}
+
+function compareViewsForRetention(left: AgentThreadView, right: AgentThreadView): number {
+  const recency = right.thread.updatedAtEpochMs - left.thread.updatedAtEpochMs;
+  if (recency !== 0) return recency;
+  if (left.thread.threadId < right.thread.threadId) return -1;
+  if (left.thread.threadId > right.thread.threadId) return 1;
+  return 0;
+}
+
+function sameEntries(
+  previous: ReadonlyMap<string, IndexedThread>,
+  next: ReadonlyMap<string, IndexedThread>,
+): boolean {
+  if (previous.size !== next.size) return false;
+  for (const [threadId, entry] of next) {
+    if (previous.get(threadId) !== entry) return false;
+  }
+  return true;
 }

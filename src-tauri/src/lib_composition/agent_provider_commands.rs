@@ -2,9 +2,11 @@ use crate::agent_task_spawner::agent_provider::agent_cli_version::{
     now_epoch_ms, parse_agent_cli_version,
 };
 use crate::agent_task_spawner::agent_provider::process::{
-    executable_identity, execute_agent_provider_plan_cancellable, resolve_package_manager,
+    executable_identity, execute_agent_provider_plan_cancellable,
+    execute_agent_provider_update_plan_cancellable_with_output_sink, resolve_package_manager,
     AgentProviderProcessFailure, AgentProviderProcessIntent, AgentProviderProcessOutput,
-    AgentProviderProcessPlan,
+    AgentProviderProcessOutputSink, AgentProviderProcessOutputStream, AgentProviderProcessPlan,
+    ExecutableIdentity,
 };
 use crate::agent_task_spawner::agent_provider::runtime::{
     AgentProviderPolicy, AgentProviderPolicyReceipt, AgentProviderRuntimeRegistry,
@@ -13,9 +15,8 @@ use crate::agent_task_spawner::agent_provider::runtime::{
 use crate::agent_task_spawner::agent_provider::{
     brew_cask, claude_auth_capability, compare_versions, npm_package, parse_auth_state,
     parse_brew_available_version, parse_claude_text_auth_state, parse_npm_available_version,
-    parse_npm_installed_version, sanitized_tail, AgentProviderAuthState,
-    AgentProviderHealthProbeResult, AgentProviderUpdateAvailability,
-    AgentProviderUpdateFailureReason, AgentProviderUpdateResult,
+    parse_npm_installed_version, AgentProviderAuthState, AgentProviderHealthProbeResult,
+    AgentProviderUpdateAvailability, AgentProviderUpdateFailureReason, AgentProviderUpdateResult,
     AgentProviderUpdateUnavailableReason, ClaudeAuthStatusCapability,
 };
 use crate::agent_task_spawner::AgentCliInvocation;
@@ -27,10 +28,15 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering as AtomicOrdering},
-        Arc,
+        Arc, Mutex,
     },
 };
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
+
+pub(crate) const AGENT_PROVIDER_UPDATE_PROGRESS_EVENT: &str = "agent-provider-update://progress";
+const MAX_AGENT_PROVIDER_PROGRESS_DATA_BYTES: usize = 4 * 1024;
+const MAX_AGENT_PROVIDER_PROGRESS_TOTAL_DATA_BYTES: usize = 1024 * 1024;
+const MAX_AGENT_PROVIDER_PROGRESS_EVENTS: u32 = 4_096;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -86,6 +92,62 @@ pub(crate) struct AgentProviderUpdateRequest {
     provider: AgentCliInvocation,
     provider_generation: u64,
     operation_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum AgentProviderUpdateProgressStream {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentProviderUpdateProgressEvent {
+    provider: AgentCliInvocation,
+    provider_generation: u64,
+    operation_id: String,
+    sequence: u32,
+    stream: AgentProviderUpdateProgressStream,
+    data: String,
+    truncated: bool,
+    redacted: bool,
+}
+
+trait AgentProviderUpdateProgressSink: Send + Sync {
+    fn emit(&self, event: AgentProviderUpdateProgressEvent) -> Result<(), ()>;
+}
+
+struct AppAgentProviderUpdateProgressSink(AppHandle);
+
+impl AgentProviderUpdateProgressSink for AppAgentProviderUpdateProgressSink {
+    fn emit(&self, event: AgentProviderUpdateProgressEvent) -> Result<(), ()> {
+        self.0
+            .emit(AGENT_PROVIDER_UPDATE_PROGRESS_EVENT, event)
+            .map_err(|_| ())
+    }
+}
+
+#[cfg(test)]
+struct NoopAgentProviderUpdateProgressSink;
+
+#[cfg(test)]
+impl AgentProviderUpdateProgressSink for NoopAgentProviderUpdateProgressSink {
+    fn emit(&self, _event: AgentProviderUpdateProgressEvent) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
+trait AgentProviderPackageManagerLocator {
+    fn resolve(&self, name: &str) -> Option<ExecutableIdentity>;
+}
+
+struct PathAgentProviderPackageManagerLocator;
+
+impl AgentProviderPackageManagerLocator for PathAgentProviderPackageManagerLocator {
+    fn resolve(&self, name: &str) -> Option<ExecutableIdentity> {
+        resolve_package_manager(name)
+    }
 }
 
 #[tauri::command]
@@ -156,117 +218,209 @@ pub(crate) async fn probe_agent_provider_health(
 pub(crate) async fn update_agent_provider(
     request: AgentProviderUpdateRequest,
     provider_registry: State<'_, Arc<AgentProviderRuntimeRegistry>>,
+    app: AppHandle,
 ) -> Result<AgentProviderUpdateResult, String> {
     let provider_registry = Arc::clone(&provider_registry);
     let cancellation = ProviderRequestCancellation::new();
     let cancelled = cancellation.flag();
+    let progress_sink: Arc<dyn AgentProviderUpdateProgressSink> =
+        Arc::new(AppAgentProviderUpdateProgressSink(app));
     let result = run_blocking_command(move || {
-        let lease = provider_registry.acquire_update(
-            request.provider,
-            request.provider_generation,
-            &request.operation_id,
-        )?;
-        if lease.operation_id != request.operation_id {
-            return Ok(update_failure(
-                AgentProviderUpdateFailureReason::AdmissionRefused,
-                "Provider update operation changed.",
-            ));
-        }
-        if !provider_registry.update_is_current(&lease) {
-            return Ok(update_failure(
-                AgentProviderUpdateFailureReason::AdmissionRefused,
-                "Provider update authority changed.",
-            ));
-        }
-        if executable_identity(&lease.candidate.cli_path).ok().as_ref()
-            != Some(&lease.candidate.cli_identity)
-        {
-            return Ok(update_failure(
-                AgentProviderUpdateFailureReason::AdmissionRefused,
-                "Provider executable identity changed.",
-            ));
-        }
-        if !provider_registry.update_is_current(&lease) {
-            return Ok(update_failure(
-                AgentProviderUpdateFailureReason::AdmissionRefused,
-                "Provider update authority changed.",
-            ));
-        }
-        let plan = match lease
-            .candidate
-            .installer
-            .update_plan(lease.provider, &lease.candidate.available_version)
-        {
-            Ok(plan) => plan,
-            Err(message) => {
-                return Ok(update_failure(
-                    AgentProviderUpdateFailureReason::AdmissionRefused,
-                    &message,
-                ))
-            }
-        };
-        if !provider_registry.update_is_current(&lease) {
-            return Ok(update_failure(
-                AgentProviderUpdateFailureReason::AdmissionRefused,
-                "Provider update authority changed.",
-            ));
-        }
-        let output = match execute_owned(&provider_registry, &cancelled, &plan) {
-            Ok(output) => output,
-            Err(failure) => return Ok(process_update_failure(failure)),
-        };
-        if !provider_registry.update_is_current(&lease) {
-            return Ok(update_failure(
-                AgentProviderUpdateFailureReason::Uncertain,
-                "Provider update authority changed after execution.",
-            ));
-        }
-        let version_plan = AgentProviderProcessPlan::provider(
-            &lease.candidate.cli_path,
-            AgentProviderProcessIntent::InstalledVersion(lease.provider),
-        )?;
-        if !provider_registry.update_is_current(&lease) {
-            return Ok(update_failure(
-                AgentProviderUpdateFailureReason::Uncertain,
-                "Provider update authority changed before verification.",
-            ));
-        }
-        let observed = match execute_owned(&provider_registry, &cancelled, &version_plan) {
-            Ok(output) => output,
-            Err(failure) => return Ok(process_update_failure(failure)),
-        };
-        if !provider_registry.update_is_current(&lease) {
-            return Ok(update_failure(
-                AgentProviderUpdateFailureReason::Uncertain,
-                "Provider update authority changed after verification.",
-            ));
-        }
-        let Some(installed_version) = parse_version_output(&observed) else {
-            return Ok(update_failure_with_output(
-                AgentProviderUpdateFailureReason::Uncertain,
-                &output,
-            ));
-        };
-        if installed_version != lease.candidate.available_version {
-            return Ok(update_failure(
-                AgentProviderUpdateFailureReason::Uncertain,
-                &format!("Provider reported version {installed_version} after update."),
-            ));
-        }
-        Ok(AgentProviderUpdateResult::Succeeded {
-            previous_version: lease.candidate.installed_version.clone(),
-            installed_version,
-        })
+        run_agent_provider_update_with_progress_sink(
+            &provider_registry,
+            &request,
+            &cancelled,
+            progress_sink,
+        )
     })
     .await;
     drop(cancellation);
     result
 }
 
+#[cfg(test)]
+fn run_agent_provider_update(
+    provider_registry: &Arc<AgentProviderRuntimeRegistry>,
+    request: &AgentProviderUpdateRequest,
+    cancelled: &AtomicBool,
+) -> Result<AgentProviderUpdateResult, String> {
+    run_agent_provider_update_with_progress_sink(
+        provider_registry,
+        request,
+        cancelled,
+        Arc::new(NoopAgentProviderUpdateProgressSink),
+    )
+}
+
+fn run_agent_provider_update_with_progress_sink(
+    provider_registry: &Arc<AgentProviderRuntimeRegistry>,
+    request: &AgentProviderUpdateRequest,
+    cancelled: &AtomicBool,
+    progress_sink: Arc<dyn AgentProviderUpdateProgressSink>,
+) -> Result<AgentProviderUpdateResult, String> {
+    run_agent_provider_update_with_spawn_barrier_and_progress_sink(
+        provider_registry,
+        request,
+        cancelled,
+        || {},
+        progress_sink,
+    )
+}
+
+#[cfg(test)]
+fn run_agent_provider_update_with_spawn_barrier(
+    provider_registry: &Arc<AgentProviderRuntimeRegistry>,
+    request: &AgentProviderUpdateRequest,
+    cancelled: &AtomicBool,
+    before_installer_spawn: impl FnOnce(),
+) -> Result<AgentProviderUpdateResult, String> {
+    run_agent_provider_update_with_spawn_barrier_and_progress_sink(
+        provider_registry,
+        request,
+        cancelled,
+        before_installer_spawn,
+        Arc::new(NoopAgentProviderUpdateProgressSink),
+    )
+}
+
+fn run_agent_provider_update_with_spawn_barrier_and_progress_sink(
+    provider_registry: &Arc<AgentProviderRuntimeRegistry>,
+    request: &AgentProviderUpdateRequest,
+    cancelled: &AtomicBool,
+    before_installer_spawn: impl FnOnce(),
+    progress_sink: Arc<dyn AgentProviderUpdateProgressSink>,
+) -> Result<AgentProviderUpdateResult, String> {
+    let lease = provider_registry.acquire_update(
+        request.provider,
+        request.provider_generation,
+        &request.operation_id,
+    )?;
+    if lease.operation_id != request.operation_id {
+        return Ok(update_failure(
+            AgentProviderUpdateFailureReason::AdmissionRefused,
+            "Provider update operation changed.",
+        ));
+    }
+    if !provider_registry.update_is_current(&lease) {
+        return Ok(update_failure(
+            AgentProviderUpdateFailureReason::AdmissionRefused,
+            "Provider update authority changed.",
+        ));
+    }
+    if executable_identity(&lease.candidate.cli_path).ok().as_ref()
+        != Some(&lease.candidate.cli_identity)
+    {
+        return Ok(update_failure(
+            AgentProviderUpdateFailureReason::AdmissionRefused,
+            "Provider executable identity changed.",
+        ));
+    }
+    if !provider_registry.update_is_current(&lease) {
+        return Ok(update_failure(
+            AgentProviderUpdateFailureReason::AdmissionRefused,
+            "Provider update authority changed.",
+        ));
+    }
+    let plan = match lease
+        .candidate
+        .installer
+        .update_plan(lease.provider, &lease.candidate.available_version)
+    {
+        Ok(plan) => plan,
+        Err(message) => {
+            return Ok(update_failure(
+                AgentProviderUpdateFailureReason::AdmissionRefused,
+                &message,
+            ))
+        }
+    };
+    if !provider_registry.update_is_current(&lease) {
+        return Ok(update_failure(
+            AgentProviderUpdateFailureReason::AdmissionRefused,
+            "Provider update authority changed.",
+        ));
+    }
+    let output = match execute_update_owned(
+        provider_registry,
+        cancelled,
+        &lease,
+        &plan,
+        before_installer_spawn,
+        progress_sink,
+    ) {
+        Ok(output) => output,
+        Err(UpdateExecutionFailure::AuthorityLost) => {
+            return Ok(update_failure(
+                AgentProviderUpdateFailureReason::AdmissionRefused,
+                "Provider executable identity changed before installer launch.",
+            ))
+        }
+        Err(UpdateExecutionFailure::Process(failure)) => {
+            return Ok(process_update_failure(failure))
+        }
+    };
+    if !provider_registry.update_is_current(&lease) {
+        return Ok(update_failure(
+            AgentProviderUpdateFailureReason::Uncertain,
+            "Provider update authority changed after execution.",
+        ));
+    }
+    let version_plan = AgentProviderProcessPlan::provider(
+        &lease.candidate.cli_path,
+        AgentProviderProcessIntent::InstalledVersion(lease.provider),
+    )?;
+    if !provider_registry.update_is_current(&lease) {
+        return Ok(update_failure(
+            AgentProviderUpdateFailureReason::Uncertain,
+            "Provider update authority changed before verification.",
+        ));
+    }
+    let observed = match execute_owned(provider_registry, cancelled, &version_plan) {
+        Ok(output) => output,
+        Err(failure) => return Ok(process_update_failure(failure)),
+    };
+    if !provider_registry.update_is_current(&lease) {
+        return Ok(update_failure(
+            AgentProviderUpdateFailureReason::Uncertain,
+            "Provider update authority changed after verification.",
+        ));
+    }
+    let Some(installed_version) = parse_version_output(&observed) else {
+        return Ok(update_failure_with_output(
+            AgentProviderUpdateFailureReason::Uncertain,
+            &output,
+        ));
+    };
+    if installed_version != lease.candidate.available_version {
+        return Ok(update_failure(
+            AgentProviderUpdateFailureReason::Uncertain,
+            &format!("Provider reported version {installed_version} after update."),
+        ));
+    }
+    Ok(AgentProviderUpdateResult::Succeeded {
+        previous_version: lease.candidate.installed_version.clone(),
+        installed_version,
+    })
+}
+
 fn probe_health(
     provider_registry: &AgentProviderRuntimeRegistry,
     lease: ProviderHealthLease,
     cancelled: &AtomicBool,
+) -> Result<AgentProviderHealthProbeResult, String> {
+    probe_health_with_locator(
+        provider_registry,
+        lease,
+        cancelled,
+        &PathAgentProviderPackageManagerLocator,
+    )
+}
+
+fn probe_health_with_locator(
+    provider_registry: &AgentProviderRuntimeRegistry,
+    lease: ProviderHealthLease,
+    cancelled: &AtomicBool,
+    package_manager_locator: &dyn AgentProviderPackageManagerLocator,
 ) -> Result<AgentProviderHealthProbeResult, String> {
     let cli_path = lease
         .policy
@@ -298,6 +452,7 @@ fn probe_health(
         &identity,
         installed.as_deref(),
         cancelled,
+        package_manager_locator,
     );
     revalidate_health_identity(provider_registry, &lease, &identity)?;
     provider_registry.cache_candidate(&lease, candidate)?;
@@ -453,6 +608,7 @@ fn probe_update(
     cli_identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
     installed_version: Option<&str>,
     cancelled: &AtomicBool,
+    package_manager_locator: &dyn AgentProviderPackageManagerLocator,
 ) -> (
     AgentProviderUpdateAvailability,
     Option<AgentProviderUpdateCandidate>,
@@ -468,7 +624,14 @@ fn probe_update(
             None,
         );
     };
-    match probe_npm(registry, lease, cli_identity, installed_version, cancelled) {
+    match probe_npm(
+        registry,
+        lease,
+        cli_identity,
+        installed_version,
+        cancelled,
+        package_manager_locator,
+    ) {
         InstallerProbeOutcome::Resolved {
             installer,
             available_version,
@@ -497,7 +660,14 @@ fn probe_update(
             None,
         );
     }
-    match probe_brew(registry, lease, cli_identity, installed_version, cancelled) {
+    match probe_brew(
+        registry,
+        lease,
+        cli_identity,
+        installed_version,
+        cancelled,
+        package_manager_locator,
+    ) {
         InstallerProbeOutcome::Resolved {
             installer,
             available_version,
@@ -541,8 +711,9 @@ fn probe_npm(
     cli_identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
     installed_version: &str,
     cancelled: &AtomicBool,
+    package_manager_locator: &dyn AgentProviderPackageManagerLocator,
 ) -> InstallerProbeOutcome {
-    let Some(npm) = resolve_package_manager("npm") else {
+    let Some(npm) = package_manager_locator.resolve("npm") else {
         return InstallerProbeOutcome::NotOwned;
     };
     if registry.revalidate_health(lease).is_err() {
@@ -657,8 +828,9 @@ fn probe_brew(
     cli_identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
     installed_version: &str,
     cancelled: &AtomicBool,
+    package_manager_locator: &dyn AgentProviderPackageManagerLocator,
 ) -> InstallerProbeOutcome {
-    let Some(brew) = resolve_package_manager("brew") else {
+    let Some(brew) = package_manager_locator.resolve("brew") else {
         return InstallerProbeOutcome::NotOwned;
     };
     if registry.revalidate_health(lease).is_err() {
@@ -859,6 +1031,159 @@ fn execute_owned(
     })
 }
 
+enum UpdateExecutionFailure {
+    AuthorityLost,
+    Process(AgentProviderProcessFailure),
+}
+
+struct ProviderUpdateProcessOutputSink {
+    provider: AgentCliInvocation,
+    provider_generation: u64,
+    operation_id: String,
+    sink: Arc<dyn AgentProviderUpdateProgressSink>,
+    state: Mutex<ProviderUpdateProgressState>,
+}
+
+#[derive(Default)]
+struct ProviderUpdateProgressState {
+    sequence: u32,
+    published_bytes: usize,
+    exhausted: bool,
+}
+
+impl ProviderUpdateProcessOutputSink {
+    fn new(
+        provider: AgentCliInvocation,
+        provider_generation: u64,
+        operation_id: String,
+        sink: Arc<dyn AgentProviderUpdateProgressSink>,
+    ) -> Self {
+        Self {
+            provider,
+            provider_generation,
+            operation_id,
+            sink,
+            state: Mutex::new(ProviderUpdateProgressState::default()),
+        }
+    }
+
+    fn publish(
+        &self,
+        state: &mut ProviderUpdateProgressState,
+        stream: AgentProviderProcessOutputStream,
+        byte_count: usize,
+    ) {
+        if state.exhausted {
+            return;
+        }
+        if state.sequence >= MAX_AGENT_PROVIDER_PROGRESS_EVENTS.saturating_sub(1) {
+            state.sequence = MAX_AGENT_PROVIDER_PROGRESS_EVENTS;
+            state.exhausted = true;
+            let data = "Additional installer activity withheld.".to_string();
+            state.published_bytes = state.published_bytes.saturating_add(data.len());
+            let _ = self.sink.emit(AgentProviderUpdateProgressEvent {
+                provider: self.provider,
+                provider_generation: self.provider_generation,
+                operation_id: self.operation_id.clone(),
+                sequence: state.sequence,
+                stream: progress_stream(stream),
+                data,
+                truncated: true,
+                redacted: true,
+            });
+            return;
+        }
+        let data = match stream {
+            AgentProviderProcessOutputStream::Stdout => {
+                format!("Installer stdout activity: {byte_count} bytes.")
+            }
+            AgentProviderProcessOutputStream::Stderr => {
+                format!("Installer stderr activity: {byte_count} bytes.")
+            }
+        };
+        debug_assert!(data.len() <= MAX_AGENT_PROVIDER_PROGRESS_DATA_BYTES);
+        debug_assert!(
+            state.published_bytes.saturating_add(data.len())
+                <= MAX_AGENT_PROVIDER_PROGRESS_TOTAL_DATA_BYTES
+        );
+        state.published_bytes = state.published_bytes.saturating_add(data.len());
+        state.sequence += 1;
+        let _ = self.sink.emit(AgentProviderUpdateProgressEvent {
+            provider: self.provider,
+            provider_generation: self.provider_generation,
+            operation_id: self.operation_id.clone(),
+            sequence: state.sequence,
+            stream: progress_stream(stream),
+            data,
+            truncated: false,
+            redacted: true,
+        });
+    }
+}
+
+impl AgentProviderProcessOutputSink for ProviderUpdateProcessOutputSink {
+    fn emit(&self, stream: AgentProviderProcessOutputStream, data: &[u8]) -> Result<(), ()> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !data.is_empty() {
+            self.publish(&mut state, stream, data.len());
+        }
+        Ok(())
+    }
+}
+
+fn progress_stream(stream: AgentProviderProcessOutputStream) -> AgentProviderUpdateProgressStream {
+    match stream {
+        AgentProviderProcessOutputStream::Stdout => AgentProviderUpdateProgressStream::Stdout,
+        AgentProviderProcessOutputStream::Stderr => AgentProviderUpdateProgressStream::Stderr,
+    }
+}
+
+fn execute_update_owned(
+    registry: &AgentProviderRuntimeRegistry,
+    cancelled: &AtomicBool,
+    lease: &crate::agent_task_spawner::agent_provider::runtime::ProviderUpdateLease,
+    plan: &AgentProviderProcessPlan,
+    before_spawn_validation: impl FnOnce(),
+    progress_sink: Arc<dyn AgentProviderUpdateProgressSink>,
+) -> Result<AgentProviderProcessOutput, UpdateExecutionFailure> {
+    let authority_lost = AtomicBool::new(false);
+    let process_output_sink: Arc<dyn AgentProviderProcessOutputSink> =
+        Arc::new(ProviderUpdateProcessOutputSink::new(
+            lease.provider,
+            lease.generation,
+            lease.operation_id.clone(),
+            progress_sink,
+        ));
+    let result = execute_agent_provider_update_plan_cancellable_with_output_sink(
+        plan,
+        || registry.operations_closed() || cancelled.load(AtomicOrdering::Acquire),
+        || {
+            before_spawn_validation();
+            let current = registry.update_is_current(lease)
+                && executable_identity(&lease.candidate.cli_path).ok().as_ref()
+                    == Some(&lease.candidate.cli_identity);
+            if !current {
+                authority_lost.store(true, AtomicOrdering::Release);
+            }
+            current
+        },
+        process_output_sink,
+    );
+    match result {
+        Ok(_) if authority_lost.load(AtomicOrdering::Acquire) => {
+            Err(UpdateExecutionFailure::AuthorityLost)
+        }
+        Ok(output) => Ok(output),
+        Err(_) if authority_lost.load(AtomicOrdering::Acquire) => {
+            Err(UpdateExecutionFailure::AuthorityLost)
+        }
+        Err(failure) => Err(UpdateExecutionFailure::Process(failure)),
+    }
+}
+
 struct ProviderRequestCancellation {
     cancelled: Arc<AtomicBool>,
 }
@@ -895,42 +1220,44 @@ fn parse_version_output(output: &AgentProviderProcessOutput) -> Option<String> {
 fn process_update_failure(failure: AgentProviderProcessFailure) -> AgentProviderUpdateResult {
     match failure {
         AgentProviderProcessFailure::Spawn(message) => {
-            update_failure(AgentProviderUpdateFailureReason::SpawnFailed, &message)
+            drop(message);
+            update_failure(AgentProviderUpdateFailureReason::SpawnFailed, "")
         }
         AgentProviderProcessFailure::TimedOut { stdout, stderr } => {
             AgentProviderUpdateResult::Failed {
                 reason: AgentProviderUpdateFailureReason::TimedOut,
-                output_tail: sanitized_tail(&stdout, &stderr),
+                output_tail: safe_installer_output_summary(&stdout, &stderr),
                 output_truncated: false,
             }
         }
         AgentProviderProcessFailure::OutputLimitExceeded { stdout, stderr } => {
             AgentProviderUpdateResult::Failed {
                 reason: AgentProviderUpdateFailureReason::OutputLimitExceeded,
-                output_tail: sanitized_tail(&stdout, &stderr),
+                output_tail: safe_installer_output_summary(&stdout, &stderr),
                 output_truncated: true,
             }
         }
         AgentProviderProcessFailure::Exited { stdout, stderr } => {
             AgentProviderUpdateResult::Failed {
                 reason: AgentProviderUpdateFailureReason::Exited,
-                output_tail: sanitized_tail(&stdout, &stderr),
+                output_tail: safe_installer_output_summary(&stdout, &stderr),
                 output_truncated: false,
             }
         }
         AgentProviderProcessFailure::Uncertain(message) => {
-            update_failure(AgentProviderUpdateFailureReason::Uncertain, &message)
+            drop(message);
+            update_failure(AgentProviderUpdateFailureReason::Uncertain, "")
         }
     }
 }
 
 fn update_failure(
     reason: AgentProviderUpdateFailureReason,
-    message: &str,
+    _message: &str,
 ) -> AgentProviderUpdateResult {
     AgentProviderUpdateResult::Failed {
         reason,
-        output_tail: sanitized_tail(message.as_bytes(), b""),
+        output_tail: safe_installer_output_summary(b"", b""),
         output_truncated: false,
     }
 }
@@ -941,430 +1268,19 @@ fn update_failure_with_output(
 ) -> AgentProviderUpdateResult {
     AgentProviderUpdateResult::Failed {
         reason,
-        output_tail: sanitized_tail(&output.stdout, &output.stderr),
+        output_tail: safe_installer_output_summary(&output.stdout, &output.stderr),
         output_truncated: false,
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static NONCE: AtomicU64 = AtomicU64::new(0);
-
-    fn provider_executable(body: &str) -> std::path::PathBuf {
-        let nonce = NONCE.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir().join(format!(
-            "codevo-provider-health-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("provider fixture");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
-                .expect("executable fixture");
-        }
-        path
-    }
-
-    #[test]
-    fn policy_and_operation_requests_reject_unknown_fields() {
-        let cancellation = ProviderRequestCancellation::new();
-        let cancelled = cancellation.flag();
-        drop(cancellation);
-        assert!(cancelled.load(AtomicOrdering::Acquire));
-
-        let accepted = serde_json::from_value::<RegisterAgentProviderPolicyRequest>(json!({
-            "provider": "codex",
-            "settingsRevision": 1,
-            "expectedProviderGeneration": null,
-            "enabled": true,
-            "cliPath": "/usr/local/bin/codex",
-            "checkForUpdates": false
-        }));
-        assert!(accepted.is_ok());
-        let extra = serde_json::from_value::<RegisterAgentProviderPolicyRequest>(json!({
-            "provider": "codex",
-            "settingsRevision": 1,
-            "expectedProviderGeneration": null,
-            "enabled": true,
-            "cliPath": "/usr/local/bin/codex",
-            "checkForUpdates": false,
-            "version": "latest"
-        }));
-        assert!(extra.is_err());
-        let update = serde_json::from_value::<AgentProviderUpdateRequest>(json!({
-            "provider": "codex",
-            "providerGeneration": 2,
-            "operationId": "operation-1",
-            "installer": "npm"
-        }));
-        assert!(update.is_err());
-        let query = serde_json::from_value::<GetAgentProviderPolicyRequest>(json!({
-            "provider": "codex",
-            "extra": true
-        }));
-        assert!(query.is_err());
-    }
-
-    #[test]
-    fn policy_snapshots_use_the_closed_tagged_wire_shape() {
-        assert_eq!(
-            serde_json::to_value(AgentProviderPolicySnapshot::Unregistered).expect("unregistered"),
-            json!({"kind":"unregistered"})
-        );
-        assert_eq!(
-            serde_json::to_value(AgentProviderPolicySnapshot::Registered {
-                receipt: RegisterAgentProviderPolicyReceipt {
-                    provider: AgentCliInvocation::CodexExec,
-                    settings_revision: 4,
-                    provider_generation: 9,
-                },
-                enabled: true,
-                cli_path: Some("/usr/local/bin/codex".to_string()),
-                check_for_updates: false,
-            })
-            .expect("registered"),
-            json!({
-                "kind":"registered",
-                "receipt": {
-                    "provider":"codex",
-                    "settingsRevision":4,
-                    "providerGeneration":9
-                },
-                "enabled":true,
-                "cliPath":"/usr/local/bin/codex",
-                "checkForUpdates":false
-            })
-        );
-    }
-
-    #[test]
-    fn health_probe_uses_the_closed_version_and_auth_plans() {
-        let executable = provider_executable(
-            "if [ \"$1\" = \"--version\" ]; then echo 'claude 2.1.247'; exit 0; fi\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ] && [ \"$3\" = \"--json\" ]; then echo '{\"loggedIn\":true,\"subscriptionType\":\"Pro\"}'; exit 0; fi\nexit 9",
-        );
-        let registry = Arc::new(AgentProviderRuntimeRegistry::new());
-        let receipt = registry
-            .register_policy(
-                AgentCliInvocation::ClaudeCode,
-                1,
-                None,
-                AgentProviderPolicy {
-                    enabled: true,
-                    cli_path: Some(executable.to_string_lossy().into_owned()),
-                    check_for_updates: false,
-                },
-            )
-            .expect("policy");
-        let lease = registry
-            .acquire_health_for_generation(
-                AgentCliInvocation::ClaudeCode,
-                receipt.provider_generation,
-            )
-            .expect("health lease");
-        let result = probe_health(&registry, lease, &AtomicBool::new(false)).expect("health");
-        assert_eq!(result.installed_version.as_deref(), Some("2.1.247"));
-        assert_eq!(
-            result.auth,
-            AgentProviderAuthState::SignedIn {
-                label: Some("Pro".to_string())
-            }
-        );
-        assert_eq!(
-            result.update,
-            AgentProviderUpdateAvailability::ChecksDisabled
-        );
-        fs::remove_file(executable).expect("cleanup");
-    }
-
-    #[test]
-    fn claude_capabilities_select_text_unavailable_and_cache_unknown_fallback() {
-        let text = provider_executable(
-            "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ] && [ -z \"$3\" ]; then echo 'Logged in using Claude'; exit 0; fi\nexit 9",
-        );
-        let text_registry = Arc::new(AgentProviderRuntimeRegistry::new());
-        let text_receipt = text_registry
-            .register_policy(
-                AgentCliInvocation::ClaudeCode,
-                1,
-                None,
-                AgentProviderPolicy {
-                    enabled: true,
-                    cli_path: Some(text.to_string_lossy().into_owned()),
-                    check_for_updates: false,
-                },
-            )
-            .expect("text policy");
-        let text_lease = text_registry
-            .acquire_health_for_generation(
-                AgentCliInvocation::ClaudeCode,
-                text_receipt.provider_generation,
-            )
-            .expect("text lease");
-        let text_identity =
-            executable_identity(text.to_str().expect("text path")).expect("identity");
-        assert_eq!(
-            probe_auth(
-                &text_registry,
-                &text_lease,
-                &text_identity,
-                Some("2.1.83"),
-                &AtomicBool::new(false),
-            ),
-            AgentProviderAuthState::SignedIn {
-                label: Some("Claude".to_string())
-            }
-        );
-        drop(text_lease);
-        fs::remove_file(text).expect("text cleanup");
-
-        let marker = std::env::temp_dir().join(format!(
-            "codevo-provider-auth-marker-{}-{}",
-            std::process::id(),
-            NONCE.fetch_add(1, Ordering::SeqCst)
-        ));
-        let unavailable = provider_executable(&format!(
-            "if [ \"$1\" = \"auth\" ]; then echo hit > '{}'; fi\nexit 9",
-            marker.display()
-        ));
-        let unavailable_registry = Arc::new(AgentProviderRuntimeRegistry::new());
-        let unavailable_receipt = unavailable_registry
-            .register_policy(
-                AgentCliInvocation::ClaudeCode,
-                1,
-                None,
-                AgentProviderPolicy {
-                    enabled: true,
-                    cli_path: Some(unavailable.to_string_lossy().into_owned()),
-                    check_for_updates: false,
-                },
-            )
-            .expect("unavailable policy");
-        let unavailable_lease = unavailable_registry
-            .acquire_health_for_generation(
-                AgentCliInvocation::ClaudeCode,
-                unavailable_receipt.provider_generation,
-            )
-            .expect("unavailable lease");
-        let unavailable_identity =
-            executable_identity(unavailable.to_str().expect("path")).expect("unavailable identity");
-        assert_eq!(
-            probe_auth(
-                &unavailable_registry,
-                &unavailable_lease,
-                &unavailable_identity,
-                Some("0.2.0"),
-                &AtomicBool::new(false),
-            ),
-            AgentProviderAuthState::Unknown
-        );
-        assert!(!marker.exists());
-        drop(unavailable_lease);
-        fs::remove_file(unavailable).expect("unavailable cleanup");
-
-        let fallback_marker = std::env::temp_dir().join(format!(
-            "codevo-provider-auth-fallback-{}-{}",
-            std::process::id(),
-            NONCE.fetch_add(1, Ordering::SeqCst)
-        ));
-        let fallback = provider_executable(&format!(
-            "if [ \"$3\" = \"--json\" ]; then echo json >> '{}'; echo \"error: unknown option '--json'\" >&2; exit 1; fi\nif [ \"$1\" = \"auth\" ]; then echo 'Logged in using Claude'; exit 0; fi\nexit 9",
-            fallback_marker.display()
-        ));
-        let fallback_registry = Arc::new(AgentProviderRuntimeRegistry::new());
-        let fallback_receipt = fallback_registry
-            .register_policy(
-                AgentCliInvocation::ClaudeCode,
-                1,
-                None,
-                AgentProviderPolicy {
-                    enabled: true,
-                    cli_path: Some(fallback.to_string_lossy().into_owned()),
-                    check_for_updates: false,
-                },
-            )
-            .expect("fallback policy");
-        let fallback_identity =
-            executable_identity(fallback.to_str().expect("path")).expect("fallback identity");
-        for _ in 0..2 {
-            let lease = fallback_registry
-                .acquire_health_for_generation(
-                    AgentCliInvocation::ClaudeCode,
-                    fallback_receipt.provider_generation,
-                )
-                .expect("fallback lease");
-            assert!(matches!(
-                probe_auth(
-                    &fallback_registry,
-                    &lease,
-                    &fallback_identity,
-                    Some("9.9.9"),
-                    &AtomicBool::new(false),
-                ),
-                AgentProviderAuthState::SignedIn { .. }
-            ));
-            drop(lease);
-        }
-        assert_eq!(
-            fs::read_to_string(&fallback_marker).expect("fallback marker"),
-            "json\n"
-        );
-        fs::remove_file(fallback).expect("fallback cleanup");
-        fs::remove_file(fallback_marker).expect("marker cleanup");
-
-        let retry_marker = std::env::temp_dir().join(format!(
-            "codevo-provider-auth-retry-{}-{}",
-            std::process::id(),
-            NONCE.fetch_add(1, Ordering::SeqCst)
-        ));
-        let retry = provider_executable(&format!(
-            "if [ \"$3\" = \"--json\" ] && [ ! -f '{}' ]; then touch '{}'; echo transient >&2; exit 1; fi\nif [ \"$3\" = \"--json\" ]; then echo \"error: unknown option '--json'\" >&2; exit 1; fi\nif [ \"$1\" = \"auth\" ]; then echo 'Logged in using Claude'; exit 0; fi\nexit 9",
-            retry_marker.display(),
-            retry_marker.display()
-        ));
-        let retry_registry = Arc::new(AgentProviderRuntimeRegistry::new());
-        let retry_receipt = retry_registry
-            .register_policy(
-                AgentCliInvocation::ClaudeCode,
-                1,
-                None,
-                AgentProviderPolicy {
-                    enabled: true,
-                    cli_path: Some(retry.to_string_lossy().into_owned()),
-                    check_for_updates: false,
-                },
-            )
-            .expect("retry policy");
-        let retry_identity =
-            executable_identity(retry.to_str().expect("path")).expect("retry identity");
-        let first_retry_lease = retry_registry
-            .acquire_health_for_generation(
-                AgentCliInvocation::ClaudeCode,
-                retry_receipt.provider_generation,
-            )
-            .expect("first retry lease");
-        assert_eq!(
-            probe_auth(
-                &retry_registry,
-                &first_retry_lease,
-                &retry_identity,
-                Some("9.9.9"),
-                &AtomicBool::new(false),
-            ),
-            AgentProviderAuthState::Unknown
-        );
-        assert_eq!(
-            retry_registry.claude_auth_capability(&first_retry_lease, &retry_identity),
-            None
-        );
-        drop(first_retry_lease);
-        let second_retry_lease = retry_registry
-            .acquire_health_for_generation(
-                AgentCliInvocation::ClaudeCode,
-                retry_receipt.provider_generation,
-            )
-            .expect("second retry lease");
-        assert!(matches!(
-            probe_auth(
-                &retry_registry,
-                &second_retry_lease,
-                &retry_identity,
-                Some("9.9.9"),
-                &AtomicBool::new(false),
-            ),
-            AgentProviderAuthState::SignedIn { .. }
-        ));
-        drop(second_retry_lease);
-        fs::remove_file(retry).expect("retry cleanup");
-        fs::remove_file(retry_marker).expect("retry marker cleanup");
-    }
-
-    #[test]
-    fn claude_fallback_requires_an_exact_unsupported_option_error() {
-        assert!(unsupported_json_option(
-            b"",
-            b"error: unknown option '--json'"
-        ));
-        assert!(!unsupported_json_option(b"", b"network failed --json"));
-        assert_eq!(
-            bounded_absolute_path(b"/opt/homebrew/Caskroom/codex\n"),
-            Some(std::path::PathBuf::from("/opt/homebrew/Caskroom/codex"))
-        );
-        assert_eq!(
-            bounded_absolute_path(b"/opt/homebrew/Caskroom/codex\n\n"),
-            None
-        );
-        assert_eq!(
-            probe_failure_reason(&AgentProviderProcessFailure::Exited {
-                stdout: Vec::new(),
-                stderr: b"Error: unknown option: --cask".to_vec(),
-            }),
-            AgentProviderUpdateUnavailableReason::UnsupportedProbe
-        );
-        assert_eq!(
-            probe_failure_reason(&AgentProviderProcessFailure::TimedOut {
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            }),
-            AgentProviderUpdateUnavailableReason::ProbeFailed
-        );
-    }
-
-    #[test]
-    fn managed_installer_ownership_requires_the_exact_provider_artifact() {
-        let npm_root = Path::new("/managed/node_modules/@openai/codex");
-        assert!(npm_cli_artifact_matches(
-            npm_root,
-            Path::new("/managed/node_modules/@openai/codex/bin/codex.js"),
-            AgentCliInvocation::CodexExec,
-        ));
-        for rejected in [
-            "/managed/node_modules/@openai/codex/bin/other",
-            "/managed/node_modules/@openai/codex/vendor/codex",
-            "/managed/node_modules/@openai/codex/bin/codex.js/child",
-            "/managed/node_modules/@openai/other/bin/codex.js",
-        ] {
-            assert!(!npm_cli_artifact_matches(
-                npm_root,
-                Path::new(rejected),
-                AgentCliInvocation::CodexExec,
-            ));
-        }
-
-        let brew_root = Path::new("/opt/homebrew/Caskroom/codex");
-        assert!(brew_cli_artifact_matches(
-            brew_root,
-            Path::new("/opt/homebrew/Caskroom/codex/0.150.1/bin/codex"),
-            AgentCliInvocation::CodexExec,
-            "0.150.1",
-        ));
-        for rejected in [
-            "/opt/homebrew/Caskroom/codex/0.150.1/other",
-            "/opt/homebrew/Caskroom/codex/0.150.1/codex",
-            "/opt/homebrew/Caskroom/codex/0.149.0/bin/codex",
-            "/opt/homebrew/Caskroom/other/0.150.1/bin/codex",
-        ] {
-            assert!(!brew_cli_artifact_matches(
-                brew_root,
-                Path::new(rejected),
-                AgentCliInvocation::CodexExec,
-                "0.150.1",
-            ));
-        }
-        assert!(npm_cli_artifact_matches(
-            Path::new("/managed/node_modules/@anthropic-ai/claude-code"),
-            Path::new("/managed/node_modules/@anthropic-ai/claude-code/cli.js"),
-            AgentCliInvocation::ClaudeCode,
-        ));
-        assert!(brew_cli_artifact_matches(
-            Path::new("/opt/homebrew/Caskroom/claude-code"),
-            Path::new("/opt/homebrew/Caskroom/claude-code/2.1.231/claude"),
-            AgentCliInvocation::ClaudeCode,
-            "2.1.231",
-        ));
-    }
+fn safe_installer_output_summary(stdout: &[u8], stderr: &[u8]) -> String {
+    format!(
+        "Installer output withheld (stdout: {} bytes, stderr: {} bytes).",
+        stdout.len(),
+        stderr.len()
+    )
 }
+
+#[cfg(test)]
+#[path = "agent_provider_commands_tests.rs"]
+mod tests;

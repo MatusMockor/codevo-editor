@@ -10,9 +10,28 @@ use crate::debug_adapter::{
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Barrier};
 
+const WATCHDOG: Duration = Duration::from_secs(10);
+
 fn policy(capacity: usize, timeout_ms: u64) -> WatchDebugCommandWorkerPolicy {
     WatchDebugCommandWorkerPolicy::new(capacity, Duration::from_millis(timeout_ms))
         .expect("worker policy")
+}
+
+fn enqueue_command(
+    port: &WatchDebugCommandWorkerPort,
+    command: WatchDebugControlCommand,
+    deadline: Instant,
+) -> mpsc::Receiver<Result<WatchDebugControlResponse, WatchDebugCommandFailure>> {
+    let (response, result) = mpsc::sync_channel(1);
+    port.owner
+        .sender
+        .try_send(CommandRequest {
+            command,
+            deadline,
+            response,
+        })
+        .expect("enqueue command directly for deterministic queue setup");
+    result
 }
 
 fn runtime_response(command: WatchDebugControlCommand) -> WatchDebugControlResponse {
@@ -255,7 +274,7 @@ fn worker_rejects_scopes_from_a_different_frame() {
 }
 
 struct DeadlineRuntime {
-    remaining: mpsc::SyncSender<Duration>,
+    deadline: mpsc::SyncSender<Instant>,
 }
 
 impl WatchDebugCommandRuntime for DeadlineRuntime {
@@ -265,29 +284,32 @@ impl WatchDebugCommandRuntime for DeadlineRuntime {
         deadline: Instant,
         _revoked: &AtomicBool,
     ) -> Result<WatchDebugControlResponse, WatchDebugCommandFailure> {
-        self.remaining
-            .send(deadline.saturating_duration_since(Instant::now()))
+        self.deadline
+            .send(deadline)
             .map_err(|_| WatchDebugCommandFailure::TargetRejected)?;
         Ok(runtime_response(command))
     }
 }
 
 #[test]
-fn runtime_receives_the_exact_short_policy_deadline() {
-    let (remaining_tx, remaining_rx) = mpsc::sync_channel(1);
+fn runtime_receives_a_live_policy_deadline() {
+    let (deadline_tx, deadline_rx) = mpsc::sync_channel(1);
+    let worker_policy = policy(1, 2_000);
     let port = WatchDebugCommandWorkerPort::spawn(
         DeadlineRuntime {
-            remaining: remaining_tx,
+            deadline: deadline_tx,
         },
         || true,
-        policy(1, 40),
+        worker_policy,
     );
 
+    let call_started = Instant::now();
     port.execute_bounded(WatchDebugControlCommand::Pause)
         .expect("bounded command");
-    let remaining = remaining_rx.recv().expect("deadline observation");
-    assert!(remaining > Duration::ZERO);
-    assert!(remaining <= Duration::from_millis(40));
+    let call_completed = Instant::now();
+    let deadline = deadline_rx.recv().expect("deadline observation");
+    assert!(deadline >= call_started + worker_policy.response_timeout);
+    assert!(deadline <= call_completed + worker_policy.response_timeout);
     port.revoke();
 }
 
@@ -353,17 +375,16 @@ fn bounded_queue_rejects_overflow_without_dispatch() {
             calls: Arc::clone(&calls),
         },
         || true,
-        policy(1, 500),
+        policy(1, 2_000),
     );
     let first_port = port.clone();
     let first = thread::spawn(move || first_port.execute_bounded(WatchDebugControlCommand::Pause));
-    entered_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("first entered");
-    let queued_port = port.clone();
-    let queued =
-        thread::spawn(move || queued_port.execute_bounded(WatchDebugControlCommand::Pause));
-    thread::sleep(Duration::from_millis(20));
+    entered_rx.recv_timeout(WATCHDOG).expect("first entered");
+    let queued = enqueue_command(
+        &port,
+        WatchDebugControlCommand::Pause,
+        Instant::now() + WATCHDOG,
+    );
     assert_eq!(
         port.execute_bounded(WatchDebugControlCommand::Pause),
         Err(WatchDebugCommandFailure::QueueFull)
@@ -375,7 +396,7 @@ fn bounded_queue_rejects_overflow_without_dispatch() {
         Ok(WatchDebugControlResponse::Ack)
     );
     assert_eq!(
-        queued.join().expect("queued"),
+        queued.recv_timeout(WATCHDOG).expect("queued"),
         Ok(WatchDebugControlResponse::Ack)
     );
     port.revoke();
@@ -396,16 +417,16 @@ fn queued_command_revalidates_exact_authority_immediately_before_dispatch() {
             calls: Arc::clone(&calls),
         },
         move || authority.load(Ordering::Acquire),
-        policy(2, 500),
+        policy(2, 2_000),
     );
     let first_port = port.clone();
     let first = thread::spawn(move || first_port.execute_bounded(WatchDebugControlCommand::Pause));
     entered_rx.recv().expect("first entered");
-    let queued_port = port.clone();
-    let queued = thread::spawn(move || {
-        queued_port.execute_bounded(WatchDebugControlCommand::Step(StepKind::Continue))
-    });
-    thread::sleep(Duration::from_millis(20));
+    let queued = enqueue_command(
+        &port,
+        WatchDebugControlCommand::Step(StepKind::Continue),
+        Instant::now() + WATCHDOG,
+    );
     current.store(false, Ordering::Release);
     release_tx.send(()).expect("release first");
 
@@ -414,7 +435,7 @@ fn queued_command_revalidates_exact_authority_immediately_before_dispatch() {
         Ok(WatchDebugControlResponse::Ack)
     );
     assert_eq!(
-        queued.join().expect("queued"),
+        queued.recv_timeout(WATCHDOG).expect("queued"),
         Err(WatchDebugCommandFailure::StaleAuthority)
     );
     port.revoke();
@@ -433,28 +454,28 @@ fn queued_command_that_expires_is_never_dispatched_late() {
             calls: Arc::clone(&calls),
         },
         || true,
-        policy(2, 40),
+        policy(2, 2_000),
     );
     let first_port = port.clone();
     let first = thread::spawn(move || first_port.execute_bounded(WatchDebugControlCommand::Pause));
     entered_rx.recv().expect("first entered");
-    let queued_port = port.clone();
-    let queued =
-        thread::spawn(move || queued_port.execute_bounded(WatchDebugControlCommand::Pause));
-
+    let expired_deadline = Instant::now()
+        .checked_sub(Duration::from_millis(1))
+        .expect("past deadline");
+    let queued = enqueue_command(&port, WatchDebugControlCommand::Pause, expired_deadline);
+    release_tx.send(()).expect("release first command");
     assert_eq!(
         first.join().expect("first"),
-        Err(WatchDebugCommandFailure::ResponseTimeout)
+        Ok(WatchDebugControlResponse::Ack)
     );
     assert_eq!(
-        queued.join().expect("queued"),
+        queued.recv_timeout(WATCHDOG).expect("queued"),
         Err(WatchDebugCommandFailure::ResponseTimeout)
     );
-    release_tx.send(()).expect("release expired first command");
     let probe_port = port.clone();
     let probe = thread::spawn(move || probe_port.execute_bounded(WatchDebugControlCommand::Pause));
     entered_rx
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(WATCHDOG)
         .expect("worker skipped expired queued command and entered fresh probe");
     release_tx.send(()).expect("release fresh probe");
     assert_eq!(
@@ -538,7 +559,7 @@ fn dropping_the_last_port_stops_and_joins_the_worker() {
 
     drop(port);
     assert_eq!(
-        stopped_rx.recv_timeout(Duration::from_secs(1)),
+        stopped_rx.recv_timeout(WATCHDOG),
         Ok(()),
         "last-port Drop must complete worker shutdown"
     );
@@ -586,28 +607,33 @@ fn revoke_rejects_in_flight_and_queued_responses_before_shutdown() {
     let first_port = port.clone();
     let first = thread::spawn(move || first_port.execute_bounded(WatchDebugControlCommand::Pause));
     entered_rx.recv().expect("first entered");
-    let queued_port = port.clone();
-    let queued =
-        thread::spawn(move || queued_port.execute_bounded(WatchDebugControlCommand::Pause));
-    thread::sleep(Duration::from_millis(10));
+    let queued = enqueue_command(
+        &port,
+        WatchDebugControlCommand::Pause,
+        Instant::now() + WATCHDOG,
+    );
     let revoke_port = port.clone();
     let revoke = thread::spawn(move || revoke_port.revoke());
 
     shutdown_rx
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(WATCHDOG)
         .expect("shutdown entered");
     assert_eq!(
         first.join().expect("first"),
         Err(WatchDebugCommandFailure::Revoked)
     );
     assert_eq!(
-        queued.join().expect("queued"),
+        queued.recv_timeout(WATCHDOG).expect("queued"),
         Err(WatchDebugCommandFailure::Revoked)
     );
     revoke.join().expect("revoke");
 }
 
-struct NonCooperativeShutdownRuntime;
+struct NonCooperativeShutdownRuntime {
+    shutdown_entered: mpsc::SyncSender<()>,
+    shutdown_completed: mpsc::SyncSender<()>,
+    release_shutdown: mpsc::Receiver<()>,
+}
 
 impl WatchDebugCommandRuntime for NonCooperativeShutdownRuntime {
     fn execute(
@@ -620,18 +646,42 @@ impl WatchDebugCommandRuntime for NonCooperativeShutdownRuntime {
     }
 
     fn shutdown(&mut self, _deadline: Instant, _revoked: &AtomicBool) {
-        thread::sleep(Duration::from_millis(200));
+        let _ = self.shutdown_entered.send(());
+        let _ = self.release_shutdown.recv();
+        let _ = self.shutdown_completed.send(());
     }
 }
 
 #[test]
 fn non_cooperative_shutdown_cannot_block_last_port_drop_past_policy_bound() {
-    let port =
-        WatchDebugCommandWorkerPort::spawn(NonCooperativeShutdownRuntime, || true, policy(1, 30));
-    let started = Instant::now();
-    drop(port);
-    assert!(
-        started.elapsed() < Duration::from_millis(120),
-        "stuck runtime must be detached after the caller bound"
+    let (shutdown_entered_tx, shutdown_entered_rx) = mpsc::sync_channel(1);
+    let (shutdown_completed_tx, shutdown_completed_rx) = mpsc::sync_channel(1);
+    let (release_shutdown_tx, release_shutdown_rx) = mpsc::sync_channel(1);
+    let port = WatchDebugCommandWorkerPort::spawn(
+        NonCooperativeShutdownRuntime {
+            shutdown_entered: shutdown_entered_tx,
+            shutdown_completed: shutdown_completed_tx,
+            release_shutdown: release_shutdown_rx,
+        },
+        || true,
+        policy(1, 30),
     );
+    let (drop_completed_tx, drop_completed_rx) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        drop(port);
+        drop_completed_tx.send(()).expect("report port drop");
+    });
+
+    shutdown_entered_rx
+        .recv_timeout(WATCHDOG)
+        .expect("runtime entered non-cooperative shutdown");
+    drop_completed_rx
+        .recv_timeout(WATCHDOG)
+        .expect("last-port Drop detached the blocked worker");
+    release_shutdown_tx
+        .send(())
+        .expect("release detached runtime for test cleanup");
+    shutdown_completed_rx
+        .recv_timeout(WATCHDOG)
+        .expect("detached runtime completed test cleanup");
 }

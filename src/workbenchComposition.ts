@@ -12,6 +12,7 @@ import { TauriAgentRootLeaseGateway } from "./infrastructure/tauriAgentRootLease
 import { TauriAgentCliVersionGateway } from "./infrastructure/tauriAgentCliVersionGateway";
 import { TauriAgentTaskGateway } from "./infrastructure/tauriAgentTaskGateway";
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
+import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
 import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
 import { TauriDebugGateway } from "./infrastructure/tauriDebugGateway";
 import { TauriGitWorktreeGateway } from "./infrastructure/tauriGitWorktreeGateway";
@@ -89,6 +90,7 @@ export function createWorkbenchComposition() {
   return {
     agentCliVersionGateway: new TauriAgentCliVersionGateway(),
     agentProviderGateway: new TauriAgentProviderGateway(),
+    agentProviderSignInGateway: new TauriAgentProviderSignInGateway(),
     agentRootLeaseGateway: new TauriAgentRootLeaseGateway(),
     agentTaskGateway: new TauriAgentTaskGateway(),
     cursorStore: new EditorCursorStore(),

@@ -132,6 +132,7 @@ interface TurnStart {
 export function useAgentTurnDispatch(
   dependencies: AgentTurnDispatchDependencies,
 ): AgentTurnDispatchSurface {
+  const agentTaskGateway = dependencies.agentTaskGateway;
   const [dispatching, setDispatching] = useState(false);
   const dependenciesRef = useRef(dependencies);
   const mountedRef = useRef(true);
@@ -139,6 +140,7 @@ export function useAgentTurnDispatch(
   const inFlightThreadsRef = useRef<Set<string>>(new Set());
   const streamsRef = useRef<Map<string, AgentTurnOutputStream>>(new Map());
   const frameRef = useRef<(() => void) | null>(null);
+  const outputSubscriptionRef = useRef({ epoch: 0, ready: false });
   const sessionWarnedThreadsRef = useRef<Set<string>>(new Set());
   const pendingTurnCountsRef = useRef<Record<AgentCliKind, number>>({ claudeCode: 0, codex: 0 });
 
@@ -216,7 +218,14 @@ export function useAgentTurnDispatch(
       const terminal = isTerminalAgentTaskStatus(event.status);
       if (terminal) {
         flushStreams();
-        const finished = finishAgentTurnOutput(parser(), stream);
+        const outputSubscription = outputSubscriptionRef.current;
+        const finished = finishAgentTurnOutput(
+          parser(),
+          stream,
+          event.status.kind !== "failed" &&
+            outputSubscription.ready &&
+            stream.outputSubscriptionEpoch === outputSubscription.epoch,
+        );
         if (finished !== null) {
           noteSessionChange(
             deps,
@@ -237,8 +246,11 @@ export function useAgentTurnDispatch(
 
   useEffect(() => {
     let disposed = false;
+    const streams = streamsRef.current;
     const unsubscribers: Array<() => void> = [];
-    const gateway = dependenciesRef.current.agentTaskGateway;
+    const outputSubscriptionEpoch = outputSubscriptionRef.current.epoch + 1;
+    outputSubscriptionRef.current = { epoch: outputSubscriptionEpoch, ready: false };
+    markOutputStreamsIncomplete(streams);
     const report = dependenciesRef.current.reportError;
     const retain = (unsubscribe: () => void): void => {
       if (disposed) {
@@ -247,24 +259,46 @@ export function useAgentTurnDispatch(
       }
       unsubscribers.push(unsubscribe);
     };
-    gateway
+    agentTaskGateway
       .subscribeAgentTaskStatus(handleStatusEvent)
       .then(retain)
       .catch((error: unknown) => report(AGENT_TASKS_SOURCE, error));
-    gateway
+    agentTaskGateway
       .subscribeAgentTaskOutput(handleOutputEvent)
-      .then(retain)
-      .catch((error: unknown) => report(AGENT_TASKS_SOURCE, error));
+      .then((unsubscribe) => {
+        if (disposed) {
+          unsubscribe();
+          return;
+        }
+        if (outputSubscriptionRef.current.epoch !== outputSubscriptionEpoch) {
+          unsubscribe();
+          return;
+        }
+        outputSubscriptionRef.current = { epoch: outputSubscriptionEpoch, ready: true };
+        unsubscribers.push(unsubscribe);
+      })
+      .catch((error: unknown) => {
+        if (!disposed && outputSubscriptionRef.current.epoch === outputSubscriptionEpoch) {
+          outputSubscriptionRef.current = { epoch: outputSubscriptionEpoch, ready: false };
+          markOutputStreamsIncomplete(streams);
+        }
+        report(AGENT_TASKS_SOURCE, error);
+      });
     return () => {
       disposed = true;
+      if (outputSubscriptionRef.current.epoch === outputSubscriptionEpoch) {
+        outputSubscriptionRef.current = { epoch: outputSubscriptionEpoch + 1, ready: false };
+        markOutputStreamsIncomplete(streams);
+      }
       for (const unsubscribe of unsubscribers.splice(0)) unsubscribe();
       frameRef.current?.();
       frameRef.current = null;
     };
-  }, [handleOutputEvent, handleStatusEvent]);
+  }, [agentTaskGateway, handleOutputEvent, handleStatusEvent]);
 
   const registerStream = useCallback(
     (thread: AgentThread, turnId: string, resumed: boolean): void => {
+      const outputSubscription = outputSubscriptionRef.current;
       streamsRef.current.set(
         turnId,
         createAgentTurnOutputStream(parser(), {
@@ -276,6 +310,7 @@ export function useAgentTurnDispatch(
           worktreePath: thread.target.worktreePath,
           kind: thread.provider.kind,
           resumed,
+          outputSubscriptionEpoch: outputSubscription.ready ? outputSubscription.epoch : null,
         }),
       );
     },
@@ -766,6 +801,10 @@ function statusEventMatchesStream(
   return event.worktreePath === stream.worktreePath;
 }
 
+function markOutputStreamsIncomplete(streams: ReadonlyMap<string, AgentTurnOutputStream>): void {
+  for (const stream of streams.values()) stream.rawStreamComplete = false;
+}
+
 function turnStartAuthorityIsCurrent(
   dependenciesRef: { readonly current: AgentTurnDispatchDependencies },
   mountedRef: { readonly current: boolean },
@@ -819,6 +858,7 @@ function pendingTurn(
     eventsTruncated: false,
     lastStatusSequence: 0,
     lastOutputSequence: 0,
+    streamMetrics: null,
     launch,
     cliVersion,
   };

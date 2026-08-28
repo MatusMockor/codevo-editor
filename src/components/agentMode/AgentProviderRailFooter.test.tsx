@@ -33,6 +33,18 @@ describe("AgentProviderRailFooter", () => {
     expect(openSettings).toHaveBeenCalledTimes(1);
   });
 
+  it("exposes real source control and usage actions", () => {
+    const openSourceControl = vi.fn();
+    const openUsage = vi.fn();
+    render(management(), vi.fn(), openSourceControl, openUsage);
+
+    act(() => button("Open Source Control").click());
+    act(() => button("Open Usage").click());
+
+    expect(openSourceControl).toHaveBeenCalledTimes(1);
+    expect(openUsage).toHaveBeenCalledTimes(1);
+  });
+
   it("offers an available update and blocks it while a provider turn is live", () => {
     const surface = management();
     render(surface);
@@ -75,16 +87,49 @@ describe("AgentProviderRailFooter", () => {
     expect(surface.retryRegistration).toHaveBeenCalledWith("claudeCode");
   });
 
-  function render(surface: AgentProviderManagementSurface, onOpenSettings = vi.fn()): void {
+  it("keeps every recovery action reachable for two failed providers", () => {
+    const failed = management({
+      health: { kind: "failed", reason: "probeFailed", checkedAtEpochMs: null },
+      policy: { kind: "failed", settingsRevision: 2, reason: "registrationFailed" },
+    });
+    const surface: AgentProviderManagementSurface = {
+      ...failed,
+      providers: {
+        claudeCode: failed.providers.claudeCode,
+        codex: {
+          health: { kind: "failed", reason: "probeFailed", checkedAtEpochMs: null },
+          policy: { kind: "failed", settingsRevision: 2, reason: "registrationFailed" },
+          updateState: { kind: "idle" },
+          liveTurnCount: 0,
+        },
+      },
+    };
+    render(surface);
+
+    expect(button("Retry Claude Code policy registration")).not.toBeNull();
+    expect(button("Refresh Claude Code status")).not.toBeNull();
+    expect(button("Retry Codex policy registration")).not.toBeNull();
+    expect(button("Refresh Codex status")).not.toBeNull();
+  });
+
+  function render(
+    surface: AgentProviderManagementSurface,
+    onOpenSettings = vi.fn(),
+    onOpenSourceControl = vi.fn(),
+    onOpenUsage = vi.fn(),
+  ): void {
     act(() =>
       root.render(
         <AgentProviderRailFooter
           management={surface}
+          onOpenSourceControl={onOpenSourceControl}
           onOpenSettings={onOpenSettings}
+          onOpenUsage={onOpenUsage}
           providerEnabled={{
             claudeCode: true,
             codex: surface.authority("codex")?.preference.enabled ?? false,
           }}
+          usageOpen={false}
         />,
       ),
     );

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
 import {
   EMPTY_EDITOR_CHANGE_HUNKS,
@@ -6,30 +6,26 @@ import {
 } from "./application/editorActiveLiveDocumentBinding";
 import { useEditorChromeActions } from "./application/useEditorChromeActions";
 import { editorCursorAuthority } from "./application/editorCursorAuthority";
-import {
-  CLOSED_PHP_CHANGE_SIGNATURE,
-  EMPTY_FILE_STATUSES_BY_PATH,
-} from "./application/appClosedState";
+import { CLOSED_PHP_CHANGE_SIGNATURE } from "./application/appClosedState";
 import { presentOptionalNodeRunWithoutDebugging } from "./application/nodeRunWithoutDebuggingPresentation";
 import { useAppFrameworkBottomPanels } from "./application/useAppFrameworkBottomPanels";
 import { useNoticeToastRenderers } from "./components/useNoticeToastRenderers";
 import { usePerfScenarioBridgeInstall } from "./components/usePerfScenarioBridgeInstall";
-import { useAppSyntaxHighlighterPreload, useAppWindowTitle } from "./application/useAppBootEffects";
+import { useAppWindowTitle } from "./application/useAppBootEffects";
 import { usePrefersLightTheme } from "./application/usePrefersLightTheme";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
 import { BrowserEditorChangeHunksGateway } from "./infrastructure/browserEditorChangeHunksGateway";
-import { createAppHighlighter } from "./infrastructure/shikiHighlighter";
 import { useDebugCommandBridges } from "./application/useDebugCommandBridges";
 import { useArtisanRoutes } from "./application/useArtisanRoutes";
 import { useScopedEditorSurfaceRunners } from "./application/useScopedEditorSurfaceRunners";
 import { useGitHistoryDiffDocuments } from "./application/useGitHistoryDiffDocuments";
+import { useActiveGitHistoryDiffReload } from "./application/useActiveGitHistoryDiffReload";
 import {
   useStableDocumentPaths,
   useStableNavigationHistoryPaths,
 } from "./application/useStablePathLists";
 import type { EditorGroupFocusRunner } from "./application/editorGroupFocusPort";
 import { isGitDiffDocumentPath } from "./application/useGitDiffWorkspace";
-import { ArtisanMakePalette } from "./components/ArtisanMakePalette";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { WorkbenchBottomPanelHost } from "./components/WorkbenchBottomPanelHost";
 import { WorkbenchShellFrame } from "./components/WorkbenchShellFrame";
@@ -42,14 +38,11 @@ import { useAppTestDebugPanels } from "./components/useAppTestDebugPanels";
 import { usePhpCoverageEditorSurfaceProps } from "./components/usePhpCoverageEditorSurfaceProps";
 import { quickOpenProps } from "./components/quickOpenProps";
 import { jsTestEditorSurfaceProps } from "./components/jsTestEditorSurfaceProps";
-import { areFileStatusesByPathEqual, workspaceInfoLabel } from "./components/appPresentation";
+import { workspaceInfoLabel } from "./components/appPresentation";
 import { useOwnedWorkspaceExpressRoutesWorkbenchPanel } from "./components/useWorkspaceExpressRoutesWorkbenchPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
-import { CommandPalette } from "./components/CommandPalette";
-import { ScopedEditorSurface } from "./components/ScopedEditorSurface";
 import type { EditorGroupSurface } from "./components/EditorGroupView";
-import { WorkbenchEditorHost } from "./components/WorkbenchEditorHost";
 import {
   useEditorGroupContentRevisionPresenter,
   useStableJsTestEditorSurfaceSource,
@@ -58,15 +51,11 @@ import {
   workbenchEditorHostProps,
 } from "./components/workbenchEditorHostPresenter";
 import { ExternalFileConflictBar } from "./components/ExternalFileConflictBar";
-import { ExternalFileCompareDialog } from "./components/ExternalFileCompareDialog";
-import { FileHistoryPanel } from "./components/FileHistoryPanel";
 import { GitBranchPanel } from "./components/GitBranchPanel";
 import { GitStashPanel } from "./components/GitStashPanel";
 import { ImageViewer } from "./components/ImageViewer";
-import { LocalHistoryPanel } from "./components/LocalHistoryPanel";
 import { MarkdownPreview } from "./components/MarkdownPreview";
 import { FileStructure } from "./components/FileStructure";
-import { GitDiffPreview } from "./components/GitDiffPreview";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ImplementationChooser } from "./components/ImplementationChooser";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
@@ -74,11 +63,8 @@ import { NodeRunConfigurationPickerHost } from "./components/NodeRunConfiguratio
 import { NodeDebugAttachProcessPickerHost } from "./components/NodeDebugAttachProcessPickerHost";
 import { PhpChangeSignatureDialog } from "./components/PhpChangeSignatureDialog";
 import { ProjectTabs } from "./components/ProjectTabs";
-import { QuickOpen } from "./components/QuickOpen";
 import { RecentFilesSwitcher } from "./components/RecentFilesSwitcher";
 import { RecentLocationsPanel } from "./components/RecentLocationsPanel";
-import { SearchEverywhere } from "./components/SearchEverywhere";
-import { WorkbenchSettingsDialogHost } from "./components/WorkbenchSettingsDialogHost";
 import { WorkbenchOverlayHosts } from "./components/WorkbenchOverlayHosts";
 import { StatusBar } from "./components/StatusBar";
 import { ReferencesPanel } from "./components/ReferencesPanel";
@@ -98,7 +84,6 @@ import {
   ideActivityStatus,
   phpLanguageServerActivityLabel,
 } from "./domain/ideActivity";
-import type { GitChangeStatus } from "./domain/git";
 import { createWorkspaceEditorSessionOwnerKey } from "./domain/editorSessionOwnerKey";
 import { isDirty } from "./domain/workspace";
 import type { EditorDocument, ImageTab } from "./domain/workspace";
@@ -107,15 +92,32 @@ import { isGitHistoryDiffDocumentPath } from "./domain/editorDocumentSchemes";
 import { formatWindowTitle } from "./domain/windowTitle";
 import { useAgentEditorCollapse } from "./application/useAgentEditorCollapse";
 import type { BottomPanelView } from "./domain/bottomPanel";
-import { AgentWorkbenchScreen } from "./components/agentMode/AgentWorkbenchScreen";
 import { AgentStatusBarHost } from "./components/agentMode/AgentStatusBarHost";
 import { WorkbenchToolbar } from "./components/WorkbenchToolbar";
+import {
+  LazyAgentWorkbenchHost,
+  LazyArtisanMakePalette,
+  LazyCommandPaletteHost,
+  LazyExternalFileCompareDialog,
+  LazyFileHistoryPanel,
+  LazyGitDiffPreview,
+  LazyLocalHistoryPanel,
+  LazyQuickOpen,
+  LazyScopedEditorSurface,
+  LazySearchEverywhere,
+  LazySurfaceHost,
+  LazyWorkbenchEditorRuntimeHost,
+  LazyWorkbenchSettingsDialogHost,
+} from "./components/appLazySurfaces";
+import { surfaceLoadingState } from "./components/surfaceLoadingState";
+import { useStableGitFileStatuses } from "./components/useStableGitFileStatuses";
 import { workbenchComposition } from "./workbenchComposition";
 import "./App.css";
 
 const {
   agentCliVersionGateway,
   agentProviderGateway,
+  agentProviderSignInGateway,
   agentRootLeaseGateway,
   artisanRoutesGateway,
   cancelJavaScriptTypeScriptLanguageServerRequest,
@@ -178,7 +180,6 @@ const editorChangeHunksGateway = new BrowserEditorChangeHunksGateway();
 function App() {
   const debugCommandBridges = useDebugCommandBridges();
   const prefersLightTheme = usePrefersLightTheme();
-  useAppSyntaxHighlighterPreload(createAppHighlighter);
   const editorGroupFocusRunnerRef = useRef<EditorGroupFocusRunner | null>(null);
   const editorGroupFocusRunner = useCallback<EditorGroupFocusRunner>(
     (groupId) => editorGroupFocusRunnerRef.current?.(groupId) ?? false,
@@ -220,7 +221,6 @@ function App() {
   const handleClosedEditorPaths = useCallback((paths: readonly string[]) => {
     closeGitHistoryDiffDocumentsRef.current(paths);
   }, []);
-  const fileStatusesByPathRef = useRef<Record<string, GitChangeStatus>>({});
   const workbench = useWorkbenchController(
     workspaceGateways,
     smartModeGateway,
@@ -246,6 +246,7 @@ function App() {
     {
       agentCliVersionGateway,
       agentProviderGateway,
+      agentProviderSignInGateway,
       agentRootLeaseGateway,
       editorMenuCommandRunner,
       editorCursorStore: cursorStore,
@@ -353,40 +354,15 @@ function App() {
     ownerId: workspaceId,
     workspaceRoot: workbench.workspaceRoot,
   });
+  const { documentsByPath: gitHistoryDocumentsByPath, reloadDocumentPath } =
+    gitHistoryDiffDocuments;
   closeGitHistoryDiffDocumentsRef.current = gitHistoryDiffDocuments.closeDocumentPaths;
-  const fileStatusesByPath = useMemo<Record<string, GitChangeStatus>>(() => {
-    const gitChanges = workbench.gitStatus?.changes;
-    const previous = fileStatusesByPathRef.current;
-
-    if (!Array.isArray(gitChanges) || gitChanges.length === 0) {
-      if (Object.keys(previous).length === 0) {
-        return previous;
-      }
-
-      fileStatusesByPathRef.current = EMPTY_FILE_STATUSES_BY_PATH;
-      return fileStatusesByPathRef.current;
-    }
-
-    const next: Record<string, GitChangeStatus> = gitChanges.reduce(
-      (accumulator, change) => {
-        accumulator[change.path] = change.status;
-
-        if (change.oldPath) {
-          accumulator[change.oldPath] = change.status;
-        }
-
-        return accumulator;
-      },
-      {} as Record<string, GitChangeStatus>,
-    );
-
-    if (areFileStatusesByPathEqual(previous, next)) {
-      return previous;
-    }
-
-    fileStatusesByPathRef.current = next;
-    return next;
-  }, [workbench.gitStatus?.changes]);
+  useActiveGitHistoryDiffReload({
+    activeDocumentPath: workbench.activeDocument?.path ?? null,
+    documentsByPath: gitHistoryDocumentsByPath,
+    reloadDocumentPath,
+  });
+  const fileStatusesByPath = useStableGitFileStatuses(workbench.gitStatus?.changes);
   const activeDocumentSavedContent = workbench.activeDocument?.savedContent ?? null;
   const activeLanguage = workbench.activeDocument?.language ?? null;
   const activeDocumentIsDirty = workbench.activeDocument
@@ -800,163 +776,165 @@ function App() {
       const groupIsActive = editorGroupsState.activeGroupId === groupId;
       const phpCoverageSurface = phpCoverageEditorSurfaceProps(document, groupIsActive);
       return (
-        <ScopedEditorSurface
-          activeDocument={document}
-          cursorStore={cursorStore}
-          cursorTrackingActive={groupIsActive}
-          activeDocumentContentReady={!document || editorContentReadyPaths.has(document.path)}
-          embeddedInGroupPanel
-          editorConfig={groupIsActive ? workbench.activeEditorConfig : {}}
-          editorFontFamily={workbench.appSettings.editorFontFamily}
-          editorFontLigatures={workbench.appSettings.editorFontLigatures}
-          editorFontSize={workbench.appSettings.editorFontSize}
-          wordWrapEnabled={workbench.appSettings.wordWrapEnabled}
-          isOpeningFile={workbench.isOpeningFile}
-          applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
-            workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit
-          }
-          applyPhpCodeActionNewFile={workbench.applyPhpCodeActionNewFile}
-          applyPhpLanguageServerWorkspaceEdit={workbench.applyPhpLanguageServerWorkspaceEdit}
-          clearLanguageServerDiagnosticsForPath={workbench.clearLanguageServerDiagnosticsForPath}
-          bookmarkedLineNumbers={groupIsActive ? activeBookmarkedLineNumbers : []}
-          breakpoints={workbench.breakpoints}
-          breakpointActions={workbench.breakpointActions}
-          onBreakpointMutationError={workbench.reportCommandError}
-          debugStoppedLocation={workbench.debugStoppedLocation}
-          debugInlineValueContext={workbench.debugInlineValueContext}
-          changeHunks={groupIsActive ? activeEditorChangeHunks : EMPTY_EDITOR_CHANGE_HUNKS}
-          editorRevealTarget={groupIsActive ? workbench.editorRevealTarget : null}
-          flushPendingLanguageServerDocument={workbench.flushPendingLanguageServerDocument}
-          getLanguageServerDocumentLifecycleIdentity={
-            workbench.getLanguageServerDocumentLifecycleIdentity
-          }
-          getJavaScriptTypeScriptDocumentSyncVersion={
-            workbench.getJavaScriptTypeScriptDocumentSyncVersion
-          }
-          requestLanguageServerDocumentLease={workbench.requestLanguageServerDocumentLease}
-          isLanguageServerDocumentRequestLeaseCurrent={
-            workbench.isLanguageServerDocumentRequestLeaseCurrent
-          }
-          flushPendingJavaScriptTypeScriptLanguageServerDocument={
-            workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
-          }
-          formatOnPaste={workbench.workspaceSettings.formatOnPaste}
-          gitBlameEnabled={groupIsActive && workbench.isActiveDocumentGitBlameEnabled}
-          isActiveDocumentJsTest={groupIsActive && workbench.isActiveDocumentJsTest}
-          {...jsTestEditorSurfaceProps(groupIsActive, jsTestEditorSurfaceSource)}
-          {...phpCoverageSurface}
-          isActiveDocumentPhpTest={groupIsActive && workbench.isActiveDocumentPhpTest}
-          isLanguageServerDocumentSynced={workbench.isLanguageServerDocumentSynced}
-          javaScriptTypeScriptLanguageServerFeaturesGateway={
-            javaScriptTypeScriptLanguageServerFeaturesGateway
-          }
-          javaScriptTypeScriptLanguageServerRuntimeStatus={
-            workbench.javaScriptTypeScriptLanguageServerRuntimeStatus
-          }
-          javaScriptTypeScriptLanguageServerRefreshGateway={
-            javaScriptTypeScriptLanguageServerRefreshGateway
-          }
-          javaScriptTypeScriptLanguageServerWorkspaceEditGateway={
-            javaScriptTypeScriptLanguageServerWorkspaceEditGateway
-          }
-          javaScriptTypeScriptCompleteFunctionCalls={
-            workbench.workspaceSettings.javaScriptTypeScriptCompleteFunctionCalls
-          }
-          javaScriptTypeScriptValidationEnabled={
-            workbench.workspaceSettings.javaScriptTypeScriptValidation
-          }
-          languageServerFeaturesGateway={languageServerFeaturesGateway}
-          languageServerRefreshGateway={languageServerRefreshGateway}
-          languageServerDiagnosticsByPath={workbench.languageServerDiagnosticsByPath}
-          languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
-          largeSmartDocumentPolicy={workbench.workspaceSettings.largeFileMode}
-          keymap={workbench.appSettings.keymap}
-          monacoTheme={monacoTheme}
-          runCommand={workbench.runCommand}
-          navigationHistoryPaths={navigationHistoryPaths}
-          openDocumentPaths={openDocumentPaths}
-          restoredViewStates={
-            workbench.restoredEditorViewStatesByGroup?.[groupId] ??
-            workbench.restoredEditorViewStates ??
-            {}
-          }
-          restoredViewStateRevision={workbench.restoredEditorViewStateRevision}
-          transientWidgetDismissKey={transientEditorWidgetDismissKey}
-          phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
-          phpLanguageServerWorkspaceEditGateway={phpLanguageServerWorkspaceEditGateway}
-          group={editorGroupsState.groups[groupId]}
-          groupId={groupId}
-          onBufferFixRunnerChange={updateEditorSurfaceBufferFixRunner}
-          onCommandRunnerChange={updateEditorSurfaceCommandRunner}
-          onDebugWatchAtCursorCaptureReaderChange={updateDebugWatchAtCursorCaptureReader}
-          onDebugEvaluateInConsoleCaptureReaderChange={updateDebugEvaluateInConsoleCaptureReader}
-          onDebugBreakpointNavigationCaptureReaderChange={
-            updateDebugBreakpointNavigationCaptureReader
-          }
-          onDebugInlineBreakpointCaptureReaderChange={updateDebugInlineBreakpointCaptureReader}
-          onEslintDisableRunnerChange={updateEditorSurfaceEslintDisableRunner}
-          onMenuCommandRunnerChange={updateEditorMenuCommandRunner}
-          onPhpstanIgnoreRunnerChange={updateEditorSurfacePhpstanIgnoreRunner}
-          onCloseActiveTab={async () => {
-            const path = editorGroupsState.groups[groupId]?.activePath;
-            if (!path) {
-              return;
+        <Suspense fallback={surfaceLoadingState("editor")}>
+          <LazyScopedEditorSurface
+            activeDocument={document}
+            cursorStore={cursorStore}
+            cursorTrackingActive={groupIsActive}
+            activeDocumentContentReady={!document || editorContentReadyPaths.has(document.path)}
+            embeddedInGroupPanel
+            editorConfig={groupIsActive ? workbench.activeEditorConfig : {}}
+            editorFontFamily={workbench.appSettings.editorFontFamily}
+            editorFontLigatures={workbench.appSettings.editorFontLigatures}
+            editorFontSize={workbench.appSettings.editorFontSize}
+            wordWrapEnabled={workbench.appSettings.wordWrapEnabled}
+            isOpeningFile={workbench.isOpeningFile}
+            applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
+              workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit
             }
-            if (workbench.closeDocumentInEditorGroup) {
-              await workbench.closeDocumentInEditorGroup(groupId, path);
-              return;
+            applyPhpCodeActionNewFile={workbench.applyPhpCodeActionNewFile}
+            applyPhpLanguageServerWorkspaceEdit={workbench.applyPhpLanguageServerWorkspaceEdit}
+            clearLanguageServerDiagnosticsForPath={workbench.clearLanguageServerDiagnosticsForPath}
+            bookmarkedLineNumbers={groupIsActive ? activeBookmarkedLineNumbers : []}
+            breakpoints={workbench.breakpoints}
+            breakpointActions={workbench.breakpointActions}
+            onBreakpointMutationError={workbench.reportCommandError}
+            debugStoppedLocation={workbench.debugStoppedLocation}
+            debugInlineValueContext={workbench.debugInlineValueContext}
+            changeHunks={groupIsActive ? activeEditorChangeHunks : EMPTY_EDITOR_CHANGE_HUNKS}
+            editorRevealTarget={groupIsActive ? workbench.editorRevealTarget : null}
+            flushPendingLanguageServerDocument={workbench.flushPendingLanguageServerDocument}
+            getLanguageServerDocumentLifecycleIdentity={
+              workbench.getLanguageServerDocumentLifecycleIdentity
             }
-            await workbench.closeDocument(path);
-          }}
-          onCursorPositionChange={workbench.updateActiveEditorPosition}
-          onEditorViewStateChange={(path, viewState) => {
-            if (workbench.updateEditorGroupViewState) {
-              workbench.updateEditorGroupViewState(groupId, path, viewState);
-              return;
+            getJavaScriptTypeScriptDocumentSyncVersion={
+              workbench.getJavaScriptTypeScriptDocumentSyncVersion
             }
-            workbench.updateEditorViewState(path, viewState);
-          }}
-          onCloseFloatingSurface={workbench.closeFloatingSurface}
-          onGoBack={goBack}
-          onGoForward={goForward}
-          onGoToDefinition={goToDefinition}
-          onGoToImplementationAt={goToImplementationAt}
-          onGoToSuperMethod={goToSuperMethod}
-          onRunTestAt={workbench.runTestAt}
-          onToggleBookmarkAtLine={workbench.toggleBookmarkAtLine}
-          onToggleGitBlame={workbench.toggleGitBlame}
-          provideGitBlame={workbench.provideGitBlame}
-          readWorkspaceFile={workbench.readWorkspaceFile}
-          onEditorFocused={() => {
-            focusRunnerGroup(groupId);
-            workbench.activateEditorGroup?.(groupId);
-            markActiveFileRevealSignal();
-          }}
-          onOpenClass={openClass}
-          onOpenFile={openFile}
-          onOpenWorkspaceFile={workbench.openWorkspaceFile}
-          onOpenWorkspaceRoot={workbench.openWorkspaceRoot}
-          onOpenFileStructure={workbench.openFileStructure}
-          onChange={onActiveDocumentChange}
-          onLanguageServerError={workbench.reportLanguageServerError}
-          onOpenPhpChangeSignature={openPhpChangeSignature}
-          onRecordCompletionLatency={workbench.recordCompletionLatency}
-          onLocalPhpDiagnosticsChange={workbench.updateLocalPhpDiagnostics}
-          onRevealTargetHandled={workbench.clearEditorRevealTarget}
-          onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
-          phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
-          frameworkIntelligenceProviders={workbench.frameworkIntelligenceProviders}
-          providePhpCodeActions={workbench.providePhpCodeActions}
-          providePhpFrameworkDefinition={workbench.providePhpFrameworkDefinition}
-          phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}
-          providePhpMethodCompletions={workbench.providePhpMethodCompletions}
-          providePhpMethodSignature={workbench.providePhpMethodSignature}
-          providePhpParameterInlayHints={workbench.providePhpParameterInlayHints}
-          userSnippets={workbench.appSettings.userSnippets}
-          workspaceRoot={workbench.workspaceRoot}
-          workspaceTrusted={workspaceTrusted}
-          workspaceIdentityDescriptor={workbench.workspaceIdentityDescriptor}
-        />
+            requestLanguageServerDocumentLease={workbench.requestLanguageServerDocumentLease}
+            isLanguageServerDocumentRequestLeaseCurrent={
+              workbench.isLanguageServerDocumentRequestLeaseCurrent
+            }
+            flushPendingJavaScriptTypeScriptLanguageServerDocument={
+              workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
+            }
+            formatOnPaste={workbench.workspaceSettings.formatOnPaste}
+            gitBlameEnabled={groupIsActive && workbench.isActiveDocumentGitBlameEnabled}
+            isActiveDocumentJsTest={groupIsActive && workbench.isActiveDocumentJsTest}
+            {...jsTestEditorSurfaceProps(groupIsActive, jsTestEditorSurfaceSource)}
+            {...phpCoverageSurface}
+            isActiveDocumentPhpTest={groupIsActive && workbench.isActiveDocumentPhpTest}
+            isLanguageServerDocumentSynced={workbench.isLanguageServerDocumentSynced}
+            javaScriptTypeScriptLanguageServerFeaturesGateway={
+              javaScriptTypeScriptLanguageServerFeaturesGateway
+            }
+            javaScriptTypeScriptLanguageServerRuntimeStatus={
+              workbench.javaScriptTypeScriptLanguageServerRuntimeStatus
+            }
+            javaScriptTypeScriptLanguageServerRefreshGateway={
+              javaScriptTypeScriptLanguageServerRefreshGateway
+            }
+            javaScriptTypeScriptLanguageServerWorkspaceEditGateway={
+              javaScriptTypeScriptLanguageServerWorkspaceEditGateway
+            }
+            javaScriptTypeScriptCompleteFunctionCalls={
+              workbench.workspaceSettings.javaScriptTypeScriptCompleteFunctionCalls
+            }
+            javaScriptTypeScriptValidationEnabled={
+              workbench.workspaceSettings.javaScriptTypeScriptValidation
+            }
+            languageServerFeaturesGateway={languageServerFeaturesGateway}
+            languageServerRefreshGateway={languageServerRefreshGateway}
+            languageServerDiagnosticsByPath={workbench.languageServerDiagnosticsByPath}
+            languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
+            largeSmartDocumentPolicy={workbench.workspaceSettings.largeFileMode}
+            keymap={workbench.appSettings.keymap}
+            monacoTheme={monacoTheme}
+            runCommand={workbench.runCommand}
+            navigationHistoryPaths={navigationHistoryPaths}
+            openDocumentPaths={openDocumentPaths}
+            restoredViewStates={
+              workbench.restoredEditorViewStatesByGroup?.[groupId] ??
+              workbench.restoredEditorViewStates ??
+              {}
+            }
+            restoredViewStateRevision={workbench.restoredEditorViewStateRevision}
+            transientWidgetDismissKey={transientEditorWidgetDismissKey}
+            phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
+            phpLanguageServerWorkspaceEditGateway={phpLanguageServerWorkspaceEditGateway}
+            group={editorGroupsState.groups[groupId]}
+            groupId={groupId}
+            onBufferFixRunnerChange={updateEditorSurfaceBufferFixRunner}
+            onCommandRunnerChange={updateEditorSurfaceCommandRunner}
+            onDebugWatchAtCursorCaptureReaderChange={updateDebugWatchAtCursorCaptureReader}
+            onDebugEvaluateInConsoleCaptureReaderChange={updateDebugEvaluateInConsoleCaptureReader}
+            onDebugBreakpointNavigationCaptureReaderChange={
+              updateDebugBreakpointNavigationCaptureReader
+            }
+            onDebugInlineBreakpointCaptureReaderChange={updateDebugInlineBreakpointCaptureReader}
+            onEslintDisableRunnerChange={updateEditorSurfaceEslintDisableRunner}
+            onMenuCommandRunnerChange={updateEditorMenuCommandRunner}
+            onPhpstanIgnoreRunnerChange={updateEditorSurfacePhpstanIgnoreRunner}
+            onCloseActiveTab={async () => {
+              const path = editorGroupsState.groups[groupId]?.activePath;
+              if (!path) {
+                return;
+              }
+              if (workbench.closeDocumentInEditorGroup) {
+                await workbench.closeDocumentInEditorGroup(groupId, path);
+                return;
+              }
+              await workbench.closeDocument(path);
+            }}
+            onCursorPositionChange={workbench.updateActiveEditorPosition}
+            onEditorViewStateChange={(path, viewState) => {
+              if (workbench.updateEditorGroupViewState) {
+                workbench.updateEditorGroupViewState(groupId, path, viewState);
+                return;
+              }
+              workbench.updateEditorViewState(path, viewState);
+            }}
+            onCloseFloatingSurface={workbench.closeFloatingSurface}
+            onGoBack={goBack}
+            onGoForward={goForward}
+            onGoToDefinition={goToDefinition}
+            onGoToImplementationAt={goToImplementationAt}
+            onGoToSuperMethod={goToSuperMethod}
+            onRunTestAt={workbench.runTestAt}
+            onToggleBookmarkAtLine={workbench.toggleBookmarkAtLine}
+            onToggleGitBlame={workbench.toggleGitBlame}
+            provideGitBlame={workbench.provideGitBlame}
+            readWorkspaceFile={workbench.readWorkspaceFile}
+            onEditorFocused={() => {
+              focusRunnerGroup(groupId);
+              workbench.activateEditorGroup?.(groupId);
+              markActiveFileRevealSignal();
+            }}
+            onOpenClass={openClass}
+            onOpenFile={openFile}
+            onOpenWorkspaceFile={workbench.openWorkspaceFile}
+            onOpenWorkspaceRoot={workbench.openWorkspaceRoot}
+            onOpenFileStructure={workbench.openFileStructure}
+            onChange={onActiveDocumentChange}
+            onLanguageServerError={workbench.reportLanguageServerError}
+            onOpenPhpChangeSignature={openPhpChangeSignature}
+            onRecordCompletionLatency={workbench.recordCompletionLatency}
+            onLocalPhpDiagnosticsChange={workbench.updateLocalPhpDiagnostics}
+            onRevealTargetHandled={workbench.clearEditorRevealTarget}
+            onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
+            phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
+            frameworkIntelligenceProviders={workbench.frameworkIntelligenceProviders}
+            providePhpCodeActions={workbench.providePhpCodeActions}
+            providePhpFrameworkDefinition={workbench.providePhpFrameworkDefinition}
+            phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}
+            providePhpMethodCompletions={workbench.providePhpMethodCompletions}
+            providePhpMethodSignature={workbench.providePhpMethodSignature}
+            providePhpParameterInlayHints={workbench.providePhpParameterInlayHints}
+            userSnippets={workbench.appSettings.userSnippets}
+            workspaceRoot={workbench.workspaceRoot}
+            workspaceTrusted={workspaceTrusted}
+            workspaceIdentityDescriptor={workbench.workspaceIdentityDescriptor}
+          />
+        </Suspense>
       );
     },
     [
@@ -1007,41 +985,45 @@ function App() {
       if (isGitHistoryDiffDocumentPath(path) && historyDiffDocument) {
         return (
           <ErrorBoundary title="Could not render this diff" resetKeys={[path]}>
-            <GitDiffPreview
-              diff={historyDiffDocument.diff}
-              isLoading={historyDiffDocument.isLoading}
-              monacoTheme={monacoTheme}
-              previewIdentity={path}
-              editorFontFamily={workbench.appSettings.editorFontFamily}
-              editorFontLigatures={workbench.appSettings.editorFontLigatures}
-              editorFontSize={workbench.appSettings.editorFontSize}
-              onClose={() => closeEditorGroupTab(groupId, path)}
-            />
+            <Suspense fallback={surfaceLoadingState("diff viewer")}>
+              <LazyGitDiffPreview
+                diff={historyDiffDocument.diff}
+                isLoading={historyDiffDocument.isLoading}
+                monacoTheme={monacoTheme}
+                previewIdentity={path}
+                editorFontFamily={workbench.appSettings.editorFontFamily}
+                editorFontLigatures={workbench.appSettings.editorFontLigatures}
+                editorFontSize={workbench.appSettings.editorFontSize}
+                onClose={() => closeEditorGroupTab(groupId, path)}
+              />
+            </Suspense>
           </ErrorBoundary>
         );
       }
       if (isGitDiffDocumentPath(path) && worktreeDiff) {
         return (
           <ErrorBoundary title="Could not render this diff" resetKeys={[path]}>
-            <GitDiffPreview
-              diff={worktreeDiff.diff}
-              isLoading={worktreeDiff.isLoading}
-              monacoTheme={monacoTheme}
-              previewIdentity={path}
-              editorFontFamily={workbench.appSettings.editorFontFamily}
-              editorFontLigatures={workbench.appSettings.editorFontLigatures}
-              editorFontSize={workbench.appSettings.editorFontSize}
-              gitOperationLoading={workbench.gitOperationLoading}
-              canRevertChange={
-                worktreeDiff.diff ? workbench.canRevertGitChange(worktreeDiff.diff.change) : false
-              }
-              loadFileHunks={workbench.loadGitFileHunks}
-              onClose={() => closeEditorGroupTab(groupId, path)}
-              onRevertFile={(change) => workbench.revertGitChanges([change])}
-              onRevertHunk={workbench.revertGitHunk}
-              onStageHunk={workbench.stageGitHunk}
-              onUnstageHunk={workbench.unstageGitHunk}
-            />
+            <Suspense fallback={surfaceLoadingState("diff viewer")}>
+              <LazyGitDiffPreview
+                diff={worktreeDiff.diff}
+                isLoading={worktreeDiff.isLoading}
+                monacoTheme={monacoTheme}
+                previewIdentity={path}
+                editorFontFamily={workbench.appSettings.editorFontFamily}
+                editorFontLigatures={workbench.appSettings.editorFontLigatures}
+                editorFontSize={workbench.appSettings.editorFontSize}
+                gitOperationLoading={workbench.gitOperationLoading}
+                canRevertChange={
+                  worktreeDiff.diff ? workbench.canRevertGitChange(worktreeDiff.diff.change) : false
+                }
+                loadFileHunks={workbench.loadGitFileHunks}
+                onClose={() => closeEditorGroupTab(groupId, path)}
+                onRevertFile={(change) => workbench.revertGitChanges([change])}
+                onRevertHunk={workbench.revertGitHunk}
+                onStageHunk={workbench.stageGitHunk}
+                onUnstageHunk={workbench.unstageGitHunk}
+              />
+            </Suspense>
           </ErrorBoundary>
         );
       }
@@ -1109,21 +1091,20 @@ function App() {
       <WorkbenchShellFrame
         agentVariant={workbench.appSettings.agentAppearanceVariant}
         agent={
-          workbench.workspaceRoot ? (
-            <AgentWorkbenchScreen
-              activeFileRevealSignal={activeFileRevealSignal}
-              fileChanges={workspaceGateways.fileChanges}
-              fileStatusesByPath={fileStatusesByPath}
-              files={workspaceGateways.files}
-              monacoTheme={monacoTheme}
-              onResizeRightPanelStart={startAgentRightPanelResize}
-              onTrustWorkspace={trustWorkspace}
-              terminalGateway={terminalGateway}
-              terminalTheme={terminalTheme}
-              workbench={workbench}
-              workspaceTrusted={workspaceTrusted}
-            />
-          ) : null
+          <LazyAgentWorkbenchHost
+            active={workbench.agentModeActive && Boolean(workbench.workspaceRoot)}
+            activeFileRevealSignal={activeFileRevealSignal}
+            fileChanges={workspaceGateways.fileChanges}
+            fileStatusesByPath={fileStatusesByPath}
+            files={workspaceGateways.files}
+            monacoTheme={monacoTheme}
+            onResizeRightPanelStart={startAgentRightPanelResize}
+            onTrustWorkspace={trustWorkspace}
+            terminalGateway={terminalGateway}
+            terminalTheme={terminalTheme}
+            workbench={workbench}
+            workspaceTrusted={workspaceTrusted}
+          />
         }
         bottom={
           workbench.bottomPanelVisible ? (
@@ -1152,7 +1133,7 @@ function App() {
         }
         chrome={
           <>
-            {workbench.agentModeActive ? null : (
+            {!workbench.agentModeActive && (
               <ProjectTabs
                 activeRoot={workbench.workspaceRoot}
                 dirtyCount={workbench.dirtyCount}
@@ -1176,7 +1157,7 @@ function App() {
               workspaceRoot={workbench.workspaceRoot}
               workspaceTrusted={workspaceTrusted}
             />
-            {workbench.externalFileConflictState.conflict ? (
+            {workbench.externalFileConflictState.conflict && (
               <ExternalFileConflictBar
                 busyAction={
                   workbench.externalFileConflictState.status === "resolving"
@@ -1192,11 +1173,12 @@ function App() {
                 error={workbench.externalFileConflictState.error}
                 onAction={workbench.handleExternalFileConflictAction}
               />
-            ) : null}
+            )}
           </>
         }
         editor={
-          <WorkbenchEditorHost
+          <LazyWorkbenchEditorRuntimeHost
+            active={!shellPlacement.editorHidden}
             {...workbenchEditorHostProps({
               activeGroupId: editorGroupsState.activeGroupId,
               contentRevisionForGroup: editorContentRevisionForGroup,
@@ -1276,15 +1258,19 @@ function App() {
         state={phpChangeSignature.state}
       />
 
-      <CommandPalette {...commandPaletteProps(workbench)} />
+      <LazyCommandPaletteHost active={workbench.paletteOpen} {...commandPaletteProps(workbench)} />
 
-      <ArtisanMakePalette
-        isOpen={workbench.artisanMakePaletteOpen}
-        onClose={workbench.closeArtisanMakePalette}
-        runInActiveTerminal={workbench.runInActiveTerminal}
-      />
+      <LazySurfaceHost active={workbench.artisanMakePaletteOpen} label="Artisan command palette">
+        <LazyArtisanMakePalette
+          isOpen
+          onClose={workbench.closeArtisanMakePalette}
+          runInActiveTerminal={workbench.runInActiveTerminal}
+        />
+      </LazySurfaceHost>
 
-      <QuickOpen {...quickOpenProps(workbench)} />
+      <LazySurfaceHost active={workbench.quickOpenOpen} label="Quick Open">
+        <LazyQuickOpen {...quickOpenProps(workbench)} />
+      </LazySurfaceHost>
 
       <RecentFilesSwitcher
         entries={workbench.recentFilesSwitcherEntries}
@@ -1320,15 +1306,17 @@ function App() {
         results={workbench.workspaceSymbolsResults}
       />
 
-      <SearchEverywhere
-        isLoading={workbench.searchEverywhereLoading}
-        isOpen={workbench.searchEverywhereOpen}
-        model={workbench.searchEverywhereModel}
-        onActivate={workbench.activateSearchEverywhereItem}
-        onChangeQuery={workbench.setSearchEverywhereQuery}
-        onClose={() => workbench.setSearchEverywhereOpen(false)}
-        query={workbench.searchEverywhereQuery}
-      />
+      <LazySurfaceHost active={workbench.searchEverywhereOpen} label="Search Everywhere">
+        <LazySearchEverywhere
+          isLoading={workbench.searchEverywhereLoading}
+          isOpen
+          model={workbench.searchEverywhereModel}
+          onActivate={workbench.activateSearchEverywhereItem}
+          onChangeQuery={workbench.setSearchEverywhereQuery}
+          onClose={() => workbench.setSearchEverywhereOpen(false)}
+          query={workbench.searchEverywhereQuery}
+        />
+      </LazySurfaceHost>
 
       <FileStructure
         canIncludeInheritedMembers={workbench.fileStructureCanIncludeInheritedMembers}
@@ -1396,52 +1384,60 @@ function App() {
         workspaceRoot={workbench.workspaceRoot}
       />
 
-      <FileHistoryPanel
-        commits={workbench.fileHistoryCommits}
-        commitsLoading={workbench.fileHistoryLoading}
-        diff={workbench.fileHistoryDiff}
-        diffLoading={workbench.fileHistoryDiffLoading}
-        editorFontFamily={workbench.appSettings.editorFontFamily}
-        editorFontLigatures={workbench.appSettings.editorFontLigatures}
-        editorFontSize={workbench.appSettings.editorFontSize}
-        isOpen={workbench.fileHistoryPanelOpen}
-        monacoTheme={monacoTheme}
-        onClose={workbench.closeFileHistory}
-        onSelectCommit={(sha) => void workbench.selectFileHistoryCommit(sha)}
-        relativePath={workbench.fileHistoryRelativePath}
-        selectedSha={workbench.fileHistorySelectedSha}
-      />
-
-      <LocalHistoryPanel
-        diff={workbench.localHistoryDiff}
-        diffLoading={workbench.localHistoryDiffLoading}
-        editorFontFamily={workbench.appSettings.editorFontFamily}
-        editorFontLigatures={workbench.appSettings.editorFontLigatures}
-        editorFontSize={workbench.appSettings.editorFontSize}
-        isOpen={workbench.localHistoryPanelOpen}
-        monacoTheme={monacoTheme}
-        onClose={workbench.closeLocalHistory}
-        onRevertVersion={(versionId) => void workbench.revertLocalHistoryVersion(versionId)}
-        onSelectVersion={(versionId) => void workbench.selectLocalHistoryVersion(versionId)}
-        relativePath={workbench.localHistoryRelativePath}
-        selectedVersionId={workbench.localHistorySelectedId}
-        versions={workbench.localHistoryVersions}
-        versionsLoading={workbench.localHistoryLoading}
-      />
-
-      {workbench.externalFileConflictState.conflict && workbench.activeDocument ? (
-        <ExternalFileCompareDialog
-          conflict={workbench.externalFileConflictState.conflict}
+      <LazySurfaceHost active={workbench.fileHistoryPanelOpen} label="file history">
+        <LazyFileHistoryPanel
+          commits={workbench.fileHistoryCommits}
+          commitsLoading={workbench.fileHistoryLoading}
+          diff={workbench.fileHistoryDiff}
+          diffLoading={workbench.fileHistoryDiffLoading}
           editorFontFamily={workbench.appSettings.editorFontFamily}
           editorFontLigatures={workbench.appSettings.editorFontLigatures}
           editorFontSize={workbench.appSettings.editorFontSize}
-          isOpen={workbench.externalFileConflictState.compareOpen}
-          language={workbench.activeDocument.language}
-          liveLocalContent={workbench.activeDocument.content}
+          isOpen={workbench.fileHistoryPanelOpen}
           monacoTheme={monacoTheme}
-          onClose={workbench.closeExternalFileCompare}
+          onClose={workbench.closeFileHistory}
+          onSelectCommit={(sha) => void workbench.selectFileHistoryCommit(sha)}
+          relativePath={workbench.fileHistoryRelativePath}
+          selectedSha={workbench.fileHistorySelectedSha}
         />
-      ) : null}
+      </LazySurfaceHost>
+
+      <LazySurfaceHost active={workbench.localHistoryPanelOpen} label="local history">
+        <LazyLocalHistoryPanel
+          diff={workbench.localHistoryDiff}
+          diffLoading={workbench.localHistoryDiffLoading}
+          editorFontFamily={workbench.appSettings.editorFontFamily}
+          editorFontLigatures={workbench.appSettings.editorFontLigatures}
+          editorFontSize={workbench.appSettings.editorFontSize}
+          isOpen={workbench.localHistoryPanelOpen}
+          monacoTheme={monacoTheme}
+          onClose={workbench.closeLocalHistory}
+          onRevertVersion={(versionId) => void workbench.revertLocalHistoryVersion(versionId)}
+          onSelectVersion={(versionId) => void workbench.selectLocalHistoryVersion(versionId)}
+          relativePath={workbench.localHistoryRelativePath}
+          selectedVersionId={workbench.localHistorySelectedId}
+          versions={workbench.localHistoryVersions}
+          versionsLoading={workbench.localHistoryLoading}
+        />
+      </LazySurfaceHost>
+
+      {workbench.externalFileConflictState.conflict &&
+        workbench.activeDocument &&
+        workbench.externalFileConflictState.compareOpen && (
+          <Suspense fallback={surfaceLoadingState("file comparison")}>
+            <LazyExternalFileCompareDialog
+              conflict={workbench.externalFileConflictState.conflict}
+              editorFontFamily={workbench.appSettings.editorFontFamily}
+              editorFontLigatures={workbench.appSettings.editorFontLigatures}
+              editorFontSize={workbench.appSettings.editorFontSize}
+              isOpen
+              language={workbench.activeDocument.language}
+              liveLocalContent={workbench.activeDocument.content}
+              monacoTheme={monacoTheme}
+              onClose={workbench.closeExternalFileCompare}
+            />
+          </Suspense>
+        )}
 
       <GitStashPanel
         diff={workbench.gitStashDiff}
@@ -1482,12 +1478,17 @@ function App() {
         plan={workbench.languageServerPlan}
       />
 
-      <WorkbenchSettingsDialogHost
-        providerManagement={workbench.agents.providerManagement}
-        systemFontGateway={systemFontGateway}
-        workbench={workbench}
-        workspaceFiles={workspaceGateways.files}
-      />
+      <LazySurfaceHost
+        active={workbench.settingsOpen || workbench.nodeLaunchConfigurationsOpen}
+        label="settings"
+      >
+        <LazyWorkbenchSettingsDialogHost
+          providerManagement={workbench.agents.providerManagement}
+          systemFontGateway={systemFontGateway}
+          workbench={workbench}
+          workspaceFiles={workspaceGateways.files}
+        />
+      </LazySurfaceHost>
     </main>
   );
 }

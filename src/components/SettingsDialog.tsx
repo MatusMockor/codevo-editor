@@ -1,7 +1,6 @@
 import { Settings2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeShortcutInput } from "../domain/keymap";
-import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import {
   appThemeOptions,
   maxEditorFontSize,
@@ -34,7 +33,10 @@ import type {
   PhpToolAvailability,
 } from "../domain/workspace";
 import { settingsDialogSections } from "./settingsDialogModel";
-import { AgentSettingsDialogSection } from "./AgentSettingsDialogSection";
+import {
+  AgentSettingsDialogSection,
+  type AgentSettingsDialogProviderControls,
+} from "./AgentSettingsDialogSection";
 import { IndexSettings } from "./IndexSettingsSection";
 import { KeymapSettingsPanel } from "./KeymapSettingsPanel";
 import { PhpSettings } from "./PhpSettingsSection";
@@ -47,8 +49,7 @@ export interface SettingsSaveInput {
   workspaceSettings: WorkspaceSettings;
 }
 
-interface SettingsDialogProps {
-  providerManagement?: AgentProviderManagementSurface | null;
+interface SettingsDialogProps extends AgentSettingsDialogProviderControls {
   appSettings: AppSettings;
   /**
    * Auto-detected git repository directories (workspace-root-relative, excluding
@@ -86,12 +87,12 @@ export function SettingsDialog({
   onRestartJavaScriptTypeScriptService,
   onSave,
   phpTools,
-  providerManagement = null,
   systemFontGateway = emptySystemFontGateway,
   workspaceDescriptor,
   workspaceRoot,
   workspaceSettings,
   workspaceTrust,
+  ...agentProviderControls
 }: SettingsDialogProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>("general");
   const [draftAppSettings, setDraftAppSettings] = useState<AppSettings>(appSettings);
@@ -559,7 +560,7 @@ export function SettingsDialog({
                     setDraftAppSettings(settings);
                   }}
                   onUpdateWorkspaceSettings={updateWorkspaceSettings}
-                  providerManagement={providerManagement}
+                  {...agentProviderControls}
                   workspaceSettings={draftWorkspaceSettings}
                 />
               ) : null}
