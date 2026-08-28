@@ -23,6 +23,10 @@ describe("workbench inline breakpoint composition", () => {
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
+    const commandEffects = readFileSync(
+      new URL("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const start = controller.indexOf("const debugInlineBreakpoint = useDebugInlineBreakpoint({");
     const end = controller.indexOf("\n  });", start);
     const composition = controller.slice(start, end);
@@ -33,12 +37,12 @@ describe("workbench inline breakpoint composition", () => {
       editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
-    const commandsStart = rootController.indexOf(
+    const commandsStart = commandEffects.indexOf(
       "const commandRegistry = useWorkbenchCommandRegistry({",
     );
-    const commands = rootController.slice(
+    const commands = commandEffects.slice(
       commandsStart,
-      rootController.indexOf("\n  });", commandsStart),
+      commandEffects.indexOf("\n  });", commandsStart),
     );
     const publicSurface = coordinatorPublicSurface(editorNavigationCoordinator);
     const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));

@@ -16,6 +16,10 @@ describe("workbench Node run composition", () => {
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
+    const commandEffects = readFileSync(
+      new URL("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const rootBindingEnd = editorNavigationCoordinator.indexOf(
       "} = useWorkbenchTaskDebugCoordinator({",
     );
@@ -23,12 +27,12 @@ describe("workbench Node run composition", () => {
       editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
-    const commandsStart = rootController.indexOf(
+    const commandsStart = commandEffects.indexOf(
       "const commandRegistry = useWorkbenchCommandRegistry({",
     );
-    const commands = rootController.slice(
+    const commands = commandEffects.slice(
       commandsStart,
-      rootController.indexOf("\n  });", commandsStart),
+      commandEffects.indexOf("\n  });", commandsStart),
     );
     const publicSurface = coordinatorPublicSurface(editorNavigationCoordinator);
     const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));
@@ -129,6 +133,10 @@ describe("workbench Node run composition", () => {
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
+    const commandEffects = readFileSync(
+      new URL("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const panels = readFileSync(
       new URL("../components/useAppTestDebugPanels.ts", import.meta.url),
       "utf8",
@@ -142,8 +150,8 @@ describe("workbench Node run composition", () => {
     expect(rootController).toContain("useWorkbenchEditorNavigationCoordinator({");
     expect(rootController).toContain("taskDebug,");
     expect(editorNavigationCoordinator).toContain("taskDebug: {");
-    expect(rootController).toContain("configureNodeLaunchConfigurations:");
-    expect(rootController).toContain(
+    expect(commandEffects).toContain("configureNodeLaunchConfigurations:");
+    expect(commandEffects).toContain(
       "taskDebug.nodeLaunchConfigurationsSurface.openNodeLaunchConfigurations,",
     );
     expect(rootController).toContain("...taskDebug.nodeLaunchConfigurationsSurface,");

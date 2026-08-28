@@ -19,6 +19,10 @@ describe("workbench JavaScript Debug Test at Cursor composition", () => {
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
+    const commandEffects = readFileSync(
+      new URL("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const start = controller.indexOf("const cursorDebug = useWorkbenchJsTestCursorDebugging({");
     const end = controller.indexOf("});", start);
     const composition = controller.slice(start, end);
@@ -29,12 +33,12 @@ describe("workbench JavaScript Debug Test at Cursor composition", () => {
       editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
-    const commandsStart = rootController.indexOf(
+    const commandsStart = commandEffects.indexOf(
       "const commandRegistry = useWorkbenchCommandRegistry({",
     );
-    const commands = rootController.slice(
+    const commands = commandEffects.slice(
       commandsStart,
-      rootController.indexOf("\n  });", commandsStart),
+      commandEffects.indexOf("\n  });", commandsStart),
     );
 
     expect(start).toBeGreaterThanOrEqual(0);

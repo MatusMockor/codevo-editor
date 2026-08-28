@@ -109,6 +109,7 @@ Round 3 starts at `d47d7f92` with 5,660 raw lines and 18,447 structural tokens. 
    - Destination: `useWorkbenchCommandEffectsCoordinator.ts`.
    - Boundary: settings and managed-install commands, Pint, floating surfaces, command registry, native menu, keyboard shortcuts, persistence, hydration, file changes, and ordered runtime subscriptions.
    - Net reduction budget: at least 373 raw lines and 880 structural tokens.
+   - Completed after `6a066b50`: 4,407 to 4,155 raw lines and 15,105 to 14,130 structural tokens. The raw planning estimate was deliberately not met to preserve the closed ownership boundary; both hotspot dimensions decreased and the final hard target remains feasible. Independent adversarial review: clean.
 
 5. Workspace transition and lifecycle
    - Range: 2042-3121.

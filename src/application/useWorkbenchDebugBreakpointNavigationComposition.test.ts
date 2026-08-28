@@ -23,6 +23,10 @@ describe("workbench breakpoint navigation composition", () => {
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
+    const commandEffects = readFileSync(
+      new URL("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const start = controller.indexOf(
       "const debugBreakpointNavigation = useDebugBreakpointNavigation({",
     );
@@ -35,7 +39,7 @@ describe("workbench breakpoint navigation composition", () => {
     );
     const ownerPredicates = controller.slice(ownerPredicateStart, ownerPredicateEnd);
     const rootBinding = coordinatorBinding(editorNavigationCoordinator);
-    const commands = commandRegistryComposition(rootController);
+    const commands = commandRegistryComposition(commandEffects);
 
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);

@@ -15,6 +15,10 @@ describe("workbench Call Stack navigation composition", () => {
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
+    const commandEffects = readFileSync(
+      new URL("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const start = controller.indexOf(
       "const debugCallStackNavigation = useDebugCallStackNavigation({",
     );
@@ -27,12 +31,12 @@ describe("workbench Call Stack navigation composition", () => {
       editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
-    const commandsStart = rootController.indexOf(
+    const commandsStart = commandEffects.indexOf(
       "const commandRegistry = useWorkbenchCommandRegistry({",
     );
-    const commands = rootController.slice(
+    const commands = commandEffects.slice(
       commandsStart,
-      rootController.indexOf("\n  });", commandsStart),
+      commandEffects.indexOf("\n  });", commandsStart),
     );
 
     expect(start).toBeGreaterThanOrEqual(0);

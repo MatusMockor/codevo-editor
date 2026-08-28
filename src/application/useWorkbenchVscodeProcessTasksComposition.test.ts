@@ -13,6 +13,7 @@ describe("VS Code process-task workbench composition", () => {
     const taskComposition = source("./useWorkbenchVscodeProcessTasks.ts");
     const sidebar = source("../components/WorkbenchSidebar.tsx");
     const rootController = source("./useWorkbenchController.ts");
+    const commandEffects = source("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts");
     const rootBindingEnd = editorNavigationCoordinator.indexOf(
       "} = useWorkbenchTaskDebugCoordinator({",
     );
@@ -20,12 +21,12 @@ describe("VS Code process-task workbench composition", () => {
       editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
-    const commandsStart = rootController.indexOf(
+    const commandsStart = commandEffects.indexOf(
       "const commandRegistry = useWorkbenchCommandRegistry({",
     );
-    const commands = rootController.slice(
+    const commands = commandEffects.slice(
       commandsStart,
-      rootController.indexOf("\n  });", commandsStart),
+      commandEffects.indexOf("\n  });", commandsStart),
     );
     const publicSurface = coordinatorPublicSurface(editorNavigationCoordinator);
     const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));

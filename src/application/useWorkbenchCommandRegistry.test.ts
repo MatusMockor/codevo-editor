@@ -13,11 +13,16 @@ const ownerB = createLegacyEditorSessionOwnerKey("/project-b");
 
 describe("debug command registration", () => {
   it("projects the private Explorer bridge into verb-only rerun commands", () => {
-    const source = readFileSync(new URL("./useWorkbenchController.ts", import.meta.url), "utf8");
+    const root = readFileSync(new URL("./useWorkbenchController.ts", import.meta.url), "utf8");
+    const source = readFileSync(
+      new URL("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts", import.meta.url),
+      "utf8",
+    );
 
-    expect(source).toContain("createJsTestRerunLastRunCommands(options.jsTestExplorerScopeRunner)");
+    expect(root).toContain("useWorkbenchCommandEffectsCoordinator({");
+    expect(source).toContain("createJsTestRerunLastRunCommands(jsTestExplorerScopeRunner)");
     expect(source).toContain(
-      "jsTestRerunLastRun: createJsTestRerunLastRunCommands(options.jsTestExplorerScopeRunner),",
+      "jsTestRerunLastRun: createJsTestRerunLastRunCommands(jsTestExplorerScopeRunner),",
     );
   });
 

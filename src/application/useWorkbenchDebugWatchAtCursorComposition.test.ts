@@ -23,6 +23,10 @@ describe("workbench Debug Add to Watch at Cursor composition", () => {
       new URL("./useWorkbenchController.ts", import.meta.url),
       "utf8",
     );
+    const commandEffects = readFileSync(
+      new URL("./workbenchController/useWorkbenchCommandEffectsCoordinator.ts", import.meta.url),
+      "utf8",
+    );
     const rootBindingEnd = editorNavigationCoordinator.indexOf(
       "} = useWorkbenchTaskDebugCoordinator({",
     );
@@ -30,12 +34,12 @@ describe("workbench Debug Add to Watch at Cursor composition", () => {
       editorNavigationCoordinator.lastIndexOf("  const {", rootBindingEnd),
       rootBindingEnd,
     );
-    const commandsStart = rootController.indexOf(
+    const commandsStart = commandEffects.indexOf(
       "const commandRegistry = useWorkbenchCommandRegistry({",
     );
-    const commands = rootController.slice(
+    const commands = commandEffects.slice(
       commandsStart,
-      rootController.indexOf("\n  });", commandsStart),
+      commandEffects.indexOf("\n  });", commandsStart),
     );
 
     expect(controllerOptions).toContain(

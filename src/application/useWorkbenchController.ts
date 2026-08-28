@@ -39,7 +39,7 @@ import {
   shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
   workspacePathBelongsToRoot,
 } from "./workbenchController/workspacePathPolicy";
-import { useWorkbenchDiagnosticPresentation } from "./workbenchController/useWorkbenchDiagnosticPresentation";
+import { useWorkbenchCommandEffectsCoordinator } from "./workbenchController/useWorkbenchCommandEffectsCoordinator";
 import { useWorkbenchEditorPresentation } from "./workbenchController/useWorkbenchEditorPresentation";
 import {
   useWorkbenchEditorFileCoordinator,
@@ -50,7 +50,6 @@ import {
   editorNavigationTaskOptionsFor,
   useWorkbenchEditorNavigationCoordinator,
 } from "./workbenchController/useWorkbenchEditorNavigationCoordinator";
-import { useWorkbenchSettingsCommands } from "./workbenchController/useWorkbenchSettingsCommands";
 import { useWorkbenchGitDiscoveryCoordinator } from "./workbenchController/useWorkbenchGitCoordinator";
 import { createWorkbenchRevealPathPort } from "./workbenchController/useWorkbenchTaskDebugCoordinator";
 import { useWorkbenchLanguageDocumentSyncCoordinator } from "./workbenchController/useWorkbenchLanguageDocumentSyncCoordinator";
@@ -61,7 +60,6 @@ import {
 import {
   beginWorkbenchSmartModeIntent,
   useWorkbenchLanguageRuntimeChannelRefs,
-  useWorkbenchLanguageRuntimeEffects,
   useWorkbenchLanguageRuntimeOwnerRefs,
   useWorkbenchStaticAnalysisCoordinator,
   type WorkbenchSmartModeIntentState,
@@ -69,12 +67,7 @@ import {
 import {
   useWorkbenchLanguageDiagnosticsSessionCoordinator,
   useWorkbenchLanguageRuntimeEventOwnerResolver,
-  useWorkbenchLanguageRuntimeSubscriptionsCoordinator,
 } from "./workbenchController/useWorkbenchLanguageRuntimeSubscriptionsCoordinator";
-import {
-  useManagedLanguageServerInstallCommands,
-  useManagedLanguageServerInstallSubscriptions,
-} from "./workbenchController/useManagedLanguageServerInstallLifecycle";
 import {
   useWorkbenchLanguageRuntimeProjectionRefBridge,
   useWorkbenchLanguageRuntimeProjectionState,
@@ -83,7 +76,6 @@ import {
   useWorkspacePackageScriptHydration,
   useWorkspaceOpenRequestLifecycle,
 } from "./workbenchController/useWorkspaceOpenRequestLifecycle";
-import { useWorkbenchWorkspaceFileChangeSubscription } from "./workbenchController/useWorkspaceFileChangeSubscription";
 import { useManagedWorkspaceIdentityOwnership } from "./workbenchController/useManagedWorkspaceIdentityOwnership";
 import { useWorkspaceIdentityAuthority } from "./workbenchController/useWorkspaceIdentityAuthority";
 import { loadCompleteWorkspaceDirectoryEntries } from "./workbenchController/useWorkspaceDirectoryLoader";
@@ -97,7 +89,6 @@ import {
 import { useExternallyRemovedDocumentTombstones } from "./workbenchController/useExternallyRemovedDocumentTombstones";
 import { disposeWorkspaceFileChanges } from "./workbenchController/workspaceRetainedStateCleanup";
 import { useWorkbenchSettingsPersistence } from "./workbenchController/useWorkbenchSettingsPersistence";
-import { useInitialAppSettingsHydration } from "./workbenchController/useInitialAppSettingsHydration";
 import {
   useWorkbenchLatencyReporting,
   useWorkbenchLatencyTrackerForRoot,
@@ -109,23 +100,13 @@ import {
   workspaceIdentityAliasPaths,
   workspaceTabsWithPath,
 } from "./documentSessionAuthorityLifecycleCoordinator";
-import { useFloatingSurfaces } from "./useFloatingSurfaces";
 import { isGitDiffDocumentPath } from "./useGitDiffWorkspace";
-import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
-import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
 import { useWorkbenchDirtyCloseDecisionPort } from "./useWorkbenchDirtyCloseDecisionPort";
 import { useOptionalWorkspaceTextReader } from "./useOptionalWorkspaceTextReader";
 import { useActiveWorkspaceOwners } from "./useActiveWorkspaceOwners";
 import { WorkspaceTrustIntentCoordinator } from "./workspaceTrustIntentCoordinator";
-import { executeCommandAndReport, type CommandExecutionRunner } from "./commandRegistry";
-import {
-  useWorkbenchKeyboardShortcutActions,
-  useWorkbenchKeyboardShortcuts,
-} from "./useWorkbenchKeyboardShortcuts";
-import { useWorkbenchNativeMenuCommands } from "./useWorkbenchNativeMenuCommands";
 import { useWorkbenchWorkspacePackageGraph } from "./useWorkbenchWorkspacePackageGraph";
 import { useWorkbenchIndexLifecycle } from "./useWorkbenchIndexLifecycle";
-import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
 import { useWorkbenchEditorConfigCoordinator } from "./useWorkbenchEditorConfigCoordinator";
 import { refreshEditorConfigAfterDocumentSave } from "./editorConfigInvalidation";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
@@ -153,14 +134,9 @@ import { useWorkbenchSymbolPanels } from "./useWorkbenchSymbolPanels";
 import { useWorkbenchDockedTextSearch } from "./useWorkbenchDockedTextSearch";
 import {
   useQuickOpenPrefixDispatch,
-  useQuickOpenPrefixDestinations,
   useQuickOpenSeededSurfaceState,
 } from "./useQuickOpenPrefixDispatch";
-import {
-  useFlushWorkspaceNavigationSessionOnBlur,
-  usePersistCurrentWorkspaceSession,
-  usePersistWorkspaceNavigationSession,
-} from "./useWorkbenchNavigationSessionPersistence";
+import { usePersistCurrentWorkspaceSession } from "./useWorkbenchNavigationSessionPersistence";
 import { useLanguageServerFeatureErrorReporting } from "./useLanguageServerFeatureErrorReporting";
 import { useWorkbenchWorkspaceSymbols } from "./useWorkbenchWorkspaceSymbols";
 import { useWorkbenchImplementationChooserState } from "./useWorkbenchLanguageNavigation";
@@ -212,7 +188,6 @@ import {
   type LanguageServerDiagnostic,
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
-import { createDiagnosticsCoalescer } from "../domain/diagnosticsCoalescer";
 import {
   type LanguageServerDocumentSyncGateway,
   type SessionBoundLanguageServerDocumentSyncGateway,
@@ -277,7 +252,6 @@ import {
   type IntelligenceMode,
   type WorkspaceDescriptor,
 } from "../domain/workspace";
-import { createJsTestRerunLastRunCommands } from "./workbenchDebugControllerOptions";
 import { documentOffsetAtEditorPosition, identifierAtEditorPosition } from "./editorPositionText";
 import { useResolvedEditorCursorStore } from "./useCursorCommandAvailability";
 
@@ -3545,531 +3519,305 @@ export function useWorkbenchController(
     todos,
   } = editorNavigation;
 
-  const { saveWorkbenchSettings, toggleSmartMode, toggleWorkspaceTrust } =
-    useWorkbenchSettingsCommands({
-      applyJavaScriptTypeScriptSettingsChange,
-      appSettingsRef,
-      autoStartedLanguageServerRootRef,
-      clearWorkspaceIndex,
-      currentWorkspaceRootRef,
-      intelligenceMode,
-      intelligenceModeRef,
-      javaScriptTypeScriptTrustAutostartRef,
-      openWorkspaceRequestTokenRef,
-      persistAppSettings,
-      persistWorkspaceSettings,
-      phpLanguageServerAutostartAttemptsByRootRef,
-      refreshJavaScriptTypeScriptPlanAfterTrustGrant,
-      refreshLanguageServerPlan,
-      reportErrorForActiveWorkspaceRoot,
-      resolveCurrentWorkspaceRuntimeOwner,
-      runGitRepositoryDiscovery,
-      runPhpWorkspaceProbe,
-      setIntelligenceMode,
-      setMessage,
-      setSmartMode: smartModeActions.setSmartMode,
-      setWorkspaceTrust,
-      smartModeGateway,
-      smartModeRequestGenerationRef,
-      smartModeRequestIntentRef,
-      startInitialIndexScan,
-      stopBackgroundProjectRuntimes,
-      stopLanguageServerRuntime,
-      stopProjectLanguageServersAfterTrustRevocation,
-      workspaceCloseGenerationByRootRef,
-      workspaceDescriptor,
-      workspaceIdentityDescriptor,
-      workspaceRoot,
-      workspaceRuntimeOwnerClaimsRef,
-      workspaceRuntimeOwnerRef,
-      workspaceSettingsRef,
-      workspaceTrust,
-      workspaceTrustGateway,
-      workspaceTrustIntentCoordinatorRef,
-      workspaceTrustRevisionByOwnerRef,
-    });
-
   const {
-    handleManagedPhpactorInstallCompletion,
-    handleManagedTypeScriptInstallCompletion,
-    installManagedPhpactor,
-    installManagedTypeScriptLanguageServer,
-  } = useManagedLanguageServerInstallCommands({
-    currentWorkspaceIdentityDescriptorRef: workspaceIdentityDescriptorRef,
-    currentWorkspaceRootRef,
-    installingManagedPhpactor,
-    installingManagedTypeScriptLanguageServer,
-    phpToolGateway,
-    refreshJavaScriptTypeScriptLanguageServerPlan,
-    refreshLanguageServerPlan,
-    reportJavaScriptTypeScriptLanguageServerError,
-    reportLanguageServerError,
-    setInstallingManagedPhpactor,
-    setInstallingManagedTypeScriptLanguageServer,
-    setLanguageServerSetupOpen,
-    setMessage,
-    setNotices,
-    setPhpTools,
-    workspaceDescriptor,
-    workspaceIdentityDescriptor,
-    workspaceRoot,
-  });
-
-  const {
-    formatActiveFile: formatActiveFileWithPint,
-    formatChangedFiles: formatChangedFilesWithPint,
-    isRunning: pintRunning,
-  } = useWorkbenchPintCommand({
-    activeDocument,
-    currentWorkspaceRootRef,
-    gateway: pintGateway,
-    setMessage,
-    workspaceRoot,
-  });
-
-  const {
-    openSettingsPanel,
-    openAppearanceSettingsPanel,
     closeFloatingSurface,
-    openWorkspaceSymbols: openWorkspaceSymbolsSurface,
-    openSearchEverywhere,
-  } = useFloatingSurfaces({
-    paletteOpen,
-    setPaletteOpen,
-    quickOpenOpen,
-    setQuickOpenOpen,
-    classOpenOpen,
-    setClassOpenOpen,
-    workspaceSymbolsOpen,
-    setWorkspaceSymbolsOpen,
-    searchEverywhereOpen,
-    setSearchEverywhereOpen,
-    resetSearchEverywhere,
-    setTextSearchOpen,
-    languageServerSetupOpen,
-    setLanguageServerSetupOpen,
-    fileStructureOpen,
-    setFileStructureOpen,
-    recentFilesSwitcherOpen,
-    setRecentFilesSwitcherOpen,
-    recentLocationsPanelOpen,
-    setRecentLocationsPanelOpen,
-    callHierarchyView,
-    setCallHierarchyView,
-    typeHierarchyView,
-    setTypeHierarchyView,
-    referencesView,
-    setReferencesView,
-    implementationChooser,
-    setImplementationChooser,
-    selectedGitChange,
-    gitDiffLoading,
-    closeGitDiffPreview: closeGitDiffPreview,
-    settingsOpen,
-    setSettingsOpen,
-    setSettingsInitialSection,
-  });
-  const openWorkspaceSymbols = useQuickOpenPrefixDestinations(
-    quickOpenPrefixDispatch,
-    openFileStructureWithInitialQuery,
-    setWorkspaceSymbolsQuery,
-    openWorkspaceSymbolsSurface,
-    openCommandPaletteWithInitialQuery,
-  );
-
-  const commandRegistry = useWorkbenchCommandRegistry({
-    canShowNette: hasNetteApplicationFramework,
-    canShowSymfony: hasSymfonyFramework,
-    activeDocument,
-    openDocuments,
-    captureNavigationCommandScope: editorDocument.captureNavigationCommandScope,
-    activeEslintBufferClean,
-    activeEslintFixes,
-    activeImage,
-    activeMarkdownPreview,
-    activePackageScripts,
-    nodePackageScriptsWorkbench: taskDebug.nodePackageScripts,
-    vscodeProcessTasksWorkbench: taskDebug.vscodeProcessTaskComposition.commands,
-    nodeRunWithoutDebugging: taskDebug.nodeRunWithoutDebugging,
-    activePhpstanBufferClean,
-    activateWorkspaceTab,
-    appSettings,
-    canReopenClosedDocument,
-    canRewordSelectedGitCommit: gitHistory.canRewordSelectedGitCommit,
-    canSearchClassOpenSymbols,
-    cherryPickSelectedGitCommit: gitHistory.cherryPickSelectedGitCommit,
-    closeActiveEditorGroup: runCloseActiveEditorGroup,
-    closeActiveEditorGroupSurface: runCloseActiveEditorGroupSurface,
-    closeDocument: runCloseDocument,
-    commitGitChanges: commitGitChanges,
-    createDirectory: fileOperations.createDirectory,
-    createFile: fileOperations.createFile,
-    createGitBranch: gitPanels.createGitBranch,
-    configureNodeLaunchConfigurations:
-      taskDebug.nodeLaunchConfigurationsSurface.openNodeLaunchConfigurations,
-    debugState: taskDebug.debugSession,
-    debugCallStackNavigation: taskDebug.debugCallStackNavigation,
-    debugRestartFrame: taskDebug.debugRestartFrame,
-    debugBreakpointNavigation: taskDebug.debugBreakpointNavigation,
-    debugInlineBreakpoint: taskDebug.debugInlineBreakpoint,
-    debugCopyStackTrace: taskDebug.debugCopyStackTrace,
-    debugEvaluateInConsole: taskDebug.debugEvaluateInConsole,
-    debugWatchAtCursor: taskDebug.debugWatchAtCursor,
-    jsTestDebugAtCursor: taskDebug.jsTestDebugAtCursor,
-    jsTestRerunLastRun: createJsTestRerunLastRunCommands(options.jsTestExplorerScopeRunner),
-    jsTestRunSelection: taskDebug.jsTestRunSelection,
-    deleteActiveDocument: fileOperations.deleteActiveDocument,
-    disableEslintRuleAtCursor,
-    openDebugPanel: taskDebug.openDebugPanel,
-    attachNodeDebug: taskDebug.attachNodeDebug,
-    pauseDebug: taskDebug.debugSession.pauseDebug,
-    startOrContinueDebug: taskDebug.startOrContinueDebug,
-    startPhpListenDebug: taskDebug.startPhpListenDebug,
-    stepDebug: taskDebug.debugSession.stepDebug,
-    stopDebug: taskDebug.debugSession.stopDebug,
-    toggleDebugBreakpointAtCursor: taskDebug.toggleDebugBreakpointAtCursor,
-    editorGroups,
-    editorSurfaceCommandRunner,
-    editorMenuCommandRunner: options.editorMenuCommandRunner,
-    eslintAnalysisRunning,
-    fixAllEslintInActiveFile,
-    focusAdjacentEditorGroup,
-    formatActiveFileWithPint,
-    formatChangedFilesWithPint,
-    generateTestForActiveDocument: editorDocument.generateTestForActiveDocument,
-    gitDiffLoading,
-    goToDeclaration: languageNavigation.goToDeclaration,
-    goToDefinition: languageNavigation.goToDefinition,
-    goToImplementation: languageNavigation.goToImplementation,
-    goToNextBookmark: bookmarkActions.goToNextBookmark,
-    goToNextProblem: editorDocument.goToNextProblem,
-    goToPreviousBookmark: bookmarkActions.goToPreviousBookmark,
-    goToPreviousProblem: editorDocument.goToPreviousProblem,
-    goToSourceDefinition: languageNavigation.goToSourceDefinition,
-    goToSuperMethod: frameworkIntelligence.goToSuperMethod,
-    goToTestForActiveDocument: editorDocument.goToTestForActiveDocument,
-    goToTypeDefinition: languageNavigation.goToTypeDefinition,
-    hasEslintDiagnosticAtCursor,
-    hasPhpstanDiagnosticAtCursor,
-    ignorePhpstanIssueAtCursor,
-    indexProgress,
-    installingManagedPhpactor,
-    installManagedPhpactor,
-    intelligenceMode,
-    isActiveDocumentJsTest,
-    isActiveDocumentPhpTest,
-    isLanguageServerActiveForWorkspace,
-    isNavigationCommandScopeCurrent: editorDocument.isNavigationCommandScopeCurrent,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    languageServerPlan,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    markFloatingSurfaceActivated,
-    moveActiveTabToAdjacentGroup,
-    navigateBackward: navigationHistoryActions.navigateBackward,
-    navigateForwardInHistory: navigationHistoryActions.navigateForwardInHistory,
-    navigationHistory,
-    openAppearanceSettingsPanel,
-    openArtisanMakePalette,
-    openArtisanRoutesPanel: taskDebugNavigation.openArtisanRoutesPanel,
-    openExpressRoutesPanel: taskDebugNavigation.openExpressRoutesPanel,
-    openCallHierarchy,
-    openFileHistory: gitHistory.openFileHistory,
-    openFileReferencesPanel,
-    openFileStructure: openFileStructure,
-    openGitBranchPanel: gitPanels.openGitBranchPanel,
-    openGitStashPanel: gitPanels.openGitStashPanel,
-    openLocalHistory: localHistory.openLocalHistory,
-    openJsTestResultsPanel: taskDebugNavigation.openJsTestResultsPanel,
-    openMarkdownPreview: editorDocument.openMarkdownPreview,
-    openPhpTestResultsPanel: taskDebugNavigation.openPhpTestResultsPanel,
-    openRecentFilesSwitcher,
-    openRecentLocationsPanel,
-    openReferencesPanel,
-    openSearchEverywhere,
-    openSettingsPanel,
-    openTypeHierarchy,
-    openWorkspace,
-    openWorkspacePath,
-    openWorkspaceSymbols,
-    phpstanAnalysisRunning,
-    phpTools,
-    pintRunning,
-    quitApplication,
-    refreshGitStatus,
-    refreshPhpTree: refreshPhpTree,
-    refreshWorkspace: refreshWorkspace,
-    refreshWorkspaceTodos: todos.refreshWorkspaceTodos,
-    renameActiveDocument: fileOperations.renameActiveDocument,
-    reopenClosedDocument: documentSaveClose.documentLifecycle.reopenClosedDocument,
-    resetEditorFontSize,
-    revertSelectedGitCommit: gitHistory.revertSelectedGitCommit,
-    rewordSelectedGitCommit: gitHistory.rewordSelectedGitCommit,
-    runAllJsTestsForActiveDocument: taskDebug.runAllJsTestsForActiveDocument,
-    runAllTestsForActiveDocument: taskDebug.runAllTestsForActiveDocument,
-    runEslintAnalysis,
-    runInActiveTerminal: taskDebug.runInActiveTerminal,
-    runJsTestForActiveDocument: taskDebug.runJsTestForActiveDocument,
-    runPhpstanAnalysis,
-    runTestForActiveDocument: taskDebug.runTestForActiveDocument,
-    saveActiveDocument,
-    selectedGitChange,
-    setClassOpenOpen,
-    setLanguageServerSetupOpen,
-    setPaletteOpen,
-    setQuickOpenOpen,
-    setRecentFilesSwitcherOpen,
-    setSidebarView,
-    setTextSearchOpen,
-    setWorkspaceSymbolsOpen,
-    showBottomPanelView: taskDebug.showBottomPanelView,
-    splitActiveEditorGroup,
-    startHardReindex,
-    startIndexScan,
-    startLanguageServer,
-    startPhpReindex,
-    stopLanguageServer,
-    agents,
-    toggleBookmarkAtCursor: bookmarkActions.toggleBookmarkAtCursor,
-    toggleBookmarksPanel: bookmarkActions.toggleBookmarksPanel,
-    toggleBottomPanel: taskDebug.toggleBottomPanel,
-    toggleEditorFontLigatures,
-    toggleGitBlame: gitHistory.toggleGitBlame,
-    toggleSmartMode,
-    toggleTodoPanel: todos.toggleTodoPanel,
-    toggleWorkspaceTrust,
-    workspaceDescriptor,
-    workspaceRoot,
-    workspaceTrust,
-    zoomEditorFontIn,
-    zoomEditorFontOut,
-  });
-
-  const runCommand = useCallback<CommandExecutionRunner>(
-    (commandId, context = editorDocument.commandContext) => {
-      const requestedRoot = currentWorkspaceRootRef.current;
-
-      return executeCommandAndReport(commandRegistry, commandId, context, (error) =>
-        reportErrorForActiveWorkspaceRoot(requestedRoot, "Command", error),
-      );
-    },
-    [editorDocument.commandContext, commandRegistry, reportErrorForActiveWorkspaceRoot],
-  );
-
-  useWorkbenchNativeMenuCommands({
-    commandContext: editorDocument.commandContext,
-    reportError,
-    runCommand,
-  });
-
-  const searchEverywhereModel = searchEverywhereModelFor(
-    commandRegistry.list(),
-    editorDocument.commandContext,
-  );
-
-  useEffect(() => {
-    if (workspaceSettings.javaScriptTypeScriptValidation) {
-      return;
-    }
-
-    resetJavaScriptTypeScriptDiagnosticsForRoot(workspaceRoot, workspaceRuntimeOwner ?? undefined);
-  }, [
-    resetJavaScriptTypeScriptDiagnosticsForRoot,
-    workspaceSettings.javaScriptTypeScriptValidation,
-    workspaceRuntimeOwner,
-    workspaceRoot,
-  ]);
-
-  useWorkbenchSidebarDataRefresh({
-    indexProgress,
-    refreshGitStatus,
-    refreshPhpTree: refreshPhpTree,
-    sidebarView,
-    workspaceRoot,
-  });
-
-  useEffect(() => {
-    if (!workspaceRoot) {
-      return;
-    }
-
-    if (indexProgress.status !== "completed") {
-      return;
-    }
-
-    if (indexProgress.rootPath && !workspaceRootKeysEqual(indexProgress.rootPath, workspaceRoot)) {
-      return;
-    }
-
-    if (expandedPhpFilePaths.size === 0) {
-      return;
-    }
-
-    const refreshKey = `${indexProgress.rootPath || workspaceRoot}:${indexProgress.indexedFiles}`;
-
-    if (lastPhpFileOutlineRefreshKeyRef.current === refreshKey) {
-      return;
-    }
-
-    lastPhpFileOutlineRefreshKeyRef.current = refreshKey;
-    expandedPhpFilePaths.forEach((path) => {
-      void loadPhpFileOutline(path);
-    });
-  }, [
-    expandedPhpFilePaths,
-    indexProgress.indexedFiles,
-    indexProgress.rootPath,
-    indexProgress.status,
-    loadPhpFileOutline,
-    workspaceRoot,
-  ]);
-
-  const keyboardShortcutActions = useWorkbenchKeyboardShortcutActions(
-    closeFloatingSurface,
-    openSearchEverywhere,
-  );
-
-  useWorkbenchKeyboardShortcuts({
-    actions: keyboardShortcutActions,
-    appSettingsRef,
-    bareKeyShortcutsRef,
-    commandContext: editorDocument.commandContext,
     commandRegistry,
-    doubleShiftDetectorRef,
-    editorSurfaceIdentity: editorDocument.navigationSurfaceIdentity,
-    keymap: appSettings.keymap,
-    runCommand,
-  });
-
-  usePersistWorkspaceNavigationSession({
-    bottomPanelView,
-    documents,
-    editorGroups,
-    editorSessionOwnerKeyForRoot,
-    persistWorkspaceSettings,
-    reportErrorForActiveWorkspaceRoot,
-    sidebarView,
-    snapshotPersistedWorkspaceSession,
-    workspaceEditorViewStatesRef,
-    workspaceRoot,
-    workspaceSessionRestoredRef,
-    workspaceSettingsRef,
-    workspaceSettingsSaveCoordinator,
-  });
-
-  useFlushWorkspaceNavigationSessionOnBlur(
-    persistCurrentWorkspaceSession,
-    reportErrorForActiveWorkspaceRoot,
-    workspaceRoot,
-  );
-
-  useInitialAppSettingsHydration({
-    applyAppSettings,
-    beginStartupRestore,
-    hasRestoredRef,
-    onAppSettingsHydrated: agents.markAppSettingsHydrated,
-    reportError,
-    settingsGateway,
-  });
-
-  useWorkbenchWorkspaceFileChangeSubscription({
-    currentWorkspaceRootRef,
-    externallyRemovedDocumentRootByPathRef,
-    gateway: workspaceFileChangeGateway,
-    handleExternalFileChange,
-    handleWorkspaceDiscoveryFileChange,
-    handleWorkspaceFileChange: fileOperations.handleWorkspaceFileChange,
-    markExternallyRemovedDocumentPath,
-    refreshEditorConfigRoot,
-    reportError,
-    setMessage,
-    workspaceRoot,
-  });
-
-  useManagedLanguageServerInstallSubscriptions({
-    handleManagedPhpactorInstallCompletion,
-    handleManagedTypeScriptInstallCompletion,
-    phpToolGateway,
-    reportError,
-  });
-
-  useWorkbenchLanguageRuntimeSubscriptionsCoordinator({
-    workspaceRoot,
-    workspaceRuntimeOwner,
-    resolveCurrentWorkspaceRuntimeOwner,
-    resolveWorkspaceRuntimeOwnerForDiagnosticsEvent,
-    currentWorkspaceRootRef,
-    diagnosticsFlushSchedulerRef,
-    languageServerDiagnosticsCoalescerRef,
-    javaScriptTypeScriptDiagnosticsCoalescerRef,
-    languageServerDiagnosticsGateway,
-    javaScriptTypeScriptLanguageServerDiagnosticsGateway,
-    createDiagnosticsCoalescer,
-    applyLanguageServerDiagnostics,
-    applyLanguageServerDiagnosticsBatch,
-    applyJavaScriptTypeScriptLanguageServerDiagnostics,
-    applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
-    reportLanguageServerError,
-    reportJavaScriptTypeScriptLanguageServerError,
-  });
-  useWorkbenchLanguageRuntimeEffects({
-    activePath,
-    changedDocumentSync: {
-      currentWorkspaceRootRef,
-      incrementalSyncRef: javaScriptTypeScriptIncrementalSyncRef,
-      isDocumentSessionLifecycleAuthorityCurrent,
-      resolveDocumentSessionLifecycleAuthority,
-      scheduleDocumentChange,
-      scheduleJavaScriptTypeScriptDocumentChange,
-      subscribeChangedDocuments,
-      workspaceIdentityDescriptorRef,
-      workspaceRuntimeOwnerRef,
-    },
-    documentsRef,
-    javaScriptTypeScript: {
-      documentSyncRuntimeSignatureRef: javaScriptTypeScriptDocumentSyncRuntimeSignatureRef,
-      languageServerRuntimeStatus: javaScriptTypeScriptLanguageServerRuntimeStatus,
-      languageServerRuntimeStatusRoot: javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-      resetLanguageServerDocuments: resetJavaScriptTypeScriptLanguageServerDocuments,
-      syncOpenDocument: syncOpenJavaScriptTypeScriptDocument,
-    },
-    openDocumentPaths,
-    php: {
-      documentSyncRuntimeSignatureRef,
-      languageServerRuntimeStatus,
-      languageServerRuntimeStatusRoot,
-      resetLanguageServerDocuments,
-      syncOpenDocument,
-    },
-    runtimeOwner: workspaceRuntimeOwner,
-    workspaceRuntimeOwnerClaimsRef,
-    workspaceRoot,
-  });
-
-  const {
     diagnosticsSummary,
     effectiveNotices,
     fileStructureCanIncludeInheritedMembers,
     fileStructureLoading,
     fileStructureOutline,
+    installManagedPhpactor,
+    installManagedTypeScriptLanguageServer,
     mergedLanguageServerDiagnosticsByPath,
-  } = useWorkbenchDiagnosticPresentation({
-    activeDocument,
-    fileStructureScope,
-    frameworkDiagnosticsByPath,
-    isExternallyRemovedDocumentPath,
-    javaScriptTypeScriptDiagnosticsByPath,
-    javaScriptTypeScriptFileStructureLoadingForDocument,
-    javaScriptTypeScriptFileStructureOutlineForDocument,
-    languageServerDiagnosticsByPath,
-    loadingInheritedPhpFileOutlinePaths,
-    loadingPhpFileOutlinePaths,
-    notices,
-    phpFileOutlinesByPath,
-    phpInheritedFileOutlinesByPath,
-    phpLocalDiagnosticsByPath,
+    openSearchEverywhere,
+    openSettingsPanel,
+    openWorkspaceSymbols,
+    runCommand,
+    saveWorkbenchSettings,
+    searchEverywhereModel,
+    toggleSmartMode,
+    toggleWorkspaceTrust,
+  } = useWorkbenchCommandEffectsCoordinator({
+    diagnosticObserverServices: {
+      activeEslintBufferClean,
+      activeEslintFixes,
+      activePhpstanBufferClean,
+      applyJavaScriptTypeScriptLanguageServerDiagnostics,
+      applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
+      applyLanguageServerDiagnostics,
+      applyLanguageServerDiagnosticsBatch,
+      disableEslintRuleAtCursor,
+      eslintAnalysisRunning,
+      externallyRemovedDocumentRootByPathRef,
+      fileStructureScope,
+      fixAllEslintInActiveFile,
+      handleExternalFileChange,
+      hasEslintDiagnosticAtCursor,
+      hasPhpstanDiagnosticAtCursor,
+      ignorePhpstanIssueAtCursor,
+      isExternallyRemovedDocumentPath,
+      javaScriptTypeScriptFileStructureLoadingForDocument,
+      javaScriptTypeScriptFileStructureOutlineForDocument,
+      lastPhpFileOutlineRefreshKeyRef,
+      loadPhpFileOutline,
+      markExternallyRemovedDocumentPath,
+      openFileStructure,
+      openFileStructureWithInitialQuery,
+      phpstanAnalysisRunning,
+      resetJavaScriptTypeScriptDiagnosticsForRoot,
+      resolveWorkspaceRuntimeOwnerForDiagnosticsEvent,
+      runEslintAnalysis,
+      runPhpstanAnalysis,
+      scheduleDocumentChange,
+      subscribeChangedDocuments,
+    },
+    workspaceRuntimeServices: {
+      activateWorkspaceTab,
+      autoStartedLanguageServerRootRef,
+      clearWorkspaceIndex,
+      frameworkIntelligence,
+      handleWorkspaceDiscoveryFileChange,
+      indexProgress,
+      intelligenceMode,
+      intelligenceModeRef,
+      isLanguageServerActiveForWorkspace,
+      languageServerSetupOpen,
+      openWorkspace,
+      openWorkspacePath,
+      openWorkspaceRequestTokenRef,
+      phpLanguageServerAutostartAttemptsByRootRef,
+      refreshJavaScriptTypeScriptLanguageServerPlan,
+      refreshLanguageServerPlan,
+      refreshWorkspace,
+      reportErrorForActiveWorkspaceRoot,
+      resetJavaScriptTypeScriptLanguageServerDocuments,
+      resetLanguageServerDocuments,
+      resolveCurrentWorkspaceRuntimeOwner,
+      runGitRepositoryDiscovery,
+      runPhpWorkspaceProbe,
+      setInstallingManagedTypeScriptLanguageServer,
+      setIntelligenceMode,
+      setLanguageServerSetupOpen,
+      setWorkspaceSymbolsQuery,
+      setWorkspaceTrust,
+      smartModeActions,
+      smartModeGateway,
+      smartModeRequestGenerationRef,
+      smartModeRequestIntentRef,
+      startHardReindex,
+      startIndexScan,
+      startInitialIndexScan,
+      startLanguageServer,
+      startPhpReindex,
+      stopBackgroundProjectRuntimes,
+      stopLanguageServer,
+      stopLanguageServerRuntime,
+      stopProjectLanguageServersAfterTrustRevocation,
+      workspaceCloseGenerationByRootRef,
+      workspaceFileChangeGateway,
+      workspaceSessionRestoredRef,
+    },
+    editorActionServices: {
+      bookmarkActions,
+      canReopenClosedDocument,
+      documentSaveClose,
+      editorDocument,
+      editorMenuCommandRunner: options.editorMenuCommandRunner,
+      editorSessionOwnerKeyForRoot,
+      editorSurfaceCommandRunner,
+      fileOperations,
+      focusAdjacentEditorGroup,
+      isDocumentSessionLifecycleAuthorityCurrent,
+      languageNavigation,
+      moveActiveTabToAdjacentGroup,
+      navigationHistory,
+      navigationHistoryActions,
+      refreshEditorConfigRoot,
+      resetEditorFontSize,
+      resolveDocumentSessionLifecycleAuthority,
+      runCloseActiveEditorGroup,
+      runCloseActiveEditorGroupSurface,
+      runCloseDocument,
+      saveActiveDocument,
+      scheduleJavaScriptTypeScriptDocumentChange,
+      splitActiveEditorGroup,
+      toggleEditorFontLigatures,
+      zoomEditorFontIn,
+      zoomEditorFontOut,
+    },
+    surfaceCommandServices: {
+      closeGitDiffPreview,
+      markFloatingSurfaceActivated,
+      openArtisanMakePalette,
+      openCallHierarchy,
+      openCommandPaletteWithInitialQuery,
+      openFileReferencesPanel,
+      openRecentFilesSwitcher,
+      openRecentLocationsPanel,
+      openReferencesPanel,
+      openTypeHierarchy,
+      quitApplication,
+      resetSearchEverywhere,
+      searchEverywhereModelFor,
+      setInstallingManagedPhpactor,
+      setMessage,
+      setNotices,
+      setPhpTools,
+      setSettingsInitialSection,
+      setSettingsOpen,
+      setSidebarView,
+      setTextSearchOpen,
+      settingsOpen,
+    },
+    taskGitServices: {
+      activePackageScripts,
+      commitGitChanges,
+      gitDiffLoading,
+      gitHistory,
+      gitPanels,
+      isActiveDocumentJsTest,
+      isActiveDocumentPhpTest,
+      jsTestExplorerScopeRunner: options.jsTestExplorerScopeRunner,
+      refreshGitStatus,
+      selectedGitChange,
+      taskDebug,
+      taskDebugNavigation,
+      todos,
+    },
+    commandIntegrationServices: {
+      agents,
+      applyJavaScriptTypeScriptSettingsChange,
+      bareKeyShortcutsRef,
+      canSearchClassOpenSymbols,
+      doubleShiftDetectorRef,
+      hasNetteApplicationFramework,
+      hasSymfonyFramework,
+      javaScriptTypeScriptTrustAutostartRef,
+      localHistory,
+      notices,
+      pintGateway,
+      quickOpenPrefixDispatch,
+      refreshJavaScriptTypeScriptPlanAfterTrustGrant,
+      refreshPhpTree,
+      reportError,
+    },
+    editorDocumentState: { activeDocument, activeImage, activeMarkdownPreview, activePath },
+    editorSessionState: { documents, documentsRef, editorGroups, openDocumentPaths, openDocuments },
+    workspaceIdentity: {
+      workspaceRoot,
+      workspaceDescriptor,
+      workspaceIdentityDescriptor,
+      workspaceIdentityDescriptorRef,
+    },
+    workspaceAuthority: {
+      currentWorkspaceRootRef,
+      workspaceRuntimeOwner,
+      workspaceRuntimeOwnerRef,
+      workspaceRuntimeOwnerClaimsRef,
+    },
+    workspaceTrustState: {
+      workspaceTrust,
+      workspaceTrustGateway,
+      workspaceTrustIntentCoordinatorRef,
+      workspaceTrustRevisionByOwnerRef,
+    },
+    workspaceSettingsState: {
+      workspaceSettings,
+      workspaceSettingsRef,
+      workspaceSettingsSaveCoordinator,
+      workspaceEditorViewStatesRef,
+    },
+    applicationSettings: { appSettings, appSettingsRef, applyAppSettings, persistAppSettings },
+    settingsPersistence: {
+      persistWorkspaceSettings,
+      settingsGateway,
+      hasRestoredRef,
+      beginStartupRestore,
+    },
+    diagnosticState: {
+      javaScriptTypeScriptDiagnosticsByPath,
+      languageServerDiagnosticsByPath,
+      frameworkDiagnosticsByPath,
+      phpLocalDiagnosticsByPath,
+    },
+    diagnosticCoalescers: {
+      diagnosticsFlushSchedulerRef,
+      languageServerDiagnosticsCoalescerRef,
+      javaScriptTypeScriptDiagnosticsCoalescerRef,
+    },
+    diagnosticGateways: {
+      languageServerDiagnosticsGateway,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      reportLanguageServerError,
+      reportJavaScriptTypeScriptLanguageServerError,
+    },
+    surfaceVisibility: { paletteOpen, quickOpenOpen, classOpenOpen, workspaceSymbolsOpen },
+    surfaceSecondaryVisibility: {
+      searchEverywhereOpen,
+      fileStructureOpen,
+      recentFilesSwitcherOpen,
+      recentLocationsPanelOpen,
+    },
+    hierarchyVisibility: {
+      callHierarchyView,
+      typeHierarchyView,
+      referencesView,
+      implementationChooser,
+    },
+    surfacePrimarySetters: {
+      setPaletteOpen,
+      setQuickOpenOpen,
+      setClassOpenOpen,
+      setWorkspaceSymbolsOpen,
+    },
+    surfaceSecondarySetters: {
+      setSearchEverywhereOpen,
+      setFileStructureOpen,
+      setRecentFilesSwitcherOpen,
+      setRecentLocationsPanelOpen,
+    },
+    hierarchySetters: {
+      setCallHierarchyView,
+      setTypeHierarchyView,
+      setReferencesView,
+      setImplementationChooser,
+    },
+    phpOutlineState: {
+      expandedPhpFilePaths,
+      loadingInheritedPhpFileOutlinePaths,
+      loadingPhpFileOutlinePaths,
+      phpFileOutlinesByPath,
+      phpInheritedFileOutlinesByPath,
+    },
+    languageRuntimeStatus: {
+      languageServerPlan,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    },
+    installState: {
+      installingManagedPhpactor,
+      installingManagedTypeScriptLanguageServer,
+      phpToolGateway,
+      phpTools,
+    },
+    navigationPersistence: {
+      bottomPanelView,
+      sidebarView,
+      snapshotPersistedWorkspaceSession,
+      persistCurrentWorkspaceSession,
+    },
+    runtimeSync: {
+      documentSyncRuntimeSignatureRef,
+      javaScriptTypeScriptDocumentSyncRuntimeSignatureRef,
+      javaScriptTypeScriptIncrementalSyncRef,
+      syncOpenDocument,
+      syncOpenJavaScriptTypeScriptDocument,
+    },
   });
+
   const reportCommandError = useCallback(
     (error: unknown) => reportErrorForActiveWorkspaceRoot(workspaceRoot, "Command", error),
     [reportErrorForActiveWorkspaceRoot, workspaceRoot],
