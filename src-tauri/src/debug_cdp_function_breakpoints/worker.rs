@@ -2,7 +2,7 @@ use super::installation::{
     evaluate_and_install_function_breakpoint, parse_call_frame_function_location,
     FunctionBreakpointCdp, FunctionBreakpointResolutionFailure, FunctionLocation,
 };
-use super::state::FunctionBreakpointSessionState;
+use super::state::{FunctionBreakpointSessionState, HiddenContinuePhase};
 use crate::debug_adapter::{
     DebugEventPayload, DebugFunctionBreakpointVerification, DebugOutputStream, DebugStopReason,
 };
@@ -12,7 +12,17 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[cfg(test)]
+mod race_tests;
+
 const FUNCTION_BREAKPOINT_RERESOLUTION_QUIET_PERIOD: Duration = Duration::from_millis(10);
+
+struct SweepInstall {
+    breakpoint_id: String,
+    function_location: Option<FunctionLocation>,
+    function_name: String,
+    logical_id: String,
+}
 
 pub(crate) fn run_reresolution_worker(
     triggers: Receiver<()>,
@@ -34,6 +44,30 @@ pub(crate) fn run_reresolution_worker(
         if !is_current() {
             fail_closed();
             return;
+        }
+        let hidden_continue = match state.hidden_continue_snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(()) => {
+                fail_closed();
+                return;
+            }
+        };
+        match hidden_continue.phase {
+            HiddenContinuePhase::AwaitingPause {
+                desired_generation,
+                revision,
+            }
+            | HiddenContinuePhase::Captured {
+                desired_generation,
+                revision,
+            } if desired_generation != state.desired_generation.load(Ordering::Acquire)
+                || revision != state.revision.load(Ordering::Acquire) =>
+            {
+                fail_closed();
+                return;
+            }
+            HiddenContinuePhase::AwaitingPause { .. } => continue 'worker,
+            HiddenContinuePhase::Captured { .. } | HiddenContinuePhase::None => {}
         }
         let Ok(publication_guard) = state.publication.lock() else {
             fail_closed();
@@ -69,25 +103,21 @@ pub(crate) fn run_reresolution_worker(
         }
         let sweep_revision = state.revision.load(Ordering::Acquire);
         let sweep_generation = state.desired_generation.load(Ordering::Acquire);
-        let pending: Vec<_> = registrations_guard
+        let mut pending: Vec<_> = registrations_guard
             .unverified_by_logical_id
             .iter()
             .map(|(id, name)| (id.clone(), name.clone()))
             .collect();
+        pending.sort_unstable_by(|left, right| left.0.cmp(&right.0));
         drop(registrations_guard);
         drop(publication_guard);
-        let mut resolved = Vec::new();
-        let mut resolved_function_locations = Vec::new();
+        let mut installed_in_sweep = Vec::new();
         let mut request_failed = false;
-        let capture_function_location = match state.has_hidden_continue_pause() {
-            Ok(capture) => capture,
-            Err(()) => {
-                fail_closed();
-                return;
-            }
-        };
+        let capture_function_location =
+            matches!(hidden_continue.phase, HiddenContinuePhase::Captured { .. });
         for (id, function_name) in pending {
             if !is_current() {
+                let _ = remove_unpublished_sweep(&mut cdp, &state, installed_in_sweep.as_slice());
                 fail_closed();
                 return;
             }
@@ -95,6 +125,7 @@ pub(crate) fn run_reresolution_worker(
                 break;
             }
             let Ok(registrations_guard) = state.registrations.lock() else {
+                let _ = remove_unpublished_sweep(&mut cdp, &state, installed_in_sweep.as_slice());
                 fail_closed();
                 return;
             };
@@ -116,50 +147,25 @@ pub(crate) fn run_reresolution_worker(
             );
             match result {
                 Ok(Some(installed)) => {
-                    let cdp_id = installed.breakpoint_id;
-                    let Ok(publication_guard) = state.publication.lock() else {
-                        remove_or_track_unpublished_install(&mut cdp, &state, cdp_id);
+                    installed_in_sweep.push(SweepInstall {
+                        breakpoint_id: installed.breakpoint_id,
+                        function_location: installed.function_location,
+                        function_name,
+                        logical_id: id,
+                    });
+                    let current_hidden_continue = state.hidden_continue_snapshot();
+                    let epoch_is_current = current_hidden_continue
+                        .as_ref()
+                        .is_ok_and(|snapshot| snapshot.epoch == hidden_continue.epoch);
+                    if epoch_is_current {
+                        continue;
+                    }
+                    let removed =
+                        remove_unpublished_sweep(&mut cdp, &state, installed_in_sweep.as_slice());
+                    if current_hidden_continue.is_err() || !removed {
                         fail_closed();
                         return;
-                    };
-                    let candidate_is_current =
-                        is_current() && state.revision.load(Ordering::Acquire) == sweep_revision;
-                    let Ok(mut registrations_guard) = state.registrations.lock() else {
-                        drop(publication_guard);
-                        remove_or_track_unpublished_install(&mut cdp, &state, cdp_id);
-                        fail_closed();
-                        return;
-                    };
-                    let candidate_is_current = candidate_is_current
-                        && !registrations_guard.by_logical_id.contains_key(&id)
-                        && registrations_guard
-                            .unverified_by_logical_id
-                            .get(&id)
-                            .map(String::as_str)
-                            == Some(function_name.as_str());
-                    if candidate_is_current {
-                        registrations_guard
-                            .by_logical_id
-                            .insert(id.clone(), cdp_id.clone());
-                        registrations_guard.unverified_by_logical_id.remove(&id);
                     }
-                    drop(registrations_guard);
-                    drop(publication_guard);
-                    if !candidate_is_current {
-                        remove_or_track_unpublished_install(&mut cdp, &state, cdp_id);
-                        if !is_current() {
-                            fail_closed();
-                            return;
-                        }
-                        break;
-                    }
-                    if let Some(location) = installed.function_location {
-                        resolved_function_locations.push(location);
-                    }
-                    resolved.push(DebugFunctionBreakpointVerification { id, verified: true });
-                }
-                Ok(None) => {}
-                Err(FunctionBreakpointResolutionFailure::Recoverable(_)) => {
                     if !is_current()
                         || state.revision.load(Ordering::Acquire) != sweep_revision
                         || state.desired_generation.load(Ordering::Acquire) != sweep_generation
@@ -167,16 +173,38 @@ pub(crate) fn run_reresolution_worker(
                         fail_closed();
                         return;
                     }
+                    continue 'worker;
+                }
+                Ok(None) => {}
+                Err(FunctionBreakpointResolutionFailure::Recoverable(_)) => {
+                    if !is_current()
+                        || state.revision.load(Ordering::Acquire) != sweep_revision
+                        || state.desired_generation.load(Ordering::Acquire) != sweep_generation
+                    {
+                        let _ = remove_unpublished_sweep(
+                            &mut cdp,
+                            &state,
+                            installed_in_sweep.as_slice(),
+                        );
+                        fail_closed();
+                        return;
+                    }
                     request_failed = true;
                     break;
                 }
                 Err(FunctionBreakpointResolutionFailure::InstallUncertain(_)) => {
+                    let _ =
+                        remove_unpublished_sweep(&mut cdp, &state, installed_in_sweep.as_slice());
                     fail_closed();
                     return;
                 }
             }
         }
         if request_failed {
+            if !remove_unpublished_sweep(&mut cdp, &state, installed_in_sweep.as_slice()) {
+                fail_closed();
+                return;
+            }
             surface_hidden_pause_after_reresolution_failure(
                 &state,
                 HiddenPauseSettleContext {
@@ -189,6 +217,92 @@ pub(crate) fn run_reresolution_worker(
                 },
             );
             continue 'worker;
+        }
+        let current_hidden_continue = state.hidden_continue_snapshot();
+        let epoch_is_current = current_hidden_continue
+            .as_ref()
+            .is_ok_and(|snapshot| snapshot.epoch == hidden_continue.epoch);
+        if !epoch_is_current {
+            let removed = remove_unpublished_sweep(&mut cdp, &state, installed_in_sweep.as_slice());
+            if current_hidden_continue.is_err() || !removed {
+                fail_closed();
+                return;
+            }
+            if !is_current()
+                || state.revision.load(Ordering::Acquire) != sweep_revision
+                || state.desired_generation.load(Ordering::Acquire) != sweep_generation
+            {
+                fail_closed();
+                return;
+            }
+            continue 'worker;
+        }
+        let Ok(publication_guard) = state.publication.lock() else {
+            let _ = remove_unpublished_sweep(&mut cdp, &state, installed_in_sweep.as_slice());
+            fail_closed();
+            return;
+        };
+        let authority_is_current = is_current()
+            && state.revision.load(Ordering::Acquire) == sweep_revision
+            && state.desired_generation.load(Ordering::Acquire) == sweep_generation;
+        let Ok(mut registrations_guard) = state.registrations.lock() else {
+            drop(publication_guard);
+            let _ = remove_unpublished_sweep(&mut cdp, &state, installed_in_sweep.as_slice());
+            fail_closed();
+            return;
+        };
+        let commit_hidden_continue = state.hidden_continue_snapshot();
+        let hidden_epoch_is_current = commit_hidden_continue
+            .as_ref()
+            .is_ok_and(|snapshot| snapshot.epoch == hidden_continue.epoch);
+        let candidates_are_current = authority_is_current
+            && hidden_epoch_is_current
+            && installed_in_sweep.iter().all(|installed| {
+                !registrations_guard
+                    .by_logical_id
+                    .contains_key(&installed.logical_id)
+                    && registrations_guard
+                        .unverified_by_logical_id
+                        .get(&installed.logical_id)
+                        .map(String::as_str)
+                        == Some(installed.function_name.as_str())
+            });
+        if candidates_are_current {
+            for installed in &installed_in_sweep {
+                registrations_guard.by_logical_id.insert(
+                    installed.logical_id.clone(),
+                    installed.breakpoint_id.clone(),
+                );
+                registrations_guard
+                    .unverified_by_logical_id
+                    .remove(&installed.logical_id);
+            }
+        }
+        drop(registrations_guard);
+        drop(publication_guard);
+        if !candidates_are_current {
+            let removed = remove_unpublished_sweep(&mut cdp, &state, installed_in_sweep.as_slice());
+            if commit_hidden_continue.is_err()
+                || !removed
+                || !is_current()
+                || state.revision.load(Ordering::Acquire) != sweep_revision
+                || state.desired_generation.load(Ordering::Acquire) != sweep_generation
+            {
+                fail_closed();
+                return;
+            }
+            continue 'worker;
+        }
+        let mut resolved = Vec::with_capacity(installed_in_sweep.len());
+        let mut resolved_function_locations = Vec::with_capacity(installed_in_sweep.len());
+        for installed in installed_in_sweep {
+            if let Some(location) = installed.function_location {
+                resolved_function_locations.push(location);
+            }
+            resolved.push(DebugFunctionBreakpointVerification {
+                id: installed.logical_id,
+                verified: true,
+            });
         }
         loop {
             let settlement = resume_after_hidden_continue_pause(
@@ -670,25 +784,43 @@ fn next_break_location(
     }))
 }
 
+fn remove_unpublished_sweep(
+    cdp: &mut impl FunctionBreakpointCdp,
+    state: &FunctionBreakpointSessionState,
+    installed: &[SweepInstall],
+) -> bool {
+    let mut removed = true;
+    for candidate in installed {
+        removed &=
+            remove_or_track_unpublished_install(cdp, state, candidate.breakpoint_id.as_str());
+    }
+    removed
+}
+
 fn remove_or_track_unpublished_install(
     cdp: &mut impl FunctionBreakpointCdp,
     state: &FunctionBreakpointSessionState,
-    cdp_id: String,
-) {
+    cdp_id: &str,
+) -> bool {
     if cdp
         .request("Debugger.removeBreakpoint", json!({"breakpointId":cdp_id}))
         .is_ok()
     {
-        return;
+        return true;
     }
     let mut registrations = match state.registrations.lock() {
         Ok(registrations) => registrations,
         Err(poisoned) => poisoned.into_inner(),
     };
-    if registrations.unpublished_cdp_ids.contains(&cdp_id) {
-        return;
+    if registrations
+        .unpublished_cdp_ids
+        .iter()
+        .any(|tracked| tracked == cdp_id)
+    {
+        return false;
     }
-    registrations.unpublished_cdp_ids.push(cdp_id);
+    registrations.unpublished_cdp_ids.push(cdp_id.to_string());
+    false
 }
 
 #[cfg(test)]
@@ -1055,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    fn pause_captured_during_install_is_settled_before_verification_publication() {
+    fn captured_pause_is_settled_before_verification_publication() {
         let state = Arc::new(FunctionBreakpointSessionState::default());
         state.desired_generation.store(1, Ordering::Release);
         state
@@ -1065,6 +1197,20 @@ mod tests {
             .unverified_by_logical_id
             .insert("fn-1".to_string(), "render".to_string());
         assert!(state.begin_hidden_continue_step().unwrap());
+        assert_eq!(
+            state.capture_hidden_continue_pause(&json!({
+                "reason":"step",
+                "hitBreakpoints":[],
+                "callFrames":[{
+                    "location":{
+                        "scriptId":"entry-script",
+                        "lineNumber":0,
+                        "columnNumber":10
+                    }
+                }]
+            })),
+            HiddenPauseCapture::Captured
+        );
         let trace = Arc::new(Mutex::new(Vec::new()));
         let (entered_tx, entered_rx) = mpsc::sync_channel(4);
         let (release_tx, release_rx) = mpsc::sync_channel(1);
@@ -1073,6 +1219,16 @@ mod tests {
             release_install: release_rx,
             replies: VecDeque::from([
                 Ok(json!({"result":{"type":"function","objectId":"function:1"}})),
+                Ok(json!({
+                    "internalProperties":[{
+                        "name":"[[FunctionLocation]]",
+                        "value":{"value":{
+                            "scriptId":"entry-script",
+                            "lineNumber":0,
+                            "columnNumber":20
+                        }}
+                    }]
+                })),
                 Ok(json!({"breakpointId":"cdp-fn-1"})),
                 Ok(json!({})),
             ]),
@@ -1114,21 +1270,11 @@ mod tests {
         );
         assert_eq!(
             entered_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            "Debugger.setBreakpointOnFunctionCall"
+            "Runtime.getProperties"
         );
         assert_eq!(
-            state.capture_hidden_continue_pause(&json!({
-                "reason":"step",
-                "hitBreakpoints":[],
-                "callFrames":[{
-                    "location":{
-                        "scriptId":"entry-script",
-                        "lineNumber":0,
-                        "columnNumber":10
-                    }
-                }]
-            })),
-            HiddenPauseCapture::Captured
+            entered_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            "Debugger.setBreakpointOnFunctionCall"
         );
         release_tx.send(()).unwrap();
         assert_eq!(
@@ -1143,6 +1289,7 @@ mod tests {
             trace.lock().unwrap().as_slice(),
             [
                 "request:Runtime.evaluate",
+                "request:Runtime.getProperties",
                 "request:Debugger.setBreakpointOnFunctionCall",
                 "request:Debugger.resume",
                 "event:verified"

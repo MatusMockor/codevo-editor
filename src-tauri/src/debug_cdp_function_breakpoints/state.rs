@@ -11,6 +11,7 @@ pub(crate) struct FunctionBreakpointSessionState {
     pub(crate) revision: AtomicU64,
     pub(crate) desired_generation: AtomicU64,
     pub(crate) publication: Mutex<()>,
+    hidden_continue_epoch: AtomicU64,
     pub(super) hidden_continue_pause: Mutex<Option<HiddenContinuePause>>,
     pub(super) hidden_continue_pending: Mutex<Option<HiddenContinueAuthority>>,
     exact_watch_entry_url: Mutex<Option<String>>,
@@ -105,6 +106,25 @@ pub(crate) enum HiddenPauseCapture {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum HiddenContinuePhase {
+    AwaitingPause {
+        desired_generation: u64,
+        revision: u64,
+    },
+    Captured {
+        desired_generation: u64,
+        revision: u64,
+    },
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct HiddenContinueSnapshot {
+    pub(super) epoch: u64,
+    pub(super) phase: HiddenContinuePhase,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ExactEntryBootstrap {
     Ordinary,
     Watch,
@@ -124,6 +144,7 @@ impl Default for FunctionBreakpointSessionState {
             revision: AtomicU64::new(1),
             desired_generation: AtomicU64::new(0),
             publication: Mutex::new(()),
+            hidden_continue_epoch: AtomicU64::new(0),
             hidden_continue_pause: Mutex::new(None),
             hidden_continue_pending: Mutex::new(None),
             exact_watch_entry_url: Mutex::new(None),
@@ -220,6 +241,27 @@ impl FunctionBreakpointSessionState {
             .lock()
             .map(|pause| pause.is_some())
             .map_err(|_| ())
+    }
+
+    pub(super) fn hidden_continue_snapshot(&self) -> Result<HiddenContinueSnapshot, ()> {
+        let pending = self.hidden_continue_pending.lock().map_err(|_| ())?;
+        let pause = self.hidden_continue_pause.lock().map_err(|_| ())?;
+        let phase = match (pending.as_ref(), pause.as_ref()) {
+            (None, None) => HiddenContinuePhase::None,
+            (Some(authority), None) => HiddenContinuePhase::AwaitingPause {
+                desired_generation: authority.desired_generation,
+                revision: authority.revision,
+            },
+            (None, Some(pause)) => HiddenContinuePhase::Captured {
+                desired_generation: pause.authority.desired_generation,
+                revision: pause.authority.revision,
+            },
+            (Some(_), Some(_)) => return Err(()),
+        };
+        Ok(HiddenContinueSnapshot {
+            epoch: self.hidden_continue_epoch.load(Ordering::Acquire),
+            phase,
+        })
     }
 
     pub(crate) fn begin_hidden_continue_step(&self) -> Result<bool, ()> {
@@ -331,12 +373,8 @@ impl FunctionBreakpointSessionState {
         bootstrap: HiddenBootstrap,
         remaining_steps: u16,
     ) -> Result<bool, ()> {
-        let has_unresolved = self
-            .registrations
-            .lock()
-            .map_err(|_| ())
-            .map(|registrations| !registrations.unverified_by_logical_id.is_empty())?;
-        if !has_unresolved {
+        let registrations = self.registrations.lock().map_err(|_| ())?;
+        if registrations.unverified_by_logical_id.is_empty() {
             return Ok(false);
         }
         let revision = self.revision.load(Ordering::Acquire);
@@ -345,6 +383,11 @@ impl FunctionBreakpointSessionState {
         if pending.is_some() {
             return Err(());
         }
+        self.hidden_continue_epoch
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |epoch| {
+                epoch.checked_add(1)
+            })
+            .map_err(|_| ())?;
         *pending = Some(HiddenContinueAuthority {
             bootstrap,
             desired_generation,
@@ -354,6 +397,7 @@ impl FunctionBreakpointSessionState {
             remaining_steps,
             revision,
         });
+        drop(registrations);
         Ok(true)
     }
 
