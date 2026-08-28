@@ -15,7 +15,9 @@ use crate::git_worktree::{ensure_worktree_path_in_base, safe_agent_task_id};
 use crate::run_blocking_command;
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_registry::{WorkspaceId, WorkspaceRegistry};
-use agent_root_lease::AgentRootLeaseRegistry;
+use agent_root_lease::{
+    AgentRootLeaseRegistry, AgentRootLeaseReleaseDisposition, MAX_AGENT_ROOT_LEASE_TOKEN,
+};
 #[cfg(test)]
 use agent_task_start_authority::revalidate_agent_task_project_authority;
 use agent_task_start_authority::{
@@ -352,6 +354,35 @@ pub(crate) struct AgentRootLeaseReceipt {
     lease_token: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum AgentRootLeaseReleaseKind {
+    Released,
+    NotHeld,
+    ForeignOwner,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentRootLeaseReleaseResult {
+    kind: AgentRootLeaseReleaseKind,
+    lease_token: u64,
+}
+
+impl AgentRootLeaseReleaseResult {
+    fn from_disposition(lease_token: u64, disposition: AgentRootLeaseReleaseDisposition) -> Self {
+        let kind = match disposition {
+            AgentRootLeaseReleaseDisposition::Released => AgentRootLeaseReleaseKind::Released,
+            AgentRootLeaseReleaseDisposition::NotHeld => AgentRootLeaseReleaseKind::NotHeld,
+            AgentRootLeaseReleaseDisposition::ForeignOwner => {
+                AgentRootLeaseReleaseKind::ForeignOwner
+            }
+        };
+
+        Self { kind, lease_token }
+    }
+}
+
 fn ensure_agent_root_lease_bounds(root_path: &str) -> Result<(), String> {
     if root_path.is_empty() {
         return Err("Agent project root path is required.".to_string());
@@ -369,6 +400,16 @@ fn ensure_agent_root_lease_bounds(root_path: &str) -> Result<(), String> {
 fn ensure_agent_root_lease_trust(root_trusted: bool) -> Result<(), String> {
     if !root_trusted {
         return Err(UNTRUSTED_AGENT_REPOSITORY_ERROR.to_string());
+    }
+
+    Ok(())
+}
+
+fn ensure_agent_root_lease_token_bounds(lease_token: u64) -> Result<(), String> {
+    if lease_token == 0 || lease_token > MAX_AGENT_ROOT_LEASE_TOKEN {
+        return Err(format!(
+            "Agent project root lease token must be between 1 and {MAX_AGENT_ROOT_LEASE_TOKEN}."
+        ));
     }
 
     Ok(())
@@ -397,12 +438,23 @@ pub(crate) async fn acquire_agent_root_lease(
 pub(crate) fn release_agent_root_lease(
     request: AgentRootLeaseReleaseRequest,
     leases: State<'_, Arc<AgentRootLeaseRegistry>>,
-) -> Result<(), String> {
-    ensure_agent_root_lease_bounds(&request.root_path)?;
-    let root = workspace_root_for_disposal(&request.root_path);
-    leases.release(&root, request.lease_token);
+) -> Result<AgentRootLeaseReleaseResult, String> {
+    release_agent_root_lease_for_registry(request, leases.inner().as_ref())
+}
 
-    Ok(())
+fn release_agent_root_lease_for_registry(
+    request: AgentRootLeaseReleaseRequest,
+    leases: &AgentRootLeaseRegistry,
+) -> Result<AgentRootLeaseReleaseResult, String> {
+    ensure_agent_root_lease_bounds(&request.root_path)?;
+    ensure_agent_root_lease_token_bounds(request.lease_token)?;
+    let root = workspace_root_for_disposal(&request.root_path);
+    let disposition = leases.release(&root, request.lease_token);
+
+    Ok(AgentRootLeaseReleaseResult::from_disposition(
+        request.lease_token,
+        disposition,
+    ))
 }
 
 pub(crate) fn stop_agent_tasks_on_dispose(app: &AppHandle, root: &Path) {
@@ -1302,6 +1354,18 @@ mod tests {
     }
 
     #[test]
+    fn agent_root_lease_release_token_bounds_are_enforced() {
+        let zero = ensure_agent_root_lease_token_bounds(0).expect_err("zero token");
+        let oversized = ensure_agent_root_lease_token_bounds(MAX_AGENT_ROOT_LEASE_TOKEN + 1)
+            .expect_err("oversized token");
+
+        assert!(zero.contains("between 1"), "got: {zero}");
+        assert!(oversized.contains("between 1"), "got: {oversized}");
+        ensure_agent_root_lease_token_bounds(1).expect("minimum token");
+        ensure_agent_root_lease_token_bounds(MAX_AGENT_ROOT_LEASE_TOKEN).expect("maximum token");
+    }
+
+    #[test]
     fn agent_root_lease_requests_reject_unknown_fields() {
         let acquire = serde_json::from_str::<AgentRootLeaseRequest>(
             "{\"rootPath\":\"/workspace/alpha\",\"extra\":1}",
@@ -1322,10 +1386,85 @@ mod tests {
         .expect("deserialize release request");
         let receipt = serde_json::to_string(&AgentRootLeaseReceipt { lease_token: 7 })
             .expect("serialize receipt");
+        let released = serde_json::to_string(&AgentRootLeaseReleaseResult::from_disposition(
+            request.lease_token,
+            AgentRootLeaseReleaseDisposition::Released,
+        ))
+        .expect("serialize released result");
 
         assert_eq!(request.root_path, "/workspace/alpha");
         assert_eq!(request.lease_token, 7);
         assert_eq!(receipt, "{\"leaseToken\":7}");
+        assert_eq!(released, "{\"kind\":\"released\",\"leaseToken\":7}");
+    }
+
+    #[test]
+    fn agent_root_lease_release_result_echoes_the_request_token_for_every_disposition() {
+        let token = MAX_AGENT_ROOT_LEASE_TOKEN;
+        let cases = [
+            (
+                AgentRootLeaseReleaseDisposition::Released,
+                "{\"kind\":\"released\",\"leaseToken\":9007199254740991}",
+            ),
+            (
+                AgentRootLeaseReleaseDisposition::NotHeld,
+                "{\"kind\":\"notHeld\",\"leaseToken\":9007199254740991}",
+            ),
+            (
+                AgentRootLeaseReleaseDisposition::ForeignOwner,
+                "{\"kind\":\"foreignOwner\",\"leaseToken\":9007199254740991}",
+            ),
+        ];
+
+        for (disposition, expected) in cases {
+            let result = AgentRootLeaseReleaseResult::from_disposition(token, disposition);
+            let serialized = serde_json::to_string(&result).expect("serialize release result");
+
+            assert_eq!(serialized, expected);
+        }
+    }
+
+    #[test]
+    fn release_agent_root_lease_facade_returns_exact_closed_dispositions() {
+        let workspace = TempWorkspace::create("lease-release-facade");
+        let registry = AgentRootLeaseRegistry::new();
+        let first_token = registry.acquire(&workspace.root).expect("first acquire");
+        let first_request = || AgentRootLeaseReleaseRequest {
+            root_path: workspace.root.to_string_lossy().into_owned(),
+            lease_token: first_token,
+        };
+
+        let released = release_agent_root_lease_for_registry(first_request(), &registry)
+            .expect("release exact owner");
+        let not_held = release_agent_root_lease_for_registry(first_request(), &registry)
+            .expect("release absent root");
+        let second_token = registry.acquire(&workspace.root).expect("second acquire");
+        let foreign_owner = release_agent_root_lease_for_registry(first_request(), &registry)
+            .expect("refuse foreign owner");
+
+        assert_eq!(
+            released,
+            AgentRootLeaseReleaseResult {
+                kind: AgentRootLeaseReleaseKind::Released,
+                lease_token: first_token,
+            }
+        );
+        assert_eq!(
+            not_held,
+            AgentRootLeaseReleaseResult {
+                kind: AgentRootLeaseReleaseKind::NotHeld,
+                lease_token: first_token,
+            }
+        );
+        assert_ne!(first_token, second_token);
+        assert_eq!(
+            foreign_owner,
+            AgentRootLeaseReleaseResult {
+                kind: AgentRootLeaseReleaseKind::ForeignOwner,
+                lease_token: first_token,
+            }
+        );
+        assert!(registry.is_held(&workspace.root));
     }
 
     #[cfg(unix)]
@@ -1345,7 +1484,10 @@ mod tests {
 
         let release_root = workspace_root_for_disposal(&alias.to_string_lossy());
 
-        assert!(registry.release(&release_root, token));
+        assert_eq!(
+            registry.release(&release_root, token),
+            AgentRootLeaseReleaseDisposition::Released
+        );
         assert!(!registry.is_held(&real));
     }
 
@@ -1367,7 +1509,10 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(registry.held_root_count(), 1);
-        assert!(registry.release(&workspace_root_for_disposal("/var/tmp"), first));
+        assert_eq!(
+            registry.release(&workspace_root_for_disposal("/var/tmp"), first),
+            AgentRootLeaseReleaseDisposition::Released
+        );
     }
 
     #[test]
@@ -1381,7 +1526,10 @@ mod tests {
             &workspace.root
         ));
 
-        registry.release(&workspace.root, token);
+        assert_eq!(
+            registry.release(&workspace.root, token),
+            AgentRootLeaseReleaseDisposition::Released
+        );
 
         assert!(agent_root_lease::dispose_should_stop_agent_tasks(
             Some(&registry),

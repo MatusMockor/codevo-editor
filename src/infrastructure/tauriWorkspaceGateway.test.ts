@@ -2,10 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceIdentityDescriptor } from "./tauriWorkspaceIdentityGateway";
 import { TauriWorkspaceGateway } from "./tauriWorkspaceGateway";
 
-const invoke = vi.hoisted(() => vi.fn());
+const { invoke, listen, nativeRuntime } = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  listen: vi.fn(),
+  nativeRuntime: { available: false },
+}));
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke, isTauri: () => false }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke,
+  isTauri: () => nativeRuntime.available,
+}));
+vi.mock("@tauri-apps/api/event", () => ({ listen }));
 
 const descriptor: WorkspaceIdentityDescriptor = {
   workspaceId: "ws-1",
@@ -17,7 +24,11 @@ const descriptor: WorkspaceIdentityDescriptor = {
 };
 
 describe("TauriWorkspaceGateway trusted file operations", () => {
-  beforeEach(() => invoke.mockReset());
+  beforeEach(() => {
+    invoke.mockReset();
+    listen.mockReset();
+    nativeRuntime.available = false;
+  });
 
   it("routes trusted workspace edits through the descriptor command with relative paths", async () => {
     invoke.mockResolvedValue({
@@ -1057,6 +1068,150 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
       gateway.renamePath("/selected/project/file.ts", "/selected/other/file.ts"),
     ).rejects.toThrow("between trusted workspaces");
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("TauriWorkspaceGateway managed language server installs", () => {
+  const request = {
+    admissionToken: 11,
+    rootPath: "/selected/project",
+    workspaceId: "ws-1",
+  };
+
+  beforeEach(() => {
+    invoke.mockReset();
+    listen.mockReset();
+    nativeRuntime.available = false;
+  });
+
+  it("sends exact owner-authority envelopes for both managed installers", async () => {
+    invoke.mockResolvedValue(undefined);
+    const gateway = trustedGateway();
+
+    await gateway.installManagedPhpactor(request);
+    await gateway.installManagedTypeScriptLanguageServer(request);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "install_managed_phpactor", {
+      request,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "install_managed_typescript_language_server", {
+      request,
+    });
+  });
+
+  it.each([
+    { admissionToken: 11, rootPath: "/selected/project" },
+    { ...request, extra: true },
+    { ...request, admissionToken: 0 },
+    { ...request, admissionToken: -1 },
+    { ...request, admissionToken: Number.MAX_SAFE_INTEGER + 1 },
+    { ...request, rootPath: "selected/project" },
+    { ...request, rootPath: " /selected/project" },
+    { ...request, workspaceId: "ws\n1" },
+    { ...request, workspaceId: "x".repeat(1_025) },
+  ])("rejects malformed installer authority before IPC %#", async (value) => {
+    const gateway = trustedGateway();
+
+    expect(() => gateway.installManagedPhpactor(value as never)).toThrow(TypeError);
+    expect(() => gateway.installManagedTypeScriptLanguageServer(value as never)).toThrow(TypeError);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("parses exact native completion events for both installers", async () => {
+    nativeRuntime.available = true;
+    const handlers: Array<(event: { payload: unknown }) => void> = [];
+    const unsubscribe = vi.fn();
+    listen.mockImplementation(
+      async (_event: string, handler: (event: { payload: unknown }) => void) => {
+        handlers.push(handler);
+        return unsubscribe;
+      },
+    );
+    const phpactorListener = vi.fn();
+    const typeScriptListener = vi.fn();
+    const gateway = trustedGateway();
+
+    await expect(gateway.subscribeManagedPhpactorInstall(phpactorListener)).resolves.toBe(
+      unsubscribe,
+    );
+    await expect(
+      gateway.subscribeManagedTypeScriptLanguageServerInstall(typeScriptListener),
+    ).resolves.toBe(unsubscribe);
+
+    handlers[0]?.({ payload: { ...request, error: null } });
+    handlers[1]?.({ payload: { ...request, error: "Install failed" } });
+
+    expect(phpactorListener).toHaveBeenCalledWith({ ...request, error: null });
+    expect(typeScriptListener).toHaveBeenCalledWith({ ...request, error: "Install failed" });
+    expect(listen).toHaveBeenNthCalledWith(
+      1,
+      "php://managed-phpactor-install-completed",
+      expect.any(Function),
+    );
+    expect(listen).toHaveBeenNthCalledWith(
+      2,
+      "typescript://managed-language-server-install-completed",
+      expect.any(Function),
+    );
+  });
+
+  it("ignores malformed native completion events", async () => {
+    nativeRuntime.available = true;
+    const handlers: Array<(event: { payload: unknown }) => void> = [];
+    listen.mockImplementation(
+      async (_event: string, handler: (event: { payload: unknown }) => void) => {
+        handlers.push(handler);
+        return () => undefined;
+      },
+    );
+    const listener = vi.fn();
+    const gateway = trustedGateway();
+
+    await gateway.subscribeManagedPhpactorInstall(listener);
+    for (const payload of [
+      { ...request },
+      { ...request, error: null, extra: true },
+      { ...request, admissionToken: 0, error: null },
+      { ...request, workspaceId: "foreign\nworkspace", error: null },
+      { ...request, error: "x".repeat(4_097) },
+      null,
+    ]) {
+      handlers[0]?.({ payload });
+    }
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("propagates application listener failures for valid native events", async () => {
+    nativeRuntime.available = true;
+    let handler: ((event: { payload: unknown }) => void) | null = null;
+    listen.mockImplementation(
+      async (_event: string, nextHandler: (event: { payload: unknown }) => void) => {
+        handler = nextHandler;
+        return () => undefined;
+      },
+    );
+    const gateway = trustedGateway();
+
+    await gateway.subscribeManagedPhpactorInstall(() => {
+      throw new Error("listener failed");
+    });
+
+    expect(() => handler?.({ payload: { ...request, error: null } })).toThrow("listener failed");
+  });
+
+  it("uses inert subscriptions outside the native runtime", async () => {
+    const listener = vi.fn();
+    const gateway = trustedGateway();
+
+    const unsubscribePhpactor = await gateway.subscribeManagedPhpactorInstall(listener);
+    const unsubscribeTypeScript =
+      await gateway.subscribeManagedTypeScriptLanguageServerInstall(listener);
+    unsubscribePhpactor();
+    unsubscribeTypeScript();
+
+    expect(listen).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
   });
 });
 

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -13,15 +14,16 @@ import type {
   PhpToolGateway,
   WorkspaceDescriptor,
 } from "../../domain/workspace";
+import type { ManagedLanguageServerInstallRequest } from "../../domain/managedLanguageServerInstall";
+import type { WorkspaceIdentityDescriptor } from "../workspaceIdentityGatewayPort";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import { replaceWorkbenchNoticeGroup, type WorkbenchNotice } from "../workbenchNotice";
 
 interface ManagedLanguageServerInstallCommandsInput {
   readonly currentWorkspaceRootRef: MutableRefObject<string | null>;
+  readonly currentWorkspaceIdentityDescriptorRef: MutableRefObject<WorkspaceIdentityDescriptor | null>;
   readonly installingManagedPhpactor: boolean;
-  readonly installingManagedPhpactorRootRef: MutableRefObject<string | null>;
   readonly installingManagedTypeScriptLanguageServer: boolean;
-  readonly installingManagedTypeScriptLanguageServerRootRef: MutableRefObject<string | null>;
   readonly phpToolGateway: PhpToolGateway;
   readonly refreshJavaScriptTypeScriptLanguageServerPlan: (rootPath: string) => Promise<unknown>;
   readonly refreshLanguageServerPlan: (rootPath: string) => Promise<unknown>;
@@ -34,15 +36,53 @@ interface ManagedLanguageServerInstallCommandsInput {
   readonly setNotices: Dispatch<SetStateAction<WorkbenchNotice[]>>;
   readonly setPhpTools: Dispatch<SetStateAction<PhpToolAvailability | null>>;
   readonly workspaceDescriptor: WorkspaceDescriptor | null;
+  readonly workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
   readonly workspaceRoot: string | null;
 }
 
+function managedInstallAuthorityFor(
+  rootPath: string | null,
+  identity: WorkspaceIdentityDescriptor | null,
+): ManagedLanguageServerInstallRequest | null {
+  if (!rootPath || !identity) return null;
+  if (
+    !workspaceRootKeysEqual(rootPath, identity.selectedPath) &&
+    !workspaceRootKeysEqual(rootPath, identity.canonicalRoot)
+  ) {
+    return null;
+  }
+  if (
+    typeof identity.admissionToken !== "number" ||
+    !Number.isSafeInteger(identity.admissionToken) ||
+    identity.admissionToken <= 0
+  ) {
+    return null;
+  }
+  return {
+    admissionToken: identity.admissionToken,
+    rootPath,
+    workspaceId: identity.workspaceId,
+  };
+}
+
+function managedInstallAuthoritiesEqual(
+  left: ManagedLanguageServerInstallRequest | null,
+  right: ManagedLanguageServerInstallRequest | null,
+): boolean {
+  return (
+    left !== null &&
+    right !== null &&
+    left.admissionToken === right.admissionToken &&
+    left.workspaceId === right.workspaceId &&
+    left.rootPath === right.rootPath
+  );
+}
+
 export function useManagedLanguageServerInstallCommands({
+  currentWorkspaceIdentityDescriptorRef,
   currentWorkspaceRootRef,
   installingManagedPhpactor,
-  installingManagedPhpactorRootRef,
   installingManagedTypeScriptLanguageServer,
-  installingManagedTypeScriptLanguageServerRootRef,
   phpToolGateway,
   refreshJavaScriptTypeScriptLanguageServerPlan,
   refreshLanguageServerPlan,
@@ -55,86 +95,103 @@ export function useManagedLanguageServerInstallCommands({
   setNotices,
   setPhpTools,
   workspaceDescriptor,
+  workspaceIdentityDescriptor,
   workspaceRoot,
 }: ManagedLanguageServerInstallCommandsInput) {
+  const installingManagedPhpactorAuthorityRef = useRef<ManagedLanguageServerInstallRequest | null>(
+    null,
+  );
+  const installingManagedTypeScriptLanguageServerAuthorityRef =
+    useRef<ManagedLanguageServerInstallRequest | null>(null);
+  const isCurrentWorkspaceAuthority = useCallback(
+    (authority: ManagedLanguageServerInstallRequest) =>
+      managedInstallAuthoritiesEqual(
+        authority,
+        managedInstallAuthorityFor(
+          currentWorkspaceRootRef.current,
+          currentWorkspaceIdentityDescriptorRef.current,
+        ),
+      ),
+    [currentWorkspaceIdentityDescriptorRef, currentWorkspaceRootRef],
+  );
+
   const installManagedPhpactor = useCallback(async () => {
     if (!workspaceRoot || !workspaceDescriptor?.php) return;
+    const authority = managedInstallAuthorityFor(workspaceRoot, workspaceIdentityDescriptor);
+    if (!authority) return;
     if (
       installingManagedPhpactor &&
-      workspaceRootKeysEqual(installingManagedPhpactorRootRef.current, workspaceRoot)
+      managedInstallAuthoritiesEqual(installingManagedPhpactorAuthorityRef.current, authority)
     ) {
       return;
     }
 
     setInstallingManagedPhpactor(true);
-    const targetWorkspaceRoot = workspaceRoot;
-    installingManagedPhpactorRootRef.current = targetWorkspaceRoot;
+    installingManagedPhpactorAuthorityRef.current = authority;
     try {
-      await phpToolGateway.installManagedPhpactor(targetWorkspaceRoot);
+      await phpToolGateway.installManagedPhpactor(authority);
     } catch (error) {
-      if (workspaceRootKeysEqual(installingManagedPhpactorRootRef.current, targetWorkspaceRoot)) {
-        installingManagedPhpactorRootRef.current = null;
+      if (
+        managedInstallAuthoritiesEqual(installingManagedPhpactorAuthorityRef.current, authority)
+      ) {
+        installingManagedPhpactorAuthorityRef.current = null;
         setInstallingManagedPhpactor(false);
       }
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) {
+      if (isCurrentWorkspaceAuthority(authority)) {
         reportLanguageServerError(error);
       }
     }
   }, [
-    currentWorkspaceRootRef,
     installingManagedPhpactor,
-    installingManagedPhpactorRootRef,
+    installingManagedPhpactorAuthorityRef,
+    isCurrentWorkspaceAuthority,
     phpToolGateway,
     reportLanguageServerError,
     setInstallingManagedPhpactor,
     workspaceDescriptor,
+    workspaceIdentityDescriptor,
     workspaceRoot,
   ]);
 
   const handleManagedPhpactorInstallCompletion = useCallback(
     async (event: ManagedPhpactorInstallCompletionEvent) => {
-      const targetWorkspaceRoot = event.root;
-      if (!workspaceRootKeysEqual(installingManagedPhpactorRootRef.current, targetWorkspaceRoot)) {
+      if (!managedInstallAuthoritiesEqual(installingManagedPhpactorAuthorityRef.current, event)) {
         return;
       }
 
-      installingManagedPhpactorRootRef.current = null;
+      installingManagedPhpactorAuthorityRef.current = null;
       setInstallingManagedPhpactor(false);
-      const installFailedForActiveWorkspace =
-        event.error && workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot);
-      if (installFailedForActiveWorkspace) {
+      if (event.error && isCurrentWorkspaceAuthority(event)) {
         reportLanguageServerError(event.error);
         return;
       }
-      if (
-        event.error ||
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)
-      ) {
-        return;
-      }
+      if (event.error || !isCurrentWorkspaceAuthority(event)) return;
 
       try {
-        const tools = await phpToolGateway.detectPhpTools(targetWorkspaceRoot);
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) return;
+        const tools = await phpToolGateway.detectPhpTools(event.rootPath);
+        if (!isCurrentWorkspaceAuthority(event)) return;
         if (tools.phpactor) {
           setNotices((current) =>
-            replaceWorkbenchNoticeGroup(current, `phpactor-setup:${targetWorkspaceRoot}`, []),
+            replaceWorkbenchNoticeGroup(current, `phpactor-setup:${event.rootPath}`, []),
           );
         }
+        if (!isCurrentWorkspaceAuthority(event)) return;
         setPhpTools(tools);
-        await refreshLanguageServerPlan(targetWorkspaceRoot);
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) return;
+        if (!isCurrentWorkspaceAuthority(event)) return;
+        await refreshLanguageServerPlan(event.rootPath);
+        if (!isCurrentWorkspaceAuthority(event)) return;
         setLanguageServerSetupOpen(false);
+        if (!isCurrentWorkspaceAuthority(event)) return;
         setMessage("Installed managed PHP IDE engine.");
       } catch (error) {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) {
+        if (isCurrentWorkspaceAuthority(event)) {
           reportLanguageServerError(error);
         }
       }
     },
     [
-      currentWorkspaceRootRef,
-      installingManagedPhpactorRootRef,
+      installingManagedPhpactorAuthorityRef,
+      isCurrentWorkspaceAuthority,
       phpToolGateway,
       refreshLanguageServerPlan,
       reportLanguageServerError,
@@ -148,77 +205,78 @@ export function useManagedLanguageServerInstallCommands({
 
   const installManagedTypeScriptLanguageServer = useCallback(async () => {
     if (!workspaceRoot || !phpToolGateway.installManagedTypeScriptLanguageServer) return;
+    const authority = managedInstallAuthorityFor(workspaceRoot, workspaceIdentityDescriptor);
+    if (!authority) return;
     if (
       installingManagedTypeScriptLanguageServer &&
-      workspaceRootKeysEqual(
-        installingManagedTypeScriptLanguageServerRootRef.current,
-        workspaceRoot,
+      managedInstallAuthoritiesEqual(
+        installingManagedTypeScriptLanguageServerAuthorityRef.current,
+        authority,
       )
     ) {
       return;
     }
 
-    const targetWorkspaceRoot = workspaceRoot;
-    installingManagedTypeScriptLanguageServerRootRef.current = targetWorkspaceRoot;
+    installingManagedTypeScriptLanguageServerAuthorityRef.current = authority;
     setInstallingManagedTypeScriptLanguageServer(true);
     try {
-      await phpToolGateway.installManagedTypeScriptLanguageServer(targetWorkspaceRoot);
+      await phpToolGateway.installManagedTypeScriptLanguageServer(authority);
     } catch (error) {
       if (
-        workspaceRootKeysEqual(
-          installingManagedTypeScriptLanguageServerRootRef.current,
-          targetWorkspaceRoot,
+        managedInstallAuthoritiesEqual(
+          installingManagedTypeScriptLanguageServerAuthorityRef.current,
+          authority,
         )
       ) {
-        installingManagedTypeScriptLanguageServerRootRef.current = null;
+        installingManagedTypeScriptLanguageServerAuthorityRef.current = null;
         setInstallingManagedTypeScriptLanguageServer(false);
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) {
+        if (isCurrentWorkspaceAuthority(authority)) {
           reportJavaScriptTypeScriptLanguageServerError(error);
         }
       }
     }
   }, [
-    currentWorkspaceRootRef,
     installingManagedTypeScriptLanguageServer,
-    installingManagedTypeScriptLanguageServerRootRef,
+    installingManagedTypeScriptLanguageServerAuthorityRef,
+    isCurrentWorkspaceAuthority,
     phpToolGateway,
     reportJavaScriptTypeScriptLanguageServerError,
     setInstallingManagedTypeScriptLanguageServer,
+    workspaceIdentityDescriptor,
     workspaceRoot,
   ]);
 
   const handleManagedTypeScriptInstallCompletion = useCallback(
     async (event: ManagedTypeScriptInstallCompletionEvent) => {
       if (
-        !workspaceRootKeysEqual(
-          installingManagedTypeScriptLanguageServerRootRef.current,
-          event.root,
+        !managedInstallAuthoritiesEqual(
+          installingManagedTypeScriptLanguageServerAuthorityRef.current,
+          event,
         )
       ) {
         return;
       }
-      installingManagedTypeScriptLanguageServerRootRef.current = null;
+      installingManagedTypeScriptLanguageServerAuthorityRef.current = null;
       setInstallingManagedTypeScriptLanguageServer(false);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.root)) return;
+      if (!isCurrentWorkspaceAuthority(event)) return;
       if (event.error) {
         reportJavaScriptTypeScriptLanguageServerError(event.error);
         return;
       }
       try {
-        await refreshJavaScriptTypeScriptLanguageServerPlan(event.root);
+        await refreshJavaScriptTypeScriptLanguageServerPlan(event.rootPath);
       } catch (error) {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.root)) {
+        if (isCurrentWorkspaceAuthority(event)) {
           reportJavaScriptTypeScriptLanguageServerError(error);
         }
         return;
       }
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.root)) {
-        setMessage("Installed managed TypeScript IDE engine.");
-      }
+      if (!isCurrentWorkspaceAuthority(event)) return;
+      setMessage("Installed managed TypeScript IDE engine.");
     },
     [
-      currentWorkspaceRootRef,
-      installingManagedTypeScriptLanguageServerRootRef,
+      installingManagedTypeScriptLanguageServerAuthorityRef,
+      isCurrentWorkspaceAuthority,
       refreshJavaScriptTypeScriptLanguageServerPlan,
       reportJavaScriptTypeScriptLanguageServerError,
       setInstallingManagedTypeScriptLanguageServer,

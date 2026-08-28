@@ -6,6 +6,7 @@ import {
   type AgentProjectOrigin,
   type AgentProjectTrust,
   type AgentRootLeaseGateway,
+  type AgentRootLeaseReleaseResult,
 } from "../domain/agentProject";
 import { DEFAULT_AGENT_ISOLATION_POLICY, type AgentIsolationPolicy } from "../domain/agentSettings";
 import {
@@ -109,6 +110,29 @@ interface AgentProjectLease {
   readonly leaseToken: number;
 }
 
+function agentRootLeaseReleaseFailure(
+  result: AgentRootLeaseReleaseResult,
+  expectedLeaseToken: number,
+): Error | null {
+  if (result.leaseToken !== expectedLeaseToken) {
+    return new Error("Agent root lease release returned a mismatched lease token.");
+  }
+  switch (result.kind) {
+    case "released":
+      return null;
+    case "notHeld":
+      return new Error("Agent root lease release reported that the lease was not held.");
+    case "foreignOwner":
+      return new Error("Agent root lease release reported a foreign lease owner.");
+    default:
+      return assertNever(result);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected agent root lease release result: ${String(value)}`);
+}
+
 type Attempt<TValue> =
   { readonly ok: true; readonly value: TValue } | { readonly ok: false; readonly error: unknown };
 
@@ -126,6 +150,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
   const overflowRef = useRef<ReadonlyArray<string>>([]);
   const generationSeedsRef = useRef(new Map<string, number>());
   const ownerIdsRef = useRef(new Map<string, string>());
+  const quarantinedLeasesRef = useRef(new Map<string, Map<number, AgentProjectLease>>());
   const closeAuthoritiesRef = useRef(
     new Map<string, { readonly workspaceId: string; readonly workspaceGeneration: number }>(),
   );
@@ -193,11 +218,33 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
   );
 
   const releaseLease = useCallback((lease: AgentProjectLease): void => {
-    void dependenciesRef.current.agentRootLeaseGateway
-      .releaseAgentRootLease({ rootPath: lease.rootPath, leaseToken: lease.leaseToken })
-      .catch((error: unknown) => {
-        dependenciesRef.current.reportError(AGENT_PROJECTS_SOURCE, error);
-      });
+    const dependencies = dependenciesRef.current;
+    const rootKey = normalizedWorkspaceRootKey(lease.rootPath);
+    const quarantineAuthority = { ...lease };
+    const rootQuarantines = quarantinedLeasesRef.current.get(rootKey) ?? new Map();
+    rootQuarantines.set(lease.leaseToken, quarantineAuthority);
+    quarantinedLeasesRef.current.set(rootKey, rootQuarantines);
+    void attempt(() =>
+      dependencies.agentRootLeaseGateway.releaseAgentRootLease({
+        rootPath: lease.rootPath,
+        leaseToken: lease.leaseToken,
+      }),
+    ).then((released) => {
+      if (!released.ok) {
+        dependencies.reportError(AGENT_PROJECTS_SOURCE, released.error);
+        return;
+      }
+      const failure = agentRootLeaseReleaseFailure(released.value, lease.leaseToken);
+      if (failure !== null) {
+        dependencies.reportError(AGENT_PROJECTS_SOURCE, failure);
+        return;
+      }
+      const currentRootQuarantines = quarantinedLeasesRef.current.get(rootKey);
+      if (currentRootQuarantines?.get(lease.leaseToken) !== quarantineAuthority) return;
+      currentRootQuarantines.delete(lease.leaseToken);
+      if (currentRootQuarantines.size > 0) return;
+      quarantinedLeasesRef.current.delete(rootKey);
+    });
   }, []);
 
   const applyEntryTrust = useCallback(
@@ -236,6 +283,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
     async (rootKey: string, generation: number, ownerId: string): Promise<boolean> => {
       const entry = entryForOwner(rootKey, generation, ownerId);
       if (entry === null || entry.releasing) return false;
+      if (quarantinedLeasesRef.current.has(rootKey)) return false;
       if (entry.leaseToken !== null) return true;
       if (entry.trust !== "trusted") return false;
       const rootPath = entry.rootPath;
@@ -248,6 +296,10 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
         return false;
       }
       const current = entryForOwner(rootKey, generation, ownerId);
+      if (quarantinedLeasesRef.current.has(rootKey)) {
+        releaseLease({ rootPath, leaseToken: receipt.value.leaseToken });
+        return false;
+      }
       if (current === null || current.releasing) {
         releaseLease({ rootPath, leaseToken: receipt.value.leaseToken });
         return false;
@@ -706,14 +758,22 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
         if (!isCurrent() || !mountedRef.current) return null;
         const current = entryFor(rootKey, generation);
         if (current === null) return null;
+        if (current.ownerId !== entry.ownerId) return null;
         if (current.workspaceId !== descriptor.workspaceId) return null;
         if (current.workspaceGeneration !== workspaceGeneration) return null;
         if (closeAuthoritiesRef.current.get(rootKey) !== closeAuthority) return null;
         return current;
       };
+      const exactLeaseEntry = (): AgentProjectEntry | null => {
+        const current = exactEntry();
+        if (current === null) return null;
+        if (current.leaseToken !== leaseToken) return null;
+        return current;
+      };
       const capturedEntry = (): AgentProjectEntry | null => {
         const current = entriesRef.current.get(rootKey);
         if (current === undefined || current.generation !== generation) return null;
+        if (current.ownerId !== entry.ownerId) return null;
         if (current.workspaceId !== descriptor.workspaceId) return null;
         if (current.workspaceGeneration !== workspaceGeneration) return null;
         if (closeAuthoritiesRef.current.get(rootKey) !== closeAuthority) return null;
@@ -723,7 +783,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
         const stopped = await attempt(() =>
           dependenciesRef.current.stopProjectTasks(ownerId, repositoryRoots),
         );
-        if (exactEntry() === null) {
+        if (exactLeaseEntry() === null) {
           clearCloseAuthority();
           return { status: "stale" };
         }
@@ -733,7 +793,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
           return { status: "task-stop-incomplete" };
         }
       }
-      const current = exactEntry();
+      const current = exactLeaseEntry();
       if (current === null) {
         clearCloseAuthority();
         return { status: "stale" };
@@ -746,15 +806,36 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
         return { status: "task-stop-incomplete" };
       }
       if (leaseToken !== null) {
+        const dependencies = dependenciesRef.current;
         const released = await attempt(() =>
-          dependenciesRef.current.agentRootLeaseGateway.releaseAgentRootLease({
+          dependencies.agentRootLeaseGateway.releaseAgentRootLease({
             rootPath: entry.rootPath,
             leaseToken,
           }),
         );
+        const afterReleaseAuthority = exactLeaseEntry();
         if (!released.ok) {
-          dependenciesRef.current.reportError(AGENT_PROJECTS_SOURCE, released.error);
+          dependencies.reportError(AGENT_PROJECTS_SOURCE, released.error);
           return { status: "lease-release-incomplete" };
+        }
+        const releaseFailure = agentRootLeaseReleaseFailure(released.value, leaseToken);
+        if (releaseFailure !== null) {
+          dependencies.reportError(AGENT_PROJECTS_SOURCE, releaseFailure);
+          return { status: "lease-release-incomplete" };
+        }
+        if (afterReleaseAuthority === null) {
+          const rootEntry = entriesRef.current.get(rootKey);
+          const releasedEntry = rootEntry?.generation === generation ? rootEntry : null;
+          if (releasedEntry?.leaseToken === leaseToken) {
+            const next = new Map(entriesRef.current);
+            next.set(rootKey, { ...releasedEntry, leaseToken: null });
+            entriesRef.current = next;
+          }
+          clearCloseAuthority();
+          if (mountedRef.current && releasedEntry?.leaseToken === leaseToken) {
+            await acquireEntryLease(rootKey, generation, releasedEntry.ownerId);
+          }
+          return { status: "stale" };
         }
         const rootEntry = entriesRef.current.get(rootKey);
         const releasedEntry = rootEntry?.generation === generation ? rootEntry : null;

@@ -305,7 +305,10 @@ function renderAgents(overrides: HarnessOverrides = {}) {
   } as unknown as GitWorktreeGateway;
   const leaseGateway = {
     acquireAgentRootLease: vi.fn(async () => ({ leaseToken: 1 })),
-    releaseAgentRootLease: vi.fn(async () => undefined),
+    releaseAgentRootLease: vi.fn(async (request: { readonly leaseToken: number }) => ({
+      kind: "released" as const,
+      leaseToken: request.leaseToken,
+    })),
   };
   const setWorkspaceTrust = vi.fn();
   const workspaceTrustRevisionByOwnerRef = { current: {} as Record<string, number> };

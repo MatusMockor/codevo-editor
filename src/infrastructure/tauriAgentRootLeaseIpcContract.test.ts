@@ -47,6 +47,7 @@ describe("invokeAcquireAgentRootLeaseIpc", () => {
     const rejected: readonly unknown[] = [
       null,
       {},
+      { leaseToken: 0 },
       { leaseToken: -1 },
       { leaseToken: 1.5 },
       { leaseToken: "1" },
@@ -63,12 +64,14 @@ describe("invokeAcquireAgentRootLeaseIpc", () => {
 });
 
 describe("invokeReleaseAgentRootLeaseIpc", () => {
-  it("sends the validated request and accepts a null unit result", async () => {
-    const invokeCommand = vi.fn<InvokeAgentRootLeaseCommand>().mockResolvedValue(null);
+  it("sends the validated request and returns the exact release result", async () => {
+    const invokeCommand = vi
+      .fn<InvokeAgentRootLeaseCommand>()
+      .mockResolvedValue({ kind: "released", leaseToken: 7 });
 
     await expect(
       invokeReleaseAgentRootLeaseIpc(invokeCommand, { rootPath: "/repo", leaseToken: 7 }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ kind: "released", leaseToken: 7 });
     expect(invokeCommand).toHaveBeenCalledWith("release_agent_root_lease", {
       request: { rootPath: "/repo", leaseToken: 7 },
     });
@@ -79,6 +82,7 @@ describe("invokeReleaseAgentRootLeaseIpc", () => {
     const rejected: readonly unknown[] = [
       { rootPath: "/repo" },
       { rootPath: 1, leaseToken: 7 },
+      { rootPath: "/repo", leaseToken: 0 },
       { rootPath: "/repo", leaseToken: -1 },
       { rootPath: "/repo", leaseToken: "7" },
       { rootPath: "/repo", leaseToken: 7, extra: true },
@@ -95,11 +99,31 @@ describe("invokeReleaseAgentRootLeaseIpc", () => {
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 
-  it("rejects a non-null unit result", async () => {
-    const invokeCommand = vi.fn<InvokeAgentRootLeaseCommand>().mockResolvedValue({});
+  it("rejects malformed release results", async () => {
+    const rejected: readonly unknown[] = [
+      null,
+      {},
+      { kind: "released" },
+      { kind: "unknown", leaseToken: 7 },
+      { kind: "released", leaseToken: 0 },
+      { kind: "released", leaseToken: 7, extra: true },
+    ];
+
+    for (const result of rejected) {
+      const invokeCommand = vi.fn<InvokeAgentRootLeaseCommand>().mockResolvedValue(result);
+      await expect(
+        invokeReleaseAgentRootLeaseIpc(invokeCommand, { rootPath: "/repo", leaseToken: 7 }),
+      ).rejects.toThrow(TypeError);
+    }
+  });
+
+  it("rejects a well-formed result that echoes a foreign lease token", async () => {
+    const invokeCommand = vi
+      .fn<InvokeAgentRootLeaseCommand>()
+      .mockResolvedValue({ kind: "released", leaseToken: 8 });
 
     await expect(
       invokeReleaseAgentRootLeaseIpc(invokeCommand, { rootPath: "/repo", leaseToken: 7 }),
-    ).rejects.toThrow("expected null");
+    ).rejects.toThrow("expected the requested lease token");
   });
 });

@@ -31,9 +31,16 @@ export interface AgentRootLeaseReceipt {
   readonly leaseToken: number;
 }
 
+export type AgentRootLeaseReleaseResult =
+  | { readonly kind: "released"; readonly leaseToken: number }
+  | { readonly kind: "notHeld"; readonly leaseToken: number }
+  | { readonly kind: "foreignOwner"; readonly leaseToken: number };
+
 export interface AgentRootLeaseGateway {
   acquireAgentRootLease(request: AgentRootLeaseAcquireRequest): Promise<AgentRootLeaseReceipt>;
-  releaseAgentRootLease(request: AgentRootLeaseReleaseRequest): Promise<void>;
+  releaseAgentRootLease(
+    request: AgentRootLeaseReleaseRequest,
+  ): Promise<AgentRootLeaseReleaseResult>;
 }
 
 export const MAX_AGENT_PROJECT_ROOTS = 8;
@@ -67,14 +74,30 @@ export function validateAgentRootLeaseReleaseRequest(value: unknown): AgentRootL
   exactKeys(request, ["rootPath", "leaseToken"], "request");
   return {
     rootPath: agentRootPath(request.rootPath, "request.rootPath"),
-    leaseToken: unsignedSafeInteger(request.leaseToken, "request.leaseToken"),
+    leaseToken: positiveSafeInteger(request.leaseToken, "request.leaseToken"),
   };
 }
 
 export function parseAgentRootLeaseReceipt(value: unknown): AgentRootLeaseReceipt {
   const result = record(value, "result");
   exactKeys(result, ["leaseToken"], "result");
-  return { leaseToken: unsignedSafeInteger(result.leaseToken, "result.leaseToken") };
+  return { leaseToken: positiveSafeInteger(result.leaseToken, "result.leaseToken") };
+}
+
+export function parseAgentRootLeaseReleaseResult(value: unknown): AgentRootLeaseReleaseResult {
+  const result = record(value, "result");
+  exactKeys(result, ["kind", "leaseToken"], "result");
+  const leaseToken = positiveSafeInteger(result.leaseToken, "result.leaseToken");
+  switch (result.kind) {
+    case "released":
+      return { kind: result.kind, leaseToken };
+    case "notHeld":
+      return { kind: result.kind, leaseToken };
+    case "foreignOwner":
+      return { kind: result.kind, leaseToken };
+    default:
+      invalid("result.kind", "released, notHeld, or foreignOwner");
+  }
 }
 
 function agentRootPath(value: unknown, path: string): string {
@@ -95,9 +118,9 @@ function boundedText(value: unknown, path: string, maxBytes: number): string {
   return value;
 }
 
-function unsignedSafeInteger(value: unknown, path: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    invalid(path, "a non-negative safe integer");
+function positiveSafeInteger(value: unknown, path: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    invalid(path, "a positive safe integer");
   }
   return value as number;
 }

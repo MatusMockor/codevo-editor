@@ -1,9 +1,11 @@
 import {
   parseAgentRootLeaseReceipt,
+  parseAgentRootLeaseReleaseResult,
   validateAgentRootLeaseAcquireRequest,
   validateAgentRootLeaseReleaseRequest,
   type AgentRootLeaseAcquireRequest,
   type AgentRootLeaseReceipt,
+  type AgentRootLeaseReleaseResult,
   type AgentRootLeaseReleaseRequest,
 } from "../domain/agentProject";
 
@@ -28,21 +30,15 @@ export async function invokeAcquireAgentRootLeaseIpc(
 export async function invokeReleaseAgentRootLeaseIpc(
   invokeCommand: InvokeAgentRootLeaseCommand,
   request: AgentRootLeaseReleaseRequest,
-): Promise<void> {
-  return invokeUnit(
-    invokeCommand,
-    RELEASE_AGENT_ROOT_LEASE_IPC_COMMAND,
-    validateAgentRootLeaseReleaseRequest(request),
+): Promise<AgentRootLeaseReleaseResult> {
+  const validated = validateAgentRootLeaseReleaseRequest(request);
+  const result = parseAgentRootLeaseReleaseResult(
+    await invokeCommand(RELEASE_AGENT_ROOT_LEASE_IPC_COMMAND, { request: validated }),
   );
-}
-
-async function invokeUnit(
-  invokeCommand: InvokeAgentRootLeaseCommand,
-  command: string,
-  request: AgentRootLeaseReleaseRequest,
-): Promise<void> {
-  const value = await invokeCommand(command, { request });
-  if (value !== null) {
-    throw new TypeError("Invalid agent root lease value at result: expected null.");
+  if (result.leaseToken !== validated.leaseToken) {
+    throw new TypeError(
+      "Invalid agent root lease value at result.leaseToken: expected the requested lease token.",
+    );
   }
+  return result;
 }

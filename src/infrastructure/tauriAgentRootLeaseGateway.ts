@@ -3,6 +3,7 @@ import type {
   AgentRootLeaseAcquireRequest,
   AgentRootLeaseGateway,
   AgentRootLeaseReceipt,
+  AgentRootLeaseReleaseResult,
   AgentRootLeaseReleaseRequest,
 } from "../domain/agentProject";
 import {
@@ -31,7 +32,9 @@ export class TauriAgentRootLeaseGateway implements AgentRootLeaseGateway {
     return invokeAcquireAgentRootLeaseIpc(this.invokeCommand, request);
   }
 
-  async releaseAgentRootLease(request: AgentRootLeaseReleaseRequest): Promise<void> {
+  async releaseAgentRootLease(
+    request: AgentRootLeaseReleaseRequest,
+  ): Promise<AgentRootLeaseReleaseResult> {
     if (!this.isRuntimeAvailable()) {
       throw new Error("Agent root leases require the native runtime.");
     }

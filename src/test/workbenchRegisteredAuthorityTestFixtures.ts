@@ -69,6 +69,27 @@ export function registeredIdentityFixture(): WorkbenchWorkspaceGateways["identit
   };
 }
 
+export function replacementWorkspaceIdentityGateway(
+  ...descriptors: WorkspaceIdentityDescriptor[]
+): WorkbenchWorkspaceGateways["identity"] {
+  let nextDescriptor = 0;
+  return {
+    getDescriptor: vi.fn(async () => {
+      const descriptor = descriptors[descriptors.length - 1]!;
+      return {
+        ...descriptor,
+        canonicalRootPath: descriptor.canonicalRoot,
+        selectedRootPath: descriptor.selectedPath,
+      };
+    }),
+    openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+    openPath: vi.fn(
+      async () => descriptors[nextDescriptor++] ?? descriptors[descriptors.length - 1]!,
+    ),
+    unregister: vi.fn(async () => undefined),
+  };
+}
+
 export function singleRegisteredIdentityFixture(
   descriptor: WorkspaceIdentityDescriptor,
   unregister: (workspaceId: string) => Promise<void> = vi.fn(async () => undefined),

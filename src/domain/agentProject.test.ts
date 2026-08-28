@@ -5,6 +5,7 @@ import {
   fnv1a64hex,
   MAX_AGENT_PROJECT_ROOTS,
   parseAgentRootLeaseReceipt,
+  parseAgentRootLeaseReleaseResult,
   validateAgentRootLeaseAcquireRequest,
   validateAgentRootLeaseReleaseRequest,
 } from "./agentProject";
@@ -45,6 +46,12 @@ describe("agent root lease validation", () => {
       rootPath: "/repo",
       leaseToken: 7,
     });
+    expect(
+      validateAgentRootLeaseReleaseRequest({
+        rootPath: "/repo",
+        leaseToken: Number.MAX_SAFE_INTEGER,
+      }),
+    ).toEqual({ rootPath: "/repo", leaseToken: Number.MAX_SAFE_INTEGER });
   });
 
   it("rejects malformed acquire requests", () => {
@@ -67,6 +74,7 @@ describe("agent root lease validation", () => {
     const rejected: readonly unknown[] = [
       {},
       { rootPath: "/repo" },
+      { rootPath: "/repo", leaseToken: 0 },
       { rootPath: "/repo", leaseToken: -1 },
       { rootPath: "/repo", leaseToken: 1.5 },
       { rootPath: "/repo", leaseToken: Number.MAX_SAFE_INTEGER + 1 },
@@ -78,8 +86,41 @@ describe("agent root lease validation", () => {
     }
   });
 
-  it("parses only an exact non-negative safe lease token receipt", () => {
-    expect(parseAgentRootLeaseReceipt({ leaseToken: 0 })).toEqual({ leaseToken: 0 });
+  it("parses every exact root lease release disposition", () => {
+    for (const kind of ["released", "notHeld", "foreignOwner"] as const) {
+      expect(parseAgentRootLeaseReleaseResult({ kind, leaseToken: 7 })).toEqual({
+        kind,
+        leaseToken: 7,
+      });
+    }
+    expect(
+      parseAgentRootLeaseReleaseResult({
+        kind: "released",
+        leaseToken: Number.MAX_SAFE_INTEGER,
+      }),
+    ).toEqual({ kind: "released", leaseToken: Number.MAX_SAFE_INTEGER });
+  });
+
+  it("rejects malformed root lease release results", () => {
+    const rejected: readonly unknown[] = [
+      null,
+      {},
+      { kind: "released" },
+      { leaseToken: 7 },
+      { kind: "unknown", leaseToken: 7 },
+      { kind: "released", leaseToken: 0 },
+      { kind: "released", leaseToken: -1 },
+      { kind: "released", leaseToken: 1.5 },
+      { kind: "released", leaseToken: "7" },
+      { kind: "released", leaseToken: Number.MAX_SAFE_INTEGER + 1 },
+      { kind: "released", leaseToken: 7, extra: true },
+    ];
+    for (const value of rejected) {
+      expect(() => parseAgentRootLeaseReleaseResult(value)).toThrow(TypeError);
+    }
+  });
+
+  it("parses only an exact positive safe lease token receipt", () => {
     expect(parseAgentRootLeaseReceipt({ leaseToken: Number.MAX_SAFE_INTEGER })).toEqual({
       leaseToken: Number.MAX_SAFE_INTEGER,
     });
@@ -87,6 +128,7 @@ describe("agent root lease validation", () => {
     const rejected: readonly unknown[] = [
       null,
       {},
+      { leaseToken: 0 },
       { leaseToken: -1 },
       { leaseToken: 1.5 },
       { leaseToken: "1" },

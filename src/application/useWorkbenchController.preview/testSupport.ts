@@ -7,6 +7,7 @@ import type { EditorPosition, LanguageServerRange } from "../../domain/languageS
 import {
   type FileEntry,
   type ManagedPhpactorInstallCompletionEvent,
+  type ManagedTypeScriptInstallCompletionEvent,
   type PhpProjectDescriptor,
   type WorkspaceDescriptor,
 } from "../../domain/workspace";
@@ -57,7 +58,8 @@ export function completion(fields: Record<string, unknown>) {
 export function createManagedPhpactorInstallHarness(
   overrides: Partial<WorkbenchWorkspaceGateways["phpTools"]> = {},
 ) {
-  const listeners = new Set<(event: ManagedPhpactorInstallCompletionEvent) => void>();
+  const phpactorListeners = new Set<(event: ManagedPhpactorInstallCompletionEvent) => void>();
+  const typeScriptListeners = new Set<(event: ManagedTypeScriptInstallCompletionEvent) => void>();
 
   const phpTools: WorkbenchWorkspaceGateways["phpTools"] = {
     detectPhpTools: vi.fn(async () => ({
@@ -65,10 +67,17 @@ export function createManagedPhpactorInstallHarness(
       phpactor: null,
     })),
     installManagedPhpactor: vi.fn(async () => undefined),
+    installManagedTypeScriptLanguageServer: vi.fn(async () => undefined),
     subscribeManagedPhpactorInstall: vi.fn(async (listener) => {
-      listeners.add(listener);
+      phpactorListeners.add(listener);
       return () => {
-        listeners.delete(listener);
+        phpactorListeners.delete(listener);
+      };
+    }),
+    subscribeManagedTypeScriptLanguageServerInstall: vi.fn(async (listener) => {
+      typeScriptListeners.add(listener);
+      return () => {
+        typeScriptListeners.delete(listener);
       };
     }),
     ...overrides,
@@ -77,7 +86,12 @@ export function createManagedPhpactorInstallHarness(
   return {
     phpTools,
     emitCompletion(event: ManagedPhpactorInstallCompletionEvent) {
-      for (const listener of listeners) {
+      for (const listener of phpactorListeners) {
+        listener(event);
+      }
+    },
+    emitTypeScriptCompletion(event: ManagedTypeScriptInstallCompletionEvent) {
+      for (const listener of typeScriptListeners) {
         listener(event);
       }
     },

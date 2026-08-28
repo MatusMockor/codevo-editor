@@ -7,6 +7,7 @@ import {
   MAX_AGENT_PROJECT_ROOTS,
   agentRootOwnerId,
   type AgentRootLeaseReceipt,
+  type AgentRootLeaseReleaseResult,
 } from "../domain/agentProject";
 import {
   defaultAppSettings,
@@ -391,6 +392,45 @@ describe("useAgentProjects lifecycle", () => {
     harness.unmount();
   });
 
+  it("does not publish an A2 lease acquired while an A1 cleanup becomes quarantined", async () => {
+    const harness = renderAgentProjects({ activeWorkspaceId: null, deferLease: true });
+    await waitForReact(() => expect(harness.environment.pendingLease).not.toBeNull());
+    const staleLease = harness.environment.pendingLease;
+
+    harness.environment.activeWorkspaceId = ACTIVE_ID;
+    harness.rerender();
+    await waitForReact(() => expect(harness.environment.pendingLease).not.toBe(staleLease));
+    const replacementLease = harness.environment.pendingLease;
+    harness.lease.releaseAgentRootLease.mockResolvedValueOnce({
+      kind: "foreignOwner",
+      leaseToken: 51,
+    });
+
+    await act(async () => {
+      staleLease?.resolve({ leaseToken: 51 });
+    });
+    await waitForReact(() =>
+      expect(harness.lease.releaseAgentRootLease).toHaveBeenCalledWith({
+        rootPath: ACTIVE_ROOT,
+        leaseToken: 51,
+      }),
+    );
+    await act(async () => {
+      replacementLease?.resolve({ leaseToken: 52 });
+    });
+
+    await waitForReact(() =>
+      expect(harness.lease.releaseAgentRootLease).toHaveBeenCalledWith({
+        rootPath: ACTIVE_ROOT,
+        leaseToken: 52,
+      }),
+    );
+    expect(harness.hook().projects[0]?.leaseToken).toBeNull();
+    expect(await harness.hook().ensureProjectLease(ACTIVE_ROOT)).toBe(false);
+    expect(harness.lease.acquireAgentRootLease).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
   it("replaces the active launch workspace while retaining a live project task owner", async () => {
     const harness = renderAgentProjects();
     await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
@@ -712,10 +752,70 @@ describe("useAgentProjects lifecycle", () => {
     harness.unmount();
   });
 
+  it.each([
+    { kind: "notHeld", echoedToken: "exact" },
+    { kind: "foreignOwner", echoedToken: "exact" },
+    { kind: "released", echoedToken: "mismatched" },
+  ] as const)(
+    "keeps the exact lease quarantined for $kind with an $echoedToken token echo",
+    async ({ kind, echoedToken }) => {
+      const harness = renderAgentProjects();
+      await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
+      const leaseToken = harness.hook().projects[0]?.leaseToken;
+      if (leaseToken === null || leaseToken === undefined) throw new Error("Lease unavailable");
+      harness.lease.releaseAgentRootLease.mockResolvedValueOnce({
+        kind,
+        leaseToken: echoedToken === "exact" ? leaseToken : leaseToken + 1,
+      });
+      const closeWorkspaceProject = harness.hook().closeWorkspaceProject;
+      if (!closeWorkspaceProject) throw new Error("Exact workspace close is unavailable");
+
+      const result = await closeWorkspaceProject(descriptorFor(ACTIVE_ROOT, ACTIVE_ID), () => true);
+
+      expect(result).toEqual({ status: "lease-release-incomplete" });
+      expect(harness.hook().projects[0]?.leaseToken).toBe(leaseToken);
+      expect(harness.hook().launchIdentityForProject(ACTIVE_ROOT)).toBeNull();
+      expect(await harness.hook().ensureProjectLease(ACTIVE_ROOT)).toBe(false);
+      expect(harness.lease.acquireAgentRootLease).toHaveBeenCalledTimes(1);
+      expect(harness.reportError).toHaveBeenCalledOnce();
+      harness.unmount();
+    },
+  );
+
+  it("quarantines a non-released trust cleanup and blocks same-root reacquisition", async () => {
+    const harness = renderAgentProjects();
+    await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
+    const leaseToken = harness.hook().projects[0]?.leaseToken;
+    if (leaseToken === null || leaseToken === undefined) throw new Error("Lease unavailable");
+    harness.lease.releaseAgentRootLease.mockResolvedValueOnce({
+      kind: "foreignOwner",
+      leaseToken,
+    });
+
+    harness.environment.activeWorkspaceTrust = { rootPath: ACTIVE_ROOT, trusted: false };
+    harness.rerender();
+
+    await waitForReact(() => expect(harness.reportError).toHaveBeenCalledOnce());
+    expect(harness.lease.releaseAgentRootLease).toHaveBeenCalledWith({
+      rootPath: ACTIVE_ROOT,
+      leaseToken,
+    });
+    expect(harness.hook().projects[0]?.leaseToken).toBeNull();
+
+    harness.environment.activeWorkspaceTrust = { rootPath: ACTIVE_ROOT, trusted: true };
+    harness.rerender();
+    await waitForReact(() => expect(harness.hook().projects[0]?.trust).toBe("trusted"));
+
+    expect(await harness.hook().ensureProjectLease(ACTIVE_ROOT)).toBe(false);
+    expect(harness.lease.acquireAgentRootLease).toHaveBeenCalledTimes(1);
+    expect(harness.hook().projects[0]?.leaseToken).toBeNull();
+    harness.unmount();
+  });
+
   it("quarantines A2 until A1 lease release settles and then acquires a fresh lease", async () => {
     const harness = renderAgentProjects();
     await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
-    const released = createDeferred<void>();
+    const released = createDeferred<AgentRootLeaseReleaseResult>();
     harness.lease.releaseAgentRootLease.mockImplementationOnce(() => released.promise);
     const closeWorkspaceProject = harness.hook().closeWorkspaceProject;
     if (!closeWorkspaceProject) throw new Error("Exact workspace close is unavailable");
@@ -725,7 +825,9 @@ describe("useAgentProjects lifecycle", () => {
     harness.environment.activeWorkspaceId = "workspace-a2";
     harness.rerender();
     expect(harness.hook().launchIdentityForProject(ACTIVE_ROOT)).toBeNull();
-    released.resolve();
+    const leaseToken = harness.hook().projects[0]?.leaseToken;
+    if (leaseToken === null || leaseToken === undefined) throw new Error("Lease unavailable");
+    released.resolve({ kind: "released", leaseToken });
     const result = await closing;
     expect(result.status).toBe("closed");
     if (result.status !== "closed") throw new Error("A1 lease release did not settle");
@@ -1172,9 +1274,12 @@ function renderAgentProjects(options: HarnessOptions = {}) {
         return { leaseToken: nextLeaseToken };
       },
     ),
-    releaseAgentRootLease: vi.fn(async (): Promise<void> => {
-      calls.push("releaseAgentRootLease");
-    }),
+    releaseAgentRootLease: vi.fn(
+      async (request: { readonly leaseToken: number }): Promise<AgentRootLeaseReleaseResult> => {
+        calls.push("releaseAgentRootLease");
+        return { kind: "released", leaseToken: request.leaseToken };
+      },
+    ),
   };
 
   const confirm = vi.fn((_message: string) => environment.confirmResult);

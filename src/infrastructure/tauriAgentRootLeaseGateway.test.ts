@@ -13,7 +13,7 @@ describe("TauriAgentRootLeaseGateway", () => {
     const invokeCommand = vi
       .fn<InvokeAgentRootLeaseCommand>()
       .mockResolvedValueOnce({ leaseToken: 7 })
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce({ kind: "released", leaseToken: 7 });
     const gateway = new TauriAgentRootLeaseGateway(invokeCommand, available);
 
     await expect(gateway.acquireAgentRootLease({ rootPath: "/repo" })).resolves.toEqual({
@@ -21,7 +21,7 @@ describe("TauriAgentRootLeaseGateway", () => {
     });
     await expect(
       gateway.releaseAgentRootLease({ rootPath: "/repo", leaseToken: 7 }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ kind: "released", leaseToken: 7 });
 
     expect(invokeCommand.mock.calls).toEqual([
       ["acquire_agent_root_lease", { request: { rootPath: "/repo" } }],
@@ -55,7 +55,10 @@ describe("TauriAgentRootLeaseGateway", () => {
 
   it("rejects malformed transport results", async () => {
     const acquireInvoke = vi.fn<InvokeAgentRootLeaseCommand>().mockResolvedValue({});
-    const releaseInvoke = vi.fn<InvokeAgentRootLeaseCommand>().mockResolvedValue(undefined);
+    const releaseInvoke = vi.fn<InvokeAgentRootLeaseCommand>().mockResolvedValue({
+      kind: "released",
+      leaseToken: 8,
+    });
 
     await expect(
       new TauriAgentRootLeaseGateway(acquireInvoke, available).acquireAgentRootLease({

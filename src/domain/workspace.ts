@@ -1,4 +1,8 @@
 import type { LanguageServerWorkspaceEdit } from "./languageServerFeatures";
+import type {
+  ManagedLanguageServerInstallCompletionEvent,
+  ManagedLanguageServerInstallRequest,
+} from "./managedLanguageServerInstall";
 
 export type FileEntryKind = "directory" | "file";
 
@@ -429,15 +433,8 @@ export interface WorkspaceDetectionGateway {
 
 export type ManagedPhpactorInstallUnsubscribeFn = () => void;
 
-export interface ManagedPhpactorInstallCompletionEvent {
-  root: string;
-  error: string | null;
-}
-
-export interface ManagedTypeScriptInstallCompletionEvent {
-  root: string;
-  error: string | null;
-}
+export type ManagedPhpactorInstallCompletionEvent = ManagedLanguageServerInstallCompletionEvent;
+export type ManagedTypeScriptInstallCompletionEvent = ManagedLanguageServerInstallCompletionEvent;
 
 export interface PhpToolGateway {
   detectPhpTools(workspaceRoot: string | null): Promise<PhpToolAvailability>;
@@ -447,11 +444,13 @@ export interface PhpToolGateway {
    * off the UI thread; completion (success or failure) is delivered through
    * {@link subscribeManagedPhpactorInstall}.
    */
-  installManagedPhpactor(root: string): Promise<void>;
+  installManagedPhpactor(request: ManagedLanguageServerInstallRequest): Promise<void>;
   subscribeManagedPhpactorInstall(
     listener: (event: ManagedPhpactorInstallCompletionEvent) => void,
   ): Promise<ManagedPhpactorInstallUnsubscribeFn>;
-  installManagedTypeScriptLanguageServer?(root: string): Promise<void>;
+  installManagedTypeScriptLanguageServer?(
+    request: ManagedLanguageServerInstallRequest,
+  ): Promise<void>;
   subscribeManagedTypeScriptLanguageServerInstall?(
     listener: (event: ManagedTypeScriptInstallCompletionEvent) => void,
   ): Promise<ManagedPhpactorInstallUnsubscribeFn>;

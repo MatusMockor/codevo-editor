@@ -1,5 +1,10 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import {
+  parseManagedLanguageServerInstallCompletionEvent,
+  parseManagedLanguageServerInstallRequest,
+  type ManagedLanguageServerInstallRequest,
+} from "../domain/managedLanguageServerInstall";
 import type {
   FileEntry,
   FileSearchGateway,
@@ -188,8 +193,10 @@ export class TauriWorkspaceGateway
     return invoke<PhpToolAvailability>("detect_php_tools", { workspaceRoot });
   }
 
-  installManagedPhpactor(root: string): Promise<void> {
-    return invoke<void>("install_managed_phpactor", { root });
+  installManagedPhpactor(request: ManagedLanguageServerInstallRequest): Promise<void> {
+    return invoke<void>("install_managed_phpactor", {
+      request: parseManagedLanguageServerInstallRequest(request),
+    });
   }
 
   subscribeManagedPhpactorInstall(
@@ -199,25 +206,27 @@ export class TauriWorkspaceGateway
       return Promise.resolve(() => undefined);
     }
 
-    return listen<ManagedPhpactorInstallCompletionEvent>(
-      MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT,
-      (event) => {
-        listener(event.payload);
-      },
-    );
+    return listen<unknown>(MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT, (event) => {
+      publishManagedLanguageServerInstallEvent(event.payload, listener);
+    });
   }
 
-  installManagedTypeScriptLanguageServer(root: string): Promise<void> {
-    return invoke<void>("install_managed_typescript_language_server", { root });
+  installManagedTypeScriptLanguageServer(
+    request: ManagedLanguageServerInstallRequest,
+  ): Promise<void> {
+    return invoke<void>("install_managed_typescript_language_server", {
+      request: parseManagedLanguageServerInstallRequest(request),
+    });
   }
 
   subscribeManagedTypeScriptLanguageServerInstall(
     listener: (event: ManagedTypeScriptInstallCompletionEvent) => void,
   ): Promise<ManagedPhpactorInstallUnsubscribeFn> {
-    if (!isTauri()) return Promise.resolve(() => undefined);
-    return listen<ManagedTypeScriptInstallCompletionEvent>(
-      MANAGED_TYPESCRIPT_INSTALL_COMPLETED_EVENT,
-      (event) => listener(event.payload),
+    if (!isTauri()) {
+      return Promise.resolve(() => undefined);
+    }
+    return listen<unknown>(MANAGED_TYPESCRIPT_INSTALL_COMPLETED_EVENT, (event) =>
+      publishManagedLanguageServerInstallEvent(event.payload, listener),
     );
   }
 
@@ -853,6 +862,19 @@ type TransactionalWorkspaceEditResult = {
   rollbackExpectedStates: Record<string, string | null>;
   rollbackFileModes: Record<string, number>;
 };
+
+function publishManagedLanguageServerInstallEvent(
+  payload: unknown,
+  listener: (event: ManagedPhpactorInstallCompletionEvent) => void,
+): void {
+  let event: ManagedPhpactorInstallCompletionEvent;
+  try {
+    event = parseManagedLanguageServerInstallCompletionEvent(payload);
+  } catch {
+    return;
+  }
+  listener(event);
+}
 
 function workspaceEditCount(result: WorkspaceEditResult): number {
   if (result.status === "success") return result.appliedCount;

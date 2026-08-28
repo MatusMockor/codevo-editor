@@ -1246,7 +1246,10 @@ function fakeAgentRootLeaseGateway(): NonNullable<
       nextToken += 1;
       return { leaseToken: nextToken };
     },
-    releaseAgentRootLease: async () => undefined,
+    releaseAgentRootLease: async (request) => ({
+      kind: "released",
+      leaseToken: request.leaseToken,
+    }),
   };
 }
 

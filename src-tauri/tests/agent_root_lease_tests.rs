@@ -19,8 +19,8 @@ mod agent_task_admission;
 mod agent_task_supervisor;
 
 use agent_root_lease::{
-    dispose_should_stop_agent_tasks, AgentRootLeaseRegistry, AGENT_ROOT_LEASE_LIMIT_ERROR,
-    MAX_AGENT_ROOT_LEASES,
+    dispose_should_stop_agent_tasks, AgentRootLeaseRegistry, AgentRootLeaseReleaseDisposition,
+    AGENT_ROOT_LEASE_LIMIT_ERROR, MAX_AGENT_ROOT_LEASES,
 };
 use agent_task_admission::AgentTaskAdmissionRegistry;
 use agent_task_spawner::{AgentChild, AgentProcessSpawner, AgentTaskSpawnPlan};
@@ -424,7 +424,10 @@ fn dispose_with_a_held_lease_leaves_the_live_task_running() {
     );
     assert_eq!(task.process.exit_code(), None);
 
-    assert!(fixture.leases.release(&task.root, token));
+    assert_eq!(
+        fixture.leases.release(&task.root, token),
+        AgentRootLeaseReleaseDisposition::Released
+    );
     fixture
         .registry
         .stop("agt-held-0001")
@@ -445,7 +448,10 @@ fn dispose_after_release_stops_the_live_task() {
     assert!(stayed_false(QUIET_WINDOW, || fixture
         .sink
         .has_terminal_status("agt-released-0001")));
-    assert!(fixture.leases.release(&task.root, token));
+    assert_eq!(
+        fixture.leases.release(&task.root, token),
+        AgentRootLeaseReleaseDisposition::Released
+    );
 
     dispose_workspace_root(&fixture, &task.root);
 
@@ -515,11 +521,36 @@ fn lease_lookup_converges_on_path_aliases() {
         Some(fixture.leases.as_ref()),
         &real
     ));
-    assert!(fixture.leases.release(&real, token));
+    assert_eq!(
+        fixture.leases.release(&real, token),
+        AgentRootLeaseReleaseDisposition::Released
+    );
     assert!(dispose_should_stop_agent_tasks(
         Some(fixture.leases.as_ref()),
         &real
     ));
+}
+
+#[test]
+fn release_dispositions_distinguish_absent_and_foreign_ownership() {
+    let fixture = fixture();
+    let root = unique_directory("release-dispositions");
+    let held_token = fixture.leases.acquire(&root).expect("acquire lease");
+    let foreign_token = held_token.wrapping_add(1).max(1);
+
+    assert_eq!(
+        fixture.leases.release(&root, foreign_token),
+        AgentRootLeaseReleaseDisposition::ForeignOwner
+    );
+    assert!(fixture.leases.is_held(&root));
+    assert_eq!(
+        fixture.leases.release(&root, held_token),
+        AgentRootLeaseReleaseDisposition::Released
+    );
+    assert_eq!(
+        fixture.leases.release(&root, held_token),
+        AgentRootLeaseReleaseDisposition::NotHeld
+    );
 }
 
 #[test]
@@ -563,7 +594,10 @@ fn lease_registry_caps_project_roots() {
 
     let (root, token) = roots.remove(0);
 
-    assert!(fixture.leases.release(&root, token));
+    assert_eq!(
+        fixture.leases.release(&root, token),
+        AgentRootLeaseReleaseDisposition::Released
+    );
     fixture
         .leases
         .acquire(Path::new("/agent-root-lease/overflow"))

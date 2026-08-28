@@ -678,8 +678,6 @@ export function useWorkbenchController(
   const autoStartedLanguageServerRootRef = useRef<string | null>(null);
   const phpLanguageServerAutostartAttemptsByRootRef = useRef<Record<string, number>>({});
   const manuallyStoppedPhpLanguageServerRootsRef = useRef<Set<string>>(new Set());
-  const installingManagedPhpactorRootRef = useRef<string | null>(null);
-  const installingManagedTypeScriptLanguageServerRootRef = useRef<string | null>(null);
   const autoStartedJavaScriptTypeScriptLanguageServerRootRef = useRef<string | null>(null);
   const javaScriptTypeScriptTrustAutostartRef = useRef<{
     owner: WorkspaceRuntimeOwner;
@@ -2099,8 +2097,6 @@ export function useWorkbenchController(
       javaScriptTypeScriptDiagnosticsByRootRef.current = {};
       lastLanguageServerCrashRef.current = null;
       lastPhpIdeReadinessSignatureRef.current = null;
-      installingManagedPhpactorRootRef.current = null;
-      installingManagedTypeScriptLanguageServerRootRef.current = null;
       openWorkspaceRequestTokenRef.current += 1;
       openWorkspaceRequestPathRef.current = null;
       openFileRequestTokenRef.current += 1;
@@ -2738,9 +2734,7 @@ export function useWorkbenchController(
       restoreIndexRoot(cachedWorkspaceState?.indexProgress.rootPath ?? null);
       autoStartedLanguageServerRootRef.current = null;
       phpLanguageServerAutostartAttemptsByRootRef.current = {};
-      installingManagedPhpactorRootRef.current = null;
       setInstallingManagedPhpactor(false);
-      installingManagedTypeScriptLanguageServerRootRef.current = null;
       flushSync(() => {
         setInstallingManagedTypeScriptLanguageServer(false);
         autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
@@ -4736,11 +4730,10 @@ export function useWorkbenchController(
     installManagedPhpactor,
     installManagedTypeScriptLanguageServer,
   } = useManagedLanguageServerInstallCommands({
+    currentWorkspaceIdentityDescriptorRef: workspaceIdentityDescriptorRef,
     currentWorkspaceRootRef,
     installingManagedPhpactor,
-    installingManagedPhpactorRootRef,
     installingManagedTypeScriptLanguageServer,
-    installingManagedTypeScriptLanguageServerRootRef,
     phpToolGateway,
     refreshJavaScriptTypeScriptLanguageServerPlan,
     refreshLanguageServerPlan,
@@ -4753,6 +4746,7 @@ export function useWorkbenchController(
     setNotices,
     setPhpTools,
     workspaceDescriptor,
+    workspaceIdentityDescriptor,
     workspaceRoot,
   });
 

@@ -926,7 +926,10 @@ function renderWorkbenchAgents(options: HarnessOptions) {
       nextLeaseToken += 1;
       return { leaseToken: nextLeaseToken };
     }),
-    releaseAgentRootLease: vi.fn(async () => undefined),
+    releaseAgentRootLease: vi.fn(async (request: { readonly leaseToken: number }) => ({
+      kind: "released" as const,
+      leaseToken: request.leaseToken,
+    })),
   };
 
   const reportError = vi.fn();

@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 pub const MAX_AGENT_ROOT_LEASES: usize = 8;
+pub const MAX_AGENT_ROOT_LEASE_TOKEN: u64 = 9_007_199_254_740_991;
 pub const AGENT_ROOT_LEASE_LIMIT_ERROR: &str = "Too many agent project roots are leased.";
+pub const AGENT_ROOT_LEASE_TOKEN_EXHAUSTED_ERROR: &str =
+    "Agent project root lease token capacity is exhausted.";
 
 #[derive(Debug, Default)]
 struct AgentRootLeaseState {
@@ -14,6 +17,13 @@ struct AgentRootLeaseState {
 #[derive(Debug, Default)]
 pub struct AgentRootLeaseRegistry {
     state: Mutex<AgentRootLeaseState>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentRootLeaseReleaseDisposition {
+    Released,
+    NotHeld,
+    ForeignOwner,
 }
 
 impl AgentRootLeaseRegistry {
@@ -32,26 +42,30 @@ impl AgentRootLeaseRegistry {
             return Err(AGENT_ROOT_LEASE_LIMIT_ERROR.to_string());
         }
 
-        state.next_token = state.next_token.wrapping_add(1).max(1);
+        if state.next_token >= MAX_AGENT_ROOT_LEASE_TOKEN {
+            return Err(AGENT_ROOT_LEASE_TOKEN_EXHAUSTED_ERROR.to_string());
+        }
+
+        state.next_token += 1;
         let token = state.next_token;
         state.leases.insert(canonical_root.to_path_buf(), token);
 
         Ok(token)
     }
 
-    pub fn release(&self, canonical_root: &Path, token: u64) -> bool {
+    pub fn release(&self, canonical_root: &Path, token: u64) -> AgentRootLeaseReleaseDisposition {
         let mut state = self.state();
         let Some(held) = state.leases.get(canonical_root).copied() else {
-            return false;
+            return AgentRootLeaseReleaseDisposition::NotHeld;
         };
 
         if held != token {
-            return false;
+            return AgentRootLeaseReleaseDisposition::ForeignOwner;
         }
 
         state.leases.remove(canonical_root);
 
-        true
+        AgentRootLeaseReleaseDisposition::Released
     }
 
     pub fn is_held(&self, canonical_root: &Path) -> bool {
@@ -103,10 +117,49 @@ mod tests {
         let root = Path::new("/workspace/beta");
         let token = registry.acquire(root).expect("acquire");
 
-        assert!(!registry.release(root, token.wrapping_add(1)));
+        assert_eq!(
+            registry.release(root, token.wrapping_add(1)),
+            AgentRootLeaseReleaseDisposition::ForeignOwner
+        );
         assert!(registry.is_held(root));
-        assert!(registry.release(root, token));
+        assert_eq!(
+            registry.release(root, token),
+            AgentRootLeaseReleaseDisposition::Released
+        );
         assert!(!registry.is_held(root));
+    }
+
+    #[test]
+    fn exhausted_tokens_fail_closed_without_reusing_a_stale_token() {
+        let registry = AgentRootLeaseRegistry::new();
+        let root = Path::new("/workspace/token-exhaustion");
+        let stale = registry.acquire(root).expect("initial acquire");
+        assert_eq!(
+            registry.release(root, stale),
+            AgentRootLeaseReleaseDisposition::Released
+        );
+        registry.state().next_token = MAX_AGENT_ROOT_LEASE_TOKEN;
+
+        let error = registry.acquire(root).expect_err("token exhaustion");
+
+        assert_eq!(error, AGENT_ROOT_LEASE_TOKEN_EXHAUSTED_ERROR);
+        assert!(!registry.is_held(root));
+    }
+
+    #[test]
+    fn exhausted_token_capacity_preserves_idempotent_held_root_acquisition() {
+        let registry = AgentRootLeaseRegistry::new();
+        let root = Path::new("/workspace/held-at-exhaustion");
+        let held = registry.acquire(root).expect("initial acquire");
+        registry.state().next_token = MAX_AGENT_ROOT_LEASE_TOKEN;
+
+        let reacquired = registry.acquire(root).expect("idempotent re-acquire");
+        let error = registry
+            .acquire(Path::new("/workspace/new-at-exhaustion"))
+            .expect_err("new root fails closed");
+
+        assert_eq!(reacquired, held);
+        assert_eq!(error, AGENT_ROOT_LEASE_TOKEN_EXHAUSTED_ERROR);
     }
 
     #[test]
@@ -115,14 +168,23 @@ mod tests {
         let root = Path::new("/workspace/gamma");
         let stale = registry.acquire(root).expect("first acquire");
 
-        assert!(registry.release(root, stale));
+        assert_eq!(
+            registry.release(root, stale),
+            AgentRootLeaseReleaseDisposition::Released
+        );
 
         let renewed = registry.acquire(root).expect("second acquire");
 
         assert_ne!(stale, renewed);
-        assert!(!registry.release(root, stale));
+        assert_eq!(
+            registry.release(root, stale),
+            AgentRootLeaseReleaseDisposition::ForeignOwner
+        );
         assert!(registry.is_held(root));
-        assert!(!registry.release(Path::new("/workspace/never-leased"), renewed));
+        assert_eq!(
+            registry.release(Path::new("/workspace/never-leased"), renewed),
+            AgentRootLeaseReleaseDisposition::NotHeld
+        );
     }
 
     #[test]
@@ -172,7 +234,10 @@ mod tests {
 
         let (root, token) = tokens.remove(0);
 
-        assert!(registry.release(&root, token));
+        assert_eq!(
+            registry.release(&root, token),
+            AgentRootLeaseReleaseDisposition::Released
+        );
 
         registry
             .acquire(Path::new("/workspace/overflow"))
@@ -190,7 +255,10 @@ mod tests {
         assert!(dispose_should_stop_agent_tasks(Some(&registry), other));
         assert!(dispose_should_stop_agent_tasks(None, leased));
 
-        registry.release(leased, token);
+        assert_eq!(
+            registry.release(leased, token),
+            AgentRootLeaseReleaseDisposition::Released
+        );
 
         assert!(dispose_should_stop_agent_tasks(Some(&registry), leased));
     }
