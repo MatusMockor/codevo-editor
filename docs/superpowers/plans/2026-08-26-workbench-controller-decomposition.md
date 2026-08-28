@@ -88,12 +88,14 @@ Round 3 starts at `d47d7f92` with 5,660 raw lines and 18,447 structural tokens. 
    - Destination: `useWorkbenchEditorFileCoordinator.ts`.
    - Boundary: document tabs, Git changes, PHP outline and change signature, workspace edits, reveal, preview, and file-open ownership.
    - Net reduction budget: at least 298 raw lines and 1,014 structural tokens.
+   - Completed in `82eb75fd`: 5,660 to 5,336 raw lines and 18,447 to 17,380 structural tokens. Independent adversarial review: clean.
 
 2. Document save and close
    - Range: 3562-3967.
    - Destination: `useWorkbenchDocumentSaveCloseCoordinator.ts`.
    - Boundary: save authority, conflicts, lifecycle exclusion, group and tab close, retained-state cleanup, workspace close, and quit ownership.
    - Net reduction budget: at least 271 raw lines and 844 structural tokens.
+   - Completed after `82eb75fd`: 5,336 to 5,065 raw lines and 17,380 to 16,531 structural tokens. Independent adversarial review: clean.
 
 3. Editor and navigation tools
    - Range: 3968-4682.
