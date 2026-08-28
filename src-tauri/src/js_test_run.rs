@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 pub(crate) mod batch;
 #[path = "js_test_coverage.rs"]
 pub(crate) mod coverage;
+#[path = "js_test_process_timeout.rs"]
+mod process_timeout;
 #[path = "js_test_projection.rs"]
 mod projection;
 #[path = "js_test_runner.rs"]
@@ -24,6 +26,9 @@ pub(crate) mod task_runner;
 use crate::js_test_execution_root::{
     retain_js_test_process_authority, RetainedJsTestProcessAuthority, RetainedJsTestRunnerKind,
 };
+pub(crate) use process_timeout::JsTestProcessTimeout;
+#[cfg(test)]
+pub(crate) use process_timeout::JsTestTimeoutTrigger;
 use projection::validate_projected_test_text;
 #[cfg(test)]
 use runner::{detect_runner, MAX_PACKAGE_JSON_BYTES};
@@ -38,6 +43,7 @@ const MAX_REPORT_BYTES: u64 = 16 * 1024 * 1024;
 const RUNNER_TIMEOUT: Duration = Duration::from_secs(300);
 const RESULT_SUBDIRECTORY: &str = "js-test-results";
 const RESULT_LABEL: &str = "JavaScript test result";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum JsTestNameMatch {
@@ -439,21 +445,27 @@ fn execute_runner_with_args(
     execute_runner_with_timeout_retained(binary, root, args, RUNNER_TIMEOUT, authority)
 }
 
-#[cfg(test)]
-fn execute_runner_with_timeout(
-    binary: &Path,
-    root: &Path,
-    args: Vec<String>,
-    timeout: Duration,
-) -> Result<Vec<u8>, String> {
-    execute_runner_with_timeout_retained(binary, root, args, timeout, None)
-}
-
 pub(super) fn execute_runner_with_timeout_retained(
     binary: &Path,
     root: &Path,
     args: Vec<String>,
     timeout: Duration,
+    authority: Option<RetainedJsTestProcessAuthority>,
+) -> Result<Vec<u8>, String> {
+    execute_runner_with_timeout_policy(
+        binary,
+        root,
+        args,
+        JsTestProcessTimeout::elapsed(timeout),
+        authority,
+    )
+}
+
+fn execute_runner_with_timeout_policy(
+    binary: &Path,
+    root: &Path,
+    args: Vec<String>,
+    timeout: JsTestProcessTimeout,
     authority: Option<RetainedJsTestProcessAuthority>,
 ) -> Result<Vec<u8>, String> {
     let mut command = if let Some(authority) = authority {
@@ -481,7 +493,7 @@ pub(super) fn execute_runner_with_timeout_retained(
         .take()
         .ok_or_else(|| "JavaScript test runner has no stderr pipe.".to_string())?;
     let stderr_reader = thread::spawn(move || bounded_output_tail(stderr, ERROR_TAIL_BYTES));
-    let deadline = Instant::now() + timeout;
+    let started_at = Instant::now();
     loop {
         if child
             .try_wait()
@@ -492,7 +504,7 @@ pub(super) fn execute_runner_with_timeout_retained(
                 .join()
                 .map_err(|_| "JavaScript test stderr reader failed.".to_string());
         }
-        if Instant::now() >= deadline {
+        if timeout.has_expired(started_at) {
             #[cfg(unix)]
             crate::debug_support::DebugProcessHandle::from_process_id(child.id()).terminate();
             #[cfg(not(unix))]
@@ -501,7 +513,7 @@ pub(super) fn execute_runner_with_timeout_retained(
             let _ = stderr_reader.join();
             return Err(format!(
                 "JavaScript test runner timed out after {} seconds.",
-                timeout.as_secs()
+                timeout.duration().as_secs()
             ));
         }
         thread::sleep(Duration::from_millis(25));
@@ -732,9 +744,10 @@ fn with_stderr_tail(message: String, stderr: &[u8]) -> String {
 mod tests {
     use super::{
         detect_runner, ensure_registered_root_identity, escape_test_filter,
-        execute_runner_with_timeout, is_valid_filter, parse_jest_json, run_js_tests_blocking_with,
-        run_js_tests_scoped_blocking_with, runner_args, scoped_runner_args, selection_for_scope,
-        JsTestNameMatch, JsTestRunScope, JsTestRunSelection, JsTestRunner, ERROR_TAIL_BYTES,
+        execute_runner_with_timeout_policy, is_valid_filter, parse_jest_json,
+        run_js_tests_blocking_with, run_js_tests_scoped_blocking_with, runner_args,
+        scoped_runner_args, selection_for_scope, JsTestNameMatch, JsTestProcessTimeout,
+        JsTestRunScope, JsTestRunSelection, JsTestRunner, JsTestTimeoutTrigger, ERROR_TAIL_BYTES,
         MAX_CASES, MAX_PACKAGE_JSON_BYTES, MAX_REPORT_BYTES, MAX_SUITES,
     };
     use crate::php_test_run::{PhpTestRunResponse, PhpTestStatus, PhpTestSuite, PhpTestTotals};
@@ -1449,9 +1462,14 @@ mod tests {
         let noisy = root.join("noisy.sh");
         fs::write(&noisy, "#!/bin/sh\nprintf '%010000d' 0 >&2\n").expect("write noisy runner");
         make_executable(&noisy);
-        let stderr =
-            execute_runner_with_timeout(&noisy, &root, vec![], std::time::Duration::from_secs(30))
-                .expect("bounded runner");
+        let stderr = execute_runner_with_timeout_policy(
+            &noisy,
+            &root,
+            vec![],
+            JsTestProcessTimeout::elapsed(std::time::Duration::from_secs(30)),
+            None,
+        )
+        .expect("bounded runner");
         assert_eq!(stderr.len(), ERROR_TAIL_BYTES);
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -1460,15 +1478,38 @@ mod tests {
     #[test]
     fn js_test_runner_timeout_kills_the_process() {
         let root = temp_directory("runner-timeout");
+        let ready = root.join("ready");
         let slow = root.join("slow.sh");
-        fs::write(&slow, "#!/bin/sh\nsleep 5\n").expect("write slow runner");
+        fs::write(
+            &slow,
+            format!("#!/bin/sh\ntouch '{}'\nsleep 30\n", ready.display()),
+        )
+        .expect("write slow runner");
         make_executable(&slow);
-        let started = std::time::Instant::now();
-        let error =
-            execute_runner_with_timeout(&slow, &root, vec![], std::time::Duration::from_millis(50))
-                .expect_err("runner must time out");
+        let trigger = JsTestTimeoutTrigger::new();
+        let worker_trigger = trigger.clone();
+        let worker_root = root.clone();
+        let worker = std::thread::spawn(move || {
+            execute_runner_with_timeout_policy(
+                &slow,
+                &worker_root,
+                vec![],
+                JsTestProcessTimeout::triggered(
+                    std::time::Duration::from_secs(300),
+                    worker_trigger,
+                ),
+                None,
+            )
+        });
+        if let Err(message) = trigger.expire_after_fixture_ready(&ready) {
+            let _ = worker.join();
+            panic!("{message}");
+        }
+        let error = worker
+            .join()
+            .expect("join runner")
+            .expect_err("runner must time out");
         assert!(error.contains("timed out"));
-        assert!(started.elapsed() < std::time::Duration::from_secs(2));
         fs::remove_dir_all(root).expect("cleanup");
     }
 

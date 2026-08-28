@@ -1,8 +1,10 @@
+#[cfg(test)]
+use super::JsTestTimeoutTrigger;
 use super::{
     detect_runner_in_workspace, ensure_registered_root_identity, parse_jest_json,
     read_report_bounded, registered_root_path, scoped_runner_args, selection_for_scope,
-    with_stderr_tail, JsTestRunScope, JsTestRunSelection, JsTestRunner, ERROR_TAIL_BYTES,
-    MAX_REPORT_BYTES, RESULT_LABEL, RESULT_SUBDIRECTORY, RUNNER_TIMEOUT,
+    with_stderr_tail, JsTestProcessTimeout, JsTestRunScope, JsTestRunSelection, JsTestRunner,
+    ERROR_TAIL_BYTES, MAX_REPORT_BYTES, RESULT_LABEL, RESULT_SUBDIRECTORY, RUNNER_TIMEOUT,
 };
 mod bounded_captured_stream {
     include!("bounded_captured_stream.rs");
@@ -338,17 +340,25 @@ where
 }
 
 #[cfg(test)]
-fn execute_with_args_timeout<F>(
+fn execute_with_args_timeout_trigger<F>(
     runner: &JsTestRunner,
     root: &Path,
     args: Vec<String>,
-    timeout: Duration,
+    reported_duration: Duration,
+    trigger: JsTestTimeoutTrigger,
     activate: F,
 ) -> Result<JsTestRunnerCompletion, String>
 where
     F: FnOnce(TerminalTaskOwnership) -> Result<(), String>,
 {
-    execute_with_args_timeout_retained(runner, root, args, timeout, activate, None)
+    execute_with_args_timeout_policy(
+        runner,
+        root,
+        args,
+        JsTestProcessTimeout::triggered(reported_duration, trigger),
+        activate,
+        None,
+    )
 }
 
 fn execute_with_args_timeout_retained<F>(
@@ -356,6 +366,27 @@ fn execute_with_args_timeout_retained<F>(
     root: &Path,
     args: Vec<String>,
     timeout: Duration,
+    activate: F,
+    authority: Option<RetainedJsTestProcessAuthority>,
+) -> Result<JsTestRunnerCompletion, String>
+where
+    F: FnOnce(TerminalTaskOwnership) -> Result<(), String>,
+{
+    execute_with_args_timeout_policy(
+        runner,
+        root,
+        args,
+        JsTestProcessTimeout::elapsed(timeout),
+        activate,
+        authority,
+    )
+}
+
+fn execute_with_args_timeout_policy<F>(
+    runner: &JsTestRunner,
+    root: &Path,
+    args: Vec<String>,
+    timeout: JsTestProcessTimeout,
     activate: F,
     authority: Option<RetainedJsTestProcessAuthority>,
 ) -> Result<JsTestRunnerCompletion, String>
@@ -431,7 +462,7 @@ where
         let _ = stderr_reader.join();
         return Err(message);
     }
-    let deadline = Instant::now() + timeout;
+    let started_at = Instant::now();
     loop {
         #[cfg(not(unix))]
         if ownership.was_stop_requested() {
@@ -463,7 +494,7 @@ where
                 };
             }
         }
-        if Instant::now() >= deadline {
+        if timeout.has_expired(started_at) {
             let stopped = ownership.was_stop_requested();
             ownership.terminate();
             #[cfg(not(unix))]
@@ -476,7 +507,7 @@ where
                 Ok(JsTestRunnerCompletion::Failed {
                     message: format!(
                         "JavaScript test runner timed out after {} seconds.",
-                        timeout.as_secs()
+                        timeout.duration().as_secs()
                     ),
                     output,
                 })
@@ -875,20 +906,16 @@ mod tests {
             ),
         );
         let runner = JsTestRunner::Vitest(binary);
+        let trigger = JsTestTimeoutTrigger::new();
+        let activation_trigger = trigger.clone();
         let activation_ready = ready.clone();
-        let completion = execute_with_args_timeout(
+        let completion = execute_with_args_timeout_trigger(
             &runner,
             &root,
             Vec::new(),
-            Duration::from_millis(50),
-            |_| {
-                let started = Instant::now();
-                while !activation_ready.is_file() {
-                    assert!(started.elapsed() < Duration::from_secs(2));
-                    thread::sleep(Duration::from_millis(5));
-                }
-                Ok(())
-            },
+            Duration::from_secs(300),
+            trigger,
+            |_| activation_trigger.expire_after_fixture_ready(&activation_ready),
         )
         .expect("runner completion");
         let JsTestRunnerCompletion::Failed { message, output } = completion else {

@@ -3,7 +3,7 @@ use crate::{
         ensure_js_test_execution_context_identity, resolve_js_test_execution_context,
         retain_js_test_process_authority, RetainedJsTestProcessAuthority, RetainedJsTestRunnerKind,
     },
-    js_test_run::{JsTestNameMatch, JsTestRunScope},
+    js_test_run::{JsTestNameMatch, JsTestProcessTimeout, JsTestRunScope},
     terminal_task_process::TerminalTaskOwnership,
     trust::WorkspaceTrustService,
     workspace_registry::{opened_root_path, WorkspaceId, WorkspaceRegistry},
@@ -1111,11 +1111,26 @@ fn flush_complete_utf8(
 }
 
 fn finish_watch(spawned: SpawnedWatch) -> JsTestWatchStatus {
-    finish_watch_with_timeout(spawned, WATCH_TIMEOUT)
+    finish_watch_with_timeout_policy(spawned, JsTestProcessTimeout::elapsed(WATCH_TIMEOUT))
 }
 
-fn finish_watch_with_timeout(mut spawned: SpawnedWatch, timeout: Duration) -> JsTestWatchStatus {
-    let deadline = Instant::now() + timeout;
+#[cfg(test)]
+fn finish_watch_with_timeout_trigger(
+    spawned: SpawnedWatch,
+    reported_duration: Duration,
+    trigger: crate::js_test_run::JsTestTimeoutTrigger,
+) -> JsTestWatchStatus {
+    finish_watch_with_timeout_policy(
+        spawned,
+        JsTestProcessTimeout::triggered(reported_duration, trigger),
+    )
+}
+
+fn finish_watch_with_timeout_policy(
+    mut spawned: SpawnedWatch,
+    timeout: JsTestProcessTimeout,
+) -> JsTestWatchStatus {
+    let started_at = Instant::now();
     let status = loop {
         #[cfg(not(unix))]
         if spawned.ownership.was_stop_requested() {
@@ -1138,7 +1153,7 @@ fn finish_watch_with_timeout(mut spawned: SpawnedWatch, timeout: Duration) -> Js
                 break Err(format!("Failed to inspect JavaScript test watch: {error}"));
             }
         }
-        if Instant::now() >= deadline {
+        if timeout.has_expired(started_at) {
             if spawned
                 .ownership
                 .wait_after_terminate(&mut spawned.child)
@@ -1148,7 +1163,7 @@ fn finish_watch_with_timeout(mut spawned: SpawnedWatch, timeout: Duration) -> Js
             }
             break Err(format!(
                 "JavaScript test watch timed out after {} seconds.",
-                timeout.as_secs()
+                timeout.duration().as_secs()
             ));
         }
         thread::sleep(Duration::from_millis(25));
