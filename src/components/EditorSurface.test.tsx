@@ -17767,6 +17767,8 @@ function createEditor(model: FakeModel): FakeEditor {
     gotoDefinition: (...args: unknown[]) => gotoDefinitionContributionNavigate(...args),
   };
   const domNode = document.createElement("div");
+  domNode.innerHTML =
+    '<div class="monaco-hover"></div><div class="find-widget"></div><div class="suggest-widget"></div>';
   const editor: FakeEditor = {
     addAction: vi.fn(() => ({ dispose: vi.fn() })),
     deltaDecorations: vi.fn((_oldDecorations: string[], decorations: any[]) =>
