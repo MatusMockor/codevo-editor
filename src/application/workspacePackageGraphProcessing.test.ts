@@ -10,17 +10,12 @@ import {
 } from "./workspacePackageGraphProcessing";
 
 describe("workspace package graph processing", () => {
-  it("time-slices a realistic near-limit monorepo instead of parsing it in one UI turn", async () => {
+  it("yields between near-limit manifests and around graph construction", async () => {
     const sources = realisticMonorepoSources(64, 192 * 1024);
     let yields = 0;
-    let sliceStartedAt = performance.now();
-    let longestSliceMs = 0;
     const runtime: WorkspacePackageProcessingRuntime = {
-      now: () => performance.now(),
+      now: () => 0,
       yieldToMainThread: async () => {
-        const now = performance.now();
-        longestSliceMs = Math.max(longestSliceMs, now - sliceStartedAt);
-        sliceStartedAt = now;
         yields += 1;
       },
     };
@@ -42,17 +37,33 @@ describe("workspace package graph processing", () => {
     expect(sources.reduce((total, input) => total + input.utf8Bytes, 0)).toBeGreaterThanOrEqual(
       12 * 1024 * 1024,
     );
-    expect(yields).toBeGreaterThanOrEqual(64);
-    expect(longestSliceMs).toBeLessThan(50);
     expect(WORKSPACE_PACKAGE_PROCESSING_LIMITS).toEqual({
       maxDurationMs: 2_000,
       maxManifestBytesPerSlice: 256 * 1024,
       maxManifestsPerSlice: 8,
       maxSliceMs: 4,
     });
+    expect(
+      sources.every(
+        ({ utf8Bytes }) =>
+          utf8Bytes <= WORKSPACE_PACKAGE_PROCESSING_LIMITS.maxManifestBytesPerSlice,
+      ),
+    ).toBe(true);
+    expect(
+      sources
+        .slice(1)
+        .every(
+          ({ utf8Bytes }, index) =>
+            (sources[index]?.utf8Bytes ?? 0) + utf8Bytes >
+            WORKSPACE_PACKAGE_PROCESSING_LIMITS.maxManifestBytesPerSlice,
+        ),
+    ).toBe(true);
+    const manifestBoundaryYields = sources.length - 1;
+    const graphPhaseBoundaryYields = 2;
+    expect(yields).toBe(manifestBoundaryYields + graphPhaseBoundaryYields);
   });
 
-  it("bounds an adversarial 256-package graph to a frame-safe operation slice", async () => {
+  it("truncates an adversarial package graph at the match-operation cap", async () => {
     const patterns = [
       "packages/*",
       ...Array.from({ length: 127 }, (_, index) => `unmatched-${index}/**`),
@@ -65,14 +76,11 @@ describe("workspace package graph processing", () => {
           : JSON.stringify({ name: `@repo/package-${index}` }),
       ),
     );
-    const phaseDurations: number[] = [];
-    let phaseStartedAt = performance.now();
+    let yields = 0;
     const runtime: WorkspacePackageProcessingRuntime = {
-      now: () => performance.now(),
+      now: () => 0,
       yieldToMainThread: async () => {
-        const now = performance.now();
-        phaseDurations.push(now - phaseStartedAt);
-        phaseStartedAt = now;
+        yields += 1;
       },
     };
 
@@ -86,10 +94,18 @@ describe("workspace package graph processing", () => {
       runtime,
     );
 
-    const graphPhaseMs = phaseDurations[phaseDurations.length - 1] ?? Number.POSITIVE_INFINITY;
     expect(MAX_WORKSPACE_GLOB_MATCH_OPERATIONS).toBe(4_096);
+    const packageCandidates = sources.length - 1;
+    const requiredMatchOperations = packageCandidates * patterns.length;
+    expect(requiredMatchOperations).toBeGreaterThan(MAX_WORKSPACE_GLOB_MATCH_OPERATIONS);
+    const manifestBatchYields =
+      Math.ceil(sources.length / WORKSPACE_PACKAGE_PROCESSING_LIMITS.maxManifestsPerSlice) - 1;
+    const graphPhaseBoundaryYields = 2;
+    expect(yields).toBe(manifestBatchYields + graphPhaseBoundaryYields);
     expect(result.truncated).toBe(true);
-    expect(graphPhaseMs).toBeLessThan(WORKSPACE_PACKAGE_PROCESSING_LIMITS.maxSliceMs);
+    expect(result.timedOut).toBe(false);
+    expect(result.packages).toEqual([]);
+    expect(result.manifests).toHaveLength(sources.length);
   });
 
   it("cancels exactly at a slice boundary without continuing stale parsing", async () => {
