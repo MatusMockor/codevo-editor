@@ -9,6 +9,13 @@ const controllerSource = readFileSync(
   new URL("./application/useWorkbenchController.ts", import.meta.url),
   "utf8",
 );
+const editorFileCoordinatorSource = readFileSync(
+  new URL(
+    "./application/workbenchController/useWorkbenchEditorFileCoordinator.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const dockedTextSearchPropsSource = readFileSync(
   new URL("./components/dockedTextSearchProps.ts", import.meta.url),
   "utf8",
@@ -106,7 +113,7 @@ describe("docked text search composition", () => {
       "  const {",
     );
     const fileStructureClosure = sourceSection(
-      controllerSource,
+      editorFileCoordinatorSource,
       "  const openFileStructureWithInitialQuery = useCallback(",
       "  const openFileStructure = useCallback(",
     );

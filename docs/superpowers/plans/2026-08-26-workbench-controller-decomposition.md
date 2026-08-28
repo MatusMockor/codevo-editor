@@ -60,16 +60,16 @@ Reduce `useWorkbenchController` to a composition root without changing public be
 
 Round 2 started from `041c44e8` with 5,798 raw lines and 19,332 structural tokens in `useWorkbenchController`. It ended at `363f87ab` with 5,673 raw lines and 18,490 structural tokens, a measured reduction of 125 raw lines and 842 structural tokens. The hotspot baseline was lowered after every controller extraction and was never increased.
 
-| Responsibility | Original controller region | Extracted boundary | Commit | Raw lines | Structural tokens |
-| --- | --- | --- | --- | ---: | ---: |
-| Language runtime projection | Runtime state and derived projection around the former 893-925 and 1715-2436 regions | `useWorkbenchLanguageRuntimeProjection` | `46c69e25` | 5,771 | 19,121 |
-| Language runtime subscriptions | Late runtime-event subscription entry point formerly in the 7572-7718 region | `useWorkbenchLanguageRuntimeSubscriptionsCoordinator` | `40435a74` | 5,761 | 19,073 |
-| Incremental document sync | Changed-document scheduling shared by the controller and language runtime coordinator | `useWorkbenchChangedDocumentSyncCoordinator` | `86924142` | 5,756 | 19,041 |
-| Workspace identity authority | Workspace lifecycle identity ownership formerly centered in the 2518-3601 region | `useWorkspaceIdentityAuthority` | `e753bfec` | 5,747 | 18,918 |
-| Exact backend teardown | Rust workspace registry and runtime teardown boundary | `dispose_registered_workspace` and unregister modules | `cbd62d1d` | 5,747 | 18,918 |
-| Workspace open and restore | Open admission, startup restore, and hydration ownership | `useWorkspaceOpenRequestLifecycle` and settings hydration | `2bff5ffd` | 5,733 | 18,832 |
-| Exact close teardown | Task, lease, backend, cache, trust, and identity settlement | `registeredWorkspaceCloseCoordinator` and `useWorkbenchCloseLifecycle` | `a5e92e24` | 5,723 | 18,751 |
-| Workspace tab close | Dirty-scope preparation, teardown handoff, retained-state cleanup, and next-tab activation | `useWorkbenchWorkspaceTabCloseCoordinator` and `workspaceRetainedStateCleanup` | `363f87ab` | 5,673 | 18,490 |
+| Responsibility                 | Original controller region                                                                 | Extracted boundary                                                             | Commit     | Raw lines | Structural tokens |
+| ------------------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ | ---------- | --------: | ----------------: |
+| Language runtime projection    | Runtime state and derived projection around the former 893-925 and 1715-2436 regions       | `useWorkbenchLanguageRuntimeProjection`                                        | `46c69e25` |     5,771 |            19,121 |
+| Language runtime subscriptions | Late runtime-event subscription entry point formerly in the 7572-7718 region               | `useWorkbenchLanguageRuntimeSubscriptionsCoordinator`                          | `40435a74` |     5,761 |            19,073 |
+| Incremental document sync      | Changed-document scheduling shared by the controller and language runtime coordinator      | `useWorkbenchChangedDocumentSyncCoordinator`                                   | `86924142` |     5,756 |            19,041 |
+| Workspace identity authority   | Workspace lifecycle identity ownership formerly centered in the 2518-3601 region           | `useWorkspaceIdentityAuthority`                                                | `e753bfec` |     5,747 |            18,918 |
+| Exact backend teardown         | Rust workspace registry and runtime teardown boundary                                      | `dispose_registered_workspace` and unregister modules                          | `cbd62d1d` |     5,747 |            18,918 |
+| Workspace open and restore     | Open admission, startup restore, and hydration ownership                                   | `useWorkspaceOpenRequestLifecycle` and settings hydration                      | `2bff5ffd` |     5,733 |            18,832 |
+| Exact close teardown           | Task, lease, backend, cache, trust, and identity settlement                                | `registeredWorkspaceCloseCoordinator` and `useWorkbenchCloseLifecycle`         | `a5e92e24` |     5,723 |            18,751 |
+| Workspace tab close            | Dirty-scope preparation, teardown handoff, retained-state cleanup, and next-tab activation | `useWorkbenchWorkspaceTabCloseCoordinator` and `workspaceRetainedStateCleanup` | `363f87ab` |     5,673 |            18,490 |
 
 All eight slices received focused regression tests and an independent read-only adversarial review before their local `main` commit. The required frontend gates passed for every commit. Cargo gates were run sequentially whenever the slice touched Rust or completed a phase boundary. The production build ran once for the integrated phase. No round 2 commit was pushed.
 
@@ -78,3 +78,45 @@ All eight slices received focused regression tests and an independent read-only 
 - `setSmartMode` must capture the exact workspace runtime owner and generation, then revalidate after every gateway, runtime-stop, and persistence await. Root equality alone does not reject an A-to-B-to-A replacement.
 - Agent favorites, CLI paths, and appearance must persist through a narrow app-preferences command derived from app-settings persistence. They must not invoke workspace trust, runtime, indexing, PHP probe, or Git settings work.
 - Ref bridges that break definition cycles remain ordered: initialize the stable delegate before consumers, then assign the final owner implementation at the existing point in hook order.
+
+## Round 3 extraction plan
+
+Round 3 starts at `d47d7f92` with 5,660 raw lines and 18,447 structural tokens. The hard target is at most 3,000 raw lines and 10,000 structural tokens. Line ranges below are inclusive positions in that starting snapshot and must be remapped after every extraction.
+
+1. Editor and file surface
+   - Range: 3123-3560.
+   - Destination: `useWorkbenchEditorFileCoordinator.ts`.
+   - Boundary: document tabs, Git changes, PHP outline and change signature, workspace edits, reveal, preview, and file-open ownership.
+   - Net reduction budget: at least 298 raw lines and 1,014 structural tokens.
+
+2. Document save and close
+   - Range: 3562-3967.
+   - Destination: `useWorkbenchDocumentSaveCloseCoordinator.ts`.
+   - Boundary: save authority, conflicts, lifecycle exclusion, group and tab close, retained-state cleanup, workspace close, and quit ownership.
+   - Net reduction budget: at least 271 raw lines and 844 structural tokens.
+
+3. Editor and navigation tools
+   - Range: 3968-4682.
+   - Destination: `useWorkbenchEditorNavigationCoordinator.ts`.
+   - Boundary: editor commands, task/debug navigation, auxiliary panels, local history, framework navigation, language navigation, navigation history, and file operations.
+   - Net reduction budget: at least 535 raw lines and 1,338 structural tokens.
+
+4. Settings, commands, and late effects
+   - Range: 4683-5180.
+   - Destination: `useWorkbenchCommandEffectsCoordinator.ts`.
+   - Boundary: settings and managed-install commands, Pint, floating surfaces, command registry, native menu, keyboard shortcuts, persistence, hydration, file changes, and ordered runtime subscriptions.
+   - Net reduction budget: at least 373 raw lines and 880 structural tokens.
+
+5. Workspace transition and lifecycle
+   - Range: 2042-3121.
+   - Destination: `useWorkbenchWorkspaceTransitionCoordinator.ts`.
+   - Boundary: exact workspace identity and runtime ownership, reset, open, restore, activation, package and settings loading, close preparation, and post-await authority revalidation.
+   - Net reduction budget: at least 820 raw lines and 3,403 structural tokens.
+
+6. Public controller facade
+   - Range: 5181-5659.
+   - Destination: `createWorkbenchControllerResult.ts`.
+   - Boundary: the exact public return contract and final presentation projection after the preceding coordinators expose typed output facets.
+   - Net reduction budget: at least 390 raw lines and 1,100 structural tokens.
+
+The six starting regions contain 3,616 raw lines and 10,946 structural tokens. Replacement wiring is capped at 880 raw lines and 2,310 tokens, projecting a controller of about 2,924 raw lines and 9,811 structural tokens before import cleanup. Every slice preserves render-time ref bridge assignment order, lowers both hotspot dimensions, receives an independent adversarial review, passes the complete gate set, and is committed and pushed independently.

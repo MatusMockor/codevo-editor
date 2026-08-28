@@ -35,9 +35,7 @@ export {
   isLanguageServerSessionCurrentForOwnerOrLegacy,
 } from "./workbenchController/languageServerStatusPolicy";
 import {
-  isBlockedByManuallyCollapsedDirectory,
   isJavaScriptTypeScriptDocumentSyncableForRoot,
-  parentDirectoriesInWorkspace,
   relativeWorkspacePath,
   shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
   workspacePathBelongsToRoot,
@@ -46,11 +44,14 @@ import { useWorkbenchDiagnosticPresentation } from "./workbenchController/useWor
 import { useWorkbenchEditorPresentation } from "./workbenchController/useWorkbenchEditorPresentation";
 import { useWorkbenchEditorGroupCoordinator } from "./workbenchController/useWorkbenchEditorGroupCoordinator";
 import { useWorkbenchEditorDocumentCoordinator } from "./workbenchController/useWorkbenchEditorDocumentCoordinator";
+import {
+  useWorkbenchEditorFileCoordinator,
+  useWorkbenchPhpOutlineState,
+} from "./workbenchController/useWorkbenchEditorFileCoordinator";
 import { useWorkbenchDocumentSaveAuthorityCoordinator } from "./workbenchController/useWorkbenchDocumentSaveAuthorityCoordinator";
 import { useWorkbenchDocumentLifecycleCoordinator } from "./workbenchController/useWorkbenchDocumentLifecycleCoordinator";
 import { useWorkbenchSettingsCommands } from "./workbenchController/useWorkbenchSettingsCommands";
 import {
-  useWorkbenchGitChangesCoordinator,
   useWorkbenchGitDiscoveryCoordinator,
   useWorkbenchGitHistoryCoordinator,
   useWorkbenchGitPanelsCoordinator,
@@ -123,7 +124,7 @@ import {
   workspaceTabsWithPath,
 } from "./documentSessionAuthorityLifecycleCoordinator";
 import { useFloatingSurfaces } from "./useFloatingSurfaces";
-import { gitChangeForDiffDocumentPath, isGitDiffDocumentPath } from "./useGitDiffWorkspace";
+import { isGitDiffDocumentPath } from "./useGitDiffWorkspace";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
 import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
 import { useWorkbenchDirtyCloseDecisionPort } from "./useWorkbenchDirtyCloseDecisionPort";
@@ -166,7 +167,6 @@ import {
   useWorkspaceCloseSessionPort,
   type WorkspaceCloseOwnership,
 } from "./useWorkbenchCloseLifecycle";
-import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
 import { useWorkbenchNavigationState } from "./useWorkbenchNavigationState";
 import { useWorkbenchClassOpen } from "./useWorkbenchClassOpen";
@@ -203,11 +203,9 @@ import {
 } from "./workspaceSettingsForRoot";
 import { createWorkspaceSettingsSaveCoordinator } from "./workspaceSettingsSaveCoordinator";
 import { WorkspaceRuntimeOwnerClaimRegistry } from "./workspaceRuntimeOwnerClaimRegistry";
-import { useWorkspaceEditFileOperations } from "./useWorkspaceEditFileOperations";
 import { useNavigationHistory, useRecentNavigation } from "./useNavigationHistory";
 import { useLanguageServerDocumentSyncState } from "./useLanguageServerDocumentSyncState";
 import { usePhpFrameworkResolution } from "./usePhpFrameworkResolution";
-import { usePhpOutline } from "./usePhpOutline";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
 import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
@@ -218,7 +216,6 @@ export type {
   PhpCodeActionRange,
 } from "./usePhpCodeActions";
 
-import { usePhpChangeSignatureWorkflow } from "./usePhpChangeSignatureWorkflow";
 import {
   createWorkbenchNotice,
   replaceWorkbenchNoticeGroup,
@@ -243,7 +240,6 @@ import {
 } from "../domain/languageServerDiagnostics";
 import { createDiagnosticsCoalescer } from "../domain/diagnosticsCoalescer";
 import {
-  isLanguageServerDocument,
   type LanguageServerDocumentSyncGateway,
   type SessionBoundLanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
@@ -282,12 +278,8 @@ import {
   type EditorSessionOwnerKey,
 } from "../domain/editorSessionOwnerKey";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import {
-  type PhpFileOutline,
-  type PhpFileOutlineGateway,
-  type PhpFileStructureScope,
-} from "../domain/phpFileOutline";
-import { emptyPhpTree, type PhpTreeGateway } from "../domain/phpTree";
+import { type PhpFileOutlineGateway, type PhpFileStructureScope } from "../domain/phpFileOutline";
+import type { PhpTreeGateway } from "../domain/phpTree";
 import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
 import { emptyRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import {
@@ -491,25 +483,27 @@ export function useWorkbenchController(
     options.workspaceSourceDiscoveryGateway,
     workspaceRuntimeOwner,
   );
-  const [phpTree, setPhpTree] = useState(emptyPhpTree);
-  const [phpTreeLoading, setPhpTreeLoading] = useState(false);
-  const [phpTreeExpandedNodeIds, setPhpTreeExpandedNodeIds] = useState(new Set<string>());
-  const [phpFileOutlinesByPath, setPhpFileOutlinesByPath] = useState<
-    Record<string, PhpFileOutline>
-  >({});
-  const [phpInheritedFileOutlinesByPath, setPhpInheritedFileOutlinesByPath] = useState<
-    Record<string, PhpFileOutline>
-  >({});
-  const [expandedPhpFilePaths, setExpandedPhpFilePaths] = useState(new Set<string>());
-  const [loadingPhpFileOutlinePaths, setLoadingPhpFileOutlinePaths] = useState<Set<string>>(
-    new Set(),
-  );
-  const [loadingInheritedPhpFileOutlinePaths, setLoadingInheritedPhpFileOutlinePaths] = useState<
-    Set<string>
-  >(new Set());
-  const [phpFileOutlineExpandedNodeIds, setPhpFileOutlineExpandedNodeIds] = useState<Set<string>>(
-    new Set(),
-  );
+  const {
+    expandedPhpFilePaths,
+    loadingInheritedPhpFileOutlinePaths,
+    loadingPhpFileOutlinePaths,
+    phpFileOutlineExpandedNodeIds,
+    phpFileOutlinesByPath,
+    phpInheritedFileOutlinesByPath,
+    phpTree,
+    phpTreeExpandedNodeIds,
+    phpTreeLoading,
+    resetPhpOutlineState,
+    setExpandedPhpFilePaths,
+    setLoadingInheritedPhpFileOutlinePaths,
+    setLoadingPhpFileOutlinePaths,
+    setPhpFileOutlineExpandedNodeIds,
+    setPhpFileOutlinesByPath,
+    setPhpInheritedFileOutlinesByPath,
+    setPhpTree,
+    setPhpTreeExpandedNodeIds,
+    setPhpTreeLoading,
+  } = useWorkbenchPhpOutlineState();
   const [entriesByDirectory, setEntriesByDirectory] = useState<Record<string, FileEntry[]>>({});
   const [expandedDirectories, setExpandedDirectories] = useCommitBailoutState(new Set<string>());
   const [manuallyCollapsedDirectories, setManuallyCollapsedDirectories] = useState<Set<string>>(
@@ -518,6 +512,7 @@ export function useWorkbenchController(
   const [loadingDirectories, setLoadingDirectories] = useState(new Set<string>());
   const [workspaceSettings, setWorkspaceSettings] =
     useState<WorkspaceSettings>(defaultWorkspaceSettings);
+  const editorSession = useEditorSessionState(workspaceSettings.largeFileMode);
   const {
     activateDocumentSessionAuthority,
     attachEditorGroupLiveDocument,
@@ -543,7 +538,6 @@ export function useWorkbenchController(
     openPathsRef,
     previewPath,
     previewPathRef,
-    reconcileDocumentSessionTopology,
     reportChangedDocuments,
     isDocumentSessionLifecycleAuthorityCurrent,
     isEditorGroupDocumentSessionAuthorityCurrent,
@@ -562,7 +556,7 @@ export function useWorkbenchController(
     subscribeChangedDocuments,
     updateDocumentContent,
     updateEditorGroups,
-  } = useEditorSessionState(workspaceSettings.largeFileMode);
+  } = editorSession;
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const {
     commandPaletteInitialQuery,
@@ -1535,37 +1529,7 @@ export function useWorkbenchController(
     setWorkspaceSymbolsOpen,
   });
 
-  const {
-    gitDiffDocuments,
-    gitDiffLoading,
-    selectedGitChange,
-    gitDiffPreview,
-    gitDiffRequestTokenRef,
-    resetGitDiffWorkspaceState,
-    clearGitDiffPreviewState,
-    cancelGitDiffDocument,
-    getGitDiffDocument,
-    getSelectedGitDiffDocument,
-    loadGitDiffDocument,
-    reloadGitDiffDocument,
-    reconcileGitDiffDocument,
-    previewGitChange,
-    openGitChange,
-    closeReplacedGitDiffDocumentRef,
-    connectDiffPreviewReconciliation,
-    gitOperationCurrency,
-    activeDocumentGitBaseline,
-    applyGitOperationStatuses,
-    gitActiveFileBranch,
-    gitLoading,
-    gitRepositoryMappings,
-    gitRepositoryStatuses,
-    gitStatus,
-    refreshGitStatus,
-    resetGitStatusSurface,
-    resolveGitRepositoryTarget,
-    runGitRepositoryDiscovery,
-  } = useWorkbenchGitDiscoveryCoordinator({
+  const gitDiscovery = useWorkbenchGitDiscoveryCoordinator({
     diffWorkspace: {
       workspaceRoot,
       gitGateway,
@@ -1587,6 +1551,30 @@ export function useWorkbenchController(
       workspaceRoot,
     },
   });
+  const {
+    gitDiffDocuments,
+    gitDiffLoading,
+    selectedGitChange,
+    gitDiffPreview,
+    gitDiffRequestTokenRef,
+    resetGitDiffWorkspaceState,
+    clearGitDiffPreviewState,
+    cancelGitDiffDocument,
+    loadGitDiffDocument,
+    previewGitChange,
+    openGitChange,
+    closeReplacedGitDiffDocumentRef,
+    activeDocumentGitBaseline,
+    gitActiveFileBranch,
+    gitLoading,
+    gitRepositoryMappings,
+    gitRepositoryStatuses,
+    gitStatus,
+    refreshGitStatus,
+    resetGitStatusSurface,
+    resolveGitRepositoryTarget,
+    runGitRepositoryDiscovery,
+  } = gitDiscovery;
 
   const agents = useWorkbenchControllerAgents({
     applyAppSettings,
@@ -1728,15 +1716,7 @@ export function useWorkbenchController(
 
   resetIndexedWorkspaceViewsRef.current = () => {
     lastPhpFileOutlineRefreshKeyRef.current = null;
-    setPhpTree(emptyPhpTree());
-    setPhpTreeExpandedNodeIds(new Set());
-    setPhpTreeLoading(false);
-    setPhpFileOutlinesByPath({});
-    setPhpInheritedFileOutlinesByPath({});
-    setExpandedPhpFilePaths(new Set());
-    setLoadingPhpFileOutlinePaths(new Set());
-    setLoadingInheritedPhpFileOutlinePaths(new Set());
-    setPhpFileOutlineExpandedNodeIds(new Set());
+    resetPhpOutlineState();
     setClassOpenResults([]);
   };
 
@@ -2127,16 +2107,8 @@ export function useWorkbenchController(
       resetWorkspaceTodosRef.current();
       resetGitStatusSurface();
       resetGitDiffWorkspaceState();
-      setPhpTree(emptyPhpTree());
-      setPhpTreeExpandedNodeIds(new Set());
-      setPhpTreeLoading(false);
-      setPhpFileOutlinesByPath({});
-      setPhpInheritedFileOutlinesByPath({});
-      setExpandedPhpFilePaths(new Set());
-      setLoadingPhpFileOutlinePaths(new Set());
-      setLoadingInheritedPhpFileOutlinePaths(new Set());
+      resetPhpOutlineState();
       resetJavaScriptTypeScriptFileStructure();
-      setPhpFileOutlineExpandedNodeIds(new Set());
       setClassOpenOpen(false);
       setClassOpenQuery("");
       setClassOpenLoading(false);
@@ -2201,6 +2173,7 @@ export function useWorkbenchController(
       setExpandedDirectories,
       setNotices,
       setPaletteOpen,
+      resetPhpOutlineState,
       stopProjectRuntimes,
       setCallHierarchyView,
       setClassOpenLoading,
@@ -2698,18 +2671,10 @@ export function useWorkbenchController(
         admittedRuntimeOwner,
       );
       languageRuntimeProjectionCommands.prepareWorkspace(cachedPhpStatus, path);
-      setPhpTree(emptyPhpTree());
-      setPhpTreeExpandedNodeIds(new Set());
-      setPhpTreeLoading(false);
+      resetPhpOutlineState();
       resetGitStatusSurface(path);
       resetGitDiffWorkspaceState();
-      setPhpFileOutlinesByPath({});
-      setPhpInheritedFileOutlinesByPath({});
       resetJavaScriptTypeScriptFileStructure();
-      setExpandedPhpFilePaths(new Set());
-      setLoadingPhpFileOutlinePaths(new Set());
-      setLoadingInheritedPhpFileOutlinePaths(new Set());
-      setPhpFileOutlineExpandedNodeIds(new Set());
       setClassOpenOpen(false);
       setClassOpenQuery("");
       setClassOpenLoading(false);
@@ -3048,6 +3013,7 @@ export function useWorkbenchController(
       setNotices,
       setInstallingManagedPhpactor,
       setQuickOpenOpen,
+      resetPhpOutlineState,
       setRecentFiles,
       setRecentFilesSwitcherOpen,
       setRecentLocations,
@@ -3120,444 +3086,147 @@ export function useWorkbenchController(
     workspaceFileChangeGateway,
   ]);
 
-  const refreshDirectory = useCallback(
-    async (path: string) => {
-      await loadDirectory(path);
+  const editorFile = useWorkbenchEditorFileCoordinator({
+    changeSignature: {
+      currentWorkspaceRootRef,
+      flushPendingDocumentChange,
+      getPhpDocumentSyncVersion,
+      indexProgress,
+      languageServerFeaturesGateway,
+      textSearch,
+      workspaceFiles,
+      workspaceTrusted,
     },
-    [loadDirectory],
-  );
-  const refreshWorkspace = useCallback(async () => {
-    if (!workspaceRoot) {
-      return;
-    }
-
-    await refreshDirectory(workspaceRoot);
-  }, [refreshDirectory, workspaceRoot]);
-
-  const {
-    activateDocument,
-    pinDocument,
-    openFile,
-    previewFile,
-    openPinnedFile,
-    openReadOnlyDocument,
-    prefetchFile,
-    cancelFilePrefetch,
-  } = useWorkbenchDocumentTabs({
-    workspaceRoot,
-    documentTabSession,
-    appSettingsRef,
-    currentWorkspaceRootRef,
-    resolveCurrentWorkspaceRuntimeOwner,
-    openFileRequestTokenRef,
-    openingFileFlagOwnerTokenRef,
-    emptyDocumentRefreshTimeoutsRef,
-    filePrefetchCacheRef,
-    filePrefetchTimersRef,
-    setIsOpeningFile,
-    workspaceFiles,
-    forgetExternallyRemovedDocumentPath,
-    clearGitDiffPreviewState,
-    isGitDiffDocumentPath,
-    loadGitDiffDocument,
-    recordCurrentNavigationLocation,
-    recordRecentFile,
-    refreshLocalPhpDiagnosticsForContent,
-    syncClosedDocument,
-    syncClosedJavaScriptTypeScriptDocument,
-    workspacePathBelongsToRoot,
-    reportError,
-    reportErrorForActiveWorkspaceRoot,
-  });
-  openFileRef.current = openFile;
-
-  const revealPathInTree = useCallback(
-    (path: string, respectManualCollapses: boolean) => {
-      const requestedRoot = workspaceRoot;
-
-      if (!requestedRoot) {
-        return;
-      }
-
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) ||
-        !isSessionPathInWorkspace(requestedRoot, path)
-      ) {
-        return;
-      }
-
-      const directories = parentDirectoriesInWorkspace(requestedRoot, path);
-
-      if (directories.length === 0) {
-        return;
-      }
-
-      setExpandedDirectories((current) => {
-        const next = new Set(current);
-        let changed = false;
-
-        for (const directory of directories) {
-          if (
-            respectManualCollapses &&
-            isBlockedByManuallyCollapsedDirectory(directory, manuallyCollapsedDirectories)
-          ) {
-            continue;
-          }
-
-          if (next.has(directory)) {
-            continue;
-          }
-
-          next.add(directory);
-          changed = true;
-        }
-
-        return changed ? next : current;
-      });
-
-      for (const directory of directories) {
-        if (
-          (respectManualCollapses &&
-            isBlockedByManuallyCollapsedDirectory(directory, manuallyCollapsedDirectories)) ||
-          (entriesByDirectory[directory] && !cachedDirectoryNeedsRefresh(directory)) ||
-          loadingDirectories.has(directory)
-        ) {
-          continue;
-        }
-
-        void loadDirectory(directory, { clearMessage: false });
-      }
-    },
-    [
-      entriesByDirectory,
+    directory: {
       cachedDirectoryNeedsRefresh,
+      entriesByDirectory,
+      isSessionPathInWorkspace,
       loadDirectory,
       loadingDirectories,
-      setExpandedDirectories,
       manuallyCollapsedDirectories,
-      workspaceRoot,
-    ],
-  );
-
-  const revealDirectoryInTree = useCallback(
-    (path: string) => revealPathInTree(path, false),
-    [revealPathInTree],
-  );
-
-  useEffect(() => {
-    if (!activePath || !workspaceSettings.revealActiveFileInTree) {
-      return;
-    }
-
-    revealPathInTree(activePath, true);
-  }, [activePath, revealPathInTree, workspaceSettings.revealActiveFileInTree]);
-
-  const {
-    canRevertGitChange,
-    closeGitDiffPreview,
-    gitAmendEnabled,
-    gitCommitMessage,
-    gitCommitMessageHistory,
-    includedGitChangePaths,
-    gitOperationLoading,
-    setGitAmendEnabled,
-    setGitCommitMessage,
-    toggleGitChangeIncluded,
-    stageGitChanges,
-    unstageGitChanges,
-    loadGitFileHunks,
-    stageGitHunk,
-    unstageGitHunk,
-    revertGitHunk,
-    revertGitChanges,
-    amendGitChanges,
-    commitGitChanges,
-    commitAndPushGitChanges,
-  } = useWorkbenchGitChangesCoordinator({
-    connectDiffPreviewReconciliation,
-    currentWorkspaceRootRef,
-    diffPreview: {
-      documentTabSession,
-      cancelGitDiffDocument,
-      getGitDiffDocument,
-      getSelectedGitDiffDocument,
-      gitChangeForDiffDocumentPath,
-      loadGitDiffDocument,
-      reloadGitDiffDocument,
-      reconcileGitDiffDocument,
+      revealActiveFileInTree: workspaceSettings.revealActiveFileInTree,
+      setExpandedDirectories,
     },
-    documentsRef,
-    gitWorkspace: {
-      gitGateway,
-      gitOperationCurrency,
+    documentTabs: {
+      appSettingsRef,
+      clearGitDiffPreviewState,
       currentWorkspaceRootRef,
-      workspaceRoot,
-      gitStatus,
-      applyGitOperationStatuses,
+      emptyDocumentRefreshTimeoutsRef,
+      filePrefetchCacheRef,
+      filePrefetchTimersRef,
+      forgetExternallyRemovedDocumentPath,
+      isGitDiffDocumentPath,
+      loadGitDiffDocument,
+      openFileRequestTokenRef,
+      openingFileFlagOwnerTokenRef,
+      recordCurrentNavigationLocation,
+      recordRecentFile,
+      refreshLocalPhpDiagnosticsForContent,
       reportError,
-      setMessage,
-      prompter,
-      gitRepositoryMappings,
-      gitRepositoryStatuses,
+      reportErrorForActiveWorkspaceRoot,
+      resolveCurrentWorkspaceRuntimeOwner,
+      setIsOpeningFile,
+      syncClosedDocument,
+      syncClosedJavaScriptTypeScriptDocument,
+      workspaceFiles,
+      workspacePathBelongsToRoot,
+      workspaceRoot,
     },
-    persistWorkspaceSettings,
-    reportErrorForActiveWorkspaceRoot,
-    workspaceSettings,
-    workspaceSettingsRef,
-  });
-
-  // PHP project tree + PHP file structure (outline) intelligence lives in a
-  // sibling strangler hook (see usePhpOutline). The React state slices stay here
-  // (reset by the workspace-lifecycle clear-blocks above, which run before
-  // `openFile` is defined) and are wired in as dependencies; the callbacks are
-  // extracted VERBATIM and consumed 1:1 below. The two refresh EFFECTS stay in
-  // the controller so their registration order and controller-owned triggers
-  // (`sidebarView` / `indexProgress`) are preserved.
-  const {
-    refreshPhpTree,
-    togglePhpTreeNode,
-    openPhpTreeNode,
-    loadPhpFileOutline,
-    loadInheritedPhpFileOutline,
-    togglePhpFileOutline,
-    togglePhpFileOutlineNode,
-    openPhpFileOutlineNode,
-  } = usePhpOutline({
-    largeSmartDocumentPolicy: workspaceSettings.largeFileMode,
-    workspaceRoot,
-    workspaceDescriptor,
-    currentWorkspaceRootRef,
-    documents,
-    workspaceFiles,
-    phpTreeGateway,
-    phpFileOutlineGateway,
-    reportError,
-    setMessage,
-    openFile,
-    setEditorRevealTarget,
-    setPhpTree,
-    setPhpTreeExpandedNodeIds,
-    setPhpTreeLoading,
-    phpFileOutlinesByPath,
-    setPhpFileOutlinesByPath,
-    setPhpInheritedFileOutlinesByPath,
-    expandedPhpFilePaths,
-    setExpandedPhpFilePaths,
-    loadingPhpFileOutlinePaths,
-    setLoadingPhpFileOutlinePaths,
-    setLoadingInheritedPhpFileOutlinePaths,
-    setPhpFileOutlineExpandedNodeIds,
-  });
-
-  const setFileStructureScopeMode = useCallback(
-    (scope: PhpFileStructureScope) => {
-      setFileStructureScope(scope);
-
-      if (
-        scope === "inherited" &&
-        activeDocument &&
-        !loadingInheritedPhpFileOutlinePaths.has(activeDocument.path)
-      ) {
-        void loadInheritedPhpFileOutline(activeDocument.path);
-      }
-    },
-    [activeDocument, loadInheritedPhpFileOutline, loadingInheritedPhpFileOutlinePaths],
-  );
-
-  const openFileStructureWithInitialQuery = useCallback(
-    (initialQuery: string) => {
-      const document = activeDocumentRef.current;
-      if (!document) {
-        setMessage("Open a PHP, JavaScript, or TypeScript file to show structure.");
-        return;
-      }
-
-      setFileStructureInitialQuery(initialQuery);
-      setPaletteOpen(false);
-      setQuickOpenOpen(false);
-      setClassOpenOpen(false);
-      setWorkspaceSymbolsOpen(false);
-      setTextSearchOpen(false);
-      setSettingsOpen(false);
-      setCallHierarchyView(null);
-      setTypeHierarchyView(null);
-      setReferencesView(null);
-
-      if (openJavaScriptTypeScriptFileStructure(document)) {
-        return;
-      }
-
-      if (!isLanguageServerDocument(document)) {
-        setMessage("File structure is available for PHP, JavaScript, and TypeScript files.");
-        return;
-      }
-
-      const nextScope =
-        fileStructureOpen && fileStructureScope === "current" ? "inherited" : "current";
-      setFileStructureScopeMode(nextScope);
-      setFileStructureOpen(true);
-
-      if (!loadingPhpFileOutlinePaths.has(document.path)) {
-        void loadPhpFileOutline(document.path);
-      }
-    },
-    [
+    fileStructure: {
       fileStructureOpen,
       fileStructureScope,
-      loadPhpFileOutline,
+      loadingInheritedPhpFileOutlinePaths,
       loadingPhpFileOutlinePaths,
       openJavaScriptTypeScriptFileStructure,
       setCallHierarchyView,
       setClassOpenOpen,
-      activeDocumentRef,
       setFileStructureInitialQuery,
+      setFileStructureOpen,
+      setFileStructureScope,
       setPaletteOpen,
-      setTextSearchOpen,
-      setFileStructureScopeMode,
       setQuickOpenOpen,
       setReferencesView,
+      setSettingsOpen,
+      setTextSearchOpen,
       setTypeHierarchyView,
       setWorkspaceSymbolsOpen,
-    ],
-  );
-  const openFileStructure = useCallback(
-    () => openFileStructureWithInitialQuery(""),
-    [openFileStructureWithInitialQuery],
-  );
-
-  const {
-    applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
-    applyPhpLanguageServerWorkspaceEdit,
-    applyJavaScriptTypeScriptRenameEdits,
-    applyJavaScriptTypeScriptCreateEdits,
-    notifyJavaScriptTypeScriptFileCreated,
-    applyJavaScriptTypeScriptDeleteEdits,
-    notifyJavaScriptTypeScriptFileDeleted,
-    applyPhpRenameEdits,
-    notifyJavaScriptTypeScriptFileRenamed,
-    notifyPhpFileRenamed,
-    notifyJavaScriptTypeScriptWatchedFilesChanged,
-  } = useWorkspaceEditFileOperations({
-    workspaceRoot,
-    hasPhpWorkspace: !!workspaceDescriptor?.php,
-    currentWorkspaceRootRef,
-    documentsRef,
-    openPathsRef,
-    previewPathRef,
-    documentVersionsByUriRef,
-    javaScriptTypeScriptDocumentVersionsByUriRef,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    languageServerFeaturesGateway,
-    javaScriptTypeScriptLanguageServerFeaturesGateway,
-    workspaceFiles,
-    reportChangedDocuments,
-    reconcileDocumentSessionTopology,
-    setDocuments,
-    setOpenPaths,
-    setPreviewPath,
-    setActivePath,
-    setMessage,
-    refreshDirectory,
-    syncClosedDocument,
-    syncClosedJavaScriptTypeScriptDocument,
-    isSessionPathInWorkspace,
-    isRunningLanguageServerForWorkspace,
-    isLanguageServerSessionActiveForRoot,
-    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-    reportError,
-  });
-
-  const phpChangeSignaturePorts = useMemo(
-    () => ({
-      applyWorkspaceEdit: (
-        edit: Parameters<typeof applyPhpLanguageServerWorkspaceEdit>[0],
-        rootPath: string,
-        openPaths: string[],
-        expectedClosedFileHashes: Readonly<Record<string, string>>,
-      ) =>
-        applyPhpLanguageServerWorkspaceEdit(edit, {
-          expectedClosedFileHashes,
-          openPaths,
-          rootPath,
-        }),
-      currentRootPath: () => currentWorkspaceRootRef.current,
-      flushDocument: flushPendingDocumentChange,
-      getOpenDocument: (path: string) => {
-        const document = documentsRef.current[path];
-        const rootPath = currentWorkspaceRootRef.current;
-        if (!document || !rootPath) return null;
-        return {
-          content: document.content,
-          path: document.path,
-          version: getPhpDocumentSyncVersion(rootPath, path),
-        };
-      },
-      isWorkspaceTrusted: () => workspaceTrusted,
-      isReferenceIndexComplete: (rootPath: string) =>
-        indexProgress.status === "completed" &&
-        indexProgress.erroredEntries === 0 &&
-        workspaceRootKeysEqual(indexProgress.rootPath, rootPath),
-      languageServer: languageServerFeaturesGateway,
-      notifyClosedDocumentsChanged: async (rootPath: string, paths: string[]) => {
-        if (paths.length === 0) return;
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
-          !workspaceTrusted
-        ) {
-          return;
-        }
-        await languageServerFeaturesGateway.didChangeWatchedFiles(
-          rootPath,
-          paths.map((path) => ({ changeType: "changed" as const, path })),
-        );
-      },
-      readClosedDocument: async (path: string) => {
-        if (!workspaceFiles.readTextFileSnapshot) return null;
-        const snapshot = await workspaceFiles.readTextFileSnapshot(path);
-        if (!snapshot.revision) return null;
-        return {
-          content: snapshot.content,
-          contentHash: snapshot.revision.contentHash,
-          path,
-          version: null,
-        };
-      },
-      searchReferencePaths: async (rootPath: string, callableName: string) => {
-        const limit = 20_001;
-        const results = await textSearch.searchText(rootPath, callableName, limit, {
-          caseSensitive: false,
-          fileMask: "*.php",
-          isRegex: false,
-          preserveCase: false,
-          wholeWord: true,
-        });
-        return {
-          complete: results.length < limit,
-          paths: [...new Set(results.map((result) => result.path))],
-        };
-      },
-      subscribeChangedDocuments,
-    }),
-    [
-      applyPhpLanguageServerWorkspaceEdit,
+    },
+    gitChanges: {
       currentWorkspaceRootRef,
-      documentsRef,
-      flushPendingDocumentChange,
-      getPhpDocumentSyncVersion,
-      languageServerFeaturesGateway,
-      indexProgress.erroredEntries,
-      indexProgress.rootPath,
-      indexProgress.status,
-      subscribeChangedDocuments,
-      textSearch,
+      gitWorkspace: {
+        currentWorkspaceRootRef,
+        gitGateway,
+        prompter,
+        reportError,
+        setMessage,
+        workspaceRoot,
+      },
+      persistWorkspaceSettings,
+      reportErrorForActiveWorkspaceRoot,
+      workspaceSettings,
+      workspaceSettingsRef,
+    },
+    editorSession,
+    gitDiscovery,
+    openFileRef,
+    phpOutline: {
+      currentWorkspaceRootRef,
+      expandedPhpFilePaths,
+      largeSmartDocumentPolicy: workspaceSettings.largeFileMode,
+      loadingPhpFileOutlinePaths,
+      phpFileOutlineGateway,
+      phpFileOutlinesByPath,
+      phpTreeGateway,
+      reportError,
+      setEditorRevealTarget,
+      setExpandedPhpFilePaths,
+      setLoadingInheritedPhpFileOutlinePaths,
+      setLoadingPhpFileOutlinePaths,
+      setMessage,
+      setPhpFileOutlineExpandedNodeIds,
+      setPhpFileOutlinesByPath,
+      setPhpInheritedFileOutlinesByPath,
+      setPhpTree,
+      setPhpTreeExpandedNodeIds,
+      setPhpTreeLoading,
+      workspaceDescriptor,
       workspaceFiles,
-      workspaceTrusted,
-    ],
-  );
-  const phpChangeSignature = usePhpChangeSignatureWorkflow(phpChangeSignaturePorts);
+      workspaceRoot,
+    },
+    workspaceEdits: {
+      currentWorkspaceRootRef,
+      documentVersionsByUriRef,
+      hasPhpWorkspace: !!workspaceDescriptor?.php,
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+      isLanguageServerSessionActiveForRoot,
+      isRunningLanguageServerForWorkspace,
+      isSessionPathInWorkspace,
+      javaScriptTypeScriptDocumentVersionsByUriRef,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      languageServerFeaturesGateway,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      reportError,
+      setMessage,
+      syncClosedDocument,
+      syncClosedJavaScriptTypeScriptDocument,
+      workspaceFiles,
+      workspaceRoot,
+    },
+  });
+  const { refreshDirectory, refreshWorkspace } = editorFile.directory;
+  const { openFile, openPinnedFile, pinDocument } = editorFile.documentTabs;
+  const { closeGitDiffPreview, commitGitChanges, revertGitChanges } = editorFile.gitChanges;
+  const { setGitAmendEnabled, setGitCommitMessage } = editorFile.gitChanges;
+  const { loadPhpFileOutline, openPhpFileOutlineNode } = editorFile.phpOutline;
+  const { openPhpTreeNode, refreshPhpTree } = editorFile.phpOutline;
+  const { openFileStructure, openFileStructureWithInitialQuery } = editorFile.fileStructure;
+  const { setFileStructureScopeMode } = editorFile.fileStructure;
+  const { applyPhpLanguageServerWorkspaceEdit } = editorFile.workspaceEdits;
+  const { notifyJavaScriptTypeScriptWatchedFilesChanged } = editorFile.workspaceEdits;
+  const { phpChangeSignature } = editorFile;
 
   const {
     captureDirtyCloseTargets,
@@ -3931,7 +3600,7 @@ export function useWorkbenchController(
       clearLanguageServerDiagnosticsForPath,
       cancelGitDiffDocument,
       loadGitDiffDocument,
-      closeGitDiffPreview,
+      closeGitDiffPreview: closeGitDiffPreview,
       closeEmptyWorkbenchSurface: closeApplicationWindow,
       isGitDiffDocumentPath,
       reportErrorForActiveWorkspaceRoot,
@@ -3953,7 +3622,7 @@ export function useWorkbenchController(
       currentWorkspaceRootRef,
       editorGroupsRef,
       editorSessionOwnerKeyForRoot,
-      openPinnedFile,
+      openPinnedFile: openPinnedFile,
       setEditorRevealTarget,
       setRestoredEditorViewStateRevision,
       setRecentlyClosedTabsVersion,
@@ -4069,7 +3738,7 @@ export function useWorkbenchController(
       invalidatePhpFrameworkBindingCacheRef,
       isPhpFrameworkBindingDependencyPathRef,
       phpFrameworkRuntimeContext,
-      pinDocument,
+      pinDocument: pinDocument,
       reportChangedDocuments,
       resetPhpFrameworkMorphMapModelTypeCacheRef,
       setDocuments,
@@ -4112,7 +3781,7 @@ export function useWorkbenchController(
       documentsRef,
       noticesRef,
       workspaceFiles,
-      openFile,
+      openFile: openFile,
       currentNavigationLocation,
       forgetRecentFile,
       recordNavigationLocationSnapshot,
@@ -4143,19 +3812,19 @@ export function useWorkbenchController(
       workspaceRuntimeOwnerClaimsRef,
       workspaceRuntimeOwnerRef,
       setExpandedDirectories,
-      notifyJavaScriptTypeScriptWatchedFilesChanged,
-      openFile,
+      notifyJavaScriptTypeScriptWatchedFilesChanged: notifyJavaScriptTypeScriptWatchedFilesChanged,
+      openFile: openFile,
       readTestFileIfExists,
-      refreshDirectory,
+      refreshDirectory: refreshDirectory,
       reportErrorForActiveWorkspaceRoot,
     },
     testNavigation: {
       activeDocumentRef,
       currentWorkspaceRootRef,
-      notifyJavaScriptTypeScriptWatchedFilesChanged,
-      openFile,
+      notifyJavaScriptTypeScriptWatchedFilesChanged: notifyJavaScriptTypeScriptWatchedFilesChanged,
+      openFile: openFile,
       readTestFileIfExists,
-      refreshDirectory,
+      refreshDirectory: refreshDirectory,
       reportErrorForActiveWorkspaceRoot,
       setExpandedDirectories,
       setMessage,
@@ -4213,7 +3882,7 @@ export function useWorkbenchController(
     isEditorGroupDocumentSessionAuthorityCurrent,
     isWorkspaceTrusted,
     openDocuments,
-    openFile,
+    openFile: openFile,
     openNavigationTarget,
     options,
     prompter,
@@ -4337,7 +4006,7 @@ export function useWorkbenchController(
       activeDocumentRef,
       currentWorkspaceRootRef,
       gitGateway,
-      openFile,
+      openFile: openFile,
       resolveGitRepositoryTarget,
       setGitBlameEnabledPaths,
       showBottomPanelView,
@@ -4648,10 +4317,13 @@ export function useWorkbenchController(
     setMessage,
     setOpenPaths,
     setPreviewPath,
-    applyJavaScriptTypeScriptCreateEdits,
-    applyJavaScriptTypeScriptDeleteEdits,
-    applyJavaScriptTypeScriptRenameEdits,
-    applyPhpRenameEdits,
+    applyJavaScriptTypeScriptCreateEdits:
+      editorFile.workspaceEdits.applyJavaScriptTypeScriptCreateEdits,
+    applyJavaScriptTypeScriptDeleteEdits:
+      editorFile.workspaceEdits.applyJavaScriptTypeScriptDeleteEdits,
+    applyJavaScriptTypeScriptRenameEdits:
+      editorFile.workspaceEdits.applyJavaScriptTypeScriptRenameEdits,
+    applyPhpRenameEdits: editorFile.workspaceEdits.applyPhpRenameEdits,
     clearLanguageServerDiagnosticsForPath,
     closeDocument,
     forgetExternallyRemovedDocumentPath,
@@ -4664,12 +4336,15 @@ export function useWorkbenchController(
     invalidatePhpFrameworkSourcePath,
     invalidatePhpTraitHostClassNames,
     markExternallyRemovedDocumentPath,
-    notifyJavaScriptTypeScriptFileCreated,
-    notifyJavaScriptTypeScriptFileDeleted,
-    notifyJavaScriptTypeScriptFileRenamed,
-    notifyPhpFileRenamed,
-    openFile,
-    refreshDirectory,
+    notifyJavaScriptTypeScriptFileCreated:
+      editorFile.workspaceEdits.notifyJavaScriptTypeScriptFileCreated,
+    notifyJavaScriptTypeScriptFileDeleted:
+      editorFile.workspaceEdits.notifyJavaScriptTypeScriptFileDeleted,
+    notifyJavaScriptTypeScriptFileRenamed:
+      editorFile.workspaceEdits.notifyJavaScriptTypeScriptFileRenamed,
+    notifyPhpFileRenamed: editorFile.workspaceEdits.notifyPhpFileRenamed,
+    openFile: openFile,
+    refreshDirectory: refreshDirectory,
     refreshGitStatus,
     remapRecentFile,
     remapRecentLocations,
@@ -4799,7 +4474,7 @@ export function useWorkbenchController(
     setImplementationChooser,
     selectedGitChange,
     gitDiffLoading,
-    closeGitDiffPreview,
+    closeGitDiffPreview: closeGitDiffPreview,
     settingsOpen,
     setSettingsOpen,
     setSettingsInitialSection,
@@ -4836,7 +4511,7 @@ export function useWorkbenchController(
     closeActiveEditorGroup: runCloseActiveEditorGroup,
     closeActiveEditorGroupSurface: runCloseActiveEditorGroupSurface,
     closeDocument: runCloseDocument,
-    commitGitChanges,
+    commitGitChanges: commitGitChanges,
     createDirectory,
     createFile,
     createGitBranch,
@@ -4911,7 +4586,7 @@ export function useWorkbenchController(
     openCallHierarchy,
     openFileHistory,
     openFileReferencesPanel,
-    openFileStructure,
+    openFileStructure: openFileStructure,
     openGitBranchPanel,
     openGitStashPanel,
     openLocalHistory,
@@ -4932,8 +4607,8 @@ export function useWorkbenchController(
     pintRunning,
     quitApplication,
     refreshGitStatus,
-    refreshPhpTree,
-    refreshWorkspace,
+    refreshPhpTree: refreshPhpTree,
+    refreshWorkspace: refreshWorkspace,
     refreshWorkspaceTodos,
     renameActiveDocument,
     reopenClosedDocument,
@@ -5015,7 +4690,7 @@ export function useWorkbenchController(
   useWorkbenchSidebarDataRefresh({
     indexProgress,
     refreshGitStatus,
-    refreshPhpTree,
+    refreshPhpTree: refreshPhpTree,
     sidebarView,
     workspaceRoot,
   });
@@ -5270,9 +4945,10 @@ export function useWorkbenchController(
     resolveEditorGroupDocumentSessionAuthority,
     isOpeningFile,
     appSettings,
-    applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
-    applyPhpLanguageServerWorkspaceEdit,
-    phpChangeSignature,
+    applyJavaScriptTypeScriptLanguageServerWorkspaceEdit:
+      editorFile.workspaceEdits.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
+    applyPhpLanguageServerWorkspaceEdit: applyPhpLanguageServerWorkspaceEdit,
+    phpChangeSignature: phpChangeSignature,
     activateWorkspaceTab,
     callHierarchyView,
     typeHierarchyView,
@@ -5312,11 +4988,11 @@ export function useWorkbenchController(
     pinEditorGroupTab,
     resizeEditorSplit,
     editorGroups,
-    closeGitDiffPreview,
+    closeGitDiffPreview: closeGitDiffPreview,
     closeWorkspaceTab,
-    amendGitChanges,
-    commitAndPushGitChanges,
-    commitGitChanges,
+    amendGitChanges: editorFile.gitChanges.amendGitChanges,
+    commitAndPushGitChanges: editorFile.gitChanges.commitAndPushGitChanges,
+    commitGitChanges: commitGitChanges,
     commandContext,
     commands: commandRegistry.list(),
     commandPaletteInitialQuery,
@@ -5376,12 +5052,12 @@ export function useWorkbenchController(
     gitDiffLoading,
     gitDiffDocuments,
     gitDiffPreview,
-    gitCommitMessage,
-    gitCommitMessageHistory,
-    gitAmendEnabled,
-    includedGitChangePaths,
+    gitCommitMessage: editorFile.gitChanges.gitCommitMessage,
+    gitCommitMessageHistory: editorFile.gitChanges.gitCommitMessageHistory,
+    gitAmendEnabled: editorFile.gitChanges.gitAmendEnabled,
+    includedGitChangePaths: editorFile.gitChanges.includedGitChangePaths,
     gitLoading,
-    gitOperationLoading,
+    gitOperationLoading: editorFile.gitChanges.gitOperationLoading,
     gitStatus,
     gitRepositoryStatuses,
     gitRepositoryMappings,
@@ -5410,7 +5086,7 @@ export function useWorkbenchController(
     openTabs,
     markdownPreviewTabs,
     openMarkdownPreview,
-    openFile,
+    openFile: openFile,
     openCallHierarchy,
     openCallHierarchyRow,
     openFileReferencesPanel,
@@ -5419,15 +5095,15 @@ export function useWorkbenchController(
     openReferencesPanel,
     openReferenceRow,
     openGitChange,
-    openReadOnlyDocument,
+    openReadOnlyDocument: editorFile.documentTabs.openReadOnlyDocument,
     openWorkspaceFile,
     openCurrentFileLocation,
-    openFileStructure,
+    openFileStructure: openFileStructure,
     openImplementationTarget,
     openProblemNotice,
     openTodoPanel,
     closeTodoPanel,
-    refreshWorkspace,
+    refreshWorkspace: refreshWorkspace,
     refreshWorkspaceTodos,
     openWorkspaceTodo,
     todoPanelOpen,
@@ -5436,7 +5112,7 @@ export function useWorkbenchController(
     closeArtisanMakePalette,
     workspaceTodos,
     workspaceTodosLoading,
-    openPhpFileOutlineNode,
+    openPhpFileOutlineNode: openPhpFileOutlineNode,
     openClassSearchResult,
     openWorkspaceSymbolResult,
     openArtisanController,
@@ -5449,15 +5125,15 @@ export function useWorkbenchController(
     ...workspaceDiscoveryVersions,
     phpTestRunRequestVersion,
     openWorkspaceSymbols,
-    openPinnedFile,
-    prefetchFile,
-    cancelFilePrefetch,
+    openPinnedFile: openPinnedFile,
+    prefetchFile: editorFile.documentTabs.prefetchFile,
+    cancelFilePrefetch: editorFile.documentTabs.cancelFilePrefetch,
     openEntryInTerminal,
     revealEntry,
     renameEntry,
     clearLanguageServerDiagnosticsForPath: clearLanguageServerDiagnosticsForActivePath,
     updateLocalPhpDiagnostics,
-    previewFile,
+    previewFile: editorFile.documentTabs.previewFile,
     previewPath,
     applyPhpCodeActionNewFile,
     frameworkIntelligenceProviders,
@@ -5578,15 +5254,15 @@ export function useWorkbenchController(
     reportLanguageServerError,
     previewGitChange,
     quitApplication,
-    refreshPhpTree,
+    refreshPhpTree: refreshPhpTree,
     refreshGitStatus,
-    revealDirectoryInTree,
+    revealDirectoryInTree: editorFile.directory.revealDirectoryInTree,
     retryDirectory,
-    revertGitChanges,
+    revertGitChanges: revertGitChanges,
     revertActiveEditorChangeHunk,
     saveActiveDocument,
     saveWorkbenchSettings,
-    setActivePath: activateDocument,
+    setActivePath: editorFile.documentTabs.activateDocument,
     hideBottomPanel,
     showBottomPanelView,
     setPaletteOpen,
@@ -5594,8 +5270,8 @@ export function useWorkbenchController(
     setClassOpenOpen,
     setWorkspaceSymbolsOpen,
     setWorkspaceSymbolsQuery,
-    setGitAmendEnabled,
-    setGitCommitMessage,
+    setGitAmendEnabled: setGitAmendEnabled,
+    setGitCommitMessage: setGitCommitMessage,
     setClassOpenQuery,
     setQuickOpenOpen,
     setSidebarView,
@@ -5606,9 +5282,9 @@ export function useWorkbenchController(
     setStatusBarItemVisibility,
     settingsInitialSection,
     setFileStructureOpen,
-    setFileStructureScopeMode,
+    setFileStructureScopeMode: setFileStructureScopeMode,
     setSmartMode,
-    pinDocument,
+    pinDocument: pinDocument,
     openJavaScriptTypeScriptServiceLog,
     restartJavaScriptTypeScriptService,
     startIndexScan,
@@ -5622,17 +5298,17 @@ export function useWorkbenchController(
     settingsOpen,
     selectedGitChange,
     toggleDirectory,
-    toggleGitChangeIncluded,
-    loadGitFileHunks,
-    stageGitChanges,
-    stageGitHunk,
-    unstageGitChanges,
-    unstageGitHunk,
-    canRevertGitChange,
-    revertGitHunk,
-    togglePhpFileOutline,
-    togglePhpFileOutlineNode,
-    togglePhpTreeNode,
+    toggleGitChangeIncluded: editorFile.gitChanges.toggleGitChangeIncluded,
+    loadGitFileHunks: editorFile.gitChanges.loadGitFileHunks,
+    stageGitChanges: editorFile.gitChanges.stageGitChanges,
+    stageGitHunk: editorFile.gitChanges.stageGitHunk,
+    unstageGitChanges: editorFile.gitChanges.unstageGitChanges,
+    unstageGitHunk: editorFile.gitChanges.unstageGitHunk,
+    canRevertGitChange: editorFile.gitChanges.canRevertGitChange,
+    revertGitHunk: editorFile.gitChanges.revertGitHunk,
+    togglePhpFileOutline: editorFile.phpOutline.togglePhpFileOutline,
+    togglePhpFileOutlineNode: editorFile.phpOutline.togglePhpFileOutlineNode,
+    togglePhpTreeNode: editorFile.phpOutline.togglePhpTreeNode,
     agentModeActive: agents.agentModeActive,
     agentWorkbench: agents.agentWorkbench,
     toggleSmartMode,
@@ -5642,7 +5318,7 @@ export function useWorkbenchController(
     updateActiveEditorPosition,
     updateEditorViewState,
     updateEditorGroupViewState,
-    openPhpTreeNode,
+    openPhpTreeNode: openPhpTreeNode,
     openSearchResult,
     agents,
     sidebarView,
