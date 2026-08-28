@@ -7,10 +7,12 @@ use crate::debug_breakpoint_policy::DebugBreakpointAdapterKind;
 use crate::debug_session_registry::DebugSessionMode;
 use std::collections::HashMap;
 use std::fs;
+use std::io::{self, Read};
 use std::net::{TcpListener, TcpStream};
+use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -48,12 +50,76 @@ impl CollectSink {
     }
 }
 
-struct ChildGuard(Child);
+struct ChildGuard {
+    child: Child,
+    stderr_thread: Option<thread::JoinHandle<()>>,
+}
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(stderr_thread) = self.stderr_thread.take() {
+            let _ = stderr_thread.join();
+        }
+    }
+}
+
+struct SpawnedNodeInspector {
+    child: ChildGuard,
+    port: u16,
+}
+
+enum NodeInspectorMode {
+    Running,
+    BreakBeforeStart,
+}
+
+impl NodeInspectorMode {
+    fn argument(&self) -> &'static str {
+        match self {
+            Self::Running => "--inspect=127.0.0.1:0",
+            Self::BreakBeforeStart => "--inspect-brk=127.0.0.1:0",
+        }
+    }
+}
+
+enum InspectorReadiness {
+    Ready(u16),
+    OutputLimitExceeded,
+    Closed,
+}
+
+enum DefaultInspectorPortOwnership {
+    Owned(TcpListener),
+    External,
+}
+
+struct DefaultInspectorPortLease {
+    _serial: MutexGuard<'static, ()>,
+    ownership: DefaultInspectorPortOwnership,
+}
+
+impl DefaultInspectorPortLease {
+    fn assert_occupied(&self) {
+        match &self.ownership {
+            DefaultInspectorPortOwnership::Owned(listener) => {
+                assert_eq!(
+                    listener
+                        .local_addr()
+                        .expect("default inspector address")
+                        .port(),
+                    9229
+                );
+            }
+            DefaultInspectorPortOwnership::External => {
+                let result = TcpListener::bind("127.0.0.1:9229");
+                assert!(
+                    result.is_err_and(|error| error.kind() == io::ErrorKind::AddrInUse),
+                    "external default inspector port owner was lost"
+                );
+            }
+        }
     }
 }
 
@@ -66,12 +132,23 @@ fn node_available() -> bool {
         .is_ok_and(|status| status.success())
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("reserve inspector port")
-        .local_addr()
-        .expect("inspector address")
-        .port()
+fn occupy_default_inspector_port() -> DefaultInspectorPortLease {
+    static SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
+    let serial = SERIAL
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("default inspector port test lease");
+    let ownership = match TcpListener::bind("127.0.0.1:9229") {
+        Ok(listener) => DefaultInspectorPortOwnership::Owned(listener),
+        Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
+            DefaultInspectorPortOwnership::External
+        }
+        Err(error) => panic!("occupy default inspector port: {error}"),
+    };
+    DefaultInspectorPortLease {
+        _serial: serial,
+        ownership,
+    }
 }
 
 fn fixture(name: &str) -> (PathBuf, PathBuf, PathBuf) {
@@ -102,18 +179,80 @@ fn wait_until(timeout: Duration, mut ready: impl FnMut() -> bool, message: &str)
     }
 }
 
-fn spawn_node(flag: &str, port: u16, script: &Path, marker: &Path) -> ChildGuard {
-    ChildGuard(
-        Command::new("node")
-            .arg(format!("--{flag}=127.0.0.1:{port}"))
-            .arg(script)
-            .arg(marker)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn real Node inspector target"),
-    )
+fn parse_inspector_port(output: &[u8]) -> Option<u16> {
+    const PREFIX: &[u8] = b"Debugger listening on ws://127.0.0.1:";
+    let prefix_start = output
+        .windows(PREFIX.len())
+        .position(|window| window == PREFIX)?;
+    let port_start = prefix_start + PREFIX.len();
+    let port_end = output[port_start..]
+        .iter()
+        .position(|byte| !byte.is_ascii_digit())?
+        + port_start;
+    std::str::from_utf8(&output[port_start..port_end])
+        .ok()?
+        .parse()
+        .ok()
+        .map(NonZeroU16::get)
+}
+
+fn read_inspector_readiness(mut stderr: impl Read, sender: mpsc::SyncSender<InspectorReadiness>) {
+    const OUTPUT_LIMIT: usize = 8 * 1024;
+    let mut output = Vec::with_capacity(512);
+    let mut buffer = [0_u8; 256];
+    loop {
+        let count = match stderr.read(&mut buffer) {
+            Ok(0) | Err(_) => {
+                let _ = sender.send(InspectorReadiness::Closed);
+                return;
+            }
+            Ok(count) => count,
+        };
+        if output.len() + count > OUTPUT_LIMIT {
+            let _ = sender.send(InspectorReadiness::OutputLimitExceeded);
+            let _ = io::copy(&mut stderr, &mut io::sink());
+            return;
+        }
+        output.extend_from_slice(&buffer[..count]);
+        let Some(port) = parse_inspector_port(&output) else {
+            continue;
+        };
+        let _ = sender.send(InspectorReadiness::Ready(port));
+        let _ = io::copy(&mut stderr, &mut io::sink());
+        return;
+    }
+}
+
+fn spawn_node(mode: NodeInspectorMode, script: &Path, marker: &Path) -> SpawnedNodeInspector {
+    let child = Command::new("node")
+        .arg(mode.argument())
+        .arg(script)
+        .arg(marker)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn real Node inspector target");
+    let mut child = ChildGuard {
+        child,
+        stderr_thread: None,
+    };
+    let stderr = child.child.stderr.take().expect("Node inspector stderr");
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let stderr_thread = thread::spawn(move || read_inspector_readiness(stderr, sender));
+    child.stderr_thread = Some(stderr_thread);
+    let port = match receiver.recv_timeout(Duration::from_secs(5)) {
+        Ok(InspectorReadiness::Ready(port)) => port,
+        Ok(InspectorReadiness::OutputLimitExceeded) => {
+            panic!("Node inspector readiness output exceeded limit")
+        }
+        Ok(InspectorReadiness::Closed) => panic!("Node inspector closed before readiness"),
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!("Node inspector readiness timed out"),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("Node inspector readiness reader disconnected")
+        }
+    };
+    SpawnedNodeInspector { child, port }
 }
 
 fn attach_and_disconnect(root: &Path, port: u16) {
@@ -156,17 +295,25 @@ fn external_running_node_survives_transport_disconnect() {
     if !node_available() {
         return;
     }
+    let default_port = occupy_default_inspector_port();
+    default_port.assert_occupied();
     let (root, script, marker) = fixture("running");
-    let port = free_port();
-    let mut child = spawn_node("inspect", port, &script, &marker);
+    let SpawnedNodeInspector { mut child, port } =
+        spawn_node(NodeInspectorMode::Running, &script, &marker);
+    default_port.assert_occupied();
+    assert_ne!(port, 9229, "Node reused the occupied default port");
     wait_until(Duration::from_secs(5), || marker.is_file(), "Node script");
 
     attach_and_disconnect(&root, port);
 
-    assert!(child.0.try_wait().expect("inspect Node status").is_none());
+    assert!(child
+        .child
+        .try_wait()
+        .expect("inspect Node status")
+        .is_none());
     assert_eq!(
         fs::read_to_string(&marker).expect("read PID marker"),
-        child.0.id().to_string()
+        child.child.id().to_string()
     );
     drop(child);
     fs::remove_dir_all(root).expect("remove Node fixture");
@@ -177,9 +324,13 @@ fn inspect_brk_node_progresses_and_survives_disconnect() {
     if !node_available() {
         return;
     }
+    let default_port = occupy_default_inspector_port();
+    default_port.assert_occupied();
     let (root, script, marker) = fixture("inspect-brk");
-    let port = free_port();
-    let mut child = spawn_node("inspect-brk", port, &script, &marker);
+    let SpawnedNodeInspector { mut child, port } =
+        spawn_node(NodeInspectorMode::BreakBeforeStart, &script, &marker);
+    default_port.assert_occupied();
+    assert_ne!(port, 9229, "Node reused the occupied default port");
     wait_until(
         Duration::from_secs(5),
         || TcpStream::connect(("127.0.0.1", port)).is_ok(),
@@ -194,10 +345,14 @@ fn inspect_brk_node_progresses_and_survives_disconnect() {
         || marker.is_file(),
         "inspect-brk target to continue after disconnect",
     );
-    assert!(child.0.try_wait().expect("inspect-brk status").is_none());
+    assert!(child
+        .child
+        .try_wait()
+        .expect("inspect-brk status")
+        .is_none());
     assert_eq!(
         fs::read_to_string(&marker).expect("read PID marker"),
-        child.0.id().to_string()
+        child.child.id().to_string()
     );
     drop(child);
     fs::remove_dir_all(root).expect("remove Node fixture");
