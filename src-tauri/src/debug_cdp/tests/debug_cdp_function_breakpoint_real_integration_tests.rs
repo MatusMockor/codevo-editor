@@ -7,19 +7,22 @@ use crate::managed_javascript_typescript::node_executable_path;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 static NEXT_WORKSPACE_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
-struct CapturingSink(Mutex<Vec<DebugEvent>>);
+struct CapturingSink {
+    events: Mutex<Vec<DebugEvent>>,
+    event_ready: Condvar,
+}
 
 impl DebugEventSink for CapturingSink {
     fn emit(&self, event: DebugEvent) {
-        lock_recover(&self.0).push(event);
+        lock_recover(&self.events).push(event);
+        self.event_ready.notify_all();
     }
 }
 
@@ -252,7 +255,7 @@ fn real_node_late_defined_function_breakpoint_verifies_before_immediate_call() {
         .expect("registered late function-breakpoint session")
         .expect("continue through late definition");
     wait_for_function_breakpoint_verification(&sink, "qa-late-function");
-    let function_stop = wait_for_stopped(&sink, 1);
+    let function_stop = wait_for_late_function_stop(&sink, 1);
     assert_eq!(function_stop.reason, DebugStopReason::Breakpoint);
     assert!(
         function_stop
@@ -262,7 +265,7 @@ fn real_node_late_defined_function_breakpoint_verifies_before_immediate_call() {
         "expected to stop in qaFunction(), got {:?}",
         function_stop.frames
     );
-    let visible_stops = lock_recover(&sink.0)
+    let visible_stops = lock_recover(&sink.events)
         .iter()
         .filter(|event| matches!(event.payload, DebugEventPayload::Stopped { .. }))
         .count();
@@ -343,7 +346,7 @@ fn real_node_preloaded_late_function_breakpoint_hits_without_visible_entry_pause
         "expected to stop in preloaded qaFunction(), got {:?}",
         function_stop.frames
     );
-    let events = lock_recover(&sink.0);
+    let events = lock_recover(&sink.events);
     let visible_stops = events
         .iter()
         .filter(|event| matches!(event.payload, DebugEventPayload::Stopped { .. }))
@@ -447,7 +450,7 @@ fn real_node_preloaded_same_line_definition_and_immediate_call_hits_function_bre
         function_stop.frames
     );
     assert!(
-        !lock_recover(&sink.0).iter().any(|event| {
+        !lock_recover(&sink.events).iter().any(|event| {
             matches!(
                 &event.payload,
                 DebugEventPayload::Output { text, .. } if text == "QA_FUNCTION_HIT"
@@ -466,9 +469,8 @@ struct StoppedEvent {
 }
 
 fn wait_for_stopped(sink: &CapturingSink, stopped_index: usize) -> StoppedEvent {
-    let deadline = Instant::now() + EVENT_TIMEOUT;
-    loop {
-        let stopped: Vec<_> = lock_recover(&sink.0)
+    wait_for_event(sink, "real function-breakpoint stop", |events| {
+        events
             .iter()
             .filter_map(|event| match &event.payload {
                 DebugEventPayload::Stopped { frames, reason, .. } => Some(StoppedEvent {
@@ -477,40 +479,100 @@ fn wait_for_stopped(sink: &CapturingSink, stopped_index: usize) -> StoppedEvent 
                 }),
                 _ => None,
             })
-            .collect();
-        if let Some(event) = stopped.get(stopped_index) {
-            return event.clone();
+            .nth(stopped_index)
+    })
+}
+
+fn wait_for_late_function_stop(sink: &CapturingSink, stopped_index: usize) -> StoppedEvent {
+    wait_for_event(sink, "late function-breakpoint stop", |events| {
+        let mut stopped_count = 0;
+        let stopped = events.iter().enumerate().find_map(|(event_index, event)| {
+            let DebugEventPayload::Stopped { frames, reason, .. } = &event.payload else {
+                return None;
+            };
+            if stopped_count != stopped_index {
+                stopped_count += 1;
+                return None;
+            }
+            Some((
+                event_index,
+                StoppedEvent {
+                    frames: frames.clone(),
+                    reason: *reason,
+                },
+            ))
+        });
+        let body_output_index = events.iter().position(|event| {
+            matches!(
+                &event.payload,
+                DebugEventPayload::Output { text, .. } if text == "LATE_FUNCTION_HIT"
+            )
+        });
+        let termination_index = events
+            .iter()
+            .position(|event| matches!(&event.payload, DebugEventPayload::Terminated { .. }));
+        if let Some((stopped_event_index, stopped)) = stopped {
+            assert!(
+                body_output_index.is_none_or(|event_index| event_index > stopped_event_index),
+                "late function body ran before its breakpoint stop: {events:?}"
+            );
+            assert!(
+                termination_index.is_none_or(|event_index| event_index > stopped_event_index),
+                "late function session terminated before its breakpoint stop: {events:?}"
+            );
+            return Some(stopped);
         }
         assert!(
-            Instant::now() < deadline,
-            "timed out waiting for real function-breakpoint stop: {:?}",
-            lock_recover(&sink.0).as_slice()
+            body_output_index.is_none(),
+            "late function body ran without its breakpoint stop: {events:?}"
         );
-        thread::sleep(Duration::from_millis(20));
-    }
+        assert!(
+            termination_index.is_none(),
+            "late function session terminated without its breakpoint stop: {events:?}"
+        );
+        None
+    })
 }
 
 fn wait_for_function_breakpoint_verification(sink: &CapturingSink, expected_id: &str) {
+    wait_for_event(sink, "late function-breakpoint verification", |events| {
+        events
+            .iter()
+            .any(|event| {
+                matches!(
+                    &event.payload,
+                    DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. }
+                        if breakpoints.iter().any(|breakpoint| {
+                            breakpoint.id == expected_id && breakpoint.verified
+                        })
+                )
+            })
+            .then_some(())
+    });
+}
+
+fn wait_for_event<T>(
+    sink: &CapturingSink,
+    description: &str,
+    inspect: impl Fn(&[DebugEvent]) -> Option<T>,
+) -> T {
     let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut events = lock_recover(&sink.events);
     loop {
-        let verified = lock_recover(&sink.0).iter().any(|event| {
-            matches!(
-                &event.payload,
-                DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. }
-                    if breakpoints.iter().any(|breakpoint| {
-                        breakpoint.id == expected_id && breakpoint.verified
-                    })
-            )
-        });
-        if verified {
-            return;
+        if let Some(result) = inspect(events.as_slice()) {
+            return result;
         }
+        let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(
-            Instant::now() < deadline,
-            "timed out waiting for late function-breakpoint verification: {:?}",
-            lock_recover(&sink.0).as_slice()
+            !remaining.is_zero(),
+            "timed out waiting for {description}: {:?}",
+            events.as_slice()
         );
-        thread::sleep(Duration::from_millis(20));
+        let waited = sink
+            .event_ready
+            .wait_timeout(events, remaining)
+            .unwrap_or_else(|error| error.into_inner());
+        events = waited.0;
     }
 }
 
