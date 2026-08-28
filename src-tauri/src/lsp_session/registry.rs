@@ -227,6 +227,21 @@ impl PhpLanguageServerRegistry {
         status
     }
 
+    #[cfg(test)]
+    pub(super) fn stop_after_exact_cleanup_settles(
+        &self,
+        root_path: &str,
+        timeout: std::time::Duration,
+    ) -> LanguageServerRuntimeStatus {
+        self.cancel_restart(root_path);
+        let status = self
+            .registry
+            .stop_after_exact_cleanup_settles(root_path, timeout);
+        let context = self.remove_launch_context(root_path);
+        self.cleanup_stopped_root(root_path, context);
+        status
+    }
+
     pub fn stop_preserving_launch_context(&self, root_path: &str) -> LanguageServerRuntimeStatus {
         self.cancel_restart(root_path);
         let context = self.launch_context(root_path);
@@ -968,6 +983,29 @@ impl LanguageServerRegistry {
         supervisor
             .map(|supervisor| supervisor.stop())
             .unwrap_or(LanguageServerRuntimeStatus::Stopped)
+    }
+
+    #[cfg(test)]
+    fn stop_after_exact_cleanup_settles(
+        &self,
+        root_path: &str,
+        timeout: std::time::Duration,
+    ) -> LanguageServerRuntimeStatus {
+        let Some(supervisor) = self.remove_supervisor(root_path) else {
+            return LanguageServerRuntimeStatus::Stopped;
+        };
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let status = supervisor.stop();
+            let cleanup_is_pending = matches!(
+                &status,
+                LanguageServerRuntimeStatus::Crashed { message }
+                    if message == "Language server cleanup is still pending."
+            );
+            if !cleanup_is_pending || std::time::Instant::now() >= deadline {
+                return status;
+            }
+        }
     }
 
     pub fn stop_all(&self) -> LanguageServerRuntimeStatus {

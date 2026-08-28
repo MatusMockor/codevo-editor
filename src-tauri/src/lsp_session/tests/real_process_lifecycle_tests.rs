@@ -219,6 +219,30 @@ fn start_real_php_workspace(
     spawner.pid()
 }
 
+#[cfg(unix)]
+fn stop_real_php_workspace_after_cleanup_settles(
+    registry: &PhpLanguageServerRegistry,
+    root: &str,
+    pid: i32,
+    proof: &str,
+) {
+    let status = registry.stop_after_exact_cleanup_settles(root, Duration::from_secs(5));
+    assert_eq!(
+        status,
+        LanguageServerRuntimeStatus::Stopped,
+        "{proof}: exact removed-supervisor cleanup did not settle"
+    );
+    assert!(
+        wait_until_process_dead(pid, Duration::from_secs(5)),
+        "{proof}: old process must be dead after cleanup settlement"
+    );
+    assert_eq!(
+        registry.status(root),
+        LanguageServerRuntimeStatus::Stopped,
+        "{proof}: settled cleanup must leave no registered workspace ghost"
+    );
+}
+
 /// Spawns a real shell process whose OWN stdout carries the LSP
 /// handshake script - unlike [`RealProcessSpawner`], which serves the
 /// script over a synthetic in-memory pipe entirely decoupled from the
@@ -799,10 +823,11 @@ fn multi_project_rapid_restart_stop_loop_leaks_nothing_and_preserves_isolation()
     leaks.record(pid_b);
 
     for iteration in 0..ITERATIONS {
-        assert_eq!(registry.stop(root_a), LanguageServerRuntimeStatus::Stopped);
-        assert!(
-            wait_until_process_dead(pid_a, Duration::from_secs(5)),
-            "iteration {iteration}: old A must die"
+        stop_real_php_workspace_after_cleanup_settles(
+            &registry,
+            root_a,
+            pid_a,
+            &format!("iteration {iteration}: stop A"),
         );
         assert!(
             process_is_alive(pid_b),
@@ -813,10 +838,11 @@ fn multi_project_rapid_restart_stop_loop_leaks_nothing_and_preserves_isolation()
         leaks.record(pid_a);
         assert!(process_is_alive(pid_a));
 
-        assert_eq!(registry.stop(root_b), LanguageServerRuntimeStatus::Stopped);
-        assert!(
-            wait_until_process_dead(pid_b, Duration::from_secs(5)),
-            "iteration {iteration}: old B must die"
+        stop_real_php_workspace_after_cleanup_settles(
+            &registry,
+            root_b,
+            pid_b,
+            &format!("iteration {iteration}: stop B"),
         );
         assert!(
             process_is_alive(pid_a),
@@ -834,7 +860,9 @@ fn multi_project_rapid_restart_stop_loop_leaks_nothing_and_preserves_isolation()
         "registry must track exactly the two live workspaces, no ghosts"
     );
 
-    registry.stop_all();
+    stop_real_php_workspace_after_cleanup_settles(&registry, root_a, pid_a, "final stop A");
+    assert!(process_is_alive(pid_b), "final stopping A must not touch B");
+    stop_real_php_workspace_after_cleanup_settles(&registry, root_b, pid_b, "final stop B");
     leaks.assert_no_leaks(Duration::from_secs(5));
 }
 
