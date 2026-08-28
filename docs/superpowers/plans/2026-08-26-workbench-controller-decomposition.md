@@ -118,10 +118,11 @@ Round 3 starts at `d47d7f92` with 5,660 raw lines and 18,447 structural tokens. 
    - Net reduction budget: at least 820 raw lines and 3,403 structural tokens.
    - Completed after `6a077ab7`: 4,155 to 3,230 raw lines and 14,130 to 10,420 structural tokens. Independent adversarial review: clean.
 
-6. Public controller facade
+6. Controller authority and presentation projection
    - Range: 5181-5659.
-   - Destination: `createWorkbenchControllerResult.ts`.
-   - Boundary: the exact public return contract and final presentation projection after the preceding coordinators expose typed output facets.
+   - Destination: `useWorkbenchControllerAuthorityCoordinator.ts` and `useWorkbenchControllerPresentation.ts`.
+   - Boundary: document and workspace authority composition, final memoized presentation actions, and qualified access to the preceding coordinators' closed output facets. The public result projection remains in the composition root because moving it would require a new 242-binding cross-module contract without reducing product ownership.
    - Net reduction budget: at least 390 raw lines and 1,100 structural tokens.
+   - Completed after `53b29777`: 3,230 to 2,848 raw lines and 10,420 to 9,956 structural tokens. The original facade token estimate was deliberately not met; the safer boundary still reaches both hard limits while preserving the exact 394-key public surface. Independent adversarial review: clean.
 
 The six starting regions contain 3,616 raw lines and 10,946 structural tokens. Replacement wiring is capped at 880 raw lines and 2,310 tokens, projecting a controller of about 2,924 raw lines and 9,811 structural tokens before import cleanup. Every slice preserves render-time ref bridge assignment order, lowers both hotspot dimensions, receives an independent adversarial review, passes the complete gate set, and is committed and pushed independently.
