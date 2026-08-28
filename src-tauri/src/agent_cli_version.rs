@@ -744,41 +744,121 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn detach_from_session_available() -> bool {
-        Command::new("perl")
-            .args(["-e", "use POSIX; exit(defined(&POSIX::setsid) ? 0 : 1)"])
+    struct DetachedProbeProcess {
+        proof_path: PathBuf,
+        terminated: bool,
+    }
+
+    #[cfg(unix)]
+    impl DetachedProbeProcess {
+        fn new(proof_path: PathBuf) -> Self {
+            Self {
+                proof_path,
+                terminated: false,
+            }
+        }
+
+        fn process_id(&self) -> Option<i32> {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            loop {
+                if let Ok(value) = fs::read_to_string(&self.proof_path) {
+                    if let Ok(process_id) = value.parse() {
+                        return Some(process_id);
+                    }
+                }
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn terminate_and_wait(&mut self) -> bool {
+            if self.terminated {
+                return true;
+            }
+            let Some(process_id) = self.process_id() else {
+                return false;
+            };
+            unsafe {
+                libc::kill(process_id, libc::SIGKILL);
+            }
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let exists = unsafe { libc::kill(process_id, 0) } == 0;
+                if !exists {
+                    self.terminated = true;
+                    return true;
+                }
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for DetachedProbeProcess {
+        fn drop(&mut self) {
+            self.terminate_and_wait();
+        }
+    }
+
+    #[cfg(unix)]
+    fn shell_argument(value: &Path) -> String {
+        format!("'{}'", value.to_string_lossy().replace('\'', "'\\''"))
+    }
+
+    #[cfg(unix)]
+    fn require_perl_session_detachment() {
+        let status = Command::new("perl")
+            .args([
+                "-e",
+                "use POSIX; defined(my $pid = fork) or exit 1; if ($pid) { waitpid($pid, 0); exit($? >> 8); } exit(POSIX::setsid() >= 0 ? 0 : 1)",
+            ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .is_ok_and(|status| status.success())
+            .expect("run Perl session detachment preflight");
+        assert!(status.success(), "Perl session detachment unavailable");
     }
 
     #[cfg(unix)]
     #[test]
     fn a_grandchild_that_leaves_the_process_group_cannot_block_the_probe() {
-        if !detach_from_session_available() {
-            return;
-        }
+        require_perl_session_detachment();
         let scripts = TempScripts::create("detached");
+        let proof_path = scripts.missing("detached.proof");
+        let mut detached_process = DetachedProbeProcess::new(proof_path.clone());
         let script = scripts.script(
             "detaching",
-            "perl -e 'use POSIX; POSIX::setsid(); sleep 3' &\necho '1.2.3'\nexit 0",
+            &format!(
+                "perl -e 'use POSIX; pipe(my $reader, my $writer) or exit 1; defined(my $pid = fork) or exit 2; if ($pid) {{ close $writer; exit defined(<$reader>) ? 0 : 3; }} close $reader; POSIX::setsid() >= 0 or exit 4; open(my $proof, \">\", $ARGV[0]) or exit 5; print {{$proof}} \"$$\"; close $proof; print {{$writer}} \"ready\\n\"; close $writer; sleep 30' {} || exit 1\necho '1.2.3'\nexit 0",
+                shell_argument(&proof_path),
+            ),
         );
-        let timeout = Duration::from_millis(200);
+        let timeout = Duration::from_secs(5);
         let registry = AgentCliVersionRegistry::with_timeout(timeout);
 
         let started = Instant::now();
         let probed = registry.probe(&request(&script), 5).expect("probe");
         let elapsed = started.elapsed();
         let cached = registry.entries.lock().expect("cache lock").len();
+        let detached_process_id = detached_process.process_id().expect("detached process id");
+        let detached_session_id = unsafe { libc::getsid(detached_process_id) };
+        let detached_process_group_id = unsafe { libc::getpgid(detached_process_id) };
 
         assert_eq!(probed.version, None);
         assert_eq!(cached, 0, "an abandoned reader must not be cached");
+        assert_eq!(detached_session_id, detached_process_id);
+        assert_eq!(detached_process_group_id, detached_process_id);
         assert!(
             elapsed < timeout + Duration::from_secs(1),
             "elapsed: {elapsed:?}"
         );
+        assert!(detached_process.terminate_and_wait());
     }
 
     #[cfg(unix)]

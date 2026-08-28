@@ -673,6 +673,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_public_intent_discovers_runtime_starts_watch_and_reaps_it() {
+        let _admission = super::super::real_node_test_admission::acquire();
         let fixture = Fixture::new(true);
 
         let DebugStartResponse::Ok { session_id } =

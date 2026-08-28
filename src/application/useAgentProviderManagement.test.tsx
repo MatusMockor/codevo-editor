@@ -247,6 +247,76 @@ describe("useAgentProviderManagement", () => {
     harness.unmount();
   });
 
+  it("retires a stale health owner without disturbing the replacement generation", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    const stale = harness.healthCalls[0];
+
+    let saved!: Promise<boolean>;
+    act(() => {
+      saved = harness.hook().save({ provider: "claudeCode", cliPath: PATH_B });
+    });
+    await act(async () => {
+      await expect(saved).resolves.toBe(true);
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await act(async () => stale?.resolve(availableHealth("1.0.0", "9.0.0")));
+
+    expect(harness.hook().providers.claudeCode.health.kind).toBe("checking");
+    expect(harness.hook().toast).toBeNull();
+    await settleHealth(harness, 2, currentHealth("2.0.0"));
+    expect(harness.hook().providers.claudeCode.health).toMatchObject({
+      kind: "ready",
+      installedVersion: "2.0.0",
+    });
+    harness.unmount();
+  });
+
+  it("settles a periodic health probe while another provider is reconfigured", async () => {
+    vi.useFakeTimers();
+    const settings = configuredSettings();
+    settings.agentProviderPreferences = {
+      ...settings.agentProviderPreferences,
+      claudeCode: {
+        ...settings.agentProviderPreferences.claudeCode,
+        healthCheckIntervalSeconds: 1,
+      },
+      codex: {
+        ...settings.agentProviderPreferences.codex,
+        healthCheckIntervalSeconds: 0,
+      },
+    };
+    const harness = renderManagement(settings);
+    await act(async () => undefined);
+    await act(async () => undefined);
+    await settleHealth(harness, 0, currentHealth("1.0.0"));
+    await settleHealth(harness, 1, currentHealth("2.0.0"));
+    await act(async () => vi.advanceTimersByTime(1_000));
+    expect(harness.healthCalls).toHaveLength(3);
+
+    let saved!: Promise<boolean>;
+    act(() => {
+      saved = harness.hook().save({
+        provider: "codex",
+        preference: {
+          ...settings.agentProviderPreferences.codex,
+          checkForUpdates: false,
+        },
+      });
+    });
+    await act(async () => {
+      await expect(saved).resolves.toBe(true);
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(4));
+    await settleHealth(harness, 2, currentHealth("1.0.1"));
+    expect(harness.hook().providers.claudeCode.health).toMatchObject({
+      kind: "ready",
+      installedVersion: "1.0.1",
+    });
+    await settleHealth(harness, 3, currentHealth("2.0.0"));
+    harness.unmount();
+  });
+
   it("reacquires a newer identical backend policy without replacing it", async () => {
     const harness = renderManagement(undefined, undefined, true, (provider) => ({
       kind: "registered",

@@ -80,6 +80,13 @@ export function AgentsSettingsSection({
   workspaceSettings,
 }: AgentsSettingsSectionProps) {
   const preferences = appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
+  const enabledAgentCliKindOptions = agentCliKindOptions.filter(
+    (option) => preferences[option.id].enabled,
+  );
+  const selectedAgentCliKindIsEnabled = enabledAgentCliKindOptions.some(
+    (option) => option.id === appSettings.agentCliKind,
+  );
+  const selectedAgentCliKind = selectedAgentCliKindIsEnabled ? appSettings.agentCliKind : "";
   return (
     <div className="settings-group">
       <div className="settings-subgroup agent-provider-settings">
@@ -119,16 +126,25 @@ export function AgentsSettingsSection({
       <label className="settings-field">
         <span>Agent CLI</span>
         <select
+          disabled={enabledAgentCliKindOptions.length === 0}
           onChange={(event) => {
             const value = event.currentTarget.value;
             if (!isAgentCliKind(value)) {
               return;
             }
+            if (!preferences[value].enabled) return;
             onChangeAgentCliKind(value);
           }}
-          value={appSettings.agentCliKind}
+          value={selectedAgentCliKind}
         >
-          {agentCliKindOptions.map((option) => (
+          {!selectedAgentCliKindIsEnabled ? (
+            <option disabled value="">
+              {enabledAgentCliKindOptions.length === 0
+                ? "No enabled providers"
+                : "Selected provider is disabled"}
+            </option>
+          ) : null}
+          {enabledAgentCliKindOptions.map((option) => (
             <option key={option.id} value={option.id}>
               {option.label}
             </option>

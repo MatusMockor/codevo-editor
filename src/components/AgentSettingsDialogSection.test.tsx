@@ -35,6 +35,7 @@ describe("AgentSettingsDialogSection provider persistence", () => {
 
     expect(management.saveWithOutcome).toHaveBeenCalledWith({
       provider: "claudeCode",
+      selectedProvider: "codex",
       preference: {
         enabled: false,
         healthCheckIntervalSeconds: 300,
@@ -42,6 +43,7 @@ describe("AgentSettingsDialogSection provider persistence", () => {
         dismissedUpdateVersion: null,
       },
     });
+    expect(management.saveWithOutcome).toHaveBeenCalledTimes(1);
     expect(persistAppSettings).not.toHaveBeenCalled();
   });
 

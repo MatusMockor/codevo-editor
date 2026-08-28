@@ -71,3 +71,6 @@ portable-pty = { path = "vendor/portable-pty" }
 [dev-dependencies]
 anyhow = "1"
 tauri = { version = "2", features = ["test"] }
+
+[profile.dev.package.sha2]
+opt-level = 3

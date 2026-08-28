@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { defaultAppSettings, type AppSettings, type SettingsGateway } from "../../domain/settings";
 import type { WorkspaceStartupRestoreIntent } from "./useWorkspaceOpenRequestLifecycle";
 
@@ -19,45 +19,55 @@ export function useInitialAppSettingsHydration({
   reportError,
   settingsGateway,
 }: InitialAppSettingsHydrationOptions): void {
+  const ownerGenerationRef = useRef(0);
+  const hydrationSettledRef = useRef(false);
+
   useEffect(() => {
-    if (hasRestoredRef.current) return;
+    if (hydrationSettledRef.current) return;
+    if (hasRestoredRef.current && ownerGenerationRef.current === 0) return;
+    const ownerGeneration = ownerGenerationRef.current + 1;
+    ownerGenerationRef.current = ownerGeneration;
     hasRestoredRef.current = true;
     let active = true;
     const startupRestore = beginStartupRestore();
+    const isCurrent = () => active && ownerGenerationRef.current === ownerGeneration;
 
     void (async () => {
       let settings: AppSettings;
       try {
         settings = await settingsGateway.loadAppSettings();
       } catch (error) {
-        if (!active) return;
+        if (!isCurrent()) return;
         reportError("Settings", error);
         settings = defaultAppSettings();
       }
-      if (!active) return;
+      if (!isCurrent()) return;
       try {
         applyAppSettings(settings);
       } catch (error) {
-        if (!active) return;
+        if (!isCurrent()) return;
         reportError("Settings", error);
         return;
       }
-      if (!active) return;
+      if (!isCurrent()) return;
+      hydrationSettledRef.current = true;
       onAppSettingsHydrated(true);
       const workspacePath = settings.recentWorkspacePath ?? settings.workspaceTabs[0] ?? null;
       if (workspacePath === null) return;
-      if (!active || !startupRestore.isCurrent()) return;
+      if (!isCurrent() || !startupRestore.isCurrent()) return;
       try {
         await startupRestore.openWorkspacePath(workspacePath);
-        if (!active || !startupRestore.isCurrent()) return;
+        if (!isCurrent() || !startupRestore.isCurrent()) return;
       } catch (error) {
-        if (!active || !startupRestore.isCurrent()) return;
+        if (!isCurrent() || !startupRestore.isCurrent()) return;
         reportError("Settings", error);
       }
     })();
 
     return () => {
       active = false;
+      if (ownerGenerationRef.current !== ownerGeneration) return;
+      ownerGenerationRef.current += 1;
     };
   }, [
     applyAppSettings,

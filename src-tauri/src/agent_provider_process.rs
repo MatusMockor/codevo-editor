@@ -72,13 +72,17 @@ impl ExecutableIdentity {
     }
 
     fn retained_shallow_is_current(&self) -> bool {
+        self.retained_shallow_is_current_with(|| false)
+    }
+
+    fn retained_shallow_is_current_with(&self, cancelled: impl Fn() -> bool) -> bool {
         let Ok(metadata) = self.descriptor.metadata() else {
             return false;
         };
         if metadata.len() != self.size_bytes {
             return false;
         }
-        if executable_digest(&self.descriptor, metadata.len())
+        if executable_digest_cancellable(&self.descriptor, metadata.len(), cancelled)
             .ok()
             .as_ref()
             != Some(&self.digest)
@@ -91,7 +95,7 @@ impl ExecutableIdentity {
         true
     }
 
-    fn path_is_current_shallow(&self) -> bool {
+    fn path_is_current_shallow_with(&self, cancelled: impl Fn() -> bool) -> bool {
         let Ok(canonical_path) = fs::canonicalize(&self.canonical_path) else {
             return false;
         };
@@ -119,7 +123,10 @@ impl ExecutableIdentity {
         if modified_epoch_ms != Some(self.modified_epoch_ms) {
             return false;
         }
-        executable_digest(&descriptor, metadata.len()).ok().as_ref() == Some(&self.digest)
+        executable_digest_cancellable(&descriptor, metadata.len(), cancelled)
+            .ok()
+            .as_ref()
+            == Some(&self.digest)
     }
 
     pub fn bound_command(&self) -> Result<BoundExecutableCommand, String> {
@@ -161,8 +168,20 @@ impl BoundExecutableCommand {
     }
 
     pub fn spawn(&mut self) -> Result<Child, BoundExecutableSpawnFailure> {
+        self.spawn_cancellable(|| false)
+    }
+
+    fn spawn_cancellable(
+        &mut self,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Child, BoundExecutableSpawnFailure> {
+        if cancelled() {
+            return Err(BoundExecutableSpawnFailure::IdentityChanged);
+        }
         for dependency in &self.dependencies {
-            if !dependency.retained_shallow_is_current() || !dependency.path_is_current_shallow() {
+            if !dependency.retained_shallow_is_current_with(&cancelled)
+                || !dependency.path_is_current_shallow_with(&cancelled)
+            {
                 return Err(BoundExecutableSpawnFailure::IdentityChanged);
             }
         }
@@ -170,8 +189,12 @@ impl BoundExecutableCommand {
         if let Some(barrier) = self.before_artifact_validation.take() {
             barrier();
         }
-        if !self.artifact.retained_shallow_is_current() || !self.artifact.path_is_current_shallow()
+        if !self.artifact.retained_shallow_is_current_with(&cancelled)
+            || !self.artifact.path_is_current_shallow_with(&cancelled)
         {
+            return Err(BoundExecutableSpawnFailure::IdentityChanged);
+        }
+        if cancelled() {
             return Err(BoundExecutableSpawnFailure::IdentityChanged);
         }
         self.command
@@ -199,7 +222,6 @@ pub enum AgentProviderProcessIntent {
 
 #[derive(Clone, Debug)]
 pub struct AgentProviderProcessPlan {
-    program: PathBuf,
     identity: ExecutableIdentity,
     args: Box<[String]>,
     cwd: PathBuf,
@@ -348,7 +370,6 @@ impl AgentProviderProcessPlan {
             .parent()
             .map_or_else(|| PathBuf::from("/"), Path::to_path_buf);
         Self {
-            program: identity.canonical_path.clone(),
             identity,
             args: args.into_boxed_slice(),
             cwd,
@@ -573,6 +594,14 @@ fn bound_command(identity: &ExecutableIdentity) -> Result<BoundExecutableCommand
 }
 
 fn executable_digest(descriptor: &fs::File, size: u64) -> Result<[u8; 32], String> {
+    executable_digest_cancellable(descriptor, size, || false)
+}
+
+fn executable_digest_cancellable(
+    descriptor: &fs::File,
+    size: u64,
+    cancelled: impl Fn() -> bool,
+) -> Result<[u8; 32], String> {
     let mut reader = descriptor
         .try_clone()
         .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
@@ -581,8 +610,19 @@ fn executable_digest(descriptor: &fs::File, size: u64) -> Result<[u8; 32], Strin
         .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
     let mut hasher = Sha256::new();
     let mut bounded = reader.take(size.saturating_add(1));
-    io::copy(&mut bounded, &mut hasher)
-        .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        if cancelled() {
+            return Err("Provider executable validation was cancelled.".to_string());
+        }
+        let count = bounded
+            .read(&mut buffer)
+            .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
     Ok(hasher.finalize().into())
 }
 
@@ -659,22 +699,14 @@ pub fn execute_agent_provider_plan_cancellable(
     plan: &AgentProviderProcessPlan,
     cancelled: impl Fn() -> bool,
 ) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
-    if !plan.identity.retained_is_current()
-        || executable_identity_path(&plan.program).ok().as_ref() != Some(&plan.identity)
-    {
-        return Err(AgentProviderProcessFailure::Uncertain(
-            "Provider executable identity changed before launch.".to_string(),
-        ));
-    }
+    let deadline = Instant::now() + plan.timeout;
     if cancelled() {
         return Err(AgentProviderProcessFailure::Uncertain(
             "Provider operation was cancelled.".to_string(),
         ));
     }
-    let mut bound = plan
-        .identity
-        .bound_command()
-        .map_err(AgentProviderProcessFailure::Uncertain)?;
+    let mut bound =
+        bound_command(&plan.identity).map_err(AgentProviderProcessFailure::Uncertain)?;
     let command = bound.command_mut();
     command
         .args(plan.args.iter())
@@ -689,9 +721,20 @@ pub fn execute_agent_provider_plan_cancellable(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let child = match bound.spawn() {
+    let child = match bound.spawn_cancellable(|| cancelled() || Instant::now() >= deadline) {
         Ok(child) => child,
         Err(BoundExecutableSpawnFailure::IdentityChanged) => {
+            if cancelled() {
+                return Err(AgentProviderProcessFailure::Uncertain(
+                    "Provider operation was cancelled.".to_string(),
+                ));
+            }
+            if Instant::now() >= deadline {
+                return Err(AgentProviderProcessFailure::TimedOut {
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                });
+            }
             return Err(AgentProviderProcessFailure::Uncertain(
                 "Provider executable identity changed before launch.".to_string(),
             ));
@@ -700,23 +743,23 @@ pub fn execute_agent_provider_plan_cancellable(
             return Err(AgentProviderProcessFailure::Spawn(error.to_string()));
         }
     };
-    OwnedProviderChild::new(child, plan.timeout, plan.output_limit).settle(cancelled)
+    OwnedProviderChild::new(child, deadline, plan.output_limit).settle(cancelled)
 }
 
 struct OwnedProviderChild {
     child: Child,
     process_group_id: Option<i32>,
-    timeout: Duration,
+    deadline: Instant,
     output_limit: usize,
     settled: bool,
 }
 
 impl OwnedProviderChild {
-    fn new(child: Child, timeout: Duration, output_limit: usize) -> Self {
+    fn new(child: Child, deadline: Instant, output_limit: usize) -> Self {
         Self {
             process_group_id: i32::try_from(child.id()).ok(),
             child,
-            timeout,
+            deadline,
             output_limit,
             settled: false,
         }
@@ -726,7 +769,6 @@ impl OwnedProviderChild {
         mut self,
         cancelled: impl Fn() -> bool,
     ) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
-        let started = Instant::now();
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let retained_bytes = Arc::new(AtomicUsize::new(0));
         let output_exceeded = Arc::new(AtomicBool::new(false));
@@ -761,9 +803,7 @@ impl OwnedProviderChild {
             }
             match self.child.try_wait() {
                 Ok(Some(status)) => break Some(status),
-                Ok(None) if started.elapsed() < self.timeout => {
-                    thread::sleep(PROCESS_POLL_INTERVAL)
-                }
+                Ok(None) if Instant::now() < self.deadline => thread::sleep(PROCESS_POLL_INTERVAL),
                 Ok(None) => break None,
                 Err(error) => {
                     self.terminate();
@@ -1014,6 +1054,60 @@ mod tests {
             execute_agent_provider_plan(&plan),
             Err(AgentProviderProcessFailure::TimedOut { .. })
         ));
+        fs::remove_file(cli).expect("cleanup");
+    }
+
+    #[test]
+    fn validation_uses_the_process_deadline_before_spawn() {
+        let marker = env::temp_dir().join(format!(
+            "codevo-provider-deadline-marker-{}-{}",
+            std::process::id(),
+            NONCE.fetch_add(1, Ordering::SeqCst)
+        ));
+        let cli = executable(&format!("touch '{}'; exit 0", marker.display()));
+        let mut plan = AgentProviderProcessPlan::provider(
+            cli.to_str().expect("path"),
+            AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
+        )
+        .expect("plan");
+        plan.timeout = Duration::ZERO;
+        assert!(matches!(
+            execute_agent_provider_plan(&plan),
+            Err(AgentProviderProcessFailure::TimedOut { .. })
+        ));
+        assert!(!marker.exists());
+        fs::remove_file(cli).expect("cleanup");
+    }
+
+    #[test]
+    fn cancellation_during_digest_validation_prevents_spawn() {
+        let marker = env::temp_dir().join(format!(
+            "codevo-provider-cancel-marker-{}-{}",
+            std::process::id(),
+            NONCE.fetch_add(1, Ordering::SeqCst)
+        ));
+        let body = format!(
+            "touch '{}'; exit 0\n{}",
+            marker.display(),
+            "\n".repeat(128 * 1024)
+        );
+        let cli = executable(&body);
+        let plan = AgentProviderProcessPlan::provider(
+            cli.to_str().expect("path"),
+            AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
+        )
+        .expect("plan");
+        let polls = AtomicUsize::new(0);
+        let result = execute_agent_provider_plan_cancellable(&plan, || {
+            polls.fetch_add(1, Ordering::AcqRel) >= 3
+        });
+        assert!(matches!(
+            result,
+            Err(AgentProviderProcessFailure::Uncertain(message))
+                if message == "Provider operation was cancelled."
+        ));
+        assert!(polls.load(Ordering::Acquire) >= 4);
+        assert!(!marker.exists());
         fs::remove_file(cli).expect("cleanup");
     }
 

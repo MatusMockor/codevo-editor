@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useRef } from "react";
+import { act, StrictMode, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, type AppSettings } from "../../domain/settings";
@@ -45,9 +45,87 @@ describe("useInitialAppSettingsHydration", () => {
     expect(options.settingsGateway.loadAppSettings).toHaveBeenCalledTimes(1);
     expect(options.applyAppSettings).toHaveBeenCalledTimes(1);
     expect(options.onAppSettingsHydrated).toHaveBeenCalledTimes(1);
+    expect(options.beginStartupRestore).toHaveBeenCalledTimes(1);
     expect(options.startupOpenWorkspacePath).toHaveBeenCalledTimes(1);
     expect(options.startupOpenWorkspacePath).toHaveBeenCalledWith("/workspace/recent");
     expect(options.reportError).not.toHaveBeenCalled();
+  });
+
+  it("lets only the current Strict Mode replay publish hydration", async () => {
+    const stale = deferred<AppSettings>();
+    const current = deferred<AppSettings>();
+    const options = hydrationOptions(stale.promise);
+    options.settingsGateway.loadAppSettings = vi
+      .fn<() => Promise<AppSettings>>()
+      .mockReturnValueOnce(stale.promise)
+      .mockReturnValueOnce(current.promise);
+
+    act(() =>
+      root.render(
+        <StrictMode>
+          <Harness options={options} />
+        </StrictMode>,
+      ),
+    );
+
+    expect(options.settingsGateway.loadAppSettings).toHaveBeenCalledTimes(2);
+    await resolve(stale, {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace/stale",
+    });
+    expect(options.applyAppSettings).not.toHaveBeenCalled();
+    expect(options.onAppSettingsHydrated).not.toHaveBeenCalled();
+    expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
+
+    await resolve(current, {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace/current",
+    });
+
+    expect(options.applyAppSettings).toHaveBeenCalledTimes(1);
+    expect(options.onAppSettingsHydrated).toHaveBeenCalledExactlyOnceWith(true);
+    expect(options.startupOpenWorkspacePath).toHaveBeenCalledExactlyOnceWith("/workspace/current");
+  });
+
+  it("does not repeat settled hydration when a dependency identity changes", async () => {
+    const options = hydrationOptions(Promise.resolve(defaultAppSettings()));
+    render(options);
+    await flush();
+
+    render({
+      ...options,
+      reportError: vi.fn<(scope: string, error: unknown) => void>(),
+    });
+    await flush();
+
+    expect(options.settingsGateway.loadAppSettings).toHaveBeenCalledTimes(1);
+    expect(options.applyAppSettings).toHaveBeenCalledTimes(1);
+    expect(options.onAppSettingsHydrated).toHaveBeenCalledTimes(1);
+    expect(options.beginStartupRestore).toHaveBeenCalledTimes(1);
+    expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
+  });
+
+  it("preserves a shared restored claim across a settled unmount and remount", async () => {
+    const options = hydrationOptions(Promise.resolve(defaultAppSettings()));
+    const sharedHasRestoredRef = { current: false };
+
+    act(() =>
+      root.render(<SharedRefHarness options={options} hasRestoredRef={sharedHasRestoredRef} />),
+    );
+    await flush();
+    expect(sharedHasRestoredRef.current).toBe(true);
+
+    act(() => root.render(null));
+    act(() =>
+      root.render(<SharedRefHarness options={options} hasRestoredRef={sharedHasRestoredRef} />),
+    );
+    await flush();
+
+    expect(options.settingsGateway.loadAppSettings).toHaveBeenCalledTimes(1);
+    expect(options.applyAppSettings).toHaveBeenCalledTimes(1);
+    expect(options.onAppSettingsHydrated).toHaveBeenCalledTimes(1);
+    expect(options.beginStartupRestore).toHaveBeenCalledTimes(1);
+    expect(options.startupOpenWorkspacePath).not.toHaveBeenCalled();
   });
 
   it("falls back to the first workspace tab", async () => {
@@ -212,6 +290,17 @@ describe("useInitialAppSettingsHydration", () => {
 
 function Harness({ options }: { readonly options: HydrationTestOptions }) {
   const hasRestoredRef = useRef(false);
+  useInitialAppSettingsHydration({ ...options, hasRestoredRef });
+  return null;
+}
+
+function SharedRefHarness({
+  hasRestoredRef,
+  options,
+}: {
+  readonly hasRestoredRef: { current: boolean };
+  readonly options: HydrationTestOptions;
+}) {
   useInitialAppSettingsHydration({ ...options, hasRestoredRef });
   return null;
 }

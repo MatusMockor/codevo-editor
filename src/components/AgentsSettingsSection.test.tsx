@@ -101,6 +101,84 @@ describe("AgentsSettingsSection agent CLI path input", () => {
     expect(onClearAgentModelFavorites).toHaveBeenCalledTimes(1);
   });
 
+  it("excludes disabled providers from the Agent CLI picker", () => {
+    const onChangeAgentCliKind = vi.fn();
+    const preferences = defaultAgentProviderPreferences();
+    render({
+      appSettings: {
+        ...defaultAppSettings(),
+        agentProviderPreferences: {
+          ...preferences,
+          codex: { ...preferences.codex, enabled: false },
+        },
+      },
+      onChangeAgentCliKind,
+    });
+
+    const picker = agentCliPicker();
+    expect([...picker.options].map((option) => option.value)).toEqual(["claudeCode"]);
+    expect(picker.value).toBe("claudeCode");
+  });
+
+  it("rejects a disabled provider value even when injected into the picker", () => {
+    const onChangeAgentCliKind = vi.fn();
+    const preferences = defaultAgentProviderPreferences();
+    render({
+      appSettings: {
+        ...defaultAppSettings(),
+        agentProviderPreferences: {
+          ...preferences,
+          codex: { ...preferences.codex, enabled: false },
+        },
+      },
+      onChangeAgentCliKind,
+    });
+
+    const picker = agentCliPicker();
+    picker.append(new Option("Codex", "codex"));
+    setSelect(picker, "codex");
+
+    expect(onChangeAgentCliKind).not.toHaveBeenCalled();
+  });
+
+  it("does not present another provider as selected while the persisted selection is disabled", () => {
+    const preferences = defaultAgentProviderPreferences();
+    render({
+      appSettings: {
+        ...defaultAppSettings(),
+        agentCliKind: "codex",
+        agentProviderPreferences: {
+          ...preferences,
+          codex: { ...preferences.codex, enabled: false },
+        },
+      },
+    });
+
+    const picker = agentCliPicker();
+    expect(picker.value).toBe("");
+    expect([...picker.options].map((option) => option.value)).toEqual(["", "claudeCode"]);
+    expect(picker.options[0]?.textContent).toBe("Selected provider is disabled");
+  });
+
+  it("shows a disabled truthful placeholder when no provider is enabled", () => {
+    const preferences = defaultAgentProviderPreferences();
+    render({
+      appSettings: {
+        ...defaultAppSettings(),
+        agentCliKind: "codex",
+        agentProviderPreferences: {
+          claudeCode: { ...preferences.claudeCode, enabled: false },
+          codex: { ...preferences.codex, enabled: false },
+        },
+      },
+    });
+
+    const picker = agentCliPicker();
+    expect(picker.disabled).toBe(true);
+    expect([...picker.options].map((option) => option.value)).toEqual([""]);
+    expect(picker.textContent).toBe("No enabled providers");
+  });
+
   function render(
     overrides: Partial<AgentsSettingsSectionProps>,
     agentCliPath: string | null = null,
@@ -133,6 +211,14 @@ describe("AgentsSettingsSection agent CLI path input", () => {
     );
     expect(input).not.toBeNull();
     return input as HTMLInputElement;
+  }
+
+  function agentCliPicker(): HTMLSelectElement {
+    const picker = [...host.querySelectorAll("select")].find(
+      (select) => select.parentElement?.textContent?.includes("Agent CLI") === true,
+    );
+    expect(picker).toBeDefined();
+    return picker as HTMLSelectElement;
   }
 
   function setValue(input: HTMLInputElement, value: string): void {

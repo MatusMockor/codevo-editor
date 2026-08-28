@@ -169,6 +169,75 @@ describe("AgentsSettingsPanel", () => {
       },
     });
   });
+
+  it("atomically falls back when disabling the selected provider", () => {
+    const updateAppSettings = vi.fn();
+    const appSettings = {
+      ...defaultAppSettings(),
+      agentCliKind: "codex" as const,
+      agentCliPaths: { claudeCode: "/bin/claude", codex: "/bin/codex" },
+    };
+    act(() =>
+      root.render(
+        <AgentsSettingsPanel
+          appSettings={appSettings}
+          hasWorkspace={false}
+          providerManagement={managementWithReadyClaude()}
+          updateAppSettings={updateAppSettings}
+          updateWorkspaceSettings={vi.fn()}
+          workspaceSettings={defaultWorkspaceSettings()}
+        />,
+      ),
+    );
+
+    const codexCard = host.querySelector('[aria-label="Codex provider"]');
+    const enabled = codexCard?.querySelector<HTMLInputElement>('input[aria-label="Enable Codex"]');
+    act(() => enabled?.click());
+
+    expect(updateAppSettings).toHaveBeenCalledTimes(1);
+    expect(updateAppSettings).toHaveBeenCalledWith({
+      ...appSettings,
+      agentCliKind: "claudeCode",
+      agentProviderPreferences: {
+        ...appSettings.agentProviderPreferences,
+        codex: { ...appSettings.agentProviderPreferences.codex, enabled: false },
+      },
+    });
+  });
+
+  it("does not fall back to an enabled provider while it is updating", () => {
+    const updateAppSettings = vi.fn();
+    const appSettings = {
+      ...defaultAppSettings(),
+      agentCliKind: "codex" as const,
+      agentCliPaths: { claudeCode: "/bin/claude", codex: "/bin/codex" },
+    };
+    act(() =>
+      root.render(
+        <AgentsSettingsPanel
+          appSettings={appSettings}
+          hasWorkspace={false}
+          providerManagement={managementWithUpdatingClaude()}
+          updateAppSettings={updateAppSettings}
+          updateWorkspaceSettings={vi.fn()}
+          workspaceSettings={defaultWorkspaceSettings()}
+        />,
+      ),
+    );
+
+    const codexCard = host.querySelector('[aria-label="Codex provider"]');
+    const enabled = codexCard?.querySelector<HTMLInputElement>('input[aria-label="Enable Codex"]');
+    act(() => enabled?.click());
+
+    expect(updateAppSettings).toHaveBeenCalledTimes(1);
+    expect(updateAppSettings).toHaveBeenCalledWith({
+      ...appSettings,
+      agentProviderPreferences: {
+        ...appSettings.agentProviderPreferences,
+        codex: { ...appSettings.agentProviderPreferences.codex, enabled: false },
+      },
+    });
+  });
 });
 
 function management(): AgentProviderManagementSurface {
@@ -207,5 +276,43 @@ function management(): AgentProviderManagementSurface {
     save: async () => true,
     saveWithOutcome: async () => ({ kind: "persisted", policyRegistered: true }),
     update: async () => null,
+  };
+}
+
+function managementWithReadyClaude(): AgentProviderManagementSurface {
+  const surface = management();
+  return {
+    ...surface,
+    admissionAuthority: (provider) => {
+      if (provider === "claudeCode") {
+        return {
+          provider,
+          revision: 2,
+          disposition: { kind: "ready" },
+          cliPath: "/bin/claude",
+          providerGeneration: 1,
+        };
+      }
+      return { provider, revision: 2, disposition: { kind: "disabled" } };
+    },
+  };
+}
+
+function managementWithUpdatingClaude(): AgentProviderManagementSurface {
+  const surface = management();
+  return {
+    ...surface,
+    admissionAuthority: (provider) => {
+      if (provider === "claudeCode") {
+        return {
+          provider,
+          revision: 2,
+          disposition: { kind: "updating" },
+          cliPath: "/bin/claude",
+          providerGeneration: 1,
+        };
+      }
+      return { provider, revision: 2, disposition: { kind: "disabled" } };
+    },
   };
 }

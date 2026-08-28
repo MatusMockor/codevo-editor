@@ -481,6 +481,43 @@ mod tests {
         }
     }
 
+    fn poll_test_child_exit(
+        child: &mut dyn AgentChild,
+        deadline: std::time::Instant,
+    ) -> Result<Option<i32>, String> {
+        loop {
+            if let Some(exit_code) = child.try_wait()? {
+                return Ok(Some(exit_code));
+            }
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Ok(None);
+            }
+            std::thread::park_timeout(remaining.min(std::time::Duration::from_millis(1)));
+        }
+    }
+
+    fn wait_for_test_child_exit(
+        child: &mut dyn AgentChild,
+        timeout: std::time::Duration,
+    ) -> Result<i32, String> {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut failure = match poll_test_child_exit(child, deadline) {
+            Ok(Some(exit_code)) => return Ok(exit_code),
+            Ok(None) => "Timed out waiting for agent child exit.".to_string(),
+            Err(error) => error,
+        };
+        if let Err(error) = child.force_kill() {
+            failure.push_str(&format!(" Kill failed: {error}"));
+        }
+        let reap_deadline = std::time::Instant::now() + timeout;
+        match poll_test_child_exit(child, reap_deadline) {
+            Ok(Some(_)) => Err(failure),
+            Ok(None) => Err(format!("{failure} Reap timed out.")),
+            Err(error) => Err(format!("{failure} Reap failed: {error}")),
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn retained_cwd_authority_cannot_be_redirected_by_path_replacement() {
@@ -506,6 +543,8 @@ mod tests {
         let mut child = StdAgentProcessSpawner
             .spawn(&plan)
             .expect("spawn retained cwd");
+        let exit_code = wait_for_test_child_exit(child.as_mut(), std::time::Duration::from_secs(5))
+            .expect("wait for pwd");
         let mut stdout = String::new();
         child
             .stdout_reader()
@@ -518,9 +557,8 @@ mod tests {
             .expect("stderr reader")
             .read_to_string(&mut stderr)
             .expect("read stderr");
-        let exit_code = child.try_wait().expect("wait for pwd");
 
-        assert_eq!(exit_code, Some(0), "stderr: {stderr}");
+        assert_eq!(exit_code, 0, "stderr: {stderr}");
         assert_eq!(
             PathBuf::from(stdout.trim()),
             retained.canonicalize().expect("canonical retained cwd")

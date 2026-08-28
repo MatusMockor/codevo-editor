@@ -7,6 +7,34 @@ import type { AgentProviderManagementSurface } from "../application/useAgentProv
 import type { AppSettings, WorkspaceSettings } from "../domain/settings";
 import { AgentsSettingsSection } from "./AgentsSettingsSection";
 
+function otherProvider(provider: AgentCliKind): AgentCliKind {
+  switch (provider) {
+    case "claudeCode":
+      return "codex";
+    case "codex":
+      return "claudeCode";
+    default:
+      return provider satisfies never;
+  }
+}
+
+function providerIsConfigured(
+  provider: AgentCliKind,
+  management: AgentProviderManagementSurface,
+): boolean {
+  const disposition = management.admissionAuthority(provider).disposition;
+  switch (disposition.kind) {
+    case "ready":
+      return true;
+    case "updating":
+    case "disabled":
+    case "policyUnavailable":
+      return false;
+    default:
+      return disposition satisfies never;
+  }
+}
+
 export interface AgentsSettingsPanelProps {
   readonly providerManagement: AgentProviderManagementSurface;
   readonly appSettings: AppSettings;
@@ -55,6 +83,28 @@ export function AgentsSettingsPanel({
     });
   };
 
+  const changeProviderEnabled = (provider: AgentCliKind, enabled: boolean): void => {
+    const preferences = appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
+    const nextPreferences = {
+      ...preferences,
+      [provider]: { ...preferences[provider], enabled },
+    };
+    if (enabled || appSettings.agentCliKind !== provider) {
+      updateAppSettings({ ...appSettings, agentProviderPreferences: nextPreferences });
+      return;
+    }
+    const fallback = otherProvider(provider);
+    if (!nextPreferences[fallback].enabled || !providerIsConfigured(fallback, providerManagement)) {
+      updateAppSettings({ ...appSettings, agentProviderPreferences: nextPreferences });
+      return;
+    }
+    updateAppSettings({
+      ...appSettings,
+      agentCliKind: fallback,
+      agentProviderPreferences: nextPreferences,
+    });
+  };
+
   return (
     <AgentsSettingsSection
       appSettings={appSettings}
@@ -71,9 +121,7 @@ export function AgentsSettingsPanel({
           dismissedUpdateVersion: null,
         }))
       }
-      onChangeAgentProviderEnabled={(provider, enabled) =>
-        changeProviderPreference(provider, (preference) => ({ ...preference, enabled }))
-      }
+      onChangeAgentProviderEnabled={changeProviderEnabled}
       onChangeAgentProviderHealthCheckInterval={(provider, healthCheckIntervalSeconds) =>
         changeProviderPreference(provider, (preference) => ({
           ...preference,
