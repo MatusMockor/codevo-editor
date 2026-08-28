@@ -116,6 +116,7 @@ Round 3 starts at `d47d7f92` with 5,660 raw lines and 18,447 structural tokens. 
    - Destination: `useWorkbenchWorkspaceTransitionCoordinator.ts`.
    - Boundary: exact workspace identity and runtime ownership, reset, open, restore, activation, package and settings loading, close preparation, and post-await authority revalidation.
    - Net reduction budget: at least 820 raw lines and 3,403 structural tokens.
+   - Completed after `6a077ab7`: 4,155 to 3,230 raw lines and 14,130 to 10,420 structural tokens. Independent adversarial review: clean.
 
 6. Public controller facade
    - Range: 5181-5659.

@@ -1,6 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import type {
   WorkbenchControllerOptions,
   WorkbenchWorkspaceGateways,
@@ -12,20 +11,14 @@ export type {
 export { ownerDocumentSavePipelineContextFor } from "./workbenchController/documentSaveOwnerContext";
 import {
   admittedWorkspaceIdentityForRoot,
-  adoptLegacyCachedWorkspaceState,
-  removeWorkspaceIdentityMappings,
   resolveAdmittedDocumentSaveOwnership,
-  workspaceSettingsIdentity,
 } from "./workbenchController/workspaceIdentityPolicy";
 export {
   adoptLegacyCachedWorkspaceState,
   resolveAdmittedDocumentSaveOwnership,
   withWorkspaceIdentityLease,
 } from "./workbenchController/workspaceIdentityPolicy";
-import {
-  backgroundRuntimeOwnersForPolicy,
-  workspaceRuntimeOwnerFor,
-} from "./workbenchController/workspaceRuntimePolicy";
+import { workspaceRuntimeOwnerFor } from "./workbenchController/workspaceRuntimePolicy";
 import {
   isLanguageServerActiveForWorkspace,
   isRunningLanguageServerForWorkspace,
@@ -40,6 +33,7 @@ import {
   workspacePathBelongsToRoot,
 } from "./workbenchController/workspacePathPolicy";
 import { useWorkbenchCommandEffectsCoordinator } from "./workbenchController/useWorkbenchCommandEffectsCoordinator";
+import { useWorkbenchWorkspaceTransitionCoordinator } from "./workbenchController/useWorkbenchWorkspaceTransitionCoordinator";
 import { useWorkbenchEditorPresentation } from "./workbenchController/useWorkbenchEditorPresentation";
 import {
   useWorkbenchEditorFileCoordinator,
@@ -58,7 +52,6 @@ import {
   useWorkbenchLanguageRuntimeOwnershipCoordinator,
 } from "./workbenchController/useWorkbenchLanguageServerRuntimeCoordinator";
 import {
-  beginWorkbenchSmartModeIntent,
   useWorkbenchLanguageRuntimeChannelRefs,
   useWorkbenchLanguageRuntimeOwnerRefs,
   useWorkbenchStaticAnalysisCoordinator,
@@ -72,34 +65,19 @@ import {
   useWorkbenchLanguageRuntimeProjectionRefBridge,
   useWorkbenchLanguageRuntimeProjectionState,
 } from "./workbenchController/useWorkbenchLanguageRuntimeProjection";
-import {
-  useWorkspacePackageScriptHydration,
-  useWorkspaceOpenRequestLifecycle,
-} from "./workbenchController/useWorkspaceOpenRequestLifecycle";
 import { useManagedWorkspaceIdentityOwnership } from "./workbenchController/useManagedWorkspaceIdentityOwnership";
 import { useWorkspaceIdentityAuthority } from "./workbenchController/useWorkspaceIdentityAuthority";
-import { loadCompleteWorkspaceDirectoryEntries } from "./workbenchController/useWorkspaceDirectoryLoader";
 import { useWorkspaceDirectoryExplorer } from "./workbenchController/useWorkspaceDirectoryExplorer";
-import { useWorkspaceSessionRestorer } from "./workbenchController/useWorkspaceSessionRestorer";
 import { boundedInFlightDirectoryLoadsFor } from "./workbenchController/boundedInFlightDirectoryLoads";
-import {
-  boundedPendingWorkspaceSettingsLoadsFor,
-  PendingWorkspaceSettingsLoadCapacityError,
-} from "./workbenchController/boundedPendingWorkspaceSettingsLoads";
+import { boundedPendingWorkspaceSettingsLoadsFor } from "./workbenchController/boundedPendingWorkspaceSettingsLoads";
 import { useExternallyRemovedDocumentTombstones } from "./workbenchController/useExternallyRemovedDocumentTombstones";
-import { disposeWorkspaceFileChanges } from "./workbenchController/workspaceRetainedStateCleanup";
 import { useWorkbenchSettingsPersistence } from "./workbenchController/useWorkbenchSettingsPersistence";
 import {
   useWorkbenchLatencyReporting,
   useWorkbenchLatencyTrackerForRoot,
 } from "./workbenchController/useWorkbenchLatencyTracking";
 import { useEditorSessionState } from "./useEditorSessionState";
-import {
-  DocumentSessionAuthorityLifecycleCoordinator,
-  resolveDocumentSessionWorkspaceTransition,
-  workspaceIdentityAliasPaths,
-  workspaceTabsWithPath,
-} from "./documentSessionAuthorityLifecycleCoordinator";
+import { DocumentSessionAuthorityLifecycleCoordinator } from "./documentSessionAuthorityLifecycleCoordinator";
 import { isGitDiffDocumentPath } from "./useGitDiffWorkspace";
 import { useWorkbenchDirtyCloseDecisionPort } from "./useWorkbenchDirtyCloseDecisionPort";
 import { useOptionalWorkspaceTextReader } from "./useOptionalWorkspaceTextReader";
@@ -110,22 +88,12 @@ import { useWorkbenchIndexLifecycle } from "./useWorkbenchIndexLifecycle";
 import { useWorkbenchEditorConfigCoordinator } from "./useWorkbenchEditorConfigCoordinator";
 import { refreshEditorConfigAfterDocumentSave } from "./editorConfigInvalidation";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
-import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import { type ResolveDocumentSaveOwnership } from "./documentSaveIdentity";
 import { DocumentSelfWriteCoordinator } from "./documentSelfWriteCoordinator";
 import type { DocumentLifecycleWorkspaceAuthority } from "./useDocumentCloseLifecycle";
 import { isSessionPathInWorkspace } from "./documentSessionState";
-import {
-  useWorkspaceStateCache,
-  workspaceIdentityStateCacheKey,
-  shouldRunInitialIndexScan,
-} from "./useWorkspaceStateCache";
-import {
-  captureWorkspaceBeforeSwitch,
-  closeWorkspaceDocumentsBeforeSwitch,
-  WorkspaceDocumentCloseCoordinator,
-} from "./workspaceSessionSwitchLifecycle";
-import type { WorkspaceCloseOwnership } from "./useWorkbenchCloseLifecycle";
+import { useWorkspaceStateCache } from "./useWorkspaceStateCache";
+import { WorkspaceDocumentCloseCoordinator } from "./workspaceSessionSwitchLifecycle";
 import { useWorkbenchNavigationState } from "./useWorkbenchNavigationState";
 import { useWorkbenchClassOpen } from "./useWorkbenchClassOpen";
 import { useWorkbenchQuickOpen } from "./useWorkbenchQuickOpen";
@@ -166,20 +134,12 @@ export type {
   PhpCodeActionRange,
 } from "./usePhpCodeActions";
 
-import {
-  createWorkbenchNotice,
-  replaceWorkbenchNoticeGroup,
-  type WorkbenchNotice,
-} from "./workbenchNotice";
+import { createWorkbenchNotice, type WorkbenchNotice } from "./workbenchNotice";
 import { PhpDiagnosticsReclassificationCoordinator } from "./phpDiagnosticsReclassificationCoordinator";
 
 import { useReplaceJavaScriptTestProblemNotices } from "./useWorkbenchNoticeStore";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-import {
-  shouldIndexWorkspace,
-  shouldStartLanguageServer,
-  type SmartModeGateway,
-} from "../domain/intelligence";
+import { shouldStartLanguageServer, type SmartModeGateway } from "../domain/intelligence";
 import type { GitGateway } from "../domain/git";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import type { BottomPanelView } from "../domain/bottomPanel";
@@ -213,11 +173,7 @@ import { type EslintDiagnosticsByRoot, type EslintFix } from "../domain/eslintDi
 import { type PhpstanDiagnosticsByRoot } from "../domain/phpstanDiagnostics";
 import { renderMarkdownPreview } from "../domain/markdownPreview";
 import { type LanguageServerRuntimeGateway } from "../domain/languageServerRuntime";
-import { cachedLanguageServerRuntimeStatusForOwner } from "../domain/languageServerRuntimeStatusCache";
-import {
-  loadWorkspaceTrustForOwner,
-  useWorkbenchControllerAgents,
-} from "./useWorkbenchControllerAgents";
+import { useWorkbenchControllerAgents } from "./useWorkbenchControllerAgents";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   createLegacyEditorSessionOwnerKey,
@@ -231,7 +187,6 @@ import { emptyRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
-  pushRecentWorkspacePath,
   type AppSettings,
   type SettingsGateway,
   type SettingsSection,
@@ -254,11 +209,6 @@ import {
 } from "../domain/workspace";
 import { documentOffsetAtEditorPosition, identifierAtEditorPosition } from "./editorPositionText";
 import { useResolvedEditorCursorStore } from "./useCursorCommandAvailability";
-
-interface OpenWorkspacePathOptions {
-  cachePreviousWorkspace?: boolean;
-  isOpenIntentCurrent?: () => boolean;
-}
 
 export type SidebarView = "files" | "git" | "php" | "scripts";
 
@@ -1960,1073 +1910,198 @@ export function useWorkbenchController(
     setMessage,
   });
 
-  const resetFilePrefetchState = useCallback(() => {
-    for (const timer of filePrefetchTimersRef.current.values()) {
-      clearTimeout(timer);
-    }
-
-    filePrefetchTimersRef.current.clear();
-    filePrefetchCacheRef.current.clear();
-  }, []);
-
-  const closeBookmarksPanelRef = useRef<() => void>(() => {});
-  const resetWorkspaceTodosRef = useRef<() => void>(() => {});
-
-  const clearActiveWorkspace = useCallback(
-    async (options?: { ownership?: WorkspaceCloseOwnership; runtimeAlreadyStopped?: boolean }) => {
-      const ownership = options?.ownership;
-      if (ownership && !ownership.isCurrent()) {
-        return;
-      }
-
-      const currentRootPath = currentWorkspaceRootRef.current;
-      if (currentRootPath) {
-        clearPhpstanDiagnosticsForRoot(currentRootPath);
-      }
-
-      if (currentRootPath && !options?.runtimeAlreadyStopped) {
-        await stopProjectRuntimes(
-          workspaceRuntimeRootByTabRef.current[currentRootPath] ?? currentRootPath,
-          workspaceRuntimeOwnerByTabRef.current[currentRootPath],
-        );
-        if (ownership && !ownership.isCurrent()) {
-          return;
-        }
-      }
-
-      if (currentRootPath) {
-        languageServerDiagnosticsCoalescerRef.current?.dropRoot(currentRootPath);
-        javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(currentRootPath);
-      }
-
-      documentSessionAuthorityLifecycle.deactivate();
-      workspaceSessionRestoredRef.current = false;
-      workspaceEditorViewStatesRef.current = {};
-      currentEditorSessionOwnerKeyRef.current = null;
-      currentWorkspaceRootRef.current = null;
-      clearWorkspaceStateCache();
-      workspaceIdentityByRootRef.current = {};
-      workspaceRuntimeRootByTabRef.current = {};
-      workspaceRuntimeOwnerByTabRef.current = {};
-      hasPhpWorkspaceByOwnerRef.current = {};
-      workspaceRuntimeOwnerClaimsRef.current.clear();
-      resetEditorConfigCache();
-      resetFilePrefetchState();
-      languageServerRuntimeStatusByRootRef.current = {};
-      languageServerDiagnosticsByRootRef.current = {};
-      javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
-      javaScriptTypeScriptDiagnosticsByRootRef.current = {};
-      lastLanguageServerCrashRef.current = null;
-      lastPhpIdeReadinessSignatureRef.current = null;
-      openWorkspaceRequestTokenRef.current += 1;
-      openWorkspaceRequestPathRef.current = null;
-      openFileRequestTokenRef.current += 1;
-      resetActiveEditorPosition();
-      setWorkspaceRoot(null);
-      setWorkspaceIdentityDescriptor(null);
-      setWorkspaceDescriptor(null);
-      setPackageScriptsByRoot({});
-      setWorkspaceTrust(null);
-      languageRuntimeProjectionCommands.reset();
-      setEntriesByDirectory({});
-      setLoadingDirectories(new Set());
-      resetDirectoryExplorerLifecycle();
-      setExpandedDirectories(new Set());
-      setManuallyCollapsedDirectories(new Set());
-      resetEditorSurfaceState();
-      setArtisanMakePaletteRoot(null);
-      setRecentFiles([]);
-      setRecentLocations([]);
-      setBookmarks([]);
-      closeBookmarksPanelRef.current();
-      setGitBlameEnabledPaths(new Set());
-      setEditorRevealTarget(null);
-      resetHistory();
-      setSidebarView("files");
-      setBottomPanelView("problems");
-      setBottomPanelVisible(false);
-      resetWorkspaceTodosRef.current();
-      resetGitStatusSurface();
-      resetGitDiffWorkspaceState();
-      resetPhpOutlineState();
-      resetJavaScriptTypeScriptFileStructure();
-      setClassOpenOpen(false);
-      setClassOpenQuery("");
-      setClassOpenLoading(false);
-      setClassOpenResults([]);
-      setWorkspaceSymbolsOpen(false);
-      setWorkspaceSymbolsQuery("");
-      setWorkspaceSymbolsLoading(false);
-      setWorkspaceSymbolsResults([]);
-      resetSearchEverywhere();
-      setQuickOpenOpen(false);
-      setRecentFilesSwitcherOpen(false);
-      setRecentLocationsPanelOpen(false);
-      resetTextSearchState();
-      setPaletteOpen(false);
-      setFileStructureOpen(false);
-      setFileStructureScope("current");
-      setImplementationChooser(null);
-      setCallHierarchyView(null);
-      setTypeHierarchyView(null);
-      setReferencesView(null);
-      setSettingsOpen(false);
-      setMessage(null);
-      setNotices([]);
-      clearLanguageServerDiagnostics();
-      clearJavaScriptTypeScriptLanguageServerDiagnostics();
-      clearPhpLocalDiagnostics();
-      applyWorkspaceSettings(defaultWorkspaceSettings());
-      setIntelligenceMode("basic");
-      intelligenceModeRef.current = "basic";
-      clearIndexWorkspaceState();
+  const {
+    activateWorkspaceTab,
+    beginStartupRestore,
+    beginWorkspaceClose,
+    clearActiveWorkspace,
+    closeBookmarksPanelRef,
+    openWorkspace,
+    openWorkspacePath,
+    openWorkspaceRoot,
+    resetWorkspaceTodosRef,
+    runWithIssuedWriteDrainRef,
+  } = useWorkbenchWorkspaceTransitionCoordinator({
+    authority: {
+      currentEditorSessionOwnerKeyRef,
+      currentWorkspaceRootRef,
+      documentSessionAuthorityLifecycle,
+      workbenchMountedRef,
+      openWorkspaceRequestInFlightTokenRef,
+      openWorkspaceRequestPathRef,
+      openWorkspaceRequestTokenRef,
+      ownedWorkspaceIdentityGenerationByIdRef,
+      pendingWorkspaceIdentityRequestTokensRef,
+      withManagedWorkspaceIdentityLease,
+      workspaceCloseGenerationByRootRef,
+      workspaceCloseOwnershipByKeyRef,
+      workspaceCloseOwnershipGenerationRef,
+      workspaceIdentityByRootRef,
+      workspaceIdentityDescriptorRef,
+      releaseOwnedWorkspaceIdentity,
+      retireWorkspaceIdentityAuthority,
+      retireWorkspaceRuntimeOwnerClaim,
+      flushDeferredWorkspaceIdentityCleanup,
     },
-    [
-      applyWorkspaceSettings,
-      closeBookmarksPanelRef,
-      clearIndexWorkspaceState,
+    cache: {
+      cacheCurrentWorkspaceState,
+      clearWorkspaceStateCache,
+      coalesceWorkspaceStateCache,
+      forgetCachedWorkspaceState,
+      resolveCachedWorkspaceState,
+      restoreCachedWorkspaceState,
+      workspaceStateCacheRef,
+      filePrefetchCacheRef,
+      filePrefetchTimersRef,
+      resetEditorConfigCache,
+      workspaceSessionRestoredRef,
+      workspaceEditorViewStatesRef,
+    },
+    documents: {
+      canonicalDocumentSaveRoot,
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+      closeSyncedLanguageServerDocumentsForRoot,
+      documentsRef,
+      editorSessionOwnerKeyForRoot,
+      openFileRequestTokenRef,
+      persistCurrentWorkspaceSession,
+      resolveDocumentSaveOwnership,
+      restorePersistedNavigationSession,
+      workspaceDocumentCloseCoordinatorRef,
+      setDocuments,
+      updateEditorGroups,
+      updateLocalPhpDiagnostics,
+    },
+    directory: {
+      adoptCachedDirectoryProjection,
+      loadDirectory,
+      primeCachedDirectoryEntries,
+      readTestFileIfExists,
+      refreshCachedExpandedDirectories,
+      resetDirectoryExplorerLifecycle,
+      setEntriesByDirectory,
+      setExpandedDirectories,
+      setLoadingDirectories,
+      setManuallyCollapsedDirectories,
+      setPackageScriptsByRoot,
+      workspaceFiles,
+    },
+    language: {
+      autoStartedJavaScriptTypeScriptLanguageServerRootRef,
+      autoStartedLanguageServerRootRef,
       clearJavaScriptTypeScriptLanguageServerDiagnostics,
       clearLanguageServerDiagnostics,
+      clearPhpLocalDiagnostics,
+      clearPhpstanDiagnosticsForRoot,
       javaScriptTypeScriptDiagnosticsByRootRef,
       javaScriptTypeScriptDiagnosticsCoalescerRef,
       javaScriptTypeScriptRuntimeStatusByRootRef,
+      languageRuntimeProjectionCommands,
       languageServerDiagnosticsByRootRef,
       languageServerDiagnosticsCoalescerRef,
       languageServerRuntimeStatusByRootRef,
-      languageRuntimeProjectionCommands,
-      clearPhpLocalDiagnostics,
-      clearPhpstanDiagnosticsForRoot,
-      clearWorkspaceStateCache,
-      currentEditorSessionOwnerKeyRef,
-      documentSessionAuthorityLifecycle,
-      resetActiveEditorPosition,
-      resetFilePrefetchState,
-      resetEditorSurfaceState,
-      resetHistory,
-      resetGitDiffWorkspaceState,
-      resetGitStatusSurface,
-      resetSearchEverywhere,
-      resetJavaScriptTypeScriptFileStructure,
-      resetDirectoryExplorerLifecycle,
-      resetWorkspaceTodosRef,
-      resetEditorConfigCache,
-      resetTextSearchState,
-      setExpandedDirectories,
-      setNotices,
-      setPaletteOpen,
-      resetPhpOutlineState,
-      stopProjectRuntimes,
-      setCallHierarchyView,
-      setClassOpenLoading,
-      setClassOpenOpen,
-      setClassOpenQuery,
-      setClassOpenResults,
-      setEditorRevealTarget,
-      setImplementationChooser,
-      setQuickOpenOpen,
-      setRecentFiles,
-      setRecentFilesSwitcherOpen,
-      setRecentLocations,
-      setRecentLocationsPanelOpen,
-      setReferencesView,
-      setTypeHierarchyView,
-      setWorkspaceSymbolsLoading,
-      setWorkspaceSymbolsOpen,
-      setWorkspaceSymbolsQuery,
-      setWorkspaceSymbolsResults,
-    ],
-  );
-
-  const loadPackageScripts = useWorkspacePackageScriptHydration({
-    currentWorkspaceRootRef,
-    readFileIfExists: readTestFileIfExists,
-    setPackageScriptsByRoot,
-  });
-
-  const restoreWorkspaceSession = useWorkspaceSessionRestorer({
-    currentWorkspaceRootRef,
-    editorSessionOwnerKeyForRoot,
-    openFileRequestTokenRef,
-    setBottomPanelView,
-    setDocuments,
-    setNotices,
-    setSidebarView,
-    updateEditorGroups,
-    updateLocalPhpDiagnostics,
-    viewStatesRef: workspaceEditorViewStatesRef,
-    workspaceFiles,
-  });
-
-  const runWithIssuedWriteDrainRef = useRef<RunWithDocumentSaveExclusion>(
-    async (_scope, operation) => operation(),
-  );
-  const runWithIssuedWriteDrainDelegate = useCallback<RunWithDocumentSaveExclusion>(
-    (scope, operation) => runWithIssuedWriteDrainRef.current(scope, operation),
-    [],
-  );
-
-  const performOpenWorkspacePath = useCallback(
-    async (
-      path: string,
-      identityDescriptor: WorkspaceIdentityDescriptor | null,
-      adoptIdentity: (() => number | null) | null,
-      requestToken: number,
-      commitOpenWorkspaceRequest: (path: string, admissionGeneration: number | null) => void,
-      options: OpenWorkspacePathOptions = {},
-    ) => {
-      const shouldCachePreviousWorkspace = options.cachePreviousWorkspace !== false;
-      if (openWorkspaceRequestTokenRef.current !== requestToken) {
-        return;
-      }
-
-      openWorkspaceRequestPathRef.current = path;
-      setArtisanMakePaletteRoot(null);
-      const isCurrentOpenWorkspaceRequest = () =>
-        workbenchMountedRef.current &&
-        openWorkspaceRequestTokenRef.current === requestToken &&
-        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path) &&
-        (!options.isOpenIntentCurrent || options.isOpenIntentCurrent());
-      const previousRootPath = currentWorkspaceRootRef.current;
-      const canonicalKey = identityDescriptor?.canonicalRoot ?? path;
-      const workspaceSettingsLoadKey = normalizedWorkspaceRootKey(canonicalKey);
-      const requestedSettingsIdentity = identityDescriptor
-        ? workspaceSettingsIdentity(canonicalKey, path)
-        : path;
-      const requestedLegacyRawKeys =
-        typeof requestedSettingsIdentity === "string"
-          ? [requestedSettingsIdentity]
-          : (requestedSettingsIdentity.legacyRawKeys ?? []);
-      const previousWorkspaceIdentity = previousRootPath
-        ? (workspaceIdentityByRootRef.current[previousRootPath] ?? null)
-        : null;
-      const previousWorkspaceSettingsSaveCoordinator = workspaceSettingsSaveCoordinator;
-      const { nextOwnerKey, replacingOwnerAtSameRoot, switchingWorkspace } =
-        resolveDocumentSessionWorkspaceTransition(
-          previousRootPath,
-          previousWorkspaceIdentity,
-          path,
-          identityDescriptor,
-        );
-
-      let cachedWorkspaceState =
-        identityDescriptor && switchingWorkspace
-          ? null
-          : identityDescriptor
-            ? coalesceWorkspaceStateCache(identityDescriptor, path)
-            : resolveCachedWorkspaceState(canonicalKey);
-
-      const adoptLegacyWorkspaceCache = () => {
-        if (!identityDescriptor || cachedWorkspaceState) {
-          return;
-        }
-
-        const legacyCachedWorkspaceState = adoptLegacyCachedWorkspaceState(identityDescriptor, [
-          resolveCachedWorkspaceState(identityDescriptor.canonicalRoot),
-          resolveCachedWorkspaceState(path),
-        ]);
-        if (!legacyCachedWorkspaceState) {
-          return;
-        }
-
-        cachedWorkspaceState = coalesceWorkspaceStateCache(identityDescriptor, path);
-      };
-
-      if (switchingWorkspace && previousRootPath) {
-        resetFilePrefetchState();
-      }
-
-      if (switchingWorkspace && previousRootPath) {
-        const captureAndDeactivatePreviousWorkspace = async () => {
-          if (!isCurrentOpenWorkspaceRequest()) {
-            return "stale" as const;
-          }
-
-          const captureResult = await captureWorkspaceBeforeSwitch(
-            {
-              rootPath: previousRootPath,
-              cacheWorkspace: shouldCachePreviousWorkspace,
-              isRequestCurrent: isCurrentOpenWorkspaceRequest,
-            },
-            {
-              invalidatePendingFileOpen: () => {
-                openFileRequestTokenRef.current += 1;
-              },
-              persistWorkspaceSession: persistCurrentWorkspaceSession,
-              cacheWorkspaceState: cacheCurrentWorkspaceState,
-              reportPersistenceError: (rootPath, error) => {
-                reportErrorForActiveWorkspaceRoot(rootPath, "Session", error);
-              },
-            },
-          );
-
-          if (captureResult === "stale" || !isCurrentOpenWorkspaceRequest()) {
-            return "stale" as const;
-          }
-
-          return closeWorkspaceDocumentsBeforeSwitch(
-            {
-              rootPath: previousRootPath,
-              isRequestCurrent: isCurrentOpenWorkspaceRequest,
-            },
-            {
-              closeLanguageServerDocuments: closeSyncedLanguageServerDocumentsForRoot,
-              closeJavaScriptTypeScriptDocuments: closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-            },
-            workspaceDocumentCloseCoordinatorRef.current,
-          );
-        };
-
-        const switchResult = shouldCachePreviousWorkspace
-          ? await runWithIssuedWriteDrainDelegate(
-              {
-                kind: "workspace",
-                canonicalRoot: canonicalDocumentSaveRoot(previousRootPath),
-              },
-              captureAndDeactivatePreviousWorkspace,
-            )
-          : await captureAndDeactivatePreviousWorkspace();
-
-        if (switchResult === "stale" || !isCurrentOpenWorkspaceRequest()) {
-          return;
-        }
-
-        if (identityDescriptor) {
-          const isNewIdentityForActiveLegacyWorkspace =
-            !previousWorkspaceIdentity && workspaceRootKeysEqual(previousRootPath, path);
-          if (isNewIdentityForActiveLegacyWorkspace) {
-            const capturedLegacyState = adoptLegacyCachedWorkspaceState(identityDescriptor, [
-              resolveCachedWorkspaceState(previousRootPath),
-              resolveCachedWorkspaceState(identityDescriptor.canonicalRoot),
-            ]);
-            if (capturedLegacyState) {
-              forgetCachedWorkspaceState(path, identityDescriptor);
-              workspaceStateCacheRef.current[
-                workspaceIdentityStateCacheKey(
-                  identityDescriptor.workspaceId,
-                  identityDescriptor.canonicalRoot,
-                )
-              ] = capturedLegacyState;
-            }
-          }
-
-          cachedWorkspaceState = coalesceWorkspaceStateCache(identityDescriptor, path);
-        }
-      }
-
-      adoptLegacyWorkspaceCache();
-      const pendingWorkspaceSettingsSave =
-        previousWorkspaceSettingsSaveCoordinator.waitForIdle(canonicalKey);
-      if (pendingWorkspaceSettingsSave) {
-        await pendingWorkspaceSettingsSave;
-      }
-      if (!isCurrentOpenWorkspaceRequest()) {
-        return;
-      }
-
-      const workspaceSettingsRevisionAtLoad = workspaceSettingsByRoot.revision(canonicalKey);
-      let workspaceSettingsLoad =
-        workspaceSettingsLoadByRootRef.current.get(workspaceSettingsLoadKey);
-      try {
-        const trackWorkspaceSettingsLoad = (
-          start: () => Promise<WorkspaceSettings>,
-          legacyRawKeys: readonly string[],
-        ) =>
-          workspaceSettingsLoadByRootRef.current.track(
-            workspaceSettingsLoadKey,
-            legacyRawKeys,
-            start,
-          );
-        workspaceSettingsLoad ??= trackWorkspaceSettingsLoad(
-          () => settingsGateway.loadWorkspaceSettings(requestedSettingsIdentity),
-          requestedLegacyRawKeys,
-        );
-        if (
-          !requestedLegacyRawKeys.every((legacyRawKey) =>
-            workspaceSettingsLoad?.legacyRawKeys.includes(legacyRawKey),
-          )
-        ) {
-          const previousLoad = workspaceSettingsLoad;
-          const continueWithWinningAlias = () =>
-            isCurrentOpenWorkspaceRequest()
-              ? settingsGateway.loadWorkspaceSettings(requestedSettingsIdentity)
-              : defaultWorkspaceSettings();
-          workspaceSettingsLoad = trackWorkspaceSettingsLoad(
-            () => previousLoad.promise.then(continueWithWinningAlias, continueWithWinningAlias),
-            [...new Set([...previousLoad.legacyRawKeys, ...requestedLegacyRawKeys])],
-          );
-        }
-      } catch (error) {
-        reportError("Settings", error);
-        if (error instanceof PendingWorkspaceSettingsLoadCapacityError) {
-          return;
-        }
-      }
-      const identityAliasPaths = identityDescriptor
-        ? workspaceIdentityAliasPaths(
-            workspaceIdentityByRootRef.current,
-            identityDescriptor,
-            cachedWorkspaceState?.workspaceIdentityDescriptor ?? null,
-          )
-        : [];
-
-      workspaceSessionRestoredRef.current = false;
-      resetLanguageServerDocuments();
-      resetJavaScriptTypeScriptLanguageServerDocuments();
-      resetActiveEditorPosition();
-      clearLanguageServerDiagnostics();
-      clearJavaScriptTypeScriptLanguageServerDiagnostics();
-      clearPhpLocalDiagnostics();
-      let workspaceSettings = defaultWorkspaceSettings();
-
-      try {
-        if (workspaceSettingsLoad) {
-          workspaceSettings = await workspaceSettingsLoad.promise;
-        }
-      } catch (error) {
-        if (!isCurrentOpenWorkspaceRequest()) {
-          return;
-        }
-
-        reportError("Settings", error);
-        if (error instanceof PendingWorkspaceSettingsLoadCapacityError) {
-          return;
-        }
-      }
-
-      if (!isCurrentOpenWorkspaceRequest()) {
-        return;
-      }
-
-      const capturedWorkspaceSettings = workspaceSettingsByRoot.captureIfRevision(
-        canonicalKey,
-        workspaceSettingsRevisionAtLoad,
-        workspaceSettings,
-      );
-      if (capturedWorkspaceSettings) {
-        workspaceSettingsSaveCoordinator.captureCommitted(canonicalKey, workspaceSettings);
-      }
-      if (!capturedWorkspaceSettings) {
-        workspaceSettings = workspaceSettingsByRoot.resolve(canonicalKey) ?? workspaceSettings;
-      }
-
-      const runtimePolicy = appSettingsRef.current.runtimePolicy;
-      if (runtimePolicy !== "keepAlive") {
-        const disposedRuntimeOwnerClaims = backgroundRuntimeOwnersForPolicy(
-          runtimePolicy,
-          path,
-          previousRootPath,
-          appSettingsRef.current.workspaceTabs,
-          workspaceRuntimeOwnerByTabRef.current,
-        ).map((owner) => ({
-          generation: workspaceRuntimeOwnerClaimsRef.current.generationFor(owner.ownerKey),
-          owner,
-        }));
-        try {
-          await stopBackgroundProjectRuntimes(runtimePolicy, path, previousRootPath);
-          if (!isCurrentOpenWorkspaceRequest()) {
-            return;
-          }
-          for (const disposedRuntimeOwnerClaim of disposedRuntimeOwnerClaims) {
-            const disposedRuntimeOwner = disposedRuntimeOwnerClaim.owner;
-            if (disposedRuntimeOwnerClaim.generation === undefined) {
-              continue;
-            }
-            if (identityDescriptor?.workspaceId === disposedRuntimeOwner.ownerKey) {
-              continue;
-            }
-            retireWorkspaceRuntimeOwnerClaim(
-              disposedRuntimeOwner.ownerKey,
-              disposedRuntimeOwnerClaim.generation,
-            );
-          }
-        } catch (error) {
-          if (!isCurrentOpenWorkspaceRequest()) {
-            return;
-          }
-
-          reportError("Settings", error);
-        }
-      }
-
-      const adoptedAdmissionGeneration = adoptIdentity?.() ?? null;
-      if (adoptIdentity && adoptedAdmissionGeneration === null) return;
-      documentSessionAuthorityLifecycle.deactivate();
-      if (identityDescriptor) {
-        const previousIdentity =
-          workspaceIdentityByRootRef.current[path] ??
-          cachedWorkspaceState?.workspaceIdentityDescriptor ??
-          null;
-        if (cachedWorkspaceState) {
-          cachedWorkspaceState.workspaceIdentityDescriptor = identityDescriptor;
-        }
-        if (previousIdentity && previousIdentity.workspaceId !== identityDescriptor.workspaceId) {
-          retireWorkspaceRuntimeOwnerClaim(
-            previousIdentity.workspaceId,
-            workspaceRuntimeOwnerClaimsRef.current.generationFor(previousIdentity.workspaceId),
-          );
-          delete workspaceRuntimeRootByTabRef.current[previousIdentity.selectedPath];
-          delete workspaceRuntimeRootByTabRef.current[previousIdentity.canonicalRoot];
-          delete workspaceRuntimeOwnerByTabRef.current[previousIdentity.selectedPath];
-          delete workspaceRuntimeOwnerByTabRef.current[previousIdentity.canonicalRoot];
-          removeWorkspaceIdentityMappings(workspaceIdentityByRootRef.current, previousIdentity);
-          void releaseOwnedWorkspaceIdentity(previousIdentity.workspaceId).catch((error) =>
-            reportError("Workspace", error),
-          );
-        }
-        removeWorkspaceIdentityMappings(workspaceIdentityByRootRef.current, identityDescriptor);
-        for (const aliasPath of identityAliasPaths) {
-          delete workspaceRuntimeRootByTabRef.current[aliasPath];
-          delete workspaceRuntimeOwnerByTabRef.current[aliasPath];
-        }
-      }
-
-      primeCachedDirectoryEntries(cachedWorkspaceState, replacingOwnerAtSameRoot);
-      phpFrameworkNavigationGenerationRef.current += 1;
-      setWorkspaceRoot(path);
-      setPackageScriptsByRoot((current) => ({
-        ...current,
-        [path]: {
-          composerScripts: [],
-          hasArtisan: false,
-        },
-      }));
-      setWorkspaceIdentityDescriptor(identityDescriptor);
-      workspaceIdentityDescriptorRef.current = identityDescriptor;
-      const admittedRuntimeOwner = workspaceRuntimeOwnerFor(path, identityDescriptor);
-      const explicitRuntimeOwner = identityDescriptor ? admittedRuntimeOwner : undefined;
-      const admittedRuntimeGeneration = identityDescriptor
-        ? (adoptedAdmissionGeneration ??
-          (adoptIdentity
-            ? null
-            : (ownedWorkspaceIdentityGenerationByIdRef.current[identityDescriptor.workspaceId] ??
-              null)))
-        : null;
-      workspaceRuntimeOwnerRef.current = admittedRuntimeOwner;
-      const isCurrentOpenWorkspaceOwnerRequest = () => {
-        if (!isCurrentOpenWorkspaceRequest() || admittedRuntimeGeneration === null) return false;
-
-        return (
-          workspaceRuntimeOwnerByTabRef.current[path] === admittedRuntimeOwner &&
-          workspaceRuntimeOwnerClaimsRef.current.generationFor(admittedRuntimeOwner.ownerKey) ===
-            admittedRuntimeGeneration &&
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)
-        );
-      };
-      if (identityDescriptor) {
-        workspaceRuntimeOwnerClaimsRef.current.register(
-          admittedRuntimeOwner,
-          identityAliasPaths,
-          admittedRuntimeGeneration,
-        );
-        workspaceIdentityByRootRef.current[path] = identityDescriptor;
-        workspaceIdentityByRootRef.current[identityDescriptor.canonicalRoot] = identityDescriptor;
-        workspaceRuntimeRootByTabRef.current[path] = path;
-        workspaceRuntimeRootByTabRef.current[identityDescriptor.canonicalRoot] = path;
-        workspaceRuntimeOwnerByTabRef.current[path] = admittedRuntimeOwner;
-        workspaceRuntimeOwnerByTabRef.current[identityDescriptor.canonicalRoot] =
-          admittedRuntimeOwner;
-      }
-      if (!identityDescriptor) {
-        workspaceRuntimeOwnerByTabRef.current[path] = admittedRuntimeOwner;
-      }
-      currentWorkspaceRootRef.current = path;
-      currentEditorSessionOwnerKeyRef.current = nextOwnerKey;
-      commitOpenWorkspaceRequest(path, admittedRuntimeGeneration);
-      const openSmartModeIntent = beginWorkbenchSmartModeIntent({
-        currentWorkspaceRootRef,
-        identity: identityDescriptor,
-        intentGenerationRef: smartModeRequestGenerationRef,
-        intentStateRef: smartModeRequestIntentRef,
-        mode: workspaceSettings.intelligenceMode,
-        owner: admittedRuntimeOwner,
-        rootPath: path,
-        workspaceRuntimeOwnerClaimsRef,
-        workspaceRuntimeOwnerRef,
-      });
-      const isCurrentOpenWorkspaceSmartModeRequest = () =>
-        isCurrentOpenWorkspaceOwnerRequest() && !!openSmartModeIntent?.isCurrent();
-      const activateCurrentDocumentSessionAuthority = () =>
-        documentSessionAuthorityLifecycle.activate({
-          descriptor: identityDescriptor,
-          documents: documentsRef.current,
-          isCurrent: () =>
-            workbenchMountedRef.current &&
-            workspaceRootKeysEqual(currentWorkspaceRootRef.current, path) &&
-            currentEditorSessionOwnerKeyRef.current === nextOwnerKey &&
-            !!identityDescriptor &&
-            workspaceIdentityByRootRef.current[path] === identityDescriptor,
-          ownerKey: identityDescriptor ? nextOwnerKey : null,
-          resolveOwnership: resolveDocumentSaveOwnership,
-          rootPath: path,
-        });
-      lastLanguageServerCrashRef.current = null;
-      restoreLanguageServerDiagnosticsForRoot(path, explicitRuntimeOwner);
-      restoreJavaScriptTypeScriptDiagnosticsForRoot(path, explicitRuntimeOwner);
-
-      if (cachedWorkspaceState) {
-        const cachedWorkspaceSnapshot = cachedWorkspaceState;
-        adoptCachedDirectoryProjection(path, cachedWorkspaceSnapshot);
-        restoreCachedWorkspaceState(path, cachedWorkspaceSnapshot);
-        activateCurrentDocumentSessionAuthority();
-      } else {
-        resetDirectoryExplorerLifecycle();
-        setEntriesByDirectory({});
-        setExpandedDirectories(new Set([path]));
-        setManuallyCollapsedDirectories(new Set());
-        resetEditorSurfaceState();
-        setRecentFiles([]);
-        setRecentLocations([]);
-        setBookmarks([]);
-        setGitBlameEnabledPaths(new Set());
-        resetHistory();
-        setSidebarView("files");
-        setBottomPanelView("problems");
-        setBottomPanelVisible(false);
-        clearIndexWorkspaceState();
-      }
-
-      // The TODO panel is a transient, workspace-scoped overlay (not part of the
-      // cached per-tab state). Always reset it on a switch so one project's TODOs
-      // can never appear inside another project's tab.
-      resetWorkspaceTodosRef.current();
-      // The recent files switcher is a transient overlay too; close it on a
-      // switch so it never shows another tab's MRU list mid-transition.
-      setRecentFilesSwitcherOpen(false);
-      // The recent locations panel is a transient overlay too; close it on a
-      // switch so it never shows another tab's positions mid-transition. The
-      // location list itself is cached/restored per tab above.
-      setRecentLocationsPanelOpen(false);
-      // The bookmarks panel is a transient overlay; close it on a switch so it
-      // never shows another tab's bookmarks mid-transition. The bookmark list
-      // itself is cached/restored per tab above.
-      closeBookmarksPanelRef.current();
-
-      setEditorRevealTarget(null);
-      setLoadingDirectories(new Set());
-      applyWorkspaceSettings(workspaceSettings);
-      setIntelligenceMode(workspaceSettings.intelligenceMode);
-      setWorkspaceDescriptor(null);
-      setWorkspaceTrust(null);
-      const cachedPhpStatus = cachedLanguageServerRuntimeStatusForOwner(
-        languageServerRuntimeStatusByRootRef.current,
-        admittedRuntimeOwner,
-      );
-      languageRuntimeProjectionCommands.prepareWorkspace(cachedPhpStatus, path);
-      resetPhpOutlineState();
-      resetGitStatusSurface(path);
-      resetGitDiffWorkspaceState();
-      resetJavaScriptTypeScriptFileStructure();
-      setClassOpenOpen(false);
-      setClassOpenQuery("");
-      setClassOpenLoading(false);
-      setClassOpenResults([]);
-      setWorkspaceSymbolsOpen(false);
-      setWorkspaceSymbolsQuery("");
-      setWorkspaceSymbolsLoading(false);
-      setWorkspaceSymbolsResults([]);
-      resetSearchEverywhere();
-      setQuickOpenOpen(false);
-      resetTextSearchState();
-      setFileStructureScope("current");
-      setImplementationChooser(null);
-      setCallHierarchyView(null);
-      setTypeHierarchyView(null);
-      setReferencesView(null);
-      setMessage(null);
-      setNotices([]);
-      lastPhpFileOutlineRefreshKeyRef.current = null;
-      lastPhpIdeReadinessSignatureRef.current = null;
-      resetPhpFrameworkCachesRef.current();
-      restoreIndexRoot(cachedWorkspaceState?.indexProgress.rootPath ?? null);
-      autoStartedLanguageServerRootRef.current = null;
-      phpLanguageServerAutostartAttemptsByRootRef.current = {};
-      setInstallingManagedPhpactor(false);
-      flushSync(() => {
-        setInstallingManagedTypeScriptLanguageServer(false);
-        autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
-      });
-
-      try {
-        const nextWorkspaceTabs = workspaceTabsWithPath(
-          appSettingsRef.current.workspaceTabs,
-          path,
-          identityAliasPaths,
-        );
-        const recentWorkspaceCandidates = (
-          appSettingsRef.current.recentWorkspacePaths ?? []
-        ).filter(
-          (recentPath) =>
-            !identityAliasPaths.some((aliasPath) => workspaceRootKeysEqual(aliasPath, recentPath)),
-        );
-        const recentWorkspacePaths = pushRecentWorkspacePath(recentWorkspaceCandidates, path);
-        await persistAppSettings({
-          ...appSettingsRef.current,
-          recentWorkspacePath: recentWorkspacePaths[0] ?? null,
-          recentWorkspacePaths,
-          workspaceTabs: nextWorkspaceTabs,
-        });
-      } catch (error) {
-        if (!isCurrentOpenWorkspaceRequest()) {
-          return;
-        }
-
-        reportError("Settings", error);
-      }
-
-      if (!isCurrentOpenWorkspaceRequest()) {
-        return;
-      }
-
-      let resolvedIntelligenceMode = workspaceSettings.intelligenceMode;
-
-      try {
-        if (openSmartModeIntent) {
-          const smartMode = await openSmartModeIntent.setMode(smartModeGateway);
-
-          if (isCurrentOpenWorkspaceSmartModeRequest() && openSmartModeIntent.claimEffects()) {
-            resolvedIntelligenceMode = smartMode.mode;
-            intelligenceModeRef.current = smartMode.mode;
-            setIntelligenceMode(smartMode.mode);
-          }
-          if (isCurrentOpenWorkspaceOwnerRequest() && !isCurrentOpenWorkspaceSmartModeRequest()) {
-            resolvedIntelligenceMode = intelligenceModeRef.current;
-          }
-        }
-      } catch (error) {
-        if (!isCurrentOpenWorkspaceOwnerRequest()) {
-          return;
-        }
-
-        if (isCurrentOpenWorkspaceSmartModeRequest()) {
-          reportError("IDE Mode", error);
-        }
-      }
-
-      if (!isCurrentOpenWorkspaceRequest()) {
-        return;
-      }
-
-      // Directory load, workspace trust, workspace detection and session
-      // restore are all independent of one another, so they run concurrently.
-      // Each sub-task keeps its own try/catch plus a post-await isolation guard
-      // against the admitted owner and open request so that replacing a
-      // workspace mid-flight, including at the same selected path, never lets
-      // stale results mutate the active workspace state.
-      const loadDirectoryTask = async () => {
-        const entries = await loadCompleteWorkspaceDirectoryEntries(() =>
-          loadDirectory(path, {
-            isMutationOwnerCurrent: isCurrentOpenWorkspaceOwnerRequest,
-            requireActiveRoot: true,
-          }),
-        );
-        if (!entries) return;
-
-        if (!isCurrentOpenWorkspaceOwnerRequest()) {
-          return;
-        }
-
-        if (cachedWorkspaceState) {
-          refreshCachedExpandedDirectories({
-            isMutationOwnerCurrent: isCurrentOpenWorkspaceOwnerRequest,
-            projection: cachedWorkspaceState,
-            rootPath: path,
-          });
-        }
-
-        await loadPackageScripts(path, entries ?? [], isCurrentOpenWorkspaceOwnerRequest);
-      };
-
-      const loadTrustTask = async () => {
-        await loadWorkspaceTrustForOwner({
-          gateway: workspaceTrustGateway,
-          isCurrent: isCurrentOpenWorkspaceOwnerRequest,
-          ownerId: admittedRuntimeOwner.ownerKey,
-          publish: setWorkspaceTrust,
-          reportError: (error) => reportErrorForActiveWorkspaceRoot(path, "Workspace Trust", error),
-          revisionByOwnerRef: workspaceTrustRevisionByOwnerRef,
-          rootPath: path,
-        });
-      };
-
-      // Warmup: the phpactor handshake (composer/autoload scan) is the
-      // dominant time-to-ready cost and is phpactor-internal, so the only safe
-      // win is to start it sooner. The PHP probe (detectPhpTools -> plan ->
-      // autostart) only needs the workspace descriptor to know the project is
-      // PHP, so as soon as detection confirms a PHP project in IDE (full smart)
-      // mode we fire the probe in parallel with the directory load and session
-      // restore instead of serializing it behind them. The handshake then warms
-      // up in the background while the user navigates. This is gated to IDE mode
-      // (preserving the basic/light-mode defer) and is owner-isolated: the probe
-      // captures the admitted runtime owner and re-checks it after its own
-      // awaits, and detection drops stale requests before triggering it.
-      let warmedUpPhpProbe = false;
-      const detectWorkspaceTask = async (): Promise<WorkspaceDescriptor | null> => {
-        try {
-          const detected = await workspaceDetection.detectWorkspace(path);
-
-          if (!isCurrentOpenWorkspaceOwnerRequest()) {
-            // Stale: the active workspace changed while detection was in
-            // flight. Return null (never the stale descriptor) so the PHP
-            // setup branch only ever sees the descriptor of the still-active
-            // open request.
-            return null;
-          }
-
-          setWorkspaceDescriptor(detected);
-          hasPhpWorkspaceByOwnerRef.current[admittedRuntimeOwner.ownerKey] = !!detected?.php;
-
-          if (detected?.php && shouldStartLanguageServer(resolvedIntelligenceMode)) {
-            warmedUpPhpProbe = true;
-            void runPhpWorkspaceProbe(path, admittedRuntimeOwner);
-          }
-
-          return detected;
-        } catch (error) {
-          if (!isCurrentOpenWorkspaceOwnerRequest()) {
-            return null;
-          }
-
-          reportErrorForActiveWorkspaceRoot(path, "Workspace Detection", error);
-          return null;
-        }
-      };
-
-      const restoreSessionTask = async () => {
-        if (cachedWorkspaceState) {
-          if (!isCurrentOpenWorkspaceOwnerRequest()) {
-            return;
-          }
-
-          workspaceSessionRestoredRef.current = true;
-          return;
-        }
-
-        if (
-          !(await restorePersistedNavigationSession(
-            path,
-            () => currentWorkspaceRootRef.current,
-            workspaceSettings.session,
-            replacingOwnerAtSameRoot,
-            restoreWorkspaceSession,
-            isCurrentOpenWorkspaceOwnerRequest,
-          ))
-        ) {
-          return;
-        }
-
-        activateCurrentDocumentSessionAuthority();
-        workspaceSessionRestoredRef.current = true;
-      };
-
-      // Discover nested git repositories from the freshly loaded workspace
-      // settings, sharing the isolated, re-entrancy-guarded discovery used by
-      // the settings-save flow so both resolve mappings identically.
-      const discoverGitRepositoriesTask = () => runGitRepositoryDiscovery(path, workspaceSettings);
-
-      // Fire-and-forget plans/scans that already isolate themselves per root.
-      void refreshJavaScriptTypeScriptLanguageServerPlan(path, undefined, explicitRuntimeOwner);
-
-      if (
-        shouldIndexWorkspace(resolvedIntelligenceMode) &&
-        shouldRunInitialIndexScan(cachedWorkspaceState)
-      ) {
-        void startInitialIndexScan(path, isCurrentOpenWorkspaceOwnerRequest);
-      }
-
-      const [, , descriptor] = await Promise.all([
-        loadDirectoryTask(),
-        loadTrustTask(),
-        detectWorkspaceTask(),
-        restoreSessionTask(),
-        discoverGitRepositoriesTask(),
-      ]);
-
-      if (!isCurrentOpenWorkspaceOwnerRequest()) {
-        return;
-      }
-
-      if (!descriptor?.php) {
-        setLanguageServerPlan(null);
-        setNotices((current) => replaceWorkbenchNoticeGroup(current, `phpactor-setup:${path}`, []));
-        return;
-      }
-
-      // The PHP language server only runs in IDE (full smart) mode, so in
-      // basic/light mode the open-time PHP probe (detectPhpTools +
-      // planPhpLanguageServer) is pure overhead. Defer it: keep the plan and
-      // setup notice cleared and replay the probe when the user enables IDE
-      // mode (setSmartMode) or, eventually, lazily on demand.
-      if (!shouldStartLanguageServer(resolvedIntelligenceMode)) {
-        setLanguageServerPlan(null);
-        setNotices((current) => replaceWorkbenchNoticeGroup(current, `phpactor-setup:${path}`, []));
-        return;
-      }
-
-      // The probe is fired eagerly during detection (warmup) for IDE-mode PHP
-      // projects, so once it has warmed up there is nothing left to do here.
-      if (warmedUpPhpProbe) {
-        return;
-      }
-
-      if (!isCurrentOpenWorkspaceOwnerRequest()) {
-        return;
-      }
-
-      await runPhpWorkspaceProbe(path, admittedRuntimeOwner);
-    },
-    [
-      applyWorkspaceSettings,
-      adoptCachedDirectoryProjection,
-      cacheCurrentWorkspaceState,
-      canonicalDocumentSaveRoot,
-      closeBookmarksPanelRef,
-      forgetCachedWorkspaceState,
-      loadDirectory,
-      loadPackageScripts,
-      languageServerRuntimeStatusByRootRef,
-      languageRuntimeProjectionCommands,
-      ownedWorkspaceIdentityGenerationByIdRef,
-      persistAppSettings,
-      persistCurrentWorkspaceSession,
-      primeCachedDirectoryEntries,
-      refreshCachedExpandedDirectories,
-      runPhpWorkspaceProbe,
-      reportError,
-      reportErrorForActiveWorkspaceRoot,
-      releaseOwnedWorkspaceIdentity,
-      retireWorkspaceRuntimeOwnerClaim,
-      restoreLanguageServerDiagnosticsForRoot,
-      coalesceWorkspaceStateCache,
-      resolveCachedWorkspaceState,
-      restoreCachedWorkspaceState,
-      restorePersistedNavigationSession,
-      restoreJavaScriptTypeScriptDiagnosticsForRoot,
-      restoreWorkspaceSession,
-      runGitRepositoryDiscovery,
-      clearIndexWorkspaceState,
-      resetActiveEditorPosition,
-      resetDirectoryExplorerLifecycle,
-      resetEditorSurfaceState,
-      resetFilePrefetchState,
-      resetGitDiffWorkspaceState,
-      resetGitStatusSurface,
-      resetHistory,
-      resetJavaScriptTypeScriptFileStructure,
-      resetSearchEverywhere,
-      resetTextSearchState,
-      resetWorkspaceTodosRef,
+      lastLanguageServerCrashRef,
+      lastPhpFileOutlineRefreshKeyRef,
+      lastPhpIdeReadinessSignatureRef,
+      phpFrameworkNavigationGenerationRef,
+      phpLanguageServerAutostartAttemptsByRootRef,
+      refreshJavaScriptTypeScriptLanguageServerPlan,
       resetJavaScriptTypeScriptLanguageServerDocuments,
       resetLanguageServerDocuments,
-      runWithIssuedWriteDrainDelegate,
+      resetPhpFrameworkCachesRef,
+      resetPhpOutlineState,
+      restoreJavaScriptTypeScriptDiagnosticsForRoot,
+      restoreLanguageServerDiagnosticsForRoot,
+      runPhpWorkspaceProbe,
+      setLanguageServerPlan,
+    },
+    runtime: {
+      clearIndexWorkspaceState,
+      hasPhpWorkspaceByOwnerRef,
+      intelligenceModeRef,
       restoreIndexRoot,
-      clearJavaScriptTypeScriptLanguageServerDiagnostics,
-      clearLanguageServerDiagnostics,
-      clearPhpLocalDiagnostics,
-      closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-      closeSyncedLanguageServerDocumentsForRoot,
-      currentEditorSessionOwnerKeyRef,
-      documentSessionAuthorityLifecycle,
-      documentsRef,
-      resolveDocumentSaveOwnership,
-      settingsGateway,
+      runGitRepositoryDiscovery,
+      setIntelligenceMode,
       smartModeGateway,
       smartModeRequestGenerationRef,
       smartModeRequestIntentRef,
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,
-      workspaceDetection,
-      workspaceSettingsByRoot,
-      workspaceSettingsSaveCoordinator,
-      workspaceTrustGateway,
+      stopProjectRuntimes,
+      workspaceRuntimeOwnerByTabRef,
       workspaceRuntimeOwnerClaimsRef,
       workspaceRuntimeOwnerRef,
-      refreshJavaScriptTypeScriptLanguageServerPlan,
+      workspaceRuntimeRootByTabRef,
+    },
+    settings: {
+      appSettingsRef,
+      applyWorkspaceSettings,
+      persistAppSettings,
+      settingsGateway,
+      workspaceSettingsByRoot,
+      workspaceSettingsLoadByRootRef,
+      workspaceSettingsSaveCoordinator,
+    },
+    workspace: {
+      externallyRemovedDocumentRootByPathRef,
+      reportError,
+      reportErrorForActiveWorkspaceRoot,
+      resetActiveEditorPosition,
+      workspaceDetection,
+      workspaceFileChangeGateway,
+      workspaceIdentityGateway: workspaceGateways.identity,
+      workspaceRoot,
+      setWorkspaceDescriptor,
+      setWorkspaceIdentityDescriptor,
+      setWorkspaceRoot,
+      setWorkspaceTrust,
+      workspaceTrustGateway,
+      workspaceTrustRevisionByOwnerRef,
+    },
+    surfacePrimary: {
+      resetEditorSurfaceState,
+      resetGitDiffWorkspaceState,
+      resetGitStatusSurface,
+      resetHistory,
+      resetJavaScriptTypeScriptFileStructure,
+      resetSearchEverywhere,
+      resetTextSearchState,
+      setArtisanMakePaletteRoot,
+      setBookmarks,
+      setBottomPanelView,
+      setBottomPanelVisible,
+      setEditorRevealTarget,
+      setFileStructureOpen,
+      setFileStructureScope,
+      setGitBlameEnabledPaths,
+      setImplementationChooser,
+      setMessage,
+      setNotices,
+    },
+    surfaceNavigation: {
       setCallHierarchyView,
       setClassOpenLoading,
       setClassOpenOpen,
       setClassOpenQuery,
       setClassOpenResults,
-      setEditorRevealTarget,
-      setExpandedDirectories,
-      setImplementationChooser,
-      setInstallingManagedTypeScriptLanguageServer,
-      setLanguageServerPlan,
-      setNotices,
       setInstallingManagedPhpactor,
+      setInstallingManagedTypeScriptLanguageServer,
+      setPaletteOpen,
       setQuickOpenOpen,
-      resetPhpOutlineState,
       setRecentFiles,
       setRecentFilesSwitcherOpen,
       setRecentLocations,
       setRecentLocationsPanelOpen,
       setReferencesView,
+      setSettingsOpen,
+      setSidebarView,
       setTypeHierarchyView,
       setWorkspaceSymbolsLoading,
       setWorkspaceSymbolsOpen,
       setWorkspaceSymbolsQuery,
       setWorkspaceSymbolsResults,
-      workspaceStateCacheRef,
-    ],
-  );
-
-  const {
-    activateWorkspaceTab,
-    beginStartupRestore,
-    beginWorkspaceClose,
-    openWorkspace,
-    openWorkspacePath,
-    openWorkspaceRoot,
-  } = useWorkspaceOpenRequestLifecycle({
-    completeDeferredIdentityCleanup: flushDeferredWorkspaceIdentityCleanup,
-    currentWorkspaceRootRef,
-    openWorkspaceRequestInFlightTokenRef,
-    openWorkspaceRequestPathRef,
-    openWorkspaceRequestTokenRef,
-    ownedWorkspaceIdentityGenerationByIdRef,
-    pendingWorkspaceIdentityRequestTokensRef,
-    performOpenWorkspacePath,
-    reportError,
-    resolveCachedWorkspaceState,
-    withManagedWorkspaceIdentityLease,
-    workbenchMountedRef,
-    workspaceCloseGenerationByRootRef,
-    workspaceCloseOwnershipByKeyRef,
-    workspaceCloseOwnershipGenerationRef,
-    workspaceIdentityByRootRef,
-    workspaceIdentityGateway: workspaceGateways.identity,
-    workspaceRoot,
+    },
   });
-
-  useEffect(() => {
-    workbenchMountedRef.current = true;
-    const workspaceRuntimeOwnerClaims = workspaceRuntimeOwnerClaimsRef.current;
-    const externallyRemovedDocumentRootByPath = externallyRemovedDocumentRootByPathRef.current;
-
-    return () => {
-      documentSessionAuthorityLifecycle.deactivate();
-      workbenchMountedRef.current = false;
-      openWorkspaceRequestTokenRef.current += 1;
-      openWorkspaceRequestPathRef.current = null;
-      openWorkspaceRequestInFlightTokenRef.current = null;
-      openFileRequestTokenRef.current += 1;
-      const workspaceIds = retireWorkspaceIdentityAuthority();
-      workspaceIdentityByRootRef.current = {};
-      workspaceRuntimeRootByTabRef.current = {};
-      workspaceRuntimeOwnerByTabRef.current = {};
-      workspaceRuntimeOwnerClaims.clear();
-      disposeWorkspaceFileChanges(workspaceFileChangeGateway, externallyRemovedDocumentRootByPath);
-      for (const workspaceId of workspaceIds) {
-        void releaseOwnedWorkspaceIdentity(workspaceId).catch(() => undefined);
-      }
-    };
-  }, [
-    documentSessionAuthorityLifecycle,
-    externallyRemovedDocumentRootByPathRef,
-    releaseOwnedWorkspaceIdentity,
-    retireWorkspaceIdentityAuthority,
-    workspaceFileChangeGateway,
-  ]);
-
   const editorFile = useWorkbenchEditorFileCoordinator({
     changeSignature: {
       currentWorkspaceRootRef,
