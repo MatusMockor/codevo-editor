@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
-const MAX_ORDINARY_STARTUP_RERESOLUTION_STEPS: u16 = 64;
+const MAX_STARTUP_RERESOLUTION_STEPS: u16 = 64;
 
 pub(crate) struct FunctionBreakpointSessionState {
     pub(crate) registrations: Mutex<FunctionBreakpointRegistrations>,
@@ -62,7 +62,7 @@ impl FunctionBreakpointVerificationReceipt {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub(super) struct HiddenContinueAuthority {
     bootstrap: HiddenBootstrap,
     pub(super) desired_generation: u64,
@@ -78,6 +78,10 @@ pub(super) struct HiddenContinuePause {
     pub(super) params: Value,
 }
 
+pub(super) struct HiddenContinueRearmReceipt {
+    authority: HiddenContinueAuthority,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HiddenStartupStep {
     None,
@@ -90,6 +94,7 @@ pub(super) enum OrdinaryStartupRearm {
     ContinueToNextLocation,
     Exhausted,
     NotApplicable,
+    WatchContinueToNextLocation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -278,12 +283,12 @@ impl FunctionBreakpointSessionState {
         let (hidden_bootstrap, remaining_steps, step) = match bootstrap {
             ExactEntryBootstrap::Ordinary => (
                 HiddenBootstrap::OrdinaryStartup,
-                MAX_ORDINARY_STARTUP_RERESOLUTION_STEPS,
+                MAX_STARTUP_RERESOLUTION_STEPS,
                 HiddenStartupStep::StepInto,
             ),
             ExactEntryBootstrap::Watch => (
                 HiddenBootstrap::WatchStartup,
-                0,
+                MAX_STARTUP_RERESOLUTION_STEPS,
                 HiddenStartupStep::StepOver,
             ),
         };
@@ -357,7 +362,7 @@ impl FunctionBreakpointSessionState {
         pause: &HiddenContinuePause,
     ) -> Result<OrdinaryStartupRearm, ()> {
         let authority = &pause.authority;
-        if authority.bootstrap != HiddenBootstrap::OrdinaryStartup {
+        if authority.bootstrap == HiddenBootstrap::None {
             return Ok(OrdinaryStartupRearm::NotApplicable);
         }
         if authority.remaining_steps == 0 {
@@ -375,7 +380,9 @@ impl FunctionBreakpointSessionState {
             return Err(());
         }
         authority.exact_script_id.as_deref().ok_or(())?;
-        authority.exact_function_location.as_ref().ok_or(())?;
+        if authority.bootstrap == HiddenBootstrap::OrdinaryStartup {
+            authority.exact_function_location.as_ref().ok_or(())?;
+        }
         let mut pending = self.hidden_continue_pending.lock().map_err(|_| ())?;
         if pending.is_some() {
             return Err(());
@@ -385,26 +392,61 @@ impl FunctionBreakpointSessionState {
             remaining_steps: authority.remaining_steps - 1,
             ..authority.clone()
         });
-        Ok(OrdinaryStartupRearm::ContinueToNextLocation)
+        match authority.bootstrap {
+            HiddenBootstrap::OrdinaryStartup => Ok(OrdinaryStartupRearm::ContinueToNextLocation),
+            HiddenBootstrap::WatchStartup => Ok(OrdinaryStartupRearm::WatchContinueToNextLocation),
+            HiddenBootstrap::None => Ok(OrdinaryStartupRearm::NotApplicable),
+        }
     }
 
     pub(super) fn bind_pending_ordinary_startup_location(
         &self,
         line_number: u64,
         column_number: u64,
-    ) -> Result<(), ()> {
+    ) -> Result<HiddenContinueRearmReceipt, ()> {
         let mut pending = self.hidden_continue_pending.lock().map_err(|_| ())?;
         let authority = pending.as_mut().ok_or(())?;
-        if authority.bootstrap != HiddenBootstrap::OrdinaryStartup
-            || authority.expected_location.is_some()
-        {
+        if authority.bootstrap == HiddenBootstrap::None || authority.expected_location.is_some() {
             return Err(());
         }
         authority.expected_location = Some((line_number, column_number));
+        Ok(HiddenContinueRearmReceipt {
+            authority: authority.clone(),
+        })
+    }
+
+    pub(super) fn cancel_rearmed_hidden_step(
+        &self,
+        receipt: &HiddenContinueRearmReceipt,
+    ) -> Result<(), ()> {
+        let mut pending = self.hidden_continue_pending.lock().map_err(|_| ())?;
+        if pending.as_ref() == Some(&receipt.authority) {
+            *pending = None;
+            return Ok(());
+        }
+        drop(pending);
+        let mut pause = self.hidden_continue_pause.lock().map_err(|_| ())?;
+        if pause
+            .as_ref()
+            .is_some_and(|pause| pause.authority == receipt.authority)
+        {
+            *pause = None;
+        }
         Ok(())
     }
 
     pub(crate) fn capture_hidden_continue_pause(&self, params: &Value) -> HiddenPauseCapture {
+        let _publication = match self.publication.try_lock() {
+            Ok(publication) => publication,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                let Ok(mut pending) = self.hidden_continue_pending.try_lock() else {
+                    return HiddenPauseCapture::Revoke;
+                };
+                *pending = None;
+                return HiddenPauseCapture::PassThrough;
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => return HiddenPauseCapture::Revoke,
+        };
         let Ok(mut pending) = self.hidden_continue_pending.lock() else {
             return HiddenPauseCapture::Revoke;
         };
@@ -430,11 +472,18 @@ impl FunctionBreakpointSessionState {
             .flatten()
             .filter(|frame| expected_location_matches(frame, &authority))
             .collect();
-        let exact_continue_location =
-            exact_function_frame_is_unambiguous && expected_location_frames.len() == 1;
+        let exact_continue_location = match authority.bootstrap {
+            HiddenBootstrap::OrdinaryStartup => {
+                exact_function_frame_is_unambiguous && expected_location_frames.len() == 1
+            }
+            HiddenBootstrap::WatchStartup => params
+                .pointer("/callFrames/0")
+                .is_some_and(|frame| expected_location_matches(frame, &authority)),
+            HiddenBootstrap::None => false,
+        };
         let is_exact_internal_step = hit_breakpoints_are_empty
             && (params.get("reason").and_then(Value::as_str) == Some("step")
-                || (authority.bootstrap == HiddenBootstrap::OrdinaryStartup
+                || (authority.bootstrap != HiddenBootstrap::None
                     && params.get("reason").and_then(Value::as_str) == Some("other")
                     && exact_continue_location));
         if !is_exact_internal_step {
