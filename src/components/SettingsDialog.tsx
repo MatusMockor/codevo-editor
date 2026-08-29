@@ -1,16 +1,13 @@
 import { Settings2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import { normalizeShortcutInput } from "../domain/keymap";
 import {
-  appThemeOptions,
-  maxEditorFontSize,
-  minEditorFontSize,
   normalizeEditorFontFamily,
   normalizeEditorFontSize,
   settingsIgnorePatternsFromText,
   settingsIgnorePatternsText,
   type AppSettings,
-  type AppTheme,
   type BackgroundRuntimePolicy,
   type JavaScriptTypeScriptImportModuleSpecifierEnding,
   type JavaScriptTypeScriptImportModuleSpecifierPreference,
@@ -26,57 +23,27 @@ import {
   normalizeGitDirectoryMappings,
 } from "../domain/gitRepositoryMapping";
 import type { SystemFontGateway } from "../domain/systemFonts";
-import type { WorkspaceTrustState } from "../domain/trust";
-import type {
-  IntelligenceMode,
-  WorkspaceDescriptor,
-  PhpToolAvailability,
-} from "../domain/workspace";
+import type { IntelligenceMode } from "../domain/workspace";
 import { settingsDialogSections } from "./settingsDialogModel";
-import {
-  AgentSettingsDialogSection,
-  type AgentSettingsDialogProviderControls,
-} from "./AgentSettingsDialogSection";
+import { AgentSettingsDialogSection } from "./AgentSettingsDialogSection";
+import { AppearanceSettings } from "./AppearanceSettingsSection";
 import { IndexSettings } from "./IndexSettingsSection";
+import { GeneralAppUpdateSettings } from "./GeneralAppUpdateSettings";
 import { KeymapSettingsPanel } from "./KeymapSettingsPanel";
 import { PhpSettings } from "./PhpSettingsSection";
 import { SnippetsSettings } from "./SnippetsSettingsSection";
 import { settingsDialogDraftPersistence } from "./settingsDialogDraftPersistence";
+import type { SettingsDialogProps } from "./settingsDialogTypes";
+import { nullableInputValue } from "./settingsDialogValues";
 
-export interface SettingsSaveInput {
-  appSettings: AppSettings;
-  trusted: boolean | null;
-  workspaceSettings: WorkspaceSettings;
-}
-
-interface SettingsDialogProps extends AgentSettingsDialogProviderControls {
-  appSettings: AppSettings;
-  /**
-   * Auto-detected git repository directories (workspace-root-relative, excluding
-   * the root), shown as read-only, "Auto-detected"-marked entries in the
-   * Directory Mappings section alongside the editable manual mappings.
-   */
-  gitDetectedRepositoryMappings?: string[];
-  initialSection?: SettingsSection;
-  isOpen: boolean;
-  phpTools: PhpToolAvailability | null;
-  systemFontGateway?: SystemFontGateway;
-  workspaceDescriptor: WorkspaceDescriptor | null;
-  workspaceRoot: string | null;
-  workspaceSettings: WorkspaceSettings;
-  workspaceTrust: WorkspaceTrustState | null;
-  onClose(): void;
-  onOpenJavaScriptTypeScriptServiceLog(): Promise<void>;
-  onOpenNodeLaunchConfigurations?(): void;
-  onRestartJavaScriptTypeScriptService(): Promise<void>;
-  onSave(input: SettingsSaveInput): Promise<void>;
-}
+export type { SettingsSaveInput } from "./settingsDialogTypes";
 
 const emptySystemFontGateway: SystemFontGateway = {
   listMonospaceFontFamilies: async () => [],
 };
 
 export function SettingsDialog({
+  appUpdater = null,
   appSettings,
   gitDetectedRepositoryMappings = [],
   initialSection = "general",
@@ -201,6 +168,7 @@ export function SettingsDialog({
             <div aria-label={selectedSectionLabel} className="settings-section" role="tabpanel">
               {activeSection === "general" ? (
                 <GeneralSettings
+                  appUpdater={appUpdater}
                   appSettings={draftAppSettings}
                   draftTrusted={draftTrusted}
                   hasWorkspace={hasWorkspace}
@@ -616,6 +584,7 @@ export function SettingsDialog({
 }
 
 interface GeneralSettingsProps {
+  appUpdater: AppUpdaterSurface | null;
   appSettings: AppSettings;
   draftTrusted: boolean;
   hasWorkspace: boolean;
@@ -666,6 +635,7 @@ interface GeneralSettingsProps {
 }
 
 function GeneralSettings({
+  appUpdater,
   appSettings,
   draftTrusted,
   hasWorkspace,
@@ -710,6 +680,7 @@ function GeneralSettings({
 }: GeneralSettingsProps) {
   return (
     <div className="settings-group">
+      {appUpdater ? <GeneralAppUpdateSettings updater={appUpdater} /> : null}
       <label className="settings-field">
         <span>Workspace</span>
         <input readOnly value={workspaceRoot || "No workspace open"} />
@@ -1272,147 +1243,4 @@ function GitMappingsSettings({
       </div>
     </div>
   );
-}
-
-interface AppearanceSettingsProps {
-  appSettings: AppSettings;
-  systemFontGateway: SystemFontGateway;
-  onChangeEditorFontFamily(value: string): void;
-  onChangeEditorFontLigatures(enabled: boolean): void;
-  onChangeEditorFontSize(value: number): void;
-  onChangeMinimapEnabled(enabled: boolean): void;
-  onChangeTheme(theme: AppTheme): void;
-  onChangeWordWrapEnabled(enabled: boolean): void;
-}
-
-function AppearanceSettings({
-  appSettings,
-  systemFontGateway,
-  onChangeEditorFontFamily,
-  onChangeEditorFontLigatures,
-  onChangeEditorFontSize,
-  onChangeMinimapEnabled,
-  onChangeTheme,
-  onChangeWordWrapEnabled,
-}: AppearanceSettingsProps) {
-  const [fontFamilyOptions, setFontFamilyOptions] = useState<string[]>([]);
-  const fontFamilyLoadRequestRef = useRef(0);
-  const visibleFontFamilyOptions = useMemo(
-    () => uniqueSortedStrings([...fontFamilyOptions, appSettings.editorFontFamily]),
-    [appSettings.editorFontFamily, fontFamilyOptions],
-  );
-
-  const loadInstalledFonts = useCallback(async () => {
-    const requestId = fontFamilyLoadRequestRef.current + 1;
-    fontFamilyLoadRequestRef.current = requestId;
-
-    try {
-      const localFamilies = await systemFontGateway.listMonospaceFontFamilies();
-      if (fontFamilyLoadRequestRef.current !== requestId) {
-        return;
-      }
-      setFontFamilyOptions(uniqueSortedStrings(localFamilies));
-    } catch {
-      if (fontFamilyLoadRequestRef.current !== requestId) {
-        return;
-      }
-      setFontFamilyOptions([]);
-    }
-  }, [systemFontGateway]);
-
-  useEffect(() => {
-    void loadInstalledFonts();
-  }, [loadInstalledFonts]);
-
-  return (
-    <div className="settings-group">
-      <label className="settings-field">
-        <span>Theme</span>
-        <select
-          onChange={(event) => onChangeTheme(event.currentTarget.value as AppTheme)}
-          value={appSettings.theme}
-        >
-          {appThemeOptions.map((theme) => (
-            <option key={theme.id} value={theme.id}>
-              {theme.label}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="settings-field">
-        <span>Font family</span>
-        <select
-          onChange={(event) => onChangeEditorFontFamily(event.currentTarget.value)}
-          value={appSettings.editorFontFamily}
-        >
-          {visibleFontFamilyOptions.map((fontFamily) => (
-            <option key={fontFamily} value={fontFamily}>
-              {fontFamily}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <div className="settings-actions">
-        <button onClick={() => void loadInstalledFonts()} type="button">
-          Refresh fonts
-        </button>
-      </div>
-
-      <label className="settings-field">
-        <span>Font size</span>
-        <input
-          max={maxEditorFontSize}
-          min={minEditorFontSize}
-          onChange={(event) => onChangeEditorFontSize(event.currentTarget.valueAsNumber)}
-          type="number"
-          value={appSettings.editorFontSize}
-        />
-      </label>
-
-      <label className="settings-toggle">
-        <input
-          checked={appSettings.editorFontLigatures}
-          onChange={(event) => onChangeEditorFontLigatures(event.currentTarget.checked)}
-          type="checkbox"
-        />
-        <span>Font ligatures</span>
-      </label>
-
-      <label className="settings-toggle">
-        <input
-          checked={appSettings.minimapEnabled === true}
-          onChange={(event) => onChangeMinimapEnabled(event.currentTarget.checked)}
-          type="checkbox"
-        />
-        <span>Minimap</span>
-      </label>
-
-      <label className="settings-toggle">
-        <input
-          checked={appSettings.wordWrapEnabled === true}
-          onChange={(event) => onChangeWordWrapEnabled(event.currentTarget.checked)}
-          type="checkbox"
-        />
-        <span>Word wrap</span>
-      </label>
-    </div>
-  );
-}
-
-function uniqueSortedStrings(values: string[]): string[] {
-  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort(
-    (left, right) => left.localeCompare(right),
-  );
-}
-
-function nullableInputValue(value: string): string | null {
-  const trimmed = value.trim();
-
-  if (!trimmed) {
-    return null;
-  }
-
-  return trimmed;
 }

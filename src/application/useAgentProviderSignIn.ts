@@ -5,7 +5,6 @@ import type {
   AgentProviderSignInState,
   AgentProviderSignInTerminalSize,
 } from "../domain/agentProviderSignIn";
-import { normalizeAgentCliPath } from "../domain/agentSettings";
 import type { AgentCliKind } from "../domain/agentTask";
 import type {
   AgentProviderAdmissionAuthority,
@@ -31,8 +30,13 @@ export interface AgentProviderSignInDependencies {
   readonly refresh: (
     provider: AgentCliKind,
     authority: ReadyAgentProviderAdmissionAuthority,
-  ) => Promise<"complete" | "failed" | "stale">;
+  ) => Promise<AgentProviderSignInRefreshOutcome>;
 }
+
+export type AgentProviderSignInRefreshOutcome =
+  | { readonly kind: "complete"; readonly authority: ReadyAgentProviderAdmissionAuthority }
+  | { readonly kind: "failed" }
+  | { readonly kind: "stale" };
 
 export interface AgentProviderSignInSurface {
   readonly states: Readonly<Record<AgentCliKind, AgentProviderSignInState>>;
@@ -216,7 +220,6 @@ export function useAgentProviderSignIn(
         provider: authority.provider,
         revision: authority.revision,
         disposition: { kind: "ready" },
-        cliPath: authority.cliPath,
         providerGeneration: authority.providerGeneration,
       };
       publishState(provider, { kind: "starting", ...intentAuthority(intent) });
@@ -385,11 +388,11 @@ export function useAgentProviderSignIn(
         exitCode,
         healthRefresh: "refreshing",
       });
-      let healthRefresh: "complete" | "failed" | "stale" = "failed";
+      let refreshOutcome: AgentProviderSignInRefreshOutcome = { kind: "failed" };
       try {
-        healthRefresh = await dependenciesRef.current.refresh(intent.provider, authority);
+        refreshOutcome = await dependenciesRef.current.refresh(intent.provider, authority);
       } catch {
-        healthRefresh = "failed";
+        refreshOutcome = { kind: "failed" };
       }
       const current = statesRef.current[intent.provider];
       if (
@@ -401,13 +404,18 @@ export function useAgentProviderSignIn(
         return;
       }
       if (
-        healthRefresh === "stale" ||
-        !authorityIsCurrent(dependenciesRef.current.readAuthority, authority, intent)
+        refreshOutcome.kind === "stale" ||
+        !settledAuthorityIsCurrent(
+          dependenciesRef.current.readAuthority,
+          authority,
+          intent,
+          refreshOutcome,
+        )
       ) {
         publishState(intent.provider, { kind: "idle" });
         return;
       }
-      publishState(intent.provider, { ...current, healthRefresh });
+      publishState(intent.provider, { ...current, healthRefresh: refreshOutcome.kind });
     },
     [publishIntent, publishState],
   );
@@ -455,7 +463,7 @@ function authorityBlockedReason(authority: AgentProviderAdmissionAuthority): str
   switch (authority.disposition.kind) {
     case "ready":
       if (!readyAuthority(authority))
-        return `Configure a valid ${label} CLI path before signing in.`;
+        return `Install ${label} or configure a valid manual CLI path before signing in.`;
       return null;
     case "disabled":
       return `Enable ${label} before signing in.`;
@@ -463,7 +471,7 @@ function authorityBlockedReason(authority: AgentProviderAdmissionAuthority): str
       return `Wait for the ${label} update to finish before signing in.`;
     case "policyUnavailable":
       if (authority.disposition.reason === "notConfigured") {
-        return `Configure a valid ${label} CLI path before signing in.`;
+        return `Install ${label} or configure a valid manual CLI path before signing in.`;
       }
       if (authority.disposition.reason === "unregistered") {
         return `Register ${label} provider settings before signing in.`;
@@ -477,12 +485,7 @@ function authorityBlockedReason(authority: AgentProviderAdmissionAuthority): str
 function readyAuthority(
   authority: AgentProviderAdmissionAuthority,
 ): authority is ReadyAgentProviderAdmissionAuthority {
-  return (
-    authority.disposition.kind === "ready" &&
-    "cliPath" in authority &&
-    normalizeAgentCliPath(authority.cliPath) === authority.cliPath &&
-    "providerGeneration" in authority
-  );
+  return authority.disposition.kind === "ready" && "providerGeneration" in authority;
 }
 
 function preparedAuthorityForIntent(
@@ -506,6 +509,18 @@ function authorityIsCurrent(
     intent.revision === authority.revision &&
     isCurrentAgentProviderAdmissionAuthority(read, authority)
   );
+}
+
+function settledAuthorityIsCurrent(
+  read: AgentProviderAdmissionAuthorityReader,
+  captured: ReadyAgentProviderAdmissionAuthority,
+  intent: AgentProviderSignInTerminalIntent,
+  refreshOutcome: Exclude<AgentProviderSignInRefreshOutcome, { readonly kind: "stale" }>,
+): boolean {
+  if (refreshOutcome.kind === "failed") return authorityIsCurrent(read, captured, intent);
+  if (refreshOutcome.authority.provider !== intent.provider) return false;
+  if (refreshOutcome.authority.providerGeneration !== intent.providerGeneration) return false;
+  return isCurrentAgentProviderAdmissionAuthority(read, refreshOutcome.authority);
 }
 
 function intentIsCurrent(

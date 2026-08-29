@@ -7,6 +7,10 @@ import {
   type SetStateAction,
 } from "react";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
+import {
+  defaultAgentCliDiscoveryResult,
+  type AgentCliDiscoveryGateway,
+} from "../domain/agentSettings";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import type {
   AgentProviderHealthGateway,
@@ -104,7 +108,7 @@ export interface WorkbenchControllerAgentsOptions {
   readonly editorSessionOwnerKey: string | null;
   readonly options: Pick<
     WorkbenchControllerOptions,
-    | "agentCliVersionGateway"
+    | "agentCliDiscoveryGateway"
     | "agentProviderGateway"
     | "agentProviderSignInGateway"
     | "agentRootLeaseGateway"
@@ -155,6 +159,10 @@ const unavailableAgentProviderGateway: AgentProviderPolicyGateway &
   registerAgentProviderPolicy: () => Promise.reject(new Error("Provider gateway is unavailable.")),
   probeAgentProviderHealth: () => Promise.reject(new Error("Provider gateway is unavailable.")),
   updateAgentProvider: () => Promise.reject(new Error("Provider gateway is unavailable.")),
+};
+
+const unavailableAgentCliDiscoveryGateway: AgentCliDiscoveryGateway = {
+  discoverAgentClis: () => Promise.resolve(defaultAgentCliDiscoveryResult()),
 };
 
 export function useWorkbenchControllerAgents(
@@ -242,7 +250,8 @@ export function useWorkbenchControllerAgents(
   const agents = useWorkbenchAgents({
     agentProviderGateway: options.options.agentProviderGateway ?? unavailableAgentProviderGateway,
     agentProviderSignInGateway: options.options.agentProviderSignInGateway,
-    agentCliVersionGateway: options.options.agentCliVersionGateway,
+    agentCliDiscoveryGateway:
+      options.options.agentCliDiscoveryGateway ?? unavailableAgentCliDiscoveryGateway,
     agentTaskGateway: options.options.agentTaskGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway,
     gitWorktreeGateway: options.options.gitWorktreeGateway,

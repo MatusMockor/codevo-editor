@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentCliKind, AgentTaskGateway, AgentTaskStatusEvent } from "../domain/agentTask";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
@@ -17,11 +16,7 @@ import {
   type AgentShipAvailability,
   type AgentShipState,
 } from "../domain/agentShip";
-import {
-  normalizeAgentCliKind,
-  normalizeAgentCliPath,
-  normalizeMaxConcurrentAgentTasks,
-} from "../domain/agentSettings";
+import { normalizeAgentCliKind, normalizeMaxConcurrentAgentTasks } from "../domain/agentSettings";
 import type { GitGateway } from "../domain/git";
 import type { GitIntegrationGateway } from "../domain/gitIntegration";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
@@ -42,7 +37,6 @@ import {
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
-import { useAgentCliVersion } from "./useAgentCliVersion";
 import {
   useAgentEditorBridge,
   type AgentEditorBridgePort,
@@ -63,7 +57,6 @@ export type AgentThreadsGitGateway = Pick<
 
 export interface AgentThreadsDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
-  readonly agentCliVersionGateway?: AgentCliVersionGateway;
   readonly agentThreadStoreGateway: AgentThreadStoreGateway;
   readonly gitWorktreeGateway: GitWorktreeGateway;
   readonly gitGateway: AgentThreadsGitGateway;
@@ -73,8 +66,8 @@ export interface AgentThreadsDependencies {
   readonly prompter: WorkbenchPrompter;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly agentModeActive: boolean;
-  readonly getAgentCliPath: () => string | null;
   readonly getAgentCliKind: () => AgentCliKind;
+  readonly currentCliVersion: (provider: AgentCliKind) => string | null;
   readonly getAgentProviderAdmissionAuthority: AgentProviderAdmissionAuthorityReader;
   readonly getMaxConcurrentAgentTasks: () => number;
   readonly getRepositoryStatus: (repositoryRoot: string) => AgentRepositoryStatusSnapshot;
@@ -198,40 +191,15 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   }, [refreshOrphanedWorktrees]);
 
   const agentCliKind = normalizeAgentCliKind(dependencies.getAgentCliKind());
-  const agentCliPath = normalizeAgentCliPath(dependencies.getAgentCliPath());
-  const agentCliVersionGateway = dependencies.agentCliVersionGateway;
-
-  const cliVersionNoticeRef = useRef<AgentTasksNotice | null>(null);
-  const setCliVersionNotice = useCallback((next: AgentTasksNotice | null): void => {
-    cliVersionNoticeRef.current = next;
-    setNotice(next);
-  }, []);
-  const setDispatchNotice = useCallback((next: AgentTasksNotice | null): void => {
-    if (next !== null) {
-      setNotice(next);
-      return;
-    }
-    setNotice((current) =>
-      current !== null && current === cliVersionNoticeRef.current ? current : null,
-    );
-  }, []);
-
-  const cliVersion = useAgentCliVersion({
-    gateway: agentCliVersionGateway ?? null,
-    agentCliPath,
-    agentCliKind,
-    enabled: dependencies.agentModeActive,
-    setNotice: setCliVersionNotice,
-    reportError,
-    now: dependencies.now,
-  });
+  const agentCliVersion = dependencies.currentCliVersion(agentCliKind);
+  const agentCliConfigured =
+    dependencies.getAgentProviderAdmissionAuthority(agentCliKind).disposition.kind === "ready";
 
   const dispatch = useAgentTurnDispatch({
     agentTaskGateway: dependencies.agentTaskGateway,
     gitWorktreeGateway: dependencies.gitWorktreeGateway,
     projects,
     store,
-    getAgentCliPath: dependencies.getAgentCliPath,
     getAgentCliKind: dependencies.getAgentCliKind,
     getAgentProviderAdmissionAuthority: dependencies.getAgentProviderAdmissionAuthority,
     getMaxConcurrentAgentTasks: dependencies.getMaxConcurrentAgentTasks,
@@ -239,15 +207,14 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     isWorktreeMissing,
     retainUncertainWorktree: worktrees.retainUncertainWorktree,
     onWorktreeCreated: worktrees.noteCreatedWorktree,
-    currentCliVersion: () => cliVersion.current,
-    probeCliVersion: agentCliVersionGateway === undefined ? undefined : cliVersion.probe,
+    currentCliVersion: dependencies.currentCliVersion,
     onWorktreeDispatchFailed,
     onTurnTerminal,
     onProjectDispatchTrustRejected: dependencies.onProjectDispatchTrustRejected,
     ensureProjectLease: dependencies.ensureProjectLease,
     launchIdentityForProject: dependencies.launchIdentityForProject,
     reportError,
-    setNotice: setDispatchNotice,
+    setNotice,
     now: dependencies.now,
     createEntropyHex4: dependencies.createEntropyHex4,
   });
@@ -364,8 +331,6 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const maxConcurrentAgentTasks = normalizeMaxConcurrentAgentTasks(
     dependencies.getMaxConcurrentAgentTasks(),
   );
-  const agentCliConfigured = agentCliPath !== null;
-
   return {
     threads: threadViews,
     repositories,
@@ -374,7 +339,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     dispatching: dispatch.dispatching,
     agentCliConfigured,
     agentCliKind,
-    agentCliVersion: cliVersion.current,
+    agentCliVersion,
     liveTaskCount: countRunningTurns(store.state),
     maxConcurrentAgentTasks,
     pendingTurnCount: dispatch.pendingTurnCount,

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadSearchSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
+import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import type { AgentThreadSearchResult } from "../../domain/agentThreadSearch";
@@ -761,14 +762,20 @@ describe("AgentThreadsSidebar", () => {
 function providerManagement(): AgentProviderManagementSurface {
   const preferences = defaultAgentProviderPreferences();
   return {
+    cliDiscovery: defaultAgentCliDiscoveryResult(),
     providers: {
       claudeCode: {
+        executable: {
+          kind: "notFound",
+          installCommand: "npm i -g @anthropic-ai/claude-code",
+        },
         health: { kind: "notConfigured" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },
         liveTurnCount: 0,
       },
       codex: {
+        executable: { kind: "notFound", installCommand: "npm i -g @openai/codex" },
         health: { kind: "notConfigured" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },

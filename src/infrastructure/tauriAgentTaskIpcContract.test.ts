@@ -32,7 +32,6 @@ const START_REQUEST: StartAgentTaskRequest = {
   cwd: "/repo/.worktrees/agt-1-0a1b",
   isolation: "worktree",
   prompt: "do the thing",
-  agentCliPath: "/usr/local/bin/claude",
   agentCliKind: "claudeCode",
   resumeSessionId: null,
   launch: defaultAgentLaunchOptions("claudeCode"),
@@ -82,6 +81,21 @@ describe("invokeStartAgentTaskIpc", () => {
         cwd: "/elsewhere",
       }),
     ).rejects.toThrow(TypeError);
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects executable paths and environment maps before touching the transport", async () => {
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>();
+    const injectedRequests: readonly unknown[] = [
+      { ...START_REQUEST, agentCliPath: "/tmp/foreign-agent" },
+      { ...START_REQUEST, env: { PATH: "/tmp/foreign-bin" } },
+    ];
+
+    for (const request of injectedRequests) {
+      await expect(
+        invokeStartAgentTaskIpc(invokeCommand, request as StartAgentTaskRequest),
+      ).rejects.toThrow(TypeError);
+    }
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 

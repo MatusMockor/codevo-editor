@@ -11,6 +11,7 @@ import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
+import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentThread, AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
@@ -2688,14 +2689,20 @@ function providerManagement(): AgentProviderManagementSurface {
     dismissedUpdateVersion: null,
   };
   return {
+    cliDiscovery: defaultAgentCliDiscoveryResult(),
     providers: {
       claudeCode: {
+        executable: {
+          kind: "notFound",
+          installCommand: "npm i -g @anthropic-ai/claude-code",
+        },
         health: { kind: "notConfigured" },
         policy: { kind: "registered", settingsRevision: 1, providerGeneration: 1 },
         updateState: { kind: "idle" },
         liveTurnCount: 0,
       },
       codex: {
+        executable: { kind: "notFound", installCommand: "npm i -g @openai/codex" },
         health: { kind: "notConfigured" },
         policy: { kind: "registered", settingsRevision: 1, providerGeneration: 1 },
         updateState: { kind: "idle" },

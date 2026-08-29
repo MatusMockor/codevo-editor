@@ -30,12 +30,15 @@ use crate::terminal_task_admission::{
     WORKSPACE_LIMIT_ERROR,
 };
 use crate::{
+    agent_cli_discovery::AgentCliDiscovery,
+    effective_executable_environment::EffectiveExecutablePath,
     node_package_problem_matcher::{
         NodePackageProblem, NodePackageProblemSnapshot, NodePackageTaskOutputStream,
     },
     node_package_scripts::{
-        finish_node_package_task, spawn_node_package_task, NodePackageTaskCompletion,
-        NodePackageTaskLaunchTarget, NodePackageTaskOutputObserver, RunNodePackageScriptRequest,
+        finish_node_package_task, spawn_node_package_task_with_effective_path,
+        NodePackageTaskCompletion, NodePackageTaskLaunchTarget, NodePackageTaskOutputObserver,
+        RunNodePackageScriptRequest,
     },
     terminal_session::TerminalSupervisor,
     terminal_task_admission::{TerminalTaskAdmission, TerminalTaskAdmissionRegistry},
@@ -773,6 +776,11 @@ pub(crate) fn workspace_start_node_package_task(
     app: AppHandle,
     request: StartNodePackageTaskRequest,
 ) -> Result<StartNodePackageTaskResponse, String> {
+    let executable_environment = app
+        .state::<Arc<AgentCliDiscovery>>()
+        .effective_environment()
+        .map_err(|error| error.to_string())?;
+    let effective_path = EffectiveExecutablePath::from_source(executable_environment.as_ref())?;
     let metadata = TaskMetadata {
         run_id: request.run_id.clone(),
         workspace_id: request.workspace_id.clone(),
@@ -792,7 +800,7 @@ pub(crate) fn workspace_start_node_package_task(
         let registry = app.state::<WorkspaceRegistry>();
         let trust = app.state::<Mutex<WorkspaceTrustService>>();
         let terminals = app.state::<TerminalSupervisor>();
-        spawn_node_package_task(
+        spawn_node_package_task_with_effective_path(
             &registry,
             &trust,
             &terminals,
@@ -805,6 +813,7 @@ pub(crate) fn workspace_start_node_package_task(
                 target: request.target,
             },
             output_observer,
+            effective_path,
         )
     };
     let spawned = match spawned {

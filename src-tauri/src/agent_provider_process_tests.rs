@@ -19,29 +19,62 @@ fn executable(body: &str) -> PathBuf {
     path
 }
 
+fn effective_path() -> String {
+    env::var("PATH").expect("test PATH")
+}
+
+fn provider_plan(
+    cli_path: &Path,
+    intent: AgentProviderProcessIntent,
+) -> Result<AgentProviderProcessPlan, String> {
+    let path = effective_path();
+    let identity = executable_identity_path_with_effective_path(cli_path, &path)?;
+    AgentProviderProcessPlan::provider_owned_with_effective_path(identity, intent, &path)
+}
+
+fn package_manager_plan(
+    identity: ExecutableIdentity,
+    intent: AgentProviderProcessIntent,
+) -> Result<AgentProviderProcessPlan, String> {
+    AgentProviderProcessPlan::package_manager_with_effective_path(
+        identity,
+        intent,
+        &effective_path(),
+    )
+}
+
+fn sign_in_recipe(
+    cli_path: &Path,
+    provider: AgentCliInvocation,
+) -> Result<AgentProviderSignInRecipe, String> {
+    let path = effective_path();
+    let identity = executable_identity_path_with_effective_path(cli_path, &path)?;
+    AgentProviderSignInRecipe::from_resolved(identity, provider, &path)
+}
+
 #[test]
 fn semantic_plans_have_fixed_arguments() {
     let cli = executable("exit 0");
-    let plan = AgentProviderProcessPlan::provider(
-        cli.to_str().expect("path"),
+    let plan = provider_plan(
+        &cli,
         AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::ClaudeCode),
     )
     .expect("plan");
     assert_eq!(plan.args(), ["auth", "status", "--json"]);
     let manager = executable_identity(cli.to_str().expect("path")).expect("manager identity");
-    let npm = AgentProviderProcessPlan::package_manager(
+    let npm = package_manager_plan(
         manager.clone(),
         AgentProviderProcessIntent::NpmAvailableVersion(AgentCliInvocation::CodexExec),
     )
     .expect("npm plan");
     assert_eq!(npm.args(), ["view", "@openai/codex", "version", "--json"]);
-    let caskroom = AgentProviderProcessPlan::package_manager(
+    let caskroom = package_manager_plan(
         manager.clone(),
         AgentProviderProcessIntent::BrewCaskroom(AgentCliInvocation::ClaudeCode),
     )
     .expect("caskroom plan");
     assert_eq!(caskroom.args(), ["--caskroom", "claude-code"]);
-    let outdated = AgentProviderProcessPlan::package_manager(
+    let outdated = package_manager_plan(
         manager.clone(),
         AgentProviderProcessIntent::BrewOutdated(AgentCliInvocation::CodexExec),
     )
@@ -50,7 +83,7 @@ fn semantic_plans_have_fixed_arguments() {
         outdated.args(),
         ["outdated", "--json=v2", "--cask", "codex"]
     );
-    let update = AgentProviderProcessPlan::package_manager(
+    let update = package_manager_plan(
         manager,
         AgentProviderProcessIntent::BrewUpdate(AgentCliInvocation::ClaudeCode),
     )
@@ -60,14 +93,53 @@ fn semantic_plans_have_fixed_arguments() {
 }
 
 #[test]
+fn package_manager_resolution_uses_only_the_captured_effective_path() {
+    let nonce = NONCE.fetch_add(1, Ordering::SeqCst);
+    let directory = env::temp_dir().join(format!(
+        "codevo-provider-manager-path-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).expect("manager directory");
+    let npm = directory.join("npm");
+    fs::write(&npm, "#!/bin/sh\nexit 0\n").expect("npm fixture");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).expect("npm mode");
+    }
+    let effective_path = directory.to_string_lossy().into_owned();
+
+    let resolved = resolve_package_manager_on_path("npm", &effective_path).expect("npm");
+
+    assert_eq!(
+        resolved.canonical_path,
+        fs::canonicalize(&npm).expect("canonical npm")
+    );
+    assert!(resolve_package_manager_on_path("brew", "/missing").is_none());
+    assert!(resolve_package_manager_on_path("npm", "relative:/usr/bin").is_none());
+    fs::remove_dir_all(directory).expect("manager cleanup");
+}
+
+#[test]
+fn oversized_host_environment_values_are_omitted_from_process_plans() {
+    assert_eq!(
+        bounded_environment_entry(
+            "CODEX_HOME".to_string(),
+            "x".repeat(MAX_PROVIDER_ENV_VALUE_BYTES + 1),
+        ),
+        None
+    );
+    assert_eq!(
+        bounded_environment_entry("CODEX_HOME".to_string(), "/bounded".to_string()),
+        Some(("CODEX_HOME".to_string(), "/bounded".to_string()))
+    );
+}
+
+#[test]
 fn sign_in_recipes_have_exact_provider_argv_without_a_shell_command() {
     let cli = executable("exit 0");
-    let claude =
-        AgentProviderSignInRecipe::new(cli.to_str().expect("path"), AgentCliInvocation::ClaudeCode)
-            .expect("claude recipe");
-    let codex =
-        AgentProviderSignInRecipe::new(cli.to_str().expect("path"), AgentCliInvocation::CodexExec)
-            .expect("codex recipe");
+    let claude = sign_in_recipe(&cli, AgentCliInvocation::ClaudeCode).expect("claude recipe");
+    let codex = sign_in_recipe(&cli, AgentCliInvocation::CodexExec).expect("codex recipe");
     let canonical_cli = fs::canonicalize(&cli).expect("canonical fake provider");
     assert_eq!(
         claude.args(),
@@ -99,9 +171,7 @@ fn sign_in_recipe_refuses_a_descriptor_path_swap_before_pty_spawn() {
     use std::os::unix::fs::PermissionsExt;
 
     let cli = executable("exit 0");
-    let recipe =
-        AgentProviderSignInRecipe::new(cli.to_str().expect("path"), AgentCliInvocation::CodexExec)
-            .expect("recipe");
+    let recipe = sign_in_recipe(&cli, AgentCliInvocation::CodexExec).expect("recipe");
     let retained = cli.with_extension("retained");
     fs::rename(&cli, &retained).expect("retain captured executable");
     fs::write(&cli, "#!/bin/sh\nexit 0\n").expect("replacement");
@@ -115,8 +185,8 @@ fn sign_in_recipe_refuses_a_descriptor_path_swap_before_pty_spawn() {
 #[test]
 fn output_is_bounded_and_nonzero_is_explicit() {
     let cli = executable("head -c 32000 /dev/zero; exit 3");
-    let plan = AgentProviderProcessPlan::provider(
-        cli.to_str().expect("path"),
+    let plan = provider_plan(
+        &cli,
         AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
     )
     .expect("plan");
@@ -133,7 +203,7 @@ fn output_is_bounded_and_nonzero_is_explicit() {
 fn combined_update_output_limit_is_a_hard_failure() {
     let cli = executable("head -c 700000 /dev/zero & head -c 700000 /dev/zero >&2 & wait");
     let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
-    let plan = AgentProviderProcessPlan::package_manager(
+    let plan = package_manager_plan(
         identity,
         AgentProviderProcessIntent::NpmUpdate {
             provider: AgentCliInvocation::CodexExec,
@@ -160,7 +230,7 @@ fn generic_executor_refuses_update_plans_before_spawn() {
     ));
     let cli = executable(&format!("touch '{}'; exit 0", marker.display()));
     let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
-    let plan = AgentProviderProcessPlan::package_manager(
+    let plan = package_manager_plan(
         identity,
         AgentProviderProcessIntent::NpmUpdate {
             provider: AgentCliInvocation::CodexExec,
@@ -186,8 +256,8 @@ fn update_executor_refuses_probe_plans_before_spawn() {
         NONCE.fetch_add(1, Ordering::SeqCst)
     ));
     let cli = executable(&format!("touch '{}'; exit 0", marker.display()));
-    let plan = AgentProviderProcessPlan::provider(
-        cli.to_str().expect("path"),
+    let plan = provider_plan(
+        &cli,
         AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
     )
     .expect("plan");
@@ -210,7 +280,7 @@ fn cancellation_while_update_spawn_authorization_is_blocked_prevents_spawn() {
     ));
     let cli = executable(&format!("touch '{}'; exit 0", marker.display()));
     let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
-    let plan = AgentProviderProcessPlan::package_manager(
+    let plan = package_manager_plan(
         identity,
         AgentProviderProcessIntent::NpmUpdate {
             provider: AgentCliInvocation::CodexExec,
@@ -257,7 +327,7 @@ fn deadline_expiry_while_update_spawn_authorization_is_blocked_prevents_spawn() 
     ));
     let cli = executable(&format!("touch '{}'; exit 0", marker.display()));
     let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
-    let mut plan = AgentProviderProcessPlan::package_manager(
+    let mut plan = package_manager_plan(
         identity,
         AgentProviderProcessIntent::NpmUpdate {
             provider: AgentCliInvocation::CodexExec,
@@ -295,7 +365,7 @@ fn installer_replacement_during_spawn_authorization_is_rejected_before_spawn() {
     let cli = executable(&format!("touch '{}'; exit 0", marker.display()));
     let retained = cli.with_extension("retained");
     let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
-    let plan = AgentProviderProcessPlan::package_manager(
+    let plan = package_manager_plan(
         identity,
         AgentProviderProcessIntent::NpmUpdate {
             provider: AgentCliInvocation::CodexExec,
@@ -363,7 +433,7 @@ fn interpreter_replacement_during_spawn_authorization_is_rejected_before_spawn()
     .expect("provider with captured interpreter");
     fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).expect("provider permissions");
     let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
-    let plan = AgentProviderProcessPlan::package_manager(
+    let plan = package_manager_plan(
         identity,
         AgentProviderProcessIntent::NpmUpdate {
             provider: AgentCliInvocation::CodexExec,
@@ -403,8 +473,8 @@ fn interpreter_replacement_during_spawn_authorization_is_rejected_before_spawn()
 #[test]
 fn timeout_kills_the_owned_process_group() {
     let cli = executable("sleep 30 & wait");
-    let mut plan = AgentProviderProcessPlan::provider(
-        cli.to_str().expect("path"),
+    let mut plan = provider_plan(
+        &cli,
         AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
     )
     .expect("plan");
@@ -424,8 +494,8 @@ fn validation_uses_the_process_deadline_before_spawn() {
         NONCE.fetch_add(1, Ordering::SeqCst)
     ));
     let cli = executable(&format!("touch '{}'; exit 0", marker.display()));
-    let mut plan = AgentProviderProcessPlan::provider(
-        cli.to_str().expect("path"),
+    let mut plan = provider_plan(
+        &cli,
         AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
     )
     .expect("plan");
@@ -451,8 +521,8 @@ fn cancellation_during_digest_validation_prevents_spawn() {
         "\n".repeat(128 * 1024)
     );
     let cli = executable(&body);
-    let plan = AgentProviderProcessPlan::provider(
-        cli.to_str().expect("path"),
+    let plan = provider_plan(
+        &cli,
         AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
     )
     .expect("plan");
@@ -473,8 +543,8 @@ fn cancellation_during_digest_validation_prevents_spawn() {
 #[test]
 fn owner_cancellation_reaps_the_process_group() {
     let cli = executable("sleep 30 & wait");
-    let plan = AgentProviderProcessPlan::provider(
-        cli.to_str().expect("path"),
+    let plan = provider_plan(
+        &cli,
         AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::CodexExec),
     )
     .expect("plan");
@@ -547,6 +617,57 @@ fn env_shebang_uses_the_captured_interpreter_under_a_hostile_path() {
         .expect("captured output");
     assert!(output.status.success());
     assert_eq!(output.stdout, b"captured");
+    fs::remove_dir_all(fixture).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[test]
+fn effective_path_resolves_env_shebang_and_is_injected_into_sign_in() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let nonce = NONCE.fetch_add(1, Ordering::SeqCst);
+    let fixture = env::temp_dir().join(format!(
+        "codevo-provider-effective-path-{}-{nonce}",
+        std::process::id()
+    ));
+    let detected_bin = fixture.join("detected-bin");
+    fs::create_dir_all(&detected_bin).expect("detected bin");
+    let node = detected_bin.join("node");
+    std::os::unix::fs::symlink("/bin/sh", &node).expect("node shim");
+    let cli = fixture.join("provider");
+    fs::write(&cli, "#!/usr/bin/env node\nprintf captured\n").expect("provider");
+    fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).expect("provider mode");
+    let effective_path = detected_bin.to_string_lossy().into_owned();
+
+    let identity = executable_identity_path_with_effective_path(&cli, &effective_path)
+        .expect("resolved identity");
+    let recipe = AgentProviderSignInRecipe::from_resolved(
+        identity.clone(),
+        AgentCliInvocation::CodexExec,
+        &effective_path,
+    )
+    .expect("sign-in recipe");
+    let mut bound = identity.bound_command().expect("bound command");
+    let output = bound
+        .command_mut()
+        .env_clear()
+        .env("PATH", "/hostile")
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn captured node")
+        .wait_with_output()
+        .expect("captured output");
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"captured");
+    assert_eq!(
+        recipe
+            .env()
+            .iter()
+            .find(|(key, _)| key == "PATH")
+            .map(|(_, value)| value.as_str()),
+        Some(effective_path.as_str())
+    );
     fs::remove_dir_all(fixture).expect("cleanup");
 }
 

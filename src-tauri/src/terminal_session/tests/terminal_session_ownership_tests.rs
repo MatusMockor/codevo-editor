@@ -1,5 +1,9 @@
 use super::*;
 
+fn test_effective_path() -> EffectiveExecutablePath<'static> {
+    EffectiveExecutablePath::new("/usr/local/bin:/usr/bin:/bin").expect("effective path")
+}
+
 #[test]
 fn every_post_spawn_fault_reaps_child_without_publication() {
     use crate::terminal_session::TerminalStartFault;
@@ -21,7 +25,6 @@ fn every_post_spawn_fault_reaps_child_without_publication() {
         );
         let sink = Arc::new(RecordingTerminalSink::default());
         let supervisor = TerminalSupervisor::new();
-
         let result = supervisor.start_with_options(
             crate::terminal_session::TerminalLaunchRoots::workspace_root(PathBuf::from(
                 "/workspace",
@@ -29,6 +32,7 @@ fn every_post_spawn_fault_reaps_child_without_publication() {
             None,
             None,
             crate::terminal_session::TerminalStartOptions {
+                effective_path: test_effective_path(),
                 fault: Some(fault),
                 profile: default_test_profile(),
                 shell_integration_base_dir: None,
@@ -113,6 +117,7 @@ fn descriptor_bound_terminal_enters_retained_directory_after_rename_and_replace(
     let request = TerminalLaunchRequest {
         cwd: root,
         cwd_directory: Some(Arc::new(retained_directory)),
+        effective_path: "/usr/local/bin:/usr/bin:/bin".to_string(),
         profile: TerminalProfile {
             command: Some("./print-marker".to_string()),
             id: "descriptor-test".to_string(),
@@ -172,6 +177,7 @@ fn descriptor_bound_start_publishes_retained_workspace_authority() {
             fs::File::open(&root).expect("retain workspace"),
             authority.clone(),
             crate::terminal_session::TerminalStartOptions {
+                effective_path: test_effective_path(),
                 fault: None,
                 profile: default_test_profile(),
                 shell_integration_base_dir: None,
@@ -230,6 +236,7 @@ fn a_worktree_terminal_records_its_own_cwd_and_keeps_the_workspace_identity() {
             fs::File::open(&worktree).expect("retain worktree"),
             authority,
             crate::terminal_session::TerminalStartOptions {
+                effective_path: test_effective_path(),
                 fault: None,
                 profile: default_test_profile(),
                 shell_integration_base_dir: None,

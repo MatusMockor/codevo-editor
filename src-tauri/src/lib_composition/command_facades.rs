@@ -1,3 +1,5 @@
+#[path = "agent_cli_discovery_commands.rs"]
+mod agent_cli_discovery_commands;
 #[path = "agent_cli_version_commands.rs"]
 mod agent_cli_version_commands;
 #[path = "agent_provider_commands.rs"]

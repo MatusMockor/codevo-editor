@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
+import { defaultAgentCliDiscoveryResult } from "../domain/agentSettings";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { AgentsSettingsSection, type AgentsSettingsSectionProps } from "./AgentsSettingsSection";
 
@@ -60,6 +61,42 @@ describe("AgentsSettingsSection agent CLI path input", () => {
       cliPathInput().dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
     });
     expect(onChangeAgentCliPath).toHaveBeenLastCalledWith("claudeCode", null);
+  });
+
+  it("renders independent automatic discovery results and routes fixed install command copy", () => {
+    const onCopyInstallCommand = vi.fn();
+    const management = providerManagement();
+    render({
+      providerManagement: {
+        ...management,
+        providers: {
+          claudeCode: {
+            ...management.providers.claudeCode,
+            executable: {
+              kind: "detected",
+              path: "/Users/test/.local/bin/claude",
+              version: "2.1.247",
+            },
+          },
+          codex: {
+            ...management.providers.codex,
+            executable: {
+              kind: "notFound",
+              installCommand: "npm i -g @openai/codex",
+            },
+          },
+        },
+      },
+      onCopyInstallCommand,
+    });
+
+    expect(host.textContent).toContain("Detected at /Users/test/.local/bin/claude (v2.1.247)");
+    expect(host.textContent).toContain("npm i -g @openai/codex");
+    const copyCodex = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy Codex install command"]',
+    );
+    act(() => copyCodex?.click());
+    expect(onCopyInstallCommand).toHaveBeenCalledWith("npm i -g @openai/codex");
   });
 
   it("keeps an invalid relative path local without clearing the persisted path on blur", () => {
@@ -268,8 +305,10 @@ describe("AgentsSettingsSection agent CLI path input", () => {
 
 function providerManagement(): AgentProviderManagementSurface {
   return {
+    cliDiscovery: defaultAgentCliDiscoveryResult(),
     providers: {
       claudeCode: {
+        executable: { kind: "detected", path: "/bin/claude", version: "2.1.245" },
         health: {
           kind: "ready",
           installedVersion: "2.1.245",
@@ -282,6 +321,7 @@ function providerManagement(): AgentProviderManagementSurface {
         liveTurnCount: 0,
       },
       codex: {
+        executable: { kind: "detected", path: "/bin/codex", version: "0.149.1" },
         health: {
           kind: "ready",
           installedVersion: "0.149.1",

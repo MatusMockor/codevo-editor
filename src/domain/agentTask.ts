@@ -55,7 +55,6 @@ export interface StartAgentTaskRequest {
   readonly cwd: string;
   readonly isolation: AgentTaskIsolation;
   readonly prompt: string;
-  readonly agentCliPath: string;
   readonly agentCliKind: AgentCliKind;
   readonly resumeSessionId: string | null;
   readonly launch: AgentLaunchOptions;
@@ -229,7 +228,6 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
       "cwd",
       "isolation",
       "prompt",
-      "agentCliPath",
       "agentCliKind",
       "resumeSessionId",
       "launch",
@@ -256,7 +254,6 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
     cwd,
     isolation,
     prompt: boundedText(request.prompt, "request.prompt", MAX_AGENT_TASK_PROMPT_BYTES, false),
-    agentCliPath: agentPath(request.agentCliPath, "request.agentCliPath"),
     agentCliKind: cliKind,
     resumeSessionId: optionalAgentSessionId(request.resumeSessionId, "request.resumeSessionId"),
     launch,

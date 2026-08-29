@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAgentModelFavorites } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
+import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import { AgentModelPicker } from "./AgentModelPicker";
 import type { AgentModelChoice } from "./agentLaunchPresentation";
@@ -359,14 +360,20 @@ function management(
 ): AgentProviderManagementSurface {
   const preferences = defaultAgentProviderPreferences();
   return {
+    cliDiscovery: defaultAgentCliDiscoveryResult(),
     providers: {
       claudeCode: {
+        executable: {
+          kind: "notFound",
+          installCommand: "npm i -g @anthropic-ai/claude-code",
+        },
         health: enabled.claudeCode ? { kind: "notConfigured" } : { kind: "disabled" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },
         liveTurnCount: 0,
       },
       codex: {
+        executable: { kind: "notFound", installCommand: "npm i -g @openai/codex" },
         health: enabled.codex ? { kind: "notConfigured" } : { kind: "disabled" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },

@@ -1,4 +1,7 @@
 use super::*;
+use crate::agent_task_spawner::agent_provider::runtime::{
+    AgentProviderExecutableResolver, ResolvedProviderExecutable,
+};
 use serde_json::json;
 use std::{
     path::{Path, PathBuf},
@@ -178,6 +181,102 @@ impl AgentProviderPackageManagerLocator for FixedPackageManagerLocator {
             "brew" => self.brew.clone(),
             _ => None,
         }
+    }
+}
+
+struct RefreshSwitchingResolver {
+    initial: ResolvedProviderExecutable,
+    updated: ResolvedProviderExecutable,
+    refreshes: AtomicUsize,
+}
+
+impl RefreshSwitchingResolver {
+    fn new(initial: &Path, updated: &Path, effective_path: &str) -> Self {
+        let initial_identity =
+            executable_identity(initial.to_str().expect("initial path")).expect("initial identity");
+        let updated_identity =
+            executable_identity(updated.to_str().expect("updated path")).expect("updated identity");
+        Self {
+            initial: ResolvedProviderExecutable {
+                cli_path: initial_identity
+                    .canonical_path
+                    .to_string_lossy()
+                    .into_owned(),
+                cli_identity: initial_identity,
+                effective_path: effective_path.to_string(),
+                path_fingerprint: "effective-path-1".to_string(),
+                discovery_generation: 1,
+            },
+            updated: ResolvedProviderExecutable {
+                cli_path: updated_identity
+                    .canonical_path
+                    .to_string_lossy()
+                    .into_owned(),
+                cli_identity: updated_identity,
+                effective_path: effective_path.to_string(),
+                path_fingerprint: "effective-path-1".to_string(),
+                discovery_generation: 2,
+            },
+            refreshes: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl AgentProviderExecutableResolver for RefreshSwitchingResolver {
+    fn resolve_provider(
+        &self,
+        _provider: AgentCliInvocation,
+        _manual_override: Option<&str>,
+        refresh: bool,
+    ) -> Result<ResolvedProviderExecutable, String> {
+        let refreshes = match refresh {
+            true => self.refreshes.fetch_add(1, Ordering::SeqCst) + 1,
+            false => self.refreshes.load(Ordering::SeqCst),
+        };
+        if refreshes >= 2 {
+            return Ok(self.updated.clone());
+        }
+        Ok(self.initial.clone())
+    }
+}
+
+struct MissingAfterUpdateResolver {
+    initial: ResolvedProviderExecutable,
+    refreshes: AtomicUsize,
+}
+
+impl MissingAfterUpdateResolver {
+    fn new(initial: &Path, effective_path: &str) -> Self {
+        let identity =
+            executable_identity(initial.to_str().expect("initial path")).expect("initial identity");
+        Self {
+            initial: ResolvedProviderExecutable {
+                cli_path: identity.canonical_path.to_string_lossy().into_owned(),
+                cli_identity: identity,
+                effective_path: effective_path.to_string(),
+                path_fingerprint: "effective-path-1".to_string(),
+                discovery_generation: 1,
+            },
+            refreshes: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl AgentProviderExecutableResolver for MissingAfterUpdateResolver {
+    fn resolve_provider(
+        &self,
+        _provider: AgentCliInvocation,
+        _manual_override: Option<&str>,
+        refresh: bool,
+    ) -> Result<ResolvedProviderExecutable, String> {
+        let refreshes = match refresh {
+            true => self.refreshes.fetch_add(1, Ordering::SeqCst) + 1,
+            false => self.refreshes.load(Ordering::SeqCst),
+        };
+        if refreshes >= 2 {
+            return Err("Provider executable unavailable.".to_string());
+        }
+        Ok(self.initial.clone())
     }
 }
 
@@ -730,6 +829,78 @@ fn local_fake_npm_detects_available_update_and_reprobes_after_install() {
     assert!(npm.install_marker.exists());
 }
 
+#[test]
+fn successful_update_refreshes_to_replaced_executable_before_immediate_turn() {
+    let npm =
+        npm_fixture("printf '0.151.0\n' > '$VERSION_PATH'; /bin/rm -f '$OLD_PROVIDER'; exit 0");
+    let version_path = npm._fixture.path("registry/installed-version");
+    let updated_provider = npm._fixture.executable(
+        "updated/codex",
+        &format!(
+            "if [ \"$1\" = \"--version\" ]; then printf 'codex '; /bin/cat '{}'; exit 0; fi\nif [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then printf 'Logged in using ChatGPT\\n'; exit 0; fi\nexit 9",
+            version_path.display()
+        ),
+    );
+    let script = fs::read_to_string(&npm.manager_path)
+        .expect("npm script")
+        .replace("$VERSION_PATH", &version_path.to_string_lossy())
+        .replace("$OLD_PROVIDER", &npm.provider_path.to_string_lossy());
+    fs::write(&npm.manager_path, script).expect("patched npm script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&npm.manager_path, fs::Permissions::from_mode(0o755))
+            .expect("npm permissions");
+    }
+    let effective_path = std::env::var("PATH").expect("effective PATH");
+    let resolver = Arc::new(RefreshSwitchingResolver::new(
+        &npm.provider_path,
+        &updated_provider,
+        &effective_path,
+    ));
+    let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(resolver));
+    let receipt = registry
+        .register_policy(
+            AgentCliInvocation::CodexExec,
+            1,
+            None,
+            AgentProviderPolicy {
+                enabled: true,
+                cli_path: None,
+                check_for_updates: true,
+            },
+        )
+        .expect("automatic policy");
+    let locator = FixedPackageManagerLocator::npm(&npm.manager_path);
+    let health = health_with_locator(&registry, receipt, &locator);
+    assert!(matches!(
+        health.update,
+        AgentProviderUpdateAvailability::Available { .. }
+    ));
+
+    let result =
+        run_agent_provider_update(&registry, &update_request(receipt), &AtomicBool::new(false))
+            .expect("updated result");
+    assert!(matches!(
+        result,
+        AgentProviderUpdateResult::Succeeded {
+            ref installed_version,
+            ..
+        } if installed_version == "0.151.0"
+    ));
+    assert!(!npm.provider_path.exists());
+    let turn = registry
+        .acquire_turn_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation)
+        .expect("turn after update");
+    assert_eq!(
+        turn.cli_path,
+        fs::canonicalize(updated_provider)
+            .expect("updated provider")
+            .to_string_lossy()
+    );
+    assert!(registry.revalidate_turn_authority(&turn).is_ok());
+}
+
 #[cfg(unix)]
 #[test]
 fn local_fake_brew_detects_available_update_and_reprobes_after_upgrade() {
@@ -1034,6 +1205,62 @@ fn local_fake_zero_exit_without_version_change_is_not_success() {
         "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes)."
     );
     assert!(!output_truncated);
+    assert!(npm.install_marker.exists());
+}
+
+#[test]
+fn successful_installer_with_missing_executable_returns_closed_uncertain_result() {
+    let npm = npm_fixture("printf '0.151.0\n' > '$VERSION_PATH'; exit 0");
+    let version_path = npm._fixture.path("registry/installed-version");
+    let manager = fs::read_to_string(&npm.manager_path)
+        .expect("npm script")
+        .replace("$VERSION_PATH", &version_path.to_string_lossy());
+    fs::write(&npm.manager_path, manager).expect("patched npm script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&npm.manager_path, fs::Permissions::from_mode(0o755))
+            .expect("npm permissions");
+    }
+    let locator = FixedPackageManagerLocator::npm(&npm.manager_path);
+    let effective_path = std::env::var("PATH").expect("effective PATH");
+    let resolver = Arc::new(MissingAfterUpdateResolver::new(
+        &npm.provider_path,
+        &effective_path,
+    ));
+    let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(resolver));
+    let receipt = registry
+        .register_policy(
+            AgentCliInvocation::CodexExec,
+            1,
+            None,
+            AgentProviderPolicy {
+                enabled: true,
+                cli_path: None,
+                check_for_updates: true,
+            },
+        )
+        .expect("automatic policy");
+    let health = health_with_locator(&registry, receipt, &locator);
+    assert!(matches!(
+        health.update,
+        AgentProviderUpdateAvailability::Available { .. }
+    ));
+
+    let result =
+        run_agent_provider_update(&registry, &update_request(receipt), &AtomicBool::new(false))
+            .expect("closed post-install result");
+
+    assert!(
+        matches!(
+            &result,
+            AgentProviderUpdateResult::Failed {
+                reason: AgentProviderUpdateFailureReason::Uncertain,
+                ..
+            }
+        ),
+        "got {result:?}"
+    );
     assert!(npm.install_marker.exists());
 }
 

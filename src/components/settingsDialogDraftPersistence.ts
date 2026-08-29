@@ -1,6 +1,6 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { AppSettings, WorkspaceSettings } from "../domain/settings";
-import type { SettingsSaveInput } from "./SettingsDialog";
+import type { SettingsSaveInput } from "./settingsDialogTypes";
 
 interface SettingsDialogDraftPersistenceOptions {
   readonly appSettingsRef: MutableRefObject<AppSettings>;

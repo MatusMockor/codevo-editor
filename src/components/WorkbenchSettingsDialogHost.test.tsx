@@ -4,6 +4,7 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
+import type { AppUpdaterGateway } from "../domain/appUpdater";
 import { waitForReact } from "../test/reactTestLifecycle";
 import {
   WorkbenchSettingsDialogHost,
@@ -50,27 +51,49 @@ describe("WorkbenchSettingsDialogHost", () => {
     expect(nodeLaunchDialog()).not.toBeNull();
   });
 
+  it("wires the required application updater into General settings", async () => {
+    const gateway = idleAppUpdaterGateway();
+    await render(settingsModel(), missingConfigurationGateway(), gateway);
+
+    clickButton("Check for updates");
+    await waitForReact(() => expect(gateway.check).toHaveBeenCalledOnce());
+    await waitForReact(() => expect(document.body.textContent).toContain("Codevo is up to date."));
+  });
+
   async function render(
     workbench: WorkbenchSettingsModel,
     workspaceFiles: NodeLaunchConfigurationFileGateway,
+    appUpdaterGateway: AppUpdaterGateway = idleAppUpdaterGateway(),
   ) {
     await act(async () => {
-      root.render(<ControlledSettingsHost workbench={workbench} workspaceFiles={workspaceFiles} />);
+      root.render(
+        <ControlledSettingsHost
+          appUpdaterGateway={appUpdaterGateway}
+          workbench={workbench}
+          workspaceFiles={workspaceFiles}
+        />,
+      );
       await Promise.resolve();
     });
   }
 });
 
 function ControlledSettingsHost({
+  appUpdaterGateway,
   workbench,
   workspaceFiles,
 }: {
+  readonly appUpdaterGateway: AppUpdaterGateway;
   readonly workbench: WorkbenchSettingsModel;
   readonly workspaceFiles: NodeLaunchConfigurationFileGateway;
 }) {
   const [nodeLaunchConfigurationsOpen, setNodeLaunchConfigurationsOpen] = useState(false);
   return (
     <WorkbenchSettingsDialogHost
+      appUpdaterComposition={{
+        appUpdaterGateway,
+        appVersion: "0.2.0-beta.1",
+      }}
       systemFontGateway={{ listMonospaceFontFamilies: async () => [] }}
       workbench={{
         ...workbench,
@@ -81,6 +104,18 @@ function ControlledSettingsHost({
       workspaceFiles={workspaceFiles}
     />
   );
+}
+
+function idleAppUpdaterGateway(): AppUpdaterGateway {
+  return {
+    check: vi.fn<AppUpdaterGateway["check"]>(async () => ({
+      kind: "upToDate",
+      currentVersion: "0.2.0-beta.1",
+    })),
+    dispose: vi.fn(async () => undefined),
+    download: vi.fn(async () => undefined),
+    installAndRestart: vi.fn(async () => undefined),
+  };
 }
 
 function settingsModel(id = "a"): WorkbenchSettingsModel {

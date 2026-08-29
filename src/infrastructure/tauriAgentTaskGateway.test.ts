@@ -16,7 +16,6 @@ const START_REQUEST: StartAgentTaskRequest = {
   cwd: "/repo",
   isolation: "in-place",
   prompt: "do the thing",
-  agentCliPath: "/usr/local/bin/claude",
   agentCliKind: "claudeCode",
   resumeSessionId: null,
   launch: defaultAgentLaunchOptions("claudeCode"),
@@ -179,9 +178,12 @@ describe("TauriAgentTaskGateway", () => {
     const invokeCommand = vi.fn<InvokeAgentTaskCommand>();
     const gateway = new TauriAgentTaskGateway(invokeCommand, vi.fn(), available);
 
-    await expect(gateway.startAgentTask({ ...START_REQUEST, agentCliPath: "" })).rejects.toThrow(
-      TypeError,
-    );
+    await expect(
+      gateway.startAgentTask({
+        ...START_REQUEST,
+        env: { PATH: "/tmp/bin" },
+      } as StartAgentTaskRequest),
+    ).rejects.toThrow(TypeError);
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 });

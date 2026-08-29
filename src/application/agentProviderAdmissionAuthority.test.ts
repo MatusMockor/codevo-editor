@@ -14,7 +14,6 @@ import {
 const READY: ReadyAgentProviderAdmissionAuthority = {
   provider: "claudeCode",
   revision: 4,
-  cliPath: "/usr/local/bin/claude",
   providerGeneration: 7,
   disposition: { kind: "ready" },
 };
@@ -67,7 +66,7 @@ describe("agent provider admission authority", () => {
     }
   });
 
-  it("rejects provider, revision, path, generation, and disposition replacement", () => {
+  it("rejects provider, revision, generation, and disposition replacement", () => {
     expect(isCurrentAgentProviderAdmissionAuthority(() => READY, READY)).toBe(true);
     expect(
       isCurrentAgentProviderAdmissionAuthority(() => ({ ...READY, provider: "codex" }), READY),
@@ -75,12 +74,6 @@ describe("agent provider admission authority", () => {
     expect(isCurrentAgentProviderAdmissionAuthority(() => ({ ...READY, revision: 5 }), READY)).toBe(
       false,
     );
-    expect(
-      isCurrentAgentProviderAdmissionAuthority(
-        () => ({ ...READY, cliPath: "/opt/bin/claude" }),
-        READY,
-      ),
-    ).toBe(false);
     expect(
       isCurrentAgentProviderAdmissionAuthority(() => ({ ...READY, providerGeneration: 8 }), READY),
     ).toBe(false);
@@ -95,7 +88,7 @@ describe("agent provider admission authority", () => {
   it("rejects an A to B to A path replacement by revision", () => {
     let current = READY;
     const read = () => current;
-    current = { ...READY, revision: 5, cliPath: "/opt/bin/claude", providerGeneration: 8 };
+    current = { ...READY, revision: 5, providerGeneration: 8 };
     current = { ...READY, revision: 6, providerGeneration: 9 };
 
     expect(isCurrentAgentProviderAdmissionAuthority(read, READY)).toBe(false);

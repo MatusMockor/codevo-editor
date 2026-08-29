@@ -7,10 +7,12 @@ pub struct PortablePtySpawner;
 
 impl TerminalPtySpawner for PortablePtySpawner {
     fn spawn(&self, request: &TerminalLaunchRequest) -> Result<SpawnedTerminal, String> {
-        let command = command_builder(
+        let mut command = command_builder(
             &request.profile,
             request.shell_integration_base_dir.as_deref(),
         );
+        let effective_path = EffectiveExecutablePath::new(&request.effective_path)?;
+        configure_terminal_environment(&mut command, effective_path);
         spawn_prepared_command(request, command, || Ok(()))
     }
 }

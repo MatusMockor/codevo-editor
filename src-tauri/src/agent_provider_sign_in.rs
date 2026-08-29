@@ -11,6 +11,7 @@ use crate::{
         },
         AgentCliInvocation,
     },
+    effective_executable_environment::EffectiveExecutablePath,
     terminal::{TerminalEventSink, TerminalRuntimeStatus, TerminalSize},
     terminal_session::{
         spawn_prepared_command_with_child, SpawnedTerminal, TerminalChild, TerminalExitStatus,
@@ -97,7 +98,11 @@ pub fn start_agent_provider_sign_in(
             return refused(provider, generation, map_admission_error(&error));
         }
     };
-    let recipe = match AgentProviderSignInRecipe::new(&lease.cli_path, provider) {
+    let recipe = match AgentProviderSignInRecipe::from_resolved(
+        lease.cli_identity.clone(),
+        provider,
+        &lease.effective_path,
+    ) {
         Ok(recipe) => recipe,
         Err(_) => {
             return refused(
@@ -107,18 +112,27 @@ pub fn start_agent_provider_sign_in(
             );
         }
     };
-    let cli_path = lease.cli_path.clone();
+    let effective_path_value = lease.effective_path.clone();
+    let effective_path = match EffectiveExecutablePath::new(&effective_path_value) {
+        Ok(path) => path,
+        Err(_) => {
+            return refused(
+                provider,
+                generation,
+                AgentProviderSignInRefusalReason::NotConfigured,
+            );
+        }
+    };
     let spawner = AgentProviderSignInPtySpawner {
         recipe,
         registry: Arc::clone(registry),
-        provider,
-        generation,
-        cli_path,
+        authority: lease.authority(),
         lease: Mutex::new(Some(lease)),
     };
     match terminal.start_semantic_session(
         provider_sign_in_cwd(),
         request.size.into(),
+        effective_path,
         &spawner,
         sink,
     ) {
@@ -150,9 +164,7 @@ pub fn start_agent_provider_sign_in(
 struct AgentProviderSignInPtySpawner {
     recipe: AgentProviderSignInRecipe,
     registry: Arc<AgentProviderRuntimeRegistry>,
-    provider: AgentCliInvocation,
-    generation: u64,
-    cli_path: String,
+    authority: crate::agent_task_spawner::agent_provider::runtime::ProviderSignInAuthority,
     lease: Mutex<Option<ProviderSignInLease>>,
 }
 
@@ -177,11 +189,7 @@ impl TerminalPtySpawner for AgentProviderSignInPtySpawner {
                 if !self.recipe.identity_is_current()
                     || self
                         .registry
-                        .revalidate_sign_in_authority(
-                            self.provider,
-                            self.generation,
-                            &self.cli_path,
-                        )
+                        .revalidate_sign_in_snapshot(&self.authority)
                         .is_err()
                     || !self.recipe.identity_is_current()
                 {

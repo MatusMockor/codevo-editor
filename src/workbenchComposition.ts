@@ -7,9 +7,11 @@ import { WorkspaceNettePresentersGateway } from "./application/workspaceNettePre
 import { WorkspaceNetteRoutesGateway } from "./application/workspaceNetteRoutesGateway";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
 import { BrowserDirtyTextSearchGateway } from "./infrastructure/browserDirtyTextSearchGateway";
+import { BrowserEditorChangeHunksGateway } from "./infrastructure/browserEditorChangeHunksGateway";
+import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { TauriAgentRootLeaseGateway } from "./infrastructure/tauriAgentRootLeaseGateway";
-import { TauriAgentCliVersionGateway } from "./infrastructure/tauriAgentCliVersionGateway";
+import { TauriAgentCliDiscoveryGateway } from "./infrastructure/tauriAgentCliDiscoveryGateway";
 import { TauriAgentTaskGateway } from "./infrastructure/tauriAgentTaskGateway";
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
@@ -74,6 +76,12 @@ import { TauriWorkspaceRuntimeLifecycleGateway } from "./infrastructure/tauriWor
 import { TauriWorkspaceSourceDiscoveryGateway } from "./infrastructure/tauriWorkspaceSourceDiscoveryGateway";
 import { TauriWorkspaceTestDiscoveryGateway } from "./infrastructure/tauriWorkspaceTestDiscoveryGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
+import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import packageMetadata from "../package.json";
+
+export const CODEVO_APP_VERSION = packageMetadata.version;
 
 /**
  * Eager, process-wide adapters used by the desktop workbench composition root.
@@ -86,18 +94,25 @@ export function createWorkbenchComposition() {
   const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
   const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
   const quickInputCoordinator = new QuickInputCoordinator();
+  const appUpdaterGateway = new TauriAppUpdaterGateway({ check, relaunch }, CODEVO_APP_VERSION);
 
   return {
-    agentCliVersionGateway: new TauriAgentCliVersionGateway(),
+    agentCliDiscoveryGateway: new TauriAgentCliDiscoveryGateway(),
     agentProviderGateway: new TauriAgentProviderGateway(),
     agentProviderSignInGateway: new TauriAgentProviderSignInGateway(),
     agentRootLeaseGateway: new TauriAgentRootLeaseGateway(),
     agentTaskGateway: new TauriAgentTaskGateway(),
+    appUpdater: {
+      appUpdaterGateway,
+      appVersion: CODEVO_APP_VERSION,
+    },
     cursorStore: new EditorCursorStore(),
     artisanRoutesGateway: new TauriArtisanRoutesGateway(),
     cancelJavaScriptTypeScriptLanguageServerRequest,
     debugGateway: new TauriDebugGateway(),
+    debugTextClipboard: new BrowserTextClipboardGateway(),
     dirtyCloseDecisionCoordinator: new DirtyCloseDecisionCoordinator(),
+    editorChangeHunksGateway: new BrowserEditorChangeHunksGateway(),
     gitGateway: new TauriGitGateway(),
     gitHistoryGateway: new TauriGitHistoryGateway(),
     gitWorktreeGateway: new TauriGitWorktreeGateway(),

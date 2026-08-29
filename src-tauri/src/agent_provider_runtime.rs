@@ -10,6 +10,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "agent_provider_runtime/resolution.rs"]
+mod resolution;
+use resolution::ResolvedProviderExecutableRef;
+#[cfg(test)]
+use resolution::TestProviderExecutableResolver;
+pub use resolution::{AgentProviderExecutableResolver, ResolvedProviderExecutable};
+
 pub const MAX_PROVIDER_OPERATION_ID_BYTES: usize = 128;
 pub const AGENT_PROVIDER_DISABLED_ERROR: &str =
     "Enable this provider in Settings before starting a turn.";
@@ -83,8 +90,10 @@ struct ProviderRuntimeState {
 pub struct AgentProviderRuntimeRegistry {
     state: Mutex<ProviderRuntimeState>,
     settlement: Condvar,
+    discovery: Arc<dyn AgentProviderExecutableResolver>,
 }
 
+#[cfg(test)]
 impl Default for AgentProviderRuntimeRegistry {
     fn default() -> Self {
         Self::new()
@@ -92,10 +101,20 @@ impl Default for AgentProviderRuntimeRegistry {
 }
 
 impl AgentProviderRuntimeRegistry {
+    #[cfg(test)]
     pub fn new() -> Self {
         Self {
             state: Mutex::new(ProviderRuntimeState::default()),
             settlement: Condvar::new(),
+            discovery: Arc::new(TestProviderExecutableResolver),
+        }
+    }
+
+    pub fn with_discovery(discovery: Arc<dyn AgentProviderExecutableResolver>) -> Self {
+        Self {
+            state: Mutex::new(ProviderRuntimeState::default()),
+            settlement: Condvar::new(),
+            discovery,
         }
     }
 
@@ -158,19 +177,37 @@ impl AgentProviderRuntimeRegistry {
         })
     }
 
+    #[cfg(test)]
     pub fn acquire_turn(
         self: &Arc<Self>,
         provider: AgentCliInvocation,
         generation: u64,
         cli_path: &str,
     ) -> Result<ProviderTurnLease, String> {
+        let lease = self.acquire_turn_for_generation(provider, generation)?;
+        if lease.cli_path != cli_path {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(lease)
+    }
+
+    pub fn acquire_turn_for_generation(
+        self: &Arc<Self>,
+        provider: AgentCliInvocation,
+        generation: u64,
+    ) -> Result<ProviderTurnLease, String> {
+        let policy = self.operation_policy(provider, generation)?;
+        let resolved = self.resolve_provider(provider, &policy, false)?;
         let mut state = self.state();
         if state.starts_closed {
             return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
         }
         let configuration = configuration_mut(&mut state, provider)
             .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
-        validate_current(configuration, generation, cli_path)?;
+        validate_current(configuration, generation)?;
+        if configuration.policy != policy {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
         if !configuration.policy.enabled {
             return Err(AGENT_PROVIDER_DISABLED_ERROR.to_string());
         }
@@ -185,6 +222,12 @@ impl AgentProviderRuntimeRegistry {
             registry: Arc::clone(self),
             provider,
             generation,
+            policy,
+            cli_path: resolved.cli_path,
+            cli_identity: resolved.cli_identity,
+            effective_path: resolved.effective_path,
+            path_fingerprint: resolved.path_fingerprint,
+            discovery_generation: resolved.discovery_generation,
         })
     }
 
@@ -204,19 +247,38 @@ impl AgentProviderRuntimeRegistry {
         ))
     }
 
+    #[cfg(test)]
     pub fn acquire_health(
         self: &Arc<Self>,
         provider: AgentCliInvocation,
         generation: u64,
         cli_path: &str,
     ) -> Result<ProviderHealthLease, String> {
+        let lease = self.acquire_health_resolved(provider, generation, false)?;
+        if lease.cli_path != cli_path {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(lease)
+    }
+
+    fn acquire_health_resolved(
+        self: &Arc<Self>,
+        provider: AgentCliInvocation,
+        generation: u64,
+        refresh: bool,
+    ) -> Result<ProviderHealthLease, String> {
+        let policy = self.operation_policy(provider, generation)?;
+        let resolved = self.resolve_provider(provider, &policy, refresh)?;
         let mut state = self.state();
         if state.starts_closed || state.health_count >= 2 {
             return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
         }
         let configuration = configuration_mut(&mut state, provider)
             .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
-        validate_current(configuration, generation, cli_path)?;
+        validate_current(configuration, generation)?;
+        if configuration.policy != policy {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
         if !configuration.policy.enabled {
             return Err(AGENT_PROVIDER_DISABLED_ERROR.to_string());
         }
@@ -231,6 +293,11 @@ impl AgentProviderRuntimeRegistry {
             provider,
             generation,
             policy,
+            cli_path: resolved.cli_path,
+            cli_identity: resolved.cli_identity,
+            effective_path: resolved.effective_path,
+            path_fingerprint: resolved.path_fingerprint,
+            discovery_generation: resolved.discovery_generation,
         })
     }
 
@@ -239,34 +306,13 @@ impl AgentProviderRuntimeRegistry {
         provider: AgentCliInvocation,
         generation: u64,
     ) -> Result<ProviderHealthLease, String> {
-        let cli_path = {
-            let state = self.state();
-            let configuration = configuration(&state, provider)
-                .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
-            if configuration.generation != generation {
-                return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
-            }
-            configuration
-                .policy
-                .cli_path
-                .clone()
-                .ok_or_else(|| "Agent provider CLI path is not configured.".to_string())?
-        };
-        self.acquire_health(provider, generation, &cli_path)
+        self.acquire_health_resolved(provider, generation, true)
     }
 
     pub fn revalidate_health(&self, lease: &ProviderHealthLease) -> Result<(), String> {
-        let state = self.state();
-        let configuration = configuration(&state, lease.provider)
-            .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
-        if configuration.generation != lease.generation
-            || configuration.policy != lease.policy
-            || configuration.health_count == 0
-            || configuration.updating
-        {
-            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
-        }
-        Ok(())
+        self.revalidate_health_state(lease)?;
+        self.revalidate_resolution(lease.provider, &lease.policy, lease.resolved())?;
+        self.revalidate_health_state(lease)
     }
 
     pub fn cache_candidate(
@@ -274,6 +320,16 @@ impl AgentProviderRuntimeRegistry {
         lease: &ProviderHealthLease,
         candidate: Option<AgentProviderUpdateCandidate>,
     ) -> Result<(), String> {
+        self.revalidate_health(lease)?;
+        if candidate.as_ref().is_some_and(|candidate| {
+            candidate.cli_path != lease.cli_path
+                || candidate.cli_identity != lease.cli_identity
+                || candidate.effective_path != lease.effective_path
+                || candidate.path_fingerprint != lease.path_fingerprint
+                || candidate.discovery_generation != lease.discovery_generation
+        }) {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
         let mut state = self.state();
         let configuration = configuration_mut(&mut state, lease.provider)
             .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
@@ -372,6 +428,8 @@ impl AgentProviderRuntimeRegistry {
         provider: AgentCliInvocation,
         generation: u64,
     ) -> Result<ProviderSignInLease, String> {
+        let policy = self.operation_policy(provider, generation)?;
+        let resolved = self.resolve_provider(provider, &policy, false)?;
         let mut state = self.state();
         if state.starts_closed {
             return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
@@ -381,14 +439,12 @@ impl AgentProviderRuntimeRegistry {
         if configuration.generation != generation {
             return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
         }
+        if configuration.policy != policy {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
         if !configuration.policy.enabled {
             return Err(AGENT_PROVIDER_DISABLED_ERROR.to_string());
         }
-        let cli_path = configuration
-            .policy
-            .cli_path
-            .clone()
-            .ok_or_else(|| "Agent provider CLI path is not configured.".to_string())?;
         if configuration.turn_count > 0 {
             return Err(AGENT_PROVIDER_TURN_ACTIVE_ERROR.to_string());
         }
@@ -403,10 +459,31 @@ impl AgentProviderRuntimeRegistry {
             registry: Arc::clone(self),
             provider,
             generation,
-            cli_path,
+            policy,
+            cli_path: resolved.cli_path,
+            cli_identity: resolved.cli_identity,
+            effective_path: resolved.effective_path,
+            path_fingerprint: resolved.path_fingerprint,
+            discovery_generation: resolved.discovery_generation,
         })
     }
 
+    pub fn revalidate_turn_authority(&self, lease: &ProviderTurnLease) -> Result<(), String> {
+        self.revalidate_operation_state(lease.provider, lease.generation, &lease.policy)?;
+        self.revalidate_resolution(lease.provider, &lease.policy, lease.resolved())?;
+        self.revalidate_operation_state(lease.provider, lease.generation, &lease.policy)
+    }
+
+    pub fn revalidate_sign_in_snapshot(
+        &self,
+        authority: &ProviderSignInAuthority,
+    ) -> Result<(), String> {
+        self.revalidate_sign_in_state(authority.provider, authority.generation, &authority.policy)?;
+        self.revalidate_resolution(authority.provider, &authority.policy, authority.resolved())?;
+        self.revalidate_sign_in_state(authority.provider, authority.generation, &authority.policy)
+    }
+
+    #[cfg(test)]
     pub fn revalidate_sign_in_authority(
         &self,
         provider: AgentCliInvocation,
@@ -429,6 +506,120 @@ impl AgentProviderRuntimeRegistry {
         Ok(())
     }
 
+    fn operation_policy(
+        &self,
+        provider: AgentCliInvocation,
+        generation: u64,
+    ) -> Result<AgentProviderPolicy, String> {
+        let state = self.state();
+        if state.starts_closed {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        let configuration = configuration(&state, provider)
+            .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
+        if configuration.generation != generation {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        if !configuration.policy.enabled {
+            return Err(AGENT_PROVIDER_DISABLED_ERROR.to_string());
+        }
+        Ok(configuration.policy.clone())
+    }
+
+    fn resolve_provider(
+        &self,
+        provider: AgentCliInvocation,
+        policy: &AgentProviderPolicy,
+        refresh: bool,
+    ) -> Result<ResolvedProviderExecutable, String> {
+        self.discovery
+            .resolve_provider(provider, policy.cli_path.as_deref(), refresh)
+    }
+
+    fn revalidate_resolution(
+        &self,
+        provider: AgentCliInvocation,
+        policy: &AgentProviderPolicy,
+        expected: ResolvedProviderExecutableRef<'_>,
+    ) -> Result<(), String> {
+        if !expected.cli_identity.is_current_for_spawn() {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        let observed = self.resolve_provider(provider, policy, false)?;
+        if observed.cli_path != expected.cli_path
+            || observed.cli_identity != *expected.cli_identity
+            || observed.effective_path != expected.effective_path
+            || observed.path_fingerprint != expected.path_fingerprint
+            || observed.discovery_generation != expected.discovery_generation
+        {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        if !expected.cli_identity.is_current_for_spawn()
+            || !observed.cli_identity.is_current_for_spawn()
+        {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(())
+    }
+
+    fn revalidate_operation_state(
+        &self,
+        provider: AgentCliInvocation,
+        generation: u64,
+        policy: &AgentProviderPolicy,
+    ) -> Result<(), String> {
+        let state = self.state();
+        let configuration = configuration(&state, provider)
+            .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
+        if state.starts_closed
+            || configuration.generation != generation
+            || configuration.policy != *policy
+            || !configuration.policy.enabled
+            || configuration.updating
+            || configuration.signing_in
+        {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(())
+    }
+
+    fn revalidate_health_state(&self, lease: &ProviderHealthLease) -> Result<(), String> {
+        let state = self.state();
+        let configuration = configuration(&state, lease.provider)
+            .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
+        if state.starts_closed
+            || configuration.generation != lease.generation
+            || configuration.policy != lease.policy
+            || configuration.health_count == 0
+            || configuration.updating
+        {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(())
+    }
+
+    fn revalidate_sign_in_state(
+        &self,
+        provider: AgentCliInvocation,
+        generation: u64,
+        policy: &AgentProviderPolicy,
+    ) -> Result<(), String> {
+        let state = self.state();
+        let configuration = configuration(&state, provider)
+            .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
+        if state.starts_closed
+            || configuration.generation != generation
+            || configuration.policy != *policy
+            || !configuration.policy.enabled
+            || !configuration.signing_in
+            || configuration.turn_count > 0
+            || configuration.updating
+        {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(())
+    }
+
     pub fn update_is_current(&self, lease: &ProviderUpdateLease) -> bool {
         let state = self.state();
         let Some(configuration) = configuration(&state, lease.provider) else {
@@ -437,6 +628,84 @@ impl AgentProviderRuntimeRegistry {
         configuration.generation == lease.generation
             && configuration.updating
             && configuration.candidate.as_ref() == Some(&lease.candidate)
+    }
+
+    pub fn revalidate_update_authority(&self, lease: &ProviderUpdateLease) -> Result<(), String> {
+        if !self.update_is_current(lease) {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        let policy = {
+            let state = self.state();
+            let configuration = configuration(&state, lease.provider)
+                .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
+            if configuration.generation != lease.generation {
+                return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+            }
+            configuration.policy.clone()
+        };
+        self.revalidate_resolution(
+            lease.provider,
+            &policy,
+            ResolvedProviderExecutableRef {
+                cli_path: &lease.candidate.cli_path,
+                cli_identity: &lease.candidate.cli_identity,
+                effective_path: &lease.candidate.effective_path,
+                path_fingerprint: &lease.candidate.path_fingerprint,
+                discovery_generation: lease.candidate.discovery_generation,
+            },
+        )?;
+        if !self.update_is_current(lease) {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(())
+    }
+
+    pub fn refresh_updated_executable(
+        &self,
+        lease: &ProviderUpdateLease,
+    ) -> Result<ResolvedProviderExecutable, String> {
+        let policy = self.update_policy(lease)?;
+        let resolved = self.resolve_provider(lease.provider, &policy, true)?;
+        if !self.update_is_current(lease) {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(resolved)
+    }
+
+    pub fn revalidate_updated_executable(
+        &self,
+        lease: &ProviderUpdateLease,
+        resolved: &ResolvedProviderExecutable,
+    ) -> Result<(), String> {
+        let policy = self.update_policy(lease)?;
+        self.revalidate_resolution(
+            lease.provider,
+            &policy,
+            ResolvedProviderExecutableRef {
+                cli_path: &resolved.cli_path,
+                cli_identity: &resolved.cli_identity,
+                effective_path: &resolved.effective_path,
+                path_fingerprint: &resolved.path_fingerprint,
+                discovery_generation: resolved.discovery_generation,
+            },
+        )?;
+        if !self.update_is_current(lease) {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(())
+    }
+
+    fn update_policy(&self, lease: &ProviderUpdateLease) -> Result<AgentProviderPolicy, String> {
+        if !self.update_is_current(lease) {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        let state = self.state();
+        let configuration = configuration(&state, lease.provider)
+            .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
+        if configuration.generation != lease.generation || !configuration.updating {
+            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+        }
+        Ok(configuration.policy.clone())
     }
 
     pub fn close_operation_admission(&self) {
@@ -561,14 +830,8 @@ fn validate_policy(policy: &AgentProviderPolicy) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_current(
-    configuration: &ProviderConfiguration,
-    generation: u64,
-    cli_path: &str,
-) -> Result<(), String> {
-    if configuration.generation != generation
-        || configuration.policy.cli_path.as_deref() != Some(cli_path)
-    {
+fn validate_current(configuration: &ProviderConfiguration, generation: u64) -> Result<(), String> {
+    if configuration.generation != generation {
         return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
     }
     Ok(())
@@ -643,18 +906,21 @@ impl ResolvedAgentProviderInstaller {
         &self,
         provider: AgentCliInvocation,
         version: &str,
+        effective_path: &str,
     ) -> Result<AgentProviderProcessPlan, String> {
         let plan = match self {
-            Self::Npm { program, .. } => AgentProviderProcessPlan::package_manager(
+            Self::Npm { program, .. } => AgentProviderProcessPlan::package_manager_with_effective_path(
                 program.clone(),
                 crate::agent_task_spawner::agent_provider::process::AgentProviderProcessIntent::NpmUpdate {
                     provider,
                     version: version.to_string(),
                 },
+                effective_path,
             ),
-            Self::Homebrew { program, .. } => AgentProviderProcessPlan::package_manager(
+            Self::Homebrew { program, .. } => AgentProviderProcessPlan::package_manager_with_effective_path(
                 program.clone(),
                 crate::agent_task_spawner::agent_provider::process::AgentProviderProcessIntent::BrewUpdate(provider),
+                effective_path,
             ),
         }?;
         let expected = match self {
@@ -671,6 +937,9 @@ impl ResolvedAgentProviderInstaller {
 pub struct AgentProviderUpdateCandidate {
     pub cli_path: String,
     pub cli_identity: ExecutableIdentity,
+    pub effective_path: String,
+    pub path_fingerprint: String,
+    pub discovery_generation: u64,
     pub installed_version: String,
     pub available_version: String,
     pub installer: ResolvedAgentProviderInstaller,
@@ -686,6 +955,24 @@ pub struct ProviderTurnLease {
     registry: Arc<AgentProviderRuntimeRegistry>,
     provider: AgentCliInvocation,
     generation: u64,
+    policy: AgentProviderPolicy,
+    pub cli_path: String,
+    pub cli_identity: ExecutableIdentity,
+    pub effective_path: String,
+    pub path_fingerprint: String,
+    pub discovery_generation: u64,
+}
+
+impl ProviderTurnLease {
+    fn resolved(&self) -> ResolvedProviderExecutableRef<'_> {
+        ResolvedProviderExecutableRef {
+            cli_path: &self.cli_path,
+            cli_identity: &self.cli_identity,
+            effective_path: &self.effective_path,
+            path_fingerprint: &self.path_fingerprint,
+            discovery_generation: self.discovery_generation,
+        }
+    }
 }
 
 impl Drop for ProviderTurnLease {
@@ -699,6 +986,23 @@ pub struct ProviderHealthLease {
     pub provider: AgentCliInvocation,
     pub generation: u64,
     pub policy: AgentProviderPolicy,
+    pub cli_path: String,
+    pub cli_identity: ExecutableIdentity,
+    pub effective_path: String,
+    pub path_fingerprint: String,
+    pub discovery_generation: u64,
+}
+
+impl ProviderHealthLease {
+    fn resolved(&self) -> ResolvedProviderExecutableRef<'_> {
+        ResolvedProviderExecutableRef {
+            cli_path: &self.cli_path,
+            cli_identity: &self.cli_identity,
+            effective_path: &self.effective_path,
+            path_fingerprint: &self.path_fingerprint,
+            discovery_generation: self.discovery_generation,
+        }
+    }
 }
 
 impl Drop for ProviderHealthLease {
@@ -725,7 +1029,51 @@ pub struct ProviderSignInLease {
     registry: Arc<AgentProviderRuntimeRegistry>,
     pub provider: AgentCliInvocation,
     pub generation: u64,
+    policy: AgentProviderPolicy,
     pub cli_path: String,
+    pub cli_identity: ExecutableIdentity,
+    pub effective_path: String,
+    pub path_fingerprint: String,
+    pub discovery_generation: u64,
+}
+
+impl ProviderSignInLease {
+    pub fn authority(&self) -> ProviderSignInAuthority {
+        ProviderSignInAuthority {
+            provider: self.provider,
+            generation: self.generation,
+            policy: self.policy.clone(),
+            cli_path: self.cli_path.clone(),
+            cli_identity: self.cli_identity.clone(),
+            effective_path: self.effective_path.clone(),
+            path_fingerprint: self.path_fingerprint.clone(),
+            discovery_generation: self.discovery_generation,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ProviderSignInAuthority {
+    provider: AgentCliInvocation,
+    generation: u64,
+    policy: AgentProviderPolicy,
+    cli_path: String,
+    cli_identity: ExecutableIdentity,
+    effective_path: String,
+    path_fingerprint: String,
+    discovery_generation: u64,
+}
+
+impl ProviderSignInAuthority {
+    fn resolved(&self) -> ResolvedProviderExecutableRef<'_> {
+        ResolvedProviderExecutableRef {
+            cli_path: &self.cli_path,
+            cli_identity: &self.cli_identity,
+            effective_path: &self.effective_path,
+            path_fingerprint: &self.path_fingerprint,
+            discovery_generation: self.discovery_generation,
+        }
+    }
 }
 
 impl std::fmt::Debug for ProviderSignInLease {
@@ -780,6 +1128,247 @@ mod tests {
         }
     }
 
+    fn auto_policy() -> AgentProviderPolicy {
+        AgentProviderPolicy {
+            enabled: true,
+            cli_path: None,
+            check_for_updates: false,
+        }
+    }
+
+    struct FakeResolver {
+        resolved: Mutex<ResolvedProviderExecutable>,
+        refreshes: AtomicU64,
+    }
+
+    impl FakeResolver {
+        fn new(identity: ExecutableIdentity, effective_path: &str) -> Self {
+            Self {
+                resolved: Mutex::new(ResolvedProviderExecutable {
+                    cli_path: identity.canonical_path.to_string_lossy().into_owned(),
+                    cli_identity: identity,
+                    effective_path: effective_path.to_string(),
+                    path_fingerprint: format!("fingerprint:{effective_path}"),
+                    discovery_generation: 1,
+                }),
+                refreshes: AtomicU64::new(0),
+            }
+        }
+
+        fn replace(&self, identity: ExecutableIdentity) {
+            let mut resolved = self
+                .resolved
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            resolved.cli_path = identity.canonical_path.to_string_lossy().into_owned();
+            resolved.cli_identity = identity;
+        }
+
+        fn refresh_authority(&self) {
+            let mut resolved = self
+                .resolved
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            resolved.discovery_generation = resolved.discovery_generation.wrapping_add(1).max(1);
+        }
+    }
+
+    impl AgentProviderExecutableResolver for FakeResolver {
+        fn resolve_provider(
+            &self,
+            _provider: AgentCliInvocation,
+            _manual_override: Option<&str>,
+            refresh: bool,
+        ) -> Result<ResolvedProviderExecutable, String> {
+            if refresh {
+                self.refreshes.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(self
+                .resolved
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone())
+        }
+    }
+
+    #[test]
+    fn automatic_turn_lease_captures_one_resolved_identity_and_effective_path() {
+        let identity = executable_identity_fixture();
+        let expected_path = identity.canonical_path.to_string_lossy().into_owned();
+        let resolver = Arc::new(FakeResolver::new(identity, "/detected/bin:/usr/bin"));
+        let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(resolver));
+        let receipt = registry
+            .register_policy(AgentCliInvocation::CodexExec, 1, None, auto_policy())
+            .expect("policy");
+
+        let lease = registry
+            .acquire_turn_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation)
+            .expect("turn lease");
+
+        assert_eq!(lease.cli_path, expected_path);
+        assert_eq!(lease.effective_path, "/detected/bin:/usr/bin");
+        assert_eq!(
+            lease.cli_identity.canonical_path,
+            std::path::Path::new(&lease.cli_path)
+        );
+        assert!(registry.revalidate_turn_authority(&lease).is_ok());
+    }
+
+    #[test]
+    fn held_turn_lease_fails_after_provider_a_b_a_generation_replacement() {
+        let resolver = Arc::new(FakeResolver::new(
+            executable_identity_fixture(),
+            "/detected/bin:/usr/bin",
+        ));
+        let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(resolver));
+        let first = registry
+            .register_policy(AgentCliInvocation::ClaudeCode, 1, None, auto_policy())
+            .expect("first policy");
+        let lease = registry
+            .acquire_turn_for_generation(AgentCliInvocation::ClaudeCode, first.provider_generation)
+            .expect("turn lease");
+        let mut disabled = auto_policy();
+        disabled.enabled = false;
+        let second = registry
+            .register_policy(
+                AgentCliInvocation::ClaudeCode,
+                2,
+                Some(first.provider_generation),
+                disabled,
+            )
+            .expect("second policy");
+        registry
+            .register_policy(
+                AgentCliInvocation::ClaudeCode,
+                3,
+                Some(second.provider_generation),
+                auto_policy(),
+            )
+            .expect("third policy");
+
+        assert_eq!(
+            registry.revalidate_turn_authority(&lease),
+            Err(AGENT_PROVIDER_STALE_ERROR.to_string())
+        );
+    }
+
+    #[test]
+    fn held_turn_lease_rejects_discovery_a_b_a_with_identical_executable_bytes() {
+        let resolver = Arc::new(FakeResolver::new(
+            executable_identity_fixture(),
+            "/detected/bin:/usr/bin",
+        ));
+        let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(
+            resolver.clone(),
+        ));
+        let receipt = registry
+            .register_policy(AgentCliInvocation::CodexExec, 1, None, auto_policy())
+            .expect("policy");
+        let lease = registry
+            .acquire_turn_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation)
+            .expect("turn lease");
+
+        resolver.refresh_authority();
+
+        assert_eq!(
+            registry.revalidate_turn_authority(&lease),
+            Err(AGENT_PROVIDER_STALE_ERROR.to_string())
+        );
+    }
+
+    #[test]
+    fn held_manual_override_lease_rejects_discovery_a_b_a() {
+        let identity = executable_identity_fixture();
+        let manual_path = identity.canonical_path.to_string_lossy().into_owned();
+        let resolver = Arc::new(FakeResolver::new(identity, "/detected/bin:/usr/bin"));
+        let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(
+            resolver.clone(),
+        ));
+        let receipt = registry
+            .register_policy(
+                AgentCliInvocation::ClaudeCode,
+                1,
+                None,
+                policy(&manual_path),
+            )
+            .expect("manual policy");
+        let lease = registry
+            .acquire_turn_for_generation(
+                AgentCliInvocation::ClaudeCode,
+                receipt.provider_generation,
+            )
+            .expect("turn lease");
+
+        resolver.refresh_authority();
+
+        assert_eq!(
+            registry.revalidate_turn_authority(&lease),
+            Err(AGENT_PROVIDER_STALE_ERROR.to_string())
+        );
+    }
+
+    #[test]
+    fn health_refresh_re_resolves_and_identity_replacement_fails_closed() {
+        let resolver = Arc::new(FakeResolver::new(
+            executable_identity_fixture(),
+            "/detected/bin:/usr/bin",
+        ));
+        let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(
+            resolver.clone(),
+        ));
+        let receipt = registry
+            .register_policy(AgentCliInvocation::CodexExec, 1, None, auto_policy())
+            .expect("policy");
+        let lease = registry
+            .acquire_health_for_generation(
+                AgentCliInvocation::CodexExec,
+                receipt.provider_generation,
+            )
+            .expect("health lease");
+        assert_eq!(resolver.refreshes.load(Ordering::SeqCst), 1);
+
+        resolver.replace(executable_identity_fixture());
+
+        assert_eq!(
+            registry.revalidate_health(&lease),
+            Err(AGENT_PROVIDER_STALE_ERROR.to_string())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cached_health_resolution_rejects_a_path_swap_before_publication() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let identity = executable_identity_fixture();
+        let executable_path = identity.canonical_path.clone();
+        let resolver = Arc::new(FakeResolver::new(identity, "/detected/bin:/usr/bin"));
+        let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(resolver));
+        let receipt = registry
+            .register_policy(AgentCliInvocation::CodexExec, 1, None, auto_policy())
+            .expect("policy");
+        let lease = registry
+            .acquire_health_for_generation(
+                AgentCliInvocation::CodexExec,
+                receipt.provider_generation,
+            )
+            .expect("health lease");
+        let retained = executable_path.with_extension("retained");
+        fs::rename(&executable_path, &retained).expect("retain executable");
+        fs::write(&executable_path, "#!/bin/sh\nexit 0\n").expect("replacement executable");
+        fs::set_permissions(&executable_path, fs::Permissions::from_mode(0o755))
+            .expect("replacement permissions");
+
+        assert_eq!(
+            registry.revalidate_health(&lease),
+            Err(AGENT_PROVIDER_STALE_ERROR.to_string())
+        );
+
+        drop(lease);
+        fs::remove_file(executable_path).expect("replacement cleanup");
+        fs::remove_file(retained).expect("retained cleanup");
+    }
+
     #[test]
     fn turns_and_updates_are_atomically_exclusive() {
         let registry = Arc::new(AgentProviderRuntimeRegistry::new());
@@ -823,7 +1412,10 @@ mod tests {
                 &health,
                 Some(AgentProviderUpdateCandidate {
                     cli_path: "/cli/claude".to_string(),
-                    cli_identity: identity.clone(),
+                    cli_identity: health.cli_identity.clone(),
+                    effective_path: health.effective_path.clone(),
+                    path_fingerprint: health.path_fingerprint.clone(),
+                    discovery_generation: health.discovery_generation,
                     installed_version: "1.0.0".to_string(),
                     available_version: "1.1.0".to_string(),
                     installer: ResolvedAgentProviderInstaller::Npm {
@@ -963,7 +1555,10 @@ mod tests {
                 &health,
                 Some(AgentProviderUpdateCandidate {
                     cli_path: "/cli/claude".to_string(),
-                    cli_identity: identity.clone(),
+                    cli_identity: health.cli_identity.clone(),
+                    effective_path: health.effective_path.clone(),
+                    path_fingerprint: health.path_fingerprint.clone(),
+                    discovery_generation: health.discovery_generation,
                     installed_version: "1.0.0".to_string(),
                     available_version: "1.1.0".to_string(),
                     installer: ResolvedAgentProviderInstaller::Npm {
@@ -1187,7 +1782,7 @@ mod tests {
             package_name: "@openai/codex".to_string(),
         };
         assert!(installer
-            .update_plan(AgentCliInvocation::CodexExec, "latest; rm")
+            .update_plan(AgentCliInvocation::CodexExec, "latest; rm", "/usr/bin:/bin")
             .is_err());
     }
 

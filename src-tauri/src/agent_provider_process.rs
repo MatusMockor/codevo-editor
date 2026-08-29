@@ -1,9 +1,9 @@
 use crate::agent_task_spawner::agent_provider::{
     brew_cask, npm_package, MAX_AGENT_PROVIDER_OUTPUT_BYTES,
 };
-use crate::agent_task_spawner::{
-    inherited_environment, AgentCliInvocation, MAX_AGENT_CLI_PATH_BYTES,
-};
+#[cfg(test)]
+use crate::agent_task_spawner::MAX_AGENT_CLI_PATH_BYTES;
+use crate::agent_task_spawner::{inherited_environment, AgentCliInvocation};
 use sha2::{Digest, Sha256};
 use std::{
     env, fs,
@@ -273,8 +273,12 @@ pub struct AgentProviderSignInRecipe {
 }
 
 impl AgentProviderSignInRecipe {
-    pub fn new(cli_path: &str, provider: AgentCliInvocation) -> Result<Self, String> {
-        let identity = executable_identity(cli_path)?;
+    pub fn from_resolved(
+        identity: ExecutableIdentity,
+        provider: AgentCliInvocation,
+        effective_path: &str,
+    ) -> Result<Self, String> {
+        let effective_path = validate_effective_path(effective_path)?;
         let semantic_args = match provider {
             AgentCliInvocation::ClaudeCode => vec!["auth", "login"],
             AgentCliInvocation::CodexExec => vec!["login"],
@@ -296,7 +300,7 @@ impl AgentProviderSignInRecipe {
             identity,
             program,
             args: args.into_boxed_slice(),
-            env: sign_in_environment().into_boxed_slice(),
+            env: sign_in_environment(effective_path).into_boxed_slice(),
         })
     }
 
@@ -318,15 +322,12 @@ impl AgentProviderSignInRecipe {
 }
 
 impl AgentProviderProcessPlan {
-    pub fn provider(cli_path: &str, intent: AgentProviderProcessIntent) -> Result<Self, String> {
-        let identity = executable_identity(cli_path)?;
-        Self::provider_owned(identity, intent)
-    }
-
-    pub fn provider_owned(
+    pub fn provider_owned_with_effective_path(
         identity: ExecutableIdentity,
         intent: AgentProviderProcessIntent,
+        effective_path: &str,
     ) -> Result<Self, String> {
+        let effective_path = validate_effective_path(effective_path)?;
         let provider = match intent {
             AgentProviderProcessIntent::InstalledVersion(provider)
             | AgentProviderProcessIntent::AuthenticationStatus(provider)
@@ -352,16 +353,19 @@ impl AgentProviderProcessPlan {
         Ok(Self::new(
             identity,
             args,
+            effective_path,
             AGENT_PROVIDER_PROBE_TIMEOUT,
             MAX_AGENT_PROVIDER_OUTPUT_BYTES,
             false,
         ))
     }
 
-    pub fn package_manager(
+    pub fn package_manager_with_effective_path(
         identity: ExecutableIdentity,
         intent: AgentProviderProcessIntent,
+        effective_path: &str,
     ) -> Result<Self, String> {
+        let effective_path = validate_effective_path(effective_path)?;
         let requires_update_authorization = matches!(
             &intent,
             AgentProviderProcessIntent::NpmUpdate { .. }
@@ -438,6 +442,7 @@ impl AgentProviderProcessPlan {
         Ok(Self::new_strings(
             identity,
             args,
+            effective_path,
             timeout,
             output_limit,
             requires_update_authorization,
@@ -447,6 +452,7 @@ impl AgentProviderProcessPlan {
     fn new(
         identity: ExecutableIdentity,
         args: Vec<&str>,
+        effective_path: &str,
         timeout: Duration,
         output_limit: usize,
         requires_update_authorization: bool,
@@ -454,6 +460,7 @@ impl AgentProviderProcessPlan {
         Self::new_strings(
             identity,
             args.into_iter().map(str::to_string).collect(),
+            effective_path,
             timeout,
             output_limit,
             requires_update_authorization,
@@ -463,6 +470,7 @@ impl AgentProviderProcessPlan {
     fn new_strings(
         identity: ExecutableIdentity,
         args: Vec<String>,
+        effective_path: &str,
         timeout: Duration,
         output_limit: usize,
         requires_update_authorization: bool,
@@ -475,7 +483,7 @@ impl AgentProviderProcessPlan {
             identity,
             args: args.into_boxed_slice(),
             cwd,
-            env: provider_environment().into_boxed_slice(),
+            env: provider_environment(effective_path).into_boxed_slice(),
             timeout,
             output_limit,
             requires_update_authorization,
@@ -504,18 +512,24 @@ fn validate_exact_version(version: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn provider_environment() -> Vec<(String, String)> {
+fn provider_environment(effective_path: &str) -> Vec<(String, String)> {
     let mut result: Vec<(String, String)> = inherited_environment()
         .into_iter()
-        .filter(|(key, _)| key != "SHELL")
+        .filter_map(|(key, value)| {
+            if key == "SHELL" || key == "PATH" {
+                return None;
+            }
+            bounded_environment_entry(key, value)
+        })
         .collect();
+    result.push(("PATH".to_string(), effective_path.to_string()));
     for key in [
         "CODEX_HOME",
         "CLAUDE_CONFIG_DIR",
         "XDG_CONFIG_HOME",
         "XDG_DATA_HOME",
     ] {
-        if let Ok(value) = env::var(key) {
+        if let Some(value) = bounded_host_environment_value(key) {
             result.push((key.to_string(), value));
         }
     }
@@ -530,51 +544,71 @@ fn provider_environment() -> Vec<(String, String)> {
     result
 }
 
-fn sign_in_environment() -> Vec<(String, String)> {
+fn sign_in_environment(effective_path: &str) -> Vec<(String, String)> {
     let mut result = inherited_environment()
         .into_iter()
-        .filter(|(_, value)| value.len() <= MAX_PROVIDER_ENV_VALUE_BYTES)
+        .filter(|(key, value)| key != "PATH" && value.len() <= MAX_PROVIDER_ENV_VALUE_BYTES)
         .collect::<Vec<_>>();
+    result.push(("PATH".to_string(), effective_path.to_string()));
     for key in [
         "CODEX_HOME",
         "CLAUDE_CONFIG_DIR",
         "XDG_CONFIG_HOME",
         "XDG_DATA_HOME",
     ] {
-        if let Ok(value) = env::var(key) {
-            if value.len() <= MAX_PROVIDER_ENV_VALUE_BYTES {
-                result.push((key.to_string(), value));
-            }
+        if let Some(value) = bounded_host_environment_value(key) {
+            result.push((key.to_string(), value));
         }
     }
     result
 }
 
-pub fn resolve_package_manager(name: &str) -> Option<ExecutableIdentity> {
+fn bounded_host_environment_value(key: &str) -> Option<String> {
+    let value = env::var(key).ok()?;
+    bounded_environment_entry(key.to_string(), value).map(|(_, value)| value)
+}
+
+fn bounded_environment_entry(key: String, value: String) -> Option<(String, String)> {
+    (value.len() <= MAX_PROVIDER_ENV_VALUE_BYTES).then_some((key, value))
+}
+
+pub fn resolve_package_manager_on_path(
+    name: &str,
+    effective_path: &str,
+) -> Option<ExecutableIdentity> {
     if !matches!(name, "npm" | "brew") {
         return None;
     }
-    let path = env::var_os("PATH")?;
-    env::split_paths(&path)
+    let effective_path = validate_effective_path(effective_path).ok()?;
+    env::split_paths(effective_path)
         .take(64)
         .map(|directory| directory.join(name))
-        .find_map(|candidate| executable_identity_path(&candidate).ok())
+        .find_map(|candidate| {
+            executable_identity_path_with_effective_path(&candidate, effective_path).ok()
+        })
 }
 
+#[cfg(test)]
 pub fn executable_identity(path: &str) -> Result<ExecutableIdentity, String> {
     if path.is_empty() || path.len() > MAX_AGENT_CLI_PATH_BYTES {
         return Err("Provider executable path is invalid.".to_string());
     }
-    executable_identity_path(Path::new(path))
+    let effective_path = current_effective_path()?;
+    executable_identity_path_with_effective_path(Path::new(path), &effective_path)
 }
 
-pub fn executable_identity_path(path: &Path) -> Result<ExecutableIdentity, String> {
-    executable_identity_path_with_depth(path, 0)
+pub fn executable_identity_path_with_effective_path(
+    path: &Path,
+    effective_path: &str,
+) -> Result<ExecutableIdentity, String> {
+    let effective_path = validate_effective_path(effective_path)?;
+    executable_identity_path_with_depth(path, 0, effective_path)
 }
 
 fn executable_identity_path_with_depth(
     path: &Path,
     interpreter_depth: usize,
+    effective_path: &str,
 ) -> Result<ExecutableIdentity, String> {
     if !path.is_absolute() {
         return Err("Provider executable path must be absolute.".to_string());
@@ -592,7 +626,7 @@ fn executable_identity_path_with_depth(
         return Err("Provider executable is too large.".to_string());
     }
     let digest = executable_digest(&descriptor, metadata.len())?;
-    let launch = executable_launch(&descriptor, interpreter_depth)?;
+    let launch = executable_launch(&descriptor, interpreter_depth, effective_path)?;
     let modified_epoch_ms = metadata
         .modified()
         .ok()
@@ -616,6 +650,7 @@ fn executable_identity_path_with_depth(
 fn executable_launch(
     descriptor: &fs::File,
     interpreter_depth: usize,
+    effective_path: &str,
 ) -> Result<ExecutableLaunch, String> {
     let shebang = read_shebang(descriptor)?;
     let Some(shebang) = shebang else {
@@ -624,8 +659,8 @@ fn executable_launch(
     if interpreter_depth != 0 {
         return Err("Provider script interpreter is unsupported.".to_string());
     }
-    let interpreter_path = resolve_shebang_interpreter(&shebang)?;
-    let interpreter = executable_identity_path_with_depth(&interpreter_path, 1)?;
+    let interpreter_path = resolve_shebang_interpreter(&shebang, effective_path)?;
+    let interpreter = executable_identity_path_with_depth(&interpreter_path, 1, effective_path)?;
     Ok(ExecutableLaunch::Script {
         interpreter: Box::new(interpreter),
     })
@@ -659,7 +694,7 @@ fn read_shebang(descriptor: &fs::File) -> Result<Option<String>, String> {
     Ok(Some(line.to_string()))
 }
 
-fn resolve_shebang_interpreter(shebang: &str) -> Result<PathBuf, String> {
+fn resolve_shebang_interpreter(shebang: &str, effective_path: &str) -> Result<PathBuf, String> {
     let fields = shebang.split_ascii_whitespace().collect::<Vec<_>>();
     if fields.len() == 1 {
         let path = Path::new(fields[0]);
@@ -681,16 +716,43 @@ fn resolve_shebang_interpreter(shebang: &str) -> Result<PathBuf, String> {
     {
         return Err("Provider script interpreter is unsupported.".to_string());
     }
-    resolve_path_executable(name)
+    resolve_path_executable(name, effective_path)
         .ok_or_else(|| "Provider script interpreter is unavailable.".to_string())
 }
 
-fn resolve_path_executable(name: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
-    env::split_paths(&path)
+fn resolve_path_executable(name: &str, effective_path: &str) -> Option<PathBuf> {
+    env::split_paths(effective_path)
         .take(64)
         .map(|directory| directory.join(name))
         .find(|candidate| candidate.is_file())
+}
+
+#[cfg(test)]
+fn current_effective_path() -> Result<String, String> {
+    env::var("PATH").map_err(|_| "Provider executable PATH is unavailable.".to_string())
+}
+
+fn validate_effective_path(effective_path: &str) -> Result<&str, String> {
+    if effective_path.is_empty()
+        || effective_path.len() > MAX_PROVIDER_ENV_VALUE_BYTES
+        || effective_path.contains('\0')
+    {
+        return Err("Provider executable PATH is invalid.".to_string());
+    }
+    let mut entries = 0usize;
+    for entry in env::split_paths(effective_path) {
+        if !entry.is_absolute() || entry.as_os_str().is_empty() {
+            return Err("Provider executable PATH is invalid.".to_string());
+        }
+        entries += 1;
+        if entries > 64 {
+            return Err("Provider executable PATH is invalid.".to_string());
+        }
+    }
+    if entries == 0 {
+        return Err("Provider executable PATH is invalid.".to_string());
+    }
+    Ok(effective_path)
 }
 
 fn bound_command(identity: &ExecutableIdentity) -> Result<BoundExecutableCommand, String> {

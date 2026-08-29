@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
+import { defaultAgentCliDiscoveryResult } from "../domain/agentSettings";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
@@ -242,14 +243,20 @@ describe("AgentsSettingsPanel", () => {
 
 function management(): AgentProviderManagementSurface {
   return {
+    cliDiscovery: defaultAgentCliDiscoveryResult(),
     providers: {
       claudeCode: {
+        executable: {
+          kind: "notFound",
+          installCommand: "npm i -g @anthropic-ai/claude-code",
+        },
         health: { kind: "notConfigured" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },
         liveTurnCount: 0,
       },
       codex: {
+        executable: { kind: "notFound", installCommand: "npm i -g @openai/codex" },
         health: { kind: "disabled" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },

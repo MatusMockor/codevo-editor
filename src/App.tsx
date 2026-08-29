@@ -13,8 +13,6 @@ import { useNoticeToastRenderers } from "./components/useNoticeToastRenderers";
 import { usePerfScenarioBridgeInstall } from "./components/usePerfScenarioBridgeInstall";
 import { useAppWindowTitle } from "./application/useAppBootEffects";
 import { usePrefersLightTheme } from "./application/usePrefersLightTheme";
-import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
-import { BrowserEditorChangeHunksGateway } from "./infrastructure/browserEditorChangeHunksGateway";
 import { useDebugCommandBridges } from "./application/useDebugCommandBridges";
 import { useArtisanRoutes } from "./application/useArtisanRoutes";
 import { useScopedEditorSurfaceRunners } from "./application/useScopedEditorSurfaceRunners";
@@ -115,7 +113,7 @@ import { workbenchComposition } from "./workbenchComposition";
 import "./App.css";
 
 const {
-  agentCliVersionGateway,
+  agentCliDiscoveryGateway,
   agentProviderGateway,
   agentProviderSignInGateway,
   agentRootLeaseGateway,
@@ -123,7 +121,9 @@ const {
   cancelJavaScriptTypeScriptLanguageServerRequest,
   cursorStore,
   debugGateway,
+  debugTextClipboard,
   dirtyCloseDecisionCoordinator,
+  editorChangeHunksGateway,
   gitGateway,
   gitHistoryGateway,
   indexProgressGateway,
@@ -174,8 +174,6 @@ const {
   workspaceTestDiscoveryGateway,
   workspaceTrustGateway,
 } = workbenchComposition;
-const debugTextClipboard = new BrowserTextClipboardGateway();
-const editorChangeHunksGateway = new BrowserEditorChangeHunksGateway();
 
 function App() {
   const debugCommandBridges = useDebugCommandBridges();
@@ -244,7 +242,7 @@ function App() {
     settingsGateway,
     workbenchPrompter,
     {
-      agentCliVersionGateway,
+      agentCliDiscoveryGateway,
       agentProviderGateway,
       agentProviderSignInGateway,
       agentRootLeaseGateway,
@@ -1483,6 +1481,7 @@ function App() {
         label="settings"
       >
         <LazyWorkbenchSettingsDialogHost
+          appUpdaterComposition={workbenchComposition.appUpdater}
           providerManagement={workbench.agents.providerManagement}
           systemFontGateway={systemFontGateway}
           workbench={workbench}

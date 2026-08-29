@@ -24,10 +24,26 @@ import {
   type AgentProviderPreference,
   type PersistedAgentProviderSettingsAuthority,
 } from "../domain/agentProviderSettings";
-import { normalizeAgentCliPath } from "../domain/agentSettings";
+import {
+  agentCliExecutablePresentation,
+  normalizeAgentCliPath,
+  type AgentCliDiscoveryGateway,
+  type AgentCliDiscoveryResult,
+  type AgentCliExecutablePresentation,
+} from "../domain/agentSettings";
 import type { AgentCliKind } from "../domain/agentTask";
 import type { AppSettings, SettingsGateway } from "../domain/settings";
-import type { AgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
+import type {
+  AgentProviderAdmissionAuthority,
+  ReadyAgentProviderAdmissionAuthority,
+} from "./agentProviderAdmissionAuthority";
+import {
+  agentProviderHealthBeforeRegistration,
+  agentProviderHealthForAutomaticDiscovery,
+  agentProviderHealthWithPersistedUpdateAuthority,
+  effectiveAgentProviderCliPath,
+} from "./agentProviderDiscoveryAdmission";
+import { useAgentCliDiscovery, type AgentCliDiscoveryPublication } from "./useAgentCliDiscovery";
 
 const PROVIDERS: readonly AgentCliKind[] = ["claudeCode", "codex"];
 const AGENT_PROVIDER_UPDATE_PROGRESS_SUBSCRIBE_TIMEOUT_MS = 1_000;
@@ -61,7 +77,13 @@ export type AgentProviderSettingsSaveOutcome =
       readonly reason: "notHydrated" | "staleAuthority" | "persistenceFailed";
     };
 
+export type AgentProviderRefreshOutcome =
+  | { readonly kind: "complete"; readonly authority: ReadyAgentProviderAdmissionAuthority }
+  | { readonly kind: "failed" }
+  | { readonly kind: "stale" };
+
 export interface AgentProviderManagementView {
+  readonly executable: AgentCliExecutablePresentation;
   readonly health: AgentProviderHealthState;
   readonly policy: AgentProviderPolicyRegistrationState;
   readonly updateState: AgentProviderUpdateState;
@@ -77,6 +99,7 @@ export interface AgentProviderSettingsIntent {
 }
 
 export interface AgentProviderManagementSurface {
+  readonly cliDiscovery: AgentCliDiscoveryResult;
   readonly providers: Readonly<Record<AgentCliKind, AgentProviderManagementView>>;
   readonly selectedProviderAuthority: SelectedAgentProviderAuthority | null;
   readonly toast: AgentProviderManagementToast | null;
@@ -85,7 +108,7 @@ export interface AgentProviderManagementSurface {
   dismissToast(): void;
   dismissUpdate(provider: AgentCliKind, version: string): Promise<boolean>;
   refresh(provider: AgentCliKind): Promise<void>;
-  refreshWithOutcome?(provider: AgentCliKind): Promise<boolean>;
+  refreshWithOutcome?(provider: AgentCliKind): Promise<AgentProviderRefreshOutcome>;
   retryRegistration(provider: AgentCliKind): Promise<void>;
   save(intent: AgentProviderSettingsIntent): Promise<boolean>;
   saveWithOutcome(intent: AgentProviderSettingsIntent): Promise<AgentProviderSettingsSaveOutcome>;
@@ -114,6 +137,7 @@ export interface AgentProviderManagementDependencies {
   readonly policyGateway: AgentProviderPolicyGateway;
   readonly healthGateway: AgentProviderHealthGateway;
   readonly updateGateway: AgentProviderUpdateGateway;
+  readonly discoveryGateway: AgentCliDiscoveryGateway;
   readonly liveTurnCount: (provider: AgentCliKind) => number;
   readonly signInActive: (provider: AgentCliKind) => boolean;
   readonly reportError: (source: string, error: unknown) => void;
@@ -138,6 +162,7 @@ interface ProviderOwner {
   readonly workspaceGeneration: number;
   readonly lifecycleGeneration: number;
   readonly cliPath: string;
+  readonly discoveryGeneration: number | null;
   readonly healthGateway: AgentProviderHealthGateway;
   readonly updateGateway: AgentProviderUpdateGateway;
 }
@@ -184,6 +209,14 @@ const initialRuntime = (): Record<AgentCliKind, ProviderRuntime> => ({
 export function useAgentProviderManagement(
   dependencies: AgentProviderManagementDependencies,
 ): AgentProviderManagementSurface {
+  const cliDiscovery = useAgentCliDiscovery({
+    active: dependencies.settingsHydrated,
+    autoDiscover:
+      dependencies.appSettingsRef.current.agentCliPaths.claudeCode === null ||
+      dependencies.appSettingsRef.current.agentCliPaths.codex === null,
+    gateway: dependencies.discoveryGateway,
+    reportError: dependencies.reportError,
+  });
   const [runtime, setRuntime] = useState(initialRuntime);
   const [toast, setToast] = useState<AgentProviderManagementToast | null>(null);
   const [selectedProviderAuthorityPublication, setSelectedProviderAuthorityPublication] =
@@ -230,6 +263,11 @@ export function useAgentProviderManagement(
     >
   >({});
   const timerRef = useRef<Partial<Record<AgentCliKind, ReturnType<typeof setTimeout>>>>({});
+  const appliedDiscoveryRef = useRef<{
+    readonly generation: number;
+    readonly status: "discovering" | "ready" | "failed";
+  } | null>(null);
+  const readCliDiscovery = cliDiscovery.read;
 
   useLayoutEffect(() => {
     dependenciesRef.current = dependencies;
@@ -257,26 +295,31 @@ export function useAgentProviderManagement(
     delete timerRef.current[provider];
   }, []);
 
-  const currentOwner = useCallback((provider: AgentCliKind): ProviderOwner | null => {
-    if (!mountedRef.current) return null;
-    const providerRuntime = runtimeRef.current[provider];
-    if (providerRuntime.policy.kind !== "registered") return null;
-    const authority = authorityRef.current[provider];
-    if (authority === undefined || !authority.preference.enabled || authority.cliPath === null) {
-      return null;
-    }
-    return {
-      provider,
-      configurationRevision: providerRuntime.configurationRevision,
-      settingsRevision: providerRuntime.policy.settingsRevision,
-      providerGeneration: providerRuntime.policy.providerGeneration,
-      workspaceGeneration: dependenciesRef.current.workspaceGeneration,
-      lifecycleGeneration: hydrationGenerationRef.current,
-      cliPath: authority.cliPath,
-      healthGateway: dependenciesRef.current.healthGateway,
-      updateGateway: dependenciesRef.current.updateGateway,
-    };
-  }, []);
+  const currentOwner = useCallback(
+    (provider: AgentCliKind): ProviderOwner | null => {
+      if (!mountedRef.current) return null;
+      const providerRuntime = runtimeRef.current[provider];
+      if (providerRuntime.policy.kind !== "registered") return null;
+      const authority = authorityRef.current[provider];
+      if (authority === undefined || !authority.preference.enabled) return null;
+      const discovery = readCliDiscovery();
+      const cliPath = effectiveAgentProviderCliPath(provider, authority.cliPath, discovery);
+      if (cliPath === null) return null;
+      return {
+        provider,
+        configurationRevision: providerRuntime.configurationRevision,
+        settingsRevision: providerRuntime.policy.settingsRevision,
+        providerGeneration: providerRuntime.policy.providerGeneration,
+        workspaceGeneration: dependenciesRef.current.workspaceGeneration,
+        lifecycleGeneration: hydrationGenerationRef.current,
+        cliPath,
+        discoveryGeneration: authority.cliPath === null ? (discovery?.generation ?? null) : null,
+        healthGateway: dependenciesRef.current.healthGateway,
+        updateGateway: dependenciesRef.current.updateGateway,
+      };
+    },
+    [readCliDiscovery],
+  );
 
   const ownerIsCurrent = useCallback(
     (owner: ProviderOwner): boolean => {
@@ -290,6 +333,7 @@ export function useAgentProviderManagement(
         current.workspaceGeneration === owner.workspaceGeneration &&
         current.lifecycleGeneration === owner.lifecycleGeneration &&
         current.cliPath === owner.cliPath &&
+        current.discoveryGeneration === owner.discoveryGeneration &&
         current.healthGateway === owner.healthGateway &&
         current.updateGateway === owner.updateGateway
       );
@@ -323,7 +367,10 @@ export function useAgentProviderManagement(
           });
           if (!ownerIsCurrent(owner)) return null;
           if (runtimeRef.current[provider].healthGeneration !== healthGeneration) return null;
-          const checked = checkedHealthResult(result, authorityRef.current[provider]);
+          const checked = agentProviderHealthWithPersistedUpdateAuthority(
+            result,
+            authorityRef.current[provider]?.preference,
+          );
           publish(provider, (current) => ({ ...current, health: { kind: "ready", ...checked } }));
           if (!ownerIsCurrent(owner)) return null;
           if (checked.update.kind !== "available") return checked;
@@ -370,6 +417,51 @@ export function useAgentProviderManagement(
     [clearTimer, currentOwner, ownerIsCurrent, refreshHealth],
   );
 
+  const applyDiscoveryGeneration = useCallback(
+    (status: "discovering" | "ready" | "failed", generation: number): void => {
+      const applied = appliedDiscoveryRef.current;
+      if (applied?.generation === generation && applied.status === status) return;
+      if (applied !== null && generation < applied.generation) return;
+      appliedDiscoveryRef.current = { generation, status };
+      const discovery = readCliDiscovery();
+      for (const provider of PROVIDERS) {
+        const fields = authorityRef.current[provider] ?? persistedSliceRef.current.fields[provider];
+        if (fields.cliPath !== null) continue;
+        clearTimer(provider);
+        publish(provider, (current) => ({
+          ...current,
+          configurationRevision:
+            current.policy.kind === "registered" || current.policy.kind === "failed"
+              ? current.configurationRevision + 1
+              : current.configurationRevision,
+          healthGeneration: current.healthGeneration + 1,
+          health: agentProviderHealthForAutomaticDiscovery(
+            fields.preference,
+            status,
+            generation,
+            discovery?.result[provider],
+          ),
+        }));
+        if (status !== "ready" || discovery?.result[provider].kind !== "detected") continue;
+        const owner = currentOwner(provider);
+        if (owner === null) continue;
+        void refreshHealth(provider).finally(() => {
+          if (!ownerIsCurrent(owner)) return;
+          scheduleHealth(provider);
+        });
+      }
+    },
+    [
+      clearTimer,
+      currentOwner,
+      ownerIsCurrent,
+      publish,
+      readCliDiscovery,
+      refreshHealth,
+      scheduleHealth,
+    ],
+  );
+
   const register = useCallback(
     async (
       provider: AgentCliKind,
@@ -384,6 +476,8 @@ export function useAgentProviderManagement(
         updateOperationRef.current[provider] === preservedUpdateOperationId;
       if (!preservesUpdate) delete updateOperationRef.current[provider];
       const configurationRevision = runtimeRef.current[provider].configurationRevision + 1;
+      const fields =
+        exactFields ?? providerFields(dependenciesRef.current.appSettingsRef.current, provider);
       authorityRef.current[provider] = undefined;
       publish(provider, (current) => ({
         ...current,
@@ -393,14 +487,14 @@ export function useAgentProviderManagement(
         updateState: preservesUpdate
           ? current.updateState
           : updateStateBeforeRegistration(current.updateState),
-        health: healthBeforeRegistration(
-          exactFields ?? providerFields(dependenciesRef.current.appSettingsRef.current, provider),
+        health: agentProviderHealthBeforeRegistration(
+          fields.preference,
+          fields.cliPath,
+          readCliDiscovery()?.result[provider],
         ),
       }));
       const gateway = dependenciesRef.current.policyGateway;
       const lifecycleGeneration = hydrationGenerationRef.current;
-      const fields =
-        exactFields ?? providerFields(dependenciesRef.current.appSettingsRef.current, provider);
       let effectiveSettingsRevision = settingsRevision;
       let expectedProviderGeneration: number | null = null;
       try {
@@ -508,7 +602,7 @@ export function useAgentProviderManagement(
         return false;
       }
     },
-    [clearTimer, publish, refreshHealth, scheduleHealth],
+    [clearTimer, publish, readCliDiscovery, refreshHealth, scheduleHealth],
   );
 
   const publishSelectedProviderAuthority = useCallback(
@@ -711,6 +805,11 @@ export function useAgentProviderManagement(
         provider,
         dependenciesRef.current.appSettingsRef.current,
         runtimeRef.current[provider],
+        effectiveAgentProviderCliPath(
+          provider,
+          authorityRef.current[provider]?.cliPath ?? null,
+          readCliDiscovery(),
+        ) !== null,
         dependenciesRef.current.liveTurnCount(provider),
         dependenciesRef.current.signInActive(provider),
       );
@@ -941,6 +1040,7 @@ export function useAgentProviderManagement(
       currentOwner,
       ownerIsCurrent,
       publish,
+      readCliDiscovery,
       refreshHealth,
       saveWithOutcome,
       scheduleHealth,
@@ -1047,6 +1147,20 @@ export function useAgentProviderManagement(
     register,
   ]);
 
+  useEffect(() => {
+    switch (cliDiscovery.status.kind) {
+      case "inactive":
+        return;
+      case "discovering":
+      case "ready":
+      case "failed":
+        applyDiscoveryGeneration(cliDiscovery.status.kind, cliDiscovery.status.generation);
+        return;
+      default:
+        return unsupportedDiscoveryStatus(cliDiscovery.status);
+    }
+  }, [applyDiscoveryGeneration, cliDiscovery.status]);
+
   const claudeLiveTurnCount = dependencies.liveTurnCount("claudeCode");
   const codexLiveTurnCount = dependencies.liveTurnCount("codex");
   const claudeSignInActive = dependencies.signInActive("claudeCode");
@@ -1074,6 +1188,11 @@ export function useAgentProviderManagement(
   const providers = useMemo(
     (): Readonly<Record<AgentCliKind, AgentProviderManagementView>> => ({
       claudeCode: {
+        executable: agentCliExecutablePresentation(
+          "claudeCode",
+          persistedSliceRef.current.fields.claudeCode.cliPath,
+          cliDiscovery.result.claudeCode,
+        ),
         health: runtime.claudeCode.health,
         policy: runtime.claudeCode.policy,
         updateState: runtime.claudeCode.updateState,
@@ -1081,6 +1200,11 @@ export function useAgentProviderManagement(
         signInActive: claudeSignInActive,
       },
       codex: {
+        executable: agentCliExecutablePresentation(
+          "codex",
+          persistedSliceRef.current.fields.codex.cliPath,
+          cliDiscovery.result.codex,
+        ),
         health: runtime.codex.health,
         policy: runtime.codex.policy,
         updateState: runtime.codex.updateState,
@@ -1088,32 +1212,96 @@ export function useAgentProviderManagement(
         signInActive: codexSignInActive,
       },
     }),
-    [claudeLiveTurnCount, claudeSignInActive, codexLiveTurnCount, codexSignInActive, runtime],
+    [
+      claudeLiveTurnCount,
+      claudeSignInActive,
+      cliDiscovery.result,
+      codexLiveTurnCount,
+      codexSignInActive,
+      runtime,
+    ],
   );
 
   const admissionAuthority = useCallback(
-    (provider: AgentCliKind) => admissionAuthorityFor(provider, authorityRef, runtimeRef),
-    [],
+    (provider: AgentCliKind) =>
+      admissionAuthorityFor(provider, authorityRef, runtimeRef, readCliDiscovery()),
+    [readCliDiscovery],
   );
   const readAuthority = useCallback(
     (provider: AgentCliKind) => authorityFor(provider, authorityRef, runtimeRef),
     [],
   );
   const dismissToast = useCallback(() => setToast(null), []);
+  const refreshProvider = useCallback(
+    async (provider: AgentCliKind): Promise<AgentProviderRefreshOutcome> => {
+      const lifecycleGeneration = hydrationGenerationRef.current;
+      const workspaceGeneration = dependenciesRef.current.workspaceGeneration;
+      const discoveryGateway = dependenciesRef.current.discoveryGateway;
+      const before = runtimeRef.current[provider].configurationRevision;
+      const discoveryPromise = cliDiscovery.refresh();
+      const discoveryGeneration = cliDiscovery.currentGeneration();
+      applyDiscoveryGeneration("discovering", discoveryGeneration);
+      const refreshRevision = runtimeRef.current[provider].configurationRevision;
+      if (refreshRevision < before) return { kind: "stale" };
+      const publication = await discoveryPromise;
+      if (!mountedRef.current) return { kind: "stale" };
+      if (hydrationGenerationRef.current !== lifecycleGeneration) return { kind: "stale" };
+      if (dependenciesRef.current.workspaceGeneration !== workspaceGeneration) {
+        return { kind: "stale" };
+      }
+      if (dependenciesRef.current.discoveryGateway !== discoveryGateway) return { kind: "stale" };
+      if (runtimeRef.current[provider].configurationRevision !== refreshRevision) {
+        return { kind: "stale" };
+      }
+      if (cliDiscovery.currentGeneration() !== discoveryGeneration) return { kind: "stale" };
+      if (publication === null) {
+        applyDiscoveryGeneration("failed", discoveryGeneration);
+        return { kind: "failed" };
+      }
+      if (publication.generation !== discoveryGeneration) return { kind: "stale" };
+      applyDiscoveryGeneration("ready", discoveryGeneration);
+      const healthOwner = currentOwner(provider);
+      if (healthOwner === null) return { kind: "failed" };
+      const health = await refreshHealth(provider);
+      if (!mountedRef.current) return { kind: "stale" };
+      if (hydrationGenerationRef.current !== lifecycleGeneration) return { kind: "stale" };
+      if (dependenciesRef.current.workspaceGeneration !== workspaceGeneration) {
+        return { kind: "stale" };
+      }
+      if (dependenciesRef.current.discoveryGateway !== discoveryGateway) return { kind: "stale" };
+      if (cliDiscovery.currentGeneration() !== discoveryGeneration) return { kind: "stale" };
+      if (!ownerIsCurrent(healthOwner)) return { kind: "stale" };
+      if (health === null) return { kind: "failed" };
+      const refreshedAuthority = admissionAuthorityFor(
+        provider,
+        authorityRef,
+        runtimeRef,
+        readCliDiscovery(),
+      );
+      if (!isReadyAdmissionAuthority(refreshedAuthority)) return { kind: "failed" };
+      return { kind: "complete", authority: refreshedAuthority };
+    },
+    [
+      applyDiscoveryGeneration,
+      cliDiscovery,
+      currentOwner,
+      ownerIsCurrent,
+      readCliDiscovery,
+      refreshHealth,
+    ],
+  );
   const refresh = useCallback(
     async (provider: AgentCliKind): Promise<void> => {
-      await refreshHealth(provider);
+      await refreshProvider(provider);
     },
-    [refreshHealth],
+    [refreshProvider],
   );
-  const refreshWithOutcome = useCallback(
-    async (provider: AgentCliKind): Promise<boolean> => (await refreshHealth(provider)) !== null,
-    [refreshHealth],
-  );
+  const refreshWithOutcome = refreshProvider;
 
   return useMemo(
     () => ({
       providers,
+      cliDiscovery: cliDiscovery.result,
       selectedProviderAuthority,
       toast,
       admissionAuthority,
@@ -1132,6 +1320,7 @@ export function useAgentProviderManagement(
       dismissToast,
       dismissUpdate,
       providers,
+      cliDiscovery.result,
       selectedProviderAuthority,
       readAuthority,
       refresh,
@@ -1335,12 +1524,6 @@ function rollbackIntent(
   });
 }
 
-function healthBeforeRegistration(fields: ProviderFields): AgentProviderHealthState {
-  if (!fields.preference.enabled) return { kind: "disabled" };
-  if (fields.cliPath === null) return { kind: "notConfigured" };
-  return { kind: "checking", generation: 0 };
-}
-
 function registrationIsCurrent(
   provider: AgentCliKind,
   configurationRevision: number,
@@ -1429,18 +1612,12 @@ function admissionAuthorityFor(
     Partial<Record<AgentCliKind, PersistedAgentProviderSettingsAuthority>>
   >,
   runtimeRef: MutableRefObject<Record<AgentCliKind, ProviderRuntime>>,
+  discovery: AgentCliDiscoveryPublication | null,
 ): AgentProviderAdmissionAuthority {
   const runtime = runtimeRef.current[provider];
   const persisted = authorityRef.current[provider];
   if (runtime.health.kind === "disabled") {
     return { provider, revision: runtime.configurationRevision, disposition: { kind: "disabled" } };
-  }
-  if (runtime.policy.kind === "registered" && persisted?.cliPath === null) {
-    return {
-      provider,
-      revision: runtime.configurationRevision,
-      disposition: { kind: "policyUnavailable", reason: "notConfigured" },
-    };
   }
   if (runtime.policy.kind === "failed") {
     return {
@@ -1449,15 +1626,18 @@ function admissionAuthorityFor(
       disposition: { kind: "policyUnavailable", reason: "registrationFailed" },
     };
   }
-  if (
-    runtime.policy.kind !== "registered" ||
-    persisted?.cliPath === null ||
-    persisted === undefined
-  ) {
+  if (runtime.policy.kind !== "registered" || persisted === undefined) {
     return {
       provider,
       revision: runtime.configurationRevision,
       disposition: { kind: "policyUnavailable", reason: "unregistered" },
+    };
+  }
+  if (effectiveAgentProviderCliPath(provider, persisted.cliPath, discovery) === null) {
+    return {
+      provider,
+      revision: runtime.configurationRevision,
+      disposition: { kind: "policyUnavailable", reason: "notConfigured" },
     };
   }
   if (runtime.updateState.kind === "starting" || runtime.updateState.kind === "running") {
@@ -1465,7 +1645,6 @@ function admissionAuthorityFor(
       provider,
       revision: runtime.configurationRevision,
       disposition: { kind: "updating" },
-      cliPath: persisted.cliPath,
       providerGeneration: runtime.policy.providerGeneration,
     };
   }
@@ -1473,28 +1652,27 @@ function admissionAuthorityFor(
     provider,
     revision: runtime.configurationRevision,
     disposition: { kind: "ready" },
-    cliPath: persisted.cliPath,
     providerGeneration: runtime.policy.providerGeneration,
   };
 }
 
-function checkedHealthResult(
-  result: AgentProviderHealthProbeResult,
-  persisted: PersistedAgentProviderSettingsAuthority | undefined,
-): AgentProviderHealthProbeResult {
-  if (persisted?.preference.checkForUpdates !== false) return result;
-  return { ...result, update: { kind: "checksDisabled" } };
+function isReadyAdmissionAuthority(
+  authority: AgentProviderAdmissionAuthority,
+): authority is ReadyAgentProviderAdmissionAuthority {
+  if (authority.disposition.kind !== "ready") return false;
+  return "providerGeneration" in authority;
 }
 
 function updateRefusal(
   provider: AgentCliKind,
   settings: AppSettings,
   runtime: ProviderRuntime,
+  executableAvailable: boolean,
   liveTurnCount: number,
   signInActive: boolean,
 ): AgentProviderUpdateRefusal | null {
   if (!preferences(settings)[provider].enabled) return "disabled";
-  if (settings.agentCliPaths[provider] === null) return "notConfigured";
+  if (!executableAvailable) return "notConfigured";
   if (runtime.policy.kind !== "registered") return "policyUnavailable";
   if (runtime.updateState.kind === "starting" || runtime.updateState.kind === "running") {
     return "alreadyUpdating";
@@ -1519,6 +1697,10 @@ function updateStateBeforeRegistration(state: AgentProviderUpdateState): AgentPr
     default:
       return unsupportedUpdateState(state);
   }
+}
+
+function unsupportedDiscoveryStatus(status: never): never {
+  throw new TypeError(`Unsupported agent CLI discovery status: ${String(status)}.`);
 }
 
 function publishUpdateFailure(

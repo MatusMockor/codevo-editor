@@ -609,3 +609,5 @@ fn lease_registry_caps_project_roots() {
         .acquire(Path::new("/agent-root-lease/overflow"))
         .expect("released slot is reusable");
 }
+#[path = "../src/effective_executable_environment.rs"]
+mod effective_executable_environment;

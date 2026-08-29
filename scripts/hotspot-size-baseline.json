@@ -39,7 +39,7 @@
     },
     "src-tauri/src/git.rs": { "rawLines": 7039, "structuralTokens": 43809 },
     "src-tauri/src/index.rs": { "rawLines": 2089, "structuralTokens": 10272 },
-    "src-tauri/src/lib.rs": { "rawLines": 210, "structuralTokens": 802 },
+    "src-tauri/src/lib.rs": { "rawLines": 210, "structuralTokens": 799 },
     "src-tauri/src/lsp_features.rs": {
       "rawLines": 1260,
       "structuralTokens": 7379
@@ -53,7 +53,7 @@
       "rawLines": 2145,
       "structuralTokens": 14163
     },
-    "src/App.tsx": { "rawLines": 1493, "structuralTokens": 7396 },
+    "src/App.tsx": { "rawLines": 1493, "structuralTokens": 7381 },
     "src/application/useDocumentSync.ts": {
       "rawLines": 1526,
       "structuralTokens": 5300
@@ -79,8 +79,8 @@
       "structuralTokens": 7381
     },
     "src/components/SettingsDialog.tsx": {
-      "rawLines": 1417,
-      "structuralTokens": 5687
+      "rawLines": 1246,
+      "structuralTokens": 5629
     },
     "src/domain/latteLinkNavigation.ts": {
       "rawLines": 2446,

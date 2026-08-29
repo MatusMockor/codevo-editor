@@ -1,0 +1,37 @@
+# Changelog
+
+All notable changes to Codevo Editor are documented in this file.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
+project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.2.0-beta.1] - 2026-08-29
+
+### Added
+
+- Added the agent-first workbench with project-scoped thread navigation, search,
+  conversation history, composer controls, and persisted workspace layout.
+- Added Files, Diff, and Terminal thread surfaces with a shared editor group, worktree
+  terminals, panel tabs, maximize, and restore behavior.
+- Added Claude and Codex provider settings, health and version probes, authentication
+  state, model selection, permissions, and resumable streaming turns.
+- Added typed worktree package-script launch targets and editor tabs for the Files
+  surface.
+
+### Changed
+
+- Expanded the worktree ship flow with commit, local integration, conflict reporting,
+  and worktree removal while preserving explicit ownership checks.
+- Reduced initial JavaScript startup work through deferred feature loading and an
+  enforced pre-paint bundle budget.
+- Decomposed the workbench controller into focused workspace, editor, navigation,
+  command, authority, and presentation coordinators.
+
+### Fixed
+
+- Hardened provider process cleanup, workspace authority revalidation, and exact lease
+  settlement across asynchronous operations.
+- Removed timing-dependent package graph, process timeout, debugger port, watch, and
+  function-breakpoint tests and fixed the production races they exposed.
+- Prevented stale function-breakpoint sweeps from publishing after hidden-step
+  ownership changes.

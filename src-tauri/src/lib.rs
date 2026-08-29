@@ -1,3 +1,4 @@
+pub mod agent_cli_discovery;
 pub mod agent_task_admission;
 pub mod agent_task_spawner;
 pub mod agent_task_supervisor;
@@ -28,6 +29,7 @@ mod debug_node_watch_start_command;
 mod debug_session_registry;
 mod debug_source_map;
 mod debug_support;
+mod effective_executable_environment;
 mod eslint;
 mod file_fuzzy_matcher;
 mod file_uri_path;
@@ -175,7 +177,6 @@ use crate::lsp_session::{
     JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRequestError,
     PhpLanguageServerRegistry,
 };
-use crate::smart_mode::SmartModeService;
 use crate::terminal_session::TerminalSupervisor;
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_edit_commands::{

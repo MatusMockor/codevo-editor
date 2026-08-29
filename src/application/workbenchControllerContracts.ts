@@ -1,4 +1,4 @@
-import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
+import type { AgentCliDiscoveryGateway } from "../domain/agentSettings";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { AgentProviderSignInGateway } from "../domain/agentProviderSignIn";
@@ -57,7 +57,7 @@ export interface WorkbenchWorkspaceGateways {
 
 export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOptions {
   activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
-  agentCliVersionGateway?: AgentCliVersionGateway;
+  agentCliDiscoveryGateway?: AgentCliDiscoveryGateway;
   agentProviderGateway?: AgentProviderPolicyGateway &
     AgentProviderHealthGateway &
     AgentProviderUpdateGateway;

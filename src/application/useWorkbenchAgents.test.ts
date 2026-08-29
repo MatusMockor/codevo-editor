@@ -86,7 +86,7 @@ describe("useWorkbenchAgents composition", () => {
     harness.unmount();
   });
 
-  it("selects the current provider path for every new dispatch", async () => {
+  it("selects the current registered provider for every new dispatch", async () => {
     const harness = renderWorkbenchAgents({ withProjectGateways: false });
     await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
     harness.appSettings.agentCliPaths = {
@@ -105,8 +105,8 @@ describe("useWorkbenchAgents composition", () => {
     });
     expect(harness.startedRequests[0]).toMatchObject({
       agentCliKind: "claudeCode",
-      agentCliPath: "/usr/local/bin/claude",
     });
+    expect(harness.startedRequests[0]).not.toHaveProperty("agentCliPath");
 
     await act(async () => {
       expect(
@@ -129,8 +129,8 @@ describe("useWorkbenchAgents composition", () => {
     });
     expect(harness.startedRequests[1]).toMatchObject({
       agentCliKind: "codex",
-      agentCliPath: "/usr/local/bin/codex",
     });
+    expect(harness.startedRequests[1]).not.toHaveProperty("agentCliPath");
     harness.unmount();
   });
 
@@ -188,8 +188,70 @@ describe("useWorkbenchAgents composition", () => {
 
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
     expect(harness.hook().notice?.message).toBe(
-      "Configure this provider's CLI path in Settings before starting a turn.",
+      "Install this provider CLI or configure a manual path in Settings before starting a turn.",
     );
+    harness.unmount();
+  });
+
+  it("admits an automatically detected provider while registering a null override", async () => {
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      providerConfigured: false,
+      autoDetected: true,
+    });
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.providers.claudeCode.executable).toEqual({
+        kind: "detected",
+        path: "/detected/claude",
+        version: "1.0.0",
+      }),
+    );
+    expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "claudeCode", cliPath: null }),
+    );
+
+    await act(async () => {
+      expect(
+        await harness.hook().startThread({
+          projectRootKey: ACTIVE_ROOT,
+          repositoryRoot: ACTIVE_ROOT,
+          prompt: "Use detected provider",
+          isolation: "worktree",
+          unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ).not.toBeNull();
+    });
+
+    expect(harness.startedRequests[0]).not.toHaveProperty("agentCliPath");
+    expect(harness.hook().providerManagement.authority("claudeCode")?.cliPath).toBeNull();
+    harness.unmount();
+  });
+
+  it("accepts the discovery revision minted by its own post-sign-in refresh", async () => {
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      providerConfigured: false,
+      autoDetected: true,
+    });
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.providers.claudeCode.health.kind).toBe("ready"),
+    );
+    await act(async () => undefined);
+    act(() => expect(harness.hook().providerSignIn.request("claudeCode")).toBe(true));
+    const intent = harness.hook().providerSignIn.terminalIntents.claudeCode!;
+    let startedSignIn!: Awaited<ReturnType<WorkbenchAgentsSurface["providerSignIn"]["start"]>>;
+    await act(async () => {
+      startedSignIn = await harness.hook().providerSignIn.start(intent, { cols: 80, rows: 24 });
+    });
+    expect(startedSignIn?.kind).toBe("started");
+
+    await act(async () => harness.hook().providerSignIn.settle(intent, 77, 0));
+
+    expect(harness.hook().providerSignIn.states.claudeCode).toMatchObject({
+      kind: "settled",
+      healthRefresh: "complete",
+    });
     harness.unmount();
   });
 
@@ -197,6 +259,9 @@ describe("useWorkbenchAgents composition", () => {
     const harness = renderWorkbenchAgents({ withProjectGateways: false });
     await waitForReact(() =>
       expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(2),
+    );
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.providers.claudeCode.health.kind).toBe("ready"),
     );
 
     act(() => {
@@ -215,6 +280,9 @@ describe("useWorkbenchAgents composition", () => {
     const harness = renderWorkbenchAgents({ withProjectGateways: false });
     await waitForReact(() =>
       expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(2),
+    );
+    await waitForReact(() =>
+      expect(harness.hook().providerManagement.providers.claudeCode.health.kind).toBe("ready"),
     );
     act(() => expect(harness.hook().providerSignIn.request("claudeCode")).toBe(true));
     const intent = harness.hook().providerSignIn.terminalIntents.claudeCode!;
@@ -863,6 +931,7 @@ describe("useWorkbenchAgents composition", () => {
 
 interface HarnessOptions {
   withProjectGateways: boolean;
+  autoDetected?: boolean;
   providerConfigured?: boolean;
   providerEnabled?: boolean;
   workspaceTabs?: ReadonlyArray<string>;
@@ -1008,6 +1077,14 @@ function renderWorkbenchAgents(options: HarnessOptions) {
   });
   const workbenchOptions: WorkbenchAgentsOptions = {
     agentProviderGateway,
+    agentCliDiscoveryGateway: {
+      discoverAgentClis: vi.fn(async () => ({
+        claudeCode: options.autoDetected
+          ? ({ kind: "detected", path: "/detected/claude", version: "1.0.0" } as const)
+          : ({ kind: "notFound" } as const),
+        codex: { kind: "notFound" as const },
+      })),
+    },
     agentProviderSignInGateway: {
       startAgentProviderSignIn: vi.fn(async (request) => ({
         kind: "started" as const,

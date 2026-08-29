@@ -1,11 +1,12 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
 use crate::node_package_scripts::{
-    preflight_vscode_node_package_task, spawn_vscode_node_package_task,
+    preflight_vscode_node_package_task, spawn_vscode_node_package_task_with_effective_path,
     NodePackageTaskLaunchTarget, NodePackageTaskOutputObserver, RunNodePackageScriptRequest,
     SpawnedNodePackageTask,
 };
 use crate::{
+    effective_executable_environment::EffectiveExecutablePath,
     managed_javascript_typescript::node_executable_path,
     node_package_problem_matcher::{NodePackageProblemMatcher, NodePackageProblemMatcherKind},
     process_task_plan::{
@@ -83,18 +84,32 @@ impl SpawnProcessTaskRequest {
 }
 
 pub(crate) struct ProcessTaskRuntime<'a> {
+    effective_path: EffectiveExecutablePath<'a>,
     registry: &'a WorkspaceRegistry,
     trust: &'a Mutex<WorkspaceTrustService>,
     terminals: &'a TerminalSupervisor,
 }
 
 impl<'a> ProcessTaskRuntime<'a> {
+    #[cfg(test)]
     pub(crate) fn new(
         registry: &'a WorkspaceRegistry,
         trust: &'a Mutex<WorkspaceTrustService>,
         terminals: &'a TerminalSupervisor,
     ) -> Self {
+        let effective_path = EffectiveExecutablePath::new("/usr/local/bin:/usr/bin:/bin")
+            .expect("test effective path");
+        Self::new_with_effective_path(registry, trust, terminals, effective_path)
+    }
+
+    pub(crate) fn new_with_effective_path(
+        registry: &'a WorkspaceRegistry,
+        trust: &'a Mutex<WorkspaceTrustService>,
+        terminals: &'a TerminalSupervisor,
+        effective_path: EffectiveExecutablePath<'a>,
+    ) -> Self {
         Self {
+            effective_path,
             registry,
             trust,
             terminals,
@@ -227,7 +242,7 @@ impl<'a> ProcessTaskRuntime<'a> {
                 task.options.cwd.as_deref(),
             )?;
             drop(_operation);
-            let spawned = spawn_vscode_node_package_task(
+            let spawned = spawn_vscode_node_package_task_with_effective_path(
                 self.registry,
                 self.trust,
                 self.terminals,
@@ -244,6 +259,7 @@ impl<'a> ProcessTaskRuntime<'a> {
                 },
                 Arc::new(SilentNodePackageObserver),
                 &descriptor.canonical_root_path,
+                self.effective_path,
             )?;
             return Ok(SpawnedRuntimeTask::NodePackage(spawned));
         }

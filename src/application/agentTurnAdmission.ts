@@ -10,11 +10,7 @@ import {
   type AgentCliKind,
 } from "../domain/agentTask";
 import { runningTurn, type AgentThread, type AgentThreadsState } from "../domain/agentThread";
-import {
-  normalizeAgentCliKind,
-  normalizeAgentCliPath,
-  normalizeMaxConcurrentAgentTasks,
-} from "../domain/agentSettings";
+import { normalizeAgentCliKind, normalizeMaxConcurrentAgentTasks } from "../domain/agentSettings";
 import {
   AGENT_TASKS_SOURCE,
   attempt,
@@ -45,7 +41,6 @@ import {
 export interface AgentTurnAdmissionDependencies {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly store: AgentThreadStoreSurface;
-  readonly getAgentCliPath: () => string | null;
   readonly getAgentCliKind: () => AgentCliKind;
   readonly getAgentProviderAdmissionAuthority: AgentProviderAdmissionAuthorityReader;
   readonly getMaxConcurrentAgentTasks: () => number;
@@ -96,7 +91,6 @@ export interface AdmittedStart {
   readonly project: AgentProjectDescriptor;
   readonly authority: AgentTaskLaunchAuthority;
   readonly prompt: string;
-  readonly agentCliPath: string;
   readonly agentCliKind: AgentCliKind;
   readonly providerAuthority: ReadyAgentProviderAdmissionAuthority;
   readonly launch: AgentLaunchOptions;
@@ -142,7 +136,6 @@ export function admitStart(
     project,
     authority: taskLaunchAuthority(project, launchIdentity),
     prompt,
-    agentCliPath: providerAdmission.cliPath,
     agentCliKind,
     providerAuthority: providerAdmission,
     launch,
@@ -154,7 +147,6 @@ export interface AdmittedFollowUp {
   readonly authority: AgentTaskLaunchAuthority;
   readonly projectRoot: string;
   readonly prompt: string;
-  readonly agentCliPath: string;
   readonly providerAuthority: ReadyAgentProviderAdmissionAuthority;
   readonly sessionId: string;
   readonly launch: AgentLaunchOptions;
@@ -215,7 +207,6 @@ export function admitFollowUp(
     authority: taskLaunchAuthority(project, launchIdentity),
     projectRoot: project.rootPath,
     prompt,
-    agentCliPath: providerAdmission.cliPath,
     providerAuthority: providerAdmission,
     sessionId: thread.provider.sessionId,
     launch,
@@ -278,16 +269,7 @@ function admitCapacity(
     deps.setNotice(warning(decision.message));
     return null;
   }
-  const agentCliPath = normalizeAgentCliPath(decision.authority.cliPath);
-  if (agentCliPath === null) {
-    deps.setNotice({
-      kind: "warning",
-      message: "No agent CLI is configured. Set the agent CLI path in settings.",
-      action: "configure-agent-cli",
-    });
-    return null;
-  }
-  return { ...decision.authority, cliPath: agentCliPath };
+  return decision.authority;
 }
 
 export function providerAdmissionIsCurrent(

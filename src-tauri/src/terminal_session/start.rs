@@ -1,7 +1,7 @@
 use super::*;
 
 impl TerminalSupervisor {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn start(
         &self,
         cwd: PathBuf,
@@ -11,11 +11,13 @@ impl TerminalSupervisor {
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
+        let effective_path = EffectiveExecutablePath::new("/usr/local/bin:/usr/bin:/bin")?;
         self.start_with_options(
             TerminalLaunchRoots::workspace_root(cwd),
             None,
             None,
             TerminalStartOptions {
+                effective_path,
                 #[cfg(test)]
                 fault: None,
                 profile,
@@ -27,13 +29,13 @@ impl TerminalSupervisor {
         )
     }
 
-    #[cfg(unix)]
+    #[cfg(all(test, unix))]
     pub(crate) fn start_descriptor_bound(
         &self,
         roots: TerminalLaunchRoots,
         cwd_directory: fs::File,
         workspace_authority: DebugWorkspaceAuthority,
-        options: TerminalStartOptions,
+        options: TerminalStartOptions<'_>,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
@@ -47,7 +49,27 @@ impl TerminalSupervisor {
         )
     }
 
-    #[cfg(not(unix))]
+    #[cfg(unix)]
+    pub(crate) fn start_descriptor_bound_with_effective_path(
+        &self,
+        roots: TerminalLaunchRoots,
+        cwd_directory: fs::File,
+        workspace_authority: DebugWorkspaceAuthority,
+        options: TerminalStartOptions<'_>,
+        spawner: &dyn TerminalPtySpawner,
+        sink: Arc<dyn TerminalEventSink>,
+    ) -> Result<TerminalRuntimeStatus, String> {
+        self.start_with_options(
+            roots,
+            Some(Arc::new(cwd_directory)),
+            Some(workspace_authority),
+            options,
+            spawner,
+            sink,
+        )
+    }
+
+    #[cfg(all(test, not(unix)))]
     /// Preserve pathname-based terminal startup on platforms without `fchdir`,
     /// but never publish retained workspace authority for that weaker launch.
     pub(crate) fn start_descriptor_bound(
@@ -55,7 +77,20 @@ impl TerminalSupervisor {
         roots: TerminalLaunchRoots,
         _cwd_directory: fs::File,
         _workspace_authority: DebugWorkspaceAuthority,
-        options: TerminalStartOptions,
+        options: TerminalStartOptions<'_>,
+        spawner: &dyn TerminalPtySpawner,
+        sink: Arc<dyn TerminalEventSink>,
+    ) -> Result<TerminalRuntimeStatus, String> {
+        self.start_with_options(roots, None, None, options, spawner, sink)
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn start_descriptor_bound_with_effective_path(
+        &self,
+        roots: TerminalLaunchRoots,
+        _cwd_directory: fs::File,
+        _workspace_authority: DebugWorkspaceAuthority,
+        options: TerminalStartOptions<'_>,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
@@ -67,7 +102,7 @@ impl TerminalSupervisor {
         roots: TerminalLaunchRoots,
         cwd_directory: Option<Arc<fs::File>>,
         workspace_authority: Option<DebugWorkspaceAuthority>,
-        options: TerminalStartOptions,
+        options: TerminalStartOptions<'_>,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
@@ -84,6 +119,7 @@ impl TerminalSupervisor {
             cwd: cwd.clone(),
             #[cfg(unix)]
             cwd_directory,
+            effective_path: options.effective_path.as_str().to_string(),
             profile: options.profile,
             shell_integration_base_dir: options.shell_integration_base_dir,
             size: options.size.normalized(),

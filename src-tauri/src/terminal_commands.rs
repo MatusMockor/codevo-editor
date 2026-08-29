@@ -1,6 +1,8 @@
 use crate::{
+    agent_cli_discovery::AgentCliDiscovery,
     canonicalize_workspace_root,
     debug_session_registry::{retain_workspace_root, RetainedDebugWorkspaceRoot},
+    effective_executable_environment::EffectiveExecutablePath,
     git_worktree::{
         agent_worktree_path, ensure_worktree_path_in_base, safe_agent_task_id,
         WORKTREE_BASE_DIR_NAME,
@@ -162,6 +164,11 @@ pub(crate) fn start_terminal_session(
     supervisor: State<'_, TerminalSupervisor>,
 ) -> Result<TerminalRuntimeStatus, String> {
     let trust = app.state::<Mutex<WorkspaceTrustService>>();
+    let executable_environment = app
+        .state::<Arc<AgentCliDiscovery>>()
+        .effective_environment()
+        .map_err(|error| error.to_string())?;
+    let effective_path = EffectiveExecutablePath::from_source(executable_environment.as_ref())?;
     let root = canonicalize_workspace_root(&root_path)?;
     let launch_target = target.unwrap_or_default();
     let root_label = root.to_string_lossy().to_string();
@@ -175,7 +182,7 @@ pub(crate) fn start_terminal_session(
             .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
         let profile_provider = LocalTerminalProfileProvider;
         let workspace_authority = retained_workspace.authority.clone();
-        let result = supervisor.start_descriptor_bound(
+        let result = supervisor.start_descriptor_bound_with_effective_path(
             TerminalLaunchRoots {
                 workspace_root: root.clone(),
                 cwd: launch_directory.cwd,
@@ -183,6 +190,7 @@ pub(crate) fn start_terminal_session(
             launch_directory.directory,
             workspace_authority,
             TerminalStartOptions {
+                effective_path,
                 #[cfg(test)]
                 fault: None,
                 profile: profile_provider.resolve_profile(profile_id.as_deref())?,

@@ -22,6 +22,9 @@ mod managed_javascript_typescript {
     }
 }
 
+#[path = "../src/effective_executable_environment.rs"]
+mod effective_executable_environment;
+
 mod terminal {
     pub trait TerminalEventSink: Send + Sync {}
 }
@@ -115,13 +118,14 @@ mod node_package_scripts {
         Err("not used by discovery".to_string())
     }
 
-    pub(crate) fn spawn_vscode_node_package_task(
+    pub(crate) fn spawn_vscode_node_package_task_with_effective_path(
         _registry: &workspace_registry::WorkspaceRegistry,
         _trust: &Mutex<trust::WorkspaceTrustService>,
         _terminals: &terminal_session::TerminalSupervisor,
         _request: &RunNodePackageScriptRequest,
         _output_observer: Arc<dyn NodePackageTaskOutputObserver>,
         _expected_workspace_root: &Path,
+        _effective_path: effective_executable_environment::EffectiveExecutablePath<'_>,
     ) -> Result<SpawnedNodePackageTask, String> {
         Err("not used by discovery".to_string())
     }

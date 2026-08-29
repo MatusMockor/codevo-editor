@@ -18,13 +18,18 @@ import {
   normalizeAgentProviderHealthCheckIntervalSeconds,
   type AgentProviderPreference,
 } from "../domain/agentProviderSettings";
-import { normalizeAgentCliPath, type AgentCliKind } from "../domain/agentSettings";
+import {
+  normalizeAgentCliPath,
+  type AgentCliExecutablePresentation,
+  type AgentCliKind,
+} from "../domain/agentSettings";
 
 const PROVIDER_HEALTH_CLOCK_TICK_MS = 30_000;
 
 export interface AgentProviderSettingsCardProps {
   readonly management: AgentProviderManagementSurface;
   readonly path: string | null;
+  readonly presentation: AgentCliExecutablePresentation;
   readonly preference: AgentProviderPreference;
   readonly provider: AgentCliKind;
   readonly signIn?: AgentProviderSignInCardControl;
@@ -32,6 +37,7 @@ export interface AgentProviderSettingsCardProps {
   onChangeEnabled(value: boolean): void;
   onChangeHealthCheckIntervalSeconds(value: number): void;
   onChangePath(value: string | null): void;
+  onCopyInstallCommand(command: string): void;
 }
 
 export interface AgentProviderSignInCardControl {
@@ -46,8 +52,10 @@ export function AgentProviderSettingsCard({
   onChangeEnabled,
   onChangeHealthCheckIntervalSeconds,
   onChangePath,
+  onCopyInstallCommand,
   path,
   preference,
+  presentation,
   provider,
   signIn,
 }: AgentProviderSettingsCardProps) {
@@ -92,9 +100,9 @@ export function AgentProviderSettingsCard({
       </header>
 
       <label className="settings-field">
-        <span>CLI path</span>
+        <span>CLI path override (optional)</span>
         <input
-          aria-describedby={`${provider}-cli-health`}
+          aria-describedby={`${provider}-cli-discovery ${provider}-cli-health`}
           aria-invalid={invalidPath || undefined}
           disabled={!preference.enabled}
           onBlur={() => {
@@ -110,8 +118,17 @@ export function AgentProviderSettingsCard({
         {invalidPath ? <small>Enter an absolute executable path.</small> : null}
       </label>
 
+      <ProviderExecutableStatus
+        id={`${provider}-cli-discovery`}
+        onCopyInstallCommand={onCopyInstallCommand}
+        presentation={presentation}
+        provider={provider}
+      />
+
       <div className="agent-provider-card__status" id={`${provider}-cli-health`} role="status">
-        <span>{providerHealthLabel(view.policy, view.health, path !== null)}</span>
+        <span>
+          {providerHealthLabel(view.policy, view.health, presentation.kind !== "notFound")}
+        </span>
         <span>{providerAuthLabel(view.health)}</span>
         <span>{providerCheckedLabel(view.health, nowEpochMs)}</span>
       </div>
@@ -214,6 +231,51 @@ export function AgentProviderSettingsCard({
       <ProviderUpdateResult state={view.updateState} />
     </section>
   );
+}
+
+function ProviderExecutableStatus({
+  id,
+  onCopyInstallCommand,
+  presentation,
+  provider,
+}: {
+  readonly id: string;
+  readonly presentation: AgentCliExecutablePresentation;
+  readonly provider: AgentCliKind;
+  onCopyInstallCommand(command: string): void;
+}) {
+  switch (presentation.kind) {
+    case "manual":
+      return (
+        <div className="agent-provider-card__result" id={id} role="status">
+          Manual override: {presentation.path}
+        </div>
+      );
+    case "detected":
+      return (
+        <div className="agent-provider-card__result" id={id} role="status">
+          Detected at {presentation.path}
+          {presentation.version === null ? null : ` (v${presentation.version})`}
+        </div>
+      );
+    case "notFound":
+      return (
+        <div className="agent-provider-card__result agent-provider-card__result--failed" id={id}>
+          <span>
+            Not found: install with <code>{presentation.installCommand}</code>
+          </span>
+          <button
+            aria-label={`Copy ${providerLabel(provider)} install command`}
+            onClick={() => onCopyInstallCommand(presentation.installCommand)}
+            type="button"
+          >
+            Copy
+          </button>
+        </div>
+      );
+    default:
+      return unsupportedExecutablePresentation(presentation);
+  }
 }
 
 function ProviderSignInStatus({
@@ -463,7 +525,7 @@ function providerHealthLabel(
   }
   switch (health.kind) {
     case "notConfigured":
-      return "CLI not configured";
+      return configured ? "Provider health not checked yet" : "CLI not found";
     case "checking":
       return "Checking provider…";
     case "ready":
@@ -595,12 +657,22 @@ function providerExecutableLabel(provider: AgentCliKind): string {
 }
 
 function providerPlaceholder(provider: AgentCliKind): string {
-  if (provider === "claudeCode") return "/usr/local/bin/claude";
-  return "/usr/local/bin/codex";
+  switch (provider) {
+    case "claudeCode":
+      return "/usr/local/bin/claude";
+    case "codex":
+      return "/usr/local/bin/codex";
+    default:
+      return unsupportedProvider(provider);
+  }
 }
 
 function unsupportedProvider(provider: never): never {
   throw new TypeError(`Unsupported agent provider: ${String(provider)}`);
+}
+
+function unsupportedExecutablePresentation(presentation: never): never {
+  throw new TypeError(`Unsupported executable presentation: ${String(presentation)}`);
 }
 
 function unsupportedHealthState(state: never): never {

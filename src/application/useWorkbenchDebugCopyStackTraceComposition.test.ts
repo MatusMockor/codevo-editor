@@ -51,13 +51,23 @@ describe("workbench Copy Call Stack composition", () => {
     );
     const publicSurface = coordinatorPublicSurface(editorNavigationCoordinator);
     const projection = rootController.slice(rootController.indexOf("\n  return {", commandsStart));
+    const rootComposition = readFileSync(
+      new URL("../workbenchComposition.ts", import.meta.url),
+      "utf8",
+    );
 
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
-    expect(app).toContain(
+    expect(rootComposition).toContain(
       'import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";',
     );
-    expect(app).toContain("const debugTextClipboard = new BrowserTextClipboardGateway();");
+    expect(
+      rootComposition.match(/debugTextClipboard: new BrowserTextClipboardGateway\(\),/gu),
+    ).toHaveLength(1);
+    expect(app).not.toContain("new BrowserTextClipboardGateway()");
+    expect(app).not.toContain(
+      'import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";',
+    );
     expect(app).toContain("debugTextClipboard,");
     expect(controllerOptions).toContain("debugTextClipboard?: TextClipboardGateway | null;");
     expect(controllerContracts).toContain(

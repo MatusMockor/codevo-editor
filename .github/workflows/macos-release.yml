@@ -1,4 +1,5 @@
 name: macOS Release
+run-name: macOS Release ${{ inputs.mode }} ${{ github.ref_name }} ${{ inputs.dispatch_id }}
 
 on:
   workflow_dispatch:
@@ -11,9 +12,18 @@ on:
         options:
           - smoke
           - signed-release
+          - beta
+      dispatch_id:
+        description: "Unique UUID used to identify this dispatch"
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: macos-release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,6 +50,15 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Validate dispatch identifier
+        env:
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+        run: |
+          if ! [[ "$DISPATCH_ID" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; then
+            echo "::error::dispatch_id must be a UUID"
+            exit 1
+          fi
 
       - name: TypeScript check
         run: npm run check
@@ -95,11 +114,11 @@ jobs:
             src-tauri/target/debug/bundle/dmg/*.dmg
             src-tauri/target/debug/bundle/macos/*.app
 
-  signed-release-dmg:
-    name: Signed Release DMG
+  release-build:
+    name: Release Build
     runs-on: macos-15
     needs: checks
-    if: ${{ inputs.mode == 'signed-release' }}
+    if: ${{ inputs.mode == 'signed-release' || inputs.mode == 'beta' }}
 
     steps:
       - name: Checkout
@@ -119,8 +138,61 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate signing secrets
+      - name: Read release metadata
+        id: release
         env:
+          EXPECTED_REF: ${{ github.ref }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs")
+
+          const version = JSON.parse(fs.readFileSync("package.json", "utf8")).version
+          if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+            throw new Error(`package.json has an unsupported release version: ${version}`)
+          }
+
+          const tauriConfig = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"))
+          if (tauriConfig.bundle?.createUpdaterArtifacts !== true) {
+            throw new Error("bundle.createUpdaterArtifacts must be true for release modes")
+          }
+
+          const tag = `v${version}`
+          if (process.env.EXPECTED_REF !== `refs/tags/${tag}`) {
+            throw new Error(`dispatch this workflow from tag ${tag}, received ${process.env.EXPECTED_REF}`)
+          }
+
+          const changelog = fs.readFileSync("CHANGELOG.md", "utf8")
+          const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          const headingPattern = new RegExp(
+            `^## \\[${escapedVersion}\\](?: - [^\\n]+)?$`,
+            "m",
+          )
+          const heading = headingPattern.exec(changelog)
+          if (!heading) {
+            throw new Error(`CHANGELOG.md has no section for ${version}`)
+          }
+          const sectionStart = heading.index
+          const followingContent = changelog.slice(sectionStart + heading[0].length)
+          const nextHeadingOffset = followingContent.search(/^## \[/m)
+          const sectionEnd =
+            nextHeadingOffset < 0
+              ? changelog.length
+              : sectionStart + heading[0].length + nextHeadingOffset
+          const section = changelog.slice(sectionStart, sectionEnd).trim()
+
+          fs.writeFileSync("release-body.md", `${section}\n`)
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`)
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\n`)
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `prerelease=${version.includes("beta") ? "true" : "false"}\n`,
+          )
+          NODE
+
+      - name: Validate release secrets
+        id: signing
+        env:
+          RELEASE_MODE: ${{ inputs.mode }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
@@ -128,17 +200,49 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           missing=0
-          for name in APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_CONTENT APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY KEYCHAIN_PASSWORD; do
+          for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
             if [ -z "${!name}" ]; then
-              echo "::error::$name is required for signed-release mode"
+              echo "::error::$name is required whenever updater bundles and latest.json are published"
               missing=1
             fi
           done
-          exit "$missing"
+
+          apple_secret_count=0
+          for name in APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_CONTENT APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY KEYCHAIN_PASSWORD; do
+            if [ -n "${!name}" ]; then
+              apple_secret_count=$((apple_secret_count + 1))
+            fi
+          done
+
+          if [ "$RELEASE_MODE" = "signed-release" ] && [ "$apple_secret_count" -ne 7 ]; then
+            echo "::error::all Apple signing and notarization secrets are required for signed-release mode"
+            missing=1
+          fi
+
+          if [ "$RELEASE_MODE" = "beta" ] && [ "$apple_secret_count" -gt 0 ] && [ "$apple_secret_count" -lt 7 ]; then
+            echo "::error::beta mode requires either all Apple signing secrets or none of them"
+            missing=1
+          fi
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          if [ "$apple_secret_count" -eq 7 ]; then
+            echo "apple_signing=true" >> "$GITHUB_OUTPUT"
+            echo "label=signed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "apple_signing=false" >> "$GITHUB_OUTPUT"
+          echo "label=unsigned" >> "$GITHUB_OUTPUT"
 
       - name: Import Apple signing certificate
+        if: ${{ steps.signing.outputs.apple_signing == 'true' }}
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -178,6 +282,7 @@ jobs:
           echo "KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
 
       - name: Prepare App Store Connect API key
+        if: ${{ steps.signing.outputs.apple_signing == 'true' }}
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
@@ -187,35 +292,143 @@ jobs:
           chmod 600 "$api_key_path"
           echo "APPLE_API_KEY_PATH=$api_key_path" >> "$GITHUB_ENV"
 
-      - name: Build signed release DMG
+      - name: Build signed release artifacts
+        if: ${{ steps.signing.outputs.apple_signing == 'true' }}
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- --bundles dmg
 
-      - name: Verify signed release artifacts
-        run: |
-          app_path="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
-          dmg_path="$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
-          test -n "$app_path"
-          test -n "$dmg_path"
+      - name: Build unsigned beta artifacts
+        if: ${{ steps.signing.outputs.apple_signing == 'false' }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --bundles dmg
 
-          codesign --verify --deep --strict --verbose=2 "$app_path"
-          codesign -dv --verbose=4 "$app_path"
-          codesign -d --entitlements :- "$app_path"
-          spctl -a -vvv -t exec "$app_path"
-          xcrun stapler validate "$dmg_path"
-          spctl -a -vvv -t open --context context:primary-signature "$dmg_path"
-          spctl -a -vvv -t install "$dmg_path"
+      - name: Verify release artifacts
+        env:
+          APPLE_SIGNING: ${{ steps.signing.outputs.apple_signing }}
+          RELEASE_LABEL: ${{ steps.signing.outputs.label }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          shopt -s nullglob
+          app_paths=(src-tauri/target/release/bundle/macos/*.app)
+          dmg_paths=(src-tauri/target/release/bundle/dmg/*.dmg)
+          updater_paths=(src-tauri/target/release/bundle/macos/*.app.tar.gz)
+          if [ "${#app_paths[@]}" -ne 1 ] || [ "${#dmg_paths[@]}" -ne 1 ] || [ "${#updater_paths[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one macOS app, DMG, and updater archive"
+            exit 1
+          fi
+
+          app_path="${app_paths[0]}"
+          dmg_path="${dmg_paths[0]}"
+          updater_path="${updater_paths[0]}"
+          test -d "$app_path"
+          test -s "$dmg_path"
+          test -s "$updater_path"
+          test -s "$updater_path.sig"
+          test "$(wc -c < "$updater_path.sig")" -le 16384
+          test -s release-body.md
+
+          if [ "$APPLE_SIGNING" = "true" ]; then
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+            codesign -dv --verbose=4 "$app_path"
+            codesign -d --entitlements :- "$app_path"
+            spctl -a -vvv -t exec "$app_path"
+            xcrun stapler validate "$dmg_path"
+            spctl -a -vvv -t open --context context:primary-signature "$dmg_path"
+            spctl -a -vvv -t install "$dmg_path"
+          fi
           hdiutil imageinfo "$dmg_path"
 
-      - name: Upload signed release artifacts
+          mkdir -p release-assets/publish
+          dmg_name="$(basename "$dmg_path")"
+          updater_name="$(basename "$updater_path")"
+          if [ "$RELEASE_LABEL" = "unsigned" ]; then
+            dmg_name="${dmg_name%.dmg}-unsigned.dmg"
+            updater_name="${updater_name%.app.tar.gz}-unsigned.app.tar.gz"
+          fi
+          cp "$dmg_path" "release-assets/publish/$dmg_name"
+          cp "$updater_path" "release-assets/publish/$updater_name"
+          cp "$updater_path.sig" "release-assets/publish/$updater_name.sig"
+          cp release-body.md release-assets/release-body.md
+
+          export UPDATER_NAME="$updater_name"
+          UPDATER_SIGNATURE="$(tr -d '\r\n' < "$updater_path.sig")"
+          export UPDATER_SIGNATURE
+          export RELEASE_ARCH="$RUNNER_ARCH"
+          node <<'NODE'
+          const fs = require("node:fs")
+
+          const platformByRunnerArch = {
+            ARM64: "darwin-aarch64",
+            X64: "darwin-x86_64",
+          }
+          const platform = platformByRunnerArch[process.env.RELEASE_ARCH]
+          if (!platform) {
+            throw new Error(`unsupported macOS runner architecture: ${process.env.RELEASE_ARCH}`)
+          }
+
+          const url = [
+            process.env.SERVER_URL,
+            process.env.REPOSITORY,
+            "releases/download",
+            process.env.RELEASE_TAG,
+            encodeURIComponent(process.env.UPDATER_NAME),
+          ].join("/")
+          const latest = {
+            version: process.env.RELEASE_VERSION,
+            notes: fs.readFileSync("release-body.md", "utf8").trim(),
+            pub_date: new Date().toISOString(),
+            platforms: {
+              [platform]: {
+                signature: process.env.UPDATER_SIGNATURE,
+                url,
+              },
+            },
+          }
+          fs.writeFileSync(
+            "release-assets/publish/latest.json",
+            `${JSON.stringify(latest, null, 2)}\n`,
+          )
+
+          const generated = JSON.parse(
+            fs.readFileSync("release-assets/publish/latest.json", "utf8"),
+          )
+          const platformNames = Object.keys(generated.platforms)
+          if (
+            generated.version !== process.env.RELEASE_VERSION ||
+            typeof generated.notes !== "string" ||
+            generated.notes.length === 0 ||
+            !Number.isFinite(Date.parse(generated.pub_date)) ||
+            platformNames.length !== 1 ||
+            platformNames[0] !== platform ||
+            generated.platforms[platform].signature !== process.env.UPDATER_SIGNATURE ||
+            generated.platforms[platform].signature.length === 0 ||
+            generated.platforms[platform].url !== url
+          ) {
+            throw new Error("generated latest.json failed its release contract")
+          }
+          NODE
+
+          printf '%s\n' "$RELEASE_LABEL" > release-assets/release-label.txt
+
+      - name: Upload release build
         uses: actions/upload-artifact@v7
         with:
-          name: codevo-editor-macos-signed-release
+          name: codevo-editor-macos-${{ inputs.mode }}-${{ steps.signing.outputs.label }}
           path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
+            release-assets/publish/*
+            release-assets/release-body.md
+            release-assets/release-label.txt
+          if-no-files-found: error
 
       - name: Clean up signing materials
         if: ${{ always() }}
@@ -224,3 +437,138 @@ jobs:
             security delete-keychain "$KEYCHAIN_PATH" || true
           fi
           rm -f "${CERTIFICATE_PATH:-}" "${APPLE_API_KEY_PATH:-}"
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: macos-15
+    needs: release-build
+    if: ${{ inputs.mode == 'signed-release' || inputs.mode == 'beta' }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+
+      - name: Download release build
+        uses: actions/download-artifact@v8
+        with:
+          pattern: codevo-editor-macos-${{ inputs.mode }}-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          tag="v$version"
+          if [ "$EXPECTED_REF" != "refs/tags/$tag" ]; then
+            echo "::error::release ref must be refs/tags/$tag"
+            exit 1
+          fi
+
+          label="$(tr -d '\r\n' < release-assets/release-label.txt)"
+          case "$label" in
+            signed)
+              title="Codevo Editor $tag"
+              ;;
+            unsigned)
+              title="Codevo Editor $tag (unsigned macOS beta)"
+              ;;
+            *)
+              echo "::error::unknown release label: $label"
+              exit 1
+              ;;
+          esac
+
+          prerelease_args=()
+          if [[ "$version" == *beta* ]]; then
+            prerelease_args+=(--prerelease)
+          fi
+
+          shopt -s nullglob
+          release_files=(release-assets/publish/*)
+          if [ "${#release_files[@]}" -eq 0 ]; then
+            echo "::error::release build contains no publishable files"
+            exit 1
+          fi
+
+          export RELEASE_TAG="$tag"
+          lookup_release() {
+            gh api "repos/$REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.tag_name == env.RELEASE_TAG) | [.id, .draft] | @tsv'
+          }
+
+          existing_release="$(lookup_release)"
+          if [ -n "$existing_release" ]; then
+            echo "::error::a release already exists for $tag"
+            exit 1
+          fi
+
+          draft_title="$title [dispatch:$DISPATCH_ID]"
+          export DRAFT_TITLE="$draft_title"
+          owned_release_id=""
+          lookup_owned_draft() {
+            gh api "repos/$REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.tag_name == env.RELEASE_TAG and .name == env.DRAFT_TITLE and .draft == true) | [.id, .tag_name, .draft, .name] | @tsv'
+          }
+          cleanup_owned_draft() {
+            exit_status=$?
+            trap - EXIT
+            if [ -n "$owned_release_id" ]; then
+              owned_record="$(
+                gh api "repos/$REPOSITORY/releases/$owned_release_id" \
+                  --jq '[.id, .tag_name, .draft, .name] | @tsv' 2>/dev/null || true
+              )"
+            else
+              owned_record="$(lookup_owned_draft 2>/dev/null || true)"
+            fi
+            IFS=$'\t' read -r candidate_id candidate_tag candidate_draft candidate_name <<< "$owned_record"
+            if [ -n "$candidate_id" ] && [ "$candidate_tag" = "$tag" ] && [ "$candidate_draft" = "true" ] && [ "$candidate_name" = "$draft_title" ]; then
+              gh api --method DELETE "repos/$REPOSITORY/releases/$candidate_id" || true
+            fi
+            exit "$exit_status"
+          }
+          trap cleanup_owned_draft EXIT
+
+          gh release create "$tag" \
+            --repo "$REPOSITORY" \
+            --verify-tag \
+            --title "$draft_title" \
+            --notes-file release-assets/release-body.md \
+            --draft \
+            "${prerelease_args[@]}"
+
+          owned_record="$(lookup_owned_draft)"
+          IFS=$'\t' read -r owned_release_id owned_tag owned_is_draft owned_title <<< "$owned_record"
+          if [ -z "$owned_release_id" ] || [ "$owned_tag" != "$tag" ] || [ "$owned_is_draft" != "true" ] || [ "$owned_title" != "$draft_title" ]; then
+            echo "::error::created release is not an identifiable draft"
+            exit 1
+          fi
+
+          gh release upload "$tag" \
+            "${release_files[@]}" \
+            --repo "$REPOSITORY"
+
+          expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
+          actual_assets="$RUNNER_TEMP/actual-release-assets.txt"
+          for release_file in "${release_files[@]}"; do
+            basename "$release_file"
+          done | sort > "$expected_assets"
+          gh api --paginate "repos/$REPOSITORY/releases/$owned_release_id/assets?per_page=100" \
+            --jq '.[] | select(.size > 0) | .name' \
+            | sort > "$actual_assets"
+          if ! diff -u "$expected_assets" "$actual_assets"; then
+            echo "::error::draft release assets do not match the verified build"
+            exit 1
+          fi
+
+          gh api --method PATCH "repos/$REPOSITORY/releases/$owned_release_id" \
+            -f name="$title" \
+            -F draft=false > /dev/null
+          owned_release_id=""
+          trap - EXIT

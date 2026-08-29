@@ -60,8 +60,14 @@ describe("workbench Copy Value composition", () => {
       rootBindingEnd,
     );
     const projection = rootController.slice(rootController.indexOf("\n  return {"));
-
-    expect(app).toContain("const debugTextClipboard = new BrowserTextClipboardGateway();");
+    expect(rootComposition).toContain(
+      'import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";',
+    );
+    expect(
+      rootComposition.match(/debugTextClipboard: new BrowserTextClipboardGateway\(\),/gu),
+    ).toHaveLength(1);
+    expect(app).not.toContain("new BrowserTextClipboardGateway()");
+    expect(app).toContain("debugTextClipboard,");
     expect(controllerOptions).toContain("debugTextClipboard?: TextClipboardGateway | null;");
     expect(controllerContracts).toContain(
       "export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOptions {",

@@ -5,7 +5,15 @@ import { LiveDocumentRuntime } from "./application/liveDocumentRuntime";
 import { TauriIncrementalLanguageServerDocumentSyncGateway } from "./infrastructure/tauriIncrementalLanguageServerDocumentSyncGateway";
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
-import { createWorkbenchComposition, workbenchComposition } from "./workbenchComposition";
+import { TauriAgentCliDiscoveryGateway } from "./infrastructure/tauriAgentCliDiscoveryGateway";
+import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway";
+import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
+import packageMetadata from "../package.json";
+import {
+  CODEVO_APP_VERSION,
+  createWorkbenchComposition,
+  workbenchComposition,
+} from "./workbenchComposition";
 
 describe("workbench live-document runtime composition", () => {
   it("owns one stable runtime for the exported workbench composition", () => {
@@ -43,5 +51,28 @@ describe("workbench live-document runtime composition", () => {
     expect(first.agentProviderGateway).not.toBe(second.agentProviderGateway);
     expect(first.agentProviderSignInGateway).toBeInstanceOf(TauriAgentProviderSignInGateway);
     expect(first.agentProviderSignInGateway).not.toBe(second.agentProviderSignInGateway);
+    expect(first.agentCliDiscoveryGateway).toBeInstanceOf(TauriAgentCliDiscoveryGateway);
+    expect(first.agentCliDiscoveryGateway).not.toBe(second.agentCliDiscoveryGateway);
+    expect("agentCliVersionGateway" in first).toBe(false);
+  });
+
+  it("constructs the updater from the package-authoritative application version", () => {
+    const first = createWorkbenchComposition();
+    const second = createWorkbenchComposition();
+
+    expect(CODEVO_APP_VERSION).toBe(packageMetadata.version);
+    expect(first.appUpdater.appVersion).toBe(packageMetadata.version);
+    expect(first.appUpdater.appUpdaterGateway).toBeInstanceOf(TauriAppUpdaterGateway);
+    expect(first.appUpdater.appUpdaterGateway).not.toBe(second.appUpdater.appUpdaterGateway);
+    expect(Object.keys(first.appUpdater).sort()).toEqual(["appUpdaterGateway", "appVersion"]);
+  });
+
+  it("owns one text clipboard instance per workbench composition", () => {
+    const first = createWorkbenchComposition();
+    const second = createWorkbenchComposition();
+
+    expect(first.debugTextClipboard).toBeInstanceOf(BrowserTextClipboardGateway);
+    expect(first.debugTextClipboard).toBe(first.debugTextClipboard);
+    expect(first.debugTextClipboard).not.toBe(second.debugTextClipboard);
   });
 });

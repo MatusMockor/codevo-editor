@@ -76,14 +76,29 @@ without integrating** is destructive and is kept separate from the normal ship p
 
 ## Providers, sign-in, and updates
 
-Open **Settings > Agents** (or use the rail footer):
+Open **Settings > Agents** (or use the rail footer). The CLI path defaults to empty, which means
+**Auto**: Codevo discovers Claude Code and Codex from the login-shell path and bounded well-known
+installation directories. A discovered provider is shown as **`Detected at <path>`**, followed by
+**`(v<version>)`** when its version can be read. No CLI path is required during normal setup.
 
-1. Enable Claude Code or Codex and enter an absolute path to its CLI executable.
-2. Register the provider policy if registration is pending or failed.
-3. Use **Refresh** to read the installed version, authentication state, and update availability.
-4. Use **Sign in** when authentication is needed. Codevo opens a dedicated bottom-terminal tab
-   and starts `claude auth login` or `codex login`; complete the provider's interactive flow there.
-   When the terminal exits, Codevo refreshes authentication status.
+If a provider is not found, install it with the command shown in its card:
+
+- Claude Code: `npm i -g @anthropic-ai/claude-code`
+- Codex: `npm i -g @openai/codex`
+
+The card includes a copy action for that fixed install command. An absolute CLI path remains
+available as an optional manual override. Clear the override to return to **Auto**. **Refresh**
+re-runs discovery across the current login-shell path and the bounded well-known directories,
+then reads the resolved CLI's version, authentication state, and update availability.
+
+Codevo applies the same effective path to agent turns, agent sign-in terminals, regular terminals,
+and package-script runs. This lets those processes find the same Node and provider executables when
+Codevo was opened from Finder or the Dock.
+
+Register the provider policy if registration is pending or failed. Use **Sign in** when
+authentication is needed. Codevo opens a dedicated bottom-terminal tab and starts
+`claude auth login` or `codex login`; complete the provider's interactive flow there. When the
+terminal exits, Codevo refreshes authentication status.
 
 Provider health checks run on the configured interval; setting it to `0` makes checks manual.
 **Check for updates** is opt-in and off by default. When an update is available, **Update** runs the
@@ -93,8 +108,8 @@ summaries disclose byte counts only, and withheld or truncated activity is label
 sign-in actions are excluded while that provider has an active turn, and they are mutually
 exclusive with each other.
 
-Codevo updates the configured CLI only. It does not install an unknown provider, switch package
-managers, or treat an unrecognized installer as updateable.
+Codevo updates only the effective resolved CLI. It does not install an unknown provider, switch
+package managers, or treat an unrecognized installer as updateable.
 
 ## Usage labels and limits
 

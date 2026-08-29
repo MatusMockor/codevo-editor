@@ -28,6 +28,36 @@ export interface AgentCliPaths {
   readonly codex: string | null;
 }
 
+export type AgentCliDiscoveryState =
+  | {
+      readonly kind: "detected";
+      readonly path: string;
+      readonly version: string | null;
+    }
+  | { readonly kind: "notFound" };
+
+export interface AgentCliDiscoveryResult {
+  readonly claudeCode: AgentCliDiscoveryState;
+  readonly codex: AgentCliDiscoveryState;
+}
+
+export interface AgentCliDiscoveryRequest {
+  readonly refresh: boolean;
+}
+
+export interface AgentCliDiscoveryGateway {
+  discoverAgentClis(request: AgentCliDiscoveryRequest): Promise<AgentCliDiscoveryResult>;
+}
+
+export type AgentCliExecutablePresentation =
+  | { readonly kind: "manual"; readonly path: string }
+  | {
+      readonly kind: "detected";
+      readonly path: string;
+      readonly version: string | null;
+    }
+  | { readonly kind: "notFound"; readonly installCommand: string };
+
 export type AgentModelFavoriteKey = `claudeCode/${ClaudeModelChoice}` | `codex/${CodexModelChoice}`;
 
 export type AgentCliPathValidation = "notConfigured" | "invalid" | "valid";
@@ -59,6 +89,37 @@ export function defaultAgentAppSettings(): AgentAppSettings {
     agentProviderPreferences: defaultAgentProviderPreferences(),
     maxConcurrentAgentTasks: DEFAULT_MAX_CONCURRENT_AGENT_TASKS,
   };
+}
+
+export function defaultAgentCliDiscoveryResult(): AgentCliDiscoveryResult {
+  return { claudeCode: { kind: "notFound" }, codex: { kind: "notFound" } };
+}
+
+export function agentCliExecutablePresentation(
+  provider: AgentCliKind,
+  manualPath: string | null,
+  discovery: AgentCliDiscoveryState,
+): AgentCliExecutablePresentation {
+  if (manualPath !== null) return { kind: "manual", path: manualPath };
+  switch (discovery.kind) {
+    case "detected":
+      return discovery;
+    case "notFound":
+      return { kind: "notFound", installCommand: agentCliInstallCommand(provider) };
+    default:
+      return unsupportedAgentCliDiscoveryState(discovery);
+  }
+}
+
+export function agentCliInstallCommand(provider: AgentCliKind): string {
+  switch (provider) {
+    case "claudeCode":
+      return "npm i -g @anthropic-ai/claude-code";
+    case "codex":
+      return "npm i -g @openai/codex";
+    default:
+      return unsupportedAgentCliKind(provider);
+  }
 }
 
 export function normalizeAgentCliPath(value: unknown): string | null {
@@ -218,6 +279,7 @@ function storedAgentCliPath(
   value: unknown,
 ): { readonly valid: true; readonly path: string | null } | { readonly valid: false } {
   if (value === null) return { valid: true, path: null };
+  if (typeof value === "string" && value.trim() === "") return { valid: true, path: null };
   const path = normalizeAgentCliPath(value);
   if (path === null) return { valid: false };
   return { valid: true, path };
@@ -225,4 +287,8 @@ function storedAgentCliPath(
 
 function unsupportedAgentCliKind(kind: never): never {
   throw new TypeError(`Unsupported agent CLI kind: ${String(kind)}`);
+}
+
+function unsupportedAgentCliDiscoveryState(state: never): never {
+  throw new TypeError(`Unsupported agent CLI discovery state: ${String(state)}`);
 }

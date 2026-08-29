@@ -2,6 +2,7 @@ import type { MutableRefObject } from "react";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
+import { defaultAgentCliDiscoveryResult } from "../domain/agentSettings";
 import type { AgentCliKind } from "../domain/agentTask";
 import type { AppSettings, WorkspaceSettings } from "../domain/settings";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
@@ -9,6 +10,7 @@ import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
 export interface AgentSettingsDialogProviderControls {
   readonly providerManagement?: AgentProviderManagementSurface | null;
   readonly providerSignIn?: AgentProviderSignInSurface | null;
+  onCopyInstallCommand?(command: string): void;
 }
 
 export interface AgentSettingsDialogSectionProps extends AgentSettingsDialogProviderControls {
@@ -27,6 +29,7 @@ export function AgentSettingsDialogSection({
   hasWorkspace,
   onPersistAppSettings,
   onPublishAppSettings,
+  onCopyInstallCommand,
   onUpdateWorkspaceSettings,
   providerManagement = null,
   providerSignIn = null,
@@ -67,6 +70,7 @@ export function AgentSettingsDialogSection({
       hasWorkspace={hasWorkspace}
       providerManagement={providerManagement ?? unavailableProviderManagement}
       providerSignIn={providerSignIn ?? unavailableProviderSignIn}
+      onCopyInstallCommand={onCopyInstallCommand}
       updateAppSettings={updateAgentAppSettings}
       updateWorkspaceSettings={onUpdateWorkspaceSettings}
       workspaceSettings={workspaceSettings}
@@ -167,14 +171,20 @@ function rollbackProviderDraft(
 }
 
 const unavailableProviderManagement: AgentProviderManagementSurface = {
+  cliDiscovery: defaultAgentCliDiscoveryResult(),
   providers: {
     claudeCode: {
+      executable: {
+        kind: "notFound",
+        installCommand: "npm i -g @anthropic-ai/claude-code",
+      },
       health: { kind: "notConfigured" },
       policy: { kind: "unregistered" },
       updateState: { kind: "idle" },
       liveTurnCount: 0,
     },
     codex: {
+      executable: { kind: "notFound", installCommand: "npm i -g @openai/codex" },
       health: { kind: "notConfigured" },
       policy: { kind: "unregistered" },
       updateState: { kind: "idle" },

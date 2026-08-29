@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
+import { defaultAgentCliDiscoveryResult } from "../domain/agentSettings";
 import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
 import { AgentProviderSettingsCard } from "./AgentProviderSettingsCard";
 
@@ -27,9 +28,61 @@ describe("AgentProviderSettingsCard", () => {
   it("shows the resolved version, auth label and fresh health timestamp", () => {
     render(management());
 
+    expect(host.textContent).toContain("Manual override: /usr/local/bin/claude");
     expect(host.textContent).toContain("Version 2.1.245");
     expect(host.textContent).toContain("Signed in · Pro plan");
     expect(host.textContent).toContain("Checked just now");
+  });
+
+  it("shows automatic detection without turning it into a persisted override", () => {
+    const onChangePath = vi.fn();
+    render(management(), {
+      onChangePath,
+      path: null,
+      presentation: {
+        kind: "detected",
+        path: "/Users/test/.local/bin/claude",
+        version: "2.1.247",
+      },
+    });
+
+    expect(host.textContent).toContain("Detected at /Users/test/.local/bin/claude (v2.1.247)");
+    expect(input('input[placeholder="/usr/local/bin/claude"]').value).toBe("");
+    expect(onChangePath).not.toHaveBeenCalled();
+  });
+
+  it("does not contradict a detected executable before its first health result", () => {
+    render(management({ health: { kind: "notConfigured" } }), {
+      path: null,
+      presentation: {
+        kind: "detected",
+        path: "/Users/test/.local/bin/claude",
+        version: null,
+      },
+    });
+
+    expect(host.textContent).toContain("Detected at /Users/test/.local/bin/claude");
+    expect(host.textContent).toContain("Provider health not checked yet");
+    expect(host.textContent).not.toContain("CLI not found");
+  });
+
+  it("shows the fixed install command and copies it when automatic discovery finds nothing", () => {
+    const onCopyInstallCommand = vi.fn();
+    render(management({ health: { kind: "notConfigured" } }), {
+      onCopyInstallCommand,
+      path: null,
+      presentation: {
+        kind: "notFound",
+        installCommand: "npm i -g @anthropic-ai/claude-code",
+      },
+    });
+
+    expect(host.textContent).toContain(
+      "Not found: install with npm i -g @anthropic-ai/claude-code",
+    );
+    expect(host.textContent).toContain("CLI not found");
+    click("button", "Copy");
+    expect(onCopyInstallCommand).toHaveBeenCalledWith("npm i -g @anthropic-ai/claude-code");
   });
 
   it("renders bounded relative check ages", () => {
@@ -430,8 +483,10 @@ describe("AgentProviderSettingsCard", () => {
           onChangeEnabled={() => undefined}
           onChangeHealthCheckIntervalSeconds={() => undefined}
           onChangePath={() => undefined}
+          onCopyInstallCommand={() => undefined}
           path="/usr/local/bin/claude"
           preference={defaultAgentProviderPreferences().claudeCode}
+          presentation={{ kind: "manual", path: "/usr/local/bin/claude" }}
           provider="claudeCode"
           {...overrides}
         />,
@@ -488,6 +543,7 @@ function management(
   overrides: Partial<AgentProviderManagementSurface["providers"]["claudeCode"]> = {},
 ): AgentProviderManagementSurface {
   const ready = {
+    executable: { kind: "manual" as const, path: "/usr/local/bin/claude" },
     policy: { kind: "registered" as const, settingsRevision: 1, providerGeneration: 1 },
     health: {
       kind: "ready" as const,
@@ -506,9 +562,11 @@ function management(
     ...overrides,
   };
   return {
+    cliDiscovery: defaultAgentCliDiscoveryResult(),
     providers: {
       claudeCode: ready,
       codex: {
+        executable: { kind: "notFound", installCommand: "npm i -g @openai/codex" },
         health: { kind: "notConfigured" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },

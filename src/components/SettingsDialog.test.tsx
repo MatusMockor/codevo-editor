@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { defaultKeymapSettings } from "../domain/keymap";
 import type { SystemFontGateway } from "../domain/systemFonts";
@@ -40,6 +41,46 @@ describe("SettingsDialog", () => {
     host.remove();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("renders application updates in General settings without an implicit check", async () => {
+    const appUpdater: AppUpdaterSurface = {
+      state: { kind: "idle", currentVersion: "0.2.0-beta.1" },
+      check: vi.fn(async () => undefined),
+      download: vi.fn(async () => undefined),
+      installAndRestart: vi.fn(async () => undefined),
+    };
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          appUpdater={appUpdater}
+          initialSection="general"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn()}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot={null}
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={null}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain("Application updates");
+    expect(host.textContent).toContain("0.2.0-beta.1");
+    expect(appUpdater.check).not.toHaveBeenCalled();
+    const checkButton = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Check for updates",
+    );
+    if (!checkButton) throw new Error("Check for updates button was not rendered.");
+    act(() => checkButton.click());
+    expect(appUpdater.check).toHaveBeenCalledOnce();
   });
 
   it("autosaves the terminal shell integration opt-in", async () => {

@@ -64,6 +64,7 @@ export interface AgentsSettingsSectionProps {
   onClearAgentModelFavorites(): void;
   onChangeMaxConcurrentAgentTasks(value: number): void;
   onChangeAgentIsolationPolicy(value: AgentIsolationPolicy): void;
+  onCopyInstallCommand?(command: string): void;
 }
 
 export function AgentsSettingsSection({
@@ -78,6 +79,7 @@ export function AgentsSettingsSection({
   onClearAgentModelFavorites,
   onChangeAgentIsolationPolicy,
   onChangeMaxConcurrentAgentTasks,
+  onCopyInstallCommand = copyInstallCommand,
   providerManagement,
   providerSignIn = unavailableProviderSignIn,
   workspaceSettings,
@@ -104,8 +106,10 @@ export function AgentsSettingsSection({
             onChangeAgentProviderHealthCheckInterval("claudeCode", value)
           }
           onChangePath={(value) => onChangeAgentCliPath("claudeCode", value)}
+          onCopyInstallCommand={onCopyInstallCommand}
           path={appSettings.agentCliPaths.claudeCode}
           preference={preferences.claudeCode}
+          presentation={providerManagement.providers.claudeCode.executable}
           provider="claudeCode"
           signIn={{
             blockedReason: providerSignIn.blockedReason("claudeCode"),
@@ -123,8 +127,10 @@ export function AgentsSettingsSection({
             onChangeAgentProviderHealthCheckInterval("codex", value)
           }
           onChangePath={(value) => onChangeAgentCliPath("codex", value)}
+          onCopyInstallCommand={onCopyInstallCommand}
           path={appSettings.agentCliPaths.codex}
           preference={preferences.codex}
+          presentation={providerManagement.providers.codex.executable}
           provider="codex"
           signIn={{
             blockedReason: providerSignIn.blockedReason("codex"),
@@ -249,6 +255,12 @@ export function AgentsSettingsSection({
       </p>
     </div>
   );
+}
+
+function copyInstallCommand(command: string): void {
+  const clipboard = navigator.clipboard;
+  if (clipboard === undefined) return;
+  void clipboard.writeText(command).catch(() => undefined);
 }
 
 const unavailableProviderSignIn: AgentProviderSignInSurface = {

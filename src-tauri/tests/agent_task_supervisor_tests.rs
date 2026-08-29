@@ -2771,3 +2771,5 @@ fn real_process_group_kill_reaps_the_whole_child_tree() {
         "output pumps did not reach EOF; a process in the tree survived the group kill"
     );
 }
+#[path = "../src/effective_executable_environment.rs"]
+mod effective_executable_environment;

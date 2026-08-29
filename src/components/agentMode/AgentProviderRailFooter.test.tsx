@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
+import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
 
 describe("AgentProviderRailFooter", () => {
@@ -94,9 +95,14 @@ describe("AgentProviderRailFooter", () => {
     });
     const surface: AgentProviderManagementSurface = {
       ...failed,
+      cliDiscovery: {
+        ...failed.cliDiscovery,
+        codex: { kind: "detected", path: "/usr/local/bin/codex", version: null },
+      },
       providers: {
         claudeCode: failed.providers.claudeCode,
         codex: {
+          executable: { kind: "detected", path: "/usr/local/bin/codex", version: null },
           health: { kind: "failed", reason: "probeFailed", checkedAtEpochMs: null },
           policy: { kind: "failed", settingsRevision: 2, reason: "registrationFailed" },
           updateState: { kind: "idle" },
@@ -154,8 +160,21 @@ function management(
 ): AgentProviderManagementSurface {
   const preferences = defaultAgentProviderPreferences();
   return {
+    cliDiscovery: {
+      ...defaultAgentCliDiscoveryResult(),
+      claudeCode: {
+        kind: "detected",
+        path: "/usr/local/bin/claude",
+        version: "2.1.245",
+      },
+    },
     providers: {
       claudeCode: {
+        executable: {
+          kind: "detected",
+          path: "/usr/local/bin/claude",
+          version: "2.1.245",
+        },
         health: overrides.health ?? {
           kind: "ready",
           installedVersion: "2.1.245",
@@ -177,6 +196,7 @@ function management(
         liveTurnCount: overrides.liveTurnCount ?? 0,
       },
       codex: {
+        executable: { kind: "notFound", installCommand: "npm i -g @openai/codex" },
         health: overrides.codexEnabled === false ? { kind: "disabled" } : { kind: "notConfigured" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },

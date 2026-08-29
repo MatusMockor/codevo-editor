@@ -104,7 +104,6 @@ describe("workbench agents production chain", () => {
     const started = agentTaskGateway.started[0];
     expect(started?.repositoryRoot).toBe("/workspace-a");
     expect(started?.workspaceId).toBe("workspace-a");
-    expect(started?.agentCliPath).toBe("/usr/local/bin/claude");
     expect(started?.agentCliKind).toBe("claudeCode");
     expect(started?.isolation).toBe("worktree");
     const threadId = gitWorktreeGateway.added[0]?.taskId ?? "";

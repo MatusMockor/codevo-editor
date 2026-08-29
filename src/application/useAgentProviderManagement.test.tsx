@@ -12,6 +12,7 @@ import type {
   AgentProviderUpdateResult,
 } from "../domain/agentProviderHealth";
 import { defaultAgentProviderPreferences } from "../domain/agentProviderSettings";
+import type { AgentCliDiscoveryGateway, AgentCliDiscoveryResult } from "../domain/agentSettings";
 import type { AgentCliKind } from "../domain/agentTask";
 import { defaultAppSettings, type AppSettings } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
@@ -23,8 +24,10 @@ import {
 import {
   useAgentProviderManagement,
   type AgentProviderManagementDependencies,
+  type AgentProviderRefreshOutcome,
   type AgentProviderManagementSurface,
 } from "./useAgentProviderManagement";
+import { isCurrentAgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
 
 const PATH_A = "/usr/local/bin/claude";
 const PATH_B = "/opt/homebrew/bin/claude";
@@ -53,6 +56,233 @@ afterEach(() => {
 });
 
 describe("useAgentProviderManagement", () => {
+  it("keeps a null persisted override while admitting the exact detected executable", async () => {
+    const discovery = deferred<AgentCliDiscoveryResult>();
+    const refreshDiscovery = deferred<AgentCliDiscoveryResult>();
+    const discoveryGateway: AgentCliDiscoveryGateway = {
+      discoverAgentClis: vi
+        .fn<AgentCliDiscoveryGateway["discoverAgentClis"]>()
+        .mockReturnValueOnce(discovery.promise)
+        .mockReturnValueOnce(refreshDiscovery.promise),
+    };
+    const settings = configuredSettings();
+    settings.agentCliPaths = { claudeCode: null, codex: "/usr/local/bin/codex" };
+    const harness = renderManagement(
+      settings,
+      () => 0,
+      true,
+      () => ({ kind: "unregistered" }),
+      {
+        discoveryGateway,
+      },
+    );
+
+    await waitForReact(() =>
+      expect(harness.dependencies.policyGateway.registerAgentProviderPolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "claudeCode", cliPath: null }),
+      ),
+    );
+    expect(harness.healthCalls).toHaveLength(1);
+    await act(async () =>
+      discovery.resolve({
+        claudeCode: { kind: "detected", path: "/detected/claude", version: "1.2.3" },
+        codex: { kind: "notFound" },
+      }),
+    );
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    expect(harness.hook().providers.claudeCode.executable).toEqual({
+      kind: "detected",
+      path: "/detected/claude",
+      version: "1.2.3",
+    });
+    expect(harness.hook().authority("claudeCode")?.cliPath).toBeNull();
+    expect(harness.hook().admissionAuthority("claudeCode")).toMatchObject({
+      disposition: { kind: "ready" },
+      providerGeneration: 1,
+    });
+    expect(harness.hook().admissionAuthority("claudeCode")).not.toHaveProperty("cliPath");
+
+    await settleHealth(harness, 0, currentHealth("2.0.0"));
+    await settleHealth(harness, 1, currentHealth("1.2.3"));
+    let refreshed!: Promise<AgentProviderRefreshOutcome>;
+    act(() => {
+      refreshed = harness.hook().refreshWithOutcome!("claudeCode");
+    });
+    expect(harness.healthCalls).toHaveLength(2);
+    await act(async () =>
+      refreshDiscovery.resolve({
+        claudeCode: { kind: "detected", path: "/detected/new-claude", version: "1.2.4" },
+        codex: { kind: "notFound" },
+      }),
+    );
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    expect(harness.hook().providers.claudeCode.executable).toMatchObject({
+      kind: "detected",
+      path: "/detected/new-claude",
+    });
+    await settleHealth(harness, 2, currentHealth("1.2.4"));
+    const receipt = await refreshed;
+    expect(receipt.kind).toBe("complete");
+    if (receipt.kind !== "complete") throw new Error("Expected an exact refresh receipt.");
+    const previousPreference = settings.agentProviderPreferences!.claudeCode;
+    const currentPolicy = harness.hook().providers.claudeCode.policy;
+    if (currentPolicy.kind !== "registered")
+      throw new Error("Expected registered provider policy.");
+    vi.mocked(harness.dependencies.policyGateway.currentAgentProviderPolicy).mockResolvedValueOnce({
+      kind: "registered",
+      receipt: {
+        provider: "claudeCode",
+        settingsRevision: currentPolicy.settingsRevision,
+        providerGeneration: currentPolicy.providerGeneration,
+      },
+      enabled: previousPreference.enabled,
+      cliPath: null,
+      checkForUpdates: previousPreference.checkForUpdates,
+    });
+    let preferenceSave!: Promise<boolean>;
+    act(() => {
+      preferenceSave = harness.hook().save({
+        provider: "claudeCode",
+        preference: {
+          ...previousPreference,
+          healthCheckIntervalSeconds: previousPreference.healthCheckIntervalSeconds + 1,
+        },
+      });
+    });
+    await act(async () => {
+      await expect(preferenceSave).resolves.toBe(true);
+    });
+    const replacement = harness.hook().admissionAuthority("claudeCode");
+    expect(replacement).toMatchObject({ providerGeneration: receipt.authority.providerGeneration });
+    expect(replacement.revision).not.toBe(receipt.authority.revision);
+    expect(
+      isCurrentAgentProviderAdmissionAuthority(
+        (provider) => harness.hook().admissionAuthority(provider),
+        receipt.authority,
+      ),
+    ).toBe(false);
+    harness.unmount();
+  });
+
+  it("restores the periodic health timer after delayed automatic discovery and refresh", async () => {
+    vi.useFakeTimers();
+    const initialDiscovery = deferred<AgentCliDiscoveryResult>();
+    const refreshedDiscovery = deferred<AgentCliDiscoveryResult>();
+    const discoveryGateway: AgentCliDiscoveryGateway = {
+      discoverAgentClis: vi
+        .fn<AgentCliDiscoveryGateway["discoverAgentClis"]>()
+        .mockReturnValueOnce(initialDiscovery.promise)
+        .mockReturnValueOnce(refreshedDiscovery.promise),
+    };
+    const settings = configuredSettings();
+    settings.agentCliPaths = { claudeCode: null, codex: "/usr/local/bin/codex" };
+    settings.agentProviderPreferences = {
+      claudeCode: {
+        ...defaultAgentProviderPreferences().claudeCode,
+        healthCheckIntervalSeconds: 1,
+      },
+      codex: {
+        ...defaultAgentProviderPreferences().codex,
+        healthCheckIntervalSeconds: 0,
+      },
+    };
+    const harness = renderManagement(
+      settings,
+      () => 0,
+      true,
+      () => ({ kind: "unregistered" }),
+      {
+        discoveryGateway,
+      },
+    );
+    await waitForReact(() =>
+      expect(harness.dependencies.policyGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(
+        2,
+      ),
+    );
+    await act(async () =>
+      initialDiscovery.resolve({
+        claudeCode: { kind: "detected", path: "/detected/claude", version: "1.2.3" },
+        codex: { kind: "notFound" },
+      }),
+    );
+    await waitForReact(() => expect(harness.healthCalls.length).toBeGreaterThanOrEqual(2));
+    const initialHealthCount = harness.healthCalls.length;
+    for (let index = 0; index < initialHealthCount; index += 1) {
+      await settleHealth(harness, index, currentHealth(index === 0 ? "2.0.0" : "1.2.3"));
+    }
+    await act(async () => vi.advanceTimersByTime(1_000));
+    expect(harness.healthCalls).toHaveLength(initialHealthCount + 1);
+    await settleHealth(harness, initialHealthCount, currentHealth("1.2.3"));
+
+    let refresh!: Promise<void>;
+    act(() => {
+      refresh = harness.hook().refresh("claudeCode");
+    });
+    await act(async () =>
+      refreshedDiscovery.resolve({
+        claudeCode: { kind: "detected", path: "/detected/claude", version: "1.2.3" },
+        codex: { kind: "notFound" },
+      }),
+    );
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(initialHealthCount + 2));
+    await settleHealth(harness, initialHealthCount + 1, currentHealth("1.2.3"));
+    await act(async () => refresh);
+    await act(async () => vi.advanceTimersByTime(1_000));
+    expect(harness.healthCalls).toHaveLength(initialHealthCount + 3);
+    harness.unmount();
+  });
+
+  it("fails a refresh whose post-discovery health owner is replaced", async () => {
+    const refreshedDiscovery = deferred<AgentCliDiscoveryResult>();
+    const initialResult: AgentCliDiscoveryResult = {
+      claudeCode: { kind: "detected", path: "/detected/claude", version: "1.2.3" },
+      codex: { kind: "notFound" },
+    };
+    const discoveryGateway: AgentCliDiscoveryGateway = {
+      discoverAgentClis: vi
+        .fn<AgentCliDiscoveryGateway["discoverAgentClis"]>()
+        .mockResolvedValueOnce(initialResult)
+        .mockReturnValueOnce(refreshedDiscovery.promise),
+    };
+    const settings = configuredSettings();
+    settings.agentCliPaths = { claudeCode: null, codex: "/usr/local/bin/codex" };
+    const harness = renderManagement(
+      settings,
+      () => 0,
+      true,
+      () => ({ kind: "unregistered" }),
+      {
+        discoveryGateway,
+      },
+    );
+    await waitForReact(() => expect(harness.healthCalls.length).toBeGreaterThanOrEqual(2));
+    const initialHealthCount = harness.healthCalls.length;
+    for (let index = 0; index < initialHealthCount; index += 1) {
+      await settleHealth(harness, index, currentHealth(index === 0 ? "2.0.0" : "1.2.3"));
+    }
+
+    let refresh!: Promise<AgentProviderRefreshOutcome>;
+    act(() => {
+      refresh = harness.hook().refreshWithOutcome!("claudeCode");
+    });
+    await act(async () => refreshedDiscovery.resolve(initialResult));
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(initialHealthCount + 1));
+    const staleHealth = harness.healthCalls[initialHealthCount];
+
+    let replacement!: Promise<boolean>;
+    act(() => {
+      replacement = harness.hook().save({ provider: "claudeCode", cliPath: PATH_B });
+    });
+    await act(async () => {
+      await expect(replacement).resolves.toBe(true);
+    });
+    await act(async () => staleHealth?.resolve(currentHealth("1.2.3")));
+
+    await expect(refresh).resolves.toEqual({ kind: "stale" });
+    harness.unmount();
+  });
+
   it("keeps the management surface stable across unrelated dependency rerenders", async () => {
     const harness = renderManagement();
     await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
@@ -671,19 +901,25 @@ describe("useAgentProviderManagement", () => {
     await act(async () => undefined);
     expect(harness.healthCalls).toHaveLength(2);
 
-    const first = harness.hook().refresh("claudeCode");
-    const second = harness.hook().refresh("claudeCode");
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = harness.hook().refresh("claudeCode");
+      second = harness.hook().refresh("claudeCode");
+    });
     void first;
     void second;
     expect(harness.healthCalls).toHaveLength(2);
 
     await settleHealth(harness, 0, currentHealth("1.0.0"));
     await settleHealth(harness, 1, currentHealth("2.0.0"));
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, currentHealth("1.0.0"));
     await act(async () => vi.advanceTimersByTime(1_000));
-    expect(harness.healthCalls).toHaveLength(3);
+    expect(harness.healthCalls).toHaveLength(4);
     harness.unmount();
     await act(async () => vi.runOnlyPendingTimers());
-    expect(harness.healthCalls).toHaveLength(3);
+    expect(harness.healthCalls).toHaveLength(4);
   });
 
   it("retires probes and timers across workspace A to B to A generations", async () => {
@@ -785,7 +1021,9 @@ describe("useAgentProviderManagement", () => {
     act(() => {
       saved = harness.hook().save({ provider: "codex", selectedProvider: "codex" });
     });
-    await expect(saved).resolves.toBe(true);
+    await act(async () => {
+      await expect(saved).resolves.toBe(true);
+    });
 
     expect(harness.settings().agentCliKind).toBe("codex");
     expect(harness.hook().selectedProviderAuthority).toEqual({
@@ -809,13 +1047,17 @@ describe("useAgentProviderManagement", () => {
         expect.objectContaining({ provider: "claudeCode", cliPath: PATH_B }),
       ),
     );
-    await expect(saveB).resolves.toBe(true);
+    await act(async () => {
+      await expect(saveB).resolves.toBe(true);
+    });
 
     let saveA!: Promise<boolean>;
     act(() => {
       saveA = harness.hook().save({ provider: "claudeCode", cliPath: PATH_A });
     });
-    await expect(saveA).resolves.toBe(true);
+    await act(async () => {
+      await expect(saveA).resolves.toBe(true);
+    });
     await waitForReact(() => expect(harness.healthCalls.length).toBeGreaterThanOrEqual(4));
     const currentA = harness.healthCalls[harness.healthCalls.length - 1];
     if (currentA === undefined) throw new Error("Expected current A health probe.");
@@ -916,8 +1158,10 @@ describe("useAgentProviderManagement", () => {
 
     expect(harness.hook().providers.claudeCode.signInActive).toBe(true);
     expect(harness.hook().providers.codex.signInActive).toBe(false);
-    await expect(harness.hook().update("claudeCode", "1.1.0")).resolves.toBe("signInActive");
-    await expect(harness.hook().update("codex", "2.1.0")).resolves.toBeNull();
+    await act(async () => {
+      await expect(harness.hook().update("claudeCode", "1.1.0")).resolves.toBe("signInActive");
+      await expect(harness.hook().update("codex", "2.1.0")).resolves.toBeNull();
+    });
     expect(harness.dependencies.updateGateway.updateAgentProvider).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "codex" }),
     );
@@ -1613,6 +1857,7 @@ function renderManagement(
     kind: "unregistered",
   }),
   options: {
+    readonly discoveryGateway?: AgentCliDiscoveryGateway;
     readonly updateGateway?: AgentProviderUpdateGateway;
     readonly renderCard?: boolean;
   } = {},
@@ -1660,6 +1905,12 @@ function renderManagement(
         outputTruncated: false,
       })),
     },
+    discoveryGateway: options.discoveryGateway ?? {
+      discoverAgentClis: vi.fn(async () => ({
+        claudeCode: { kind: "notFound" as const },
+        codex: { kind: "notFound" as const },
+      })),
+    },
     liveTurnCount,
     signInActive: () => false,
     reportError: (source, error) => errors.push({ source, error }),
@@ -1678,12 +1929,14 @@ function renderManagement(
     return createElement(AgentProviderSettingsCard, {
       management: hook,
       path: settings.agentCliPaths.claudeCode,
+      presentation: hook.providers.claudeCode.executable,
       preference,
       provider: "claudeCode",
       onChangeCheckForUpdates: () => undefined,
       onChangeEnabled: () => undefined,
       onChangeHealthCheckIntervalSeconds: () => undefined,
       onChangePath: () => undefined,
+      onCopyInstallCommand: () => undefined,
     });
   }
 

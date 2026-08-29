@@ -14,6 +14,7 @@ import {
   defaultAgentProviderPreferences,
   type PersistedAgentProviderSettingsAuthority,
 } from "../../domain/agentProviderSettings";
+import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
   agentThreadAttention,
@@ -614,12 +615,17 @@ function providerManagement(
   return {
     providers: {
       claudeCode: {
+        executable: {
+          kind: "notFound",
+          installCommand: "npm i -g @anthropic-ai/claude-code",
+        },
         health: { kind: "notConfigured" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },
         liveTurnCount: 0,
       },
       codex: {
+        executable: { kind: "notFound", installCommand: "npm i -g @openai/codex" },
         health: { kind: "notConfigured" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },
@@ -642,6 +648,7 @@ function providerManagement(
     saveWithOutcome: async () => ({ kind: "rejected", reason: "notHydrated" }),
     update: async () => "policyUnavailable",
     ...overrides,
+    cliDiscovery: overrides.cliDiscovery ?? defaultAgentCliDiscoveryResult(),
   };
 }
 

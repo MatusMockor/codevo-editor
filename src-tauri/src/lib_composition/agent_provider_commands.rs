@@ -1,12 +1,14 @@
 use crate::agent_task_spawner::agent_provider::agent_cli_version::{
     now_epoch_ms, parse_agent_cli_version,
 };
+#[cfg(test)]
+use crate::agent_task_spawner::agent_provider::process::executable_identity;
 use crate::agent_task_spawner::agent_provider::process::{
-    executable_identity, execute_agent_provider_plan_cancellable,
-    execute_agent_provider_update_plan_cancellable_with_output_sink, resolve_package_manager,
-    AgentProviderProcessFailure, AgentProviderProcessIntent, AgentProviderProcessOutput,
-    AgentProviderProcessOutputSink, AgentProviderProcessOutputStream, AgentProviderProcessPlan,
-    ExecutableIdentity,
+    execute_agent_provider_plan_cancellable,
+    execute_agent_provider_update_plan_cancellable_with_output_sink,
+    resolve_package_manager_on_path, AgentProviderProcessFailure, AgentProviderProcessIntent,
+    AgentProviderProcessOutput, AgentProviderProcessOutputSink, AgentProviderProcessOutputStream,
+    AgentProviderProcessPlan, ExecutableIdentity,
 };
 use crate::agent_task_spawner::agent_provider::runtime::{
     AgentProviderPolicy, AgentProviderPolicyReceipt, AgentProviderRuntimeRegistry,
@@ -142,11 +144,11 @@ trait AgentProviderPackageManagerLocator {
     fn resolve(&self, name: &str) -> Option<ExecutableIdentity>;
 }
 
-struct PathAgentProviderPackageManagerLocator;
+struct EffectivePathAgentProviderPackageManagerLocator<'a>(&'a str);
 
-impl AgentProviderPackageManagerLocator for PathAgentProviderPackageManagerLocator {
+impl AgentProviderPackageManagerLocator for EffectivePathAgentProviderPackageManagerLocator<'_> {
     fn resolve(&self, name: &str) -> Option<ExecutableIdentity> {
-        resolve_package_manager(name)
+        resolve_package_manager_on_path(name, self.0)
     }
 }
 
@@ -301,31 +303,35 @@ fn run_agent_provider_update_with_spawn_barrier_and_progress_sink(
             "Provider update operation changed.",
         ));
     }
-    if !provider_registry.update_is_current(&lease) {
+    if provider_registry
+        .revalidate_update_authority(&lease)
+        .is_err()
+    {
         return Ok(update_failure(
             AgentProviderUpdateFailureReason::AdmissionRefused,
             "Provider update authority changed.",
         ));
     }
-    if executable_identity(&lease.candidate.cli_path).ok().as_ref()
-        != Some(&lease.candidate.cli_identity)
-    {
+    if !lease.candidate.cli_identity.is_current_for_spawn() {
         return Ok(update_failure(
             AgentProviderUpdateFailureReason::AdmissionRefused,
             "Provider executable identity changed.",
         ));
     }
-    if !provider_registry.update_is_current(&lease) {
+    if provider_registry
+        .revalidate_update_authority(&lease)
+        .is_err()
+    {
         return Ok(update_failure(
             AgentProviderUpdateFailureReason::AdmissionRefused,
             "Provider update authority changed.",
         ));
     }
-    let plan = match lease
-        .candidate
-        .installer
-        .update_plan(lease.provider, &lease.candidate.available_version)
-    {
+    let plan = match lease.candidate.installer.update_plan(
+        lease.provider,
+        &lease.candidate.available_version,
+        &lease.candidate.effective_path,
+    ) {
         Ok(plan) => plan,
         Err(message) => {
             return Ok(update_failure(
@@ -334,7 +340,10 @@ fn run_agent_provider_update_with_spawn_barrier_and_progress_sink(
             ))
         }
     };
-    if !provider_registry.update_is_current(&lease) {
+    if provider_registry
+        .revalidate_update_authority(&lease)
+        .is_err()
+    {
         return Ok(update_failure(
             AgentProviderUpdateFailureReason::AdmissionRefused,
             "Provider update authority changed.",
@@ -365,11 +374,32 @@ fn run_agent_provider_update_with_spawn_barrier_and_progress_sink(
             "Provider update authority changed after execution.",
         ));
     }
-    let version_plan = AgentProviderProcessPlan::provider(
-        &lease.candidate.cli_path,
+    let updated = match provider_registry.refresh_updated_executable(&lease) {
+        Ok(resolved) => resolved,
+        Err(_) => {
+            return Ok(update_failure(
+                AgentProviderUpdateFailureReason::Uncertain,
+                "Provider executable could not be resolved after the update.",
+            ));
+        }
+    };
+    let version_plan = match AgentProviderProcessPlan::provider_owned_with_effective_path(
+        updated.cli_identity.clone(),
         AgentProviderProcessIntent::InstalledVersion(lease.provider),
-    )?;
-    if !provider_registry.update_is_current(&lease) {
+        &updated.effective_path,
+    ) {
+        Ok(plan) => plan,
+        Err(_) => {
+            return Ok(update_failure(
+                AgentProviderUpdateFailureReason::Uncertain,
+                "Provider verification could not be prepared after the update.",
+            ));
+        }
+    };
+    if provider_registry
+        .revalidate_updated_executable(&lease, &updated)
+        .is_err()
+    {
         return Ok(update_failure(
             AgentProviderUpdateFailureReason::Uncertain,
             "Provider update authority changed before verification.",
@@ -379,7 +409,10 @@ fn run_agent_provider_update_with_spawn_barrier_and_progress_sink(
         Ok(output) => output,
         Err(failure) => return Ok(process_update_failure(failure)),
     };
-    if !provider_registry.update_is_current(&lease) {
+    if provider_registry
+        .revalidate_updated_executable(&lease, &updated)
+        .is_err()
+    {
         return Ok(update_failure(
             AgentProviderUpdateFailureReason::Uncertain,
             "Provider update authority changed after verification.",
@@ -408,11 +441,12 @@ fn probe_health(
     lease: ProviderHealthLease,
     cancelled: &AtomicBool,
 ) -> Result<AgentProviderHealthProbeResult, String> {
+    let effective_path = lease.effective_path.clone();
     probe_health_with_locator(
         provider_registry,
         lease,
         cancelled,
-        &PathAgentProviderPackageManagerLocator,
+        &EffectivePathAgentProviderPackageManagerLocator(&effective_path),
     )
 }
 
@@ -422,16 +456,12 @@ fn probe_health_with_locator(
     cancelled: &AtomicBool,
     package_manager_locator: &dyn AgentProviderPackageManagerLocator,
 ) -> Result<AgentProviderHealthProbeResult, String> {
-    let cli_path = lease
-        .policy
-        .cli_path
-        .as_deref()
-        .ok_or_else(|| "Agent provider CLI path is not configured.".to_string())?;
-    let identity = executable_identity(cli_path)?;
+    let identity = lease.cli_identity.clone();
     provider_registry.revalidate_health(&lease)?;
-    let version_plan = AgentProviderProcessPlan::provider_owned(
+    let version_plan = AgentProviderProcessPlan::provider_owned_with_effective_path(
         identity.clone(),
         AgentProviderProcessIntent::InstalledVersion(lease.provider),
+        &lease.effective_path,
     )?;
     provider_registry.revalidate_health(&lease)?;
     let installed_output = execute_owned(provider_registry, cancelled, &version_plan)
@@ -456,6 +486,7 @@ fn probe_health_with_locator(
     );
     revalidate_health_identity(provider_registry, &lease, &identity)?;
     provider_registry.cache_candidate(&lease, candidate)?;
+    revalidate_health_identity(provider_registry, &lease, &identity)?;
     Ok(AgentProviderHealthProbeResult {
         installed_version: installed,
         auth,
@@ -474,9 +505,10 @@ fn probe_auth(
     if lease.provider == AgentCliInvocation::ClaudeCode {
         return probe_claude_auth(registry, lease, identity, installed_version, cancelled);
     }
-    let plan = AgentProviderProcessPlan::provider_owned(
+    let plan = AgentProviderProcessPlan::provider_owned_with_effective_path(
         identity.clone(),
         AgentProviderProcessIntent::AuthenticationStatus(lease.provider),
+        &lease.effective_path,
     );
     let Ok(plan) = plan else {
         return AgentProviderAuthState::Unknown;
@@ -515,9 +547,10 @@ fn probe_claude_auth(
         );
         return probe_claude_text_auth(registry, lease, identity, cancelled);
     }
-    let Ok(plan) = AgentProviderProcessPlan::provider_owned(
+    let Ok(plan) = AgentProviderProcessPlan::provider_owned_with_effective_path(
         identity.clone(),
         AgentProviderProcessIntent::AuthenticationStatus(AgentCliInvocation::ClaudeCode),
+        &lease.effective_path,
     ) else {
         return AgentProviderAuthState::Unknown;
     };
@@ -570,9 +603,10 @@ fn probe_claude_text_auth(
     identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
     cancelled: &AtomicBool,
 ) -> AgentProviderAuthState {
-    let Ok(plan) = AgentProviderProcessPlan::provider_owned(
+    let Ok(plan) = AgentProviderProcessPlan::provider_owned_with_effective_path(
         identity.clone(),
         AgentProviderProcessIntent::AuthenticationStatusText(AgentCliInvocation::ClaudeCode),
+        &lease.effective_path,
     ) else {
         return AgentProviderAuthState::Unknown;
     };
@@ -591,12 +625,7 @@ fn revalidate_health_identity(
     identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
 ) -> Result<(), String> {
     registry.revalidate_health(lease)?;
-    let cli_path = lease
-        .policy
-        .cli_path
-        .as_deref()
-        .ok_or_else(|| "Agent provider CLI path is not configured.".to_string())?;
-    if executable_identity(cli_path).ok().as_ref() != Some(identity) {
+    if lease.cli_identity != *identity {
         return Err("Provider executable identity changed.".to_string());
     }
     registry.revalidate_health(lease)
@@ -637,9 +666,7 @@ fn probe_update(
             available_version,
         } => {
             return availability(
-                lease.policy.cli_path.as_deref().unwrap_or_default(),
-                cli_identity,
-                installed_version,
+                ProviderAvailabilityEvidence::new(lease, cli_identity, installed_version),
                 available_version,
                 installer,
             )
@@ -673,9 +700,7 @@ fn probe_update(
             available_version,
         } => {
             return availability(
-                lease.policy.cli_path.as_deref().unwrap_or_default(),
-                cli_identity,
-                installed_version,
+                ProviderAvailabilityEvidence::new(lease, cli_identity, installed_version),
                 available_version,
                 installer,
             )
@@ -721,9 +746,10 @@ fn probe_npm(
             AgentProviderUpdateUnavailableReason::ProbeFailed,
         );
     }
-    let root_plan = AgentProviderProcessPlan::package_manager(
+    let root_plan = AgentProviderProcessPlan::package_manager_with_effective_path(
         npm.clone(),
         AgentProviderProcessIntent::NpmGlobalRoot,
+        &lease.effective_path,
     );
     let Ok(root_plan) = root_plan else {
         return InstallerProbeOutcome::NotOwned;
@@ -755,9 +781,10 @@ fn probe_npm(
     if !npm_cli_artifact_matches(&package_root, &cli_identity.canonical_path, lease.provider) {
         return InstallerProbeOutcome::NotOwned;
     }
-    let inventory_plan = AgentProviderProcessPlan::package_manager(
+    let inventory_plan = AgentProviderProcessPlan::package_manager_with_effective_path(
         npm.clone(),
         AgentProviderProcessIntent::NpmInventory,
+        &lease.effective_path,
     );
     let Ok(inventory_plan) = inventory_plan else {
         return InstallerProbeOutcome::Unavailable(
@@ -785,9 +812,10 @@ fn probe_npm(
             AgentProviderUpdateUnavailableReason::InvalidVersion,
         );
     }
-    let available_plan = AgentProviderProcessPlan::package_manager(
+    let available_plan = AgentProviderProcessPlan::package_manager_with_effective_path(
         npm,
         AgentProviderProcessIntent::NpmAvailableVersion(lease.provider),
+        &lease.effective_path,
     );
     let Ok(available_plan) = available_plan else {
         return InstallerProbeOutcome::Unavailable(
@@ -838,9 +866,10 @@ fn probe_brew(
             AgentProviderUpdateUnavailableReason::ProbeFailed,
         );
     }
-    let caskroom_plan = AgentProviderProcessPlan::package_manager(
+    let caskroom_plan = AgentProviderProcessPlan::package_manager_with_effective_path(
         brew.clone(),
         AgentProviderProcessIntent::BrewCaskroom(lease.provider),
+        &lease.effective_path,
     );
     let Ok(caskroom_plan) = caskroom_plan else {
         return InstallerProbeOutcome::NotOwned;
@@ -877,9 +906,10 @@ fn probe_brew(
     ) {
         return InstallerProbeOutcome::NotOwned;
     }
-    let outdated_plan = AgentProviderProcessPlan::package_manager(
+    let outdated_plan = AgentProviderProcessPlan::package_manager_with_effective_path(
         brew,
         AgentProviderProcessIntent::BrewOutdated(lease.provider),
+        &lease.effective_path,
     );
     let Ok(outdated_plan) = outdated_plan else {
         return InstallerProbeOutcome::Unavailable(
@@ -978,29 +1008,56 @@ fn brew_cli_artifact_matches(
     cli_path == expected
 }
 
+struct ProviderAvailabilityEvidence<'a> {
+    cli_path: &'a str,
+    cli_identity: &'a ExecutableIdentity,
+    effective_path: &'a str,
+    path_fingerprint: &'a str,
+    discovery_generation: u64,
+    installed_version: &'a str,
+}
+
+impl<'a> ProviderAvailabilityEvidence<'a> {
+    fn new(
+        lease: &'a ProviderHealthLease,
+        cli_identity: &'a ExecutableIdentity,
+        installed_version: &'a str,
+    ) -> Self {
+        Self {
+            cli_path: &lease.cli_path,
+            cli_identity,
+            effective_path: &lease.effective_path,
+            path_fingerprint: &lease.path_fingerprint,
+            discovery_generation: lease.discovery_generation,
+            installed_version,
+        }
+    }
+}
+
 fn availability(
-    cli_path: &str,
-    cli_identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
-    installed_version: &str,
+    evidence: ProviderAvailabilityEvidence<'_>,
     available_version: String,
     installer: ResolvedAgentProviderInstaller,
 ) -> (
     AgentProviderUpdateAvailability,
     Option<AgentProviderUpdateCandidate>,
 ) {
-    match compare_versions(installed_version, &available_version) {
+    match compare_versions(evidence.installed_version, &available_version) {
         Some(Ordering::Less) => {
             let display = installer.display();
             (
                 AgentProviderUpdateAvailability::Available {
-                    installed_version: installed_version.to_string(),
+                    installed_version: evidence.installed_version.to_string(),
                     available_version: available_version.clone(),
                     installer: display,
                 },
                 Some(AgentProviderUpdateCandidate {
-                    cli_path: cli_path.to_string(),
-                    cli_identity: cli_identity.clone(),
-                    installed_version: installed_version.to_string(),
+                    cli_path: evidence.cli_path.to_string(),
+                    cli_identity: evidence.cli_identity.clone(),
+                    effective_path: evidence.effective_path.to_string(),
+                    path_fingerprint: evidence.path_fingerprint.to_string(),
+                    discovery_generation: evidence.discovery_generation,
+                    installed_version: evidence.installed_version.to_string(),
                     available_version,
                     installer,
                 }),
@@ -1008,7 +1065,7 @@ fn availability(
         }
         Some(_) => (
             AgentProviderUpdateAvailability::Current {
-                installed_version: installed_version.to_string(),
+                installed_version: evidence.installed_version.to_string(),
             },
             None,
         ),
@@ -1162,9 +1219,7 @@ fn execute_update_owned(
         || registry.operations_closed() || cancelled.load(AtomicOrdering::Acquire),
         || {
             before_spawn_validation();
-            let current = registry.update_is_current(lease)
-                && executable_identity(&lease.candidate.cli_path).ok().as_ref()
-                    == Some(&lease.candidate.cli_identity);
+            let current = registry.revalidate_update_authority(lease).is_ok();
             if !current {
                 authority_lost.store(true, AtomicOrdering::Release);
             }

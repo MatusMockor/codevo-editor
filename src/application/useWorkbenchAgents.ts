@@ -1,6 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
-import type { AgentCliVersionGateway } from "../domain/agentCliVersion";
-import { activeAgentCliPath } from "../domain/agentSettings";
+import type { AgentCliDiscoveryGateway } from "../domain/agentSettings";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { AgentProviderSignInGateway } from "../domain/agentProviderSignIn";
@@ -47,6 +46,7 @@ import {
   type AgentProviderManagementSurface,
 } from "./useAgentProviderManagement";
 import { useAgentProviderSignIn, type AgentProviderSignInSurface } from "./useAgentProviderSignIn";
+import type { AgentProviderSignInRefreshOutcome } from "./useAgentProviderSignIn";
 import type { ReadyAgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import {
@@ -70,8 +70,8 @@ export interface WorkbenchAgentsOptions {
   readonly agentProviderGateway: AgentProviderPolicyGateway &
     AgentProviderHealthGateway &
     AgentProviderUpdateGateway;
+  readonly agentCliDiscoveryGateway: AgentCliDiscoveryGateway;
   readonly agentProviderSignInGateway?: AgentProviderSignInGateway;
-  readonly agentCliVersionGateway?: AgentCliVersionGateway;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly gitWorktreeGateway?: GitWorktreeGateway;
   readonly gitIntegrationGateway?: GitIntegrationGateway;
@@ -283,23 +283,36 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     async (
       provider: "claudeCode" | "codex",
       authority: ReadyAgentProviderAdmissionAuthority,
-    ): Promise<"complete" | "failed" | "stale"> => {
+    ): Promise<AgentProviderSignInRefreshOutcome> => {
       const management = providerManagementRef.current;
-      if (management === null || !providerAuthorityMatches(management, authority)) return "stale";
+      if (management === null || !providerAuthorityMatches(management, authority)) {
+        return { kind: "stale" };
+      }
       const preSignInProbeWasPending = management.providers[provider].health.kind === "checking";
       const refresh = management.refreshWithOutcome;
-      if (refresh === undefined) return "failed";
-      let refreshed = await refresh(provider);
+      if (refresh === undefined) return { kind: "failed" };
+      const refreshed = await refresh(provider);
+      if (refreshed.kind !== "complete") return refreshed;
       const current = providerManagementRef.current;
-      if (current === null || !providerAuthorityMatches(current, authority)) return "stale";
+      if (current === null) return { kind: "stale" };
+      if (!providerAuthorityMatches(current, refreshed.authority)) return { kind: "stale" };
+      if (refreshed.authority.providerGeneration !== authority.providerGeneration) {
+        return { kind: "stale" };
+      }
       if (preSignInProbeWasPending) {
         const freshRefresh = current.refreshWithOutcome;
-        if (freshRefresh === undefined) return "failed";
-        refreshed = await freshRefresh(provider);
+        if (freshRefresh === undefined) return { kind: "failed" };
+        const fresh = await freshRefresh(provider);
+        if (fresh.kind !== "complete") return fresh;
         const final = providerManagementRef.current;
-        if (final === null || !providerAuthorityMatches(final, authority)) return "stale";
+        if (final === null) return { kind: "stale" };
+        if (!providerAuthorityMatches(final, fresh.authority)) return { kind: "stale" };
+        if (fresh.authority.providerGeneration !== authority.providerGeneration) {
+          return { kind: "stale" };
+        }
+        return fresh;
       }
-      return refreshed ? "complete" : "failed";
+      return refreshed;
     },
     [],
   );
@@ -321,6 +334,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     policyGateway: options.agentProviderGateway,
     healthGateway: options.agentProviderGateway,
     updateGateway: options.agentProviderGateway,
+    discoveryGateway: options.agentCliDiscoveryGateway,
     liveTurnCount,
     signInActive: providerSignIn.isActive,
     reportError: options.reportError,
@@ -330,7 +344,6 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
 
   const threads = useAgentThreads({
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
-    agentCliVersionGateway: options.agentCliVersionGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway ?? defaultAgentThreadStoreGateway,
     gitWorktreeGateway: options.gitWorktreeGateway ?? defaultGitWorktreeGateway,
     gitGateway: options.gitGateway,
@@ -341,12 +354,8 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     prompter: options.prompter,
     projects: agentProjects.projects,
     agentModeActive: options.agentModeActive,
-    getAgentCliPath: () =>
-      activeAgentCliPath(
-        options.appSettingsRef.current.agentCliPaths,
-        options.appSettingsRef.current.agentCliKind,
-      ),
     getAgentCliKind: () => options.appSettingsRef.current.agentCliKind,
+    currentCliVersion: (provider) => providerCliVersion(providerManagement, provider),
     getAgentProviderAdmissionAuthority: providerManagement.admissionAuthority,
     getMaxConcurrentAgentTasks: () => options.appSettingsRef.current.maxConcurrentAgentTasks,
     getRepositoryStatus,
@@ -369,6 +378,18 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   );
 }
 
+function providerCliVersion(
+  management: AgentProviderManagementSurface,
+  provider: "claudeCode" | "codex",
+): string | null {
+  const view = management.providers[provider];
+  if (view.health.kind === "ready" && view.health.installedVersion !== null) {
+    return view.health.installedVersion;
+  }
+  if (view.executable.kind === "detected") return view.executable.version;
+  return null;
+}
+
 function unavailableProviderSignInAuthority(provider: "claudeCode" | "codex") {
   return {
     provider,
@@ -384,11 +405,9 @@ function providerAuthorityMatches(
   const current = management.admissionAuthority(captured.provider);
   return (
     current.disposition.kind === "ready" &&
-    "cliPath" in current &&
     "providerGeneration" in current &&
     current.revision === captured.revision &&
-    current.providerGeneration === captured.providerGeneration &&
-    current.cliPath === captured.cliPath
+    current.providerGeneration === captured.providerGeneration
   );
 }
 

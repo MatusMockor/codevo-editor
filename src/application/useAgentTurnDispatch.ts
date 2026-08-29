@@ -81,11 +81,7 @@ export interface AgentTurnDispatchDependencies extends AgentTurnAdmissionDepende
   ) => Promise<InPlacePreflight>;
   readonly retainUncertainWorktree: (worktreePath: string) => void;
   readonly onWorktreeCreated?: (repositoryRoot: string, worktreePath: string) => void;
-  readonly currentCliVersion?: () => string | null;
-  readonly probeCliVersion?: (
-    agentCliPath: string,
-    agentCliKind: AgentCliKind,
-  ) => Promise<string | null>;
+  readonly currentCliVersion?: (provider: AgentCliKind) => string | null;
   readonly onWorktreeDispatchFailed?: () => void;
   readonly onTurnTerminal?: (event: AgentTaskStatusEvent) => void;
   readonly onProjectDispatchTrustRejected?: (projectRootKey: string) => void;
@@ -119,7 +115,6 @@ interface TurnStart {
   readonly worktreePath: string | null;
   readonly prompt: string;
   readonly turnId: string;
-  readonly agentCliPath: string;
   readonly agentCliKind: AgentCliKind;
   readonly providerAuthority: ReadyAgentProviderAdmissionAuthority;
   readonly resumeSessionId: string | null;
@@ -392,8 +387,7 @@ export function useAgentTurnDispatch(
         (!turnRegistered || registeredTurnAlive(start));
       let turnRegistered = false;
       if (!turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return false;
-      const cliVersion = deps.currentCliVersion?.() ?? null;
-      refreshCliVersion(deps, start);
+      const cliVersion = deps.currentCliVersion?.(start.agentCliKind) ?? null;
       const turn = pendingTurn(turnId, start.prompt, now(), start.launch, cliVersion);
       if (start.registration === "before-start") {
         start.register(turn);
@@ -412,7 +406,6 @@ export function useAgentTurnDispatch(
           cwd: start.cwd,
           isolation: start.isolation,
           prompt: start.prompt,
-          agentCliPath: start.agentCliPath,
           agentCliKind: start.agentCliKind,
           providerGeneration: start.providerAuthority.providerGeneration,
           resumeSessionId: start.resumeSessionId,
@@ -484,8 +477,7 @@ export function useAgentTurnDispatch(
       const deps = dependenciesRef.current;
       const admitted = admitStart(deps, request);
       if (admitted === null) return null;
-      const { authority, project, prompt, agentCliPath, agentCliKind, providerAuthority, launch } =
-        admitted;
+      const { authority, project, prompt, agentCliKind, providerAuthority, launch } = admitted;
       const repositoryRoot = request.repositoryRoot;
       if (dispatchingRef.current) {
         deps.setNotice(warning("A dispatch is already in progress."));
@@ -595,7 +587,6 @@ export function useAgentTurnDispatch(
           worktreePath,
           prompt,
           turnId,
-          agentCliPath,
           agentCliKind,
           providerAuthority,
           resumeSessionId: null,
@@ -647,16 +638,8 @@ export function useAgentTurnDispatch(
       const deps = dependenciesRef.current;
       const admitted = admitFollowUp(deps, request, inFlightThreadsRef.current);
       if (admitted === null) return false;
-      const {
-        thread,
-        authority,
-        projectRoot,
-        prompt,
-        agentCliPath,
-        providerAuthority,
-        sessionId,
-        launch,
-      } = admitted;
+      const { thread, authority, projectRoot, prompt, providerAuthority, sessionId, launch } =
+        admitted;
       const repositoryRoot = thread.owner.repositoryRoot;
       const turnId = mintUnusedId(deps, new Set(usedTurnIds(deps.store.state)));
       if (turnId === null) {
@@ -677,7 +660,6 @@ export function useAgentTurnDispatch(
           worktreePath: thread.target.worktreePath,
           prompt,
           turnId,
-          agentCliPath,
           agentCliKind: thread.provider.kind,
           providerAuthority,
           resumeSessionId: sessionId,
@@ -833,12 +815,6 @@ function noteSessionChange(
   if (notice === null || warned.has(threadId)) return;
   warned.add(threadId);
   deps.setNotice(notice);
-}
-
-function refreshCliVersion(deps: AgentTurnDispatchDependencies, start: TurnStart): void {
-  const probe = deps.probeCliVersion;
-  if (probe === undefined) return;
-  void attempt(() => probe(start.agentCliPath, start.agentCliKind));
 }
 
 function pendingTurn(

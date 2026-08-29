@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::effective_executable_environment::EffectiveExecutablePath;
+
 #[path = "agent_provider.rs"]
 pub mod agent_provider;
 use std::{
@@ -105,6 +107,7 @@ impl AgentTaskSpawnPlan {
     }
 }
 
+#[cfg(test)]
 pub fn plan_agent_invocation(
     cli_path: &str,
     invocation: AgentCliInvocation,
@@ -131,6 +134,58 @@ pub fn plan_agent_invocation(
     }
     let executable_identity = agent_provider::process::executable_identity(cli_path)
         .map_err(|_| agent_cli_binary_unavailable_error(invocation))?;
+    plan_agent_invocation_with_authority_and_environment(
+        executable_identity,
+        invocation,
+        prompt,
+        cwd,
+        resume_session_id,
+        launch,
+        inherited_environment(),
+    )
+}
+
+pub(crate) fn plan_agent_invocation_with_authority(
+    executable_identity: agent_provider::process::ExecutableIdentity,
+    invocation: AgentCliInvocation,
+    prompt: &str,
+    cwd: &Path,
+    resume_session_id: Option<&str>,
+    launch: AgentLaunchOptions,
+    effective_path: EffectiveExecutablePath<'_>,
+) -> Result<AgentTaskSpawnPlan, String> {
+    plan_agent_invocation_with_authority_and_environment(
+        executable_identity,
+        invocation,
+        prompt,
+        cwd,
+        resume_session_id,
+        launch,
+        replace_effective_path(inherited_environment(), effective_path),
+    )
+}
+
+fn plan_agent_invocation_with_authority_and_environment(
+    executable_identity: agent_provider::process::ExecutableIdentity,
+    invocation: AgentCliInvocation,
+    prompt: &str,
+    cwd: &Path,
+    resume_session_id: Option<&str>,
+    launch: AgentLaunchOptions,
+    environment: Vec<(String, String)>,
+) -> Result<AgentTaskSpawnPlan, String> {
+    if !launch.matches(invocation) {
+        return Err(AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR.to_string());
+    }
+    if let Some(candidate) = resume_session_id {
+        validate_resume_session_id(candidate)?;
+    }
+    if !executable_identity.canonical_path.is_absolute() {
+        return Err("Agent CLI path must be absolute.".to_string());
+    }
+    if !executable_identity.retained_is_current() {
+        return Err(agent_cli_binary_unavailable_error(invocation));
+    }
     if prompt.is_empty() {
         return Err("Agent prompt must not be empty.".to_string());
     }
@@ -148,7 +203,7 @@ pub fn plan_agent_invocation(
         cwd: cwd.to_path_buf(),
         #[cfg(unix)]
         cwd_authority: None,
-        env: inherited_environment(),
+        env: environment,
     })
 }
 
@@ -219,6 +274,29 @@ pub(crate) fn inherited_environment() -> Vec<(String, String)> {
         .collect()
 }
 
+fn replace_effective_path(
+    environment: Vec<(String, String)>,
+    effective_path: EffectiveExecutablePath<'_>,
+) -> Vec<(String, String)> {
+    let mut replaced = false;
+    let mut result = Vec::with_capacity(environment.len() + 1);
+    for (key, value) in environment {
+        if key != "PATH" {
+            result.push((key, value));
+            continue;
+        }
+        if replaced {
+            continue;
+        }
+        result.push((key, effective_path.as_str().to_string()));
+        replaced = true;
+    }
+    if !replaced {
+        result.push(("PATH".to_string(), effective_path.as_str().to_string()));
+    }
+    result
+}
+
 pub fn agent_cli_binary_unavailable_error(invocation: AgentCliInvocation) -> String {
     match invocation {
         AgentCliInvocation::ClaudeCode => CLAUDE_CLI_BINARY_UNAVAILABLE_ERROR.to_string(),
@@ -249,18 +327,6 @@ pub struct StdAgentProcessSpawner;
 
 impl AgentProcessSpawner for StdAgentProcessSpawner {
     fn spawn(&self, plan: &AgentTaskSpawnPlan) -> Result<Box<dyn AgentChild>, String> {
-        if !plan.executable_identity.retained_is_current()
-            || agent_provider::process::executable_identity(
-                plan.program()
-                    .to_str()
-                    .ok_or_else(|| "Agent CLI path is invalid.".to_string())?,
-            )
-            .ok()
-            .as_ref()
-                != Some(&plan.executable_identity)
-        {
-            return Err("Agent CLI executable identity changed before launch.".to_string());
-        }
         let mut bound = plan
             .executable_identity
             .bound_command()
@@ -515,6 +581,42 @@ mod tests {
         }
     }
 
+    #[test]
+    fn effective_path_replaces_only_path_in_the_agent_allowlist() {
+        let environment = vec![
+            ("HOME".to_string(), "/home/editor".to_string()),
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("LANG".to_string(), "en_US.UTF-8".to_string()),
+            ("PATH".to_string(), "/duplicate".to_string()),
+        ];
+        let effective_path =
+            EffectiveExecutablePath::new("/opt/codevo/bin:/usr/bin").expect("effective path");
+
+        assert_eq!(
+            replace_effective_path(environment, effective_path),
+            [
+                ("HOME".to_string(), "/home/editor".to_string()),
+                ("PATH".to_string(), "/opt/codevo/bin:/usr/bin".to_string()),
+                ("LANG".to_string(), "en_US.UTF-8".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn effective_path_does_not_add_environment_outside_the_agent_allowlist() {
+        let environment = vec![("HOME".to_string(), "/home/editor".to_string())];
+        let effective_path =
+            EffectiveExecutablePath::new("/opt/codevo/bin:/usr/bin").expect("effective path");
+
+        assert_eq!(
+            replace_effective_path(environment, effective_path),
+            [
+                ("HOME".to_string(), "/home/editor".to_string()),
+                ("PATH".to_string(), "/opt/codevo/bin:/usr/bin".to_string()),
+            ]
+        );
+    }
+
     fn poll_test_child_exit(
         child: &mut dyn AgentChild,
         deadline: std::time::Instant,
@@ -668,6 +770,59 @@ mod tests {
             plan.program,
             retained.canonicalize().expect("canonical cli")
         );
+        fs::remove_dir_all(fixture).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hostile_effective_path_cannot_replace_retained_script_interpreter() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let nonce = CWD_AUTHORITY_NONCE.fetch_add(1, Ordering::SeqCst);
+        let fixture = std::env::temp_dir().join(format!(
+            "agent-task-retained-interpreter-{}-{nonce}",
+            std::process::id()
+        ));
+        let safe = fixture.join("safe");
+        let hostile = fixture.join("hostile");
+        fs::create_dir_all(&safe).expect("safe directory");
+        fs::create_dir_all(&hostile).expect("hostile directory");
+        let safe_node = safe.join("node");
+        symlink("/bin/sh", &safe_node).expect("safe node");
+        let hostile_node = hostile.join("node");
+        fs::write(&hostile_node, "#!/bin/sh\nprintf hostile\n").expect("hostile node");
+        fs::set_permissions(&hostile_node, fs::Permissions::from_mode(0o755))
+            .expect("hostile node permissions");
+        let cli = fixture.join("claude");
+        fs::write(&cli, "#!/usr/bin/env node\nprintf safe\n").expect("cli");
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).expect("cli permissions");
+        let safe_path = safe.to_string_lossy().into_owned();
+        let identity =
+            agent_provider::process::executable_identity_path_with_effective_path(&cli, &safe_path)
+                .expect("retained cli identity");
+        let hostile_path = hostile.to_string_lossy().into_owned();
+        let plan = plan_agent_invocation_with_authority(
+            identity,
+            AgentCliInvocation::ClaudeCode,
+            "stop",
+            &fixture,
+            None,
+            claude_default(),
+            EffectiveExecutablePath::new(&hostile_path).expect("hostile effective path"),
+        )
+        .expect("plan");
+
+        let mut child = StdAgentProcessSpawner.spawn(&plan).expect("spawn cli");
+        let exit_code = child.reap().expect("wait cli");
+        let mut stdout = String::new();
+        child
+            .stdout_reader()
+            .expect("stdout")
+            .read_to_string(&mut stdout)
+            .expect("read stdout");
+
+        assert_eq!(exit_code, 0);
+        assert_eq!(stdout, "safe");
         fs::remove_dir_all(fixture).expect("cleanup");
     }
 

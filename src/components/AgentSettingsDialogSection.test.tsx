@@ -4,6 +4,7 @@ import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
+import { defaultAgentCliDiscoveryResult } from "../domain/agentSettings";
 import { defaultAppSettings, defaultWorkspaceSettings, type AppSettings } from "../domain/settings";
 import { AgentSettingsDialogSection } from "./AgentSettingsDialogSection";
 
@@ -111,14 +112,23 @@ function providerManagement(
   const preference = defaultAppSettings().agentProviderPreferences?.claudeCode;
   if (preference === undefined) throw new Error("Default provider preference is missing.");
   return {
+    cliDiscovery: defaultAgentCliDiscoveryResult(),
     providers: {
       claudeCode: {
+        executable: {
+          kind: "manual",
+          path: "/usr/bin/claude",
+        },
         health: { kind: "notConfigured" },
         policy: { kind: "registered", settingsRevision: 1, providerGeneration: 1 },
         updateState: { kind: "idle" },
         liveTurnCount: 0,
       },
       codex: {
+        executable: {
+          kind: "manual",
+          path: "/usr/bin/codex",
+        },
         health: { kind: "notConfigured" },
         policy: { kind: "registered", settingsRevision: 1, providerGeneration: 1 },
         updateState: { kind: "idle" },

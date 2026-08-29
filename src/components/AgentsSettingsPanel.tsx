@@ -44,6 +44,7 @@ export interface AgentsSettingsPanelProps {
   readonly workspaceSettings: WorkspaceSettings;
   updateAppSettings(settings: AppSettings): void;
   updateWorkspaceSettings(settings: WorkspaceSettings): void;
+  onCopyInstallCommand?(command: string): void;
 }
 
 export function AgentsSettingsPanel({
@@ -51,6 +52,7 @@ export function AgentsSettingsPanel({
   hasWorkspace,
   providerManagement,
   providerSignIn,
+  onCopyInstallCommand,
   updateAppSettings,
   updateWorkspaceSettings,
   workspaceSettings,
@@ -137,6 +139,7 @@ export function AgentsSettingsPanel({
       onChangeMaxConcurrentAgentTasks={(maxConcurrentAgentTasks) =>
         updateAppSettings({ ...appSettings, maxConcurrentAgentTasks })
       }
+      onCopyInstallCommand={onCopyInstallCommand}
       onClearAgentModelFavorites={clearAgentModelFavorites}
       providerManagement={providerManagement}
       providerSignIn={providerSignIn}

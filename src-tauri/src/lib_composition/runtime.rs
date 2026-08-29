@@ -1,4 +1,5 @@
 use super::*;
+use crate::smart_mode::SmartModeService;
 // This Tauri composition root intentionally wires the complete command surface.
 // Capability modules below use explicit imports; the runtime remains the one
 // broad crate boundary until command registration is generated from typed groups.
@@ -127,6 +128,8 @@ pub fn run() {
         .manage(LegacyLocalHistoryWorkspaceAuthorizer::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let trust_path = app.path().app_config_dir()?.join("workspace-trust.json");
             let trust_service = WorkspaceTrustService::load(trust_path)?;
@@ -142,12 +145,23 @@ pub fn run() {
                     app.path().app_data_dir()?,
                 ),
             ));
-            app.manage(Arc::new(
+            let agent_cli_versions = Arc::new(
                 agent_task_spawner::agent_provider::agent_cli_version::AgentCliVersionRegistry::new(),
+            );
+            let agent_cli_discovery = Arc::new(agent_cli_discovery::AgentCliDiscovery::new(
+                Arc::clone(&agent_cli_versions),
             ));
-            app.manage(Arc::new(
-                agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry::new(),
-            ));
+            let provider_executable_resolver: Arc<
+                dyn agent_task_spawner::agent_provider::runtime::AgentProviderExecutableResolver,
+            > = agent_cli_discovery.clone();
+            let agent_provider_runtime = Arc::new(
+                agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry::with_discovery(
+                    provider_executable_resolver,
+                ),
+            );
+            app.manage(agent_cli_versions);
+            app.manage(agent_cli_discovery);
+            app.manage(agent_provider_runtime);
             app.manage(Arc::new(
                 git_integration_commands::IntegrationLocks::default(),
             ));
@@ -484,6 +498,7 @@ pub fn run() {
             agent_thread_store_commands::load_agent_threads,
             agent_thread_store_commands::save_agent_thread,
             agent_thread_store_commands::delete_agent_thread,
+            agent_cli_discovery_commands::discover_agent_clis,
             agent_cli_version_commands::probe_agent_cli_version,
             agent_provider_commands::register_agent_provider_policy,
             agent_provider_commands::get_agent_provider_policy,

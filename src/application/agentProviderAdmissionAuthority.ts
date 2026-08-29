@@ -14,7 +14,6 @@ export type AgentProviderAdmissionAuthority =
       readonly provider: AgentCliKind;
       readonly revision: number;
       readonly disposition: { readonly kind: "ready" };
-      readonly cliPath: string;
       readonly providerGeneration: number;
     }
   | {
@@ -26,7 +25,6 @@ export type AgentProviderAdmissionAuthority =
       readonly provider: AgentCliKind;
       readonly revision: number;
       readonly disposition: { readonly kind: "updating" };
-      readonly cliPath: string;
       readonly providerGeneration: number;
     }
   | {
@@ -66,7 +64,7 @@ export const AGENT_PROVIDER_UPDATING_NOTICE =
 export const AGENT_PROVIDER_UNREGISTERED_NOTICE =
   "Provider settings are not registered yet. Retry provider setup.";
 export const AGENT_PROVIDER_NOT_CONFIGURED_NOTICE =
-  "Configure this provider's CLI path in Settings before starting a turn.";
+  "Install this provider CLI or configure a manual path in Settings before starting a turn.";
 export const AGENT_PROVIDER_REGISTRATION_FAILED_NOTICE =
   "Provider settings could not be registered. Retry in Settings.";
 
@@ -105,7 +103,6 @@ export function isCurrentAgentProviderAdmissionAuthority(
   if (current.provider !== captured.provider) return false;
   if (current.revision !== captured.revision) return false;
   if (!isReadyAuthority(current)) return false;
-  if (current.cliPath !== captured.cliPath) return false;
   return current.providerGeneration === captured.providerGeneration;
 }
 
@@ -113,7 +110,7 @@ function isReadyAuthority(
   authority: AgentProviderAdmissionAuthority,
 ): authority is ReadyAgentProviderAdmissionAuthority {
   if (authority.disposition.kind !== "ready") return false;
-  return "cliPath" in authority && "providerGeneration" in authority;
+  return "providerGeneration" in authority;
 }
 
 function malformedAuthority(authority: AgentProviderAdmissionAuthority): never {

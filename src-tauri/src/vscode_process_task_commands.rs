@@ -21,6 +21,8 @@ use crate::{
 
 #[cfg(all(not(test), any(target_os = "macos", target_os = "linux")))]
 use crate::{
+    agent_cli_discovery::AgentCliDiscovery,
+    effective_executable_environment::EffectiveExecutablePath,
     node_package_scripts::{finish_node_package_task, NodePackageTaskCompletion},
     process_task_runtime::{
         finish_process_task, ProcessTaskOwner, ProcessTaskRuntime, SpawnProcessTaskRequest,
@@ -82,9 +84,15 @@ impl ProcessTaskRuntimePort for AppProcessTaskRuntime {
             .map_err(|_| "Process task workspace is not registered.".to_string())?;
         let trust = self.0.state::<Mutex<WorkspaceTrustService>>();
         let terminals = self.0.state::<TerminalSupervisor>();
+        let executable_environment = self
+            .0
+            .state::<Arc<AgentCliDiscovery>>()
+            .effective_environment()
+            .map_err(|error| error.to_string())?;
+        let effective_path = EffectiveExecutablePath::from_source(executable_environment.as_ref())?;
         let identity = parse_task_owner_label(&owner.label)?;
-        ProcessTaskRuntime::new(&registry, &trust, &terminals).resolve_chain_labels(
-            &SpawnProcessTaskRequest {
+        ProcessTaskRuntime::new_with_effective_path(&registry, &trust, &terminals, effective_path)
+            .resolve_chain_labels(&SpawnProcessTaskRequest {
                 owner: ProcessTaskOwner {
                     workspace_id: owner.workspace_id.clone(),
                     workspace_root: descriptor.canonical_root_path.clone(),
@@ -93,8 +101,7 @@ impl ProcessTaskRuntimePort for AppProcessTaskRuntime {
                 config_revision: owner.config_revision.clone(),
                 label: identity.label,
                 package_root_relative_path: identity.package_root_relative_path,
-            },
-        )
+            })
     }
 
     fn prepare_and_spawn(
@@ -115,19 +122,29 @@ impl ProcessTaskRuntimePort for AppProcessTaskRuntime {
             .map_err(|_| "Process task workspace is not registered.".to_string())?;
         let trust = self.0.state::<Mutex<WorkspaceTrustService>>();
         let terminals = self.0.state::<TerminalSupervisor>();
+        let executable_environment = self
+            .0
+            .state::<Arc<AgentCliDiscovery>>()
+            .effective_environment()
+            .map_err(|error| error.to_string())?;
+        let effective_path = EffectiveExecutablePath::from_source(executable_environment.as_ref())?;
         let identity = parse_task_owner_label(&owner.label)?;
-        let spawned = ProcessTaskRuntime::new(&registry, &trust, &terminals).prepare_and_spawn(
-            &SpawnProcessTaskRequest {
-                owner: ProcessTaskOwner {
-                    workspace_id: owner.workspace_id.clone(),
-                    workspace_root: descriptor.canonical_root_path.clone(),
-                    terminal_session_id: owner.session_id,
-                },
-                config_revision: owner.config_revision.clone(),
-                label: label.to_string(),
-                package_root_relative_path: identity.package_root_relative_path,
+        let spawned = ProcessTaskRuntime::new_with_effective_path(
+            &registry,
+            &trust,
+            &terminals,
+            effective_path,
+        )
+        .prepare_and_spawn(&SpawnProcessTaskRequest {
+            owner: ProcessTaskOwner {
+                workspace_id: owner.workspace_id.clone(),
+                workspace_root: descriptor.canonical_root_path.clone(),
+                terminal_session_id: owner.session_id,
             },
-        )?;
+            config_revision: owner.config_revision.clone(),
+            label: label.to_string(),
+            package_root_relative_path: identity.package_root_relative_path,
+        })?;
         let SpawnedRuntimeTask::Process(mut spawned) = spawned else {
             let SpawnedRuntimeTask::NodePackage(spawned) = spawned else {
                 return Err("Unable to prepare the configured task.".to_string());

@@ -7,6 +7,7 @@ mod unpublished_child;
 use crate::terminal_task_process::{terminate_task_process_groups, TerminalTaskOwnership};
 use crate::{
     debug_session_registry::DebugWorkspaceAuthority,
+    effective_executable_environment::EffectiveExecutablePath,
     terminal::{TerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize},
 };
 use portable_pty::{CommandBuilder, PtySize};
@@ -25,6 +26,9 @@ use std::{
     time::{Duration, Instant},
 };
 use unpublished_child::UnpublishedTerminalChild;
+#[path = "terminal_session/effective_environment.rs"]
+mod effective_environment;
+use effective_environment::configure_terminal_environment;
 #[path = "terminal_portable_pty.rs"]
 mod portable_pty_spawner;
 #[cfg(test)]
@@ -37,6 +41,7 @@ pub struct TerminalLaunchRequest {
     pub cwd: PathBuf,
     #[cfg(unix)]
     cwd_directory: Option<Arc<fs::File>>,
+    effective_path: String,
     pub profile: TerminalProfile,
     pub shell_integration_base_dir: Option<PathBuf>,
     pub size: TerminalSize,
@@ -64,7 +69,8 @@ impl TerminalLaunchRoots {
     }
 }
 
-pub(crate) struct TerminalStartOptions {
+pub(crate) struct TerminalStartOptions<'a> {
+    pub(crate) effective_path: EffectiveExecutablePath<'a>,
     #[cfg(test)]
     pub(crate) fault: Option<TerminalStartFault>,
     pub(crate) profile: TerminalProfile,
@@ -201,6 +207,7 @@ impl TerminalSupervisor {
         &self,
         cwd: PathBuf,
         size: TerminalSize,
+        effective_path: EffectiveExecutablePath<'_>,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
@@ -209,6 +216,7 @@ impl TerminalSupervisor {
             None,
             None,
             TerminalStartOptions {
+                effective_path,
                 #[cfg(test)]
                 fault: None,
                 profile: TerminalProfile {
@@ -815,7 +823,7 @@ mod tests {
     mod stuck_waiter_tests;
 
     use super::{
-        command_builder, finish_portable_spawn, prepare_shell_integration,
+        command_builder, finish_portable_spawn, prepare_shell_integration, EffectiveExecutablePath,
         LocalTerminalProfileProvider, PortablePtySpawner, ProcessGroupSignalSender,
         ProcessTreeTerminator, SpawnedTerminal, TerminalChild, TerminalExitStatus, TerminalKiller,
         TerminalLaunchRequest, TerminalOwnedProcessGroup, TerminalOwnedProcessGroupSource,

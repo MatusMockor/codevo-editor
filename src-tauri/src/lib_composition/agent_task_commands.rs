@@ -3,14 +3,20 @@ use crate::agent_task_admission::AgentTaskAdmissionRegistry;
 use crate::agent_task_spawner::agent_launch::{
     AgentLaunchOptions, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR,
 };
-use crate::agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry;
-use crate::agent_task_spawner::{plan_agent_invocation, AgentCliInvocation, AgentTaskSpawnPlan};
+use crate::agent_task_spawner::agent_provider::process::ExecutableIdentity;
+use crate::agent_task_spawner::agent_provider::runtime::{
+    AgentProviderRuntimeRegistry, ProviderTurnLease,
+};
+use crate::agent_task_spawner::{
+    plan_agent_invocation_with_authority, AgentCliInvocation, AgentTaskSpawnPlan,
+};
 use crate::agent_task_supervisor::{
     AgentTaskEventSink, AgentTaskIsolation, AgentTaskOutputEvent, AgentTaskRegistry,
     AgentTaskStartRequest as AgentTaskRegistryStartRequest, AgentTaskStartResult,
     AgentTaskStatusEvent, AGENT_TASK_OUTPUT_EVENT_CHANNEL, AGENT_TASK_STARTS_CLOSED_ERROR,
     AGENT_TASK_STATUS_EVENT_CHANNEL,
 };
+use crate::effective_executable_environment::EffectiveExecutablePath;
 use crate::git_worktree::{ensure_worktree_path_in_base, safe_agent_task_id};
 use crate::run_blocking_command;
 use crate::trust::WorkspaceTrustService;
@@ -65,7 +71,6 @@ pub(crate) struct StartAgentTaskRequest {
     cwd: String,
     isolation: AgentTaskIsolation,
     prompt: String,
-    agent_cli_path: String,
     agent_cli_kind: AgentCliInvocation,
     resume_session_id: Option<String>,
     launch: AgentLaunchOptions,
@@ -175,9 +180,18 @@ struct PreparedAgentTaskStart {
     authority: AgentTaskProjectAuthority,
 }
 
+fn acquire_agent_task_provider_authority(
+    registry: &Arc<AgentProviderRuntimeRegistry>,
+    request: &StartAgentTaskRequest,
+) -> Result<ProviderTurnLease, String> {
+    registry.acquire_turn_for_generation(request.agent_cli_kind, request.provider_generation)
+}
+
 fn prepare_agent_task_start(
     request: &StartAgentTaskRequest,
     authority: AgentTaskProjectAuthority,
+    executable_identity: ExecutableIdentity,
+    effective_path: EffectiveExecutablePath<'_>,
 ) -> Result<PreparedAgentTaskStart, String> {
     if request.provider_generation == 0 {
         return Err("Agent provider generation is invalid.".to_string());
@@ -204,13 +218,14 @@ fn prepare_agent_task_start(
             Some(cwd.clone())
         }
     };
-    let plan = plan_agent_invocation(
-        &request.agent_cli_path,
+    let plan = plan_agent_invocation_with_authority(
+        executable_identity,
         request.agent_cli_kind,
         &request.prompt,
         &cwd,
         request.resume_session_id.as_deref(),
         request.launch,
+        effective_path,
     )?
     .with_cwd_authority(Arc::clone(&authority.cwd_authority));
 
@@ -236,16 +251,30 @@ pub(crate) async fn start_agent_task(
     let preparation_app = app.clone();
     let preparation_request = request.clone();
     let prepared = run_blocking_command(move || {
+        let provider_turn = acquire_agent_task_provider_authority(
+            preparation_app
+                .state::<Arc<AgentProviderRuntimeRegistry>>()
+                .inner(),
+            &preparation_request,
+        )?;
         let authority = capture_agent_task_project_authority(
             &preparation_app.state::<WorkspaceRegistry>(),
             &preparation_app.state::<Mutex<WorkspaceTrustService>>(),
             &preparation_request,
         )?;
-        prepare_agent_task_start(&preparation_request, authority)
+        let effective_path = EffectiveExecutablePath::new(&provider_turn.effective_path)?;
+        let prepared = prepare_agent_task_start(
+            &preparation_request,
+            authority,
+            provider_turn.cli_identity.clone(),
+            effective_path,
+        )?;
+        Ok((prepared, provider_turn))
     })
     .await?;
     let admission_registry = Arc::clone(&state.admission);
     run_blocking_command(move || {
+        let (prepared, provider_turn) = prepared;
         let PreparedAgentTaskStart {
             request: registry_request,
             plan,
@@ -267,21 +296,15 @@ pub(crate) async fn start_agent_task(
         {
             return Err(UNKNOWN_AGENT_WORKSPACE_ERROR.to_string());
         }
-        let provider_turn = app
-            .state::<Arc<AgentProviderRuntimeRegistry>>()
-            .acquire_turn(
-                request.agent_cli_kind,
-                request.provider_generation,
-                &request.agent_cli_path,
-            )?;
-        let admission = admission_registry
-            .reserve(
-                &request.workspace_id,
-                &registry_request.repository_root,
-                plan.cwd(),
-                request.isolation,
-            )?
-            .with_runtime_lease(provider_turn);
+        let admission = admission_registry.reserve(
+            &request.workspace_id,
+            &registry_request.repository_root,
+            plan.cwd(),
+            request.isolation,
+        )?;
+        app.state::<Arc<AgentProviderRuntimeRegistry>>()
+            .revalidate_turn_authority(&provider_turn)?;
+        let admission = admission.with_runtime_lease(provider_turn);
         let result = app
             .state::<AgentTaskRegistry>()
             .start(registry_request, plan, admission)
@@ -478,6 +501,9 @@ mod tests {
         ClaudeEffortChoice, ClaudeModelChoice, ClaudePermissionMode, CodexExecutionMode,
         CodexModelChoice,
     };
+    use crate::agent_task_spawner::agent_provider::runtime::{
+        AgentProviderPolicy, AGENT_PROVIDER_STALE_ERROR,
+    };
     use crate::trust::WorkspaceTrustSnapshot;
     use crate::workspace_registry::{ManagedWorkspaceDescriptor, UnicodeNormalizationPolicy};
     use std::fs;
@@ -537,6 +563,7 @@ mod tests {
         cwd: &Path,
         isolation: AgentTaskIsolation,
     ) -> StartAgentTaskRequest {
+        workspace.executable_cli();
         StartAgentTaskRequest {
             task_id: "agt-test-0001".to_string(),
             workspace_id: workspace_id("workspace-1"),
@@ -545,7 +572,6 @@ mod tests {
             cwd: cwd.to_string_lossy().into_owned(),
             isolation,
             prompt: "Fix the failing test.".to_string(),
-            agent_cli_path: workspace.executable_cli().to_string_lossy().into_owned(),
             agent_cli_kind: AgentCliInvocation::ClaudeCode,
             resume_session_id: None,
             launch: AgentLaunchOptions::default(),
@@ -596,7 +622,21 @@ mod tests {
     fn prepare_test_request(
         request: &StartAgentTaskRequest,
     ) -> Result<PreparedAgentTaskStart, String> {
-        prepare_agent_task_start(request, test_authority(request))
+        let cli_path = PathBuf::from(&request.project_root).join("agent-cli");
+        let cli_identity = crate::agent_task_spawner::agent_provider::process::executable_identity(
+            cli_path
+                .to_str()
+                .ok_or_else(|| "test agent path is not UTF-8".to_string())?,
+        )
+        .map_err(|_| "test agent executable is unavailable".to_string())?;
+        let effective_path_value = request.project_root.as_str();
+        let effective_path = EffectiveExecutablePath::new(effective_path_value)?;
+        prepare_agent_task_start(
+            request,
+            test_authority(request),
+            cli_identity,
+            effective_path,
+        )
     }
 
     fn registered_request(
@@ -1052,10 +1092,15 @@ mod tests {
     #[test]
     fn prepare_rejects_a_non_executable_cli_path() {
         let workspace = TempWorkspace::create("cli-not-executable");
-        let mut request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
-        let plain = workspace.root.join("not-executable");
+        let request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
+        let plain = workspace.root.join("agent-cli");
         fs::write(&plain, "data").expect("write plain file");
-        request.agent_cli_path = plain.to_string_lossy().into_owned();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&plain, fs::Permissions::from_mode(0o644))
+                .expect("mark fake agent cli non-executable");
+        }
 
         let error = prepare_test_request(&request).expect_err("non-executable cli");
 
@@ -1124,7 +1169,6 @@ mod tests {
         request.task_id = "Bad--Id".to_string();
         request.repository_root = "/nonexistent/repository/root".to_string();
         request.cwd = "/nonexistent/repository/root".to_string();
-        request.agent_cli_path = "/nonexistent/agent-cli".to_string();
         request.launch = AgentLaunchOptions::Codex {
             model: CodexModelChoice::Default,
             mode: CodexExecutionMode::Default,
@@ -1202,7 +1246,7 @@ mod tests {
 
     #[test]
     fn the_start_request_contract_has_no_dangerous_launch_confirmation_field() {
-        let dangerous = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"codex","resumeSessionId":null,"launch":{"provider":"codex","model":"gpt-5.6-sol","mode":"dangerFullAccess"},"providerGeneration":1}"#;
+        let dangerous = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliKind":"codex","resumeSessionId":null,"launch":{"provider":"codex","model":"gpt-5.6-sol","mode":"dangerFullAccess"},"providerGeneration":1}"#;
         let parsed: StartAgentTaskRequest =
             serde_json::from_str(dangerous).expect("dangerous request parses");
         assert_eq!(
@@ -1261,7 +1305,7 @@ mod tests {
 
     #[test]
     fn the_start_request_contract_requires_a_launch_and_rejects_unknown_fields() {
-        let complete = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"claudeCode","resumeSessionId":null,"launch":{"provider":"claudeCode","model":"opus","mode":"plan"},"providerGeneration":1}"#;
+        let complete = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliKind":"claudeCode","resumeSessionId":null,"launch":{"provider":"claudeCode","model":"opus","mode":"plan"},"providerGeneration":1}"#;
         let parsed: StartAgentTaskRequest =
             serde_json::from_str(complete).expect("complete request parses");
         assert_eq!(
@@ -1273,7 +1317,7 @@ mod tests {
             }
         );
 
-        let missing_launch = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliPath":"/bin/cli","agentCliKind":"claudeCode","resumeSessionId":null}"#;
+        let missing_launch = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliKind":"claudeCode","resumeSessionId":null}"#;
         assert!(serde_json::from_str::<StartAgentTaskRequest>(missing_launch).is_err());
 
         let missing_project_root = complete.replace("\"projectRoot\":\"/repo\",", "");
@@ -1322,15 +1366,65 @@ mod tests {
     #[test]
     fn start_requests_reject_unknown_fields_and_accept_a_null_resume_session_id() {
         let unknown = serde_json::from_str::<StartAgentTaskRequest>(
-            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1,\"extra\":1}",
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1,\"extra\":1}",
         );
         let accepted = serde_json::from_str::<StartAgentTaskRequest>(
-            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/bin/agent\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1}",
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1}",
         )
         .expect("deserialize start request");
+        let injected_path = serde_json::from_str::<StartAgentTaskRequest>(
+            "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/tmp/injected\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1}",
+        );
 
         assert!(unknown.is_err(), "unknown start field must be rejected");
+        assert!(
+            injected_path.is_err(),
+            "frontend executable injection must be rejected"
+        );
         assert_eq!(accepted.resume_session_id, None);
+    }
+
+    #[test]
+    fn turn_start_rejects_a_stale_provider_generation_after_an_a_b_a_replacement() {
+        let workspace = TempWorkspace::create("stale-provider-generation");
+        let mut request = start_request(&workspace, &workspace.root, AgentTaskIsolation::InPlace);
+        let cli_path = workspace
+            .root
+            .join("agent-cli")
+            .to_string_lossy()
+            .into_owned();
+        let policy = |check_for_updates| AgentProviderPolicy {
+            enabled: true,
+            cli_path: Some(cli_path.clone()),
+            check_for_updates,
+        };
+        let registry = Arc::new(AgentProviderRuntimeRegistry::new());
+        let first = registry
+            .register_policy(AgentCliInvocation::ClaudeCode, 1, None, policy(false))
+            .expect("register first provider authority");
+        let second = registry
+            .register_policy(
+                AgentCliInvocation::ClaudeCode,
+                2,
+                Some(first.provider_generation),
+                policy(true),
+            )
+            .expect("replace provider authority");
+        registry
+            .register_policy(
+                AgentCliInvocation::ClaudeCode,
+                3,
+                Some(second.provider_generation),
+                policy(false),
+            )
+            .expect("restore provider policy under a new generation");
+        request.provider_generation = first.provider_generation;
+
+        let error = acquire_agent_task_provider_authority(&registry, &request)
+            .err()
+            .expect("stale generation must fail closed");
+
+        assert_eq!(error, AGENT_PROVIDER_STALE_ERROR);
     }
 
     #[test]

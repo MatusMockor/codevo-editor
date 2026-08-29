@@ -7,8 +7,11 @@ import {
   MAX_CONCURRENT_AGENT_TASKS_LIMIT,
   MIN_CONCURRENT_AGENT_TASKS_LIMIT,
   activeAgentCliPath,
+  agentCliExecutablePresentation,
+  agentCliInstallCommand,
   agentCliPathValidation,
   defaultAgentAppSettings,
+  defaultAgentCliDiscoveryResult,
   normalizeAgentAppearanceVariant,
   normalizeAgentCliKind,
   normalizeAgentCliPaths,
@@ -95,6 +98,22 @@ describe("normalizeAgentCliPath", () => {
 });
 
 describe("agent CLI paths", () => {
+  it("normalizes null and empty stored paths to automatic discovery", () => {
+    expect(normalizeAgentCliPaths({ claudeCode: null, codex: null }, null, "claudeCode")).toEqual({
+      claudeCode: null,
+      codex: null,
+    });
+    expect(normalizeAgentCliPath("")).toBeNull();
+    expect(normalizeAgentCliPath("  ")).toBeNull();
+    expect(
+      normalizeAgentCliPaths(
+        { claudeCode: "  ", codex: "/usr/local/bin/codex" },
+        null,
+        "claudeCode",
+      ),
+    ).toEqual({ claudeCode: null, codex: "/usr/local/bin/codex" });
+  });
+
   it("migrates the single legacy path only to its selected provider", () => {
     expect(normalizeAgentCliPaths(undefined, "/bin/claude", "claudeCode")).toEqual({
       claudeCode: "/bin/claude",
@@ -131,6 +150,44 @@ describe("agent CLI paths", () => {
     const paths = { claudeCode: "/bin/claude", codex: "/bin/codex" };
     expect(activeAgentCliPath(paths, "claudeCode")).toBe("/bin/claude");
     expect(activeAgentCliPath(paths, "codex")).toBe("/bin/codex");
+  });
+});
+
+describe("agent CLI executable presentation", () => {
+  it("defaults both providers to automatic discovery with no result", () => {
+    expect(defaultAgentCliDiscoveryResult()).toEqual({
+      claudeCode: { kind: "notFound" },
+      codex: { kind: "notFound" },
+    });
+  });
+
+  it("presents a validated manual override before an automatic result", () => {
+    expect(
+      agentCliExecutablePresentation("claudeCode", "/opt/claude", {
+        kind: "detected",
+        path: "/Users/test/.local/bin/claude",
+        version: "2.1.247",
+      }),
+    ).toEqual({ kind: "manual", path: "/opt/claude" });
+  });
+
+  it("presents the detected executable and fixed not-found install commands", () => {
+    expect(
+      agentCliExecutablePresentation("codex", null, {
+        kind: "detected",
+        path: "/Users/test/.local/bin/codex",
+        version: "0.150.1",
+      }),
+    ).toEqual({
+      kind: "detected",
+      path: "/Users/test/.local/bin/codex",
+      version: "0.150.1",
+    });
+    expect(agentCliExecutablePresentation("claudeCode", null, { kind: "notFound" })).toEqual({
+      kind: "notFound",
+      installCommand: "npm i -g @anthropic-ai/claude-code",
+    });
+    expect(agentCliInstallCommand("codex")).toBe("npm i -g @openai/codex");
   });
 });
 

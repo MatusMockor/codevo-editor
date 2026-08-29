@@ -1,4 +1,5 @@
 use crate::{
+    effective_executable_environment::EffectiveExecutablePath,
     git_worktree::{
         agent_worktree_path, ensure_worktree_path_in_base, safe_agent_task_id,
         WORKTREE_BASE_DIR_NAME,
@@ -12,6 +13,8 @@ use crate::{
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(test)]
+use std::env;
 use std::{
     collections::BTreeSet,
     fs::File,
@@ -22,6 +25,10 @@ use std::{
     thread,
 };
 use tauri::State;
+
+#[path = "node_package_scripts/effective_environment.rs"]
+mod effective_environment;
+use effective_environment::configure_node_package_environment;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::{
@@ -158,6 +165,12 @@ struct ParsedManifest {
 enum ScriptExecutionPolicy {
     PackagePanel,
     VscodeTask,
+}
+
+struct NodePackageTaskSpawnPolicy<'a> {
+    execution: ScriptExecutionPolicy,
+    expected_workspace_root: Option<&'a Path>,
+    effective_path: EffectiveExecutablePath<'a>,
 }
 
 #[tauri::command]
@@ -325,6 +338,7 @@ pub(crate) enum NodePackageTaskCompletion {
     Stopped,
 }
 
+#[cfg(test)]
 pub(crate) fn spawn_node_package_task(
     registry: &WorkspaceRegistry,
     trust: &Mutex<WorkspaceTrustService>,
@@ -332,18 +346,45 @@ pub(crate) fn spawn_node_package_task(
     request: &RunNodePackageScriptRequest,
     output_observer: Arc<dyn NodePackageTaskOutputObserver>,
 ) -> Result<SpawnedNodePackageTask, String> {
+    let path = env::var("PATH").map_err(|_| "Test PATH is unavailable.".to_string())?;
+    let effective_path = EffectiveExecutablePath::new(&path)?;
     spawn_node_package_task_with_policy(
         registry,
         trust,
         terminals,
         request,
         output_observer,
-        ScriptExecutionPolicy::PackagePanel,
-        None,
+        NodePackageTaskSpawnPolicy {
+            execution: ScriptExecutionPolicy::PackagePanel,
+            expected_workspace_root: None,
+            effective_path,
+        },
     )
 }
 
-#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn spawn_node_package_task_with_effective_path(
+    registry: &WorkspaceRegistry,
+    trust: &Mutex<WorkspaceTrustService>,
+    terminals: &TerminalSupervisor,
+    request: &RunNodePackageScriptRequest,
+    output_observer: Arc<dyn NodePackageTaskOutputObserver>,
+    effective_path: EffectiveExecutablePath<'_>,
+) -> Result<SpawnedNodePackageTask, String> {
+    spawn_node_package_task_with_policy(
+        registry,
+        trust,
+        terminals,
+        request,
+        output_observer,
+        NodePackageTaskSpawnPolicy {
+            execution: ScriptExecutionPolicy::PackagePanel,
+            expected_workspace_root: None,
+            effective_path,
+        },
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn spawn_vscode_node_package_task(
     registry: &WorkspaceRegistry,
     trust: &Mutex<WorkspaceTrustService>,
@@ -352,14 +393,42 @@ pub(crate) fn spawn_vscode_node_package_task(
     output_observer: Arc<dyn NodePackageTaskOutputObserver>,
     expected_workspace_root: &Path,
 ) -> Result<SpawnedNodePackageTask, String> {
+    let path = env::var("PATH").map_err(|_| "Test PATH is unavailable.".to_string())?;
+    let effective_path = EffectiveExecutablePath::new(&path)?;
     spawn_node_package_task_with_policy(
         registry,
         trust,
         terminals,
         request,
         output_observer,
-        ScriptExecutionPolicy::VscodeTask,
-        Some(expected_workspace_root),
+        NodePackageTaskSpawnPolicy {
+            execution: ScriptExecutionPolicy::VscodeTask,
+            expected_workspace_root: Some(expected_workspace_root),
+            effective_path,
+        },
+    )
+}
+
+pub(crate) fn spawn_vscode_node_package_task_with_effective_path(
+    registry: &WorkspaceRegistry,
+    trust: &Mutex<WorkspaceTrustService>,
+    terminals: &TerminalSupervisor,
+    request: &RunNodePackageScriptRequest,
+    output_observer: Arc<dyn NodePackageTaskOutputObserver>,
+    expected_workspace_root: &Path,
+    effective_path: EffectiveExecutablePath<'_>,
+) -> Result<SpawnedNodePackageTask, String> {
+    spawn_node_package_task_with_policy(
+        registry,
+        trust,
+        terminals,
+        request,
+        output_observer,
+        NodePackageTaskSpawnPolicy {
+            execution: ScriptExecutionPolicy::VscodeTask,
+            expected_workspace_root: Some(expected_workspace_root),
+            effective_path,
+        },
     )
 }
 
@@ -407,8 +476,7 @@ fn spawn_node_package_task_with_policy(
     terminals: &TerminalSupervisor,
     request: &RunNodePackageScriptRequest,
     output_observer: Arc<dyn NodePackageTaskOutputObserver>,
-    policy: ScriptExecutionPolicy,
-    expected_workspace_root: Option<&Path>,
+    policy: NodePackageTaskSpawnPolicy<'_>,
 ) -> Result<SpawnedNodePackageTask, String> {
     validate_workspace_id(&request.workspace_id)?;
     validate_script_name(&request.script_name)?;
@@ -420,7 +488,10 @@ fn spawn_node_package_task_with_policy(
     let descriptor = registry
         .descriptor(&request.workspace_id)
         .map_err(|_| "Node package script workspace is not registered.".to_string())?;
-    if expected_workspace_root.is_some_and(|expected| descriptor.canonical_root_path != expected) {
+    if policy
+        .expected_workspace_root
+        .is_some_and(|expected| descriptor.canonical_root_path != expected)
+    {
         return Err("The package task workspace identity changed before start.".to_string());
     }
     let root = registry
@@ -482,7 +553,7 @@ fn spawn_node_package_task_with_policy(
     {
         return Err("The requested package script no longer exists in package.json.".to_string());
     }
-    if matches!(policy, ScriptExecutionPolicy::VscodeTask) {
+    if matches!(policy.execution, ScriptExecutionPolicy::VscodeTask) {
         reject_vscode_lifecycle_hooks(&parsed, &request.script_name)?;
     }
     let manager = parsed
@@ -496,6 +567,7 @@ fn spawn_node_package_task_with_policy(
         .ok_or_else(|| "Could not determine a supported package manager.".to_string())?;
 
     let mut command = Command::new(manager.executable());
+    configure_node_package_environment(&mut command, policy.effective_path);
     command
         .arg("run")
         .arg(&request.script_name)

@@ -38,6 +38,7 @@ import type { AgentOutputParserPort } from "./agentTurnOutputStream";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
 import {
   AGENT_PROVIDER_DISABLED_NOTICE,
+  AGENT_PROVIDER_NOT_CONFIGURED_NOTICE,
   AGENT_PROVIDER_REGISTRATION_FAILED_NOTICE,
   AGENT_PROVIDER_UNREGISTERED_NOTICE,
   AGENT_PROVIDER_UPDATING_NOTICE,
@@ -58,7 +59,6 @@ const ROOT_A = "/workspace/app";
 const ROOT_B = "/workspace/other";
 const OWNER_A = "workspace-a";
 const OWNER_B = "workspace-b";
-const CLI_PATH = "/usr/local/bin/claude";
 const SESSION_ID = "sess-0001-abcd";
 
 interface Environment {
@@ -70,7 +70,6 @@ interface Environment {
   workspaceGeneration: number;
   generation: number;
   origin: AgentProjectOrigin;
-  cliPath: string | null;
   cliKind: AgentCliKind;
   providerRevision: Record<AgentCliKind, number>;
   providerGeneration: Record<AgentCliKind, number>;
@@ -80,10 +79,8 @@ interface Environment {
   leaseToken: number | null;
   ensureProjectLease: ((projectRootKey: string) => Promise<boolean>) | null;
   preflight: InPlacePreflight;
-  currentCliVersion: string | null;
+  currentCliVersion: Record<AgentCliKind, string | null>;
   outputSubscriptionGate: Promise<void> | null;
-  probeCliVersion:
-    ((agentCliPath: string, agentCliKind: AgentCliKind) => Promise<string | null>) | null;
 }
 
 function createDeferred<T>() {
@@ -442,6 +439,21 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(started?.workspaceId).toBe(OWNER_A);
     expect(started?.agentCliKind).toBe("claudeCode");
     expect(started?.providerGeneration).toBe(1);
+    expect(Object.keys(started ?? {}).sort()).toEqual(
+      [
+        "taskId",
+        "workspaceId",
+        "projectRoot",
+        "repositoryRoot",
+        "cwd",
+        "isolation",
+        "prompt",
+        "agentCliKind",
+        "providerGeneration",
+        "resumeSessionId",
+        "launch",
+      ].sort(),
+    );
     expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledWith({
       taskId: started?.taskId,
       workspaceId: OWNER_A,
@@ -491,60 +503,26 @@ describe("useAgentTurnDispatch startThread", () => {
     harness.unmount();
   });
 
-  it("stamps the cached CLI version on the started turn and refreshes it in the background", async () => {
-    const probeCliVersion = vi.fn(async () => "1.5.0");
-    const harness = renderDispatch({ currentCliVersion: "1.4.2", probeCliVersion });
+  it("stamps the selected provider's observed CLI version on the started turn", async () => {
+    const harness = renderDispatch({
+      currentCliVersion: { claudeCode: "1.4.2", codex: "0.150.0" },
+    });
 
     const result = await act(() => harness.hook().startThread(startRequest()));
 
     expect(result).not.toBeNull();
-    expect(probeCliVersion).toHaveBeenCalledWith(CLI_PATH, "claudeCode");
     expect(harness.turn(result?.threadId ?? "", 0).cliVersion).toBe("1.4.2");
     harness.unmount();
   });
 
-  it("starts the turn with an unknown CLI version when no version is cached and the probe fails", async () => {
-    const probeCliVersion = vi.fn(async () => {
-      throw new Error("probe failed");
-    });
-    const harness = renderDispatch({ probeCliVersion });
+  it("starts the turn with an unknown CLI version when provider state has no observed version", async () => {
+    const harness = renderDispatch();
 
     const result = await act(() => harness.hook().startThread(startRequest()));
 
     expect(result).not.toBeNull();
     expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
     expect(harness.turn(result?.threadId ?? "", 0).cliVersion).toBeNull();
-    harness.unmount();
-  });
-
-  it("registers the turn without waiting for a CLI version probe that never settles", async () => {
-    const probeCliVersion = vi.fn(() => new Promise<string | null>(() => undefined));
-    const harness = renderDispatch({ probeCliVersion });
-
-    const result = await act(() => harness.hook().startThread(startRequest()));
-
-    expect(result).not.toBeNull();
-    expect(probeCliVersion).toHaveBeenCalledTimes(1);
-    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
-    expect(harness.turn(result?.threadId ?? "", 0).cliVersion).toBeNull();
-    harness.unmount();
-  });
-
-  it("keeps a late probe result from touching a turn owned by another project", async () => {
-    const probe = createDeferred<string | null>();
-    const harness = renderDispatch({ probeCliVersion: () => probe.promise });
-
-    const result = await act(() => harness.hook().startThread(startRequest()));
-    const threadId = result?.threadId ?? "";
-    harness.switchToProject(ROOT_B, OWNER_B);
-    probe.resolve("9.9.9");
-    await act(async () => {
-      await probe.promise;
-    });
-
-    expect(harness.turn(threadId, 0).cliVersion).toBeNull();
-    expect(harness.thread(threadId).owner.ownerId).toBe(OWNER_A);
-    expect(harness.actionsOf("threadCreated")).toHaveLength(1);
     harness.unmount();
   });
 
@@ -690,12 +668,17 @@ describe("useAgentTurnDispatch startThread", () => {
     harness.unmount();
   });
 
-  it("refuses to start without a configured CLI and offers the settings action", async () => {
-    const harness = renderDispatch({ cliPath: null });
+  it("refuses to start when automatic discovery did not find the provider", async () => {
+    const harness = renderDispatch({
+      providerDisposition: {
+        claudeCode: { kind: "policyUnavailable", reason: "notConfigured" },
+        codex: { kind: "ready" },
+      },
+    });
 
     expect(await act(() => harness.hook().startThread(startRequest()))).toBeNull();
 
-    expect(harness.notice()?.action).toBe("configure-agent-cli");
+    expect(harness.notice()?.message).toBe(AGENT_PROVIDER_NOT_CONFIGURED_NOTICE);
     harness.unmount();
   });
 });
@@ -757,7 +740,6 @@ describe("useAgentTurnDispatch launch admission", () => {
     expect(result).not.toBeNull();
     expect(harness.startedRequests[0]).toMatchObject({
       agentCliKind: "claudeCode",
-      agentCliPath: CLI_PATH,
       providerGeneration: 1,
       launch: defaultAgentLaunchOptions("claudeCode"),
     });
@@ -1497,10 +1479,14 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     harness.unmount();
   });
 
-  it("blocks a follow-up when the CLI is no longer configured", async () => {
+  it("blocks a follow-up when automatic discovery no longer finds the provider", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
-    harness.environment.cliPath = null;
+    harness.environment.providerDisposition.claudeCode = {
+      kind: "policyUnavailable",
+      reason: "notConfigured",
+    };
+    harness.environment.providerRevision.claudeCode += 1;
 
     expect(
       await act(() =>
@@ -1510,12 +1496,14 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       ),
     ).toBe(false);
 
-    expect(harness.notice()?.action).toBe("configure-agent-cli");
+    expect(harness.notice()?.message).toBe(AGENT_PROVIDER_NOT_CONFIGURED_NOTICE);
     harness.unmount();
   });
 
   it("uses the thread provider when the selected draft provider differs", async () => {
-    const harness = renderDispatch();
+    const harness = renderDispatch({
+      currentCliVersion: { claudeCode: "2.1.247", codex: "0.150.0" },
+    });
     const threadId = await harness.settleThreadWithSession();
     harness.environment.cliKind = "codex";
 
@@ -1529,9 +1517,9 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
 
     expect(harness.startedRequests[1]).toMatchObject({
       agentCliKind: "claudeCode",
-      agentCliPath: CLI_PATH,
       providerGeneration: 1,
     });
+    expect(harness.turn(threadId, 1).cliVersion).toBe("2.1.247");
     harness.unmount();
   });
 
@@ -1691,7 +1679,6 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     workspaceGeneration: 1,
     generation: 1,
     origin: "active-tab",
-    cliPath: CLI_PATH,
     cliKind: "claudeCode",
     providerRevision: { claudeCode: 1, codex: 1 },
     providerGeneration: { claudeCode: 1, codex: 1 },
@@ -1701,9 +1688,8 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     leaseToken: 1,
     ensureProjectLease: null,
     preflight: { kind: "ok" },
-    currentCliVersion: null,
+    currentCliVersion: { claudeCode: null, codex: null },
     outputSubscriptionGate: null,
-    probeCliVersion: null,
     ...overrides,
   };
   const startedRequests: StartAgentTaskRequest[] = [];
@@ -1807,7 +1793,6 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
         return [project()];
       },
       store,
-      getAgentCliPath: () => environment.cliPath,
       getAgentCliKind: () => environment.cliKind,
       getAgentProviderAdmissionAuthority: (
         provider: AgentCliKind,
@@ -1822,8 +1807,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       isWorktreeMissing: () => environment.worktreeMissing,
       retainUncertainWorktree,
       onWorktreeCreated,
-      currentCliVersion: () => environment.currentCliVersion,
-      probeCliVersion: environment.probeCliVersion ?? undefined,
+      currentCliVersion: (provider) => environment.currentCliVersion[provider],
       onTurnTerminal,
       onProjectDispatchTrustRejected,
       reportError,
@@ -1971,10 +1955,7 @@ function threadIdForTurn(state: AgentThreadsState, turnId: string): string {
 }
 
 function replaceProviderAtoBtoA(environment: Environment): void {
-  const cliPath = environment.cliPath;
-  environment.cliPath = "/opt/provider-b/claude";
   environment.providerRevision.claudeCode += 1;
-  environment.cliPath = cliPath;
   environment.providerRevision.claudeCode += 1;
 }
 
@@ -1990,7 +1971,6 @@ function providerAuthority(
         provider,
         revision,
         disposition,
-        cliPath: provider === "claudeCode" ? (environment.cliPath ?? "") : "/usr/local/bin/codex",
         providerGeneration: environment.providerGeneration[provider],
       };
     case "updating":
@@ -1998,7 +1978,6 @@ function providerAuthority(
         provider,
         revision,
         disposition,
-        cliPath: provider === "claudeCode" ? (environment.cliPath ?? "") : "/usr/local/bin/codex",
         providerGeneration: environment.providerGeneration[provider],
       };
     case "disabled":

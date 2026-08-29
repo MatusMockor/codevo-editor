@@ -1,6 +1,6 @@
 [package]
 name = "codevo-editor"
-version = "0.1.0"
+version = "0.2.0-beta.1"
 description = "Codevo Editor is a Fleet-like PHP-focused desktop code editor"
 authors = ["Matus Mockor"]
 edition = "2021"
@@ -42,6 +42,8 @@ serde_json = { version = "1", features = ["raw_value"] }
 url = "2"
 sha2 = "0.10"
 tauri-plugin-dialog = "2"
+tauri-plugin-process = "=2.3.1"
+tauri-plugin-updater = "=2.10.1"
 rusqlite = { version = "0.40.1", features = ["bundled", "functions"] }
 ignore = "0.4.26"
 json5 = "0.4"

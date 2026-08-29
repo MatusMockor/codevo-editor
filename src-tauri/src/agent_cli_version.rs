@@ -3,9 +3,10 @@ use crate::agent_task_spawner::{
     MAX_AGENT_CLI_PATH_BYTES,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
-    fs,
+    env, fs,
     io::Read,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -18,6 +19,7 @@ pub const MAX_AGENT_CLI_VERSION_OUTPUT_BYTES: usize = 4 * 1024;
 pub const MAX_AGENT_CLI_VERSION_BYTES: usize = 64;
 pub const MAX_AGENT_CLI_VERSION_CACHE_ENTRIES: usize = 16;
 pub const AGENT_CLI_VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+pub const MAX_AGENT_CLI_EFFECTIVE_PATH_BYTES: usize = 64 * 1024;
 
 const AGENT_CLI_VERSION_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const AGENT_CLI_VERSION_READER_GRACE: Duration = Duration::from_millis(250);
@@ -131,6 +133,7 @@ struct AgentCliVersionCacheKey {
     canonical_path: PathBuf,
     identity: AgentCliBinaryIdentity,
     fingerprint: AgentCliBinaryFingerprint,
+    effective_path_fingerprint: Option<[u8; 32]>,
 }
 
 struct AgentCliVersionCacheEntry {
@@ -138,8 +141,25 @@ struct AgentCliVersionCacheEntry {
     result: AgentCliVersionProbeResult,
 }
 
+#[derive(Clone)]
+struct AgentCliVersionAdmissionEntry {
+    key: AgentCliVersionCacheKey,
+    generation: u64,
+}
+
+struct AgentCliVersionAdmissionState {
+    next_generation: u64,
+    entries: VecDeque<AgentCliVersionAdmissionEntry>,
+}
+
+struct AgentCliVersionProbeAdmission {
+    generation: u64,
+    cached: Option<AgentCliVersionProbeResult>,
+}
+
 pub struct AgentCliVersionRegistry {
     entries: Mutex<VecDeque<AgentCliVersionCacheEntry>>,
+    admissions: Mutex<AgentCliVersionAdmissionState>,
     timeout: Duration,
 }
 
@@ -157,6 +177,10 @@ impl AgentCliVersionRegistry {
     pub fn with_timeout(timeout: Duration) -> Self {
         Self {
             entries: Mutex::new(VecDeque::new()),
+            admissions: Mutex::new(AgentCliVersionAdmissionState {
+                next_generation: 1,
+                entries: VecDeque::new(),
+            }),
             timeout,
         }
     }
@@ -166,6 +190,36 @@ impl AgentCliVersionRegistry {
         request: &AgentCliVersionProbeRequest,
         now_epoch_ms: u64,
     ) -> Result<AgentCliVersionProbeResult, String> {
+        self.probe_internal(request, now_epoch_ms, None, false)
+    }
+
+    pub fn probe_with_effective_path(
+        &self,
+        request: &AgentCliVersionProbeRequest,
+        now_epoch_ms: u64,
+        effective_path: &str,
+    ) -> Result<AgentCliVersionProbeResult, String> {
+        validate_effective_path(effective_path)?;
+        self.probe_internal(request, now_epoch_ms, Some(effective_path), false)
+    }
+
+    pub fn refresh_with_effective_path(
+        &self,
+        request: &AgentCliVersionProbeRequest,
+        now_epoch_ms: u64,
+        effective_path: &str,
+    ) -> Result<AgentCliVersionProbeResult, String> {
+        validate_effective_path(effective_path)?;
+        self.probe_internal(request, now_epoch_ms, Some(effective_path), true)
+    }
+
+    fn probe_internal(
+        &self,
+        request: &AgentCliVersionProbeRequest,
+        now_epoch_ms: u64,
+        effective_path: Option<&str>,
+        force_refresh: bool,
+    ) -> Result<AgentCliVersionProbeResult, String> {
         let unavailable = || agent_cli_binary_unavailable_error(request.agent_cli_kind);
         let (program, metadata) =
             validated_binary(&request.agent_cli_path).ok_or_else(unavailable)?;
@@ -174,20 +228,22 @@ impl AgentCliVersionRegistry {
             canonical_path: program.clone(),
             identity: binary_identity(&metadata),
             fingerprint,
+            effective_path_fingerprint: effective_path.map(effective_path_fingerprint),
         };
 
-        if let Some(cached) = self.cached(&key) {
+        let admission = self.admit_probe(&key, force_refresh)?;
+        if let Some(cached) = admission.cached {
             return Ok(cached);
         }
 
-        let outcome = self.read_version(&program);
+        let outcome = self.read_version_with_effective_path(&program, effective_path);
         let result = AgentCliVersionProbeResult {
             version: outcome.version(),
             probed_at_epoch_ms: now_epoch_ms,
             binary_fingerprint: fingerprint,
         };
         if let VersionProbeOutcome::Settled(_) = outcome {
-            self.remember(key, result.clone());
+            self.remember_if_current(key, admission.generation, result.clone());
         }
 
         Ok(result)
@@ -201,6 +257,65 @@ impl AgentCliVersionRegistry {
             .map(|entry| entry.result.clone())
     }
 
+    fn admit_probe(
+        &self,
+        key: &AgentCliVersionCacheKey,
+        force_refresh: bool,
+    ) -> Result<AgentCliVersionProbeAdmission, String> {
+        let mut admissions = self
+            .admissions
+            .lock()
+            .map_err(|_| "Agent CLI version admission is unavailable.".to_string())?;
+        let existing = admissions
+            .entries
+            .iter()
+            .find(|entry| &entry.key == key)
+            .map(|entry| entry.generation);
+        let generation = match (force_refresh, existing) {
+            (false, Some(generation)) => generation,
+            (false, None) | (true, _) => {
+                let generation = admissions.next_generation;
+                admissions.next_generation = admissions
+                    .next_generation
+                    .checked_add(1)
+                    .ok_or_else(|| "Agent CLI version admission is exhausted.".to_string())?;
+                admissions.entries.retain(|entry| &entry.key != key);
+                admissions.entries.push_back(AgentCliVersionAdmissionEntry {
+                    key: key.clone(),
+                    generation,
+                });
+                while admissions.entries.len() > MAX_AGENT_CLI_VERSION_CACHE_ENTRIES {
+                    admissions.entries.pop_front();
+                }
+                generation
+            }
+        };
+        let cached = match force_refresh {
+            true => None,
+            false => self.cached(key),
+        };
+        Ok(AgentCliVersionProbeAdmission { generation, cached })
+    }
+
+    fn remember_if_current(
+        &self,
+        key: AgentCliVersionCacheKey,
+        generation: u64,
+        result: AgentCliVersionProbeResult,
+    ) {
+        let Ok(admissions) = self.admissions.lock() else {
+            return;
+        };
+        let is_current = admissions
+            .entries
+            .iter()
+            .any(|entry| entry.key == key && entry.generation == generation);
+        if !is_current {
+            return;
+        }
+        self.remember(key, result);
+    }
+
     fn remember(&self, key: AgentCliVersionCacheKey, result: AgentCliVersionProbeResult) {
         let Ok(mut entries) = self.entries.lock() else {
             return;
@@ -212,8 +327,17 @@ impl AgentCliVersionRegistry {
         }
     }
 
+    #[cfg(test)]
     fn read_version(&self, program: &Path) -> VersionProbeOutcome {
-        let Ok(mut child) = spawn_version_command(program) else {
+        self.read_version_with_effective_path(program, None)
+    }
+
+    fn read_version_with_effective_path(
+        &self,
+        program: &Path,
+        effective_path: Option<&str>,
+    ) -> VersionProbeOutcome {
+        let Ok(mut child) = spawn_version_command(program, effective_path) else {
             return VersionProbeOutcome::Unsettled;
         };
         let started = Instant::now();
@@ -303,16 +427,17 @@ impl VersionProbeOutcome {
     }
 }
 
-fn spawn_version_command(program: &Path) -> std::io::Result<Child> {
+fn spawn_version_command(program: &Path, effective_path: Option<&str>) -> std::io::Result<Child> {
     let cwd = program
         .parent()
         .map_or_else(|| PathBuf::from("/"), Path::to_path_buf);
     let mut command = Command::new(program);
+    let environment = version_environment(effective_path);
     command
         .arg("--version")
         .current_dir(cwd)
         .env_clear()
-        .envs(inherited_environment())
+        .envs(environment)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -322,6 +447,36 @@ fn spawn_version_command(program: &Path) -> std::io::Result<Child> {
         command.process_group(0);
     }
     command.spawn()
+}
+
+fn version_environment(effective_path: Option<&str>) -> Vec<(String, String)> {
+    let mut environment = inherited_environment();
+    let Some(effective_path) = effective_path else {
+        return environment;
+    };
+    environment.retain(|(key, _)| key != "PATH");
+    environment.push(("PATH".to_string(), effective_path.to_string()));
+    environment
+}
+
+fn validate_effective_path(effective_path: &str) -> Result<(), String> {
+    if effective_path.is_empty() {
+        return Err("The effective executable PATH is required.".to_string());
+    }
+    if effective_path.len() > MAX_AGENT_CLI_EFFECTIVE_PATH_BYTES {
+        return Err("The effective executable PATH exceeds the supported length.".to_string());
+    }
+    if effective_path.contains('\0') {
+        return Err("The effective executable PATH contains an invalid byte.".to_string());
+    }
+    if env::split_paths(effective_path).any(|entry| !entry.is_absolute()) {
+        return Err("The effective executable PATH contains a relative entry.".to_string());
+    }
+    Ok(())
+}
+
+fn effective_path_fingerprint(effective_path: &str) -> [u8; 32] {
+    Sha256::digest(effective_path.as_bytes()).into()
 }
 
 #[cfg(unix)]
@@ -425,7 +580,10 @@ mod tests {
     use super::*;
     use std::{
         io::Write,
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
     };
 
     static NONCE: AtomicU64 = AtomicU64::new(0);
@@ -553,6 +711,165 @@ mod tests {
         assert_eq!(probed.version, Some("2.1.245".to_string()));
         assert_eq!(probed.probed_at_epoch_ms, 100);
         assert!(probed.binary_fingerprint.size_bytes > 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn effective_path_resolves_env_shebang_interpreter() {
+        let scripts = TempScripts::create("effective-path");
+        let interpreter = scripts.script("codevo-version-node", "echo '7.8.9'");
+        let provider = scripts.base.join("claude-env");
+        fs::write(&provider, "#!/usr/bin/env codevo-version-node\n").expect("write env provider");
+        set_executable(&provider);
+        let effective_path = interpreter
+            .parent()
+            .expect("interpreter parent")
+            .to_string_lossy();
+        let registry = AgentCliVersionRegistry::new();
+
+        let probed = registry
+            .probe_with_effective_path(&request(&provider), 100, &effective_path)
+            .expect("effective PATH probe");
+
+        assert_eq!(probed.version, Some("7.8.9".to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn effective_path_fingerprint_separates_version_cache_entries() {
+        let scripts = TempScripts::create("effective-path-cache");
+        let first_bin = scripts.base.join("first-bin");
+        let second_bin = scripts.base.join("second-bin");
+        fs::create_dir_all(&first_bin).expect("first bin");
+        fs::create_dir_all(&second_bin).expect("second bin");
+        let first = first_bin.join("codevo-cache-node");
+        let second = second_bin.join("codevo-cache-node");
+        scripts.write_script(&first, "echo '1.2.3'");
+        scripts.write_script(&second, "echo '4.5.6'");
+        let provider = scripts.base.join("codex-env");
+        fs::write(&provider, "#!/usr/bin/env codevo-cache-node\n").expect("write env provider");
+        set_executable(&provider);
+        let registry = AgentCliVersionRegistry::new();
+
+        let first_result = registry
+            .probe_with_effective_path(
+                &request(&provider),
+                100,
+                first_bin.to_string_lossy().as_ref(),
+            )
+            .expect("first effective PATH probe");
+        let second_result = registry
+            .probe_with_effective_path(
+                &request(&provider),
+                200,
+                second_bin.to_string_lossy().as_ref(),
+            )
+            .expect("second effective PATH probe");
+
+        assert_eq!(first_result.version, Some("1.2.3".to_string()));
+        assert_eq!(second_result.version, Some("4.5.6".to_string()));
+        assert_eq!(second_result.probed_at_epoch_ms, 200);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_effective_path_refresh_bypasses_stable_wrapper_cache() {
+        let scripts = TempScripts::create("effective-path-refresh");
+        let bin = scripts.base.join("bin");
+        fs::create_dir_all(&bin).expect("bin");
+        let interpreter = bin.join("codevo-refresh-node");
+        scripts.write_script(&interpreter, "echo '1.2.3'");
+        let provider = scripts.base.join("claude-env");
+        fs::write(&provider, "#!/usr/bin/env codevo-refresh-node\n").expect("write env provider");
+        set_executable(&provider);
+        let effective_path = bin.to_string_lossy();
+        let registry = AgentCliVersionRegistry::new();
+
+        let first = registry
+            .probe_with_effective_path(&request(&provider), 100, &effective_path)
+            .expect("first probe");
+        scripts.write_script(&interpreter, "echo '4.5.6'");
+        let cached = registry
+            .probe_with_effective_path(&request(&provider), 200, &effective_path)
+            .expect("cached probe");
+        let refreshed = registry
+            .refresh_with_effective_path(&request(&provider), 300, &effective_path)
+            .expect("refreshed probe");
+
+        assert_eq!(first.version, Some("1.2.3".to_string()));
+        assert_eq!(cached.version, Some("1.2.3".to_string()));
+        assert_eq!(refreshed.version, Some("4.5.6".to_string()));
+        assert_eq!(refreshed.probed_at_epoch_ms, 300);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn older_in_flight_probe_cannot_overwrite_newer_refresh_generation() {
+        let scripts = TempScripts::create("effective-path-reordered-refresh");
+        let started = scripts.base.join("started");
+        let release = scripts.base.join("release");
+        let count = scripts.base.join("count");
+        let provider = scripts.script(
+            "claude",
+            &format!(
+                "n=0; test -f '{}' && n=$(/bin/cat '{}'); n=$((n+1)); printf %s $n > '{}'; if test $n -eq 1; then printf %s 1.2.3; : > '{}'; while ! test -f '{}'; do /bin/sleep 0.01; done; exit 0; fi; printf %s 4.5.6",
+                count.to_string_lossy(),
+                count.to_string_lossy(),
+                count.to_string_lossy(),
+                started.to_string_lossy(),
+                release.to_string_lossy()
+            ),
+        );
+        let effective_path = provider
+            .parent()
+            .expect("provider parent")
+            .to_string_lossy()
+            .into_owned();
+        let registry = Arc::new(AgentCliVersionRegistry::new());
+        let first_registry = registry.clone();
+        let first_request = request(&provider);
+        let first_path = effective_path.clone();
+        let first = thread::spawn(move || {
+            first_registry.probe_with_effective_path(&first_request, 100, &first_path)
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !started.exists() {
+            assert!(Instant::now() < deadline, "first probe did not start");
+            thread::yield_now();
+        }
+
+        let refreshed = registry
+            .refresh_with_effective_path(&request(&provider), 200, &effective_path)
+            .expect("newer refresh");
+        fs::File::create(&release).expect("release older probe");
+        let older = first.join().expect("join older").expect("older probe");
+        let cached = registry
+            .probe_with_effective_path(&request(&provider), 300, &effective_path)
+            .expect("cached refreshed version");
+
+        assert_eq!(older.version, Some("1.2.3".to_string()));
+        assert_eq!(refreshed.version, Some("4.5.6".to_string()));
+        assert_eq!(cached.version, Some("4.5.6".to_string()));
+        assert_eq!(cached.probed_at_epoch_ms, 200);
+    }
+
+    #[test]
+    fn effective_path_probe_rejects_empty_relative_nul_and_oversized_values() {
+        let scripts = TempScripts::create("effective-path-invalid");
+        let provider = scripts.script("claude", "echo '1.2.3'");
+        let registry = AgentCliVersionRegistry::new();
+        let invalid = [
+            String::new(),
+            "relative/bin".to_string(),
+            "/usr/bin:\0/bad".to_string(),
+            format!("/{}", "a".repeat(MAX_AGENT_CLI_EFFECTIVE_PATH_BYTES)),
+        ];
+
+        for effective_path in invalid {
+            assert!(registry
+                .probe_with_effective_path(&request(&provider), 1, &effective_path)
+                .is_err());
+        }
     }
 
     #[test]

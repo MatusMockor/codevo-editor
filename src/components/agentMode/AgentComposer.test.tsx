@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
+import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "../../domain/agentTask";
 import {
   AgentComposer,
@@ -682,14 +683,20 @@ function defaultProps(): AgentComposerProps {
 function disabledProvidersManagement(): AgentProviderManagementSurface {
   const preferences = defaultAgentProviderPreferences();
   return {
+    cliDiscovery: defaultAgentCliDiscoveryResult(),
     providers: {
       claudeCode: {
+        executable: {
+          kind: "notFound",
+          installCommand: "npm i -g @anthropic-ai/claude-code",
+        },
         health: { kind: "disabled" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },
         liveTurnCount: 0,
       },
       codex: {
+        executable: { kind: "notFound", installCommand: "npm i -g @openai/codex" },
         health: { kind: "disabled" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },

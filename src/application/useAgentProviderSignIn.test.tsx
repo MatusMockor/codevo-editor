@@ -4,7 +4,10 @@ import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderSignInResult } from "../domain/agentProviderSignIn";
-import type { AgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
+import type {
+  AgentProviderAdmissionAuthority,
+  ReadyAgentProviderAdmissionAuthority,
+} from "./agentProviderAdmissionAuthority";
 import {
   nextAgentProviderSignInIntentId,
   useAgentProviderSignIn,
@@ -12,11 +15,10 @@ import {
   type AgentProviderSignInSurface,
 } from "./useAgentProviderSignIn";
 
-const READY: AgentProviderAdmissionAuthority = {
+const READY: ReadyAgentProviderAdmissionAuthority = {
   provider: "claudeCode",
   revision: 4,
   disposition: { kind: "ready" },
-  cliPath: "/usr/local/bin/claude",
   providerGeneration: 7,
 };
 
@@ -80,7 +82,6 @@ describe("useAgentProviderSignIn", () => {
               provider: "codex",
               revision: 2,
               disposition: { kind: "ready" },
-              cliPath: "/usr/local/bin/codex",
               providerGeneration: 3,
             },
     });
@@ -105,7 +106,7 @@ describe("useAgentProviderSignIn", () => {
         revision: 1,
         disposition: { kind: "policyUnavailable", reason: "notConfigured" },
       },
-      "Configure a valid Claude Code CLI path before signing in.",
+      "Install Claude Code or configure a valid manual CLI path before signing in.",
     ],
     [
       {
@@ -159,8 +160,8 @@ describe("useAgentProviderSignIn", () => {
     let completeRefresh!: () => void;
     const refresh = vi.fn(
       () =>
-        new Promise<"complete">((resolve) => {
-          completeRefresh = () => resolve("complete");
+        new Promise<{ readonly kind: "complete"; readonly authority: typeof READY }>((resolve) => {
+          completeRefresh = () => resolve({ kind: "complete", authority: READY });
         }),
     );
     const harness = render({ refresh });
@@ -190,8 +191,8 @@ describe("useAgentProviderSignIn", () => {
     let completeRefresh!: () => void;
     const refresh = vi.fn(
       () =>
-        new Promise<"complete">((resolve) => {
-          completeRefresh = () => resolve("complete");
+        new Promise<{ readonly kind: "complete"; readonly authority: typeof READY }>((resolve) => {
+          completeRefresh = () => resolve({ kind: "complete", authority: READY });
         }),
     );
     const harness = render({ readAuthority: () => authority, refresh });
@@ -202,7 +203,7 @@ describe("useAgentProviderSignIn", () => {
     act(() => {
       settlement = harness.surface().settle(intent, 11, 0);
     });
-    authority = { ...READY, cliPath: "/opt/bin/claude", revision: 5 };
+    authority = { ...READY, revision: 5 };
 
     await act(async () => completeRefresh());
     await settlement;
@@ -225,7 +226,6 @@ describe("useAgentProviderSignIn", () => {
   });
 
   it.each([
-    ["path", { ...READY, cliPath: "/opt/bin/claude" }],
     ["generation", { ...READY, providerGeneration: 8 }],
     ["revision", { ...READY, revision: 8 }],
     [
@@ -313,7 +313,7 @@ describe("useAgentProviderSignIn", () => {
     expect(harness.surface().terminalIntents.claudeCode).toBeNull();
   });
 
-  it("privately revalidates the captured CLI path without exposing it to the terminal", async () => {
+  it("privately revalidates the captured revision without exposing executable details", async () => {
     let authority = READY;
     const harness = render({ readAuthority: () => authority });
     act(() => harness.surface().request("claudeCode"));
@@ -324,7 +324,7 @@ describe("useAgentProviderSignIn", () => {
       "providerGeneration",
       "revision",
     ]);
-    authority = { ...READY, cliPath: "/opt/bin/claude" };
+    authority = { ...READY, revision: 5 };
 
     await act(async () => harness.surface().start(intent, { cols: 80, rows: 24 }));
 
@@ -394,7 +394,7 @@ describe("useAgentProviderSignIn", () => {
     act(() => {
       start = harness.surface().start(intent, { cols: 80, rows: 24 });
     });
-    current = { ...READY, revision: 5, cliPath: "/opt/bin/claude", providerGeneration: 8 };
+    current = { ...READY, revision: 5, providerGeneration: 8 };
     current = { ...READY, revision: 6, providerGeneration: 9 };
     await act(async () =>
       resolve({
@@ -580,7 +580,7 @@ describe("useAgentProviderSignIn", () => {
       },
       liveTurnCount: () => 0,
       readAuthority: () => READY,
-      refresh: vi.fn(async () => "complete" as const),
+      refresh: vi.fn(async () => ({ kind: "complete" as const, authority: READY })),
       revealTerminal: vi.fn(),
       stopSession: vi.fn(async () => undefined),
       terminalUnavailableReason: () => null,
