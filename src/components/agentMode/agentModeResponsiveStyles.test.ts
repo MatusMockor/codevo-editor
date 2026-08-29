@@ -37,6 +37,25 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-session__body")).not.toMatch(/padding:[^;]*148px/);
   });
 
+  it("reflows thread content inside the docked center column", () => {
+    expect(rule(".agent-session")).toContain("min-width: 0");
+    expect(rule(".agent-session__scroll")).toContain("min-width: 0");
+    expect(rule(".agent-session__scroll")).toContain("overflow-x: hidden");
+    expect(rule(".agent-session__body")).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(rule(".agent-session__body")).toContain("min-width: 0");
+    expect(rule(".agent-turn")).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(rule(".agent-turn")).toContain("min-width: 0");
+    expect(rule(".agent-turn__events")).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(rule(".agent-turn__events")).toContain("min-width: 0");
+    expect(rule(".agent-raw__lines")).toContain("overflow: auto");
+    expect(rule(".agent-well__stream")).toContain("overflow: auto");
+
+    const narrowCenter = block(appCss, "@container agent-center (max-width: 600px)");
+    expect(rule(".agent-prompt", narrowCenter)).toContain("max-width: 100%");
+    expect(rule(".agent-prompt__meta")).toContain("flex-wrap: wrap");
+    expect(rule(".agent-prompt__meta")).toContain("justify-content: flex-end");
+  });
+
   it("keeps the frame bounded and gives the thread column a real minimum track", () => {
     const frame = rule('.workbench-frame[data-layout="agent"] {', shellCss);
     expect(frame).toContain("overflow: hidden");
