@@ -60,22 +60,18 @@ describe("WorkbenchToolbar", () => {
     expect(onToggleSmartMode).toHaveBeenCalledTimes(1);
   });
 
-  it("renders nothing in the agent layout of a trusted workspace", () => {
+  it("renders no toolbar in the agent layout", () => {
     render({ layout: "agent", ideProgress: { busy: true, state: "active", text: "Indexing" } });
 
     expect(host.querySelector(".workbench-toolbar")).toBeNull();
   });
 
-  it("keeps only the trust affordance reachable in the agent layout", () => {
+  it("does not restore the toolbar for an untrusted agent workspace", () => {
     const onTrustWorkspace = vi.fn();
     render({ layout: "agent", onTrustWorkspace, workspaceTrusted: false });
 
-    expect(host.querySelector(".workbench-toolbar--agent")).not.toBeNull();
-    expect(host.querySelector(".smart-mode-switch")).toBeNull();
-    expect(host.querySelector(".toolbar-status")).toBeNull();
-    act(() => host.querySelector<HTMLButtonElement>(".toolbar-action")?.click());
-
-    expect(onTrustWorkspace).toHaveBeenCalledTimes(1);
+    expect(host.querySelector(".workbench-toolbar")).toBeNull();
+    expect(onTrustWorkspace).not.toHaveBeenCalled();
   });
 
   it("offers to trust an untrusted workspace in the expanded layout", () => {

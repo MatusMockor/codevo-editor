@@ -41,17 +41,16 @@ export function WorkbenchToolbar({
   workspaceRoot,
   workspaceTrusted,
 }: WorkbenchToolbarProps) {
+  if (layout === "agent") {
+    return null;
+  }
+
   const trustNeeded = workspaceRoot !== null && !workspaceTrusted;
   const trustButton = trustNeeded ? (
     <button className="toolbar-action" onClick={onTrustWorkspace} type="button">
       Trust
     </button>
   ) : null;
-
-  if (layout === "agent") {
-    if (!trustNeeded) return null;
-    return <header className="workbench-toolbar workbench-toolbar--agent">{trustButton}</header>;
-  }
 
   return (
     <header className="workbench-toolbar">

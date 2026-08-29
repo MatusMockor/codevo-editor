@@ -16,6 +16,7 @@ import { buildJsTestExplorerTree, type JsTestExplorerTestNode } from "./domain/j
 import type { TestGutterTarget } from "./domain/testGutterTargets";
 import { createEmptyDebugWatches } from "./test/debugWatchMocks";
 import { workbenchComposition } from "./workbenchComposition";
+import { defaultAgentCliDiscoveryResult } from "./domain/agentSettings";
 
 vi.mock("./components/monacoRuntimeLoader", () => ({
   initializeMonacoRuntime: vi.fn(async () => undefined),
@@ -1032,7 +1033,7 @@ describe("App command routing", () => {
     expect(host.querySelector('[data-testid="project-tabs"]')).toBeNull();
     expect(host.querySelector('[data-testid="status-bar"]')).toBeNull();
     expect(host.querySelector(".status-bar--agent")?.textContent).toContain("1/3 agents running");
-    expect(host.querySelector(".workbench-toolbar--agent")).not.toBeNull();
+    expect(host.querySelector(".workbench-toolbar")).toBeNull();
     expect(host.querySelector(".smart-mode-switch")).toBeNull();
     expect(host.querySelector(".workbench-mode-switch")).toBeNull();
     expect(host.querySelector(".app-shell")?.className).toContain("app-shell--agent-mode");
@@ -1365,14 +1366,20 @@ function createWorkbench() {
 
 function providerManagement(): AgentProviderManagementSurface {
   return {
+    cliDiscovery: defaultAgentCliDiscoveryResult(),
     providers: {
       claudeCode: {
+        executable: {
+          kind: "notFound",
+          installCommand: "npm i -g @anthropic-ai/claude-code",
+        },
         health: { kind: "notConfigured" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },
         liveTurnCount: 0,
       },
       codex: {
+        executable: { kind: "notFound", installCommand: "npm i -g @openai/codex" },
         health: { kind: "notConfigured" },
         policy: { kind: "unregistered" },
         updateState: { kind: "idle" },

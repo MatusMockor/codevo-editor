@@ -1689,10 +1689,6 @@
   padding-inline-start: 18px;
 }
 
-.workbench-toolbar--agent {
-  justify-content: flex-start;
-}
-
 .status-bar--agent .status-agent-slots {
   display: inline-flex;
   align-items: center;
