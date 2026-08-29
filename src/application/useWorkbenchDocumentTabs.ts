@@ -2,6 +2,12 @@ import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction 
 import type { FilePrefetchCache } from "../domain/filePrefetchCache";
 import { isPrefetchableContentSize, shouldPrefetchFileContent } from "../domain/filePrefetchCache";
 import type { AppSettings } from "../domain/settings";
+import {
+  createConservativeWorkspaceRootFromPath,
+  parseWorkspacePath,
+  type CanonicalNativePath,
+  type WorkspaceRootDescriptor,
+} from "../domain/workspacePath";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   detectLanguage,
@@ -16,6 +22,62 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { DocumentTabSessionPort } from "./documentTabSessionPort";
 
 const FILE_PREFETCH_HOVER_DELAY_MS = 80;
+
+function normalizedWorkspaceRootForContainment(
+  root: WorkspaceRootDescriptor,
+): WorkspaceRootDescriptor {
+  if (root.flavor !== "windows-drive" || root.nativePath !== `/${root.anchor}/`) {
+    return root;
+  }
+
+  return Object.freeze({
+    ...root,
+    nativePath: root.nativePath.slice(0, -1) as CanonicalNativePath,
+  });
+}
+
+function isPathOwnedByWorkspaceRoot(path: string, workspaceRoot: string | null): boolean {
+  if (!workspaceRoot) {
+    return false;
+  }
+
+  const root = createConservativeWorkspaceRootFromPath(workspaceRoot);
+
+  if (!root.ok) {
+    return false;
+  }
+
+  return parseWorkspacePath(normalizedWorkspaceRootForContainment(root.value), path).ok;
+}
+
+function isSafeAbsoluteWorkspacePath(path: string): boolean {
+  const canonicalPath = createConservativeWorkspaceRootFromPath(path);
+
+  if (!canonicalPath.ok) {
+    return false;
+  }
+
+  let traversalPath = path;
+
+  if (path.toLowerCase().startsWith("file:")) {
+    try {
+      traversalPath = decodeURIComponent(path);
+    } catch {
+      return false;
+    }
+  }
+
+  const traversalSegments =
+    canonicalPath.value.flavor === "posix"
+      ? traversalPath.split("/")
+      : traversalPath.split(/[\\/]/);
+
+  if (traversalSegments.some((segment) => segment === "..")) {
+    return false;
+  }
+
+  return true;
+}
 
 function replaceOpeningFileOwner(
   ownerRef: MutableRefObject<number | null>,
@@ -137,7 +199,6 @@ export function useWorkbenchDocumentTabs(
     refreshLocalPhpDiagnosticsForContent,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
-    workspacePathBelongsToRoot,
     reportError,
     reportErrorForActiveWorkspaceRoot,
   } = dependencies;
@@ -203,11 +264,18 @@ export function useWorkbenchDocumentTabs(
           return null;
         }
       };
-      const belongsToInactiveWorkspaceTab = appSettingsRef.current.workspaceTabs.some(
-        (tabPath) =>
-          !workspaceRootKeysEqual(tabPath, requestedRoot) &&
-          workspacePathBelongsToRoot(entry.path, tabPath),
-      );
+      if (!isSafeAbsoluteWorkspacePath(entry.path)) {
+        return false;
+      }
+
+      const requestedWorkspaceOwnsPath = isPathOwnedByWorkspaceRoot(entry.path, requestedRoot);
+      const belongsToInactiveWorkspaceTab =
+        !requestedWorkspaceOwnsPath &&
+        appSettingsRef.current.workspaceTabs.some(
+          (tabPath) =>
+            !workspaceRootKeysEqual(tabPath, requestedRoot) &&
+            isPathOwnedByWorkspaceRoot(entry.path, tabPath),
+        );
 
       if (belongsToInactiveWorkspaceTab) {
         return false;
@@ -495,7 +563,6 @@ export function useWorkbenchDocumentTabs(
       syncClosedDocument,
       syncClosedJavaScriptTypeScriptDocument,
       workspaceFiles,
-      workspacePathBelongsToRoot,
       workspaceRoot,
     ],
   );

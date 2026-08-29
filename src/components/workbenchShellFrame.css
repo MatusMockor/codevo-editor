@@ -85,6 +85,7 @@
   z-index: 1;
   padding-top: var(--agent-surface-header-height);
   padding-left: var(--agent-surface-tree-width);
+  clip-path: inset(var(--agent-surface-header-height) 0 0 var(--agent-surface-tree-width));
   grid-column: 3;
   grid-row: 1 / -1;
   pointer-events: none;
@@ -92,6 +93,11 @@
 
 .workbench-frame[data-layout="agent"] > [data-slot="editor"] > * {
   pointer-events: auto;
+}
+
+.workbench-frame > [data-slot="surface"][hidden],
+.workbench-frame > [data-slot="editor"][hidden] {
+  display: none;
 }
 
 .workbench-frame[data-layout="agent"] > [data-slot="bottom"] .bottom-panel {

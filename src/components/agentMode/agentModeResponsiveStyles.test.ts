@@ -129,6 +129,14 @@ describe("agent mode responsive layout contract", () => {
     expect(
       rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss),
     ).toContain("padding-left: var(--agent-surface-tree-width)");
+    expect(
+      rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss).replace(
+        /\s+/g,
+        " ",
+      ),
+    ).toContain(
+      "clip-path: inset(var(--agent-surface-header-height) 0 0 var(--agent-surface-tree-width))",
+    );
   });
 
   it("places the docked bottom panel under the thread column beside a full-height right panel", () => {
@@ -152,6 +160,12 @@ describe("agent mode responsive layout contract", () => {
     expect(
       rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss),
     ).toContain("grid-column: 3");
+    expect(
+      rule(
+        '.workbench-frame > [data-slot="surface"][hidden],\n.workbench-frame > [data-slot="editor"][hidden]',
+        shellCss,
+      ),
+    ).toContain("display: none");
   });
 
   it("pins the maximized frame rail column to the rail track and moves the bottom panel under the surface", () => {

@@ -57,6 +57,8 @@ interface HarnessOptions {
   gitDiffRead?: Deferred<GitFileDiff>;
   gitChanges?: GitChangedFile[];
   message?: string | null;
+  workspaceRoot?: string;
+  workspaceTabs?: string[];
 }
 
 interface HarnessState {
@@ -98,6 +100,7 @@ function document(path: string, content: string, savedContent = content): Editor
 }
 
 function renderHarness(options: HarnessOptions = {}) {
+  const workspaceRoot = options.workspaceRoot ?? ROOT_A;
   const container = window.document.createElement("div");
   const root = createRoot(container);
   const syncClosedDocument = vi.fn(async () => undefined);
@@ -144,9 +147,9 @@ function renderHarness(options: HarnessOptions = {}) {
     const [gitDiffLoading, setGitDiffLoading] = useState(options.gitDiffLoading ?? false);
     const [message, setMessage] = useState(options.message ?? null);
     const initializedRef = useRef(false);
-    const currentWorkspaceRootRef = useRef<string | null>(ROOT_A);
+    const currentWorkspaceRootRef = useRef<string | null>(workspaceRoot);
     const currentWorkspaceRuntimeOwnerRef = useRef<WorkspaceRuntimeOwner | null>(
-      createWorkspaceRuntimeOwner("workspace-a", ROOT_A),
+      createWorkspaceRuntimeOwner("workspace-a", workspaceRoot),
     );
     const gitDiffRequestTokenRef = useRef(0);
     const selectedGitChangeRef = useRef<GitChangedFile | null>(options.selectedGitChange ?? null);
@@ -199,7 +202,7 @@ function renderHarness(options: HarnessOptions = {}) {
           openPaths: options.openPaths ?? [],
           previewPath: options.previewPath ?? null,
         });
-      session.restoreEditorSurface(ROOT_A, {
+      session.restoreEditorSurface(workspaceRoot, {
         activePath: options.activePath ?? null,
         documents: options.documents ?? {},
         editorGroups,
@@ -213,7 +216,7 @@ function renderHarness(options: HarnessOptions = {}) {
     const dependencies = {
       appSettingsRef: useRef({
         ...defaultAppSettings(),
-        workspaceTabs: [ROOT_A, ROOT_B],
+        workspaceTabs: options.workspaceTabs ?? [ROOT_A, ROOT_B],
       }),
       currentWorkspaceRootRef,
       resolveCurrentWorkspaceRuntimeOwner: () => currentWorkspaceRuntimeOwnerRef.current,
@@ -239,7 +242,7 @@ function renderHarness(options: HarnessOptions = {}) {
       workspaceFiles,
       workspacePathBelongsToRoot: (path, workspaceRoot) =>
         Boolean(workspaceRoot && path.startsWith(`${workspaceRoot}/`)),
-      workspaceRoot: ROOT_A,
+      workspaceRoot,
     } as WorkbenchDocumentTabsDependencies;
 
     captured.api = useWorkbenchDocumentTabs(dependencies);
@@ -295,6 +298,115 @@ function renderHarness(options: HarnessOptions = {}) {
 }
 
 describe("useWorkbenchDocumentTabs", () => {
+  it("prefers an active nested workspace over an inactive parent while blocking siblings", async () => {
+    const parentRoot = "/workspace";
+    const nestedRoot = `${parentRoot}/nested`;
+    const siblingRoot = `${parentRoot}/sibling`;
+    const nestedPath = `${nestedRoot}/README.md`;
+    const siblingPath = `${siblingRoot}/README.md`;
+    const readText = vi.fn(async (path: string) => `content:${path}`);
+    const harness = renderHarness({
+      readText,
+      workspaceRoot: nestedRoot,
+      workspaceTabs: [parentRoot, nestedRoot, siblingRoot],
+    });
+
+    let nestedOpened = false;
+    await act(async () => {
+      nestedOpened = await harness.api().openFile(entry(nestedPath));
+    });
+
+    expect(nestedOpened).toBe(true);
+    expect(harness.state().documents[nestedPath]?.content).toBe(`content:${nestedPath}`);
+
+    let siblingOpened = true;
+    await act(async () => {
+      siblingOpened = await harness.api().openFile(entry(siblingPath));
+    });
+
+    expect(siblingOpened).toBe(false);
+    expect(readText).toHaveBeenCalledOnce();
+    expect(harness.state().documents[siblingPath]).toBeUndefined();
+    harness.unmount();
+  });
+
+  it.each([
+    ["drive casing and mixed separators", "C:\\Workspace", "c:/workspace/src/file.ts"],
+    ["UNC casing and separator aliases", "\\\\Server\\Share", "//server/share/src/file.ts"],
+    ["the POSIX filesystem root", "/", "/README.md"],
+    ["a Windows drive root", "C:\\", "c:/README.md"],
+    ["a native percent filename", "/workspace", "/workspace/%ZZ.ts"],
+    ["a POSIX backslash filename", "/workspace", "/workspace/a\\..\\b.ts"],
+    ["an encoded POSIX backslash filename", "/workspace", "file:///workspace/a%5C..%5Cb.ts"],
+  ])("opens a path owned through %s", async (_label, workspaceRoot, filePath) => {
+    const readText = vi.fn(async () => "owned content");
+    const harness = renderHarness({
+      readText,
+      workspaceRoot,
+      workspaceTabs: [workspaceRoot],
+    });
+
+    let opened = false;
+    await act(async () => {
+      opened = await harness.api().openFile(entry(filePath));
+    });
+
+    expect(opened).toBe(true);
+    expect(readText).toHaveBeenCalledOnce();
+    expect(harness.state().documents[filePath]?.content).toBe("owned content");
+    harness.unmount();
+  });
+
+  it.each([
+    ["a traversal alias", "/workspace/nested/../sibling/README.md"],
+    ["an encoded traversal alias", "file:///workspace/nested/%2e%2e/sibling/README.md"],
+    ["encoded slash traversal", "file:///workspace/nested/a%2F..%2Fsibling/README.md"],
+    ["Windows backslash traversal", "C:\\workspace\\..\\outside.ts"],
+    ["malformed percent encoding", "file:///workspace/nested/%ZZ/README.md"],
+    ["a relative path", "nested/README.md"],
+  ])("blocks %s before reading from the filesystem", async (_label, rejectedPath) => {
+    const nestedRoot = "/workspace/nested";
+    const readText = vi.fn(async () => "unexpected content");
+    const harness = renderHarness({
+      readText,
+      workspaceRoot: nestedRoot,
+      workspaceTabs: ["/workspace", nestedRoot, "/workspace/sibling"],
+    });
+
+    let opened = true;
+    await act(async () => {
+      opened = await harness.api().openFile(entry(rejectedPath));
+    });
+
+    expect(opened).toBe(false);
+    expect(readText).not.toHaveBeenCalled();
+    expect(harness.state().documents).toEqual({});
+    harness.unmount();
+  });
+
+  it("opens a safe external path outside every workspace tab", async () => {
+    const externalPath = "/external-library/definition.ts";
+    const readText = vi.fn(async () => "external content");
+    const harness = renderHarness({
+      readText,
+      workspaceRoot: "/workspace/nested",
+      workspaceTabs: ["/workspace", "/workspace/nested", "/workspace/sibling"],
+    });
+
+    let opened = false;
+    await act(async () => {
+      opened = await harness.api().openFile(entry(externalPath), { readOnly: true });
+    });
+
+    expect(opened).toBe(true);
+    expect(readText).toHaveBeenCalledOnce();
+    expect(harness.state().documents[externalPath]).toMatchObject({
+      content: "external content",
+      readOnly: true,
+    });
+    harness.unmount();
+  });
+
   it("invalidates a loading Git diff when an ordinary tab is activated", async () => {
     const diffPath = `${ROOT_A}/changed.ts`;
     const ordinaryPath = `${ROOT_A}/ordinary.ts`;
