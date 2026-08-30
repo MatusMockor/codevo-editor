@@ -1,6 +1,6 @@
 [package]
 name = "codevo-editor"
-version = "0.2.0-beta.3"
+version = "0.2.0-beta.4"
 description = "Codevo Editor is a Fleet-like PHP-focused desktop code editor"
 authors = ["Matus Mockor"]
 edition = "2021"
