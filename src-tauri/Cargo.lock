@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "codevo-editor"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -544,6 +544,7 @@ dependencies = [
  "ignore",
  "json5",
  "libc",
+ "minisign-verify",
  "notify",
  "objc2",
  "objc2-app-kit",

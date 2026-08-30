@@ -1,6 +1,6 @@
 [package]
 name = "codevo-editor"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 description = "Codevo Editor is a Fleet-like PHP-focused desktop code editor"
 authors = ["Matus Mockor"]
 edition = "2021"
@@ -57,6 +57,7 @@ fontdb = "0.23.0"
 quick-xml = "=0.39.4"
 tungstenite = "0.30.0"
 base64 = "0.22"
+minisign-verify = "0.2.5"
 sourcemap = "9"
 unicode-ident = "1"
 unicode-id-start = "1.4"

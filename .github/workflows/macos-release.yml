@@ -142,6 +142,7 @@ jobs:
         id: release
         env:
           EXPECTED_REF: ${{ github.ref }}
+          RELEASE_MODE: ${{ inputs.mode }}
         run: |
           node <<'NODE'
           const fs = require("node:fs")
@@ -149,6 +150,10 @@ jobs:
           const version = JSON.parse(fs.readFileSync("package.json", "utf8")).version
           if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
             throw new Error(`package.json has an unsupported release version: ${version}`)
+          }
+          const isBeta = /^\d+\.\d+\.\d+-beta(?:\.[0-9A-Za-z-]+)*$/.test(version)
+          if ((process.env.RELEASE_MODE === "beta") !== isBeta) {
+            throw new Error(`release mode ${process.env.RELEASE_MODE} does not match version ${version}`)
           }
 
           const tauriConfig = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"))
@@ -185,7 +190,7 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\n`)
           fs.appendFileSync(
             process.env.GITHUB_OUTPUT,
-            `prerelease=${version.includes("beta") ? "true" : "false"}\n`,
+            `prerelease=${isBeta ? "true" : "false"}\n`,
           )
           NODE
 
@@ -337,6 +342,12 @@ jobs:
           test "$(wc -c < "$updater_path.sig")" -le 16384
           test -s release-body.md
 
+          cargo run --quiet --manifest-path src-tauri/Cargo.toml \
+            --example verify_updater_signature -- \
+            "$updater_path" \
+            "$updater_path.sig" \
+            src-tauri/tauri.conf.json
+
           if [ "$APPLE_SIGNING" = "true" ]; then
             codesign --verify --deep --strict --verbose=2 "$app_path"
             codesign -dv --verbose=4 "$app_path"
@@ -486,7 +497,7 @@ jobs:
           esac
 
           prerelease_args=()
-          if [[ "$version" == *beta* ]]; then
+          if [[ "$version" == *-* ]]; then
             prerelease_args+=(--prerelease)
           fi
 
@@ -505,70 +516,214 @@ jobs:
 
           existing_release="$(lookup_release)"
           if [ -n "$existing_release" ]; then
-            echo "::error::a release already exists for $tag"
-            exit 1
+            IFS=$'\t' read -r existing_release_id existing_release_draft <<< "$existing_release"
+            if [ -z "$existing_release_id" ] || [ "$existing_release_draft" != "false" ]; then
+              echo "::error::the existing release for $tag is not a published release"
+              exit 1
+            fi
+
+            existing_release_dir="$RUNNER_TEMP/existing-version-release"
+            mkdir -p "$existing_release_dir"
+            gh release download "$tag" \
+              --repo "$REPOSITORY" \
+              --pattern latest.json \
+              --dir "$existing_release_dir"
+            cp "$existing_release_dir/latest.json" release-assets/publish/latest.json
+            RELEASE_VERSION="$version" node <<'NODE'
+          const fs = require("node:fs")
+
+          const latest = JSON.parse(fs.readFileSync("release-assets/publish/latest.json", "utf8"))
+          const platformEntries = Object.values(latest.platforms ?? {})
+          if (
+            latest.version !== process.env.RELEASE_VERSION ||
+            platformEntries.length === 0 ||
+            platformEntries.some(
+              (entry) =>
+                typeof entry?.url !== "string" ||
+                !entry.url.includes(`/releases/download/v${process.env.RELEASE_VERSION}/`),
+            )
+          ) {
+            throw new Error("existing release updater manifest does not match the release version")
+          }
+          NODE
+          else
+            draft_title="$title [dispatch:$DISPATCH_ID]"
+            export DRAFT_TITLE="$draft_title"
+            owned_release_id=""
+            lookup_owned_draft() {
+              gh api "repos/$REPOSITORY/releases?per_page=100" \
+                --jq '.[] | select(.tag_name == env.RELEASE_TAG and .name == env.DRAFT_TITLE and .draft == true) | [.id, .tag_name, .draft, .name] | @tsv'
+            }
+            cleanup_owned_draft() {
+              exit_status=$?
+              trap - EXIT
+              if [ -n "$owned_release_id" ]; then
+                owned_record="$(
+                  gh api "repos/$REPOSITORY/releases/$owned_release_id" \
+                    --jq '[.id, .tag_name, .draft, .name] | @tsv' 2>/dev/null || true
+                )"
+              else
+                owned_record="$(lookup_owned_draft 2>/dev/null || true)"
+              fi
+              IFS=$'\t' read -r candidate_id candidate_tag candidate_draft candidate_name <<< "$owned_record"
+              if [ -n "$candidate_id" ] && [ "$candidate_tag" = "$tag" ] && [ "$candidate_draft" = "true" ] && [ "$candidate_name" = "$draft_title" ]; then
+                gh api --method DELETE "repos/$REPOSITORY/releases/$candidate_id" || true
+              fi
+              exit "$exit_status"
+            }
+            trap cleanup_owned_draft EXIT
+
+            gh release create "$tag" \
+              --repo "$REPOSITORY" \
+              --verify-tag \
+              --title "$draft_title" \
+              --notes-file release-assets/release-body.md \
+              --draft \
+              "${prerelease_args[@]}"
+
+            owned_record="$(lookup_owned_draft)"
+            IFS=$'\t' read -r owned_release_id owned_tag owned_is_draft owned_title <<< "$owned_record"
+            if [ -z "$owned_release_id" ] || [ "$owned_tag" != "$tag" ] || [ "$owned_is_draft" != "true" ] || [ "$owned_title" != "$draft_title" ]; then
+              echo "::error::created release is not an identifiable draft"
+              exit 1
+            fi
+
+            gh release upload "$tag" \
+              "${release_files[@]}" \
+              --repo "$REPOSITORY"
+
+            expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
+            actual_assets="$RUNNER_TEMP/actual-release-assets.txt"
+            for release_file in "${release_files[@]}"; do
+              basename "$release_file"
+            done | sort > "$expected_assets"
+            gh api --paginate "repos/$REPOSITORY/releases/$owned_release_id/assets?per_page=100" \
+              --jq '.[] | select(.size > 0) | .name' \
+              | sort > "$actual_assets"
+            if ! diff -u "$expected_assets" "$actual_assets"; then
+              echo "::error::draft release assets do not match the verified build"
+              exit 1
+            fi
+
+            gh api --method PATCH "repos/$REPOSITORY/releases/$owned_release_id" \
+              -f name="$title" \
+              -F draft=false > /dev/null
+            owned_release_id=""
+            trap - EXIT
           fi
 
-          draft_title="$title [dispatch:$DISPATCH_ID]"
-          export DRAFT_TITLE="$draft_title"
-          owned_release_id=""
-          lookup_owned_draft() {
-            gh api "repos/$REPOSITORY/releases?per_page=100" \
-              --jq '.[] | select(.tag_name == env.RELEASE_TAG and .name == env.DRAFT_TITLE and .draft == true) | [.id, .tag_name, .draft, .name] | @tsv'
-          }
-          cleanup_owned_draft() {
-            exit_status=$?
-            trap - EXIT
-            if [ -n "$owned_release_id" ]; then
-              owned_record="$(
-                gh api "repos/$REPOSITORY/releases/$owned_release_id" \
-                  --jq '[.id, .tag_name, .draft, .name] | @tsv' 2>/dev/null || true
-              )"
-            else
-              owned_record="$(lookup_owned_draft 2>/dev/null || true)"
-            fi
-            IFS=$'\t' read -r candidate_id candidate_tag candidate_draft candidate_name <<< "$owned_record"
-            if [ -n "$candidate_id" ] && [ "$candidate_tag" = "$tag" ] && [ "$candidate_draft" = "true" ] && [ "$candidate_name" = "$draft_title" ]; then
-              gh api --method DELETE "repos/$REPOSITORY/releases/$candidate_id" || true
-            fi
-            exit "$exit_status"
-          }
-          trap cleanup_owned_draft EXIT
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta(\.[0-9A-Za-z-]+)*$ ]]; then
+            exit 0
+          fi
 
-          gh release create "$tag" \
+          beta_title="Codevo Editor beta channel"
+          beta_notes="Tracks the latest published Codevo Editor beta release: $tag."
+          beta_pending_title="$beta_title [pending:$tag]"
+          beta_pending_notes="Managed pending beta channel publication for $tag."
+          beta_release_exists=false
+          if beta_release_record="$(
+            gh release view beta \
+              --repo "$REPOSITORY" \
+              --json body,isDraft,name,tagName \
+              --jq '[.isDraft, .name, .body, .tagName] | @json' 2>/dev/null
+          )"; then
+            beta_owned_draft_record="$(
+              jq -cn \
+                --arg title "$beta_pending_title" \
+                --arg body "$beta_pending_notes" \
+                '[true, $title, $body, "beta"]'
+            )"
+            beta_release_draft="$(jq -r '.[0]' <<< "$beta_release_record")"
+            if [ "$beta_release_draft" = "true" ]; then
+              if [ "$beta_release_record" != "$beta_owned_draft_record" ]; then
+                echo "::error::the beta tag has an unowned draft release"
+                exit 1
+              fi
+              beta_revalidated_record="$(
+                gh release view beta \
+                  --repo "$REPOSITORY" \
+                  --json body,isDraft,name,tagName \
+                  --jq '[.isDraft, .name, .body, .tagName] | @json'
+              )"
+              if [ "$beta_revalidated_record" != "$beta_owned_draft_record" ]; then
+                echo "::error::the beta channel draft changed before cleanup"
+                exit 1
+              fi
+              gh release delete beta \
+                --repo "$REPOSITORY" \
+                --cleanup-tag \
+                --yes
+            else
+              beta_release_exists=true
+            fi
+          fi
+
+          if [ "$beta_release_exists" = "true" ]; then
+            beta_backup_dir="$RUNNER_TEMP/beta-channel-backup"
+            beta_verify_dir="$RUNNER_TEMP/beta-channel-verify"
+            mkdir -p "$beta_backup_dir" "$beta_verify_dir"
+            if ! gh release download beta \
+              --repo "$REPOSITORY" \
+              --pattern latest.json \
+              --dir "$beta_backup_dir"; then
+              echo "::error::cannot replace the beta channel without a verified manifest backup"
+              exit 1
+            fi
+            restore_beta_manifest() {
+              gh release upload beta \
+                "$beta_backup_dir/latest.json" \
+                --clobber \
+                --repo "$REPOSITORY"
+            }
+            if ! gh release upload beta \
+              release-assets/publish/latest.json \
+              --clobber \
+              --repo "$REPOSITORY"; then
+              restore_beta_manifest
+              exit 1
+            fi
+            if ! gh release download beta \
+              --repo "$REPOSITORY" \
+              --pattern latest.json \
+              --dir "$beta_verify_dir"; then
+              restore_beta_manifest
+              exit 1
+            fi
+            if ! cmp release-assets/publish/latest.json "$beta_verify_dir/latest.json"; then
+              restore_beta_manifest
+              exit 1
+            fi
+            git tag --force beta "$GITHUB_SHA"
+            git push origin refs/tags/beta --force
+            gh release edit beta \
+              --repo "$REPOSITORY" \
+              --title "$beta_title" \
+              --notes "$beta_notes" \
+              --draft=false \
+              --prerelease
+            exit 0
+          fi
+
+          git tag --force beta "$GITHUB_SHA"
+          git push origin refs/tags/beta --force
+          gh release create beta \
+            release-assets/publish/latest.json \
             --repo "$REPOSITORY" \
             --verify-tag \
-            --title "$draft_title" \
-            --notes-file release-assets/release-body.md \
+            --title "$beta_pending_title" \
+            --notes "$beta_pending_notes" \
             --draft \
-            "${prerelease_args[@]}"
-
-          owned_record="$(lookup_owned_draft)"
-          IFS=$'\t' read -r owned_release_id owned_tag owned_is_draft owned_title <<< "$owned_record"
-          if [ -z "$owned_release_id" ] || [ "$owned_tag" != "$tag" ] || [ "$owned_is_draft" != "true" ] || [ "$owned_title" != "$draft_title" ]; then
-            echo "::error::created release is not an identifiable draft"
-            exit 1
-          fi
-
-          gh release upload "$tag" \
-            "${release_files[@]}" \
-            --repo "$REPOSITORY"
-
-          expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
-          actual_assets="$RUNNER_TEMP/actual-release-assets.txt"
-          for release_file in "${release_files[@]}"; do
-            basename "$release_file"
-          done | sort > "$expected_assets"
-          gh api --paginate "repos/$REPOSITORY/releases/$owned_release_id/assets?per_page=100" \
-            --jq '.[] | select(.size > 0) | .name' \
-            | sort > "$actual_assets"
-          if ! diff -u "$expected_assets" "$actual_assets"; then
-            echo "::error::draft release assets do not match the verified build"
-            exit 1
-          fi
-
-          gh api --method PATCH "repos/$REPOSITORY/releases/$owned_release_id" \
-            -f name="$title" \
-            -F draft=false > /dev/null
-          owned_release_id=""
-          trap - EXIT
+            --prerelease
+          gh release download beta \
+            --repo "$REPOSITORY" \
+            --pattern latest.json \
+            --dir "$RUNNER_TEMP/beta-channel-initial-verify"
+          cmp \
+            release-assets/publish/latest.json \
+            "$RUNNER_TEMP/beta-channel-initial-verify/latest.json"
+          gh release edit beta \
+            --repo "$REPOSITORY" \
+            --title "$beta_title" \
+            --notes "$beta_notes" \
+            --draft=false \
+            --prerelease

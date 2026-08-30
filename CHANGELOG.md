@@ -5,6 +5,20 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.2] - 2026-08-30
+
+### Added
+
+- Added automatic Claude Code and Codex CLI discovery with persisted provider paths,
+  version probes, and opt-in beta update controls.
+- Added a signed updater feed contract for GitHub beta releases.
+
+### Fixed
+
+- Restored the Files surface and nested workspace file opening in the real Tauri app.
+- Made the docked right panel reflow the conversation column and expand across it when
+  maximized, matching the intended workbench layout.
+
 ## [0.2.0-beta.1] - 2026-08-29
 
 ### Added
