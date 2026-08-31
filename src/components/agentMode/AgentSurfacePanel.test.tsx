@@ -307,24 +307,18 @@ describe("AgentSurfacePanel", () => {
     );
   });
 
-  it("wires the layout controls slot, the resize handle and the close button", () => {
-    const onClosePanel = vi.fn();
+  it("wires the layout controls slot and resize handle without an overall close button", () => {
     render({
       layout: open(["files"], "files"),
       layoutControls: <button data-layout-control type="button" />,
-      onClosePanel,
     });
 
     expect(
       host.querySelector(".agent-surface__layout-controls [data-layout-control]"),
     ).not.toBeNull();
     expect(host.querySelector('[role="separator"][aria-orientation="vertical"]')).not.toBeNull();
-    click('[aria-label="Close panel"]');
-    expect(onClosePanel).toHaveBeenCalledTimes(1);
-
-    render({ layout: open([], null), onClosePanel });
-    click('[aria-label="Close panel"]');
-    expect(onClosePanel).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('[aria-label="Close panel"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Close Files tab"]')).not.toBeNull();
   });
 
   it("keeps the tablist owning only tabs and pairs each close button with its panel", () => {
@@ -495,7 +489,6 @@ function defaultProps(): AgentSurfacePanelProps {
     onOpenSurface: () => undefined,
     onActivateSurface: () => undefined,
     onCloseSurfaceTab: () => undefined,
-    onClosePanel: () => undefined,
   };
 }
 

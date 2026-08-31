@@ -2457,25 +2457,28 @@
   max-height: min(320px, calc(100vh - 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-radius: var(--agent-radius-lg);
+  border-radius: var(--agent-radius-xl);
   background: var(--agent-raised);
   box-shadow:
     0 0 0 1px var(--agent-hairline-strong),
     0 12px 32px rgba(0, 0, 0, var(--agent-shadow-alpha));
-  padding: 4px;
+  padding: 4px 0;
 }
 
 .agent-picker__option {
   display: flex;
+  box-sizing: border-box;
+  width: 100%;
   align-items: flex-start;
   gap: var(--agent-space-3);
-  border-radius: var(--agent-radius-md);
+  border-radius: var(--agent-radius-lg);
   color: var(--agent-text);
   cursor: pointer;
   outline: none;
   padding: 6px 10px 6px 6px;
 }
 
+.agent-picker__option:hover,
 .agent-picker__option--active {
   background: var(--agent-hover);
   color: var(--agent-text-strong);
@@ -4021,7 +4024,7 @@
   height: min(300px, calc(100vh - 16px));
   max-height: min(320px, calc(100vh - 16px));
   overflow: hidden;
-  border-radius: var(--agent-radius-lg);
+  border-radius: var(--agent-radius-xl);
   background: var(--agent-raised);
   box-shadow:
     0 0 0 1px var(--agent-hairline-strong),
@@ -4138,17 +4141,20 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 4px;
+  padding: 4px 0;
 }
 
 .agent-model-picker__row {
   display: flex;
+  box-sizing: border-box;
+  width: 100%;
   align-items: center;
   gap: 2px;
-  border-radius: var(--agent-radius-md);
+  border-radius: var(--agent-radius-lg);
   color: var(--agent-text);
 }
 
+.agent-model-picker__row:hover,
 .agent-model-picker__row--active {
   background: var(--agent-hover);
   color: var(--agent-text-strong);

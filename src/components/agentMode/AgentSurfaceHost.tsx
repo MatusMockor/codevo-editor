@@ -31,7 +31,6 @@ export interface AgentSurfaceHostProps {
   onOpenSurface(surface: AgentSurfaceKind): void;
   onActivateSurface(surface: AgentSurfaceKind): void;
   onCloseSurfaceTab(surface: AgentSurfaceKind): void;
-  onClosePanel(): void;
 }
 
 const UNAVAILABLE_FILES: AgentSurfaceFileTreeDependencies["files"] = {
@@ -46,7 +45,6 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   layout,
   layoutControls,
   onActivateSurface,
-  onClosePanel,
   onCloseSurfaceTab,
   onOpenSurface,
   thread,
@@ -134,7 +132,6 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
         layout={layout}
         layoutControls={layoutControls}
         onActivateSurface={onActivateSurface}
-        onClosePanel={onClosePanel}
         onCloseSurfaceTab={onCloseSurfaceTab}
         onOpenSurface={onOpenSurface}
         onResizeStart={chrome.onResizeRightPanelStart}

@@ -19,7 +19,6 @@ import { useWorkbenchFrameTreeReport } from "../workbenchFrameTreeReport";
 import { WorkbenchEditorTabsPortalTarget } from "../workbenchEditorTabsPortal";
 
 export const AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE = "data-agent-editor-slot";
-export const AGENT_SURFACE_CLOSE_PANEL_LABEL = "Close panel";
 
 const LazyAgentSurfaceDiff = lazy(() =>
   import("./AgentSurfaceDiff").then((module) => ({ default: module.AgentSurfaceDiff })),
@@ -48,7 +47,6 @@ export interface AgentSurfacePanelProps {
   onOpenSurface(surface: AgentSurfaceKind): void;
   onActivateSurface(surface: AgentSurfaceKind): void;
   onCloseSurfaceTab(surface: AgentSurfaceKind): void;
-  onClosePanel(): void;
   onTrustWorkspace?(): void;
   onResizeStart?(event: PointerEvent<HTMLDivElement>): void;
 }
@@ -82,7 +80,6 @@ export function AgentSurfacePanel({
   layout,
   layoutControls,
   onActivateSurface,
-  onClosePanel,
   onCloseSurfaceTab,
   onOpenSurface,
   onResizeStart,
@@ -188,15 +185,6 @@ export function AgentSurfacePanel({
           </button>
         )}
         <div className="agent-surface__layout-controls">{layoutControls}</div>
-        <button
-          aria-label={AGENT_SURFACE_CLOSE_PANEL_LABEL}
-          className="agent-iconbutton"
-          onClick={onClosePanel}
-          title={AGENT_SURFACE_CLOSE_PANEL_LABEL}
-          type="button"
-        >
-          <X aria-hidden="true" size={14} />
-        </button>
       </header>
       <div className="agent-surface__body" data-agent-surface-body>
         {chooserShown && (

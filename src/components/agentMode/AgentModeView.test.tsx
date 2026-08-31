@@ -686,7 +686,7 @@ describe("AgentModeView", () => {
     });
   });
 
-  it("drives the surface tabs: open, add by command, switch, close, maximize and close the panel", async () => {
+  it("drives the surface tabs: open, add by command, switch, close and maximize", async () => {
     const threads = [threadView({ threadId: "agt-1" })];
     let layout = recordedLayoutState();
     const rerender = (): void => {
@@ -741,11 +741,7 @@ describe("AgentModeView", () => {
     rerender();
     expect(surfaceTabs()).toEqual([]);
     expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
-
-    click('[aria-label="Close panel"]');
-    rerender();
-    expect(host.querySelector(".agent-surface")).toBeNull();
-    expect(reduceRecordedLayout(layout)).toMatchObject({ rightPanel: "closed", openSurfaces: [] });
+    expect(host.querySelector('.agent-surface [aria-label="Close panel"]')).toBeNull();
   });
 
   it.each([
@@ -782,7 +778,7 @@ describe("AgentModeView", () => {
     expect(layout.actions).toEqual([{ kind: "toggleMaximized" }, { kind: "toggleRail" }]);
   });
 
-  it("keeps the tabs and the surfaces mounted while the panel is closed", async () => {
+  it("toggles the panel from the PanelRight control and preserves its surface tabs", async () => {
     const threads = [threadView({ threadId: "agt-1" })];
     let layout = recordedLayoutState({
       rightPanel: "open",
@@ -797,7 +793,9 @@ describe("AgentModeView", () => {
     clickText("Refactor the parser");
     await waitForReact(() => expect(host.querySelector("[data-mock-diff]")).not.toBeNull());
 
-    click('.agent-surface [aria-label="Close panel"]');
+    expect(host.querySelector('.agent-surface [aria-label="Close panel"]')).toBeNull();
+    click('.agent-surface button[aria-label^="Toggle right panel"]');
+    expect(layout.actions).toEqual([{ kind: "toggleRightPanel" }]);
     rerender();
 
     expect(reduceRecordedLayout(layout)).toMatchObject({
@@ -810,6 +808,7 @@ describe("AgentModeView", () => {
     expect(host.querySelector("[data-mock-diff]")).not.toBeNull();
 
     click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
+    expect(layout.actions).toEqual([{ kind: "toggleRightPanel" }]);
     rerender();
 
     expect(host.querySelector('[data-slot="surface"]')?.hasAttribute("hidden")).toBe(false);

@@ -488,7 +488,6 @@ export function AgentModeView({
           layout={layout}
           layoutControls={layoutControls}
           onActivateSurface={activateSurface}
-          onClosePanel={toggleRightPanelCommand}
           onCloseSurfaceTab={closeSurfaceTab}
           onOpenSurface={openSurfaceCommand}
           thread={surfaceThread}
