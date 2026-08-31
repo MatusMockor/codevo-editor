@@ -5,6 +5,15 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.5] - 2026-08-31
+
+### Changed
+
+- Made the model, effort, and permission picker popovers softer and more rounded, with
+  hover and active states that fill each row's full width.
+- Removed the redundant overall close button from the right panel. The PanelRight
+  button now closes and reopens the panel while preserving its surface tabs and state.
+
 ## [0.2.0-beta.4] - 2026-08-31
 
 ### Added
