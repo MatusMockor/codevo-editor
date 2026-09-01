@@ -1,4 +1,4 @@
-import { Expand, Maximize2, Minimize2, PanelBottom, PanelRight } from "lucide-react";
+import { Maximize2, Minimize2, PanelBottom, PanelRight } from "lucide-react";
 import {
   agentControlTooltip,
   defaultAgentPanelLayoutShortcuts,
@@ -22,13 +22,11 @@ export interface AgentPanelLayoutControlsProps {
   readonly maximize?: AgentPanelMaximizeControl | null;
   onToggleBottomPanel(): void;
   onToggleRightPanel(): void;
-  onExpandEditor: (() => void) | null;
 }
 
 export function AgentPanelLayoutControls({
   bottomPanelOpen,
   maximize = null,
-  onExpandEditor,
   onToggleBottomPanel,
   onToggleRightPanel,
   rightPanelOpen,
@@ -37,7 +35,6 @@ export function AgentPanelLayoutControls({
   const chords = shortcuts ?? defaultAgentPanelLayoutShortcuts();
   const bottomTitle = agentControlTooltip("Toggle terminal panel", chords.bottomPanel);
   const rightTitle = agentControlTooltip("Toggle right panel", chords.rightPanel);
-  const expandTitle = agentControlTooltip("Expand to editor", chords.expandEditor);
   const maximizeTitle =
     maximize?.maximized === true ? AGENT_PANEL_RESTORE_LABEL : AGENT_PANEL_MAXIMIZE_LABEL;
   const MaximizeIcon = maximize?.maximized === true ? Minimize2 : Maximize2;
@@ -54,17 +51,6 @@ export function AgentPanelLayoutControls({
           type="button"
         >
           <MaximizeIcon aria-hidden="true" size={14} />
-        </button>
-      )}
-      {onExpandEditor !== null && (
-        <button
-          aria-label={expandTitle}
-          className="agent-icon-toggle"
-          onClick={onExpandEditor}
-          title={expandTitle}
-          type="button"
-        >
-          <Expand aria-hidden="true" size={14} />
         </button>
       )}
       <button

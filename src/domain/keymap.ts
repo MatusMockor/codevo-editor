@@ -981,12 +981,6 @@ export const keymapCommands = [
   },
   {
     category: "Agent",
-    defaultShortcut: "Cmd+Alt+E",
-    id: "agent.toggleEditorExpanded",
-    label: "Expand or Collapse Editor",
-  },
-  {
-    category: "Agent",
     defaultShortcut: "",
     id: "agent.runPreferredScript",
     label: "Run Thread Script",

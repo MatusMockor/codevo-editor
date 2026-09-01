@@ -231,7 +231,7 @@ describe("App Quick Open integration", () => {
     vi.clearAllMocks();
   });
 
-  it("shows the editing-only status for custom-policy 3 MiB TypeScript and clears it after shrink", async () => {
+  it("keeps custom-policy 3 MiB TypeScript editing inside the right sidebar", async () => {
     const largeContent = "x".repeat(3 * 1024 * 1024);
     mocks.largeFileContent.current = largeContent;
     localStorage.setItem(
@@ -248,6 +248,7 @@ describe("App Quick Open integration", () => {
         host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
       ).toBe("true");
     });
+    await openEditorSidebarForIntegration(host);
 
     act(() => {
       window.dispatchEvent(
@@ -272,11 +273,9 @@ describe("App Quick Open integration", () => {
     });
 
     await waitFor(() => {
-      const status = host.querySelector('[data-testid="large-document-status"]');
-      expect(status?.textContent).toBe("Large file mode");
-      expect(status?.getAttribute("title")).toContain("language features are unavailable");
-      expect(status?.getAttribute("title")).toContain("hard synchronization safety limits");
       expect(mocks.updateActiveDocument.current).not.toBeNull();
+      expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
+      expect(host.querySelector('[data-slot="editor"]')?.getAttribute("hidden")).toBeNull();
     });
 
     const smallContent = "const value = 1;";
@@ -286,11 +285,7 @@ describe("App Quick Open integration", () => {
         utf16Length: smallContent.length,
       });
     });
-    await waitFor(() => {
-      const status = host.querySelector('[data-testid="large-document-status"]');
-      expect(status?.textContent).toBe("");
-      expect(status?.getAttribute("title")).toBeNull();
-    });
+    expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
   }, 15_000);
 
   it("routes a command prefix through the real controller into Command Palette", async () => {
@@ -432,7 +427,11 @@ describe("App Quick Open integration", () => {
       expect(
         host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
       ).toBe("true");
-      expect(mocks.onCursorPositionChange.current).not.toBeNull();
+    });
+    await openEditorSidebarForIntegration(host);
+    await waitFor(() => expect(mocks.onCursorPositionChange.current).not.toBeNull());
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
     });
     const rendersBeforeCursorMoves = mocks.surfaceRenderCount.value;
 
@@ -442,24 +441,21 @@ describe("App Quick Open integration", () => {
       });
     }
 
-    expect(host.querySelector('[data-testid="cursor-position"]')?.textContent).toBe("100:100");
     expect(mocks.surfaceRenderCount.value - rendersBeforeCursorMoves).toBe(0);
   }, 10_000);
 
   it.each([
     {
       input: ":42",
-      message: "Open a file to go to a line.",
       submit: true,
     },
     {
       input: "@",
-      message: "Open a PHP, JavaScript, or TypeScript file to show structure.",
       submit: false,
     },
   ])(
-    "keeps the no-document message after dispatching $input",
-    async ({ input, message, submit }) => {
+    "closes quick open after dispatching $input without leaving the agent layout",
+    async ({ input, submit }) => {
       const { default: App } = await import("./App");
       await act(async () => {
         root.render(<App />);
@@ -469,6 +465,7 @@ describe("App Quick Open integration", () => {
           host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
         ).toBe("true");
       });
+      await openEditorSidebarForIntegration(host);
       act(() => {
         window.dispatchEvent(
           new KeyboardEvent("keydown", {
@@ -508,12 +505,31 @@ describe("App Quick Open integration", () => {
         });
       }
 
-      expect(host.querySelector('[data-testid="status-message"]')?.textContent).toBe(message);
       expect(host.querySelector('section[aria-label="Quick open"]')).toBeNull();
+      expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
     },
     10_000,
   );
 });
+
+async function openEditorSidebarForIntegration(host: ParentNode): Promise<void> {
+  act(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+        code: "KeyF",
+        key: "f",
+        metaKey: true,
+      }),
+    );
+  });
+  await waitFor(() => {
+    expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
+    expect(host.querySelector('[data-slot="editor"]')?.getAttribute("hidden")).toBeNull();
+  });
+}
 
 async function waitFor(assertion: () => void): Promise<void> {
   const deadline = Date.now() + 2_000;

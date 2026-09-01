@@ -42,7 +42,6 @@ export interface AgentThreadHeaderProps {
   onOpenSurface(kind: AgentSurfaceKind): void;
   onToggleBottomPanel(): void;
   onToggleRightPanel(): void;
-  onExpandEditor(): void;
   onOpenScriptsView: (() => void) | null;
   onRevealPath(path: string): Promise<void>;
   onRevealFailed(error: unknown): void;
@@ -164,7 +163,6 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
         {layout.rightPanel === "closed" && (
           <AgentPanelLayoutControls
             bottomPanelOpen={props.bottomPanelOpen}
-            onExpandEditor={null}
             onToggleBottomPanel={props.onToggleBottomPanel}
             onToggleRightPanel={props.onToggleRightPanel}
             rightPanelOpen={false}

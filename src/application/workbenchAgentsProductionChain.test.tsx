@@ -199,7 +199,7 @@ describe("workbench agents production chain", () => {
     expect(getWorkbench().appSettings.agentModelFavoritesRevision).toBe(0);
   });
 
-  it("expands the editor and collapses back to the agent layout", async () => {
+  it("opens and closes the editor inside the agent right panel", async () => {
     const { getWorkbench } = renderController({
       agentTaskGateway: fakeAgentTaskGateway().gateway,
       gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
@@ -215,20 +215,24 @@ describe("workbench agents production chain", () => {
     await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
 
     await act(async () => {
-      getWorkbench().agentWorkbench.dispatch({ kind: "expandEditor" });
+      getWorkbench().agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
       await Promise.resolve();
     });
-    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(false));
-    expect(getWorkbench().agentWorkbench.effectiveLayout).toBe("editor-expanded");
+    await waitForReact(() => expect(getWorkbench().agentWorkbench.layout.rightPanel).toBe("open"));
+    expect(getWorkbench().agentWorkbench.effectiveLayout).toBe("agent");
+    expect(getWorkbench().agentWorkbench.layout.activeSurface).toBe("files");
 
     await act(async () => {
-      getWorkbench().agentWorkbench.dispatch({ kind: "collapseEditor" });
+      getWorkbench().agentWorkbench.dispatch({ kind: "toggleRightPanel" });
       await Promise.resolve();
     });
-    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
+    await waitForReact(() =>
+      expect(getWorkbench().agentWorkbench.layout.rightPanel).toBe("closed"),
+    );
+    expect(getWorkbench().agentModeActive).toBe(true);
   });
 
-  it("keeps the previously selected sidebar view across an expand round trip", async () => {
+  it("keeps the previously selected sidebar view across a panel round trip", async () => {
     const { getWorkbench } = renderController({
       agentTaskGateway: fakeAgentTaskGateway().gateway,
       gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
@@ -249,20 +253,20 @@ describe("workbench agents production chain", () => {
     await waitForReact(() => expect(getWorkbench().sidebarView).toBe("git"));
 
     await act(async () => {
-      getWorkbench().agentWorkbench.dispatch({ kind: "toggleEditorExpanded" });
+      getWorkbench().agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
       await Promise.resolve();
     });
-    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(false));
+    await waitForReact(() => expect(getWorkbench().agentWorkbench.layout.rightPanel).toBe("open"));
 
     await act(async () => {
-      getWorkbench().agentWorkbench.dispatch({ kind: "toggleEditorExpanded" });
+      getWorkbench().agentWorkbench.dispatch({ kind: "toggleRightPanel" });
       await Promise.resolve();
     });
     await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
     expect(getWorkbench().sidebarView).toBe("git");
   });
 
-  it("keeps the layout per workspace tab across A -> B -> A", async () => {
+  it("starts each workspace tab in the agent layout across A -> B -> A", async () => {
     const appSettings: AppSettings = {
       ...defaultAppSettings(),
       agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
@@ -279,10 +283,10 @@ describe("workbench agents production chain", () => {
     await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
 
     await act(async () => {
-      getWorkbench().agentWorkbench.dispatch({ kind: "expandEditor" });
+      getWorkbench().agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
       await Promise.resolve();
     });
-    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(false));
+    await waitForReact(() => expect(getWorkbench().agentWorkbench.layout.rightPanel).toBe("open"));
 
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");
@@ -298,7 +302,7 @@ describe("workbench agents production chain", () => {
     await flushAsyncTurns();
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
-    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(false));
+    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
   });
 
   function getPanelHost(): HTMLDivElement {

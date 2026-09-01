@@ -103,10 +103,6 @@ export function useAgentWorkbenchLayout(
 
   const dispatch = useCallback(
     (action: AgentWorkbenchLayoutAction) => {
-      if (ownerKey === null) {
-        return;
-      }
-
       setOwned((current) => {
         if (current.ownerKey !== ownerKey || current.generation !== ownedGeneration) {
           return current;
@@ -132,7 +128,8 @@ export function useAgentWorkbenchLayout(
       return;
     }
 
-    const layout = parseAgentWorkbenchLayout(hydration.layout);
+    const restoredLayout = parseAgentWorkbenchLayout(hydration.layout);
+    const layout: AgentWorkbenchLayout = { ...restoredLayout, layout: "agent" };
     const persistedBottomPanel = parsePersistedAgentBottomPanel(hydration.layout);
     setOwned((current) => {
       if (current.ownerKey !== owned.ownerKey || current.generation !== owned.generation) {
@@ -147,8 +144,9 @@ export function useAgentWorkbenchLayout(
     });
   }, [hydration, owned]);
 
-  const effectiveLayout: AgentWorkbenchLayoutMode =
-    ownerKey === null || !agentLayoutAvailable ? "editor-expanded" : owned.layout.layout;
+  const effectiveLayout: AgentWorkbenchLayoutMode = agentLayoutAvailable
+    ? owned.layout.layout
+    : "editor-expanded";
   const agentLayoutActive = effectiveLayout === "agent";
 
   useEffect(() => {

@@ -922,7 +922,7 @@ describe("SettingsDialog", () => {
     });
 
     expect(host.querySelectorAll(".keymap-category")).toHaveLength(19);
-    expect(host.querySelectorAll(".keymap-field")).toHaveLength(156);
+    expect(host.querySelectorAll(".keymap-field")).toHaveLength(155);
     expect(host.textContent).toContain("editor.save");
     expect(host.textContent).toContain("editor.nextRecentlyUsedEditor");
 

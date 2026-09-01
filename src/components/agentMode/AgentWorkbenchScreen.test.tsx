@@ -113,7 +113,7 @@ describe("AgentWorkbenchScreen", () => {
 
     click('button[aria-label="Open Source Control"]');
 
-    expect(workbench.agentWorkbench.actions).toEqual([{ kind: "expandEditor" }]);
+    expect(workbench.agentWorkbench.actions).toEqual([{ kind: "openSurface", surface: "files" }]);
     expect(workbench.setSidebarView).toHaveBeenCalledWith("git");
   });
 
@@ -371,7 +371,7 @@ describe("AgentWorkbenchScreen", () => {
     expect(other.showBottomPanelView).not.toHaveBeenCalled();
   });
 
-  it("expands the editor with the scripts sidebar from the scripts menu", async () => {
+  it("opens the editor sidebar with scripts from the scripts menu", async () => {
     const layout = recordedLayoutState();
     const workbench = createWorkbench(ROOT_A, { agentWorkbench: layout });
     render(workbench);
@@ -381,7 +381,7 @@ describe("AgentWorkbenchScreen", () => {
     await act(async () => {});
     clickMenuItem("Open Scripts and Tasks");
 
-    expect(layout.actions).toContainEqual({ kind: "expandEditor" });
+    expect(layout.actions).toContainEqual({ kind: "openSurface", surface: "files" });
     expect(workbench.setSidebarView).toHaveBeenCalledWith("scripts");
   });
 

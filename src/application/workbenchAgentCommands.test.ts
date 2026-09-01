@@ -52,7 +52,6 @@ const LAYOUT_COMMAND_IDS = [
   "agent.openFilesSurface",
   "agent.openDiffSurface",
   "agent.openTerminalSurface",
-  "agent.toggleEditorExpanded",
 ] as const;
 
 function handlers(
@@ -103,9 +102,6 @@ describe("workbenchAgentCommands", () => {
     );
     expect(commands.find((command) => command.id === "agent.findInThread")?.title).toBe(
       "Find in Thread",
-    );
-    expect(commands.find((command) => command.id === "agent.toggleEditorExpanded")?.title).toBe(
-      "Expand or Collapse Editor",
     );
   });
 
@@ -221,7 +217,6 @@ describe("workbenchAgentCommands", () => {
       { kind: "openSurface", surface: "files" },
       { kind: "openSurface", surface: "diff" },
       { kind: "openSurface", surface: "terminal" },
-      { kind: "toggleEditorExpanded" },
     ]);
   });
 
@@ -242,10 +237,6 @@ describe("workbenchAgentCommands", () => {
     ]);
     expect(await toggleRightPanel(openDiff, ["diff"])).toEqual([{ kind: "toggleRightPanel" }]);
     expect(await toggleRightPanel(expanded, ["terminal"])).toEqual([{ kind: "toggleRightPanel" }]);
-    expect(await toggleEditorExpanded(openDiff, ["diff"])).toEqual([
-      { kind: "toggleEditorExpanded" },
-    ]);
-    expect(await toggleEditorExpanded(expanded, [])).toEqual([{ kind: "toggleEditorExpanded" }]);
   });
 
   it("toggles the panel while no agent view answers for the surfaces", async () => {
@@ -265,13 +256,6 @@ describe("workbenchAgentCommands", () => {
     blockedSurfaces: ReadonlyArray<AgentSurfaceKind>,
   ): Promise<ReadonlyArray<AgentWorkbenchLayoutAction>> {
     return runLayoutCommand("agent.toggleRightPanel", layout, blockedSurfaces);
-  }
-
-  async function toggleEditorExpanded(
-    layout: AgentWorkbenchLayout,
-    blockedSurfaces: ReadonlyArray<AgentSurfaceKind>,
-  ): Promise<ReadonlyArray<AgentWorkbenchLayoutAction>> {
-    return runLayoutCommand("agent.toggleEditorExpanded", layout, blockedSurfaces);
   }
 
   async function runLayoutCommand(

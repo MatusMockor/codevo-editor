@@ -27,9 +27,7 @@ const ACTIONS: ReadonlyArray<AgentWorkbenchLayoutAction> = [
   { kind: "showSurfaceChooser" },
   { kind: "toggleRightPanel" },
   { kind: "toggleMaximized" },
-  { kind: "expandEditor" },
   { kind: "collapseEditor" },
-  { kind: "toggleEditorExpanded" },
   { kind: "resizeRightPanel", width: 700 },
   { kind: "resizeBottomPanel", height: 400 },
 ];
@@ -138,7 +136,6 @@ describe("agentWorkbenchLayoutReducer", () => {
       agentWorkbenchLayoutReducer(filesOnly, { kind: "closeSurfaceTab", surface: "diff" }),
     ).toBe(filesOnly);
     expect(agentWorkbenchLayoutReducer(filesOnly, { kind: "collapseEditor" })).toBe(filesOnly);
-    expect(agentWorkbenchLayoutReducer(EXPANDED, { kind: "expandEditor" })).toBe(EXPANDED);
     const chooser = open([], null);
     expect(agentWorkbenchLayoutReducer(chooser, { kind: "showSurfaceChooser" })).toBe(chooser);
   });
@@ -372,35 +369,14 @@ describe("agentWorkbenchLayoutReducer", () => {
     });
   });
 
-  describe("editor expansion", () => {
-    it("expands from every panel state keeping the tabs and collapses back onto them", () => {
-      for (const state of everyReachableState()) {
-        const expanded = agentWorkbenchLayoutReducer(state, { kind: "expandEditor" });
-        expect(expanded).toEqual(
-          layoutOf({
-            layout: "editor-expanded",
-            openSurfaces: state.openSurfaces,
-            activeSurface: state.activeSurface,
-            rightPanelWidth: state.rightPanelWidth,
-            bottomPanelHeight: state.bottomPanelHeight,
-          }),
-        );
-        expect(agentWorkbenchLayoutReducer(expanded, { kind: "collapseEditor" })).toEqual(
-          open(state.openSurfaces, state.activeSurface ?? state.openSurfaces[0] ?? null, {
-            rightPanelWidth: state.rightPanelWidth,
-            bottomPanelHeight: state.bottomPanelHeight,
-          }),
-        );
-      }
-    });
-
-    it("toggles the expanded editor in both directions and keeps the tab", () => {
-      const expanded = agentWorkbenchLayoutReducer(open(["diff"], "diff"), {
-        kind: "toggleEditorExpanded",
+  describe("legacy editor expansion", () => {
+    it("collapses persisted expanded layouts back onto their tabs", () => {
+      const expanded = layoutOf({
+        layout: "editor-expanded",
+        openSurfaces: ["diff"],
+        activeSurface: "diff",
       });
-      expect(expanded.layout).toBe("editor-expanded");
-      expect(expanded.openSurfaces).toEqual(["diff"]);
-      expect(agentWorkbenchLayoutReducer(expanded, { kind: "toggleEditorExpanded" })).toEqual(
+      expect(agentWorkbenchLayoutReducer(expanded, { kind: "collapseEditor" })).toEqual(
         open(["diff"], "diff"),
       );
     });

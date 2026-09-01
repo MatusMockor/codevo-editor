@@ -192,12 +192,12 @@ export function AgentWorkbenchScreen({
   );
 
   const openScriptsView = useCallback(() => {
-    agentWorkbench.dispatch({ kind: "expandEditor" });
+    agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
     setSidebarView("scripts");
   }, [agentWorkbench, setSidebarView]);
 
   const openSourceControl = useCallback(() => {
-    agentWorkbench.dispatch({ kind: "expandEditor" });
+    agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
     setSidebarView("git");
   }, [agentWorkbench, setSidebarView]);
 
@@ -489,6 +489,5 @@ function layoutShortcuts(keymap: KeymapSettings): AgentPanelLayoutShortcuts {
   return {
     bottomPanel: shortcutForCommand(keymap, "panel.toggle") ?? "",
     rightPanel: shortcutForCommand(keymap, "agent.toggleRightPanel") ?? "",
-    expandEditor: shortcutForCommand(keymap, "agent.toggleEditorExpanded") ?? "",
   };
 }

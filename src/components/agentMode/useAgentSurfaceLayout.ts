@@ -22,7 +22,6 @@ export interface AgentSurfaceLayout {
   activateSurface(surface: AgentSurfaceKind): void;
   closeSurfaceTab(surface: AgentSurfaceKind): void;
   surfaceBlocked(surface: AgentSurfaceKind): boolean;
-  expandEditor(): void;
   toggleRightPanel(): void;
   toggleRail(): void;
   toggleMaximized(): void;
@@ -63,10 +62,6 @@ export function useAgentSurfaceLayout({
       agentSurfaceBlockedReason(surface, selectedThread, workspaceTrusted, workspaceRoot) !== null,
     [selectedThread, workspaceRoot, workspaceTrusted],
   );
-  const expandEditor = useCallback(
-    () => dispatchLayout({ kind: "toggleEditorExpanded" }),
-    [dispatchLayout],
-  );
   const toggleRightPanel = useCallback(() => {
     setChooserRequested(false);
     dispatchLayout({ kind: "toggleRightPanel" });
@@ -90,7 +85,6 @@ export function useAgentSurfaceLayout({
     activateSurface,
     closeSurfaceTab,
     surfaceBlocked,
-    expandEditor,
     toggleRightPanel,
     toggleRail,
     toggleMaximized,

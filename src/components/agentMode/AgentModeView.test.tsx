@@ -859,7 +859,7 @@ describe("AgentModeView", () => {
     expect(reduceRecordedLayout(layout).rail).toBe("collapsed");
   });
 
-  it("routes the ⌥⌘R and ⌥⌘E commands to the plain layout actions", async () => {
+  it("routes the right panel command to the plain layout action", async () => {
     const bridge = createAgentViewCommandBridge();
     const layout = recordedLayoutState();
     render({
@@ -869,18 +869,12 @@ describe("AgentModeView", () => {
     });
     const commands = workbenchAgentCommands({ agentLayout: layout, viewCommands: bridge });
     const toggleCommand = commands.find((command) => command.id === "agent.toggleRightPanel");
-    const expandCommand = commands.find((command) => command.id === "agent.toggleEditorExpanded");
 
     await toggleCommand?.run();
     clickText("Refactor the parser");
     await toggleCommand?.run();
-    await expandCommand?.run();
 
-    expect(layout.actions).toEqual([
-      { kind: "toggleRightPanel" },
-      { kind: "toggleRightPanel" },
-      { kind: "toggleEditorExpanded" },
-    ]);
+    expect(layout.actions).toEqual([{ kind: "toggleRightPanel" }, { kind: "toggleRightPanel" }]);
   });
 
   it("renders the empty surface panel with only Files enabled while no thread is selected", () => {

@@ -1059,6 +1059,28 @@ describe("App command routing", () => {
     expect(document.title).toBe("workspace");
   });
 
+  it("mounts the agent manager when the app starts without a workspace", async () => {
+    mocks.workbenchOverrides = {
+      agentModeActive: true,
+      agentWorkbench: agentLayoutState("agent"),
+      workspaceRoot: null,
+      workspaceIdentityDescriptor: null,
+    };
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(host.querySelector('[data-testid="agent-mode-view"]')).not.toBeNull();
+    });
+    expect(host.querySelector(".activity-bar")).toBeNull();
+    expect(host.querySelector(".sidebar")).toBeNull();
+    expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
+    expect(document.title).toBe("Agents");
+  });
+
   it("collapses the expanded editor back to the threads from the toolbar", () => {
     const unbind = bindSurfacePolicy(false);
     click(host.querySelector<HTMLButtonElement>('button[aria-label="Collapse editor (⌥⌘E)"]'));

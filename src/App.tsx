@@ -1090,7 +1090,7 @@ function App() {
         agentVariant={workbench.appSettings.agentAppearanceVariant}
         agent={
           <LazyAgentWorkbenchHost
-            active={workbench.agentModeActive && Boolean(workbench.workspaceRoot)}
+            active={workbench.agentModeActive}
             activeFileRevealSignal={activeFileRevealSignal}
             fileChanges={workspaceGateways.fileChanges}
             fileStatusesByPath={fileStatusesByPath}

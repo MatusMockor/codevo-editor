@@ -9,7 +9,7 @@ import {
 } from "./AgentPanelLayoutControls";
 import { agentControlTooltip, agentShortcutGlyphs } from "./agentThreadHeaderPresentation";
 
-const SHORTCUTS = { bottomPanel: "Cmd+J", rightPanel: "Cmd+Alt+R", expandEditor: "Cmd+Alt+E" };
+const SHORTCUTS = { bottomPanel: "Cmd+J", rightPanel: "Cmd+Alt+R" };
 
 describe("agentShortcutGlyphs", () => {
   it("renders chords as platform glyphs in a stable modifier order", () => {
@@ -45,7 +45,6 @@ describe("AgentPanelLayoutControls", () => {
     expect(bottom.getAttribute("aria-pressed")).toBe("true");
     expect(right.getAttribute("aria-pressed")).toBe("false");
     expect(bottom.title).toBe("Toggle terminal panel (⌘J)");
-    expect(host.querySelector('[aria-label^="Expand to editor"]')).toBeNull();
   });
 
   it("invokes the toggle callbacks", () => {
@@ -85,14 +84,6 @@ describe("AgentPanelLayoutControls", () => {
     expect(host.querySelector('[aria-label="Maximize panel"]')).toBeNull();
   });
 
-  it("shows the expand button only when an expand handler is given", () => {
-    const onExpandEditor = vi.fn();
-    render({ onExpandEditor });
-
-    act(() => button("Expand to editor (⌥⌘E)").click());
-    expect(onExpandEditor).toHaveBeenCalledTimes(1);
-  });
-
   function render(overrides: Partial<AgentPanelLayoutControlsProps>): void {
     const props: AgentPanelLayoutControlsProps = {
       bottomPanelOpen: false,
@@ -100,7 +91,6 @@ describe("AgentPanelLayoutControls", () => {
       shortcuts: SHORTCUTS,
       onToggleBottomPanel: vi.fn(),
       onToggleRightPanel: vi.fn(),
-      onExpandEditor: null,
       ...overrides,
     };
     act(() => {

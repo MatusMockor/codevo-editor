@@ -93,8 +93,5 @@ export function workbenchAgentCommands({
         surface: surfaceCommand.surface,
       }),
     ),
-    layoutCommand("agent.toggleEditorExpanded", "Expand or Collapse Editor", {
-      kind: "toggleEditorExpanded",
-    }),
   ];
 }

@@ -87,11 +87,11 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     harness.unmount();
   });
 
-  it("forces the expanded editor without a workspace", () => {
+  it("serves the agent manager without a workspace", () => {
     const harness = renderAgents({ workspaceRoot: null, editorSessionOwnerKey: null });
 
-    expect(harness.result().agentModeActive).toBe(false);
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("editor-expanded");
+    expect(harness.result().agentModeActive).toBe(true);
+    expect(harness.result().agentWorkbench.effectiveLayout).toBe("agent");
     harness.unmount();
   });
 
@@ -121,14 +121,13 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     harness.unmount();
   });
 
-  it("dispatches layout actions and derives the agent mode flag", () => {
+  it("dispatches layout actions while keeping the agent manager active", () => {
     const harness = renderAgents();
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));
     expect(harness.result().agentWorkbench.layout.activeSurface).toBe("diff");
 
-    act(() => harness.result().agentWorkbench.dispatch({ kind: "toggleEditorExpanded" }));
-    expect(harness.result().agentModeActive).toBe(false);
+    expect(harness.result().agentModeActive).toBe(true);
     harness.unmount();
   });
 
@@ -252,11 +251,9 @@ describe("useWorkbenchControllerAgents layout surface", () => {
   it("opens the files surface through the agent editor bridge", () => {
     const harness = renderAgents();
 
-    act(() => harness.result().agentWorkbench.dispatch({ kind: "expandEditor" }));
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("editor-expanded");
-
-    act(() => harness.result().agentWorkbench.dispatch({ kind: "collapseEditor" }));
+    act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "files" }));
     expect(harness.result().agentWorkbench.effectiveLayout).toBe("agent");
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("files");
     harness.unmount();
   });
 });

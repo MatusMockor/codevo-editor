@@ -14,7 +14,6 @@ export interface AgentShipQuickAction {
 export interface AgentPanelLayoutShortcuts {
   readonly bottomPanel: string;
   readonly rightPanel: string;
-  readonly expandEditor: string;
 }
 
 export interface AgentOpenTarget {
@@ -83,7 +82,6 @@ export function defaultAgentPanelLayoutShortcuts(): AgentPanelLayoutShortcuts {
   return {
     bottomPanel: defaultShortcutForCommand("panel.toggle"),
     rightPanel: defaultShortcutForCommand("agent.toggleRightPanel"),
-    expandEditor: defaultShortcutForCommand("agent.toggleEditorExpanded"),
   };
 }
 

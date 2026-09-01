@@ -53,11 +53,11 @@ describe("useAgentWorkbenchLayout", () => {
     harness.unmount();
   });
 
-  it("forces the expanded editor without a workspace", () => {
+  it("starts in the agent layout without a workspace", () => {
     const harness = renderLayout({ workspaceOwnerKey: null, hasWorkspace: false });
 
-    expect(harness.result().agentModeActive).toBe(false);
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("editor-expanded");
+    expect(harness.result().agentModeActive).toBe(true);
+    expect(harness.result().agentWorkbench.effectiveLayout).toBe("agent");
     harness.unmount();
   });
 
@@ -73,43 +73,30 @@ describe("useAgentWorkbenchLayout", () => {
     harness.unmount();
   });
 
-  it("ignores dispatches without an owner", () => {
+  it("allows unpersisted panel actions without a workspace owner", () => {
     const harness = renderLayout({ workspaceOwnerKey: null, hasWorkspace: false });
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));
 
-    expect(harness.result().agentWorkbench.layout).toEqual(initialAgentWorkbenchLayout);
+    expect(harness.result().agentWorkbench.layout).toMatchObject({
+      layout: "agent",
+      rightPanel: "open",
+      activeSurface: "diff",
+    });
     harness.unmount();
   });
 
-  it("applies reducer actions for the current owner", () => {
+  it("keeps the editor surface inside the agent layout for the current owner", () => {
     const harness = renderLayout({ workspaceOwnerKey: "workspace-a", hasWorkspace: true });
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));
 
-    expect(harness.result().agentWorkbench.layout.activeSurface).toBe("diff");
-
-    act(() => harness.result().agentWorkbench.dispatch({ kind: "expandEditor" }));
-
-    expect(harness.result().agentModeActive).toBe(false);
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("editor-expanded");
-    harness.unmount();
-  });
-
-  it("derives the agent mode flag from the expand and collapse actions", () => {
-    const harness = renderLayout({ workspaceOwnerKey: "workspace-a", hasWorkspace: true });
-
-    act(() => harness.result().agentWorkbench.dispatch({ kind: "expandEditor" }));
-    expect(harness.result().agentModeActive).toBe(false);
-
-    act(() => harness.result().agentWorkbench.dispatch({ kind: "collapseEditor" }));
     expect(harness.result().agentModeActive).toBe(true);
-
-    act(() => harness.result().agentWorkbench.dispatch({ kind: "toggleEditorExpanded" }));
-    expect(harness.result().agentModeActive).toBe(false);
-
-    act(() => harness.result().agentWorkbench.dispatch({ kind: "toggleEditorExpanded" }));
-    expect(harness.result().agentModeActive).toBe(true);
+    expect(harness.result().agentWorkbench.effectiveLayout).toBe("agent");
+    expect(harness.result().agentWorkbench.layout).toMatchObject({
+      rightPanel: "open",
+      activeSurface: "diff",
+    });
     harness.unmount();
   });
 
@@ -123,6 +110,26 @@ describe("useAgentWorkbenchLayout", () => {
     await harness.settle();
 
     expect(harness.result().agentWorkbench.layout).toEqual(diffLayout);
+    harness.unmount();
+  });
+
+  it("migrates a persisted expanded editor back to the agent startup layout", async () => {
+    const harness = renderLayout({
+      workspaceOwnerKey: "workspace-a",
+      hasWorkspace: true,
+      hydration: {
+        ownerKey: "workspace-a",
+        layout: { ...diffLayout, layout: "editor-expanded" },
+      },
+    });
+
+    await harness.settle();
+
+    expect(harness.result().agentModeActive).toBe(true);
+    expect(harness.result().agentWorkbench.layout).toMatchObject({
+      layout: "agent",
+      activeSurface: "diff",
+    });
     harness.unmount();
   });
 

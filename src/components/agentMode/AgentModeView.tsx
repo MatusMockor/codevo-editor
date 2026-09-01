@@ -185,7 +185,6 @@ export function AgentModeView({
   const newThread = useAgentLatestCallback(startNewThread);
   const activateSurface = useAgentLatestCallback(surface.activateSurface);
   const closeSurfaceTab = useAgentLatestCallback(surface.closeSurfaceTab);
-  const expandEditor = useAgentLatestCallback(surface.expandEditor);
   const openSurfaceCommand = useAgentLatestCallback(openSurface);
   const toggleRightPanelCommand = useAgentLatestCallback(toggleRightPanel);
   const revealFailed = useCallback(() => setLocalNotice(REVEAL_FAILED_NOTICE), []);
@@ -291,7 +290,6 @@ export function AgentModeView({
           maximized: layout.rightPanelMaximized || responsivePanelRestore !== "none",
           onToggle: toggleResponsivePanel,
         }}
-        onExpandEditor={null}
         onToggleBottomPanel={chrome.onToggleBottomPanel}
         onToggleRightPanel={toggleRightPanel}
         rightPanelOpen
@@ -411,7 +409,6 @@ export function AgentModeView({
                 bottomPanelOpen={chrome.bottomPanelVisible}
                 commitMenuOpenSignal={commitMenuOpenSignal}
                 layout={layout}
-                onExpandEditor={expandEditor}
                 onNewThread={newThread}
                 onOpenScriptsView={chrome.onOpenScriptsView}
                 onOpenSurface={openSurfaceCommand}

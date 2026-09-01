@@ -35,8 +35,8 @@ function defaultShortcutsWithoutIntentionalCollisions(
 
 describe("keymap", () => {
   it("keeps reserved commands out of the generated editable settings catalog", () => {
-    expect(keymapCommands).toHaveLength(156);
-    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(154);
+    expect(keymapCommands).toHaveLength(155);
+    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(153);
   });
 
   it("creates defaults for editable shortcuts", () => {
@@ -676,7 +676,6 @@ describe("keymap", () => {
       "agent.openFilesSurface": { label: "Show Files Surface", mac: "Cmd+Alt+F" },
       "agent.openDiffSurface": { label: "Show Diff Surface", mac: "Cmd+Alt+D" },
       "agent.openTerminalSurface": { label: "Show Terminal Surface", mac: "Cmd+Alt+J" },
-      "agent.toggleEditorExpanded": { label: "Expand or Collapse Editor", mac: "Cmd+Alt+E" },
       "agent.runPreferredScript": { label: "Run Thread Script", mac: "" },
       "agent.openCommitMenu": { label: "Commit Thread Changes", mac: "" },
     } as const;
@@ -697,7 +696,6 @@ describe("keymap", () => {
       expect(defaults["agent.openFilesSurface"]).toBe(`${primary}+Alt+F`);
       expect(defaults["agent.openDiffSurface"]).toBe(`${primary}+Alt+D`);
       expect(defaults["agent.openTerminalSurface"]).toBe(`${primary}+Alt+J`);
-      expect(defaults["agent.toggleEditorExpanded"]).toBe(`${primary}+Alt+E`);
       expect(defaults["agent.runPreferredScript"]).toBe("");
       expect(defaults["agent.openCommitMenu"]).toBe("");
 

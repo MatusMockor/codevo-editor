@@ -16,7 +16,7 @@ import { AgentThreadHeader, type AgentThreadHeaderProps } from "./AgentThreadHea
 
 const ROOT = "/workspace/app";
 const PROJECT = { projectRootKey: "root:app", repositoryRoot: ROOT, label: "app" };
-const SHORTCUTS = { bottomPanel: "Cmd+J", rightPanel: "Cmd+Alt+R", expandEditor: "Cmd+Alt+E" };
+const SHORTCUTS = { bottomPanel: "Cmd+J", rightPanel: "Cmd+Alt+R" };
 
 describe("AgentThreadHeader", () => {
   let host: HTMLDivElement;
@@ -204,7 +204,6 @@ describe("AgentThreadHeader", () => {
       onOpenSurface: vi.fn(),
       onToggleBottomPanel: vi.fn(),
       onToggleRightPanel: vi.fn(),
-      onExpandEditor: vi.fn(),
       onOpenScriptsView: null,
       onRevealPath: vi.fn(() => Promise.resolve()),
       onRevealFailed: vi.fn(),

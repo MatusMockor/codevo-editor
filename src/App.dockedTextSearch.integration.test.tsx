@@ -297,6 +297,7 @@ describe("App docked text search integration", () => {
         host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
       ).toBe("true");
     });
+    await openEditorSidebarForIntegration(host);
     act(() => {
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -338,6 +339,7 @@ describe("App docked text search integration", () => {
         host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
       ).toBe("true");
     });
+    await openEditorSidebarForIntegration(host);
     act(() => {
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -350,8 +352,8 @@ describe("App docked text search integration", () => {
       );
     });
     const resizeHandle = await waitForElement<HTMLElement>(host, ".bottom-panel-resize-handle");
-    const shell = await waitForElement<HTMLElement>(host, "main.app-shell");
-    expect(shell.style.getPropertyValue("--bottom-panel-height")).toBe("152px");
+    const workbench = await waitForElement<HTMLElement>(host, ".editor-workbench");
+    expect(workbench.style.getPropertyValue("--agent-bottom-panel-committed")).toBe("280px");
     act(() => {
       resizeHandle.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientY: 600 }));
     });
@@ -368,10 +370,29 @@ describe("App docked text search integration", () => {
       window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
     });
 
-    expect(shell.style.getPropertyValue("--bottom-panel-height")).toBe("172px");
+    expect(workbench.style.getPropertyValue("--agent-bottom-panel-committed")).toBe("300px");
     expect(mocks.surfaceRenderCount.value - rendersBeforeResize).toBe(0);
   }, 10_000);
 });
+
+async function openEditorSidebarForIntegration(host: ParentNode): Promise<void> {
+  act(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+        code: "KeyF",
+        key: "f",
+        metaKey: true,
+      }),
+    );
+  });
+  await waitFor(() => {
+    expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
+    expect(host.querySelector('[data-slot="editor"]')?.getAttribute("hidden")).toBeNull();
+  });
+}
 
 async function waitFor(assertion: () => void): Promise<void> {
   const deadline = Date.now() + 2_000;
