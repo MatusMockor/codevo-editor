@@ -26,6 +26,14 @@ vi.mock("./infrastructure/shikiHighlighter", () => ({
   })),
 }));
 
+vi.mock("./components/agentMode/AgentWorkbenchScreen", () => ({
+  AgentWorkbenchScreen: () => <div data-testid="agent-mode-view" />,
+}));
+
+vi.mock("./components/TerminalTabsPanel", () => ({
+  TerminalTabsPanel: () => <div data-testid="terminal-tabs-panel" />,
+}));
+
 vi.mock("./components/ScopedEditorSurface", () => ({
   ScopedEditorSurface: ({ activeDocument }: { activeDocument: { name: string } | null }) => {
     mocks.surfaceRenderCount.value += 1;
@@ -59,7 +67,7 @@ describe("App docked text search integration", () => {
   let host: HTMLDivElement;
   let root: Root;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     Object.defineProperty(window.navigator, "platform", {
       configurable: true,
@@ -76,6 +84,13 @@ describe("App docked text search integration", () => {
     });
     localStorage.clear();
     mocks.surfaceRenderCount.value = 0;
+    await Promise.all([
+      import("./components/agentMode/AgentWorkbenchScreen"),
+      import("./components/ScopedEditorSurface"),
+      import("./components/TerminalTabsPanel"),
+      import("./components/WorkbenchEditorHost"),
+      import("./components/WorkbenchSettingsDialogHost"),
+    ]);
     localStorage.setItem(
       "editor.settings.app",
       JSON.stringify({
@@ -189,6 +204,7 @@ describe("App docked text search integration", () => {
         host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
       ).toBe("true");
     });
+    await settleAsyncTurns();
 
     const shortcutEvent = new KeyboardEvent("keydown", {
       bubbles: true,
@@ -326,6 +342,7 @@ describe("App docked text search integration", () => {
 
     expect(query).toHaveLength(20);
     expect(input.value).toBe(query);
+    await settleAsyncTurns();
     expect(mocks.surfaceRenderCount.value - rendersBeforeTyping).toBe(0);
   }, 10_000);
 
@@ -369,6 +386,7 @@ describe("App docked text search integration", () => {
     act(() => {
       window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
     });
+    await settleAsyncTurns();
 
     expect(workbench.style.getPropertyValue("--agent-bottom-panel-committed")).toBe("300px");
     expect(mocks.surfaceRenderCount.value - rendersBeforeResize).toBe(0);
@@ -392,20 +410,32 @@ async function openEditorSidebarForIntegration(host: ParentNode): Promise<void> 
     expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
     expect(host.querySelector('[data-slot="editor"]')?.getAttribute("hidden")).toBeNull();
   });
+  await settleAsyncTurns();
+}
+
+async function settleAsyncTurns(): Promise<void> {
+  await act(async () => {
+    for (let turn = 0; turn < 5; turn += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    }
+  });
 }
 
 async function waitFor(assertion: () => void): Promise<void> {
   const deadline = Date.now() + 2_000;
 
   while (Date.now() < deadline) {
-    try {
-      assertion();
-      return;
-    } catch {
-      await act(async () => {
-        await new Promise((resolve) => window.setTimeout(resolve, 10));
-      });
-    }
+    let passed = false;
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 10));
+      try {
+        assertion();
+        passed = true;
+      } catch {
+        passed = false;
+      }
+    });
+    if (passed) return;
   }
 
   assertion();
