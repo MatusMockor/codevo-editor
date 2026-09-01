@@ -5,6 +5,20 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.6] - 2026-09-01
+
+### Added
+
+- Added bounded discovery and import of eligible Claude Code and Codex terminal CLI
+  sessions as resumable project threads.
+
+### Changed
+
+- Made the agent manager the permanent primary workbench, including startup without a
+  workspace and migration from previously persisted expanded-editor layouts.
+- Kept Files, Source Control, and Scripts inside the agent right panel and removed the
+  fullscreen editor control, command, and keyboard shortcut.
+
 ## [0.2.0-beta.5] - 2026-08-31
 
 ### Changed
