@@ -9,7 +9,7 @@ import {
   type AgentThreadFindHit,
   type AgentThreadSearchRange,
 } from "../../domain/agentThreadSearch";
-import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
+import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import {
   agentLaunchEffortMeta,
   agentLaunchEffortValue,
@@ -89,6 +89,7 @@ function AgentThreadSessionBody({
   const query = findQuery ?? "";
   const activeHit = findHitIndex === undefined ? null : (hits[findHitIndex] ?? null);
   const worktreeRemovalLabel = agentWorktreeRemovalLabel(thread);
+  const provenanceNote = agentExternalOriginNote(record.externalOrigin);
 
   const hitTurnIds = useMemo(() => new Set(hits.map((hit) => hit.turnId)), [hits]);
   const baseHighlight = useMemo<AgentTurnHighlight>(() => ({ query, current: null }), [query]);
@@ -121,6 +122,10 @@ function AgentThreadSessionBody({
             <p className="agent-note agent-note--warning">
               Earlier turns were dropped to bound memory.
             </p>
+          )}
+
+          {provenanceNote !== null && (
+            <p className="agent-note agent-session__provenance">{provenanceNote}</p>
           )}
 
           {record.turns.map((turn) => (

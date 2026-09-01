@@ -15,6 +15,13 @@ import type {
 } from "../domain/agentThread";
 import type { AgentThreadSearchResult } from "../domain/agentThreadSearch";
 import type {
+  ExternalAgentSessionPreview,
+  ExternalAgentSessionView,
+  ExternalSessionListRequest,
+  ExternalSessionListSnapshot,
+  ExternalSessionPreviewRequest,
+} from "../domain/externalAgentSession";
+import type {
   AgentShipAvailability,
   AgentShipIntegrationMode,
   AgentShipState,
@@ -116,6 +123,49 @@ export interface AgentThreadStoreSurface {
   rename(threadId: string, title: string): void;
 }
 
+export interface ExternalSessionGateway {
+  listExternalSessions(request: ExternalSessionListRequest): Promise<ExternalSessionListSnapshot>;
+  previewExternalSession(
+    request: ExternalSessionPreviewRequest,
+  ): Promise<ExternalAgentSessionPreview>;
+}
+
+export type ExternalSessionsState = "closed" | "loading" | "ready" | "failed";
+
+export interface ExternalSessionsTarget {
+  readonly rootKey: string;
+  readonly repositoryRoot: string;
+}
+
+export interface ExternalSessionImportRequest {
+  readonly projectRootKey: string;
+  readonly repositoryRoot: string;
+  readonly provider: AgentCliKind;
+  readonly sessionId: string;
+  readonly title: string;
+  readonly firstPrompt: string;
+}
+
+export interface ExternalSessionImportResult {
+  readonly threadId: string;
+  readonly alreadyImported: boolean;
+}
+
+export interface ExternalSessionsSurface {
+  readonly state: ExternalSessionsState;
+  readonly target: ExternalSessionsTarget | null;
+  readonly sessions: ReadonlyArray<ExternalAgentSessionView>;
+  readonly skipped: number;
+  readonly truncated: boolean;
+  readonly preview: ExternalAgentSessionPreview | null;
+  readonly previewPending: boolean;
+  readonly importPending: boolean;
+  open(target: ExternalSessionsTarget): Promise<void>;
+  reload(): Promise<void>;
+  close(): void;
+  loadPreview(sessionId: string): Promise<void>;
+}
+
 export type AgentThreadCopyDetail = "path" | "branch" | "threadId";
 
 export interface AgentThreadView {
@@ -183,6 +233,9 @@ export interface AgentThreadsSurface {
   refreshIsolationStatus(repositoryRoot: string): Promise<void>;
   startThread(request: AgentThreadStartRequest): Promise<AgentThreadStartResult | null>;
   sendFollowUp(request: AgentFollowUpRequest): Promise<boolean>;
+  importExternalSession(
+    request: ExternalSessionImportRequest,
+  ): Promise<ExternalSessionImportResult | null>;
   stop(threadId: string): Promise<void>;
   togglePin(threadId: string): void;
   archive(threadId: string): void;

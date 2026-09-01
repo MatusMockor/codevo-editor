@@ -3,7 +3,11 @@
 import { act, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
+import type {
+  AgentThreadsSurface,
+  AgentThreadView,
+  ExternalSessionsSurface,
+} from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
@@ -222,6 +226,69 @@ describe("useAgentThreadNavigation", () => {
     expect(current().commands.threadFindFocused()).toBe(false);
   });
 
+  it("opens the terminal sessions palette for an open project and closes it on demand", () => {
+    render(threadsSurfaceFixture());
+
+    expect(current().terminalSessions.open).toBe(false);
+    expect(current().terminalSessions.target).toBeNull();
+
+    act(() => current().terminalSessions.openFor(SURFACE_FIXTURE_ROOT, FIXTURE_NESTED_ROOT));
+    expect(current().terminalSessions.open).toBe(true);
+    expect(current().terminalSessions.target).toEqual({
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      repositoryRoot: FIXTURE_NESTED_ROOT,
+    });
+
+    act(() => current().terminalSessions.close());
+    expect(current().terminalSessions.open).toBe(false);
+    expect(current().terminalSessions.target).toBeNull();
+  });
+
+  it("refuses to open terminal sessions for an unknown or draining project", () => {
+    render(threadsSurfaceFixture());
+
+    act(() => current().terminalSessions.openFor("/somewhere/else", "/somewhere/else"));
+    expect(current().terminalSessions.open).toBe(false);
+
+    act(() => current().terminalSessions.openFor(SURFACE_FIXTURE_ROOT, "/somewhere/else"));
+    expect(current().terminalSessions.open).toBe(false);
+
+    render(threadsSurfaceFixture(), [projectFixture({ origin: "closed-tab-live-tasks" })]);
+    act(() => current().terminalSessions.openFor(SURFACE_FIXTURE_ROOT, SURFACE_FIXTURE_ROOT));
+    expect(current().terminalSessions.open).toBe(false);
+  });
+
+  it("closes the terminal sessions palette when its project is replaced and stays closed after A to B to A", () => {
+    render(threadsSurfaceFixture());
+    act(() => current().terminalSessions.openFor(SURFACE_FIXTURE_ROOT, SURFACE_FIXTURE_ROOT));
+    expect(current().terminalSessions.open).toBe(true);
+
+    render(threadsSurfaceFixture(), [
+      projectFixture({ rootKey: "/workspace/b", rootPath: "/workspace/b", repositories: [] }),
+    ]);
+    expect(current().terminalSessions.open).toBe(false);
+
+    render(threadsSurfaceFixture(), [projectFixture()]);
+    expect(current().terminalSessions.open).toBe(false);
+  });
+
+  it("closes the external sessions surface when the palette project drains", () => {
+    const externalSessions = { close: vi.fn() };
+    render(threadsSurfaceFixture(), [projectFixture()], externalSessions);
+    act(() => current().terminalSessions.openFor(SURFACE_FIXTURE_ROOT, SURFACE_FIXTURE_ROOT));
+    expect(current().terminalSessions.open).toBe(true);
+    expect(externalSessions.close).not.toHaveBeenCalled();
+
+    render(threadsSurfaceFixture(), [], externalSessions);
+
+    expect(current().terminalSessions.open).toBe(false);
+    expect(externalSessions.close).toHaveBeenCalledTimes(1);
+
+    render(threadsSurfaceFixture(), [projectFixture()], externalSessions);
+    expect(current().terminalSessions.open).toBe(false);
+    expect(externalSessions.close).toHaveBeenCalledTimes(1);
+  });
+
   it("selects a started thread without closing the find bar", () => {
     render(threadsSurfaceFixture({ threads: [view("agt-1"), view("agt-2")] }));
 
@@ -253,9 +320,12 @@ describe("useAgentThreadNavigation", () => {
   function render(
     agents: AgentThreadsSurface,
     projects: ReadonlyArray<AgentProjectDescriptor> = [projectFixture()],
+    externalSessions: Pick<ExternalSessionsSurface, "close"> | null = null,
   ): void {
     act(() => {
-      root.render(<Harness agents={agents} projects={projects} />);
+      root.render(
+        <Harness agents={agents} externalSessions={externalSessions} projects={projects} />,
+      );
     });
   }
 
@@ -266,9 +336,11 @@ describe("useAgentThreadNavigation", () => {
 
   function Harness({
     agents,
+    externalSessions,
     projects,
   }: {
     readonly agents: AgentThreadsSurface;
+    readonly externalSessions: Pick<ExternalSessionsSurface, "close"> | null;
     readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   }) {
     const groups = useMemo(
@@ -277,6 +349,7 @@ describe("useAgentThreadNavigation", () => {
     );
     captured = useAgentThreadNavigation({
       agents,
+      externalSessions,
       groups,
       presentationThreads: agents.threads,
       projects,

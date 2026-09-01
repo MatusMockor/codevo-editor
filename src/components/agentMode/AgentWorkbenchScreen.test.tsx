@@ -39,6 +39,7 @@ import {
   recordedLayoutState,
   type RecordedAgentWorkbenchLayout,
 } from "./agentWorkbenchChromeTestFixtures";
+import { externalSessionsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
 import {
   ADD_PROJECT_REFUSED_REASON,
   AgentWorkbenchScreen,
@@ -585,6 +586,7 @@ function surface(
 ): WorkbenchAgentsSurface {
   return {
     ...threadsSurface(workspaceRoot, worktreePath),
+    externalSessions: externalSessionsSurfaceFixture(),
     providerManagement: providerManagement(),
     providerSignIn: {
       states: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
@@ -712,6 +714,7 @@ function threadsSurface(root: string, worktreePath: string | null): AgentThreads
     refreshIsolationStatus: async () => undefined,
     startThread: async () => ({ threadId: "agt-default" }),
     sendFollowUp: async () => true,
+    importExternalSession: async () => null,
     stop: async () => undefined,
     togglePin: () => undefined,
     archive: () => undefined,
@@ -776,6 +779,7 @@ function threadView(root: string, worktreePath: string | null): AgentThreadView 
     ],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration: null,
   };
   return {

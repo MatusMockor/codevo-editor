@@ -55,6 +55,37 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("No Git repository detected");
   });
 
+  it("notes imported provenance above the first turn", () => {
+    render({
+      thread: threadView({
+        externalOrigin: {
+          provider: "claudeCode",
+          sessionId: "987b95ad-c9bc-4d08-ae49-9b431efc8f87",
+          importedAtEpochMs: NOW - 60_000,
+        },
+      }),
+    });
+
+    const note = host.querySelector(".agent-session__provenance");
+    expect(note?.textContent).toBe(
+      "Imported from terminal session 987b95ad-c9bc-4d08-ae49-9b431efc8f87",
+    );
+
+    const firstTurn = host.querySelector("article.agent-turn");
+    expect(firstTurn).not.toBeNull();
+    expect(
+      note !== null &&
+        firstTurn !== null &&
+        (note.compareDocumentPosition(firstTurn) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+    ).toBe(true);
+  });
+
+  it("renders no provenance note for a native thread", () => {
+    render({});
+
+    expect(host.querySelector(".agent-session__provenance")).toBeNull();
+  });
+
   it("renders one turn per prompt with its assistant paragraphs", () => {
     render({
       thread: threadView({
@@ -615,6 +646,7 @@ function launchMeta(turnId: string): ReadonlyArray<string | null> {
 interface ThreadViewOptions {
   readonly status?: AgentTurnStatus;
   readonly turns?: ReadonlyArray<AgentTurn>;
+  readonly externalOrigin?: AgentThread["externalOrigin"];
   readonly turnsTruncated?: boolean;
   readonly worktreeRemoved?: boolean;
   readonly worktreeMissing?: boolean;
@@ -641,6 +673,7 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
     turns,
     turnsTruncated: overrides.turnsTruncated ?? false,
     viewedAtEpochMs: null,
+    externalOrigin: overrides.externalOrigin ?? null,
     integration:
       overrides.branchDeleted === true || overrides.pushed !== undefined
         ? {

@@ -5,11 +5,15 @@ import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import {
   agentThreadAttention,
   agentThreadLifecycle,
+  agentThreadTitle,
   agentThreadUnread,
   lastUsedAgentLaunch,
+  normalizeAgentThreadTitle,
   runningTurn,
   type AgentThread,
+  type AgentThreadsState,
 } from "../domain/agentThread";
+import { isExternalAgentSessionId } from "../domain/externalAgentSession";
 import {
   agentShipStatus,
   initialAgentShipState,
@@ -29,13 +33,20 @@ import type {
   AgentThreadStoreGateway,
   AgentThreadView,
   AgentThreadsSurface,
+  ExternalSessionGateway,
+  ExternalSessionImportRequest,
+  ExternalSessionImportResult,
+  ExternalSessionsSurface,
 } from "./agentThreadPorts";
-import { projectByOwnerId } from "./agentProjectAuthority";
+import { info, projectByOwnerId, projectByRootKey, warning } from "./agentProjectAuthority";
 import {
   countRunningTurns,
   countRunningTurnsInRepository,
+  mintUnusedId,
+  usedTurnIds,
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
+import { useExternalSessions } from "./useExternalSessions";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
 import {
   useAgentEditorBridge,
@@ -58,6 +69,7 @@ export type AgentThreadsGitGateway = Pick<
 export interface AgentThreadsDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
   readonly agentThreadStoreGateway: AgentThreadStoreGateway;
+  readonly externalSessionGateway?: ExternalSessionGateway;
   readonly gitWorktreeGateway: GitWorktreeGateway;
   readonly gitGateway: AgentThreadsGitGateway;
   readonly gitIntegrationGateway: GitIntegrationGateway;
@@ -83,7 +95,31 @@ export interface AgentThreadsDependencies {
 
 const NO_PENDING_SHIP_RECONCILE: ReadonlySet<string> = Object.freeze(new Set<string>());
 
-export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentThreadsSurface {
+export const IMPORT_INVALID_SESSION_NOTICE =
+  "This terminal session id is not valid, so it cannot be imported.";
+export const IMPORT_PROVIDER_MISMATCH_NOTICE =
+  "This session was recorded by a different agent CLI, so it cannot be imported here.";
+export const IMPORT_CLI_NOT_CONFIGURED_NOTICE =
+  "Configure the agent CLI before importing a terminal session.";
+export const IMPORT_PROJECT_UNAVAILABLE_NOTICE =
+  "This project is not available, so the session cannot be imported.";
+export const IMPORT_DUPLICATE_NOTICE = "This session is already imported.";
+export const IMPORT_STORE_NOT_READY_NOTICE =
+  "Saved threads are still loading for this project, so the session was not imported. Try again.";
+const IMPORT_ID_MINT_FAILED_NOTICE = "A thread id could not be minted. Try again.";
+
+const UNWIRED_EXTERNAL_SESSION_GATEWAY: ExternalSessionGateway = {
+  listExternalSessions: () =>
+    Promise.reject(new Error("The external session gateway is not wired.")),
+  previewExternalSession: () =>
+    Promise.reject(new Error("The external session gateway is not wired.")),
+};
+
+export interface AgentThreadsHookSurface extends AgentThreadsSurface {
+  readonly externalSessions: ExternalSessionsSurface;
+}
+
+export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentThreadsHookSurface {
   const [notice, setNotice] = useState<AgentTasksNotice | null>(null);
   const [pendingShipReconcile, setPendingShipReconcile] = useState<ReadonlySet<string>>(
     () => NO_PENDING_SHIP_RECONCILE,
@@ -283,6 +319,118 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     [currentState, projects, renameInStore],
   );
 
+  const {
+    getAgentCliKind,
+    getAgentProviderAdmissionAuthority,
+    launchIdentityForProject,
+    now: clock,
+    createEntropyHex4,
+  } = dependencies;
+  const { loadedRootKeys } = store;
+  const importExternalSession = useCallback(
+    async (request: ExternalSessionImportRequest): Promise<ExternalSessionImportResult | null> => {
+      if (!isExternalAgentSessionId(request.sessionId)) {
+        setNotice(warning(IMPORT_INVALID_SESSION_NOTICE));
+        return null;
+      }
+      if (request.provider !== normalizeAgentCliKind(getAgentCliKind())) {
+        setNotice({
+          kind: "warning",
+          message: IMPORT_PROVIDER_MISMATCH_NOTICE,
+          action: "configure-agent-cli",
+        });
+        return null;
+      }
+      if (getAgentProviderAdmissionAuthority(request.provider).disposition.kind !== "ready") {
+        setNotice({
+          kind: "warning",
+          message: IMPORT_CLI_NOT_CONFIGURED_NOTICE,
+          action: "configure-agent-cli",
+        });
+        return null;
+      }
+      const project = projectByRootKey(projects, request.projectRootKey);
+      if (
+        project === undefined ||
+        project.origin === "closed-tab-live-tasks" ||
+        !project.repositories.some(
+          (repository) => repository.repositoryRoot === request.repositoryRoot,
+        )
+      ) {
+        setNotice(warning(IMPORT_PROJECT_UNAVAILABLE_NOTICE));
+        return null;
+      }
+      const identity = launchIdentityForProject(project.rootKey);
+      if (identity === null) {
+        setNotice(warning(IMPORT_PROJECT_UNAVAILABLE_NOTICE));
+        return null;
+      }
+      if (!loadedRootKeys.has(project.rootKey)) {
+        setNotice(warning(IMPORT_STORE_NOT_READY_NOTICE));
+        return null;
+      }
+      const state = currentState();
+      const existing = importedThreadFor(state, request);
+      if (existing !== null) {
+        setNotice(info(IMPORT_DUPLICATE_NOTICE));
+        return { threadId: existing.threadId, alreadyImported: true };
+      }
+      const usedIds = new Set([...state.threads.keys(), ...usedTurnIds(state)]);
+      const threadId = mintUnusedId({ now: clock, createEntropyHex4 }, usedIds);
+      if (threadId === null) {
+        setNotice(warning(IMPORT_ID_MINT_FAILED_NOTICE));
+        return null;
+      }
+      const createdAt = (clock ?? Date.now)();
+      const thread: AgentThread = {
+        threadId,
+        owner: {
+          rootKey: project.rootKey,
+          ownerId: identity.workspaceId,
+          repositoryRoot: request.repositoryRoot,
+        },
+        target: { isolation: "in-place", worktreePath: null },
+        provider: { kind: request.provider, sessionId: request.sessionId },
+        title: normalizeAgentThreadTitle(request.title) ?? agentThreadTitle(request.firstPrompt),
+        pinned: false,
+        archived: false,
+        createdAtEpochMs: createdAt,
+        updatedAtEpochMs: createdAt,
+        turns: [],
+        turnsTruncated: false,
+        integration: null,
+        viewedAtEpochMs: createdAt,
+        externalOrigin: {
+          provider: request.provider,
+          sessionId: request.sessionId,
+          importedAtEpochMs: createdAt,
+        },
+      };
+      dispatchAction({ kind: "threadCreated", thread });
+      setNotice(null);
+      return { threadId, alreadyImported: false };
+    },
+    [
+      clock,
+      createEntropyHex4,
+      currentState,
+      dispatchAction,
+      getAgentCliKind,
+      getAgentProviderAdmissionAuthority,
+      launchIdentityForProject,
+      loadedRootKeys,
+      projects,
+    ],
+  );
+
+  const externalSessions = useExternalSessions({
+    externalSessionGateway: dependencies.externalSessionGateway ?? UNWIRED_EXTERNAL_SESSION_GATEWAY,
+    threads,
+    projects,
+    reportError,
+    setNotice,
+  });
+
   const threadCopyDetail = useCallback(
     (threadId: string, detail: AgentThreadCopyDetail): string | null => {
       const thread = currentState().threads.get(threadId);
@@ -352,6 +500,8 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     refreshIsolationStatus: isolation.refreshIsolationStatus,
     startThread: dispatch.startThread,
     sendFollowUp: dispatch.sendFollowUp,
+    importExternalSession,
+    externalSessions,
     stop: dispatch.stop,
     togglePin: store.togglePin,
     archive: store.archive,
@@ -378,6 +528,27 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     configureAgentCli,
     dismissNotice,
   };
+}
+
+function importedThreadFor(
+  state: AgentThreadsState,
+  request: ExternalSessionImportRequest,
+): AgentThread | null {
+  for (const thread of state.threads.values()) {
+    if (thread.owner.repositoryRoot !== request.repositoryRoot) continue;
+    if (
+      thread.provider.kind === request.provider &&
+      thread.provider.sessionId === request.sessionId
+    ) {
+      return thread;
+    }
+    const origin = thread.externalOrigin;
+    if (origin === null) continue;
+    if (origin.provider === request.provider && origin.sessionId === request.sessionId) {
+      return thread;
+    }
+  }
+  return null;
 }
 
 function threadIdForTurn(threads: ReadonlyMap<string, AgentThread>, turnId: string): string {

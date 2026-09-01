@@ -1,4 +1,7 @@
-import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
+import type {
+  AgentThreadsSurface,
+  ExternalSessionsSurface,
+} from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import { SURFACE_FIXTURE_ROOT } from "./agentSurfaceTestFixtures";
@@ -33,6 +36,26 @@ export function projectFixture(
   };
 }
 
+export function externalSessionsSurfaceFixture(
+  overrides: Partial<ExternalSessionsSurface> = {},
+): ExternalSessionsSurface {
+  return {
+    state: "closed",
+    target: null,
+    sessions: [],
+    skipped: 0,
+    truncated: false,
+    preview: null,
+    previewPending: false,
+    importPending: false,
+    open: async () => undefined,
+    reload: async () => undefined,
+    close: () => undefined,
+    loadPreview: async () => undefined,
+    ...overrides,
+  };
+}
+
 export function threadsSurfaceFixture(
   overrides: Partial<AgentThreadsSurface> = {},
 ): AgentThreadsSurface {
@@ -61,6 +84,7 @@ export function threadsSurfaceFixture(
     refreshIsolationStatus: async () => undefined,
     startThread: async () => ({ threadId: "agt-default" }),
     sendFollowUp: async () => true,
+    importExternalSession: async () => null,
     stop: async () => undefined,
     togglePin: () => undefined,
     archive: () => undefined,

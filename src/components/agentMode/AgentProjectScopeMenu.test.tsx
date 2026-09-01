@@ -61,7 +61,12 @@ describe("AgentProjectScopeMenu", () => {
     openMenu();
     click(gears()[1]);
 
-    expect(menuItemLabels()).toEqual(["Filter to this project", "Reveal in Finder", "Copy path"]);
+    expect(menuItemLabels()).toEqual([
+      "Filter to this project",
+      "Terminal sessions…",
+      "Reveal in Finder",
+      "Copy path",
+    ]);
   });
 
   it("offers Trust project only while the project is untrusted", () => {
@@ -89,7 +94,7 @@ describe("AgentProjectScopeMenu", () => {
     openMenu();
     click(gears()[0]);
 
-    expect(menuItemLabels()).toEqual(["Filter to this project"]);
+    expect(menuItemLabels()).toEqual(["Filter to this project", "Terminal sessions…"]);
   });
 
   it("reports a project command with the root key of that project", () => {

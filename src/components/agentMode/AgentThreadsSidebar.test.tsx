@@ -928,6 +928,7 @@ function threadView(threadId: string, title: string, options: ThreadViewOptions)
     ],
     turnsTruncated: false,
     viewedAtEpochMs,
+    externalOrigin: null,
     integration: null,
   };
   if (countRenders !== undefined) countTitleReads(thread, title, countRenders);

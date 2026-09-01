@@ -1,0 +1,2 @@
+{"timestamp":"2026-08-30T15:00:00.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"77777777-7777-4777-8777-777777777777","id":"77777777-7777-4777-8777-777777777777","timestamp":"2026-08-30T15:00:00.000Z","cwd":"/repo","originator":"vscode","cli_version":"0.149.1","source":"vscode","thread_source":"user","model_provider":"openai"}}
+{"timestamp":"2026-08-30T15:00:01.000Z","ordinal":1,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Extension driven prompt"}]}}

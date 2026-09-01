@@ -27,6 +27,7 @@ import {
   isTerminalAgentTurnStatus,
   type AgentProviderSession,
   type AgentThread,
+  type AgentThreadExternalOrigin,
   type AgentThreadIntegration,
   type AgentThreadIntegrationReceipt,
   type AgentThreadOwner,
@@ -66,6 +67,18 @@ export function serializeAgentThread(thread: AgentThread): Record<string, unknow
     turnsTruncated: thread.turnsTruncated,
     integration: serializeIntegration(thread.integration),
     viewedAtEpochMs: thread.viewedAtEpochMs,
+    externalOrigin: serializeExternalOrigin(thread.externalOrigin),
+  };
+}
+
+function serializeExternalOrigin(
+  origin: AgentThreadExternalOrigin | null,
+): Record<string, unknown> | null {
+  if (origin === null) return null;
+  return {
+    provider: origin.provider,
+    sessionId: origin.sessionId,
+    importedAtEpochMs: origin.importedAtEpochMs,
   };
 }
 
@@ -179,14 +192,15 @@ export function parseAgentThread(value: unknown): AgentThread {
       "turns",
       "turnsTruncated",
     ],
-    ["integration", "viewedAtEpochMs"],
+    ["integration", "viewedAtEpochMs", "externalOrigin"],
     "thread",
   );
+  const provider = parseProvider(thread.provider, "thread.provider");
   return {
     threadId: agentId(thread.threadId, "thread.threadId"),
     owner: parseOwner(thread.owner, "thread.owner"),
     target: parseTarget(thread.target, "thread.target"),
-    provider: parseProvider(thread.provider, "thread.provider"),
+    provider,
     title: boundedText(thread.title, "thread.title", MAX_AGENT_THREAD_TITLE_BYTES, false),
     pinned: booleanFlag(thread.pinned, "thread.pinned"),
     archived: booleanFlag(thread.archived, "thread.archived"),
@@ -196,6 +210,28 @@ export function parseAgentThread(value: unknown): AgentThread {
     turnsTruncated: booleanFlag(thread.turnsTruncated, "thread.turnsTruncated"),
     integration: parseIntegration(thread.integration, "thread.integration"),
     viewedAtEpochMs: parseViewedAt(thread.viewedAtEpochMs, "thread.viewedAtEpochMs"),
+    externalOrigin: parseExternalOrigin(
+      thread.externalOrigin,
+      "thread.externalOrigin",
+      provider.kind,
+    ),
+  };
+}
+
+function parseExternalOrigin(
+  value: unknown,
+  path: string,
+  providerKind: AgentCliKind,
+): AgentThreadExternalOrigin | null {
+  if (value === undefined || value === null) return null;
+  const origin = record(value, path);
+  exactKeys(origin, ["provider", "sessionId", "importedAtEpochMs"], path);
+  const provider = agentCliKind(origin.provider, `${path}.provider`);
+  if (provider !== providerKind) invalid(`${path}.provider`, "the thread provider kind");
+  return {
+    provider,
+    sessionId: externalSessionId(origin.sessionId, `${path}.sessionId`),
+    importedAtEpochMs: unsignedSafeInteger(origin.importedAtEpochMs, `${path}.importedAtEpochMs`),
   };
 }
 
@@ -496,6 +532,11 @@ function turnEventKind(value: unknown, path: string): AgentTurnEvent["kind"] {
 
 function agentTaskIsolation(value: unknown, path: string): AgentTaskIsolation {
   if (value !== "worktree" && value !== "in-place") invalid(path, "worktree or in-place");
+  return value;
+}
+
+function externalSessionId(value: unknown, path: string): string {
+  if (!isAgentSessionId(value)) invalid(path, "a safe agent session id");
   return value;
 }
 

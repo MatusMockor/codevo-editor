@@ -32,6 +32,7 @@ describe("useAgentThreadMenuCommands", () => {
   let scopes: AgentRailScope[];
   let removed: string[];
   let started: Array<readonly [string, string]>;
+  let terminalSessions: Array<readonly [string, string]>;
   let clipboardDescriptor: PropertyDescriptor | undefined;
 
   beforeEach(() => {
@@ -44,6 +45,7 @@ describe("useAgentThreadMenuCommands", () => {
     scopes = [];
     removed = [];
     started = [];
+    terminalSessions = [];
     clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
   });
 
@@ -81,6 +83,24 @@ describe("useAgentThreadMenuCommands", () => {
     ]);
     expect(revealPath).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
     expect(writeText).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
+    expect(notices).toEqual([]);
+  });
+
+  it("opens terminal sessions for the gear menu target project", () => {
+    render();
+
+    act(() => current().handleProjectCommand(PROJECT_TARGET, "terminalSessions"));
+    act(() =>
+      current().handleProjectCommand(
+        { ...PROJECT_TARGET, repositoryRoot: `${SURFACE_FIXTURE_ROOT}/packages/api` },
+        "terminalSessions",
+      ),
+    );
+
+    expect(terminalSessions).toEqual([
+      [SURFACE_FIXTURE_ROOT, SURFACE_FIXTURE_ROOT],
+      [SURFACE_FIXTURE_ROOT, `${SURFACE_FIXTURE_ROOT}/packages/api`],
+    ]);
     expect(notices).toEqual([]);
   });
 
@@ -177,6 +197,8 @@ describe("useAgentThreadMenuCommands", () => {
       onReleaseProject: () => undefined,
       onFilterScope: (scope) => scopes.push(scope),
       onThreadRemoved: (threadId) => removed.push(threadId),
+      onOpenTerminalSessions: (projectRootKey, repositoryRoot) =>
+        terminalSessions.push([projectRootKey, repositoryRoot]),
       startNewThread: (projectRootKey, repositoryRoot) =>
         started.push([projectRootKey, repositoryRoot]),
       ...overrides,

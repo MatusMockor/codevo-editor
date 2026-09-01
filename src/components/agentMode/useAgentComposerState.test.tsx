@@ -14,7 +14,11 @@ import {
   projectFixture,
   threadsSurfaceFixture,
 } from "./agentThreadsSurfaceTestFixtures";
-import { useAgentComposerState, type AgentComposerState } from "./useAgentComposerState";
+import {
+  IMPORTED_THREAD_COMPOSER_CAPTION,
+  useAgentComposerState,
+  type AgentComposerState,
+} from "./useAgentComposerState";
 import { useAgentThreadNavigation, type AgentThreadNavigation } from "./useAgentThreadNavigation";
 
 interface Captured {
@@ -163,6 +167,30 @@ describe("useAgentComposerState", () => {
       dangerousLaunchConfirmed: true,
     });
     expect(current().composer.composerProps.prompt).toBe("");
+  });
+
+  it("captions the follow-up composer with the imported provenance line", () => {
+    const original = surfaceThreadView();
+    const imported = {
+      ...original,
+      thread: {
+        ...original.thread,
+        externalOrigin: {
+          provider: "claudeCode" as const,
+          sessionId: "34fbe185-9c1d-4e6a-8b21-7f3a5d90c412",
+          importedAtEpochMs: 1_700_000_000_000,
+        },
+      },
+    };
+    render(threadsSurfaceFixture({ threads: [imported] }));
+
+    act(() => current().navigation.selectThread("agt-1"));
+    expect(current().composer.composerProps.isolationReason).toBe(IMPORTED_THREAD_COMPOSER_CAPTION);
+
+    act(() => current().navigation.clearSelectedThread());
+    expect(current().composer.composerProps.isolationReason).not.toBe(
+      IMPORTED_THREAD_COMPOSER_CAPTION,
+    );
   });
 
   it("keeps a follow-up bound to the provider that owns the selected thread", async () => {

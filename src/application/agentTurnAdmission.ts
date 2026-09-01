@@ -340,7 +340,7 @@ export function usedTurnIds(state: AgentThreadsState): Iterable<string> {
 }
 
 export function mintUnusedId(
-  deps: AdmissionDependencies,
+  deps: Pick<AdmissionDependencies, "now" | "createEntropyHex4">,
   used: ReadonlySet<string>,
 ): string | null {
   const now = deps.now ?? Date.now;

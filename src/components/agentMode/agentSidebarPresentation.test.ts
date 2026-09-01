@@ -11,6 +11,9 @@ import {
   agentRailEmptyState,
   agentRailNewThreadTarget,
   agentRailProjectLabels,
+  agentExternalOriginNote,
+  agentExternalSessionRowTitle,
+  agentExternalSessionsStatusNote,
   agentProjectMenuEntries,
   agentProjectMenuTarget,
   agentProjectRepositoryCountLabel,
@@ -23,6 +26,8 @@ import {
   agentRowRecedes,
   agentRowStatus,
   agentRowStatusLabel,
+  agentSessionTurnCountLabel,
+  agentThreadImportedBadgeLabel,
   agentThreadMenuEntries,
   agentWorkingDurationLabel,
   type AgentRailProjectScopeEntry,
@@ -213,6 +218,7 @@ describe("agent rail scope", () => {
 
     expect(agentProjectMenuEntries(trusted, false).map((entry) => entry.label)).toEqual([
       "Filter to this project",
+      "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",
     ]);
@@ -225,7 +231,32 @@ describe("agent rail scope", () => {
     expect(agentProjectMenuEntries(closed, false)[0]?.command).toBe("release");
     expect(agentProjectMenuEntries(detached, false).map((entry) => entry.command)).toEqual([
       "filterToProject",
+      "terminalSessions",
     ]);
+  });
+
+  it("offers terminal sessions only for a trusted project with a live owner", () => {
+    const trusted = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
+    const untrusted = projectEntry(
+      agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })]),
+    );
+    const closed = projectEntry(
+      agentRailScopeEntries([group(ROOT, "app", [], { origin: "closed-tab-live-tasks" })]),
+    );
+
+    const command = (entry: AgentRailProjectScopeEntry) =>
+      agentProjectMenuEntries(entry, false).find(
+        (candidate) => candidate.command === "terminalSessions",
+      );
+
+    expect(command(trusted)).toEqual({
+      id: "terminal-sessions",
+      label: "Terminal sessions…",
+      command: "terminalSessions",
+      disabled: false,
+    });
+    expect(command(untrusted)?.disabled).toBe(true);
+    expect(command(closed)?.disabled).toBe(true);
   });
 
   it("disables the filter action for the project already in scope", () => {
@@ -406,6 +437,7 @@ function view({
     ],
     turnsTruncated: false,
     viewedAtEpochMs,
+    externalOrigin: null,
     integration: null,
   };
   const running = status.kind === "pending" || status.kind === "running";
@@ -430,3 +462,58 @@ function projectEntry(entries: ReadonlyArray<AgentRailScopeEntry>): AgentRailPro
   expect(entry?.kind).toBe("repository");
   return entry as AgentRailProjectScopeEntry;
 }
+
+describe("terminal session presentation", () => {
+  it("labels imported provenance from the persisted external origin", () => {
+    expect(agentThreadImportedBadgeLabel(null)).toBeNull();
+    expect(agentExternalOriginNote(null)).toBeNull();
+
+    const origin = {
+      provider: "codex",
+      sessionId: "01a038a1-c2ee-7642-98e4-c94d7a479e0c",
+      importedAtEpochMs: NOW,
+    } as const;
+
+    expect(agentThreadImportedBadgeLabel(origin)).toBe("Imported");
+    expect(agentExternalOriginNote(origin)).toBe(
+      "Imported from terminal session 01a038a1-c2ee-7642-98e4-c94d7a479e0c",
+    );
+  });
+
+  it("marks an inexact turn count with a plus", () => {
+    expect(agentSessionTurnCountLabel(1, true)).toBe("1 turn");
+    expect(agentSessionTurnCountLabel(6, true)).toBe("6 turns");
+    expect(agentSessionTurnCountLabel(6, false)).toBe("6+ turns");
+    expect(agentSessionTurnCountLabel(1, false)).toBe("1+ turns");
+  });
+
+  it("falls back from title to first prompt line to session id", () => {
+    const id = "34fbe185-0000-4000-8000-000000000000";
+
+    expect(
+      agentExternalSessionRowTitle({ title: "Fix parser", firstPrompt: "hello", sessionId: id }),
+    ).toBe("Fix parser");
+    expect(
+      agentExternalSessionRowTitle({
+        title: "",
+        firstPrompt: "  first line \nsecond line",
+        sessionId: id,
+      }),
+    ).toBe("first line");
+    expect(agentExternalSessionRowTitle({ title: "", firstPrompt: "", sessionId: id })).toBe(id);
+  });
+
+  it("reports skipped and truncated counts truthfully", () => {
+    expect(agentExternalSessionsStatusNote(0, false, 10)).toBeNull();
+    expect(agentExternalSessionsStatusNote(1, false, 10)).toBe(
+      "1 automated or unreadable session hidden",
+    );
+    expect(agentExternalSessionsStatusNote(12, false, 10)).toBe(
+      "12 automated or unreadable sessions hidden",
+    );
+    expect(agentExternalSessionsStatusNote(12, true, 200)).toBe(
+      "12 automated or unreadable sessions hidden · showing the newest 200",
+    );
+    expect(agentExternalSessionsStatusNote(0, true, 200)).toBe("showing the newest 200");
+  });
+});

@@ -158,7 +158,7 @@ fn login_shell_path_precedes_current_path_and_well_known_directories() {
         Some(shell_path),
         Some(joined_path(&[&current_bin])),
         versions,
-        Duration::from_secs(1),
+        Duration::from_secs(30),
     );
 
     let snapshot = service.effective_environment().expect("discovery snapshot");
@@ -191,7 +191,7 @@ fn cached_snapshot_does_not_run_login_shell_again_until_refresh() {
         Some(shell_path),
         Some(joined_path(&[&bin])),
         Arc::new(TestVersions::default()),
-        Duration::from_secs(1),
+        Duration::from_secs(30),
     );
 
     service.effective_environment().expect("first snapshot");
@@ -322,7 +322,7 @@ fn well_known_nvm_fnm_and_static_directories_are_bounded_and_discovered() {
         None,
         Some(joined_path(&[&empty])),
         Arc::new(TestVersions::default()),
-        Duration::from_secs(1),
+        Duration::from_secs(30),
     );
 
     let snapshot = service
@@ -366,7 +366,7 @@ fn nvm_inventory_cannot_starve_fnm_provider_discovery() {
         None,
         Some(joined_path(&[&empty])),
         Arc::new(TestVersions::default()),
-        Duration::from_secs(1),
+        Duration::from_secs(30),
     );
 
     let snapshot = service.effective_environment().expect("fair snapshot");

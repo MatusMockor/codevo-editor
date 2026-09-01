@@ -122,6 +122,12 @@ export interface AgentThreadIntegration {
   readonly branchDeleted: boolean;
 }
 
+export interface AgentThreadExternalOrigin {
+  readonly provider: AgentCliKind;
+  readonly sessionId: string;
+  readonly importedAtEpochMs: number;
+}
+
 export interface AgentThread {
   readonly threadId: string;
   readonly owner: AgentThreadOwner;
@@ -136,6 +142,7 @@ export interface AgentThread {
   readonly turnsTruncated: boolean;
   readonly integration: AgentThreadIntegration | null;
   readonly viewedAtEpochMs: number | null;
+  readonly externalOrigin: AgentThreadExternalOrigin | null;
 }
 
 export interface AgentThreadsState {

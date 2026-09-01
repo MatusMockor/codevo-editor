@@ -17,6 +17,7 @@ import { AgentThreadHeader, type AgentThreadHeaderProps } from "./AgentThreadHea
 const ROOT = "/workspace/app";
 const PROJECT = { projectRootKey: "root:app", repositoryRoot: ROOT, label: "app" };
 const SHORTCUTS = { bottomPanel: "Cmd+J", rightPanel: "Cmd+Alt+R" };
+const SESSION_ID = "34fbe185-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
 
 describe("AgentThreadHeader", () => {
   let host: HTMLDivElement;
@@ -51,6 +52,31 @@ describe("AgentThreadHeader", () => {
     expect(button("Run dev")).toBeDefined();
     expect(button("Open in Editor")).toBeDefined();
     expect(button("Commit")).toBeDefined();
+  });
+
+  it("badges a thread imported from a terminal session and leaves other threads unbadged", () => {
+    render({ thread: threadView({}) });
+    expect(host.querySelector(".agent-crumbs .agent-microlabel")).toBeNull();
+
+    const base = threadView({});
+    render({
+      thread: {
+        ...base,
+        thread: {
+          ...base.thread,
+          provider: { kind: "claudeCode", sessionId: SESSION_ID },
+          externalOrigin: {
+            provider: "claudeCode",
+            sessionId: SESSION_ID,
+            importedAtEpochMs: 1_700_000_000_000,
+          },
+        },
+      },
+    });
+
+    const badge = host.querySelector<HTMLElement>(".agent-crumbs .agent-microlabel");
+    expect(badge?.textContent).toBe("Imported");
+    expect(badge?.title).toBe("Imported terminal session");
   });
 
   it("keeps collapsed header actions named and discoverable by tooltip", () => {
@@ -289,6 +315,7 @@ function threadView(overrides: {
     turns: [],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration: null,
   };
   return {

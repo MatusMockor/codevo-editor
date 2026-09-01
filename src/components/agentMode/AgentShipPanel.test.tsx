@@ -508,6 +508,7 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
     turns: [],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration: null,
   };
 

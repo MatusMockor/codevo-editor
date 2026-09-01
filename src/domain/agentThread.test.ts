@@ -71,6 +71,7 @@ function thread(overrides: Partial<AgentThread> = {}): AgentThread {
     turns: [turn({ turnId: firstTurnIdOf(threadId) })],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration: null,
     ...overrides,
   };
@@ -971,6 +972,7 @@ describe("threadMarkedUnread", () => {
       pinned: true,
       updatedAtEpochMs: 3_000,
       viewedAtEpochMs: 5_000,
+      externalOrigin: null,
     });
 
     const unread = agentThreadsReducer(stateWith(before), {
@@ -992,6 +994,7 @@ describe("threadMarkedUnread", () => {
     expect(serializeAgentThread(after)).toEqual({
       ...serializeAgentThread(before),
       viewedAtEpochMs: null,
+      externalOrigin: null,
     });
     expect(parseAgentThread(serializeAgentThread(after))).toEqual(after);
   });
@@ -1253,6 +1256,7 @@ describe("agent thread wire compatibility", () => {
     const stamped = thread({
       turns: [turn({ launch: { provider: "codex", model: "gpt-5.5", mode: "readOnly" } })],
       viewedAtEpochMs: 4_000,
+      externalOrigin: null,
     });
     const wire = serializeAgentThread(stamped) as Record<string, unknown>;
     const turns = (wire.turns as Record<string, unknown>[]).map((entry) => {
@@ -1280,6 +1284,7 @@ describe("agent thread wire compatibility", () => {
         }),
       ],
       viewedAtEpochMs: 4_000,
+      externalOrigin: null,
     });
 
     const wire = JSON.parse(JSON.stringify(serializeAgentThread(stamped))) as Record<
@@ -1371,6 +1376,7 @@ describe("parseAgentThread", () => {
     ],
     turnsTruncated: true,
     viewedAtEpochMs: null,
+    externalOrigin: null,
   });
 
   it("round trips through serialize and parse", () => {

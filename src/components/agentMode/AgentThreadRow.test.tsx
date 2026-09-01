@@ -11,6 +11,7 @@ import { AgentThreadRow } from "./AgentThreadRow";
 
 const ROOT = "/workspace/app";
 const NOW = 1_700_000_600_000;
+const SESSION_ID = "34fbe185-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
 
 describe("AgentThreadRow", () => {
   let host: HTMLDivElement;
@@ -81,6 +82,20 @@ describe("AgentThreadRow", () => {
     expect(line1().querySelector(".agent-row__time")?.textContent).toBe("2m");
   });
 
+  it("marks an imported thread on the card and the slim row, and leaves plain threads unbadged", () => {
+    render(pinnedDone());
+    expect(host.querySelector(".agent-microlabel")).toBeNull();
+
+    render(importedView({ archived: false }));
+    const line3 = host.querySelector<HTMLElement>(".agent-row__line3");
+    const badge = line3?.querySelector<HTMLElement>(".agent-microlabel") ?? null;
+    expect(badge?.textContent).toBe("Imported");
+    expect(badge?.title).toBe("Imported terminal session");
+
+    render(importedView({ archived: true }));
+    expect(host.querySelector(".agent-row--slim .agent-microlabel")?.textContent).toBe("Imported");
+  });
+
   it("keeps the branch left and the provider glyph right on line three", () => {
     render(pinnedDone());
 
@@ -96,6 +111,23 @@ function pinnedDone(): AgentThreadView {
 
 function viewedDone(): AgentThreadView {
   return threadView({ pinned: false, viewedAtEpochMs: NOW });
+}
+
+function importedView({ archived }: { readonly archived: boolean }): AgentThreadView {
+  const view = threadView({ pinned: false, viewedAtEpochMs: NOW });
+  return {
+    ...view,
+    thread: {
+      ...view.thread,
+      archived,
+      provider: { kind: "claudeCode", sessionId: SESSION_ID },
+      externalOrigin: {
+        provider: "claudeCode",
+        sessionId: SESSION_ID,
+        importedAtEpochMs: NOW - 60_000,
+      },
+    },
+  };
 }
 
 function threadView({
@@ -132,6 +164,7 @@ function threadView({
     ],
     turnsTruncated: false,
     viewedAtEpochMs,
+    externalOrigin: null,
     integration: null,
   };
 

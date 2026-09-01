@@ -36,6 +36,7 @@ import type {
   AgentRepositoryStatusSnapshot,
   AgentThreadStoreGateway,
   AgentThreadsSurface,
+  ExternalSessionsSurface,
 } from "./agentThreadPorts";
 import type { AgentEditorBridgePort } from "./useAgentEditorBridge";
 import type { ExternalUrlOpenerPort } from "./useAgentShipFlow";
@@ -53,6 +54,7 @@ import {
   defaultAgentTaskGateway,
   defaultAgentThreadStoreGateway,
   defaultCompareUrlOpener,
+  defaultExternalSessionGateway,
   defaultGitIntegrationGateway,
   defaultGitWorktreeGateway,
 } from "./workbenchDefaultGateways";
@@ -105,6 +107,7 @@ export interface WorkbenchAgentsOptions {
 }
 
 export interface WorkbenchAgentsSurface extends AgentThreadsSurface {
+  readonly externalSessions: ExternalSessionsSurface;
   readonly agentProjects: AgentProjectsSurface;
   readonly providerManagement: AgentProviderManagementSurface;
   readonly providerSignIn: AgentProviderSignInSurface;
@@ -345,6 +348,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   const threads = useAgentThreads({
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway ?? defaultAgentThreadStoreGateway,
+    externalSessionGateway: defaultExternalSessionGateway,
     gitWorktreeGateway: options.gitWorktreeGateway ?? defaultGitWorktreeGateway,
     gitGateway: options.gitGateway,
     gitIntegrationGateway: options.gitIntegrationGateway ?? defaultGitIntegrationGateway,

@@ -5,7 +5,7 @@ import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThrea
 import { act, memo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/agentProject";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
@@ -30,6 +30,8 @@ import {
 } from "./agentWorkbenchChromeTestFixtures";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { agentCompactTimeLabel, agentRailScopeValue } from "./agentSidebarPresentation";
+import { externalSessionsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
+import type { ExternalAgentSessionView } from "../../domain/externalAgentSession";
 import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 
@@ -1152,6 +1154,7 @@ describe("AgentModeView", () => {
     expect(projectMenuLabels()).toEqual([
       "Trust project",
       "Filter to this project",
+      "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",
     ]);
@@ -1181,6 +1184,7 @@ describe("AgentModeView", () => {
 
     expect(projectMenuLabels()).toEqual([
       "Filter to this project",
+      "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",
     ]);
@@ -2230,6 +2234,133 @@ describe("AgentModeView", () => {
     expect(button?.disabled).toBe(true);
   });
 
+  it("opens the terminal sessions palette from the project gear menu and closes it", () => {
+    const externalSessions = externalSessionsSurfaceFixture({
+      state: "ready",
+      target: { rootKey: ROOT, repositoryRoot: ROOT },
+      sessions: [externalSessionView()],
+      open: vi.fn(async () => undefined),
+      close: vi.fn(),
+      loadPreview: vi.fn(async () => undefined),
+    });
+    render({ agents: surface({ externalSessions }), projects: [activeProject()] });
+
+    openProjectMenu("app");
+    clickMenuItem("Terminal sessions…");
+
+    expect(host.querySelector(".agent-terminal-sessions")).not.toBeNull();
+    expect(externalSessions.open).toHaveBeenCalledWith({ rootKey: ROOT, repositoryRoot: ROOT });
+
+    const filter = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Filter terminal sessions"]',
+    );
+    expect(filter).not.toBeNull();
+    act(() => {
+      filter?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+    });
+
+    expect(host.querySelector(".agent-terminal-sessions")).toBeNull();
+    expect(externalSessions.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the terminal sessions palette from the empty rail import action", () => {
+    const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
+    render({ agents: surface({ externalSessions }) });
+
+    act(() => buttonWithText("Import a terminal session…").click());
+
+    expect(host.querySelector(".agent-terminal-sessions")).not.toBeNull();
+    expect(externalSessions.open).toHaveBeenCalledWith({ rootKey: ROOT, repositoryRoot: ROOT });
+  });
+
+  it("hides the empty rail import action when no project can receive the import", () => {
+    const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
+    render({
+      agents: surface({ externalSessions }),
+      projects: [{ ...activeProject(), trust: "untrusted" }],
+    });
+
+    expect(host.querySelector(".agent-rail__empty-state")).not.toBeNull();
+    const button = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => candidate.textContent?.trim() === "Import a terminal session…",
+    );
+    expect(button).toBeUndefined();
+    expect(externalSessions.open).not.toHaveBeenCalled();
+  });
+
+  it("hides the empty rail import action without an external sessions surface", () => {
+    render();
+
+    const button = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => candidate.textContent?.trim() === "Import a terminal session…",
+    );
+    expect(button).toBeUndefined();
+  });
+
+  it("imports a session from the palette, selects the thread, and closes the palette", async () => {
+    const importExternalSession = vi.fn(async () => ({
+      threadId: "agt-1",
+      alreadyImported: false,
+    }));
+    const externalSessions = externalSessionsSurfaceFixture({
+      state: "ready",
+      target: { rootKey: ROOT, repositoryRoot: ROOT },
+      sessions: [externalSessionView()],
+      close: vi.fn(),
+    });
+    render({
+      agents: surface({
+        externalSessions,
+        importExternalSession,
+        threads: [threadView({ threadId: "agt-1" })],
+      }),
+      projects: [activeProject()],
+    });
+
+    openProjectMenu("app");
+    clickMenuItem("Terminal sessions…");
+    act(() => buttonWithText("Continue in Codevo").click());
+
+    expect(importExternalSession).toHaveBeenCalledWith({
+      projectRootKey: ROOT,
+      repositoryRoot: ROOT,
+      provider: "claudeCode",
+      sessionId: "34fbe185-9c1d-4e6a-8b21-7f3a5d90c412",
+      title: "Security review session",
+      firstPrompt: "remember plum",
+    });
+    await waitForReact(() => expect(host.querySelector(".agent-terminal-sessions")).toBeNull());
+    expect(externalSessions.close).toHaveBeenCalledTimes(1);
+    expect(selectedSessionId()).toBe("agt-1");
+  });
+
+  it("selects the existing thread for an already imported session without importing again", () => {
+    const importExternalSession = vi.fn(async () => null);
+    const externalSessions = externalSessionsSurfaceFixture({
+      state: "ready",
+      target: { rootKey: ROOT, repositoryRoot: ROOT },
+      sessions: [externalSessionView({ alreadyImportedThreadId: "agt-1" })],
+      close: vi.fn(),
+    });
+    render({
+      agents: surface({
+        externalSessions,
+        importExternalSession,
+        threads: [threadView({ threadId: "agt-1" })],
+      }),
+      projects: [activeProject()],
+    });
+
+    openProjectMenu("app");
+    clickMenuItem("Terminal sessions…");
+    act(() => buttonWithText("Open imported thread").click());
+
+    expect(importExternalSession).not.toHaveBeenCalled();
+    expect(host.querySelector(".agent-terminal-sessions")).toBeNull();
+    expect(externalSessions.close).toHaveBeenCalledTimes(1);
+    expect(selectedSessionId()).toBe("agt-1");
+  });
+
   function render(
     overrides: Partial<AgentModeViewProps> = {},
     responsiveRestore: ResponsivePanelRestore = "none",
@@ -2612,11 +2743,26 @@ function backgroundProject(): AgentProjectDescriptor {
   };
 }
 
-function surface(
-  overrides: Partial<
-    AgentThreadsSurface & { readonly providerManagement: AgentProviderManagementSurface }
-  >,
-): AgentThreadsSurface & { readonly providerManagement: AgentProviderManagementSurface } {
+function externalSessionView(
+  overrides: Partial<ExternalAgentSessionView> = {},
+): ExternalAgentSessionView {
+  return {
+    provider: "claudeCode",
+    sessionId: "34fbe185-9c1d-4e6a-8b21-7f3a5d90c412",
+    cwd: ROOT,
+    title: "Security review session",
+    firstPrompt: "remember plum",
+    startedAtEpochMs: 1_700_000_000_000,
+    lastActivityEpochMs: 1_700_000_100_000,
+    turnCount: 3,
+    turnCountExact: true,
+    fileBytes: 1_024,
+    alreadyImportedThreadId: null,
+    ...overrides,
+  };
+}
+
+function surface(overrides: Partial<AgentModeViewProps["agents"]>): AgentModeViewProps["agents"] {
   return {
     threads: [],
     repositories: [repository(ROOT, ""), repository(NESTED, "packages/api")],
@@ -2639,6 +2785,7 @@ function surface(
     refreshIsolationStatus: async () => undefined,
     startThread: async () => ({ threadId: "agt-default" }),
     sendFollowUp: async () => true,
+    importExternalSession: async () => null,
     stop: async () => undefined,
     togglePin: () => undefined,
     archive: () => undefined,
@@ -2785,6 +2932,7 @@ function threadView({
     turns: [{ ...turn(threadId, prompt ?? title, status), events, launch }],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration: null,
   };
 

@@ -86,6 +86,7 @@ function thread(overrides: Partial<AgentThread> = {}): AgentThread {
     turns: [],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration: null,
     ...overrides,
   };
@@ -724,6 +725,7 @@ describe("useAgentThreadStore thread viewed", () => {
     const created = thread({
       turns: [{ ...turn("agt-1-0a1c"), launch }],
       viewedAtEpochMs: 42,
+      externalOrigin: null,
     });
 
     const first = renderStoreWithGateway(gateway);

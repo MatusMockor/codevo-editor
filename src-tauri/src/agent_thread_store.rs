@@ -35,6 +35,8 @@ pub const AGENT_THREAD_INTEGRATION_OBJECT_ID_ERROR: &str =
     "Agent thread integration object ids must be 40 lowercase hexadecimal characters.";
 pub const AGENT_THREAD_INTEGRATION_REF_ERROR: &str =
     "Agent thread integration remote or branch name is out of bounds.";
+pub const AGENT_THREAD_EXTERNAL_ORIGIN_PROVIDER_ERROR: &str =
+    "Agent thread external origin provider must match the thread provider.";
 
 const FNV1A_64_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A_64_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -64,6 +66,16 @@ pub struct AgentThread {
     pub integration: Option<AgentThreadIntegration>,
     #[serde(default)]
     pub viewed_at_epoch_ms: Option<u64>,
+    #[serde(default)]
+    pub external_origin: Option<AgentThreadExternalOrigin>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentThreadExternalOrigin {
+    pub provider: AgentCliInvocation,
+    pub session_id: String,
+    pub imported_at_epoch_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -455,9 +467,24 @@ pub fn validate_agent_thread_document(
     if let Some(integration) = thread.integration.as_ref() {
         validate_agent_thread_integration(integration)?;
     }
+    if let Some(origin) = thread.external_origin.as_ref() {
+        validate_agent_thread_external_origin(origin, thread.provider.kind)?;
+    }
     for turn in &thread.turns {
         validate_agent_turn(turn)?;
     }
+    Ok(())
+}
+
+fn validate_agent_thread_external_origin(
+    origin: &AgentThreadExternalOrigin,
+    provider_kind: AgentCliInvocation,
+) -> Result<(), String> {
+    if origin.provider != provider_kind {
+        return Err(AGENT_THREAD_EXTERNAL_ORIGIN_PROVIDER_ERROR.to_string());
+    }
+    validate_resume_session_id(&origin.session_id)?;
+
     Ok(())
 }
 

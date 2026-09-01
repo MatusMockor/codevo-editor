@@ -169,6 +169,7 @@ function threadView({
     turns: [turn(threadId, launch)],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration: null,
   };
 

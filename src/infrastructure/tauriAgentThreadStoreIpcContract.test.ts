@@ -28,6 +28,7 @@ const THREAD: AgentThread = {
   turns: [],
   turnsTruncated: false,
   viewedAtEpochMs: null,
+  externalOrigin: null,
   integration: null,
 };
 

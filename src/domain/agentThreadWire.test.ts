@@ -31,6 +31,7 @@ function storedThread(launch: unknown): Record<string, unknown> {
     turnsTruncated: false,
     integration: null,
     viewedAtEpochMs: null,
+    externalOrigin: null,
   };
 }
 
@@ -138,6 +139,74 @@ describe("agentThreadWire stream metrics", () => {
       expect(() =>
         parseAgentThread(storedThreadWithTurn({ ...STORED_TURN, launch: null, streamMetrics })),
       ).toThrow(/streamMetrics/);
+    }
+  });
+});
+
+describe("agentThreadWire external origin", () => {
+  const SESSION_ID = "987b95ad-c9bc-4d08-ae49-9b431efc8f87";
+
+  function storedThreadWithOrigin(externalOrigin: unknown): Record<string, unknown> {
+    return { ...storedThread(null), externalOrigin };
+  }
+
+  it("parses a schema-v1 thread written before the field as null", () => {
+    const { externalOrigin: _externalOrigin, ...legacy } = storedThread(null);
+
+    expect("externalOrigin" in legacy).toBe(false);
+    expect(parseAgentThread(legacy).externalOrigin).toBeNull();
+    expect(parseAgentThread(storedThreadWithOrigin(null)).externalOrigin).toBeNull();
+  });
+
+  it("round-trips an imported provenance record verbatim", () => {
+    const stored = storedThreadWithOrigin({
+      provider: "claudeCode",
+      sessionId: SESSION_ID,
+      importedAtEpochMs: 1_700_000_000_000,
+    });
+    const parsed = parseAgentThread(stored);
+
+    expect(parsed.externalOrigin).toEqual({
+      provider: "claudeCode",
+      sessionId: SESSION_ID,
+      importedAtEpochMs: 1_700_000_000_000,
+    });
+    expect(serializeAgentThread(parsed)).toEqual(stored);
+  });
+
+  it("serializes an absent origin as an explicit null", () => {
+    expect(serializeAgentThread(parseAgentThread(storedThread(null))).externalOrigin).toBeNull();
+  });
+
+  it("rejects a provider that disagrees with the thread provider kind", () => {
+    expect(() =>
+      parseAgentThread(
+        storedThreadWithOrigin({
+          provider: "codex",
+          sessionId: SESSION_ID,
+          importedAtEpochMs: 1,
+        }),
+      ),
+    ).toThrow(/thread\.externalOrigin\.provider/);
+  });
+
+  it("rejects unknown keys, malformed ids and malformed timestamps", () => {
+    const rejected: readonly unknown[] = [
+      { provider: "claudeCode", sessionId: SESSION_ID, importedAtEpochMs: 1, extra: 1 },
+      { provider: "claudeCode", sessionId: SESSION_ID },
+      { provider: "gemini", sessionId: SESSION_ID, importedAtEpochMs: 1 },
+      { provider: "claudeCode", sessionId: "../etc", importedAtEpochMs: 1 },
+      { provider: "claudeCode", sessionId: null, importedAtEpochMs: 1 },
+      { provider: "claudeCode", sessionId: SESSION_ID, importedAtEpochMs: -1 },
+      { provider: "claudeCode", sessionId: SESSION_ID, importedAtEpochMs: 1.5 },
+      [],
+      "imported",
+    ];
+
+    for (const externalOrigin of rejected) {
+      expect(() => parseAgentThread(storedThreadWithOrigin(externalOrigin))).toThrow(
+        /thread\.externalOrigin/,
+      );
     }
   });
 });

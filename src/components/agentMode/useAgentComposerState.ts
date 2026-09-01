@@ -36,6 +36,9 @@ import {
   type AgentProjectGroup,
 } from "./agentModePresentation";
 
+export const IMPORTED_THREAD_COMPOSER_CAPTION =
+  "Runs in the project checkout - imported sessions continue where the terminal session ran.";
+
 export type AgentComposerSurface = Pick<
   AgentThreadsSurface,
   | "agentCliConfigured"
@@ -328,7 +331,9 @@ export function useAgentComposerControllerState({
     dispatching: agents.dispatching,
     guard,
     isolation,
-    isolationReason: preview === null ? null : agentIsolationReasonLabel(preview.recommended),
+    isolationReason:
+      importedThreadCaption(selectedThread) ??
+      (preview === null ? null : agentIsolationReasonLabel(preview.recommended)),
     launch: composerLaunch,
     launchProvider: agentCliKind,
     mode: composerMode,
@@ -353,6 +358,12 @@ export function useAgentComposerControllerState({
     startNewThread,
     clearSelection,
   };
+}
+
+function importedThreadCaption(selectedThread: AgentThreadView | null): string | null {
+  if (selectedThread === null) return null;
+  if (selectedThread.thread.externalOrigin === null) return null;
+  return IMPORTED_THREAD_COMPOSER_CAPTION;
 }
 
 function composerProviderKind(

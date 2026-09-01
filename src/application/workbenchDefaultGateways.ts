@@ -2,6 +2,7 @@ import { TauriAgentTaskGateway } from "../infrastructure/tauriAgentTaskGateway";
 import { TauriAgentThreadStoreGateway } from "../infrastructure/tauriAgentThreadStoreGateway";
 import { TauriDebugGateway } from "../infrastructure/tauriDebugGateway";
 import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiagnosticsGateway";
+import { TauriExternalSessionGateway } from "../infrastructure/tauriExternalSessionGateway";
 import {
   TauriCompareUrlOpener,
   TauriGitIntegrationGateway,
@@ -15,6 +16,7 @@ import { TauriPrettierGateway } from "../infrastructure/tauriPrettierGateway";
 export const defaultAgentTaskGateway = new TauriAgentTaskGateway();
 export const defaultAgentThreadStoreGateway = new TauriAgentThreadStoreGateway();
 export const defaultDebugGateway = new TauriDebugGateway();
+export const defaultExternalSessionGateway = new TauriExternalSessionGateway();
 export const defaultGitWorktreeGateway = new TauriGitWorktreeGateway();
 export const defaultGitIntegrationGateway = new TauriGitIntegrationGateway();
 export const defaultCompareUrlOpener = new TauriCompareUrlOpener();

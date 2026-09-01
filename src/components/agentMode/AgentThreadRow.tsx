@@ -12,6 +12,7 @@ import {
   agentRowRecedes,
   agentRowStatus,
   agentRowVariant,
+  agentThreadImportedBadgeLabel,
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
 
@@ -41,6 +42,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   const recede = agentRowRecedes(view, status, on);
   const branch = agentShipBranchLabel(view.ship);
   const title = agentThreadDisplayTitle(thread);
+  const importedLabel = agentThreadImportedBadgeLabel(thread.externalOrigin);
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
   const [renaming, setRenaming] = useState(false);
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -99,6 +101,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
           ) : (
             <span className="agent-row__title">{title}</span>
           )}
+          {importedLabel !== null && <ImportedBadge label={importedLabel} />}
           <span className="agent-row__time agent-num">
             <AgentCompactRelativeTime epochMs={thread.updatedAtEpochMs} />
           </span>
@@ -178,6 +181,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
               {filesLabel(view.changeSummary.files.length)}
             </span>
           )}
+          {importedLabel !== null && <ImportedBadge label={importedLabel} />}
           <AgentProviderGlyph kind={thread.provider.kind} />
         </div>
         {jumpLabel !== null && (
@@ -190,6 +194,14 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
     </li>
   );
 });
+
+function ImportedBadge({ label }: { readonly label: string }) {
+  return (
+    <span className="agent-microlabel" title="Imported terminal session">
+      {label}
+    </span>
+  );
+}
 
 function filesLabel(count: number): string {
   return count === 1 ? "1 file" : `${count} files`;

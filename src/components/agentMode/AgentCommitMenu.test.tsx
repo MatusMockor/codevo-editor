@@ -473,6 +473,7 @@ function threadView(overrides: {
     turns: [],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration: null,
   };
   return {

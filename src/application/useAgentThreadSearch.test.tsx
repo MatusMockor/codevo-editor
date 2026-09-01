@@ -52,6 +52,7 @@ function thread(
     turnsTruncated: false,
     integration: null,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     ...overrides,
   };
 }

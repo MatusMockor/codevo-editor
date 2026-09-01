@@ -137,6 +137,7 @@ fn thread_document(
             turns_truncated: false,
             viewed_at_epoch_ms: None,
             integration: None,
+            external_origin: None,
         },
     }
 }
@@ -664,7 +665,8 @@ fn document_json() -> Value {
             ],
             "turnsTruncated": false,
             "integration": null,
-            "viewedAtEpochMs": null
+            "viewedAtEpochMs": null,
+            "externalOrigin": null
         }
     })
 }
@@ -920,4 +922,77 @@ fn fnv1a64hex_matches_the_typescript_port() {
     assert_eq!(fnv1a64hex("a"), "af63dc4c8601ec8c");
     assert_eq!(fnv1a64hex("foobar"), "85944171f73967e8");
     assert_eq!(agent_root_owner_id("foobar"), "agent-root:85944171f73967e8");
+}
+
+#[test]
+fn external_origin_round_trips_through_the_camel_case_wire_shape() {
+    let mut document = thread_document(ROOT_KEY, "agt-thread-0001", 10);
+    document.thread.external_origin = Some(AgentThreadExternalOrigin {
+        provider: AgentCliInvocation::ClaudeCode,
+        session_id: "987b95ad-c9bc-4d08-ae49-9b431efc8f87".to_string(),
+        imported_at_epoch_ms: 1_700_000_000_000,
+    });
+
+    let encoded = serde_json::to_value(&document).expect("serialize external origin");
+    assert_eq!(
+        encoded["thread"]["externalOrigin"],
+        json!({
+            "provider": "claudeCode",
+            "sessionId": "987b95ad-c9bc-4d08-ae49-9b431efc8f87",
+            "importedAtEpochMs": 1_700_000_000_000u64
+        })
+    );
+
+    let decoded: AgentThreadDocument =
+        serde_json::from_value(encoded.clone()).expect("deserialize external origin");
+    assert_eq!(decoded, document);
+    validate_agent_thread_document(ROOT_KEY, &decoded).expect("imported thread is accepted");
+}
+
+#[test]
+fn external_origin_is_absent_in_documents_written_before_the_field() {
+    let document = thread_document(ROOT_KEY, "agt-thread-0001", 10);
+    let mut legacy = serde_json::to_value(&document).expect("serialize document");
+    legacy["thread"]
+        .as_object_mut()
+        .expect("thread object")
+        .remove("externalOrigin");
+
+    let decoded: AgentThreadDocument =
+        serde_json::from_value(legacy).expect("deserialize legacy document");
+
+    assert_eq!(decoded.thread.external_origin, None);
+    assert_eq!(decoded, document);
+}
+
+#[test]
+fn external_origin_rejects_unknown_fields_and_invalid_provenance() {
+    let mut document = thread_document(ROOT_KEY, "agt-thread-0001", 10);
+    document.thread.external_origin = Some(AgentThreadExternalOrigin {
+        provider: AgentCliInvocation::ClaudeCode,
+        session_id: "987b95ad-c9bc-4d08-ae49-9b431efc8f87".to_string(),
+        imported_at_epoch_ms: 1,
+    });
+    let mut unknown = serde_json::to_value(&document).expect("serialize document");
+    unknown["thread"]["externalOrigin"]["extra"] = json!(true);
+    assert!(serde_json::from_value::<AgentThreadDocument>(unknown).is_err());
+
+    let mut mismatched = document.clone();
+    mismatched.thread.external_origin = Some(AgentThreadExternalOrigin {
+        provider: AgentCliInvocation::CodexExec,
+        session_id: "987b95ad-c9bc-4d08-ae49-9b431efc8f87".to_string(),
+        imported_at_epoch_ms: 1,
+    });
+    assert_eq!(
+        validate_agent_thread_document(ROOT_KEY, &mismatched),
+        Err(AGENT_THREAD_EXTERNAL_ORIGIN_PROVIDER_ERROR.to_string())
+    );
+
+    let mut malformed = document;
+    malformed.thread.external_origin = Some(AgentThreadExternalOrigin {
+        provider: AgentCliInvocation::ClaudeCode,
+        session_id: "../etc/passwd".to_string(),
+        imported_at_epoch_ms: 1,
+    });
+    assert!(validate_agent_thread_document(ROOT_KEY, &malformed).is_err());
 }

@@ -15,6 +15,7 @@ import type {
   AgentTasksNotice,
   AgentThreadsSurface,
   AgentThreadView,
+  ExternalSessionsSurface,
 } from "../../application/agentThreadPorts";
 import type {
   AgentViewCommandBridge,
@@ -27,6 +28,7 @@ import { AgentAddProjectDialog } from "./AgentAddProjectDialog";
 import { AgentNoticeBar } from "./AgentNoticeBar";
 import { AgentThreadFindBar } from "./AgentThreadFindBar";
 import { AgentThreadHeader } from "./AgentThreadHeader";
+import { AgentTerminalSessionsPalette } from "./AgentTerminalSessionsPalette";
 import { AgentThreadSearchPalette } from "./AgentThreadSearchPalette";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
@@ -53,6 +55,7 @@ import {
 export interface AgentModeViewProps {
   readonly agents: AgentThreadsSurface & {
     readonly providerManagement: AgentProviderManagementSurface;
+    readonly externalSessions?: ExternalSessionsSurface;
   };
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
   readonly workspaceRoot: string | null;
@@ -70,6 +73,12 @@ export interface AgentModeViewProps {
 const DEFAULT_NOW_TICK_MS = 30_000;
 const FIND_BAR_ROWS: CSSProperties = { gridTemplateRows: "auto auto minmax(0, 1fr) auto" };
 const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
+
+const TERMINAL_SESSIONS_UNAVAILABLE_NOTICE: AgentTasksNotice = {
+  kind: "warning",
+  message: "Terminal sessions are not available in this workbench.",
+  action: null,
+};
 
 export function AgentModeView({
   agents,
@@ -94,8 +103,10 @@ export function AgentModeView({
     [projects, agents.orphanedWorktrees, presentationThreads],
   );
 
+  const externalSessions = agents.externalSessions ?? null;
   const navigation = useAgentThreadNavigation({
     agents,
+    externalSessions,
     groups,
     presentationThreads,
     projects,
@@ -167,6 +178,73 @@ export function AgentModeView({
     [openSurface, showChanges],
   );
 
+  const terminalSessionsPalette = navigation.terminalSessions;
+  const terminalSessionsTarget = terminalSessionsPalette.target;
+  const selectThread = navigation.selectThread;
+  const openTerminalSessions = useCallback(
+    (projectRootKey: string, repositoryRoot: string) => {
+      if (externalSessions === null) {
+        setLocalNotice(TERMINAL_SESSIONS_UNAVAILABLE_NOTICE);
+        return;
+      }
+      terminalSessionsPalette.openFor(projectRootKey, repositoryRoot);
+      void externalSessions.open({ rootKey: projectRootKey, repositoryRoot });
+    },
+    [externalSessions, terminalSessionsPalette],
+  );
+  const closeTerminalSessions = useCallback(() => {
+    terminalSessionsPalette.close();
+    externalSessions?.close();
+  }, [externalSessions, terminalSessionsPalette]);
+  const selectImportedThread = useCallback(
+    (threadId: string) => {
+      selectThread(threadId);
+      closeTerminalSessions();
+    },
+    [closeTerminalSessions, selectThread],
+  );
+  const importExternalSessionAction = agents.importExternalSession;
+  const importTerminalSession = useCallback(
+    (sessionId: string, provider: AgentCliKind) => {
+      if (externalSessions === null) return;
+      if (terminalSessionsTarget === null) return;
+      const session =
+        externalSessions.sessions.find(
+          (candidate) => candidate.sessionId === sessionId && candidate.provider === provider,
+        ) ?? null;
+      if (session === null) return;
+      if (session.alreadyImportedThreadId !== null) {
+        selectImportedThread(session.alreadyImportedThreadId);
+        return;
+      }
+      void importExternalSessionAction({
+        projectRootKey: terminalSessionsTarget.projectRootKey,
+        repositoryRoot: terminalSessionsTarget.repositoryRoot,
+        provider,
+        sessionId,
+        title: session.title,
+        firstPrompt: session.firstPrompt,
+      }).then((result) => {
+        if (result === null) return;
+        selectImportedThread(result.threadId);
+      });
+    },
+    [externalSessions, importExternalSessionAction, selectImportedThread, terminalSessionsTarget],
+  );
+  const newThreadTargetForRail = navigation.newThreadTarget;
+  const railImportTarget = useMemo(() => newThreadTargetForRail(), [newThreadTargetForRail]);
+  const importTerminalSessionFromRail = useCallback(() => {
+    if (railImportTarget === null) return;
+    openTerminalSessions(railImportTarget.projectRootKey, railImportTarget.repositoryRoot);
+  }, [openTerminalSessions, railImportTarget]);
+  const terminalSessionsProjectLabel = useMemo(() => {
+    if (terminalSessionsTarget === null) return null;
+    return (
+      groups.find((group) => group.projectRootKey === terminalSessionsTarget.projectRootKey)
+        ?.label ?? null
+    );
+  }, [groups, terminalSessionsTarget]);
+
   const menu = useAgentThreadMenuCommands({
     agents,
     groups,
@@ -176,6 +254,7 @@ export function AgentModeView({
     onReleaseProject: releaseProject,
     onFilterScope: navigation.setRailScope,
     onThreadRemoved: navigation.forgetThread,
+    onOpenTerminalSessions: openTerminalSessions,
     startNewThread,
   });
   const renameThread = useAgentLatestCallback(agents.renameThread);
@@ -381,6 +460,11 @@ export function AgentModeView({
                 onAddProject={addProject.openDialog}
                 onChangeScope={navigation.setRailScope}
                 onCollapseSidebar={toggleRail}
+                onImportTerminalSession={
+                  externalSessions === null || railImportTarget === null
+                    ? undefined
+                    : importTerminalSessionFromRail
+                }
                 onNewThread={newThread}
                 onOpenProviderSettings={agents.configureAgentCli}
                 onOpenSourceControl={onOpenSourceControl}
@@ -475,6 +559,16 @@ export function AgentModeView({
           result={navigation.search.result}
           titles={navigation.palette.titles}
         />
+        {externalSessions !== null && (
+          <AgentTerminalSessionsPalette
+            isOpen={terminalSessionsPalette.open}
+            onClose={closeTerminalSessions}
+            onImport={importTerminalSession}
+            onSelectImported={selectImportedThread}
+            projectLabel={terminalSessionsProjectLabel}
+            surface={externalSessions}
+          />
+        )}
       </section>
       {surface.surfaceHost.mounted && (
         <AgentSurfaceHost

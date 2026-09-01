@@ -27,6 +27,7 @@ export function surfaceThreadView(overrides: Partial<AgentThreadView> = {}): Age
     turns: [],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration: null,
     ...(overrides.thread ?? {}),
   };

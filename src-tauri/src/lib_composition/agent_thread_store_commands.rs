@@ -226,6 +226,7 @@ mod tests {
                 turns_truncated: false,
                 viewed_at_epoch_ms: None,
                 integration: None,
+                external_origin: None,
             }],
             unreadable: vec![UnreadableAgentThread {
                 thread_id: "agt-thread-0002".to_string(),

@@ -59,6 +59,7 @@ export interface AgentThreadsSidebarProps {
   onTogglePin(threadId: string): void;
   onChangeScope(scope: AgentRailScope): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
+  onImportTerminalSession?(): void;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onAddProject(): void;
   onTrustProject(projectRootKey: string): void;
@@ -72,6 +73,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   onAddProject,
   onChangeScope,
   onCollapseSidebar,
+  onImportTerminalSession,
   onNewThread,
   onProjectCommand,
   providerEnabled,
@@ -305,6 +307,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
             empty={empty}
             focusedThreadId={focusedThreadId}
             jumpLabels={jumpLabels}
+            onImportTerminalSession={onImportTerminalSession}
             onSelectThread={selectThread}
             onShowMoreArchived={showMoreArchived}
             onThreadMenuCommand={menuCommand}

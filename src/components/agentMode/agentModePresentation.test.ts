@@ -731,6 +731,7 @@ function thread({
     ],
     turnsTruncated: false,
     viewedAtEpochMs,
+    externalOrigin: null,
     integration: null,
   };
 
@@ -1047,6 +1048,7 @@ function shipThread(title: string): AgentThread {
     turns: [],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration: null,
   };
 }

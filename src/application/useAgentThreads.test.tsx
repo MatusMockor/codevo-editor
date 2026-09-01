@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { agentRootOwnerId } from "../domain/agentProject";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type {
+  AgentCliKind,
   AgentTaskGateway,
   AgentTaskOutputEvent,
   AgentTaskStatus,
@@ -21,9 +22,18 @@ import type {
   AgentThreadStartRequest,
   AgentThreadStoreGateway,
   AgentThreadsSurface,
+  ExternalSessionImportRequest,
   SaveAgentThreadRequest,
 } from "./agentThreadPorts";
-import { useAgentThreads, type AgentThreadsDependencies } from "./useAgentThreads";
+import {
+  IMPORT_DUPLICATE_NOTICE,
+  IMPORT_INVALID_SESSION_NOTICE,
+  IMPORT_PROJECT_UNAVAILABLE_NOTICE,
+  IMPORT_PROVIDER_MISMATCH_NOTICE,
+  IMPORT_STORE_NOT_READY_NOTICE,
+  useAgentThreads,
+  type AgentThreadsDependencies,
+} from "./useAgentThreads";
 import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 
 const ROOT = "/workspace/app";
@@ -41,6 +51,7 @@ interface Environment {
   shipStatus: GitShipStatus;
   withEditor: boolean;
   cliVersion: string | null;
+  cliKind: AgentCliKind;
 }
 
 const SHA_A = "a".repeat(40);
@@ -235,6 +246,7 @@ function storedThread(
     ],
     turnsTruncated: false,
     viewedAtEpochMs: null,
+    externalOrigin: null,
     integration,
   };
 }
@@ -250,6 +262,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     shipStatus: shipStatus(),
     withEditor: true,
     cliVersion: CLI_VERSION,
+    cliKind: "claudeCode",
     ...overrides,
   };
   const startedRequests: StartAgentTaskRequest[] = [];
@@ -359,7 +372,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       prompter: { confirm: () => true, prompt: () => null },
       projects: [project()],
       agentModeActive: environment.agentModeActive,
-      getAgentCliKind: () => "claudeCode",
+      getAgentCliKind: () => environment.cliKind,
       currentCliVersion: () => environment.cliVersion,
       getAgentProviderAdmissionAuthority: (provider) => ({
         provider,
@@ -788,6 +801,200 @@ describe("useAgentThreads ship and editor wiring", () => {
     await act(() => harness.hook().openChangedFile(stored.threadId, changed));
     expect(harness.editor.openFile).toHaveBeenCalledTimes(1);
     expect(harness.editor.openSurface).toHaveBeenCalledWith("files");
+    harness.unmount();
+  });
+});
+
+describe("useAgentThreads external session import", () => {
+  const EXTERNAL_ID = "34fbe185-9c1d-4e6a-8b21-7f3a5d90c412";
+
+  function importRequest(
+    overrides: Partial<ExternalSessionImportRequest> = {},
+  ): ExternalSessionImportRequest {
+    return {
+      projectRootKey: ROOT,
+      repositoryRoot: ROOT,
+      provider: "claudeCode",
+      sessionId: EXTERNAL_ID,
+      title: "Security review session",
+      firstPrompt: "remember plum",
+      ...overrides,
+    };
+  }
+
+  async function storeReady(harness: ReturnType<typeof renderThreads>, loads = 1): Promise<void> {
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalledTimes(loads));
+    await act(async () => {
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+  }
+
+  it("imports a zero-turn in-place thread, persists it, and starts no task", async () => {
+    const harness = renderThreads();
+    await storeReady(harness);
+    harness.store.saveAgentThread.mockClear();
+
+    const result = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(result).toEqual({ threadId: expect.any(String), alreadyImported: false });
+
+    const view = harness.hook().threads[0];
+    expect(view?.thread.threadId).toBe(result?.threadId);
+    expect(view?.thread.turns).toHaveLength(0);
+    expect(view?.lifecycle).toBe("settled");
+    expect(view?.thread.title).toBe("Security review session");
+    expect(view?.thread.target).toEqual({ isolation: "in-place", worktreePath: null });
+    expect(view?.thread.provider).toEqual({ kind: "claudeCode", sessionId: EXTERNAL_ID });
+    expect(view?.thread.externalOrigin).toEqual({
+      provider: "claudeCode",
+      sessionId: EXTERNAL_ID,
+      importedAtEpochMs: expect.any(Number),
+    });
+    expect(harness.hook().liveTaskCount).toBe(0);
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    await waitForReact(() => expect(harness.store.saveAgentThread).toHaveBeenCalledTimes(1));
+    const saved = harness.store.saveAgentThread.mock.calls[0]?.[0];
+    expect(saved?.rootKey).toBe(ROOT);
+    expect(saved?.thread.provider.sessionId).toBe(EXTERNAL_ID);
+    expect(saved?.thread.externalOrigin?.sessionId).toBe(EXTERNAL_ID);
+    expect(saved?.thread.turns).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("falls back to the first prompt as the title when the session title is empty", async () => {
+    const harness = renderThreads();
+    await storeReady(harness);
+
+    const result = await act(() =>
+      harness.hook().importExternalSession(importRequest({ title: "   " })),
+    );
+
+    const view = harness
+      .hook()
+      .threads.find((candidate) => candidate.thread.threadId === result?.threadId);
+    expect(view?.thread.title).toBe("remember plum");
+    harness.unmount();
+  });
+
+  it("resumes the imported session on the next follow-up through the task gateway", async () => {
+    const harness = renderThreads({ cliKind: "codex" });
+    await storeReady(harness);
+
+    const result = await act(() =>
+      harness.hook().importExternalSession(importRequest({ provider: "codex" })),
+    );
+    expect(result?.alreadyImported).toBe(false);
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+
+    const sent = await act(() =>
+      harness.hook().sendFollowUp({
+        threadId: result?.threadId ?? "",
+        prompt: "which word?",
+        launch: defaultAgentLaunchOptions("codex"),
+      }),
+    );
+
+    expect(sent).toBe(true);
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.startedRequests[0]).toMatchObject({
+      resumeSessionId: EXTERNAL_ID,
+      agentCliKind: "codex",
+      repositoryRoot: ROOT,
+      cwd: ROOT,
+      isolation: "in-place",
+    });
+    harness.unmount();
+  });
+
+  it("selects the existing thread when the session is already imported", async () => {
+    const harness = renderThreads();
+    await storeReady(harness);
+
+    const first = await act(() => harness.hook().importExternalSession(importRequest()));
+    const second = await act(() => harness.hook().importExternalSession(importRequest()));
+
+    expect(second).toEqual({ threadId: first?.threadId, alreadyImported: true });
+    expect(harness.hook().threads).toHaveLength(1);
+    expect(harness.hook().notice?.message).toBe(IMPORT_DUPLICATE_NOTICE);
+    harness.unmount();
+  });
+
+  it("resolves an id collision with a Codevo-born session to the existing thread", async () => {
+    const stored = storedThread("agt-stored-0001", "agt-stored-0002");
+    const collided = {
+      ...stored,
+      provider: { kind: "claudeCode" as const, sessionId: EXTERNAL_ID },
+    };
+    const harness = renderThreads({ storedThreads: [collided] });
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(1));
+
+    const result = await act(() => harness.hook().importExternalSession(importRequest()));
+
+    expect(result).toEqual({ threadId: stored.threadId, alreadyImported: true });
+    expect(harness.hook().threads).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("rejects a provider that does not match the configured agent CLI", async () => {
+    const harness = renderThreads();
+    await storeReady(harness);
+
+    const result = await act(() =>
+      harness.hook().importExternalSession(importRequest({ provider: "codex" })),
+    );
+
+    expect(result).toBeNull();
+    expect(harness.hook().threads).toHaveLength(0);
+    expect(harness.hook().notice?.message).toBe(IMPORT_PROVIDER_MISMATCH_NOTICE);
+    harness.unmount();
+  });
+
+  it("rejects a malformed session id before it can reach the store", async () => {
+    const harness = renderThreads();
+    await storeReady(harness);
+
+    const result = await act(() =>
+      harness.hook().importExternalSession(importRequest({ sessionId: "not-a-uuid" })),
+    );
+
+    expect(result).toBeNull();
+    expect(harness.hook().notice?.message).toBe(IMPORT_INVALID_SESSION_NOTICE);
+    expect(harness.store.saveAgentThread).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("fails closed while another project owns the tab and imports again after A to B to A", async () => {
+    const harness = renderThreads();
+    await storeReady(harness);
+
+    harness.set({ rootKey: "/workspace/other", ownerId: "workspace-b", generation: 2 });
+    const foreign = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(foreign).toBeNull();
+    expect(harness.hook().notice?.message).toBe(IMPORT_PROJECT_UNAVAILABLE_NOTICE);
+    expect(harness.hook().threads).toHaveLength(0);
+
+    harness.set({ rootKey: ROOT, ownerId: OWNER, generation: 3 });
+    const beforeReload = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(beforeReload).toBeNull();
+    expect(harness.hook().notice?.message).toBe(IMPORT_STORE_NOT_READY_NOTICE);
+
+    await storeReady(harness, 3);
+    const result = await act(() => harness.hook().importExternalSession(importRequest()));
+    expect(result?.alreadyImported).toBe(false);
+    await waitForReact(() => expect(harness.hook().threads).toHaveLength(1));
+    harness.unmount();
+  });
+
+  it("keeps a truthful notice when the store rejects the imported thread", async () => {
+    const harness = renderThreads();
+    await storeReady(harness);
+    harness.store.saveAgentThread.mockRejectedValueOnce(new Error("disk full"));
+
+    const result = await act(() => harness.hook().importExternalSession(importRequest()));
+
+    expect(result).not.toBeNull();
+    await waitForReact(() =>
+      expect(harness.hook().notice?.message).toBe("Some agent conversations could not be saved."),
+    );
     harness.unmount();
   });
 });

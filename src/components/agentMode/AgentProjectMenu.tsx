@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, type KeyboardEvent, type ReactNode } from "react";
-import { Copy, Filter, FolderOpen, Settings, ShieldCheck, Unplug } from "lucide-react";
+import { Copy, Filter, FolderOpen, History, Settings, ShieldCheck, Unplug } from "lucide-react";
 import { focusMenuItem, useAgentPopover } from "./agentPopover";
 import {
   agentProjectMenuEntries,
@@ -118,6 +118,8 @@ function commandIcon(command: AgentProjectMenuCommand): ReactNode {
       return <Copy size={13} />;
     case "filterToProject":
       return <Filter size={13} />;
+    case "terminalSessions":
+      return <History size={13} />;
     default:
       return unsupportedProjectMenuCommand(command);
   }

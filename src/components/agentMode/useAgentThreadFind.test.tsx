@@ -127,5 +127,6 @@ function threadWith(events: ReadonlyArray<AgentTurnEvent>): AgentThread {
     turnsTruncated: false,
     integration: null,
     viewedAtEpochMs: null,
+    externalOrigin: null,
   };
 }

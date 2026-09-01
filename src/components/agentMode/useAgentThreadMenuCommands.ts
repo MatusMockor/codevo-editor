@@ -50,6 +50,7 @@ export interface AgentThreadMenuCommandOptions {
   onReleaseProject(projectRootKey: string): void;
   onFilterScope(scope: AgentRailScope): void;
   onThreadRemoved(threadId: string): void;
+  onOpenTerminalSessions(projectRootKey: string, repositoryRoot: string): void;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
 }
 
@@ -62,6 +63,7 @@ export function useAgentThreadMenuCommands({
   agents,
   groups,
   onFilterScope,
+  onOpenTerminalSessions,
   onReleaseProject,
   onThreadRemoved,
   onTrustProject,
@@ -127,11 +129,22 @@ export function useAgentThreadMenuCommands({
           if (target.rootPath === null) return;
           copyText(target.rootPath);
           return;
+        case "terminalSessions":
+          onOpenTerminalSessions(target.projectRootKey, target.repositoryRoot);
+          return;
         default:
           return unsupportedProjectCommand(command);
       }
     },
-    [copyText, onFilterScope, onReleaseProject, onTrustProject, reportNotice, revealPath],
+    [
+      copyText,
+      onFilterScope,
+      onOpenTerminalSessions,
+      onReleaseProject,
+      onTrustProject,
+      reportNotice,
+      revealPath,
+    ],
   );
 
   const handleThreadMenuCommand = useCallback(

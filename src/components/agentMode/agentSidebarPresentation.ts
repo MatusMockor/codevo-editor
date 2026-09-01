@@ -2,7 +2,13 @@ import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectOrigin, AgentProjectTrust } from "../../domain/agentProject";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
-import { runningTurn, type AgentThread, type AgentTurnStatus } from "../../domain/agentThread";
+import {
+  runningTurn,
+  type AgentThread,
+  type AgentThreadExternalOrigin,
+  type AgentTurnStatus,
+} from "../../domain/agentThread";
+import type { ExternalAgentSessionSummary } from "../../domain/externalAgentSession";
 import type { AgentProjectGroup } from "./agentModePresentation";
 
 export const ARCHIVED_PAGE_COUNT = 20;
@@ -46,7 +52,7 @@ export type AgentRailScopeEntry =
 export type AgentRailProjectScopeEntry = Extract<AgentRailScopeEntry, { kind: "repository" }>;
 
 export type AgentProjectMenuCommand =
-  "trust" | "release" | "reveal" | "copyPath" | "filterToProject";
+  "trust" | "release" | "reveal" | "copyPath" | "filterToProject" | "terminalSessions";
 
 export interface AgentProjectMenuTarget {
   readonly projectRootKey: string;
@@ -354,6 +360,14 @@ export function agentProjectMenuEntries(
     entries.push(projectMenuEntry("release", "Release project", "release", false));
   }
   entries.push(projectMenuEntry("filter", filterScopeLabel(entry), "filterToProject", scoped));
+  entries.push(
+    projectMenuEntry(
+      "terminal-sessions",
+      "Terminal sessions…",
+      "terminalSessions",
+      entry.trust !== "trusted" || entry.origin === "closed-tab-live-tasks",
+    ),
+  );
   if (entry.rootPath === null) return entries;
   entries.push(projectMenuEntry("reveal", "Reveal in Finder", "reveal", false));
   entries.push(projectMenuEntry("copy-path", "Copy path", "copyPath", false));
@@ -496,6 +510,48 @@ export function agentRowClassName(
   if (status.kind === "working") classes.push("agent-row--inflight");
   if (unread) classes.push("agent-row--unread");
   return classes.join(" ");
+}
+
+export const AGENT_IMPORTED_BADGE_LABEL = "Imported";
+
+export function agentThreadImportedBadgeLabel(
+  origin: AgentThreadExternalOrigin | null,
+): string | null {
+  if (origin === null) return null;
+  return AGENT_IMPORTED_BADGE_LABEL;
+}
+
+export function agentExternalOriginNote(origin: AgentThreadExternalOrigin | null): string | null {
+  if (origin === null) return null;
+  return `Imported from terminal session ${origin.sessionId}`;
+}
+
+export function agentSessionTurnCountLabel(turnCount: number, turnCountExact: boolean): string {
+  if (!turnCountExact) return `${turnCount}+ turns`;
+  if (turnCount === 1) return "1 turn";
+  return `${turnCount} turns`;
+}
+
+export function agentExternalSessionRowTitle(
+  session: Pick<ExternalAgentSessionSummary, "firstPrompt" | "sessionId" | "title">,
+): string {
+  if (session.title !== "") return session.title;
+  const promptLine = session.firstPrompt.split("\n", 1)[0]?.trim() ?? "";
+  if (promptLine !== "") return promptLine;
+  return session.sessionId;
+}
+
+export function agentExternalSessionsStatusNote(
+  skipped: number,
+  truncated: boolean,
+  shownCount: number,
+): string | null {
+  const parts: string[] = [];
+  if (skipped === 1) parts.push("1 automated or unreadable session hidden");
+  if (skipped > 1) parts.push(`${skipped} automated or unreadable sessions hidden`);
+  if (truncated) parts.push(`showing the newest ${shownCount}`);
+  if (parts.length === 0) return null;
+  return parts.join(" · ");
 }
 
 export function agentThreadRevealForMatch(

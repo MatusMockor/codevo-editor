@@ -498,6 +498,8 @@ pub fn run() {
             agent_thread_store_commands::load_agent_threads,
             agent_thread_store_commands::save_agent_thread,
             agent_thread_store_commands::delete_agent_thread,
+            agent_session_history_commands::list_external_agent_sessions,
+            agent_session_history_commands::preview_external_agent_session,
             agent_cli_discovery_commands::discover_agent_clis,
             agent_cli_version_commands::probe_agent_cli_version,
             agent_provider_commands::register_agent_provider_policy,

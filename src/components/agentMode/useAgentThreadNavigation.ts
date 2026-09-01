@@ -3,6 +3,7 @@ import type {
   AgentThreadSearchSurface,
   AgentThreadsSurface,
   AgentThreadView,
+  ExternalSessionsSurface,
 } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type {
@@ -39,6 +40,7 @@ export interface AgentThreadNavigationOptions {
   readonly presentationThreads: ReadonlyArray<AgentThreadView>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
+  readonly externalSessions?: Pick<ExternalSessionsSurface, "close"> | null;
 }
 
 export interface AgentThreadPaletteState {
@@ -46,6 +48,18 @@ export interface AgentThreadPaletteState {
   readonly titles: ReadonlyMap<string, string>;
   readonly archivedThreadIds: ReadonlySet<string>;
   activate(threadId: string, reveal: AgentThreadRevealRequest | null): void;
+  close(): void;
+}
+
+export interface AgentTerminalSessionsTarget {
+  readonly projectRootKey: string;
+  readonly repositoryRoot: string;
+}
+
+export interface AgentTerminalSessionsPaletteState {
+  readonly open: boolean;
+  readonly target: AgentTerminalSessionsTarget | null;
+  openFor(projectRootKey: string, repositoryRoot: string): void;
   close(): void;
 }
 
@@ -60,6 +74,7 @@ export interface AgentThreadNavigation {
   readonly find: AgentThreadFindState;
   readonly findHitIndex: number | undefined;
   readonly palette: AgentThreadPaletteState;
+  readonly terminalSessions: AgentTerminalSessionsPaletteState;
   readonly commands: AgentNavigationCommandHandlers;
   setRailScope(scope: AgentRailScope): void;
   selectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
@@ -85,6 +100,7 @@ interface AgentNavigationScopeState {
 
 export function useAgentThreadNavigation({
   agents,
+  externalSessions = null,
   groups,
   presentationThreads,
   projects,
@@ -100,7 +116,19 @@ export function useAgentThreadNavigation({
     [projects, scopeState],
   );
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [terminalSessionsTarget, setTerminalSessionsTarget] =
+    useState<AgentTerminalSessionsTarget | null>(null);
   const centerRef = useRef<HTMLDivElement | null>(null);
+
+  const externalSessionsRef = useRef(externalSessions);
+  externalSessionsRef.current = externalSessions;
+
+  useEffect(() => {
+    if (terminalSessionsTarget === null) return;
+    if (terminalSessionsTargetIsOpen(terminalSessionsTarget, projects)) return;
+    setTerminalSessionsTarget(null);
+    externalSessionsRef.current?.close();
+  }, [projects, terminalSessionsTarget]);
 
   const scopeEntries = useMemo(() => agentRailScopeEntries(groups), [groups]);
   const threadViews = agents.threads;
@@ -251,6 +279,25 @@ export function useAgentThreadNavigation({
     [activatePaletteResult, archivedThreadIds, closePalette, paletteOpen, paletteTitles],
   );
 
+  const openTerminalSessions = useCallback(
+    (projectRootKey: string, repositoryRoot: string) => {
+      const target: AgentTerminalSessionsTarget = { projectRootKey, repositoryRoot };
+      if (!terminalSessionsTargetIsOpen(target, projects)) return;
+      setTerminalSessionsTarget(target);
+    },
+    [projects],
+  );
+  const closeTerminalSessions = useCallback(() => setTerminalSessionsTarget(null), []);
+  const terminalSessions = useMemo<AgentTerminalSessionsPaletteState>(
+    () => ({
+      open: terminalSessionsTarget !== null,
+      target: terminalSessionsTarget,
+      openFor: openTerminalSessions,
+      close: closeTerminalSessions,
+    }),
+    [closeTerminalSessions, openTerminalSessions, terminalSessionsTarget],
+  );
+
   return {
     centerRef,
     selectedThreadId,
@@ -262,6 +309,7 @@ export function useAgentThreadNavigation({
     find,
     findHitIndex: find.open && find.hitIndex >= 0 ? find.hitIndex : undefined,
     palette,
+    terminalSessions,
     commands,
     setRailScope,
     selectThread,
@@ -271,6 +319,18 @@ export function useAgentThreadNavigation({
     closeFindBar,
     newThreadTarget,
   };
+}
+
+function terminalSessionsTargetIsOpen(
+  target: AgentTerminalSessionsTarget,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+): boolean {
+  const project = projects.find((candidate) => candidate.rootKey === target.projectRootKey);
+  if (project === undefined) return false;
+  if (project.origin === "closed-tab-live-tasks") return false;
+  return project.repositories.some(
+    (repository) => repository.repositoryRoot === target.repositoryRoot,
+  );
 }
 
 function captureScopeAuthority(

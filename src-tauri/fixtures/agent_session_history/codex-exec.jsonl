@@ -1,0 +1,9 @@
+{"timestamp":"2026-08-30T09:00:00.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"55555555-5555-4555-8555-555555555555","id":"55555555-5555-4555-8555-555555555555","timestamp":"2026-08-30T09:00:00.000Z","cwd":"/repo","originator":"codex_exec","cli_version":"0.149.1","source":"exec","thread_source":"user","model_provider":"openai","base_instructions":{"text":"You are Codex."}}}
+{"timestamp":"2026-08-30T09:00:01.000Z","ordinal":1,"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<skills_instructions>trimmed</skills_instructions>"}]}}
+{"timestamp":"2026-08-30T09:00:02.000Z","ordinal":2,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>"}]}}
+{"timestamp":"2026-08-30T09:00:03.000Z","ordinal":3,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Remember the word mango. Reply with exactly: ok"}]}}
+{"timestamp":"2026-08-30T09:00:04.000Z","ordinal":4,"type":"event_msg","payload":{"type":"task_started","turn_id":"eeeeeeee-0000-4000-8000-000000000001"}}
+{"timestamp":"2026-08-30T09:00:05.000Z","ordinal":5,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}}
+{"timestamp":"2026-08-30T09:00:06.000Z","ordinal":6,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"What word did I ask you to remember?"}]}}
+{"timestamp":"2026-08-30T09:00:07.000Z","ordinal":7,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"mango"}]}}
+{"timestamp":"2026-08-30T09:00:08.000Z","ordinal":8,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":5}}}}

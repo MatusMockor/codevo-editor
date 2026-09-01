@@ -20,6 +20,7 @@ export interface AgentThreadListProps {
   onSelectThread(threadId: string): void;
   onTogglePin(threadId: string): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
+  onImportTerminalSession?(): void;
 }
 
 export const AgentThreadList = memo(function AgentThreadList({
@@ -27,6 +28,7 @@ export const AgentThreadList = memo(function AgentThreadList({
   empty,
   focusedThreadId,
   jumpLabels,
+  onImportTerminalSession,
   onSelectThread,
   onShowMoreArchived,
   onThreadMenuCommand,
@@ -55,7 +57,7 @@ export const AgentThreadList = memo(function AgentThreadList({
   };
 
   if (empty !== null) {
-    return <EmptyState state={empty} />;
+    return <EmptyState onImportTerminalSession={onImportTerminalSession} state={empty} />;
   }
 
   return (
@@ -101,12 +103,30 @@ export const AgentThreadList = memo(function AgentThreadList({
   );
 });
 
-function EmptyState({ state }: { readonly state: NonNullable<AgentRailEmptyState> }) {
+function EmptyState({
+  onImportTerminalSession,
+  state,
+}: {
+  onImportTerminalSession?(): void;
+  readonly state: NonNullable<AgentRailEmptyState>;
+}) {
   if (state.kind === "noProjects") {
     return <div className="agent-rail__empty-state">No projects yet</div>;
   }
-  if (state.scopeLabel === null) {
-    return <div className="agent-rail__empty-state">No threads yet</div>;
-  }
-  return <div className="agent-rail__empty-state">No threads in {state.scopeLabel} yet</div>;
+  const label =
+    state.scopeLabel === null ? "No threads yet" : `No threads in ${state.scopeLabel} yet`;
+  return (
+    <div className="agent-rail__empty-state">
+      {label}
+      {onImportTerminalSession !== undefined && (
+        <button
+          className="agent-linkbutton agent-rail__empty-import"
+          onClick={onImportTerminalSession}
+          type="button"
+        >
+          Import a terminal session…
+        </button>
+      )}
+    </div>
+  );
 }

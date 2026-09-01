@@ -1,0 +1,4 @@
+{"type":"agent-name","agentName":"Fixture agent thread","sessionId":"22222222-2222-4222-8222-222222222222"}
+{"type":"ai-title","aiTitle":"Secondary title candidate","sessionId":"22222222-2222-4222-8222-222222222222"}
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Investigate the flaky watcher test"},"promptSource":"typed","origin":{"kind":"human"},"userType":"external","entrypoint":"cli","cwd":"/repo","sessionId":"22222222-2222-4222-8222-222222222222","timestamp":"2026-08-30T10:00:00.000Z","uuid":"bbbbbbbb-0000-4000-8000-000000000001"}
+{"parentUuid":"bbbbbbbb-0000-4000-8000-000000000001","isSidechain":false,"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"The watcher test races its cleanup."}]},"cwd":"/repo","sessionId":"22222222-2222-4222-8222-222222222222","timestamp":"2026-08-30T10:00:01.000Z","uuid":"bbbbbbbb-0000-4000-8000-000000000002"}

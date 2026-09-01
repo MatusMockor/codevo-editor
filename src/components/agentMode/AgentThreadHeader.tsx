@@ -16,7 +16,10 @@ import { AgentOpenMenu } from "./AgentOpenMenu";
 import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
 import { AgentScriptRunControl } from "./AgentScriptRunControl";
 import type { AgentShipActions } from "./AgentShipPanel";
-import type { AgentThreadMenuCommand } from "./agentSidebarPresentation";
+import {
+  agentThreadImportedBadgeLabel,
+  type AgentThreadMenuCommand,
+} from "./agentSidebarPresentation";
 import { AgentThreadRowMenu } from "./AgentThreadRowMenu";
 import { RenameInput } from "./AgentThreadRowParts";
 import type { AgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
@@ -60,6 +63,7 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
   const threadId = thread?.thread.threadId ?? null;
   const title = thread === null ? "New thread" : agentThreadDisplayTitle(thread.thread);
   const projectLabel = project?.label ?? thread?.repositoryLabel ?? null;
+  const importedLabel = agentThreadImportedBadgeLabel(thread?.thread.externalOrigin ?? null);
 
   useEffect(() => {
     setMenuAnchor(null);
@@ -130,6 +134,11 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
             <h2 className="agent-crumbs__heading">{title}</h2>
             <ChevronDown aria-hidden="true" className="agent-crumbs__chevron" size={14} />
           </button>
+        )}
+        {importedLabel !== null && (
+          <span className="agent-microlabel" title="Imported terminal session">
+            {importedLabel}
+          </span>
         )}
         {thread !== null && <ThreadStatus thread={thread} />}
       </nav>

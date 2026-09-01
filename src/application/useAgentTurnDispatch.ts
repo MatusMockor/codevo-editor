@@ -609,6 +609,7 @@ export function useAgentTurnDispatch(
               turnsTruncated: false,
               integration: null,
               viewedAtEpochMs: createdAt,
+              externalOrigin: null,
             };
             registerStream(thread, turn.turnId, false);
             dependenciesRef.current.store.dispatchAction({ kind: "threadCreated", thread });
