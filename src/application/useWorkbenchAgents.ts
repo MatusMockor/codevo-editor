@@ -154,18 +154,25 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
       return [];
     }
 
-    return gitRepositoryMappings.map((mapping) => ({
-      mapping,
-      repositoryRoot: repositoryRootForMapping(mapping, workspaceRoot),
-      repositoryRelativePath: "",
-    }));
-  }, [gitRepositoryMappings, workspaceRoot]);
+    return gitRepositoryMappings
+      .map((mapping) => ({
+        mapping,
+        repositoryRoot: repositoryRootForMapping(mapping, workspaceRoot),
+        repositoryRelativePath: "",
+      }))
+      .filter((repository) => {
+        const status = gitRepositoryStatuses.find(
+          (candidate) => candidate.root === repository.repositoryRoot,
+        );
+        return status === undefined || status.failed || status.status.isRepository;
+      });
+  }, [gitRepositoryMappings, gitRepositoryStatuses, workspaceRoot]);
 
   const getRepositoryStatus = useCallback(
     (repositoryRoot: string): AgentRepositoryStatusSnapshot => {
       const entry = gitRepositoryStatuses.find((candidate) => candidate.root === repositoryRoot);
 
-      if (!entry || entry.failed) {
+      if (!entry || entry.failed || !entry.status.isRepository) {
         return { known: false, dirty: false };
       }
 
@@ -371,14 +378,71 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     openAgentSettings,
   });
 
+  const refreshIsolationStatus = threads.refreshIsolationStatus;
+  const startThread = threads.startThread;
+  const launchIdentityForProject = agentProjects.launchIdentityForProject;
+  const isCurrentRepositoryOwner = agentProjects.isCurrentRepositoryOwner;
+  const startThreadAfterRepositoryProbe = useCallback(
+    async (request: Parameters<AgentThreadsSurface["startThread"]>[0]) => {
+      const project = agentProjects.projects.find(
+        (candidate) => candidate.rootKey === request.projectRootKey,
+      );
+      if (project === undefined || project.trust !== "trusted") return null;
+      const authority = {
+        rootKey: project.rootKey,
+        ownerId: project.ownerId,
+        generation: project.generation,
+      };
+      if (!isCurrentRepositoryOwner(authority, request.repositoryRoot)) return null;
+      const launchIdentity = launchIdentityForProject(request.projectRootKey);
+      if (launchIdentity === null) return null;
+      const outcome = await refreshIsolationStatus(request.repositoryRoot);
+      if (outcome?.kind !== "ready") return null;
+      if (
+        outcome.authority.rootKey !== authority.rootKey ||
+        outcome.authority.ownerId !== authority.ownerId ||
+        outcome.authority.generation !== authority.generation ||
+        !isCurrentRepositoryOwner(authority, request.repositoryRoot)
+      ) {
+        return null;
+      }
+      const currentLaunchIdentity = launchIdentityForProject(request.projectRootKey);
+      if (
+        currentLaunchIdentity === null ||
+        currentLaunchIdentity.workspaceId !== launchIdentity.workspaceId ||
+        currentLaunchIdentity.generation !== launchIdentity.generation
+      ) {
+        return null;
+      }
+      return startThread(request);
+    },
+    [
+      agentProjects.projects,
+      isCurrentRepositoryOwner,
+      launchIdentityForProject,
+      refreshIsolationStatus,
+      startThread,
+    ],
+  );
+
+  const threadsWithRepositoryPreflight = useMemo(
+    () => ({ ...threads, startThread: startThreadAfterRepositoryProbe }),
+    [startThreadAfterRepositoryProbe, threads],
+  );
+
   useLayoutEffect(() => {
-    threadsSurfaceRef.current = threads;
+    threadsSurfaceRef.current = threadsWithRepositoryPreflight;
     providerManagementRef.current = providerManagement;
   });
 
   return useMemo(
-    () => ({ ...threads, agentProjects, providerManagement, providerSignIn }),
-    [agentProjects, providerManagement, providerSignIn, threads],
+    () => ({
+      ...threadsWithRepositoryPreflight,
+      agentProjects,
+      providerManagement,
+      providerSignIn,
+    }),
+    [agentProjects, providerManagement, providerSignIn, threadsWithRepositoryPreflight],
   );
 }
 

@@ -416,7 +416,7 @@ export function agentIsolationReasonLabel(recommended: AgentIsolationDefault): s
   }
   switch (recommended.reason) {
     case "policy":
-      return "This workspace always isolates agents in a worktree.";
+      return "Agents start in an isolated worktree by default.";
     case "agent-active":
       return "Another agent is already running in this repository.";
     case "parallel-dispatch":

@@ -120,7 +120,7 @@ describe("useAgentProjects admission and bounds", () => {
 });
 
 describe("useAgentProjects background root loading", () => {
-  it("loads trust, settings, discovered repositories, and a lease for a trusted root", async () => {
+  it("omits an aggregate non-Git root while keeping its configured and discovered repositories", async () => {
     const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
     harness.environment.workspaceSettingsByRoot.set(BACKGROUND_ROOT, {
       ...defaultWorkspaceSettings(),
@@ -144,7 +144,6 @@ describe("useAgentProjects background root loading", () => {
     expect(project?.ownerId).toBe(agentRootOwnerId(BACKGROUND_ROOT));
     expect(project?.isolationPolicy).toBe("worktree");
     expect(project?.repositories.map((repository) => repository.repositoryRoot)).toEqual([
-      BACKGROUND_ROOT,
       `${BACKGROUND_ROOT}/packages/api`,
       `${BACKGROUND_ROOT}/packages/web`,
     ]);
@@ -1256,7 +1255,8 @@ function renderAgentProjects(options: HarnessOptions = {}) {
 
   const discovery = {
     detectRepositories: vi.fn(
-      async (rootPath: string): Promise<string[]> => environment.detectedByRoot.get(rootPath) ?? [],
+      async (rootPath: string): Promise<string[]> =>
+        environment.detectedByRoot.get(rootPath) ?? [""],
     ),
   };
 

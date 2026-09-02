@@ -262,7 +262,7 @@ describe("agentModePresentation", () => {
   it("explains every isolation recommendation and in-place guard reason", () => {
     expect(agentIsolationReasonLabel({ kind: "in-place" })).toContain("clean");
     expect(agentIsolationReasonLabel({ kind: "worktree", reason: "policy" })).toContain(
-      "always isolates",
+      "by default",
     );
     expect(agentIsolationReasonLabel({ kind: "worktree", reason: "agent-active" })).toContain(
       "Another agent",

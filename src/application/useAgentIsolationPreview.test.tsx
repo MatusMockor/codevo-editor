@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentProjectDescriptor, AgentProjectOrigin } from "../domain/agentProject";
 import type { AgentIsolationPolicy } from "../domain/agentSettings";
 import type { GitChangedFile, GitStatus } from "../domain/git";
-import type { AgentRepositoryStatusSnapshot } from "./agentThreadPorts";
+import type {
+  AgentRepositoryProbeOutcome,
+  AgentRepositoryStatusSnapshot,
+} from "./agentThreadPorts";
 import { projectAuthority } from "./agentProjectAuthority";
 import {
   agentIsolationReasonLabel,
@@ -28,6 +31,7 @@ interface Environment {
   dirtyEditors: number;
   liveTasks: number;
   gitChanges: number;
+  trust: "trusted" | "untrusted" | "unknown";
 }
 
 function createDeferred<T>() {
@@ -39,9 +43,12 @@ function createDeferred<T>() {
 }
 
 describe("useAgentIsolationPreview", () => {
-  it("recommends in-place for a clean active repository and a worktree for a dirty one", () => {
+  it("defaults clean and dirty auto-policy repositories to isolated worktrees", () => {
     const clean = renderPreview();
-    expect(clean.hook().isolationPreview(ROOT).recommended).toEqual({ kind: "in-place" });
+    expect(clean.hook().isolationPreview(ROOT).recommended).toEqual({
+      kind: "worktree",
+      reason: "policy",
+    });
     expect(clean.hook().isolationPreview(ROOT).inPlaceGuard).toEqual({ kind: "safe" });
     expect(clean.hook().isolationPreview(ROOT).inPlaceAllowed).toBe(true);
     clean.unmount();
@@ -107,7 +114,7 @@ describe("useAgentIsolationPreview", () => {
     const slow = createDeferred<GitStatus>();
     harness.git.getStatus.mockImplementationOnce(() => slow.promise);
 
-    let first: Promise<void> = Promise.resolve();
+    let first: Promise<AgentRepositoryProbeOutcome> = Promise.resolve({ kind: "stale" });
     await act(async () => {
       first = harness.hook().refreshIsolationStatus(ROOT);
       await harness.hook().refreshIsolationStatus(ROOT);
@@ -124,7 +131,7 @@ describe("useAgentIsolationPreview", () => {
     harness.unmount();
   });
 
-  it("marks the status unknown when the refresh fails and reports the error", async () => {
+  it("publishes the real bounded error when the refresh fails", async () => {
     const harness = renderPreview({ status: { known: true, dirty: false } });
     harness.git.getStatus.mockRejectedValueOnce(new Error("git unavailable"));
 
@@ -132,8 +139,44 @@ describe("useAgentIsolationPreview", () => {
 
     expect(harness.reportError).toHaveBeenCalledWith("Agents", expect.any(Error));
     expect(harness.hook().isolationContext(ROOT).repositoryStatusKnown).toBe(false);
+    expect(harness.hook().isolationPreview(ROOT).repositoryStatus).toEqual({
+      kind: "failed",
+      message: "Repository status check failed: git unavailable",
+    });
     expect(harness.hook().isolationPreview(ROOT).confirmationKey).toBeNull();
     harness.unmount();
+  });
+
+  it("clips localized repository errors on a UTF-8 byte boundary", async () => {
+    const harness = renderPreview();
+    harness.git.getStatus.mockRejectedValueOnce(new Error("🧪".repeat(300)));
+
+    await act(() => harness.hook().refreshIsolationStatus(ROOT));
+
+    const status = harness.hook().isolationPreview(ROOT).repositoryStatus;
+    expect(status?.kind).toBe("failed");
+    if (status?.kind !== "failed") throw new Error("Expected a failed repository probe");
+    expect(new TextEncoder().encode(status.message).byteLength).toBeLessThanOrEqual(512);
+    expect(status.message).not.toContain("�");
+    harness.unmount();
+  });
+
+  it("keeps a genuine initial probe quiet and distinguishes an untrusted project", () => {
+    const checking = renderPreview({ status: { known: false, dirty: false } });
+    expect(checking.hook().isolationPreview(ROOT)).toMatchObject({
+      repositoryStatus: { kind: "checking" },
+      inPlaceGuard: { kind: "safe" },
+      recommended: { kind: "worktree" },
+    });
+    checking.unmount();
+
+    const untrusted = renderPreview({ trust: "untrusted" });
+    expect(untrusted.hook().isolationPreview(ROOT)).toMatchObject({
+      repositoryStatus: { kind: "unavailable" },
+      inPlaceAllowed: false,
+      recommended: { kind: "worktree" },
+    });
+    untrusted.unmount();
   });
 
   it("ignores a late refresh after the project generation changed", async () => {
@@ -149,6 +192,54 @@ describe("useAgentIsolationPreview", () => {
     });
 
     expect(harness.hook().isolationContext(ROOT).repositoryStatusKnown).toBe(false);
+    harness.unmount();
+  });
+
+  it("fails closed when trust is revoked during a pending probe", async () => {
+    const harness = renderPreview();
+    const pending = createDeferred<GitStatus>();
+    harness.git.getStatus.mockImplementationOnce(() => pending.promise);
+
+    let outcome: AgentRepositoryProbeOutcome | null = null;
+    await act(async () => {
+      const refresh = harness.hook().refreshIsolationStatus(ROOT);
+      harness.environment.trust = "untrusted";
+      pending.resolve({ branch: "main", changes: [], isRepository: true, rootPath: ROOT });
+      outcome = await refresh;
+    });
+
+    expect(outcome).toEqual({ kind: "stale" });
+    expect(harness.hook().isolationPreview(ROOT).repositoryStatus?.kind).toBe("unavailable");
+    harness.unmount();
+  });
+
+  it("rejects a late A result after an A to B to A ownership cycle", async () => {
+    const harness = renderPreview({ status: { known: false, dirty: false } });
+    const pendingA = createDeferred<GitStatus>();
+    harness.git.getStatus.mockImplementationOnce(() => pendingA.promise);
+
+    let first: Promise<AgentRepositoryProbeOutcome> = Promise.resolve({ kind: "stale" });
+    await act(async () => {
+      first = harness.hook().refreshIsolationStatus(ROOT);
+      harness.environment.generation = 2;
+      harness.environment.generation = 3;
+      await harness.hook().refreshIsolationStatus(ROOT);
+    });
+
+    await act(async () => {
+      pendingA.resolve({
+        branch: "main",
+        changes: [change()],
+        isRepository: true,
+        rootPath: ROOT,
+      });
+      expect(await first).toEqual({ kind: "stale" });
+    });
+
+    expect(harness.hook().isolationContext(ROOT)).toMatchObject({
+      repositoryStatusKnown: true,
+      repositoryDirty: false,
+    });
     harness.unmount();
   });
 
@@ -261,6 +352,7 @@ function renderPreview(overrides: Partial<Environment> = {}) {
     dirtyEditors: 0,
     liveTasks: 0,
     gitChanges: 0,
+    trust: "trusted",
     ...overrides,
   };
   const git = {
@@ -278,7 +370,7 @@ function renderPreview(overrides: Partial<Environment> = {}) {
     ownerId: OWNER,
     label: "app",
     generation: environment.generation,
-    trust: "trusted",
+    trust: environment.trust,
     origin: environment.origin,
     repositories: [
       { mapping: { rootRelativePath: "" }, repositoryRoot: ROOT, repositoryRelativePath: "" },

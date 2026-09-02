@@ -42,6 +42,25 @@ export interface AgentRepositoryStatusSnapshot {
   readonly dirty: boolean;
 }
 
+export type AgentRepositoryProbeState =
+  | { readonly kind: "checking" }
+  | { readonly kind: "ready" }
+  | { readonly kind: "failed"; readonly message: string }
+  | { readonly kind: "unavailable"; readonly message: string };
+
+export type AgentRepositoryProbeOutcome =
+  | {
+      readonly kind: "ready";
+      readonly authority: {
+        readonly rootKey: string;
+        readonly ownerId: string;
+        readonly generation: number;
+      };
+    }
+  | { readonly kind: "failed" }
+  | { readonly kind: "stale" }
+  | { readonly kind: "unavailable" };
+
 export interface AgentTaskDiffSide {
   readonly text: string;
   readonly truncated: boolean;
@@ -75,6 +94,7 @@ export interface OrphanedWorktreeView {
 
 export interface AgentIsolationPreview {
   readonly repositoryRoot: string;
+  readonly repositoryStatus?: AgentRepositoryProbeState;
   readonly recommended: AgentIsolationDefault;
   readonly inPlaceGuard: InPlaceDispatchGuard;
   readonly inPlaceAllowed: boolean;
@@ -230,7 +250,7 @@ export interface AgentThreadsSurface {
   threadCopyDetail(threadId: string, detail: AgentThreadCopyDetail): string | null;
   lastUsedLaunch(projectRootKey: string): AgentLaunchOptions | null;
   isolationPreview(repositoryRoot: string): AgentIsolationPreview;
-  refreshIsolationStatus(repositoryRoot: string): Promise<void>;
+  refreshIsolationStatus(repositoryRoot: string): Promise<AgentRepositoryProbeOutcome | void>;
   startThread(request: AgentThreadStartRequest): Promise<AgentThreadStartResult | null>;
   sendFollowUp(request: AgentFollowUpRequest): Promise<boolean>;
   importExternalSession(

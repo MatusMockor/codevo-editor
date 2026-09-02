@@ -10,6 +10,7 @@ import type {
   StartAgentTaskRequest,
 } from "../domain/agentTask";
 import type { AgentWorktreeReceipt, GitWorktreeGateway } from "../domain/gitWorktree";
+import { emptyGitStatus, type GitGateway } from "../domain/git";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
@@ -71,6 +72,7 @@ describe("workbench agents production chain", () => {
     const { getWorkbench } = renderController({
       agentTaskGateway: agentTaskGateway.gateway,
       agentProviderGateway,
+      gitGateway: cleanRepositoryGitGateway(),
       gitWorktreeGateway: gitWorktreeGateway.gateway,
       appSettings: {
         ...defaultAppSettings(),
@@ -84,6 +86,16 @@ describe("workbench agents production chain", () => {
     await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
     await waitForReact(() =>
       expect(getWorkbench().agents.providerManagement.authority("claudeCode")).not.toBeNull(),
+    );
+    await act(async () => {
+      await expect(getWorkbench().agents.refreshIsolationStatus("/workspace-a")).resolves.toEqual(
+        expect.objectContaining({ kind: "ready" }),
+      );
+    });
+    await waitForReact(() =>
+      expect(
+        getWorkbench().agents.isolationPreview("/workspace-a").repositoryStatus?.kind,
+      ).toBe("ready"),
     );
     expect(getWorkbench().agentWorkbench.effectiveLayout).toBe("agent");
     expect(getWorkbench().sidebarView).toBe("files");
@@ -178,15 +190,18 @@ describe("workbench agents production chain", () => {
       await flushAsyncTurns();
     });
     expect(favorite).toBe(true);
+    let reopenWorkspace!: Promise<boolean>;
+    act(() => {
+      reopenWorkspace = getWorkbench().openWorkspaceRoot("/workspace-a");
+    });
+    await act(async () => Promise.resolve());
+    expect(rejectFavoriteSave).not.toBeNull();
     await act(async () => {
-      await getWorkbench().openWorkspaceRoot("/workspace-a");
+      rejectFavoriteSave?.(new Error("settings unavailable"));
+      await reopenWorkspace;
       await flushAsyncTurns();
     });
     expect(getWorkbench().workspaceIdentityDescriptor?.workspaceId).toBe("workspace-owner-b");
-    await act(async () => {
-      rejectFavoriteSave?.(new Error("settings unavailable"));
-      await flushAsyncTurns();
-    });
 
     expect(saveAppSettings).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -442,6 +457,57 @@ function fakeGitWorktreeGateway(): {
     pruneWorktrees: async () => [],
   };
   return { gateway, added };
+}
+
+function cleanRepositoryGitGateway(): GitGateway {
+  const status = (rootPath: string) => ({
+    ...emptyGitStatus(rootPath),
+    branch: "main",
+    isRepository: true,
+  });
+  return {
+    blame: vi.fn(async () => []),
+    branchList: vi.fn(async () => []),
+    commit: vi.fn(async (rootPath) => status(rootPath)),
+    createBranch: vi.fn(async () => undefined),
+    currentBranch: vi.fn(async () => "main"),
+    fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
+      change: {
+        isStaged: false,
+        isUnversioned: false,
+        oldPath: null,
+        oldRelativePath: null,
+        path: relativePath,
+        relativePath,
+        status: "modified" as const,
+      },
+      language: "plaintext",
+      modifiedContent: "",
+      originalContent: "",
+    })),
+    fileHistory: vi.fn(async () => []),
+    getDiff: vi.fn(async (_rootPath, change) => ({
+      change,
+      language: "plaintext",
+      modifiedContent: "",
+      originalContent: "",
+    })),
+    getFileHunks: vi.fn(async () => []),
+    getStatus: vi.fn(async (rootPath) => status(rootPath)),
+    push: vi.fn(async (rootPath) => status(rootPath)),
+    revertFiles: vi.fn(async (rootPath) => status(rootPath)),
+    stageFiles: vi.fn(async (rootPath) => status(rootPath)),
+    stageHunk: vi.fn(async (rootPath) => status(rootPath)),
+    stashApply: vi.fn(async () => undefined),
+    stashDrop: vi.fn(async () => undefined),
+    stashList: vi.fn(async () => []),
+    stashPop: vi.fn(async () => undefined),
+    stashSave: vi.fn(async () => undefined),
+    stashShow: vi.fn(async () => ""),
+    switchBranch: vi.fn(async () => undefined),
+    unstageFiles: vi.fn(async (rootPath) => status(rootPath)),
+    unstageHunk: vi.fn(async (rootPath) => status(rootPath)),
+  };
 }
 
 function identityGateway(

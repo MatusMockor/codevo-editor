@@ -490,15 +490,43 @@ describe("useAgentTurnDispatch startThread", () => {
 
   it("reports an unknown worktree creation failure without downgrading the project", async () => {
     const harness = renderDispatch();
-    const error = new Error("transport: Agent worktrees require a trusted repository. retry later");
+    const error = new Error(
+      "transport:\u001b[31m cannot lock ref 'refs/heads/agent/agt-test': permission denied\nretry later",
+    );
     harness.worktree.addAgentWorktree.mockRejectedValueOnce(error);
+
+    const result = await act(() => harness.hook().startThread(startRequest()));
+    const retried = await act(() => harness.hook().startThread(startRequest()));
+
+    expect(result).toBeNull();
+    expect(retried).not.toBeNull();
+    expect(harness.onProjectDispatchTrustRejected).not.toHaveBeenCalled();
+    expect(harness.reportError).toHaveBeenCalledWith("Agents", error);
+    expect(harness.notice()).toBeNull();
+    expect(harness.worktree.addAgentWorktree).toHaveBeenCalledTimes(2);
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("shows a bounded sanitized reason when worktree creation fails", async () => {
+    const harness = renderDispatch();
+    const reason = `permission denied\n\u001b[31m\u0085\u202e${"é".repeat(4_000)}`;
+    harness.worktree.addAgentWorktree.mockRejectedValueOnce(new Error(reason));
 
     const result = await act(() => harness.hook().startThread(startRequest()));
 
     expect(result).toBeNull();
-    expect(harness.onProjectDispatchTrustRejected).not.toHaveBeenCalled();
-    expect(harness.reportError).toHaveBeenCalledWith("Agents", error);
-    expect(harness.notice()?.message).toBe("The agent worktree could not be created.");
+    const notice = harness.notice()?.message ?? "";
+    expect(notice).toMatch(/^The agent worktree could not be created: permission denied /);
+    expect(notice).not.toContain("\n");
+    expect(notice).not.toContain("\u001b");
+    expect(notice).not.toContain("\u0085");
+    expect(notice).not.toContain("\u202e");
+    expect(notice).not.toContain("31m");
+    expect(notice.endsWith(" [truncated]")).toBe(true);
+    expect(new TextEncoder().encode(notice).byteLength).toBeLessThanOrEqual(
+      new TextEncoder().encode("The agent worktree could not be created: ").byteLength + 512,
+    );
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
     harness.unmount();
   });

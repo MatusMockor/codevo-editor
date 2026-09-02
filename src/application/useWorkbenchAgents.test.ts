@@ -12,6 +12,7 @@ import type {
   StartAgentTaskRequest,
 } from "../domain/agentTask";
 import type { GitStatus } from "../domain/git";
+import type { GitRepositoryStatus } from "../domain/gitRepositoryMapping";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { WorkspaceTrustState } from "../domain/trust";
 import { DEFAULT_WORKSPACE_PATH_POLICY } from "../domain/workspacePath";
@@ -83,6 +84,147 @@ describe("useWorkbenchAgents composition", () => {
     expect(harness.startedRequests[0]?.workspaceId).toBe(ACTIVE_ID);
     expect(harness.startedRequests[0]?.repositoryRoot).toBe(ACTIVE_ROOT);
     expect(harness.trust.getTrust).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not publish an aggregate non-Git project root as an agent repository", async () => {
+    const nestedRoot = `${ACTIVE_ROOT}/ebox-crm`;
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: false,
+      gitRepositoryMappings: [{ rootRelativePath: "" }, { rootRelativePath: "ebox-crm" }],
+      gitRepositoryStatuses: [
+        {
+          mapping: { rootRelativePath: "" },
+          root: ACTIVE_ROOT,
+          status: { branch: null, changes: [], isRepository: false, rootPath: ACTIVE_ROOT },
+          failed: false,
+        },
+        {
+          mapping: { rootRelativePath: "ebox-crm" },
+          root: nestedRoot,
+          status: { branch: "main", changes: [], isRepository: true, rootPath: nestedRoot },
+          failed: false,
+        },
+      ],
+    });
+
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    expect(
+      harness.hook().agentProjects.projects[0]?.repositories.map((repo) => repo.repositoryRoot),
+    ).toEqual([nestedRoot]);
+
+    await act(async () => {
+      expect(
+        await harness.hook().startThread({
+          projectRootKey: ACTIVE_ROOT,
+          repositoryRoot: nestedRoot,
+          prompt: "Use the discovered repository",
+          isolation: "worktree",
+          unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ).not.toBeNull();
+    });
+
+    expect(harness.worktree.addAgentWorktree).toHaveBeenCalledWith(nestedRoot, expect.any(String));
+    expect(harness.startedRequests[0]?.repositoryRoot).toBe(nestedRoot);
+    harness.unmount();
+  });
+
+  it("owner-gates a fresh repository probe before every worktree dispatch", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false });
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    const pending = createDeferred<GitStatus>();
+    harness.git.getStatus.mockImplementationOnce(() => pending.promise);
+
+    let start: Promise<unknown> = Promise.resolve(null);
+    await act(async () => {
+      start = harness.hook().startThread({
+        projectRootKey: ACTIVE_ROOT,
+        repositoryRoot: ACTIVE_ROOT,
+        prompt: "Probe before creating a worktree",
+        isolation: "worktree",
+        unsafeInPlaceConfirmationKey: null,
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+      await Promise.resolve();
+    });
+
+    expect(harness.git.getStatus).toHaveBeenCalledWith(ACTIVE_ROOT);
+    expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+
+    await act(async () => {
+      pending.resolve({ branch: "main", changes: [], isRepository: true, rootPath: ACTIVE_ROOT });
+      expect(await start).not.toBeNull();
+    });
+
+    expect(harness.worktree.addAgentWorktree).toHaveBeenCalledTimes(1);
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("does not dispatch after a real repository probe failure", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false });
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    harness.git.getStatus.mockRejectedValueOnce(new Error("permission denied"));
+
+    await act(async () => {
+      expect(
+        await harness.hook().startThread({
+          projectRootKey: ACTIVE_ROOT,
+          repositoryRoot: ACTIVE_ROOT,
+          prompt: "Do not dispatch",
+          isolation: "worktree",
+          unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ).toBeNull();
+    });
+
+    expect(harness.reportError).toHaveBeenCalledWith("Agents", expect.any(Error));
+    expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().isolationPreview(ACTIVE_ROOT).repositoryStatus).toEqual({
+      kind: "failed",
+      message: "Repository status check failed: permission denied",
+    });
+    harness.unmount();
+  });
+
+  it("rejects a ready probe after an A to B to A launch-owner cycle", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false });
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    const pending = createDeferred<GitStatus>();
+    harness.git.getStatus.mockImplementationOnce(() => pending.promise);
+
+    const start = harness.hook().startThread({
+      projectRootKey: ACTIVE_ROOT,
+      repositoryRoot: ACTIVE_ROOT,
+      prompt: "Do not cross ownership generations",
+      isolation: "worktree",
+      unsafeInPlaceConfirmationKey: null,
+      launch: defaultAgentLaunchOptions("claudeCode"),
+    });
+
+    harness.setWorkspaceId("workspace-b");
+    harness.rerender();
+    await waitForReact(() =>
+      expect(harness.hook().agentProjects.projects[0]?.ownerId).toBe("workspace-b"),
+    );
+    harness.setWorkspaceId(ACTIVE_ID);
+    harness.rerender();
+    await waitForReact(() =>
+      expect(harness.hook().agentProjects.projects[0]?.ownerId).toBe(ACTIVE_ID),
+    );
+
+    await act(async () => {
+      pending.resolve({ branch: "main", changes: [], isRepository: true, rootPath: ACTIVE_ROOT });
+      expect(await start).toBeNull();
+    });
+
+    expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -938,6 +1080,7 @@ interface HarnessOptions {
   refusedLeaseRoots?: ReadonlyArray<string>;
   workspaceTrust?: WorkspaceTrustState | null;
   gitRepositoryMappings?: ReadonlyArray<{ readonly rootRelativePath: string }>;
+  gitRepositoryStatuses?: ReadonlyArray<GitRepositoryStatus>;
 }
 
 function renderWorkbenchAgents(options: HarnessOptions) {
@@ -1023,7 +1166,7 @@ function renderWorkbenchAgents(options: HarnessOptions) {
   const settingsGateway = {
     loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
   };
-  const discovery = { detectRepositories: vi.fn(async () => []) };
+  const discovery = { detectRepositories: vi.fn(async () => [""]) };
   let nextLeaseToken = 0;
   const refusedLeaseRoots = new Set<string>(options.refusedLeaseRoots ?? []);
   const lease = {
@@ -1131,7 +1274,7 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     },
     externalUrlOpener: null,
     gitRepositoryMappings: options.gitRepositoryMappings ?? [{ rootRelativePath: "" }],
-    gitRepositoryStatuses: [],
+    gitRepositoryStatuses: options.gitRepositoryStatuses ?? [],
     openDocuments: [],
     onActiveWorkspaceTrustChanged: activeTrustChanged,
     prompter: { confirm: () => true, prompt: () => null },

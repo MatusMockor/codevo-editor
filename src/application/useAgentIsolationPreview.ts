@@ -12,6 +12,7 @@ import type { GitGateway, GitStatus } from "../domain/git";
 import {
   AGENT_TASKS_SOURCE,
   attempt,
+  errorMessageOf,
   isCurrentProjectOwner,
   owningProjectForRepository,
   projectAuthority,
@@ -19,7 +20,15 @@ import {
   sameProjectAuthority,
   type AgentProjectAuthority,
 } from "./agentProjectAuthority";
-import type { AgentIsolationPreview, AgentRepositoryStatusSnapshot } from "./agentThreadPorts";
+import type {
+  AgentIsolationPreview,
+  AgentRepositoryProbeOutcome,
+  AgentRepositoryProbeState,
+  AgentRepositoryStatusSnapshot,
+} from "./agentThreadPorts";
+
+const MAX_REPOSITORY_STATUS_ERROR_LENGTH = 512;
+const UTF8_ENCODER = new TextEncoder();
 
 export interface AgentIsolationPreviewDependencies {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
@@ -40,7 +49,7 @@ export type InPlacePreflight =
 export interface AgentIsolationPreviewSurface {
   isolationContext(repositoryRoot: string): AgentTaskIsolationContext;
   isolationPreview(repositoryRoot: string): AgentIsolationPreview;
-  refreshIsolationStatus(repositoryRoot: string): Promise<void>;
+  refreshIsolationStatus(repositoryRoot: string): Promise<AgentRepositoryProbeOutcome>;
   preflightInPlace(
     repositoryRoot: string,
     authority: AgentProjectAuthority,
@@ -51,6 +60,7 @@ export interface AgentIsolationPreviewSurface {
 interface FreshIsolationStatus {
   readonly authority: AgentProjectAuthority;
   readonly snapshot: AgentRepositoryStatusSnapshot;
+  readonly state: AgentRepositoryProbeState;
 }
 
 export function useAgentIsolationPreview(
@@ -110,23 +120,31 @@ export function useAgentIsolationPreview(
   }, []);
 
   const refreshIsolationStatus = useCallback(
-    async (repositoryRoot: string): Promise<void> => {
+    async (repositoryRoot: string): Promise<AgentRepositoryProbeOutcome> => {
       const deps = dependenciesRef.current;
       const project = owningProjectForRepository(deps.projects, repositoryRoot);
-      if (project === undefined) return;
+      if (project === undefined || project.trust !== "trusted") return { kind: "unavailable" };
       const authority = projectAuthority(project);
       const requestGeneration = nextRequestGeneration(repositoryRoot);
-      if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return;
+      if (!isCurrentTrustedProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+        return { kind: "stale" };
+      }
+      storeStatus(repositoryRoot, checkingIsolationStatus(authority));
       const result = await attempt(() => deps.gitGateway.getStatus(repositoryRoot));
-      if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return;
-      if (requestGenerationsRef.current.get(repositoryRoot) !== requestGeneration) return;
-      if (!result.ok) deps.reportError(AGENT_TASKS_SOURCE, result.error);
-      storeStatus(
-        repositoryRoot,
-        result.ok
-          ? freshIsolationStatus(authority, repositoryRoot, result.value)
-          : unknownIsolationStatus(authority),
-      );
+      if (!isCurrentTrustedProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+        return { kind: "stale" };
+      }
+      if (requestGenerationsRef.current.get(repositoryRoot) !== requestGeneration) {
+        return { kind: "stale" };
+      }
+      if (!result.ok) {
+        deps.reportError(AGENT_TASKS_SOURCE, result.error);
+        storeStatus(repositoryRoot, failedIsolationStatus(authority, result.error));
+        return { kind: "failed" };
+      }
+      const status = freshIsolationStatus(authority, repositoryRoot, result.value);
+      storeStatus(repositoryRoot, status);
+      return status.state.kind === "ready" ? { kind: "ready", authority } : { kind: "failed" };
     },
     [nextRequestGeneration, storeStatus],
   );
@@ -135,9 +153,15 @@ export function useAgentIsolationPreview(
     (repositoryRoot: string): AgentIsolationPreview => {
       const deps = dependenciesRef.current;
       const project = owningProjectForRepository(deps.projects, repositoryRoot);
-      const inPlaceAllowed = project?.origin === "active-tab";
+      const inPlaceAllowed = project?.origin === "active-tab" && project.trust === "trusted";
       const context = isolationContext(repositoryRoot);
       const authority = project === undefined ? null : projectAuthority(project);
+      const repositoryStatus = repositoryProbeState(
+        project,
+        authority,
+        statusesRef.current.get(repositoryRoot),
+        context,
+      );
       const confirmationKey =
         authority !== null &&
         sameOptionalProjectAuthority(statusesRef.current.get(repositoryRoot)?.authority, authority)
@@ -145,10 +169,12 @@ export function useAgentIsolationPreview(
           : null;
       return {
         repositoryRoot,
+        repositoryStatus,
         recommended: inPlaceAllowed
-          ? defaultAgentTaskIsolation(context)
+          ? recommendedIsolation(context)
           : { kind: "worktree", reason: "policy" },
-        inPlaceGuard: inPlaceDispatchGuard(context),
+        inPlaceGuard:
+          repositoryStatus.kind === "ready" ? inPlaceDispatchGuard(context) : { kind: "safe" },
         inPlaceAllowed,
         confirmationKey,
       };
@@ -164,18 +190,25 @@ export function useAgentIsolationPreview(
     ): Promise<InPlacePreflight> => {
       const deps = dependenciesRef.current;
       const requestGeneration = nextRequestGeneration(repositoryRoot);
-      if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+      if (!isCurrentTrustedProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
         return { kind: "owner-lost" };
       }
       const status = await attempt(() => deps.gitGateway.getStatus(repositoryRoot));
-      if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+      if (!isCurrentTrustedProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
         return { kind: "owner-lost" };
       }
       if (requestGenerationsRef.current.get(repositoryRoot) !== requestGeneration) {
         return { kind: "superseded" };
       }
-      if (!status.ok) return { kind: "status-failed", error: status.error };
-      storeStatus(repositoryRoot, freshIsolationStatus(authority, repositoryRoot, status.value));
+      if (!status.ok) {
+        storeStatus(repositoryRoot, failedIsolationStatus(authority, status.error));
+        return { kind: "status-failed", error: status.error };
+      }
+      const fresh = freshIsolationStatus(authority, repositoryRoot, status.value);
+      storeStatus(repositoryRoot, fresh);
+      if (fresh.state.kind === "failed") {
+        return { kind: "status-failed", error: new Error(fresh.state.message) };
+      }
       const context = isolationContext(repositoryRoot);
       const guard = inPlaceDispatchGuard(context);
       const confirmationKey = isolationConfirmationKey(repositoryRoot, context, authority);
@@ -185,7 +218,7 @@ export function useAgentIsolationPreview(
       ) {
         return { kind: "unsafe", label: guardReasonsLabel(guard.reasons) };
       }
-      if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+      if (!isCurrentTrustedProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
         return { kind: "owner-lost" };
       }
       return { kind: "ok" };
@@ -196,19 +229,101 @@ export function useAgentIsolationPreview(
   return { isolationContext, isolationPreview, refreshIsolationStatus, preflightInPlace };
 }
 
+function isCurrentTrustedProjectOwner(
+  dependenciesRef: {
+    readonly current: Pick<AgentIsolationPreviewDependencies, "projects">;
+  },
+  mountedRef: { readonly current: boolean },
+  authority: AgentProjectAuthority,
+  repositoryRoot: string,
+): boolean {
+  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return false;
+  const project = owningProjectForRepository(dependenciesRef.current.projects, repositoryRoot);
+  return (
+    project !== undefined &&
+    project.trust === "trusted" &&
+    sameProjectAuthority(projectAuthority(project), authority)
+  );
+}
+
 function freshIsolationStatus(
   authority: AgentProjectAuthority,
   repositoryRoot: string,
   status: GitStatus,
 ): FreshIsolationStatus {
   if (!status.isRepository || status.rootPath !== repositoryRoot) {
-    return unknownIsolationStatus(authority);
+    return failedIsolationStatus(
+      authority,
+      new Error("Git did not return status for the selected repository."),
+    );
   }
-  return { authority, snapshot: { known: true, dirty: status.changes.length > 0 } };
+  return {
+    authority,
+    snapshot: { known: true, dirty: status.changes.length > 0 },
+    state: { kind: "ready" },
+  };
 }
 
-function unknownIsolationStatus(authority: AgentProjectAuthority): FreshIsolationStatus {
-  return { authority, snapshot: { known: false, dirty: false } };
+function checkingIsolationStatus(authority: AgentProjectAuthority): FreshIsolationStatus {
+  return { authority, snapshot: { known: false, dirty: false }, state: { kind: "checking" } };
+}
+
+function failedIsolationStatus(
+  authority: AgentProjectAuthority,
+  error: unknown,
+): FreshIsolationStatus {
+  const message = boundedStatusError(error);
+  return {
+    authority,
+    snapshot: { known: false, dirty: false },
+    state: {
+      kind: "failed",
+      message,
+    },
+  };
+}
+
+function boundedStatusError(error: unknown): string {
+  const detail = errorMessageOf(error).trim();
+  const message = `Repository status check failed${detail === "" ? "." : `: ${detail}`}`;
+  if (UTF8_ENCODER.encode(message).byteLength <= MAX_REPOSITORY_STATUS_ERROR_LENGTH) return message;
+  let bounded = "";
+  for (const character of message) {
+    const next = `${bounded}${character}`;
+    if (UTF8_ENCODER.encode(next).byteLength > MAX_REPOSITORY_STATUS_ERROR_LENGTH) break;
+    bounded = next;
+  }
+  return bounded;
+}
+
+function repositoryProbeState(
+  project: AgentProjectDescriptor | undefined,
+  authority: AgentProjectAuthority | null,
+  fresh: FreshIsolationStatus | undefined,
+  context: AgentTaskIsolationContext,
+): AgentRepositoryProbeState {
+  if (project === undefined) {
+    return { kind: "unavailable", message: "Select an available project repository." };
+  }
+  if (project.trust !== "trusted") {
+    return { kind: "unavailable", message: "Trust this project to check its repository." };
+  }
+  if (
+    authority !== null &&
+    fresh !== undefined &&
+    sameProjectAuthority(fresh.authority, authority)
+  ) {
+    return fresh.state;
+  }
+  return context.repositoryStatusKnown ? { kind: "ready" } : { kind: "checking" };
+}
+
+function recommendedIsolation(context: AgentTaskIsolationContext): AgentIsolationDefault {
+  const recommended = defaultAgentTaskIsolation(context);
+  if (recommended.kind === "in-place" && context.workspacePolicy === "auto") {
+    return { kind: "worktree", reason: "policy" };
+  }
+  return recommended;
 }
 
 function isolationConfirmationKey(
@@ -245,7 +360,7 @@ export function agentIsolationReasonLabel(recommended: AgentIsolationDefault): s
   }
   switch (recommended.reason) {
     case "policy":
-      return "This workspace always isolates agents in a worktree.";
+      return "Agents start in an isolated worktree by default.";
     case "agent-active":
       return "Another agent is already running in this repository.";
     case "parallel-dispatch":

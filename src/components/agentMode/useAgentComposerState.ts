@@ -163,10 +163,14 @@ export function useAgentComposerControllerState({
 
   const preview = composerRoot === null ? null : agents.isolationPreview(composerRoot);
   const refreshIsolationStatus = agents.refreshIsolationStatus;
+  const composerProbeAuthorityKey =
+    composerProject === null
+      ? null
+      : `${composerProject.rootKey}\u0000${composerProject.ownerId}\u0000${composerProject.generation}\u0000${composerProject.trust}`;
   useEffect(() => {
     if (composerRoot === null) return;
     void refreshIsolationStatus(composerRoot);
-  }, [composerRoot, refreshIsolationStatus]);
+  }, [composerProbeAuthorityKey, composerRoot, refreshIsolationStatus]);
   const recommended: AgentTaskIsolation =
     preview === null || preview.recommended.kind === "in-place" ? "in-place" : "worktree";
   const chosen: AgentTaskIsolation =
@@ -174,7 +178,10 @@ export function useAgentComposerControllerState({
       ? isolationChoice.isolation
       : recommended;
   const isolation: AgentTaskIsolation = worktreeOnly ? "worktree" : chosen;
-  const guard = preview?.inPlaceGuard ?? { kind: "safe" as const };
+  const guard =
+    preview?.repositoryStatus !== undefined && preview.repositoryStatus.kind !== "ready"
+      ? ({ kind: "safe" } as const)
+      : (preview?.inPlaceGuard ?? { kind: "safe" as const });
   const confirmationKey = preview?.confirmationKey ?? null;
   const confirmed = confirmationKey !== null && unsafeConfirmed === confirmationKey;
   const targetRootKey = target?.projectRootKey ?? null;
@@ -197,7 +204,9 @@ export function useAgentComposerControllerState({
   const submissionBlocked =
     agents.dispatching ||
     (selectedThread === null &&
-      (target === null || (isolation === "in-place" && guard.kind === "unsafe" && !confirmed)));
+      (target === null ||
+        (preview?.repositoryStatus !== undefined && preview.repositoryStatus.kind !== "ready") ||
+        (isolation === "in-place" && guard.kind === "unsafe" && !confirmed)));
 
   const startNewThread = useCallback(
     (projectRootKey: string, repositoryRoot: string) => {
@@ -331,9 +340,7 @@ export function useAgentComposerControllerState({
     dispatching: agents.dispatching,
     guard,
     isolation,
-    isolationReason:
-      importedThreadCaption(selectedThread) ??
-      (preview === null ? null : agentIsolationReasonLabel(preview.recommended)),
+    isolationReason: importedThreadCaption(selectedThread) ?? isolationStatusCaption(preview),
     launch: composerLaunch,
     launchProvider: agentCliKind,
     mode: composerMode,
@@ -358,6 +365,22 @@ export function useAgentComposerControllerState({
     startNewThread,
     clearSelection,
   };
+}
+
+function isolationStatusCaption(
+  preview: ReturnType<AgentComposerSurface["isolationPreview"]> | null,
+) {
+  if (preview === null) return null;
+  if (preview.repositoryStatus === undefined) return agentIsolationReasonLabel(preview.recommended);
+  switch (preview.repositoryStatus.kind) {
+    case "checking":
+      return "Checking repository...";
+    case "failed":
+    case "unavailable":
+      return preview.repositoryStatus.message;
+    case "ready":
+      return agentIsolationReasonLabel(preview.recommended);
+  }
 }
 
 function importedThreadCaption(selectedThread: AgentThreadView | null): string | null {

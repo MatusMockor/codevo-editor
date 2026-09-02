@@ -103,7 +103,10 @@ function isLexicallyCanonicalAbsolutePath(value: string): boolean {
   if (!value.startsWith("/")) return false;
   if (value === "/") return true;
   if (value.endsWith("/") || value.includes("//")) return false;
-  return value.split("/").slice(1).every((segment) => segment !== "." && segment !== "..");
+  return value
+    .split("/")
+    .slice(1)
+    .every((segment) => segment !== "." && segment !== "..");
 }
 
 export function parseExternalSessionListSnapshot(

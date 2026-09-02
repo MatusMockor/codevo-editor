@@ -10,6 +10,7 @@ import {
 } from "../domain/agentProject";
 import { DEFAULT_AGENT_ISOLATION_POLICY, type AgentIsolationPolicy } from "../domain/agentSettings";
 import {
+  gitMappingCandidatesFromDirectoryListing,
   repositoryRootForMapping,
   resolveEffectiveGitRepositoryMappings,
   type ResolvedGitRepository,
@@ -20,7 +21,7 @@ import { normalizedWorkspaceRootKey, workspaceDisplayName } from "../domain/work
 import { workspaceSettingsIdentity } from "./workbenchController/workspaceIdentityPolicy";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
 import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
-import type { AgentProjectLaunchIdentity } from "./agentProjectAuthority";
+import type { AgentProjectAuthority, AgentProjectLaunchIdentity } from "./agentProjectAuthority";
 
 export const MAX_CONCURRENT_AGENT_PROJECT_LOADS = 2;
 const MAX_AGENT_PROJECT_RETIRED_OWNERS = 14;
@@ -69,6 +70,7 @@ export interface AgentProjectsSurface {
   ): Promise<AgentWorkspaceProjectCloseResult>;
   ensureProjectLease(rootKey: string): Promise<boolean>;
   launchIdentityForProject(rootKey: string): AgentProjectLaunchIdentity | null;
+  isCurrentRepositoryOwner(authority: AgentProjectAuthority, repositoryRoot: string): boolean;
   noteDispatchTrustRejected(rootKey: string): void;
 }
 
@@ -171,6 +173,33 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       )
         return null;
       return { workspaceId: entry.workspaceId, generation: entry.workspaceGeneration };
+    },
+    [],
+  );
+
+  const isCurrentRepositoryOwner = useCallback(
+    (authority: AgentProjectAuthority, repositoryRoot: string): boolean => {
+      const entry = entriesRef.current.get(authority.rootKey);
+      if (
+        entry === undefined ||
+        entry.releasing ||
+        !entry.admitted ||
+        entry.trust !== "trusted" ||
+        entry.ownerId !== authority.ownerId ||
+        entry.generation !== authority.generation
+      ) {
+        return false;
+      }
+      const deps = dependenciesRef.current;
+      const activeRootKey =
+        deps.activeWorkspaceRoot === null
+          ? null
+          : normalizedWorkspaceRootKey(deps.activeWorkspaceRoot);
+      const repositories =
+        entry.rootKey === activeRootKey ? deps.activeWorkspaceRepositories : entry.repositories;
+      return (
+        repositories?.some((repository) => repository.repositoryRoot === repositoryRoot) === true
+      );
     },
     [],
   );
@@ -945,11 +974,13 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       closeWorkspaceProject,
       ensureProjectLease,
       launchIdentityForProject,
+      isCurrentRepositoryOwner,
       noteDispatchTrustRejected,
     }),
     [
       ensureProjectLease,
       launchIdentityForProject,
+      isCurrentRepositoryOwner,
       noteDispatchTrustRejected,
       overflowRootPaths,
       projects,
@@ -1060,11 +1091,19 @@ function resolveProjectRepositories(
     detectedDirectories,
     auto,
   });
-  return mappings.map((mapping) => ({
-    mapping,
-    repositoryRoot: repositoryRootForMapping(mapping, rootPath),
-    repositoryRelativePath: "",
-  }));
+  const rootWasDiscovered =
+    detectedDirectories === null ||
+    !auto ||
+    gitMappingCandidatesFromDirectoryListing([...detectedDirectories]).some(
+      (mapping) => mapping.rootRelativePath === "",
+    );
+  return mappings
+    .filter((mapping) => mapping.rootRelativePath !== "" || rootWasDiscovered)
+    .map((mapping) => ({
+      mapping,
+      repositoryRoot: repositoryRootForMapping(mapping, rootPath),
+      repositoryRelativePath: "",
+    }));
 }
 
 function overflowSnapshot(

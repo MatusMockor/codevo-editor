@@ -328,9 +328,7 @@ function decorateSessions(
   }));
 }
 
-function importedThreadIds(
-  threads: ReadonlyMap<string, AgentThread>,
-): ReadonlyMap<string, string> {
+function importedThreadIds(threads: ReadonlyMap<string, AgentThread>): ReadonlyMap<string, string> {
   const imported = new Map<string, string>();
   for (const thread of threads.values()) {
     const origin = thread.externalOrigin;

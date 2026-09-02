@@ -83,6 +83,63 @@ describe("useAgentComposerState", () => {
     expect(current().navigation.selectedThreadId).toBe("agt-new");
   });
 
+  it("shows a quiet checking caption without the in-place risk confirmation", () => {
+    render(
+      threadsSurfaceFixture({
+        isolationPreview: (repositoryRoot) => ({
+          repositoryRoot,
+          repositoryStatus: { kind: "checking" },
+          recommended: { kind: "worktree", reason: "status-unknown" },
+          inPlaceGuard: { kind: "unsafe", reasons: ["status-unknown"] },
+          inPlaceAllowed: true,
+          confirmationKey: null,
+        }),
+      }),
+    );
+
+    expect(current().composer.composerProps.isolationReason).toBe("Checking repository...");
+    expect(current().composer.composerProps.guard).toEqual({ kind: "safe" });
+    expect(current().composer.composerProps.submitBlocked).toBe(true);
+  });
+
+  it("surfaces the actionable repository probe failure and keeps dispatch blocked", () => {
+    render(
+      threadsSurfaceFixture({
+        isolationPreview: (repositoryRoot) => ({
+          repositoryRoot,
+          repositoryStatus: {
+            kind: "failed",
+            message: "Repository status check failed: permission denied",
+          },
+          recommended: { kind: "worktree", reason: "status-unknown" },
+          inPlaceGuard: { kind: "unsafe", reasons: ["status-unknown"] },
+          inPlaceAllowed: true,
+          confirmationKey: null,
+        }),
+      }),
+    );
+
+    expect(current().composer.composerProps.isolationReason).toBe(
+      "Repository status check failed: permission denied",
+    );
+    expect(current().composer.composerProps.guard).toEqual({ kind: "safe" });
+    expect(current().composer.composerProps.submitBlocked).toBe(true);
+  });
+
+  it("re-probes when the selected repository is rebound to a new owner generation", () => {
+    const refreshIsolationStatus = vi.fn(async () => ({ kind: "stale" as const }));
+    const agents = threadsSurfaceFixture({ refreshIsolationStatus });
+
+    render(agents, [projectFixture({ ownerId: "owner-a", generation: 1 })]);
+    expect(refreshIsolationStatus).toHaveBeenCalledTimes(1);
+
+    render(agents, [projectFixture({ ownerId: "owner-b", generation: 2 })]);
+    expect(refreshIsolationStatus).toHaveBeenCalledTimes(2);
+
+    render(agents, [projectFixture({ ownerId: "owner-a", generation: 3 })]);
+    expect(refreshIsolationStatus).toHaveBeenCalledTimes(3);
+  });
+
   it("keeps the prompt when the thread does not start", async () => {
     render(threadsSurfaceFixture({ startThread: async () => null }));
     act(() => current().composer.composerProps.onPromptChange("Keep me"));

@@ -484,7 +484,9 @@ describe("useExternalSessions", () => {
     });
     const harness = renderExternalSessions({
       projects: [
-        project({ repositories: [repository(REPOSITORY_ROOT), repository(NESTED_REPOSITORY_ROOT)] }),
+        project({
+          repositories: [repository(REPOSITORY_ROOT), repository(NESTED_REPOSITORY_ROOT)],
+        }),
       ],
       threads: new Map([[imported.threadId, imported]]),
     });
