@@ -550,7 +550,7 @@ describe("AgentThreadsSidebar", () => {
     render({ groups, onChangeScope });
 
     click("#agent-rail-scope");
-    click(`[role="menuitemradio"][data-value="${OTHER}|${OTHER}"]`);
+    click(`[role="menuitemradio"][data-value="${OTHER}"]`);
 
     expect(onChangeScope).toHaveBeenCalledWith({
       kind: "repository",

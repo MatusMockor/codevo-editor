@@ -55,6 +55,7 @@ export function useAgentProjectGateways(
   gitGateway: Pick<GitGateway, "detectRepositories">,
   settingsGateway: Pick<SettingsGateway, "loadWorkspaceSettings">,
   trustGateway: WorkspaceTrustGateway,
+  activateWorkspaceRoot?: (rootPath: string) => Promise<void>,
 ): WorkbenchAgentProjectGateways | undefined {
   const descriptorForRoot = useCallback(
     (rootPath: string): WorkspaceIdentityDescriptor | null =>
@@ -75,8 +76,16 @@ export function useAgentProjectGateways(
             },
             agentRootLeaseGateway,
             descriptorForRoot,
+            activateWorkspaceRoot,
           },
-    [agentRootLeaseGateway, descriptorForRoot, gitGateway, settingsGateway, trustGateway],
+    [
+      activateWorkspaceRoot,
+      agentRootLeaseGateway,
+      descriptorForRoot,
+      gitGateway,
+      settingsGateway,
+      trustGateway,
+    ],
   );
 }
 
@@ -98,6 +107,7 @@ export type WorkbenchControllerPersistWorkspaceSettings = (
 ) => Promise<void>;
 
 export interface WorkbenchControllerAgentsOptions {
+  readonly activateWorkspaceRoot?: (rootPath: string) => Promise<void>;
   readonly agentLayoutAvailable?: boolean;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly appSettingsRef: { readonly current: AppSettings };
@@ -195,6 +205,7 @@ export function useWorkbenchControllerAgents(
     options.gitGateway,
     options.settingsGateway,
     options.workspaceTrustGateway,
+    options.activateWorkspaceRoot,
   );
 
   const editorBridge = useAgentEditorBridgePort(

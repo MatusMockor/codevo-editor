@@ -5,6 +5,31 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.7] - 2026-09-02
+
+### Added
+
+- Added real Claude Code and Codex account-limit visibility, including current
+  session or five-hour usage, weekly usage, and reset times.
+- Added searchable project and terminal-session pickers scoped to projects currently
+  open in the editor.
+- Added subagent activity summaries to the thread timeline.
+
+### Changed
+
+- Made local checkout the default launch environment and moved related safety details
+  into the relevant picker instead of the conversation surface.
+- Simplified the agent-first workbench, composer metadata, sidebar continuity, and
+  integrated terminal chrome.
+- Clear the composer immediately after a message is accepted for dispatch.
+
+### Fixed
+
+- Restored continuation of saved threads when project tabs are reopened or change
+  active state, while preserving exact workspace ownership.
+- Initialized provider availability during application startup and stabilized agent
+  root and worktree registration across relaunches.
+
 ## [0.2.0-beta.6] - 2026-09-01
 
 ### Added

@@ -261,7 +261,7 @@ export function AgentModelPicker({
             <div aria-label={label} className="agent-model-picker__list" id={listId} role="listbox">
               {visible.map((row, index) => (
                 <div
-                  className={`agent-model-picker__row${index === active ? " agent-model-picker__row--active" : ""}`}
+                  className={`agent-model-picker__row${index === active ? " agent-model-picker__row--active" : ""}${row.value === launch.model ? " agent-model-picker__row--selected" : ""}`}
                   key={row.favoriteKey}
                 >
                   <div
@@ -280,7 +280,7 @@ export function AgentModelPicker({
                     </span>
                     <span className="agent-model-picker__text">
                       <span className="agent-model-picker__label">{row.label}</span>
-                      <span className="agent-model-picker__provider">{row.providerName}</span>
+                      <span className="agent-model-picker__description">{row.hint}</span>
                     </span>
                     {index < MAX_SHORTCUT_ROWS && (
                       <kbd className="agent-model-picker__kbd agent-num">
@@ -381,6 +381,8 @@ function providerAvailabilityReason(
       return null;
     case "disabled":
       return "This provider is disabled";
+    case "initializing":
+      return "This provider is initializing";
     case "updating":
       return "This provider is updating";
     case "policyUnavailable":

@@ -27,6 +27,7 @@ function providerIsConfigured(
   switch (disposition.kind) {
     case "ready":
       return true;
+    case "initializing":
     case "updating":
     case "disabled":
     case "policyUnavailable":

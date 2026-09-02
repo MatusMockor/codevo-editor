@@ -38,6 +38,7 @@ export interface AgentProjectsDependencies {
   readonly activeWorkspaceRepositories: ReadonlyArray<ResolvedGitRepository>;
   readonly activeIsolationPolicy: AgentIsolationPolicy;
   readonly descriptorForRoot: (rootPath: string) => WorkspaceIdentityDescriptor | null;
+  readonly activateWorkspaceRoot?: (rootPath: string) => Promise<void>;
   readonly settingsGateway: Pick<SettingsGateway, "loadWorkspaceSettings">;
   readonly trustGateway: WorkspaceTrustGateway;
   readonly repositoryDiscoveryGateway: AgentRepositoryDiscoveryGateway;
@@ -68,6 +69,9 @@ export interface AgentProjectsSurface {
     isCurrent: () => boolean,
   ): Promise<AgentWorkspaceProjectCloseResult>;
   ensureProjectLease(rootKey: string): Promise<boolean>;
+  ensureProjectLaunchIdentity?(
+    rootKey: string,
+  ): Promise<AgentProjectLaunchIdentity | null>;
   launchIdentityForProject(rootKey: string): AgentProjectLaunchIdentity | null;
   isCurrentRepositoryOwner(authority: AgentProjectAuthority, repositoryRoot: string): boolean;
   noteDispatchTrustRejected(rootKey: string): void;
@@ -167,10 +171,11 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       if (
         entry === undefined ||
         entry.releasing ||
-        closeAuthoritiesRef.current.has(rootKey) ||
-        entry.workspaceId === null
+        !entry.admitted ||
+        closeAuthoritiesRef.current.has(rootKey)
       )
         return null;
+      if (entry.workspaceId === null) return null;
       return { workspaceId: entry.workspaceId, generation: entry.workspaceGeneration };
     },
     [],
@@ -312,7 +317,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       const entry = entryForOwner(rootKey, generation, ownerId);
       if (entry === null || entry.releasing) return false;
       if (quarantinedLeasesRef.current.has(rootKey)) return false;
-      if (entry.leaseToken !== null) return true;
+      if (entry.leaseToken !== null && entry.workspaceId !== null) return true;
       if (entry.trust !== "trusted") return false;
       const rootPath = entry.rootPath;
       const receipt = await attempt(() =>
@@ -336,12 +341,28 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
         releaseLease({ rootPath, leaseToken: receipt.value.leaseToken });
         return false;
       }
-      if (current.leaseToken === receipt.value.leaseToken) return true;
+      if (current.leaseToken === receipt.value.leaseToken) {
+        if (current.workspaceId === receipt.value.workspaceId) return true;
+        return patchEntry(rootKey, generation, {
+          leaseToken: receipt.value.leaseToken,
+          workspaceId: receipt.value.workspaceId,
+          observedWorkspaceId: receipt.value.workspaceId,
+          workspaceGeneration: current.workspaceGeneration + 1,
+        });
+      }
       if (current.leaseToken !== null) {
         releaseLease({ rootPath, leaseToken: receipt.value.leaseToken });
         return true;
       }
-      return patchEntry(rootKey, generation, { leaseToken: receipt.value.leaseToken });
+      return patchEntry(rootKey, generation, {
+        leaseToken: receipt.value.leaseToken,
+        workspaceId: receipt.value.workspaceId,
+        observedWorkspaceId: receipt.value.workspaceId,
+        workspaceGeneration:
+          current.workspaceId === receipt.value.workspaceId
+            ? current.workspaceGeneration
+            : current.workspaceGeneration + 1,
+      });
     },
     [entryForOwner, patchEntry, releaseLease],
   );
@@ -479,7 +500,16 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
             entry = { ...entry, admitted: true };
             changed = true;
           }
-          const currentWorkspaceId = candidateWorkspaceId;
+          if (
+            candidate.rootKey === activeKey &&
+            deps.activeWorkspaceRepositories.length > 0 &&
+            !sameRepositories(entry.repositories, deps.activeWorkspaceRepositories)
+          ) {
+            entry = { ...entry, repositories: deps.activeWorkspaceRepositories };
+            changed = true;
+          }
+          const currentWorkspaceId =
+            candidateWorkspaceId ?? (entry.leaseToken !== null ? entry.workspaceId : null);
           const retainedWorkspaceIds = [...entry.retiredWorkspaceIds];
           const workspaceIdentityChanged = currentWorkspaceId !== entry.observedWorkspaceId;
           const workspaceIdentityCanRecover =
@@ -922,6 +952,72 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
     [acquireEntryLease],
   );
 
+  const ensureProjectLaunchIdentity = useCallback(
+    async (rootKey: string): Promise<AgentProjectLaunchIdentity | null> => {
+      const existingIdentity = launchIdentityForProject(rootKey);
+      if (existingIdentity !== null) return existingIdentity;
+      const entry = entriesRef.current.get(rootKey);
+      if (
+        entry === undefined ||
+        entry.releasing ||
+        !entry.admitted ||
+        closeAuthoritiesRef.current.has(rootKey)
+      ) {
+        return null;
+      }
+      if (entry.workspaceId === null) {
+        const leased = await acquireEntryLease(rootKey, entry.generation, entry.ownerId);
+        if (!leased) return null;
+        const leasedIdentity = launchIdentityForProject(rootKey);
+        if (leasedIdentity !== null) return leasedIdentity;
+      }
+      const currentEntry = entriesRef.current.get(rootKey);
+      if (currentEntry === undefined || currentEntry.workspaceId !== null) {
+        return launchIdentityForProject(rootKey);
+      }
+      const activateWorkspaceRoot = dependenciesRef.current.activateWorkspaceRoot;
+      if (activateWorkspaceRoot === undefined) return null;
+      const authority = { generation: currentEntry.generation, ownerId: currentEntry.ownerId };
+      const activated = await attempt(() => activateWorkspaceRoot(currentEntry.rootPath));
+      if (!activated.ok) {
+        const current = entriesRef.current.get(rootKey);
+        if (
+          current?.generation === authority.generation &&
+          current.ownerId === authority.ownerId
+        ) {
+          dependenciesRef.current.reportError(AGENT_PROJECTS_SOURCE, activated.error);
+        }
+        return null;
+      }
+      const current = entriesRef.current.get(rootKey);
+      if (
+        current === undefined ||
+        current.generation !== authority.generation ||
+        current.ownerId !== authority.ownerId ||
+        current.releasing ||
+        !current.admitted ||
+        current.workspaceId !== null ||
+        closeAuthoritiesRef.current.has(rootKey)
+      ) {
+        return launchIdentityForProject(rootKey);
+      }
+      const descriptor = dependenciesRef.current.descriptorForRoot(current.rootPath);
+      if (descriptor === null) return null;
+      const workspaceGeneration = current.workspaceGeneration + 1;
+      if (
+        !patchEntry(rootKey, current.generation, {
+          workspaceId: descriptor.workspaceId,
+          observedWorkspaceId: descriptor.workspaceId,
+          workspaceGeneration,
+        })
+      ) {
+        return null;
+      }
+      return { workspaceId: descriptor.workspaceId, generation: workspaceGeneration };
+    },
+    [acquireEntryLease, launchIdentityForProject, patchEntry],
+  );
+
   const noteDispatchTrustRejected = useCallback(
     (rootKey: string): void => {
       const entry = entriesRef.current.get(rootKey);
@@ -972,12 +1068,14 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       releaseProject,
       closeWorkspaceProject,
       ensureProjectLease,
+      ensureProjectLaunchIdentity,
       launchIdentityForProject,
       isCurrentRepositoryOwner,
       noteDispatchTrustRejected,
     }),
     [
       ensureProjectLease,
+      ensureProjectLaunchIdentity,
       launchIdentityForProject,
       isCurrentRepositoryOwner,
       noteDispatchTrustRejected,
@@ -1138,6 +1236,22 @@ function projectDescriptors(
     });
   }
   return descriptors;
+}
+
+function sameRepositories(
+  left: ReadonlyArray<ResolvedGitRepository> | null,
+  right: ReadonlyArray<ResolvedGitRepository>,
+): boolean {
+  if (left === null || left.length !== right.length) return false;
+  return left.every((repository, index) => {
+    const candidate = right[index];
+    return (
+      candidate !== undefined &&
+      repository.repositoryRoot === candidate.repositoryRoot &&
+      repository.repositoryRelativePath === candidate.repositoryRelativePath &&
+      repository.mapping.rootRelativePath === candidate.mapping.rootRelativePath
+    );
+  });
 }
 
 function projectOrigin(entry: AgentProjectEntry, isActive: boolean): AgentProjectOrigin {

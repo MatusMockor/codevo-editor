@@ -11,7 +11,7 @@ import { defaultAgentProviderPreferences } from "../../domain/agentProviderSetti
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import { AgentModelPicker } from "./AgentModelPicker";
-import type { AgentModelChoice } from "./agentLaunchPresentation";
+import { agentModelRows, type AgentModelChoice } from "./agentLaunchPresentation";
 import { agentPlatformModifier } from "./agentSubmitShortcut";
 
 const CLAUDE: AgentLaunchOptions = {
@@ -44,7 +44,7 @@ describe("AgentModelPicker", () => {
 
     expect(trigger().getAttribute("aria-haspopup")).toBe("dialog");
     expect(trigger().dataset.value).toBe("default");
-    expect(trigger().textContent).toBe("Claude (default)");
+    expect(trigger().textContent).toBe("Auto (Claude Code)");
 
     open();
 
@@ -54,10 +54,13 @@ describe("AgentModelPicker", () => {
     expect(document.activeElement).toBe(search());
     expect(optionValues()).toEqual(["default", "fable", "opus", "sonnet"]);
     expect(selectedOption()?.dataset.value).toBe("default");
+    expect(selectedOption()?.parentElement?.classList).toContain(
+      "agent-model-picker__row--selected",
+    );
     expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-0`);
     expect(
-      [...host.querySelectorAll(".agent-model-picker__provider")].map((el) => el.textContent),
-    ).toEqual(["Claude Code", "Claude Code", "Claude Code", "Claude Code"]);
+      [...host.querySelectorAll(".agent-model-picker__description")].map((el) => el.textContent),
+    ).toEqual(agentModelRows("claudeCode").map((row) => row.hint));
     expect(
       [...host.querySelectorAll(".agent-model-picker__kbd")].map((el) => el.textContent),
     ).toEqual([1, 2, 3, 4].map((digit) => `${agentPlatformModifier().glyph}${digit}`));
@@ -430,6 +433,22 @@ describe("AgentModelPicker search styling contract", () => {
     expect(input).toContain("outline: none");
     const focus = cssRule(css, ".agent-model-picker__input:focus-visible {");
     expect(focus).toContain("box-shadow: none");
+  });
+
+  it("uses readable typography for model names and descriptions", () => {
+    expect(css).toMatch(/\n\.agent-model-picker__label \{[^}]*font-size: 14px/s);
+    expect(css).toMatch(
+      /\n\.agent-model-picker__description \{[^}]*font-size: var\(--agent-fs-sm\)/s,
+    );
+  });
+
+  it("uses a full-row T3-style hover and a visible selected state", () => {
+    expect(cssRule(css, ".agent-model-picker__row--selected {")).toContain(
+      "var(--agent-text-strong) 8%",
+    );
+    expect(css).toMatch(
+      /\.agent-model-picker__row:hover,[^}]*background: color-mix\(in srgb, var\(--agent-fill\) 82%, var\(--agent-canvas\)\)/s,
+    );
   });
 });
 

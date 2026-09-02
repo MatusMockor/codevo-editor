@@ -3052,21 +3052,28 @@ button {
 .bottom-panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   min-width: 0;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text);
   font-size: 12px;
   font-weight: 700;
   overflow: hidden;
-  padding: 0 10px;
+  padding: 0 8px;
   text-transform: uppercase;
+}
+
+.bottom-panel-header__leading {
+  display: flex;
+  align-self: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .bottom-panel-tabs {
   display: flex;
   align-self: stretch;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -3074,26 +3081,139 @@ button {
 
 .bottom-panel-tab {
   flex: 0 0 auto;
-  min-width: 92px;
+  min-width: 0;
   border: 0;
-  border-right: 1px solid var(--color-border);
   background: transparent;
   color: var(--color-text-subtle);
   cursor: pointer;
   font-size: 12px;
   font-weight: 700;
-  padding: 0 12px;
+  padding: 0 10px;
   text-transform: uppercase;
 }
 
 .bottom-panel-tab:hover {
-  background: var(--color-hover);
   color: var(--color-text-strong);
 }
 
 .bottom-panel-tab.active {
-  background: var(--color-surface);
   color: var(--color-text-strong);
+}
+
+.bottom-panel--agent[data-active-view="terminal"] .bottom-panel-tabs {
+  display: none;
+}
+
+.bottom-panel[data-active-view="terminal"] {
+  grid-template-rows: 30px minmax(0, 1fr);
+  background: var(--color-panel-deep);
+}
+
+.bottom-panel[data-active-view="terminal"] .bottom-panel-header {
+  border-bottom: 0;
+  background: var(--color-panel-deep);
+}
+
+.bottom-panel[data-active-view="terminal"]
+  .terminal-tabs-toolbar__session:has(.terminal-tabs-toolbar__tab[aria-selected="true"]) {
+  background: transparent;
+}
+
+.bottom-panel[data-active-view="terminal"] .terminal-profile-select,
+.bottom-panel[data-active-view="terminal"] .bottom-panel-text-action {
+  border-color: transparent;
+  background: transparent;
+}
+
+.bottom-panel[data-active-view="terminal"] .terminal-profile-select:hover,
+.bottom-panel[data-active-view="terminal"] .bottom-panel-text-action:hover {
+  border-color: transparent;
+  background: var(--color-hover);
+}
+
+.bottom-panel-terminal-toolbar {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.terminal-tabs-toolbar,
+.terminal-tabs-toolbar__sessions,
+.terminal-tabs-toolbar__session {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.terminal-tabs-toolbar {
+  height: 100%;
+  color: var(--color-text-subtle);
+  overflow: hidden;
+}
+
+.terminal-tabs-toolbar__sessions {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.terminal-tabs-toolbar__session {
+  flex: 0 0 auto;
+  height: 24px;
+  border-radius: 5px;
+}
+
+.terminal-tabs-toolbar__session:has(.terminal-tabs-toolbar__tab[aria-selected="true"]) {
+  background: var(--color-hover);
+  color: var(--color-text-strong);
+}
+
+.terminal-tabs-toolbar__tab,
+.terminal-tabs-toolbar__close,
+.terminal-tabs-toolbar__new {
+  display: inline-grid;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.terminal-tabs-toolbar__tab {
+  max-width: 180px;
+  overflow: hidden;
+  padding: 0 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-tabs-toolbar__close,
+.terminal-tabs-toolbar__new {
+  width: 24px;
+  padding: 0;
+}
+
+.terminal-tabs-toolbar__close:disabled {
+  display: none;
+}
+
+.terminal-tabs-toolbar__tab:hover,
+.terminal-tabs-toolbar__close:hover:not(:disabled),
+.terminal-tabs-toolbar__new:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text-strong);
+}
+
+.terminal-tabs-toolbar__tab:focus-visible,
+.terminal-tabs-toolbar__close:focus-visible,
+.terminal-tabs-toolbar__new:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.terminal-tabs-toolbar__new:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .bottom-panel-action {
@@ -3116,9 +3236,9 @@ button {
 .terminal-profile-select {
   max-width: 180px;
   height: 24px;
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--color-border);
   border-radius: 5px;
-  background: var(--color-surface);
+  background: var(--color-hover);
   color: var(--color-text);
   font-size: 12px;
   outline: 0;

@@ -390,6 +390,8 @@ function persistIntent(
       return changedThreadIntent(state, action, "coalesced");
     case "threadRenamed":
       return changedThreadIntent(state, action, "immediate");
+    case "ownerRebound":
+      return NO_PERSIST;
     case "pinToggled":
     case "archived":
     case "integrationRecorded":

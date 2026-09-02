@@ -896,7 +896,7 @@ export function useWorkbenchController(
     fileSearch,
     latencyTrackerForRoot,
     reportError,
-    recentFiles: recentFiles,
+    recentFiles,
     setMessage,
     workspaceRoot,
     ...quickOpenPrefixDispatch,
@@ -936,7 +936,7 @@ export function useWorkbenchController(
   const workspaceSymbols = useWorkbenchWorkspaceSymbols({
     workspaceRoot,
     workspaceOwner: workspaceRuntimeOwner,
-    canSearchClassOpenSymbols: canSearchClassOpenSymbols,
+    canSearchClassOpenSymbols,
     searchClassOpenSymbols: classOpen.searchClassOpenSymbols,
     reportError,
     setMessage,
@@ -944,7 +944,7 @@ export function useWorkbenchController(
   const { setWorkspaceSymbolsOpen, setWorkspaceSymbolsQuery } = workspaceSymbols;
 
   const searchEverywhere = useWorkbenchSearchEverywhere({
-    canSearchClassOpenSymbols: canSearchClassOpenSymbols,
+    canSearchClassOpenSymbols,
     fileSearch,
     latencyTrackerForRoot,
     reportError,
@@ -1099,38 +1099,6 @@ export function useWorkbenchController(
     resolveGitRepositoryTarget,
     runGitRepositoryDiscovery,
   } = gitDiscovery;
-
-  const agents = useWorkbenchControllerAgents({
-    applyAppSettings,
-    appSettingsRef,
-    bottomPanelVisible,
-    setBottomPanelView,
-    setBottomPanelVisible,
-    options,
-    openFileRef,
-    openGitChange,
-    editorSessionOwnerKey,
-    gitGateway,
-    gitRepositoryMappings,
-    gitRepositoryStatuses,
-    openDocuments: openDocuments,
-    prompter,
-    reportError,
-    setSettingsInitialSection,
-    setSettingsOpen,
-    setWorkspaceTrust,
-    settingsGateway,
-    workspaceIdentityByRootRef,
-    workspaceIdentityDescriptor,
-    workspaceRoot,
-    workspaceSettingsRef,
-    workspaceTrust,
-    workspaceTrustGateway,
-    terminalGateway,
-    workspaceTrustIntentCoordinatorRef,
-    workspaceTrustRevisionByOwnerRef,
-    persistWorkspaceSettings,
-  });
 
   const {
     replaceEslintDiagnostics,
@@ -1745,6 +1713,40 @@ export function useWorkbenchController(
       setWorkspaceSymbolsResults: workspaceSymbols.setWorkspaceSymbolsResults,
     },
   });
+
+  const agents = useWorkbenchControllerAgents({
+    activateWorkspaceRoot: workspaceTransition.activateWorkspaceTab,
+    applyAppSettings,
+    appSettingsRef,
+    bottomPanelVisible,
+    setBottomPanelView,
+    setBottomPanelVisible,
+    options,
+    openFileRef,
+    openGitChange,
+    editorSessionOwnerKey,
+    gitGateway,
+    gitRepositoryMappings,
+    gitRepositoryStatuses,
+    openDocuments,
+    prompter,
+    reportError,
+    setSettingsInitialSection,
+    setSettingsOpen,
+    setWorkspaceTrust,
+    settingsGateway,
+    workspaceIdentityByRootRef,
+    workspaceIdentityDescriptor,
+    workspaceRoot,
+    workspaceSettingsRef,
+    workspaceTrust,
+    workspaceTrustGateway,
+    terminalGateway,
+    workspaceTrustIntentCoordinatorRef,
+    workspaceTrustRevisionByOwnerRef,
+    persistWorkspaceSettings,
+  });
+
   const editorFile = useWorkbenchEditorFileCoordinator({
     changeSignature: {
       currentWorkspaceRootRef,

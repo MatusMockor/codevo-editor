@@ -147,6 +147,25 @@ describe("AgentThreadSession", () => {
     expect(host.querySelector(".agent-tool__status--ok")).toBeNull();
   });
 
+  it("shows how many subagents were started and their live outcomes", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Audit the UI", { kind: "running" }, [
+            { kind: "toolCall", toolId: "agent-1", name: "Task", inputSummary: "Review" },
+            { kind: "toolCall", toolId: "agent-2", name: "Agent", inputSummary: "Test" },
+            { kind: "toolResult", toolId: "agent-1", outputSummary: "done", isError: false },
+          ]),
+        ],
+      }),
+    });
+
+    expect(host.querySelector(".agent-subagents")?.textContent).toBe(
+      "Started 2 subagents1 working · 1 completed",
+    );
+    expect(host.querySelector(".agent-subagents__dot--live")).not.toBeNull();
+  });
+
   it("collapses reasoning and raw output instead of dumping them", () => {
     render({
       thread: threadView({
@@ -240,29 +259,35 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("Agent CLI exited with code 1.");
   });
 
-  it("records the model and mode of a turn in its prompt meta line", () => {
+  it("shows only the message time below a user bubble", () => {
     render({
       thread: threadView({
         turns: [
-          turn("agt-1-t1", "Refactor the parser", { kind: "exited", exitCode: 0 }, [], {
-            provider: "claudeCode",
-            model: "opus",
-            mode: "acceptEdits",
-            effort: "default",
-          }),
+          {
+            ...turn("agt-1-t1", "Refactor the parser", { kind: "exited", exitCode: 0 }, [], {
+              provider: "claudeCode",
+              model: "opus",
+              mode: "acceptEdits",
+              effort: "default",
+            }),
+            cliVersion: "2.1.245",
+          },
         ],
       }),
     });
 
     const meta = host.querySelector(".agent-prompt__meta");
 
-    expect(meta?.textContent).toContain("opus");
-    expect(meta?.textContent).toContain("accept edits");
-    expect(host.querySelector(".agent-prompt__launch--plan")).toBeNull();
-    expect(host.querySelector(".agent-prompt__launch--danger")).toBeNull();
+    expect(meta?.textContent).toBe("5 minutes ago");
+    expect(meta?.getAttribute("aria-label")).toBe("Message time");
+    expect(host.textContent).not.toContain("worktree");
+    expect(host.textContent).not.toContain("finished");
+    expect(host.textContent).not.toContain("opus");
+    expect(host.textContent).not.toContain("accept edits");
+    expect(host.textContent).not.toContain("claude 2.1.245");
   });
 
-  it("records only a non-default Claude effort in turn metadata", () => {
+  it("does not add launch choices to historical user messages", () => {
     render({
       thread: threadView({
         turns: [
@@ -287,12 +312,13 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(launchMeta("agt-1-t1")).toEqual(["sonnet", "plan only", "low"]);
-    expect(launchMeta("agt-1-t2")).toEqual(["opus", "accept edits"]);
-    expect(launchMeta("agt-1-t3")).toEqual(["gpt-5.5", "read-only"]);
+    expect(host.querySelectorAll(".agent-prompt__meta")).toHaveLength(3);
+    expect(host.querySelector(".agent-prompt__launch")).toBeNull();
+    expect(host.textContent).not.toContain("sonnet");
+    expect(host.textContent).not.toContain("gpt-5.5");
   });
 
-  it("badges a plan turn and a turn that bypassed the permission checks", () => {
+  it("does not badge permission modes inside the conversation", () => {
     render({
       thread: threadView({
         turns: [
@@ -311,8 +337,8 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.querySelector(".agent-prompt__launch--plan")?.textContent).toBe("plan only");
-    expect(host.querySelector(".agent-prompt__launch--danger")?.textContent).toBe("full access");
+    expect(host.textContent).not.toContain("plan only");
+    expect(host.textContent).not.toContain("full access");
   });
 
   it("shows no launch meta for a turn recorded before launch options existed", () => {
@@ -322,7 +348,7 @@ describe("AgentThreadSession", () => {
     expect(host.querySelector(".agent-prompt__cli")).toBeNull();
   });
 
-  it("shows the CLI version a turn ran with and stays quiet when it is unknown", () => {
+  it("keeps the CLI version out of the conversation transcript", () => {
     render({
       thread: threadView({
         turns: [
@@ -335,11 +361,8 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    const versions = Array.from(host.querySelectorAll(".agent-prompt__cli"));
-    expect(versions.map((node) => node.textContent)).toEqual(["claude 2.1.245"]);
-    expect(versions[0]?.closest("[data-agent-turn]")?.getAttribute("data-agent-turn")).toBe(
-      "agt-1-t1",
-    );
+    expect(host.querySelector(".agent-prompt__cli")).toBeNull();
+    expect(host.textContent).not.toContain("claude 2.1.245");
   });
 
   it("distinguishes a retained local branch from a deleted local branch and retained remote", () => {
@@ -634,13 +657,6 @@ function defaultProps(): AgentThreadSessionProps {
     composerRepositoryLabel: "app",
     onReviewInDiff: () => undefined,
   };
-}
-
-function launchMeta(turnId: string): ReadonlyArray<string | null> {
-  const turn = document.querySelector(`[data-agent-turn="${turnId}"]`);
-  return Array.from(turn?.querySelectorAll(".agent-prompt__launch") ?? []).map(
-    (node) => node.textContent,
-  );
 }
 
 interface ThreadViewOptions {

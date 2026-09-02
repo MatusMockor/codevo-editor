@@ -284,7 +284,8 @@ describe("App docked text search integration", () => {
     const searchTab = Array.from(panel.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
       (tab) => tab.textContent === "Search",
     );
-    expect(searchTab?.getAttribute("aria-selected")).toBe("true");
+    expect(searchTab).toBeUndefined();
+    expect(terminalTab?.getAttribute("aria-selected")).toBe("true");
     await act(async () => {
       terminalTab?.click();
       await Promise.resolve();

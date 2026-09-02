@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
+use crate::workspace_registry::WorkspaceId;
+
 pub const MAX_AGENT_ROOT_LEASES: usize = 8;
 pub const MAX_AGENT_ROOT_LEASE_TOKEN: u64 = 9_007_199_254_740_991;
 pub const AGENT_ROOT_LEASE_LIMIT_ERROR: &str = "Too many agent project roots are leased.";
@@ -11,7 +13,31 @@ pub const AGENT_ROOT_LEASE_TOKEN_EXHAUSTED_ERROR: &str =
 #[derive(Debug, Default)]
 struct AgentRootLeaseState {
     next_token: u64,
-    leases: HashMap<PathBuf, u64>,
+    leases: HashMap<PathBuf, AgentRootLease>,
+}
+
+#[derive(Clone, Debug)]
+struct AgentRootLease {
+    token: u64,
+    registration: Option<AgentRootWorkspaceRegistration>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentRootWorkspaceRegistration {
+    pub workspace_id: WorkspaceId,
+    pub admission_token: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct RegisteredAgentRootLease {
+    pub lease_token: u64,
+    pub registration: AgentRootWorkspaceRegistration,
+}
+
+#[derive(Clone, Debug)]
+pub enum RegisteredAgentRootLeaseAcquisition {
+    Acquired(RegisteredAgentRootLease),
+    Existing(RegisteredAgentRootLease),
 }
 
 #[derive(Debug, Default)]
@@ -31,11 +57,12 @@ impl AgentRootLeaseRegistry {
         Self::default()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn acquire(&self, canonical_root: &Path) -> Result<u64, String> {
         let mut state = self.state();
 
-        if let Some(token) = state.leases.get(canonical_root) {
-            return Ok(*token);
+        if let Some(lease) = state.leases.get(canonical_root) {
+            return Ok(lease.token);
         }
 
         if state.leases.len() >= MAX_AGENT_ROOT_LEASES {
@@ -48,24 +75,100 @@ impl AgentRootLeaseRegistry {
 
         state.next_token += 1;
         let token = state.next_token;
-        state.leases.insert(canonical_root.to_path_buf(), token);
+        state.leases.insert(
+            canonical_root.to_path_buf(),
+            AgentRootLease {
+                token,
+                registration: None,
+            },
+        );
 
         Ok(token)
     }
 
+    pub fn registered(&self, canonical_root: &Path) -> Option<RegisteredAgentRootLease> {
+        let state = self.state();
+        let lease = state.leases.get(canonical_root)?;
+        Some(RegisteredAgentRootLease {
+            lease_token: lease.token,
+            registration: lease.registration.clone()?,
+        })
+    }
+
+    pub fn acquire_registered(
+        &self,
+        canonical_root: &Path,
+        registration: AgentRootWorkspaceRegistration,
+    ) -> Result<RegisteredAgentRootLeaseAcquisition, String> {
+        let mut state = self.state();
+        if let Some(existing) = state.leases.get(canonical_root) {
+            let registration = existing.registration.clone().ok_or_else(|| {
+                "Agent project root lease has no workspace registration.".to_string()
+            })?;
+            return Ok(RegisteredAgentRootLeaseAcquisition::Existing(
+                RegisteredAgentRootLease {
+                    lease_token: existing.token,
+                    registration,
+                },
+            ));
+        }
+        if state.leases.len() >= MAX_AGENT_ROOT_LEASES {
+            return Err(AGENT_ROOT_LEASE_LIMIT_ERROR.to_string());
+        }
+        if state.next_token >= MAX_AGENT_ROOT_LEASE_TOKEN {
+            return Err(AGENT_ROOT_LEASE_TOKEN_EXHAUSTED_ERROR.to_string());
+        }
+        state.next_token += 1;
+        let lease_token = state.next_token;
+        state.leases.insert(
+            canonical_root.to_path_buf(),
+            AgentRootLease {
+                token: lease_token,
+                registration: Some(registration.clone()),
+            },
+        );
+        Ok(RegisteredAgentRootLeaseAcquisition::Acquired(
+            RegisteredAgentRootLease {
+                lease_token,
+                registration,
+            },
+        ))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn release(&self, canonical_root: &Path, token: u64) -> AgentRootLeaseReleaseDisposition {
         let mut state = self.state();
-        let Some(held) = state.leases.get(canonical_root).copied() else {
+        let Some(held) = state.leases.get(canonical_root) else {
             return AgentRootLeaseReleaseDisposition::NotHeld;
         };
 
-        if held != token {
+        if held.token != token {
             return AgentRootLeaseReleaseDisposition::ForeignOwner;
         }
 
         state.leases.remove(canonical_root);
 
         AgentRootLeaseReleaseDisposition::Released
+    }
+
+    pub fn release_registered(
+        &self,
+        canonical_root: &Path,
+        token: u64,
+    ) -> (
+        AgentRootLeaseReleaseDisposition,
+        Option<AgentRootWorkspaceRegistration>,
+    ) {
+        let mut state = self.state();
+        let Some(held) = state.leases.get(canonical_root) else {
+            return (AgentRootLeaseReleaseDisposition::NotHeld, None);
+        };
+        if held.token != token {
+            return (AgentRootLeaseReleaseDisposition::ForeignOwner, None);
+        }
+        let registration = held.registration.clone();
+        state.leases.remove(canonical_root);
+        (AgentRootLeaseReleaseDisposition::Released, registration)
     }
 
     pub fn is_held(&self, canonical_root: &Path) -> bool {

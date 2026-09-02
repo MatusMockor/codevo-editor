@@ -204,27 +204,28 @@ export function agentRailScopeEntries(
   ];
 
   for (const group of groups) {
-    for (const repo of group.repos) {
-      entries.push({
-        kind: "repository",
-        value: agentRailScopeValue(group.projectRootKey, repo.repositoryRoot),
-        label: group.singleRepo ? group.label : `${group.label} / ${repo.label}`,
-        projectRootKey: group.projectRootKey,
-        repositoryRoot: repo.repositoryRoot,
-        repositoryResolved: repo.repositoryResolved,
-        trust: group.trust,
-        origin: group.origin,
-        rootPath: group.rootPath,
-        repositoryCount: group.repos.length,
-      });
-    }
+    if (group.origin === "closed-tab-live-tasks") continue;
+    const repo = group.repos[0];
+    if (repo === undefined) continue;
+    entries.push({
+      kind: "repository",
+      value: agentRailScopeValue(group.projectRootKey, repo.repositoryRoot),
+      label: group.label,
+      projectRootKey: group.projectRootKey,
+      repositoryRoot: repo.repositoryRoot,
+      repositoryResolved: repo.repositoryResolved,
+      trust: group.trust,
+      origin: group.origin,
+      rootPath: group.rootPath,
+      repositoryCount: group.repos.length,
+    });
   }
 
   return entries;
 }
 
-export function agentRailScopeValue(projectRootKey: string, repositoryRoot: string): string {
-  return `${projectRootKey}|${repositoryRoot}`;
+export function agentRailScopeValue(projectRootKey: string, _repositoryRoot: string): string {
+  return projectRootKey;
 }
 
 export function agentRailScopeEntryValue(scope: AgentRailScope): string {
@@ -252,7 +253,7 @@ export function agentRailScopeLabel(
 
 function scopeIncludes(scope: AgentRailScope, view: AgentThreadView): boolean {
   if (scope.kind === "all") return true;
-  return view.thread.owner.repositoryRoot === scope.repositoryRoot;
+  return view.thread.owner.rootKey === scope.projectRootKey;
 }
 
 function compareByRecency(left: AgentThreadView, right: AgentThreadView): number {
@@ -307,8 +308,8 @@ export function agentRailOrphanCount(
 ): number {
   let count = 0;
   for (const group of groups) {
+    if (scope.kind === "repository" && group.projectRootKey !== scope.projectRootKey) continue;
     for (const repo of group.repos) {
-      if (scope.kind === "repository" && repo.repositoryRoot !== scope.repositoryRoot) continue;
       count += repo.orphans.length;
     }
   }
@@ -359,7 +360,7 @@ export function agentProjectMenuEntries(
   if (entry.origin === "closed-tab-live-tasks") {
     entries.push(projectMenuEntry("release", "Release project", "release", false));
   }
-  entries.push(projectMenuEntry("filter", filterScopeLabel(entry), "filterToProject", scoped));
+  entries.push(projectMenuEntry("filter", filterScopeLabel(), "filterToProject", scoped));
   entries.push(
     projectMenuEntry(
       "terminal-sessions",
@@ -379,8 +380,7 @@ export function agentProjectRepositoryCountLabel(entry: AgentRailScopeEntry): st
   return `${entry.repositoryCount} repos`;
 }
 
-function filterScopeLabel(entry: AgentRailProjectScopeEntry): string {
-  if (entry.repositoryCount > 1) return "Filter to this repository";
+function filterScopeLabel(): string {
   return "Filter to this project";
 }
 
@@ -397,17 +397,20 @@ export function agentRailNewThreadTarget(
   scope: AgentRailScope,
   entries: ReadonlyArray<AgentRailScopeEntry>,
 ): { readonly projectRootKey: string; readonly repositoryRoot: string } | null {
-  const value = agentRailScopeEntryValue(scope);
   const candidates = entries.filter(
     (entry): entry is Extract<AgentRailScopeEntry, { kind: "repository" }> =>
-      entry.kind === "repository" && (scope.kind === "all" || entry.value === value),
+      entry.kind === "repository" &&
+      (scope.kind === "all" || entry.projectRootKey === scope.projectRootKey),
   );
   const entry =
     candidates.find(
       (candidate) => candidate.trust === "trusted" && candidate.origin !== "closed-tab-live-tasks",
     ) ?? null;
   if (entry === null) return null;
-  return { projectRootKey: entry.projectRootKey, repositoryRoot: entry.repositoryRoot };
+  return {
+    projectRootKey: entry.projectRootKey,
+    repositoryRoot: scope.kind === "repository" ? scope.repositoryRoot : entry.repositoryRoot,
+  };
 }
 
 export function agentJumpSlots(sections: AgentRailSections): ReadonlyMap<string, number> {

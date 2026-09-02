@@ -273,7 +273,7 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(false);
   });
 
-  it("starts a thread with the recommended isolation of the selected repository", () => {
+  it("defaults a dirty repository to local checkout and keeps the safety confirmation", () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({
       agents: surface({
@@ -288,20 +288,14 @@ describe("AgentModeView", () => {
       }),
     });
 
-    expect(host.textContent).toContain("The working tree has uncommitted changes.");
+    expect(pickerTrigger("agent-checkout").textContent).toContain("Local checkout");
+    expect(host.textContent).not.toContain("Running in place can overwrite your work");
 
     typePrompt("Fix the parser");
     submitForm();
 
-    expect(startThread).toHaveBeenCalledWith({
-      projectRootKey: ROOT,
-      repositoryRoot: ROOT,
-      prompt: "Fix the parser",
-      isolation: "worktree",
-      unsafeInPlaceConfirmationKey: null,
-      launch: defaultAgentLaunchOptions("claudeCode"),
-      dangerousLaunchConfirmed: false,
-    });
+    expect(submitButton().disabled).toBe(true);
+    expect(startThread).not.toHaveBeenCalled();
   });
 
   it("blocks an unsafe in-place start until it is confirmed", () => {
@@ -320,7 +314,6 @@ describe("AgentModeView", () => {
     });
 
     typePrompt("Fix the parser");
-    pickOption("agent-checkout", "in-place");
 
     expect(submitButton().disabled).toBe(true);
 
@@ -353,7 +346,7 @@ describe("AgentModeView", () => {
       projectRootKey: ROOT,
       repositoryRoot: NESTED,
       prompt: "Update the router",
-      isolation: "worktree",
+      isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
       launch: defaultAgentLaunchOptions("claudeCode"),
       dangerousLaunchConfirmed: false,
@@ -1113,7 +1106,7 @@ describe("AgentModeView", () => {
       projectRootKey: ROOT,
       repositoryRoot: ROOT,
       prompt: "Fix the parser",
-      isolation: "worktree",
+      isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
       launch: defaultAgentLaunchOptions("claudeCode"),
       dangerousLaunchConfirmed: false,
@@ -1196,7 +1189,7 @@ describe("AgentModeView", () => {
     });
 
     expect(host.querySelector("select#agent-project")).toBeNull();
-    expect(scopeOptionLabels()).toEqual(["All projects", "app", "api-service"]);
+    expect(scopeOptionLabels()).toEqual(["All projects", "app"]);
   });
 
   it("shows no start target when only a closed-tab draining project remains", () => {
@@ -1232,20 +1225,17 @@ describe("AgentModeView", () => {
     );
   });
 
-  it("releases a closed-tab project through the surface callback", () => {
+  it("keeps a closed-tab project out of the project scope menu", () => {
     const onReleaseProject = vi.fn();
     render({
       onReleaseProject,
       projects: [{ ...backgroundProject(), origin: "closed-tab-live-tasks" }],
     });
 
-    chooseScope(OTHER_ROOT, OTHER_ROOT);
-
-    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Tab closed");
-
-    click('[aria-label="Release project api-service"]');
-
-    expect(onReleaseProject).toHaveBeenCalledWith(OTHER_ROOT);
+    expect(pickerTrigger("agent-rail-scope").textContent).toContain("All projects");
+    expect(pickerTrigger("agent-rail-scope").disabled).toBe(true);
+    expect(host.querySelector('[aria-label="Release project api-service"]')).toBeNull();
+    expect(onReleaseProject).not.toHaveBeenCalled();
   });
 
   it("reports the roots beyond the project limit truthfully", () => {
@@ -1334,7 +1324,7 @@ describe("AgentModeView", () => {
       projectRootKey: ROOT,
       repositoryRoot: ROOT,
       prompt: "Fix the parser",
-      isolation: "worktree",
+      isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
       launch: {
         provider: "claudeCode",
@@ -1358,6 +1348,7 @@ describe("AgentModeView", () => {
 
     chooseLaunch("agent-launch-model", "opus");
 
+    act(() => pickerTrigger("agent-launch-mode").click());
     expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
   });
 
@@ -1531,6 +1522,7 @@ describe("AgentModeView", () => {
     chooseScope(OTHER_ROOT, OTHER_ROOT);
 
     expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
+    act(() => pickerTrigger("agent-launch-mode").click());
     expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
   });
 
@@ -2140,7 +2132,7 @@ describe("AgentModeView", () => {
     expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
   });
 
-  it("scopes the rail and the search to the chosen repository", async () => {
+  it("scopes the rail and the search to every repository in the chosen project", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       render({
@@ -2156,7 +2148,7 @@ describe("AgentModeView", () => {
 
       chooseScope(ROOT, NESTED);
 
-      expect(threadOrder()).toEqual(["agt-3"]);
+      expect(threadOrder()).toEqual(["agt-1", "agt-3"]);
 
       typeSearch("parser");
       await act(async () => {
@@ -2168,7 +2160,7 @@ describe("AgentModeView", () => {
         [...host.querySelectorAll('#agent-rail-search-results [role="option"]')].map(
           (option) => option.textContent,
         ),
-      ).toEqual(["Nested parser"]);
+      ).toEqual(["Nested parser", "Refactor the parser"]);
     } finally {
       vi.useRealTimers();
     }
@@ -2611,7 +2603,12 @@ describe("AgentModeView", () => {
   }
 
   function toggleCheckbox(id: string, checked: boolean): void {
-    const element = host.querySelector<HTMLInputElement>(`input#${id}`);
+    let element = host.querySelector<HTMLInputElement>(`input#${id}`);
+    if (element === null) {
+      const pickerId = id === "agent-unsafe-confirm" ? "agent-checkout" : "agent-launch-mode";
+      act(() => host.querySelector<HTMLButtonElement>(`button#${pickerId}`)?.click());
+      element = host.querySelector<HTMLInputElement>(`input#${id}`);
+    }
     expect(element).not.toBeNull();
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")?.set?.call(

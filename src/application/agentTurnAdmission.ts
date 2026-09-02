@@ -46,6 +46,9 @@ export interface AgentTurnAdmissionDependencies {
   readonly getMaxConcurrentAgentTasks: () => number;
   readonly isWorktreeMissing: (threadId: string) => boolean;
   readonly ensureProjectLease?: (projectRootKey: string) => Promise<boolean>;
+  readonly ensureProjectLaunchIdentity?: (
+    projectRootKey: string,
+  ) => Promise<AgentProjectLaunchIdentity | null>;
   readonly launchIdentityForProject: (projectRootKey: string) => AgentProjectLaunchIdentity | null;
   readonly reportError: (source: string, error: unknown) => void;
   readonly setNotice: (notice: AgentTasksNotice | null) => void;
@@ -144,6 +147,7 @@ export function admitStart(
 
 export interface AdmittedFollowUp {
   readonly thread: AgentThread;
+  readonly previousOwnerId: string;
   readonly authority: AgentTaskLaunchAuthority;
   readonly projectRoot: string;
   readonly prompt: string;
@@ -178,12 +182,8 @@ export function admitFollowUp(
   if (
     project === undefined ||
     launchIdentity === null ||
-    launchIdentity.workspaceId !== thread.owner.ownerId ||
     project.rootKey !== thread.owner.rootKey ||
-    project.origin === "closed-tab-live-tasks" ||
-    !project.repositories.some(
-      (repository) => repository.repositoryRoot === thread.owner.repositoryRoot,
-    )
+    project.origin === "closed-tab-live-tasks"
   ) {
     deps.setNotice(warning("This thread's project is no longer open, so it cannot continue."));
     return null;
@@ -202,8 +202,16 @@ export function admitFollowUp(
     deps.setNotice(warning("The worktree for this thread no longer exists."));
     return null;
   }
+  const reboundThread =
+    thread.owner.ownerId === launchIdentity.workspaceId
+      ? thread
+      : {
+          ...thread,
+          owner: { ...thread.owner, ownerId: launchIdentity.workspaceId },
+        };
   return {
-    thread,
+    thread: reboundThread,
+    previousOwnerId: thread.owner.ownerId,
     authority: taskLaunchAuthority(project, launchIdentity),
     projectRoot: project.rootPath,
     prompt,

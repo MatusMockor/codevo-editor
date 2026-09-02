@@ -4,7 +4,6 @@ import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { agentRootOwnerId } from "../domain/agentProject";
 import type {
   AgentTaskGateway,
   AgentTaskOutputEvent,
@@ -549,7 +548,7 @@ describe("useWorkbenchAgents composition", () => {
       .hook()
       .agentProjects.projects.find((project) => project.rootKey === BACKGROUND_ROOT);
     expect(background?.origin).toBe("background-tab");
-    expect(background?.ownerId).toBe(agentRootOwnerId(BACKGROUND_ROOT));
+    expect(background?.ownerId).toBe(`workspace-agent:${BACKGROUND_ROOT}`);
 
     await act(async () => {
       expect(
@@ -564,7 +563,7 @@ describe("useWorkbenchAgents composition", () => {
       ).not.toBeNull();
     });
 
-    expect(harness.startedRequests[0]?.workspaceId).toBe(agentRootOwnerId(BACKGROUND_ROOT));
+    expect(harness.startedRequests[0]?.workspaceId).toBe(`workspace-agent:${BACKGROUND_ROOT}`);
     expect(harness.hook().threads).toHaveLength(1);
     expect(harness.reportError).not.toHaveBeenCalled();
     harness.unmount();
@@ -989,7 +988,10 @@ describe("useWorkbenchAgents composition", () => {
       expect(background?.leaseToken).toBeNull();
     });
     harness.refusedLeaseRoots.delete(BACKGROUND_ROOT);
-    const pendingLease = createDeferred<{ readonly leaseToken: number }>();
+    const pendingLease = createDeferred<{
+      readonly leaseToken: number;
+      readonly workspaceId: string;
+    }>();
     harness.lease.acquireAgentRootLease.mockImplementationOnce(() => pendingLease.promise);
 
     let pending!: ReturnType<WorkbenchAgentsSurface["startThread"]>;
@@ -1008,7 +1010,7 @@ describe("useWorkbenchAgents composition", () => {
       expect(harness.hook().providerManagement.providers.claudeCode.liveTurnCount).toBe(1),
     );
     await act(async () => {
-      pendingLease.resolve({ leaseToken: 101 });
+      pendingLease.resolve({ leaseToken: 101, workspaceId: "workspace-background-agent" });
       await pending;
     });
     harness.unmount();
@@ -1041,7 +1043,7 @@ describe("useWorkbenchAgents composition", () => {
     await act(async () => {
       harness.emitStatus({
         taskId,
-        workspaceId: agentRootOwnerId(BACKGROUND_ROOT),
+        workspaceId: `workspace-agent:${BACKGROUND_ROOT}`,
         repositoryRoot: BACKGROUND_ROOT,
         isolation: "worktree",
         worktreePath,
@@ -1056,7 +1058,7 @@ describe("useWorkbenchAgents composition", () => {
     });
 
     expect(harness.agent.stopAgentTasksForRoot).toHaveBeenCalledWith({
-      workspaceId: agentRootOwnerId(BACKGROUND_ROOT),
+      workspaceId: `workspace-agent:${BACKGROUND_ROOT}`,
       repositoryRoot: BACKGROUND_ROOT,
     });
     await waitForReact(() => {
@@ -1175,7 +1177,11 @@ function renderWorkbenchAgents(options: HarnessOptions) {
         return Promise.reject(new Error("Too many agent project roots are leased."));
       }
       nextLeaseToken += 1;
-      return { leaseToken: nextLeaseToken };
+      return {
+        leaseToken: nextLeaseToken,
+        workspaceId:
+          request.rootPath === ACTIVE_ROOT ? ACTIVE_ID : `workspace-agent:${request.rootPath}`,
+      };
     }),
     releaseAgentRootLease: vi.fn(async (request: { readonly leaseToken: number }) => ({
       kind: "released" as const,
@@ -1252,7 +1258,8 @@ function renderWorkbenchAgents(options: HarnessOptions) {
             selectedPath: rootPath,
             unicodeNormalizationPolicy: "preserved",
             policy: DEFAULT_WORKSPACE_PATH_POLICY,
-            workspaceId: agentRootOwnerId(rootPath),
+            workspaceId:
+              rootPath === ACTIVE_ROOT ? ACTIVE_ID : `workspace-agent:${rootPath}`,
           }),
         }
       : undefined,

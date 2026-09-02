@@ -467,6 +467,8 @@ function authorityBlockedReason(authority: AgentProviderAdmissionAuthority): str
       return null;
     case "disabled":
       return `Enable ${label} before signing in.`;
+    case "initializing":
+      return `Wait for ${label} to finish initializing before signing in.`;
     case "updating":
       return `Wait for the ${label} update to finish before signing in.`;
     case "policyUnavailable":

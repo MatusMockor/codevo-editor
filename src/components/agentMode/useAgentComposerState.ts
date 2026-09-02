@@ -171,16 +171,11 @@ export function useAgentComposerControllerState({
     if (composerRoot === null) return;
     void refreshIsolationStatus(composerRoot);
   }, [composerProbeAuthorityKey, composerRoot, refreshIsolationStatus]);
-  // The current project policy is the render-time authority. The preview hook
-  // intentionally retains async state behind a stable callback, so during a
-  // project switch it can briefly project the previous owner's clean in-place
-  // recommendation. Automatic policy must still fail isolated in that frame;
-  // only an explicit workspace in-place policy or user choice may select the
-  // local checkout.
+  // A new thread starts in the project's local checkout unless the workspace
+  // explicitly requires isolation. Repository status still supplies the
+  // in-place safety guard below, and background projects remain worktree-only.
   const recommended: AgentTaskIsolation =
-    composerProject?.isolationPolicy === "auto" || preview?.recommended.kind === "worktree"
-      ? "worktree"
-      : "in-place";
+    composerProject?.isolationPolicy === "worktree" ? "worktree" : "in-place";
   const chosen: AgentTaskIsolation =
     isolationChoice !== null && isolationChoice.repositoryRoot === composerRoot
       ? isolationChoice.isolation
@@ -211,6 +206,7 @@ export function useAgentComposerControllerState({
 
   const submissionBlocked =
     agents.dispatching ||
+    (composerMode.kind === "followUp" && composerMode.blockedReason !== null) ||
     (selectedThread === null &&
       (target === null ||
         (preview?.repositoryStatus !== undefined && preview.repositoryStatus.kind !== "ready") ||
@@ -255,6 +251,7 @@ export function useAgentComposerControllerState({
   const submit = useCallback(
     async (prompt: string, submission: AgentComposerSubmission) => {
       setDangerousConfirmed(false);
+      if (submissionBlocked) return false;
       const authority = submissionAuthority;
       if (authority === null) return false;
       switch (authority.kind) {
@@ -295,6 +292,7 @@ export function useAgentComposerControllerState({
       onThreadStarted,
       sendFollowUp,
       startThread,
+      submissionBlocked,
       submissionAuthority,
     ],
   );
@@ -348,7 +346,8 @@ export function useAgentComposerControllerState({
     dispatching: agents.dispatching,
     guard,
     isolation,
-    isolationReason: importedThreadCaption(selectedThread) ?? isolationStatusCaption(preview),
+    isolationReason:
+      importedThreadCaption(selectedThread) ?? isolationStatusCaption(preview, isolation),
     launch: composerLaunch,
     launchProvider: agentCliKind,
     mode: composerMode,
@@ -377,9 +376,14 @@ export function useAgentComposerControllerState({
 
 function isolationStatusCaption(
   preview: ReturnType<AgentComposerSurface["isolationPreview"]> | null,
+  isolation: AgentTaskIsolation,
 ) {
   if (preview === null) return null;
-  if (preview.repositoryStatus === undefined) return agentIsolationReasonLabel(preview.recommended);
+  if (preview.repositoryStatus === undefined) {
+    return preview.recommended.kind === isolation
+      ? agentIsolationReasonLabel(preview.recommended)
+      : null;
+  }
   switch (preview.repositoryStatus.kind) {
     case "checking":
       return "Checking repository...";
@@ -387,7 +391,9 @@ function isolationStatusCaption(
     case "unavailable":
       return preview.repositoryStatus.message;
     case "ready":
-      return agentIsolationReasonLabel(preview.recommended);
+      return preview.recommended.kind === isolation
+        ? agentIsolationReasonLabel(preview.recommended)
+        : null;
   }
 }
 
@@ -421,12 +427,14 @@ export function useAgentComposerPromptState(
   const submit = useCallback(
     (submission: AgentComposerSubmission) => {
       const submittedPrompt = prompt;
-      const submittedRevision = promptRevisionRef.current;
+      const clearedRevision = promptRevisionRef.current + 1;
+      promptRevisionRef.current = clearedRevision;
+      setPrompt("");
       void controller.submit(submittedPrompt, submission).then((submitted) => {
-        if (!submitted) return;
-        if (promptRevisionRef.current !== submittedRevision) return;
+        if (submitted) return;
+        if (promptRevisionRef.current !== clearedRevision) return;
         promptRevisionRef.current += 1;
-        setPrompt("");
+        setPrompt(submittedPrompt);
       });
     },
     [controller, prompt],
@@ -548,18 +556,17 @@ function useComposerMode(
   agentCliKind: AgentCliKind,
 ): AgentComposerMode {
   const { agentCliConfigured, liveTaskCount, maxConcurrentAgentTasks } = agents;
-  const providerConfigured = selectedThread === null ? agentCliConfigured : true;
   return useMemo<AgentComposerMode>(() => {
     if (selectedThread === null) return { kind: "new" };
     return {
       kind: "followUp",
       threadTitle: agentThreadDisplayTitle(selectedThread.thread),
       blockedReason: agentFollowUpBlockedReason(selectedThread, {
-        agentCliConfigured: providerConfigured,
+        agentCliConfigured,
         agentCliKind,
         liveTaskCount,
         maxConcurrentAgentTasks,
       }),
     };
-  }, [agentCliKind, liveTaskCount, maxConcurrentAgentTasks, providerConfigured, selectedThread]);
+  }, [agentCliConfigured, agentCliKind, liveTaskCount, maxConcurrentAgentTasks, selectedThread]);
 }

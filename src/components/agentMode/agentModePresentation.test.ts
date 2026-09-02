@@ -30,6 +30,7 @@ import {
   agentThreadTimeLabel,
   agentThreadTone,
   agentTurnProjection,
+  agentTurnSubagentSummary,
   agentTurnStatusLabel,
   agentShipConflictFiles,
   agentShipAvailability,
@@ -243,6 +244,24 @@ describe("agentModePresentation", () => {
     ]);
 
     expect(projection.items[0]).toMatchObject({ kind: "tool", outcome: null });
+  });
+
+  it("counts subagent spawn tools and derives their current outcome", () => {
+    expect(
+      agentTurnSubagentSummary([
+        { kind: "toolCall", toolId: "agent-1", name: "Task", inputSummary: "Review UI" },
+        { kind: "toolCall", toolId: "agent-2", name: "Agent", inputSummary: "Run tests" },
+        { kind: "toolCall", toolId: "agent-3", name: "spawn_agent", inputSummary: "Audit" },
+        { kind: "toolCall", toolId: "read-1", name: "Read", inputSummary: "a.ts" },
+        { kind: "toolResult", toolId: "agent-1", outputSummary: "done", isError: false },
+        { kind: "toolResult", toolId: "agent-2", outputSummary: "failed", isError: true },
+      ]),
+    ).toEqual({ total: 3, running: 1, completed: 1, failed: 1 });
+    expect(
+      agentTurnSubagentSummary([
+        { kind: "toolCall", toolId: "read-1", name: "Read", inputSummary: "a.ts" },
+      ]),
+    ).toBeNull();
   });
 
   it("renders a relative start time", () => {

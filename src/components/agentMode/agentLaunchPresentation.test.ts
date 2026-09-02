@@ -26,6 +26,7 @@ import {
   agentLaunchModeHint,
   agentLaunchModeLabel,
   agentLaunchModelChoices,
+  agentLaunchModelHint,
   agentLaunchModelLabel,
   agentLaunchModelMeta,
   agentLaunchSupportsEffort,
@@ -105,10 +106,18 @@ describe("agentLaunchPresentation", () => {
         mode: "default",
         effort: "default",
       }),
-    ).toBe("Claude (default)");
+    ).toBe("Auto (Claude Code)");
     expect(agentLaunchModelLabel({ provider: "codex", model: "default", mode: "default" })).toBe(
-      "Codex (default)",
+      "Auto (Codex)",
     );
+    expect(
+      agentLaunchModelHint({
+        provider: "claudeCode",
+        model: "default",
+        mode: "default",
+        effort: "default",
+      }),
+    ).toBe("No model override. Claude CLI chooses the model from its settings.");
     expect(
       agentLaunchModeLabel({
         provider: "claudeCode",

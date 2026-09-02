@@ -1242,9 +1242,9 @@ function fakeAgentRootLeaseGateway(): NonNullable<
 > {
   let nextToken = 0;
   return {
-    acquireAgentRootLease: async () => {
+    acquireAgentRootLease: async (request) => {
       nextToken += 1;
-      return { leaseToken: nextToken };
+      return { leaseToken: nextToken, workspaceId: `workspace:${request.rootPath}` };
     },
     releaseAgentRootLease: async (request) => ({
       kind: "released",

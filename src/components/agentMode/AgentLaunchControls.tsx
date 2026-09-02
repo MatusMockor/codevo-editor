@@ -1,4 +1,4 @@
-import { Lock, LockOpen, TriangleAlert } from "lucide-react";
+import { Lock, LockOpen } from "lucide-react";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
@@ -12,7 +12,6 @@ import {
   agentLaunchEffortValue,
   agentLaunchModeChoices,
   agentLaunchModeHint,
-  agentLaunchModeLabel,
   agentLaunchModelHint,
   agentLaunchSupportsEffort,
   agentLaunchTone,
@@ -37,17 +36,26 @@ export interface AgentLaunchControlsProps {
   readonly favorites: AgentModelFavorites;
   readonly providerEnabled?: Readonly<Record<AgentCliKind, boolean>> | null;
   readonly providerManagement?: AgentProviderManagementSurface | null;
+  readonly dangerousConfirmed?: boolean;
   onLaunchChange(next: AgentLaunchOptions): void;
+  onDangerousConfirmedChange?(confirmed: boolean): void;
 }
 
 export function AgentLaunchControls({
   disabled,
+  dangerousConfirmed = false,
   favorites,
   launch,
   onLaunchChange,
+  onDangerousConfirmedChange = () => undefined,
   providerEnabled = null,
   providerManagement = null,
 }: AgentLaunchControlsProps) {
+  const modeChoices = agentLaunchModeChoices(launch.provider);
+  const dangerousChoice = modeChoices.find((choice) => choice.tone === "danger") ?? null;
+  const dangerousLaunch =
+    dangerousChoice === null ? null : agentLaunchWithMode(launch, dangerousChoice.value);
+  const dangerNotice = dangerousLaunch === null ? null : agentLaunchDangerNotice(dangerousLaunch);
   return (
     <div className="agent-composer__launch">
       <AgentModelPicker
@@ -90,13 +98,26 @@ export function AgentLaunchControls({
       <AgentLaunchDivider />
       <AgentPickerMenu
         align="start"
+        confirmation={
+          dangerNotice === null
+            ? null
+            : {
+                id: DANGER_ID,
+                value: dangerousChoice?.value ?? launch.mode,
+                checked: dangerousConfirmed,
+                disabled,
+                label: agentLaunchDangerConfirmLabel(dangerousLaunch ?? launch),
+                description: dangerNotice,
+                onChange: onDangerousConfirmedChange,
+              }
+        }
         describedBy={`${MODE_ID}-hint`}
         disabled={disabled}
         icon={accessIcon(agentLaunchAccess(launch))}
         id={MODE_ID}
         label="Agent permission mode"
         onChange={(value) => onLaunchChange(agentLaunchWithMode(launch, value))}
-        options={agentLaunchModeChoices(launch.provider).map(toOption)}
+        options={modeChoices.map(toOption)}
         prefix={null}
         tone={agentLaunchTone(launch)}
         value={launch.mode}
@@ -116,41 +137,6 @@ function AgentLaunchDivider() {
 function accessIcon(access: AgentLaunchAccess) {
   if (access === "open") return <LockOpen size={14} />;
   return <Lock size={14} />;
-}
-
-export function AgentLaunchWarning({
-  confirmed,
-  disabled = false,
-  launch,
-  onConfirmedChange,
-}: {
-  readonly launch: AgentLaunchOptions;
-  readonly confirmed: boolean;
-  readonly disabled?: boolean;
-  onConfirmedChange(confirmed: boolean): void;
-}) {
-  const notice = agentLaunchDangerNotice(launch);
-  if (notice === null) return null;
-
-  return (
-    <div className="agent-composer__danger" role="alert">
-      <span className="agent-composer__danger-title">
-        <TriangleAlert aria-hidden="true" size={12} />
-        {agentLaunchModeLabel(launch)} removes the safety checks
-      </span>
-      <p className="agent-composer__danger-body">{notice}</p>
-      <label className="agent-composer__checkbox" htmlFor={DANGER_ID}>
-        <input
-          checked={confirmed}
-          disabled={disabled}
-          id={DANGER_ID}
-          onChange={(event) => onConfirmedChange(event.target.checked)}
-          type="checkbox"
-        />
-        {agentLaunchDangerConfirmLabel(launch)}
-      </label>
-    </div>
-  );
 }
 
 function toOption(choice: AgentLaunchChoice): AgentPickerOption {

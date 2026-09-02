@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   MAX_TERMINAL_TABS,
   createTerminalTab,
@@ -39,6 +40,7 @@ export interface TerminalTabsPanelProps {
   readonly shellIntegrationEnabled: boolean;
   readonly terminalGateway: TerminalGateway;
   readonly terminalTheme: TerminalTheme;
+  readonly toolbarHost?: HTMLElement | null;
   readonly providerSignIn?: AgentProviderSignInSurface;
   onActiveCwdChange?(cwd: string | null): void;
   onActiveProfileChange?(profileId: string | null): void;
@@ -47,19 +49,7 @@ export interface TerminalTabsPanelProps {
 }
 
 const styles: Record<string, CSSProperties> = {
-  action: { background: "transparent", border: 0, color: "inherit", padding: 4 },
-  close: { background: "transparent", border: 0, color: "inherit", padding: 2 },
   shell: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 },
-  tab: {
-    alignItems: "center",
-    background: "transparent",
-    border: 0,
-    color: "inherit",
-    display: "inline-flex",
-    gap: 4,
-    padding: "4px 7px",
-  },
-  tablist: { alignItems: "center", display: "flex", flex: "0 0 auto", overflowX: "auto" },
   viewport: { flex: "1 1 auto", minHeight: 0 },
 };
 
@@ -235,57 +225,69 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
     }
   }, [props.ownerKey, props.providerSignIn, props.providerSignIn?.terminalIntents, tabs.mruTabIds]);
 
+  const toolbar = (
+    <div className="terminal-tabs-toolbar">
+      <div
+        aria-label="Terminal sessions"
+        className="terminal-tabs-toolbar__sessions"
+        role="tablist"
+      >
+        {tabs.tabs.map((tab, index) => {
+          const selected = tab.id === tabs.activeTabId;
+          return (
+            <span className="terminal-tabs-toolbar__session" key={tab.id} role="presentation">
+              <button
+                aria-controls={`${tab.id}-panel`}
+                aria-selected={selected}
+                id={`${tab.id}-tab`}
+                onClick={() => activate(tab.id)}
+                onKeyDown={(event) => onTabKeyDown(event, index)}
+                ref={(button) => {
+                  if (button) tabButtonRefs.current.set(tab.id, button);
+                  else tabButtonRefs.current.delete(tab.id);
+                }}
+                className="terminal-tabs-toolbar__tab"
+                role="tab"
+                tabIndex={selected ? 0 : -1}
+                type="button"
+              >
+                {tab.title}
+              </button>
+              <button
+                aria-label={`Close ${tab.title}`}
+                disabled={
+                  tabs.tabs.length === 1 ||
+                  signInTabIsAwaitingSession(runtime.get(tab.id), props.providerSignIn)
+                }
+                className="terminal-tabs-toolbar__close"
+                onClick={() => close(tab.id)}
+                type="button"
+              >
+                <X aria-hidden="true" size={12} />
+              </button>
+            </span>
+          );
+        })}
+      </div>
+      <button
+        aria-label="New Terminal"
+        className="terminal-tabs-toolbar__new"
+        disabled={tabs.tabs.length >= MAX_TERMINAL_TABS}
+        onClick={create}
+        type="button"
+      >
+        <Plus aria-hidden="true" size={14} />
+      </button>
+    </div>
+  );
+
   return (
     <section aria-label="Terminal tabs" style={styles.shell}>
-      <div style={styles.tablist}>
-        <div aria-label="Terminal sessions" role="tablist" style={{ display: "flex" }}>
-          {tabs.tabs.map((tab, index) => {
-            const selected = tab.id === tabs.activeTabId;
-            return (
-              <span key={tab.id} role="presentation">
-                <button
-                  aria-controls={`${tab.id}-panel`}
-                  aria-selected={selected}
-                  id={`${tab.id}-tab`}
-                  onClick={() => activate(tab.id)}
-                  onKeyDown={(event) => onTabKeyDown(event, index)}
-                  ref={(button) => {
-                    if (button) tabButtonRefs.current.set(tab.id, button);
-                    else tabButtonRefs.current.delete(tab.id);
-                  }}
-                  role="tab"
-                  style={styles.tab}
-                  tabIndex={selected ? 0 : -1}
-                  type="button"
-                >
-                  {tab.title}
-                </button>
-                <button
-                  aria-label={`Close ${tab.title}`}
-                  disabled={
-                    tabs.tabs.length === 1 ||
-                    signInTabIsAwaitingSession(runtime.get(tab.id), props.providerSignIn)
-                  }
-                  onClick={() => close(tab.id)}
-                  style={styles.close}
-                  type="button"
-                >
-                  <X aria-hidden="true" size={12} />
-                </button>
-              </span>
-            );
-          })}
-        </div>
-        <button
-          aria-label="New Terminal"
-          disabled={tabs.tabs.length >= MAX_TERMINAL_TABS}
-          onClick={create}
-          style={styles.action}
-          type="button"
-        >
-          <Plus aria-hidden="true" size={14} />
-        </button>
-      </div>
+      {props.toolbarHost === undefined
+        ? toolbar
+        : props.toolbarHost
+          ? createPortal(toolbar, props.toolbarHost)
+          : null}
       <div style={styles.viewport}>
         {tabs.tabs.map((tab) => {
           const metadata = runtime.get(tab.id);

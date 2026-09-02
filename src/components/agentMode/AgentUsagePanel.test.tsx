@@ -38,6 +38,60 @@ describe("AgentUsagePanel", () => {
     expect(host.textContent?.toLowerCase()).not.toContain("cost");
   });
 
+  it("renders provider account limits separately from local token activity", () => {
+    act(() =>
+      root.render(
+        <AgentUsagePanel
+          accountUsage={{
+            claudeCode: {
+              kind: "ready",
+              snapshot: {
+                provider: "claudeCode",
+                fetchedAtEpochMs: NOW,
+                windows: [
+                  {
+                    id: "claude-session",
+                    label: "Current session",
+                    usedPercent: 6,
+                    windowDurationMinutes: null,
+                    resetsAtEpochMs: null,
+                    resetsLabel: "Sep 2 at 10:40pm",
+                  },
+                ],
+              },
+            },
+            codex: {
+              kind: "ready",
+              snapshot: {
+                provider: "codex",
+                fetchedAtEpochMs: NOW,
+                windows: [
+                  {
+                    id: "codex-weekly",
+                    label: "Codex · Weekly limit",
+                    usedPercent: 11,
+                    windowDurationMinutes: 10_080,
+                    resetsAtEpochMs: NOW + 60_000,
+                    resetsLabel: null,
+                  },
+                ],
+              },
+            },
+          }}
+          nowEpochMs={NOW}
+          projectLabels={new Map()}
+          threads={[]}
+        />,
+      ),
+    );
+
+    expect(host.textContent).toContain("Account limits");
+    expect(host.textContent).toContain("Current session6% used");
+    expect(host.textContent).toContain("Codex · Weekly limit11% used");
+    expect(host.textContent).toContain("Local activity");
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2);
+  });
+
   it("switches periods accessibly and excludes turns outside the selected window", () => {
     const old = thread("claudeCode", "project-a", 1, 2, NOW - 10 * 24 * 60 * 60 * 1_000);
     render([thread("claudeCode", "project-a", 5, 7), old]);

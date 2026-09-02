@@ -288,6 +288,7 @@ describe("BottomPanel terminal links", () => {
       {
         activeView: "problems",
         debug: <div aria-label="Debug" />,
+        hasJsWorkspace: true,
         notices: [
           {
             id: "problem",
@@ -304,8 +305,11 @@ describe("BottomPanel terminal links", () => {
       host.querySelectorAll<HTMLButtonElement>(".bottom-panel-tabs > [role='tab']"),
       (button) => button.textContent,
     );
-    expect(labels).toEqual(["Terminal", "Search"]);
+    expect(labels).toEqual(["Terminal"]);
     expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Terminal");
+    const terminalSession = host.querySelector('[aria-label="Terminal sessions"]');
+    expect(terminalSession?.closest(".bottom-panel-header")).not.toBeNull();
+    expect(host.querySelector(".bottom-panel-body > .terminal-tabs-toolbar")).toBeNull();
     expect(host.querySelector('[aria-label="Problems"]')).toBeNull();
     expect(host.querySelector('[aria-label="Debug"]')).toBeNull();
     expect(activeTerminalProps().isActive).toBe(true);

@@ -6,7 +6,7 @@ export function agentThreadsInScope(
   scope: AgentRailScope,
 ): ReadonlyArray<AgentThreadView> {
   if (scope.kind === "all") return views;
-  return views.filter((view) => view.thread.owner.repositoryRoot === scope.repositoryRoot);
+  return views.filter((view) => view.thread.owner.rootKey === scope.projectRootKey);
 }
 
 export function orderedRailThreadIds(

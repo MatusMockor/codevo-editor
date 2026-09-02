@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_PROVIDER_DISABLED_NOTICE,
+  AGENT_PROVIDER_INITIALIZING_NOTICE,
   AGENT_PROVIDER_NOT_CONFIGURED_NOTICE,
   AGENT_PROVIDER_REGISTRATION_FAILED_NOTICE,
   AGENT_PROVIDER_UNREGISTERED_NOTICE,
@@ -25,6 +26,11 @@ describe("agent provider admission authority", () => {
         { provider: "claudeCode", revision: 4, disposition: { kind: "disabled" } },
         "disabled",
         AGENT_PROVIDER_DISABLED_NOTICE,
+      ],
+      [
+        { provider: "claudeCode", revision: 4, disposition: { kind: "initializing" } },
+        "initializing",
+        AGENT_PROVIDER_INITIALIZING_NOTICE,
       ],
       [{ ...READY, disposition: { kind: "updating" } }, "updating", AGENT_PROVIDER_UPDATING_NOTICE],
       [

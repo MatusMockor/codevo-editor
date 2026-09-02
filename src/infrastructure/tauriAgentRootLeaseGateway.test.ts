@@ -12,12 +12,13 @@ describe("TauriAgentRootLeaseGateway", () => {
   it("forwards typed acquire and release requests", async () => {
     const invokeCommand = vi
       .fn<InvokeAgentRootLeaseCommand>()
-      .mockResolvedValueOnce({ leaseToken: 7 })
+      .mockResolvedValueOnce({ leaseToken: 7, workspaceId: "ws-agent-root" })
       .mockResolvedValueOnce({ kind: "released", leaseToken: 7 });
     const gateway = new TauriAgentRootLeaseGateway(invokeCommand, available);
 
     await expect(gateway.acquireAgentRootLease({ rootPath: "/repo" })).resolves.toEqual({
       leaseToken: 7,
+      workspaceId: "ws-agent-root",
     });
     await expect(
       gateway.releaseAgentRootLease({ rootPath: "/repo", leaseToken: 7 }),

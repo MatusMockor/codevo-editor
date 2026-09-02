@@ -84,6 +84,34 @@ describe("AgentPickerMenu", () => {
     expect(document.activeElement).toBe(trigger());
   });
 
+  it("keeps a guarded choice open and confirms it inside the picker", () => {
+    const onChange = vi.fn();
+    const onConfirmedChange = vi.fn();
+    const confirmation = {
+      id: "picker-confirm",
+      value: "bypass",
+      checked: false,
+      disabled: false,
+      label: "Accept the risk",
+      description: "Skips every safety check.",
+      onChange: onConfirmedChange,
+    };
+    render({ confirmation, onChange });
+
+    click(trigger());
+    click(options()[2]);
+
+    expect(onChange).toHaveBeenCalledWith("bypass");
+    expect(host.querySelector('[role="listbox"]')).not.toBeNull();
+
+    render({ confirmation, onChange, value: "bypass" });
+    expect(host.textContent).toContain("Accept the risk");
+    const checkbox = host.querySelector<HTMLInputElement>("#picker-confirm");
+    expect(checkbox).not.toBeNull();
+    click(checkbox);
+    expect(onConfirmedChange).toHaveBeenCalledWith(true);
+  });
+
   it("does not report the option that is already selected", () => {
     const onChange = vi.fn();
     render({ onChange, value: "plan" });

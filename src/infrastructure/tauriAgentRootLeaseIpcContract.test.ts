@@ -16,11 +16,13 @@ describe("agent root lease IPC command names", () => {
 
 describe("invokeAcquireAgentRootLeaseIpc", () => {
   it("sends the validated request and parses the receipt", async () => {
-    const invokeCommand = vi.fn<InvokeAgentRootLeaseCommand>().mockResolvedValue({ leaseToken: 7 });
+    const invokeCommand = vi
+      .fn<InvokeAgentRootLeaseCommand>()
+      .mockResolvedValue({ leaseToken: 7, workspaceId: "ws-agent-root" });
 
     await expect(
       invokeAcquireAgentRootLeaseIpc(invokeCommand, { rootPath: "/repo" }),
-    ).resolves.toEqual({ leaseToken: 7 });
+    ).resolves.toEqual({ leaseToken: 7, workspaceId: "ws-agent-root" });
     expect(invokeCommand).toHaveBeenCalledWith("acquire_agent_root_lease", {
       request: { rootPath: "/repo" },
     });
@@ -48,10 +50,11 @@ describe("invokeAcquireAgentRootLeaseIpc", () => {
       null,
       {},
       { leaseToken: 0 },
+      { leaseToken: 1, workspaceId: "" },
       { leaseToken: -1 },
       { leaseToken: 1.5 },
       { leaseToken: "1" },
-      { leaseToken: 1, extra: true },
+      { leaseToken: 1, workspaceId: "ws-agent-root", extra: true },
     ];
 
     for (const receipt of rejected) {

@@ -86,6 +86,8 @@ export interface AgentThreadsDependencies {
   readonly getDirtyEditorDocumentCount: (repositoryRoot: string) => number;
   readonly onProjectDispatchTrustRejected?: (projectRootKey: string) => void;
   readonly ensureProjectLease?: (projectRootKey: string) => Promise<boolean>;
+  readonly ensureProjectLaunchIdentity?:
+    AgentTurnAdmissionDependencies["ensureProjectLaunchIdentity"];
   readonly launchIdentityForProject: AgentTurnAdmissionDependencies["launchIdentityForProject"];
   readonly reportError: (source: string, error: unknown) => void;
   readonly openAgentSettings: () => void;
@@ -248,6 +250,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     onTurnTerminal,
     onProjectDispatchTrustRejected: dependencies.onProjectDispatchTrustRejected,
     ensureProjectLease: dependencies.ensureProjectLease,
+    ensureProjectLaunchIdentity: dependencies.ensureProjectLaunchIdentity,
     launchIdentityForProject: dependencies.launchIdentityForProject,
     reportError,
     setNotice,

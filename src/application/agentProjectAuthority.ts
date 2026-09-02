@@ -139,6 +139,28 @@ export function isCurrentTaskLaunchAuthority(
   );
 }
 
+export function isCurrentThreadLaunchAuthority(
+  dependenciesRef: AgentLaunchProjectsRef,
+  mountedRef: MountedRef,
+  authority: AgentTaskLaunchAuthority,
+): boolean {
+  if (!mountedRef.current) return false;
+  const project = projectByRootKey(dependenciesRef.current.projects, authority.rootKey);
+  if (project === undefined || project.generation !== authority.generation) return false;
+  if (
+    project.ownerId !== authority.ownerId &&
+    project.runtimeOwnerIds?.includes(authority.ownerId) !== true
+  ) {
+    return false;
+  }
+  const identity = dependenciesRef.current.launchIdentityForProject(authority.rootKey);
+  return (
+    identity !== null &&
+    identity.workspaceId === authority.workspaceId &&
+    identity.generation === authority.workspaceGeneration
+  );
+}
+
 export async function tryOrReport<TValue>(
   operation: () => Promise<TValue>,
   dependenciesRef: AgentErrorReporterRef,

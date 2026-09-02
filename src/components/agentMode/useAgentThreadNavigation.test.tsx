@@ -77,7 +77,7 @@ describe("useAgentThreadNavigation", () => {
     expect(current().selectedThreadId).toBe("agt-3");
   });
 
-  it("scopes the rail and derives the new-thread target from the scope", () => {
+  it("scopes the rail to the project and preserves the requested new-thread repository", () => {
     const nested = view("agt-nested", FIXTURE_NESTED_ROOT);
     render(threadsSurfaceFixture({ threads: [view("agt-1"), nested] }));
 
@@ -100,7 +100,7 @@ describe("useAgentThreadNavigation", () => {
       repositoryRoot: FIXTURE_NESTED_ROOT,
     });
     act(() => current().commands.jumpToThread(1));
-    expect(current().selectedThreadId).toBe("agt-nested");
+    expect(current().selectedThreadId).toBe("agt-1");
   });
 
   it("keeps a removed repository scope bound to its original owner generation", () => {

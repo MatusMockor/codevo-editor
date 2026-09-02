@@ -76,6 +76,13 @@ export interface AgentToolOutcome {
   readonly isError: boolean;
 }
 
+export interface AgentSubagentSummary {
+  readonly total: number;
+  readonly running: number;
+  readonly completed: number;
+  readonly failed: number;
+}
+
 export type AgentTurnItem =
   | {
       readonly kind: "assistantText";
@@ -260,6 +267,39 @@ export function agentTurnProjection(events: ReadonlyArray<AgentTurnEvent>): Agen
   }
 
   return { items, rawLines, hiddenCount };
+}
+
+export function agentTurnSubagentSummary(
+  events: ReadonlyArray<AgentTurnEvent>,
+): AgentSubagentSummary | null {
+  const results = new Map<string, boolean>();
+  for (const event of events) {
+    if (event.kind === "toolResult" && !results.has(event.toolId)) {
+      results.set(event.toolId, event.isError);
+    }
+  }
+
+  const seen = new Set<string>();
+  let running = 0;
+  let completed = 0;
+  let failed = 0;
+  for (const event of events) {
+    if (event.kind !== "toolCall" || !isSubagentSpawnTool(event.name) || seen.has(event.toolId)) {
+      continue;
+    }
+    seen.add(event.toolId);
+    const result = results.get(event.toolId);
+    if (result === undefined) running += 1;
+    else if (result) failed += 1;
+    else completed += 1;
+  }
+
+  const total = running + completed + failed;
+  return total === 0 ? null : { total, running, completed, failed };
+}
+
+function isSubagentSpawnTool(name: string): boolean {
+  return name === "Task" || name === "Agent" || name === "SpawnAgent" || name === "spawn_agent";
 }
 
 interface TurnItemAppend {

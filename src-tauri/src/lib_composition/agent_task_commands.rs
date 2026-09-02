@@ -22,7 +22,11 @@ use crate::run_blocking_command;
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_registry::{WorkspaceId, WorkspaceRegistry};
 use agent_root_lease::{
-    AgentRootLeaseRegistry, AgentRootLeaseReleaseDisposition, MAX_AGENT_ROOT_LEASE_TOKEN,
+    AgentRootLeaseRegistry, AgentRootLeaseReleaseDisposition, RegisteredAgentRootLease,
+    MAX_AGENT_ROOT_LEASE_TOKEN,
+};
+use agent_root_workspace_registration::{
+    acquire_registered_workspace_lease, release_registered_workspace_lease,
 };
 #[cfg(test)]
 use agent_task_start_authority::revalidate_agent_task_project_authority;
@@ -37,6 +41,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 #[path = "../agent_root_lease.rs"]
 pub(crate) mod agent_root_lease;
+#[path = "agent_root_workspace_registration.rs"]
+mod agent_root_workspace_registration;
 #[path = "agent_task_start_authority.rs"]
 mod agent_task_start_authority;
 
@@ -375,6 +381,7 @@ pub(crate) struct AgentRootLeaseReleaseRequest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentRootLeaseReceipt {
     lease_token: u64,
+    workspace_id: WorkspaceId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -440,6 +447,7 @@ fn ensure_agent_root_lease_token_bounds(lease_token: u64) -> Result<(), String> 
 
 #[tauri::command]
 pub(crate) async fn acquire_agent_root_lease(
+    app: AppHandle,
     request: AgentRootLeaseRequest,
     trust: GitTrustState<'_>,
     leases: State<'_, Arc<AgentRootLeaseRegistry>>,
@@ -450,34 +458,43 @@ pub(crate) async fn acquire_agent_root_lease(
     let leases = Arc::clone(&leases);
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&request.root_path)?;
-        let lease_token = leases.acquire(&root)?;
-
-        Ok(AgentRootLeaseReceipt { lease_token })
+        let registry = app.state::<WorkspaceRegistry>();
+        acquire_registered_workspace_lease(&root, &registry, &leases).map(agent_root_lease_receipt)
     })
     .await
 }
 
 #[tauri::command]
 pub(crate) fn release_agent_root_lease(
+    registry: State<'_, WorkspaceRegistry>,
     request: AgentRootLeaseReleaseRequest,
     leases: State<'_, Arc<AgentRootLeaseRegistry>>,
 ) -> Result<AgentRootLeaseReleaseResult, String> {
-    release_agent_root_lease_for_registry(request, leases.inner().as_ref())
+    release_agent_root_lease_for_registry(request, leases.inner().as_ref(), Some(&registry))
 }
 
 fn release_agent_root_lease_for_registry(
     request: AgentRootLeaseReleaseRequest,
     leases: &AgentRootLeaseRegistry,
+    workspace_registry: Option<&WorkspaceRegistry>,
 ) -> Result<AgentRootLeaseReleaseResult, String> {
     ensure_agent_root_lease_bounds(&request.root_path)?;
     ensure_agent_root_lease_token_bounds(request.lease_token)?;
     let root = workspace_root_for_disposal(&request.root_path);
-    let disposition = leases.release(&root, request.lease_token);
+    let disposition =
+        release_registered_workspace_lease(&root, request.lease_token, leases, workspace_registry)?;
 
     Ok(AgentRootLeaseReleaseResult::from_disposition(
         request.lease_token,
         disposition,
     ))
+}
+
+fn agent_root_lease_receipt(lease: RegisteredAgentRootLease) -> AgentRootLeaseReceipt {
+    AgentRootLeaseReceipt {
+        lease_token: lease.lease_token,
+        workspace_id: lease.registration.workspace_id,
+    }
 }
 
 pub(crate) fn stop_agent_tasks_on_dispose(app: &AppHandle, root: &Path) {
@@ -511,6 +528,9 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
+
+    #[path = "agent_task_commands_agent_root_lease_tests.rs"]
+    mod agent_root_workspace_registration_tests;
 
     struct TempWorkspace {
         root: PathBuf,
@@ -1473,52 +1493,6 @@ mod tests {
     }
 
     #[test]
-    fn agent_root_lease_wire_shape_is_camel_case() {
-        let request = serde_json::from_str::<AgentRootLeaseReleaseRequest>(
-            "{\"rootPath\":\"/workspace/alpha\",\"leaseToken\":7}",
-        )
-        .expect("deserialize release request");
-        let receipt = serde_json::to_string(&AgentRootLeaseReceipt { lease_token: 7 })
-            .expect("serialize receipt");
-        let released = serde_json::to_string(&AgentRootLeaseReleaseResult::from_disposition(
-            request.lease_token,
-            AgentRootLeaseReleaseDisposition::Released,
-        ))
-        .expect("serialize released result");
-
-        assert_eq!(request.root_path, "/workspace/alpha");
-        assert_eq!(request.lease_token, 7);
-        assert_eq!(receipt, "{\"leaseToken\":7}");
-        assert_eq!(released, "{\"kind\":\"released\",\"leaseToken\":7}");
-    }
-
-    #[test]
-    fn agent_root_lease_release_result_echoes_the_request_token_for_every_disposition() {
-        let token = MAX_AGENT_ROOT_LEASE_TOKEN;
-        let cases = [
-            (
-                AgentRootLeaseReleaseDisposition::Released,
-                "{\"kind\":\"released\",\"leaseToken\":9007199254740991}",
-            ),
-            (
-                AgentRootLeaseReleaseDisposition::NotHeld,
-                "{\"kind\":\"notHeld\",\"leaseToken\":9007199254740991}",
-            ),
-            (
-                AgentRootLeaseReleaseDisposition::ForeignOwner,
-                "{\"kind\":\"foreignOwner\",\"leaseToken\":9007199254740991}",
-            ),
-        ];
-
-        for (disposition, expected) in cases {
-            let result = AgentRootLeaseReleaseResult::from_disposition(token, disposition);
-            let serialized = serde_json::to_string(&result).expect("serialize release result");
-
-            assert_eq!(serialized, expected);
-        }
-    }
-
-    #[test]
     fn release_agent_root_lease_facade_returns_exact_closed_dispositions() {
         let workspace = TempWorkspace::create("lease-release-facade");
         let registry = AgentRootLeaseRegistry::new();
@@ -1528,12 +1502,12 @@ mod tests {
             lease_token: first_token,
         };
 
-        let released = release_agent_root_lease_for_registry(first_request(), &registry)
+        let released = release_agent_root_lease_for_registry(first_request(), &registry, None)
             .expect("release exact owner");
-        let not_held = release_agent_root_lease_for_registry(first_request(), &registry)
+        let not_held = release_agent_root_lease_for_registry(first_request(), &registry, None)
             .expect("release absent root");
         let second_token = registry.acquire(&workspace.root).expect("second acquire");
-        let foreign_owner = release_agent_root_lease_for_registry(first_request(), &registry)
+        let foreign_owner = release_agent_root_lease_for_registry(first_request(), &registry, None)
             .expect("refuse foreign owner");
 
         assert_eq!(

@@ -8,6 +8,8 @@ mod agent_provider_commands;
 mod agent_provider_sign_in;
 #[path = "agent_provider_sign_in_commands.rs"]
 mod agent_provider_sign_in_commands;
+#[path = "agent_provider_usage_commands.rs"]
+mod agent_provider_usage_commands;
 #[path = "agent_session_history_commands.rs"]
 mod agent_session_history_commands;
 #[path = "agent_task_commands.rs"]

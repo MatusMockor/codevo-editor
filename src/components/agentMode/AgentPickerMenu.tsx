@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -30,13 +31,25 @@ export interface AgentPickerMenuProps {
   readonly align: AgentPickerAlign;
   readonly variant?: AgentPickerVariant;
   readonly icon?: ReactNode;
+  readonly confirmation?: AgentPickerConfirmation | null;
   onChange(value: string): void;
+}
+
+export interface AgentPickerConfirmation {
+  readonly id: string;
+  readonly value: string;
+  readonly checked: boolean;
+  readonly disabled: boolean;
+  readonly label: string;
+  readonly description: string | null;
+  onChange(checked: boolean): void;
 }
 
 const UNKNOWN_VALUE_LABEL = "Select…";
 
 export function AgentPickerMenu({
   align,
+  confirmation = null,
   describedBy,
   disabled,
   icon = null,
@@ -77,11 +90,17 @@ export function AgentPickerMenu({
   const choose = useCallback(
     (option: AgentPickerOption) => {
       if (disabled) return;
+      if (option.value === confirmation?.value && !confirmation.checked) {
+        setActiveIndex(options.indexOf(option));
+        setOpen(true);
+        if (option.value !== value) onChange(option.value);
+        return;
+      }
       close(true);
       if (option.value === value) return;
       onChange(option.value);
     },
-    [close, disabled, onChange, value],
+    [close, confirmation, disabled, onChange, options, value],
   );
 
   useEffect(() => {
@@ -191,36 +210,64 @@ export function AgentPickerMenu({
           style={placement.style}
         >
           {options.map((option, index) => (
-            <div
-              aria-selected={option.value === value}
-              className={optionClassName(option, index === activeIndex)}
-              data-index={index}
-              data-value={option.value}
-              id={`${listId}-${index}`}
-              key={option.value}
-              onClick={() => choose(option)}
-              onMouseEnter={() => setActiveIndex(index)}
-              role="option"
-              tabIndex={-1}
-            >
-              <span className="agent-picker__mark" aria-hidden="true">
-                {option.value === value && <Check size={12} />}
-              </span>
-              <span className="agent-picker__text">
-                <span className="agent-picker__label">
-                  {option.tone === "danger" && (
-                    <TriangleAlert aria-hidden="true" className="agent-picker__warn" size={11} />
-                  )}
-                  {option.label}
-                  {option.detail !== null && (
-                    <span className="agent-picker__detail agent-num">{option.detail}</span>
+            <Fragment key={option.value}>
+              <div
+                aria-selected={option.value === value}
+                className={optionClassName(option, index === activeIndex)}
+                data-index={index}
+                data-value={option.value}
+                id={`${listId}-${index}`}
+                onClick={() => choose(option)}
+                onMouseEnter={() => setActiveIndex(index)}
+                role="option"
+                tabIndex={-1}
+              >
+                <span className="agent-picker__mark" aria-hidden="true">
+                  {option.value === value && <Check size={12} />}
+                </span>
+                <span className="agent-picker__text">
+                  <span className="agent-picker__label">
+                    {option.tone === "danger" && (
+                      <TriangleAlert
+                        aria-hidden="true"
+                        className="agent-picker__warn"
+                        size={11}
+                      />
+                    )}
+                    {option.label}
+                    {option.detail !== null && (
+                      <span className="agent-picker__detail agent-num">{option.detail}</span>
+                    )}
+                  </span>
+                  {option.description !== null && (
+                    <span className="agent-picker__description">{option.description}</span>
                   )}
                 </span>
-                {option.description !== null && (
-                  <span className="agent-picker__description">{option.description}</span>
+              </div>
+              {confirmation !== null &&
+                option.value === value &&
+                option.value === confirmation.value && (
+                  <label className="agent-picker__confirmation" htmlFor={confirmation.id}>
+                    <input
+                      checked={confirmation.checked}
+                      disabled={confirmation.disabled}
+                      id={confirmation.id}
+                      onChange={(event) => confirmation.onChange(event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span className="agent-picker__confirmation-copy">
+                      <span className="agent-picker__confirmation-label">
+                        {confirmation.label}
+                      </span>
+                      {confirmation.description !== null && (
+                        <span className="agent-picker__confirmation-description">
+                          {confirmation.description}
+                        </span>
+                      )}
+                    </span>
+                  </label>
                 )}
-              </span>
-            </div>
+            </Fragment>
           ))}
         </div>
       )}

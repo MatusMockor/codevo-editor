@@ -74,7 +74,7 @@ describe("useAgentProjectGateways", () => {
     const host = document.body.appendChild(document.createElement("div"));
     const root = createRoot(host);
     const leaseGateway = {
-      acquireAgentRootLease: vi.fn(async () => ({ leaseToken: 1 })),
+      acquireAgentRootLease: vi.fn(async () => ({ leaseToken: 1, workspaceId: "workspace-a" })),
       releaseAgentRootLease: vi.fn(async () => ({ kind: "released" as const, leaseToken: 1 })),
     };
     const settingsGateway = {
@@ -344,7 +344,7 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     pruneWorktrees: vi.fn(async () => []),
   } as unknown as GitWorktreeGateway;
   const leaseGateway = {
-    acquireAgentRootLease: vi.fn(async () => ({ leaseToken: 1 })),
+    acquireAgentRootLease: vi.fn(async () => ({ leaseToken: 1, workspaceId: "workspace-a" })),
     releaseAgentRootLease: vi.fn(async (request: { readonly leaseToken: number }) => ({
       kind: "released" as const,
       leaseToken: request.leaseToken,

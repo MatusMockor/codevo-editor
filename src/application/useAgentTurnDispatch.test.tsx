@@ -4,7 +4,11 @@ import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import { act, createElement, useMemo, useReducer } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import type { AgentProjectDescriptor, AgentProjectOrigin } from "../domain/agentProject";
+import {
+  agentRootOwnerId,
+  type AgentProjectDescriptor,
+  type AgentProjectOrigin,
+} from "../domain/agentProject";
 import {
   AgentTaskStartRejectedError,
   type AgentCliKind,
@@ -68,6 +72,7 @@ interface Environment {
   activeOwner: string;
   workspaceId: string;
   workspaceGeneration: number;
+  launchIdentityAvailable: boolean;
   generation: number;
   origin: AgentProjectOrigin;
   cliKind: AgentCliKind;
@@ -1139,6 +1144,132 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     harness.unmount();
   });
 
+  it("rebinds a settled thread when the same open project has a new workspace owner", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    harness.environment.workspaceId = OWNER_B;
+    harness.environment.workspaceGeneration += 1;
+
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue after reopening",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(true);
+
+    const followUp = harness.startedRequests[1];
+    expect(followUp).toMatchObject({
+      workspaceId: OWNER_B,
+      projectRoot: ROOT_A,
+      repositoryRoot: ROOT_A,
+      resumeSessionId: SESSION_ID,
+    });
+    expect(harness.thread(threadId).owner).toEqual({
+      rootKey: ROOT_A,
+      ownerId: OWNER_B,
+      repositoryRoot: ROOT_A,
+    });
+    expect(harness.actionsOf("ownerRebound")).toEqual([
+      {
+        kind: "ownerRebound",
+        threadId,
+        previousOwnerId: OWNER_A,
+        owner: { rootKey: ROOT_A, ownerId: OWNER_B, repositoryRoot: ROOT_A },
+      },
+    ]);
+
+    const followUpTurnId = followUp?.taskId ?? "";
+    await act(async () => {
+      harness.emitOutput(followUpTurnId, 1, "resumed output");
+      harness.emitStatus(followUpTurnId, 1, { kind: "exited", exitCode: 0 }, OWNER_B);
+    });
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "exited", exitCode: 0 });
+    harness.unmount();
+  });
+
+  it("restores a background project's launch identity before resuming its thread", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    harness.environment.launchIdentityAvailable = false;
+
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue from the restored tab",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(true);
+
+    expect(harness.ensureProjectLaunchIdentity).toHaveBeenCalledExactlyOnceWith(ROOT_A);
+    expect(harness.startedRequests[1]).toMatchObject({
+      workspaceId: OWNER_B,
+      projectRoot: ROOT_A,
+      repositoryRoot: ROOT_A,
+      resumeSessionId: SESSION_ID,
+    });
+    expect(harness.thread(threadId).owner.ownerId).toBe(OWNER_B);
+    harness.unmount();
+  });
+
+  it("resumes a durable thread while its background repository list is still loading", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    harness.environment.repositoryRoot = ROOT_B;
+
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue from the background tab",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(true);
+
+    expect(harness.startedRequests[1]).toMatchObject({
+      projectRoot: ROOT_A,
+      repositoryRoot: ROOT_A,
+      resumeSessionId: SESSION_ID,
+    });
+    harness.unmount();
+  });
+
+  it("resumes a background thread through its durable agent-root launch identity", async () => {
+    const durableOwnerId = agentRootOwnerId(ROOT_A);
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    harness.environment.activeOwner = durableOwnerId;
+    harness.environment.workspaceId = durableOwnerId;
+    harness.environment.workspaceGeneration += 1;
+    harness.environment.origin = "background-tab";
+    harness.environment.repositoryRoot = ROOT_B;
+
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue through the durable owner",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(true);
+
+    expect(harness.ensureProjectLaunchIdentity).not.toHaveBeenCalled();
+    expect(harness.startedRequests[1]).toMatchObject({
+      workspaceId: durableOwnerId,
+      projectRoot: ROOT_A,
+      repositoryRoot: ROOT_A,
+      resumeSessionId: SESSION_ID,
+    });
+    expect(harness.notice()).toBeNull();
+    harness.unmount();
+  });
+
   it("allows only one running turn per thread", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
@@ -1705,6 +1836,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     activeOwner: OWNER_A,
     workspaceId: OWNER_A,
     workspaceGeneration: 1,
+    launchIdentityAvailable: true,
     generation: 1,
     origin: "active-tab",
     cliKind: "claudeCode",
@@ -1764,6 +1896,15 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
   const onTurnTerminal = vi.fn();
   const onProjectDispatchTrustRejected = vi.fn();
   const reportError = vi.fn();
+  const ensureProjectLaunchIdentity = vi.fn(async () => {
+    environment.workspaceId = OWNER_B;
+    environment.workspaceGeneration += 1;
+    environment.launchIdentityAvailable = true;
+    return {
+      workspaceId: environment.workspaceId,
+      generation: environment.workspaceGeneration,
+    };
+  });
 
   const project = (): AgentProjectDescriptor => ({
     rootKey: environment.activeRoot,
@@ -1826,10 +1967,14 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
         provider: AgentCliKind,
       ): AgentProviderAdmissionAuthority => providerAuthority(environment, provider),
       getMaxConcurrentAgentTasks: () => environment.maxConcurrent,
-      launchIdentityForProject: () => ({
-        workspaceId: environment.workspaceId,
-        generation: environment.workspaceGeneration,
-      }),
+      ensureProjectLaunchIdentity,
+      launchIdentityForProject: () =>
+        environment.launchIdentityAvailable
+          ? {
+              workspaceId: environment.workspaceId,
+              generation: environment.workspaceGeneration,
+            }
+          : null,
       ensureProjectLease: environment.ensureProjectLease ?? undefined,
       preflightInPlace,
       isWorktreeMissing: () => environment.worktreeMissing,
@@ -1866,6 +2011,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     onTurnTerminal,
     onProjectDispatchTrustRejected,
     reportError,
+    ensureProjectLaunchIdentity,
     startedRequests,
     actions,
     environment,
@@ -2009,6 +2155,8 @@ function providerAuthority(
         providerGeneration: environment.providerGeneration[provider],
       };
     case "disabled":
+      return { provider, revision, disposition };
+    case "initializing":
       return { provider, revision, disposition };
     case "policyUnavailable":
       return { provider, revision, disposition };

@@ -31,7 +31,7 @@ describe("useAgentCliDiscovery", () => {
     await waitForReact(() =>
       expect(harness.hook().status).toEqual({ kind: "ready", generation: 1 }),
     );
-    expect(gateway.discoverAgentClis).toHaveBeenCalledWith({ refresh: false });
+    expect(gateway.discoverAgentClis).toHaveBeenCalledWith({ refresh: true });
     expect(harness.hook().presentation("claudeCode", null)).toEqual({
       kind: "detected",
       path: "/one/claude",

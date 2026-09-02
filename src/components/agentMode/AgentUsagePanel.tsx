@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { AgentThread } from "../../domain/agentThread";
+import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import {
   aggregateAgentUsage,
   type AgentCliUsageSource,
@@ -11,6 +12,7 @@ import {
 export interface AgentUsagePanelProps {
   readonly threads: ReadonlyArray<AgentThread>;
   readonly projectLabels: ReadonlyMap<string, string>;
+  readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
   readonly nowEpochMs?: number;
 }
 
@@ -28,6 +30,7 @@ const PERIODS: ReadonlyArray<PeriodOption> = [
 const PROVIDER_ORDER = ["claudeCode", "codex"] as const;
 
 export function AgentUsagePanel({
+  accountUsage,
   nowEpochMs = Date.now(),
   projectLabels,
   threads,
@@ -52,8 +55,22 @@ export function AgentUsagePanel({
     <section aria-label="Usage" className="agent-usage-panel">
       <header className="agent-usage-panel__header">
         <h2>Usage</h2>
-        <p>Saved threads on this device. This is not account or billing usage.</p>
+        <p>Provider account limits and Saved threads on this device.</p>
       </header>
+      <section aria-label="Account limits" className="agent-usage-panel__limits">
+        <h3>Account limits</h3>
+        {PROVIDER_ORDER.map((provider) => (
+          <AccountLimits
+            key={provider}
+            provider={provider}
+            state={accountUsage?.[provider] ?? { kind: "idle" }}
+          />
+        ))}
+      </section>
+      <div className="agent-usage-panel__local-heading">
+        <h3>Local activity</h3>
+        <p>Saved Codevo threads; not billing usage.</p>
+      </div>
       <div aria-label="Usage period" className="agent-usage-panel__periods" role="tablist">
         {PERIODS.map((option, index) => (
           <button
@@ -91,6 +108,45 @@ export function AgentUsagePanel({
           />
         ))}
       </div>
+    </section>
+  );
+}
+
+function AccountLimits({
+  provider,
+  state,
+}: {
+  readonly provider: AgentUsageProvider["provider"];
+  readonly state: AgentAccountUsageLoadState;
+}) {
+  return (
+    <section aria-label={`${providerLabel(provider)} account limits`}>
+      <h4>{providerLabel(provider)}</h4>
+      {state.kind === "loading" || state.kind === "idle" ? <p>Loading account limits…</p> : null}
+      {state.kind === "unavailable" ? <p>Account limits are unavailable.</p> : null}
+      {state.kind === "ready" ? (
+        <div className="agent-usage-panel__limit-list">
+          {state.snapshot.windows.map((window) => (
+            <div className="agent-usage-panel__limit" key={window.id}>
+              <div>
+                <span>{window.label}</span>
+                <strong>{formatPercent(window.usedPercent)} used</strong>
+              </div>
+              <div
+                aria-label={`${window.label}: ${formatPercent(window.usedPercent)} used`}
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={Math.round(window.usedPercent)}
+                className="agent-usage-panel__meter"
+                role="progressbar"
+              >
+                <span style={{ width: `${window.usedPercent}%` }} />
+              </div>
+              <p>{resetLabel(window.resetsAtEpochMs, window.resetsLabel)}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -216,4 +272,18 @@ function sourceLabel(source: AgentCliUsageSource): string {
 
 function formatInteger(value: number): string {
   return new Intl.NumberFormat().format(value);
+}
+
+function formatPercent(value: number): string {
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}%`;
+}
+
+function resetLabel(epochMs: number | null, label: string | null): string {
+  if (epochMs !== null) {
+    return `Resets ${new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(epochMs)}`;
+  }
+  return label === null ? "Reset time unavailable" : `Resets ${label}`;
 }

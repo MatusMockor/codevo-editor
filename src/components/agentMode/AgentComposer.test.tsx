@@ -115,7 +115,8 @@ describe("AgentComposer", () => {
       providerManagement: disabledProvidersManagement(),
     });
 
-    expect(checkbox("agent-unsafe-confirm").disabled).toBe(true);
+    expect(trigger(CHECKOUT_ID).disabled).toBe(true);
+    expect(host.querySelector("#agent-unsafe-confirm")).toBeNull();
   });
 
   it("disables dangerous launch confirmation when all providers are disabled", () => {
@@ -131,7 +132,8 @@ describe("AgentComposer", () => {
       providerManagement: disabledProvidersManagement(),
     });
 
-    expect(checkbox("agent-launch-danger-confirm").disabled).toBe(true);
+    expect(trigger("agent-launch-mode").disabled).toBe(true);
+    expect(host.querySelector("#agent-launch-danger-confirm")).toBeNull();
   });
 
   it("blocks a project that has no repository and names it", () => {
@@ -307,10 +309,13 @@ describe("AgentComposer", () => {
       submitBlocked: true,
     });
 
-    expect(host.textContent).toContain("Running in place can overwrite your work");
+    expect(host.textContent).not.toContain("Running in place can overwrite your work");
+    expect(submitButton().disabled).toBe(true);
+
+    openPicker(CHECKOUT_ID);
     expect(host.textContent).toContain("the working tree has uncommitted changes");
     expect(host.textContent).toContain("unsaved editors belong to this repository");
-    expect(submitButton().disabled).toBe(true);
+    expect(host.textContent).toContain("Accept the risk and run locally");
 
     toggleCheckbox("agent-unsafe-confirm", true);
 
@@ -463,9 +468,7 @@ describe("AgentComposer", () => {
     } as const;
     render({ launch: dangerous, onDangerousConfirmedChange, onSubmit, prompt: "Fix it" });
 
-    expect(host.querySelector(".agent-composer__danger")?.textContent).toContain(
-      "Bypasses permission checks",
-    );
+    expect(host.querySelector(".agent-composer__danger")).toBeNull();
     expect(submitButton().disabled).toBe(true);
 
     submitForm();
@@ -473,6 +476,8 @@ describe("AgentComposer", () => {
 
     expect(onSubmit).not.toHaveBeenCalled();
 
+    openPicker("agent-launch-mode");
+    expect(host.textContent).toContain("Bypasses permission checks");
     toggleCheckbox("agent-launch-danger-confirm", true);
 
     expect(onDangerousConfirmedChange).toHaveBeenCalledWith(true);
@@ -541,6 +546,9 @@ describe("AgentComposer", () => {
   }
 
   function toggleCheckbox(id: string, checked: boolean): void {
+    if (host.querySelector(`input#${id}`) === null) {
+      openPicker(id === "agent-unsafe-confirm" ? CHECKOUT_ID : "agent-launch-mode");
+    }
     const element = checkbox(id);
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")?.set?.call(

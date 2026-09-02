@@ -1644,6 +1644,15 @@ function admissionAuthorityFor(
       disposition: { kind: "policyUnavailable", reason: "notConfigured" },
     };
   }
+  const automaticExecutableIsFresh =
+    persisted.cliPath === null && discovery?.result[provider]?.kind === "detected";
+  if (runtime.health.kind === "checking" && !automaticExecutableIsFresh) {
+    return {
+      provider,
+      revision: runtime.configurationRevision,
+      disposition: { kind: "initializing" },
+    };
+  }
   if (runtime.updateState.kind === "starting" || runtime.updateState.kind === "running") {
     return {
       provider,

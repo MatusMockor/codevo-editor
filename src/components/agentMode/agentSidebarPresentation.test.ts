@@ -191,9 +191,10 @@ describe("agent rail scope", () => {
 
   it("surfaces trust and origin state with the matching action", () => {
     const untrusted = agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })])[1];
-    const closed = agentRailScopeEntries([
-      group(ROOT, "app", [], { origin: "closed-tab-live-tasks" }),
-    ])[1];
+    const closed = {
+      ...projectEntry(agentRailScopeEntries([group(ROOT, "app", [])])),
+      origin: "closed-tab-live-tasks" as const,
+    };
     const background = agentRailScopeEntries([
       group(ROOT, "app", [], { origin: "background-tab" }),
     ])[1];
@@ -209,9 +210,7 @@ describe("agent rail scope", () => {
     const untrusted = projectEntry(
       agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })]),
     );
-    const closed = projectEntry(
-      agentRailScopeEntries([group(ROOT, "app", [], { origin: "closed-tab-live-tasks" })]),
-    );
+    const closed = { ...trusted, origin: "closed-tab-live-tasks" as const };
     const detached = projectEntry(
       agentRailScopeEntries([group(ROOT, "app", [], { rootPath: null })]),
     );
@@ -240,9 +239,7 @@ describe("agent rail scope", () => {
     const untrusted = projectEntry(
       agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })]),
     );
-    const closed = projectEntry(
-      agentRailScopeEntries([group(ROOT, "app", [], { origin: "closed-tab-live-tasks" })]),
-    );
+    const closed = { ...trusted, origin: "closed-tab-live-tasks" as const };
 
     const command = (entry: AgentRailProjectScopeEntry) =>
       agentProjectMenuEntries(entry, false).find(
@@ -281,8 +278,30 @@ describe("agent rail scope", () => {
     expect(agentProjectRepositoryCountLabel(single)).toBeNull();
     expect(agentProjectRepositoryCountLabel({ ...single, repositoryCount: 3 })).toBe("3 repos");
     expect(agentProjectMenuEntries({ ...single, repositoryCount: 3 }, false)[0]?.label).toBe(
-      "Filter to this repository",
+      "Filter to this project",
     );
+  });
+
+  it("lists each open editor project once instead of expanding its repositories", () => {
+    const open = group(ROOT, "Developer", []);
+    const entries = agentRailScopeEntries([
+      {
+        ...open,
+        singleRepo: false,
+        repos: [
+          ...open.repos,
+          {
+            ...open.repos[0]!,
+            repositoryRoot: `${ROOT}/packages/api`,
+            label: "api",
+          },
+        ],
+      },
+      group(OTHER, "Closed", [], { origin: "closed-tab-live-tasks" }),
+    ]);
+
+    expect(entries.map((entry) => entry.label)).toEqual(["All projects", "Developer"]);
+    expect(agentProjectRepositoryCountLabel(entries[1]!)).toBe("2 repos");
   });
 
   it("targets the first dispatchable repository for a new thread", () => {

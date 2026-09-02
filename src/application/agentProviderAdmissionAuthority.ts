@@ -3,6 +3,7 @@ import type { AgentCliKind } from "../domain/agentTask";
 export type AgentProviderAdmissionDisposition =
   | { readonly kind: "ready" }
   | { readonly kind: "disabled" }
+  | { readonly kind: "initializing" }
   | { readonly kind: "updating" }
   | {
       readonly kind: "policyUnavailable";
@@ -20,6 +21,11 @@ export type AgentProviderAdmissionAuthority =
       readonly provider: AgentCliKind;
       readonly revision: number;
       readonly disposition: { readonly kind: "disabled" };
+    }
+  | {
+      readonly provider: AgentCliKind;
+      readonly revision: number;
+      readonly disposition: { readonly kind: "initializing" };
     }
   | {
       readonly provider: AgentCliKind;
@@ -53,12 +59,19 @@ export type AgentProviderAdmissionDecision =
   | {
       readonly kind: "rejected";
       readonly reason:
-        "disabled" | "updating" | "notConfigured" | "unregistered" | "registrationFailed";
+        | "disabled"
+        | "initializing"
+        | "updating"
+        | "notConfigured"
+        | "unregistered"
+        | "registrationFailed";
       readonly message: string;
     };
 
 export const AGENT_PROVIDER_DISABLED_NOTICE =
   "Enable this provider in Settings before starting a turn.";
+export const AGENT_PROVIDER_INITIALIZING_NOTICE =
+  "This provider is initializing. Wait for it to become ready.";
 export const AGENT_PROVIDER_UPDATING_NOTICE =
   "This provider is updating. Wait for the update to finish.";
 export const AGENT_PROVIDER_UNREGISTERED_NOTICE =
@@ -80,6 +93,12 @@ export function decideAgentProviderAdmission(
         kind: "rejected",
         reason: "disabled",
         message: AGENT_PROVIDER_DISABLED_NOTICE,
+      };
+    case "initializing":
+      return {
+        kind: "rejected",
+        reason: "initializing",
+        message: AGENT_PROVIDER_INITIALIZING_NOTICE,
       };
     case "updating":
       return {

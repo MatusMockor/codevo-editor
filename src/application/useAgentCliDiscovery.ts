@@ -98,7 +98,10 @@ export function useAgentCliDiscovery(
         mountedRef.current = false;
       };
     }
-    void discover(false);
+    // Startup discovery is also the executable-cache authority used by native
+    // turn admission. Force a fresh environment so the first turn cannot race
+    // a stale CLI path while the slower provider health checks run in background.
+    void discover(true);
     return () => {
       mountedRef.current = false;
       requestGenerationRef.current += 1;

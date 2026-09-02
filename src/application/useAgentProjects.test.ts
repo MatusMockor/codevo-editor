@@ -30,10 +30,10 @@ const ACTIVE_ROOT = "/ws/active";
 const ACTIVE_ID = "workspace-active";
 const BACKGROUND_ROOT = "/ws/api";
 
-function activeRepository(): ResolvedGitRepository {
+function activeRepository(rootPath = ACTIVE_ROOT): ResolvedGitRepository {
   return {
     mapping: { rootRelativePath: "" },
-    repositoryRoot: ACTIVE_ROOT,
+    repositoryRoot: rootPath,
     repositoryRelativePath: "",
   };
 }
@@ -121,7 +121,7 @@ describe("useAgentProjects admission and bounds", () => {
 
 describe("useAgentProjects background root loading", () => {
   it("omits an aggregate non-Git root while keeping its configured and discovered repositories", async () => {
-    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
+    const harness = renderAgentProjects({ tabs: [ACTIVE_ROOT, BACKGROUND_ROOT] });
     harness.environment.workspaceSettingsByRoot.set(BACKGROUND_ROOT, {
       ...defaultWorkspaceSettings(),
       agentIsolationPolicy: "worktree",
@@ -374,7 +374,7 @@ describe("useAgentProjects lifecycle", () => {
     harness.rerender();
     await waitForReact(() => expect(harness.hook().projects[0]?.ownerId).not.toBe(initialOwnerId));
     await act(async () => {
-      staleLease?.resolve({ leaseToken: 41 });
+      staleLease?.resolve({ leaseToken: 41, workspaceId: "workspace-agent-active-stale" });
     });
 
     await waitForReact(() => {
@@ -385,7 +385,7 @@ describe("useAgentProjects lifecycle", () => {
       expect(harness.environment.pendingLease).not.toBe(staleLease);
     });
     await act(async () => {
-      harness.environment.pendingLease?.resolve({ leaseToken: 42 });
+      harness.environment.pendingLease?.resolve({ leaseToken: 42, workspaceId: ACTIVE_ID });
     });
     await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).toBe(42));
     harness.unmount();
@@ -406,7 +406,7 @@ describe("useAgentProjects lifecycle", () => {
     });
 
     await act(async () => {
-      staleLease?.resolve({ leaseToken: 51 });
+      staleLease?.resolve({ leaseToken: 51, workspaceId: "workspace-agent-active-stale" });
     });
     await waitForReact(() =>
       expect(harness.lease.releaseAgentRootLease).toHaveBeenCalledWith({
@@ -415,7 +415,7 @@ describe("useAgentProjects lifecycle", () => {
       }),
     );
     await act(async () => {
-      replacementLease?.resolve({ leaseToken: 52 });
+      replacementLease?.resolve({ leaseToken: 52, workspaceId: ACTIVE_ID });
     });
 
     await waitForReact(() =>
@@ -447,6 +447,71 @@ describe("useAgentProjects lifecycle", () => {
     expect(harness.hook().projects[0]?.ownerId).toBe(ACTIVE_ID);
     expect(harness.releaseProjectTasks).not.toHaveBeenCalledWith(ACTIVE_ID);
     expect(harness.hook().projects[0]?.leaseToken).toBe(previousLeaseToken);
+    harness.unmount();
+  });
+
+  it("uses a durable agent-root launch identity for a restored background tab", async () => {
+    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
+    await waitForReact(() => expect(harness.hook().projects).toHaveLength(2));
+    await waitForReact(() =>
+      expect(harness.hook().launchIdentityForProject(BACKGROUND_ROOT)).not.toBeNull(),
+    );
+    const expectedIdentity = {
+      workspaceId: `workspace-agent:${BACKGROUND_ROOT}`,
+      generation: 2,
+    };
+    expect(harness.hook().launchIdentityForProject(BACKGROUND_ROOT)).toEqual(expectedIdentity);
+
+    const identity = await act(() =>
+      harness.hook().ensureProjectLaunchIdentity?.(BACKGROUND_ROOT),
+    );
+
+    expect(harness.activateWorkspaceRoot).not.toHaveBeenCalled();
+    expect(identity).toEqual(expectedIdentity);
+    harness.unmount();
+  });
+
+  it("retains an active repository when its workspace becomes a background tab", async () => {
+    const harness = renderAgentProjects({ tabs: [ACTIVE_ROOT, BACKGROUND_ROOT] });
+    await waitForReact(() => {
+      expect(harness.hook().projects.find((project) => project.rootKey === ACTIVE_ROOT)?.repositories)
+        .toEqual([activeRepository(ACTIVE_ROOT)]);
+    });
+
+    harness.environment.activeWorkspaceId = "workspace-background";
+    harness.environment.activeWorkspaceRoot = BACKGROUND_ROOT;
+    harness.rerender();
+
+    await waitForReact(() => {
+      const previousProject = harness
+        .hook()
+        .projects.find((project) => project.rootKey === ACTIVE_ROOT);
+      expect(previousProject?.origin).toBe("background-tab");
+      expect(previousProject?.repositories).toEqual([activeRepository(ACTIVE_ROOT)]);
+    });
+    harness.unmount();
+  });
+
+  it("does not expose a launch identity for a background project after its tab closes", async () => {
+    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
+    await waitForReact(() => expect(harness.hook().projects).toHaveLength(2));
+    const ownerId = agentRootOwnerId(BACKGROUND_ROOT);
+    harness.environment.liveOwners.add(ownerId);
+    harness.environment.tabs = [];
+    harness.rerender();
+    await waitForReact(() => {
+      expect(
+        harness.hook().projects.find((project) => project.rootKey === BACKGROUND_ROOT)?.origin,
+      ).toBe("closed-tab-live-tasks");
+    });
+
+    const identity = await act(() =>
+      harness.hook().ensureProjectLaunchIdentity?.(BACKGROUND_ROOT),
+    );
+
+    expect(identity).toBeNull();
+    expect(harness.hook().launchIdentityForProject(BACKGROUND_ROOT)).toBeNull();
+    expect(harness.activateWorkspaceRoot).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -1263,7 +1328,7 @@ function renderAgentProjects(options: HarnessOptions = {}) {
   let nextLeaseToken = 0;
   const lease = {
     acquireAgentRootLease: vi.fn(
-      async (_request: { rootPath: string }): Promise<AgentRootLeaseReceipt> => {
+      async (request: { rootPath: string }): Promise<AgentRootLeaseReceipt> => {
         calls.push("acquireAgentRootLease");
         if (environment.deferLease) {
           const deferred = createDeferred<AgentRootLeaseReceipt>();
@@ -1271,7 +1336,13 @@ function renderAgentProjects(options: HarnessOptions = {}) {
           return deferred.promise;
         }
         nextLeaseToken += 1;
-        return { leaseToken: nextLeaseToken };
+        const workspaceId =
+          request.rootPath === environment.activeWorkspaceRoot &&
+          environment.activeWorkspaceId !== null
+            ? environment.activeWorkspaceId
+            : (environment.descriptorsByRoot.get(request.rootPath)?.workspaceId ??
+              `workspace-agent:${request.rootPath}`);
+        return { leaseToken: nextLeaseToken, workspaceId };
       },
     ),
     releaseAgentRootLease: vi.fn(
@@ -1290,6 +1361,12 @@ function renderAgentProjects(options: HarnessOptions = {}) {
   const releaseProjectTasks = vi.fn((): void => {
     calls.push("releaseProjectTasks");
   });
+  const activateWorkspaceRoot = vi.fn(async (rootPath: string): Promise<void> => {
+    environment.descriptorsByRoot.set(
+      rootPath,
+      descriptorFor(rootPath, "workspace-background-restored"),
+    );
+  });
 
   const dependencies: AgentProjectsDependencies = {
     get enabled() {
@@ -1305,9 +1382,14 @@ function renderAgentProjects(options: HarnessOptions = {}) {
     get activeWorkspaceTrust() {
       return environment.activeWorkspaceTrust;
     },
-    activeWorkspaceRepositories: [activeRepository()],
+    get activeWorkspaceRepositories() {
+      return environment.activeWorkspaceRoot === null
+        ? []
+        : [activeRepository(environment.activeWorkspaceRoot)];
+    },
     activeIsolationPolicy: "auto",
     descriptorForRoot: (rootPath: string) => environment.descriptorsByRoot.get(rootPath) ?? null,
+    activateWorkspaceRoot,
     settingsGateway: settings,
     trustGateway: trust,
     repositoryDiscoveryGateway: discovery,
@@ -1337,6 +1419,7 @@ function renderAgentProjects(options: HarnessOptions = {}) {
 
   return {
     calls,
+    activateWorkspaceRoot,
     activeTrustChanges,
     confirm,
     discovery,

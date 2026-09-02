@@ -52,8 +52,9 @@ describe("agent mode responsive layout contract", () => {
 
     const narrowCenter = block(appCss, "@container agent-center (max-width: 600px)");
     expect(rule(".agent-prompt", narrowCenter)).toContain("max-width: 100%");
-    expect(rule(".agent-prompt__meta")).toContain("flex-wrap: wrap");
+    expect(rule(".agent-prompt__meta")).toContain("opacity: 0");
     expect(rule(".agent-prompt__meta")).toContain("justify-content: flex-end");
+    expect(rule(".agent-prompt:hover .agent-prompt__meta")).toContain("opacity: 1");
   });
 
   it("keeps the frame bounded and gives the thread column a real minimum track", () => {
@@ -158,7 +159,7 @@ describe("agent mode responsive layout contract", () => {
     );
   });
 
-  it("places the docked bottom panel under the thread column beside a full-height right panel", () => {
+  it("places the docked bottom panel under the thread column beside full-height side rails", () => {
     const frame = rule('.workbench-frame[data-layout="agent"] {', shellCss);
     expect(frame.replace(/\s+/g, " ")).toContain(
       "grid-template-columns: var(--agent-rail-track) minmax(var(--agent-center-min-width), 1fr) var(--agent-right-panel-width)",
@@ -167,11 +168,24 @@ describe("agent mode responsive layout contract", () => {
 
     const agent = rule('.workbench-frame[data-layout="agent"] > [data-slot="agent"]', shellCss);
     expect(agent).toContain("grid-column: 1 / 3");
-    expect(agent).toContain("grid-row: 1");
+    expect(agent).toContain("grid-row: 1 / -1");
+
+    const agentGrid = rule(".agent-mode__grid {", appCss);
+    expect(agentGrid).toContain(
+      "grid-template-rows: minmax(0, 1fr) var(--agent-bottom-panel-height)",
+    );
+    expect(
+      rule(
+        ".agent-mode__grid > .agent-rail,\n.agent-mode__grid > .agent-rail__chrome",
+        appCss,
+      ),
+    ).toContain("grid-row: 1 / -1");
+    expect(rule(".agent-mode__center {", appCss)).toContain("grid-row: 1");
 
     const bottom = rule('.workbench-frame[data-layout="agent"] > [data-slot="bottom"]', shellCss);
     expect(bottom).toContain("grid-column: 2");
     expect(bottom).toContain("grid-row: 2");
+    expect(bottom).toContain("z-index: 1");
 
     const surface = rule('.workbench-frame[data-layout="agent"] > [data-slot="surface"]', shellCss);
     expect(surface).toContain("grid-column: 3");

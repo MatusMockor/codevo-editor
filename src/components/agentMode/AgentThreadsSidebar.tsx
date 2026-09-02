@@ -1,6 +1,7 @@
 import {
   memo,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -12,6 +13,11 @@ import { createPortal } from "react-dom";
 import type { AgentThreadSearchSurface } from "../../application/agentThreadPorts";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
+import type {
+  AgentAccountUsageGateway,
+  AgentAccountUsageLoadState,
+} from "../../domain/agentAccountUsage";
+import { TauriAgentProviderGateway } from "../../infrastructure/tauriAgentProviderGateway";
 import { AgentRailHeader } from "./AgentRailHeader";
 import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
 import { AgentUsagePanel } from "./AgentUsagePanel";
@@ -41,6 +47,7 @@ export const SEARCH_OPTION_PREFIX = "agent-rail-search-result-";
 const EMPTY_JUMP_LABELS: ReadonlyMap<string, string> = new Map();
 const EMPTY_MATCHES: ReadonlyArray<AgentThreadSearchMatch> = [];
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
+const DEFAULT_ACCOUNT_USAGE_GATEWAY: AgentAccountUsageGateway = new TauriAgentProviderGateway();
 
 export interface AgentThreadsSidebarProps {
   readonly addProjectAvailable: boolean;
@@ -52,6 +59,7 @@ export interface AgentThreadsSidebarProps {
   readonly selectedThreadId: string | null;
   readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>>;
   readonly providerManagement: AgentProviderManagementSurface;
+  readonly accountUsageGateway?: AgentAccountUsageGateway;
   onOpenProviderSettings(): void;
   onOpenSourceControl(): void;
   onCollapseSidebar?(): void;
@@ -69,6 +77,7 @@ export interface AgentThreadsSidebarProps {
 
 export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   addProjectAvailable,
+  accountUsageGateway = DEFAULT_ACCOUNT_USAGE_GATEWAY,
   groups,
   onAddProject,
   onChangeScope,
@@ -95,6 +104,9 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   const [archivedShown, setArchivedShown] = useState(ARCHIVED_PAGE_COUNT);
   const [focusRequest, setFocusRequest] = useState<string | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [accountUsage, setAccountUsage] = useState<
+    Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>
+  >({ claudeCode: { kind: "idle" }, codex: { kind: "idle" } });
   const jumpHints = useJumpHints();
   const railRef = useRef<HTMLElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -126,6 +138,39 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     () => new Map(groups.map((group) => [group.projectRootKey, group.label])),
     [groups],
   );
+
+  useEffect(() => {
+    if (!usageOpen) return;
+    let current = true;
+    const providers = (["claudeCode", "codex"] as const).map((provider) => ({
+      provider,
+      authority: providerManagement.admissionAuthority(provider),
+    }));
+    setAccountUsage({ claudeCode: { kind: "loading" }, codex: { kind: "loading" } });
+    for (const { provider, authority } of providers) {
+      if (authority.disposition.kind !== "ready" || !("providerGeneration" in authority)) {
+        setAccountUsage((state) => ({ ...state, [provider]: { kind: "unavailable" } }));
+        continue;
+      }
+      const providerGeneration = authority.providerGeneration;
+      void accountUsageGateway
+        .readAgentProviderUsage({
+          provider,
+          providerGeneration,
+        })
+        .then((snapshot) => {
+          if (!current) return;
+          setAccountUsage((state) => ({ ...state, [provider]: { kind: "ready", snapshot } }));
+        })
+        .catch(() => {
+          if (!current) return;
+          setAccountUsage((state) => ({ ...state, [provider]: { kind: "unavailable" } }));
+        });
+    }
+    return () => {
+      current = false;
+    };
+  }, [accountUsageGateway, providerManagement, usageOpen]);
 
   useLayoutEffect(() => {
     if (!usageOpen) return;
@@ -354,6 +399,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
                   <X aria-hidden="true" size={14} />
                 </button>
                 <AgentUsagePanel
+                  accountUsage={accountUsage}
                   projectLabels={usageProjectLabels}
                   threads={views.map((view) => view.thread)}
                 />

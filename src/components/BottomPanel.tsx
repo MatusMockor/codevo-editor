@@ -148,6 +148,7 @@ const agentHiddenBottomPanelViews = new Set<WorkbenchBottomPanelView>([
   "runtime",
   "history",
   "debug",
+  "search",
 ]);
 const LazyTerminalTabsPanel = lazy(() =>
   import("./TerminalTabsPanel").then((module) => ({
@@ -228,7 +229,7 @@ export function BottomPanel({
     (activeView === "expressRoutes" && hasExpressRoutes);
   const fallbackView: WorkbenchBottomPanelView = viewScope === "agent" ? "terminal" : "problems";
   const effectiveActiveView =
-    (viewScope === "agent" && agentHiddenBottomPanelViews.has(activeView)) ||
+    (viewScope === "agent" && activeView !== "terminal") ||
     (activeView === "expressRoutes" && !showExpressRoutes) ||
     (activeView === "packages" && !hasJsWorkspace) ||
     (activeView === "nette" && !hasNette) ||
@@ -239,6 +240,7 @@ export function BottomPanel({
   const [terminalProfiles, setTerminalProfiles] = useState<TerminalProfile[]>([]);
   const [selectedTerminalProfileId, setSelectedTerminalProfileId] = useState<string | null>(null);
   const [terminalCwd, setTerminalCwd] = useState<string | null>(null);
+  const [terminalToolbarHost, setTerminalToolbarHost] = useState<HTMLDivElement | null>(null);
   const workspaceRootRef = useRef(workspaceRoot);
   workspaceRootRef.current = workspaceRoot;
 
@@ -349,7 +351,11 @@ export function BottomPanel({
   });
 
   return (
-    <section aria-label="Panel" className="bottom-panel">
+    <section
+      aria-label="Panel"
+      className={`bottom-panel bottom-panel--${viewScope}`}
+      data-active-view={effectiveActiveView}
+    >
       <div
         aria-label="Resize panel"
         aria-orientation="horizontal"
@@ -358,43 +364,50 @@ export function BottomPanel({
         role="separator"
       />
       <header className="bottom-panel-header">
-        <div aria-label="Panel views" className="bottom-panel-tabs" role="tablist">
-          {[
-            ...bottomPanelViews.filter(
-              (view) => viewScope !== "agent" || !agentHiddenBottomPanelViews.has(view),
-            ),
-            ...(hasArtisan ? (["routes"] as const) : []),
-            ...(showExpressRoutes ? (["expressRoutes"] as const) : []),
-            ...(hasJsWorkspace ? (["packages"] as const) : []),
-            ...(hasNette ? (["nette"] as const) : []),
-            ...(hasSymfony ? (["symfony"] as const) : []),
-            ...(hasArtisan || hasPhpWorkspace || hasJsWorkspace ? (["testResults"] as const) : []),
-          ].map((view) => (
-            <button
-              aria-selected={effectiveActiveView === view}
-              className={
-                effectiveActiveView === view ? "bottom-panel-tab active" : "bottom-panel-tab"
-              }
-              key={view}
-              onClick={() => onSelectView(view)}
-              role="tab"
-              type="button"
-            >
-              {view === "routes"
-                ? "Routes"
-                : view === "expressRoutes"
-                  ? "Express Routes"
-                  : view === "packages"
-                    ? "Packages"
-                    : view === "nette"
-                      ? "Nette"
-                      : view === "symfony"
-                        ? "Symfony"
-                        : view === "testResults"
-                          ? "Tests"
-                          : bottomPanelLabel(view)}
-            </button>
-          ))}
+        <div className="bottom-panel-header__leading">
+          <div aria-label="Panel views" className="bottom-panel-tabs" role="tablist">
+            {[
+              ...bottomPanelViews.filter(
+                (view) => viewScope !== "agent" || !agentHiddenBottomPanelViews.has(view),
+              ),
+              ...(viewScope === "editor" && hasArtisan ? (["routes"] as const) : []),
+              ...(viewScope === "editor" && showExpressRoutes ? (["expressRoutes"] as const) : []),
+              ...(viewScope === "editor" && hasJsWorkspace ? (["packages"] as const) : []),
+              ...(viewScope === "editor" && hasNette ? (["nette"] as const) : []),
+              ...(viewScope === "editor" && hasSymfony ? (["symfony"] as const) : []),
+              ...(viewScope === "editor" && (hasArtisan || hasPhpWorkspace || hasJsWorkspace)
+                ? (["testResults"] as const)
+                : []),
+            ].map((view) => (
+              <button
+                aria-selected={effectiveActiveView === view}
+                className={
+                  effectiveActiveView === view ? "bottom-panel-tab active" : "bottom-panel-tab"
+                }
+                key={view}
+                onClick={() => onSelectView(view)}
+                role="tab"
+                type="button"
+              >
+                {view === "routes"
+                  ? "Routes"
+                  : view === "expressRoutes"
+                    ? "Express Routes"
+                    : view === "packages"
+                      ? "Packages"
+                      : view === "nette"
+                        ? "Nette"
+                        : view === "symfony"
+                          ? "Symfony"
+                          : view === "testResults"
+                            ? "Tests"
+                            : bottomPanelLabel(view)}
+              </button>
+            ))}
+          </div>
+          {effectiveActiveView === "terminal" ? (
+            <div className="bottom-panel-terminal-toolbar" ref={setTerminalToolbarHost} />
+          ) : null}
         </div>
         {effectiveActiveView === "problems" && notices.length > 0 ? (
           <button
@@ -526,6 +539,7 @@ export function BottomPanel({
               rootPath={workspaceRoot}
               terminalGateway={terminalGateway}
               terminalTheme={terminalTheme}
+              toolbarHost={terminalToolbarHost}
               providerSignIn={providerSignIn}
             />
           </Suspense>

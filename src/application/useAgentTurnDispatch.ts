@@ -24,6 +24,7 @@ import {
   errorMessageOf,
   failure,
   isCurrentTaskLaunchAuthority,
+  isCurrentThreadLaunchAuthority,
   warning,
   type AgentProjectAuthority,
   type AgentTaskLaunchAuthority,
@@ -104,9 +105,11 @@ const UNCERTAIN_START_MESSAGE = "The agent start result was uncertain.";
 const UNEXPECTED_TASK_ID_MESSAGE = "The agent returned an unexpected task id.";
 
 type TurnRegistration = "before-start" | "after-start";
+type TurnAuthorityScope = "project" | "thread";
 
 interface TurnStart {
   readonly authority: AgentTaskLaunchAuthority;
+  readonly authorityScope: TurnAuthorityScope;
   readonly projectRoot: string;
   readonly threadId: string;
   readonly repositoryRoot: string;
@@ -133,6 +136,7 @@ export function useAgentTurnDispatch(
   const mountedRef = useRef(true);
   const dispatchingRef = useRef(false);
   const inFlightThreadsRef = useRef<Set<string>>(new Set());
+  const preparingThreadsRef = useRef<Set<string>>(new Set());
   const streamsRef = useRef<Map<string, AgentTurnOutputStream>>(new Map());
   const frameRef = useRef<(() => void) | null>(null);
   const outputSubscriptionRef = useRef({ epoch: 0, ready: false });
@@ -579,6 +583,7 @@ export function useAgentTurnDispatch(
         const now = deps.now ?? Date.now;
         const started = await runTurnStart({
           authority,
+          authorityScope: "project",
           projectRoot: admitted.project.rootPath,
           threadId,
           repositoryRoot,
@@ -636,49 +641,88 @@ export function useAgentTurnDispatch(
 
   const sendFollowUp = useCallback(
     async (request: AgentFollowUpRequest): Promise<boolean> => {
-      const deps = dependenciesRef.current;
+      let deps = dependenciesRef.current;
+      const candidate = deps.store.state.threads.get(request.threadId);
+      if (
+        candidate !== undefined &&
+        !candidate.archived &&
+        runningTurn(candidate) === null &&
+        deps.launchIdentityForProject(candidate.owner.rootKey) === null &&
+        deps.ensureProjectLaunchIdentity !== undefined
+      ) {
+        if (preparingThreadsRef.current.has(candidate.threadId)) {
+          deps.setNotice(warning("This thread is already preparing to continue."));
+          return false;
+        }
+        preparingThreadsRef.current.add(candidate.threadId);
+        try {
+          await deps.ensureProjectLaunchIdentity(candidate.owner.rootKey);
+        } finally {
+          preparingThreadsRef.current.delete(candidate.threadId);
+        }
+        deps = dependenciesRef.current;
+      }
       const admitted = admitFollowUp(deps, request, inFlightThreadsRef.current);
       if (admitted === null) return false;
-      const { thread, authority, projectRoot, prompt, providerAuthority, sessionId, launch } =
-        admitted;
+      const {
+        thread,
+        previousOwnerId,
+        authority,
+        projectRoot,
+        prompt,
+        providerAuthority,
+        sessionId,
+        launch,
+      } = admitted;
       const repositoryRoot = thread.owner.repositoryRoot;
+      if (previousOwnerId !== thread.owner.ownerId) {
+        deps.store.dispatchAction({
+          kind: "ownerRebound",
+          threadId: thread.threadId,
+          previousOwnerId,
+          owner: thread.owner,
+        });
+      }
+      const reboundThread = deps.store.currentState().threads.get(thread.threadId);
+      if (reboundThread?.owner.ownerId !== thread.owner.ownerId) return false;
       const turnId = mintUnusedId(deps, new Set(usedTurnIds(deps.store.state)));
       if (turnId === null) {
         deps.setNotice(warning("A turn id could not be minted. Try again."));
         return false;
       }
-      inFlightThreadsRef.current.add(thread.threadId);
-      beginPendingTurn(thread.provider.kind);
+      inFlightThreadsRef.current.add(reboundThread.threadId);
+      beginPendingTurn(reboundThread.provider.kind);
       setDispatching(true);
       try {
         return await runTurnStart({
           authority,
+          authorityScope: "thread",
           projectRoot,
-          threadId: thread.threadId,
+          threadId: reboundThread.threadId,
           repositoryRoot,
-          cwd: thread.target.worktreePath ?? repositoryRoot,
-          isolation: thread.target.isolation,
-          worktreePath: thread.target.worktreePath,
+          cwd: reboundThread.target.worktreePath ?? repositoryRoot,
+          isolation: reboundThread.target.isolation,
+          worktreePath: reboundThread.target.worktreePath,
           prompt,
           turnId,
-          agentCliKind: thread.provider.kind,
+          agentCliKind: reboundThread.provider.kind,
           providerAuthority,
           resumeSessionId: sessionId,
           launch,
           createdWorktree: null,
           registration: "before-start",
           register: (turn) => {
-            registerStream(thread, turn.turnId, true);
+            registerStream(reboundThread, turn.turnId, true);
             dependenciesRef.current.store.dispatchAction({
               kind: "turnStarted",
-              threadId: thread.threadId,
+              threadId: reboundThread.threadId,
               turn,
             });
           },
         });
       } finally {
-        endPendingTurn(thread.provider.kind);
-        inFlightThreadsRef.current.delete(thread.threadId);
+        endPendingTurn(reboundThread.provider.kind);
+        inFlightThreadsRef.current.delete(reboundThread.threadId);
         if (mountedRef.current) setDispatching(inFlightThreadsRef.current.size > 0);
       }
     },
@@ -793,14 +837,16 @@ function turnStartAuthorityIsCurrent(
   mountedRef: { readonly current: boolean },
   start: TurnStart,
 ): boolean {
-  if (
-    !isCurrentTaskLaunchAuthority(
-      dependenciesRef,
-      mountedRef,
-      start.authority,
-      start.repositoryRoot,
-    )
-  ) {
+  const current =
+    start.authorityScope === "thread"
+      ? isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, start.authority)
+      : isCurrentTaskLaunchAuthority(
+          dependenciesRef,
+          mountedRef,
+          start.authority,
+          start.repositoryRoot,
+        );
+  if (!current) {
     return false;
   }
   return providerAdmissionIsCurrent(dependenciesRef.current, start.providerAuthority);

@@ -107,6 +107,10 @@ describe("useAgentProviderManagement", () => {
 
     await settleHealth(harness, 0, currentHealth("2.0.0"));
     await settleHealth(harness, 1, currentHealth("1.2.3"));
+    expect(harness.hook().admissionAuthority("claudeCode")).toMatchObject({
+      disposition: { kind: "ready" },
+      providerGeneration: 1,
+    });
     let refreshed!: Promise<AgentProviderRefreshOutcome>;
     act(() => {
       refreshed = harness.hook().refreshWithOutcome!("claudeCode");
@@ -156,7 +160,10 @@ describe("useAgentProviderManagement", () => {
       await expect(preferenceSave).resolves.toBe(true);
     });
     const replacement = harness.hook().admissionAuthority("claudeCode");
-    expect(replacement).toMatchObject({ providerGeneration: receipt.authority.providerGeneration });
+    expect(replacement).toMatchObject({
+      disposition: { kind: "ready" },
+      providerGeneration: receipt.authority.providerGeneration,
+    });
     expect(replacement.revision).not.toBe(receipt.authority.revision);
     expect(
       isCurrentAgentProviderAdmissionAuthority(
@@ -612,6 +619,10 @@ describe("useAgentProviderManagement", () => {
       provider: "claudeCode",
       settingsRevision: 1,
     });
+    expect(harness.hook().admissionAuthority("claudeCode")).toMatchObject({
+      disposition: { kind: "initializing" },
+    });
+    await settleHealth(harness, 0, currentHealth("1.0.0"));
     expect(harness.hook().admissionAuthority("claudeCode")).toMatchObject({
       providerGeneration: 4,
       disposition: { kind: "ready" },

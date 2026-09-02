@@ -110,17 +110,16 @@ describe("workbench agents production chain", () => {
     await submitComposer(host);
     await flushAsyncTurns();
 
-    expect(gitWorktreeGateway.added).toHaveLength(1);
-    expect(gitWorktreeGateway.added[0]?.repositoryRoot).toBe("/workspace-a");
+    expect(gitWorktreeGateway.added).toHaveLength(0);
     expect(agentTaskGateway.started).toHaveLength(1);
     const started = agentTaskGateway.started[0];
     expect(started?.repositoryRoot).toBe("/workspace-a");
     expect(started?.workspaceId).toBe("workspace-a");
     expect(started?.agentCliKind).toBe("claudeCode");
-    expect(started?.isolation).toBe("worktree");
-    const threadId = gitWorktreeGateway.added[0]?.taskId ?? "";
+    expect(started?.isolation).toBe("in-place");
+    const threadId = getWorkbench().agents.threads[0]?.thread.threadId ?? "";
     expect(started?.taskId).not.toBe(threadId);
-    expect(started?.cwd).toBe(`/workspace-a/.worktrees/${threadId}`);
+    expect(started?.cwd).toBe("/workspace-a");
     expect(started?.resumeSessionId).toBeNull();
     expect(started?.prompt).toBe("Fix the failing unit test.");
     expect(agentTaskGateway.acknowledged).toEqual([started?.taskId]);
@@ -320,7 +319,7 @@ describe("workbench agents production chain", () => {
     await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
   });
 
-  it("recommends an isolated worktree for a clean automatic-policy repository after an aggregate project switch", async () => {
+  it("keeps local checkout selected after an aggregate project switch", async () => {
     const appSettings: AppSettings = {
       ...defaultAppSettings(),
       agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
@@ -367,8 +366,8 @@ describe("workbench agents production chain", () => {
       reason: "policy",
     });
     renderAgentMode(getWorkbench());
-    expect(getPanelHost().textContent).toContain("Isolated worktree");
-    expect(getPanelHost().textContent).toContain(
+    expect(getPanelHost().textContent).toContain("Local checkout");
+    expect(getPanelHost().textContent).not.toContain(
       "Agents start in an isolated worktree by default.",
     );
   });

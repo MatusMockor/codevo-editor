@@ -1,6 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  parseAgentAccountUsageSnapshot,
+  type AgentAccountUsageGateway,
+  type AgentAccountUsageSnapshot,
+} from "../domain/agentAccountUsage";
+import {
   parseAgentProviderCurrentPolicyResult,
   parseAgentProviderHealthProbeResult,
   parseAgentProviderPolicyRegistrationReceipt,
@@ -28,6 +33,7 @@ export const REGISTER_AGENT_PROVIDER_POLICY_IPC_COMMAND = "register_agent_provid
 export const GET_AGENT_PROVIDER_POLICY_IPC_COMMAND = "get_agent_provider_policy" as const;
 export const PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND = "probe_agent_provider_health" as const;
 export const UPDATE_AGENT_PROVIDER_IPC_COMMAND = "update_agent_provider" as const;
+export const READ_AGENT_PROVIDER_USAGE_IPC_COMMAND = "read_agent_provider_usage" as const;
 export const AGENT_PROVIDER_UPDATE_PROGRESS_EVENT = "agent-provider-update://progress" as const;
 
 export type InvokeAgentProviderCommand = (
@@ -47,7 +53,11 @@ const listenToAgentProviderUpdateProgress: ListenToAgentProviderUpdateProgress =
   listen<unknown>(event, handler);
 
 export class TauriAgentProviderGateway
-  implements AgentProviderPolicyGateway, AgentProviderHealthGateway, AgentProviderUpdateGateway
+  implements
+    AgentProviderPolicyGateway,
+    AgentProviderHealthGateway,
+    AgentProviderUpdateGateway,
+    AgentAccountUsageGateway
 {
   constructor(
     private readonly invokeCommand: InvokeAgentProviderCommand = invokeAgentProviderCommand,
@@ -110,6 +120,20 @@ export class TauriAgentProviderGateway
     return parseAgentProviderUpdateResult(
       await this.invokeCommand(UPDATE_AGENT_PROVIDER_IPC_COMMAND, { request: validated }),
     );
+  }
+
+  async readAgentProviderUsage(
+    request: AgentProviderGenerationRequest,
+  ): Promise<AgentAccountUsageSnapshot> {
+    this.requireRuntime();
+    const validated = validateAgentProviderHealthProbeRequest(request);
+    const result = parseAgentAccountUsageSnapshot(
+      await this.invokeCommand(READ_AGENT_PROVIDER_USAGE_IPC_COMMAND, { request: validated }),
+    );
+    if (result.provider !== validated.provider) {
+      return invalidResponse("result.provider", "the requested provider");
+    }
+    return result;
   }
 
   async subscribeAgentProviderUpdateProgress(

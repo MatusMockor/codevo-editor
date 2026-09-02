@@ -7,9 +7,9 @@ use crate::agent_task_spawner::{inherited_environment, AgentCliInvocation};
 use sha2::{Digest, Sha256};
 use std::{
     env, fs,
-    io::{self, Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Child, ChildStdin, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
@@ -241,6 +241,7 @@ pub enum AgentProviderProcessIntent {
     InstalledVersion(AgentCliInvocation),
     AuthenticationStatus(AgentCliInvocation),
     AuthenticationStatusText(AgentCliInvocation),
+    AccountUsage(AgentCliInvocation),
     NpmGlobalRoot,
     NpmInventory,
     NpmAvailableVersion(AgentCliInvocation),
@@ -261,6 +262,8 @@ pub struct AgentProviderProcessPlan {
     env: Box<[(String, String)]>,
     timeout: Duration,
     output_limit: usize,
+    stdin_payload: Option<Box<[u8]>>,
+    stdout_completion_marker: Option<Box<[u8]>>,
     requires_update_authorization: bool,
 }
 
@@ -331,7 +334,8 @@ impl AgentProviderProcessPlan {
         let provider = match intent {
             AgentProviderProcessIntent::InstalledVersion(provider)
             | AgentProviderProcessIntent::AuthenticationStatus(provider)
-            | AgentProviderProcessIntent::AuthenticationStatusText(provider) => provider,
+            | AgentProviderProcessIntent::AuthenticationStatusText(provider)
+            | AgentProviderProcessIntent::AccountUsage(provider) => provider,
             _ => return Err("Provider executable cannot run this operation.".to_string()),
         };
         let args = match intent {
@@ -347,17 +351,44 @@ impl AgentProviderProcessPlan {
             {
                 vec!["login", "status"]
             }
+            AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::ClaudeCode) => vec![
+                "-p",
+                "/usage",
+                "--output-format",
+                "json",
+                "--permission-mode",
+                "dontAsk",
+                "--no-session-persistence",
+            ],
+            AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::CodexExec) => {
+                vec!["app-server", "--stdio"]
+            }
             _ => return Err("Provider executable cannot run this operation.".to_string()),
         };
         let _ = provider;
-        Ok(Self::new(
+        let mut plan = Self::new(
             identity,
             args,
             effective_path,
             AGENT_PROVIDER_PROBE_TIMEOUT,
             MAX_AGENT_PROVIDER_OUTPUT_BYTES,
             false,
-        ))
+        );
+        if provider == AgentCliInvocation::CodexExec
+            && matches!(intent, AgentProviderProcessIntent::AccountUsage(_))
+        {
+            plan.stdin_payload = Some(
+                concat!(
+                    "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo Editor\",\"version\":\"0.2.0\"}}}\n",
+                    "{\"method\":\"initialized\",\"params\":{}}\n",
+                    "{\"method\":\"account/rateLimits/read\",\"id\":1}\n"
+                )
+                .as_bytes()
+                .into(),
+            );
+            plan.stdout_completion_marker = Some(b"\"id\":1,\"result\"".as_slice().into());
+        }
+        Ok(plan)
     }
 
     pub fn package_manager_with_effective_path(
@@ -486,6 +517,8 @@ impl AgentProviderProcessPlan {
             env: provider_environment(effective_path).into_boxed_slice(),
             timeout,
             output_limit,
+            stdin_payload: None,
+            stdout_completion_marker: None,
             requires_update_authorization,
         }
     }
@@ -972,7 +1005,11 @@ fn execute_agent_provider_plan_cancellable_inner(
         .current_dir(&plan.cwd)
         .env_clear()
         .envs(plan.env.iter().cloned())
-        .stdin(Stdio::null())
+        .stdin(if plan.stdin_payload.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
@@ -1003,24 +1040,59 @@ fn execute_agent_provider_plan_cancellable_inner(
                 return Err(AgentProviderProcessFailure::Spawn(error.to_string()));
             }
         };
-    OwnedProviderChild::new(child, deadline, plan.output_limit).settle(cancelled, output_sink)
+    let mut child = child;
+    let mut retained_stdin = None;
+    if let Some(payload) = plan.stdin_payload.as_deref() {
+        let Some(mut stdin) = child.stdin.take() else {
+            let mut owned = OwnedProviderChild::new(child, None, deadline, plan.output_limit, None);
+            owned.terminate();
+            return Err(AgentProviderProcessFailure::Uncertain(
+                "Provider input pipe was unavailable.".to_string(),
+            ));
+        };
+        if let Err(error) = stdin.write_all(payload) {
+            drop(stdin);
+            let mut owned = OwnedProviderChild::new(child, None, deadline, plan.output_limit, None);
+            owned.terminate();
+            return Err(AgentProviderProcessFailure::Uncertain(error.to_string()));
+        }
+        retained_stdin = Some(stdin);
+    }
+    OwnedProviderChild::new(
+        child,
+        retained_stdin,
+        deadline,
+        plan.output_limit,
+        plan.stdout_completion_marker.clone(),
+    )
+    .settle(cancelled, output_sink)
 }
 
 struct OwnedProviderChild {
     child: Child,
+    stdin: Option<ChildStdin>,
     process_group_id: Option<i32>,
     deadline: Instant,
     output_limit: usize,
+    stdout_completion_marker: Option<Box<[u8]>>,
     settled: bool,
 }
 
 impl OwnedProviderChild {
-    fn new(child: Child, deadline: Instant, output_limit: usize) -> Self {
+    fn new(
+        child: Child,
+        stdin: Option<ChildStdin>,
+        deadline: Instant,
+        output_limit: usize,
+        stdout_completion_marker: Option<Box<[u8]>>,
+    ) -> Self {
         Self {
             process_group_id: i32::try_from(child.id()).ok(),
             child,
+            stdin,
             deadline,
             output_limit,
+            stdout_completion_marker,
             settled: false,
         }
     }
@@ -1033,30 +1105,40 @@ impl OwnedProviderChild {
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let retained_bytes = Arc::new(AtomicUsize::new(0));
         let output_exceeded = Arc::new(AtomicBool::new(false));
+        let completion_observed = Arc::new(AtomicBool::new(false));
         let stdout = self.child.stdout.take().map(|reader| {
             spawn_reader(
                 reader,
                 self.output_limit,
-                Arc::clone(&bytes_read),
-                Arc::clone(&retained_bytes),
-                Arc::clone(&output_exceeded),
-                AgentProviderProcessOutputStream::Stdout,
-                Arc::clone(&output_sink),
+                ProviderReaderContext {
+                    bytes_read: Arc::clone(&bytes_read),
+                    retained_bytes: Arc::clone(&retained_bytes),
+                    output_exceeded: Arc::clone(&output_exceeded),
+                    stream: AgentProviderProcessOutputStream::Stdout,
+                    output_sink: Arc::clone(&output_sink),
+                    completion_marker: self.stdout_completion_marker.clone(),
+                    completion_observed: Arc::clone(&completion_observed),
+                },
             )
         });
         let stderr = self.child.stderr.take().map(|reader| {
             spawn_reader(
                 reader,
                 self.output_limit,
-                Arc::clone(&bytes_read),
-                Arc::clone(&retained_bytes),
-                Arc::clone(&output_exceeded),
-                AgentProviderProcessOutputStream::Stderr,
-                Arc::clone(&output_sink),
+                ProviderReaderContext {
+                    bytes_read: Arc::clone(&bytes_read),
+                    retained_bytes: Arc::clone(&retained_bytes),
+                    output_exceeded: Arc::clone(&output_exceeded),
+                    stream: AgentProviderProcessOutputStream::Stderr,
+                    output_sink: Arc::clone(&output_sink),
+                    completion_marker: None,
+                    completion_observed: Arc::clone(&completion_observed),
+                },
             )
         });
         let mut exceeded = false;
         let mut cancelled_by_owner = false;
+        let mut completed_by_marker = false;
         let status = loop {
             if cancelled() {
                 cancelled_by_owner = true;
@@ -1064,6 +1146,10 @@ impl OwnedProviderChild {
             }
             if output_exceeded.load(Ordering::Acquire) {
                 exceeded = true;
+                break None;
+            }
+            if completion_observed.load(Ordering::Acquire) {
+                completed_by_marker = true;
                 break None;
             }
             match self.child.try_wait() {
@@ -1100,6 +1186,9 @@ impl OwnedProviderChild {
         if exceeded {
             return Err(AgentProviderProcessFailure::OutputLimitExceeded { stdout, stderr });
         }
+        if completed_by_marker {
+            return Ok(AgentProviderProcessOutput { stdout, stderr });
+        }
         let Some(status) = status else {
             return Err(AgentProviderProcessFailure::TimedOut { stdout, stderr });
         };
@@ -1110,6 +1199,7 @@ impl OwnedProviderChild {
     }
 
     fn terminate(&mut self) {
+        self.stdin.take();
         kill_group(self.process_group_id);
         let _ = self.child.kill();
         let _ = wait_child(&mut self.child);
@@ -1126,16 +1216,31 @@ impl Drop for OwnedProviderChild {
     }
 }
 
-fn spawn_reader<R: Read + Send + 'static>(
-    mut reader: R,
-    limit: usize,
+struct ProviderReaderContext {
     bytes_read: Arc<AtomicUsize>,
     retained_bytes: Arc<AtomicUsize>,
     output_exceeded: Arc<AtomicBool>,
     stream: AgentProviderProcessOutputStream,
     output_sink: Arc<dyn AgentProviderProcessOutputSink>,
+    completion_marker: Option<Box<[u8]>>,
+    completion_observed: Arc<AtomicBool>,
+}
+
+fn spawn_reader<R: Read + Send + 'static>(
+    mut reader: R,
+    limit: usize,
+    context: ProviderReaderContext,
 ) -> thread::JoinHandle<Vec<u8>> {
     thread::spawn(move || {
+        let ProviderReaderContext {
+            bytes_read,
+            retained_bytes,
+            output_exceeded,
+            stream,
+            output_sink,
+            completion_marker,
+            completion_observed,
+        } = context;
         let mut output = Vec::new();
         let mut buffer = [0_u8; 4096];
         loop {
@@ -1178,6 +1283,11 @@ fn spawn_reader<R: Read + Send + 'static>(
                 ) {
                     Ok(_) => {
                         output.extend_from_slice(&buffer[..accepted]);
+                        if completion_marker.as_deref().is_some_and(|marker| {
+                            output.windows(marker.len()).any(|window| window == marker)
+                        }) {
+                            completion_observed.store(true, Ordering::Release);
+                        }
                         break;
                     }
                     Err(current) => retained = current,

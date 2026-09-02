@@ -305,7 +305,6 @@ function containsFixedDescendants(node: HTMLElement): boolean {
   if (isSet(style.perspective)) return true;
   if (isSet(style.filter)) return true;
   if (isSet(style.backdropFilter)) return true;
-  if (style.containerType !== undefined && isSet(style.containerType)) return true;
   if (CONTAINING_BLOCK_CONTAIN.some((value) => style.contain.split(" ").includes(value))) {
     return true;
   }

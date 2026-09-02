@@ -48,9 +48,9 @@ interface LaunchText {
 
 const CLAUDE_MODEL_TEXT: Record<ClaudeModelChoice, LaunchText> = {
   default: {
-    label: "Claude (default)",
-    meta: "default model",
-    hint: "Uses the model your Claude CLI is configured to run.",
+    label: "Auto (Claude Code)",
+    meta: "automatic model",
+    hint: "No model override. Claude CLI chooses the model from its settings.",
   },
   fable: {
     label: "Claude Fable 5",
@@ -127,9 +127,9 @@ const CLAUDE_EFFORT_TEXT: Record<ClaudeEffortChoice, LaunchText> = {
 
 const CODEX_MODEL_TEXT: Record<CodexModelChoice, LaunchText> = {
   default: {
-    label: "Codex (default)",
-    meta: "default model",
-    hint: "Uses the model your Codex CLI is configured to run.",
+    label: "Auto (Codex)",
+    meta: "automatic model",
+    hint: "No model override. Codex CLI chooses the model from its settings.",
   },
   "gpt-5.6-sol": {
     label: "GPT-5.6 Sol",

@@ -195,6 +195,12 @@ export type AgentThreadsAction =
     }
   | { readonly kind: "threadMarkedUnread"; readonly threadId: string }
   | { readonly kind: "threadRenamed"; readonly threadId: string; readonly title: string }
+  | {
+      readonly kind: "ownerRebound";
+      readonly threadId: string;
+      readonly previousOwnerId: string;
+      readonly owner: AgentThreadOwner;
+    }
   | { readonly kind: "pinToggled"; readonly threadId: string }
   | { readonly kind: "archived"; readonly threadId: string }
   | { readonly kind: "deleted"; readonly threadId: string }
@@ -355,6 +361,8 @@ export function agentThreadsReducer(
       return markThreadUnread(state, action.threadId);
     case "threadRenamed":
       return renameThread(state, action.threadId, action.title);
+    case "ownerRebound":
+      return rebindOwner(state, action.threadId, action.previousOwnerId, action.owner);
     case "pinToggled":
       return togglePin(state, action.threadId);
     case "archived":
@@ -798,6 +806,23 @@ function renameThread(state: AgentThreadsState, threadId: string, raw: string): 
   if (title === null) return state;
   if (title === thread.title) return state;
   return replaceThread(state, { ...thread, title });
+}
+
+function rebindOwner(
+  state: AgentThreadsState,
+  threadId: string,
+  previousOwnerId: string,
+  owner: AgentThreadOwner,
+): AgentThreadsState {
+  const thread = state.threads.get(threadId);
+  if (thread === undefined) return state;
+  if (runningTurn(thread) !== null) return state;
+  if (thread.owner.ownerId !== previousOwnerId) return state;
+  if (thread.owner.rootKey !== owner.rootKey) return state;
+  if (thread.owner.repositoryRoot !== owner.repositoryRoot) return state;
+  if (owner.ownerId.trim() === "") return state;
+  if (thread.owner.ownerId === owner.ownerId) return state;
+  return replaceThread(state, { ...thread, owner });
 }
 
 function togglePin(state: AgentThreadsState, threadId: string): AgentThreadsState {

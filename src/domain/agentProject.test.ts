@@ -120,19 +120,26 @@ describe("agent root lease validation", () => {
     }
   });
 
-  it("parses only an exact positive safe lease token receipt", () => {
-    expect(parseAgentRootLeaseReceipt({ leaseToken: Number.MAX_SAFE_INTEGER })).toEqual({
+  it("parses only an exact lease token and workspace identity receipt", () => {
+    expect(
+      parseAgentRootLeaseReceipt({
+        leaseToken: Number.MAX_SAFE_INTEGER,
+        workspaceId: "ws-agent-root",
+      }),
+    ).toEqual({
       leaseToken: Number.MAX_SAFE_INTEGER,
+      workspaceId: "ws-agent-root",
     });
 
     const rejected: readonly unknown[] = [
       null,
       {},
       { leaseToken: 0 },
+      { leaseToken: 1, workspaceId: "" },
       { leaseToken: -1 },
       { leaseToken: 1.5 },
       { leaseToken: "1" },
-      { leaseToken: 1, extra: true },
+      { leaseToken: 1, workspaceId: "ws-agent-root", extra: true },
     ];
     for (const value of rejected) {
       expect(() => parseAgentRootLeaseReceipt(value)).toThrow(TypeError);

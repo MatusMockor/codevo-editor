@@ -65,6 +65,7 @@ export interface WorkbenchAgentProjectGateways {
   readonly repositoryDiscoveryGateway: AgentRepositoryDiscoveryGateway;
   readonly agentRootLeaseGateway: AgentRootLeaseGateway;
   readonly descriptorForRoot: (rootPath: string) => WorkspaceIdentityDescriptor | null;
+  readonly activateWorkspaceRoot?: (rootPath: string) => Promise<void>;
 }
 
 export interface WorkbenchAgentsOptions {
@@ -269,6 +270,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     activeWorkspaceRepositories: resolvedRepositories,
     activeIsolationPolicy: options.workspaceSettingsRef.current.agentIsolationPolicy,
     descriptorForRoot,
+    activateWorkspaceRoot: projectGateways?.activateWorkspaceRoot,
     settingsGateway: projectGateways?.settingsGateway ?? unwiredSettingsGateway,
     trustGateway: projectGateways?.trustGateway ?? unwiredTrustGateway,
     repositoryDiscoveryGateway:
@@ -373,6 +375,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     getDirtyEditorDocumentCount,
     onProjectDispatchTrustRejected: agentProjects.noteDispatchTrustRejected,
     ensureProjectLease: agentProjects.ensureProjectLease,
+    ensureProjectLaunchIdentity: agentProjects.ensureProjectLaunchIdentity,
     launchIdentityForProject: agentProjects.launchIdentityForProject,
     reportError: options.reportError,
     openAgentSettings,

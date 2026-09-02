@@ -1,5 +1,5 @@
 import { useRef, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { Folder, FolderGit2, Play, Plus, Send, TriangleAlert } from "lucide-react";
+import { Folder, FolderGit2, Play, Plus, Send } from "lucide-react";
 import {
   useAgentModelFavorites,
   type AgentModelFavoritesPersistence,
@@ -17,7 +17,7 @@ import {
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
 import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
-import { AgentLaunchControls, AgentLaunchWarning } from "./AgentLaunchControls";
+import { AgentLaunchControls } from "./AgentLaunchControls";
 import { agentLaunchMetaLabel } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes, inPlaceGuardReasonLabel } from "./agentModePresentation";
 import { AgentPickerMenu } from "./AgentPickerMenu";
@@ -123,7 +123,6 @@ export function AgentComposer({
   const followUp = mode.kind === "followUp";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason = composerTargetReason(followUp, target);
-  const unsafeInPlace = !followUp && isolation === "in-place" && guard.kind === "unsafe";
   const effectiveLaunch =
     launch.provider === launchProvider ? launch : defaultAgentLaunchOptions(launchProvider);
   const dangerousLaunch = agentLaunchIsDangerous(effectiveLaunch);
@@ -151,10 +150,12 @@ export function AgentComposer({
 
   const launchControls = (
     <AgentLaunchControls
+      dangerousConfirmed={dangerousConfirmed}
       disabled={dispatching || allProvidersDisabled}
       favorites={favorites}
       launch={effectiveLaunch}
       onLaunchChange={onLaunchChange}
+      onDangerousConfirmedChange={onDangerousConfirmedChange}
       providerEnabled={providerEnabled}
       providerManagement={providerManagement}
     />
@@ -164,8 +165,11 @@ export function AgentComposer({
     <>
       <AgentComposerCheckout
         disabled={dispatching || worktreeOnly || allProvidersDisabled}
+        guard={guard}
         isolation={isolation}
         onIsolationChange={onIsolationChange}
+        onUnsafeConfirmedChange={onUnsafeConfirmedChange}
+        unsafeConfirmed={unsafeConfirmed}
       />
       <AgentComposerRepository
         disabled={dispatching || allProvidersDisabled}
@@ -231,37 +235,6 @@ export function AgentComposer({
               : "Ask anything or describe the change you want"
           }
           value={prompt}
-        />
-
-        {unsafeInPlace && guard.kind === "unsafe" && (
-          <div className="agent-composer__unsafe">
-            <span className="agent-composer__unsafe-title">
-              <TriangleAlert aria-hidden="true" size={12} />
-              Running in place can overwrite your work
-            </span>
-            <ul className="agent-composer__unsafe-reasons">
-              {guard.reasons.map((reason) => (
-                <li key={reason}>{inPlaceGuardReasonLabel(reason)}</li>
-              ))}
-            </ul>
-            <label className="agent-composer__checkbox" htmlFor="agent-unsafe-confirm">
-              <input
-                checked={unsafeConfirmed}
-                disabled={allProvidersDisabled}
-                id="agent-unsafe-confirm"
-                onChange={(event) => onUnsafeConfirmedChange(event.target.checked)}
-                type="checkbox"
-              />
-              Start in this repository anyway and accept the risk
-            </label>
-          </div>
-        )}
-
-        <AgentLaunchWarning
-          confirmed={dangerousConfirmed}
-          disabled={allProvidersDisabled}
-          launch={effectiveLaunch}
-          onConfirmedChange={onDangerousConfirmedChange}
         />
 
         <div className="agent-composer__row">
@@ -337,25 +310,60 @@ function AgentComposerBytes({ promptBytes }: { readonly promptBytes: number }) {
 
 function AgentComposerCheckout({
   disabled,
+  guard,
   isolation,
   onIsolationChange,
+  onUnsafeConfirmedChange,
+  unsafeConfirmed,
 }: {
   readonly isolation: AgentTaskIsolation;
   readonly disabled: boolean;
+  readonly guard: InPlaceDispatchGuard;
+  readonly unsafeConfirmed: boolean;
   onIsolationChange(isolation: AgentTaskIsolation): void;
+  onUnsafeConfirmedChange(confirmed: boolean): void;
 }) {
+  const unsafeGuard = guard.kind === "unsafe";
+  const unsafeSelected = isolation === "in-place" && unsafeGuard;
+  const options = unsafeGuard
+    ? CHECKOUT_OPTIONS.map((option) =>
+        option.value === "in-place"
+          ? agentPickerOption(
+              option.value,
+              option.label,
+              `Runs in the project's own checkout; ${guard.reasons
+                .map(inPlaceGuardReasonLabel)
+                .join(", ")}.`,
+              "danger",
+            )
+          : option,
+      )
+    : CHECKOUT_OPTIONS;
   return (
     <AgentPickerMenu
       align="start"
+      confirmation={
+        unsafeGuard
+          ? {
+              id: "agent-unsafe-confirm",
+              value: "in-place",
+              checked: unsafeConfirmed,
+              disabled,
+              label: "Accept the risk and run locally",
+              description: "The agent can overwrite uncommitted or unsaved work.",
+              onChange: onUnsafeConfirmedChange,
+            }
+          : null
+      }
       describedBy={null}
       disabled={disabled}
       icon={isolationGlyph(isolation)}
       id={CHECKOUT_ID}
       label="Checkout for this thread"
       onChange={(value) => changeIsolation(value, onIsolationChange)}
-      options={CHECKOUT_OPTIONS}
+      options={options}
       prefix={null}
-      tone={null}
+      tone={unsafeSelected ? "danger" : null}
       value={isolation}
       variant="ghost"
     />

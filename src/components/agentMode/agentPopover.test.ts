@@ -1,6 +1,9 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 import {
   AGENT_POPOVER_METRICS,
+  agentPopoverContainingBlock,
   agentPopoverPosition,
   agentPopoverStyle,
   agentPopoverViewportFrame,
@@ -166,6 +169,20 @@ describe("agentPopoverPosition", () => {
 describe("agentPopoverStyle", () => {
   it("returns no style before the first measurement", () => {
     expect(agentPopoverStyle(null, "start")).toEqual({});
+  });
+});
+
+describe("agentPopoverContainingBlock", () => {
+  it("does not offset fixed popovers for a size container", () => {
+    const container = document.createElement("div");
+    const popover = document.createElement("div");
+    container.style.containerType = "inline-size";
+    container.append(popover);
+    document.body.append(container);
+
+    expect(agentPopoverContainingBlock(popover)).toBeNull();
+
+    container.remove();
   });
 });
 

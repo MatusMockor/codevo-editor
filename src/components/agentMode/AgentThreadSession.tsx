@@ -1,8 +1,5 @@
 import { memo, useEffect, useMemo, useRef, type ReactNode } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import { agentCliVersionLabel } from "../../domain/agentCliVersion";
-import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentTurn } from "../../domain/agentThread";
 import {
   MIN_THREAD_SEARCH_QUERY_CHARS,
@@ -10,21 +7,12 @@ import {
   type AgentThreadSearchRange,
 } from "../../domain/agentThreadSearch";
 import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentSidebarPresentation";
-import {
-  agentLaunchEffortMeta,
-  agentLaunchEffortValue,
-  agentLaunchModeHint,
-  agentLaunchModeMeta,
-  agentLaunchModelMeta,
-  agentLaunchTone,
-} from "./agentLaunchPresentation";
 import { AgentRelativeTime } from "./agentClock";
 import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 import {
-  agentIsolationBadgeLabel,
   agentWorktreeRemovalLabel,
   agentTurnProjection,
-  agentTurnStatusLabel,
+  agentTurnSubagentSummary,
   type AgentTurnItem,
 } from "./agentModePresentation";
 
@@ -131,9 +119,7 @@ function AgentThreadSessionBody({
           {record.turns.map((turn) => (
             <AgentTurnView
               highlight={highlightFor(turn.turnId)}
-              isolationLabel={record.target.isolation}
               key={turn.turnId}
-              provider={record.provider.kind}
               renderProbe={turnRenderProbe}
               turn={turn}
             />
@@ -162,20 +148,16 @@ function AgentThreadSessionBody({
 
 const AgentTurnView = memo(function AgentTurnView({
   highlight = null,
-  isolationLabel,
-  provider,
   renderProbe,
   turn,
 }: {
   readonly highlight?: AgentTurnHighlight | null;
-  readonly isolationLabel: AgentThreadView["thread"]["target"]["isolation"];
-  readonly provider: AgentCliKind;
   readonly renderProbe?: (turnId: string) => void;
   readonly turn: AgentTurn;
 }) {
-  const cliVersion = agentCliVersionLabel(provider, turn.cliVersion);
   renderProbe?.(turn.turnId);
   const projection = agentTurnProjection(turn.events);
+  const subagents = agentTurnSubagentSummary(turn.events);
   const running = turn.status.kind === "pending" || turn.status.kind === "running";
   const empty = projection.items.length === 0 && projection.rawLines.length === 0;
   const cursor = highlight?.current ?? null;
@@ -191,25 +173,10 @@ const AgentTurnView = memo(function AgentTurnView({
         <div className="agent-prompt__body">
           <HighlightRun current={promptCurrent} query={highlight?.query ?? ""} text={turn.prompt} />
         </div>
-        <div className="agent-prompt__meta agent-num">
-          <span>you</span>
-          <span aria-hidden="true" className="agent-prompt__sep" />
+        <div className="agent-prompt__meta agent-num" aria-label="Message time">
           <span>
             <AgentRelativeTime epochMs={turn.startedAtEpochMs} />
           </span>
-          <span aria-hidden="true" className="agent-prompt__sep" />
-          <span>{agentIsolationBadgeLabel(isolationLabel).toLowerCase()}</span>
-          <span aria-hidden="true" className="agent-prompt__sep" />
-          <span>{agentTurnStatusLabel(turn.status).toLowerCase()}</span>
-          {turn.launch !== null && <AgentTurnLaunchMeta launch={turn.launch} />}
-          {cliVersion !== null && (
-            <>
-              <span aria-hidden="true" className="agent-prompt__sep" />
-              <span className="agent-prompt__cli" title="CLI version this turn ran with">
-                {cliVersion}
-              </span>
-            </>
-          )}
         </div>
       </article>
 
@@ -218,6 +185,7 @@ const AgentTurnView = memo(function AgentTurnView({
       )}
 
       <div className="agent-turn__events">
+        {subagents !== null && <AgentSubagentSummary summary={subagents} />}
         {projection.items.map((item) => (
           <AgentTurnItemView
             highlight={itemHighlight(highlight, item.key)}
@@ -260,28 +228,27 @@ const AgentTurnView = memo(function AgentTurnView({
   );
 });
 
-function AgentTurnLaunchMeta({ launch }: { readonly launch: AgentLaunchOptions }) {
-  const tone = agentLaunchTone(launch);
-  const effortMeta =
-    agentLaunchEffortValue(launch) === "default" ? null : agentLaunchEffortMeta(launch);
-  const modeClassName =
-    tone === null ? "agent-prompt__launch" : `agent-prompt__launch agent-prompt__launch--${tone}`;
-
+function AgentSubagentSummary({
+  summary,
+}: {
+  readonly summary: NonNullable<ReturnType<typeof agentTurnSubagentSummary>>;
+}) {
+  const states = [
+    summary.running > 0 ? `${summary.running} working` : null,
+    summary.completed > 0 ? `${summary.completed} completed` : null,
+    summary.failed > 0 ? `${summary.failed} failed` : null,
+  ].filter((state): state is string => state !== null);
   return (
-    <>
-      <span aria-hidden="true" className="agent-prompt__sep" />
-      <span className="agent-prompt__launch">{agentLaunchModelMeta(launch)}</span>
-      <span aria-hidden="true" className="agent-prompt__sep" />
-      <span className={modeClassName} title={agentLaunchModeHint(launch)}>
-        {agentLaunchModeMeta(launch)}
+    <div className="agent-subagents" role="status">
+      <span
+        aria-hidden="true"
+        className={`agent-subagents__dot${summary.running > 0 ? " agent-subagents__dot--live" : ""}${summary.failed > 0 && summary.running === 0 ? " agent-subagents__dot--failed" : ""}`}
+      />
+      <span className="agent-subagents__label">
+        Started {summary.total} subagent{summary.total === 1 ? "" : "s"}
       </span>
-      {effortMeta !== null && (
-        <>
-          <span aria-hidden="true" className="agent-prompt__sep" />
-          <span className="agent-prompt__launch">{effortMeta}</span>
-        </>
-      )}
-    </>
+      <span className="agent-subagents__status">{states.join(" · ")}</span>
+    </div>
   );
 }
 

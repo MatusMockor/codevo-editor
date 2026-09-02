@@ -29,6 +29,7 @@ export interface AgentRootLeaseReleaseRequest {
 
 export interface AgentRootLeaseReceipt {
   readonly leaseToken: number;
+  readonly workspaceId: string;
 }
 
 export type AgentRootLeaseReleaseResult =
@@ -80,8 +81,11 @@ export function validateAgentRootLeaseReleaseRequest(value: unknown): AgentRootL
 
 export function parseAgentRootLeaseReceipt(value: unknown): AgentRootLeaseReceipt {
   const result = record(value, "result");
-  exactKeys(result, ["leaseToken"], "result");
-  return { leaseToken: positiveSafeInteger(result.leaseToken, "result.leaseToken") };
+  exactKeys(result, ["leaseToken", "workspaceId"], "result");
+  return {
+    leaseToken: positiveSafeInteger(result.leaseToken, "result.leaseToken"),
+    workspaceId: boundedText(result.workspaceId, "result.workspaceId", MAX_AGENT_TASK_PATH_BYTES),
+  };
 }
 
 export function parseAgentRootLeaseReleaseResult(value: unknown): AgentRootLeaseReleaseResult {

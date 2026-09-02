@@ -8,7 +8,7 @@ import type { AgentProviderManagementSurface } from "../../application/useAgentP
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import { AgentLaunchControls, AgentLaunchWarning } from "./AgentLaunchControls";
+import { AgentLaunchControls } from "./AgentLaunchControls";
 
 const NO_FAVORITES: AgentModelFavorites = {
   keys: new Set(),
@@ -126,7 +126,7 @@ describe("AgentLaunchControls", () => {
       expect(trigger(id).classList.contains("agent-picker__trigger--ghost")).toBe(true);
       expect(trigger(id).querySelector(".agent-picker__prefix")).toBeNull();
     }
-    expect(trigger("agent-launch-model").textContent).toBe("Claude (default)");
+    expect(trigger("agent-launch-model").textContent).toBe("Auto (Claude Code)");
     expect(trigger("agent-launch-effort").textContent).toBe("Default effort");
     expect(trigger("agent-launch-mode").textContent).toBe("Default permissions");
     const dividers = host.querySelectorAll(".agent-composer__divider");
@@ -155,7 +155,7 @@ describe("AgentLaunchControls", () => {
 
     open("agent-launch-model");
     expect(options("agent-launch-model").map((option) => optionLabel(option))).toEqual([
-      "Codex (default)",
+      "Auto (Codex)",
       "GPT-5.6 Sol",
       "GPT-5.5",
       "GPT-5.4",
@@ -246,25 +246,33 @@ describe("AgentLaunchControls", () => {
     expect(trigger("agent-launch-mode").disabled).toBe(false);
   });
 
-  it("stays silent for a safe mode and warns for a dangerous one", () => {
+  it("keeps dangerous confirmation inside the permission picker", () => {
     const onConfirmedChange = vi.fn();
-    renderWarning(
+    renderControls(
       { provider: "claudeCode", model: "opus", mode: "acceptEdits", effort: "default" },
+      undefined,
+      false,
+      null,
       false,
       onConfirmedChange,
     );
 
-    expect(host.querySelector(".agent-composer__danger")).toBeNull();
+    open("agent-launch-mode");
+    expect(host.querySelector("input#agent-launch-danger-confirm")).toBeNull();
+    open("agent-launch-mode");
 
-    renderWarning(
+    renderControls(
       { provider: "claudeCode", model: "opus", mode: "bypassPermissions", effort: "default" },
+      undefined,
+      false,
+      null,
       false,
       onConfirmedChange,
     );
 
-    const warning = host.querySelector(".agent-composer__danger");
-    expect(warning?.getAttribute("role")).toBe("alert");
-    expect(warning?.textContent).toContain("Bypasses permission checks");
+    expect(host.textContent).not.toContain("Bypasses permission checks");
+    open("agent-launch-mode");
+    expect(host.textContent).toContain("Bypasses permission checks");
     expect(host.querySelector("input#agent-launch-danger-confirm")).not.toBeNull();
   });
 
@@ -273,32 +281,20 @@ describe("AgentLaunchControls", () => {
     onLaunchChange: (next: AgentLaunchOptions) => void = () => undefined,
     disabled = false,
     providerManagement: AgentProviderManagementSurface | null = null,
+    dangerousConfirmed = false,
+    onDangerousConfirmedChange: (next: boolean) => void = () => undefined,
   ): void {
     act(() =>
       root.render(
         <AgentLaunchControls
           disabled={disabled}
+          dangerousConfirmed={dangerousConfirmed}
           favorites={NO_FAVORITES}
           launch={launch}
           onLaunchChange={onLaunchChange}
+          onDangerousConfirmedChange={onDangerousConfirmedChange}
           providerEnabled={{ claudeCode: true, codex: true }}
           providerManagement={providerManagement}
-        />,
-      ),
-    );
-  }
-
-  function renderWarning(
-    launch: AgentLaunchOptions,
-    confirmed: boolean,
-    onConfirmedChange: (next: boolean) => void,
-  ): void {
-    act(() =>
-      root.render(
-        <AgentLaunchWarning
-          confirmed={confirmed}
-          launch={launch}
-          onConfirmedChange={onConfirmedChange}
         />,
       ),
     );

@@ -74,7 +74,7 @@ describe("useAgentComposerState", () => {
       projectRootKey: SURFACE_FIXTURE_ROOT,
       repositoryRoot: FIXTURE_NESTED_ROOT,
       prompt: "Refactor the parser",
-      isolation: "worktree",
+      isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
       launch,
       dangerousLaunchConfirmed: false,
@@ -168,6 +168,7 @@ describe("useAgentComposerState", () => {
         dangerousLaunchConfirmed: false,
       });
     });
+    expect(current().composer.composerProps.prompt).toBe("");
     act(() => current().composer.composerProps.onPromptChange("Second prompt"));
 
     await act(async () => {
@@ -224,6 +225,40 @@ describe("useAgentComposerState", () => {
       dangerousLaunchConfirmed: true,
     });
     expect(current().composer.composerProps.prompt).toBe("");
+  });
+
+  it("keeps a selected follow-up blocked until its provider is ready", async () => {
+    const sendFollowUp = vi.fn(async () => true);
+    const unavailable = threadsSurfaceFixture({
+      agentCliConfigured: false,
+      threads: [surfaceThreadView()],
+      sendFollowUp,
+    });
+    render(unavailable);
+
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("First send after launch"));
+    expect(current().composer.composerProps.mode).toMatchObject({
+      kind: "followUp",
+      blockedReason: "No agent CLI is configured. Set the agent CLI path in settings.",
+    });
+    expect(current().composer.composerProps.submitBlocked).toBe(true);
+
+    await act(async () => {
+      await current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+    expect(sendFollowUp).not.toHaveBeenCalled();
+
+    render({ ...unavailable, agentCliConfigured: true });
+    expect(current().navigation.selectedThreadId).toBe("agt-1");
+    expect(current().composer.composerProps.mode).toMatchObject({
+      kind: "followUp",
+      blockedReason: null,
+    });
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
   });
 
   it("captions the follow-up composer with the imported provenance line", () => {
@@ -296,6 +331,7 @@ describe("useAgentComposerState", () => {
         dangerousLaunchConfirmed: false,
       });
     });
+    expect(current().composer.composerProps.prompt).toBe("");
 
     const replacement = {
       ...original,
@@ -354,22 +390,31 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.unsafeConfirmed).toBe(false);
   });
 
-  it("keeps a new clean project isolated under automatic policy across a stale preview frame", () => {
+  it("defaults a new thread to the local checkout under automatic policy", () => {
     const agents = threadsSurfaceFixture({
       isolationPreview: (repositoryRoot) => ({
         repositoryRoot,
-        recommended: { kind: "in-place" },
-        inPlaceGuard: { kind: "safe" },
+        recommended: { kind: "worktree", reason: "dirty-tree" },
+        inPlaceGuard: { kind: "unsafe", reasons: ["dirty-tree"] },
         inPlaceAllowed: true,
-        confirmationKey: null,
+        confirmationKey: "confirm-local",
       }),
     });
 
     render(agents, [projectFixture({ isolationPolicy: "auto" })]);
 
-    expect(current().composer.composerProps.isolation).toBe("worktree");
-    act(() => current().composer.composerProps.onIsolationChange("in-place"));
     expect(current().composer.composerProps.isolation).toBe("in-place");
+    expect(current().composer.composerProps.guard).toEqual({
+      kind: "unsafe",
+      reasons: ["dirty-tree"],
+    });
+    expect(current().composer.composerProps.submitBlocked).toBe(true);
+  });
+
+  it("honors an explicit workspace worktree policy", () => {
+    render(threadsSurfaceFixture(), [projectFixture({ isolationPolicy: "worktree" })]);
+
+    expect(current().composer.composerProps.isolation).toBe("worktree");
   });
 
   it("forces worktree isolation for background-tab projects", () => {
