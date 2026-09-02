@@ -254,12 +254,15 @@ export function repositoryRootForMapping(
 /**
  * The effective repository mappings for a freshly opened workspace: the manual
  * mappings persisted in the workspace settings, unioned with the auto-detected
- * repositories when auto-detection is enabled, and always including the
- * workspace root (primary). Detected directories are `.git`-suffix tolerant.
+ * repositories when auto-detection is enabled. Detected directories are
+ * `.git`-suffix tolerant.
  *
- * The workspace root is always present so the single-repo/no-repo behaviour is
- * preserved: with no manual mappings and nothing (or `null`) detected the
- * result is exactly `[""]`, the pre-multi-repo default.
+ * Until discovery has produced an authoritative result, the workspace root is
+ * retained as the conservative single-repository fallback. Once enabled
+ * discovery succeeds, however, the root is included only when discovery found
+ * its `.git` entry. This deliberately overrides a persisted/legacy manual `""`
+ * mapping: an aggregate non-Git folder must never remain an executable Git
+ * target while its discovered nested repositories stay available.
  */
 export function resolveEffectiveGitRepositoryMappings(options: {
   manualMappings: unknown;
@@ -278,7 +281,16 @@ export function resolveEffectiveGitRepositoryMappings(options: {
         )
       : [];
 
-  return normalizeGitDirectoryMappings(["", ...manual, ...detected]);
+  const discoveryConfirmed =
+    options.auto && options.detectedDirectories != null;
+  const rootWasDiscovered = detected.some(
+    (rootRelativePath) => rootRelativePath === "",
+  );
+  const resolved = normalizeGitDirectoryMappings(["", ...manual, ...detected]);
+
+  return discoveryConfirmed && !rootWasDiscovered
+    ? resolved.filter((mapping) => mapping.rootRelativePath !== "")
+    : resolved;
 }
 
 /**

@@ -379,7 +379,7 @@ describe("resolveEffectiveGitRepositoryMappings", () => {
     ).toEqual([mapping(""), mapping("workbench/lcsk/manual")]);
   });
 
-  it("always includes the workspace root and falls back to it alone", () => {
+  it("falls back to the workspace root while discovery has no authoritative result", () => {
     expect(
       resolveEffectiveGitRepositoryMappings({
         manualMappings: [],
@@ -387,16 +387,26 @@ describe("resolveEffectiveGitRepositoryMappings", () => {
         auto: true,
       }),
     ).toEqual([mapping("")]);
-  });
 
-  it("strips a stray .git segment from detected directories", () => {
     expect(
       resolveEffectiveGitRepositoryMappings({
         manualMappings: [],
+        auto: true,
+      }),
+    ).toEqual([mapping("")]);
+  });
+
+  it("omits a confirmed non-Git aggregate root while keeping nested repositories", () => {
+    expect(
+      resolveEffectiveGitRepositoryMappings({
+        manualMappings: ["", "workbench/lcsk/manual"],
         detectedDirectories: ["workbench/lcsk/x/.git"],
         auto: true,
       }),
-    ).toEqual([mapping(""), mapping("workbench/lcsk/x")]);
+    ).toEqual([
+      mapping("workbench/lcsk/manual"),
+      mapping("workbench/lcsk/x"),
+    ]);
   });
 });
 

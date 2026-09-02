@@ -654,7 +654,7 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
     });
     await flushAsyncTurns();
 
-    expect(mappingPaths(getWorkbench())).toEqual(["", "libs/manual", "packages/api"]);
+    expect(mappingPaths(getWorkbench())).toEqual(["libs/manual", "packages/api"]);
 
     await act(async () => {
       await getWorkbench().saveWorkbenchSettings(
@@ -736,7 +736,7 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
     });
     await flushAsyncTurns();
 
-    expect(mappingPaths(getWorkbench())).toEqual(["", "libs/second", "packages/second"]);
+    expect(mappingPaths(getWorkbench())).toEqual(["libs/second", "packages/second"]);
   });
 
   it("drops an in-flight discovery result when the workspace switches mid-flight", async () => {
@@ -783,7 +783,7 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
     });
     await flushAsyncTurns();
     expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
-    expect(mappingPaths(getWorkbench())).toEqual([""]);
+    expect(mappingPaths(getWorkbench())).toEqual([]);
 
     // Start a settings-save discovery on A and leave its detection pending.
     let saveA: Promise<void> | null = null;

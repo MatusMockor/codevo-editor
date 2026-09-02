@@ -10,7 +10,6 @@ import {
 } from "../domain/agentProject";
 import { DEFAULT_AGENT_ISOLATION_POLICY, type AgentIsolationPolicy } from "../domain/agentSettings";
 import {
-  gitMappingCandidatesFromDirectoryListing,
   repositoryRootForMapping,
   resolveEffectiveGitRepositoryMappings,
   type ResolvedGitRepository,
@@ -27,7 +26,7 @@ export const MAX_CONCURRENT_AGENT_PROJECT_LOADS = 2;
 const MAX_AGENT_PROJECT_RETIRED_OWNERS = 14;
 
 export interface AgentRepositoryDiscoveryGateway {
-  detectRepositories(rootPath: string, maxDepth?: number): Promise<string[]>;
+  detectRepositories(rootPath: string, maxDepth?: number): Promise<readonly string[] | null>;
 }
 
 export interface AgentProjectsDependencies {
@@ -1091,19 +1090,11 @@ function resolveProjectRepositories(
     detectedDirectories,
     auto,
   });
-  const rootWasDiscovered =
-    detectedDirectories === null ||
-    !auto ||
-    gitMappingCandidatesFromDirectoryListing([...detectedDirectories]).some(
-      (mapping) => mapping.rootRelativePath === "",
-    );
-  return mappings
-    .filter((mapping) => mapping.rootRelativePath !== "" || rootWasDiscovered)
-    .map((mapping) => ({
-      mapping,
-      repositoryRoot: repositoryRootForMapping(mapping, rootPath),
-      repositoryRelativePath: "",
-    }));
+  return mappings.map((mapping) => ({
+    mapping,
+    repositoryRoot: repositoryRootForMapping(mapping, rootPath),
+    repositoryRelativePath: "",
+  }));
 }
 
 function overflowSnapshot(

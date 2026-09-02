@@ -11,6 +11,7 @@ import {
   fanOutGitRepositoryStatuses,
   mergeGitRepositoryStatuses,
   primaryGitStatus,
+  repositoryRootForMapping,
   resolveEffectiveGitRepositoryMappings,
   resolveGitRepositoryForPath,
   WORKSPACE_ROOT_MAPPING,
@@ -118,9 +119,10 @@ export function useGitStatusSurface({
   workspaceRoot,
 }: GitStatusSurfaceDependencies) {
   const [gitStatus, setGitStatus] = useState<GitStatus>(emptyGitStatus());
-  // Effective git repository mappings (manual + auto-detected, always incl. the
-  // workspace root). Defaults to the single workspace-root repo so behaviour is
-  // identical to the pre-multi-repo world until discovery runs.
+  // Effective git repository mappings (manual + auto-detected). Defaults to the
+  // single workspace-root repo until discovery runs; a successful discovery
+  // that confirms an aggregate non-Git root removes that root while retaining
+  // its nested repositories.
   const [gitRepositoryMappings, setGitRepositoryMappings] = useState<GitRepositoryMapping[]>([
     WORKSPACE_ROOT_MAPPING,
   ]);
@@ -198,8 +200,9 @@ export function useGitStatusSurface({
   // discovery token (last request wins) and the live workspace root before
   // publishing, dropping any stale or superseded result. On failure or when auto
   // is off it falls back to the manual mappings plus the workspace root
-  // (single-repo behaviour). Shared by the open flow and the settings-save flow
-  // so both resolve mappings identically.
+  // (single-repo behaviour). A successful enabled scan is authoritative and
+  // omits a root it did not discover. Shared by the open flow and the
+  // settings-save flow so both resolve mappings identically.
   const runGitRepositoryDiscovery = useCallback(
     async (rootPath: string, settings: WorkspaceSettings): Promise<void> => {
       const requestToken = gitRepositoryDiscoveryRequestTokenRef.current + 1;
@@ -224,18 +227,34 @@ export function useGitStatusSurface({
         return;
       }
 
-      setGitRepositoryMappings(
-        resolveEffectiveGitRepositoryMappings({
-          manualMappings: settings.gitDirectoryMappings,
-          detectedDirectories: detected,
-          auto,
-        }),
+      const mappings = resolveEffectiveGitRepositoryMappings({
+        manualMappings: settings.gitDirectoryMappings,
+        detectedDirectories: detected,
+        auto,
+      });
+      const allowedRepositoryRoots = new Set(
+        mappings.map((mapping) => repositoryRootForMapping(mapping, rootPath)),
       );
+
+      gitStatusRequestGenerationRef.current += 1;
+      gitOperationCurrency.reservePublication([rootPath, ...allowedRepositoryRoots]);
+      setGitLoading(false);
+      setGitRepositoryMappings(mappings);
+      setGitRepositoryStatuses((current) =>
+        current.filter((status) =>
+          [...allowedRepositoryRoots].some((root) => workspaceRootKeysEqual(root, status.root)),
+        ),
+      );
+      if (!mappings.some((mapping) => mapping.rootRelativePath === "")) {
+        publishGitStatus(emptyGitStatus(rootPath));
+      }
     },
     [
       currentWorkspaceRootRef,
       gitGateway,
+      gitOperationCurrency,
       gitRepositoryDiscoveryRequestTokenRef,
+      publishGitStatus,
       reportErrorForActiveWorkspaceRoot,
     ],
   );
@@ -243,9 +262,10 @@ export function useGitStatusSurface({
   // Resolves the git repository (and in-repo path) that owns an absolute file
   // path: a file in a nested repository (directory mapping) routes to that repo
   // root + its repo-relative path, so its gutter diff, blame and file history
-  // run against the correct repository. Falls back to the workspace root (the
-  // pre-multi-repo behaviour) for primary-repo files and any path the resolver
-  // declines. `null` only when there is no workspace or the path is outside it.
+  // run against the correct repository. Falls back to the workspace root only
+  // while a primary mapping exists. When discovery confirmed an aggregate
+  // non-Git root, files outside every nested repository resolve to `null` rather
+  // than accidentally running Git against the aggregate folder.
   const resolveGitRepositoryTarget = useCallback(
     (absolutePath: string): GitRepositoryTarget | null => {
       const root = currentWorkspaceRootRef.current ?? workspaceRoot;
@@ -261,6 +281,10 @@ export function useGitStatusSurface({
           repositoryRoot: resolved.repositoryRoot,
           relativePath: resolved.repositoryRelativePath,
         };
+      }
+
+      if (!gitRepositoryMappings.some((mapping) => mapping.rootRelativePath === "")) {
+        return null;
       }
 
       const relativePath = workspaceRelativePath(root, absolutePath);

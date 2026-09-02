@@ -22,6 +22,7 @@ import type { AgentThreadStoreGateway } from "./agentThreadPorts";
 import { WorkspaceTrustIntentCoordinator } from "./workspaceTrustIntentCoordinator";
 import {
   loadWorkspaceTrustForOwner,
+  useAgentProjectGateways,
   useWorkbenchControllerAgents,
   type WorkbenchControllerAgentsOptions,
   type WorkbenchControllerAgentsSurface,
@@ -62,6 +63,48 @@ describe("loadWorkspaceTrustForOwner", () => {
     await loading;
 
     expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+describe("useAgentProjectGateways", () => {
+  it("preserves the conservative repository fallback when discovery is unavailable", async () => {
+    const captured: { current: ReturnType<typeof useAgentProjectGateways> } = {
+      current: undefined,
+    };
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    const leaseGateway = {
+      acquireAgentRootLease: vi.fn(async () => ({ leaseToken: 1 })),
+      releaseAgentRootLease: vi.fn(async () => ({ kind: "released" as const, leaseToken: 1 })),
+    };
+    const settingsGateway = {
+      loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
+    };
+    const trustGateway = {
+      getTrust: vi.fn(async (rootPath: string) => ({ rootPath, trusted: true })),
+      setTrust: vi.fn(async (rootPath: string, trusted: boolean) => ({ rootPath, trusted })),
+    };
+
+    function Harness() {
+      captured.current = useAgentProjectGateways(
+        leaseGateway,
+        { current: {} },
+        {},
+        settingsGateway,
+        trustGateway,
+      );
+      return null;
+    }
+
+    act(() => root.render(<Harness />));
+
+    const resolvedGateways = captured.current;
+    expect(resolvedGateways).toBeDefined();
+    if (resolvedGateways === undefined) throw new Error("Agent project gateways were not wired.");
+    await expect(
+      resolvedGateways.repositoryDiscoveryGateway.detectRepositories(ROOT_A),
+    ).resolves.toBeNull();
+    act(() => root.unmount());
   });
 });
 

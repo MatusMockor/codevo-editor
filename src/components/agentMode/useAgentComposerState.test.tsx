@@ -74,7 +74,7 @@ describe("useAgentComposerState", () => {
       projectRootKey: SURFACE_FIXTURE_ROOT,
       repositoryRoot: FIXTURE_NESTED_ROOT,
       prompt: "Refactor the parser",
-      isolation: "in-place",
+      isolation: "worktree",
       unsafeInPlaceConfirmationKey: null,
       launch,
       dangerousLaunchConfirmed: false,
@@ -326,6 +326,7 @@ describe("useAgentComposerState", () => {
           confirmationKey: "confirm-1",
         }),
       }),
+      [projectFixture({ isolationPolicy: "in-place" })],
     );
     act(() => current().composer.composerProps.onPromptChange("Go"));
     expect(current().composer.composerProps.submitBlocked).toBe(true);
@@ -351,6 +352,24 @@ describe("useAgentComposerState", () => {
       expect.objectContaining({ isolation: "in-place", unsafeInPlaceConfirmationKey: "confirm-1" }),
     );
     expect(current().composer.composerProps.unsafeConfirmed).toBe(false);
+  });
+
+  it("keeps a new clean project isolated under automatic policy across a stale preview frame", () => {
+    const agents = threadsSurfaceFixture({
+      isolationPreview: (repositoryRoot) => ({
+        repositoryRoot,
+        recommended: { kind: "in-place" },
+        inPlaceGuard: { kind: "safe" },
+        inPlaceAllowed: true,
+        confirmationKey: null,
+      }),
+    });
+
+    render(agents, [projectFixture({ isolationPolicy: "auto" })]);
+
+    expect(current().composer.composerProps.isolation).toBe("worktree");
+    act(() => current().composer.composerProps.onIsolationChange("in-place"));
+    expect(current().composer.composerProps.isolation).toBe("in-place");
   });
 
   it("forces worktree isolation for background-tab projects", () => {

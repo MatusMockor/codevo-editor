@@ -320,6 +320,59 @@ describe("workbench agents production chain", () => {
     await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
   });
 
+  it("recommends an isolated worktree for a clean automatic-policy repository after an aggregate project switch", async () => {
+    const appSettings: AppSettings = {
+      ...defaultAppSettings(),
+      agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
+      recentWorkspacePath: "/workspace-a",
+      workspaceTabs: ["/workspace-a", "/workspace-b"],
+    };
+    const gitGateway = cleanRepositoryGitGateway();
+    gitGateway.detectRepositories = vi.fn(async (rootPath) =>
+      rootPath === "/workspace-a" ? ["nested"] : [""],
+    );
+    gitGateway.getStatus = vi.fn(async (rootPath) => ({
+      ...emptyGitStatus(rootPath),
+      branch: rootPath === "/workspace-a" ? null : "main",
+      isRepository: rootPath !== "/workspace-a",
+    }));
+    const { getWorkbench } = renderController({
+      agentTaskGateway: fakeAgentTaskGateway().gateway,
+      gitGateway,
+      gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
+      appSettings,
+      settingsGateway: memorySettingsGateway(appSettings),
+    });
+    await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+    await waitForReact(() =>
+      expect(
+        getWorkbench().gitRepositoryMappings.map((mapping) => mapping.rootRelativePath),
+      ).toEqual(["nested"]),
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+    renderAgentMode(getWorkbench());
+    await waitForReact(() =>
+      expect(getWorkbench().agents.isolationPreview("/workspace-b").repositoryStatus?.kind).toBe(
+        "ready",
+      ),
+    );
+
+    expect(getWorkbench().workspaceSettings.agentIsolationPolicy).toBe("auto");
+    expect(getWorkbench().agents.isolationPreview("/workspace-b").recommended).toEqual({
+      kind: "worktree",
+      reason: "policy",
+    });
+    renderAgentMode(getWorkbench());
+    expect(getPanelHost().textContent).toContain("Isolated worktree");
+    expect(getPanelHost().textContent).toContain(
+      "Agents start in an isolated worktree by default.",
+    );
+  });
+
   function getPanelHost(): HTMLDivElement {
     expect(panelHost).not.toBeNull();
     return panelHost ?? document.createElement("div");

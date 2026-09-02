@@ -71,7 +71,7 @@ export function useAgentProjectGateways(
             trustGateway,
             repositoryDiscoveryGateway: {
               detectRepositories: (rootPath: string, maxDepth?: number) =>
-                gitGateway.detectRepositories?.(rootPath, maxDepth) ?? Promise.resolve([]),
+                gitGateway.detectRepositories?.(rootPath, maxDepth) ?? Promise.resolve(null),
             },
             agentRootLeaseGateway,
             descriptorForRoot,

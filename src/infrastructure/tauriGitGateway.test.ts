@@ -28,12 +28,10 @@ describe("TauriGitGateway", () => {
     });
   });
 
-  it("returns no repositories outside Tauri", async () => {
+  it("reports repository discovery as unavailable outside Tauri", async () => {
     const gateway = new TauriGitGateway(vi.fn(), () => false);
 
-    await expect(gateway.detectRepositories("/workspace")).resolves.toEqual(
-      [],
-    );
+    await expect(gateway.detectRepositories("/workspace")).resolves.toBeNull();
   });
 
   it("returns empty status outside Tauri", async () => {

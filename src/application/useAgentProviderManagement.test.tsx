@@ -719,12 +719,13 @@ describe("useAgentProviderManagement", () => {
       appUpdaterSkippedVersion: "0.2.0",
     };
     providerFirst.dependencies.applyAppSettings(skipped);
-    const skipSave = appSettingsSaveCoordinatorFor(
-      providerFirst.dependencies.settingsGateway,
-    ).save(skipped, (committed) => ({
-      ...committed,
-      appUpdaterSkippedVersion: "0.2.0",
-    }));
+    const skipSave = appSettingsSaveCoordinatorFor(providerFirst.dependencies.settingsGateway).save(
+      skipped,
+      (committed) => ({
+        ...committed,
+        appUpdaterSkippedVersion: "0.2.0",
+      }),
+    );
     expect(providerFirst.dependencies.settingsGateway.saveAppSettings).toHaveBeenCalledOnce();
     await act(async () => heldProvider.reject(new Error("disk full")));
     await expect(providerSave).resolves.toBe(false);

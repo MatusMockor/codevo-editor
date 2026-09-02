@@ -82,6 +82,7 @@ function renderSurface(
   getStatus: (rootPath: string) => Promise<GitStatus>,
   selectedGitChange: GitChangedFile | null = null,
   selectedRepositoryRoot = ROOT,
+  detectedRepositories?: ReadonlyArray<string>,
 ): Harness {
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -107,7 +108,12 @@ function renderSurface(
         : null,
     currentWorkspaceRootRef: { current: ROOT },
     editorGitBaselineRequestTokenRef: { current: 0 },
-    gitGateway: { getStatus } as GitGateway,
+    gitGateway: {
+      getStatus,
+      ...(detectedRepositories === undefined
+        ? {}
+        : { detectRepositories: async () => [...detectedRepositories] }),
+    } as GitGateway,
     gitRepositoryDiscoveryRequestTokenRef: { current: 0 },
     reportError,
     reportErrorForActiveWorkspaceRoot: vi.fn(),
@@ -387,6 +393,140 @@ describe("useGitStatusSurface", () => {
     expect(harness.reconcileSelectedGitDiffPreviewForRepository).toHaveBeenCalledWith(nestedRoot, [
       selectedChange,
     ]);
+    harness.unmount();
+  });
+
+  it("never resolves files outside nested repositories to a confirmed non-Git aggregate root", async () => {
+    const nestedRoot = `${ROOT}/packages/nested`;
+    const detectedRepositories = ["", "packages/nested"];
+    const rootChange = changedFile("README.md");
+    const nestedChange = {
+      ...changedFile("packages/nested/src/index.ts"),
+      path: `${nestedRoot}/src/index.ts`,
+      relativePath: "src/index.ts",
+    };
+    const harness = renderSurface(
+      async (rootPath) =>
+        rootPath === ROOT
+          ? { ...status("main", [rootChange]), rootPath }
+          : { ...status("nested", [nestedChange]), rootPath },
+      null,
+      ROOT,
+      detectedRepositories,
+    );
+
+    await act(async () => {
+      await harness.surface().runGitRepositoryDiscovery(ROOT, {
+        ...defaultWorkspaceSettings(),
+        gitDirectoryMappings: [""],
+        gitDirectoryMappingsAuto: true,
+      });
+    });
+    await act(async () => {
+      await harness.surface().refreshGitStatus();
+    });
+
+    expect(harness.surface().gitRepositoryStatuses.map((entry) => entry.root)).toEqual([
+      ROOT,
+      nestedRoot,
+    ]);
+    expect(harness.surface().gitStatus.changes).toEqual([rootChange]);
+
+    detectedRepositories.shift();
+    await act(async () => {
+      await harness.surface().runGitRepositoryDiscovery(ROOT, {
+        ...defaultWorkspaceSettings(),
+        gitDirectoryMappings: [""],
+        gitDirectoryMappingsAuto: true,
+      });
+    });
+
+    expect(harness.surface().gitRepositoryMappings).toEqual([
+      { rootRelativePath: "packages/nested" },
+    ]);
+    expect(harness.surface().gitRepositoryStatuses.map((entry) => entry.root)).toEqual([
+      nestedRoot,
+    ]);
+    expect(harness.surface().gitStatus).toEqual({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath: ROOT,
+    });
+    expect(harness.surface().resolveGitRepositoryTarget(`${ROOT}/README.md`)).toBeNull();
+    expect(harness.surface().resolveGitRepositoryTarget(`${nestedRoot}/src/index.ts`)).toEqual({
+      repositoryRoot: nestedRoot,
+      relativePath: "src/index.ts",
+    });
+    harness.unmount();
+  });
+
+  it("retires an in-flight fallback-root refresh before publishing authoritative nested mappings", async () => {
+    const nestedRoot = `${ROOT}/packages/nested`;
+    const pendingRootStatus = createDeferred<GitStatus>();
+    const staleRootChange = changedFile("stale-root.ts");
+    const nestedChange = {
+      ...changedFile("packages/nested/src/live.ts"),
+      path: `${nestedRoot}/src/live.ts`,
+      relativePath: "src/live.ts",
+    };
+    const harness = renderSurface(
+      (rootPath) =>
+        rootPath === ROOT
+          ? pendingRootStatus.promise
+          : Promise.resolve({ ...status("nested", [nestedChange]), rootPath }),
+      null,
+      ROOT,
+      ["packages/nested"],
+    );
+    let staleRefresh: Promise<void> = Promise.resolve();
+
+    act(() => {
+      staleRefresh = harness.surface().refreshGitStatus();
+    });
+    expect(harness.surface().gitLoading).toBe(true);
+
+    await act(async () => {
+      await harness.surface().runGitRepositoryDiscovery(ROOT, {
+        ...defaultWorkspaceSettings(),
+        gitDirectoryMappings: [],
+        gitDirectoryMappingsAuto: true,
+      });
+    });
+    act(() => {
+      harness.surface().applyGitOperationStatuses([
+        {
+          mapping: { rootRelativePath: "packages/nested" },
+          root: nestedRoot,
+          status: { ...status("nested", [nestedChange]), rootPath: nestedRoot },
+          failed: false,
+        },
+      ]);
+    });
+
+    await act(async () => {
+      pendingRootStatus.resolve({ ...status("stale", [staleRootChange]), rootPath: ROOT });
+      await staleRefresh;
+    });
+
+    expect(harness.surface().gitLoading).toBe(false);
+    expect(harness.surface().gitRepositoryMappings).toEqual([
+      { rootRelativePath: "packages/nested" },
+    ]);
+    expect(harness.surface().gitRepositoryStatuses).toEqual([
+      {
+        mapping: { rootRelativePath: "packages/nested" },
+        root: nestedRoot,
+        status: { ...status("nested", [nestedChange]), rootPath: nestedRoot },
+        failed: false,
+      },
+    ]);
+    expect(harness.surface().gitStatus).toEqual({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath: ROOT,
+    });
     harness.unmount();
   });
 

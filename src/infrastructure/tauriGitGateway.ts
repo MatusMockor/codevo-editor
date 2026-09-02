@@ -91,9 +91,9 @@ export class TauriGitGateway implements GitGateway {
   async detectRepositories(
     rootPath: string,
     maxDepth?: number,
-  ): Promise<string[]> {
+  ): Promise<string[] | null> {
     if (!this.isRuntimeAvailable()) {
-      return [];
+      return null;
     }
 
     return this.invokeCommand("detect_git_repositories", {

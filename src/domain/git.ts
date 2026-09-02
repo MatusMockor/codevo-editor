@@ -173,7 +173,7 @@ export interface GitGateway {
    * Optional: existing gateways/mocks predate this capability and are not
    * required to implement it.
    */
-  detectRepositories?(rootPath: string, maxDepth?: number): Promise<string[]>;
+  detectRepositories?(rootPath: string, maxDepth?: number): Promise<string[] | null>;
   fileCommitDiff(
     rootPath: string,
     relativePath: string,

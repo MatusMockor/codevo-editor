@@ -171,8 +171,16 @@ export function useAgentComposerControllerState({
     if (composerRoot === null) return;
     void refreshIsolationStatus(composerRoot);
   }, [composerProbeAuthorityKey, composerRoot, refreshIsolationStatus]);
+  // The current project policy is the render-time authority. The preview hook
+  // intentionally retains async state behind a stable callback, so during a
+  // project switch it can briefly project the previous owner's clean in-place
+  // recommendation. Automatic policy must still fail isolated in that frame;
+  // only an explicit workspace in-place policy or user choice may select the
+  // local checkout.
   const recommended: AgentTaskIsolation =
-    preview === null || preview.recommended.kind === "in-place" ? "in-place" : "worktree";
+    composerProject?.isolationPolicy === "auto" || preview?.recommended.kind === "worktree"
+      ? "worktree"
+      : "in-place";
   const chosen: AgentTaskIsolation =
     isolationChoice !== null && isolationChoice.repositoryRoot === composerRoot
       ? isolationChoice.isolation
