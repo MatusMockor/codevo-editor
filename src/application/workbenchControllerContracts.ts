@@ -7,7 +7,10 @@ import type {
   AgentProviderPolicyGateway,
   AgentProviderUpdateGateway,
 } from "../domain/agentProviderHealth";
-import type { AgentAccountUsageGateway } from "../domain/agentAccountUsage";
+import type {
+  AgentAccountUsageGateway,
+  AgentAccountUsageStoreGateway,
+} from "../domain/agentAccountUsage";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
@@ -62,7 +65,8 @@ export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOpti
   agentProviderGateway?: AgentProviderPolicyGateway &
     AgentProviderHealthGateway &
     AgentProviderUpdateGateway &
-    Partial<AgentAccountUsageGateway>;
+    Partial<AgentAccountUsageGateway> &
+    Partial<AgentAccountUsageStoreGateway>;
   agentProviderSignInGateway?: AgentProviderSignInGateway;
   agentRootLeaseGateway?: AgentRootLeaseGateway;
   agentTaskGateway?: AgentTaskGateway;

@@ -3,6 +3,8 @@ import type { AgentCliDiscoveryGateway } from "../domain/agentSettings";
 import type {
   AgentAccountUsageGateway,
   AgentAccountUsageLoadState,
+  AgentAccountUsageSnapshot,
+  AgentAccountUsageStoreGateway,
 } from "../domain/agentAccountUsage";
 import { mergeAgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
@@ -78,7 +80,8 @@ export interface WorkbenchAgentsOptions {
   readonly agentProviderGateway: AgentProviderPolicyGateway &
     AgentProviderHealthGateway &
     AgentProviderUpdateGateway &
-    Partial<AgentAccountUsageGateway>;
+    Partial<AgentAccountUsageGateway> &
+    Partial<AgentAccountUsageStoreGateway>;
   readonly agentCliDiscoveryGateway: AgentCliDiscoveryGateway;
   readonly agentProviderSignInGateway?: AgentProviderSignInGateway;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
@@ -149,7 +152,8 @@ const unwiredAgentProviderSignInGateway: AgentProviderSignInGateway = {
 export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAgentsSurface {
   const [accountUsage, setAccountUsage] = useState<
     Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>
-  >({ claudeCode: { kind: "idle" }, codex: { kind: "idle" } });
+  >(() => initialAccountUsage(options.agentProviderGateway));
+  const accountUsageRef = useRef(accountUsage);
   const {
     gitRepositoryMappings,
     gitRepositoryStatuses,
@@ -367,17 +371,20 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   const recordAccountUsage = useCallback(
     (observation: Parameters<typeof mergeAgentAccountUsageObservation>[1]): void => {
       const observedAtEpochMs = Date.now();
-      setAccountUsage((state) => {
-        const current = state[observation.provider];
-        const snapshot = mergeAgentAccountUsageObservation(
-          current.kind === "ready" ? current.snapshot : null,
-          observation,
-          observedAtEpochMs,
-        );
-        return { ...state, [observation.provider]: { kind: "ready", snapshot } };
-      });
+      const current = accountUsageRef.current[observation.provider];
+      const snapshot = mergeAgentAccountUsageObservation(
+        current.kind === "ready" ? current.snapshot : null,
+        observation,
+        observedAtEpochMs,
+      );
+      publishAccountUsageSnapshot(
+        snapshot,
+        accountUsageRef,
+        setAccountUsage,
+        options.agentProviderGateway,
+      );
     },
-    [],
+    [options.agentProviderGateway],
   );
 
   const refreshCodexUsageAfterTurn = useCallback(
@@ -402,7 +409,12 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
           ) {
             return;
           }
-          setAccountUsage((state) => ({ ...state, codex: { kind: "ready", snapshot } }));
+          publishAccountUsageSnapshot(
+            snapshot,
+            accountUsageRef,
+            setAccountUsage,
+            options.agentProviderGateway,
+          );
         })
         .catch(() => undefined);
     },
@@ -511,6 +523,39 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
       threadsWithRepositoryPreflight,
     ],
   );
+}
+
+function initialAccountUsage(
+  gateway: Partial<AgentAccountUsageStoreGateway> | undefined,
+): Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>> {
+  const state: Record<"claudeCode" | "codex", AgentAccountUsageLoadState> = {
+    claudeCode: { kind: "idle" },
+    codex: { kind: "idle" },
+  };
+  try {
+    for (const snapshot of gateway?.loadAgentAccountUsage?.() ?? []) {
+      state[snapshot.provider] = { kind: "ready", snapshot };
+    }
+  } catch {
+    // Storage can be unavailable; live provider observations still populate this state.
+  }
+  return state;
+}
+
+function publishAccountUsageSnapshot(
+  snapshot: AgentAccountUsageSnapshot,
+  stateRef: { current: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>> },
+  publish: (state: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>) => void,
+  gateway: Partial<AgentAccountUsageStoreGateway> | undefined,
+): void {
+  const next = { ...stateRef.current, [snapshot.provider]: { kind: "ready" as const, snapshot } };
+  stateRef.current = next;
+  publish(next);
+  try {
+    gateway?.saveAgentAccountUsage?.(snapshot);
+  } catch {
+    // A storage failure must not affect the completed provider turn or its live snapshot.
+  }
 }
 
 function providerCliVersion(

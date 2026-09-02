@@ -41,6 +41,11 @@ export interface AgentAccountUsageGateway {
   }): Promise<AgentAccountUsageSnapshot>;
 }
 
+export interface AgentAccountUsageStoreGateway {
+  loadAgentAccountUsage(): ReadonlyArray<AgentAccountUsageSnapshot>;
+  saveAgentAccountUsage(snapshot: AgentAccountUsageSnapshot): void;
+}
+
 export type AgentAccountUsageLoadState =
   | { readonly kind: "idle" | "loading" }
   | { readonly kind: "ready"; readonly snapshot: AgentAccountUsageSnapshot }

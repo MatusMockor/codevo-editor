@@ -6,6 +6,7 @@ import { WorkspaceNetteServicesGateway } from "./application/workspaceNetteServi
 import { WorkspaceNettePresentersGateway } from "./application/workspaceNettePresentersGateway";
 import { WorkspaceNetteRoutesGateway } from "./application/workspaceNetteRoutesGateway";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
+import { BrowserAgentAccountUsageStoreGateway } from "./infrastructure/browserAgentAccountUsageStoreGateway";
 import { BrowserDirtyTextSearchGateway } from "./infrastructure/browserDirtyTextSearchGateway";
 import { BrowserEditorChangeHunksGateway } from "./infrastructure/browserEditorChangeHunksGateway";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
@@ -97,10 +98,17 @@ export function createWorkbenchComposition() {
   const quickInputCoordinator = new QuickInputCoordinator();
   const appUpdaterGateway = new TauriAppUpdaterGateway({ check, relaunch }, CODEVO_APP_VERSION);
   const settingsGateway = new BrowserSettingsGateway();
+  const agentAccountUsageStoreGateway = new BrowserAgentAccountUsageStoreGateway();
+  const agentProviderGateway = Object.assign(new TauriAgentProviderGateway(), {
+    loadAgentAccountUsage: () => agentAccountUsageStoreGateway.loadAgentAccountUsage(),
+    saveAgentAccountUsage: (
+      snapshot: Parameters<typeof agentAccountUsageStoreGateway.saveAgentAccountUsage>[0],
+    ) => agentAccountUsageStoreGateway.saveAgentAccountUsage(snapshot),
+  });
 
   return {
     agentCliDiscoveryGateway: new TauriAgentCliDiscoveryGateway(),
-    agentProviderGateway: new TauriAgentProviderGateway(),
+    agentProviderGateway,
     agentProviderSignInGateway: new TauriAgentProviderSignInGateway(),
     agentRootLeaseGateway: new TauriAgentRootLeaseGateway(),
     agentTaskGateway: new TauriAgentTaskGateway(),

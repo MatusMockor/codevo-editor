@@ -5,6 +5,14 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.9] - 2026-09-02
+
+### Fixed
+
+- Persist the latest validated Claude Code and Codex subscription-limit snapshots
+  locally so Usage remains informative after an application restart without polling
+  either provider.
+
 ## [0.2.0-beta.8] - 2026-09-02
 
 ### Changed
