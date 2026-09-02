@@ -11,6 +11,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[path = "git_worktree_exclude.rs"]
+mod git_worktree_exclude;
+
+use git_worktree_exclude::ensure_agent_worktree_excluded;
+#[cfg(test)]
+use git_worktree_exclude::{
+    contains_exclude_pattern, MAX_GIT_INFO_EXCLUDE_BYTES, WORKTREE_EXCLUDE_PATTERN,
+};
+
 pub const WORKTREE_BASE_DIR_NAME: &str = ".worktrees";
 pub const AGENT_BRANCH_PREFIX: &str = "agent/";
 pub const MAX_WORKTREES_PER_REPOSITORY: usize = 16;
@@ -32,8 +41,44 @@ const WORKTREE_LOCKED_ATTRIBUTE: &str = "locked";
 const WORKTREE_PRUNABLE_ATTRIBUTE: &str = "prunable";
 const LOCAL_BRANCH_REF_PREFIX: &str = "refs/heads/";
 const HOOKS_DISABLED_CONFIG: &str = "core.hooksPath=/dev/null";
+const FSMONITOR_DISABLED_CONFIG: &str = "core.fsmonitor=false";
+const WORKTREE_ENV_ALLOWLIST: [&str; 31] = [
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "TMPDIR",
+    "SSH_AUTH_SOCK",
+    "SSH_AGENT_PID",
+    "SSH_ASKPASS",
+    "SSH_ASKPASS_REQUIRE",
+    "DISPLAY",
+    "XDG_CONFIG_HOME",
+    "XDG_RUNTIME_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_ASKPASS",
+    "GIT_EXEC_PATH",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+];
 const WORKTREE_LOCKS_DIR_NAME: &str = ".codevo-locks";
 const WORKTREE_LOCK_OWNER_FILE_NAME: &str = "owner";
+const WORKTREE_LOCK_CONFLICT_ERROR: &str =
+    "Another Codevo process is creating this worktree, or a stale creation lock remains.";
 static WORKTREE_LOCK_NONCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -254,6 +299,7 @@ impl GitWorktreeGateway for CommandGitWorktreeGateway {
         let root = canonical_repository_root(repository_root)?;
         self.list_worktrees(&root)?;
         repository_head(&root)?;
+        ensure_agent_worktree_excluded(&root)?;
         let base = ensure_agent_worktree_base(&root)?;
         let target = agent_worktree_path(&root, &task_id);
         ensure_path_bounds(&target)?;
@@ -407,14 +453,14 @@ impl AgentWorktreeCreationLock {
     fn acquire(base: &Path, task_id: &str) -> Result<Self, String> {
         let locks = base.join(WORKTREE_LOCKS_DIR_NAME);
         ensure_lock_directory(&locks)?;
-        let lock_path = locks.join(format!("{task_id}.lock"));
+        Self::acquire_path(locks.join(format!("{task_id}.lock")))
+    }
+
+    fn acquire_path(lock_path: PathBuf) -> Result<Self, String> {
         match fs::create_dir(&lock_path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err(
-                    "Another Codevo process is creating this worktree, or a stale creation lock remains."
-                        .to_string(),
-                );
+                return Err(WORKTREE_LOCK_CONFLICT_ERROR.to_string());
             }
             Err(error) => return Err(format!("Failed to acquire the worktree lock: {error}")),
         }
@@ -613,12 +659,21 @@ fn compensate_failed_worktree_add(
 
 fn worktree_git_command(repository_root: &Path) -> Command {
     let mut command = Command::new("git");
+    command.env_clear();
+    for key in WORKTREE_ENV_ALLOWLIST {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
     command
         .env("LC_ALL", "C")
         .env("LANG", "C")
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-c")
         .arg(HOOKS_DISABLED_CONFIG)
+        .arg("-c")
+        .arg(FSMONITOR_DISABLED_CONFIG)
         .arg("-C")
         .arg(repository_root);
     command
@@ -932,6 +987,9 @@ mod tests {
     use std::sync::Arc;
 
     static TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
+    const HOSTILE_ENV_CHILD: &str = "CODEVO_WORKTREE_HOSTILE_ENV_CHILD";
+    const HOSTILE_ENV_TARGET: &str = "CODEVO_WORKTREE_HOSTILE_ENV_TARGET";
+    const HOSTILE_ENV_FOREIGN: &str = "CODEVO_WORKTREE_HOSTILE_ENV_FOREIGN";
 
     struct TempRepository {
         root: PathBuf,
@@ -980,19 +1038,23 @@ mod tests {
     }
 
     fn run_git(root: &Path, arguments: &[&str]) {
-        let output = Command::new("git")
+        let output = git_output(root, arguments);
+        assert!(
+            output.status.success(),
+            "git fixture command {arguments:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn git_output(root: &Path, arguments: &[&str]) -> std::process::Output {
+        Command::new("git")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .arg("-C")
             .arg(root)
             .args(arguments)
             .output()
-            .expect("run git fixture command");
-        assert!(
-            output.status.success(),
-            "git fixture command {arguments:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+            .expect("run git fixture command")
     }
 
     fn assert_branch_absent(root: &Path, branch: &str) {
@@ -1011,6 +1073,191 @@ mod tests {
         assert!(created.worktree_path.is_dir());
         assert_eq!(created.branch, "agent/agt-nested-0001");
         assert!(created.worktree_path.starts_with(&repository.root));
+    }
+
+    #[test]
+    fn successful_worktree_keeps_parent_status_clean_without_tracked_gitignore() {
+        let repository = TempRepository::create("clean-parent", false, true);
+        assert!(!repository.root.join(".gitignore").exists());
+
+        CommandGitWorktreeGateway::new()
+            .add_agent_worktree(&repository.root, "agt-clean-0001")
+            .expect("create isolated worktree");
+
+        let status = git_output(&repository.root, &["status", "--short"]);
+        assert!(status.status.success());
+        assert_eq!(String::from_utf8_lossy(&status.stdout), "");
+        assert!(!repository.root.join(".gitignore").exists());
+        let exclude =
+            fs::read(repository.root.join(".git/info/exclude")).expect("read local exclude file");
+        assert!(contains_exclude_pattern(&exclude));
+    }
+
+    #[test]
+    fn hostile_git_identity_environment_cannot_redirect_worktree_provisioning() {
+        if std::env::var_os(HOSTILE_ENV_CHILD).is_some() {
+            let target = PathBuf::from(
+                std::env::var_os(HOSTILE_ENV_TARGET).expect("child target repository"),
+            );
+            CommandGitWorktreeGateway::new()
+                .add_agent_worktree(&target, "agt-hostile-env-0001")
+                .expect("provision target repository despite hostile inherited Git identity");
+            return;
+        }
+
+        let target = TempRepository::create("hostile-env-target", false, true);
+        let foreign = TempRepository::create("hostile-env-foreign", false, true);
+        let foreign_exclude = foreign.root.join(".git/info/exclude");
+        let foreign_exclude_before =
+            fs::read(&foreign_exclude).expect("read foreign exclude before child");
+        let foreign_head_before =
+            repository_head(&foreign.root).expect("foreign head before child");
+        let test_binary = std::env::current_exe().expect("current test binary");
+        let output = Command::new(test_binary)
+            .arg("--exact")
+            .arg(
+                "git_worktree::tests::hostile_git_identity_environment_cannot_redirect_worktree_provisioning",
+            )
+            .arg("--nocapture")
+            .env(HOSTILE_ENV_CHILD, "1")
+            .env(HOSTILE_ENV_TARGET, &target.root)
+            .env(HOSTILE_ENV_FOREIGN, &foreign.root)
+            .env("GIT_DIR", foreign.root.join(".git"))
+            .env("GIT_WORK_TREE", &foreign.root)
+            .env("GIT_COMMON_DIR", foreign.root.join(".git"))
+            .env("GIT_INDEX_FILE", foreign.root.join(".git/index"))
+            .env("GIT_OBJECT_DIRECTORY", foreign.root.join(".git/objects"))
+            .env(
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                foreign.root.join(".git/objects"),
+            )
+            .env("GIT_PREFIX", "foreign-prefix/")
+            .output()
+            .expect("run hostile environment child");
+        assert!(
+            output.status.success(),
+            "hostile environment child failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(target.root.join(".worktrees/agt-hostile-env-0001").is_dir());
+        assert!(contains_exclude_pattern(
+            &fs::read(target.root.join(".git/info/exclude")).expect("target exclude installed")
+        ));
+        assert_eq!(
+            String::from_utf8_lossy(&git_output(&target.root, &["status", "--short"]).stdout),
+            ""
+        );
+        assert!(!foreign.root.join(WORKTREE_BASE_DIR_NAME).exists());
+        assert_eq!(
+            fs::read(&foreign_exclude).expect("foreign exclude retained"),
+            foreign_exclude_before
+        );
+        assert_eq!(
+            repository_head(&foreign.root).expect("foreign head retained"),
+            foreign_head_before
+        );
+        assert_branch_absent(&foreign.root, "agent/agt-hostile-env-0001");
+        assert_eq!(
+            String::from_utf8_lossy(&git_output(&foreign.root, &["status", "--short"]).stdout),
+            ""
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_exclude_update_preserves_user_bytes_permissions_and_is_idempotent() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let repository = TempRepository::create("exclude-preserve", false, true);
+        let exclude = repository.root.join(".git/info/exclude");
+        let user_content = b"# user content\n*.secret\n";
+        fs::write(&exclude, user_content).expect("write user exclude content");
+        fs::set_permissions(&exclude, fs::Permissions::from_mode(0o640))
+            .expect("set exclude permissions");
+
+        let gateway = CommandGitWorktreeGateway::new();
+        gateway
+            .add_agent_worktree(&repository.root, "agt-exclude-0001")
+            .expect("create first worktree");
+        gateway
+            .add_agent_worktree(&repository.root, "agt-exclude-0002")
+            .expect("create second worktree");
+
+        let updated = fs::read(&exclude).expect("read updated exclude");
+        assert!(updated.starts_with(user_content));
+        assert_eq!(
+            updated
+                .split(|byte| *byte == b'\n')
+                .filter(|line| *line == WORKTREE_EXCLUDE_PATTERN)
+                .count(),
+            1
+        );
+        assert_eq!(
+            exclude
+                .metadata()
+                .expect("exclude metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640
+        );
+    }
+
+    #[test]
+    fn oversized_local_exclude_is_rejected_without_mutation_or_worktree_base() {
+        let repository = TempRepository::create("exclude-oversized", false, true);
+        let exclude = repository.root.join(".git/info/exclude");
+        let original = vec![b'x'; MAX_GIT_INFO_EXCLUDE_BYTES];
+        fs::write(&exclude, &original).expect("write maximum exclude fixture");
+
+        let error = CommandGitWorktreeGateway::new()
+            .add_agent_worktree(&repository.root, "agt-exclude-large-0001")
+            .expect_err("oversized update must be rejected");
+
+        assert!(error.contains("cannot exceed"), "unexpected: {error}");
+        assert_eq!(fs::read(&exclude).expect("exclude retained"), original);
+        assert!(!repository.root.join(WORKTREE_BASE_DIR_NAME).exists());
+        assert_eq!(
+            fs::read_dir(repository.root.join(".git/info"))
+                .expect("read git info")
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().contains("codevo"))
+                .count(),
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symbolic_link_local_exclude_is_rejected_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let repository = TempRepository::create("exclude-symlink", false, true);
+        let outside = repository
+            .root
+            .parent()
+            .expect("repository container")
+            .join("outside-exclude");
+        fs::write(&outside, "outside\n").expect("write outside exclude");
+        let exclude = repository.root.join(".git/info/exclude");
+        fs::remove_file(&exclude).expect("remove fixture exclude");
+        symlink(&outside, &exclude).expect("symlink local exclude");
+
+        let error = CommandGitWorktreeGateway::new()
+            .add_agent_worktree(&repository.root, "agt-exclude-link-0001")
+            .expect_err("symlinked local exclude must be rejected");
+
+        assert!(
+            error.contains("exclude file must be"),
+            "unexpected: {error}"
+        );
+        assert_eq!(
+            fs::read_to_string(&outside).expect("outside retained"),
+            "outside\n"
+        );
+        assert!(!repository.root.join(WORKTREE_BASE_DIR_NAME).exists());
     }
 
     #[test]
@@ -1136,6 +1383,43 @@ mod tests {
                 .expect("query winning branch"),
             Some(repository_head(&repository.root).expect("query head"))
         );
+    }
+
+    #[test]
+    fn concurrent_distinct_adds_install_one_local_exclude_entry() {
+        let repository = TempRepository::create("concurrent-exclude", false, true);
+        let root = Arc::new(repository.root.clone());
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let workers: Vec<_> = ["agt-distinct-0001", "agt-distinct-0002"]
+            .into_iter()
+            .map(|task_id| {
+                let root = Arc::clone(&root);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    CommandGitWorktreeGateway::new().add_agent_worktree(&root, task_id)
+                })
+            })
+            .collect();
+        barrier.wait();
+        for worker in workers {
+            worker
+                .join()
+                .expect("join distinct add worker")
+                .expect("create distinct worktree");
+        }
+
+        let exclude =
+            fs::read(repository.root.join(".git/info/exclude")).expect("read local exclude file");
+        assert_eq!(
+            exclude
+                .split(|byte| *byte == b'\n')
+                .filter(|line| *line == WORKTREE_EXCLUDE_PATTERN)
+                .count(),
+            1
+        );
+        let status = git_output(&repository.root, &["status", "--short"]);
+        assert_eq!(String::from_utf8_lossy(&status.stdout), "");
     }
 
     #[test]
@@ -1276,6 +1560,8 @@ mod tests {
         assert!(error.contains("filter"), "unexpected error: {error}");
         assert!(!repository.root.join(".worktrees/agt-filter-0001").exists());
         assert_branch_absent(&repository.root, "agent/agt-filter-0001");
+        let failed_status = git_output(&repository.root, &["status", "--short"]);
+        assert_eq!(String::from_utf8_lossy(&failed_status.stdout), "");
 
         run_git(
             &repository.root,
