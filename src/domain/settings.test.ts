@@ -36,6 +36,7 @@ import {
 describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
     expect(defaultAppSettings()).toEqual({
+      appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
@@ -143,6 +144,15 @@ describe("settings defaults", () => {
       sidebarView: "files",
       version: 1,
     });
+  });
+
+  it("normalizes the exact skipped application update version", () => {
+    expect(
+      normalizeAppSettings({ appUpdaterSkippedVersion: " 0.2.0 " }).appUpdaterSkippedVersion,
+    ).toBe("0.2.0");
+    expect(
+      normalizeAppSettings({ appUpdaterSkippedVersion: "x".repeat(65) }).appUpdaterSkippedVersion,
+    ).toBeNull();
   });
 });
 
@@ -274,6 +284,7 @@ describe("normalizeAppSettings", () => {
 
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
+      appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
@@ -309,6 +320,7 @@ describe("normalizeAppSettings", () => {
         workspaceTabs: ["/project-a", " /project-b ", "/project-a", 42],
       }),
     ).toEqual({
+      appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
@@ -339,6 +351,7 @@ describe("normalizeAppSettings", () => {
         theme: "ayuMirage",
       }),
     ).toEqual({
+      appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
@@ -381,6 +394,7 @@ describe("normalizeAppSettings", () => {
         editorFontLigatures: "true",
       }),
     ).toEqual({
+      appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
@@ -437,6 +451,7 @@ describe("normalizeAppSettings", () => {
         workspaceTabs: ["/project/api/", "/project/web", "/project/api"],
       }),
     ).toEqual({
+      appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",

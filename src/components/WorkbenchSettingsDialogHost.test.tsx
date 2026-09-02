@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import type { AppUpdaterGateway } from "../domain/appUpdater";
+import { useAppUpdater } from "../application/useAppUpdater";
 import { waitForReact } from "../test/reactTestLifecycle";
 import {
   WorkbenchSettingsDialogHost,
@@ -88,12 +89,20 @@ function ControlledSettingsHost({
   readonly workspaceFiles: NodeLaunchConfigurationFileGateway;
 }) {
   const [nodeLaunchConfigurationsOpen, setNodeLaunchConfigurationsOpen] = useState(false);
+  const preferencesGatewayRef = useState(() => ({
+    loadSkippedVersion: async () => null,
+    saveSkippedVersion: async () => undefined,
+  }))[0];
+  const appUpdater = useAppUpdater({
+    currentVersion: "0.2.0-beta.1",
+    gateway: appUpdaterGateway,
+    preferencesGateway: preferencesGatewayRef,
+    persistSkippedVersion: vi.fn(async () => undefined),
+    scheduleAfterUiInteractive: neverSchedule,
+  });
   return (
     <WorkbenchSettingsDialogHost
-      appUpdaterComposition={{
-        appUpdaterGateway,
-        appVersion: "0.2.0-beta.1",
-      }}
+      appUpdater={appUpdater}
       systemFontGateway={{ listMonospaceFontFamilies: async () => [] }}
       workbench={{
         ...workbench,
@@ -105,6 +114,8 @@ function ControlledSettingsHost({
     />
   );
 }
+
+const neverSchedule = () => () => undefined;
 
 function idleAppUpdaterGateway(): AppUpdaterGateway {
   return {

@@ -1,4 +1,10 @@
-import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import {
+  useCallback,
+  useRef,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from "react";
 import {
   defaultEditorFontSize,
   normalizeEditorFontSize,
@@ -10,6 +16,7 @@ import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import type { WorkspaceIdentityDescriptor } from "../workspaceIdentityGatewayPort";
 import type { WorkspaceSettingsByRootSnapshot } from "../workspaceSettingsForRoot";
 import type { WorkspaceSettingsSaveCoordinator } from "../workspaceSettingsSaveCoordinator";
+import { appSettingsSaveCoordinatorFor } from "../appSettingsSaveCoordinator";
 import { workspaceSettingsIdentity } from "./workspaceIdentityPolicy";
 
 interface UseWorkbenchSettingsPersistenceOptions {
@@ -39,8 +46,18 @@ export function useWorkbenchSettingsPersistence({
   workspaceSettingsRef,
   workspaceSettingsSaveCoordinator,
 }: UseWorkbenchSettingsPersistenceOptions) {
+  const appSettingsSaveCoordinator = appSettingsSaveCoordinatorFor(settingsGateway);
+  const appSettingsSaveCoordinatorRef = useRef(appSettingsSaveCoordinator);
+  if (appSettingsSaveCoordinatorRef.current !== appSettingsSaveCoordinator) {
+    const previousCommitted = appSettingsSaveCoordinatorRef.current.committedSnapshot();
+    if (previousCommitted) {
+      appSettingsSaveCoordinator.initializeCommittedSnapshot(previousCommitted);
+    }
+  }
+  appSettingsSaveCoordinatorRef.current = appSettingsSaveCoordinator;
   const applyAppSettings = useCallback(
     (settings: AppSettings) => {
+      appSettingsSaveCoordinatorRef.current.initializeCommittedSnapshot(settings);
       appSettingsRef.current = settings;
       setAppSettings(settings);
     },
@@ -58,16 +75,38 @@ export function useWorkbenchSettingsPersistence({
   const persistAppSettings = useCallback(
     async (nextSettings: AppSettings) => {
       const previousSettings = appSettingsRef.current;
+      appSettingsSaveCoordinatorRef.current.initializeCommittedSnapshot(previousSettings);
       applyAppSettings(nextSettings);
 
-      try {
-        await settingsGateway.saveAppSettings(nextSettings);
-      } catch (error) {
-        applyAppSettings(previousSettings);
-        throw error;
-      }
+      const coordinator = appSettingsSaveCoordinatorRef.current;
+      const save = coordinator.save(previousSettings, (committed) =>
+        mergeAppSettingsIntent(committed, previousSettings, nextSettings),
+      );
+      return save.then(
+        () => undefined,
+        (error: unknown) => {
+          applyAppSettings(
+            rollbackAppSettingsIntent(
+              appSettingsRef.current,
+              coordinator.committedSnapshot() ?? previousSettings,
+              previousSettings,
+              nextSettings,
+            ),
+          );
+          throw error;
+        },
+      );
     },
-    [appSettingsRef, applyAppSettings, settingsGateway],
+    [appSettingsRef, applyAppSettings],
+  );
+
+  const persistAppUpdaterSkippedVersion = useCallback(
+    (version: string) =>
+      persistAppSettings({
+        ...appSettingsRef.current,
+        appUpdaterSkippedVersion: version,
+      }),
+    [appSettingsRef, persistAppSettings],
   );
 
   const setEditorFontSize = useCallback(
@@ -166,10 +205,40 @@ export function useWorkbenchSettingsPersistence({
     applyAppSettings,
     applyWorkspaceSettings,
     persistAppSettings,
+    persistAppUpdaterSkippedVersion,
     persistWorkspaceSettings,
     resetEditorFontSize,
     toggleEditorFontLigatures,
     zoomEditorFontIn,
     zoomEditorFontOut,
   };
+}
+
+function mergeAppSettingsIntent(
+  committed: AppSettings,
+  previous: AppSettings,
+  next: AppSettings,
+): AppSettings {
+  const merged = { ...committed };
+  for (const key of Object.keys(next) as ReadonlyArray<keyof AppSettings>) {
+    if (Object.is(previous[key], next[key])) continue;
+    Reflect.set(merged, key, next[key]);
+  }
+  return merged;
+}
+
+function rollbackAppSettingsIntent(
+  current: AppSettings,
+  committed: AppSettings,
+  previous: AppSettings,
+  attempted: AppSettings,
+): AppSettings {
+  const rolledBack = { ...current };
+  for (const key of Object.keys(attempted) as ReadonlyArray<keyof AppSettings>) {
+    if (Object.is(previous[key], attempted[key]) || !Object.is(current[key], attempted[key])) {
+      continue;
+    }
+    Reflect.set(rolledBack, key, committed[key]);
+  }
+  return rolledBack;
 }

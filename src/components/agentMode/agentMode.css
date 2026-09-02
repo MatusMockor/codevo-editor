@@ -26,6 +26,10 @@
   --agent-live: var(--color-accent);
   --agent-live-soft: var(--color-accent-soft);
   --agent-live-contrast: var(--color-app);
+  /* CTA contrast is kept separate from decorative accent text. All shipped dark
+     accents clear 4.5:1 against black; light palettes override below. */
+  --agent-action-contrast: #000;
+  --agent-action-tone: #fff;
   --agent-glow: color-mix(in srgb, var(--agent-live) 55%, transparent);
   --agent-glow-faint: color-mix(in srgb, var(--agent-live) 9%, transparent);
   --agent-glow-danger: color-mix(in srgb, var(--agent-danger) 35%, transparent);
@@ -1639,33 +1643,42 @@
   align-items: center;
   gap: 7px;
   height: 28px;
-  border: none;
+  border: 1px solid color-mix(in srgb, var(--agent-live) 72%, var(--agent-ink));
   border-radius: var(--agent-radius-md);
   background: var(--agent-live);
-  color: var(--agent-live-contrast);
+  color: var(--agent-action-contrast);
   cursor: pointer;
   font-size: var(--agent-fs-sm);
   font-weight: 600;
   padding: 0 10px 0 12px;
   white-space: nowrap;
   transition:
-    filter var(--agent-motion-hover) var(--ease-standard),
+    background-color var(--agent-motion-hover) var(--ease-standard),
+    border-color var(--agent-motion-hover) var(--ease-standard),
     transform var(--agent-motion-hover) var(--ease-standard),
     box-shadow var(--agent-motion-hover) var(--ease-standard);
 }
 
 .agent-composer__send:hover:not(:disabled) {
-  filter: brightness(1.08);
-  box-shadow: 0 0 14px var(--agent-glow);
+  border-color: color-mix(in srgb, var(--agent-live) 54%, var(--agent-ink));
+  background: color-mix(in srgb, var(--agent-live) 88%, var(--agent-action-tone));
+  box-shadow:
+    0 0 0 1px var(--agent-live-soft),
+    0 0 16px var(--agent-glow);
 }
 
 .agent-composer__send:active:not(:disabled) {
+  background: color-mix(in srgb, var(--agent-live) 78%, var(--agent-action-tone));
+  box-shadow:
+    0 0 0 1px var(--agent-live-soft),
+    0 0 8px var(--agent-glow);
   transform: translateY(1px);
 }
 
 .agent-composer__send:disabled {
-  background: var(--agent-fill);
-  color: var(--agent-text-disabled);
+  border-color: var(--agent-hairline);
+  background: color-mix(in srgb, var(--agent-fill) 72%, transparent);
+  color: color-mix(in srgb, var(--agent-text-disabled) 88%, transparent);
   cursor: not-allowed;
 }
 
@@ -1675,8 +1688,10 @@
 }
 
 .agent-composer__kbd {
+  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
   border-radius: var(--agent-radius-sm);
-  background: color-mix(in srgb, var(--agent-ink) 12%, transparent);
+  background: color-mix(in srgb, currentColor 13%, transparent);
+  color: inherit;
   font-family: var(--agent-mono);
   font-size: var(--agent-fs-2xs);
   font-weight: 500;
@@ -1688,7 +1703,8 @@
 }
 
 .agent-composer__send:disabled .agent-composer__kbd {
-  background: color-mix(in srgb, var(--agent-text-disabled) 18%, transparent);
+  border-color: color-mix(in srgb, currentColor 18%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
 }
 
 .agent-composer__reason {
@@ -2639,9 +2655,16 @@
   --agent-shadow-alpha: 0.1;
   --agent-scanline: color-mix(in srgb, var(--agent-text) 4%, transparent);
   --agent-live-contrast: #fff;
+  --agent-action-contrast: #fff;
+  --agent-action-tone: #000;
   --agent-focus-ring:
     0 0 0 1px var(--agent-live), 0 0 0 3px color-mix(in srgb, var(--agent-live) 18%, transparent);
   --agent-shadow-well: inset 0 1px 0 color-mix(in srgb, var(--agent-ink) 4%, transparent);
+}
+
+.app-shell[data-theme="oneLight"] .workbench-frame {
+  --agent-action-contrast: #000;
+  --agent-action-tone: #fff;
 }
 
 @media (prefers-color-scheme: light) {
@@ -2651,6 +2674,8 @@
     --agent-shadow-alpha: 0.1;
     --agent-scanline: color-mix(in srgb, var(--agent-text) 4%, transparent);
     --agent-live-contrast: #fff;
+    --agent-action-contrast: #fff;
+    --agent-action-tone: #000;
     --agent-focus-ring:
       0 0 0 1px var(--agent-live), 0 0 0 3px color-mix(in srgb, var(--agent-live) 18%, transparent);
     --agent-shadow-well: inset 0 1px 0 color-mix(in srgb, var(--agent-ink) 4%, transparent);

@@ -6595,14 +6595,18 @@ button.problem-row:focus-visible {
 }
 
 .settings-dialog {
-  width: min(760px, calc(100vw - 36px));
+  width: min(880px, calc(100vw - 36px));
+  max-height: min(680px, calc(100vh - 64px));
+  border-color: var(--color-border-strong);
+  border-radius: 14px;
+  background: var(--color-modal);
 }
 
 .settings-form {
   display: grid;
   height: 100%;
-  max-height: min(620px, calc(100vh - 80px));
-  grid-template-rows: 42px minmax(0, 1fr);
+  max-height: min(680px, calc(100vh - 64px));
+  grid-template-rows: 48px minmax(0, 1fr);
 }
 
 .settings-header {
@@ -6612,7 +6616,7 @@ button.problem-row:focus-visible {
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text-strong);
   font-weight: 600;
-  padding: 0 10px 0 14px;
+  padding: 0 12px 0 18px;
 }
 
 .settings-header span {
@@ -6644,26 +6648,28 @@ button.problem-row:focus-visible {
 .settings-content {
   display: grid;
   min-height: 0;
-  grid-template-columns: 164px minmax(0, 1fr);
+  grid-template-columns: 184px minmax(0, 1fr);
 }
 
 .settings-nav {
   display: grid;
   align-content: start;
-  gap: 2px;
+  gap: 3px;
   border-right: 1px solid var(--color-border);
-  background: var(--color-panel);
-  padding: 8px;
+  background: color-mix(in srgb, var(--color-panel) 82%, var(--color-modal));
+  padding: 12px 10px;
 }
 
 .settings-nav-item {
-  min-height: 34px;
+  min-height: 36px;
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 550;
+  padding: 0 12px;
   text-align: left;
   transition:
     background-color var(--motion-fast) var(--ease-standard),
@@ -6676,32 +6682,55 @@ button.problem-row:focus-visible {
 }
 
 .settings-nav-item.active {
-  background: var(--color-accent-soft);
+  background: color-mix(in srgb, var(--color-accent) 15%, var(--color-surface));
   color: var(--color-text-strong);
+  box-shadow: inset 2px 0 0 var(--color-accent);
 }
 
 .settings-section {
   min-height: 0;
   overflow: auto;
-  padding: 14px;
+  padding: 0 24px 28px;
+}
+
+.settings-section__header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  margin: 0 -4px 18px;
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-modal) 94%, transparent);
+  backdrop-filter: blur(14px);
+  padding: 21px 4px 13px;
+}
+
+.settings-section__header h2 {
+  margin: 0;
+  color: var(--color-text-strong);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .settings-group {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .settings-subgroup {
   display: grid;
-  gap: 8px;
-  border-top: 1px solid var(--color-border);
-  padding-top: 12px;
+  gap: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-surface) 74%, var(--color-modal));
+  padding: 14px;
 }
 
 .settings-subgroup > span {
-  color: var(--color-text-subtle);
+  color: var(--color-text-muted);
   font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -6765,11 +6794,12 @@ button.problem-row:focus-visible {
    box rather than the palette's full-width underline, theme-aware via tokens. */
 .keymap-search {
   position: sticky;
-  top: 0;
-  z-index: 1;
+  top: 70px;
+  z-index: 3;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: var(--color-modal);
+  box-shadow: 0 5px 14px color-mix(in srgb, #000 10%, transparent);
   padding: 0 10px;
 }
 
@@ -6798,7 +6828,7 @@ button.problem-row:focus-visible {
   min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: color-mix(in srgb, var(--color-surface) 88%, var(--color-modal));
   color: var(--color-text);
   outline: 0;
   padding: 0 10px;
@@ -6830,12 +6860,14 @@ button.problem-row:focus-visible {
 .settings-field textarea:disabled {
   color: var(--color-disabled);
   cursor: not-allowed;
+  opacity: 0.72;
 }
 
 .settings-toggle {
   display: inline-flex;
   align-items: center;
   gap: 9px;
+  min-height: 30px;
 }
 
 .settings-toggle input {
@@ -6853,13 +6885,17 @@ button.problem-row:focus-visible {
   min-height: 32px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: color-mix(in srgb, var(--color-surface) 86%, var(--color-modal));
   color: var(--color-text);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
   font-weight: 700;
   padding: 0 12px;
+  transition:
+    border-color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
 }
 
 .settings-actions button:disabled {
@@ -6869,6 +6905,139 @@ button.problem-row:focus-visible {
 
 .settings-actions button:not(:disabled):hover {
   border-color: var(--color-accent);
+  background: var(--color-hover);
+  color: var(--color-text-strong);
+}
+
+.settings-actions button:focus-visible,
+.settings-field > button:focus-visible,
+.agent-provider-card__actions button:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus-ring);
+}
+
+.settings-field > button,
+.agent-provider-card__actions button {
+  min-height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface) 86%, var(--color-modal));
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 0 12px;
+  transition:
+    border-color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
+}
+
+.settings-field > button:hover:not(:disabled),
+.agent-provider-card__actions button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: var(--color-hover);
+  color: var(--color-text-strong);
+}
+
+.settings-field > button:disabled,
+.agent-provider-card__actions button:disabled {
+  color: var(--color-disabled);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.settings-group--general > .settings-field,
+.settings-group--general > .settings-toggle,
+.settings-surface--agents .settings-group > .settings-field,
+.settings-surface--agents .settings-group > .settings-toggle {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-surface) 68%, var(--color-modal));
+  padding: 11px 12px;
+}
+
+.settings-group--general > .settings-field,
+.settings-surface--agents .settings-group > .settings-field {
+  grid-template-columns: minmax(180px, 0.72fr) minmax(220px, 1fr);
+  align-items: center;
+  column-gap: 18px;
+}
+
+.settings-subsection {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.72fr) minmax(220px, 1fr);
+  align-items: center;
+  gap: 10px 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-accent) 5%, var(--color-surface));
+  padding: 14px;
+}
+
+.settings-subsection h3 {
+  grid-column: 1 / -1;
+  margin: 0 0 2px;
+  color: var(--color-text-strong);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settings-subsection .settings-field {
+  display: contents;
+}
+
+.settings-subsection__notes,
+.settings-subsection__status,
+.settings-subsection .settings-actions {
+  grid-column: 1 / -1;
+}
+
+.settings-subsection__notes,
+.settings-subsection__status {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-subsection__status {
+  color: var(--color-text-muted);
+}
+
+.settings-subsection__status--success {
+  color: var(--color-success);
+}
+
+.settings-subsection__status--danger {
+  color: var(--color-danger);
+}
+
+.keymap-category {
+  padding: 0;
+  overflow: hidden;
+}
+
+.keymap-category > span {
+  padding: 12px 14px 2px;
+}
+
+.keymap-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--color-border);
+  padding: 10px 14px;
+}
+
+.keymap-command:first-of-type {
+  border-top: 0;
+}
+
+.keymap-command .settings-actions button {
+  min-width: 112px;
 }
 
 .settings-readout {
@@ -6916,6 +7085,10 @@ button.problem-row:focus-visible {
 }
 
 @media (max-width: 680px) {
+  .settings-dialog {
+    width: calc(100vw - 20px);
+  }
+
   .settings-content {
     grid-template-columns: 1fr;
   }
@@ -6929,6 +7102,34 @@ button.problem-row:focus-visible {
 
   .settings-nav-item {
     flex: 0 0 auto;
+  }
+
+  .settings-section {
+    padding: 0 14px 20px;
+  }
+
+  .settings-section__header {
+    margin-bottom: 14px;
+    padding-top: 16px;
+  }
+
+  .settings-group--general > .settings-field,
+  .settings-surface--agents .settings-group > .settings-field,
+  .settings-subsection,
+  .keymap-field {
+    grid-template-columns: 1fr;
+  }
+
+  .keymap-search {
+    top: 62px;
+  }
+
+  .keymap-command {
+    grid-template-columns: 1fr;
+  }
+
+  .keymap-command .settings-actions button {
+    width: 100%;
   }
 }
 
@@ -7665,16 +7866,17 @@ kbd {
 
 .agent-provider-settings {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .agent-provider-card {
-  background: color-mix(in srgb, var(--panel-bg) 94%, var(--text-primary));
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-surface) 80%, var(--color-modal));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 13px;
+  padding: 16px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-strong) 4%, transparent);
 }
 
 .agent-provider-card__header,
@@ -7696,11 +7898,17 @@ kbd {
   gap: 5px;
 }
 
+.agent-provider-card__header strong {
+  color: var(--color-text-strong);
+  font-size: 13px;
+  font-weight: 650;
+}
+
 .agent-provider-card__header small,
 .agent-provider-card__status,
 .agent-provider-card__interval small,
 .agent-provider-card__result small {
-  color: var(--text-muted);
+  color: var(--color-text-muted);
   font-size: 11px;
 }
 
@@ -7708,18 +7916,22 @@ kbd {
   display: flex;
   flex-wrap: wrap;
   gap: 5px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-panel) 72%, transparent);
+  padding: 8px 10px;
 }
 
 .agent-provider-card__policy {
   align-items: center;
-  color: var(--text-muted);
+  color: var(--color-text-muted);
   display: flex;
   font-size: 11px;
   gap: 8px;
 }
 
 .agent-provider-card__policy--failed {
-  color: var(--status-error);
+  color: var(--color-danger);
 }
 
 .agent-provider-card__input-unit {
@@ -7737,6 +7949,7 @@ kbd {
 .agent-provider-card__actions {
   justify-content: flex-start;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .agent-provider-card__actions button {
@@ -7746,19 +7959,24 @@ kbd {
 }
 
 .agent-provider-card__result {
-  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-panel) 70%, transparent);
+  color: var(--color-text-muted);
   margin: 0;
   padding: 8px 10px;
 }
 
 .agent-provider-card__result--success {
-  background: color-mix(in srgb, var(--status-success) 12%, transparent);
-  color: var(--status-success);
+  border-color: color-mix(in srgb, var(--color-success) 28%, var(--color-border));
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  color: var(--color-success);
 }
 
 .agent-provider-card__result--failed {
-  background: color-mix(in srgb, var(--status-error) 12%, transparent);
-  color: var(--status-error);
+  border-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border));
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  color: var(--color-danger);
 }
 
 .agent-provider-card__result pre {

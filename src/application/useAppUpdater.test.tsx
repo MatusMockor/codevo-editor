@@ -44,6 +44,143 @@ describe("useAppUpdater", () => {
     expect(gateway.installAndRestart).toHaveBeenCalledWith(7);
   });
 
+  it("checks after the UI-ready scheduler and exposes an available startup release", async () => {
+    const gateway = gatewayWithUpdate();
+    let start!: () => void;
+    render(gateway, {
+      scheduleAfterUiInteractive: (task) => {
+        start = task;
+        return vi.fn();
+      },
+    });
+
+    await act(async () => start());
+
+    expect(gateway.check).toHaveBeenCalledOnce();
+    expect(surface?.state).toMatchObject({ kind: "available", version: "0.2.0" });
+  });
+
+  it("keeps startup up-to-date and check failures silent", async () => {
+    const logStartupFailure = vi.fn();
+    const upToDate = gatewayWithUpdate();
+    upToDate.check.mockResolvedValue({ kind: "upToDate", currentVersion: "0.1.0" });
+    let start!: () => void;
+    render(upToDate, {
+      logStartupFailure,
+      scheduleAfterUiInteractive: (task) => {
+        start = task;
+        return vi.fn();
+      },
+    });
+    await act(async () => start());
+    expect(surface?.state.kind).toBe("upToDate");
+    expect(logStartupFailure).not.toHaveBeenCalled();
+
+    const failing = gatewayWithUpdate();
+    failing.check.mockRejectedValue(new Error("offline endpoint"));
+    render(failing, {
+      logStartupFailure,
+      scheduleAfterUiInteractive: (task) => {
+        start = task;
+        return vi.fn();
+      },
+    });
+    await act(async () => start());
+    expect(surface?.state.kind).toBe("idle");
+    expect(logStartupFailure).toHaveBeenLastCalledWith(
+      "Application update check failed during startup.",
+    );
+  });
+
+  it("still checks when the persisted skip preference cannot be read", async () => {
+    const gateway = gatewayWithUpdate();
+    const preferencesGateway = preferenceGateway();
+    preferencesGateway.loadSkippedVersion.mockRejectedValue(new Error("settings unavailable"));
+    const logStartupFailure = vi.fn();
+    let start!: () => void;
+    render(gateway, {
+      logStartupFailure,
+      preferencesGateway,
+      scheduleAfterUiInteractive: (task) => {
+        start = task;
+        return vi.fn();
+      },
+    });
+
+    await act(async () => start());
+
+    expect(gateway.check).toHaveBeenCalledOnce();
+    expect(surface?.state.kind).toBe("available");
+    expect(logStartupFailure).toHaveBeenCalledWith(
+      "Application update skip preference could not be read.",
+    );
+  });
+
+  it("retains release data after download failure and releases the native candidate", async () => {
+    const gateway = gatewayWithUpdate();
+    gateway.download.mockRejectedValue(new Error("secret download failure"));
+    render(gateway);
+    await act(async () => surface?.check());
+
+    await act(async () => surface?.download());
+
+    expect(surface?.state).toMatchObject({
+      kind: "failed",
+      operation: "download",
+      message: "Unable to download the application update.",
+      release: { version: "0.2.0", notes: "Beta update" },
+    });
+    expect(gateway.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("retains release data after install failure and releases the native candidate", async () => {
+    const gateway = gatewayWithUpdate();
+    gateway.installAndRestart.mockRejectedValue(new Error("secret install failure"));
+    render(gateway);
+    await act(async () => surface?.check());
+    await act(async () => surface?.download());
+
+    await act(async () => surface?.installAndRestart());
+
+    expect(surface?.state).toMatchObject({
+      kind: "failed",
+      operation: "installAndRestart",
+      message: "Unable to install the application update.",
+      release: { version: "0.2.0" },
+    });
+    expect(gateway.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("persists skip-this-version and suppresses only that startup candidate", async () => {
+    const gateway = gatewayWithUpdate();
+    const preferences = preferenceGateway();
+    const persistSkippedVersion = vi.fn(async () => undefined);
+    let start!: () => void;
+    render(gateway, {
+      preferencesGateway: preferences,
+      persistSkippedVersion,
+      scheduleAfterUiInteractive: (task) => {
+        start = task;
+        return vi.fn();
+      },
+    });
+    await act(async () => start());
+    await act(async () => surface?.skipVersion());
+    expect(persistSkippedVersion).toHaveBeenCalledWith("0.2.0");
+    expect(surface?.state.kind).toBe("idle");
+
+    preferences.loadSkippedVersion.mockResolvedValue("0.2.0");
+    render(gateway, {
+      preferencesGateway: preferences,
+      scheduleAfterUiInteractive: (task) => {
+        start = task;
+        return vi.fn();
+      },
+    });
+    await act(async () => start());
+    expect(surface?.state.kind).toBe("idle");
+  });
+
   it("drops a stale check completion after the gateway owner changes", async () => {
     let settle!: (value: Awaited<ReturnType<AppUpdaterGateway["check"]>>) => void;
     const first: AppUpdaterGateway = {
@@ -87,13 +224,21 @@ describe("useAppUpdater", () => {
       currentVersion: "0.1.0",
       operation: "check",
       message: "Unable to check for application updates.",
+      release: null,
     });
   });
 
   it("accepts results after the StrictMode setup cleanup cycle and disposes on unmount", async () => {
     const gateway = gatewayWithUpdate();
+    const preferencesGateway = preferenceGateway();
     function Harness() {
-      surface = useAppUpdater({ currentVersion: "0.1.0", gateway });
+      surface = useAppUpdater({
+        currentVersion: "0.1.0",
+        gateway,
+        preferencesGateway,
+        persistSkippedVersion: vi.fn(async () => undefined),
+        scheduleAfterUiInteractive: neverSchedule,
+      });
       return null;
     }
     act(() =>
@@ -111,9 +256,20 @@ describe("useAppUpdater", () => {
     root = createRoot(host);
   });
 
-  function render(gateway: AppUpdaterGateway): void {
+  function render(
+    gateway: AppUpdaterGateway,
+    overrides: Partial<Parameters<typeof useAppUpdater>[0]> = {},
+  ): void {
+    const preferencesGateway = overrides.preferencesGateway ?? preferenceGateway();
     function Harness() {
-      surface = useAppUpdater({ currentVersion: "0.1.0", gateway });
+      surface = useAppUpdater({
+        currentVersion: "0.1.0",
+        gateway,
+        preferencesGateway,
+        persistSkippedVersion: vi.fn(async () => undefined),
+        scheduleAfterUiInteractive: neverSchedule,
+        ...overrides,
+      });
       return null;
     }
     act(() => root.render(<Harness />));
@@ -122,7 +278,7 @@ describe("useAppUpdater", () => {
 
 function gatewayWithUpdate() {
   return {
-    check: vi.fn(async () => ({
+    check: vi.fn<AppUpdaterGateway["check"]>(async () => ({
       kind: "available" as const,
       candidate: {
         candidateRevision: 7,
@@ -135,5 +291,13 @@ function gatewayWithUpdate() {
     download: vi.fn(async () => undefined),
     installAndRestart: vi.fn(async () => undefined),
     dispose: vi.fn(async () => undefined),
+  };
+}
+
+const neverSchedule = () => () => undefined;
+
+function preferenceGateway() {
+  return {
+    loadSkippedVersion: vi.fn(async () => null as string | null),
   };
 }

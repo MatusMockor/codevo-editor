@@ -606,6 +606,7 @@ function surface(
       releaseProject: async () => undefined,
       ensureProjectLease: async () => true,
       launchIdentityForProject: () => ({ workspaceId: "workspace-id", generation: 1 }),
+      isCurrentRepositoryOwner: () => true,
       noteDispatchTrustRejected: () => undefined,
     },
   };

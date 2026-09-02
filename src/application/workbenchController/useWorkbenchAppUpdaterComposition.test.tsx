@@ -20,19 +20,25 @@ describe("useWorkbenchAppUpdaterComposition", () => {
       installAndRestart: vi.fn(async () => undefined),
     };
     let updater: AppUpdaterSurface | undefined;
+    const appUpdaterPreferencesGateway = {
+      loadSkippedVersion: vi.fn(async () => null),
+    };
     const host = document.createElement("div");
     const root = createRoot(host);
 
     function Probe() {
-      updater = useWorkbenchAppUpdaterComposition({
-        appUpdaterGateway: gateway,
-        appVersion: "0.2.0-beta.1",
-      });
+      updater = useWorkbenchAppUpdaterComposition(
+        {
+          appUpdaterGateway: gateway,
+          appUpdaterPreferencesGateway,
+          appVersion: "0.2.0-beta.1",
+        },
+        vi.fn(async () => undefined),
+      );
       return null;
     }
 
     act(() => root.render(<Probe />));
-    await act(async () => readUpdater(updater).check());
     await waitForReact(() => expect(readUpdater(updater).state.kind).toBe("upToDate"));
     expect(readUpdater(updater).state.currentVersion).toBe("0.2.0-beta.1");
     expect(gateway.check).toHaveBeenCalledOnce();

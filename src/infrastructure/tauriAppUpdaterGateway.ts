@@ -116,7 +116,12 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
     const candidate = this.candidate;
     this.candidate = null;
     if (!candidate) return;
-    await this.releaseCandidate(candidate);
+    try {
+      await this.releaseCandidate(candidate);
+    } catch (error) {
+      if (this.revision === disposalRevision && !candidate.closed) this.candidate = candidate;
+      throw error;
+    }
     if (this.revision !== disposalRevision) return;
   }
 

@@ -5008,16 +5008,13 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
       );
     });
 
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    let switchPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
     });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
-
     await act(async () => {
       workspaceASettingsSave.reject(new Error("stale workspace-open settings"));
-      await Promise.resolve();
+      await switchPromise;
     });
     await flushAsyncTurns(24);
 

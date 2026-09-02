@@ -33,6 +33,7 @@ import {
 } from "../domain/agentSettings";
 import type { AgentCliKind } from "../domain/agentTask";
 import type { AppSettings, SettingsGateway } from "../domain/settings";
+import { appSettingsSaveCoordinatorFor } from "./appSettingsSaveCoordinator";
 import type {
   AgentProviderAdmissionAuthority,
   ReadyAgentProviderAdmissionAuthority,
@@ -675,6 +676,9 @@ export function useAgentProviderManagement(
       if (queued.cliPathOwned) cliPathRevisionRef.current[intent.provider] = queued.revision;
       if (queued.preferenceOwned) preferenceRevisionRef.current[intent.provider] = queued.revision;
       if (queued.selectedOwned) selectedRevisionRef.current = queued.revision;
+      appSettingsSaveCoordinatorFor(
+        dependenciesRef.current.settingsGateway,
+      ).initializeCommittedSnapshot(settings);
       dependenciesRef.current.applyAppSettings(applyIntent(settings, queued));
       let resolveResult: (value: AgentProviderSettingsSaveOutcome) => void = () => undefined;
       const result = new Promise<AgentProviderSettingsSaveOutcome>((resolve) => {
@@ -697,11 +701,11 @@ export function useAgentProviderManagement(
           resolveResult({ kind: "rejected", reason: "staleAuthority" });
           return;
         }
-        const latest = dependenciesRef.current.appSettingsRef.current;
-        const candidate = persistedCandidate(latest, persistedSliceRef.current, queued);
         const settingsGateway = dependenciesRef.current.settingsGateway;
         try {
-          await settingsGateway.saveAppSettings(candidate);
+          await appSettingsSaveCoordinatorFor(settingsGateway).save(settings, (committed) =>
+            persistedCandidate(committed, persistedSliceRef.current, queued),
+          );
           if (!mountedRef.current) {
             resolveResult({ kind: "rejected", reason: "staleAuthority" });
             return;

@@ -26,6 +26,7 @@ import type { EditorGroupFocusRunner } from "./application/editorGroupFocusPort"
 import { isGitDiffDocumentPath } from "./application/useGitDiffWorkspace";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { WorkbenchBottomPanelHost } from "./components/WorkbenchBottomPanelHost";
+import { WorkbenchAppUpdaterHost } from "./components/WorkbenchAppUpdaterHost";
 import { WorkbenchShellFrame } from "./components/WorkbenchShellFrame";
 import { workbenchShellPlacement } from "./components/workbenchShellPlacement";
 import { useWorkbenchResizeHandles } from "./application/useWorkbenchResizeHandles";
@@ -105,7 +106,6 @@ import {
   LazySearchEverywhere,
   LazySurfaceHost,
   LazyWorkbenchEditorRuntimeHost,
-  LazyWorkbenchSettingsDialogHost,
 } from "./components/appLazySurfaces";
 import { surfaceLoadingState } from "./components/surfaceLoadingState";
 import { useStableGitFileStatuses } from "./components/useStableGitFileStatuses";
@@ -1476,18 +1476,13 @@ function App() {
         plan={workbench.languageServerPlan}
       />
 
-      <LazySurfaceHost
-        active={workbench.settingsOpen || workbench.nodeLaunchConfigurationsOpen}
-        label="settings"
-      >
-        <LazyWorkbenchSettingsDialogHost
-          appUpdaterComposition={workbenchComposition.appUpdater}
-          providerManagement={workbench.agents.providerManagement}
-          systemFontGateway={systemFontGateway}
-          workbench={workbench}
-          workspaceFiles={workspaceGateways.files}
-        />
-      </LazySurfaceHost>
+      <WorkbenchAppUpdaterHost
+        composition={workbenchComposition.appUpdater}
+        providerManagement={workbench.agents.providerManagement}
+        systemFontGateway={systemFontGateway}
+        workbench={workbench}
+        workspaceFiles={workspaceGateways.files}
+      />
     </main>
   );
 }

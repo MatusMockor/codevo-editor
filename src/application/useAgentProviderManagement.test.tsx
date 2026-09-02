@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { act, createElement } from "react";
+import { act, createElement, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentProviderCurrentPolicyResult,
+  AgentProviderGenerationRequest,
   AgentProviderHealthProbeResult,
   AgentProviderPolicyRegistrationRequest,
   AgentProviderUpdateProgressEvent,
@@ -28,6 +29,7 @@ import {
   type AgentProviderManagementSurface,
 } from "./useAgentProviderManagement";
 import { isCurrentAgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
+import { appSettingsSaveCoordinatorFor } from "./appSettingsSaveCoordinator";
 
 const PATH_A = "/usr/local/bin/claude";
 const PATH_B = "/opt/homebrew/bin/claude";
@@ -44,6 +46,7 @@ interface Harness {
   readonly hook: () => AgentProviderManagementSurface;
   readonly dependencies: AgentProviderManagementDependencies;
   readonly healthCalls: Array<Deferred<AgentProviderHealthProbeResult>>;
+  readonly healthRequests: AgentProviderGenerationRequest[];
   readonly errors: Array<{ readonly source: string; readonly error: unknown }>;
   replaceDependencies(
     replacement: Partial<AgentProviderManagementDependencies>,
@@ -379,6 +382,14 @@ describe("useAgentProviderManagement", () => {
       checkForUpdates: true,
     });
     expect(harness.healthCalls).toHaveLength(2);
+    expect(harness.healthRequests).toEqual([
+      { provider: "claudeCode", providerGeneration: 1 },
+      { provider: "codex", providerGeneration: 1 },
+    ]);
+
+    harness.replaceDependencies({});
+    await act(async () => undefined);
+    expect(harness.healthCalls).toHaveLength(2);
 
     await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
     expect(harness.hook().providers.claudeCode.health.kind).toBe("ready");
@@ -396,6 +407,25 @@ describe("useAgentProviderManagement", () => {
       provider: "claudeCode",
       settingsRevision: 1,
     });
+    harness.unmount();
+  });
+
+  it("runs each persisted startup probe once through StrictMode effect replay", async () => {
+    const harness = renderManagement(
+      configuredSettings(),
+      () => 0,
+      true,
+      () => ({ kind: "unregistered" }),
+      { strict: true },
+    );
+
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await act(async () => undefined);
+
+    expect(harness.healthRequests).toEqual([
+      { provider: "claudeCode", providerGeneration: 1 },
+      { provider: "codex", providerGeneration: 1 },
+    ]);
     harness.unmount();
   });
 
@@ -473,6 +503,17 @@ describe("useAgentProviderManagement", () => {
     };
     const harness = renderManagement(settings);
     await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    expect(harness.dependencies.policyGateway.registerAgentProviderPolicy).toHaveBeenCalledWith({
+      provider: "claudeCode",
+      settingsRevision: 1,
+      expectedProviderGeneration: null,
+      enabled: true,
+      cliPath: PATH_A,
+      checkForUpdates: false,
+    });
+    expect(harness.healthRequests.filter(({ provider }) => provider === "claudeCode")).toEqual([
+      { provider: "claudeCode", providerGeneration: 1 },
+    ]);
     await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
 
     expect(harness.hook().providers.claudeCode.health).toMatchObject({
@@ -656,6 +697,87 @@ describe("useAgentProviderManagement", () => {
     expect(harness.settings().theme).not.toBe(initialTheme);
     expect(harness.errors[0]?.source).toBe("Agent provider settings");
     harness.unmount();
+  });
+
+  it("does not resurrect rejected provider fields when a later updater skip persists", async () => {
+    const providerFirst = renderManagement();
+    await waitForReact(() => expect(providerFirst.healthCalls).toHaveLength(2));
+    const heldProvider = deferred<void>();
+    vi.mocked(providerFirst.dependencies.settingsGateway.saveAppSettings)
+      .mockImplementationOnce(() => heldProvider.promise)
+      .mockResolvedValueOnce(undefined);
+    let providerSave!: Promise<boolean>;
+    act(() => {
+      providerSave = providerFirst.hook().save({ provider: "claudeCode", cliPath: PATH_B });
+    });
+    await act(async () => undefined);
+    const providerCandidate = vi.mocked(providerFirst.dependencies.settingsGateway.saveAppSettings)
+      .mock.calls[0]?.[0];
+    expect(providerCandidate?.appUpdaterSkippedVersion).toBeNull();
+    const skipped = {
+      ...providerFirst.settings(),
+      appUpdaterSkippedVersion: "0.2.0",
+    };
+    providerFirst.dependencies.applyAppSettings(skipped);
+    const skipSave = appSettingsSaveCoordinatorFor(
+      providerFirst.dependencies.settingsGateway,
+    ).save(skipped, (committed) => ({
+      ...committed,
+      appUpdaterSkippedVersion: "0.2.0",
+    }));
+    expect(providerFirst.dependencies.settingsGateway.saveAppSettings).toHaveBeenCalledOnce();
+    await act(async () => heldProvider.reject(new Error("disk full")));
+    await expect(providerSave).resolves.toBe(false);
+    await expect(skipSave).resolves.toMatchObject({ appUpdaterSkippedVersion: "0.2.0" });
+    expect(
+      vi.mocked(providerFirst.dependencies.settingsGateway.saveAppSettings).mock.calls[1]?.[0],
+    ).toMatchObject({
+      agentCliPaths: { claudeCode: PATH_A, codex: "/usr/local/bin/codex" },
+      appUpdaterSkippedVersion: "0.2.0",
+    });
+    expect(providerFirst.settings()).toMatchObject({
+      agentCliPaths: { claudeCode: PATH_A, codex: "/usr/local/bin/codex" },
+      appUpdaterSkippedVersion: "0.2.0",
+    });
+    providerFirst.unmount();
+  });
+
+  it("does not persist a rejected updater skip through a later provider save", async () => {
+    const skipFirst = renderManagement();
+    await waitForReact(() => expect(skipFirst.healthCalls).toHaveLength(2));
+    const heldSkip = deferred<void>();
+    vi.mocked(skipFirst.dependencies.settingsGateway.saveAppSettings)
+      .mockImplementationOnce(() => heldSkip.promise)
+      .mockResolvedValueOnce(undefined);
+    const beforeSkip = skipFirst.settings();
+    const firstSkipped = { ...beforeSkip, appUpdaterSkippedVersion: "0.3.0" };
+    skipFirst.dependencies.applyAppSettings(firstSkipped);
+    const coordinator = appSettingsSaveCoordinatorFor(skipFirst.dependencies.settingsGateway);
+    const firstSkipSave = coordinator.save(beforeSkip, (committed) => ({
+      ...committed,
+      appUpdaterSkippedVersion: "0.3.0",
+    }));
+    let laterProviderSave!: Promise<boolean>;
+    act(() => {
+      laterProviderSave = skipFirst.hook().save({ provider: "claudeCode", cliPath: PATH_B });
+    });
+    await act(async () => undefined);
+    expect(skipFirst.dependencies.settingsGateway.saveAppSettings).toHaveBeenCalledOnce();
+    const skipRejection = expect(firstSkipSave).rejects.toThrow("disk full");
+    await act(async () => heldSkip.reject(new Error("disk full")));
+    await skipRejection;
+    skipFirst.dependencies.applyAppSettings({
+      ...skipFirst.settings(),
+      appUpdaterSkippedVersion: coordinator.committedSnapshot()?.appUpdaterSkippedVersion ?? null,
+    });
+    await expect(laterProviderSave).resolves.toBe(true);
+    expect(
+      vi.mocked(skipFirst.dependencies.settingsGateway.saveAppSettings).mock.calls[1]?.[0],
+    ).toMatchObject({
+      agentCliPaths: { claudeCode: PATH_B, codex: "/usr/local/bin/codex" },
+      appUpdaterSkippedVersion: null,
+    });
+    skipFirst.unmount();
   });
 
   it("rolls back queued same-provider failures to the persisted receipt", async () => {
@@ -1860,11 +1982,13 @@ function renderManagement(
     readonly discoveryGateway?: AgentCliDiscoveryGateway;
     readonly updateGateway?: AgentProviderUpdateGateway;
     readonly renderCard?: boolean;
+    readonly strict?: boolean;
   } = {},
 ): Harness {
   let settings = initialSettings;
   let hook: AgentProviderManagementSurface | null = null;
   const healthCalls: Array<Deferred<AgentProviderHealthProbeResult>> = [];
+  const healthRequests: AgentProviderGenerationRequest[] = [];
   const errors: Array<{ readonly source: string; readonly error: unknown }> = [];
   const generations: Record<AgentCliKind, number> = { claudeCode: 0, codex: 0 };
   const settingsRef = { current: settings };
@@ -1891,7 +2015,8 @@ function renderManagement(
       ),
     },
     healthGateway: {
-      probeAgentProviderHealth: vi.fn(() => {
+      probeAgentProviderHealth: vi.fn((request) => {
+        healthRequests.push(request);
         const call = deferred<AgentProviderHealthProbeResult>();
         healthCalls.push(call);
         return call.promise;
@@ -1940,7 +2065,10 @@ function renderManagement(
     });
   }
 
-  act(() => root.render(createElement(Hook)));
+  const hookElement = createElement(Hook);
+  act(() =>
+    root.render(options.strict ? createElement(StrictMode, null, hookElement) : hookElement),
+  );
   return {
     container,
     settings: () => settings,
@@ -1950,6 +2078,7 @@ function renderManagement(
     },
     dependencies,
     healthCalls,
+    healthRequests,
     errors,
     replaceDependencies: (replacement) => {
       currentDependencies = { ...currentDependencies, ...replacement };

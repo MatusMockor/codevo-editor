@@ -51,6 +51,7 @@ describe("AgentsSettingsPanel", () => {
     const clear = [...host.querySelectorAll("button")].find((button) =>
       button.textContent?.includes("Clear 1 favorites"),
     );
+    expect(host.querySelector(".settings-surface--agents .agent-provider-settings")).not.toBeNull();
     act(() => clear?.click());
 
     expect(updateAppSettings).toHaveBeenCalledWith(

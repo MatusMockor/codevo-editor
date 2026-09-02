@@ -28,6 +28,7 @@ import {
   normalizeAgentProviderPreferences,
   type AgentProviderPreferences,
 } from "./agentProviderSettings";
+import { normalizeAppUpdaterSkippedVersion } from "./appUpdater";
 import {
   parseAgentWorkbenchLayout,
   parsePersistedAgentBottomPanel,
@@ -133,6 +134,7 @@ const genericEditorFontFamilies = new Set([
 ]);
 
 export interface AppSettings {
+  appUpdaterSkippedVersion: string | null;
   agentCliPaths: AgentCliPaths;
   agentCliKind: AgentCliKind;
   agentAppearanceVariant: AgentAppearanceVariant;
@@ -293,6 +295,7 @@ export interface WorkspaceSettingsIdentity {
 export function defaultAppSettings(): AppSettings {
   return {
     ...defaultAgentAppSettings(),
+    appUpdaterSkippedVersion: null,
     editorFontFamily: defaultEditorFontFamily,
     editorFontLigatures: defaultEditorFontLigatures,
     editorFontSize: defaultEditorFontSize,
@@ -488,6 +491,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   );
 
   return {
+    appUpdaterSkippedVersion: normalizeAppUpdaterSkippedVersion(value.appUpdaterSkippedVersion),
     agentCliPaths,
     agentCliKind,
     agentAppearanceVariant: normalizeAgentAppearanceVariant(value.agentAppearanceVariant),

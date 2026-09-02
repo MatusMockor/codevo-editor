@@ -20,8 +20,17 @@ export function GeneralAppUpdateSettings({ updater }: GeneralAppUpdateSettingsPr
           <strong>{presentation.version}</strong>
         </div>
       ) : null}
-      {presentation.notes ? <p>{presentation.notes}</p> : null}
-      {presentation.status ? <p aria-live="polite">{presentation.status}</p> : null}
+      {presentation.notes ? (
+        <p className="settings-subsection__notes">{presentation.notes}</p>
+      ) : null}
+      {presentation.status ? (
+        <p
+          aria-live="polite"
+          className={`settings-subsection__status settings-subsection__status--${presentation.statusTone}`}
+        >
+          {presentation.status}
+        </p>
+      ) : null}
       <div className="settings-actions">
         {presentation.action === "check" ? (
           <button onClick={() => void updater.check()} type="button">
@@ -58,6 +67,7 @@ type AppUpdaterPresentation = AppUpdaterActionPresentation & {
   readonly version: string | null;
   readonly notes: string | null;
   readonly status: string | null;
+  readonly statusTone: "neutral" | "success" | "danger";
 };
 
 function appUpdaterPresentation(state: AppUpdaterState): AppUpdaterPresentation {
@@ -67,7 +77,7 @@ function appUpdaterPresentation(state: AppUpdaterState): AppUpdaterPresentation 
     case "checking":
       return presentation({ action: "pending", pendingLabel: "Checking…" });
     case "upToDate":
-      return presentation({ action: "check" }, null, null, "Codevo is up to date.");
+      return presentation({ action: "check" }, null, null, "Codevo is up to date.", "success");
     case "available":
       return presentation({ action: "download" }, state.version, state.notes);
     case "downloading":
@@ -85,7 +95,7 @@ function appUpdaterPresentation(state: AppUpdaterState): AppUpdaterPresentation 
         state.notes,
       );
     case "failed":
-      return presentation({ action: "check" }, null, null, state.message);
+      return presentation({ action: "check" }, null, null, state.message, "danger");
   }
 }
 
@@ -94,6 +104,7 @@ function presentation(
   version: string | null = null,
   notes: string | null = null,
   status: string | null = null,
+  statusTone: AppUpdaterPresentation["statusTone"] = "neutral",
 ): AppUpdaterPresentation {
-  return { ...action, version, notes, status };
+  return { ...action, version, notes, status, statusTone };
 }

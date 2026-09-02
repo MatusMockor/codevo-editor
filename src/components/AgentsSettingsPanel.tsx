@@ -111,39 +111,41 @@ export function AgentsSettingsPanel({
   };
 
   return (
-    <AgentsSettingsSection
-      appSettings={appSettings}
-      hasWorkspace={hasWorkspace}
-      onChangeAgentAppearanceVariant={(agentAppearanceVariant) =>
-        updateAppSettings({ ...appSettings, agentAppearanceVariant })
-      }
-      onChangeAgentCliKind={(agentCliKind) => updateAppSettings({ ...appSettings, agentCliKind })}
-      onChangeAgentCliPath={changeCliPath}
-      onChangeAgentProviderCheckForUpdates={(provider, checkForUpdates) =>
-        changeProviderPreference(provider, (preference) => ({
-          ...preference,
-          checkForUpdates,
-          dismissedUpdateVersion: null,
-        }))
-      }
-      onChangeAgentProviderEnabled={changeProviderEnabled}
-      onChangeAgentProviderHealthCheckInterval={(provider, healthCheckIntervalSeconds) =>
-        changeProviderPreference(provider, (preference) => ({
-          ...preference,
-          healthCheckIntervalSeconds,
-        }))
-      }
-      onChangeAgentIsolationPolicy={(agentIsolationPolicy) =>
-        updateWorkspaceSettings({ ...workspaceSettings, agentIsolationPolicy })
-      }
-      onChangeMaxConcurrentAgentTasks={(maxConcurrentAgentTasks) =>
-        updateAppSettings({ ...appSettings, maxConcurrentAgentTasks })
-      }
-      onCopyInstallCommand={onCopyInstallCommand}
-      onClearAgentModelFavorites={clearAgentModelFavorites}
-      providerManagement={providerManagement}
-      providerSignIn={providerSignIn}
-      workspaceSettings={workspaceSettings}
-    />
+    <div className="settings-surface settings-surface--agents">
+      <AgentsSettingsSection
+        appSettings={appSettings}
+        hasWorkspace={hasWorkspace}
+        onChangeAgentAppearanceVariant={(agentAppearanceVariant) =>
+          updateAppSettings({ ...appSettings, agentAppearanceVariant })
+        }
+        onChangeAgentCliKind={(agentCliKind) => updateAppSettings({ ...appSettings, agentCliKind })}
+        onChangeAgentCliPath={changeCliPath}
+        onChangeAgentProviderCheckForUpdates={(provider, checkForUpdates) =>
+          changeProviderPreference(provider, (preference) => ({
+            ...preference,
+            checkForUpdates,
+            dismissedUpdateVersion: null,
+          }))
+        }
+        onChangeAgentProviderEnabled={changeProviderEnabled}
+        onChangeAgentProviderHealthCheckInterval={(provider, healthCheckIntervalSeconds) =>
+          changeProviderPreference(provider, (preference) => ({
+            ...preference,
+            healthCheckIntervalSeconds,
+          }))
+        }
+        onChangeAgentIsolationPolicy={(agentIsolationPolicy) =>
+          updateWorkspaceSettings({ ...workspaceSettings, agentIsolationPolicy })
+        }
+        onChangeMaxConcurrentAgentTasks={(maxConcurrentAgentTasks) =>
+          updateAppSettings({ ...appSettings, maxConcurrentAgentTasks })
+        }
+        onCopyInstallCommand={onCopyInstallCommand}
+        onClearAgentModelFavorites={clearAgentModelFavorites}
+        providerManagement={providerManagement}
+        providerSignIn={providerSignIn}
+        workspaceSettings={workspaceSettings}
+      />
+    </div>
   );
 }

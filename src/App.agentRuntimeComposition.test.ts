@@ -8,7 +8,7 @@ describe("App agent and updater composition", () => {
     expect(source).toContain("agentCliDiscoveryGateway,");
     expect(source).not.toContain("agentCliVersionGateway");
     expect(source).toContain(
-      "<LazyWorkbenchSettingsDialogHost\n          appUpdaterComposition={workbenchComposition.appUpdater}",
+      "<WorkbenchAppUpdaterHost\n        composition={workbenchComposition.appUpdater}",
     );
   });
 });

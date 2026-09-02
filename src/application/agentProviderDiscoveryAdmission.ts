@@ -60,8 +60,10 @@ export function agentProviderHealthWithPersistedUpdateAuthority(
   result: AgentProviderHealthProbeResult,
   preference: AgentProviderPreference | undefined,
 ): AgentProviderHealthProbeResult {
-  if (preference?.checkForUpdates !== false) return result;
-  return { ...result, update: { kind: "checksDisabled" } };
+  if (preference?.checkForUpdates !== true) {
+    return { ...result, update: { kind: "checksDisabled" } };
+  }
+  return result;
 }
 
 function unsupportedAgentCliDiscoveryPhase(phase: never): never {

@@ -437,6 +437,7 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
@@ -539,6 +540,7 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await gateway.saveAppSettings({
+      appUpdaterSkippedVersion: null,
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
       agentModelFavoriteKeys: [],
@@ -650,6 +652,7 @@ describe("BrowserSettingsGateway", () => {
     });
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
@@ -768,6 +771,7 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      appUpdaterSkippedVersion: null,
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",

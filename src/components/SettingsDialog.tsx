@@ -1,5 +1,5 @@
 import { Settings2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import { normalizeShortcutInput } from "../domain/keymap";
 import {
@@ -35,6 +35,8 @@ import { SnippetsSettings } from "./SnippetsSettingsSection";
 import { settingsDialogDraftPersistence } from "./settingsDialogDraftPersistence";
 import type { SettingsDialogProps } from "./settingsDialogTypes";
 import { nullableInputValue } from "./settingsDialogValues";
+import { SettingsSectionHeader } from "./SettingsSectionHeader";
+import { settingsSectionLabel } from "./settingsSectionPresentation";
 
 export type { SettingsSaveInput } from "./settingsDialogTypes";
 
@@ -100,10 +102,7 @@ export function SettingsDialog({
     }
   }, [initialSection, isOpen]);
 
-  const selectedSectionLabel = useMemo(() => {
-    const section = settingsDialogSections.find((item) => item.id === activeSection);
-    return section?.label || "Settings";
-  }, [activeSection]);
+  const selectedSectionLabel = settingsSectionLabel(activeSection);
 
   if (!isOpen) {
     return null;
@@ -166,6 +165,7 @@ export function SettingsDialog({
             </nav>
 
             <div aria-label={selectedSectionLabel} className="settings-section" role="tabpanel">
+              <SettingsSectionHeader label={selectedSectionLabel} />
               {activeSection === "general" ? (
                 <GeneralSettings
                   appUpdater={appUpdater}
@@ -679,7 +679,7 @@ function GeneralSettings({
   workspaceSettings,
 }: GeneralSettingsProps) {
   return (
-    <div className="settings-group">
+    <div className="settings-group settings-group--general">
       {appUpdater ? <GeneralAppUpdateSettings updater={appUpdater} /> : null}
       <label className="settings-field">
         <span>Workspace</span>

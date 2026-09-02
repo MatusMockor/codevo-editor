@@ -4667,14 +4667,13 @@ describe("useWorkbenchController document editing and language-service mutations
       expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenCalled();
     });
 
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    let switchPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
     });
-    await flushAsyncTurns();
-
     await act(async () => {
       appSettingsSave.resolve(undefined);
-      await savePromise;
+      await Promise.all([savePromise, switchPromise]);
     });
     await flushAsyncTurns(24);
 
@@ -4780,21 +4779,16 @@ describe("useWorkbenchController document editing and language-service mutations
     await waitForReact(() => {
       expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenCalledOnce();
     });
-    vi.mocked(
-      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
-    ).mockImplementationOnce(async () => {
-      appSettingsSave.resolve(undefined);
-      await savePromise;
-      expect(dependencies.smartModeGateway.setMode).not.toHaveBeenCalled();
-    });
     vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(true);
 
-    await act(async () => {
-      await getWorkbench().closeWorkspaceTab("/workspace");
+    let closePromise: Promise<void> = Promise.resolve();
+    act(() => {
+      closePromise = getWorkbench().closeWorkspaceTab("/workspace");
     });
-
     await act(async () => {
-      await savePromise;
+      await Promise.resolve();
+      appSettingsSave.resolve(undefined);
+      await Promise.all([savePromise, closePromise]);
     });
     await flushAsyncTurns(24);
 

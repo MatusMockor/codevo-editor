@@ -93,9 +93,9 @@ describe("workbench agents production chain", () => {
       );
     });
     await waitForReact(() =>
-      expect(
-        getWorkbench().agents.isolationPreview("/workspace-a").repositoryStatus?.kind,
-      ).toBe("ready"),
+      expect(getWorkbench().agents.isolationPreview("/workspace-a").repositoryStatus?.kind).toBe(
+        "ready",
+      ),
     );
     expect(getWorkbench().agentWorkbench.effectiveLayout).toBe("agent");
     expect(getWorkbench().sidebarView).toBe("files");

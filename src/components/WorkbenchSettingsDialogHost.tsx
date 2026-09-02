@@ -1,10 +1,7 @@
 import type { AppSettings, SettingsSection, WorkspaceSettings } from "../domain/settings";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
-import {
-  useWorkbenchAppUpdaterComposition,
-  type WorkbenchAppUpdaterComposition,
-} from "../application/workbenchController/useWorkbenchAppUpdaterComposition";
+import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import type { SystemFontGateway } from "../domain/systemFonts";
 import type { WorkspaceTrustState } from "../domain/trust";
 import type { PhpToolAvailability, WorkspaceDescriptor } from "../domain/workspace";
@@ -41,7 +38,7 @@ export interface WorkbenchSettingsModel {
 }
 
 export interface WorkbenchSettingsDialogHostProps {
-  readonly appUpdaterComposition: WorkbenchAppUpdaterComposition;
+  readonly appUpdater: AppUpdaterSurface;
   readonly providerManagement?: AgentProviderManagementSurface | null;
   readonly systemFontGateway: SystemFontGateway;
   readonly workbench: WorkbenchSettingsModel;
@@ -49,13 +46,12 @@ export interface WorkbenchSettingsDialogHostProps {
 }
 
 export function WorkbenchSettingsDialogHost({
-  appUpdaterComposition,
+  appUpdater,
   providerManagement = null,
   systemFontGateway,
   workbench,
   workspaceFiles,
 }: WorkbenchSettingsDialogHostProps) {
-  const appUpdater = useWorkbenchAppUpdaterComposition(appUpdaterComposition);
   const nodeLaunchDialog = useNodeLaunchConfigurationsDialogController({
     isOpen: workbench.nodeLaunchConfigurationsOpen,
     onClose: workbench.closeNodeLaunchConfigurations,

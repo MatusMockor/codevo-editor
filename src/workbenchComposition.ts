@@ -77,6 +77,7 @@ import { TauriWorkspaceSourceDiscoveryGateway } from "./infrastructure/tauriWork
 import { TauriWorkspaceTestDiscoveryGateway } from "./infrastructure/tauriWorkspaceTestDiscoveryGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
 import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway";
+import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import packageMetadata from "../package.json";
@@ -95,6 +96,7 @@ export function createWorkbenchComposition() {
   const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
   const quickInputCoordinator = new QuickInputCoordinator();
   const appUpdaterGateway = new TauriAppUpdaterGateway({ check, relaunch }, CODEVO_APP_VERSION);
+  const settingsGateway = new BrowserSettingsGateway();
 
   return {
     agentCliDiscoveryGateway: new TauriAgentCliDiscoveryGateway(),
@@ -104,6 +106,7 @@ export function createWorkbenchComposition() {
     agentTaskGateway: new TauriAgentTaskGateway(),
     appUpdater: {
       appUpdaterGateway,
+      appUpdaterPreferencesGateway: new SettingsAppUpdaterPreferencesGateway(settingsGateway),
       appVersion: CODEVO_APP_VERSION,
     },
     cursorStore: new EditorCursorStore(),
@@ -177,7 +180,7 @@ export function createWorkbenchComposition() {
     runtimeObservabilityGateway: new TauriRuntimeObservabilityGateway(),
     quickInputCoordinator,
     serverReadyExternalUrlOpener: new TauriServerReadyExternalUrlOpener(),
-    settingsGateway: new BrowserSettingsGateway(),
+    settingsGateway,
     smartModeGateway: new TauriSmartModeGateway(),
     systemFontGateway: new TauriSystemFontGateway(),
     symfonyWorkspaceIntelligenceGateway: new TauriSymfonyWorkspaceIntelligenceGateway(),

@@ -162,3 +162,22 @@ GitHub's `/releases/latest` endpoint excludes prereleases. Consequently, a Beta 
 with `/releases/latest/download/latest.json` will not discover that beta. Beta-channel
 auto-discovery remains unsupported until the application has a separate prerelease
 channel endpoint; stable releases do use `/releases/latest`.
+
+## Local startup-updater QA
+
+Every application launch performs one non-blocking update check after the first UI
+commit. An available version opens the application update dialog; an up-to-date or
+failed check stays silent. The **Check for updates** action in Settings > General uses
+the same updater surface. Choosing **Skip this version** persists the exact version in
+application settings, while **Later** dismisses only the current dialog.
+
+For built-app QA, run a loopback server on `127.0.0.1:41788` that serves a signed
+Tauri `latest.json`, then build with the explicit overlay:
+
+```sh
+npm run tauri build -- --config src-tauri/tauri.updater-qa.conf.json
+```
+
+The overlay is intentionally opt-in and loopback-only. It enables insecure HTTP only
+for this QA build; the production configuration remains HTTPS-only. Build again
+without the overlay before distributing an artifact.

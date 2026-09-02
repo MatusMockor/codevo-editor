@@ -7,6 +7,7 @@ import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGa
 import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
 import { TauriAgentCliDiscoveryGateway } from "./infrastructure/tauriAgentCliDiscoveryGateway";
 import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway";
+import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
 import packageMetadata from "../package.json";
 import {
@@ -63,8 +64,15 @@ describe("workbench live-document runtime composition", () => {
     expect(CODEVO_APP_VERSION).toBe(packageMetadata.version);
     expect(first.appUpdater.appVersion).toBe(packageMetadata.version);
     expect(first.appUpdater.appUpdaterGateway).toBeInstanceOf(TauriAppUpdaterGateway);
+    expect(first.appUpdater.appUpdaterPreferencesGateway).toBeInstanceOf(
+      SettingsAppUpdaterPreferencesGateway,
+    );
     expect(first.appUpdater.appUpdaterGateway).not.toBe(second.appUpdater.appUpdaterGateway);
-    expect(Object.keys(first.appUpdater).sort()).toEqual(["appUpdaterGateway", "appVersion"]);
+    expect(Object.keys(first.appUpdater).sort()).toEqual([
+      "appUpdaterGateway",
+      "appUpdaterPreferencesGateway",
+      "appVersion",
+    ]);
   });
 
   it("owns one text clipboard instance per workbench composition", () => {

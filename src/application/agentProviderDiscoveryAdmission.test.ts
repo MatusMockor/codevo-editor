@@ -83,6 +83,9 @@ describe("agent provider discovery admission", () => {
     expect(agentProviderHealthWithPersistedUpdateAuthority(result, ENABLED).update).toEqual({
       kind: "checksDisabled",
     });
+    expect(agentProviderHealthWithPersistedUpdateAuthority(result, undefined).update).toEqual({
+      kind: "checksDisabled",
+    });
     expect(
       agentProviderHealthWithPersistedUpdateAuthority(result, {
         ...ENABLED,

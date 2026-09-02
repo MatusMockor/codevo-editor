@@ -93,7 +93,7 @@ export function KeymapSettingsPanel({
   );
 
   return (
-    <div className="settings-group">
+    <div className="settings-group settings-group--keymap">
       <div className="palette-search keymap-search">
         <Search aria-hidden="true" size={16} />
         <input

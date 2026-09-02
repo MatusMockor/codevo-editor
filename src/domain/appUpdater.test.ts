@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  isSkippedAppUpdateVersion,
   initialAppUpdaterState,
+  normalizeAppUpdaterSkippedVersion,
   reduceAppUpdaterState,
   type AppUpdateCandidate,
 } from "./appUpdater";
@@ -74,5 +76,13 @@ describe("app updater reducer", () => {
 
     expect(failed.kind).toBe("failed");
     expect(failed.kind === "failed" ? failed.message.length : 0).toBe(512);
+  });
+
+  it("normalizes persisted skip versions and suppresses only an exact release", () => {
+    expect(normalizeAppUpdaterSkippedVersion(" 0.2.0 ")).toBe("0.2.0");
+    expect(normalizeAppUpdaterSkippedVersion("x".repeat(65))).toBeNull();
+    expect(normalizeAppUpdaterSkippedVersion("0.2.0\nignored")).toBeNull();
+    expect(isSkippedAppUpdateVersion(candidate, "0.2.0")).toBe(true);
+    expect(isSkippedAppUpdateVersion(candidate, "0.3.0")).toBe(false);
   });
 });

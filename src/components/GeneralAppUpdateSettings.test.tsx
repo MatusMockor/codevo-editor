@@ -35,6 +35,7 @@ describe("GeneralAppUpdateSettings", () => {
 
     expect(host.textContent).toContain("Current version0.1.0");
     expect(host.textContent).toContain("Available version0.2.0");
+    expect(host.querySelector(".settings-subsection__notes")?.textContent).toBe("Beta update");
     act(() => button("Download update").click());
     expect(updater.download).toHaveBeenCalledOnce();
     expect(updater.installAndRestart).not.toHaveBeenCalled();
@@ -48,6 +49,7 @@ describe("GeneralAppUpdateSettings", () => {
     const updater = updaterSurface({ kind: "upToDate", currentVersion: "0.1.0" });
     render(updater);
     expect(host.textContent).toContain("Codevo is up to date.");
+    expect(host.querySelector(".settings-subsection__status--success")).not.toBeNull();
     expect(button("Check for updates").disabled).toBe(false);
 
     render({
@@ -57,9 +59,11 @@ describe("GeneralAppUpdateSettings", () => {
         currentVersion: "0.1.0",
         operation: "check",
         message: "Unable to check for application updates.",
+        release: null,
       },
     });
     expect(host.textContent).toContain("Unable to check for application updates.");
+    expect(host.querySelector(".settings-subsection__status--danger")).not.toBeNull();
   });
 
   it("disables the action while an operation is pending", () => {
@@ -85,7 +89,9 @@ function updaterSurface(state: AppUpdaterSurface["state"]): AppUpdaterSurface {
   return {
     state,
     check: vi.fn(async () => undefined),
+    dismiss: vi.fn(),
     download: vi.fn(async () => undefined),
     installAndRestart: vi.fn(async () => undefined),
+    skipVersion: vi.fn(async () => undefined),
   };
 }

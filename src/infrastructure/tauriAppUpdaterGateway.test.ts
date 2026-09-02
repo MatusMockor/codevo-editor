@@ -183,6 +183,28 @@ describe("TauriAppUpdaterGateway", () => {
     expect(mismatch.close).toHaveBeenCalledOnce();
   });
 
+  it("retains a candidate when native close fails so release can be retried", async () => {
+    const baseUpdate = updateFromManifest(
+      latestManifest,
+      async () => undefined,
+      async () => undefined,
+    );
+    const close = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("close failed"))
+      .mockResolvedValueOnce(undefined);
+    const update = { ...baseUpdate, close };
+    const gateway = new TauriAppUpdaterGateway(
+      { check: async () => update, relaunch: async () => undefined },
+      "0.1.0",
+    );
+    await gateway.check();
+
+    await expect(gateway.dispose()).rejects.toThrow("close failed");
+    await expect(gateway.dispose()).resolves.toBeUndefined();
+    expect(update.close).toHaveBeenCalledTimes(2);
+  });
+
   it("closes a late update resource after a newer check owns the gateway", async () => {
     let settleFirst!: (update: TauriUpdaterBridgeUpdate) => void;
     const staleUpdate = updateFromManifest(

@@ -24,8 +24,8 @@
         "src/application/useWorkbenchController.preview/workspace-save-and-runtime-coordination.test.tsx",
         "src/application/useWorkbenchController.preview/workspace-search-tests-and-navigation.test.tsx"
       ],
-      "rawLines": 71228,
-      "structuralTokens": 335192
+      "rawLines": 71219,
+      "structuralTokens": 335190
     }
   },
   "files": {
@@ -53,7 +53,7 @@
       "rawLines": 2145,
       "structuralTokens": 14163
     },
-    "src/App.tsx": { "rawLines": 1493, "structuralTokens": 7373 },
+    "src/App.tsx": { "rawLines": 1490, "structuralTokens": 7355 },
     "src/application/useDocumentSync.ts": {
       "rawLines": 1526,
       "structuralTokens": 5300
@@ -64,7 +64,7 @@
     },
     "src/application/useWorkbenchController.ts": {
       "rawLines": 2848,
-      "structuralTokens": 9956
+      "structuralTokens": 9936
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 2502,
@@ -80,7 +80,7 @@
     },
     "src/components/SettingsDialog.tsx": {
       "rawLines": 1246,
-      "structuralTokens": 5629
+      "structuralTokens": 5611
     },
     "src/domain/latteLinkNavigation.ts": {
       "rawLines": 2446,

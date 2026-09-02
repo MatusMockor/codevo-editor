@@ -47,8 +47,10 @@ describe("SettingsDialog", () => {
     const appUpdater: AppUpdaterSurface = {
       state: { kind: "idle", currentVersion: "0.2.0-beta.1" },
       check: vi.fn(async () => undefined),
+      dismiss: vi.fn(),
       download: vi.fn(async () => undefined),
       installAndRestart: vi.fn(async () => undefined),
+      skipVersion: vi.fn(async () => undefined),
     };
 
     await act(async () => {
@@ -74,6 +76,8 @@ describe("SettingsDialog", () => {
 
     expect(host.textContent).toContain("Application updates");
     expect(host.textContent).toContain("0.2.0-beta.1");
+    expect(host.querySelector(".settings-section__header h2")?.textContent).toBe("General");
+    expect(host.querySelector(".settings-group--general")).not.toBeNull();
     expect(appUpdater.check).not.toHaveBeenCalled();
     const checkButton = Array.from(host.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "Check for updates",
@@ -921,6 +925,7 @@ describe("SettingsDialog", () => {
       await Promise.resolve();
     });
 
+    expect(host.querySelector(".settings-group--keymap")).not.toBeNull();
     expect(host.querySelectorAll(".keymap-category")).toHaveLength(19);
     expect(host.querySelectorAll(".keymap-field")).toHaveLength(155);
     expect(host.textContent).toContain("editor.save");

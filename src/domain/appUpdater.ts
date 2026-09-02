@@ -22,6 +22,10 @@ export interface AppUpdaterGateway {
   dispose(): Promise<void>;
 }
 
+export interface AppUpdaterPreferencesGateway {
+  loadSkippedVersion(): Promise<string | null>;
+}
+
 export type AppUpdaterOperation = "check" | "download" | "installAndRestart";
 
 export type AppUpdaterState =
@@ -43,6 +47,7 @@ export type AppUpdaterState =
       readonly currentVersion: string;
       readonly operation: AppUpdaterOperation;
       readonly message: string;
+      readonly release: AppUpdaterReleasePresentation | null;
     };
 
 interface AppUpdaterReleasePresentation {
@@ -62,6 +67,7 @@ export type AppUpdaterAction =
   | { readonly kind: "downloadStarted"; readonly generation: number }
   | { readonly kind: "downloadSettled"; readonly generation: number }
   | { readonly kind: "installStarted"; readonly generation: number }
+  | { readonly kind: "dismissed" }
   | {
       readonly kind: "failed";
       readonly generation: number;
@@ -107,6 +113,8 @@ export function reduceAppUpdaterState(
     case "installStarted":
       if (state.kind !== "readyToInstall") return state;
       return { ...state, kind: "installing", generation: action.generation };
+    case "dismissed":
+      return initialAppUpdaterState(state.currentVersion);
     case "failed":
       if (!matchesPendingGeneration(state, action.generation)) return state;
       return {
@@ -114,10 +122,39 @@ export function reduceAppUpdaterState(
         currentVersion: state.currentVersion,
         operation: action.operation,
         message: boundedError(action.message),
+        release:
+          state.kind === "downloading" || state.kind === "installing"
+            ? releasePresentation(state)
+            : null,
       };
     case "reset":
       return initialAppUpdaterState(action.currentVersion);
   }
+}
+
+function releasePresentation(state: AppUpdaterReleasePresentation): AppUpdaterReleasePresentation {
+  return {
+    currentVersion: state.currentVersion,
+    version: state.version,
+    date: state.date,
+    notes: state.notes,
+  };
+}
+
+export function normalizeAppUpdaterSkippedVersion(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (normalized.length === 0 || normalized.length > MAX_APP_UPDATE_VERSION_LENGTH) return null;
+  if (/\p{Cc}/u.test(normalized)) return null;
+  return normalized;
+}
+
+export function isSkippedAppUpdateVersion(
+  candidate: Pick<AppUpdateCandidate, "version">,
+  skippedVersion: string | null,
+): boolean {
+  return normalizeAppUpdaterSkippedVersion(skippedVersion) === candidate.version;
 }
 
 function availableState(candidate: AppUpdateCandidate): AppUpdaterState {
