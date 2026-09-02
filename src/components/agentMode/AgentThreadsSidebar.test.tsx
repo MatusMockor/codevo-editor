@@ -694,6 +694,7 @@ describe("AgentThreadsSidebar", () => {
     const groups = overrides.groups ?? [group(ROOT, "app", [settled("agt-1", "Fix the parser")])];
     const props: AgentThreadsSidebarProps = {
       addProjectAvailable: true,
+      accountUsage: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
       groups,
       search: searchSurface(""),
       scope: { kind: "all" },

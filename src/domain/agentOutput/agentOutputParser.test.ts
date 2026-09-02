@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentCliKind, AgentTaskOutputStream } from "../agentTask";
+import type { AgentAccountUsageObservation } from "../agentAccountUsage";
 import { MAX_AGENT_EVENT_TEXT_BYTES, type AgentTurnEvent } from "../agentThread";
 import {
   MAX_AGENT_OUTPUT_LINE_BYTES,
@@ -21,6 +22,7 @@ const CODEX_HOOK_ERROR =
 interface ParserRun {
   readonly events: ReadonlyArray<AgentTurnEvent>;
   readonly reportedSessionIds: ReadonlyArray<string>;
+  readonly accountUsage: ReadonlyArray<AgentAccountUsageObservation>;
 }
 
 function fixture(name: string): string {
@@ -35,16 +37,19 @@ function run(
   let state = createAgentOutputParserState(kind);
   const events: AgentTurnEvent[] = [];
   const reportedSessionIds: string[] = [];
+  const accountUsage: AgentAccountUsageObservation[] = [];
   for (const chunk of chunks) {
     const result = feedAgentOutput(state, stream, chunk);
     state = result.state;
     events.push(...result.events);
     if (result.sessionId !== null) reportedSessionIds.push(result.sessionId);
+    accountUsage.push(...result.accountUsage);
   }
   const finished = finishAgentOutput(state);
   events.push(...finished.events);
   expect(finished.sessionId).toBeNull();
-  return { events, reportedSessionIds };
+  accountUsage.push(...finished.accountUsage);
+  return { events, reportedSessionIds, accountUsage };
 }
 
 function fixedOffsets(length: number, count: number): ReadonlyArray<number> {
@@ -336,6 +341,25 @@ describe("agent output parser bounds", () => {
     expect(parsed.events).toEqual([
       { kind: "unknownLine", stream: "stdout", raw: "listening on stdout", clipped: false },
     ]);
+    expect(parsed.accountUsage).toEqual([]);
+  });
+
+  it("separates Claude limit observations from persisted conversation events", () => {
+    const parsed = run("claudeCode", [
+      `${JSON.stringify({
+        type: "rate_limit_event",
+        rate_limit_info: {
+          rateLimitType: "five_hour",
+          utilization: 0.32,
+          resetsAt: 1_786_200_000,
+        },
+      })}\n`,
+    ]);
+
+    expect(parsed.events).toEqual([]);
+    expect(parsed.accountUsage).toMatchObject([
+      { provider: "claudeCode", windows: [{ id: "five_hour", usedPercent: 32 }] },
+    ]);
   });
 
   it("returns the state unchanged for an empty chunk", () => {
@@ -346,6 +370,7 @@ describe("agent output parser bounds", () => {
     expect(result.state).toBe(state);
     expect(result.events).toEqual([]);
     expect(result.sessionId).toBeNull();
+    expect(result.accountUsage).toEqual([]);
   });
 
   it("clears pending lines after finishing", () => {

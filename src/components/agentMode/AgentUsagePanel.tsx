@@ -57,15 +57,18 @@ export function AgentUsagePanel({
         <h2>Usage</h2>
         <p>Provider account limits and Saved threads on this device.</p>
       </header>
-      <section aria-label="Account limits" className="agent-usage-panel__limits">
-        <h3>Account limits</h3>
-        {PROVIDER_ORDER.map((provider) => (
-          <AccountLimits
-            key={provider}
-            provider={provider}
-            state={accountUsage?.[provider] ?? { kind: "idle" }}
-          />
-        ))}
+      <section aria-label="Subscription limits" className="agent-usage-panel__limits">
+        <h3>Subscription limits</h3>
+        <div className="agent-usage-panel__limit-providers">
+          {PROVIDER_ORDER.map((provider) => (
+            <AccountLimits
+              key={provider}
+              nowEpochMs={nowEpochMs}
+              provider={provider}
+              state={accountUsage?.[provider] ?? { kind: "idle" }}
+            />
+          ))}
+        </div>
       </section>
       <div className="agent-usage-panel__local-heading">
         <h3>Local activity</h3>
@@ -114,35 +117,48 @@ export function AgentUsagePanel({
 
 function AccountLimits({
   provider,
+  nowEpochMs,
   state,
 }: {
   readonly provider: AgentUsageProvider["provider"];
+  readonly nowEpochMs: number;
   readonly state: AgentAccountUsageLoadState;
 }) {
   return (
-    <section aria-label={`${providerLabel(provider)} account limits`}>
-      <h4>{providerLabel(provider)}</h4>
-      {state.kind === "loading" || state.kind === "idle" ? <p>Loading account limits…</p> : null}
-      {state.kind === "unavailable" ? <p>Account limits are unavailable.</p> : null}
+    <section
+      aria-label={`${providerLabel(provider)} subscription limits`}
+      className="agent-usage-panel__limit-provider"
+    >
+      <header>
+        <h4>{providerLabel(provider)}</h4>
+        {state.kind === "ready" ? (
+          <span>{updatedLabel(state.snapshot.fetchedAtEpochMs, nowEpochMs)}</span>
+        ) : null}
+      </header>
+      {state.kind === "loading" ? <p>Updating…</p> : null}
+      {state.kind === "idle" ? <p>Available after the next provider turn.</p> : null}
+      {state.kind === "unavailable" ? <p>No limits reported by the latest turn.</p> : null}
       {state.kind === "ready" ? (
         <div className="agent-usage-panel__limit-list">
           {state.snapshot.windows.map((window) => (
             <div className="agent-usage-panel__limit" key={window.id}>
               <div>
                 <span>{window.label}</span>
-                <strong>{formatPercent(window.usedPercent)} used</strong>
+                <span className="agent-usage-panel__limit-meta">
+                  <strong>{formatPercent(window.usedPercent)}</strong>
+                  <span>{resetLabel(window.resetsAtEpochMs, window.resetsLabel, nowEpochMs)}</span>
+                </span>
               </div>
               <div
                 aria-label={`${window.label}: ${formatPercent(window.usedPercent)} used`}
                 aria-valuemax={100}
                 aria-valuemin={0}
                 aria-valuenow={Math.round(window.usedPercent)}
-                className="agent-usage-panel__meter"
+                className={`agent-usage-panel__meter${window.usedPercent >= 90 ? " agent-usage-panel__meter--danger" : ""}`}
                 role="progressbar"
               >
                 <span style={{ width: `${window.usedPercent}%` }} />
               </div>
-              <p>{resetLabel(window.resetsAtEpochMs, window.resetsLabel)}</p>
             </div>
           ))}
         </div>
@@ -278,12 +294,30 @@ function formatPercent(value: number): string {
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}%`;
 }
 
-function resetLabel(epochMs: number | null, label: string | null): string {
+function resetLabel(epochMs: number | null, label: string | null, nowEpochMs: number): string {
   if (epochMs !== null) {
+    const remainingMs = epochMs - nowEpochMs;
+    if (remainingMs > 0 && remainingMs < 24 * 60 * 60 * 1_000) {
+      const totalMinutes = Math.ceil(remainingMs / 60_000);
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return `Resets in ${hours > 0 ? `${hours}h ` : ""}${minutes}m`;
+    }
     return `Resets ${new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
+      weekday: "short",
+      hour: "numeric",
+      minute: "2-digit",
     }).format(epochMs)}`;
   }
-  return label === null ? "Reset time unavailable" : `Resets ${label}`;
+  return label === null ? "Reset unavailable" : `Resets ${label}`;
+}
+
+function updatedLabel(observedAtEpochMs: number, nowEpochMs: number): string {
+  const elapsedMs = Math.max(0, nowEpochMs - observedAtEpochMs);
+  if (elapsedMs < 60_000) return "Updated just now";
+  const minutes = Math.floor(elapsedMs / 60_000);
+  if (minutes < 60) return `Updated ${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Updated ${hours}h ago`;
+  return `Updated ${Math.floor(hours / 24)}d ago`;
 }

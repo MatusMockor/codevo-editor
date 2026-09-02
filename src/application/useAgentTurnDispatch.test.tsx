@@ -944,6 +944,22 @@ describe("useAgentTurnDispatch output stream", () => {
     harness.unmount();
   });
 
+  it("publishes provider limit observations from a real turn without adding chat events", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+
+    await act(async () => harness.emitOutput(turnId, 1, "usage"));
+
+    expect(harness.onAccountUsageObserved).toHaveBeenCalledOnce();
+    expect(harness.onAccountUsageObserved).toHaveBeenCalledWith({
+      provider: "claudeCode",
+      windows: [expect.objectContaining({ id: "five_hour", usedPercent: 20 })],
+    });
+    expect(harness.turn(threadId, 0).events).toEqual([]);
+    harness.unmount();
+  });
+
   it("ignores late, duplicate, and foreign output once the turn is terminal", async () => {
     const harness = renderDispatch();
     const threadId = await harness.startThread();
@@ -1820,11 +1836,42 @@ function fakeParser(): AgentOutputParserPort & {
   const create = (kind: AgentCliKind): AgentOutputParserState => createAgentOutputParserState(kind);
   const feed = vi.fn(
     (state: AgentOutputParserState, _stream: "stdout" | "stderr", chunk: string) =>
-      chunk.startsWith("session:")
-        ? { state, events: [], sessionId: chunk.slice("session:".length) }
-        : { state, events: [{ kind: "assistantText" as const, text: chunk }], sessionId: null },
+      chunk === "usage"
+        ? {
+            state,
+            events: [],
+            sessionId: null,
+            accountUsage: [
+              {
+                provider: "claudeCode" as const,
+                windows: [
+                  {
+                    id: "five_hour",
+                    label: "5-hour limit",
+                    usedPercent: 20,
+                    windowDurationMinutes: 300,
+                    resetsAtEpochMs: null,
+                    resetsLabel: null,
+                  },
+                ],
+              },
+            ],
+          }
+        : chunk.startsWith("session:")
+          ? { state, events: [], sessionId: chunk.slice("session:".length), accountUsage: [] }
+          : {
+              state,
+              events: [{ kind: "assistantText" as const, text: chunk }],
+              sessionId: null,
+              accountUsage: [],
+            },
   );
-  const finish = vi.fn((state: AgentOutputParserState) => ({ state, events: [], sessionId: null }));
+  const finish = vi.fn((state: AgentOutputParserState) => ({
+    state,
+    events: [],
+    sessionId: null,
+    accountUsage: [],
+  }));
   return { create, feed, finish };
 }
 
@@ -1894,6 +1941,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
   const retainUncertainWorktree = vi.fn();
   const onWorktreeCreated = vi.fn();
   const onTurnTerminal = vi.fn();
+  const onAccountUsageObserved = vi.fn();
   const onProjectDispatchTrustRejected = vi.fn();
   const reportError = vi.fn();
   const ensureProjectLaunchIdentity = vi.fn(async () => {
@@ -1982,6 +2030,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       onWorktreeCreated,
       currentCliVersion: (provider) => environment.currentCliVersion[provider],
       onTurnTerminal,
+      onAccountUsageObserved,
       onProjectDispatchTrustRejected,
       reportError,
       setNotice: (notice) => notices.push(notice),
@@ -2009,6 +2058,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     retainUncertainWorktree,
     onWorktreeCreated,
     onTurnTerminal,
+    onAccountUsageObserved,
     onProjectDispatchTrustRejected,
     reportError,
     ensureProjectLaunchIdentity,

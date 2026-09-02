@@ -4,6 +4,7 @@ import type {
   AgentTaskOutputEvent,
   AgentTaskOutputStream,
 } from "../domain/agentTask";
+import type { AgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import {
   createAgentOutputParserState,
   feedAgentOutput,
@@ -59,6 +60,7 @@ export interface AgentTurnOutputStream {
   pendingDropped: boolean;
   pendingReceivedUtf8Bytes: number;
   pendingStreamMetricsObserved: boolean;
+  pendingAccountUsage: AgentAccountUsageObservation[];
   rawStreamComplete: boolean;
   sawSessionId: boolean;
   sawResult: boolean;
@@ -100,11 +102,20 @@ export function createAgentTurnOutputStream(
     pendingDropped: false,
     pendingReceivedUtf8Bytes: 0,
     pendingStreamMetricsObserved: false,
+    pendingAccountUsage: [],
     rawStreamComplete:
       identity.outputSubscriptionEpoch === undefined || identity.outputSubscriptionEpoch !== null,
     sawSessionId: false,
     sawResult: false,
   };
+}
+
+export function drainAgentAccountUsage(
+  stream: AgentTurnOutputStream,
+): ReadonlyArray<AgentAccountUsageObservation> {
+  const observations = stream.pendingAccountUsage;
+  stream.pendingAccountUsage = [];
+  return observations;
 }
 
 export function acceptAgentTurnOutput(
@@ -196,6 +207,7 @@ export function finishAgentTurnOutput(
 
 function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): void {
   stream.parser = result.state;
+  stream.pendingAccountUsage.push(...result.accountUsage);
   for (const event of result.events) {
     if (event.kind === "result") stream.sawResult = true;
     appendPendingEvent(stream, event);

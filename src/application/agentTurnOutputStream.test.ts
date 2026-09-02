@@ -40,6 +40,7 @@ function scriptedParser(script: (chunk: string) => FeedScript): AgentOutputParse
     state,
     events: produced.events,
     sessionId: produced.sessionId,
+    accountUsage: [],
   });
   return {
     create: (kind) => createAgentOutputParserState(kind),

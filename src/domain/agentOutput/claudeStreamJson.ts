@@ -7,6 +7,7 @@ import {
   type AgentTurnUsage,
 } from "../agentThread";
 import type { ParsedAgentLine } from "./agentOutputParser";
+import type { AgentAccountUsageWindow } from "../agentAccountUsage";
 import { summarizeToolInput, summarizeToolOutput } from "./toolInputSummary";
 import { boundedUtf8Text, utf8ByteLength } from "./utf8Text";
 
@@ -21,7 +22,65 @@ export function parseClaudeStreamJsonLine(line: string): ParsedAgentLine {
   if (value.type === "assistant") return parseAssistantLine(value);
   if (value.type === "user") return parseUserLine(value);
   if (value.type === "result") return parseResultLine(value);
+  if (value.type === "rate_limit_event") return parseRateLimitEvent(value);
   return IGNORED;
+}
+
+function parseRateLimitEvent(value: Record<string, unknown>): ParsedAgentLine {
+  const info = objectValue(value.rate_limit_info);
+  if (info === null) return IGNORED;
+  const windows: AgentAccountUsageWindow[] = [];
+  const unified = objectValue(info.unifiedWindows);
+  if (unified !== null && Object.keys(unified).length <= 12) {
+    for (const [id, candidate] of Object.entries(unified)) {
+      const window = claudeLimitWindow(id, candidate);
+      if (window !== null) windows.push(window);
+    }
+  }
+  if (windows.length === 0 && typeof info.rateLimitType === "string") {
+    const window = claudeLimitWindow(info.rateLimitType, info);
+    if (window !== null) windows.push(window);
+  }
+  return windows.length === 0
+    ? IGNORED
+    : { kind: "accountUsage", observation: { provider: "claudeCode", windows } };
+}
+
+function claudeLimitWindow(id: string, value: unknown): AgentAccountUsageWindow | null {
+  if (id.includes("overage")) return null;
+  const window = objectValue(value);
+  if (window === null) return null;
+  const utilization = window.utilization;
+  if (typeof utilization !== "number" || !Number.isFinite(utilization)) return null;
+  if (utilization < 0 || utilization > 1) return null;
+  const resetsAtSeconds = window.resetsAt;
+  const resetsAtEpochMs =
+    typeof resetsAtSeconds === "number" &&
+    Number.isSafeInteger(resetsAtSeconds) &&
+    resetsAtSeconds >= 0 &&
+    Number.isSafeInteger(resetsAtSeconds * 1_000)
+      ? resetsAtSeconds * 1_000
+      : null;
+  return {
+    id,
+    label: claudeLimitLabel(id),
+    usedPercent: utilization * 100,
+    windowDurationMinutes: id === "five_hour" ? 300 : id.startsWith("seven_day") ? 10_080 : null,
+    resetsAtEpochMs,
+    resetsLabel: null,
+  };
+}
+
+function claudeLimitLabel(id: string): string {
+  if (id === "five_hour") return "5-hour limit";
+  if (id === "seven_day") return "Weekly limit";
+  if (id === "seven_day_opus") return "Weekly Opus limit";
+  if (id === "seven_day_sonnet") return "Weekly Sonnet limit";
+  return id
+    .split("_")
+    .filter(Boolean)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function parseSystemLine(value: Record<string, unknown>): ParsedAgentLine {

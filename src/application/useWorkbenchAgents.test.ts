@@ -86,6 +86,46 @@ describe("useWorkbenchAgents composition", () => {
     harness.unmount();
   });
 
+  it("refreshes Codex subscription limits only after a successful real turn", async () => {
+    const harness = renderWorkbenchAgents({ withProjectGateways: false, providerKind: "codex" });
+    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+    expect(harness.agentProviderGateway.readAgentProviderUsage).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await harness.hook().startThread({
+        projectRootKey: ACTIVE_ROOT,
+        repositoryRoot: ACTIVE_ROOT,
+        prompt: "Inspect the project",
+        isolation: "worktree",
+        unsafeInPlaceConfirmationKey: null,
+        launch: defaultAgentLaunchOptions("codex"),
+      });
+    });
+    const request = harness.startedRequests[0];
+    expect(request).toBeDefined();
+
+    await act(async () => {
+      harness.emitStatus({
+        taskId: request?.taskId ?? "",
+        workspaceId: ACTIVE_ID,
+        repositoryRoot: ACTIVE_ROOT,
+        isolation: "worktree",
+        worktreePath: request?.cwd ?? null,
+        sequence: 1,
+        status: { kind: "exited", exitCode: 0 },
+      });
+    });
+
+    await waitForReact(() => {
+      expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledOnce();
+      expect(harness.hook().accountUsage.codex).toMatchObject({
+        kind: "ready",
+        snapshot: { windows: [{ id: "primary", usedPercent: 17 }] },
+      });
+    });
+    harness.unmount();
+  });
+
   it("does not publish an aggregate non-Git project root as an agent repository", async () => {
     const nestedRoot = `${ACTIVE_ROOT}/ebox-crm`;
     const harness = renderWorkbenchAgents({
@@ -1075,6 +1115,7 @@ describe("useWorkbenchAgents composition", () => {
 
 interface HarnessOptions {
   withProjectGateways: boolean;
+  providerKind?: "claudeCode" | "codex";
   autoDetected?: boolean;
   providerConfigured?: boolean;
   providerEnabled?: boolean;
@@ -1086,11 +1127,14 @@ interface HarnessOptions {
 }
 
 function renderWorkbenchAgents(options: HarnessOptions) {
+  const providerKind = options.providerKind ?? "claudeCode";
   const appSettings: AppSettings = {
     ...defaultAppSettings(),
+    agentCliKind: providerKind,
     agentCliPaths: {
-      claudeCode: options.providerConfigured === false ? null : CLI_PATH,
-      codex: null,
+      claudeCode:
+        providerKind === "claudeCode" && options.providerConfigured !== false ? CLI_PATH : null,
+      codex: providerKind === "codex" && options.providerConfigured !== false ? CLI_PATH : null,
     },
     workspaceTabs: [...(options.workspaceTabs ?? [])],
     agentProviderPreferences: {
@@ -1217,6 +1261,20 @@ function renderWorkbenchAgents(options: HarnessOptions) {
       outputTail: "",
       outputTruncated: false,
     })),
+    readAgentProviderUsage: vi.fn(async () => ({
+      provider: "codex" as const,
+      fetchedAtEpochMs: 1_700_000_000_000,
+      windows: [
+        {
+          id: "primary",
+          label: "Weekly limit",
+          usedPercent: 17,
+          windowDurationMinutes: 10_080,
+          resetsAtEpochMs: null,
+          resetsLabel: null,
+        },
+      ],
+    })),
   };
   let activeWorkspaceId = ACTIVE_ID;
   let activeWorkspaceTrust = options.workspaceTrust ?? null;
@@ -1258,8 +1316,7 @@ function renderWorkbenchAgents(options: HarnessOptions) {
             selectedPath: rootPath,
             unicodeNormalizationPolicy: "preserved",
             policy: DEFAULT_WORKSPACE_PATH_POLICY,
-            workspaceId:
-              rootPath === ACTIVE_ROOT ? ACTIVE_ID : `workspace-agent:${rootPath}`,
+            workspaceId: rootPath === ACTIVE_ROOT ? ACTIVE_ID : `workspace-agent:${rootPath}`,
           }),
         }
       : undefined,

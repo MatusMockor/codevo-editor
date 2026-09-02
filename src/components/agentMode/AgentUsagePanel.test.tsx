@@ -85,9 +85,10 @@ describe("AgentUsagePanel", () => {
       ),
     );
 
-    expect(host.textContent).toContain("Account limits");
-    expect(host.textContent).toContain("Current session6% used");
-    expect(host.textContent).toContain("Codex · Weekly limit11% used");
+    expect(host.textContent).toContain("Subscription limits");
+    expect(host.textContent).toContain("Claude CodeUpdated just now");
+    expect(host.textContent).toContain("Current session6%Resets Sep 2 at 10:40pm");
+    expect(host.textContent).toContain("Codex · Weekly limit11%Resets in 1m");
     expect(host.textContent).toContain("Local activity");
     expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2);
   });

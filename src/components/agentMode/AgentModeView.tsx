@@ -11,6 +11,7 @@ import type {
 } from "../../application/useAgentProviderManagement";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentCliKind } from "../../domain/agentTask";
+import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import type {
   AgentTasksNotice,
   AgentThreadsSurface,
@@ -54,6 +55,7 @@ import {
 
 export interface AgentModeViewProps {
   readonly agents: AgentThreadsSurface & {
+    readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
     readonly providerManagement: AgentProviderManagementSurface;
     readonly externalSessions?: ExternalSessionsSurface;
   };
@@ -71,6 +73,10 @@ export interface AgentModeViewProps {
 }
 
 const DEFAULT_NOW_TICK_MS = 30_000;
+const IDLE_ACCOUNT_USAGE = {
+  claudeCode: { kind: "idle" },
+  codex: { kind: "idle" },
+} as const;
 const FIND_BAR_ROWS: CSSProperties = { gridTemplateRows: "auto auto minmax(0, 1fr) auto" };
 const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
 
@@ -456,6 +462,7 @@ export function AgentModeView({
             ) : (
               <AgentThreadsSidebar
                 addProjectAvailable={chrome.addProject !== null}
+                accountUsage={agents.accountUsage ?? IDLE_ACCOUNT_USAGE}
                 groups={groups}
                 onAddProject={addProject.openDialog}
                 onChangeScope={navigation.setRailScope}

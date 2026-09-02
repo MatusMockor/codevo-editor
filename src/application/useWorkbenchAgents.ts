@@ -1,5 +1,10 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentCliDiscoveryGateway } from "../domain/agentSettings";
+import type {
+  AgentAccountUsageGateway,
+  AgentAccountUsageLoadState,
+} from "../domain/agentAccountUsage";
+import { mergeAgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { AgentProviderSignInGateway } from "../domain/agentProviderSignIn";
@@ -72,7 +77,8 @@ export interface WorkbenchAgentsOptions {
   readonly agentTaskGateway?: AgentTaskGateway;
   readonly agentProviderGateway: AgentProviderPolicyGateway &
     AgentProviderHealthGateway &
-    AgentProviderUpdateGateway;
+    AgentProviderUpdateGateway &
+    Partial<AgentAccountUsageGateway>;
   readonly agentCliDiscoveryGateway: AgentCliDiscoveryGateway;
   readonly agentProviderSignInGateway?: AgentProviderSignInGateway;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
@@ -108,6 +114,7 @@ export interface WorkbenchAgentsOptions {
 }
 
 export interface WorkbenchAgentsSurface extends AgentThreadsSurface {
+  readonly accountUsage: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
   readonly externalSessions: ExternalSessionsSurface;
   readonly agentProjects: AgentProjectsSurface;
   readonly providerManagement: AgentProviderManagementSurface;
@@ -140,6 +147,9 @@ const unwiredAgentProviderSignInGateway: AgentProviderSignInGateway = {
 };
 
 export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAgentsSurface {
+  const [accountUsage, setAccountUsage] = useState<
+    Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>
+  >({ claudeCode: { kind: "idle" }, codex: { kind: "idle" } });
   const {
     gitRepositoryMappings,
     gitRepositoryStatuses,
@@ -354,6 +364,51 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     workspaceGeneration: providerWorkspaceOwnerRef.current.generation,
   });
 
+  const recordAccountUsage = useCallback(
+    (observation: Parameters<typeof mergeAgentAccountUsageObservation>[1]): void => {
+      const observedAtEpochMs = Date.now();
+      setAccountUsage((state) => {
+        const current = state[observation.provider];
+        const snapshot = mergeAgentAccountUsageObservation(
+          current.kind === "ready" ? current.snapshot : null,
+          observation,
+          observedAtEpochMs,
+        );
+        return { ...state, [observation.provider]: { kind: "ready", snapshot } };
+      });
+    },
+    [],
+  );
+
+  const refreshCodexUsageAfterTurn = useCallback(
+    (provider: "claudeCode" | "codex"): void => {
+      if (provider !== "codex") return;
+      const readUsage = options.agentProviderGateway.readAgentProviderUsage;
+      const management = providerManagementRef.current;
+      if (readUsage === undefined || management === null) return;
+      const authority = management.admissionAuthority(provider);
+      if (authority.disposition.kind !== "ready" || !("providerGeneration" in authority)) return;
+      const providerGeneration = authority.providerGeneration;
+      void readUsage
+        .call(options.agentProviderGateway, { provider, providerGeneration })
+        .then((snapshot) => {
+          const current = providerManagementRef.current;
+          if (current === null) return;
+          const currentAuthority = current.admissionAuthority(provider);
+          if (
+            currentAuthority.disposition.kind !== "ready" ||
+            !("providerGeneration" in currentAuthority) ||
+            currentAuthority.providerGeneration !== providerGeneration
+          ) {
+            return;
+          }
+          setAccountUsage((state) => ({ ...state, codex: { kind: "ready", snapshot } }));
+        })
+        .catch(() => undefined);
+    },
+    [options.agentProviderGateway],
+  );
+
   const threads = useAgentThreads({
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway ?? defaultAgentThreadStoreGateway,
@@ -374,6 +429,8 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     getRepositoryStatus,
     getDirtyEditorDocumentCount,
     onProjectDispatchTrustRejected: agentProjects.noteDispatchTrustRejected,
+    onAccountUsageObserved: recordAccountUsage,
+    onProviderTurnCompleted: refreshCodexUsageAfterTurn,
     ensureProjectLease: agentProjects.ensureProjectLease,
     ensureProjectLaunchIdentity: agentProjects.ensureProjectLaunchIdentity,
     launchIdentityForProject: agentProjects.launchIdentityForProject,
@@ -441,11 +498,18 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   return useMemo(
     () => ({
       ...threadsWithRepositoryPreflight,
+      accountUsage,
       agentProjects,
       providerManagement,
       providerSignIn,
     }),
-    [agentProjects, providerManagement, providerSignIn, threadsWithRepositoryPreflight],
+    [
+      accountUsage,
+      agentProjects,
+      providerManagement,
+      providerSignIn,
+      threadsWithRepositoryPreflight,
+    ],
   );
 }
 

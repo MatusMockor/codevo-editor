@@ -1,4 +1,5 @@
 import type { AgentCliKind, AgentTaskOutputStream } from "../agentTask";
+import type { AgentAccountUsageObservation } from "../agentAccountUsage";
 import { MAX_AGENT_EVENT_TEXT_BYTES, type AgentTurnEvent } from "../agentThread";
 import { parseClaudeStreamJsonLine } from "./claudeStreamJson";
 import { parseCodexJsonlLine } from "./codexJsonl";
@@ -16,6 +17,7 @@ export type ParsedAgentLine =
       readonly events: ReadonlyArray<AgentTurnEvent>;
       readonly sessionId: string | null;
     }
+  | { readonly kind: "accountUsage"; readonly observation: AgentAccountUsageObservation }
   | { readonly kind: "ignored" }
   | { readonly kind: "unknown"; readonly raw: string };
 
@@ -31,6 +33,7 @@ export interface AgentOutputFeedResult {
   readonly state: AgentOutputParserState;
   readonly events: ReadonlyArray<AgentTurnEvent>;
   readonly sessionId: string | null;
+  readonly accountUsage: ReadonlyArray<AgentAccountUsageObservation>;
 }
 
 interface AgentOutputLineStrategy {
@@ -45,6 +48,7 @@ interface ParsedLines {
   readonly emittedToolIds: ReadonlySet<string>;
   readonly capturedSessionId: string | null;
   readonly reportedSessionId: string | null;
+  readonly accountUsage: ReadonlyArray<AgentAccountUsageObservation>;
 }
 
 const NO_EVENTS: ReadonlyArray<AgentTurnEvent> = [];
@@ -75,7 +79,7 @@ export function feedAgentOutput(
   stream: AgentTaskOutputStream,
   chunk: string,
 ): AgentOutputFeedResult {
-  if (chunk.length === 0) return { state, events: NO_EVENTS, sessionId: null };
+  if (chunk.length === 0) return { state, events: NO_EVENTS, sessionId: null, accountUsage: [] };
   const split = splitLines(pendingLine(state, stream), chunk);
   const overflowEvents = oversizeLineEvents(stream, split.overflow);
   const parsed = parseLines(state, stream, split.lines);
@@ -87,6 +91,7 @@ export function feedAgentOutput(
     },
     events: [...overflowEvents, ...parsed.events],
     sessionId: parsed.reportedSessionId,
+    accountUsage: parsed.accountUsage,
   };
 }
 
@@ -99,6 +104,7 @@ export function finishAgentOutput(state: AgentOutputParserState): AgentOutputFee
     state: { ...state, stdout: EMPTY_PENDING_LINE, stderr: EMPTY_PENDING_LINE },
     events,
     sessionId: null,
+    accountUsage: [],
   };
 }
 
@@ -111,6 +117,7 @@ function parseLines(
   let emittedToolIds = state.emittedToolIds;
   let capturedSessionId = state.sessionId;
   let reportedSessionId: string | null = null;
+  const accountUsage: AgentAccountUsageObservation[] = [];
   const strategy = strategyFor(state.kind);
   for (const line of lines) {
     if (line.trim() === "") continue;
@@ -125,13 +132,17 @@ function parseLines(
       continue;
     }
     if (parsed.result.kind === "ignored") continue;
+    if (parsed.result.kind === "accountUsage") {
+      accountUsage.push(parsed.result.observation);
+      continue;
+    }
     events.push(...parsed.result.events);
     const candidate = parsed.result.sessionId;
     if (candidate === null || candidate === capturedSessionId) continue;
     reportedSessionId = candidate;
     capturedSessionId = capturedSessionId ?? candidate;
   }
-  return { events, emittedToolIds, capturedSessionId, reportedSessionId };
+  return { events, emittedToolIds, capturedSessionId, reportedSessionId, accountUsage };
 }
 
 function strategyFor(kind: AgentCliKind): AgentOutputLineStrategy {

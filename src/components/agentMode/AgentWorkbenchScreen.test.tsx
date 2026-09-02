@@ -586,6 +586,7 @@ function surface(
 ): WorkbenchAgentsSurface {
   return {
     ...threadsSurface(workspaceRoot, worktreePath),
+    accountUsage: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
     externalSessions: externalSessionsSurfaceFixture(),
     providerManagement: providerManagement(),
     providerSignIn: {

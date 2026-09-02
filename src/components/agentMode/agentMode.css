@@ -4586,7 +4586,6 @@
 }
 
 .agent-usage-panel__limits,
-.agent-usage-panel__limits > section,
 .agent-usage-panel__limit-list,
 .agent-usage-panel__limit,
 .agent-usage-panel__local-heading {
@@ -4600,6 +4599,32 @@
   padding-top: 10px;
 }
 
+.agent-usage-panel__limit-providers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.agent-usage-panel__limit-provider {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.agent-usage-panel__limit-provider > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-usage-panel__limit-provider > header > span {
+  color: var(--agent-text-subtle);
+  font-size: var(--agent-fs-2xs);
+  white-space: nowrap;
+}
+
 .agent-usage-panel__limit {
   gap: 5px;
 }
@@ -4611,6 +4636,14 @@
   gap: 12px;
   color: var(--agent-text);
   font-size: var(--agent-fs-xs);
+}
+
+.agent-usage-panel__limit-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--agent-text-muted);
+  white-space: nowrap;
 }
 
 .agent-usage-panel__limit strong {
@@ -4631,6 +4664,16 @@
   height: 100%;
   border-radius: inherit;
   background: var(--agent-accent);
+}
+
+.agent-usage-panel__meter--danger > span {
+  background: var(--agent-danger);
+}
+
+@media (max-width: 720px) {
+  .agent-usage-panel__limit-providers {
+    grid-template-columns: 1fr;
+  }
 }
 
 .agent-usage-panel__periods button {

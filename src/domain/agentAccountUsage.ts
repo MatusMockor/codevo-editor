@@ -15,6 +15,25 @@ export interface AgentAccountUsageSnapshot {
   readonly windows: ReadonlyArray<AgentAccountUsageWindow>;
 }
 
+export interface AgentAccountUsageObservation {
+  readonly provider: AgentCliKind;
+  readonly windows: ReadonlyArray<AgentAccountUsageWindow>;
+}
+
+export function mergeAgentAccountUsageObservation(
+  current: AgentAccountUsageSnapshot | null,
+  observation: AgentAccountUsageObservation,
+  observedAtEpochMs: number,
+): AgentAccountUsageSnapshot {
+  const windows = new Map(current?.windows.map((window) => [window.id, window]) ?? []);
+  for (const window of observation.windows) windows.set(window.id, window);
+  return {
+    provider: observation.provider,
+    fetchedAtEpochMs: observedAtEpochMs,
+    windows: [...windows.values()],
+  };
+}
+
 export interface AgentAccountUsageGateway {
   readAgentProviderUsage(request: {
     readonly provider: AgentCliKind;

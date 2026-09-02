@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
+import type { AgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import {
   isDefiniteAgentTaskStartRejection,
   isTerminalAgentTaskStatus,
@@ -55,6 +56,7 @@ import type { ReadyAgentProviderAdmissionAuthority } from "./agentProviderAdmiss
 import {
   acceptAgentTurnOutput,
   createAgentTurnOutputStream,
+  drainAgentAccountUsage,
   domainAgentOutputParser,
   drainAgentTurnOutput,
   finishAgentTurnOutput,
@@ -85,6 +87,7 @@ export interface AgentTurnDispatchDependencies extends AgentTurnAdmissionDepende
   readonly currentCliVersion?: (provider: AgentCliKind) => string | null;
   readonly onWorktreeDispatchFailed?: () => void;
   readonly onTurnTerminal?: (event: AgentTaskStatusEvent) => void;
+  readonly onAccountUsageObserved?: (observation: AgentAccountUsageObservation) => void;
   readonly onProjectDispatchTrustRejected?: (projectRootKey: string) => void;
   readonly outputParser?: AgentOutputParserPort;
 }
@@ -195,6 +198,10 @@ export function useAgentTurnDispatch(
       const stream = streamsRef.current.get(event.taskId);
       if (stream === undefined) return;
       if (!acceptAgentTurnOutput(parser(), stream, event)) return;
+      const deps = dependenciesRef.current;
+      for (const observation of drainAgentAccountUsage(stream)) {
+        deps.onAccountUsageObserved?.(observation);
+      }
       scheduleFlush();
     },
     [parser, scheduleFlush],
@@ -225,6 +232,9 @@ export function useAgentTurnDispatch(
             outputSubscription.ready &&
             stream.outputSubscriptionEpoch === outputSubscription.epoch,
         );
+        for (const observation of drainAgentAccountUsage(stream)) {
+          deps.onAccountUsageObserved?.(observation);
+        }
         if (finished !== null) {
           noteSessionChange(
             deps,

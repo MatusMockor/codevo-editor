@@ -5,6 +5,21 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.8] - 2026-09-02
+
+### Changed
+
+- Simplified subscription limits to the compact T3 Code-style provider layout with
+  concise reset times, last-updated context, and high-usage emphasis.
+- Limit snapshots now update from provider activity instead of when the Usage panel
+  opens: Claude observations are consumed from turn events, while Codex is refreshed
+  through its rate-limit control plane after a successful Codex turn.
+
+### Fixed
+
+- Opening or reopening Usage no longer launches provider CLI processes or performs
+  account-limit reads.
+
 ## [0.2.0-beta.7] - 2026-09-02
 
 ### Added

@@ -180,8 +180,75 @@ describe("parseClaudeStreamJsonLine bounds and fail-closed handling", () => {
   it("ignores unknown line types", () => {
     expect(
       parseClaudeStreamJsonLine(line({ type: "rate_limit_event", rate_limit_info: {} })),
-    ).toEqual({ kind: "ignored" });
+    ).toEqual({
+      kind: "ignored",
+    });
     expect(parseClaudeStreamJsonLine(line({ type: "stream_event" }))).toEqual({ kind: "ignored" });
+  });
+
+  it("parses all valid Claude subscription windows without exposing them as chat events", () => {
+    expect(
+      parseClaudeStreamJsonLine(
+        line({
+          type: "rate_limit_event",
+          rate_limit_info: {
+            rateLimitType: "five_hour",
+            utilization: 0.2,
+            resetsAt: 1_786_200_000,
+            unifiedWindows: {
+              five_hour: { utilization: 0.2, resetsAt: 1_786_200_000 },
+              seven_day: { utilization: 0.615, resetsAt: 1_786_500_000 },
+              seven_day_overage_included: null,
+            },
+          },
+        }),
+      ),
+    ).toEqual({
+      kind: "accountUsage",
+      observation: {
+        provider: "claudeCode",
+        windows: [
+          {
+            id: "five_hour",
+            label: "5-hour limit",
+            usedPercent: 20,
+            windowDurationMinutes: 300,
+            resetsAtEpochMs: 1_786_200_000_000,
+            resetsLabel: null,
+          },
+          {
+            id: "seven_day",
+            label: "Weekly limit",
+            usedPercent: 61.5,
+            windowDurationMinutes: 10_080,
+            resetsAtEpochMs: 1_786_500_000_000,
+            resetsLabel: null,
+          },
+        ],
+      },
+    });
+  });
+
+  it("falls back to Claude's representative window and rejects invalid utilization", () => {
+    expect(
+      parseClaudeStreamJsonLine(
+        line({
+          type: "rate_limit_event",
+          rate_limit_info: { rateLimitType: "seven_day", utilization: 0.81, resetsAt: null },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "accountUsage",
+      observation: { windows: [{ id: "seven_day", usedPercent: 81 }] },
+    });
+    expect(
+      parseClaudeStreamJsonLine(
+        line({
+          type: "rate_limit_event",
+          rate_limit_info: { rateLimitType: "five_hour", utilization: 4 },
+        }),
+      ),
+    ).toEqual({ kind: "ignored" });
   });
 
   it("reports non-JSON and non-object lines as unknown", () => {

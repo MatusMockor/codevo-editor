@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
+import type { AgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import type { AgentCliKind, AgentTaskGateway, AgentTaskStatusEvent } from "../domain/agentTask";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import {
@@ -85,9 +86,10 @@ export interface AgentThreadsDependencies {
   readonly getRepositoryStatus: (repositoryRoot: string) => AgentRepositoryStatusSnapshot;
   readonly getDirtyEditorDocumentCount: (repositoryRoot: string) => number;
   readonly onProjectDispatchTrustRejected?: (projectRootKey: string) => void;
+  readonly onAccountUsageObserved?: (observation: AgentAccountUsageObservation) => void;
+  readonly onProviderTurnCompleted?: (provider: AgentCliKind) => void;
   readonly ensureProjectLease?: (projectRootKey: string) => Promise<boolean>;
-  readonly ensureProjectLaunchIdentity?:
-    AgentTurnAdmissionDependencies["ensureProjectLaunchIdentity"];
+  readonly ensureProjectLaunchIdentity?: AgentTurnAdmissionDependencies["ensureProjectLaunchIdentity"];
   readonly launchIdentityForProject: AgentTurnAdmissionDependencies["launchIdentityForProject"];
   readonly reportError: (source: string, error: unknown) => void;
   readonly openAgentSettings: () => void;
@@ -126,7 +128,8 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const [pendingShipReconcile, setPendingShipReconcile] = useState<ReadonlySet<string>>(
     () => NO_PENDING_SHIP_RECONCILE,
   );
-  const { projects, reportError, gitGateway } = dependencies;
+  const { projects, reportError, gitGateway, onAccountUsageObserved, onProviderTurnCompleted } =
+    dependencies;
 
   const store = useAgentThreadStore({
     agentThreadStoreGateway: dependencies.agentThreadStoreGateway,
@@ -204,16 +207,20 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
 
   const onTurnTerminal = useCallback(
     (event: AgentTaskStatusEvent): void => {
+      const threadId = threadIdForTurn(threads, event.taskId);
+      const provider = threads.get(threadId)?.provider.kind;
+      if (event.status.kind === "exited" && event.status.exitCode === 0 && provider !== undefined) {
+        onProviderTurnCompleted?.(provider);
+      }
       if (event.isolation !== "worktree") return;
       void refreshOrphanedWorktrees();
-      const threadId = threadIdForTurn(threads, event.taskId);
       void refreshVisibleChanges(threadId);
       setPendingShipReconcile((current) => {
         if (current.has(threadId)) return current;
         return new Set(current).add(threadId);
       });
     },
-    [refreshOrphanedWorktrees, refreshVisibleChanges, threads],
+    [onProviderTurnCompleted, refreshOrphanedWorktrees, refreshVisibleChanges, threads],
   );
 
   useEffect(() => {
@@ -248,6 +255,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     currentCliVersion: dependencies.currentCliVersion,
     onWorktreeDispatchFailed,
     onTurnTerminal,
+    onAccountUsageObserved,
     onProjectDispatchTrustRejected: dependencies.onProjectDispatchTrustRejected,
     ensureProjectLease: dependencies.ensureProjectLease,
     ensureProjectLaunchIdentity: dependencies.ensureProjectLaunchIdentity,
