@@ -279,6 +279,38 @@ describe("BottomPanel terminal links", () => {
     expect(labels).toContain("Packages");
   });
 
+  it("keeps legacy editor diagnostics out of the agent bottom panel", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "problems",
+        debug: <div aria-label="Debug" />,
+        notices: [
+          {
+            id: "problem",
+            message: "Legacy editor problem",
+            severity: "error",
+            source: "TypeScript",
+          },
+        ],
+        viewScope: "agent",
+      },
+    );
+
+    const labels = Array.from(
+      host.querySelectorAll<HTMLButtonElement>(".bottom-panel-tabs > [role='tab']"),
+      (button) => button.textContent,
+    );
+    expect(labels).toEqual(["Terminal", "Search"]);
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Terminal");
+    expect(host.querySelector('[aria-label="Problems"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Debug"]')).toBeNull();
+    expect(activeTerminalProps().isActive).toBe(true);
+  });
+
   it("renders and selects the package dependency tree only for a JavaScript workspace", async () => {
     const onOpenDependency = vi.fn();
     await renderPanel(

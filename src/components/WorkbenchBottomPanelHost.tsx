@@ -32,6 +32,7 @@ export function WorkbenchBottomPanelHost({
         search,
         workbench,
       })}
+      viewScope={workbench.agentModeActive ? "agent" : "editor"}
     />
   );
 }

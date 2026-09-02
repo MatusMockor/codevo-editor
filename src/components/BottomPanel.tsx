@@ -61,6 +61,7 @@ function problemsPackageAuthority(
 
 interface BottomPanelProps {
   activeView: WorkbenchBottomPanelView;
+  viewScope?: "agent" | "editor";
   debug?: ReactNode;
   search?: ReactNode;
   artisanRoutes?: ArtisanRoute[];
@@ -141,6 +142,13 @@ const bottomPanelViews: WorkbenchBottomPanelView[] = [
   "debug",
   "search",
 ];
+const agentHiddenBottomPanelViews = new Set<WorkbenchBottomPanelView>([
+  "problems",
+  "index",
+  "runtime",
+  "history",
+  "debug",
+]);
 const LazyTerminalTabsPanel = lazy(() =>
   import("./TerminalTabsPanel").then((module) => ({
     default: module.TerminalTabsPanel,
@@ -149,6 +157,7 @@ const LazyTerminalTabsPanel = lazy(() =>
 
 export function BottomPanel({
   activeView,
+  viewScope = "editor",
   debug,
   search,
   artisanRoutes = [],
@@ -217,12 +226,14 @@ export function BottomPanel({
   const showExpressRoutes =
     hasExpressWorkspaceSignal({ routes: expressRoutesPanel?.routes ?? [] }) ||
     (activeView === "expressRoutes" && hasExpressRoutes);
+  const fallbackView: WorkbenchBottomPanelView = viewScope === "agent" ? "terminal" : "problems";
   const effectiveActiveView =
+    (viewScope === "agent" && agentHiddenBottomPanelViews.has(activeView)) ||
     (activeView === "expressRoutes" && !showExpressRoutes) ||
     (activeView === "packages" && !hasJsWorkspace) ||
     (activeView === "nette" && !hasNette) ||
     (activeView === "symfony" && !hasSymfony)
-      ? "problems"
+      ? fallbackView
       : activeView;
   const [terminalMounted, setTerminalMounted] = useState(effectiveActiveView === "terminal");
   const [terminalProfiles, setTerminalProfiles] = useState<TerminalProfile[]>([]);
@@ -349,7 +360,9 @@ export function BottomPanel({
       <header className="bottom-panel-header">
         <div aria-label="Panel views" className="bottom-panel-tabs" role="tablist">
           {[
-            ...bottomPanelViews,
+            ...bottomPanelViews.filter(
+              (view) => viewScope !== "agent" || !agentHiddenBottomPanelViews.has(view),
+            ),
             ...(hasArtisan ? (["routes"] as const) : []),
             ...(showExpressRoutes ? (["expressRoutes"] as const) : []),
             ...(hasJsWorkspace ? (["packages"] as const) : []),

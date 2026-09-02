@@ -16,6 +16,7 @@ type TestDebugPanels = ReturnType<typeof useAppTestDebugPanels>;
 export type BottomPanelHostWorkbench = Pick<
   Workbench,
   | "appSettings"
+  | "agentModeActive"
   | "bottomPanelView"
   | "clearNotices"
   | "getLatencySnapshot"
