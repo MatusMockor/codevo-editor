@@ -549,7 +549,9 @@ export function agentExternalSessionsStatusNote(
   const parts: string[] = [];
   if (skipped === 1) parts.push("1 automated or unreadable session hidden");
   if (skipped > 1) parts.push(`${skipped} automated or unreadable sessions hidden`);
-  if (truncated) parts.push(`showing the newest ${shownCount}`);
+  if (truncated) {
+    parts.push(shownCount === 0 ? "session scan limited" : `showing the newest ${shownCount}`);
+  }
   if (parts.length === 0) return null;
   return parts.join(" · ");
 }

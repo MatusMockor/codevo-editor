@@ -515,5 +515,6 @@ describe("terminal session presentation", () => {
       "12 automated or unreadable sessions hidden · showing the newest 200",
     );
     expect(agentExternalSessionsStatusNote(0, true, 200)).toBe("showing the newest 200");
+    expect(agentExternalSessionsStatusNote(0, true, 0)).toBe("session scan limited");
   });
 });

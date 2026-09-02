@@ -56,6 +56,27 @@ describe("AgentProjectScopeMenu", () => {
     expect(host.querySelector(".agent-scope-menu__count")?.textContent).toBe("2 repos");
   });
 
+  it("filters projects by label and repository path", () => {
+    render({
+      entries: [
+        ALL_ENTRY,
+        entry(ROOT, "boxes / app"),
+        entry("/workspace/boxes/ebox-crm", "boxes / ebox-crm"),
+      ],
+    });
+    openMenu();
+
+    typeSearch("ebox");
+    expect(rowLabels()).toEqual(["boxes / ebox-crm"]);
+
+    typeSearch("workspace/app");
+    expect(rowLabels()).toEqual(["boxes / app"]);
+
+    typeSearch("missing");
+    expect(rowLabels()).toEqual([]);
+    expect(host.textContent).toContain("No matching projects.");
+  });
+
   it("opens the project actions from the gear of that row", () => {
     render();
     openMenu();
@@ -137,17 +158,30 @@ describe("AgentProjectScopeMenu", () => {
     expect(document.activeElement).toBe(trigger());
   });
 
-  it("focuses the active scope on open and walks the rows with the arrow keys", () => {
+  it("focuses project search on open and walks the filtered rows with the arrow keys", () => {
     render({ value: agentRailScopeValue(ROOT, ROOT) });
     openMenu();
 
-    expect(document.activeElement).toBe(scopeRow(agentRailScopeValue(ROOT, ROOT)));
+    expect(document.activeElement).toBe(searchInput());
 
     keydown("ArrowDown");
-    expect(document.activeElement).toBe(gears()[0]);
+    expect(document.activeElement).toBe(scopeRow(ALL_PROJECTS_SCOPE_VALUE));
 
     keydown("ArrowUp");
-    expect(document.activeElement).toBe(scopeRow(agentRailScopeValue(ROOT, ROOT)));
+    expect(document.activeElement).toBe(gears()[1]);
+  });
+
+  it("clears a project query before Escape closes the menu", () => {
+    render();
+    openMenu();
+    typeSearch("api");
+
+    keydown("Escape", searchInput());
+    expect(searchInput().value).toBe("");
+    expect(host.querySelector('[role="menu"]')).not.toBeNull();
+
+    keydown("Escape", searchInput());
+    expect(host.querySelector('[role="menu"]')).toBeNull();
   });
 
   it("returns focus to the trigger when Escape closes the scope menu", () => {
@@ -213,6 +247,21 @@ describe("AgentProjectScopeMenu", () => {
 
   function openMenu(): void {
     click(trigger());
+  }
+
+  function searchInput(): HTMLInputElement {
+    const element = host.querySelector<HTMLInputElement>('input[aria-label="Search projects"]');
+    expect(element).not.toBeNull();
+    return element as HTMLInputElement;
+  }
+
+  function typeSearch(value: string): void {
+    const element = searchInput();
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    act(() => {
+      setter?.call(element, value);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
   }
 
   function gears(): ReadonlyArray<HTMLButtonElement> {

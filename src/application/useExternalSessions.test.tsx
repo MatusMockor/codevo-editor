@@ -29,6 +29,7 @@ const OWNER_ID = agentRootOwnerId(ROOT_KEY);
 const OTHER_OWNER_ID = agentRootOwnerId(OTHER_ROOT_KEY);
 const REPOSITORY_ROOT = "/workspace/app";
 const OTHER_REPOSITORY_ROOT = "/workspace/other";
+const NESTED_REPOSITORY_ROOT = "/workspace/app/packages/api";
 
 const SESSION_A = "987b95ad-c9bc-4d08-ae49-9b431efc8f87";
 const SESSION_B = "01a038a1-c2ee-7642-98e4-c94d7a479e0c";
@@ -467,6 +468,38 @@ describe("useExternalSessions", () => {
       provider: "codex",
       sessionId: SESSION_A,
       repositoryRoot: REPOSITORY_ROOT,
+    });
+
+    harness.unmount();
+  });
+
+  it("previews and decorates a nested repository session with its exact owner", async () => {
+    const imported = thread({
+      owner: {
+        rootKey: ROOT_KEY,
+        ownerId: OWNER_ID,
+        repositoryRoot: NESTED_REPOSITORY_ROOT,
+      },
+      externalOrigin: { provider: "claudeCode", sessionId: SESSION_A, importedAtEpochMs: 50 },
+    });
+    const harness = renderExternalSessions({
+      projects: [
+        project({ repositories: [repository(REPOSITORY_ROOT), repository(NESTED_REPOSITORY_ROOT)] }),
+      ],
+      threads: new Map([[imported.threadId, imported]]),
+    });
+    harness.listResults.push(() =>
+      Promise.resolve(snapshot([summary({ cwd: NESTED_REPOSITORY_ROOT })])),
+    );
+
+    await resolveInReactAct(() => harness.hook().open(TARGET));
+    await resolveInReactAct(() => harness.hook().loadPreview(SESSION_A));
+
+    expect(harness.hook().sessions[0]?.alreadyImportedThreadId).toBe(imported.threadId);
+    expect(harness.gateway.previewExternalSession).toHaveBeenLastCalledWith({
+      provider: "claudeCode",
+      sessionId: SESSION_A,
+      repositoryRoot: NESTED_REPOSITORY_ROOT,
     });
 
     harness.unmount();

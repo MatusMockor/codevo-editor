@@ -84,7 +84,25 @@ impl HistoryHome {
         session_id: &str,
         modified_epoch_ms: u64,
     ) -> PathBuf {
-        let directory = self.claude_project_directory();
+        self.write_claude_content_for_root(
+            content,
+            session_id,
+            &self.repository_root,
+            modified_epoch_ms,
+        )
+    }
+
+    fn write_claude_content_for_root(
+        &self,
+        content: &str,
+        session_id: &str,
+        repository_root: &str,
+        modified_epoch_ms: u64,
+    ) -> PathBuf {
+        let directory = self
+            .roots
+            .claude_projects_directory
+            .join(encode_claude_project_directory(repository_root));
         fs::create_dir_all(&directory).expect("create claude project dir");
         let path = directory.join(format!("{session_id}.jsonl"));
         fs::write(&path, content).expect("write claude session fixture");
@@ -425,6 +443,37 @@ fn claude_sessions_with_a_foreign_cwd_are_ignored_without_inflating_skipped() {
 }
 
 #[test]
+fn listing_includes_sessions_from_canonical_nested_repositories() {
+    let home = HistoryHome::create("nested-repositories");
+    let nested = home.base.join("repo").join("packages").join("api");
+    fs::create_dir_all(&nested).expect("create nested repository");
+    let nested = fs::canonicalize(nested)
+        .expect("canonicalize nested repository")
+        .to_string_lossy()
+        .into_owned();
+    let claude_line = minimal_claude_line(&nested, CLAUDE_INTERACTIVE_ID, "nested claude");
+    home.write_claude_content_for_root(
+        &format!("{claude_line}\n"),
+        CLAUDE_INTERACTIVE_ID,
+        &nested,
+        NOW_EPOCH_MS - 2_000,
+    );
+    home.write_codex_session(
+        "codex-exec.jsonl",
+        CODEX_EXEC_ID,
+        &nested,
+        1,
+        NOW_EPOCH_MS - 1_000,
+    );
+
+    let listing = home.list();
+
+    assert_eq!(listing.sessions.len(), 2);
+    assert!(listing.sessions.iter().all(|session| session.cwd == nested));
+    assert_eq!(listing.skipped, 0);
+}
+
+#[test]
 fn claude_sessions_without_typed_prompts_are_skipped() {
     let home = HistoryHome::create("claude-sdk-only");
     home.write_claude_session(
@@ -559,6 +608,41 @@ fn codex_rollout_files_with_mismatched_meta_ids_are_skipped() {
     let listing = home.list();
     assert!(listing.sessions.is_empty());
     assert_eq!(listing.skipped, 1);
+}
+
+#[test]
+fn codex_files_beyond_the_provider_cap_do_not_claim_to_be_unreadable() {
+    let home = HistoryHome::create("codex-foreign-cap");
+    let foreign = home.base.join("foreign");
+    fs::create_dir_all(&foreign).expect("create foreign repository");
+    let foreign = fs::canonicalize(foreign)
+        .expect("canonicalize foreign repository")
+        .to_string_lossy()
+        .into_owned();
+    let directory = home.codex_day_directory(1);
+    fs::create_dir_all(&directory).expect("create codex day directory");
+    for index in 0..(MAX_PROVIDER_FILES + 2) {
+        let session_id = format!("{index:08x}-0000-4000-8000-{index:012x}");
+        let path = directory.join(format!("rollout-2026-08-30T09-00-00-{session_id}.jsonl"));
+        let content = json!({
+            "timestamp": "2026-08-30T09:00:00.000Z",
+            "type": "session_meta",
+            "payload": {
+                "id": session_id,
+                "timestamp": "2026-08-30T09:00:00.000Z",
+                "cwd": foreign,
+                "source": "exec"
+            }
+        })
+        .to_string();
+        fs::write(&path, format!("{content}\n")).expect("write foreign codex session");
+        set_modified(&path, NOW_EPOCH_MS - index as u64);
+    }
+
+    let listing = home.list();
+
+    assert!(listing.sessions.is_empty());
+    assert_eq!(listing.skipped, 0);
 }
 
 #[test]

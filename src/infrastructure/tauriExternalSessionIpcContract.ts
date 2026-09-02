@@ -5,6 +5,7 @@ import type {
   ExternalSessionPreviewRequest,
 } from "../domain/externalAgentSession";
 import {
+  isExternalSessionWithinRepository,
   parseExternalAgentSessionPreview,
   parseExternalSessionListSnapshot,
   validateExternalSessionId,
@@ -54,9 +55,9 @@ export async function invokeListExternalAgentSessionsIpc(
     "result",
   );
   for (const session of snapshot.sessions) {
-    if (session.cwd !== validated.repositoryRoot) {
+    if (!isExternalSessionWithinRepository(session.cwd, validated.repositoryRoot)) {
       throw new TypeError(
-        "Invalid external agent session value at result.sessions: expected the requested repository root.",
+        "Invalid external agent session value at result.sessions: expected the requested repository scope.",
       );
     }
   }

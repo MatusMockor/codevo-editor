@@ -461,6 +461,48 @@
   min-width: 220px;
 }
 
+.agent-scope-menu__search {
+  position: sticky;
+  z-index: 2;
+  top: -4px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-bottom: 1px solid var(--agent-hairline);
+  background: var(--agent-raised);
+  color: var(--agent-text-muted);
+  margin: -4px -4px 3px;
+  padding: 8px 10px 7px;
+}
+
+.agent-scope-menu__search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--agent-text-strong);
+  font: inherit;
+  font-size: var(--agent-fs-sm);
+  outline: 0;
+  padding: 0;
+}
+
+.agent-scope-menu__search input::placeholder {
+  color: var(--agent-text-muted);
+}
+
+.agent-scope-menu__search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.agent-scope-menu__search:focus-within {
+  color: var(--agent-text-strong);
+}
+
+.agent-scope-menu__empty {
+  text-align: center;
+}
+
 .agent-scope-menu__row {
   display: flex;
   align-items: center;
@@ -4574,6 +4616,15 @@
   color: var(--agent-text);
   font-size: var(--agent-fs-sm);
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-terminal-sessions__repository {
+  overflow: hidden;
+  max-width: 110px;
+  color: var(--agent-text-subtle);
+  font-family: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

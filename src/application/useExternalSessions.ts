@@ -207,7 +207,7 @@ export function useExternalSessions(
         dependenciesRef.current.externalSessionGateway.previewExternalSession({
           provider: summary.provider,
           sessionId,
-          repositoryRoot: target.repositoryRoot,
+          repositoryRoot: summary.cwd,
         }),
       );
       if (!mountedRef.current) return;
@@ -320,32 +320,45 @@ function decorateSessions(
   threads: ReadonlyMap<string, AgentThread>,
 ): ReadonlyArray<ExternalAgentSessionView> {
   if (target === null) return [];
-  const imported = importedThreadIds(threads, target.repositoryRoot);
+  const imported = importedThreadIds(threads);
   return summaries.map((summary) => ({
     ...summary,
     alreadyImportedThreadId:
-      imported.get(providerSessionKey(summary.provider, summary.sessionId)) ?? null,
+      imported.get(repositorySessionKey(summary.cwd, summary.provider, summary.sessionId)) ?? null,
   }));
 }
 
 function importedThreadIds(
   threads: ReadonlyMap<string, AgentThread>,
-  repositoryRoot: string,
 ): ReadonlyMap<string, string> {
   const imported = new Map<string, string>();
   for (const thread of threads.values()) {
-    if (thread.owner.repositoryRoot !== repositoryRoot) continue;
     const origin = thread.externalOrigin;
     if (origin !== null) {
-      imported.set(providerSessionKey(origin.provider, origin.sessionId), thread.threadId);
+      imported.set(
+        repositorySessionKey(thread.owner.repositoryRoot, origin.provider, origin.sessionId),
+        thread.threadId,
+      );
     }
     const sessionId = thread.provider.sessionId;
     if (sessionId === null) continue;
-    const identity = providerSessionKey(thread.provider.kind, sessionId);
+    const identity = repositorySessionKey(
+      thread.owner.repositoryRoot,
+      thread.provider.kind,
+      sessionId,
+    );
     if (imported.has(identity)) continue;
     imported.set(identity, thread.threadId);
   }
   return imported;
+}
+
+function repositorySessionKey(
+  repositoryRoot: string,
+  provider: AgentCliKind,
+  sessionId: string,
+): string {
+  return `${repositoryRoot}:${providerSessionKey(provider, sessionId)}`;
 }
 
 function providerSessionKey(provider: AgentCliKind, sessionId: string): string {

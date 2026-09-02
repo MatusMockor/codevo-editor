@@ -91,6 +91,21 @@ export function validateExternalSessionRepositoryRoot(
   return candidate;
 }
 
+export function isExternalSessionWithinRepository(sessionRoot: string, scopeRoot: string): boolean {
+  if (!isLexicallyCanonicalAbsolutePath(sessionRoot)) return false;
+  if (!isLexicallyCanonicalAbsolutePath(scopeRoot)) return false;
+  if (sessionRoot === scopeRoot) return true;
+  if (scopeRoot === "/") return sessionRoot.startsWith("/");
+  return sessionRoot.startsWith(`${scopeRoot}/`);
+}
+
+function isLexicallyCanonicalAbsolutePath(value: string): boolean {
+  if (!value.startsWith("/")) return false;
+  if (value === "/") return true;
+  if (value.endsWith("/") || value.includes("//")) return false;
+  return value.split("/").slice(1).every((segment) => segment !== "." && segment !== "..");
+}
+
 export function parseExternalSessionListSnapshot(
   value: unknown,
   path = "externalSessions",

@@ -2334,6 +2334,27 @@ describe("AgentModeView", () => {
     expect(selectedSessionId()).toBe("agt-1");
   });
 
+  it("imports a nested terminal session into the repository recorded by that session", () => {
+    const importExternalSession = vi.fn(async () => null);
+    const externalSessions = externalSessionsSurfaceFixture({
+      state: "ready",
+      target: { rootKey: ROOT, repositoryRoot: ROOT },
+      sessions: [externalSessionView({ cwd: NESTED })],
+    });
+    render({
+      agents: surface({ externalSessions, importExternalSession }),
+      projects: [activeProject()],
+    });
+
+    openProjectMenu("app");
+    clickMenuItem("Terminal sessions…");
+    act(() => buttonWithText("Continue in Codevo").click());
+
+    expect(importExternalSession).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRootKey: ROOT, repositoryRoot: NESTED }),
+    );
+  });
+
   it("selects the existing thread for an already imported session without importing again", () => {
     const importExternalSession = vi.fn(async () => null);
     const externalSessions = externalSessionsSurfaceFixture({

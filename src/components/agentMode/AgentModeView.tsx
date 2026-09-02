@@ -219,7 +219,7 @@ export function AgentModeView({
       }
       void importExternalSessionAction({
         projectRootKey: terminalSessionsTarget.projectRootKey,
-        repositoryRoot: terminalSessionsTarget.repositoryRoot,
+        repositoryRoot: session.cwd,
         provider,
         sessionId,
         title: session.title,

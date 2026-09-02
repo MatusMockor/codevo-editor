@@ -281,6 +281,11 @@ function SessionListBody({
             {agentExternalSessionRowTitle(session)}
           </span>
           <span className="agent-terminal-sessions__row-meta agent-num">
+            {surface.target !== null && session.cwd !== surface.target.repositoryRoot && (
+              <span className="agent-terminal-sessions__repository" title={session.cwd}>
+                {repositoryLabel(session.cwd)}
+              </span>
+            )}
             {session.alreadyImportedThreadId !== null && (
               <span className="agent-terminal-sessions__badge">{AGENT_IMPORTED_BADGE_LABEL}</span>
             )}
@@ -367,7 +372,8 @@ function filterSessions(
   return sessions.filter(
     (session) =>
       session.title.toLowerCase().includes(needle) ||
-      session.sessionId.toLowerCase().includes(needle),
+      session.sessionId.toLowerCase().includes(needle) ||
+      session.cwd.toLowerCase().includes(needle),
   );
 }
 

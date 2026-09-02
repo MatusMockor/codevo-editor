@@ -90,6 +90,30 @@ describe("invokeListExternalAgentSessionsIpc", () => {
       invokeListExternalAgentSessionsIpc(invokeCommand, { repositoryRoot: "/repo" }),
     ).rejects.toThrow(TypeError);
   });
+
+  it("accepts a session from a nested repository inside the requested scope", async () => {
+    const invokeCommand = vi.fn(async () => ({
+      sessions: [summary({ cwd: "/repo/packages/api" })],
+      skipped: 0,
+      truncated: false,
+    }));
+
+    await expect(
+      invokeListExternalAgentSessionsIpc(invokeCommand, { repositoryRoot: "/repo" }),
+    ).resolves.toMatchObject({ sessions: [{ cwd: "/repo/packages/api" }] });
+  });
+
+  it("rejects a nested-looking session path that contains an alias segment", async () => {
+    const invokeCommand = vi.fn(async () => ({
+      sessions: [summary({ cwd: "/repo/../other" })],
+      skipped: 0,
+      truncated: false,
+    }));
+
+    await expect(
+      invokeListExternalAgentSessionsIpc(invokeCommand, { repositoryRoot: "/repo" }),
+    ).rejects.toThrow(TypeError);
+  });
 });
 
 describe("invokePreviewExternalAgentSessionIpc", () => {

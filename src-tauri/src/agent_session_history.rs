@@ -1,7 +1,7 @@
 use crate::agent_task_spawner::AgentCliInvocation;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -176,13 +176,13 @@ pub fn list_external_agent_sessions_at(
     let repository_root = validate_repository_root(&request.repository_root)?;
     let mut sessions: Vec<ExternalAgentSessionSummary> = Vec::new();
     let mut skipped: u32 = 0;
-    collect_claude_sessions(
+    let claude_scan_limited = collect_claude_sessions(
         &repository_root,
         &roots.claude_projects_directory,
         &mut sessions,
         &mut skipped,
     );
-    collect_codex_sessions(
+    let codex_scan_limited = collect_codex_sessions(
         &repository_root,
         &roots.codex_sessions_directory,
         now_epoch_ms,
@@ -195,7 +195,8 @@ pub fn list_external_agent_sessions_at(
             .cmp(&left.last_activity_epoch_ms)
             .then_with(|| left.session_id.cmp(&right.session_id))
     });
-    let truncated = sessions.len() > MAX_EXTERNAL_SESSION_ENTRIES;
+    let truncated =
+        claude_scan_limited || codex_scan_limited || sessions.len() > MAX_EXTERNAL_SESSION_ENTRIES;
     sessions.truncate(MAX_EXTERNAL_SESSION_ENTRIES);
     Ok(ExternalAgentSessionListing {
         sessions,
@@ -314,41 +315,93 @@ struct ClaudeSessionCandidate {
 }
 
 fn collect_claude_candidates(
-    project_directory: &Path,
+    projects_directory: &Path,
+    repository_root: &str,
     skipped: &mut u32,
-) -> Vec<ClaudeSessionCandidate> {
+) -> (Vec<ClaudeSessionCandidate>, bool) {
     let mut candidates: Vec<ClaudeSessionCandidate> = Vec::new();
-    let Ok(entries) = fs::read_dir(project_directory) else {
-        return candidates;
+    let encoded_root = encode_claude_project_directory(repository_root);
+    let nested_prefix = format!("{encoded_root}-");
+    let Ok(project_entries) = fs::read_dir(projects_directory) else {
+        return (candidates, false);
     };
-    for entry in entries.take(MAX_SCANNED_DIRECTORY_ENTRIES) {
-        let Ok(entry) = entry else {
+    let mut inspected_entries = 0usize;
+    let mut scan_limited = false;
+    for (project_index, project_entry) in project_entries
+        .take(MAX_SCANNED_DIRECTORY_ENTRIES + 1)
+        .enumerate()
+    {
+        if project_index >= MAX_SCANNED_DIRECTORY_ENTRIES {
+            scan_limited = true;
+            break;
+        }
+        let Ok(project_entry) = project_entry else {
             bump(skipped);
             continue;
         };
-        let name = entry.file_name();
+        let name = project_entry.file_name();
         let Some(name) = name.to_str() else {
             continue;
         };
-        let Some(stem) = name.strip_suffix(CLAUDE_SESSION_FILE_SUFFIX) else {
-            continue;
-        };
-        if validate_external_session_id(stem).is_err() {
-            bump(skipped);
+        if name != encoded_root && !name.starts_with(&nested_prefix) {
             continue;
         }
-        candidates.push(ClaudeSessionCandidate {
-            path: entry.path(),
-            session_id: stem.to_string(),
-            modified_epoch_ms: entry
-                .metadata()
-                .ok()
-                .and_then(|metadata| metadata.modified().ok())
-                .map(epoch_ms_from_system_time)
-                .unwrap_or(0),
-        });
+        let Ok(file_type) = project_entry.file_type() else {
+            bump(skipped);
+            continue;
+        };
+        if !file_type.is_dir() || file_type.is_symlink() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(project_entry.path()) else {
+            bump(skipped);
+            continue;
+        };
+        for entry in entries {
+            if inspected_entries >= MAX_SCANNED_DIRECTORY_ENTRIES {
+                scan_limited = true;
+                break;
+            }
+            inspected_entries += 1;
+            collect_claude_candidate(entry, &mut candidates, skipped);
+        }
+        if scan_limited {
+            break;
+        }
     }
-    candidates
+    (candidates, scan_limited)
+}
+
+fn collect_claude_candidate(
+    entry: Result<fs::DirEntry, std::io::Error>,
+    candidates: &mut Vec<ClaudeSessionCandidate>,
+    skipped: &mut u32,
+) {
+    let Ok(entry) = entry else {
+        bump(skipped);
+        return;
+    };
+    let name = entry.file_name();
+    let Some(name) = name.to_str() else {
+        return;
+    };
+    let Some(stem) = name.strip_suffix(CLAUDE_SESSION_FILE_SUFFIX) else {
+        return;
+    };
+    if validate_external_session_id(stem).is_err() {
+        bump(skipped);
+        return;
+    }
+    candidates.push(ClaudeSessionCandidate {
+        path: entry.path(),
+        session_id: stem.to_string(),
+        modified_epoch_ms: entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .map(epoch_ms_from_system_time)
+            .unwrap_or(0),
+    });
 }
 
 fn collect_claude_sessions(
@@ -356,10 +409,9 @@ fn collect_claude_sessions(
     projects_directory: &Path,
     sessions: &mut Vec<ExternalAgentSessionSummary>,
     skipped: &mut u32,
-) {
-    let project_directory =
-        projects_directory.join(encode_claude_project_directory(repository_root));
-    let mut candidates = collect_claude_candidates(&project_directory, skipped);
+) -> bool {
+    let (mut candidates, scan_limited) =
+        collect_claude_candidates(projects_directory, repository_root, skipped);
     candidates.sort_by(|left, right| {
         right
             .modified_epoch_ms
@@ -369,13 +421,16 @@ fn collect_claude_sessions(
     let dropped = candidates.len().saturating_sub(MAX_PROVIDER_FILES);
     *skipped = skipped.saturating_add(u32::try_from(dropped).unwrap_or(u32::MAX));
     candidates.truncate(MAX_PROVIDER_FILES);
+    let mut listed_ids = HashSet::new();
     for candidate in candidates {
         match summarize_claude_session(repository_root, &candidate.path, &candidate.session_id) {
-            Ok(summary) => sessions.push(summary),
+            Ok(summary) if listed_ids.insert(summary.session_id.clone()) => sessions.push(summary),
+            Ok(_) => {}
             Err(SessionExclusion::Foreign) => {}
             Err(SessionExclusion::Skipped) => bump(skipped),
         }
     }
+    scan_limited || dropped > 0
 }
 
 fn summarize_claude_session(
@@ -386,9 +441,11 @@ fn summarize_claude_session(
     let window = read_history_windows(path, false).map_err(|_| SessionExclusion::Skipped)?;
     let scanned = window_lines(&window.head, false, !window.head_complete);
     let facts = scan_claude_head(&scanned.lines);
-    if facts.cwd.as_deref() != Some(repository_root) {
-        return Err(SessionExclusion::Foreign);
-    }
+    let cwd = facts
+        .cwd
+        .as_deref()
+        .and_then(|candidate| scoped_repository_root(repository_root, candidate))
+        .ok_or(SessionExclusion::Foreign)?;
     if facts.typed_count == 0 {
         return Err(SessionExclusion::Skipped);
     }
@@ -414,7 +471,7 @@ fn summarize_claude_session(
     Ok(ExternalAgentSessionSummary {
         provider: AgentCliInvocation::ClaudeCode,
         session_id: session_id.to_string(),
-        cwd: repository_root.to_string(),
+        cwd,
         title,
         first_prompt,
         started_at_epoch_ms,
@@ -431,7 +488,7 @@ fn collect_codex_sessions(
     now_epoch_ms: u64,
     sessions: &mut Vec<ExternalAgentSessionSummary>,
     skipped: &mut u32,
-) {
+) -> bool {
     let mut opened = 0usize;
     for day_directory in codex_day_directories(sessions_directory, now_epoch_ms) {
         let Ok(entries) = fs::read_dir(&day_directory) else {
@@ -450,8 +507,7 @@ fn collect_codex_sessions(
                 continue;
             };
             if opened >= MAX_PROVIDER_FILES {
-                bump(skipped);
-                continue;
+                return true;
             }
             opened += 1;
             match summarize_codex_session(repository_root, &entry.path(), &session_id) {
@@ -461,6 +517,7 @@ fn collect_codex_sessions(
             }
         }
     }
+    false
 }
 
 fn codex_day_directories(sessions_directory: &Path, now_epoch_ms: u64) -> Vec<PathBuf> {
@@ -507,7 +564,7 @@ fn summarize_codex_session(
     };
     let meta =
         serde_json::from_str::<RawCodexLine>(first_line).map_err(|_| SessionExclusion::Skipped)?;
-    let started = codex_meta_gate(&meta, repository_root, session_id)?;
+    let scoped = codex_meta_gate(&meta, repository_root, session_id)?;
 
     let mut first_prompt: Option<String> = None;
     let mut turn_count: u32 = 0;
@@ -527,7 +584,9 @@ fn summarize_codex_session(
         turn_count = turn_count.saturating_add(1);
     }
 
-    let started_at_epoch_ms = started.unwrap_or(window.modified_epoch_ms);
+    let started_at_epoch_ms = scoped
+        .started_at_epoch_ms
+        .unwrap_or(window.modified_epoch_ms);
     let last_activity_epoch_ms = if window.modified_epoch_ms == 0 {
         started_at_epoch_ms
     } else {
@@ -540,7 +599,7 @@ fn summarize_codex_session(
     Ok(ExternalAgentSessionSummary {
         provider: AgentCliInvocation::CodexExec,
         session_id: session_id.to_string(),
-        cwd: repository_root.to_string(),
+        cwd: scoped.cwd,
         title: first_prompt.clone(),
         first_prompt,
         started_at_epoch_ms,
@@ -555,7 +614,7 @@ fn codex_meta_gate(
     line: &RawCodexLine,
     repository_root: &str,
     session_id: &str,
-) -> Result<Option<u64>, SessionExclusion> {
+) -> Result<ScopedCodexMeta, SessionExclusion> {
     if line.line_type.as_deref() != Some("session_meta") {
         return Err(SessionExclusion::Skipped);
     }
@@ -570,9 +629,11 @@ fn codex_meta_gate(
     if !recorded_id.eq_ignore_ascii_case(session_id) {
         return Err(SessionExclusion::Skipped);
     }
-    if payload.cwd.as_deref() != Some(repository_root) {
-        return Err(SessionExclusion::Foreign);
-    }
+    let cwd = payload
+        .cwd
+        .as_deref()
+        .and_then(|candidate| scoped_repository_root(repository_root, candidate))
+        .ok_or(SessionExclusion::Foreign)?;
     match payload.source.as_ref() {
         Some(Value::String(source)) if source == "exec" || source == "cli" => {}
         _ => return Err(SessionExclusion::Skipped),
@@ -582,7 +643,33 @@ fn codex_meta_gate(
         .as_deref()
         .or(line.timestamp.as_deref())
         .and_then(parse_iso_utc_epoch_ms);
-    Ok(started)
+    Ok(ScopedCodexMeta {
+        cwd,
+        started_at_epoch_ms: started,
+    })
+}
+
+struct ScopedCodexMeta {
+    cwd: String,
+    started_at_epoch_ms: Option<u64>,
+}
+
+fn scoped_repository_root(scope_root: &str, candidate: &str) -> Option<String> {
+    if candidate.is_empty() || candidate.len() > MAX_EXTERNAL_SESSION_ROOT_BYTES {
+        return None;
+    }
+    let candidate_path = Path::new(candidate);
+    if !candidate_path.is_absolute() {
+        return None;
+    }
+    let canonical = fs::canonicalize(candidate_path).ok()?;
+    if canonical.as_os_str() != candidate_path.as_os_str() || !canonical.starts_with(scope_root) {
+        return None;
+    }
+    if !fs::metadata(&canonical).ok()?.is_dir() {
+        return None;
+    }
+    Some(candidate.to_string())
 }
 
 fn find_codex_session_file(

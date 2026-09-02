@@ -1,5 +1,5 @@
-import { useLayoutEffect, type KeyboardEvent } from "react";
-import { ChevronDown, Folder } from "lucide-react";
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { ChevronDown, Folder, Search } from "lucide-react";
 import { useAgentPopover } from "./agentPopover";
 import { AgentProjectMenu } from "./AgentProjectMenu";
 import {
@@ -22,6 +22,7 @@ export interface AgentProjectScopeMenuProps {
 
 const UNKNOWN_SCOPE_LABEL = "Select…";
 const ITEM_SELECTOR = "[data-scope-item]:not(:disabled)";
+const MAX_PROJECT_FILTER_CHARS = 160;
 
 export function AgentProjectScopeMenu({
   disabled,
@@ -34,7 +35,10 @@ export function AgentProjectScopeMenu({
 }: AgentProjectScopeMenuProps) {
   const popover = useAgentPopover("start", disabled);
   const listId = `${id}-list`;
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
   const selected = entries.find((entry) => entry.value === value) ?? null;
+  const filteredEntries = useMemo(() => filterScopeEntries(entries, query), [entries, query]);
 
   const choose = (entry: AgentRailScopeEntry): void => {
     popover.hide(true);
@@ -65,6 +69,10 @@ export function AgentProjectScopeMenu({
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      if (event.target === searchRef.current && query !== "") {
+        setQuery("");
+        return;
+      }
       popover.hide(true);
       return;
     }
@@ -73,17 +81,14 @@ export function AgentProjectScopeMenu({
     popover.hide(false);
   };
 
-  const { open, popoverRef } = popover;
+  const { open } = popover;
   useLayoutEffect(() => {
-    if (!open) return;
-    const menu = popoverRef.current;
-    const current = menu?.querySelector<HTMLButtonElement>(`[data-value="${cssEscape(value)}"]`);
-    if (current !== null && current !== undefined) {
-      current.focus();
+    if (!open) {
+      setQuery("");
       return;
     }
-    focusScopeEdge(menu, "first");
-  }, [open, popoverRef, value]);
+    searchRef.current?.focus();
+  }, [open]);
 
   return (
     <div
@@ -123,7 +128,20 @@ export function AgentProjectScopeMenu({
           role="menu"
           style={popover.style}
         >
-          {entries.map((entry) => (
+          <label className="agent-scope-menu__search">
+            <Search aria-hidden="true" size={14} />
+            <input
+              aria-label="Search projects"
+              autoComplete="off"
+              maxLength={MAX_PROJECT_FILTER_CHARS}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              placeholder="Search projects"
+              ref={searchRef}
+              type="search"
+              value={query}
+            />
+          </label>
+          {filteredEntries.map((entry) => (
             <div className="agent-scope-menu__row" key={entry.value} role="none">
               <button
                 aria-checked={entry.value === value}
@@ -153,6 +171,9 @@ export function AgentProjectScopeMenu({
               )}
             </div>
           ))}
+          {filteredEntries.length === 0 && (
+            <p className="agent-menu__note agent-scope-menu__empty">No matching projects.</p>
+          )}
         </div>
       )}
     </div>
@@ -175,6 +196,10 @@ function moveScopeFocus(menu: HTMLElement, step: 1 | -1): void {
   const items = scopeItems(menu);
   if (items.length === 0) return;
   const current = items.findIndex((item) => item === document.activeElement);
+  if (current === -1) {
+    items[step === 1 ? 0 : items.length - 1]?.focus();
+    return;
+  }
   items[(current + step + items.length) % items.length]?.focus();
 }
 
@@ -190,7 +215,17 @@ function scopeItems(menu: HTMLElement): ReadonlyArray<HTMLButtonElement> {
   return [...menu.querySelectorAll<HTMLButtonElement>(ITEM_SELECTOR)];
 }
 
-function cssEscape(value: string): string {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
-  return value.replace(/["\\]/gu, "\\$&");
+function filterScopeEntries(
+  entries: ReadonlyArray<AgentRailScopeEntry>,
+  rawQuery: string,
+): ReadonlyArray<AgentRailScopeEntry> {
+  const query = rawQuery.slice(0, MAX_PROJECT_FILTER_CHARS).trim().toLocaleLowerCase();
+  if (query === "") return entries;
+  return entries.filter((entry) => {
+    const searchable =
+      entry.kind === "all"
+        ? entry.label
+        : `${entry.label}\n${entry.repositoryRoot}\n${entry.rootPath ?? ""}`;
+    return searchable.toLocaleLowerCase().includes(query);
+  });
 }

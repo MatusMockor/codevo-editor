@@ -126,6 +126,20 @@ describe("AgentTerminalSessionsPalette", () => {
     expect(host.textContent).toContain("No sessions match");
   });
 
+  it("labels and filters a session from a nested repository", async () => {
+    await render({
+      surface: surfaceFixture({
+        sessions: [sessionFixture({ cwd: `${ROOT}/packages/ebox-crm` })],
+      }),
+    });
+
+    expect(host.querySelector(".agent-terminal-sessions__repository")?.textContent).toBe(
+      "ebox-crm",
+    );
+    await type("packages/ebox-crm");
+    expect(host.querySelectorAll('[role="option"]')).toHaveLength(1);
+  });
+
   it("moves the selection with arrows and wraps at both ends", async () => {
     await render({});
 
