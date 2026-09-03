@@ -142,26 +142,18 @@ export function AgentModeView({
     onThreadStarted: navigation.selectStartedThread,
   });
   const submitComposer = useAgentLatestCallback(composer.submit);
-  const changeDangerousConfirmed = useAgentLatestCallback(
-    composer.composerProps.onDangerousConfirmedChange,
-  );
   const changeIsolation = useAgentLatestCallback(composer.composerProps.onIsolationChange);
   const changeLaunch = useAgentLatestCallback(composer.composerProps.onLaunchChange);
   const clearComposer = useAgentLatestCallback(composer.composerProps.onNewThread);
   const selectComposerRepository = useAgentLatestCallback(
     composer.composerProps.onSelectRepository,
   );
-  const changeUnsafeConfirmed = useAgentLatestCallback(
-    composer.composerProps.onUnsafeConfirmedChange,
-  );
   const composerProps = {
     ...composer.composerProps,
-    onDangerousConfirmedChange: changeDangerousConfirmed,
     onIsolationChange: changeIsolation,
     onLaunchChange: changeLaunch,
     onNewThread: clearComposer,
     onSelectRepository: selectComposerRepository,
-    onUnsafeConfirmedChange: changeUnsafeConfirmed,
   };
   const startNewThread = composer.startNewThread;
 

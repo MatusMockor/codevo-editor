@@ -41,7 +41,7 @@ describe("AgentLaunchControls", () => {
     });
 
     expect(trigger("agent-launch-model").textContent).toBe("Claude Opus 5");
-    expect(trigger("agent-launch-mode").textContent).toContain("Accept edits");
+    expect(trigger("agent-launch-mode").textContent).toContain("Auto-accept edits");
 
     open("agent-launch-model");
     expect(optionValues("agent-launch-model")).toEqual(["default", "fable", "opus", "sonnet"]);
@@ -49,9 +49,9 @@ describe("AgentLaunchControls", () => {
 
     open("agent-launch-mode");
     expect(options("agent-launch-mode").map((option) => optionLabel(option))).toEqual([
-      "Default permissions",
+      "Auto",
       "Plan mode",
-      "Accept edits",
+      "Auto-accept edits",
       "Full access",
     ]);
     expect(
@@ -128,7 +128,7 @@ describe("AgentLaunchControls", () => {
     }
     expect(trigger("agent-launch-model").textContent).toBe("Auto (Claude Code)");
     expect(trigger("agent-launch-effort").textContent).toBe("Default effort");
-    expect(trigger("agent-launch-mode").textContent).toBe("Default permissions");
+    expect(trigger("agent-launch-mode").textContent).toBe("Auto");
     const dividers = host.querySelectorAll(".agent-composer__divider");
     expect(dividers).toHaveLength(2);
     expect(dividers[0]?.getAttribute("aria-hidden")).toBe("true");
@@ -201,7 +201,7 @@ describe("AgentLaunchControls", () => {
     ]);
   });
 
-  it("tones the mode trigger and flags dangerous options in the list", () => {
+  it("tones plan mode but presents full access as a normal access choice", () => {
     renderControls({ provider: "claudeCode", model: "default", mode: "plan", effort: "default" });
     expect(trigger("agent-launch-mode").classList.contains("agent-picker__trigger--plan")).toBe(
       true,
@@ -209,15 +209,14 @@ describe("AgentLaunchControls", () => {
 
     renderControls({ provider: "codex", model: "default", mode: "dangerFullAccess" });
     expect(trigger("agent-launch-mode").classList.contains("agent-picker__trigger--danger")).toBe(
-      true,
+      false,
     );
 
     open("agent-launch-mode");
     const danger = options("agent-launch-mode").filter((option) =>
       option.classList.contains("agent-picker__option--danger"),
     );
-    expect(danger.map((option) => option.dataset.value)).toEqual(["dangerFullAccess"]);
-    expect(danger[0]?.querySelector(".agent-picker__warn")).not.toBeNull();
+    expect(danger).toHaveLength(0);
   });
 
   it("disables both pickers while a turn is dispatching", () => {
@@ -246,15 +245,12 @@ describe("AgentLaunchControls", () => {
     expect(trigger("agent-launch-mode").disabled).toBe(false);
   });
 
-  it("keeps dangerous confirmation inside the permission picker", () => {
-    const onConfirmedChange = vi.fn();
+  it("uses the access choice itself without a second confirmation", () => {
     renderControls(
       { provider: "claudeCode", model: "opus", mode: "acceptEdits", effort: "default" },
       undefined,
       false,
       null,
-      false,
-      onConfirmedChange,
     );
 
     open("agent-launch-mode");
@@ -266,14 +262,10 @@ describe("AgentLaunchControls", () => {
       undefined,
       false,
       null,
-      false,
-      onConfirmedChange,
     );
 
-    expect(host.textContent).not.toContain("Bypasses permission checks");
     open("agent-launch-mode");
-    expect(host.textContent).toContain("Bypasses permission checks");
-    expect(host.querySelector("input#agent-launch-danger-confirm")).not.toBeNull();
+    expect(host.querySelector("input#agent-launch-danger-confirm")).toBeNull();
   });
 
   function renderControls(
@@ -281,18 +273,14 @@ describe("AgentLaunchControls", () => {
     onLaunchChange: (next: AgentLaunchOptions) => void = () => undefined,
     disabled = false,
     providerManagement: AgentProviderManagementSurface | null = null,
-    dangerousConfirmed = false,
-    onDangerousConfirmedChange: (next: boolean) => void = () => undefined,
   ): void {
     act(() =>
       root.render(
         <AgentLaunchControls
           disabled={disabled}
-          dangerousConfirmed={dangerousConfirmed}
           favorites={NO_FAVORITES}
           launch={launch}
           onLaunchChange={onLaunchChange}
-          onDangerousConfirmedChange={onDangerousConfirmedChange}
           providerEnabled={{ claudeCode: true, codex: true }}
           providerManagement={providerManagement}
         />,

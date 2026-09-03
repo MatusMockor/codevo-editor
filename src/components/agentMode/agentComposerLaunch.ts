@@ -1,4 +1,4 @@
-import { defaultAgentLaunchOptions, type AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import { isTerminalAgentTurnStatus, type AgentThread } from "../../domain/agentThread";
 import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
@@ -18,6 +18,18 @@ export interface LaunchScope {
   readonly key: string;
   readonly rootKey: string;
   readonly seed: AgentLaunchOptions | null;
+}
+
+export function defaultAgentComposerLaunch(provider: AgentCliKind): AgentLaunchOptions {
+  if (provider === "claudeCode") {
+    return {
+      provider: "claudeCode",
+      model: "default",
+      mode: "bypassPermissions",
+      effort: "default",
+    };
+  }
+  return { provider: "codex", model: "default", mode: "dangerFullAccess" };
 }
 
 export function resolveLaunchScope(
@@ -42,14 +54,14 @@ export function resolveComposerLaunch(
   provider: AgentCliKind,
   lastUsedLaunch: (projectRootKey: string) => AgentLaunchOptions | null,
 ): AgentLaunchOptions {
-  if (scope === null) return defaultAgentLaunchOptions(provider);
+  if (scope === null) return defaultAgentComposerLaunch(provider);
   if (choice !== null && choice.key === scope.key && choice.launch.provider === provider) {
     return choice.launch;
   }
   if (scope.seed !== null && scope.seed.provider === provider) return scope.seed;
   const remembered = lastUsedLaunch(scope.rootKey);
   if (remembered !== null && remembered.provider === provider) return remembered;
-  return defaultAgentLaunchOptions(provider);
+  return defaultAgentComposerLaunch(provider);
 }
 
 export function agentLaunchKey(launch: AgentLaunchOptions): string {

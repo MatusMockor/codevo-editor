@@ -71,9 +71,9 @@ const CLAUDE_MODEL_TEXT: Record<ClaudeModelChoice, LaunchText> = {
 
 const CLAUDE_MODE_TEXT: Record<ClaudePermissionMode, LaunchText> = {
   default: {
-    label: "Default permissions",
-    meta: "default permissions",
-    hint: "Uses the permission mode your Claude CLI is configured to use.",
+    label: "Auto",
+    meta: "automatic access",
+    hint: "Uses the access mode configured in Claude CLI.",
   },
   plan: {
     label: "Plan mode",
@@ -81,8 +81,8 @@ const CLAUDE_MODE_TEXT: Record<ClaudePermissionMode, LaunchText> = {
     hint: "The agent plans the work and does not change files.",
   },
   acceptEdits: {
-    label: "Accept edits",
-    meta: "accept edits",
+    label: "Auto-accept edits",
+    meta: "auto-accept edits",
     hint: "File edits apply without asking; tools that still ask are denied, because the run has no input.",
   },
   bypassPermissions: {
@@ -150,9 +150,9 @@ const CODEX_MODEL_TEXT: Record<CodexModelChoice, LaunchText> = {
 
 const CODEX_MODE_TEXT: Record<CodexExecutionMode, LaunchText> = {
   default: {
-    label: "Default sandbox",
-    meta: "default sandbox",
-    hint: "Uses the sandbox your Codex CLI is configured to use.",
+    label: "Auto",
+    meta: "automatic access",
+    hint: "Uses the sandbox and approval policy configured in Codex CLI.",
   },
   readOnly: {
     label: "Read-only",
@@ -319,7 +319,6 @@ export function agentLaunchWithMode(launch: AgentLaunchOptions, value: string): 
 }
 
 export function agentLaunchTone(launch: AgentLaunchOptions): AgentLaunchTone {
-  if (agentLaunchIsDangerous(launch)) return "danger";
   if (launch.provider === "claudeCode" && launch.mode === "plan") return "plan";
   return null;
 }

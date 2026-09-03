@@ -67,23 +67,19 @@ function agentComposerControllerPropsEqual(
     left.providerEnabled === right.providerEnabled &&
     left.submissionBlocked === right.submissionBlocked &&
     left.submit === right.submit &&
-    leftProps.dangerousConfirmed === rightProps.dangerousConfirmed &&
     leftProps.dispatching === rightProps.dispatching &&
+    sameGuard(leftProps.guard, rightProps.guard) &&
     leftProps.isolation === rightProps.isolation &&
     leftProps.isolationReason === rightProps.isolationReason &&
     leftProps.launchProvider === rightProps.launchProvider &&
-    leftProps.unsafeConfirmed === rightProps.unsafeConfirmed &&
     leftProps.worktreeOnly === rightProps.worktreeOnly &&
     leftProps.worktreeOnlyReason === rightProps.worktreeOnlyReason &&
-    leftProps.onDangerousConfirmedChange === rightProps.onDangerousConfirmedChange &&
     leftProps.onIsolationChange === rightProps.onIsolationChange &&
     leftProps.onLaunchChange === rightProps.onLaunchChange &&
     leftProps.onNewThread === rightProps.onNewThread &&
     leftProps.onSelectRepository === rightProps.onSelectRepository &&
-    leftProps.onUnsafeConfirmedChange === rightProps.onUnsafeConfirmedChange &&
     sameComposerMode(leftProps.mode, rightProps.mode) &&
     sameComposerTarget(leftProps.target, rightProps.target) &&
-    sameGuard(leftProps.guard, rightProps.guard) &&
     agentLaunchOptionsEqual(leftProps.launch, rightProps.launch)
   );
 }

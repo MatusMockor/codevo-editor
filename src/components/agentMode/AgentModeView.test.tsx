@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { defaultAgentLaunchOptions } from "../../domain/agentLaunch";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { act, memo } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -20,6 +19,7 @@ import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import type { AgentTurnEvent } from "../../domain/agentThread";
 import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import { workbenchAgentCommands } from "../../application/workbenchAgentCommands";
+import { defaultAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
 import { WorkbenchFrameResponsiveContext } from "../workbenchFrameResponsiveContext";
 import type { ResponsivePanelRestore } from "../../domain/agentWorkbenchResponsiveLayout";
@@ -273,7 +273,7 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(false);
   });
 
-  it("defaults a dirty repository to local checkout and keeps the safety confirmation", () => {
+  it("defaults a dirty repository to local checkout without a second confirmation", () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({
       agents: surface({
@@ -294,11 +294,18 @@ describe("AgentModeView", () => {
     typePrompt("Fix the parser");
     submitForm();
 
-    expect(submitButton().disabled).toBe(true);
-    expect(startThread).not.toHaveBeenCalled();
+    expect(startThread).toHaveBeenCalledWith({
+      projectRootKey: ROOT,
+      repositoryRoot: ROOT,
+      prompt: "Fix the parser",
+      isolation: "in-place",
+      unsafeInPlaceConfirmationKey: "dirty-preview-key",
+      launch: defaultAgentComposerLaunch("claudeCode"),
+      dangerousLaunchConfirmed: true,
+    });
   });
 
-  it("blocks an unsafe in-place start until it is confirmed", () => {
+  it("does not render a separate unsafe checkout confirmation", () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({
       agents: surface({
@@ -315,11 +322,8 @@ describe("AgentModeView", () => {
 
     typePrompt("Fix the parser");
 
-    expect(submitButton().disabled).toBe(true);
-
-    toggleCheckbox("agent-unsafe-confirm", true);
-
     expect(submitButton().disabled).toBe(false);
+    expect(host.querySelector("#agent-unsafe-confirm")).toBeNull();
 
     submitForm();
 
@@ -329,8 +333,8 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: "dirty-preview-key",
-      launch: defaultAgentLaunchOptions("claudeCode"),
-      dangerousLaunchConfirmed: false,
+      launch: defaultAgentComposerLaunch("claudeCode"),
+      dangerousLaunchConfirmed: true,
     });
   });
 
@@ -348,8 +352,8 @@ describe("AgentModeView", () => {
       prompt: "Update the router",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
-      launch: defaultAgentLaunchOptions("claudeCode"),
-      dangerousLaunchConfirmed: false,
+      launch: defaultAgentComposerLaunch("claudeCode"),
+      dangerousLaunchConfirmed: true,
     });
   });
 
@@ -474,8 +478,8 @@ describe("AgentModeView", () => {
     expect(sendFollowUp).toHaveBeenCalledWith({
       threadId: "agt-1",
       prompt: "Also update the tests",
-      launch: defaultAgentLaunchOptions("claudeCode"),
-      dangerousLaunchConfirmed: false,
+      launch: defaultAgentComposerLaunch("claudeCode"),
+      dangerousLaunchConfirmed: true,
     });
     expect(promptField().value).toBe("");
   });
@@ -1065,8 +1069,8 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "worktree",
       unsafeInPlaceConfirmationKey: null,
-      launch: defaultAgentLaunchOptions("claudeCode"),
-      dangerousLaunchConfirmed: false,
+      launch: defaultAgentComposerLaunch("claudeCode"),
+      dangerousLaunchConfirmed: true,
     });
   });
 
@@ -1108,8 +1112,8 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
-      launch: defaultAgentLaunchOptions("claudeCode"),
-      dangerousLaunchConfirmed: false,
+      launch: defaultAgentComposerLaunch("claudeCode"),
+      dangerousLaunchConfirmed: true,
     });
   });
 
@@ -1272,8 +1276,8 @@ describe("AgentModeView", () => {
     render({ agents: surface({ agentCliKind: "codex" }) });
 
     expect(launchSelect("agent-launch-model").value).toBe("default");
-    expect(launchSelect("agent-launch-mode").value).toBe("default");
-    expect(host.textContent).toContain("Default sandbox");
+    expect(launchSelect("agent-launch-mode").value).toBe("dangerFullAccess");
+    expect(host.textContent).toContain("Full access");
   });
 
   it("drops a launch chosen for another project when the composer target changes", () => {
@@ -1313,18 +1317,14 @@ describe("AgentModeView", () => {
     expect(launchSelect("agent-launch-model").value).toBe("default");
   });
 
-  it("carries the launch and its confirmation into the start and forgets the confirmation", async () => {
+  it("carries full access into the start without a second confirmation", async () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({ agents: surface({ startThread }) });
 
-    chooseLaunch("agent-launch-mode", "bypassPermissions");
     typePrompt("Fix the parser");
 
-    expect(submitButton().disabled).toBe(true);
-
-    toggleCheckbox("agent-launch-danger-confirm", true);
-
     expect(submitButton().disabled).toBe(false);
+    expect(host.querySelector("#agent-launch-danger-confirm")).toBeNull();
 
     await submitFormAsync();
 
@@ -1342,22 +1342,18 @@ describe("AgentModeView", () => {
       },
       dangerousLaunchConfirmed: true,
     });
-    expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
     expect(submitButton().disabled).toBe(true);
   });
 
-  it("forgets the dangerous confirmation as soon as the launch changes", () => {
+  it("keeps the selected access mode when the model changes", () => {
     render();
 
-    chooseLaunch("agent-launch-mode", "bypassPermissions");
-    toggleCheckbox("agent-launch-danger-confirm", true);
-
-    expect(checkbox("agent-launch-danger-confirm").checked).toBe(true);
+    expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
 
     chooseLaunch("agent-launch-model", "opus");
 
-    act(() => pickerTrigger("agent-launch-mode").click());
-    expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
+    expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
+    expect(host.querySelector("#agent-launch-danger-confirm")).toBeNull();
   });
 
   it("carries the launch into a follow-up turn", async () => {
@@ -1372,8 +1368,13 @@ describe("AgentModeView", () => {
     expect(sendFollowUp).toHaveBeenCalledWith({
       threadId: "agt-1",
       prompt: "Also update the docs",
-      launch: { provider: "claudeCode", model: "sonnet", mode: "default", effort: "default" },
-      dangerousLaunchConfirmed: false,
+      launch: {
+        provider: "claudeCode",
+        model: "sonnet",
+        mode: "bypassPermissions",
+        effort: "default",
+      },
+      dangerousLaunchConfirmed: true,
     });
   });
 
@@ -1470,12 +1471,17 @@ describe("AgentModeView", () => {
     expect(sendFollowUp).toHaveBeenCalledWith({
       threadId: "agt-b",
       prompt: "Also update the docs",
-      launch: { provider: "claudeCode", model: "sonnet", mode: "default", effort: "default" },
-      dangerousLaunchConfirmed: false,
+      launch: {
+        provider: "claudeCode",
+        model: "sonnet",
+        mode: "bypassPermissions",
+        effort: "default",
+      },
+      dangerousLaunchConfirmed: true,
     });
   });
 
-  it("forgets the dangerous confirmation when the selected thread changes", () => {
+  it("keeps a thread's full-access mode without a confirmation control", () => {
     render({
       agents: surface({
         threads: [
@@ -1502,16 +1508,13 @@ describe("AgentModeView", () => {
     });
 
     click('[data-thread-id="agt-1"]');
-    toggleCheckbox("agent-launch-danger-confirm", true);
-    expect(checkbox("agent-launch-danger-confirm").checked).toBe(true);
-
     click('[data-thread-id="agt-2"]');
 
     expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
-    expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
+    expect(host.querySelector("#agent-launch-danger-confirm")).toBeNull();
   });
 
-  it("forgets the dangerous confirmation when the composer project changes", () => {
+  it("keeps remembered full access when the composer project changes", () => {
     render({
       agents: surface({
         lastUsedLaunch: () => ({
@@ -1524,14 +1527,10 @@ describe("AgentModeView", () => {
       projects: [activeProject(), backgroundProject()],
     });
 
-    toggleCheckbox("agent-launch-danger-confirm", true);
-    expect(checkbox("agent-launch-danger-confirm").checked).toBe(true);
-
     chooseScope(OTHER_ROOT, OTHER_ROOT);
 
     expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
-    act(() => pickerTrigger("agent-launch-mode").click());
-    expect(checkbox("agent-launch-danger-confirm").checked).toBe(false);
+    expect(host.querySelector("#agent-launch-danger-confirm")).toBeNull();
   });
 
   it("advances session timestamps on clock ticks without rerendering the column", () => {
@@ -2418,12 +2417,6 @@ describe("AgentModeView", () => {
     );
   }
 
-  function checkbox(id: string): HTMLInputElement {
-    const element = host.querySelector<HTMLInputElement>(`input#${id}`);
-    expect(element).not.toBeNull();
-    return element ?? document.createElement("input");
-  }
-
   function pickerTrigger(id: string): HTMLButtonElement {
     const element = host.querySelector<HTMLButtonElement>(`button#${id}`);
     expect(element).not.toBeNull();
@@ -2608,23 +2601,6 @@ describe("AgentModeView", () => {
     );
     expect(option).not.toBeNull();
     act(() => option?.click());
-  }
-
-  function toggleCheckbox(id: string, checked: boolean): void {
-    let element = host.querySelector<HTMLInputElement>(`input#${id}`);
-    if (element === null) {
-      const pickerId = id === "agent-unsafe-confirm" ? "agent-checkout" : "agent-launch-mode";
-      act(() => host.querySelector<HTMLButtonElement>(`button#${pickerId}`)?.click());
-      element = host.querySelector<HTMLInputElement>(`input#${id}`);
-    }
-    expect(element).not.toBeNull();
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")?.set?.call(
-        element,
-        checked,
-      );
-      element?.dispatchEvent(new Event("click", { bubbles: true }));
-    });
   }
 
   function submitForm(): void {

@@ -349,7 +349,7 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.prompt).toBe("");
   });
 
-  it("requires the unsafe in-place confirmation key and forwards it on start", async () => {
+  it("uses the current checkout choice as confirmation and forwards the safety key", async () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render(
       threadsSurfaceFixture({
@@ -365,29 +365,22 @@ describe("useAgentComposerState", () => {
       [projectFixture({ isolationPolicy: "in-place" })],
     );
     act(() => current().composer.composerProps.onPromptChange("Go"));
-    expect(current().composer.composerProps.submitBlocked).toBe(true);
-
-    act(() => current().composer.composerProps.onUnsafeConfirmedChange(true));
-    expect(current().composer.composerProps.unsafeConfirmed).toBe(true);
     expect(current().composer.composerProps.submitBlocked).toBe(false);
 
     act(() => current().composer.composerProps.onIsolationChange("worktree"));
     expect(current().composer.composerProps.isolation).toBe("worktree");
-    expect(current().composer.composerProps.unsafeConfirmed).toBe(false);
 
     act(() => current().composer.composerProps.onIsolationChange("in-place"));
-    act(() => current().composer.composerProps.onUnsafeConfirmedChange(true));
     await act(async () => {
       current().composer.composerProps.onSubmit({
         launch: defaultAgentLaunchOptions("claudeCode"),
-        dangerousLaunchConfirmed: false,
+        dangerousLaunchConfirmed: true,
       });
     });
 
     expect(startThread).toHaveBeenCalledWith(
       expect.objectContaining({ isolation: "in-place", unsafeInPlaceConfirmationKey: "confirm-1" }),
     );
-    expect(current().composer.composerProps.unsafeConfirmed).toBe(false);
   });
 
   it("defaults a new thread to the local checkout under automatic policy", () => {
@@ -402,13 +395,14 @@ describe("useAgentComposerState", () => {
     });
 
     render(agents, [projectFixture({ isolationPolicy: "auto" })]);
+    act(() => current().composer.composerProps.onPromptChange("Go"));
 
     expect(current().composer.composerProps.isolation).toBe("in-place");
     expect(current().composer.composerProps.guard).toEqual({
       kind: "unsafe",
       reasons: ["dirty-tree"],
     });
-    expect(current().composer.composerProps.submitBlocked).toBe(true);
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
   });
 
   it("honors an explicit workspace worktree policy", () => {
@@ -435,7 +429,7 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.worktreeOnlyReason).not.toBeNull();
   });
 
-  it("seeds the launch from the remembered project launch and resets the dangerous confirmation on change", () => {
+  it("seeds the launch from the remembered project launch and lets the user change it", () => {
     const remembered: AgentLaunchOptions = {
       provider: "claudeCode",
       model: "default",
@@ -446,16 +440,12 @@ describe("useAgentComposerState", () => {
 
     expect(current().composer.composerProps.launch).toEqual(remembered);
 
-    act(() => current().composer.composerProps.onDangerousConfirmedChange(true));
-    expect(current().composer.composerProps.dangerousConfirmed).toBe(true);
-
     act(() =>
       current().composer.composerProps.onLaunchChange(defaultAgentLaunchOptions("claudeCode")),
     );
     expect(current().composer.composerProps.launch).toEqual(
       defaultAgentLaunchOptions("claudeCode"),
     );
-    expect(current().composer.composerProps.dangerousConfirmed).toBe(false);
   });
 
   it("clears the selected thread and unsafe confirmation when starting fresh", () => {

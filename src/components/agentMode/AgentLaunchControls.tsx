@@ -5,8 +5,6 @@ import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
   agentLaunchAccess,
-  agentLaunchDangerConfirmLabel,
-  agentLaunchDangerNotice,
   agentLaunchEffortChoices,
   agentLaunchEffortHint,
   agentLaunchEffortValue,
@@ -28,7 +26,6 @@ import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
 const MODEL_ID = "agent-launch-model";
 const EFFORT_ID = "agent-launch-effort";
 const MODE_ID = "agent-launch-mode";
-const DANGER_ID = "agent-launch-danger-confirm";
 
 export interface AgentLaunchControlsProps {
   readonly launch: AgentLaunchOptions;
@@ -36,26 +33,18 @@ export interface AgentLaunchControlsProps {
   readonly favorites: AgentModelFavorites;
   readonly providerEnabled?: Readonly<Record<AgentCliKind, boolean>> | null;
   readonly providerManagement?: AgentProviderManagementSurface | null;
-  readonly dangerousConfirmed?: boolean;
   onLaunchChange(next: AgentLaunchOptions): void;
-  onDangerousConfirmedChange?(confirmed: boolean): void;
 }
 
 export function AgentLaunchControls({
   disabled,
-  dangerousConfirmed = false,
   favorites,
   launch,
   onLaunchChange,
-  onDangerousConfirmedChange = () => undefined,
   providerEnabled = null,
   providerManagement = null,
 }: AgentLaunchControlsProps) {
   const modeChoices = agentLaunchModeChoices(launch.provider);
-  const dangerousChoice = modeChoices.find((choice) => choice.tone === "danger") ?? null;
-  const dangerousLaunch =
-    dangerousChoice === null ? null : agentLaunchWithMode(launch, dangerousChoice.value);
-  const dangerNotice = dangerousLaunch === null ? null : agentLaunchDangerNotice(dangerousLaunch);
   return (
     <div className="agent-composer__launch">
       <AgentModelPicker
@@ -98,19 +87,7 @@ export function AgentLaunchControls({
       <AgentLaunchDivider />
       <AgentPickerMenu
         align="start"
-        confirmation={
-          dangerNotice === null
-            ? null
-            : {
-                id: DANGER_ID,
-                value: dangerousChoice?.value ?? launch.mode,
-                checked: dangerousConfirmed,
-                disabled,
-                label: agentLaunchDangerConfirmLabel(dangerousLaunch ?? launch),
-                description: dangerNotice,
-                onChange: onDangerousConfirmedChange,
-              }
-        }
+        confirmation={null}
         describedBy={`${MODE_ID}-hint`}
         disabled={disabled}
         icon={accessIcon(agentLaunchAccess(launch))}

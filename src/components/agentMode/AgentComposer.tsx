@@ -6,11 +6,7 @@ import {
 } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentContextCompactionOffer } from "../../domain/agentContextCompaction";
-import {
-  agentLaunchIsDangerous,
-  defaultAgentLaunchOptions,
-  type AgentLaunchOptions,
-} from "../../domain/agentLaunch";
+import { agentLaunchIsDangerous, type AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
   MAX_AGENT_TASK_PROMPT_BYTES,
   type AgentCliKind,
@@ -18,9 +14,10 @@ import {
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
 import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
+import { defaultAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentLaunchControls } from "./AgentLaunchControls";
 import { agentLaunchMetaLabel } from "./agentLaunchPresentation";
-import { formatAgentPromptBytes, inPlaceGuardReasonLabel } from "./agentModePresentation";
+import { formatAgentPromptBytes } from "./agentModePresentation";
 import { AgentPickerMenu } from "./AgentPickerMenu";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
 import { agentSubmitShortcut } from "./agentSubmitShortcut";
@@ -71,10 +68,8 @@ export interface AgentComposerProps {
   readonly worktreeOnly: boolean;
   readonly worktreeOnlyReason: string | null;
   readonly guard: InPlaceDispatchGuard;
-  readonly unsafeConfirmed: boolean;
   readonly launch: AgentLaunchOptions;
   readonly launchProvider: AgentCliKind;
-  readonly dangerousConfirmed: boolean;
   readonly dispatching: boolean;
   readonly submitBlocked: boolean;
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
@@ -82,9 +77,7 @@ export interface AgentComposerProps {
   onSelectRepository(repositoryRoot: string): void;
   onPromptChange(prompt: string): void;
   onIsolationChange(isolation: AgentTaskIsolation): void;
-  onUnsafeConfirmedChange(confirmed: boolean): void;
   onLaunchChange(launch: AgentLaunchOptions): void;
-  onDangerousConfirmedChange(confirmed: boolean): void;
   onNewThread(): void;
   onOpenProviderSettings(): void;
   onSubmit(submission: AgentComposerSubmission): void;
@@ -93,16 +86,13 @@ export interface AgentComposerProps {
 
 export function AgentComposer({
   compactionOffer = null,
-  dangerousConfirmed,
   dispatching,
-  guard,
   isolation,
   isolationReason,
   launch,
   launchProvider,
   modelFavoritesPersistence = null,
   mode,
-  onDangerousConfirmedChange,
   onIsolationChange,
   onLaunchChange,
   onNewThread,
@@ -111,14 +101,12 @@ export function AgentComposer({
   onSelectRepository,
   onSubmit,
   onCompactContext,
-  onUnsafeConfirmedChange,
   prompt,
   promptBytes,
   providerEnabled,
   providerManagement = null,
   submitBlocked,
   target,
-  unsafeConfirmed,
   worktreeOnly,
   worktreeOnlyReason,
 }: AgentComposerProps) {
@@ -130,20 +118,15 @@ export function AgentComposer({
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason = composerTargetReason(followUp, target);
   const effectiveLaunch =
-    launch.provider === launchProvider ? launch : defaultAgentLaunchOptions(launchProvider);
+    launch.provider === launchProvider ? launch : defaultAgentComposerLaunch(launchProvider);
   const dangerousLaunch = agentLaunchIsDangerous(effectiveLaunch);
-  const dangerousLaunchConfirmed = dangerousLaunch && dangerousConfirmed;
   const providerReason =
     providerEnabled[effectiveLaunch.provider] === false
       ? "Enable an agent provider in Settings before starting a turn."
       : null;
   const allProvidersDisabled = !providerEnabled.claudeCode && !providerEnabled.codex;
   const blocked =
-    submitBlocked ||
-    providerReason !== null ||
-    blockedReason !== null ||
-    targetReason !== null ||
-    (dangerousLaunch && !dangerousLaunchConfirmed);
+    submitBlocked || providerReason !== null || blockedReason !== null || targetReason !== null;
   const shortcut = agentSubmitShortcut();
   const caption = composerCaption({
     blockedReason,
@@ -156,12 +139,10 @@ export function AgentComposer({
 
   const launchControls = (
     <AgentLaunchControls
-      dangerousConfirmed={dangerousConfirmed}
       disabled={dispatching || allProvidersDisabled}
       favorites={favorites}
       launch={effectiveLaunch}
       onLaunchChange={onLaunchChange}
-      onDangerousConfirmedChange={onDangerousConfirmedChange}
       providerEnabled={providerEnabled}
       providerManagement={providerManagement}
     />
@@ -171,11 +152,8 @@ export function AgentComposer({
     <>
       <AgentComposerCheckout
         disabled={dispatching || worktreeOnly || allProvidersDisabled}
-        guard={guard}
         isolation={isolation}
         onIsolationChange={onIsolationChange}
-        onUnsafeConfirmedChange={onUnsafeConfirmedChange}
-        unsafeConfirmed={unsafeConfirmed}
       />
       <AgentComposerRepository
         disabled={dispatching || allProvidersDisabled}
@@ -188,7 +166,7 @@ export function AgentComposer({
   const footer = followUp ? <AgentComposerLockedCheckout isolation={isolation} /> : targetControls;
 
   const dispatch = (): void => {
-    onSubmit({ launch: effectiveLaunch, dangerousLaunchConfirmed });
+    onSubmit({ launch: effectiveLaunch, dangerousLaunchConfirmed: dangerousLaunch });
   };
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
@@ -226,7 +204,10 @@ export function AgentComposer({
               className="agent-compaction-offer__action"
               disabled={blocked}
               onClick={() =>
-                onCompactContext({ launch: effectiveLaunch, dangerousLaunchConfirmed })
+                onCompactContext({
+                  launch: effectiveLaunch,
+                  dangerousLaunchConfirmed: dangerousLaunch,
+                })
               }
               type="button"
             >
@@ -350,60 +331,26 @@ function AgentComposerBytes({ promptBytes }: { readonly promptBytes: number }) {
 
 function AgentComposerCheckout({
   disabled,
-  guard,
   isolation,
   onIsolationChange,
-  onUnsafeConfirmedChange,
-  unsafeConfirmed,
 }: {
   readonly isolation: AgentTaskIsolation;
   readonly disabled: boolean;
-  readonly guard: InPlaceDispatchGuard;
-  readonly unsafeConfirmed: boolean;
   onIsolationChange(isolation: AgentTaskIsolation): void;
-  onUnsafeConfirmedChange(confirmed: boolean): void;
 }) {
-  const unsafeGuard = guard.kind === "unsafe";
-  const unsafeSelected = isolation === "in-place" && unsafeGuard;
-  const options = unsafeGuard
-    ? CHECKOUT_OPTIONS.map((option) =>
-        option.value === "in-place"
-          ? agentPickerOption(
-              option.value,
-              option.label,
-              `Runs in the project's own checkout; ${guard.reasons
-                .map(inPlaceGuardReasonLabel)
-                .join(", ")}.`,
-              "danger",
-            )
-          : option,
-      )
-    : CHECKOUT_OPTIONS;
   return (
     <AgentPickerMenu
       align="start"
-      confirmation={
-        unsafeGuard
-          ? {
-              id: "agent-unsafe-confirm",
-              value: "in-place",
-              checked: unsafeConfirmed,
-              disabled,
-              label: "Accept the risk and run locally",
-              description: "The agent can overwrite uncommitted or unsaved work.",
-              onChange: onUnsafeConfirmedChange,
-            }
-          : null
-      }
+      confirmation={null}
       describedBy={null}
       disabled={disabled}
       icon={isolationGlyph(isolation)}
       id={CHECKOUT_ID}
       label="Checkout for this thread"
       onChange={(value) => changeIsolation(value, onIsolationChange)}
-      options={options}
+      options={CHECKOUT_OPTIONS}
       prefix={null}
-      tone={unsafeSelected ? "danger" : null}
+      tone={null}
       value={isolation}
       variant="ghost"
     />

@@ -300,26 +300,17 @@ describe("AgentComposer", () => {
     expect(submitButton().getAttribute("aria-keyshortcuts")).toMatch(/\+Enter$/);
   });
 
-  it("requires an explicit confirmation for an unsafe in-place run", () => {
-    const onUnsafeConfirmedChange = vi.fn();
+  it("shows checkout choices without a second confirmation step", () => {
     render({
       isolation: "in-place",
       guard: { kind: "unsafe", reasons: ["dirty-tree", "dirty-editors"] },
-      onUnsafeConfirmedChange,
-      submitBlocked: true,
     });
 
-    expect(host.textContent).not.toContain("Running in place can overwrite your work");
-    expect(submitButton().disabled).toBe(true);
+    expect(submitButton().disabled).toBe(false);
 
     openPicker(CHECKOUT_ID);
-    expect(host.textContent).toContain("the working tree has uncommitted changes");
-    expect(host.textContent).toContain("unsaved editors belong to this repository");
-    expect(host.textContent).toContain("Accept the risk and run locally");
-
-    toggleCheckbox("agent-unsafe-confirm", true);
-
-    expect(onUnsafeConfirmedChange).toHaveBeenCalledWith(true);
+    expect(host.textContent).not.toContain("Accept the risk and run locally");
+    expect(host.querySelector("input#agent-unsafe-confirm")).toBeNull();
   });
 
   it("hides the unsafe confirmation for a worktree run and in follow-up mode", () => {
@@ -452,39 +443,26 @@ describe("AgentComposer", () => {
     submitForm();
 
     expect(onSubmit).toHaveBeenCalledWith({
-      launch: { provider: "codex", model: "default", mode: "default" },
-      dangerousLaunchConfirmed: false,
+      launch: { provider: "codex", model: "default", mode: "dangerFullAccess" },
+      dangerousLaunchConfirmed: true,
     });
   });
 
-  it("blocks a dangerous launch until it is confirmed for this submission", () => {
+  it("treats choosing full access as the confirmation for this submission", () => {
     const onSubmit = vi.fn();
-    const onDangerousConfirmedChange = vi.fn();
     const dangerous = {
       provider: "claudeCode",
       model: "opus",
       mode: "bypassPermissions",
       effort: "default",
     } as const;
-    render({ launch: dangerous, onDangerousConfirmedChange, onSubmit, prompt: "Fix it" });
+    render({ launch: dangerous, onSubmit, prompt: "Fix it" });
 
     expect(host.querySelector(".agent-composer__danger")).toBeNull();
-    expect(submitButton().disabled).toBe(true);
-
-    submitForm();
-    pressAccelerator();
-
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(submitButton().disabled).toBe(false);
 
     openPicker("agent-launch-mode");
-    expect(host.textContent).toContain("Bypasses permission checks");
-    toggleCheckbox("agent-launch-danger-confirm", true);
-
-    expect(onDangerousConfirmedChange).toHaveBeenCalledWith(true);
-
-    render({ dangerousConfirmed: true, launch: dangerous, onSubmit, prompt: "Fix it" });
-
-    expect(submitButton().disabled).toBe(false);
+    expect(host.querySelector("input#agent-launch-danger-confirm")).toBeNull();
 
     submitForm();
 
@@ -497,7 +475,6 @@ describe("AgentComposer", () => {
   it("never claims a confirmation for a launch that is not dangerous", () => {
     const onSubmit = vi.fn();
     render({
-      dangerousConfirmed: true,
       launch: { provider: "codex", model: "gpt-5.4", mode: "workspaceWrite" },
       launchProvider: "codex",
       onSubmit,
@@ -556,30 +533,10 @@ describe("AgentComposer", () => {
     act(() => root.render(<AgentComposer {...defaultProps()} {...overrides} />));
   }
 
-  function checkbox(id: string): HTMLInputElement {
-    const element = host.querySelector<HTMLInputElement>(`input#${id}`);
-    expect(element).not.toBeNull();
-    return element ?? document.createElement("input");
-  }
-
   function submitButton(): HTMLButtonElement {
     const element = host.querySelector<HTMLButtonElement>('button[type="submit"]');
     expect(element).not.toBeNull();
     return element ?? document.createElement("button");
-  }
-
-  function toggleCheckbox(id: string, checked: boolean): void {
-    if (host.querySelector(`input#${id}`) === null) {
-      openPicker(id === "agent-unsafe-confirm" ? CHECKOUT_ID : "agent-launch-mode");
-    }
-    const element = checkbox(id);
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")?.set?.call(
-        element,
-        checked,
-      );
-      element.dispatchEvent(new Event("click", { bubbles: true }));
-    });
   }
 
   function trigger(id: string): HTMLButtonElement {
@@ -691,10 +648,8 @@ function defaultProps(): AgentComposerProps {
     worktreeOnly: false,
     worktreeOnlyReason: null,
     guard: { kind: "safe" },
-    unsafeConfirmed: false,
     launch: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
     launchProvider: "claudeCode",
-    dangerousConfirmed: false,
     dispatching: false,
     submitBlocked: false,
     providerEnabled: { claudeCode: true, codex: true },
@@ -702,9 +657,7 @@ function defaultProps(): AgentComposerProps {
     onSelectRepository: () => undefined,
     onPromptChange: () => undefined,
     onIsolationChange: () => undefined,
-    onUnsafeConfirmedChange: () => undefined,
     onLaunchChange: () => undefined,
-    onDangerousConfirmedChange: () => undefined,
     onNewThread: () => undefined,
     onOpenProviderSettings: () => undefined,
     onSubmit: () => undefined,

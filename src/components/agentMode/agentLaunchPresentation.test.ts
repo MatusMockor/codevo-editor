@@ -125,9 +125,9 @@ describe("agentLaunchPresentation", () => {
         mode: "default",
         effort: "default",
       }),
-    ).toBe("Default permissions");
+    ).toBe("Auto");
     expect(agentLaunchModeLabel({ provider: "codex", model: "default", mode: "default" })).toBe(
-      "Default sandbox",
+      "Auto",
     );
     expect(agentLaunchModeHint({ provider: "codex", model: "default", mode: "default" })).toContain(
       "configured",
@@ -147,13 +147,13 @@ describe("agentLaunchPresentation", () => {
     expect(agentLaunchModelLabel(claude("sonnet"))).toBe("Claude Sonnet 5");
     expect(agentLaunchModelMeta(claude("opus"))).toBe("opus");
     expect(agentLaunchModeChoices("claudeCode").map((choice) => choice.label)).toEqual([
-      "Default permissions",
+      "Auto",
       "Plan mode",
-      "Accept edits",
+      "Auto-accept edits",
       "Full access",
     ]);
     expect(agentLaunchModeChoices("codex").map((choice) => choice.label)).toEqual([
-      "Default sandbox",
+      "Auto",
       "Read-only",
       "Workspace write",
       "Full access",
@@ -190,13 +190,13 @@ describe("agentLaunchPresentation", () => {
         mode: "acceptEdits",
         effort: "default",
       }),
-    ).toBe("opus · accept edits");
+    ).toBe("opus · auto-accept edits");
     expect(
       agentLaunchMetaLabel({ provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" }),
     ).toBe("gpt-5.5 · workspace write");
   });
 
-  it("tones plan and dangerous modes apart from the ordinary ones", () => {
+  it("tones plan mode while keeping access choices visually neutral", () => {
     expect(
       agentLaunchTone({ provider: "claudeCode", model: "opus", mode: "plan", effort: "default" }),
     ).toBe("plan");
@@ -207,9 +207,9 @@ describe("agentLaunchPresentation", () => {
         mode: "bypassPermissions",
         effort: "default",
       }),
-    ).toBe("danger");
+    ).toBeNull();
     expect(agentLaunchTone({ provider: "codex", model: "default", mode: "dangerFullAccess" })).toBe(
-      "danger",
+      null,
     );
     expect(agentLaunchTone({ provider: "codex", model: "default", mode: "readOnly" })).toBeNull();
   });
@@ -321,7 +321,7 @@ describe("agentLaunchPresentation", () => {
         mode: "acceptEdits",
         effort: "default",
       }),
-    ).toBe("opus · accept edits");
+    ).toBe("opus · auto-accept edits");
     expect(
       agentLaunchMetaLabel({
         provider: "claudeCode",
@@ -329,7 +329,7 @@ describe("agentLaunchPresentation", () => {
         mode: "acceptEdits",
         effort: "xhigh",
       }),
-    ).toBe("opus · accept edits · xhigh");
+    ).toBe("opus · auto-accept edits · xhigh");
     expect(
       agentLaunchMetaLabel({ provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" }),
     ).toBe("gpt-5.5 · workspace write");

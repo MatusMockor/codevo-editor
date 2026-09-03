@@ -12,7 +12,6 @@ import type {
   AgentComposerSubmission,
 } from "./AgentComposer";
 import {
-  agentLaunchKey,
   resolveComposerLaunch,
   resolveLaunchScope,
   type IsolationChoice,
@@ -129,9 +128,7 @@ export function useAgentComposerControllerState({
 }: AgentComposerStateOptions): AgentComposerControllerState {
   const [selection, setSelection] = useState<ComposerSelection | null>(null);
   const [isolationChoice, setIsolationChoice] = useState<IsolationChoice | null>(null);
-  const [unsafeConfirmed, setUnsafeConfirmed] = useState<string | null>(null);
   const [launchChoice, setLaunchChoice] = useState<LaunchChoice | null>(null);
-  const [dangerousConfirmed, setDangerousConfirmed] = useState(false);
 
   const composerProjects = useMemo(
     () => composerProjectOptions(groups, projects),
@@ -186,7 +183,8 @@ export function useAgentComposerControllerState({
       ? ({ kind: "safe" } as const)
       : (preview?.inPlaceGuard ?? { kind: "safe" as const });
   const confirmationKey = preview?.confirmationKey ?? null;
-  const confirmed = confirmationKey !== null && unsafeConfirmed === confirmationKey;
+  const unsafeInPlaceConfirmationKey =
+    isolation === "in-place" && guard.kind === "unsafe" ? confirmationKey : null;
   const targetRootKey = target?.projectRootKey ?? null;
   const launchScope = useMemo(
     () => resolveLaunchScope(selectedThread, targetRootKey),
@@ -199,10 +197,6 @@ export function useAgentComposerControllerState({
     () => resolveComposerLaunch(launchChoice, launchScope, agentCliKind, lastUsedLaunch),
     [agentCliKind, lastUsedLaunch, launchChoice, launchScope],
   );
-  const launchKey = `${launchScope?.key ?? ""}|${agentLaunchKey(composerLaunch)}`;
-  useEffect(() => {
-    setDangerousConfirmed(false);
-  }, [launchKey]);
 
   const submissionBlocked =
     agents.dispatching ||
@@ -210,7 +204,7 @@ export function useAgentComposerControllerState({
     (selectedThread === null &&
       (target === null ||
         (preview?.repositoryStatus !== undefined && preview.repositoryStatus.kind !== "ready") ||
-        (isolation === "in-place" && guard.kind === "unsafe" && !confirmed)));
+        (isolation === "in-place" && guard.kind === "unsafe" && confirmationKey === null)));
 
   const startNewThread = useCallback(
     (projectRootKey: string, repositoryRoot: string) => {
@@ -231,7 +225,6 @@ export function useAgentComposerControllerState({
               generation: project.generation,
             },
       );
-      setUnsafeConfirmed(null);
     },
     [composerProjects, onClearSelectedThread],
   );
@@ -239,7 +232,6 @@ export function useAgentComposerControllerState({
   const clearSelection = useCallback(() => {
     onClearSelectedThread();
     setSelection(null);
-    setUnsafeConfirmed(null);
   }, [onClearSelectedThread]);
 
   const sendFollowUp = agents.sendFollowUp;
@@ -250,7 +242,6 @@ export function useAgentComposerControllerState({
 
   const submit = useCallback(
     async (prompt: string, submission: AgentComposerSubmission) => {
-      setDangerousConfirmed(false);
       if (submissionBlocked) return false;
       const authority = submissionAuthority;
       if (authority === null) return false;
@@ -270,7 +261,7 @@ export function useAgentComposerControllerState({
             repositoryRoot: authority.repositoryRoot,
             prompt,
             isolation,
-            unsafeInPlaceConfirmationKey: confirmed ? confirmationKey : null,
+            unsafeInPlaceConfirmationKey,
             launch: submission.launch,
             dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
           });
@@ -278,15 +269,13 @@ export function useAgentComposerControllerState({
           if (!composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority)) {
             return false;
           }
-          setUnsafeConfirmed(null);
           onThreadStarted(started.threadId);
           return true;
         }
       }
     },
     [
-      confirmationKey,
-      confirmed,
+      unsafeInPlaceConfirmationKey,
       isolation,
       onThreadStarted,
       sendFollowUp,
@@ -313,7 +302,6 @@ export function useAgentComposerControllerState({
         ownerId: project.ownerId,
         generation: project.generation,
       });
-      setUnsafeConfirmed(null);
     },
     [composerProjects, target],
   );
@@ -322,7 +310,6 @@ export function useAgentComposerControllerState({
     (next: AgentTaskIsolation) => {
       if (composerRoot === null) return;
       setIsolationChoice({ repositoryRoot: composerRoot, isolation: next });
-      setUnsafeConfirmed(null);
     },
     [composerRoot],
   );
@@ -335,13 +322,7 @@ export function useAgentComposerControllerState({
     [launchScope],
   );
 
-  const changeUnsafeConfirmed = useCallback(
-    (next: boolean) => setUnsafeConfirmed(next ? confirmationKey : null),
-    [confirmationKey],
-  );
-
   const composerProps: AgentComposerControllerProps = {
-    dangerousConfirmed,
     dispatching: agents.dispatching,
     guard,
     isolation,
@@ -350,14 +331,11 @@ export function useAgentComposerControllerState({
     launch: composerLaunch,
     launchProvider: agentCliKind,
     mode: composerMode,
-    onDangerousConfirmedChange: setDangerousConfirmed,
     onIsolationChange: changeIsolation,
     onLaunchChange: changeLaunch,
     onNewThread: clearSelection,
     onSelectRepository: selectRepository,
-    onUnsafeConfirmedChange: changeUnsafeConfirmed,
     target: composerTargetView(composerProjects, target),
-    unsafeConfirmed: confirmed,
     worktreeOnly,
     worktreeOnlyReason,
   };
