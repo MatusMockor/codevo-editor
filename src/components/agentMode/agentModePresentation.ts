@@ -255,6 +255,15 @@ export function agentFollowUpBlockedReason(
 export function agentTurnProjection(events: ReadonlyArray<AgentTurnEvent>): AgentTurnProjection {
   const hiddenCount = Math.max(0, events.length - MAX_RENDERED_EVENTS_PER_TURN);
   const calls = toolCallIndex(events);
+  const visibleAssistantText = new Set(
+    events
+      .slice(hiddenCount)
+      .filter(
+        (event): event is Extract<AgentTurnEvent, { kind: "assistantText" }> =>
+          event.kind === "assistantText",
+      )
+      .map((event) => normalizedAgentResponse(event.text)),
+  );
   const items: AgentTurnItem[] = [];
   const rawLines: AgentRawLine[] = [];
   const toolItemByToolId = new Map<string, number>();
@@ -262,11 +271,22 @@ export function agentTurnProjection(events: ReadonlyArray<AgentTurnEvent>): Agen
   for (let offset = hiddenCount; offset < events.length; offset += 1) {
     const event = events[offset];
     if (event === undefined) continue;
+    if (
+      event.kind === "result" &&
+      !event.isError &&
+      visibleAssistantText.has(normalizedAgentResponse(event.text))
+    ) {
+      continue;
+    }
     const key = `e${offset}`;
     appendTurnItem({ calls, event, items, key, rawLines, toolItemByToolId });
   }
 
   return { items, rawLines, hiddenCount };
+}
+
+function normalizedAgentResponse(text: string): string {
+  return text.replace(/\r\n?/g, "\n").trim();
 }
 
 export function agentTurnSubagentSummary(

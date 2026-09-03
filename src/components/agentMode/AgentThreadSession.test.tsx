@@ -251,6 +251,57 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("Waiting for output…");
   });
 
+  it("scrolls to the latest message when a new turn starts", () => {
+    const first = turn("agt-1-t1", "First", { kind: "exited", exitCode: 0 }, []);
+    render({ thread: threadView({ turns: [first] }) });
+    const scroll = scrollContainer({ scrollHeight: 900, clientHeight: 300, scrollTop: 120 });
+
+    const next = threadView({
+      turns: [first, turn("agt-1-t2", "Second", { kind: "running" }, [])],
+    });
+    render({ thread: next });
+
+    expect(scroll.scrollTop).toBe(900);
+  });
+
+  it("keeps following streamed output while already at the bottom", () => {
+    const running = turn("agt-1-t1", "First", { kind: "running" }, []);
+    render({ thread: threadView({ turns: [running] }) });
+    const scroll = scrollContainer({ scrollHeight: 900, clientHeight: 300, scrollTop: 600 });
+    act(() => scroll.dispatchEvent(new Event("scroll")));
+
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "First", { kind: "running" }, [
+            { kind: "assistantText", text: "Working" },
+          ]),
+        ],
+      }),
+    });
+
+    expect(scroll.scrollTop).toBe(900);
+  });
+
+  it("does not pull the reader away from older output during the same turn", () => {
+    const running = turn("agt-1-t1", "First", { kind: "running" }, []);
+    render({ thread: threadView({ turns: [running] }) });
+    const scroll = scrollContainer({ scrollHeight: 900, clientHeight: 300, scrollTop: 100 });
+    act(() => scroll.dispatchEvent(new Event("scroll")));
+
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "First", { kind: "running" }, [
+            { kind: "assistantText", text: "Working" },
+          ]),
+        ],
+      }),
+    });
+
+    expect(scroll.scrollTop).toBe(100);
+  });
+
   it("renders the failure message of a failed turn", () => {
     render({
       thread: threadView({ status: { kind: "failed", message: "Agent CLI exited with code 1." } }),
@@ -621,6 +672,21 @@ describe("AgentThreadSession", () => {
       writable: true,
     });
     return scrolled;
+  }
+
+  function scrollContainer(dimensions: {
+    readonly scrollHeight: number;
+    readonly clientHeight: number;
+    readonly scrollTop: number;
+  }): HTMLDivElement {
+    const scroll = host.querySelector<HTMLDivElement>(".agent-session__scroll");
+    expect(scroll).not.toBeNull();
+    Object.defineProperties(scroll, {
+      scrollHeight: { configurable: true, value: dimensions.scrollHeight },
+      clientHeight: { configurable: true, value: dimensions.clientHeight },
+      scrollTop: { configurable: true, value: dimensions.scrollTop, writable: true },
+    });
+    return scroll!;
   }
 
   function withFind(overrides: Partial<AgentThreadSessionProps>): Partial<AgentThreadSessionProps> {

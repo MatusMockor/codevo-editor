@@ -820,28 +820,44 @@ fn executable_digest_cancellable(
     size: u64,
     cancelled: impl Fn() -> bool,
 ) -> Result<[u8; 32], String> {
-    let mut reader = descriptor
-        .try_clone()
-        .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
-    reader
-        .seek(SeekFrom::Start(0))
-        .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
     let mut hasher = Sha256::new();
-    let mut bounded = reader.take(size.saturating_add(1));
     let mut buffer = [0_u8; 64 * 1024];
-    loop {
+    let limit = size.saturating_add(1);
+    let mut offset = 0_u64;
+    while offset < limit {
         if cancelled() {
             return Err("Provider executable validation was cancelled.".to_string());
         }
-        let count = bounded
-            .read(&mut buffer)
+        let remaining = usize::try_from((limit - offset).min(buffer.len() as u64))
+            .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
+        let count = read_executable_at(descriptor, &mut buffer[..remaining], offset)
             .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
         if count == 0 {
             break;
         }
         hasher.update(&buffer[..count]);
+        offset = offset.saturating_add(count as u64);
     }
     Ok(hasher.finalize().into())
+}
+
+#[cfg(unix)]
+fn read_executable_at(descriptor: &fs::File, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    descriptor.read_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn read_executable_at(descriptor: &fs::File, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    descriptor.seek_read(buffer, offset)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn read_executable_at(descriptor: &fs::File, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
+    let mut reader = descriptor.try_clone()?;
+    reader.seek(SeekFrom::Start(offset))?;
+    reader.read(buffer)
 }
 
 #[cfg(unix)]

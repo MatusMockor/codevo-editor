@@ -262,8 +262,7 @@ export function useAgentComposerControllerState({
             launch: submission.launch,
             dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
           });
-          if (!sent) return false;
-          return composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority);
+          return sent;
         }
         case "new": {
           const started = await startThread({

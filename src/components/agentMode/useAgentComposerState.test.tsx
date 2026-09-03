@@ -312,7 +312,7 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.launch.provider).toBe("claudeCode");
   });
 
-  it("keeps a pending follow-up when the selected thread owner is replaced", async () => {
+  it("keeps a successfully dispatched follow-up cleared when its owner is rebound", async () => {
     let resolveFollowUp: ((value: boolean) => void) | null = null;
     const pendingFollowUp = new Promise<boolean>((resolve) => {
       resolveFollowUp = resolve;
@@ -346,7 +346,7 @@ describe("useAgentComposerState", () => {
       await pendingFollowUp;
     });
 
-    expect(current().composer.composerProps.prompt).toBe("Keep follow-up");
+    expect(current().composer.composerProps.prompt).toBe("");
   });
 
   it("requires the unsafe in-place confirmation key and forwards it on start", async () => {

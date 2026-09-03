@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentTurn } from "../../domain/agentThread";
 import {
@@ -73,6 +73,11 @@ function AgentThreadSessionBody({
   const record = thread.thread;
   const threadId = record.threadId;
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const pinnedToLatestRef = useRef(true);
+  const renderedTurnRef = useRef<{ readonly threadId: string; readonly turnId: string | null }>({
+    threadId,
+    turnId: null,
+  });
   const hits = findHits ?? NO_FIND_HITS;
   const query = findQuery ?? "";
   const activeHit = findHitIndex === undefined ? null : (hits[findHitIndex] ?? null);
@@ -94,6 +99,36 @@ function AgentThreadSessionBody({
     const target = revealTarget(container, reveal, activeHit);
     target?.scrollIntoView?.({ block: "center" });
   }, [activeHit, reveal]);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (container === null) return;
+    const updatePinnedState = () => {
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      pinnedToLatestRef.current = distanceFromBottom <= 32;
+    };
+    container.addEventListener("scroll", updatePinnedState, { passive: true });
+    return () => container.removeEventListener("scroll", updatePinnedState);
+  }, [threadId]);
+
+  const lastTurn = record.turns[record.turns.length - 1] ?? null;
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    if (container === null) return;
+    const previous = renderedTurnRef.current;
+    const newTurn = previous.threadId !== threadId || previous.turnId !== lastTurn?.turnId;
+    renderedTurnRef.current = { threadId, turnId: lastTurn?.turnId ?? null };
+    if (!newTurn && !pinnedToLatestRef.current) return;
+    container.scrollTop = container.scrollHeight;
+    pinnedToLatestRef.current = true;
+  }, [
+    lastTurn?.events.length,
+    lastTurn?.status.kind,
+    lastTurn?.turnId,
+    record.updatedAtEpochMs,
+    threadId,
+  ]);
 
   const highlightFor = (turnIdentity: string): AgentTurnHighlight | null => {
     if (query === "") return null;

@@ -206,6 +206,33 @@ describe("agentModePresentation", () => {
     expect(projection.rawLines.map((line) => line.raw)).toEqual(["warn"]);
   });
 
+  it("does not render a successful result that repeats the assistant response", () => {
+    const projection = agentTurnProjection([
+      { kind: "assistantText", text: "The answer is ready.\r\n" },
+      { kind: "result", text: "The answer is ready.\n", isError: false, usage: null },
+    ]);
+
+    expect(projection.items).toHaveLength(1);
+    expect(projection.items[0]).toMatchObject({
+      kind: "assistantText",
+      paragraphs: ["The answer is ready."],
+    });
+  });
+
+  it("keeps distinct and failed results visible", () => {
+    const projection = agentTurnProjection([
+      { kind: "assistantText", text: "Partial answer" },
+      { kind: "result", text: "Complete answer", isError: false, usage: null },
+      { kind: "result", text: "Partial answer", isError: true, usage: null },
+    ]);
+
+    expect(projection.items.map((item) => item.kind)).toEqual([
+      "assistantText",
+      "result",
+      "result",
+    ]);
+  });
+
   it("names an orphan tool result from the call that fell outside the window", () => {
     const events: AgentTurnEvent[] = [
       { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },

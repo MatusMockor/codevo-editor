@@ -9,11 +9,16 @@ import {
 } from "./startupShell";
 
 describe("createStartupShell", () => {
-  it("renders a neutral activity skeleton without claiming an active product mode", () => {
+  it("renders a centered branded loader without a fake application rail", () => {
     const shell = createStartupShell();
 
-    expect(shell.querySelector('[role="status"]')?.textContent).toBe("Loading Codevo…");
-    expect(shell.querySelector("nav")?.getAttribute("aria-label")).toBe("Primary activity loading");
+    expect(shell.querySelector('[role="status"]')?.getAttribute("aria-label")).toBe(
+      "Loading Codevo",
+    );
+    expect(shell.querySelector("[data-startup-loader]")).not.toBeNull();
+    expect(shell.querySelector("[data-startup-spinner]")).not.toBeNull();
+    expect(shell.querySelector("nav")).toBeNull();
+    expect(shell.querySelector("strong")?.textContent).toBe("CODEVO");
     expect(shell.textContent).not.toContain("Agent");
     expect(shell.textContent).not.toContain("AI");
     expect(shell.querySelector('[aria-current="page"]')).toBeNull();

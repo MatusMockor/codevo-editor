@@ -5,6 +5,23 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.11] - 2026-09-03
+
+### Changed
+
+- Replaced the startup corner placeholder with a centered branded loading indicator.
+- Keep an active conversation pinned to its newest turn and streamed output unless the
+  reader deliberately scrolls back.
+
+### Fixed
+
+- Prevent successful follow-ups from restoring already submitted prompt text after a
+  legitimate project-owner rebind.
+- Render identical Claude assistant and final-result events only once while retaining
+  distinct or failed result messages.
+- Prevent concurrent provider executable validation from corrupting the shared read
+  position and falsely reporting an installed CLI as missing.
+
 ## [0.2.0-beta.10] - 2026-09-03
 
 ### Changed

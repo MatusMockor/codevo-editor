@@ -23,6 +23,44 @@ fn effective_path() -> String {
     env::var("PATH").expect("test PATH")
 }
 
+#[test]
+fn executable_validation_does_not_mutate_the_shared_descriptor_cursor() {
+    let cli = executable("exit 0");
+    let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
+    let mut cursor_observer = identity.descriptor.try_clone().expect("descriptor clone");
+    cursor_observer
+        .seek(SeekFrom::Start(3))
+        .expect("set shared cursor");
+
+    assert!(identity.retained_is_current());
+    assert_eq!(cursor_observer.stream_position().expect("cursor"), 3);
+
+    fs::remove_file(cli).expect("cleanup");
+}
+
+#[test]
+fn concurrent_executable_validations_do_not_interfere() {
+    let cli = executable(&format!("# {}\nexit 0", "x".repeat(8 * 1024 * 1024)));
+    let identity = executable_identity(cli.to_str().expect("path")).expect("identity");
+    let barrier = Arc::new(std::sync::Barrier::new(8));
+    let validations = (0..8)
+        .map(|_| {
+            let identity = identity.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                identity.retained_is_current()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    assert!(validations
+        .into_iter()
+        .all(|validation| validation.join().expect("validation thread")));
+
+    fs::remove_file(cli).expect("cleanup");
+}
+
 fn provider_plan(
     cli_path: &Path,
     intent: AgentProviderProcessIntent,

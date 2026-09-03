@@ -2,26 +2,36 @@ export function createStartupShell(): HTMLElement {
   const shell = document.createElement("main");
   shell.setAttribute("aria-label", "Codevo Editor starting");
   shell.style.cssText =
-    "display:grid;grid-template-columns:52px 1fr;min-height:100vh;background:#111418;color:#d5d9e2;font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+    "display:grid;place-items:center;min-height:100vh;overflow:hidden;background:radial-gradient(circle at 50% 46%,#1d2430 0,#13171d 30%,#0c0f13 72%);color:#dce3ee;font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
 
-  const rail = document.createElement("nav");
-  rail.setAttribute("aria-label", "Primary activity loading");
-  rail.style.cssText =
-    "display:flex;flex-direction:column;align-items:center;gap:12px;padding:14px 0;border-right:1px solid #2a303a;background:#0b0d10";
-  const brand = document.createElement("strong");
-  brand.textContent = "C";
-  brand.title = "Codevo";
-  const activityPlaceholder = document.createElement("span");
-  activityPlaceholder.setAttribute("aria-hidden", "true");
-  activityPlaceholder.style.cssText = "width:22px;height:22px;border-radius:5px;background:#20252d";
-  rail.append(brand, activityPlaceholder);
+  const styles = document.createElement("style");
+  styles.textContent =
+    "@keyframes codevo-startup-spin{to{transform:rotate(360deg)}}@keyframes codevo-startup-pulse{50%{transform:scale(.96);opacity:.78}}";
 
   const loading = document.createElement("section");
   loading.setAttribute("aria-live", "polite");
   loading.setAttribute("role", "status");
-  loading.style.cssText = "display:grid;place-items:center;color:#aeb6c4";
-  loading.textContent = "Loading Codevo…";
-  shell.append(rail, loading);
+  loading.setAttribute("aria-label", "Loading Codevo");
+  loading.setAttribute("data-startup-loader", "");
+  loading.style.cssText =
+    "display:grid;place-items:center;gap:18px;filter:drop-shadow(0 18px 38px rgba(0,0,0,.36))";
+
+  const mark = document.createElement("div");
+  mark.setAttribute("aria-hidden", "true");
+  mark.style.cssText =
+    "position:relative;display:grid;place-items:center;width:54px;height:54px;border:1px solid #343c49;border-radius:16px;background:linear-gradient(145deg,#232a35,#141920);box-shadow:inset 0 1px 0 rgba(255,255,255,.05);font-size:19px;font-weight:700;letter-spacing:-.04em;animation:codevo-startup-pulse 1.8s ease-in-out infinite";
+  mark.textContent = "C";
+  const ring = document.createElement("span");
+  ring.setAttribute("data-startup-spinner", "");
+  ring.style.cssText =
+    "position:absolute;inset:-7px;border:2px solid transparent;border-top-color:#8ab4f8;border-right-color:#8ab4f855;border-radius:50%;animation:codevo-startup-spin .9s linear infinite";
+  mark.append(ring);
+
+  const brand = document.createElement("strong");
+  brand.style.cssText = "font-size:13px;font-weight:600;letter-spacing:.08em;color:#aeb8c7";
+  brand.textContent = "CODEVO";
+  loading.append(mark, brand);
+  shell.append(styles, loading);
   return shell;
 }
 
