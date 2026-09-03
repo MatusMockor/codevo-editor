@@ -372,5 +372,10 @@ function turn(
 }
 
 function usage(inputTokens: number, outputTokens: number): AgentTurnEvent {
-  return { kind: "result", text: "", isError: false, usage: { inputTokens, outputTokens } };
+  return {
+    kind: "result",
+    text: "",
+    isError: false,
+    usage: { inputTokens, outputTokens, contextTokens: inputTokens },
+  };
 }

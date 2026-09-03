@@ -42,10 +42,14 @@ describe("TauriExternalSessionGateway", () => {
       });
     const gateway = new TauriExternalSessionGateway(invokeCommand, available);
 
-    const snapshot = await gateway.listExternalSessions({ repositoryRoot: "/repo" });
+    const snapshot = await gateway.listExternalSessions({
+      projectRoot: "/repo",
+      repositoryRoot: "/repo",
+    });
     const preview = await gateway.previewExternalSession({
       provider: "claudeCode",
       sessionId: SESSION_ID,
+      projectRoot: "/repo",
       repositoryRoot: "/repo",
     });
 
@@ -53,10 +57,20 @@ describe("TauriExternalSessionGateway", () => {
     expect(preview.exchanges).toEqual([{ role: "user", text: "hello" }]);
     expect(preview.exchangesTruncated).toBe(true);
     expect(invokeCommand.mock.calls).toEqual([
-      ["list_external_agent_sessions", { request: { repositoryRoot: "/repo" } }],
+      [
+        "list_external_agent_sessions",
+        { request: { projectRoot: "/repo", repositoryRoot: "/repo" } },
+      ],
       [
         "preview_external_agent_session",
-        { request: { provider: "claudeCode", sessionId: SESSION_ID, repositoryRoot: "/repo" } },
+        {
+          request: {
+            provider: "claudeCode",
+            sessionId: SESSION_ID,
+            projectRoot: "/repo",
+            repositoryRoot: "/repo",
+          },
+        },
       ],
     ]);
   });
@@ -65,10 +79,14 @@ describe("TauriExternalSessionGateway", () => {
     const invokeCommand = vi.fn<InvokeExternalSessionCommand>();
     const gateway = new TauriExternalSessionGateway(invokeCommand, unavailable);
 
-    const snapshot = await gateway.listExternalSessions({ repositoryRoot: "/repo" });
+    const snapshot = await gateway.listExternalSessions({
+      projectRoot: "/repo",
+      repositoryRoot: "/repo",
+    });
     const preview = await gateway.previewExternalSession({
       provider: "codex",
       sessionId: SESSION_ID,
+      projectRoot: "/repo",
       repositoryRoot: "/repo",
     });
 
@@ -87,13 +105,14 @@ describe("TauriExternalSessionGateway", () => {
     const invokeCommand = vi.fn<InvokeExternalSessionCommand>();
     const gateway = new TauriExternalSessionGateway(invokeCommand, unavailable);
 
-    await expect(gateway.listExternalSessions({ repositoryRoot: "relative" })).rejects.toThrow(
-      TypeError,
-    );
+    await expect(
+      gateway.listExternalSessions({ projectRoot: "/repo", repositoryRoot: "relative" }),
+    ).rejects.toThrow(TypeError);
     await expect(
       gateway.previewExternalSession({
         provider: "codex",
         sessionId: "../../etc/passwd",
+        projectRoot: "/repo",
         repositoryRoot: "/repo",
       }),
     ).rejects.toThrow(TypeError);
@@ -106,7 +125,9 @@ describe("TauriExternalSessionGateway", () => {
       .mockResolvedValue({ sessions: [summary({ cwd: "/other" })], skipped: 0, truncated: false });
     const gateway = new TauriExternalSessionGateway(invokeCommand, available);
 
-    await expect(gateway.listExternalSessions({ repositoryRoot: "/repo" })).rejects.toThrow(Error);
+    await expect(
+      gateway.listExternalSessions({ projectRoot: "/repo", repositoryRoot: "/repo" }),
+    ).rejects.toThrow(Error);
   });
 
   it("rejects a preview that answers with a different session identity", async () => {
@@ -123,6 +144,7 @@ describe("TauriExternalSessionGateway", () => {
       gateway.previewExternalSession({
         provider: "claudeCode",
         sessionId: SESSION_ID,
+        projectRoot: "/repo",
         repositoryRoot: "/repo",
       }),
     ).rejects.toThrow(Error);
@@ -135,7 +157,7 @@ describe("TauriExternalSessionGateway", () => {
     const gateway = new TauriExternalSessionGateway(invokeCommand, available);
 
     const failure = await gateway
-      .listExternalSessions({ repositoryRoot: "/repo" })
+      .listExternalSessions({ projectRoot: "/repo", repositoryRoot: "/repo" })
       .catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(Error);
@@ -150,6 +172,7 @@ describe("TauriExternalSessionGateway", () => {
       gateway.previewExternalSession({
         provider: "codex",
         sessionId: SESSION_ID,
+        projectRoot: "/repo",
         repositoryRoot: "/repo",
       }),
     ).rejects.toThrow("The external agent session request failed.");

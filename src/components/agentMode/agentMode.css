@@ -1236,6 +1236,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 4px;
   padding-right: 4px;
   color: var(--agent-text-subtle);
   font-size: var(--agent-fs-xs);
@@ -1502,6 +1503,71 @@
     transparent,
     color-mix(in srgb, var(--agent-canvas) 94%, transparent) 46%
   );
+}
+
+.agent-compaction-offer {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  border-radius: var(--agent-radius-lg);
+  background: var(--agent-raised);
+  box-shadow: inset 0 0 0 1px var(--agent-hairline-strong);
+  padding: 9px 10px 9px 13px;
+}
+
+.agent-compaction-offer__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-compaction-offer__copy strong {
+  color: var(--agent-text-strong);
+  font-size: var(--agent-fs-sm);
+}
+
+.agent-compaction-offer__copy span {
+  overflow: hidden;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-compaction-offer__action,
+.agent-compaction-offer__dismiss {
+  border: 0;
+  border-radius: var(--agent-radius-md);
+  background: var(--agent-hover);
+  color: var(--agent-text);
+  cursor: pointer;
+}
+
+.agent-compaction-offer__action {
+  box-shadow: inset 0 0 0 1px var(--agent-hairline-strong);
+  font-size: var(--agent-fs-sm);
+  font-weight: 600;
+  padding: 6px 10px;
+}
+
+.agent-compaction-offer__dismiss {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+
+.agent-compaction-offer__action:hover:not(:disabled),
+.agent-compaction-offer__dismiss:hover {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+}
+
+.agent-compaction-offer__action:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .agent-composer__box {
@@ -1937,6 +2003,65 @@
   min-width: 0;
 }
 
+.agent-work {
+  min-width: 0;
+  border-bottom: 1px solid var(--agent-hairline);
+  padding-bottom: 8px;
+}
+
+.agent-work__summary {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  color: var(--agent-text-muted);
+  cursor: pointer;
+  font-size: var(--agent-fs-sm);
+  list-style: none;
+  padding: 5px 0;
+}
+
+.agent-work__summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-work__title {
+  color: var(--agent-text-strong);
+  font-weight: 600;
+}
+
+.agent-work__counts {
+  overflow: hidden;
+  color: var(--agent-text-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-work__chevron {
+  transition: transform var(--agent-motion-select) var(--ease-standard);
+}
+
+.agent-work[open] .agent-work__chevron {
+  transform: rotate(180deg);
+}
+
+.agent-work__events {
+  display: grid;
+  gap: 8px;
+  padding: 7px 0 2px 16px;
+}
+
+.agent-compaction-event {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-left: 2px solid var(--agent-accent);
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-sm);
+  padding: 6px 10px;
+}
+
 .agent-subagents {
   display: flex;
   align-items: center;
@@ -1986,6 +2111,71 @@
   display: grid;
   gap: 8px;
   max-width: 68ch;
+}
+
+.agent-message-actions {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+}
+
+.agent-message-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text-subtle);
+  cursor: pointer;
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+  transition:
+    background var(--agent-motion-hover) var(--ease-standard),
+    color var(--agent-motion-hover) var(--ease-standard),
+    opacity var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-prompt:hover .agent-message-copy,
+.agent-prompt:focus-within .agent-message-copy,
+.agent-text:hover .agent-message-copy,
+.agent-text:focus-within .agent-message-copy,
+.agent-finale:hover .agent-message-copy,
+.agent-finale:focus-within .agent-message-copy,
+.agent-message-copy:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-message-copy:hover,
+.agent-message-copy:focus-visible {
+  background: var(--agent-hover);
+  color: var(--agent-text-strong);
+  outline: none;
+}
+
+.agent-message-copy:focus-visible {
+  box-shadow: 0 0 0 1px var(--agent-accent);
+}
+
+.agent-message-copy--copied {
+  color: var(--agent-ok);
+  opacity: 1;
+}
+
+.agent-message-copy--failed {
+  color: var(--agent-danger);
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .agent-message-copy {
+    opacity: 0.72;
+    pointer-events: auto;
+  }
 }
 
 .agent-text__paragraph {

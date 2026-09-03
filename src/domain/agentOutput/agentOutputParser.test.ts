@@ -102,7 +102,7 @@ describe("agent output parser fixtures", () => {
         kind: "result",
         text: "done",
         isError: false,
-        usage: { inputTokens: 58, outputTokens: 163 },
+        usage: { inputTokens: 58, outputTokens: 163, contextTokens: 64_935 },
       },
     ]);
     expect(parsed.reportedSessionIds).toEqual([CLAUDE_SESSION_ID]);
@@ -113,7 +113,12 @@ describe("agent output parser fixtures", () => {
 
     expect(parsed.events).toEqual([
       { kind: "assistantText", text: "hello" },
-      { kind: "result", text: "hello", isError: false, usage: { inputTokens: 2, outputTokens: 4 } },
+      {
+        kind: "result",
+        text: "hello",
+        isError: false,
+        usage: { inputTokens: 2, outputTokens: 4, contextTokens: 32_591 },
+      },
     ]);
     expect(parsed.reportedSessionIds).toEqual([CLAUDE_SESSION_ID]);
   });
@@ -139,7 +144,7 @@ describe("agent output parser fixtures", () => {
         kind: "result",
         text: "",
         isError: false,
-        usage: { inputTokens: 49_996, outputTokens: 314 },
+        usage: { inputTokens: 49_996, outputTokens: 314, contextTokens: 49_996 },
       },
     ]);
     expect(parsed.reportedSessionIds).toEqual([CODEX_SESSION_ID]);
@@ -156,7 +161,7 @@ describe("agent output parser fixtures", () => {
         kind: "result",
         text: "",
         isError: false,
-        usage: { inputTokens: 19_096, outputTokens: 5 },
+        usage: { inputTokens: 19_096, outputTokens: 5, contextTokens: 19_096 },
       },
     ]);
     expect(parsed.reportedSessionIds).toEqual([CODEX_SESSION_ID]);

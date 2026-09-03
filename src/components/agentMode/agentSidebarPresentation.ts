@@ -52,7 +52,7 @@ export type AgentRailScopeEntry =
 export type AgentRailProjectScopeEntry = Extract<AgentRailScopeEntry, { kind: "repository" }>;
 
 export type AgentProjectMenuCommand =
-  "trust" | "release" | "reveal" | "copyPath" | "filterToProject" | "terminalSessions";
+  "trust" | "close" | "release" | "reveal" | "copyPath" | "filterToProject" | "terminalSessions";
 
 export interface AgentProjectMenuTarget {
   readonly projectRootKey: string;
@@ -359,6 +359,8 @@ export function agentProjectMenuEntries(
   }
   if (entry.origin === "closed-tab-live-tasks") {
     entries.push(projectMenuEntry("release", "Release project", "release", false));
+  } else if (entry.rootPath !== null) {
+    entries.push(projectMenuEntry("close", "Close project", "close", false));
   }
   entries.push(projectMenuEntry("filter", filterScopeLabel(), "filterToProject", scoped));
   entries.push(

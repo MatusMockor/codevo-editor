@@ -57,6 +57,14 @@ describe("AgentUsagePanel", () => {
                     resetsAtEpochMs: null,
                     resetsLabel: "Sep 2 at 10:40pm",
                   },
+                  {
+                    id: "seven_day_overage_included",
+                    label: "Weekly Fable limit",
+                    usedPercent: 27,
+                    windowDurationMinutes: 10_080,
+                    resetsAtEpochMs: NOW + 120_000,
+                    resetsLabel: null,
+                  },
                 ],
               },
             },
@@ -93,9 +101,10 @@ describe("AgentUsagePanel", () => {
     ).toEqual(["Codex subscription limits", "Claude Code subscription limits"]);
     expect(host.textContent).toContain("Claude CodeUpdated just now");
     expect(host.textContent).toContain("Current session6%Resets Sep 2 at 10:40pm");
+    expect(host.textContent).toContain("Weekly Fable limit27%Resets in 2m");
     expect(host.textContent).toContain("Codex · Weekly limit11%Resets in 1m");
     expect(host.textContent).toContain("Local activity");
-    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2);
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(3);
   });
 
   it("keeps empty local activity quiet and technical details collapsed", () => {
@@ -228,7 +237,14 @@ function thread(
         status: { kind: "exited", exitCode: 0 },
         startedAtEpochMs,
         endedAtEpochMs: startedAtEpochMs + 1_000,
-        events: [{ kind: "result", text: "done", isError: false, usage }],
+        events: [
+          {
+            kind: "result",
+            text: "done",
+            isError: false,
+            usage: usage === null ? null : { ...usage, contextTokens: usage.inputTokens },
+          },
+        ],
         eventsTruncated: false,
         lastStatusSequence: 1,
         lastOutputSequence: 1,

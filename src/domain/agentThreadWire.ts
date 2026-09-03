@@ -164,7 +164,17 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
         usage:
           event.usage === null
             ? null
-            : { inputTokens: event.usage.inputTokens, outputTokens: event.usage.outputTokens },
+            : {
+                inputTokens: event.usage.inputTokens,
+                outputTokens: event.usage.outputTokens,
+                contextTokens: event.usage.contextTokens,
+              },
+      };
+    case "contextCompaction":
+      return {
+        kind: event.kind,
+        beforeTokens: event.beforeTokens,
+        afterTokens: event.afterTokens,
       };
     case "error":
       return { kind: event.kind, message: event.message };
@@ -475,6 +485,13 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
         isError: booleanFlag(event.isError, `${path}.isError`),
         usage: parseUsage(event.usage, `${path}.usage`),
       };
+    case "contextCompaction":
+      exactKeys(event, ["kind", "beforeTokens", "afterTokens"], path);
+      return {
+        kind,
+        beforeTokens: optionalUnsignedSafeInteger(event.beforeTokens, `${path}.beforeTokens`),
+        afterTokens: optionalUnsignedSafeInteger(event.afterTokens, `${path}.afterTokens`),
+      };
     case "error":
       exactKeys(event, ["kind", "message"], path);
       return { kind, message: eventText(event.message, `${path}.message`) };
@@ -494,10 +511,14 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
 function parseUsage(value: unknown, path: string): AgentTurnUsage | null {
   if (value === null) return null;
   const usage = record(value, path);
-  exactKeys(usage, ["inputTokens", "outputTokens"], path);
+  boundedKeys(usage, ["inputTokens", "outputTokens"], ["contextTokens"], path);
   return {
     inputTokens: unsignedSafeInteger(usage.inputTokens, `${path}.inputTokens`),
     outputTokens: unsignedSafeInteger(usage.outputTokens, `${path}.outputTokens`),
+    contextTokens:
+      usage.contextTokens === undefined
+        ? null
+        : optionalUnsignedSafeInteger(usage.contextTokens, `${path}.contextTokens`),
   };
 }
 
@@ -522,6 +543,7 @@ function turnEventKind(value: unknown, path: string): AgentTurnEvent["kind"] {
     value !== "toolCall" &&
     value !== "toolResult" &&
     value !== "result" &&
+    value !== "contextCompaction" &&
     value !== "error" &&
     value !== "unknownLine"
   ) {

@@ -103,6 +103,9 @@ function itemEvents(
 ): CodexItemEvents {
   if (item.type === "agent_message") return messageEvents("assistantText", item.text, completed);
   if (item.type === "reasoning") return messageEvents("reasoning", item.text, completed);
+  if (item.type === "context_compaction" || item.type === "contextCompaction") {
+    return compactionEvents(item, completed, state);
+  }
   const itemId = safeIdentifier(item.id, MAX_AGENT_TOOL_ID_BYTES);
   if (itemId === null) return NO_ITEM_EVENTS;
   if (item.type === "command_execution") return commandEvents(item, itemId, completed, state);
@@ -111,6 +114,26 @@ function itemEvents(
   if (item.type === "web_search") return webSearchEvents(item, itemId, state);
   if (item.type === "error") return errorItemEvents(item, itemId, state);
   return NO_ITEM_EVENTS;
+}
+
+function compactionEvents(
+  item: Record<string, unknown>,
+  completed: boolean,
+  state: ReadonlySet<string>,
+): CodexItemEvents {
+  if (!completed) return NO_ITEM_EVENTS;
+  const itemId = safeIdentifier(item.id, MAX_AGENT_TOOL_ID_BYTES);
+  if (itemId !== null && state.has(itemId)) return NO_ITEM_EVENTS;
+  return {
+    events: [
+      {
+        kind: "contextCompaction",
+        beforeTokens: tokenCount(item.pre_tokens ?? item.preTokens),
+        afterTokens: tokenCount(item.post_tokens ?? item.postTokens),
+      },
+    ],
+    emittedItemId: itemId,
+  };
 }
 
 function messageEvents(
@@ -244,7 +267,7 @@ function parseUsage(value: unknown): AgentTurnUsage | null {
   const inputTokens = tokenCount(usage.input_tokens);
   const outputTokens = tokenCount(usage.output_tokens);
   if (inputTokens === null || outputTokens === null) return null;
-  return { inputTokens, outputTokens };
+  return { inputTokens, outputTokens, contextTokens: inputTokens };
 }
 
 function tokenCount(value: unknown): number | null {

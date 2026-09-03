@@ -2,6 +2,7 @@ import { memo } from "react";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentCliKind } from "../../domain/agentTask";
+import type { AgentContextCompactionOffer } from "../../domain/agentContextCompaction";
 import { agentLaunchOptionsEqual } from "../../domain/agentLaunch";
 import { AgentComposer } from "./AgentComposer";
 import {
@@ -11,6 +12,7 @@ import {
 } from "./useAgentComposerState";
 
 export interface AgentComposerControllerProps {
+  readonly compactionOffer?: AgentContextCompactionOffer | null;
   readonly composerProps: AgentComposerPresentation;
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
   readonly providerManagement: AgentProviderManagementSurface;
@@ -21,6 +23,7 @@ export interface AgentComposerControllerProps {
 }
 
 export const AgentComposerController = memo(function AgentComposerController({
+  compactionOffer = null,
   composerProps,
   modelFavoritesPersistence = null,
   onOpenProviderSettings,
@@ -34,11 +37,16 @@ export const AgentComposerController = memo(function AgentComposerController({
     submissionBlocked,
     submit,
   });
+  const compactContext = (submission: Parameters<typeof submit>[1]): void => {
+    void submit("/compact", submission);
+  };
   return (
     <AgentComposer
       {...controlledProps}
+      compactionOffer={compactionOffer}
       modelFavoritesPersistence={modelFavoritesPersistence}
       onOpenProviderSettings={onOpenProviderSettings}
+      onCompactContext={compactContext}
       providerEnabled={providerEnabled}
       providerManagement={providerManagement}
     />
@@ -52,6 +60,7 @@ function agentComposerControllerPropsEqual(
   const leftProps = left.composerProps;
   const rightProps = right.composerProps;
   return (
+    left.compactionOffer?.key === right.compactionOffer?.key &&
     left.modelFavoritesPersistence === right.modelFavoritesPersistence &&
     left.onOpenProviderSettings === right.onOpenProviderSettings &&
     left.providerManagement === right.providerManagement &&

@@ -28,24 +28,36 @@ function summary(overrides: Record<string, unknown> = {}): Record<string, unknow
 
 describe("tauriExternalSessionIpcContract requests", () => {
   it("validates the list and preview request shapes", () => {
-    expect(validateExternalSessionListRequest({ repositoryRoot: "/repo" })).toEqual({
+    expect(
+      validateExternalSessionListRequest({ projectRoot: "/repo", repositoryRoot: "/repo" }),
+    ).toEqual({
+      projectRoot: "/repo",
       repositoryRoot: "/repo",
     });
     expect(
       validateExternalSessionPreviewRequest({
         provider: "codex",
         sessionId: SESSION_ID,
+        projectRoot: "/repo",
         repositoryRoot: "/repo",
       }),
-    ).toEqual({ provider: "codex", sessionId: SESSION_ID, repositoryRoot: "/repo" });
+    ).toEqual({
+      provider: "codex",
+      sessionId: SESSION_ID,
+      projectRoot: "/repo",
+      repositoryRoot: "/repo",
+    });
   });
 
   it("refuses a relative root, an unknown provider and a malformed session id", () => {
-    expect(() => validateExternalSessionListRequest({ repositoryRoot: "repo" })).toThrow(TypeError);
+    expect(() =>
+      validateExternalSessionListRequest({ projectRoot: "/repo", repositoryRoot: "repo" }),
+    ).toThrow(TypeError);
     expect(() =>
       validateExternalSessionPreviewRequest({
         provider: "vscode" as never,
         sessionId: SESSION_ID,
+        projectRoot: "/repo",
         repositoryRoot: "/repo",
       }),
     ).toThrow(TypeError);
@@ -53,6 +65,7 @@ describe("tauriExternalSessionIpcContract requests", () => {
       validateExternalSessionPreviewRequest({
         provider: "codex",
         sessionId: "../etc/passwd",
+        projectRoot: "/repo",
         repositoryRoot: "/repo",
       }),
     ).toThrow(TypeError);
@@ -68,11 +81,12 @@ describe("invokeListExternalAgentSessionsIpc", () => {
     }));
 
     const snapshot = await invokeListExternalAgentSessionsIpc(invokeCommand, {
+      projectRoot: "/repo",
       repositoryRoot: "/repo",
     });
 
     expect(invokeCommand).toHaveBeenCalledWith(LIST_EXTERNAL_AGENT_SESSIONS_IPC_COMMAND, {
-      request: { repositoryRoot: "/repo" },
+      request: { projectRoot: "/repo", repositoryRoot: "/repo" },
     });
     expect(snapshot.sessions[0].turnCount).toBe(6);
     expect(snapshot.skipped).toBe(3);
@@ -87,7 +101,10 @@ describe("invokeListExternalAgentSessionsIpc", () => {
     }));
 
     await expect(
-      invokeListExternalAgentSessionsIpc(invokeCommand, { repositoryRoot: "/repo" }),
+      invokeListExternalAgentSessionsIpc(invokeCommand, {
+        projectRoot: "/repo",
+        repositoryRoot: "/repo",
+      }),
     ).rejects.toThrow(TypeError);
   });
 
@@ -99,7 +116,10 @@ describe("invokeListExternalAgentSessionsIpc", () => {
     }));
 
     await expect(
-      invokeListExternalAgentSessionsIpc(invokeCommand, { repositoryRoot: "/repo" }),
+      invokeListExternalAgentSessionsIpc(invokeCommand, {
+        projectRoot: "/repo",
+        repositoryRoot: "/repo",
+      }),
     ).resolves.toMatchObject({ sessions: [{ cwd: "/repo/packages/api" }] });
   });
 
@@ -111,7 +131,10 @@ describe("invokeListExternalAgentSessionsIpc", () => {
     }));
 
     await expect(
-      invokeListExternalAgentSessionsIpc(invokeCommand, { repositoryRoot: "/repo" }),
+      invokeListExternalAgentSessionsIpc(invokeCommand, {
+        projectRoot: "/repo",
+        repositoryRoot: "/repo",
+      }),
     ).rejects.toThrow(TypeError);
   });
 });
@@ -129,11 +152,17 @@ describe("invokePreviewExternalAgentSessionIpc", () => {
     const preview = await invokePreviewExternalAgentSessionIpc(invokeCommand, {
       provider: "claudeCode",
       sessionId: SESSION_ID,
+      projectRoot: "/repo",
       repositoryRoot: "/repo",
     });
 
     expect(invokeCommand).toHaveBeenCalledWith(PREVIEW_EXTERNAL_AGENT_SESSION_IPC_COMMAND, {
-      request: { provider: "claudeCode", sessionId: SESSION_ID, repositoryRoot: "/repo" },
+      request: {
+        provider: "claudeCode",
+        sessionId: SESSION_ID,
+        projectRoot: "/repo",
+        repositoryRoot: "/repo",
+      },
     });
     expect(preview.exchanges).toHaveLength(1);
   });
@@ -151,6 +180,7 @@ describe("invokePreviewExternalAgentSessionIpc", () => {
       invokePreviewExternalAgentSessionIpc(invokeCommand, {
         provider: "claudeCode",
         sessionId: SESSION_ID,
+        projectRoot: "/repo",
         repositoryRoot: "/repo",
       }),
     ).rejects.toThrow(TypeError);

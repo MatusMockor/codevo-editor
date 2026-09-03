@@ -1,10 +1,11 @@
-import { useRef, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { Folder, FolderGit2, Play, Plus, Send } from "lucide-react";
+import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { Folder, FolderGit2, Play, Plus, Send, X } from "lucide-react";
 import {
   useAgentModelFavorites,
   type AgentModelFavoritesPersistence,
 } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
+import type { AgentContextCompactionOffer } from "../../domain/agentContextCompaction";
 import {
   agentLaunchIsDangerous,
   defaultAgentLaunchOptions,
@@ -59,6 +60,7 @@ export interface AgentComposerSubmission {
 }
 
 export interface AgentComposerProps {
+  readonly compactionOffer?: AgentContextCompactionOffer | null;
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
   readonly mode: AgentComposerMode;
   readonly target: AgentComposerTarget | null;
@@ -86,9 +88,11 @@ export interface AgentComposerProps {
   onNewThread(): void;
   onOpenProviderSettings(): void;
   onSubmit(submission: AgentComposerSubmission): void;
+  onCompactContext?(submission: AgentComposerSubmission): void;
 }
 
 export function AgentComposer({
+  compactionOffer = null,
   dangerousConfirmed,
   dispatching,
   guard,
@@ -106,6 +110,7 @@ export function AgentComposer({
   onPromptChange,
   onSelectRepository,
   onSubmit,
+  onCompactContext,
   onUnsafeConfirmedChange,
   prompt,
   promptBytes,
@@ -120,6 +125,7 @@ export function AgentComposer({
   const composerRef = useRef<HTMLFormElement>(null);
   const compact = useCompactComposerControls(composerRef);
   const favorites = useAgentModelFavorites(modelFavoritesPersistence);
+  const [dismissedCompactionKey, setDismissedCompactionKey] = useState<string | null>(null);
   const followUp = mode.kind === "followUp";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason = composerTargetReason(followUp, target);
@@ -206,6 +212,36 @@ export function AgentComposer({
       onSubmit={submit}
       ref={composerRef}
     >
+      {compactionOffer !== null &&
+        compactionOffer.key !== dismissedCompactionKey &&
+        onCompactContext !== undefined && (
+          <div className="agent-compaction-offer">
+            <div className="agent-compaction-offer__copy">
+              <strong>Resume with less context</strong>
+              <span>
+                {formatContextTokens(compactionOffer.contextTokens)} tokens from an older session
+              </span>
+            </div>
+            <button
+              className="agent-compaction-offer__action"
+              disabled={blocked}
+              onClick={() =>
+                onCompactContext({ launch: effectiveLaunch, dangerousLaunchConfirmed })
+              }
+              type="button"
+            >
+              Compact
+            </button>
+            <button
+              aria-label="Dismiss context compaction suggestion"
+              className="agent-compaction-offer__dismiss"
+              onClick={() => setDismissedCompactionKey(compactionOffer.key)}
+              type="button"
+            >
+              <X aria-hidden="true" size={14} />
+            </button>
+          </div>
+        )}
       <div className="agent-composer__box">
         {followUp && (
           <div className="agent-composer__context">
@@ -287,6 +323,10 @@ export function AgentComposer({
       </div>
     </form>
   );
+}
+
+function formatContextTokens(tokens: number): string {
+  return tokens >= 1_000 ? `${Math.round(tokens / 1_000)}k` : String(tokens);
 }
 
 const BYTES_WARN_RATIO = 0.8;

@@ -253,7 +253,12 @@ describe("parseCodexJsonlLine turns", () => {
       {
         kind: "events",
         events: [
-          { kind: "result", text: "", isError: false, usage: { inputTokens: 12, outputTokens: 4 } },
+          {
+            kind: "result",
+            text: "",
+            isError: false,
+            usage: { inputTokens: 12, outputTokens: 4, contextTokens: 12 },
+          },
         ],
         sessionId: null,
       },
@@ -277,6 +282,37 @@ describe("parseCodexJsonlLine turns", () => {
 
     expect(parsed.results).toEqual([
       { kind: "events", events: [{ kind: "error", message: "stream closed" }], sessionId: null },
+    ]);
+  });
+
+  it("maps a completed context compaction item once", () => {
+    const parsed = parseAll([
+      {
+        type: "item.completed",
+        item: {
+          id: "compact-1",
+          type: "context_compaction",
+          pre_tokens: 140_000,
+          post_tokens: 50_000,
+        },
+      },
+      {
+        type: "item.completed",
+        item: {
+          id: "compact-1",
+          type: "context_compaction",
+          pre_tokens: 140_000,
+          post_tokens: 50_000,
+        },
+      },
+    ]);
+    expect(parsed.results).toEqual([
+      {
+        kind: "events",
+        events: [{ kind: "contextCompaction", beforeTokens: 140_000, afterTokens: 50_000 }],
+        sessionId: null,
+      },
+      { kind: "ignored" },
     ]);
   });
 });

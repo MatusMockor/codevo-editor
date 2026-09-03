@@ -1135,10 +1135,12 @@ describe("AgentModeView", () => {
 
   it("runs the project actions from the gear of a rail project row", () => {
     const onTrustProject = vi.fn();
+    const onCloseProject = vi.fn();
     const revealPath = vi.fn(async () => undefined);
     const writeText = vi.fn(async () => undefined);
     render({
       chrome: chromeFixture({ revealPath }),
+      onCloseProject,
       onTrustProject,
       projects: [activeProject(), { ...backgroundProject(), trust: "untrusted" }],
     });
@@ -1146,6 +1148,7 @@ describe("AgentModeView", () => {
     openProjectMenu("api-service");
     expect(projectMenuLabels()).toEqual([
       "Trust project",
+      "Close project",
       "Filter to this project",
       "Terminal sessions…",
       "Reveal in Finder",
@@ -1154,6 +1157,10 @@ describe("AgentModeView", () => {
 
     clickMenuItem("Trust project");
     expect(onTrustProject).toHaveBeenCalledWith(OTHER_ROOT);
+
+    openProjectMenu("api-service");
+    clickMenuItem("Close project");
+    expect(onCloseProject).toHaveBeenCalledWith(OTHER_ROOT);
 
     openProjectMenu("api-service");
     withClipboard({ writeText }, () => clickMenuItem("Copy path"));
@@ -1170,12 +1177,13 @@ describe("AgentModeView", () => {
     expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Untrusted");
   });
 
-  it("offers no trust or release action for a trusted active project", () => {
+  it("offers a close action for a trusted active project", () => {
     render({ projects: [activeProject(), backgroundProject()] });
 
     openProjectMenu("app");
 
     expect(projectMenuLabels()).toEqual([
+      "Close project",
       "Filter to this project",
       "Terminal sessions…",
       "Reveal in Finder",
@@ -2705,6 +2713,7 @@ function changedFile(relativePath: string): GitChangedFile {
 function defaultProps(): AgentModeViewProps {
   return {
     agents: surface({}),
+    onCloseProject: () => undefined,
     onReleaseProject: () => undefined,
     onTrustProject: () => undefined,
     overflowRootPaths: [],

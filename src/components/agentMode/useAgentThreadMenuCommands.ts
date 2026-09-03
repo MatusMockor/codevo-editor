@@ -47,6 +47,7 @@ export interface AgentThreadMenuCommandOptions {
   revealPath(path: string): Promise<void>;
   reportNotice(notice: AgentTasksNotice): void;
   onTrustProject(projectRootKey: string): void;
+  onCloseProject(rootPath: string): void;
   onReleaseProject(projectRootKey: string): void;
   onFilterScope(scope: AgentRailScope): void;
   onThreadRemoved(threadId: string): void;
@@ -63,6 +64,7 @@ export function useAgentThreadMenuCommands({
   agents,
   groups,
   onFilterScope,
+  onCloseProject,
   onOpenTerminalSessions,
   onReleaseProject,
   onThreadRemoved,
@@ -114,6 +116,9 @@ export function useAgentThreadMenuCommands({
         case "release":
           onReleaseProject(target.projectRootKey);
           return;
+        case "close":
+          if (target.rootPath !== null) onCloseProject(target.rootPath);
+          return;
         case "filterToProject":
           onFilterScope({
             kind: "repository",
@@ -139,6 +144,7 @@ export function useAgentThreadMenuCommands({
     [
       copyText,
       onFilterScope,
+      onCloseProject,
       onOpenTerminalSessions,
       onReleaseProject,
       onTrustProject,

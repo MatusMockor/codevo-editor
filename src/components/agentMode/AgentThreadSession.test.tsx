@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
@@ -14,6 +14,7 @@ import type {
 } from "../../domain/agentThread";
 import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { GitChangedFile } from "../../domain/git";
+import type { TextClipboardGateway } from "../../domain/textClipboard";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
 import { AgentClockProvider } from "./agentClock";
@@ -107,6 +108,86 @@ describe("AgentThreadSession", () => {
     expect(
       [...host.querySelectorAll(".agent-text__paragraph")].map((element) => element.textContent),
     ).toEqual(["First paragraph.", "Second paragraph.", "Working on it."]);
+  });
+
+  it("copies the exact user message and AI response with success feedback", async () => {
+    const writeText = vi.fn(async () => undefined);
+    const textClipboard: TextClipboardGateway = { canWriteText: () => true, writeText };
+    render({
+      textClipboard,
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Keep\nmy prompt", { kind: "exited", exitCode: 0 }, [
+            { kind: "assistantText", text: "First paragraph.\n\n\nSecond paragraph." },
+          ]),
+        ],
+      }),
+    });
+
+    const promptCopy = button("Copy your message");
+    const responseCopy = button("Copy AI response");
+
+    await act(async () => promptCopy.click());
+    expect(writeText).toHaveBeenLastCalledWith("Keep\nmy prompt");
+    expect(promptCopy.getAttribute("aria-label")).toBe("Copied your message");
+
+    await act(async () => responseCopy.click());
+    expect(writeText).toHaveBeenLastCalledWith("First paragraph.\n\n\nSecond paragraph.");
+    expect(responseCopy.getAttribute("aria-label")).toBe("Copied AI response");
+  });
+
+  it("keeps clipboard feedback working after StrictMode replays its effects", async () => {
+    const writeText = vi.fn(async () => undefined);
+    act(() =>
+      root.render(
+        <StrictMode>
+          <AgentClockProvider nowTickMs={1}>
+            <AgentThreadSession
+              {...defaultProps()}
+              textClipboard={{ canWriteText: () => true, writeText }}
+            />
+          </AgentClockProvider>
+        </StrictMode>,
+      ),
+    );
+
+    const copy = button("Copy your message");
+    await act(async () => copy.click());
+
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("Refactor the parser");
+    expect(copy.getAttribute("aria-label")).toBe("Copied your message");
+  });
+
+  it("reports a rejected clipboard write and lets the user retry", async () => {
+    const writeText = vi
+      .fn<TextClipboardGateway["writeText"]>()
+      .mockRejectedValueOnce(new Error("denied"))
+      .mockResolvedValueOnce(undefined);
+    render({ textClipboard: { canWriteText: () => true, writeText } });
+
+    const copy = button("Copy your message");
+    await act(async () => copy.click());
+    expect(copy.getAttribute("aria-label")).toBe("Could not copy your message");
+
+    await act(async () => copy.click());
+    expect(copy.getAttribute("aria-label")).toBe("Copied your message");
+  });
+
+  it("copies a distinct final AI result", async () => {
+    const writeText = vi.fn(async () => undefined);
+    render({
+      textClipboard: { canWriteText: () => true, writeText },
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Run it", { kind: "exited", exitCode: 0 }, [
+            { kind: "result", text: "Final result", isError: false, usage: null },
+          ]),
+        ],
+      }),
+    });
+
+    await act(async () => button("Copy AI response").click());
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("Final result");
   });
 
   it("pairs a tool call with the result of the same tool id", () => {
@@ -714,6 +795,12 @@ describe("AgentThreadSession", () => {
     );
     expect(element).toBeDefined();
     act(() => element?.click());
+  }
+
+  function button(label: string): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+    expect(element).not.toBeNull();
+    return element as HTMLButtonElement;
   }
 });
 

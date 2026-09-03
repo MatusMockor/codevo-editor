@@ -1361,7 +1361,7 @@ describe("parseAgentThread", () => {
             kind: "result",
             text: "done",
             isError: false,
-            usage: { inputTokens: 1, outputTokens: 2 },
+            usage: { inputTokens: 1, outputTokens: 2, contextTokens: 1 },
           },
           { kind: "result", text: "", isError: true, usage: null },
           { kind: "error", message: "e" },

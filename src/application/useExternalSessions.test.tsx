@@ -451,6 +451,7 @@ describe("useExternalSessions", () => {
     expect(harness.gateway.previewExternalSession).toHaveBeenLastCalledWith({
       provider: "claudeCode",
       sessionId: SESSION_A,
+      projectRoot: ROOT_KEY,
       repositoryRoot: REPOSITORY_ROOT,
     });
     expect(harness.hook().preview?.sessionId).toBe(SESSION_A);
@@ -467,6 +468,7 @@ describe("useExternalSessions", () => {
     expect(harness.gateway.previewExternalSession).toHaveBeenLastCalledWith({
       provider: "codex",
       sessionId: SESSION_A,
+      projectRoot: ROOT_KEY,
       repositoryRoot: REPOSITORY_ROOT,
     });
 
@@ -501,6 +503,7 @@ describe("useExternalSessions", () => {
     expect(harness.gateway.previewExternalSession).toHaveBeenLastCalledWith({
       provider: "claudeCode",
       sessionId: SESSION_A,
+      projectRoot: ROOT_KEY,
       repositoryRoot: NESTED_REPOSITORY_ROOT,
     });
 

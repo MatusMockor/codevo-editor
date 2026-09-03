@@ -47,7 +47,7 @@ function parseRateLimitEvent(value: Record<string, unknown>): ParsedAgentLine {
 }
 
 function claudeLimitWindow(id: string, value: unknown): AgentAccountUsageWindow | null {
-  if (id.includes("overage")) return null;
+  if (id.includes("overage") && id !== "seven_day_overage_included") return null;
   const window = objectValue(value);
   if (window === null) return null;
   const utilization = window.utilization;
@@ -76,6 +76,7 @@ function claudeLimitLabel(id: string): string {
   if (id === "seven_day") return "Weekly limit";
   if (id === "seven_day_opus") return "Weekly Opus limit";
   if (id === "seven_day_sonnet") return "Weekly Sonnet limit";
+  if (id === "seven_day_overage_included") return "Weekly Fable limit";
   return id
     .split("_")
     .filter(Boolean)
@@ -84,9 +85,23 @@ function claudeLimitLabel(id: string): string {
 }
 
 function parseSystemLine(value: Record<string, unknown>): ParsedAgentLine {
-  if (value.subtype !== "init") return IGNORED;
-  if (!isAgentSessionId(value.session_id)) return IGNORED;
-  return { kind: "events", events: [], sessionId: value.session_id };
+  if (value.subtype === "init") {
+    if (!isAgentSessionId(value.session_id)) return IGNORED;
+    return { kind: "events", events: [], sessionId: value.session_id };
+  }
+  if (value.subtype !== "compact_boundary") return IGNORED;
+  const metadata = objectValue(value.compact_metadata ?? value.compactMetadata);
+  return {
+    kind: "events",
+    events: [
+      {
+        kind: "contextCompaction",
+        beforeTokens: tokenCount(metadata?.pre_tokens ?? metadata?.preTokens),
+        afterTokens: tokenCount(metadata?.post_tokens ?? metadata?.postTokens),
+      },
+    ],
+    sessionId: isAgentSessionId(value.session_id) ? value.session_id : null,
+  };
 }
 
 function parseAssistantLine(value: Record<string, unknown>): ParsedAgentLine {
@@ -161,7 +176,15 @@ function parseUsage(value: unknown): AgentTurnUsage | null {
   const inputTokens = tokenCount(usage.input_tokens);
   const outputTokens = tokenCount(usage.output_tokens);
   if (inputTokens === null || outputTokens === null) return null;
-  return { inputTokens, outputTokens };
+  const cacheCreationTokens = tokenCount(usage.cache_creation_input_tokens) ?? 0;
+  const cacheReadTokens = tokenCount(usage.cache_read_input_tokens) ?? 0;
+  const contextTokens = safeTokenSum(inputTokens, cacheCreationTokens, cacheReadTokens);
+  return { inputTokens, outputTokens, contextTokens };
+}
+
+function safeTokenSum(...values: ReadonlyArray<number>): number | null {
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return Number.isSafeInteger(total) ? total : null;
 }
 
 function tokenCount(value: unknown): number | null {

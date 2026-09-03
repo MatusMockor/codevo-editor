@@ -28,6 +28,8 @@ import type { GitChangeStatus } from "../../domain/git";
 import { shortcutForCommand, type KeymapSettings } from "../../domain/keymap";
 import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
 import type { TerminalGateway } from "../../domain/terminal";
+import type { TextClipboardGateway } from "../../domain/textClipboard";
+import { BrowserTextClipboardGateway } from "../../infrastructure/browserTextClipboardGateway";
 import { TauriDirectoryListingGateway } from "../../infrastructure/tauriDirectoryListingGateway";
 import {
   TauriRevealPathGateway,
@@ -54,6 +56,7 @@ export type AgentWorkbenchScreenWorkbench = Pick<
   | "appSettings"
   | "bottomPanelView"
   | "bottomPanelVisible"
+  | "closeWorkspaceTab"
   | "hideBottomPanel"
   | "nodePackageScripts"
   | "openPinnedFile"
@@ -79,6 +82,7 @@ export interface AgentWorkbenchScreenProps {
   readonly monacoTheme: MonacoAppTheme;
   readonly terminalTheme: TerminalTheme;
   readonly workspaceTrusted: boolean;
+  readonly textClipboard?: TextClipboardGateway | null;
   readonly revealPathGateway?: RevealPathGateway;
   readonly directoryListingGateway?: DirectoryListingGateway;
   onTrustWorkspace(): void;
@@ -89,6 +93,7 @@ export const ADD_PROJECT_REFUSED_REASON = "Unable to add that project.";
 const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGateway();
 const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
   new TauriDirectoryListingGateway();
+const DEFAULT_TEXT_CLIPBOARD = new BrowserTextClipboardGateway();
 interface PersistedProviderProjection {
   readonly authorities: Readonly<
     Partial<Record<AgentCliKind, PersistedAgentProviderSettingsAuthority>>
@@ -110,6 +115,7 @@ export function AgentWorkbenchScreen({
   revealPathGateway = DEFAULT_REVEAL_PATH_GATEWAY,
   terminalGateway,
   terminalTheme,
+  textClipboard = DEFAULT_TEXT_CLIPBOARD,
   workbench,
   workspaceTrusted,
 }: AgentWorkbenchScreenProps) {
@@ -351,11 +357,13 @@ export function AgentWorkbenchScreen({
       key={workspaceRoot ?? ""}
       modelFavoritesPersistence={modelFavoritesPersistence}
       onOpenSourceControl={openSourceControl}
+      onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
       onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
       onTrustProject={(projectRootKey) => void projects.trustProject(projectRootKey)}
       overflowRootPaths={projects.overflowRootPaths}
       providerEnabled={providerEnabled}
       projects={projects.projects}
+      textClipboard={textClipboard}
       viewCommands={workbenchAgentViewCommandBridge}
       workspaceRoot={workspaceRoot}
     />

@@ -151,6 +151,7 @@ impl HistoryHome {
     fn list(&self) -> ExternalAgentSessionListing {
         list_external_agent_sessions_at(
             &ListExternalAgentSessionsRequest {
+                project_root: self.repository_root.clone(),
                 repository_root: self.repository_root.clone(),
             },
             &self.roots,
@@ -168,6 +169,7 @@ impl HistoryHome {
             &PreviewExternalAgentSessionRequest {
                 provider,
                 session_id: session_id.to_string(),
+                project_root: self.repository_root.clone(),
                 repository_root: self.repository_root.clone(),
             },
             &self.roots,
@@ -208,22 +210,26 @@ fn claude_attachment_line(root: &str, session_id: &str) -> String {
 #[test]
 fn requests_reject_unknown_fields_and_use_the_camel_case_wire_shape() {
     let list = serde_json::from_value::<ListExternalAgentSessionsRequest>(json!({
+        "projectRoot": "/repo",
         "repositoryRoot": "/repo"
     }))
     .expect("deserialize list request");
     let preview = serde_json::from_value::<PreviewExternalAgentSessionRequest>(json!({
         "provider": "claudeCode",
         "sessionId": CLAUDE_SESSION_ID,
+        "projectRoot": "/repo",
         "repositoryRoot": "/repo"
     }))
     .expect("deserialize preview request");
 
     assert_eq!(list.repository_root, "/repo");
+    assert_eq!(list.project_root, "/repo");
     assert_eq!(preview.provider, AgentCliInvocation::ClaudeCode);
     assert_eq!(preview.session_id, CLAUDE_SESSION_ID);
 
     assert!(
         serde_json::from_value::<ListExternalAgentSessionsRequest>(json!({
+            "projectRoot": "/repo",
             "repositoryRoot": "/repo",
             "extra": 1
         }))
@@ -233,6 +239,7 @@ fn requests_reject_unknown_fields_and_use_the_camel_case_wire_shape() {
         serde_json::from_value::<PreviewExternalAgentSessionRequest>(json!({
             "provider": "vscode",
             "sessionId": CODEX_SESSION_ID,
+            "projectRoot": "/repo",
             "repositoryRoot": "/repo"
         }))
         .is_err()
@@ -957,6 +964,7 @@ fn repository_roots_must_be_canonical_absolute_directories() {
     for candidate in candidates {
         let result = list_external_agent_sessions_at(
             &ListExternalAgentSessionsRequest {
+                project_root: home.repository_root.clone(),
                 repository_root: candidate.clone(),
             },
             &home.roots,

@@ -529,6 +529,29 @@ describe("AgentComposer", () => {
     });
   });
 
+  it("shows and dismisses a context offer and submits the provider compact command", () => {
+    const onCompactContext = vi.fn();
+    render({
+      compactionOffer: { key: "agt-1:1:120000", contextTokens: 120_000 },
+      mode: { kind: "followUp", threadTitle: "Long task", blockedReason: null },
+      onCompactContext,
+    });
+
+    expect(host.textContent).toContain("Resume with less context");
+    expect(host.textContent).toContain("120k tokens from an older session");
+    act(() => host.querySelector<HTMLButtonElement>(".agent-compaction-offer__action")?.click());
+    expect(onCompactContext).toHaveBeenCalledWith({
+      launch: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
+      dangerousLaunchConfirmed: false,
+    });
+    act(() =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Dismiss context compaction suggestion"]')
+        ?.click(),
+    );
+    expect(host.textContent).not.toContain("Resume with less context");
+  });
+
   function render(overrides: Partial<AgentComposerProps> = {}): void {
     act(() => root.render(<AgentComposer {...defaultProps()} {...overrides} />));
   }

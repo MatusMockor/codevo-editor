@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, type KeyboardEvent, type ReactNode } from "react";
-import { Copy, Filter, FolderOpen, History, Settings, ShieldCheck, Unplug } from "lucide-react";
+import { Copy, Filter, FolderOpen, History, Settings, ShieldCheck, Unplug, X } from "lucide-react";
 import { focusMenuItem, useAgentPopover } from "./agentPopover";
 import {
   agentProjectMenuEntries,
@@ -112,6 +112,8 @@ function commandIcon(command: AgentProjectMenuCommand): ReactNode {
       return <ShieldCheck size={13} />;
     case "release":
       return <Unplug size={13} />;
+    case "close":
+      return <X size={13} />;
     case "reveal":
       return <FolderOpen size={13} />;
     case "copyPath":

@@ -52,12 +52,14 @@ export interface ExternalAgentSessionPreview {
 }
 
 export interface ExternalSessionListRequest {
+  readonly projectRoot: string;
   readonly repositoryRoot: string;
 }
 
 export interface ExternalSessionPreviewRequest {
   readonly provider: AgentCliKind;
   readonly sessionId: string;
+  readonly projectRoot: string;
   readonly repositoryRoot: string;
 }
 

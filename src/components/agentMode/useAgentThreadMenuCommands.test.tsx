@@ -59,20 +59,23 @@ describe("useAgentThreadMenuCommands", () => {
     Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
   });
 
-  it("routes project commands to trust, release, scope filtering, reveal, and copy", async () => {
+  it("routes project commands to trust, close, release, scope filtering, reveal, and copy", async () => {
     const writeText = installClipboard(async () => undefined);
     const onTrustProject = vi.fn();
+    const onCloseProject = vi.fn();
     const onReleaseProject = vi.fn();
     const revealPath = vi.fn(async () => undefined);
-    render({ onTrustProject, onReleaseProject, revealPath });
+    render({ onTrustProject, onCloseProject, onReleaseProject, revealPath });
 
     act(() => current().handleProjectCommand(PROJECT_TARGET, "trust"));
+    act(() => current().handleProjectCommand(PROJECT_TARGET, "close"));
     act(() => current().handleProjectCommand(PROJECT_TARGET, "release"));
     act(() => current().handleProjectCommand(PROJECT_TARGET, "filterToProject"));
     await act(async () => current().handleProjectCommand(PROJECT_TARGET, "reveal"));
     await act(async () => current().handleProjectCommand(PROJECT_TARGET, "copyPath"));
 
     expect(onTrustProject).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
+    expect(onCloseProject).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
     expect(onReleaseProject).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
     expect(scopes).toEqual([
       {
@@ -194,6 +197,7 @@ describe("useAgentThreadMenuCommands", () => {
       revealPath: async () => undefined,
       reportNotice: (notice) => notices.push(notice),
       onTrustProject: () => undefined,
+      onCloseProject: () => undefined,
       onReleaseProject: () => undefined,
       onFilterScope: (scope) => scopes.push(scope),
       onThreadRemoved: (threadId) => removed.push(threadId),

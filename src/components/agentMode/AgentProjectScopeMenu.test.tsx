@@ -83,6 +83,7 @@ describe("AgentProjectScopeMenu", () => {
     click(gears()[1]);
 
     expect(menuItemLabels()).toEqual([
+      "Close project",
       "Filter to this project",
       "Terminal sessions…",
       "Reveal in Finder",
@@ -197,7 +198,7 @@ describe("AgentProjectScopeMenu", () => {
     render();
     openMenu();
     click(gears()[0]);
-    expect(document.activeElement).toBe(menuItem("Filter to this project"));
+    expect(document.activeElement).toBe(menuItem("Close project"));
 
     keydown("Escape", document.activeElement);
 

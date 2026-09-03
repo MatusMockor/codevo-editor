@@ -87,6 +87,7 @@ export type AgentTurnItem =
   | {
       readonly kind: "assistantText";
       readonly key: string;
+      readonly text: string;
       readonly paragraphs: ReadonlyArray<string>;
     }
   | { readonly kind: "reasoning"; readonly key: string; readonly text: string }
@@ -103,7 +104,19 @@ export type AgentTurnItem =
       readonly text: string;
       readonly isError: boolean;
     }
+  | {
+      readonly kind: "contextCompaction";
+      readonly key: string;
+      readonly beforeTokens: number | null;
+      readonly afterTokens: number | null;
+    }
   | { readonly kind: "error"; readonly key: string; readonly message: string };
+
+export interface AgentTurnWorkFold {
+  readonly workItems: ReadonlyArray<AgentTurnItem>;
+  readonly visibleItems: ReadonlyArray<AgentTurnItem>;
+  readonly summary: string;
+}
 
 export interface AgentRawLine {
   readonly key: string;
@@ -285,6 +298,72 @@ export function agentTurnProjection(events: ReadonlyArray<AgentTurnEvent>): Agen
   return { items, rawLines, hiddenCount };
 }
 
+export function agentTurnWorkFold(
+  items: ReadonlyArray<AgentTurnItem>,
+  running: boolean,
+): AgentTurnWorkFold | null {
+  const hasWork = items.some((item) => item.kind === "tool" || item.kind === "reasoning");
+  if (!hasWork) return null;
+  if (running) {
+    return { workItems: items, visibleItems: [], summary: agentWorkSummary(items) };
+  }
+  let finalResponseIndex = -1;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item?.kind === "assistantText" || (item?.kind === "result" && !item.isError)) {
+      finalResponseIndex = index;
+      break;
+    }
+  }
+  if (finalResponseIndex <= 0) return null;
+  const workItems = items.slice(0, finalResponseIndex);
+  if (!workItems.some((item) => item.kind === "tool" || item.kind === "reasoning")) return null;
+  return {
+    workItems,
+    visibleItems: items.slice(finalResponseIndex),
+    summary: agentWorkSummary(workItems),
+  };
+}
+
+export function agentTurnDurationLabel(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function agentWorkSummary(items: ReadonlyArray<AgentTurnItem>): string {
+  let commands = 0;
+  let reads = 0;
+  let changes = 0;
+  let tools = 0;
+  let updates = 0;
+  for (const item of items) {
+    if (item.kind === "assistantText") updates += 1;
+    if (item.kind !== "tool") continue;
+    const name = item.name.toLowerCase();
+    if (name === "bash" || name === "shell" || name === "command_execution") commands += 1;
+    else if (name === "read") reads += 1;
+    else if (name === "edit" || name === "write" || name === "apply_patch") changes += 1;
+    else tools += 1;
+  }
+  const parts = [
+    countLabel(commands, "command"),
+    countLabel(updates, "update"),
+    countLabel(reads, "file read", "files read"),
+    countLabel(changes, "file changed", "files changed"),
+    countLabel(tools, "other tool"),
+  ].filter((part): part is string => part !== null);
+  return parts.length === 0 ? "Activity" : parts.join(" · ");
+}
+
+function countLabel(count: number, singular: string, plural = `${singular}s`): string | null {
+  return count === 0 ? null : `${count} ${count === 1 ? singular : plural}`;
+}
+
 function normalizedAgentResponse(text: string): string {
   return text.replace(/\r\n?/g, "\n").trim();
 }
@@ -340,7 +419,12 @@ function appendTurnItem({
   toolItemByToolId,
 }: TurnItemAppend): void {
   if (event.kind === "assistantText") {
-    items.push({ kind: "assistantText", key, paragraphs: paragraphsOf(event.text) });
+    items.push({
+      kind: "assistantText",
+      key,
+      text: event.text,
+      paragraphs: paragraphsOf(event.text),
+    });
     return;
   }
   if (event.kind === "reasoning") {
@@ -364,6 +448,15 @@ function appendTurnItem({
   }
   if (event.kind === "result") {
     items.push({ kind: "result", key, text: event.text, isError: event.isError });
+    return;
+  }
+  if (event.kind === "contextCompaction") {
+    items.push({
+      kind: "contextCompaction",
+      key,
+      beforeTokens: event.beforeTokens,
+      afterTokens: event.afterTokens,
+    });
     return;
   }
   if (event.kind === "error") {

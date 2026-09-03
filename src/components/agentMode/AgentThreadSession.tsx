@@ -1,18 +1,23 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentTurn } from "../../domain/agentThread";
+import type { TextClipboardGateway } from "../../domain/textClipboard";
 import {
   MIN_THREAD_SEARCH_QUERY_CHARS,
   type AgentThreadFindHit,
   type AgentThreadSearchRange,
 } from "../../domain/agentThreadSearch";
 import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentSidebarPresentation";
-import { AgentRelativeTime } from "./agentClock";
+import { AgentRelativeTime, AgentWorkingDuration } from "./agentClock";
 import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
+import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import {
   agentWorktreeRemovalLabel,
+  agentTurnDurationLabel,
   agentTurnProjection,
   agentTurnSubagentSummary,
+  agentTurnWorkFold,
   type AgentTurnItem,
 } from "./agentModePresentation";
 
@@ -45,6 +50,7 @@ export interface AgentThreadSessionProps {
   readonly findHits?: ReadonlyArray<AgentThreadFindHit>;
   readonly findHitIndex?: number;
   readonly reveal?: AgentThreadRevealRequest | null;
+  readonly textClipboard?: TextClipboardGateway | null;
   onReviewInDiff(threadId: string): void;
 }
 
@@ -67,6 +73,7 @@ function AgentThreadSessionBody({
   findQuery,
   onReviewInDiff,
   reveal = null,
+  textClipboard = null,
   thread,
   turnRenderProbe,
 }: AgentThreadSessionBodyProps) {
@@ -156,6 +163,7 @@ function AgentThreadSessionBody({
               highlight={highlightFor(turn.turnId)}
               key={turn.turnId}
               renderProbe={turnRenderProbe}
+              textClipboard={textClipboard}
               turn={turn}
             />
           ))}
@@ -184,10 +192,12 @@ function AgentThreadSessionBody({
 const AgentTurnView = memo(function AgentTurnView({
   highlight = null,
   renderProbe,
+  textClipboard,
   turn,
 }: {
   readonly highlight?: AgentTurnHighlight | null;
   readonly renderProbe?: (turnId: string) => void;
+  readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentTurn;
 }) {
   renderProbe?.(turn.turnId);
@@ -195,6 +205,7 @@ const AgentTurnView = memo(function AgentTurnView({
   const subagents = agentTurnSubagentSummary(turn.events);
   const running = turn.status.kind === "pending" || turn.status.kind === "running";
   const empty = projection.items.length === 0 && projection.rawLines.length === 0;
+  const workFold = agentTurnWorkFold(projection.items, running);
   const cursor = highlight?.current ?? null;
   const promptCurrent = cursor !== null && cursor.kind === "prompt" ? cursor.occurrence : null;
 
@@ -212,6 +223,11 @@ const AgentTurnView = memo(function AgentTurnView({
           <span>
             <AgentRelativeTime epochMs={turn.startedAtEpochMs} />
           </span>
+          <AgentMessageCopyButton
+            clipboard={textClipboard}
+            label="your message"
+            text={turn.prompt}
+          />
         </div>
       </article>
 
@@ -221,11 +237,23 @@ const AgentTurnView = memo(function AgentTurnView({
 
       <div className="agent-turn__events">
         {subagents !== null && <AgentSubagentSummary summary={subagents} />}
-        {projection.items.map((item) => (
+        {workFold !== null && (
+          <AgentTurnWork
+            highlight={highlight}
+            items={workFold.workItems}
+            key={running ? "running-work" : "settled-work"}
+            running={running}
+            summary={workFold.summary}
+            textClipboard={textClipboard}
+            turn={turn}
+          />
+        )}
+        {(workFold?.visibleItems ?? projection.items).map((item) => (
           <AgentTurnItemView
             highlight={itemHighlight(highlight, item.key)}
             item={item}
             key={item.key}
+            textClipboard={textClipboard}
           />
         ))}
         {empty && running && (
@@ -263,6 +291,54 @@ const AgentTurnView = memo(function AgentTurnView({
   );
 });
 
+function AgentTurnWork({
+  highlight,
+  items,
+  running,
+  summary,
+  textClipboard,
+  turn,
+}: {
+  readonly highlight: AgentTurnHighlight | null;
+  readonly items: ReadonlyArray<AgentTurnItem>;
+  readonly running: boolean;
+  readonly summary: string;
+  readonly textClipboard: TextClipboardGateway | null;
+  readonly turn: AgentTurn;
+}) {
+  const title = running ? (
+    <>
+      Working for <AgentWorkingDuration startedAtEpochMs={turn.startedAtEpochMs} />
+    </>
+  ) : (
+    <>
+      Worked for{" "}
+      {agentTurnDurationLabel(
+        (turn.endedAtEpochMs ?? turn.startedAtEpochMs) - turn.startedAtEpochMs,
+      )}
+    </>
+  );
+  return (
+    <details className="agent-work" open={running || undefined}>
+      <summary className="agent-work__summary">
+        <span className="agent-work__title">{title}</span>
+        <span className="agent-work__counts">{summary}</span>
+        <ChevronDown aria-hidden="true" className="agent-work__chevron" size={14} />
+      </summary>
+      <div className="agent-work__events">
+        {items.map((item) => (
+          <AgentTurnItemView
+            highlight={itemHighlight(highlight, item.key)}
+            item={item}
+            key={item.key}
+            textClipboard={textClipboard}
+          />
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function AgentSubagentSummary({
   summary,
 }: {
@@ -290,9 +366,11 @@ function AgentSubagentSummary({
 function AgentTurnItemView({
   highlight,
   item,
+  textClipboard,
 }: {
   readonly highlight: AgentItemHighlight | null;
   readonly item: AgentTurnItem;
+  readonly textClipboard: TextClipboardGateway | null;
 }) {
   if (item.kind === "assistantText") {
     return (
@@ -302,6 +380,9 @@ function AgentTurnItemView({
             <HighlightRun current={run.current} query={highlight?.query ?? ""} text={run.text} />
           </p>
         ))}
+        <div className="agent-message-actions">
+          <AgentMessageCopyButton clipboard={textClipboard} label="AI response" text={item.text} />
+        </div>
       </div>
     );
   }
@@ -339,7 +420,29 @@ function AgentTurnItemView({
             />
           </p>
         )}
+        {item.text !== "" && (
+          <div className="agent-message-actions">
+            <AgentMessageCopyButton
+              clipboard={textClipboard}
+              label="AI response"
+              text={item.text}
+            />
+          </div>
+        )}
       </section>
+    );
+  }
+
+  if (item.kind === "contextCompaction") {
+    const tokenChange =
+      item.beforeTokens === null || item.afterTokens === null
+        ? null
+        : `${formatTokens(item.beforeTokens)} → ${formatTokens(item.afterTokens)} tokens`;
+    return (
+      <div className="agent-compaction-event" data-agent-event={item.key}>
+        <span>Conversation compacted</span>
+        {tokenChange !== null && <span className="agent-num">{tokenChange}</span>}
+      </div>
     );
   }
 
@@ -349,6 +452,10 @@ function AgentTurnItemView({
       <p className="agent-finale__body">{item.message}</p>
     </section>
   );
+}
+
+function formatTokens(tokens: number): string {
+  return tokens >= 1_000 ? `${Math.round(tokens / 1_000)}k` : String(tokens);
 }
 
 function AgentToolRow({ item }: { readonly item: Extract<AgentTurnItem, { kind: "tool" }> }) {

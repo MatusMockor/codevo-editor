@@ -12,6 +12,8 @@ import type {
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
+import type { TextClipboardGateway } from "../../domain/textClipboard";
+import { agentContextCompactionOffer } from "../../domain/agentContextCompaction";
 import type {
   AgentTasksNotice,
   AgentThreadsSurface,
@@ -67,8 +69,10 @@ export interface AgentModeViewProps {
   readonly nowTickMs?: number;
   readonly viewCommands?: AgentViewCommandBridge | null;
   readonly chrome: AgentWorkbenchChrome;
+  readonly textClipboard?: TextClipboardGateway | null;
   onOpenSourceControl?(): void;
   onTrustProject(projectRootKey: string): void;
+  onCloseProject?(rootPath: string): void;
   onReleaseProject(projectRootKey: string): void;
 }
 
@@ -79,6 +83,7 @@ const IDLE_ACCOUNT_USAGE = {
 } as const;
 const FIND_BAR_ROWS: CSSProperties = { gridTemplateRows: "auto auto minmax(0, 1fr) auto" };
 const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
+const NOOP_CLOSE_PROJECT = () => undefined;
 
 const TERMINAL_SESSIONS_UNAVAILABLE_NOTICE: AgentTasksNotice = {
   kind: "warning",
@@ -92,11 +97,13 @@ export function AgentModeView({
   modelFavoritesPersistence = null,
   nowTickMs = DEFAULT_NOW_TICK_MS,
   onOpenSourceControl = NOOP_OPEN_SOURCE_CONTROL,
+  onCloseProject = NOOP_CLOSE_PROJECT,
   onReleaseProject,
   onTrustProject,
   overflowRootPaths,
   providerEnabled,
   projects,
+  textClipboard = null,
   viewCommands = null,
   workspaceRoot,
 }: AgentModeViewProps) {
@@ -259,6 +266,7 @@ export function AgentModeView({
     onTrustProject: trustProject,
     onReleaseProject: releaseProject,
     onFilterScope: navigation.setRailScope,
+    onCloseProject,
     onThreadRemoved: navigation.forgetThread,
     onOpenTerminalSessions: openTerminalSessions,
     startNewThread,
@@ -532,9 +540,14 @@ export function AgentModeView({
                 findQuery={find.open ? find.query : undefined}
                 onReviewInDiff={reviewInDiff}
                 reveal={find.reveal}
+                textClipboard={textClipboard}
                 thread={sessionThread}
               />
               <AgentComposerController
+                compactionOffer={agentContextCompactionOffer(
+                  sessionThread?.thread ?? null,
+                  Date.now(),
+                )}
                 composerProps={composerProps}
                 modelFavoritesPersistence={modelFavoritesPersistence}
                 onOpenProviderSettings={agents.configureAgentCli}

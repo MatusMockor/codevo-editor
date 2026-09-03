@@ -25,6 +25,7 @@ export function validateExternalSessionListRequest(
   request: ExternalSessionListRequest,
 ): ExternalSessionListRequest {
   return {
+    projectRoot: validateExternalSessionRepositoryRoot(request.projectRoot, "request.projectRoot"),
     repositoryRoot: validateExternalSessionRepositoryRoot(
       request.repositoryRoot,
       "request.repositoryRoot",
@@ -38,6 +39,7 @@ export function validateExternalSessionPreviewRequest(
   return {
     provider: validateExternalSessionProvider(request.provider, "request.provider"),
     sessionId: validateExternalSessionId(request.sessionId, "request.sessionId"),
+    projectRoot: validateExternalSessionRepositoryRoot(request.projectRoot, "request.projectRoot"),
     repositoryRoot: validateExternalSessionRepositoryRoot(
       request.repositoryRoot,
       "request.repositoryRoot",

@@ -143,6 +143,40 @@ describe("agentThreadWire stream metrics", () => {
   });
 });
 
+describe("agentThreadWire context metadata", () => {
+  it("round-trips context usage and compaction events", () => {
+    const events = [
+      {
+        kind: "result",
+        text: "done",
+        isError: false,
+        usage: { inputTokens: 10, outputTokens: 2, contextTokens: 120_000 },
+      },
+      { kind: "contextCompaction", beforeTokens: 120_000, afterTokens: 40_000 },
+    ];
+    const stored = storedThreadWithTurn({ ...STORED_TURN, launch: null, events });
+    expect(serializeAgentThread(parseAgentThread(stored))).toEqual(stored);
+  });
+
+  it("loads result usage written before contextTokens was recorded", () => {
+    const stored = storedThreadWithTurn({
+      ...STORED_TURN,
+      launch: null,
+      events: [
+        {
+          kind: "result",
+          text: "done",
+          isError: false,
+          usage: { inputTokens: 10, outputTokens: 2 },
+        },
+      ],
+    });
+    expect(parseAgentThread(stored).turns[0].events[0]).toMatchObject({
+      usage: { inputTokens: 10, outputTokens: 2, contextTokens: null },
+    });
+  });
+});
+
 describe("agentThreadWire external origin", () => {
   const SESSION_ID = "987b95ad-c9bc-4d08-ae49-9b431efc8f87";
 

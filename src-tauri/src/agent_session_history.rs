@@ -36,6 +36,7 @@ pub type ExternalSessionProvider = AgentCliInvocation;
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ListExternalAgentSessionsRequest {
+    pub project_root: String,
     pub repository_root: String,
 }
 
@@ -44,6 +45,7 @@ pub struct ListExternalAgentSessionsRequest {
 pub struct PreviewExternalAgentSessionRequest {
     pub provider: ExternalSessionProvider,
     pub session_id: String,
+    pub project_root: String,
     pub repository_root: String,
 }
 

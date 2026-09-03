@@ -114,9 +114,15 @@ export function useExternalSessions(
         failLoad(dependenciesRef, publish, target, EXTERNAL_SESSIONS_OWNER_LOST_NOTICE);
         return;
       }
+      const project = projectByRootKey(dependenciesRef.current.projects, target.rootKey);
+      if (project === undefined) {
+        failLoad(dependenciesRef, publish, target, EXTERNAL_SESSIONS_OWNER_LOST_NOTICE);
+        return;
+      }
 
       const loaded = await attempt(() =>
         dependenciesRef.current.externalSessionGateway.listExternalSessions({
+          projectRoot: project.rootPath,
           repositoryRoot: target.repositoryRoot,
         }),
       );
@@ -193,6 +199,11 @@ export function useExternalSessions(
         failLoad(dependenciesRef, publish, target, EXTERNAL_SESSIONS_OWNER_LOST_NOTICE);
         return;
       }
+      const project = projectByRootKey(dependenciesRef.current.projects, target.rootKey);
+      if (project === undefined) {
+        failLoad(dependenciesRef, publish, target, EXTERNAL_SESSIONS_OWNER_LOST_NOTICE);
+        return;
+      }
 
       previewGenerationRef.current += 1;
       const previewGeneration = previewGenerationRef.current;
@@ -207,6 +218,7 @@ export function useExternalSessions(
         dependenciesRef.current.externalSessionGateway.previewExternalSession({
           provider: summary.provider,
           sessionId,
+          projectRoot: project.rootPath,
           repositoryRoot: summary.cwd,
         }),
       );

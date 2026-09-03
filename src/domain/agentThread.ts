@@ -53,6 +53,8 @@ export type AgentTurnStatus = AgentTaskStatus | { readonly kind: "interrupted" }
 export interface AgentTurnUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** Tokens occupying the provider context window after the turn, when reported. */
+  readonly contextTokens: number | null;
 }
 
 export interface AgentTurnStreamMetrics {
@@ -80,6 +82,11 @@ export type AgentTurnEvent =
       readonly text: string;
       readonly isError: boolean;
       readonly usage: AgentTurnUsage | null;
+    }
+  | {
+      readonly kind: "contextCompaction";
+      readonly beforeTokens: number | null;
+      readonly afterTokens: number | null;
     }
   | { readonly kind: "error"; readonly message: string }
   | {
@@ -641,6 +648,8 @@ function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
       return [event.message];
     case "unknownLine":
       return [event.raw];
+    case "contextCompaction":
+      return [];
     case "assistantText":
     case "reasoning":
     case "result":

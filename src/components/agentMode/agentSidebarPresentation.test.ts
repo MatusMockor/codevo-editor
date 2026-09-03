@@ -216,6 +216,7 @@ describe("agent rail scope", () => {
     );
 
     expect(agentProjectMenuEntries(trusted, false).map((entry) => entry.label)).toEqual([
+      "Close project",
       "Filter to this project",
       "Terminal sessions…",
       "Reveal in Finder",
@@ -277,7 +278,7 @@ describe("agent rail scope", () => {
     expect(agentProjectRepositoryCountLabel(entries[0] as AgentRailScopeEntry)).toBeNull();
     expect(agentProjectRepositoryCountLabel(single)).toBeNull();
     expect(agentProjectRepositoryCountLabel({ ...single, repositoryCount: 3 })).toBe("3 repos");
-    expect(agentProjectMenuEntries({ ...single, repositoryCount: 3 }, false)[0]?.label).toBe(
+    expect(agentProjectMenuEntries({ ...single, repositoryCount: 3 }, false)[1]?.label).toBe(
       "Filter to this project",
     );
   });

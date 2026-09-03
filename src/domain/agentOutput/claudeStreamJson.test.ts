@@ -154,7 +154,12 @@ describe("parseClaudeStreamJsonLine content", () => {
     expect(failed).toEqual({
       kind: "events",
       events: [
-        { kind: "result", text: "boom", isError: true, usage: { inputTokens: 5, outputTokens: 7 } },
+        {
+          kind: "result",
+          text: "boom",
+          isError: true,
+          usage: { inputTokens: 5, outputTokens: 7, contextTokens: 5 },
+        },
       ],
       sessionId: SESSION_ID,
     });
@@ -198,7 +203,10 @@ describe("parseClaudeStreamJsonLine bounds and fail-closed handling", () => {
             unifiedWindows: {
               five_hour: { utilization: 0.2, resetsAt: 1_786_200_000 },
               seven_day: { utilization: 0.615, resetsAt: 1_786_500_000 },
-              seven_day_overage_included: null,
+              seven_day_overage_included: {
+                utilization: 0.27,
+                resetsAt: 1_786_500_000,
+              },
             },
           },
         }),
@@ -220,6 +228,14 @@ describe("parseClaudeStreamJsonLine bounds and fail-closed handling", () => {
             id: "seven_day",
             label: "Weekly limit",
             usedPercent: 61.5,
+            windowDurationMinutes: 10_080,
+            resetsAtEpochMs: 1_786_500_000_000,
+            resetsLabel: null,
+          },
+          {
+            id: "seven_day_overage_included",
+            label: "Weekly Fable limit",
+            usedPercent: 27,
             windowDurationMinutes: 10_080,
             resetsAtEpochMs: 1_786_500_000_000,
             resetsLabel: null,
@@ -254,6 +270,23 @@ describe("parseClaudeStreamJsonLine bounds and fail-closed handling", () => {
   it("reports non-JSON and non-object lines as unknown", () => {
     expect(parseClaudeStreamJsonLine("not json")).toEqual({ kind: "unknown", raw: "not json" });
     expect(parseClaudeStreamJsonLine("[1,2]")).toEqual({ kind: "unknown", raw: "[1,2]" });
+  });
+
+  it("maps a compact boundary to a visible context event", () => {
+    expect(
+      parseClaudeStreamJsonLine(
+        line({
+          type: "system",
+          subtype: "compact_boundary",
+          session_id: "session-1",
+          compact_metadata: { pre_tokens: 130_000, post_tokens: 41_000 },
+        }),
+      ),
+    ).toEqual({
+      kind: "events",
+      events: [{ kind: "contextCompaction", beforeTokens: 130_000, afterTokens: 41_000 }],
+      sessionId: "session-1",
+    });
   });
 
   it("ignores a known type with an unusable message shape", () => {

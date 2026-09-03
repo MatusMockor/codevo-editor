@@ -30,6 +30,8 @@ import {
   agentThreadTimeLabel,
   agentThreadTone,
   agentTurnProjection,
+  agentTurnDurationLabel,
+  agentTurnWorkFold,
   agentTurnSubagentSummary,
   agentTurnStatusLabel,
   agentShipConflictFiles,
@@ -197,7 +199,10 @@ describe("agentModePresentation", () => {
       "reasoning",
       "tool",
     ]);
-    expect(projection.items[0]).toMatchObject({ paragraphs: ["One.", "Two."] });
+    expect(projection.items[0]).toMatchObject({
+      text: "One.\n\nTwo.",
+      paragraphs: ["One.", "Two."],
+    });
     expect(projection.items[2]).toMatchObject({
       name: "Read",
       inputSummary: "a.ts",
@@ -271,6 +276,39 @@ describe("agentModePresentation", () => {
     ]);
 
     expect(projection.items[0]).toMatchObject({ kind: "tool", outcome: null });
+  });
+
+  it("folds completed work before the final response without hiding the response", () => {
+    const items = agentTurnProjection([
+      { kind: "assistantText", text: "I will inspect it." },
+      { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "ok", isError: false },
+      { kind: "toolCall", toolId: "t-2", name: "Read", inputSummary: "app.ts" },
+      { kind: "assistantText", text: "Fixed and verified." },
+    ]).items;
+
+    const fold = agentTurnWorkFold(items, false);
+    expect(fold?.summary).toBe("1 command · 1 update · 1 file read");
+    expect(fold?.workItems).toHaveLength(3);
+    expect(fold?.visibleItems).toHaveLength(1);
+    expect(fold?.visibleItems[0]).toMatchObject({
+      kind: "assistantText",
+      text: "Fixed and verified.",
+    });
+    expect(agentTurnDurationLabel(24 * 60_000 + 28_000)).toBe("24m 28s");
+  });
+
+  it("keeps active work expanded and does not fold answer-only turns", () => {
+    const working = agentTurnProjection([
+      { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+    ]).items;
+    expect(agentTurnWorkFold(working, true)?.visibleItems).toEqual([]);
+    expect(
+      agentTurnWorkFold(
+        agentTurnProjection([{ kind: "assistantText", text: "Done" }]).items,
+        false,
+      ),
+    ).toBeNull();
   });
 
   it("counts subagent spawn tools and derives their current outcome", () => {
