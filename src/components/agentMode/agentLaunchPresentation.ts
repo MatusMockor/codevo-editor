@@ -7,12 +7,14 @@ import {
   agentLaunchIsDangerous,
   type AgentLaunchOptions,
   type ClaudeEffortChoice,
+  type ClaudeContextChoice,
   type ClaudeModelChoice,
   type ClaudePermissionMode,
   type CodexExecutionMode,
   type CodexModelChoice,
 } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
+import modelManifest from "../../domain/agentModelManifest.json";
 
 export type AgentModelChoice = ClaudeModelChoice | CodexModelChoice;
 
@@ -136,6 +138,16 @@ const CODEX_MODEL_TEXT: Record<CodexModelChoice, LaunchText> = {
     meta: "gpt-5.6-sol",
     hint: "Runs the session on gpt-5.6-sol.",
   },
+  "gpt-5.6-terra": {
+    label: "GPT-5.6 Terra",
+    meta: "gpt-5.6-terra",
+    hint: "Runs the session on gpt-5.6-terra.",
+  },
+  "gpt-5.6-luna": {
+    label: "GPT-5.6 Luna",
+    meta: "gpt-5.6-luna",
+    hint: "Runs the session on gpt-5.6-luna.",
+  },
   "gpt-5.5": {
     label: "GPT-5.5",
     meta: "gpt-5.5",
@@ -177,10 +189,15 @@ export function agentLaunchModelChoices(provider: AgentCliKind): ReadonlyArray<A
   return choices(CODEX_MODEL_CHOICES, CODEX_MODEL_TEXT, () => null);
 }
 
-export function agentModelRows(provider: AgentCliKind): ReadonlyArray<AgentModelRow> {
-  if (provider === "claudeCode")
-    return modelRows(provider, CLAUDE_MODEL_CHOICES, CLAUDE_MODEL_TEXT);
-  return modelRows(provider, CODEX_MODEL_CHOICES, CODEX_MODEL_TEXT);
+export function agentModelRows(
+  provider: AgentCliKind,
+  configuredModel: string | null = null,
+): ReadonlyArray<AgentModelRow> {
+  const configured = configuredModelEntry(provider, configuredModel);
+  if (provider === "claudeCode") {
+    return modelRows(provider, CLAUDE_MODEL_CHOICES, CLAUDE_MODEL_TEXT, configured);
+  }
+  return modelRows(provider, CODEX_MODEL_CHOICES, CODEX_MODEL_TEXT, configured);
 }
 
 export function agentModelFavoriteKey(provider: AgentCliKind, model: AgentModelChoice): string {
@@ -263,11 +280,43 @@ export function agentLaunchWithEffort(
   return { ...launch, effort };
 }
 
-export function agentLaunchModelLabel(launch: AgentLaunchOptions): string {
+export function agentLaunchContextLabel(context: ClaudeContextChoice): string {
+  return context === "1m" ? "1M" : "200k";
+}
+
+export function agentLaunchWithContext(
+  launch: AgentLaunchOptions,
+  context: ClaudeContextChoice,
+  configuredModel: string | null,
+): AgentLaunchOptions {
+  if (launch.provider !== "claudeCode") return launch;
+  const configured = configuredModelEntry("claudeCode", configuredModel);
+  const model =
+    launch.model === "default" && configured !== null ? configured.choice : launch.model;
+  if (!CLAUDE_MODEL_CHOICES.includes(model as ClaudeModelChoice)) return launch;
+  return { ...launch, model: model as ClaudeModelChoice, context };
+}
+
+export function agentLaunchModelLabel(
+  launch: AgentLaunchOptions,
+  configuredModel: string | null = null,
+): string {
+  if (launch.model === "default") {
+    return configuredModelEntry(launch.provider, configuredModel)?.label ?? modelText(launch).label;
+  }
   return modelText(launch).label;
 }
 
-export function agentLaunchModelHint(launch: AgentLaunchOptions): string {
+export function agentLaunchModelHint(
+  launch: AgentLaunchOptions,
+  configuredModel: string | null = null,
+): string {
+  if (launch.model === "default") {
+    const configured = configuredModelEntry(launch.provider, configuredModel);
+    if (configured !== null) {
+      return `${configured.description} Selected by your ${agentModelProviderName(launch.provider)} configuration.`;
+    }
+  }
   return modelText(launch).hint;
 }
 
@@ -361,16 +410,39 @@ function modelRows<Value extends AgentModelChoice>(
   provider: AgentCliKind,
   values: ReadonlyArray<Value>,
   text: Record<Value, LaunchText>,
+  configured: ManifestModel | null,
 ): ReadonlyArray<AgentModelRow> {
   const providerName = agentModelProviderName(provider);
-  return values.map((value) => ({
-    value,
-    label: text[value].label,
-    hint: text[value].hint,
-    provider,
-    providerName,
-    favoriteKey: agentModelFavoriteKey(provider, value),
-  }));
+  return values
+    .filter((value) => value === "default" || value !== configured?.choice)
+    .map((value) => ({
+      value,
+      label: value === "default" && configured !== null ? configured.label : text[value].label,
+      hint:
+        value === "default" && configured !== null
+          ? `${configured.description} Selected by your ${providerName} configuration.`
+          : text[value].hint,
+      provider,
+      providerName,
+      favoriteKey: agentModelFavoriteKey(provider, value),
+    }));
+}
+
+interface ManifestModel {
+  readonly choice: AgentModelChoice;
+  readonly label: string;
+  readonly runtimeIds: ReadonlyArray<string>;
+  readonly description: string;
+}
+
+function configuredModelEntry(
+  provider: AgentCliKind,
+  configuredModel: string | null,
+): ManifestModel | null {
+  if (configuredModel === null) return null;
+  const base = configuredModel.replace(/\[[^\]]+\]$/, "");
+  const entries = modelManifest[provider] as ReadonlyArray<ManifestModel>;
+  return entries.find((entry) => entry.runtimeIds.includes(base)) ?? null;
 }
 
 function choices<Value extends string>(

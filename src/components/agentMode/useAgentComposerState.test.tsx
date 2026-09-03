@@ -448,6 +448,26 @@ describe("useAgentComposerState", () => {
     );
   });
 
+  it("keeps a provider selected from the new-thread model picker", () => {
+    render(threadsSurfaceFixture(), undefined, { claudeCode: true, codex: true });
+    expect(current().composer.composerProps.launchProvider).toBe("claudeCode");
+
+    act(() =>
+      current().composer.composerProps.onLaunchChange({
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        mode: "dangerFullAccess",
+      }),
+    );
+
+    expect(current().composer.composerProps.launchProvider).toBe("codex");
+    expect(current().composer.composerProps.launch).toEqual({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      mode: "dangerFullAccess",
+    });
+  });
+
   it("clears the selected thread and unsafe confirmation when starting fresh", () => {
     render(threadsSurfaceFixture({ threads: [surfaceThreadView()] }));
     act(() => current().navigation.selectThread("agt-1"));

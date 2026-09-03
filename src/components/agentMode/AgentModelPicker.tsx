@@ -38,12 +38,12 @@ export interface AgentModelPickerProps {
   readonly favorites: AgentModelFavorites;
   readonly providerEnabled?: Readonly<Record<AgentCliKind, boolean>> | null;
   readonly providerManagement?: AgentProviderManagementSurface | null;
-  onSelect(model: AgentModelChoice): void;
+  readonly providerSwitchable?: boolean;
+  onSelect(model: AgentModelChoice, provider?: AgentCliKind): void;
 }
 
 const PROVIDERS: ReadonlyArray<AgentCliKind> = ["claudeCode", "codex"];
 const MAX_SHORTCUT_ROWS = 9;
-const OTHER_PROVIDER_REASON = "Switch the agent CLI in settings";
 
 export function AgentModelPicker({
   describedBy,
@@ -55,6 +55,7 @@ export function AgentModelPicker({
   onSelect,
   providerEnabled = null,
   providerManagement = null,
+  providerSwitchable = false,
 }: AgentModelPickerProps) {
   const selectedProviderEnabled = providerIsEnabled(providerEnabled, launch.provider);
   const providerUnavailableReason = providerAvailabilityReason(
@@ -66,19 +67,29 @@ export function AgentModelPicker({
   const popover = useAgentPopover("start", pickerDisabled);
   const { hide, open, popoverRef, show } = popover;
   const [filter, setFilter] = useState<AgentModelFilter>("all");
+  const [displayProvider, setDisplayProvider] = useState<AgentCliKind>(launch.provider);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listId = `${id}-list`;
   const dialogId = `${id}-dialog`;
-  const rows = useMemo(
-    () => (selectedProviderEnabled ? agentModelRows(launch.provider) : []),
-    [launch.provider, selectedProviderEnabled],
-  );
   const providers = useMemo(
     () => PROVIDERS.filter((provider) => providerIsEnabled(providerEnabled, provider)),
     [providerEnabled],
   );
+  const rows = useMemo(() => {
+    if (filter === "favorites") {
+      return providers.flatMap((provider) =>
+        agentModelRows(provider, configuredProviderModel(providerManagement, provider)),
+      );
+    }
+    return providerIsEnabled(providerEnabled, displayProvider)
+      ? agentModelRows(
+          displayProvider,
+          configuredProviderModel(providerManagement, displayProvider),
+        )
+      : [];
+  }, [displayProvider, filter, providerEnabled, providerManagement, providers]);
   const visible = useMemo(
     () => filterAgentModelRows(rows, filter, favorites.keys, query),
     [favorites.keys, filter, query, rows],
@@ -91,6 +102,7 @@ export function AgentModelPicker({
     if (pickerDisabled) return;
     setQuery("");
     setFilter("all");
+    setDisplayProvider(launch.provider);
     setActiveIndex(
       Math.max(
         0,
@@ -98,16 +110,17 @@ export function AgentModelPicker({
       ),
     );
     show();
-  }, [launch.model, pickerDisabled, rows, show]);
+  }, [launch.model, launch.provider, pickerDisabled, rows, show]);
 
   const choose = useCallback(
     (row: AgentModelRow) => {
       if (pickerDisabled) return;
       hide(true);
-      if (row.value === launch.model) return;
-      onSelect(row.value);
+      if (row.provider === launch.provider && row.value === launch.model) return;
+      if (row.provider === launch.provider) onSelect(row.value);
+      else onSelect(row.value, row.provider);
     },
-    [hide, launch.model, onSelect, pickerDisabled],
+    [hide, launch.model, launch.provider, onSelect, pickerDisabled],
   );
 
   useLayoutEffect(() => {
@@ -191,13 +204,21 @@ export function AgentModelPicker({
         onClick={() => (open ? hide(false) : openPicker())}
         onKeyDown={onTriggerKeyDown}
         ref={popover.triggerRef}
-        title={providerUnavailableReason ?? agentLaunchModelHint(launch)}
+        title={
+          providerUnavailableReason ??
+          agentLaunchModelHint(launch, configuredProviderModel(providerManagement, launch.provider))
+        }
         type="button"
       >
         <span aria-hidden="true" className="agent-picker__icon">
           <AgentProviderGlyph kind={launch.provider} />
         </span>
-        <span className="agent-picker__value">{agentLaunchModelLabel(launch)}</span>
+        <span className="agent-picker__value">
+          {agentLaunchModelLabel(
+            launch,
+            configuredProviderModel(providerManagement, launch.provider),
+          )}
+        </span>
         <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={12} />
       </button>
 
@@ -224,10 +245,13 @@ export function AgentModelPicker({
             </button>
             {providers.map((provider) => (
               <AgentProviderRailItem
-                active={filter === "all"}
-                current={provider === launch.provider}
+                active={filter === "all" && provider === displayProvider}
+                disabled={!providerSwitchable && provider !== launch.provider}
                 key={provider}
-                onSelect={() => selectFilter("all")}
+                onSelect={() => {
+                  setDisplayProvider(provider);
+                  selectFilter("all");
+                }}
                 provider={provider}
               />
             ))}
@@ -316,24 +340,24 @@ export function AgentModelPicker({
 
 function AgentProviderRailItem({
   active,
-  current,
+  disabled,
   onSelect,
   provider,
 }: {
   readonly provider: AgentCliKind;
-  readonly current: boolean;
   readonly active: boolean;
+  readonly disabled: boolean;
   onSelect(): void;
 }) {
   const name = agentModelProviderName(provider);
-  if (!current) {
+  if (disabled) {
     return (
       <button
         aria-disabled="true"
         aria-label={`${name} models`}
         className="agent-model-picker__rail-item"
         data-provider={provider}
-        title={OTHER_PROVIDER_REASON}
+        title="This provider is unavailable in this thread. Start a new thread to switch providers."
         type="button"
       >
         <AgentProviderGlyph kind={provider} />
@@ -366,6 +390,14 @@ function providerIsEnabled(
 ): boolean {
   if (enabled === null) return true;
   return enabled[provider];
+}
+
+function configuredProviderModel(
+  management: AgentProviderManagementSurface | null,
+  provider: AgentCliKind,
+): string | null {
+  const state = management?.cliDiscovery[provider];
+  return state?.kind === "detected" ? (state.configuredModel ?? null) : null;
 }
 
 function providerAvailabilityReason(

@@ -33,6 +33,7 @@ export type AgentCliDiscoveryState =
       readonly kind: "detected";
       readonly path: string;
       readonly version: string | null;
+      readonly configuredModel?: string | null;
     }
   | { readonly kind: "notFound" };
 

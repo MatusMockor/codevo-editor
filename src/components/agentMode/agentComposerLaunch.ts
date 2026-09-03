@@ -26,7 +26,8 @@ export function defaultAgentComposerLaunch(provider: AgentCliKind): AgentLaunchO
       provider: "claudeCode",
       model: "default",
       mode: "bypassPermissions",
-      effort: "default",
+      effort: "high",
+      context: "1m",
     };
   }
   return { provider: "codex", model: "default", mode: "dangerFullAccess" };

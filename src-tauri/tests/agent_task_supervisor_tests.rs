@@ -21,8 +21,8 @@ use agent_task_admission::{
     AGENT_TASK_REPOSITORY_LIMIT, AGENT_TASK_REPOSITORY_LIMIT_ERROR,
 };
 use agent_task_spawner::agent_launch::{
-    AgentLaunchOptions, ClaudeEffortChoice, ClaudeModelChoice, ClaudePermissionMode,
-    CodexExecutionMode, CodexModelChoice,
+    AgentLaunchOptions, ClaudeContextChoice, ClaudeEffortChoice, ClaudeModelChoice,
+    ClaudePermissionMode, CodexExecutionMode, CodexModelChoice,
 };
 use agent_task_spawner::{
     plan_agent_invocation, AgentChild, AgentCliInvocation, AgentProcessSpawner, AgentTaskSpawnPlan,
@@ -671,6 +671,7 @@ const CLAUDE_LAUNCH: AgentLaunchOptions = AgentLaunchOptions::ClaudeCode {
     model: ClaudeModelChoice::Default,
     mode: ClaudePermissionMode::Default,
     effort: ClaudeEffortChoice::Default,
+    context: ClaudeContextChoice::TwoHundredK,
 };
 const CODEX_LAUNCH: AgentLaunchOptions = AgentLaunchOptions::Codex {
     model: CodexModelChoice::Default,

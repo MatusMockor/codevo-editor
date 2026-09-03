@@ -1338,7 +1338,8 @@ describe("AgentModeView", () => {
         provider: "claudeCode",
         model: "default",
         mode: "bypassPermissions",
-        effort: "default",
+        effort: "high",
+        context: "1m",
       },
       dangerousLaunchConfirmed: true,
     });
@@ -1372,7 +1373,8 @@ describe("AgentModeView", () => {
         provider: "claudeCode",
         model: "sonnet",
         mode: "bypassPermissions",
-        effort: "default",
+        effort: "high",
+        context: "1m",
       },
       dangerousLaunchConfirmed: true,
     });
@@ -1475,7 +1477,8 @@ describe("AgentModeView", () => {
         provider: "claudeCode",
         model: "sonnet",
         mode: "bypassPermissions",
-        effort: "default",
+        effort: "high",
+        context: "1m",
       },
       dangerousLaunchConfirmed: true,
     });

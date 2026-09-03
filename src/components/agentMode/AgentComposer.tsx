@@ -145,6 +145,7 @@ export function AgentComposer({
       onLaunchChange={onLaunchChange}
       providerEnabled={providerEnabled}
       providerManagement={providerManagement}
+      providerSwitchable={!followUp}
     />
   );
 

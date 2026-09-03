@@ -25,6 +25,7 @@ describe("agentLaunch", () => {
       model: "default",
       mode: "default",
       effort: "default",
+      context: "1m",
     });
     expect(defaultAgentLaunchOptions("codex")).toEqual({
       provider: "codex",
@@ -107,7 +108,7 @@ describe("agentLaunch", () => {
       const wire: unknown = JSON.parse(JSON.stringify(serializeAgentLaunchOptions(options)));
       expect(parseAgentLaunchOptions(wire, "launch")).toEqual(options);
     }
-    expect(pairs).toHaveLength(32);
+    expect(pairs).toHaveLength(40);
   });
 
   it("rejects non-string and casing variants of a known choice", () => {

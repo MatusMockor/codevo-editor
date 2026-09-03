@@ -5,26 +5,22 @@ import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
   agentLaunchAccess,
-  agentLaunchEffortChoices,
-  agentLaunchEffortHint,
-  agentLaunchEffortValue,
   agentLaunchModeChoices,
   agentLaunchModeHint,
   agentLaunchModelHint,
-  agentLaunchSupportsEffort,
   agentLaunchTone,
-  agentLaunchWithEffort,
   agentLaunchWithMode,
   agentLaunchWithModel,
   type AgentLaunchAccess,
   type AgentLaunchChoice,
 } from "./agentLaunchPresentation";
 import { AgentModelPicker } from "./AgentModelPicker";
+import { defaultAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentPickerMenu } from "./AgentPickerMenu";
+import { AgentTraitsPicker } from "./AgentTraitsPicker";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
 
 const MODEL_ID = "agent-launch-model";
-const EFFORT_ID = "agent-launch-effort";
 const MODE_ID = "agent-launch-mode";
 
 export interface AgentLaunchControlsProps {
@@ -33,6 +29,7 @@ export interface AgentLaunchControlsProps {
   readonly favorites: AgentModelFavorites;
   readonly providerEnabled?: Readonly<Record<AgentCliKind, boolean>> | null;
   readonly providerManagement?: AgentProviderManagementSurface | null;
+  readonly providerSwitchable?: boolean;
   onLaunchChange(next: AgentLaunchOptions): void;
 }
 
@@ -43,8 +40,12 @@ export function AgentLaunchControls({
   onLaunchChange,
   providerEnabled = null,
   providerManagement = null,
+  providerSwitchable = false,
 }: AgentLaunchControlsProps) {
   const modeChoices = agentLaunchModeChoices(launch.provider);
+  const discovered = providerManagement?.cliDiscovery[launch.provider];
+  const configuredModel =
+    discovered?.kind === "detected" ? (discovered.configuredModel ?? null) : null;
   return (
     <div className="agent-composer__launch">
       <AgentModelPicker
@@ -54,33 +55,31 @@ export function AgentLaunchControls({
         id={MODEL_ID}
         label="Agent model"
         launch={launch}
-        onSelect={(model) => onLaunchChange(agentLaunchWithModel(launch, model))}
+        onSelect={(model, provider = launch.provider) =>
+          onLaunchChange(
+            agentLaunchWithModel(
+              provider === launch.provider ? launch : defaultAgentComposerLaunch(provider),
+              model,
+            ),
+          )
+        }
         providerEnabled={providerEnabled}
         providerManagement={providerManagement}
+        providerSwitchable={providerSwitchable}
       />
       <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
-        {agentLaunchModelHint(launch)}
+        {agentLaunchModelHint(launch, configuredModel)}
       </span>
 
-      {agentLaunchSupportsEffort(launch) && (
+      {launch.provider === "claudeCode" && (
         <>
           <AgentLaunchDivider />
-          <AgentPickerMenu
-            align="start"
-            describedBy={`${EFFORT_ID}-hint`}
+          <AgentTraitsPicker
+            configuredModel={configuredModel}
             disabled={disabled}
-            id={EFFORT_ID}
-            label="Agent reasoning effort"
-            onChange={(value) => onLaunchChange(agentLaunchWithEffort(launch, value))}
-            options={agentLaunchEffortChoices().map(toOption)}
-            prefix={null}
-            tone={null}
-            value={agentLaunchEffortValue(launch)}
-            variant="ghost"
+            launch={launch}
+            onChange={onLaunchChange}
           />
-          <span className="agent-visually-hidden" id={`${EFFORT_ID}-hint`}>
-            {agentLaunchEffortHint(launch)}
-          </span>
         </>
       )}
 

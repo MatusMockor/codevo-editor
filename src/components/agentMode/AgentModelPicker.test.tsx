@@ -75,10 +75,17 @@ describe("AgentModelPicker", () => {
     expect(codex.getAttribute("aria-pressed")).toBe("true");
     expect(codex.getAttribute("aria-disabled")).toBeNull();
     expect(claude.getAttribute("aria-disabled")).toBe("true");
-    expect(claude.title).toBe("Switch the agent CLI in settings");
+    expect(claude.title).toContain("Start a new thread to switch providers");
 
     act(() => claude.click());
-    expect(optionValues()).toEqual(["default", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]);
+    expect(optionValues()).toEqual([
+      "default",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+      "gpt-5.4",
+    ]);
     expect(selectedOption()?.dataset.value).toBe("gpt-5.5");
   });
 
@@ -208,6 +215,35 @@ describe("AgentModelPicker", () => {
     expect(host.querySelector('[data-provider="codex"]')).toBeNull();
   });
 
+  it("switches providers from a new-thread picker and keeps providers locked in a thread", () => {
+    const onSelect = vi.fn();
+    render(CLAUDE, onSelect, false, null, { claudeCode: true, codex: true }, true);
+    open();
+    act(() => railItem("codex").click());
+    expect(optionValues()).toContain("gpt-5.6-sol");
+    act(() => option("default").click());
+    expect(onSelect).toHaveBeenCalledWith("default", "codex");
+  });
+
+  it("names the CLI-configured default model and removes its duplicate row", () => {
+    const configured = management({ claudeCode: true, codex: true });
+    render(CLAUDE, vi.fn(), false, {
+      ...configured,
+      cliDiscovery: {
+        ...configured.cliDiscovery,
+        claudeCode: {
+          kind: "detected",
+          path: "/bin/claude",
+          version: "2.1.258",
+          configuredModel: "claude-fable-5-1[1m]",
+        },
+      },
+    });
+    expect(trigger().textContent).toBe("Claude Fable 5");
+    open();
+    expect(optionValues()).toEqual(["default", "opus", "sonnet"]);
+  });
+
   it("keeps persisted enablement separate from unavailable registration authority", () => {
     const base = management({ claudeCode: true, codex: true });
     const unavailable: AgentProviderManagementSurface = {
@@ -231,12 +267,14 @@ describe("AgentModelPicker", () => {
     onSelect,
     providerEnabled,
     providerManagement,
+    providerSwitchable,
   }: {
     readonly launch: AgentLaunchOptions;
     readonly disabled: boolean;
     readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>> | null;
     readonly providerManagement: AgentProviderManagementSurface | null;
-    onSelect(model: AgentModelChoice): void;
+    readonly providerSwitchable: boolean;
+    onSelect(model: AgentModelChoice, provider?: "claudeCode" | "codex"): void;
   }) {
     const favorites = useAgentModelFavorites();
     const [current] = useState(launch);
@@ -251,16 +289,19 @@ describe("AgentModelPicker", () => {
         onSelect={onSelect}
         providerEnabled={providerEnabled}
         providerManagement={providerManagement}
+        providerSwitchable={providerSwitchable}
       />
     );
   }
 
   function render(
     launch: AgentLaunchOptions,
-    onSelect: (model: AgentModelChoice) => void = () => undefined,
+    onSelect: (model: AgentModelChoice, provider?: "claudeCode" | "codex") => void = () =>
+      undefined,
     disabled = false,
     providerManagement: AgentProviderManagementSurface | null = null,
     providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>> | null = null,
+    providerSwitchable = false,
   ): void {
     act(() =>
       root.render(
@@ -279,6 +320,7 @@ describe("AgentModelPicker", () => {
                 })
           }
           providerManagement={providerManagement}
+          providerSwitchable={providerSwitchable}
         />,
       ),
     );

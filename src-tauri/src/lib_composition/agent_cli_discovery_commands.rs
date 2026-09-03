@@ -66,6 +66,7 @@ mod tests {
             claude_code: crate::agent_cli_discovery::AgentCliDiscoveryState::Detected {
                 path: "/usr/local/bin/claude".to_string(),
                 version: Some("2.1.247".to_string()),
+                configured_model: Some("claude-fable-5-1[1m]".to_string()),
             },
             codex: crate::agent_cli_discovery::AgentCliDiscoveryState::NotFound,
         };
@@ -76,7 +77,8 @@ mod tests {
                 "claudeCode": {
                     "kind": "detected",
                     "path": "/usr/local/bin/claude",
-                    "version": "2.1.247"
+                    "version": "2.1.247",
+                    "configuredModel": "claude-fable-5-1[1m]"
                 },
                 "codex": { "kind": "notFound" }
             })

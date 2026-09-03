@@ -48,14 +48,36 @@ function discoveryState(value: unknown, path: string): AgentCliDiscoveryState {
     return { kind: "notFound" };
   }
   if (state.kind === "detected") {
-    exactKeys(state, ["kind", "path", "version"], path);
+    exactKeys(
+      state,
+      "configuredModel" in state
+        ? ["kind", "path", "version", "configuredModel"]
+        : ["kind", "path", "version"],
+      path,
+    );
     return {
       kind: "detected",
       path: absolutePath(state.path, `${path}.path`),
       version: optionalVersion(state.version, `${path}.version`),
+      ...(state.configuredModel === undefined
+        ? {}
+        : { configuredModel: optionalModelId(state.configuredModel, `${path}.configuredModel`) }),
     };
   }
   return invalid(`${path}.kind`, "expected detected or notFound");
+}
+
+function optionalModelId(value: unknown, path: string): string | null {
+  if (value === null) return null;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 128 ||
+    !/^[A-Za-z0-9._[\]-]+$/.test(value)
+  ) {
+    return invalid(path, "expected a bounded model identifier or null");
+  }
+  return value;
 }
 
 function absolutePath(value: unknown, path: string): string {

@@ -69,22 +69,14 @@ describe("AgentLaunchControls", () => {
       onLaunchChange,
     );
 
-    expect(trigger("agent-launch-effort").textContent).toBe("High");
-    expect(trigger("agent-launch-effort").getAttribute("aria-label")).toBe(
-      "Agent reasoning effort",
+    expect(trigger("agent-launch-effort").textContent).toBe("High · 200k");
+    expect(trigger("agent-launch-effort").getAttribute("aria-label")).toBe("Model capabilities");
+    act(() => trigger("agent-launch-effort").click());
+    const max = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find(
+      (option) => option.textContent === "Max",
     );
-    open("agent-launch-effort");
-    expect(optionValues("agent-launch-effort")).toEqual([
-      "default",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ]);
-    open("agent-launch-effort");
-
-    pick("agent-launch-effort", "max");
+    expect(max).not.toBeUndefined();
+    act(() => max?.click());
 
     expect(onLaunchChange).toHaveBeenCalledWith({
       provider: "claudeCode",
@@ -96,6 +88,33 @@ describe("AgentLaunchControls", () => {
     renderControls({ provider: "codex", model: "default", mode: "default" });
 
     expect(host.querySelector("#agent-launch-effort")).toBeNull();
+  });
+
+  it("shows the 1M default and applies the Claude model suffix selection", () => {
+    const onLaunchChange = vi.fn();
+    renderControls(
+      {
+        provider: "claudeCode",
+        model: "fable",
+        mode: "bypassPermissions",
+        effort: "high",
+        context: "1m",
+      },
+      onLaunchChange,
+    );
+    expect(trigger("agent-launch-effort").textContent).toBe("High · 1M");
+    act(() => trigger("agent-launch-effort").click());
+    const standard = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find(
+      (option) => option.textContent === "200k",
+    );
+    act(() => standard?.click());
+    expect(onLaunchChange).toHaveBeenCalledWith({
+      provider: "claudeCode",
+      model: "fable",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "200k",
+    });
   });
 
   it("marks the model trigger with the provider glyph without repeating it to readers", () => {
@@ -127,7 +146,7 @@ describe("AgentLaunchControls", () => {
       expect(trigger(id).querySelector(".agent-picker__prefix")).toBeNull();
     }
     expect(trigger("agent-launch-model").textContent).toBe("Auto (Claude Code)");
-    expect(trigger("agent-launch-effort").textContent).toBe("Default effort");
+    expect(trigger("agent-launch-effort").textContent).toBe("Default effort · 200k");
     expect(trigger("agent-launch-mode").textContent).toBe("Auto");
     const dividers = host.querySelectorAll(".agent-composer__divider");
     expect(dividers).toHaveLength(2);
@@ -157,6 +176,8 @@ describe("AgentLaunchControls", () => {
     expect(options("agent-launch-model").map((option) => optionLabel(option))).toEqual([
       "Auto (Codex)",
       "GPT-5.6 Sol",
+      "GPT-5.6 Terra",
+      "GPT-5.6 Luna",
       "GPT-5.5",
       "GPT-5.4",
     ]);

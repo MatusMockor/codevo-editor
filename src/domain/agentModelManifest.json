@@ -1,0 +1,70 @@
+{
+  "claudeCode": [
+    {
+      "choice": "fable",
+      "label": "Claude Fable 5",
+      "runtimeIds": ["fable", "claude-fable-5", "claude-fable-5-1"],
+      "description": "Latest Claude Fable model.",
+      "defaultEffort": "high",
+      "contextWindows": ["200k", "1m"]
+    },
+    {
+      "choice": "opus",
+      "label": "Claude Opus 5",
+      "runtimeIds": ["opus", "claude-opus-5"],
+      "description": "Latest Claude Opus model.",
+      "defaultEffort": "high",
+      "contextWindows": ["200k", "1m"]
+    },
+    {
+      "choice": "sonnet",
+      "label": "Claude Sonnet 5",
+      "runtimeIds": ["sonnet", "claude-sonnet-5"],
+      "description": "Latest Claude Sonnet model.",
+      "defaultEffort": "high",
+      "contextWindows": ["200k", "1m"]
+    }
+  ],
+  "codex": [
+    {
+      "choice": "gpt-5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "runtimeIds": ["gpt-5.6-sol"],
+      "description": "Reliable agentic workhorse for everyday tasks.",
+      "defaultEffort": "low",
+      "contextWindows": []
+    },
+    {
+      "choice": "gpt-5.6-terra",
+      "label": "GPT-5.6 Terra",
+      "runtimeIds": ["gpt-5.6-terra"],
+      "description": "Balanced agentic coding model for everyday work.",
+      "defaultEffort": "medium",
+      "contextWindows": []
+    },
+    {
+      "choice": "gpt-5.6-luna",
+      "label": "GPT-5.6 Luna",
+      "runtimeIds": ["gpt-5.6-luna"],
+      "description": "Fast and affordable agentic coding model.",
+      "defaultEffort": "medium",
+      "contextWindows": []
+    },
+    {
+      "choice": "gpt-5.5",
+      "label": "GPT-5.5",
+      "runtimeIds": ["gpt-5.5"],
+      "description": "Proven previous-generation coding model.",
+      "defaultEffort": "medium",
+      "contextWindows": []
+    },
+    {
+      "choice": "gpt-5.4",
+      "label": "GPT-5.4",
+      "runtimeIds": ["gpt-5.4"],
+      "description": "Strong model for everyday coding.",
+      "defaultEffort": "medium",
+      "contextWindows": []
+    }
+  ]
+}

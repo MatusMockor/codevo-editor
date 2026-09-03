@@ -190,7 +190,15 @@ export function useAgentComposerControllerState({
     () => resolveLaunchScope(selectedThread, targetRootKey),
     [selectedThread, targetRootKey],
   );
-  const agentCliKind = composerProviderKind(selectedThread, agents.agentCliKind, providerEnabled);
+  const selectedLaunchProvider =
+    launchChoice !== null && launchChoice.key === launchScope?.key
+      ? launchChoice.launch.provider
+      : agents.agentCliKind;
+  const agentCliKind = composerProviderKind(
+    selectedThread,
+    selectedLaunchProvider,
+    providerEnabled,
+  );
   const composerMode = useComposerMode(selectedThread, agents, agentCliKind);
   const lastUsedLaunch = agents.lastUsedLaunch;
   const composerLaunch = useMemo(

@@ -11,7 +11,14 @@ export const CLAUDE_PERMISSION_MODES = [
 ] as const;
 export type ClaudePermissionMode = (typeof CLAUDE_PERMISSION_MODES)[number];
 
-export const CODEX_MODEL_CHOICES = ["default", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"] as const;
+export const CODEX_MODEL_CHOICES = [
+  "default",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.5",
+  "gpt-5.4",
+] as const;
 export type CodexModelChoice = (typeof CODEX_MODEL_CHOICES)[number];
 
 export const CODEX_EXECUTION_MODES = [
@@ -24,12 +31,15 @@ export type CodexExecutionMode = (typeof CODEX_EXECUTION_MODES)[number];
 
 export const CLAUDE_EFFORT_CHOICES = ["default", "low", "medium", "high", "xhigh", "max"] as const;
 export type ClaudeEffortChoice = (typeof CLAUDE_EFFORT_CHOICES)[number];
+export const CLAUDE_CONTEXT_CHOICES = ["200k", "1m"] as const;
+export type ClaudeContextChoice = (typeof CLAUDE_CONTEXT_CHOICES)[number];
 
 export interface ClaudeLaunchOptions {
   readonly provider: "claudeCode";
   readonly model: ClaudeModelChoice;
   readonly mode: ClaudePermissionMode;
   readonly effort: ClaudeEffortChoice;
+  readonly context?: ClaudeContextChoice;
 }
 
 export interface CodexLaunchOptions {
@@ -46,7 +56,13 @@ export interface AgentLaunchOptionsByProvider {
 }
 
 export const DEFAULT_AGENT_LAUNCH_OPTIONS: AgentLaunchOptionsByProvider = {
-  claudeCode: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
+  claudeCode: {
+    provider: "claudeCode",
+    model: "default",
+    mode: "default",
+    effort: "default",
+    context: "1m",
+  },
   codex: { provider: "codex", model: "default", mode: "default" },
 };
 
@@ -69,6 +85,7 @@ export function serializeAgentLaunchOptions(options: AgentLaunchOptions): Record
       model: options.model,
       mode: options.mode,
       effort: options.effort,
+      ...(options.context === undefined ? {} : { context: options.context }),
     };
   }
   return { provider: options.provider, model: options.model, mode: options.mode };
@@ -96,7 +113,9 @@ export function agentLaunchOptionsEqual(a: AgentLaunchOptions, b: AgentLaunchOpt
   if (a.provider !== b.provider) return false;
   if (a.model !== b.model) return false;
   if (a.mode !== b.mode) return false;
-  if (a.provider === "claudeCode" && b.provider === "claudeCode") return a.effort === b.effort;
+  if (a.provider === "claudeCode" && b.provider === "claudeCode") {
+    return a.effort === b.effort && (a.context ?? "1m") === (b.context ?? "1m");
+  }
   return true;
 }
 
@@ -110,6 +129,9 @@ function parseLaunchOptions(value: unknown, path: string, stored: boolean): Agen
       model: member(options.model, CLAUDE_MODEL_CHOICES, `${path}.model`),
       mode: member(options.mode, CLAUDE_PERMISSION_MODES, `${path}.mode`),
       effort: parseEffort(options.effort, `${path}.effort`, stored),
+      ...(options.context === undefined
+        ? {}
+        : { context: member(options.context, CLAUDE_CONTEXT_CHOICES, `${path}.context`) }),
     };
   }
   exactKeys(options, ["provider", "model", "mode"], path);
@@ -124,8 +146,10 @@ function claudeLaunchKeys(
   options: Record<string, unknown>,
   stored: boolean,
 ): ReadonlyArray<string> {
-  if (stored && !("effort" in options)) return ["provider", "model", "mode"];
-  return ["provider", "model", "mode", "effort"];
+  const keys = ["provider", "model", "mode"];
+  if (!stored || "effort" in options) keys.push("effort");
+  if ("context" in options) keys.push("context");
+  return keys;
 }
 
 function parseEffort(value: unknown, path: string, stored: boolean): ClaudeEffortChoice {

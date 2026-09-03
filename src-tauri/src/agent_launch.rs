@@ -32,6 +32,10 @@ pub enum CodexModelChoice {
     Default,
     #[serde(rename = "gpt-5.6-sol")]
     Gpt56Sol,
+    #[serde(rename = "gpt-5.6-terra")]
+    Gpt56Terra,
+    #[serde(rename = "gpt-5.6-luna")]
+    Gpt56Luna,
     #[serde(rename = "gpt-5.5")]
     Gpt55,
     #[serde(rename = "gpt-5.4")]
@@ -48,6 +52,15 @@ pub enum ClaudeEffortChoice {
     High,
     Xhigh,
     Max,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub enum ClaudeContextChoice {
+    #[default]
+    #[serde(rename = "200k")]
+    TwoHundredK,
+    #[serde(rename = "1m")]
+    OneM,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -69,6 +82,8 @@ pub enum AgentLaunchOptions {
         mode: ClaudePermissionMode,
         #[serde(default)]
         effort: ClaudeEffortChoice,
+        #[serde(default)]
+        context: ClaudeContextChoice,
     },
     #[serde(rename_all = "camelCase")]
     Codex {
@@ -83,6 +98,7 @@ impl Default for AgentLaunchOptions {
             model: ClaudeModelChoice::Default,
             mode: ClaudePermissionMode::Default,
             effort: ClaudeEffortChoice::Default,
+            context: ClaudeContextChoice::OneM,
         }
     }
 }
@@ -108,7 +124,7 @@ impl AgentLaunchOptions {
 
     pub fn model_args(&self) -> &'static [&'static str] {
         match self {
-            Self::ClaudeCode { model, .. } => claude_model_args(*model),
+            Self::ClaudeCode { model, context, .. } => claude_model_args(*model, *context),
             Self::Codex { model, .. } => codex_model_args(*model),
         }
     }
@@ -139,12 +155,18 @@ fn claude_effort_args(effort: ClaudeEffortChoice) -> &'static [&'static str] {
     }
 }
 
-fn claude_model_args(model: ClaudeModelChoice) -> &'static [&'static str] {
-    match model {
-        ClaudeModelChoice::Default => &[],
-        ClaudeModelChoice::Fable => &["--model", "fable"],
-        ClaudeModelChoice::Opus => &["--model", "opus"],
-        ClaudeModelChoice::Sonnet => &["--model", "sonnet"],
+fn claude_model_args(
+    model: ClaudeModelChoice,
+    context: ClaudeContextChoice,
+) -> &'static [&'static str] {
+    match (model, context) {
+        (ClaudeModelChoice::Default, _) => &[],
+        (ClaudeModelChoice::Fable, ClaudeContextChoice::TwoHundredK) => &["--model", "fable"],
+        (ClaudeModelChoice::Fable, ClaudeContextChoice::OneM) => &["--model", "fable[1m]"],
+        (ClaudeModelChoice::Opus, ClaudeContextChoice::TwoHundredK) => &["--model", "opus"],
+        (ClaudeModelChoice::Opus, ClaudeContextChoice::OneM) => &["--model", "opus[1m]"],
+        (ClaudeModelChoice::Sonnet, ClaudeContextChoice::TwoHundredK) => &["--model", "sonnet"],
+        (ClaudeModelChoice::Sonnet, ClaudeContextChoice::OneM) => &["--model", "sonnet[1m]"],
     }
 }
 
@@ -161,6 +183,8 @@ fn codex_model_args(model: CodexModelChoice) -> &'static [&'static str] {
     match model {
         CodexModelChoice::Default => &[],
         CodexModelChoice::Gpt56Sol => &["-m", "gpt-5.6-sol"],
+        CodexModelChoice::Gpt56Terra => &["-m", "gpt-5.6-terra"],
+        CodexModelChoice::Gpt56Luna => &["-m", "gpt-5.6-luna"],
         CodexModelChoice::Gpt55 => &["-m", "gpt-5.5"],
         CodexModelChoice::Gpt54 => &["-m", "gpt-5.4"],
     }
@@ -195,9 +219,11 @@ mod tests {
         ClaudePermissionMode::AcceptEdits,
         ClaudePermissionMode::BypassPermissions,
     ];
-    const CODEX_MODELS: [CodexModelChoice; 4] = [
+    const CODEX_MODELS: [CodexModelChoice; 6] = [
         CodexModelChoice::Default,
         CodexModelChoice::Gpt56Sol,
+        CodexModelChoice::Gpt56Terra,
+        CodexModelChoice::Gpt56Luna,
         CodexModelChoice::Gpt55,
         CodexModelChoice::Gpt54,
     ];
@@ -230,6 +256,7 @@ mod tests {
             model,
             mode,
             effort,
+            context: ClaudeContextChoice::TwoHundredK,
         }
     }
 
@@ -252,6 +279,17 @@ mod tests {
                 "model {model:?}"
             );
         }
+    }
+
+    #[test]
+    fn claude_one_million_context_uses_the_runtime_model_suffix() {
+        let launch = AgentLaunchOptions::ClaudeCode {
+            model: ClaudeModelChoice::Fable,
+            mode: ClaudePermissionMode::Default,
+            effort: ClaudeEffortChoice::High,
+            context: ClaudeContextChoice::OneM,
+        };
+        assert_eq!(launch.model_args(), &["--model", "fable[1m]"]);
     }
 
     #[test]
@@ -316,9 +354,11 @@ mod tests {
 
     #[test]
     fn codex_model_table_is_exhaustive_and_flagless_by_default() {
-        let expected: [&[&str]; 4] = [
+        let expected: [&[&str]; 6] = [
             &[],
             &["-m", "gpt-5.6-sol"],
+            &["-m", "gpt-5.6-terra"],
+            &["-m", "gpt-5.6-luna"],
             &["-m", "gpt-5.5"],
             &["-m", "gpt-5.4"],
         ];
@@ -431,7 +471,7 @@ mod tests {
         .expect("claude launch encodes");
         assert_eq!(
             encoded,
-            r#"{"provider":"claudeCode","model":"sonnet","mode":"bypassPermissions","effort":"default"}"#
+            r#"{"provider":"claudeCode","model":"sonnet","mode":"bypassPermissions","effort":"default","context":"200k"}"#
         );
         let encoded = serde_json::to_string(&claude_with_effort(
             ClaudeModelChoice::Sonnet,
@@ -441,7 +481,7 @@ mod tests {
         .expect("claude launch encodes");
         assert_eq!(
             encoded,
-            r#"{"provider":"claudeCode","model":"sonnet","mode":"bypassPermissions","effort":"xhigh"}"#
+            r#"{"provider":"claudeCode","model":"sonnet","mode":"bypassPermissions","effort":"xhigh","context":"200k"}"#
         );
     }
 

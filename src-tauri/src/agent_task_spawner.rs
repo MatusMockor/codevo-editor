@@ -522,8 +522,8 @@ fn exit_code_of(status: std::process::ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::agent_launch::{
-        ClaudeEffortChoice, ClaudeModelChoice, ClaudePermissionMode, CodexExecutionMode,
-        CodexModelChoice,
+        ClaudeContextChoice, ClaudeEffortChoice, ClaudeModelChoice, ClaudePermissionMode,
+        CodexExecutionMode, CodexModelChoice,
     };
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -544,9 +544,11 @@ mod tests {
         ClaudePermissionMode::AcceptEdits,
         ClaudePermissionMode::BypassPermissions,
     ];
-    const CODEX_MODELS: [CodexModelChoice; 4] = [
+    const CODEX_MODELS: [CodexModelChoice; 6] = [
         CodexModelChoice::Default,
         CodexModelChoice::Gpt56Sol,
+        CodexModelChoice::Gpt56Terra,
+        CodexModelChoice::Gpt56Luna,
         CodexModelChoice::Gpt55,
         CodexModelChoice::Gpt54,
     ];
@@ -571,6 +573,7 @@ mod tests {
             model: ClaudeModelChoice::Default,
             mode: ClaudePermissionMode::Default,
             effort: ClaudeEffortChoice::Default,
+            context: ClaudeContextChoice::OneM,
         }
     }
 
@@ -905,6 +908,7 @@ mod tests {
                     model: ClaudeModelChoice::Opus,
                     mode: ClaudePermissionMode::AcceptEdits,
                     effort: ClaudeEffortChoice::Default,
+                    context: ClaudeContextChoice::TwoHundredK,
                 }
             ),
             [
@@ -960,6 +964,7 @@ mod tests {
                         model,
                         mode,
                         effort,
+                        context: ClaudeContextChoice::TwoHundredK,
                     };
                     for resume in [None, Some(SESSION_ID)] {
                         let mut expected: Vec<String> =

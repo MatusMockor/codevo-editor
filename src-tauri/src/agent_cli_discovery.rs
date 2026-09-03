@@ -132,6 +132,8 @@ pub struct EffectiveExecutableEnvironment {
     authority_generation: u64,
     claude_code: Option<DiscoveredAgentCli>,
     codex: Option<DiscoveredAgentCli>,
+    claude_configured_model: Option<String>,
+    codex_configured_model: Option<String>,
 }
 
 impl EffectiveExecutableEnvironment {
@@ -156,8 +158,11 @@ impl EffectiveExecutableEnvironment {
 
     pub fn presentation(&self) -> AgentCliDiscoveryResult {
         AgentCliDiscoveryResult {
-            claude_code: discovery_state(self.claude_code.as_ref()),
-            codex: discovery_state(self.codex.as_ref()),
+            claude_code: discovery_state(
+                self.claude_code.as_ref(),
+                self.claude_configured_model.as_deref(),
+            ),
+            codex: discovery_state(self.codex.as_ref(), self.codex_configured_model.as_deref()),
         }
     }
 }
@@ -183,17 +188,23 @@ pub enum AgentCliDiscoveryState {
     Detected {
         path: String,
         version: Option<String>,
+        #[serde(rename = "configuredModel")]
+        configured_model: Option<String>,
     },
     NotFound,
 }
 
-fn discovery_state(discovered: Option<&DiscoveredAgentCli>) -> AgentCliDiscoveryState {
+fn discovery_state(
+    discovered: Option<&DiscoveredAgentCli>,
+    configured_model: Option<&str>,
+) -> AgentCliDiscoveryState {
     let Some(discovered) = discovered else {
         return AgentCliDiscoveryState::NotFound;
     };
     AgentCliDiscoveryState::Detected {
         path: discovered.path.to_string_lossy().into_owned(),
         version: discovered.version.clone(),
+        configured_model: configured_model.map(ToOwned::to_owned),
     }
 }
 
@@ -380,6 +391,10 @@ impl AgentCliDiscovery {
     ) -> Result<Arc<EffectiveExecutableEnvironment>, AgentCliDiscoveryError> {
         let effective_path = self.build_effective_path()?;
         let fingerprint = path_fingerprint(&effective_path);
+        let home = self
+            .context
+            .home_directory()
+            .filter(|path| path.is_absolute());
         let snapshot = Arc::new(EffectiveExecutableEnvironment {
             claude_code: self.discover_provider(
                 AgentCliInvocation::ClaudeCode,
@@ -387,6 +402,8 @@ impl AgentCliDiscovery {
                 &effective_path,
             ),
             codex: self.discover_provider(AgentCliInvocation::CodexExec, "codex", &effective_path),
+            claude_configured_model: home.as_deref().and_then(read_claude_configured_model),
+            codex_configured_model: home.as_deref().and_then(read_codex_configured_model),
             path: effective_path,
             path_fingerprint: fingerprint,
             authority_generation,
@@ -523,6 +540,53 @@ impl AgentCliDiscovery {
         }
         None
     }
+}
+
+const MAX_AGENT_MODEL_CONFIG_BYTES: u64 = 256 * 1024;
+const MAX_AGENT_MODEL_ID_BYTES: usize = 128;
+
+fn read_claude_configured_model(home: &Path) -> Option<String> {
+    let contents = read_bounded_config(&home.join(".claude/settings.json"))?;
+    let value: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    bounded_model_id(value.get("model")?.as_str()?)
+}
+
+fn read_codex_configured_model(home: &Path) -> Option<String> {
+    let contents = read_bounded_config(&home.join(".codex/config.toml"))?;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || !line.starts_with("model") {
+            continue;
+        }
+        let (key, value) = line.split_once('=')?;
+        if key.trim() != "model" {
+            continue;
+        }
+        return bounded_model_id(value.trim().trim_matches('"').trim_matches('\''));
+    }
+    None
+}
+
+fn read_bounded_config(path: &Path) -> Option<String> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_AGENT_MODEL_CONFIG_BYTES {
+        return None;
+    }
+    fs::read_to_string(path).ok()
+}
+
+fn bounded_model_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > MAX_AGENT_MODEL_ID_BYTES || !value.is_ascii() {
+        return None;
+    }
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"-._[]".contains(&byte))
+    {
+        return None;
+    }
+    Some(value.to_string())
 }
 
 impl AgentProviderExecutableResolver for AgentCliDiscovery {

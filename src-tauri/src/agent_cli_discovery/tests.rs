@@ -803,3 +803,45 @@ fn presentation_is_closed_and_uses_camel_case_provider_keys() {
     assert_eq!(value["codex"]["path"], canonical.to_string_lossy().as_ref());
     assert_eq!(value["codex"]["version"], "1.2.3");
 }
+
+#[test]
+fn presentation_reports_only_bounded_configured_model_identifiers() {
+    let fixture = TestDirectory::new("configured-models");
+    let bin = fixture.path.join("bin");
+    executable(&bin.join("claude"), "provider");
+    executable(&bin.join("codex"), "provider");
+    fs::create_dir_all(fixture.path.join(".claude")).expect("Claude config directory");
+    fs::create_dir_all(fixture.path.join(".codex")).expect("Codex config directory");
+    fs::write(
+        fixture.path.join(".claude/settings.json"),
+        r#"{"model":"claude-fable-5-1[1m]","secret":"not projected"}"#,
+    )
+    .expect("Claude settings");
+    fs::write(
+        fixture.path.join(".codex/config.toml"),
+        "model = \"gpt-5.6-sol\"\napi_key = \"not projected\"\n",
+    )
+    .expect("Codex config");
+    let service = discovery(
+        &fixture.path,
+        None,
+        Some(joined_path(&[&bin])),
+        Arc::new(TestVersions::default()),
+        Duration::from_secs(1),
+    );
+
+    let value = serde_json::to_value(
+        service
+            .effective_environment()
+            .expect("snapshot")
+            .presentation(),
+    )
+    .expect("serialize presentation");
+
+    assert_eq!(
+        value["claudeCode"]["configuredModel"],
+        "claude-fable-5-1[1m]"
+    );
+    assert_eq!(value["codex"]["configuredModel"], "gpt-5.6-sol");
+    assert!(value.to_string().find("not projected").is_none());
+}
