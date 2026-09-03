@@ -69,10 +69,15 @@ describe("AgentThreadsSidebar", () => {
     expect(scroll?.nextElementSibling).toBe(host.querySelector(".agent-provider-footer"));
   });
 
-  it("keeps usage viewport-bound and provider actions compact in narrow rails", () => {
-    expect(cssRule(".agent-usage-layer")).toContain("position: fixed");
-    expect(cssRule(".agent-usage-popover")).toContain("max-height: calc(100vh - 96px)");
-    expect(AGENT_MODE_CSS).toContain("@media (max-width: 700px)");
+  it("opens Usage as a viewport-bound workspace page beside the rail", () => {
+    expect(cssRule(".workbench-frame > .agent-usage-layer")).toContain("position: fixed");
+    expect(cssRule(".workbench-frame > .agent-usage-layer")).toContain(
+      "left: var(--agent-rail-track)",
+    );
+    expect(cssRule(".agent-usage-popover")).toContain("inset: 0");
+    expect(cssRule(".agent-usage-popover")).toContain("overflow: hidden");
+    expect(cssRule(".agent-usage-popover:focus-visible")).toContain("box-shadow: none");
+    expect(AGENT_MODE_CSS).toContain("@media (max-width: 560px)");
     expect(AGENT_MODE_CSS).toContain("@container (max-width: 280px)");
     expect(AGENT_MODE_CSS).toContain("flex-direction: column");
     expect(cssRule(".agent-provider-footer__providers {")).toContain("overflow: hidden");

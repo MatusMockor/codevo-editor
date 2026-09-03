@@ -346,23 +346,28 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
                 role="dialog"
                 tabIndex={-1}
               >
-                <button
-                  aria-label="Close Usage"
-                  className="agent-iconbutton agent-usage-popover__close"
-                  onClick={closeUsage}
-                  title="Close Usage"
-                  type="button"
-                >
-                  <X aria-hidden="true" size={14} />
-                </button>
-                <AgentUsagePanel
-                  accountUsage={accountUsage}
-                  projectLabels={usageProjectLabels}
-                  threads={views.map((view) => view.thread)}
-                />
+                <header className="agent-usage-popover__header">
+                  <h2>Usage</h2>
+                  <button
+                    aria-label="Close Usage"
+                    className="agent-iconbutton agent-usage-popover__close"
+                    onClick={closeUsage}
+                    title="Close Usage"
+                    type="button"
+                  >
+                    <X aria-hidden="true" size={14} />
+                  </button>
+                </header>
+                <div className="agent-usage-popover__scroll">
+                  <AgentUsagePanel
+                    accountUsage={accountUsage}
+                    projectLabels={usageProjectLabels}
+                    threads={views.map((view) => view.thread)}
+                  />
+                </div>
               </div>
             </div>,
-            document.querySelector(".app-shell") ?? document.body,
+            railRef.current?.closest(".workbench-frame") ?? document.body,
           )
         : null}
     </aside>

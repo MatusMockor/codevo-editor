@@ -8,6 +8,7 @@ import {
   type AgentUsagePeriod,
   type AgentUsageProvider,
 } from "../../domain/agentUsage";
+import { AgentProviderGlyph } from "./AgentProviderGlyph";
 
 export interface AgentUsagePanelProps {
   readonly threads: ReadonlyArray<AgentThread>;
@@ -27,7 +28,7 @@ const PERIODS: ReadonlyArray<PeriodOption> = [
   { period: "30days", label: "30 days" },
 ];
 
-const PROVIDER_ORDER = ["claudeCode", "codex"] as const;
+const PROVIDER_ORDER = ["codex", "claudeCode"] as const;
 
 export function AgentUsagePanel({
   accountUsage,
@@ -53,10 +54,6 @@ export function AgentUsagePanel({
 
   return (
     <section aria-label="Usage" className="agent-usage-panel">
-      <header className="agent-usage-panel__header">
-        <h2>Usage</h2>
-        <p>Provider account limits and Saved threads on this device.</p>
-      </header>
       <section aria-label="Subscription limits" className="agent-usage-panel__limits">
         <h3>Subscription limits</h3>
         <div className="agent-usage-panel__limit-providers">
@@ -70,47 +67,52 @@ export function AgentUsagePanel({
           ))}
         </div>
       </section>
-      <div className="agent-usage-panel__local-heading">
-        <h3>Local activity</h3>
-        <p>Saved Codevo threads; not billing usage.</p>
-      </div>
-      <div aria-label="Usage period" className="agent-usage-panel__periods" role="tablist">
-        {PERIODS.map((option, index) => (
-          <button
-            aria-controls="agent-usage-period-panel"
-            aria-label={option.label}
-            aria-selected={period === option.period}
-            id={`agent-usage-period-${option.period}`}
-            key={option.period}
-            onClick={() => setPeriod(option.period)}
-            onKeyDown={(event) => handlePeriodKeyDown(event, index)}
-            ref={(node) => {
-              periodTabsRef.current[index] = node;
-            }}
-            role="tab"
-            tabIndex={period === option.period ? 0 : -1}
-            type="button"
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-      <div
-        aria-labelledby={`agent-usage-period-${period}`}
-        id="agent-usage-period-panel"
-        role="tabpanel"
-      >
-        {usage.savedHistoryIncomplete ? (
-          <p role="note">Saved history is incomplete because older turns were evicted.</p>
-        ) : null}
-        {PROVIDER_ORDER.map((provider) => (
-          <ProviderUsage
-            key={provider}
-            projectLabels={projectLabels}
-            usage={usage.providers[provider]}
-          />
-        ))}
-      </div>
+      <section aria-label="Local activity" className="agent-usage-panel__local">
+        <header className="agent-usage-panel__local-heading">
+          <div>
+            <h3>Local activity</h3>
+            <p>Saved threads and turns on this device, not subscription billing.</p>
+          </div>
+          <div aria-label="Usage period" className="agent-usage-panel__periods" role="tablist">
+            {PERIODS.map((option, index) => (
+              <button
+                aria-controls="agent-usage-period-panel"
+                aria-label={option.label}
+                aria-selected={period === option.period}
+                id={`agent-usage-period-${option.period}`}
+                key={option.period}
+                onClick={() => setPeriod(option.period)}
+                onKeyDown={(event) => handlePeriodKeyDown(event, index)}
+                ref={(node) => {
+                  periodTabsRef.current[index] = node;
+                }}
+                role="tab"
+                tabIndex={period === option.period ? 0 : -1}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </header>
+        <div
+          aria-labelledby={`agent-usage-period-${period}`}
+          className="agent-usage-panel__provider-grid"
+          id="agent-usage-period-panel"
+          role="tabpanel"
+        >
+          {usage.savedHistoryIncomplete ? (
+            <p role="note">Saved history is incomplete because older turns were evicted.</p>
+          ) : null}
+          {PROVIDER_ORDER.map((provider) => (
+            <ProviderUsage
+              key={provider}
+              projectLabels={projectLabels}
+              usage={usage.providers[provider]}
+            />
+          ))}
+        </div>
+      </section>
     </section>
   );
 }
@@ -127,10 +129,13 @@ function AccountLimits({
   return (
     <section
       aria-label={`${providerLabel(provider)} subscription limits`}
-      className="agent-usage-panel__limit-provider"
+      className={`agent-usage-panel__limit-provider agent-usage-panel__limit-provider--${provider === "claudeCode" ? "claude" : "codex"}`}
     >
       <header>
-        <h4>{providerLabel(provider)}</h4>
+        <h4>
+          <AgentProviderGlyph decorative kind={provider} />
+          <span>{providerLabel(provider)}</span>
+        </h4>
         {state.kind === "ready" ? (
           <span>{updatedLabel(state.snapshot.fetchedAtEpochMs, nowEpochMs)}</span>
         ) : null}
@@ -182,53 +187,70 @@ function ProviderUsage({
   readonly projectLabels: ReadonlyMap<string, string>;
   readonly usage: AgentUsageProvider;
 }) {
+  const metrics = usage.total;
+  const hasActivity = metrics.turnsStarted > 0;
   return (
-    <section aria-label={`${providerLabel(usage.provider)} usage`}>
-      <h3>{providerLabel(usage.provider)}</h3>
-      <Metrics metrics={usage.total} />
-      <p>CLI source: {sourceLabel(usage.total.cliUsage.source)}</p>
-      {usage.projects.length === 0 ? (
-        <p>No saved turns in this period.</p>
-      ) : (
-        <div aria-label={`${providerLabel(usage.provider)} projects`}>
-          {usage.projects.map((project) => (
-            <section key={project.rootKey}>
-              <h4>{projectLabels.get(project.rootKey) ?? project.rootKey}</h4>
-              <Metrics metrics={project.metrics} compact />
-            </section>
-          ))}
-        </div>
-      )}
+    <section
+      aria-label={`${providerLabel(usage.provider)} usage`}
+      className="agent-usage-panel__provider"
+    >
+      <h4>
+        <AgentProviderGlyph decorative kind={usage.provider} />
+        <span>{providerLabel(usage.provider)}</span>
+      </h4>
+      {hasActivity ? <Metrics metrics={metrics} /> : <p>No saved turns in this period.</p>}
+      {hasActivity ? (
+        <details className="agent-usage-panel__details">
+          <summary>Details</summary>
+          <div>
+            <p>
+              {metrics.turnsStarted} started · {metrics.turnsCompleted} completed ·{" "}
+              {metrics.turnsFailed} failed · {metrics.turnsStoppedOrInterrupted} stopped/interrupted
+              · {metrics.turnsActive} active
+            </p>
+            <p>
+              Wall time: {durationLabel(metrics.wallTime.totalMs)} ({metrics.wallTime.measuredTurns}{" "}
+              of {metrics.wallTime.eligibleTurns} ended turns measured)
+            </p>
+            <StreamOutput metrics={metrics} />
+            <p>
+              {metrics.cliUsage.measuredTurns} of {metrics.cliUsage.eligibleTurns} turns reported
+              CLI usage{metrics.cliUsage.incomplete ? "; usage evidence is incomplete" : ""}.
+            </p>
+            <p>CLI source: {sourceLabel(metrics.cliUsage.source)}</p>
+            {usage.projects.length > 0 ? (
+              <div aria-label={`${providerLabel(usage.provider)} projects`}>
+                {usage.projects.map((project) => (
+                  <section key={project.rootKey}>
+                    <h4>{projectLabels.get(project.rootKey) ?? project.rootKey}</h4>
+                    <Metrics metrics={project.metrics} compact />
+                  </section>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
     </section>
   );
 }
 
 function Metrics({ metrics, compact = false }: { metrics: AgentUsageMetrics; compact?: boolean }) {
   const usage = metrics.cliUsage;
+  const totalTokens =
+    usage.measuredTurns === 0 || usage.inputTokens === null || usage.outputTokens === null
+      ? null
+      : usage.inputTokens + usage.outputTokens;
   return (
-    <div>
-      <p>
-        {metrics.turnsStarted} started · {metrics.turnsCompleted} completed · {metrics.turnsFailed}{" "}
-        failed · {metrics.turnsStoppedOrInterrupted} stopped/interrupted · {metrics.turnsActive}{" "}
-        active
-      </p>
-      <p>
-        Wall time: {durationLabel(metrics.wallTime.totalMs)} ({metrics.wallTime.measuredTurns} of{" "}
-        {metrics.wallTime.eligibleTurns} ended turns measured)
-      </p>
-      <StreamOutput metrics={metrics} />
-      {!compact && usage.measuredTurns > 0 && usage.inputTokens !== null ? (
-        <p>{formatInteger(usage.inputTokens)} input tokens</p>
-      ) : null}
-      {!compact && usage.measuredTurns > 0 && usage.outputTokens !== null ? (
-        <p>{formatInteger(usage.outputTokens)} output tokens</p>
-      ) : null}
+    <div
+      className={`agent-usage-panel__metrics${compact ? " agent-usage-panel__metrics--compact" : ""}`}
+    >
+      <Metric label="Turns" value={formatInteger(metrics.turnsStarted)} />
+      <Metric label="Completed" value={formatInteger(metrics.turnsCompleted)} />
       {!compact ? (
-        <p>
-          {usage.measuredTurns} of {usage.eligibleTurns} turns reported CLI usage
-          {usage.incomplete ? "; usage evidence is incomplete" : ""}.
-        </p>
+        <Metric label="Tokens" value={totalTokens === null ? "—" : formatInteger(totalTokens)} />
       ) : null}
+      <Metric label="Wall time" value={durationLabel(metrics.wallTime.totalMs)} />
     </div>
   );
 }
@@ -262,6 +284,15 @@ function StreamOutput({ metrics }: { readonly metrics: AgentUsageMetrics }) {
       of {output.eligibleTurns} turns measured; {output.completeTurns} complete)
       {output.incomplete ? "; output coverage is incomplete" : ""}.
     </p>
+  );
+}
+
+function Metric({ label, value }: { readonly label: string; readonly value: string }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 

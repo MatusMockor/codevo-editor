@@ -86,11 +86,29 @@ describe("AgentUsagePanel", () => {
     );
 
     expect(host.textContent).toContain("Subscription limits");
+    expect(
+      [...host.querySelectorAll(".agent-usage-panel__limit-provider")].map((element) =>
+        element.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Codex subscription limits", "Claude Code subscription limits"]);
     expect(host.textContent).toContain("Claude CodeUpdated just now");
     expect(host.textContent).toContain("Current session6%Resets Sep 2 at 10:40pm");
     expect(host.textContent).toContain("Codex · Weekly limit11%Resets in 1m");
     expect(host.textContent).toContain("Local activity");
     expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2);
+  });
+
+  it("keeps empty local activity quiet and technical details collapsed", () => {
+    render([]);
+
+    expect(host.textContent).toContain("No saved turns in this period.");
+    expect(host.textContent).not.toContain("0 started");
+    expect(host.querySelector("details")).toBeNull();
+
+    render([thread("claudeCode", "project-a", 5, 7)]);
+    const details = host.querySelector<HTMLDetailsElement>("details");
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
   });
 
   it("switches periods accessibly and excludes turns outside the selected window", () => {

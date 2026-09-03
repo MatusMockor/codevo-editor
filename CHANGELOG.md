@@ -5,6 +5,15 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.10] - 2026-09-03
+
+### Changed
+
+- Reworked Usage from a narrow diagnostic popover into a full workspace page beside
+  the project rail, matching T3 Code's spacious two-column subscription-limit layout.
+- Added provider marks and colors, placed Codex before Claude Code, simplified empty
+  local activity, and moved technical turn evidence into collapsed details.
+
 ## [0.2.0-beta.9] - 2026-09-02
 
 ### Fixed
