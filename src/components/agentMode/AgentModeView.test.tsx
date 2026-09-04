@@ -2325,6 +2325,30 @@ describe("AgentModeView", () => {
     });
   });
 
+  it("opens header sessions for a project-root thread with only nested repositories", () => {
+    const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
+    const project = activeProject();
+    const nestedRoot = `${ROOT}/packages/api`;
+    render({
+      agents: surface({ externalSessions, threads: [threadView({ threadId: "agt-root" })] }),
+      projects: [
+        {
+          ...project,
+          repositories: [{ ...project.repositories[0]!, repositoryRoot: nestedRoot }],
+        },
+      ],
+    });
+
+    click('[data-thread-id="agt-root"]');
+    act(() => terminalSessionsEntry().click());
+
+    expect(terminalSessionsPalette()).not.toBeNull();
+    expect(externalSessions.open).toHaveBeenCalledExactlyOnceWith({
+      rootKey: ROOT,
+      repositoryRoot: nestedRoot,
+    });
+  });
+
   it("keeps the sessions surface shut when the header repository is outside the project", () => {
     const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
     render({

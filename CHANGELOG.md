@@ -5,6 +5,18 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.13] - 2026-09-05
+
+### Changed
+
+- Scope the thread sidebar to one selected project and simplify project switching.
+- Restyle the terminal-session picker and make it accessible from the thread header.
+
+### Fixed
+
+- Keep the session list readable in narrow windows by placing the preview below it.
+- Open session history from project-root threads in projects with nested repositories.
+
 ## [0.2.0-beta.12] - 2026-09-04
 
 ### Added

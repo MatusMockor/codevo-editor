@@ -453,8 +453,12 @@ export function agentProjectTerminalSessionsTarget(
 ): AgentRailScope | null {
   if (project === null) return null;
   const entry = agentRailScopeEntryFor(entries, project.projectRootKey);
-  if (!usable(entry)) return null;
-  return { projectRootKey: project.projectRootKey, repositoryRoot: project.repositoryRoot };
+  if (entry === null || !usable(entry)) return null;
+  return {
+    projectRootKey: project.projectRootKey,
+    repositoryRoot:
+      project.repositoryRoot === entry.rootPath ? entry.repositoryRoot : project.repositoryRoot,
+  };
 }
 
 function usable(entry: AgentRailScopeEntry | null): boolean {
