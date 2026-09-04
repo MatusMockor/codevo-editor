@@ -1044,7 +1044,7 @@ describe("AgentModeView", () => {
     render({ projects: [activeProject(), backgroundProject()] });
 
     expect(host.querySelector('section[aria-label^="Project "]')).toBeNull();
-    expect(scopeOptionLabels()).toEqual(["All projects", "app", "api-service"]);
+    expect(scopeOptionLabels()).toEqual(["app", "api-service"]);
     click("button#agent-rail-scope");
     expect(
       [...host.querySelectorAll("#agent-rail-scope-list .agent-menu__detail")].map(
@@ -1057,7 +1057,7 @@ describe("AgentModeView", () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({ agents: surface({ startThread }), projects: [activeProject(), backgroundProject()] });
 
-    chooseScope(OTHER_ROOT, OTHER_ROOT);
+    chooseScope(OTHER_ROOT);
 
     expect(pickerTrigger("agent-checkout").disabled).toBe(true);
     expect(host.textContent).toContain("not the active tab");
@@ -1086,7 +1086,7 @@ describe("AgentModeView", () => {
     });
 
     click('button[aria-label="New thread in app"]');
-    chooseScope(OTHER_ROOT, OTHER_ROOT);
+    chooseScope(OTHER_ROOT);
 
     expect(host.querySelector('button[aria-label="New thread in api-service"]')).not.toBeNull();
 
@@ -1128,10 +1128,6 @@ describe("AgentModeView", () => {
 
     expect(host.textContent).toContain("Choose a project in the rail to start a thread.");
     expect(submitButton().disabled).toBe(true);
-    expect(host.textContent).not.toContain("Untrusted");
-
-    chooseScope(OTHER_ROOT, OTHER_ROOT);
-
     expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Untrusted");
 
     click('[aria-label="Trust project api-service"]');
@@ -1155,7 +1151,6 @@ describe("AgentModeView", () => {
     expect(projectMenuLabels()).toEqual([
       "Trust project",
       "Close project",
-      "Filter to this project",
       "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",
@@ -1176,11 +1171,22 @@ describe("AgentModeView", () => {
     clickMenuItem("Reveal in Finder");
     expect(revealPath).toHaveBeenCalledWith(OTHER_ROOT);
 
-    openProjectMenu("api-service");
-    clickMenuItem("Filter to this project");
+    expect(projectMenuLabels()).not.toContain("Filter to this project");
+
+    chooseScope(OTHER_ROOT);
 
     expect(pickerTrigger("agent-rail-scope").textContent).toContain("api-service");
     expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Untrusted");
+  });
+
+  it("closes a project from the close button on its scope row", () => {
+    const onCloseProject = vi.fn();
+    render({ onCloseProject, projects: [activeProject(), backgroundProject()] });
+
+    closeProjectFromRow("api-service");
+
+    expect(onCloseProject).toHaveBeenCalledExactlyOnceWith(OTHER_ROOT);
+    expect(pickerTrigger("agent-rail-scope").textContent).toContain("app");
   });
 
   it("offers a close action for a trusted active project", () => {
@@ -1190,20 +1196,20 @@ describe("AgentModeView", () => {
 
     expect(projectMenuLabels()).toEqual([
       "Close project",
-      "Filter to this project",
       "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",
     ]);
   });
 
-  it("keeps a closed-tab draining project out of the composer picker", () => {
+  it("keeps a closed-tab draining project in the rail but out of the composer picker", () => {
     render({
       projects: [activeProject(), { ...backgroundProject(), origin: "closed-tab-live-tasks" }],
     });
 
     expect(host.querySelector("select#agent-project")).toBeNull();
-    expect(scopeOptionLabels()).toEqual(["All projects", "app"]);
+    expect(scopeOptionLabels()).toEqual(["app", "api-service"]);
+    expect(host.querySelector('[aria-label="Close project api-service"]')).toBeNull();
   });
 
   it("shows no start target when only a closed-tab draining project remains", () => {
@@ -1213,22 +1219,18 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(true);
   });
 
-  it("never starts a thread in a background project while the rail shows all projects", () => {
+  it("starts a thread in the only background project once it is the rail scope", () => {
     render({ projects: [backgroundProject()] });
 
-    expect(host.textContent).toContain("Choose a project in the rail to start a thread.");
-    expect(submitButton().disabled).toBe(true);
-
-    chooseScope(OTHER_ROOT, OTHER_ROOT);
-
+    expect(pickerTrigger("agent-rail-scope").textContent).toContain("api-service");
     expect(host.textContent).not.toContain("Choose a project in the rail to start a thread.");
   });
 
-  it("prefers the active-tab project over a background project for a new thread", async () => {
+  it("starts a new thread in the scoped project", async () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({
       agents: surface({ startThread }),
-      projects: [backgroundProject(), activeProject()],
+      projects: [activeProject(), backgroundProject()],
     });
 
     typePrompt("Fix the parser");
@@ -1239,17 +1241,38 @@ describe("AgentModeView", () => {
     );
   });
 
-  it("keeps a closed-tab project out of the project scope menu", () => {
+  it("keeps a draining project scoped so its running thread stays reachable", () => {
     const onReleaseProject = vi.fn();
     render({
+      agents: surface({
+        threads: [
+          threadView({
+            threadId: "agt-live",
+            rootKey: OTHER_ROOT,
+            projectOrigin: "closed-tab-live-tasks",
+            status: { kind: "running" },
+          }),
+        ],
+      }),
       onReleaseProject,
       projects: [{ ...backgroundProject(), origin: "closed-tab-live-tasks" }],
     });
 
-    expect(pickerTrigger("agent-rail-scope").textContent).toContain("All projects");
+    expect(pickerTrigger("agent-rail-scope").textContent).toContain("api-service");
+    expect(pickerTrigger("agent-rail-scope").disabled).toBe(false);
+    expect(host.querySelector('[data-thread-id="agt-live"]')).not.toBeNull();
+    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Tab closed");
+
+    click('[aria-label="Release project api-service"]');
+
+    expect(onReleaseProject).toHaveBeenCalledWith(OTHER_ROOT);
+  });
+
+  it("shows a neutral scope only when no project is registered", () => {
+    render({ projects: [] });
+
+    expect(pickerTrigger("agent-rail-scope").textContent).toContain("No project");
     expect(pickerTrigger("agent-rail-scope").disabled).toBe(true);
-    expect(host.querySelector('[aria-label="Release project api-service"]')).toBeNull();
-    expect(onReleaseProject).not.toHaveBeenCalled();
   });
 
   it("reports the roots beyond the project limit truthfully", () => {
@@ -1297,7 +1320,7 @@ describe("AgentModeView", () => {
 
     expect(launchSelect("agent-launch-model").value).toBe("claude-fable-5-1");
 
-    chooseScope(OTHER_ROOT, OTHER_ROOT);
+    chooseScope(OTHER_ROOT);
 
     expect(launchSelect("agent-launch-model").value).toBe("sonnet");
     expect(launchSelect("agent-launch-mode").value).toBe("plan");
@@ -1419,7 +1442,9 @@ describe("AgentModeView", () => {
 
     expect(launchSelect("agent-launch-model").value).toBe("sonnet");
 
+    chooseScope(OTHER_ROOT);
     click('[data-thread-id="agt-b"]');
+    chooseScope(ROOT);
 
     expect(launchSelect("agent-launch-model").value).toBe("opus");
     expect(launchSelect("agent-launch-mode").value).toBe("acceptEdits");
@@ -1461,6 +1486,7 @@ describe("AgentModeView", () => {
 
     expect(host.querySelector("select#agent-project")).toBeNull();
 
+    chooseScope(OTHER_ROOT);
     click('[data-thread-id="agt-b"]');
     chooseLaunch("agent-launch-model", "claude-opus-5");
     expect(launchSelect("agent-launch-model").value).toBe("claude-opus-5");
@@ -1530,7 +1556,7 @@ describe("AgentModeView", () => {
       projects: [activeProject(), backgroundProject()],
     });
 
-    chooseScope(OTHER_ROOT, OTHER_ROOT);
+    chooseScope(OTHER_ROOT);
 
     expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
     expect(host.querySelector("#agent-launch-danger-confirm")).toBeNull();
@@ -2156,7 +2182,7 @@ describe("AgentModeView", () => {
 
       expect(threadOrder()).toEqual(["agt-1", "agt-3"]);
 
-      chooseScope(ROOT, NESTED);
+      chooseScope(ROOT);
 
       expect(threadOrder()).toEqual(["agt-1", "agt-3"]);
 
@@ -2535,14 +2561,22 @@ describe("AgentModeView", () => {
     return labels;
   }
 
-  function chooseScope(projectRootKey: string, repositoryRoot: string): void {
-    click("button#agent-rail-scope");
+  function chooseScope(projectRootKey: string): void {
+    if (host.querySelector("#agent-rail-scope-list") === null) {
+      click("button#agent-rail-scope");
+    }
     click(
       `#agent-rail-scope-list [role="menuitemradio"][data-value="${agentRailScopeValue(
         projectRootKey,
-        repositoryRoot,
       )}"]`,
     );
+  }
+
+  function closeProjectFromRow(label: string): void {
+    if (host.querySelector("#agent-rail-scope-list") === null) {
+      click("button#agent-rail-scope");
+    }
+    click(`[aria-label="Close project ${label}"]`);
   }
 
   function restoreClipboard(descriptor: PropertyDescriptor | undefined): void {

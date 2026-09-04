@@ -10,26 +10,19 @@ import {
   resolveComposerTarget,
   type AgentComposerProjectOption,
 } from "./agentComposerTarget";
-import type { AgentRailScope } from "./agentSidebarPresentation";
 
 const ACTIVE_ROOT = "/workspace/app";
 const BACKGROUND_ROOT = "/workspace/api";
-const ALL_SCOPE: AgentRailScope = { kind: "all" };
 
 describe("resolveComposerTarget", () => {
-  it("targets the active-tab project when the rail shows all projects", () => {
-    const target = resolveComposerTarget(
-      [backgroundProject(), activeProject()],
-      null,
-      null,
-      ALL_SCOPE,
-    );
+  it("targets the active-tab project when no project is scoped", () => {
+    const target = resolveComposerTarget([backgroundProject(), activeProject()], null, null, null);
 
     expect(target).toEqual({ projectRootKey: ACTIVE_ROOT, repositoryRoot: ACTIVE_ROOT });
   });
 
   it("blocks the start target when no active-tab project is available", () => {
-    expect(resolveComposerTarget([backgroundProject()], null, null, ALL_SCOPE)).toBeNull();
+    expect(resolveComposerTarget([backgroundProject()], null, null, null)).toBeNull();
   });
 
   it("keeps an explicit repository scope even when it is a background project", () => {
@@ -49,7 +42,7 @@ describe("resolveComposerTarget", () => {
       [backgroundProject(), activeProject()],
       selection(BACKGROUND_ROOT, "agent-root:api", 1),
       null,
-      ALL_SCOPE,
+      null,
     );
 
     expect(target).toEqual({ projectRootKey: BACKGROUND_ROOT, repositoryRoot: BACKGROUND_ROOT });
@@ -60,7 +53,7 @@ describe("resolveComposerTarget", () => {
       [backgroundProject(), activeProject()],
       selection("/workspace/gone", "agent-root:gone", 1),
       null,
-      ALL_SCOPE,
+      null,
     );
 
     expect(target).toBeNull();
@@ -78,16 +71,34 @@ describe("resolveComposerTarget", () => {
     expect(target).toBeNull();
   });
 
-  it("keeps repository scope authoritative over a stale foreign selection", () => {
+  it("prefers a repository selection inside the scoped project", () => {
+    const nested = `${ACTIVE_ROOT}/packages/api`;
     const target = resolveComposerTarget(
-      [backgroundProject(), activeProject()],
-      selection(ACTIVE_ROOT, "agent-root:app", 1),
+      [{ ...activeProject(), repositories: [{ repositoryRoot: nested, label: "api" }] }],
+      selection(ACTIVE_ROOT, "agent-root:app", 1, nested),
       null,
       {
         kind: "repository",
-        projectRootKey: BACKGROUND_ROOT,
-        repositoryRoot: BACKGROUND_ROOT,
-        ownerId: "agent-root:api",
+        projectRootKey: ACTIVE_ROOT,
+        repositoryRoot: ACTIVE_ROOT,
+        ownerId: "agent-root:app",
+        generation: 1,
+      },
+    );
+
+    expect(target).toEqual({ projectRootKey: ACTIVE_ROOT, repositoryRoot: nested });
+  });
+
+  it("lets an explicit selection retarget the composer inside a scoped rail", () => {
+    const target = resolveComposerTarget(
+      [backgroundProject(), activeProject()],
+      selection(BACKGROUND_ROOT, "agent-root:api", 1),
+      null,
+      {
+        kind: "repository",
+        projectRootKey: ACTIVE_ROOT,
+        repositoryRoot: ACTIVE_ROOT,
+        ownerId: "agent-root:app",
         generation: 1,
       },
     );
@@ -95,12 +106,29 @@ describe("resolveComposerTarget", () => {
     expect(target).toEqual({ projectRootKey: BACKGROUND_ROOT, repositoryRoot: BACKGROUND_ROOT });
   });
 
+  it("fails closed on a missing selection even while a repository scope is live", () => {
+    const target = resolveComposerTarget(
+      [backgroundProject(), activeProject()],
+      { kind: "missing", projectRootKey: "/workspace/gone", repositoryRoot: "/workspace/gone" },
+      null,
+      {
+        kind: "repository",
+        projectRootKey: ACTIVE_ROOT,
+        repositoryRoot: ACTIVE_ROOT,
+        ownerId: "agent-root:app",
+        generation: 1,
+      },
+    );
+
+    expect(target).toBeNull();
+  });
+
   it("does not rebind a selection after the same roots are registered by a new generation", () => {
     const target = resolveComposerTarget(
       [{ ...activeProject(), generation: 2 }],
       selection(ACTIVE_ROOT, "agent-root:app", 1),
       null,
-      ALL_SCOPE,
+      null,
     );
 
     expect(target).toBeNull();
@@ -111,7 +139,7 @@ describe("resolveComposerTarget", () => {
       [activeProject()],
       null,
       threadView(BACKGROUND_ROOT),
-      ALL_SCOPE,
+      null,
     );
 
     expect(target).toEqual({ projectRootKey: BACKGROUND_ROOT, repositoryRoot: BACKGROUND_ROOT });
@@ -164,11 +192,11 @@ function backgroundProject(): AgentComposerProjectOption {
   };
 }
 
-function selection(root: string, ownerId: string, generation: number) {
+function selection(root: string, ownerId: string, generation: number, repositoryRoot = root) {
   return {
     kind: "bound" as const,
     projectRootKey: root,
-    repositoryRoot: root,
+    repositoryRoot,
     ownerId,
     generation,
   };

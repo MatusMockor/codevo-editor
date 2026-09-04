@@ -3,15 +3,15 @@ import { agentRailSections, type AgentRailScope } from "./agentSidebarPresentati
 
 export function agentThreadsInScope(
   views: ReadonlyArray<AgentThreadView>,
-  scope: AgentRailScope,
+  scope: AgentRailScope | null,
 ): ReadonlyArray<AgentThreadView> {
-  if (scope.kind === "all") return views;
+  if (scope === null) return [];
   return views.filter((view) => view.thread.owner.rootKey === scope.projectRootKey);
 }
 
 export function orderedRailThreadIds(
   views: ReadonlyArray<AgentThreadView>,
-  scope: AgentRailScope,
+  scope: AgentRailScope | null,
 ): ReadonlyArray<string> {
   const sections = agentRailSections(views, scope, false, 0);
   return [...sections.pinned, ...sections.active].map((view) => view.thread.threadId);

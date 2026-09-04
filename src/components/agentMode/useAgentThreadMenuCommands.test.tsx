@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTasksNotice } from "../../application/agentThreadPorts";
 import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
-import type { AgentProjectMenuTarget, AgentRailScope } from "./agentSidebarPresentation";
+import type { AgentProjectMenuTarget } from "./agentSidebarPresentation";
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
 import {
   CLIPBOARD_UNAVAILABLE_NOTICE,
@@ -29,7 +29,6 @@ describe("useAgentThreadMenuCommands", () => {
   let root: Root;
   let captured: AgentThreadMenuCommands | null;
   let notices: AgentTasksNotice[];
-  let scopes: AgentRailScope[];
   let removed: string[];
   let started: Array<readonly [string, string]>;
   let terminalSessions: Array<readonly [string, string]>;
@@ -42,7 +41,6 @@ describe("useAgentThreadMenuCommands", () => {
     root = createRoot(host);
     captured = null;
     notices = [];
-    scopes = [];
     removed = [];
     started = [];
     terminalSessions = [];
@@ -59,7 +57,7 @@ describe("useAgentThreadMenuCommands", () => {
     Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
   });
 
-  it("routes project commands to trust, close, release, scope filtering, reveal, and copy", async () => {
+  it("routes project commands to trust, close, release, reveal, and copy", async () => {
     const writeText = installClipboard(async () => undefined);
     const onTrustProject = vi.fn();
     const onCloseProject = vi.fn();
@@ -70,20 +68,12 @@ describe("useAgentThreadMenuCommands", () => {
     act(() => current().handleProjectCommand(PROJECT_TARGET, "trust"));
     act(() => current().handleProjectCommand(PROJECT_TARGET, "close"));
     act(() => current().handleProjectCommand(PROJECT_TARGET, "release"));
-    act(() => current().handleProjectCommand(PROJECT_TARGET, "filterToProject"));
     await act(async () => current().handleProjectCommand(PROJECT_TARGET, "reveal"));
     await act(async () => current().handleProjectCommand(PROJECT_TARGET, "copyPath"));
 
     expect(onTrustProject).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
     expect(onCloseProject).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
     expect(onReleaseProject).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
-    expect(scopes).toEqual([
-      {
-        kind: "repository",
-        projectRootKey: SURFACE_FIXTURE_ROOT,
-        repositoryRoot: SURFACE_FIXTURE_ROOT,
-      },
-    ]);
     expect(revealPath).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
     expect(writeText).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
     expect(notices).toEqual([]);
@@ -199,7 +189,6 @@ describe("useAgentThreadMenuCommands", () => {
       onTrustProject: () => undefined,
       onCloseProject: () => undefined,
       onReleaseProject: () => undefined,
-      onFilterScope: (scope) => scopes.push(scope),
       onThreadRemoved: (threadId) => removed.push(threadId),
       onOpenTerminalSessions: (projectRootKey, repositoryRoot) =>
         terminalSessions.push([projectRootKey, repositoryRoot]),

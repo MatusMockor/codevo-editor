@@ -6,6 +6,7 @@ import { MAX_AGENT_PROJECT_ROOTS } from "../../domain/agentProject";
 import { AgentProjectScopeMenu } from "./AgentProjectScopeMenu";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import {
+  agentRailDetachedThreadCount,
   agentRailNewThreadTarget,
   agentRailOrphanCount,
   agentRailScopeEntryValue,
@@ -22,7 +23,7 @@ export interface AgentRailHeaderProps {
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly search: AgentThreadSearchSurface;
   readonly searchRef: RefObject<HTMLInputElement | null>;
-  readonly scope: AgentRailScope;
+  readonly scope: AgentRailScope | null;
   readonly scopeEntries: ReadonlyArray<AgentRailScopeEntry>;
   readonly overflowRootPaths: ReadonlyArray<string>;
   readonly searchActiveDescendant: string | null;
@@ -57,6 +58,7 @@ export function AgentRailHeader({
   const scopeState = agentRailScopeState(scopeEntry);
   const newThreadTarget = agentRailNewThreadTarget(scope, scopeEntries);
   const orphanCount = agentRailOrphanCount(groups, scope);
+  const detachedCount = agentRailDetachedThreadCount(groups);
 
   const changeScope = useCallback(
     (value: string) => {
@@ -141,7 +143,7 @@ export function AgentRailHeader({
       </div>
       <div className="agent-rail__row agent-scope">
         <AgentProjectScopeMenu
-          disabled={scopeEntries.length <= 1}
+          disabled={scopeEntries.length === 0}
           entries={scopeEntries}
           id="agent-rail-scope"
           label="Project scope"
@@ -150,7 +152,7 @@ export function AgentRailHeader({
           value={scopeValue}
         />
       </div>
-      {scopeState !== null && scopeEntry?.kind === "repository" && (
+      {scopeState !== null && scopeEntry !== null && (
         <div className="agent-rail__row agent-scope__state">
           <span className="agent-scope__state-label">{scopeState.label}</span>
           {scopeState.action === "trust" && (
@@ -176,6 +178,7 @@ export function AgentRailHeader({
         </div>
       )}
       {orphanCount > 0 && <p className="agent-rail__note">{orphanLabel(orphanCount)}</p>}
+      {detachedCount > 0 && <p className="agent-rail__note">{detachedLabel(detachedCount)}</p>}
       {overflowRootPaths.length > 0 && (
         <p className="agent-rail__note agent-rail__overflow" title={overflowRootPaths.join("\n")}>
           {overflowLabel(overflowRootPaths.length)}
@@ -187,6 +190,11 @@ export function AgentRailHeader({
 
 function orphanLabel(count: number): string {
   return count === 1 ? "1 orphaned worktree" : `${count} orphaned worktrees`;
+}
+
+function detachedLabel(count: number): string {
+  const suffix = count === 1 ? "thread from a removed project" : "threads from removed projects";
+  return `${count} ${suffix} hidden`;
 }
 
 function overflowLabel(count: number): string {

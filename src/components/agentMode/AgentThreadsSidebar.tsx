@@ -47,7 +47,7 @@ export interface AgentThreadsSidebarProps {
   readonly accountUsage: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly search: AgentThreadSearchSurface;
-  readonly scope: AgentRailScope;
+  readonly scope: AgentRailScope | null;
   readonly scopeEntries: ReadonlyArray<AgentRailScopeEntry>;
   readonly overflowRootPaths: ReadonlyArray<string>;
   readonly selectedThreadId: string | null;

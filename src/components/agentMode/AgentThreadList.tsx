@@ -113,11 +113,12 @@ function EmptyState({
   if (state.kind === "noProjects") {
     return <div className="agent-rail__empty-state">No projects yet</div>;
   }
-  const label =
-    state.scopeLabel === null ? "No threads yet" : `No threads in ${state.scopeLabel} yet`;
+  if (state.kind === "noScope") {
+    return <div className="agent-rail__empty-state">No project selected</div>;
+  }
   return (
     <div className="agent-rail__empty-state">
-      {label}
+      {`No threads in ${state.scopeLabel} yet`}
       {onImportTerminalSession !== undefined && (
         <button
           className="agent-linkbutton agent-rail__empty-import"

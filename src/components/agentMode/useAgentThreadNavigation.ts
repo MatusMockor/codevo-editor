@@ -16,8 +16,14 @@ import type { ComposerScope } from "./agentComposerTarget";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import { adjacentThreadId, agentThreadsInScope, orderedRailThreadIds } from "./agentModeNavigation";
 import {
+  agentRailDefaultScopeEntry,
+  agentRailNeighbourScopeEntry,
   agentRailNewThreadTarget,
   agentRailScopeEntries,
+  agentRailScopeEntryFor,
+  agentRailScopeFromEntry,
+  agentRailScopeOrder,
+  sameAgentRailScopeOrder,
   type AgentRailScope,
   type AgentRailScopeEntry,
   type AgentThreadRevealRequest,
@@ -67,8 +73,8 @@ export interface AgentThreadNavigation {
   readonly centerRef: RefObject<HTMLDivElement | null>;
   readonly selectedThreadId: string | null;
   readonly selectedThread: AgentThreadView | null;
-  readonly railScope: AgentRailScope;
-  readonly composerScope: ComposerScope;
+  readonly railScope: AgentRailScope | null;
+  readonly composerScope: ComposerScope | null;
   readonly scopeEntries: ReadonlyArray<AgentRailScopeEntry>;
   readonly search: AgentThreadSearchSurface;
   readonly find: AgentThreadFindState;
@@ -94,9 +100,12 @@ interface AgentNavigationScopeAuthority {
 }
 
 interface AgentNavigationScopeState {
-  readonly railScope: AgentRailScope;
+  readonly railScope: AgentRailScope | null;
   readonly authority: AgentNavigationScopeAuthority | null;
+  readonly order: ReadonlyArray<string>;
 }
+
+const NO_SCOPE_STATE: AgentNavigationScopeState = { railScope: null, authority: null, order: [] };
 
 export function useAgentThreadNavigation({
   agents,
@@ -106,15 +115,7 @@ export function useAgentThreadNavigation({
   projects,
 }: AgentThreadNavigationOptions): AgentThreadNavigation {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [scopeState, setScopeState] = useState<AgentNavigationScopeState>({
-    railScope: { kind: "all" },
-    authority: null,
-  });
-  const railScope = scopeState.railScope;
-  const composerScope = useMemo(
-    () => resolveComposerScope(scopeState, projects),
-    [projects, scopeState],
-  );
+  const [storedScopeState, setScopeState] = useState<AgentNavigationScopeState>(NO_SCOPE_STATE);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [terminalSessionsTarget, setTerminalSessionsTarget] =
     useState<AgentTerminalSessionsTarget | null>(null);
@@ -132,6 +133,23 @@ export function useAgentThreadNavigation({
 
   const scopeEntries = useMemo(() => agentRailScopeEntries(groups), [groups]);
   const threadViews = agents.threads;
+  const selectedThread =
+    threadViews.find((view) => view.thread.threadId === selectedThreadId) ?? null;
+  const selectedProjectRootKey = selectedThread?.thread.owner.rootKey ?? null;
+
+  const scopeState = reconcileScopeState(
+    storedScopeState,
+    scopeEntries,
+    selectedProjectRootKey,
+    projects,
+  );
+  if (scopeState !== storedScopeState) setScopeState(scopeState);
+  const railScope = scopeState.railScope;
+  const composerScope = useMemo(
+    () => resolveComposerScope(scopeState, projects),
+    [projects, scopeState],
+  );
+
   const scopedViews = useMemo(
     () => agentThreadsInScope(threadViews, railScope),
     [railScope, threadViews],
@@ -160,8 +178,6 @@ export function useAgentThreadNavigation({
     [paletteOpen, scopedViews],
   );
 
-  const selectedThread =
-    threadViews.find((view) => view.thread.threadId === selectedThreadId) ?? null;
   const find = useAgentThreadFind(selectedThread?.thread ?? null);
 
   const markThreadViewed = agents.markThreadViewed;
@@ -197,11 +213,11 @@ export function useAgentThreadNavigation({
 
   const setRailScope = useCallback(
     (scope: AgentRailScope) => {
-      if (scope.kind === "all") {
-        setScopeState({ railScope: scope, authority: null });
-        return;
-      }
-      setScopeState({ railScope: scope, authority: captureScopeAuthority(scope, projects) });
+      setScopeState((current) => ({
+        railScope: scope,
+        authority: captureScopeAuthority(scope, projects),
+        order: current.order,
+      }));
     },
     [projects],
   );
@@ -333,8 +349,70 @@ function terminalSessionsTargetIsOpen(
   );
 }
 
+function reconcileScopeState(
+  current: AgentNavigationScopeState,
+  entries: ReadonlyArray<AgentRailScopeEntry>,
+  selectedProjectRootKey: string | null,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+): AgentNavigationScopeState {
+  const order = agentRailScopeOrder(entries);
+  const ordered = sameAgentRailScopeOrder(current.order, order);
+  const scope = current.railScope;
+  const entry = scope === null ? null : agentRailScopeEntryFor(entries, scope.projectRootKey);
+  if (scope !== null && entry !== null && scopeAuthorityIntact(current, scope, projects)) {
+    return ordered ? current : { ...current, order };
+  }
+  const next =
+    entry ?? replacementScopeEntry(scope, current.order, entries, selectedProjectRootKey);
+  if (next === null) {
+    if (scope === null && current.authority === null && ordered) return current;
+    return { ...NO_SCOPE_STATE, order };
+  }
+  const railScope = agentRailScopeFromEntry(next);
+  const replacement: AgentNavigationScopeState = {
+    railScope,
+    authority: captureScopeAuthority(railScope, projects),
+    order,
+  };
+  return sameScopeState(current, replacement) ? current : replacement;
+}
+
+function sameScopeState(
+  left: AgentNavigationScopeState,
+  right: AgentNavigationScopeState,
+): boolean {
+  if (!sameAgentRailScopeOrder(left.order, right.order)) return false;
+  if (left.railScope?.projectRootKey !== right.railScope?.projectRootKey) return false;
+  if (left.railScope?.repositoryRoot !== right.railScope?.repositoryRoot) return false;
+  if (left.authority?.ownerId !== right.authority?.ownerId) return false;
+  return left.authority?.generation === right.authority?.generation;
+}
+
+function scopeAuthorityIntact(
+  state: AgentNavigationScopeState,
+  scope: AgentRailScope,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+): boolean {
+  const captured = state.authority;
+  if (captured === null) return false;
+  const live = captureScopeAuthority(scope, projects);
+  if (live === null) return false;
+  return live.ownerId === captured.ownerId && live.generation === captured.generation;
+}
+
+function replacementScopeEntry(
+  scope: AgentRailScope | null,
+  previousOrder: ReadonlyArray<string>,
+  entries: ReadonlyArray<AgentRailScopeEntry>,
+  selectedProjectRootKey: string | null,
+): AgentRailScopeEntry | null {
+  const fallback = agentRailDefaultScopeEntry(entries, selectedProjectRootKey);
+  if (scope === null) return fallback;
+  return agentRailNeighbourScopeEntry(previousOrder, entries, scope.projectRootKey) ?? fallback;
+}
+
 function captureScopeAuthority(
-  scope: Extract<AgentRailScope, { readonly kind: "repository" }>,
+  scope: AgentRailScope,
   projects: ReadonlyArray<AgentProjectDescriptor>,
 ): AgentNavigationScopeAuthority | null {
   const project = projects.find((candidate) => candidate.rootKey === scope.projectRootKey) ?? null;
@@ -348,9 +426,9 @@ function captureScopeAuthority(
 function resolveComposerScope(
   state: AgentNavigationScopeState,
   projects: ReadonlyArray<AgentProjectDescriptor>,
-): ComposerScope {
+): ComposerScope | null {
   const scope = state.railScope;
-  if (scope.kind === "all") return scope;
+  if (scope === null) return null;
   const missing = {
     kind: "missing" as const,
     projectRootKey: scope.projectRootKey,

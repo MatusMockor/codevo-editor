@@ -56,7 +56,7 @@ describe("AgentThreadsSidebar", () => {
       host.querySelector('input[role="combobox"][aria-label="Search threads"]'),
     ).not.toBeNull();
     expect(host.querySelector('[aria-label="New thread"]')).not.toBeNull();
-    expect(host.querySelector("#agent-rail-scope")?.textContent).toContain("All projects");
+    expect(host.querySelector("#agent-rail-scope")?.textContent).toContain("app");
     expect(host.querySelector(".agent-rail__title")).toBeNull();
     expect(host.querySelector(".agent-rail__filters")).toBeNull();
     expect(host.textContent).not.toContain("running");
@@ -558,7 +558,6 @@ describe("AgentThreadsSidebar", () => {
     click(`[role="menuitemradio"][data-value="${OTHER}"]`);
 
     expect(onChangeScope).toHaveBeenCalledWith({
-      kind: "repository",
       projectRootKey: OTHER,
       repositoryRoot: OTHER,
     });
@@ -567,7 +566,7 @@ describe("AgentThreadsSidebar", () => {
     render({
       groups,
       onTrustProject,
-      scope: { kind: "repository", projectRootKey: OTHER, repositoryRoot: OTHER },
+      scope: { projectRootKey: OTHER, repositoryRoot: OTHER },
     });
 
     expect(rowIds()).toEqual(["agt-2"]);
@@ -577,16 +576,16 @@ describe("AgentThreadsSidebar", () => {
     expect(host.querySelector(".agent-trust")).toBeNull();
   });
 
-  it("starts a new thread in the first dispatchable repository of the scope", () => {
+  it("starts a new thread in the scoped repository and fails closed when untrusted", () => {
     const onNewThread = vi.fn();
-    render({
-      groups: [group(ROOT, "app", [], { trust: "untrusted" }), group(OTHER, "api", [])],
-      onNewThread,
-    });
+    const groups = [group(ROOT, "app", [], { trust: "untrusted" }), group(OTHER, "api", [])];
+    render({ groups, onNewThread, scope: { projectRootKey: OTHER, repositoryRoot: OTHER } });
 
     click('[aria-label="New thread"]');
-
     expect(onNewThread).toHaveBeenCalledWith(OTHER, OTHER);
+
+    render({ groups, onNewThread });
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="New thread"]')?.disabled).toBe(true);
   });
 
   it("renders the empty states and the overflow note", () => {
@@ -594,7 +593,9 @@ describe("AgentThreadsSidebar", () => {
     expect(host.querySelector(".agent-rail__empty-state")?.textContent).toBe("No projects yet");
 
     render({ groups: [group(ROOT, "app", [])], overflowRootPaths: ["/workspace/nine"] });
-    expect(host.querySelector(".agent-rail__empty-state")?.textContent).toBe("No threads yet");
+    expect(host.querySelector(".agent-rail__empty-state")?.textContent).toBe(
+      "No threads in app yet",
+    );
     expect(host.querySelector(".agent-rail__overflow")?.textContent).toBe(
       "1 more project is not shown (limit 8)",
     );
@@ -702,7 +703,7 @@ describe("AgentThreadsSidebar", () => {
       accountUsage: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
       groups,
       search: searchSurface(""),
-      scope: { kind: "all" },
+      scope: { projectRootKey: ROOT, repositoryRoot: ROOT },
       scopeEntries: agentRailScopeEntries(groups),
       overflowRootPaths: [],
       selectedThreadId: null,

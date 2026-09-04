@@ -58,7 +58,7 @@ export interface AgentComposerStateOptions {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly selectedThread: AgentThreadView | null;
-  readonly railScope: ComposerScope;
+  readonly railScope: ComposerScope | null;
   onClearSelectedThread(): void;
   onThreadStarted(threadId: string): void;
 }
@@ -134,19 +134,21 @@ export function useAgentComposerControllerState({
     () => composerProjectOptions(groups, projects),
     [groups, projects],
   );
+  const scopedProjectRootKey = railScope?.kind === "repository" ? railScope.projectRootKey : null;
+  const scopedRepositoryRoot = railScope?.kind === "repository" ? railScope.repositoryRoot : null;
   useLayoutEffect(() => {
-    if (railScope.kind !== "repository") return;
+    if (scopedProjectRootKey === null || scopedRepositoryRoot === null) return;
     setSelection((current) => {
       if (current === null) return null;
       if (
-        current.projectRootKey === railScope.projectRootKey &&
-        current.repositoryRoot === railScope.repositoryRoot
+        current.projectRootKey === scopedProjectRootKey &&
+        current.repositoryRoot === scopedRepositoryRoot
       ) {
         return current;
       }
       return null;
     });
-  }, [railScope]);
+  }, [scopedProjectRootKey, scopedRepositoryRoot]);
   const target = resolveComposerTarget(composerProjects, selection, selectedThread, railScope);
   const composerRoot = target?.repositoryRoot ?? null;
   const composerProject =

@@ -539,7 +539,6 @@ describe("useAgentComposerState", () => {
     act(() => current().composer.startNewThread(SURFACE_FIXTURE_ROOT, SURFACE_FIXTURE_ROOT));
     act(() =>
       current().navigation.setRailScope({
-        kind: "repository",
         projectRootKey: "/workspace/other",
         repositoryRoot: "/workspace/other",
       }),
@@ -590,7 +589,7 @@ describe("useAgentComposerState", () => {
     expect(startThread).not.toHaveBeenCalled();
   });
 
-  it("does not resurrect a shadowed selection after returning the scope to all projects", async () => {
+  it("does not resurrect a shadowed selection after the scope moves to another project", async () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     const background = projectFixture({
       rootKey: "/workspace/other",
@@ -604,12 +603,16 @@ describe("useAgentComposerState", () => {
     act(() => current().composer.startNewThread("/workspace/other", "/workspace/other"));
     act(() =>
       current().navigation.setRailScope({
-        kind: "repository",
+        projectRootKey: "/workspace/other",
+        repositoryRoot: "/workspace/other",
+      }),
+    );
+    act(() =>
+      current().navigation.setRailScope({
         projectRootKey: SURFACE_FIXTURE_ROOT,
         repositoryRoot: SURFACE_FIXTURE_ROOT,
       }),
     );
-    act(() => current().navigation.setRailScope({ kind: "all" }));
 
     expect(current().composer.target).toEqual({
       projectRootKey: SURFACE_FIXTURE_ROOT,
@@ -630,41 +633,52 @@ describe("useAgentComposerState", () => {
     );
   });
 
-  it("does not launch through a repository scope rebound to a new owner generation", async () => {
+  it("keeps an explicit composer selection when projects republish under the same scope", () => {
+    const background = projectFixture({
+      rootKey: "/workspace/other",
+      rootPath: "/workspace/other",
+      ownerId: "agent-root:other",
+      label: "other",
+      origin: "background-tab",
+      repositories: [fixtureRepository("/workspace/other", "")],
+    });
+    const agents = threadsSurfaceFixture();
+    render(agents, [projectFixture(), background]);
+
+    act(() => current().composer.startNewThread("/workspace/other", "/workspace/other"));
+    expect(current().composer.target?.projectRootKey).toBe("/workspace/other");
+
+    render(agents, [projectFixture({ trust: "trusted" }), { ...background }]);
+
+    expect(current().navigation.railScope?.projectRootKey).toBe(SURFACE_FIXTURE_ROOT);
+    expect(current().composer.target?.projectRootKey).toBe("/workspace/other");
+  });
+
+  it("keeps the scoped composer alive when the project owner generation is replaced", async () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     const agents = threadsSurfaceFixture({ startThread });
     render(agents, [projectFixture({ generation: 1 })]);
     act(() =>
       current().navigation.setRailScope({
-        kind: "repository",
         projectRootKey: SURFACE_FIXTURE_ROOT,
         repositoryRoot: SURFACE_FIXTURE_ROOT,
       }),
     );
 
-    render(agents, []);
-    render(agents, [projectFixture({ generation: 2 })]);
-    expect(current().composer.target).toBeNull();
-    act(() => current().composer.composerProps.onPromptChange("Stay with the original owner"));
-    await act(async () => {
-      current().composer.composerProps.onSubmit({
-        launch: defaultAgentLaunchOptions("claudeCode"),
-        dangerousLaunchConfirmed: false,
-      });
+    render(agents, [projectFixture({ ownerId: "owner-b", generation: 2 })]);
+    expect(current().navigation.composerScope).toEqual({
+      kind: "repository",
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+      ownerId: "owner-b",
+      generation: 2,
     });
-    expect(startThread).not.toHaveBeenCalled();
-
-    act(() =>
-      current().navigation.setRailScope({
-        kind: "repository",
-        projectRootKey: SURFACE_FIXTURE_ROOT,
-        repositoryRoot: SURFACE_FIXTURE_ROOT,
-      }),
-    );
     expect(current().composer.target).toEqual({
       projectRootKey: SURFACE_FIXTURE_ROOT,
       repositoryRoot: SURFACE_FIXTURE_ROOT,
     });
+
+    act(() => current().composer.composerProps.onPromptChange("Use the live owner"));
     await act(async () => {
       current().composer.composerProps.onSubmit({
         launch: defaultAgentLaunchOptions("claudeCode"),

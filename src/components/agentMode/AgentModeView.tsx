@@ -257,7 +257,6 @@ export function AgentModeView({
     reportNotice: setLocalNotice,
     onTrustProject: trustProject,
     onReleaseProject: releaseProject,
-    onFilterScope: navigation.setRailScope,
     onCloseProject,
     onThreadRemoved: navigation.forgetThread,
     onOpenTerminalSessions: openTerminalSessions,

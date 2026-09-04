@@ -25,11 +25,11 @@ describe("AgentThreadList empty state", () => {
   it("offers a terminal session import from the no-threads state", () => {
     const onImportTerminalSession = vi.fn();
     render({
-      empty: { kind: "noThreads", scopeLabel: null },
+      empty: { kind: "noThreads", scopeLabel: "app" },
       onImportTerminalSession,
     });
 
-    expect(host.textContent).toContain("No threads yet");
+    expect(host.textContent).toContain("No threads in app yet");
     const link = importLink();
     expect(link).not.toBeNull();
     expect(link?.textContent).toBe("Import a terminal session…");
@@ -52,9 +52,9 @@ describe("AgentThreadList empty state", () => {
   });
 
   it("renders no import action when the entry point is not wired", () => {
-    render({ empty: { kind: "noThreads", scopeLabel: null } });
+    render({ empty: { kind: "noThreads", scopeLabel: "app" } });
 
-    expect(host.textContent).toContain("No threads yet");
+    expect(host.textContent).toContain("No threads in app yet");
     expect(importLink()).toBeNull();
   });
 
@@ -85,7 +85,7 @@ function defaults(): AgentThreadListProps {
     focusedThreadId: null,
     jumpLabels: new Map(),
     archivedExpanded: false,
-    empty: { kind: "noThreads", scopeLabel: null },
+    empty: { kind: "noThreads", scopeLabel: "app" },
     onToggleArchived: () => undefined,
     onShowMoreArchived: () => undefined,
     onSelectThread: () => undefined,

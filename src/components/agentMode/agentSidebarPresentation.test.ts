@@ -4,7 +4,6 @@ import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThrea
 import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import {
-  ALL_PROJECTS_SCOPE_VALUE,
   ARCHIVED_PAGE_COUNT,
   agentCompactTimeLabel,
   agentJumpSlots,
@@ -14,11 +13,19 @@ import {
   agentExternalOriginNote,
   agentExternalSessionRowTitle,
   agentExternalSessionsStatusNote,
+  agentProjectClosable,
+  agentProjectCloseLabel,
   agentProjectMenuEntries,
   agentProjectMenuTarget,
   agentProjectRepositoryCountLabel,
+  agentRailDefaultScopeEntry,
+  agentRailDetachedThreadCount,
+  agentRailNeighbourScopeEntry,
   agentRailScopeEntries,
+  agentRailScopeEntryFor,
+  agentRailScopeFromEntry,
   agentRailScopeLabel,
+  agentRailScopeOrder,
   agentRailScopeState,
   agentRailSections,
   agentRailViews,
@@ -30,13 +37,14 @@ import {
   agentThreadImportedBadgeLabel,
   agentThreadMenuEntries,
   agentWorkingDurationLabel,
-  type AgentRailProjectScopeEntry,
+  sameAgentRailScopeOrder,
   type AgentRailScopeEntry,
 } from "./agentSidebarPresentation";
 
 const ROOT = "/workspace/app";
 const OTHER = "/workspace/api";
 const NOW = 1_700_000_600_000;
+const ROOT_SCOPE = { projectRootKey: ROOT, repositoryRoot: ROOT } as const;
 
 describe("agent row status", () => {
   it("maps a running turn to working with its start time", () => {
@@ -106,13 +114,13 @@ describe("agent rail sections", () => {
       ),
     ];
 
-    const collapsed = agentRailSections(views, { kind: "all" }, false, ARCHIVED_PAGE_COUNT);
+    const collapsed = agentRailSections(views, ROOT_SCOPE, false, ARCHIVED_PAGE_COUNT);
     expect(ids(collapsed.pinned)).toEqual(["pin"]);
     expect(ids(collapsed.active)).toEqual(["new", "old"]);
     expect(collapsed.archived).toEqual([]);
     expect(collapsed.hiddenArchivedCount).toBe(ARCHIVED_PAGE_COUNT + 3);
 
-    const expanded = agentRailSections(views, { kind: "all" }, true, ARCHIVED_PAGE_COUNT);
+    const expanded = agentRailSections(views, ROOT_SCOPE, true, ARCHIVED_PAGE_COUNT);
     expect(expanded.archived).toHaveLength(ARCHIVED_PAGE_COUNT);
     expect(expanded.archived[0]?.thread.threadId).toBe("arc-0");
     expect(expanded.hiddenArchivedCount).toBe(3);
@@ -122,7 +130,7 @@ describe("agent rail sections", () => {
     const views = [view({ threadId: "a" }), view({ threadId: "b", repositoryRoot: OTHER })];
     const scoped = agentRailSections(
       views,
-      { kind: "repository", projectRootKey: OTHER, repositoryRoot: OTHER },
+      { projectRootKey: OTHER, repositoryRoot: OTHER },
       false,
       0,
     );
@@ -132,11 +140,11 @@ describe("agent rail sections", () => {
 
   it("assigns jump slots to the first nine visible cards only when more than one exists", () => {
     const many = Array.from({ length: 12 }, (_, index) => view({ threadId: `t-${index}` }));
-    const slots = agentJumpSlots(agentRailSections(many, { kind: "all" }, false, 0));
+    const slots = agentJumpSlots(agentRailSections(many, ROOT_SCOPE, false, 0));
 
     expect(slots.size).toBe(9);
     expect(slots.get("t-0")).toBe(1);
-    expect(agentJumpSlots(agentRailSections([view({})], { kind: "all" }, false, 0)).size).toBe(0);
+    expect(agentJumpSlots(agentRailSections([view({})], ROOT_SCOPE, false, 0)).size).toBe(0);
   });
 
   it("flattens groups and labels projects only when several exist", () => {
@@ -151,61 +159,86 @@ describe("agent rail sections", () => {
   it("describes the empty states truthfully", () => {
     const groups = [group(ROOT, "app", [])];
     const entries = agentRailScopeEntries(groups);
-    const sections = agentRailSections([], { kind: "all" }, false, 0);
+    const sections = agentRailSections([], ROOT_SCOPE, false, 0);
 
-    expect(agentRailEmptyState([], sections, { kind: "all" }, entries)).toEqual({
+    expect(agentRailEmptyState([], sections, null, entries)).toEqual({
       kind: "noProjects",
     });
-    expect(agentRailEmptyState(groups, sections, { kind: "all" }, entries)).toEqual({
+    expect(agentRailEmptyState(groups, sections, null, entries)).toEqual({ kind: "noScope" });
+    expect(agentRailEmptyState(groups, sections, ROOT_SCOPE, entries)).toEqual({
       kind: "noThreads",
-      scopeLabel: null,
+      scopeLabel: "app",
     });
-    expect(
-      agentRailEmptyState(
-        groups,
-        sections,
-        { kind: "repository", projectRootKey: ROOT, repositoryRoot: ROOT },
-        entries,
-      ),
-    ).toEqual({ kind: "noThreads", scopeLabel: "app" });
   });
 });
 
 describe("agent rail scope", () => {
-  it("lists all projects first and labels multi-repository projects", () => {
-    const entries = agentRailScopeEntries([group(ROOT, "app", [])]);
+  it("lists one entry per open project and labels the scope from it", () => {
+    const entries = agentRailScopeEntries([group(ROOT, "app", []), group(OTHER, "api", [])]);
 
-    expect(entries[0]).toEqual({
-      kind: "all",
-      value: ALL_PROJECTS_SCOPE_VALUE,
-      label: "All projects",
-    });
-    expect(agentRailScopeLabel({ kind: "all" }, entries)).toBe("All projects");
-    expect(
-      agentRailScopeLabel(
-        { kind: "repository", projectRootKey: ROOT, repositoryRoot: ROOT },
-        entries,
-      ),
-    ).toBe("app");
+    expect(entries.map((entry) => entry.label)).toEqual(["app", "api"]);
+    expect(entries[0]?.value).toBe(ROOT);
+    expect(agentRailScopeLabel(ROOT_SCOPE, entries)).toBe("app");
+    expect(agentRailScopeLabel(null, entries)).toBe("No project");
+    expect(agentRailScopeLabel({ projectRootKey: "/gone", repositoryRoot: "/gone" }, entries)).toBe(
+      "No project",
+    );
+  });
+
+  it("resolves the default scope from the selected thread, then the first project", () => {
+    const entries = agentRailScopeEntries([group(ROOT, "app", []), group(OTHER, "api", [])]);
+
+    expect(agentRailDefaultScopeEntry(entries, OTHER)?.projectRootKey).toBe(OTHER);
+    expect(agentRailDefaultScopeEntry(entries, "/gone")?.projectRootKey).toBe(ROOT);
+    expect(agentRailDefaultScopeEntry(entries, null)?.projectRootKey).toBe(ROOT);
+    expect(agentRailDefaultScopeEntry([], null)).toBeNull();
+    expect(agentRailScopeEntryFor(entries, "/gone")).toBeNull();
+    expect(agentRailScopeFromEntry(entries[0]!)).toEqual(ROOT_SCOPE);
+  });
+
+  it("replaces a closed scope with the next project, falling back to the previous one", () => {
+    const third = "/workspace/web";
+    const previous = agentRailScopeOrder(
+      agentRailScopeEntries([
+        group(ROOT, "app", []),
+        group(OTHER, "api", []),
+        group(third, "web", []),
+      ]),
+    );
+    const withoutMiddle = agentRailScopeEntries([group(ROOT, "app", []), group(third, "web", [])]);
+    const onlyFirst = agentRailScopeEntries([group(ROOT, "app", [])]);
+
+    expect(previous).toEqual([ROOT, OTHER, third]);
+    expect(agentRailNeighbourScopeEntry(previous, withoutMiddle, OTHER)?.projectRootKey).toBe(
+      third,
+    );
+    expect(agentRailNeighbourScopeEntry(previous, onlyFirst, third)?.projectRootKey).toBe(ROOT);
+    expect(agentRailNeighbourScopeEntry(previous, [], ROOT)).toBeNull();
+    expect(agentRailNeighbourScopeEntry(previous, withoutMiddle, "/gone")).toBeNull();
+    expect(sameAgentRailScopeOrder(previous, [ROOT, OTHER, third])).toBe(true);
+    expect(sameAgentRailScopeOrder(previous, [ROOT, third, OTHER])).toBe(false);
+    expect(sameAgentRailScopeOrder(previous, [ROOT])).toBe(false);
   });
 
   it("surfaces trust and origin state with the matching action", () => {
-    const untrusted = agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })])[1];
+    const untrusted = projectEntry(
+      agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })]),
+    );
     const closed = {
       ...projectEntry(agentRailScopeEntries([group(ROOT, "app", [])])),
       origin: "closed-tab-live-tasks" as const,
     };
-    const background = agentRailScopeEntries([
-      group(ROOT, "app", [], { origin: "background-tab" }),
-    ])[1];
+    const background = projectEntry(
+      agentRailScopeEntries([group(ROOT, "app", [], { origin: "background-tab" })]),
+    );
 
-    expect(agentRailScopeState(untrusted ?? null)).toEqual({ label: "Untrusted", action: "trust" });
-    expect(agentRailScopeState(closed ?? null)).toEqual({ label: "Tab closed", action: "release" });
-    expect(agentRailScopeState(background ?? null)).toEqual({ label: "Background", action: null });
+    expect(agentRailScopeState(untrusted)).toEqual({ label: "Untrusted", action: "trust" });
+    expect(agentRailScopeState(closed)).toEqual({ label: "Tab closed", action: "release" });
+    expect(agentRailScopeState(background)).toEqual({ label: "Background", action: null });
     expect(agentRailScopeState(null)).toBeNull();
   });
 
-  it("offers the project actions that match the project state", () => {
+  it("offers the project actions that match the project state without a filter entry", () => {
     const trusted = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
     const untrusted = projectEntry(
       agentRailScopeEntries([group(ROOT, "app", [], { trust: "untrusted" })]),
@@ -215,24 +248,40 @@ describe("agent rail scope", () => {
       agentRailScopeEntries([group(ROOT, "app", [], { rootPath: null })]),
     );
 
-    expect(agentProjectMenuEntries(trusted, false).map((entry) => entry.label)).toEqual([
+    expect(agentProjectMenuEntries(trusted).map((entry) => entry.label)).toEqual([
       "Close project",
-      "Filter to this project",
       "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",
     ]);
-    expect(agentProjectMenuEntries(untrusted, false)[0]).toEqual({
+    expect(agentProjectMenuEntries(untrusted)[0]).toEqual({
       id: "trust",
       label: "Trust project",
       command: "trust",
       disabled: false,
     });
-    expect(agentProjectMenuEntries(closed, false)[0]?.command).toBe("release");
-    expect(agentProjectMenuEntries(detached, false).map((entry) => entry.command)).toEqual([
-      "filterToProject",
+    expect(agentProjectMenuEntries(closed)[0]?.command).toBe("release");
+    expect(agentProjectMenuEntries(detached).map((entry) => entry.command)).toEqual([
       "terminalSessions",
     ]);
+    for (const entry of [trusted, untrusted, closed, detached]) {
+      expect(agentProjectMenuEntries(entry).map((item) => item.label)).not.toContain(
+        "Filter to this project",
+      );
+    }
+  });
+
+  it("marks a project closable only while it owns a live root path", () => {
+    const trusted = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
+    const closed = { ...trusted, origin: "closed-tab-live-tasks" as const };
+    const detached = projectEntry(
+      agentRailScopeEntries([group(ROOT, "app", [], { rootPath: null })]),
+    );
+
+    expect(agentProjectClosable(trusted)).toBe(true);
+    expect(agentProjectClosable(closed)).toBe(false);
+    expect(agentProjectClosable(detached)).toBe(false);
+    expect(agentProjectCloseLabel(trusted)).toBe("Close project app");
   });
 
   it("offers terminal sessions only for a trusted project with a live owner", () => {
@@ -242,10 +291,8 @@ describe("agent rail scope", () => {
     );
     const closed = { ...trusted, origin: "closed-tab-live-tasks" as const };
 
-    const command = (entry: AgentRailProjectScopeEntry) =>
-      agentProjectMenuEntries(entry, false).find(
-        (candidate) => candidate.command === "terminalSessions",
-      );
+    const command = (entry: AgentRailScopeEntry) =>
+      agentProjectMenuEntries(entry).find((candidate) => candidate.command === "terminalSessions");
 
     expect(command(trusted)).toEqual({
       id: "terminal-sessions",
@@ -255,16 +302,7 @@ describe("agent rail scope", () => {
     });
     expect(command(untrusted)?.disabled).toBe(true);
     expect(command(closed)?.disabled).toBe(true);
-  });
-
-  it("disables the filter action for the project already in scope", () => {
-    const entry = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
-    const filter = agentProjectMenuEntries(entry, true).find(
-      (candidate) => candidate.command === "filterToProject",
-    );
-
-    expect(filter?.disabled).toBe(true);
-    expect(agentProjectMenuTarget(entry)).toEqual({
+    expect(agentProjectMenuTarget(trusted)).toEqual({
       projectRootKey: ROOT,
       repositoryRoot: ROOT,
       rootPath: ROOT,
@@ -272,15 +310,10 @@ describe("agent rail scope", () => {
   });
 
   it("reports the repository count only for a multi-repository project", () => {
-    const entries = agentRailScopeEntries([group(ROOT, "app", [])]);
-    const single = projectEntry(entries);
+    const single = projectEntry(agentRailScopeEntries([group(ROOT, "app", [])]));
 
-    expect(agentProjectRepositoryCountLabel(entries[0] as AgentRailScopeEntry)).toBeNull();
     expect(agentProjectRepositoryCountLabel(single)).toBeNull();
     expect(agentProjectRepositoryCountLabel({ ...single, repositoryCount: 3 })).toBe("3 repos");
-    expect(agentProjectMenuEntries({ ...single, repositoryCount: 3 }, false)[1]?.label).toBe(
-      "Filter to this project",
-    );
   });
 
   it("lists each open editor project once instead of expanding its repositories", () => {
@@ -301,26 +334,48 @@ describe("agent rail scope", () => {
       group(OTHER, "Closed", [], { origin: "closed-tab-live-tasks" }),
     ]);
 
-    expect(entries.map((entry) => entry.label)).toEqual(["All projects", "Developer"]);
-    expect(agentProjectRepositoryCountLabel(entries[1]!)).toBe("2 repos");
+    expect(entries.map((entry) => entry.label)).toEqual(["Developer", "Closed"]);
+    expect(agentProjectRepositoryCountLabel(entries[0]!)).toBe("2 repos");
   });
 
-  it("targets the first dispatchable repository for a new thread", () => {
+  it("keeps a draining project in the rail and hides detached threads behind a count", () => {
+    const draining = group(OTHER, "api", [view({ threadId: "live" })], {
+      origin: "closed-tab-live-tasks",
+    });
+    const detached: AgentProjectGroup = {
+      ...group(ROOT, "Removed projects", [view({})]),
+      kind: "detached",
+    };
+    const entries = agentRailScopeEntries([group(ROOT, "app", []), draining, detached]);
+    const drainingEntry = entries[1];
+
+    expect(entries.map((entry) => entry.label)).toEqual(["app", "api"]);
+    expect(drainingEntry === undefined ? null : agentRailScopeState(drainingEntry)).toEqual({
+      label: "Tab closed",
+      action: "release",
+    });
+    expect(drainingEntry === undefined ? null : agentProjectClosable(drainingEntry)).toBe(false);
+    expect(
+      drainingEntry === undefined
+        ? []
+        : agentProjectMenuEntries(drainingEntry).map((item) => item.command),
+    ).toEqual(["release", "terminalSessions", "reveal", "copyPath"]);
+    expect(agentRailNewThreadTarget({ projectRootKey: OTHER, repositoryRoot: OTHER }, entries)) //
+      .toBeNull();
+    expect(agentRailDetachedThreadCount([group(ROOT, "app", []), draining, detached])).toBe(1);
+    expect(agentRailDetachedThreadCount([group(ROOT, "app", [])])).toBe(0);
+  });
+
+  it("targets the scoped repository for a new thread and fails closed otherwise", () => {
     const entries = agentRailScopeEntries([
       group(ROOT, "app", [], { trust: "untrusted" }),
       group(OTHER, "api", []),
     ]);
 
-    expect(agentRailNewThreadTarget({ kind: "all" }, entries)).toEqual({
-      projectRootKey: OTHER,
-      repositoryRoot: OTHER,
-    });
-    expect(
-      agentRailNewThreadTarget(
-        { kind: "repository", projectRootKey: ROOT, repositoryRoot: ROOT },
-        entries,
-      ),
-    ).toBeNull();
+    expect(agentRailNewThreadTarget({ projectRootKey: OTHER, repositoryRoot: OTHER }, entries)) //
+      .toEqual({ projectRootKey: OTHER, repositoryRoot: OTHER });
+    expect(agentRailNewThreadTarget(ROOT_SCOPE, entries)).toBeNull();
+    expect(agentRailNewThreadTarget(null, entries)).toBeNull();
   });
 });
 
@@ -477,10 +532,10 @@ function view({
   };
 }
 
-function projectEntry(entries: ReadonlyArray<AgentRailScopeEntry>): AgentRailProjectScopeEntry {
-  const entry = entries[1];
-  expect(entry?.kind).toBe("repository");
-  return entry as AgentRailProjectScopeEntry;
+function projectEntry(entries: ReadonlyArray<AgentRailScopeEntry>): AgentRailScopeEntry {
+  const entry = entries[0];
+  expect(entry).toBeDefined();
+  return entry as AgentRailScopeEntry;
 }
 
 describe("terminal session presentation", () => {

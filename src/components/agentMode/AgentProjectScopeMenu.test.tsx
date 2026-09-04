@@ -4,22 +4,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentProjectScopeMenu, type AgentProjectScopeMenuProps } from "./AgentProjectScopeMenu";
-import {
-  ALL_PROJECTS_SCOPE_LABEL,
-  ALL_PROJECTS_SCOPE_VALUE,
-  agentRailScopeValue,
-  type AgentRailProjectScopeEntry,
-  type AgentRailScopeEntry,
-} from "./agentSidebarPresentation";
+import { agentRailScopeValue, type AgentRailScopeEntry } from "./agentSidebarPresentation";
 
 const ROOT = "/workspace/app";
 const OTHER = "/workspace/api";
-
-const ALL_ENTRY: AgentRailScopeEntry = {
-  kind: "all",
-  value: ALL_PROJECTS_SCOPE_VALUE,
-  label: ALL_PROJECTS_SCOPE_LABEL,
-};
 
 describe("AgentProjectScopeMenu", () => {
   let host: HTMLDivElement;
@@ -37,20 +25,111 @@ describe("AgentProjectScopeMenu", () => {
     host.remove();
   });
 
-  it("lists a folder row per project and keeps the gear off the All projects row", () => {
+  it("lists a folder row per open project with a gear and a close button", () => {
     render();
     openMenu();
 
-    expect(rowLabels()).toEqual(["All projects", "app", "api"]);
-    expect(host.querySelectorAll('[role="menuitemradio"] svg').length).toBe(3);
+    expect(rowLabels()).toEqual(["app", "api"]);
+    expect(host.querySelectorAll('[role="menuitemradio"] svg').length).toBe(2);
     expect(gears().map((gear) => gear.getAttribute("aria-label"))).toEqual([
       "Project actions for app",
       "Project actions for api",
     ]);
+    expect(closeButtons().map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Close project app",
+      "Close project api",
+    ]);
+    expect(closeButtons()[0]?.title).toBe("Close project");
+  });
+
+  it("never lists an All projects entry", () => {
+    render();
+    openMenu();
+
+    expect(host.textContent).not.toContain("All projects");
+    expect(trigger().textContent).not.toContain("All projects");
+  });
+
+  it("closes the project from the row without opening the gear menu", () => {
+    const onProjectCommand = vi.fn();
+    const onChange = vi.fn();
+    render({ onChange, onProjectCommand });
+    openMenu();
+    click(closeButtons()[1]);
+
+    expect(onProjectCommand).toHaveBeenCalledExactlyOnceWith(
+      { projectRootKey: OTHER, repositoryRoot: OTHER, rootPath: OTHER },
+      "close",
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("hides the close button for a project it cannot close", () => {
+    render({
+      entries: [
+        entry(ROOT, "app", { rootPath: null }),
+        entry(OTHER, "api", { origin: "closed-tab-live-tasks" }),
+      ],
+    });
+    openMenu();
+
+    expect(closeButtons()).toEqual([]);
+  });
+
+  it("keeps the menu keyboard-operable after the close button removes its row", () => {
+    render({ entries: [entry(ROOT, "app"), entry(OTHER, "api")] });
+    openMenu();
+
+    keydown("ArrowUp");
+    expect(document.activeElement).toBe(closeButtons()[1]);
+
+    act(() => closeButtons()[1]?.click());
+
+    expect(document.activeElement).toBe(searchInput());
+  });
+
+  it("reaches the close button with the roving arrow focus and activates it with Enter", () => {
+    const onProjectCommand = vi.fn();
+    render({ entries: [entry(ROOT, "app")], onProjectCommand });
+    openMenu();
+
+    keydown("ArrowDown");
+    expect(document.activeElement).toBe(scopeRow(agentRailScopeValue(ROOT)));
+    keydown("ArrowDown");
+    expect(document.activeElement).toBe(gears()[0]);
+    keydown("ArrowDown");
+    expect(document.activeElement).toBe(closeButtons()[0]);
+
+    click(closeButtons()[0]);
+    expect(onProjectCommand).toHaveBeenCalledExactlyOnceWith(
+      { projectRootKey: ROOT, repositoryRoot: ROOT, rootPath: ROOT },
+      "close",
+    );
+  });
+
+  it("moves focus out of the menu when the last project leaves the picker", () => {
+    const addProject = document.createElement("button");
+    addProject.setAttribute("aria-label", "Add project");
+    document.body.append(addProject);
+    render();
+    openMenu();
+    keydown("ArrowDown");
+    expect(host.contains(document.activeElement)).toBe(true);
+
+    render({ entries: [], value: "", disabled: true });
+
+    expect(document.activeElement).toBe(addProject);
+    addProject.remove();
+  });
+
+  it("shows a neutral label when no project is open", () => {
+    render({ entries: [], value: "", disabled: true });
+
+    expect(trigger().textContent).toContain("No project");
   });
 
   it("reports the repository count of a multi-repository project", () => {
-    render({ entries: [ALL_ENTRY, entry(ROOT, "app", { repositoryCount: 2 })] });
+    render({ entries: [entry(ROOT, "app", { repositoryCount: 2 })] });
     openMenu();
 
     expect(host.querySelector(".agent-scope-menu__count")?.textContent).toBe("2 repos");
@@ -58,11 +137,7 @@ describe("AgentProjectScopeMenu", () => {
 
   it("filters projects by label and repository path", () => {
     render({
-      entries: [
-        ALL_ENTRY,
-        entry(ROOT, "boxes / app"),
-        entry("/workspace/boxes/ebox-crm", "boxes / ebox-crm"),
-      ],
+      entries: [entry(ROOT, "boxes / app"), entry("/workspace/boxes/ebox-crm", "boxes / ebox-crm")],
     });
     openMenu();
 
@@ -77,14 +152,13 @@ describe("AgentProjectScopeMenu", () => {
     expect(host.textContent).toContain("No matching projects.");
   });
 
-  it("opens the project actions from the gear of that row", () => {
+  it("opens the project actions from the gear of that row without a filter entry", () => {
     render();
     openMenu();
     click(gears()[1]);
 
     expect(menuItemLabels()).toEqual([
       "Close project",
-      "Filter to this project",
       "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",
@@ -93,7 +167,7 @@ describe("AgentProjectScopeMenu", () => {
 
   it("offers Trust project only while the project is untrusted", () => {
     render({
-      entries: [ALL_ENTRY, entry(ROOT, "app", { trust: "untrusted" })],
+      entries: [entry(ROOT, "app", { trust: "untrusted" })],
     });
     openMenu();
     click(gears()[0]);
@@ -103,7 +177,7 @@ describe("AgentProjectScopeMenu", () => {
 
   it("offers Release project only for a project whose tab was closed", () => {
     render({
-      entries: [ALL_ENTRY, entry(ROOT, "app", { origin: "closed-tab-live-tasks" })],
+      entries: [entry(ROOT, "app", { origin: "closed-tab-live-tasks" })],
     });
     openMenu();
     click(gears()[0]);
@@ -112,11 +186,11 @@ describe("AgentProjectScopeMenu", () => {
   });
 
   it("hides the path actions for a project without a known root path", () => {
-    render({ entries: [ALL_ENTRY, entry(ROOT, "app", { rootPath: null })] });
+    render({ entries: [entry(ROOT, "app", { rootPath: null })] });
     openMenu();
     click(gears()[0]);
 
-    expect(menuItemLabels()).toEqual(["Filter to this project", "Terminal sessions…"]);
+    expect(menuItemLabels()).toEqual(["Terminal sessions…"]);
   });
 
   it("reports a project command with the root key of that project", () => {
@@ -132,44 +206,28 @@ describe("AgentProjectScopeMenu", () => {
     );
   });
 
-  it("reports the filter command and disables it for the active scope", () => {
-    const onProjectCommand = vi.fn();
-    render({ onProjectCommand, value: agentRailScopeValue(ROOT, ROOT) });
-    openMenu();
-    click(gears()[1]);
-    clickMenuItem("Filter to this project");
-
-    expect(onProjectCommand).toHaveBeenCalledWith(
-      { projectRootKey: OTHER, repositoryRoot: OTHER, rootPath: OTHER },
-      "filterToProject",
-    );
-
-    click(gears()[0]);
-    expect(menuItem("Filter to this project")?.disabled).toBe(true);
-  });
-
   it("changes the scope from a project row", () => {
     const onChange = vi.fn();
     render({ onChange });
     openMenu();
-    click(scopeRow(agentRailScopeValue(OTHER, OTHER)));
+    click(scopeRow(agentRailScopeValue(OTHER)));
 
-    expect(onChange).toHaveBeenCalledWith(agentRailScopeValue(OTHER, OTHER));
+    expect(onChange).toHaveBeenCalledWith(agentRailScopeValue(OTHER));
     expect(host.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(trigger());
   });
 
   it("focuses project search on open and walks the filtered rows with the arrow keys", () => {
-    render({ value: agentRailScopeValue(ROOT, ROOT) });
+    render({ value: agentRailScopeValue(ROOT) });
     openMenu();
 
     expect(document.activeElement).toBe(searchInput());
 
     keydown("ArrowDown");
-    expect(document.activeElement).toBe(scopeRow(ALL_PROJECTS_SCOPE_VALUE));
+    expect(document.activeElement).toBe(scopeRow(agentRailScopeValue(ROOT)));
 
     keydown("ArrowUp");
-    expect(document.activeElement).toBe(gears()[1]);
+    expect(document.activeElement).toBe(closeButtons()[1]);
   });
 
   it("clears a project query before Escape closes the menu", () => {
@@ -210,8 +268,8 @@ describe("AgentProjectScopeMenu", () => {
     const props: AgentProjectScopeMenuProps = {
       id: "agent-rail-scope",
       label: "Project scope",
-      entries: [ALL_ENTRY, entry(ROOT, "app"), entry(OTHER, "api")],
-      value: ALL_PROJECTS_SCOPE_VALUE,
+      entries: [entry(ROOT, "app"), entry(OTHER, "api")],
+      value: agentRailScopeValue(ROOT),
       disabled: false,
       onChange: vi.fn(),
       onProjectCommand: vi.fn(),
@@ -223,11 +281,10 @@ describe("AgentProjectScopeMenu", () => {
   function entry(
     repositoryRoot: string,
     label: string,
-    overrides: Partial<AgentRailProjectScopeEntry> = {},
-  ): AgentRailProjectScopeEntry {
+    overrides: Partial<AgentRailScopeEntry> = {},
+  ): AgentRailScopeEntry {
     return {
-      kind: "repository",
-      value: agentRailScopeValue(repositoryRoot, repositoryRoot),
+      value: agentRailScopeValue(repositoryRoot),
       label,
       projectRootKey: repositoryRoot,
       repositoryRoot,
@@ -267,6 +324,14 @@ describe("AgentProjectScopeMenu", () => {
 
   function gears(): ReadonlyArray<HTMLButtonElement> {
     return [...host.querySelectorAll<HTMLButtonElement>(".agent-scope-menu__gear")];
+  }
+
+  function closeButtons(): ReadonlyArray<HTMLButtonElement> {
+    return [
+      ...host.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"][aria-label^="Close project "]',
+      ),
+    ];
   }
 
   function scopeRow(value: string): HTMLButtonElement {

@@ -25,7 +25,6 @@ export type ComposerSelection =
   | ({ readonly kind: "missing" } & ComposerTarget);
 
 export type ComposerScope =
-  | { readonly kind: "all" }
   | ({
       readonly kind: "repository";
       readonly ownerId: string;
@@ -37,17 +36,17 @@ export function resolveComposerTarget(
   projects: ReadonlyArray<AgentComposerProjectOption>,
   selection: ComposerSelection | null,
   selectedThread: AgentThreadView | null,
-  scope: ComposerScope,
+  scope: ComposerScope | null,
 ): ComposerTarget | null {
   if (selectedThread !== null) {
     const owner = selectedThread.thread.owner;
     return { projectRootKey: owner.rootKey, repositoryRoot: owner.repositoryRoot };
   }
 
-  if (scope.kind === "missing") return null;
-  if (scope.kind === "repository") return findComposerTarget(projects, scope);
   if (selection?.kind === "missing") return null;
+  if (scope?.kind === "missing") return null;
   if (selection !== null) return findComposerTarget(projects, selection);
+  if (scope !== null) return findComposerTarget(projects, scope);
 
   const project = projects.find((candidate) => candidate.origin === "active-tab") ?? null;
   if (project === null) {

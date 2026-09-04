@@ -1,24 +1,23 @@
 import { useId, useLayoutEffect, type KeyboardEvent, type ReactNode } from "react";
-import { Copy, Filter, FolderOpen, History, Settings, ShieldCheck, Unplug, X } from "lucide-react";
+import { Copy, FolderOpen, History, Settings, ShieldCheck, Unplug, X } from "lucide-react";
 import { focusMenuItem, useAgentPopover } from "./agentPopover";
 import {
   agentProjectMenuEntries,
   agentProjectMenuTarget,
   type AgentProjectMenuCommand,
   type AgentProjectMenuTarget,
-  type AgentRailProjectScopeEntry,
+  type AgentRailScopeEntry,
 } from "./agentSidebarPresentation";
 
 export interface AgentProjectMenuProps {
-  readonly entry: AgentRailProjectScopeEntry;
-  readonly scoped: boolean;
+  readonly entry: AgentRailScopeEntry;
   onCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
 }
 
-export function AgentProjectMenu({ entry, onCommand, scoped }: AgentProjectMenuProps) {
+export function AgentProjectMenu({ entry, onCommand }: AgentProjectMenuProps) {
   const menuId = useId();
   const popover = useAgentPopover("end");
-  const entries = agentProjectMenuEntries(entry, scoped);
+  const entries = agentProjectMenuEntries(entry);
   const label = `Project actions for ${entry.label}`;
 
   const choose = (command: AgentProjectMenuCommand): void => {
@@ -52,7 +51,7 @@ export function AgentProjectMenu({ entry, onCommand, scoped }: AgentProjectMenuP
 
   return (
     <div
-      className="agent-scope-menu__actions"
+      className="agent-scope-menu__gear-slot"
       onBlur={popover.onBlur}
       ref={popover.rootRef}
       role="none"
@@ -118,8 +117,6 @@ function commandIcon(command: AgentProjectMenuCommand): ReactNode {
       return <FolderOpen size={13} />;
     case "copyPath":
       return <Copy size={13} />;
-    case "filterToProject":
-      return <Filter size={13} />;
     case "terminalSessions":
       return <History size={13} />;
     default:

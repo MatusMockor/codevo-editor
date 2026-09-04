@@ -13,11 +13,15 @@ import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
 import {
   FIXTURE_NESTED_ROOT,
+  fixtureRepository,
   projectFixture,
   threadsSurfaceFixture,
 } from "./agentThreadsSurfaceTestFixtures";
 import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
 import { useAgentThreadNavigation, type AgentThreadNavigation } from "./useAgentThreadNavigation";
+
+const OTHER_ROOT = "/workspace/api";
+const THIRD_ROOT = "/workspace/web";
 
 describe("useAgentThreadNavigation", () => {
   let host: HTMLDivElement;
@@ -81,6 +85,10 @@ describe("useAgentThreadNavigation", () => {
     const nested = view("agt-nested", FIXTURE_NESTED_ROOT);
     render(threadsSurfaceFixture({ threads: [view("agt-1"), nested] }));
 
+    expect(current().railScope).toEqual({
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+    });
     expect(current().newThreadTarget()).toEqual({
       projectRootKey: SURFACE_FIXTURE_ROOT,
       repositoryRoot: SURFACE_FIXTURE_ROOT,
@@ -88,13 +96,11 @@ describe("useAgentThreadNavigation", () => {
 
     act(() =>
       current().setRailScope({
-        kind: "repository",
         projectRootKey: SURFACE_FIXTURE_ROOT,
         repositoryRoot: FIXTURE_NESTED_ROOT,
       }),
     );
 
-    expect(current().railScope.kind).toBe("repository");
     expect(current().newThreadTarget()).toEqual({
       projectRootKey: SURFACE_FIXTURE_ROOT,
       repositoryRoot: FIXTURE_NESTED_ROOT,
@@ -103,27 +109,76 @@ describe("useAgentThreadNavigation", () => {
     expect(current().selectedThreadId).toBe("agt-1");
   });
 
-  it("keeps a removed repository scope bound to its original owner generation", () => {
-    const first = projectFixture({ generation: 1 });
-    render(threadsSurfaceFixture(), [first]);
-    act(() =>
-      current().setRailScope({
-        kind: "repository",
-        projectRootKey: SURFACE_FIXTURE_ROOT,
-        repositoryRoot: SURFACE_FIXTURE_ROOT,
-      }),
-    );
-    expect(current().composerScope.kind).toBe("repository");
+  it("defaults the scope to the first open project and drops it without any project", () => {
+    render(threadsSurfaceFixture(), [project(OTHER_ROOT, "api"), projectFixture()]);
+    expect(current().railScope?.projectRootKey).toBe(OTHER_ROOT);
 
     render(threadsSurfaceFixture(), []);
-    expect(current().composerScope.kind).toBe("missing");
+    expect(current().railScope).toBeNull();
+    expect(current().composerScope).toBeNull();
+    expect(current().scopeEntries).toEqual([]);
+    expect(current().newThreadTarget()).toBeNull();
+  });
 
-    render(threadsSurfaceFixture(), [projectFixture({ generation: 2 })]);
-    expect(current().composerScope.kind).toBe("missing");
+  it("defaults the scope to the project owning the selected thread", () => {
+    const foreign = viewInProject("agt-foreign", OTHER_ROOT);
+    render(threadsSurfaceFixture({ threads: [foreign] }), []);
+    expect(current().railScope).toBeNull();
 
+    act(() => current().selectThread("agt-foreign"));
+    render(threadsSurfaceFixture({ threads: [foreign] }), [
+      projectFixture(),
+      project(OTHER_ROOT, "api"),
+    ]);
+
+    expect(current().railScope?.projectRootKey).toBe(OTHER_ROOT);
+  });
+
+  it("moves the scope to the neighbouring project when the scoped project closes", () => {
+    const all = [projectFixture(), project(OTHER_ROOT, "api"), project(THIRD_ROOT, "web")];
+    render(threadsSurfaceFixture(), all);
+    act(() => current().setRailScope({ projectRootKey: OTHER_ROOT, repositoryRoot: OTHER_ROOT }));
+    expect(current().railScope?.projectRootKey).toBe(OTHER_ROOT);
+
+    render(threadsSurfaceFixture(), [projectFixture(), project(THIRD_ROOT, "web")]);
+    expect(current().railScope?.projectRootKey).toBe(THIRD_ROOT);
+
+    render(threadsSurfaceFixture(), [projectFixture()]);
+    expect(current().railScope?.projectRootKey).toBe(SURFACE_FIXTURE_ROOT);
+  });
+
+  it("keeps the scope on a project that drains after its tab closed", () => {
+    const draining = { ...project(OTHER_ROOT, "api"), origin: "closed-tab-live-tasks" as const };
+    render(threadsSurfaceFixture(), [projectFixture(), project(OTHER_ROOT, "api")]);
+    act(() => current().setRailScope({ projectRootKey: OTHER_ROOT, repositoryRoot: OTHER_ROOT }));
+
+    render(threadsSurfaceFixture(), [projectFixture(), draining]);
+
+    expect(current().railScope?.projectRootKey).toBe(OTHER_ROOT);
+    expect(current().scopeEntries.map((entry) => entry.projectRootKey)).toEqual([
+      SURFACE_FIXTURE_ROOT,
+      OTHER_ROOT,
+    ]);
+    expect(current().newThreadTarget()).toBeNull();
+  });
+
+  it("keeps the scope when another project closes", () => {
+    render(threadsSurfaceFixture(), [
+      projectFixture(),
+      project(OTHER_ROOT, "api"),
+      project(THIRD_ROOT, "web"),
+    ]);
+    act(() => current().setRailScope({ projectRootKey: OTHER_ROOT, repositoryRoot: OTHER_ROOT }));
+
+    render(threadsSurfaceFixture(), [project(OTHER_ROOT, "api"), project(THIRD_ROOT, "web")]);
+    expect(current().railScope?.projectRootKey).toBe(OTHER_ROOT);
+    expect(current().composerScope?.kind).toBe("repository");
+  });
+
+  it("re-establishes the scope authority when the scoped project owner is replaced", () => {
+    render(threadsSurfaceFixture(), [projectFixture({ generation: 1 })]);
     act(() =>
       current().setRailScope({
-        kind: "repository",
         projectRootKey: SURFACE_FIXTURE_ROOT,
         repositoryRoot: SURFACE_FIXTURE_ROOT,
       }),
@@ -133,8 +188,40 @@ describe("useAgentThreadNavigation", () => {
       projectRootKey: SURFACE_FIXTURE_ROOT,
       repositoryRoot: SURFACE_FIXTURE_ROOT,
       ownerId: projectFixture().ownerId,
+      generation: 1,
+    });
+
+    render(threadsSurfaceFixture(), [projectFixture({ ownerId: "owner-b", generation: 2 })]);
+
+    expect(current().railScope).toEqual({
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+    });
+    expect(current().composerScope).toEqual({
+      kind: "repository",
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+      ownerId: "owner-b",
       generation: 2,
     });
+  });
+
+  it("re-establishes the scope when the scoped repository leaves the project", () => {
+    render(threadsSurfaceFixture());
+    act(() =>
+      current().setRailScope({
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: FIXTURE_NESTED_ROOT,
+      }),
+    );
+    expect(current().railScope?.repositoryRoot).toBe(FIXTURE_NESTED_ROOT);
+
+    render(threadsSurfaceFixture(), [
+      projectFixture({ repositories: [fixtureRepository(SURFACE_FIXTURE_ROOT, "")] }),
+    ]);
+
+    expect(current().railScope?.repositoryRoot).toBe(SURFACE_FIXTURE_ROOT);
+    expect(current().composerScope?.kind).toBe("repository");
   });
 
   it("opens the palette with titles, activates a result with a reveal, and closes it", () => {
@@ -309,6 +396,32 @@ describe("useAgentThreadNavigation", () => {
         threadId,
         owner: { ...base.owner, repositoryRoot },
       },
+    });
+  }
+
+  function viewInProject(threadId: string, rootKey: string): AgentThreadView {
+    const base = surfaceThreadView().thread;
+    return surfaceThreadView({
+      thread: {
+        ...base,
+        threadId,
+        owner: {
+          ...base.owner,
+          rootKey,
+          ownerId: `agent-root:${rootKey}`,
+          repositoryRoot: rootKey,
+        },
+      },
+    });
+  }
+
+  function project(rootKey: string, label: string): AgentProjectDescriptor {
+    return projectFixture({
+      rootKey,
+      rootPath: rootKey,
+      ownerId: `agent-root:${rootKey}`,
+      label,
+      repositories: [fixtureRepository(rootKey, "")],
     });
   }
 

@@ -8,7 +8,6 @@ import type { AgentProjectGroup } from "./agentModePresentation";
 import type {
   AgentProjectMenuCommand,
   AgentProjectMenuTarget,
-  AgentRailScope,
   AgentThreadCopyDetail,
   AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
@@ -49,7 +48,6 @@ export interface AgentThreadMenuCommandOptions {
   onTrustProject(projectRootKey: string): void;
   onCloseProject(rootPath: string): void;
   onReleaseProject(projectRootKey: string): void;
-  onFilterScope(scope: AgentRailScope): void;
   onThreadRemoved(threadId: string): void;
   onOpenTerminalSessions(projectRootKey: string, repositoryRoot: string): void;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
@@ -63,7 +61,6 @@ export interface AgentThreadMenuCommands {
 export function useAgentThreadMenuCommands({
   agents,
   groups,
-  onFilterScope,
   onCloseProject,
   onOpenTerminalSessions,
   onReleaseProject,
@@ -119,13 +116,6 @@ export function useAgentThreadMenuCommands({
         case "close":
           if (target.rootPath !== null) onCloseProject(target.rootPath);
           return;
-        case "filterToProject":
-          onFilterScope({
-            kind: "repository",
-            projectRootKey: target.projectRootKey,
-            repositoryRoot: target.repositoryRoot,
-          });
-          return;
         case "reveal":
           if (target.rootPath === null) return;
           void revealPath(target.rootPath).catch(() => reportNotice(REVEAL_FAILED_NOTICE));
@@ -143,7 +133,6 @@ export function useAgentThreadMenuCommands({
     },
     [
       copyText,
-      onFilterScope,
       onCloseProject,
       onOpenTerminalSessions,
       onReleaseProject,

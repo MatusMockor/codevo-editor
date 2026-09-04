@@ -1,8 +1,12 @@
-import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ChevronDown, Folder, Search } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { ChevronDown, Folder, Search, X } from "lucide-react";
 import { useAgentPopover } from "./agentPopover";
 import { AgentProjectMenu } from "./AgentProjectMenu";
 import {
+  NO_PROJECT_SCOPE_LABEL,
+  agentProjectCloseLabel,
+  agentProjectClosable,
+  agentProjectMenuTarget,
   agentProjectRepositoryCountLabel,
   agentRailScopeState,
   type AgentProjectMenuCommand,
@@ -20,7 +24,6 @@ export interface AgentProjectScopeMenuProps {
   onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
 }
 
-const UNKNOWN_SCOPE_LABEL = "Select…";
 const ITEM_SELECTOR = "[data-scope-item]:not(:disabled)";
 const MAX_PROJECT_FILTER_CHARS = 160;
 
@@ -44,6 +47,11 @@ export function AgentProjectScopeMenu({
     popover.hide(true);
     if (entry.value === value) return;
     onChange(entry.value);
+  };
+
+  const closeProject = (entry: AgentRailScopeEntry): void => {
+    searchRef.current?.focus();
+    onProjectCommand(agentProjectMenuTarget(entry), "close");
   };
 
   const onTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
@@ -81,7 +89,7 @@ export function AgentProjectScopeMenu({
     popover.hide(false);
   };
 
-  const { open } = popover;
+  const { open, rootRef, triggerRef } = popover;
   useLayoutEffect(() => {
     if (!open) {
       setQuery("");
@@ -89,6 +97,14 @@ export function AgentProjectScopeMenu({
     }
     searchRef.current?.focus();
   }, [open]);
+
+  useEffect(() => {
+    if (!disabled || !open) return;
+    const root = rootRef.current;
+    if (root === null) return;
+    if (!scopeMenuHeldFocus(root)) return;
+    focusScopeSuccessor(triggerRef.current);
+  }, [disabled, open, rootRef, triggerRef]);
 
   return (
     <div
@@ -114,7 +130,7 @@ export function AgentProjectScopeMenu({
         <span aria-hidden="true" className="agent-picker__icon">
           <Folder size={13} />
         </span>
-        <span className="agent-picker__value">{selected?.label ?? UNKNOWN_SCOPE_LABEL}</span>
+        <span className="agent-picker__value">{selected?.label ?? NO_PROJECT_SCOPE_LABEL}</span>
         <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={12} />
       </button>
 
@@ -162,13 +178,23 @@ export function AgentProjectScopeMenu({
                 {repositoryCount(entry)}
                 {stateLabel(entry)}
               </button>
-              {entry.kind === "repository" && (
-                <AgentProjectMenu
-                  entry={entry}
-                  onCommand={onProjectCommand}
-                  scoped={entry.value === value}
-                />
-              )}
+              <div className="agent-scope-menu__actions" role="none">
+                <AgentProjectMenu entry={entry} onCommand={onProjectCommand} />
+                {agentProjectClosable(entry) && (
+                  <button
+                    aria-label={agentProjectCloseLabel(entry)}
+                    className="agent-scope-menu__close"
+                    data-scope-item="close"
+                    onClick={() => closeProject(entry)}
+                    role="menuitem"
+                    tabIndex={-1}
+                    title="Close project"
+                    type="button"
+                  >
+                    <X aria-hidden="true" size={13} />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           {filteredEntries.length === 0 && (
@@ -190,6 +216,22 @@ function stateLabel(entry: AgentRailScopeEntry) {
   const state = agentRailScopeState(entry);
   if (state === null) return null;
   return <span className="agent-menu__detail">{state.label}</span>;
+}
+
+function scopeMenuHeldFocus(root: HTMLElement): boolean {
+  const active = root.ownerDocument.activeElement;
+  if (active === null || active === root.ownerDocument.body) return true;
+  return root.contains(active);
+}
+
+function focusScopeSuccessor(trigger: HTMLButtonElement | null): void {
+  if (trigger !== null && !trigger.disabled) {
+    trigger.focus();
+    return;
+  }
+  const addProject = document.querySelector<HTMLButtonElement>('button[aria-label="Add project"]');
+  if (addProject === null || addProject.disabled) return;
+  addProject.focus();
 }
 
 function moveScopeFocus(menu: HTMLElement, step: 1 | -1): void {
@@ -222,10 +264,7 @@ function filterScopeEntries(
   const query = rawQuery.slice(0, MAX_PROJECT_FILTER_CHARS).trim().toLocaleLowerCase();
   if (query === "") return entries;
   return entries.filter((entry) => {
-    const searchable =
-      entry.kind === "all"
-        ? entry.label
-        : `${entry.label}\n${entry.repositoryRoot}\n${entry.rootPath ?? ""}`;
+    const searchable = `${entry.label}\n${entry.repositoryRoot}\n${entry.rootPath ?? ""}`;
     return searchable.toLocaleLowerCase().includes(query);
   });
 }
