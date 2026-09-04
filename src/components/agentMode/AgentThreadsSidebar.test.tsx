@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadSearchSurface, AgentThreadView } from "../../application/agentThreadPorts";
@@ -169,13 +169,13 @@ describe("AgentThreadsSidebar", () => {
     expect(host.textContent).not.toContain("+ New thread");
   });
 
-  it("renders the three card lines: project, title, branch and provider glyph", () => {
+  it("renders the card lines: title, branch and provider glyph, without repeating the scope", () => {
     render({
       groups: [group(ROOT, "app", [settled("agt-1", "Fix the parser", { branch: "main" })])],
     });
 
     const card = row("agt-1");
-    expect(card.querySelector(".agent-row__project")?.textContent).toBe("app");
+    expect(card.querySelector(".agent-row__project")).toBeNull();
     expect(card.querySelector(".agent-row__title")?.textContent).toBe("Fix the parser");
     expect(card.querySelector(".agent-row__branch")?.textContent).toBe("main");
     expect(card.querySelector('[aria-label="Claude Code"] svg')).not.toBeNull();
@@ -189,6 +189,37 @@ describe("AgentThreadsSidebar", () => {
 
     expect(row("agt-1").querySelector(".agent-row__project")?.textContent).toBe("app / app");
     expect(row("agt-1").querySelector(".agent-row__branch")?.textContent).toBe("worktree");
+  });
+
+  it("labels every row of a nested-checkout project, including the scoped repository", () => {
+    const nested = `${ROOT}/packages/api`;
+    const base = group(ROOT, "app", [settled("agt-1", "One")]);
+    const nestedThread = scopedTo(ROOT, settled("agt-2", "Two", { repositoryRoot: nested }));
+    render({
+      groups: [
+        {
+          ...base,
+          singleRepo: false,
+          repos: [
+            ...base.repos,
+            {
+              repositoryRoot: nested,
+              label: "packages/api",
+              repositoryResolved: true,
+              threads: [nestedThread],
+              archived: [],
+              orphans: [],
+              liveCount: 0,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(row("agt-1").querySelector(".agent-row__project")?.textContent).toBe("app / app");
+    expect(row("agt-2").querySelector(".agent-row__project")?.textContent).toBe(
+      "app / packages/api",
+    );
   });
 
   it("shows the Codex mark for codex threads", () => {
@@ -851,6 +882,13 @@ function searchSurface(query: string, result: AgentThreadSearchResult | null = n
   return surface;
 }
 
+function scopedTo(projectRootKey: string, view: AgentThreadView): AgentThreadView {
+  return {
+    ...view,
+    thread: { ...view.thread, owner: { ...view.thread.owner, rootKey: projectRootKey } },
+  };
+}
+
 function group(
   repositoryRoot: string,
   label: string,
@@ -1006,3 +1044,25 @@ function countTitleReads(thread: AgentThread, title: string, counter: { count: n
     },
   });
 }
+
+describe("agentMode.css after the terminal sessions palette redesign", () => {
+  const RETIRED_CLASSES = ["agent-terminal-sessions", "agent-rail__empty-import"];
+
+  it("keeps no retired class in the stylesheet or in any agent mode component", () => {
+    const directory = import.meta.dirname;
+    const offenders = readdirSync(directory)
+      .filter((name) => name.endsWith(".tsx") && !name.endsWith(".test.tsx"))
+      .filter((name) => {
+        const source = readFileSync(resolve(directory, name), "utf8");
+        const applied = [...source.matchAll(/className="([^"]*)"/gu)].flatMap((match) =>
+          (match[1] ?? "").split(/\s+/u),
+        );
+        return RETIRED_CLASSES.some((retired) => applied.includes(retired));
+      });
+
+    expect(offenders).toEqual([]);
+    for (const retired of RETIRED_CLASSES) {
+      expect(AGENT_MODE_CSS).not.toContain(`.${retired}`);
+    }
+  });
+});

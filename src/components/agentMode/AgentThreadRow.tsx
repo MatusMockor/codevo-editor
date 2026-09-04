@@ -18,7 +18,7 @@ import {
 
 export interface AgentThreadRowProps {
   readonly view: AgentThreadView;
-  readonly projectLabel: string;
+  readonly projectLabel: string | null;
   readonly on: boolean;
   readonly focused: boolean;
   readonly jumpLabel: string | null;
@@ -124,7 +124,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
       >
         <div className="agent-row__line1">
           <Icon aria-hidden="true" className="agent-row__icon" size={16} />
-          <span className="agent-row__project">{projectLabel}</span>
+          {projectLabel !== null && <span className="agent-row__project">{projectLabel}</span>}
           {thread.pinned && (
             <button
               aria-label="Unpin thread"

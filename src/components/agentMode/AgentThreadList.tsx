@@ -2,7 +2,9 @@ import { memo } from "react";
 import { ChevronDown, Plus } from "lucide-react";
 import { AgentThreadRow } from "./AgentThreadRow";
 import {
+  agentRowProjectLabel,
   type AgentRailEmptyState,
+  type AgentRailRowProjectScope,
   type AgentRailSections,
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
@@ -10,6 +12,7 @@ import {
 export interface AgentThreadListProps {
   readonly sections: AgentRailSections;
   readonly projectLabels: ReadonlyMap<string, string>;
+  readonly projectScope: AgentRailRowProjectScope | null;
   readonly selectedThreadId: string | null;
   readonly focusedThreadId: string | null;
   readonly jumpLabels: ReadonlyMap<string, string>;
@@ -20,7 +23,6 @@ export interface AgentThreadListProps {
   onSelectThread(threadId: string): void;
   onTogglePin(threadId: string): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
-  onImportTerminalSession?(): void;
 }
 
 export const AgentThreadList = memo(function AgentThreadList({
@@ -28,19 +30,20 @@ export const AgentThreadList = memo(function AgentThreadList({
   empty,
   focusedThreadId,
   jumpLabels,
-  onImportTerminalSession,
   onSelectThread,
   onShowMoreArchived,
   onThreadMenuCommand,
   onToggleArchived,
   onTogglePin,
   projectLabels,
+  projectScope,
   sections,
   selectedThreadId,
 }: AgentThreadListProps) {
   const archivedTotal = sections.archived.length + sections.hiddenArchivedCount;
   const renderRow = (view: (typeof sections.active)[number]) => {
     const threadId = view.thread.threadId;
+    const repositoryRoot = view.thread.owner.repositoryRoot;
     return (
       <AgentThreadRow
         focused={focusedThreadId === threadId}
@@ -50,15 +53,17 @@ export const AgentThreadList = memo(function AgentThreadList({
         onMenuCommand={onThreadMenuCommand}
         onSelect={onSelectThread}
         onTogglePin={onTogglePin}
-        projectLabel={projectLabels.get(view.thread.owner.repositoryRoot) ?? view.repositoryLabel}
+        projectLabel={agentRowProjectLabel(
+          projectLabels.get(repositoryRoot) ?? view.repositoryLabel,
+          repositoryRoot,
+          projectScope,
+        )}
         view={view}
       />
     );
   };
 
-  if (empty !== null) {
-    return <EmptyState onImportTerminalSession={onImportTerminalSession} state={empty} />;
-  }
+  if (empty !== null) return <EmptyState state={empty} />;
 
   return (
     <ul aria-label="Thread list" className="agent-list" role="list">
@@ -103,31 +108,12 @@ export const AgentThreadList = memo(function AgentThreadList({
   );
 });
 
-function EmptyState({
-  onImportTerminalSession,
-  state,
-}: {
-  onImportTerminalSession?(): void;
-  readonly state: NonNullable<AgentRailEmptyState>;
-}) {
+function EmptyState({ state }: { readonly state: NonNullable<AgentRailEmptyState> }) {
   if (state.kind === "noProjects") {
     return <div className="agent-rail__empty-state">No projects yet</div>;
   }
   if (state.kind === "noScope") {
     return <div className="agent-rail__empty-state">No project selected</div>;
   }
-  return (
-    <div className="agent-rail__empty-state">
-      {`No threads in ${state.scopeLabel} yet`}
-      {onImportTerminalSession !== undefined && (
-        <button
-          className="agent-linkbutton agent-rail__empty-import"
-          onClick={onImportTerminalSession}
-          type="button"
-        >
-          Import a terminal session…
-        </button>
-      )}
-    </div>
-  );
+  return <div className="agent-rail__empty-state">{`No threads in ${state.scopeLabel} yet`}</div>;
 }

@@ -38,6 +38,7 @@ import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
 import { agentThreadHeaderProject, type AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 import { AgentClockProvider } from "./agentClock";
 import { agentProjectGroups } from "./agentModePresentation";
+import { agentProjectTerminalSessionsTarget } from "./agentSidebarPresentation";
 import { useAgentAddProject } from "./useAgentAddProject";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentShipActions } from "./useAgentShipActions";
@@ -192,7 +193,7 @@ export function AgentModeView({
         setLocalNotice(TERMINAL_SESSIONS_UNAVAILABLE_NOTICE);
         return;
       }
-      terminalSessionsPalette.openFor(projectRootKey, repositoryRoot);
+      if (!terminalSessionsPalette.openFor(projectRootKey, repositoryRoot)) return;
       void externalSessions.open({ rootKey: projectRootKey, repositoryRoot });
     },
     [externalSessions, terminalSessionsPalette],
@@ -237,11 +238,10 @@ export function AgentModeView({
     [externalSessions, importExternalSessionAction, selectImportedThread, terminalSessionsTarget],
   );
   const newThreadTargetForRail = navigation.newThreadTarget;
-  const railImportTarget = useMemo(() => newThreadTargetForRail(), [newThreadTargetForRail]);
-  const importTerminalSessionFromRail = useCallback(() => {
-    if (railImportTarget === null) return;
-    openTerminalSessions(railImportTarget.projectRootKey, railImportTarget.repositoryRoot);
-  }, [openTerminalSessions, railImportTarget]);
+  const railTerminalSessionsTarget = useMemo(
+    () => newThreadTargetForRail(),
+    [newThreadTargetForRail],
+  );
   const terminalSessionsProjectLabel = useMemo(() => {
     if (terminalSessionsTarget === null) return null;
     return (
@@ -342,6 +342,16 @@ export function AgentModeView({
     () => agentThreadHeaderProject(selectedThread, groups, projects, headerFallback),
     [groups, headerFallback, projects, selectedThread],
   );
+  const scopeEntries = navigation.scopeEntries;
+  const headerTerminalSessionsTarget = useMemo(() => {
+    if (headerProject === null) return railTerminalSessionsTarget;
+    return agentProjectTerminalSessionsTarget(headerProject, scopeEntries);
+  }, [headerProject, railTerminalSessionsTarget, scopeEntries]);
+  const openHeaderTerminalSessions = useMemo(() => {
+    const target = headerTerminalSessionsTarget;
+    if (target === null) return null;
+    return () => openTerminalSessions(target.projectRootKey, target.repositoryRoot);
+  }, [headerTerminalSessionsTarget, openTerminalSessions]);
   const responsivePanelRestore = useWorkbenchFrameResponsiveRestore();
   const toggleResponsivePanel = useCallback(() => {
     switch (responsivePanelRestore) {
@@ -466,11 +476,6 @@ export function AgentModeView({
                 onAddProject={addProject.openDialog}
                 onChangeScope={navigation.setRailScope}
                 onCollapseSidebar={toggleRail}
-                onImportTerminalSession={
-                  externalSessions === null || railImportTarget === null
-                    ? undefined
-                    : importTerminalSessionFromRail
-                }
                 onNewThread={newThread}
                 onOpenProviderSettings={agents.configureAgentCli}
                 onOpenSourceControl={onOpenSourceControl}
@@ -502,6 +507,7 @@ export function AgentModeView({
                 onNewThread={newThread}
                 onOpenScriptsView={chrome.onOpenScriptsView}
                 onOpenSurface={openSurfaceCommand}
+                onOpenTerminalSessions={openHeaderTerminalSessions}
                 onRenameThread={renameThread}
                 onRevealFailed={revealFailed}
                 onRevealPath={chrome.revealPath}

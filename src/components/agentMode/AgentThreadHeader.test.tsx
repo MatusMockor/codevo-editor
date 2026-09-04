@@ -190,6 +190,52 @@ describe("AgentThreadHeader", () => {
     expect(onToggleRightPanel).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the terminal sessions palette from the header for an open thread", () => {
+    const onOpenTerminalSessions = vi.fn();
+    render({ onOpenTerminalSessions });
+
+    const entry = button("Terminal sessions");
+    expect(entry.title).toBe("Terminal sessions");
+    expect(entry.disabled).toBe(false);
+
+    act(() => entry.click());
+
+    expect(onOpenTerminalSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the terminal sessions entry in the New thread state, left of the layout toggles", () => {
+    const onOpenTerminalSessions = vi.fn();
+    render({ thread: null, onOpenTerminalSessions });
+
+    const entry = button("Terminal sessions");
+    const toggles = host.querySelector<HTMLElement>("[data-panel-layout-controls]");
+    expect(toggles).not.toBeNull();
+    expect(entry.compareDocumentPosition(toggles as HTMLElement)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(host.querySelector(".agent-thread-head__divider")).not.toBeNull();
+
+    act(() => entry.click());
+
+    expect(onOpenTerminalSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the terminal sessions entry without a scoped project, keeping its title", () => {
+    render({ onOpenTerminalSessions: null });
+
+    const entry = button("Terminal sessions");
+    expect(entry.disabled).toBe(true);
+    expect(entry.title).toBe("Terminal sessions");
+  });
+
+  it("keeps the terminal sessions entry while the layout toggles move to the right panel", () => {
+    render({ layout: { ...initialAgentWorkbenchLayout, rightPanel: "open" } });
+
+    expect(button("Terminal sessions").disabled).toBe(false);
+    expect(host.querySelector("[data-panel-layout-controls]")).toBeNull();
+    expect(host.querySelector(".agent-thread-head__divider")).toBeNull();
+  });
+
   it("routes a reveal failure to the injected notice handler", async () => {
     const failure = new Error("Unable to reveal that path in the file manager.");
     const onRevealFailed = vi.fn();
@@ -231,6 +277,7 @@ describe("AgentThreadHeader", () => {
       onToggleBottomPanel: vi.fn(),
       onToggleRightPanel: vi.fn(),
       onOpenScriptsView: null,
+      onOpenTerminalSessions: vi.fn(),
       onRevealPath: vi.fn(() => Promise.resolve()),
       onRevealFailed: vi.fn(),
       ...overrides,

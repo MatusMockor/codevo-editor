@@ -25,6 +25,7 @@ import {
   agentJumpSlots,
   agentRailEmptyState,
   agentRailProjectLabels,
+  agentRailRowProjectScope,
   agentRailSections,
   agentRailViews,
   agentThreadRevealForMatch,
@@ -60,7 +61,6 @@ export interface AgentThreadsSidebarProps {
   onTogglePin(threadId: string): void;
   onChangeScope(scope: AgentRailScope): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
-  onImportTerminalSession?(): void;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onAddProject(): void;
   onTrustProject(projectRootKey: string): void;
@@ -75,7 +75,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   onAddProject,
   onChangeScope,
   onCollapseSidebar,
-  onImportTerminalSession,
   onNewThread,
   onProjectCommand,
   providerEnabled,
@@ -124,6 +123,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
 
   const views = useMemo(() => agentRailViews(groups), [groups]);
   const projectLabels = useMemo(() => agentRailProjectLabels(groups), [groups]);
+  const projectScope = useMemo(() => agentRailRowProjectScope(groups, scope), [groups, scope]);
   const usageProjectLabels = useMemo(
     () => new Map(groups.map((group) => [group.projectRootKey, group.label])),
     [groups],
@@ -309,13 +309,13 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
             empty={empty}
             focusedThreadId={focusedThreadId}
             jumpLabels={jumpLabels}
-            onImportTerminalSession={onImportTerminalSession}
             onSelectThread={selectThread}
             onShowMoreArchived={showMoreArchived}
             onThreadMenuCommand={menuCommand}
             onToggleArchived={toggleArchived}
             onTogglePin={togglePin}
             projectLabels={projectLabels}
+            projectScope={projectScope}
             sections={sections}
             selectedThreadId={selectedThreadId}
           />

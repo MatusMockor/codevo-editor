@@ -65,7 +65,7 @@ export interface AgentTerminalSessionsTarget {
 export interface AgentTerminalSessionsPaletteState {
   readonly open: boolean;
   readonly target: AgentTerminalSessionsTarget | null;
-  openFor(projectRootKey: string, repositoryRoot: string): void;
+  openFor(projectRootKey: string, repositoryRoot: string): boolean;
   close(): void;
 }
 
@@ -298,8 +298,9 @@ export function useAgentThreadNavigation({
   const openTerminalSessions = useCallback(
     (projectRootKey: string, repositoryRoot: string) => {
       const target: AgentTerminalSessionsTarget = { projectRootKey, repositoryRoot };
-      if (!terminalSessionsTargetIsOpen(target, projects)) return;
+      if (!terminalSessionsTargetIsOpen(target, projects)) return false;
       setTerminalSessionsTarget(target);
+      return true;
     },
     [projects],
   );

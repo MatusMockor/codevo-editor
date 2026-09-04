@@ -154,7 +154,7 @@ export function AgentTerminalSessionsPalette({
     <div className="palette-backdrop" onMouseDown={onClose} role="presentation">
       <section
         aria-label="Terminal sessions"
-        className="agent-tsp agent-terminal-sessions"
+        className="agent-tsp"
         onKeyDown={(event) => {
           if (!handleKeyDown(event.key, keyOrigin(event.target, inputRef.current))) return;
           event.preventDefault();

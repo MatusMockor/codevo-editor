@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
-import { ChevronDown, Folder } from "lucide-react";
+import { ChevronDown, Folder, History } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentThreadScriptsSurface } from "../../application/useAgentThreadScripts";
 import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
@@ -22,7 +22,10 @@ import {
 } from "./agentSidebarPresentation";
 import { AgentThreadRowMenu } from "./AgentThreadRowMenu";
 import { RenameInput } from "./AgentThreadRowParts";
-import type { AgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
+import {
+  AGENT_TERMINAL_SESSIONS_LABEL,
+  type AgentPanelLayoutShortcuts,
+} from "./agentThreadHeaderPresentation";
 
 export interface AgentThreadHeaderProject {
   readonly projectRootKey: string;
@@ -46,6 +49,7 @@ export interface AgentThreadHeaderProps {
   onToggleBottomPanel(): void;
   onToggleRightPanel(): void;
   onOpenScriptsView: (() => void) | null;
+  onOpenTerminalSessions: (() => void) | null;
   onRevealPath(path: string): Promise<void>;
   onRevealFailed(error: unknown): void;
 }
@@ -169,15 +173,21 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
             />
           </>
         )}
-        {layout.rightPanel === "closed" && (
-          <AgentPanelLayoutControls
-            bottomPanelOpen={props.bottomPanelOpen}
-            onToggleBottomPanel={props.onToggleBottomPanel}
-            onToggleRightPanel={props.onToggleRightPanel}
-            rightPanelOpen={false}
-            shortcuts={props.shortcuts}
-          />
-        )}
+        <div className="agent-thread-head__tools">
+          <TerminalSessionsButton onOpen={props.onOpenTerminalSessions} />
+          {layout.rightPanel === "closed" && (
+            <>
+              <span aria-hidden="true" className="agent-thread-head__divider" />
+              <AgentPanelLayoutControls
+                bottomPanelOpen={props.bottomPanelOpen}
+                onToggleBottomPanel={props.onToggleBottomPanel}
+                onToggleRightPanel={props.onToggleRightPanel}
+                rightPanelOpen={false}
+                shortcuts={props.shortcuts}
+              />
+            </>
+          )}
+        </div>
       </div>
 
       {thread !== null && menuAnchor !== null && (
@@ -196,6 +206,21 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
     </header>
   );
 });
+
+function TerminalSessionsButton({ onOpen }: { readonly onOpen: (() => void) | null }) {
+  return (
+    <button
+      aria-label={AGENT_TERMINAL_SESSIONS_LABEL}
+      className="agent-icon-toggle"
+      disabled={onOpen === null}
+      onClick={onOpen ?? undefined}
+      title={AGENT_TERMINAL_SESSIONS_LABEL}
+      type="button"
+    >
+      <History aria-hidden="true" size={14} />
+    </button>
+  );
+}
 
 function ThreadStatus({ thread }: { readonly thread: AgentThreadView }) {
   const tone = agentThreadTone(thread.lifecycle, lastAgentTurnStatus(thread.thread));

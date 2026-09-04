@@ -2276,7 +2276,7 @@ describe("AgentModeView", () => {
     openProjectMenu("app");
     clickMenuItem("Terminal sessions…");
 
-    expect(host.querySelector(".agent-terminal-sessions")).not.toBeNull();
+    expect(terminalSessionsPalette()).not.toBeNull();
     expect(externalSessions.open).toHaveBeenCalledWith({ rootKey: ROOT, repositoryRoot: ROOT });
 
     const filter = host.querySelector<HTMLInputElement>(
@@ -2287,42 +2287,94 @@ describe("AgentModeView", () => {
       filter?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
     });
 
-    expect(host.querySelector(".agent-terminal-sessions")).toBeNull();
+    expect(terminalSessionsPalette()).toBeNull();
     expect(externalSessions.close).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the terminal sessions palette from the empty rail import action", () => {
+  it("opens the terminal sessions palette for the scoped project from the thread header", () => {
     const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
-    render({ agents: surface({ externalSessions }) });
+    render({ agents: surface({ externalSessions }), projects: [activeProject()] });
 
-    act(() => buttonWithText("Import a terminal session…").click());
+    const entry = terminalSessionsEntry();
+    expect(entry.disabled).toBe(false);
+    act(() => entry.click());
 
-    expect(host.querySelector(".agent-terminal-sessions")).not.toBeNull();
+    expect(terminalSessionsPalette()).not.toBeNull();
     expect(externalSessions.open).toHaveBeenCalledWith({ rootKey: ROOT, repositoryRoot: ROOT });
   });
 
-  it("hides the empty rail import action when no project can receive the import", () => {
+  it("opens the terminal sessions palette for the header project, not the rail scope", () => {
+    const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
+    render({
+      agents: surface({
+        externalSessions,
+        threads: [threadView({ threadId: "agt-b", rootKey: OTHER_ROOT })],
+      }),
+      projects: [activeProject(), backgroundProject()],
+    });
+
+    chooseScope(OTHER_ROOT);
+    click('[data-thread-id="agt-b"]');
+    chooseScope(ROOT);
+
+    act(() => terminalSessionsEntry().click());
+
+    expect(externalSessions.open).toHaveBeenCalledExactlyOnceWith({
+      rootKey: OTHER_ROOT,
+      repositoryRoot: OTHER_ROOT,
+    });
+  });
+
+  it("keeps the sessions surface shut when the header repository is outside the project", () => {
+    const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
+    render({
+      agents: surface({
+        externalSessions,
+        threads: [threadView({ threadId: "agt-1", repositoryRoot: "/workspace/elsewhere" })],
+      }),
+      projects: [activeProject()],
+    });
+
+    click('[data-thread-id="agt-1"]');
+    act(() => terminalSessionsEntry().click());
+
+    expect(terminalSessionsPalette()).toBeNull();
+    expect(externalSessions.open).not.toHaveBeenCalled();
+  });
+
+  it("leaves the empty rail without any terminal session link", () => {
+    const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
+    render({ agents: surface({ externalSessions }) });
+
+    const empty = host.querySelector(".agent-rail__empty-state");
+    expect(empty).not.toBeNull();
+    expect(empty?.querySelector("button")).toBeNull();
+    expect(host.querySelector(".agent-rail__empty-import")).toBeNull();
+  });
+
+  it("disables the header terminal sessions entry for an untrusted scoped project", () => {
     const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
     render({
       agents: surface({ externalSessions }),
       projects: [{ ...activeProject(), trust: "untrusted" }],
     });
 
-    expect(host.querySelector(".agent-rail__empty-state")).not.toBeNull();
-    const button = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
-      (candidate) => candidate.textContent?.trim() === "Import a terminal session…",
-    );
-    expect(button).toBeUndefined();
+    const entry = terminalSessionsEntry();
+    expect(entry.disabled).toBe(true);
+    expect(entry.title).toBe("Terminal sessions");
+    act(() => entry.click());
+
+    expect(terminalSessionsPalette()).toBeNull();
     expect(externalSessions.open).not.toHaveBeenCalled();
   });
 
-  it("hides the empty rail import action without an external sessions surface", () => {
-    render();
+  it("reports that terminal sessions are unavailable without an external sessions surface", () => {
+    render({ projects: [activeProject()] });
 
-    const button = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
-      (candidate) => candidate.textContent?.trim() === "Import a terminal session…",
-    );
-    expect(button).toBeUndefined();
+    act(() => terminalSessionsEntry().click());
+
+    expect(terminalSessionsPalette()).toBeNull();
+    expect(host.textContent).toContain("Terminal sessions are not available in this workbench.");
   });
 
   it("imports a session from the palette, selects the thread, and closes the palette", async () => {
@@ -2357,7 +2409,7 @@ describe("AgentModeView", () => {
       title: "Security review session",
       firstPrompt: "remember plum",
     });
-    await waitForReact(() => expect(host.querySelector(".agent-terminal-sessions")).toBeNull());
+    await waitForReact(() => expect(terminalSessionsPalette()).toBeNull());
     expect(externalSessions.close).toHaveBeenCalledTimes(1);
     expect(selectedSessionId()).toBe("agt-1");
   });
@@ -2405,7 +2457,7 @@ describe("AgentModeView", () => {
     act(() => buttonWithText("Open imported thread").click());
 
     expect(importExternalSession).not.toHaveBeenCalled();
-    expect(host.querySelector(".agent-terminal-sessions")).toBeNull();
+    expect(terminalSessionsPalette()).toBeNull();
     expect(externalSessions.close).toHaveBeenCalledTimes(1);
     expect(selectedSessionId()).toBe("agt-1");
   });
@@ -2542,6 +2594,18 @@ describe("AgentModeView", () => {
     );
     expect(item).toBeDefined();
     act(() => item?.click());
+  }
+
+  function terminalSessionsPalette(): HTMLElement | null {
+    return host.querySelector<HTMLElement>('[role="dialog"][aria-label="Terminal sessions"]');
+  }
+
+  function terminalSessionsEntry(): HTMLButtonElement {
+    const entry = host.querySelector<HTMLButtonElement>(
+      '.agent-thread-head button[aria-label="Terminal sessions"]',
+    );
+    expect(entry).not.toBeNull();
+    return entry as HTMLButtonElement;
   }
 
   function buttonWithText(label: string): HTMLButtonElement {

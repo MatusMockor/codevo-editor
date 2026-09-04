@@ -415,12 +415,7 @@ export function agentProjectMenuEntries(
     entries.push(projectMenuEntry("close", "Close project", "close", false));
   }
   entries.push(
-    projectMenuEntry(
-      "terminal-sessions",
-      "Terminal sessions…",
-      "terminalSessions",
-      entry.trust !== "trusted" || entry.origin === "closed-tab-live-tasks",
-    ),
+    projectMenuEntry("terminal-sessions", "Terminal sessions…", "terminalSessions", !usable(entry)),
   );
   if (entry.rootPath === null) return entries;
   entries.push(projectMenuEntry("reveal", "Reveal in Finder", "reveal", false));
@@ -445,12 +440,26 @@ function projectMenuEntry(
 export function agentRailNewThreadTarget(
   scope: AgentRailScope | null,
   entries: ReadonlyArray<AgentRailScopeEntry>,
-): { readonly projectRootKey: string; readonly repositoryRoot: string } | null {
+): AgentRailScope | null {
   if (scope === null) return null;
   const entry = agentRailScopeEntryFor(entries, scope.projectRootKey);
-  if (entry === null) return null;
-  if (entry.trust !== "trusted" || entry.origin === "closed-tab-live-tasks") return null;
-  return { projectRootKey: entry.projectRootKey, repositoryRoot: scope.repositoryRoot };
+  if (!usable(entry)) return null;
+  return { projectRootKey: scope.projectRootKey, repositoryRoot: scope.repositoryRoot };
+}
+
+export function agentProjectTerminalSessionsTarget(
+  project: AgentRailScope | null,
+  entries: ReadonlyArray<AgentRailScopeEntry>,
+): AgentRailScope | null {
+  if (project === null) return null;
+  const entry = agentRailScopeEntryFor(entries, project.projectRootKey);
+  if (!usable(entry)) return null;
+  return { projectRootKey: project.projectRootKey, repositoryRoot: project.repositoryRoot };
+}
+
+function usable(entry: AgentRailScopeEntry | null): boolean {
+  if (entry === null) return false;
+  return entry.trust === "trusted" && entry.origin !== "closed-tab-live-tasks";
 }
 
 export function agentJumpSlots(sections: AgentRailSections): ReadonlyMap<string, number> {
@@ -538,6 +547,32 @@ export function agentRailProjectLabels(
     }
   }
   return labels;
+}
+
+export interface AgentRailRowProjectScope {
+  readonly repositoryRoot: string;
+  readonly singleRepo: boolean;
+}
+
+export function agentRailRowProjectScope(
+  groups: ReadonlyArray<AgentProjectGroup>,
+  scope: AgentRailScope | null,
+): AgentRailRowProjectScope | null {
+  if (scope === null) return null;
+  const group = groups.find((candidate) => candidate.projectRootKey === scope.projectRootKey);
+  if (group === undefined) return null;
+  return { repositoryRoot: scope.repositoryRoot, singleRepo: group.singleRepo };
+}
+
+export function agentRowProjectLabel(
+  label: string,
+  repositoryRoot: string,
+  scope: AgentRailRowProjectScope | null,
+): string | null {
+  if (scope === null) return label;
+  if (!scope.singleRepo) return label;
+  if (repositoryRoot !== scope.repositoryRoot) return label;
+  return null;
 }
 
 export function agentRowClassName(

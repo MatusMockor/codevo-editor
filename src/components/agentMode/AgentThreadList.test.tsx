@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentRailEmptyState } from "./agentSidebarPresentation";
 import { AgentThreadList, type AgentThreadListProps } from "./AgentThreadList";
 
@@ -22,55 +22,26 @@ describe("AgentThreadList empty state", () => {
     host.remove();
   });
 
-  it("offers a terminal session import from the no-threads state", () => {
-    const onImportTerminalSession = vi.fn();
-    render({
-      empty: { kind: "noThreads", scopeLabel: "app" },
-      onImportTerminalSession,
-    });
-
-    expect(host.textContent).toContain("No threads in app yet");
-    const link = importLink();
-    expect(link).not.toBeNull();
-    expect(link?.textContent).toBe("Import a terminal session…");
-
-    act(() => {
-      link?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(onImportTerminalSession).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps the scoped no-threads wording next to the import action", () => {
-    render({
-      empty: { kind: "noThreads", scopeLabel: "app" },
-      onImportTerminalSession: () => undefined,
-    });
-
-    expect(host.textContent).toContain("No threads in app yet");
-    expect(importLink()).not.toBeNull();
-  });
-
-  it("renders no import action when the entry point is not wired", () => {
+  it("states the scoped no-threads wording without any import action", () => {
     render({ empty: { kind: "noThreads", scopeLabel: "app" } });
 
-    expect(host.textContent).toContain("No threads in app yet");
-    expect(importLink()).toBeNull();
+    expect(host.textContent).toBe("No threads in app yet");
+    expect(host.querySelector("button")).toBeNull();
   });
 
-  it("renders no import action without any project", () => {
-    render({
-      empty: { kind: "noProjects" },
-      onImportTerminalSession: () => undefined,
-    });
+  it("states the no-projects wording without any import action", () => {
+    render({ empty: { kind: "noProjects" } });
 
-    expect(host.textContent).toContain("No projects yet");
-    expect(importLink()).toBeNull();
+    expect(host.textContent).toBe("No projects yet");
+    expect(host.querySelector("button")).toBeNull();
   });
 
-  function importLink(): HTMLButtonElement | null {
-    return host.querySelector<HTMLButtonElement>(".agent-rail__empty-import");
-  }
+  it("states the no-scope wording without any import action", () => {
+    render({ empty: { kind: "noScope" } });
+
+    expect(host.textContent).toBe("No project selected");
+    expect(host.querySelector("button")).toBeNull();
+  });
 
   function render(overrides: Partial<AgentThreadListProps> & { empty: AgentRailEmptyState }) {
     act(() => root.render(<AgentThreadList {...defaults()} {...overrides} />));
@@ -81,6 +52,7 @@ function defaults(): AgentThreadListProps {
   return {
     sections: { pinned: [], active: [], archived: [], hiddenArchivedCount: 0 },
     projectLabels: new Map(),
+    projectScope: null,
     selectedThreadId: null,
     focusedThreadId: null,
     jumpLabels: new Map(),

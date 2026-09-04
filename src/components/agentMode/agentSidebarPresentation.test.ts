@@ -10,6 +10,8 @@ import {
   agentRailEmptyState,
   agentRailNewThreadTarget,
   agentRailProjectLabels,
+  agentRailRowProjectScope,
+  agentRowProjectLabel,
   agentExternalOriginNote,
   agentExternalSessionRowTitle,
   agentExternalSessionsStatusNote,
@@ -154,6 +156,26 @@ describe("agent rail sections", () => {
     expect(agentRailProjectLabels(groups).get(ROOT)).toBe("app");
     const multi = { ...groups[0], singleRepo: false } as AgentProjectGroup;
     expect(agentRailProjectLabels([multi]).get(ROOT)).toBe("app / app");
+  });
+
+  it("hides the row project label only for the single repository of the scoped project", () => {
+    const groups = [group(ROOT, "app", []), group(OTHER, "api", [])];
+    const scope = agentRailRowProjectScope(groups, ROOT_SCOPE);
+
+    expect(scope).toEqual({ repositoryRoot: ROOT, singleRepo: true });
+    expect(agentRowProjectLabel("app", ROOT, scope)).toBeNull();
+    expect(agentRowProjectLabel("app / api", `${ROOT}/packages/api`, scope)).toBe("app / api");
+  });
+
+  it("keeps the row project label for a nested-checkout project and an unknown scope", () => {
+    const multi = { ...group(ROOT, "app", []), singleRepo: false };
+    const multiScope = agentRailRowProjectScope([multi], ROOT_SCOPE);
+
+    expect(multiScope).toEqual({ repositoryRoot: ROOT, singleRepo: false });
+    expect(agentRowProjectLabel("app / app", ROOT, multiScope)).toBe("app / app");
+    expect(agentRailRowProjectScope([], ROOT_SCOPE)).toBeNull();
+    expect(agentRailRowProjectScope([multi], null)).toBeNull();
+    expect(agentRowProjectLabel("app", ROOT, null)).toBe("app");
   });
 
   it("describes the empty states truthfully", () => {

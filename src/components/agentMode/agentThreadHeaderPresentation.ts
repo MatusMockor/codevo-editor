@@ -25,6 +25,7 @@ export const AGENT_SHIP_NOTHING_LABEL = "Nothing to commit";
 export const AGENT_SHIP_NOTHING_REASON = "There are no changes to commit, push or integrate.";
 export const AGENT_OPEN_MISSING_REASON = "The worktree no longer exists";
 export const AGENT_OPEN_NO_TARGET_REASON = "Select a thread first";
+export const AGENT_TERMINAL_SESSIONS_LABEL = "Terminal sessions";
 export const AGENT_SCRIPT_NONE_LABEL = "No scripts";
 export const AGENT_SCRIPT_ELSEWHERE_SUFFIX = "(running elsewhere)";
 export const AGENT_REVEAL_BLOCKED_REASON = "That path is outside the agent project roots.";
