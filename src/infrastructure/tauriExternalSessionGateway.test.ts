@@ -29,6 +29,50 @@ function summary(overrides: Record<string, unknown> = {}): Record<string, unknow
 }
 
 describe("TauriExternalSessionGateway", () => {
+  it("reads original history with cutoff and bounds failures", async () => {
+    const request = {
+      provider: "codex" as const,
+      sessionId: SESSION_ID,
+      projectRoot: "/repo",
+      repositoryRoot: "/repo",
+      beforeEpochMs: 1000,
+    };
+    const invokeCommand = vi.fn<InvokeExternalSessionCommand>().mockResolvedValue({
+      provider: "codex",
+      sessionId: SESSION_ID,
+      exchanges: [{ role: "user", text: "hi" }],
+      exchangesTruncated: false,
+      totalPreviewBytes: 2,
+    });
+    const gateway = new TauriExternalSessionGateway(invokeCommand, available);
+    await expect(gateway.readExternalSessionHistory(request)).resolves.toMatchObject({
+      exchanges: [{ text: "hi" }],
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("read_external_agent_session_history", { request });
+    invokeCommand.mockRejectedValue("x".repeat(1000));
+    await expect(gateway.readExternalSessionHistory(request)).rejects.toThrow(
+      "x".repeat(MAX_EXTERNAL_SESSION_ERROR_CHARS),
+    );
+  });
+
+  it("refuses unavailable history instead of persisting a successful empty snapshot", async () => {
+    const invokeCommand = vi.fn<InvokeExternalSessionCommand>();
+    const gateway = new TauriExternalSessionGateway(invokeCommand, unavailable);
+    const request = {
+      provider: "codex" as const,
+      sessionId: SESSION_ID,
+      projectRoot: "/repo",
+      repositoryRoot: "/repo",
+      beforeEpochMs: 1000,
+    };
+    await expect(
+      gateway.readExternalSessionHistory({ ...request, beforeEpochMs: -1 }),
+    ).rejects.toThrow();
+    await expect(gateway.readExternalSessionHistory(request)).rejects.toThrow(
+      "requires the desktop app",
+    );
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
   it("forwards both typed commands and returns parsed payloads", async () => {
     const invokeCommand = vi
       .fn<InvokeExternalSessionCommand>()

@@ -934,6 +934,7 @@ fn external_origin_round_trips_through_the_camel_case_wire_shape() {
         provider: AgentCliInvocation::ClaudeCode,
         session_id: "987b95ad-c9bc-4d08-ae49-9b431efc8f87".to_string(),
         imported_at_epoch_ms: 1_700_000_000_000,
+        history: None,
     });
 
     let encoded = serde_json::to_value(&document).expect("serialize external origin");
@@ -968,6 +969,97 @@ fn external_origin_is_absent_in_documents_written_before_the_field() {
     assert_eq!(decoded, document);
 }
 
+fn document_with_external_history() -> AgentThreadDocument {
+    let mut document = thread_document(ROOT_KEY, "agt-thread-0001", 10);
+    let session_id = "987b95ad-c9bc-4d08-ae49-9b431efc8f87".to_string();
+    document.thread.external_origin = Some(AgentThreadExternalOrigin {
+        provider: AgentCliInvocation::ClaudeCode,
+        session_id: session_id.clone(),
+        imported_at_epoch_ms: 1,
+        history: Some(AgentThreadExternalHistory {
+            provider: AgentCliInvocation::ClaudeCode,
+            session_id,
+            exchanges: vec![AgentThreadExternalExchange {
+                role: AgentThreadExternalExchangeRole::Assistant,
+                text: "Ahoj 👋".to_string(),
+            }],
+            exchanges_truncated: true,
+            total_preview_bytes: 9,
+        }),
+    });
+    document
+}
+
+#[test]
+fn external_history_is_preserved_by_store_reload() {
+    let temp = TempStore::create("external-history");
+    let document = document_with_external_history();
+    let store = temp.store();
+    store.save(ROOT_KEY, &document).expect("save history");
+    let loaded = store.load(ROOT_KEY).expect("load history");
+    assert_eq!(loaded.threads, vec![document.thread]);
+}
+
+#[test]
+fn external_history_rejects_invalid_identity_and_utf8_bounds() {
+    let document = document_with_external_history();
+    let mut mutations = Vec::new();
+    let history = document
+        .thread
+        .external_origin
+        .as_ref()
+        .unwrap()
+        .history
+        .as_ref()
+        .unwrap();
+    let mut foreign = history.clone();
+    foreign.provider = AgentCliInvocation::CodexExec;
+    mutations.push(foreign);
+    let mut foreign = history.clone();
+    foreign.session_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".to_string();
+    mutations.push(foreign);
+    let mut wrong_bytes = history.clone();
+    wrong_bytes.total_preview_bytes = 6;
+    mutations.push(wrong_bytes);
+    let mut too_many = history.clone();
+    too_many.exchanges =
+        vec![history.exchanges[0].clone(); MAX_AGENT_EXTERNAL_HISTORY_EXCHANGES + 1];
+    too_many.total_preview_bytes = (too_many.exchanges.len() * 9) as u64;
+    mutations.push(too_many);
+    let mut oversized_text = history.clone();
+    oversized_text.exchanges[0].text = "👋".repeat(MAX_AGENT_EVENT_TEXT_BYTES / 4 + 1);
+    oversized_text.total_preview_bytes = oversized_text.exchanges[0].text.len() as u64;
+    mutations.push(oversized_text);
+    let mut oversized_total = history.clone();
+    oversized_total.exchanges = vec![
+        AgentThreadExternalExchange {
+            role: AgentThreadExternalExchangeRole::User,
+            text: "x".repeat(MAX_AGENT_EVENT_TEXT_BYTES)
+        };
+        9
+    ];
+    oversized_total.total_preview_bytes = (9 * MAX_AGENT_EVENT_TEXT_BYTES) as u64;
+    mutations.push(oversized_total);
+    let mut control = history.clone();
+    control.exchanges[0].text = "\u{001b}".to_string();
+    control.total_preview_bytes = 1;
+    mutations.push(control);
+    for history in mutations {
+        let mut invalid = document.clone();
+        invalid.thread.external_origin.as_mut().unwrap().history = Some(history);
+        assert!(validate_agent_thread_document(ROOT_KEY, &invalid).is_err());
+    }
+    let mut unknown = serde_json::to_value(&document).unwrap();
+    unknown["thread"]["externalOrigin"]["history"]["extra"] = json!(true);
+    assert!(serde_json::from_value::<AgentThreadDocument>(unknown).is_err());
+    let mut unknown_exchange = serde_json::to_value(&document).unwrap();
+    unknown_exchange["thread"]["externalOrigin"]["history"]["exchanges"][0]["extra"] = json!(true);
+    assert!(serde_json::from_value::<AgentThreadDocument>(unknown_exchange).is_err());
+    let mut null_history = serde_json::to_value(&document).unwrap();
+    null_history["thread"]["externalOrigin"]["history"] = json!(null);
+    assert!(serde_json::from_value::<AgentThreadDocument>(null_history).is_err());
+}
+
 #[test]
 fn external_origin_rejects_unknown_fields_and_invalid_provenance() {
     let mut document = thread_document(ROOT_KEY, "agt-thread-0001", 10);
@@ -975,6 +1067,7 @@ fn external_origin_rejects_unknown_fields_and_invalid_provenance() {
         provider: AgentCliInvocation::ClaudeCode,
         session_id: "987b95ad-c9bc-4d08-ae49-9b431efc8f87".to_string(),
         imported_at_epoch_ms: 1,
+        history: None,
     });
     let mut unknown = serde_json::to_value(&document).expect("serialize document");
     unknown["thread"]["externalOrigin"]["extra"] = json!(true);
@@ -985,6 +1078,7 @@ fn external_origin_rejects_unknown_fields_and_invalid_provenance() {
         provider: AgentCliInvocation::CodexExec,
         session_id: "987b95ad-c9bc-4d08-ae49-9b431efc8f87".to_string(),
         imported_at_epoch_ms: 1,
+        history: None,
     });
     assert_eq!(
         validate_agent_thread_document(ROOT_KEY, &mismatched),
@@ -996,6 +1090,7 @@ fn external_origin_rejects_unknown_fields_and_invalid_provenance() {
         provider: AgentCliInvocation::ClaudeCode,
         session_id: "../etc/passwd".to_string(),
         imported_at_epoch_ms: 1,
+        history: None,
     });
     assert!(validate_agent_thread_document(ROOT_KEY, &malformed).is_err());
 }

@@ -1,12 +1,16 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { ExternalSessionGateway } from "../application/agentThreadPorts";
 import type {
+  ExternalAgentSessionHistory,
+  ExternalSessionHistoryRequest,
   ExternalAgentSessionPreview,
   ExternalSessionListRequest,
   ExternalSessionListSnapshot,
   ExternalSessionPreviewRequest,
 } from "../domain/externalAgentSession";
 import {
+  invokeReadExternalAgentSessionHistoryIpc,
+  validateExternalSessionHistoryRequest,
   invokeListExternalAgentSessionsIpc,
   invokePreviewExternalAgentSessionIpc,
   validateExternalSessionListRequest,
@@ -33,6 +37,20 @@ export class TauriExternalSessionGateway implements ExternalSessionGateway {
     private readonly invokeCommand: InvokeExternalSessionCommand = invokeExternalSessionCommand,
     private readonly isRuntimeAvailable: ExternalSessionRuntimeDetector = isTauri,
   ) {}
+
+  async readExternalSessionHistory(
+    request: ExternalSessionHistoryRequest,
+  ): Promise<ExternalAgentSessionHistory> {
+    const validated = validateExternalSessionHistoryRequest(request);
+    if (!this.isRuntimeAvailable()) {
+      throw new Error("Original session history requires the desktop app.");
+    }
+    try {
+      return await invokeReadExternalAgentSessionHistoryIpc(this.invokeCommand, validated);
+    } catch (error) {
+      throw boundedExternalSessionError(error);
+    }
+  }
 
   async listExternalSessions(
     request: ExternalSessionListRequest,

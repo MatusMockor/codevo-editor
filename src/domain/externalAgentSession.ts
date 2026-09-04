@@ -1,9 +1,11 @@
 import { MAX_AGENT_TASK_PATH_BYTES, type AgentCliKind } from "./agentTask";
-import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThread";
+import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 
 export const MAX_EXTERNAL_SESSION_ENTRIES = 200;
 export const MAX_PREVIEW_EXCHANGES = 40;
 export const PREVIEW_TOTAL_BYTES = 64 * 1_024;
+export const MAX_HISTORY_EXCHANGES = 256;
+export const HISTORY_TOTAL_BYTES = 128 * 1_024;
 export const MAX_EXTERNAL_SESSION_TITLE_BYTES = MAX_AGENT_THREAD_TITLE_BYTES;
 export const MAX_EXTERNAL_SESSION_TEXT_BYTES = MAX_AGENT_EVENT_TEXT_BYTES;
 export const MAX_EXTERNAL_SESSION_PATH_BYTES = MAX_AGENT_TASK_PATH_BYTES;
@@ -54,6 +56,12 @@ export interface ExternalAgentSessionPreview {
 export interface ExternalSessionListRequest {
   readonly projectRoot: string;
   readonly repositoryRoot: string;
+}
+
+export type ExternalAgentSessionHistory = ExternalAgentSessionPreview;
+
+export interface ExternalSessionHistoryRequest extends ExternalSessionPreviewRequest {
+  readonly beforeEpochMs: number;
 }
 
 export interface ExternalSessionPreviewRequest {
@@ -178,22 +186,49 @@ export function parseExternalAgentSessionPreview(
   value: unknown,
   path = "externalSessionPreview",
 ): ExternalAgentSessionPreview {
+  return parseSessionTranscript(value, path, MAX_PREVIEW_EXCHANGES, PREVIEW_TOTAL_BYTES);
+}
+
+export function parseExternalAgentSessionHistory(
+  value: unknown,
+  path = "externalSessionHistory",
+): ExternalAgentSessionHistory {
+  return parseSessionTranscript(value, path, MAX_HISTORY_EXCHANGES, HISTORY_TOTAL_BYTES);
+}
+
+function parseSessionTranscript(
+  value: unknown,
+  path: string,
+  maximumExchanges: number,
+  maximumBytes: number,
+): ExternalAgentSessionPreview {
   const preview = record(value, path);
   exactKeys(
     preview,
     ["provider", "sessionId", "exchanges", "exchangesTruncated", "totalPreviewBytes"],
     path,
   );
+  const exchanges = parseExchanges(preview.exchanges, `${path}.exchanges`, maximumExchanges);
+  const actualBytes = exchanges.reduce(
+    (total, exchange) => total + UTF8_ENCODER.encode(exchange.text).byteLength,
+    0,
+  );
+  if (actualBytes > maximumBytes)
+    invalid(`${path}.exchanges`, `at most ${maximumBytes} total text bytes`);
+  const totalPreviewBytes = boundedCount(
+    preview.totalPreviewBytes,
+    `${path}.totalPreviewBytes`,
+    maximumBytes,
+  );
+  if (maximumExchanges === MAX_HISTORY_EXCHANGES && totalPreviewBytes !== actualBytes) {
+    invalid(`${path}.totalPreviewBytes`, "the actual total UTF-8 text bytes");
+  }
   return {
     provider: validateExternalSessionProvider(preview.provider, `${path}.provider`),
     sessionId: validateExternalSessionId(preview.sessionId, `${path}.sessionId`),
-    exchanges: parseExchanges(preview.exchanges, `${path}.exchanges`),
+    exchanges,
     exchangesTruncated: booleanFlag(preview.exchangesTruncated, `${path}.exchangesTruncated`),
-    totalPreviewBytes: boundedCount(
-      preview.totalPreviewBytes,
-      `${path}.totalPreviewBytes`,
-      PREVIEW_TOTAL_BYTES,
-    ),
+    totalPreviewBytes,
   };
 }
 
@@ -211,9 +246,13 @@ function parseSummaries(value: unknown, path: string): ReadonlyArray<ExternalAge
   });
 }
 
-function parseExchanges(value: unknown, path: string): ReadonlyArray<ExternalSessionExchange> {
-  if (!Array.isArray(value) || value.length > MAX_PREVIEW_EXCHANGES) {
-    invalid(path, `an array of at most ${MAX_PREVIEW_EXCHANGES} exchanges`);
+function parseExchanges(
+  value: unknown,
+  path: string,
+  maximum: number,
+): ReadonlyArray<ExternalSessionExchange> {
+  if (!Array.isArray(value) || value.length > maximum) {
+    invalid(path, `an array of at most ${maximum} exchanges`);
   }
   return value.map((candidate, index) => parseExchange(candidate, `${path}[${index}]`));
 }

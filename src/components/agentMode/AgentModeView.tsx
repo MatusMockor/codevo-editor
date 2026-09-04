@@ -531,6 +531,18 @@ export function AgentModeView({
                 />
               )}
               <AgentThreadSession
+                externalHistoryState={
+                  sessionThread === null
+                    ? undefined
+                    : agents.externalHistory?.states.get(sessionThread.thread.threadId)
+                }
+                onRetryExternalHistory={
+                  sessionThread === null || agents.externalHistory === undefined
+                    ? undefined
+                    : () => {
+                        void agents.externalHistory?.load(sessionThread.thread.threadId);
+                      }
+                }
                 composerRepositoryLabel={composer.composerLabel}
                 findHitIndex={navigation.findHitIndex}
                 findHits={find.open ? find.hits : undefined}

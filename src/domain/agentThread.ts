@@ -9,19 +9,20 @@ import {
   type AgentTaskStatusEvent,
 } from "./agentTask";
 import type { GitIntegrationMode } from "./gitIntegration";
+import type { ExternalAgentSessionHistory } from "./externalAgentSession";
+import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 
 export { AGENT_SESSION_ID_PATTERN, MAX_AGENT_SESSION_ID_BYTES } from "./agentTask";
 export { parseAgentThread, serializeAgentThread } from "./agentThreadWire";
+export { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 
 export const MAX_AGENT_THREADS_PER_ROOT = 64;
 export const MAX_AGENT_TURNS_PER_THREAD = 64;
 export const MAX_AGENT_EVENTS_PER_TURN = 512;
-export const MAX_AGENT_EVENT_TEXT_BYTES = 16 * 1_024;
 export const MAX_AGENT_EVENT_BYTES_PER_TURN = 512 * 1_024;
 export const MAX_AGENT_TOOL_SUMMARY_BYTES = 512;
 export const MAX_AGENT_TOOL_ID_BYTES = 256;
 export const MAX_AGENT_TOOL_NAME_BYTES = 256;
-export const MAX_AGENT_THREAD_TITLE_BYTES = 256;
 export const MAX_AGENT_THREAD_TITLE_CHARS = 200;
 export const AGENT_THREAD_SCHEMA_VERSION = 1;
 export const UNTITLED_AGENT_THREAD_TITLE = "Untitled thread";
@@ -135,6 +136,7 @@ export interface AgentThreadExternalOrigin {
   readonly provider: AgentCliKind;
   readonly sessionId: string;
   readonly importedAtEpochMs: number;
+  readonly history?: ExternalAgentSessionHistory;
 }
 
 export interface AgentThread {
@@ -170,6 +172,12 @@ export type AgentThreadsAction =
       readonly threads: ReadonlyArray<AgentThread>;
     }
   | { readonly kind: "threadCreated"; readonly thread: AgentThread }
+  | {
+      readonly kind: "externalHistoryLoaded";
+      readonly threadId: string;
+      readonly owner: AgentThreadOwner;
+      readonly history: ExternalAgentSessionHistory;
+    }
   | { readonly kind: "turnStarted"; readonly threadId: string; readonly turn: AgentTurn }
   | {
       readonly kind: "taskStatusEvent";
@@ -354,6 +362,8 @@ export function agentThreadsReducer(
       return loadThreads(state, action.owner, action.threads);
     case "threadCreated":
       return createThread(state, action.thread);
+    case "externalHistoryLoaded":
+      return loadExternalHistory(state, action);
     case "turnStarted":
       return startTurn(state, action.threadId, action.turn);
     case "taskStatusEvent":
@@ -383,6 +393,27 @@ export function agentThreadsReducer(
     default:
       return unsupportedAction(action);
   }
+}
+
+function loadExternalHistory(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "externalHistoryLoaded" }>,
+): AgentThreadsState {
+  const thread = state.threads.get(action.threadId);
+  if (thread === undefined || thread.externalOrigin === null) return state;
+  if (
+    thread.owner.rootKey !== action.owner.rootKey ||
+    thread.owner.ownerId !== action.owner.ownerId ||
+    thread.owner.repositoryRoot !== action.owner.repositoryRoot ||
+    thread.externalOrigin.provider !== action.history.provider ||
+    thread.externalOrigin.sessionId !== action.history.sessionId ||
+    thread.externalOrigin.history !== undefined
+  )
+    return state;
+  return replaceThread(state, {
+    ...thread,
+    externalOrigin: { ...thread.externalOrigin, history: action.history },
+  });
 }
 
 function loadThreads(

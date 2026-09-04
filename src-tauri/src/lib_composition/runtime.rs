@@ -500,6 +500,7 @@ pub fn run() {
             agent_thread_store_commands::delete_agent_thread,
             agent_session_history_commands::list_external_agent_sessions,
             agent_session_history_commands::preview_external_agent_session,
+            agent_session_history_commands::read_external_agent_session_history,
             agent_cli_discovery_commands::discover_agent_clis,
             agent_cli_version_commands::probe_agent_cli_version,
             agent_provider_commands::register_agent_provider_policy,

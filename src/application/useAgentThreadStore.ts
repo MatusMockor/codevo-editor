@@ -372,6 +372,7 @@ function persistIntent(
     case "threadCreated":
       return saveIntent(action.thread.threadId, "immediate");
     case "turnStarted":
+    case "externalHistoryLoaded":
       return saveIntent(action.threadId, "immediate");
     case "taskStatusEvent":
       return liveTurnIntent(

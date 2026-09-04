@@ -23,6 +23,7 @@ import type {
   AgentThreadStoreGateway,
   AgentThreadsSurface,
   ExternalSessionImportRequest,
+  ExternalSessionGateway,
   SaveAgentThreadRequest,
 } from "./agentThreadPorts";
 import {
@@ -53,6 +54,7 @@ interface Environment {
   cliVersion: string | null;
   cliKind: AgentCliKind;
   repositoryRoots: ReadonlyArray<string>;
+  externalSessionGateway?: ExternalSessionGateway;
 }
 
 const SHA_A = "a".repeat(40);
@@ -364,6 +366,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     const dependencies: AgentThreadsDependencies = {
       agentTaskGateway: agent as unknown as AgentTaskGateway,
       agentThreadStoreGateway: store as unknown as AgentThreadStoreGateway,
+      externalSessionGateway: environment.externalSessionGateway,
       gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
       gitGateway: git,
       gitIntegrationGateway: gitIntegration,
@@ -857,6 +860,40 @@ describe("useAgentThreads external session import", () => {
     expect(saved?.thread.provider.sessionId).toBe(EXTERNAL_ID);
     expect(saved?.thread.externalOrigin?.sessionId).toBe(EXTERNAL_ID);
     expect(saved?.thread.turns).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("loads history when an imported thread is selected and persists it without starting a turn", async () => {
+    const history = {
+      provider: "claudeCode" as const,
+      sessionId: EXTERNAL_ID,
+      exchanges: [{ role: "user" as const, text: "Earlier prompt" }],
+      exchangesTruncated: false,
+      totalPreviewBytes: 14,
+    };
+    const readExternalSessionHistory = vi.fn(async () => history);
+    const harness = renderThreads({
+      externalSessionGateway: {
+        listExternalSessions: vi.fn(),
+        previewExternalSession: vi.fn(),
+        readExternalSessionHistory,
+      },
+    });
+    await storeReady(harness);
+    const result = await act(() => harness.hook().importExternalSession(importRequest()));
+    await act(async () => harness.hook().markThreadViewed(result!.threadId));
+    await waitForReact(() =>
+      expect(harness.store.saveAgentThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          thread: expect.objectContaining({ externalOrigin: expect.objectContaining({ history }) }),
+        }),
+      ),
+    );
+    expect(harness.hook().threads[0]?.thread.externalOrigin?.history).toEqual(history);
+    expect(harness.hook().threads[0]?.thread.turns).toHaveLength(0);
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    act(() => harness.hook().markThreadViewed(result!.threadId));
+    expect(readExternalSessionHistory).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 

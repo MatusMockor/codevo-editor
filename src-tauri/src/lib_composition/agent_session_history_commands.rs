@@ -2,9 +2,10 @@ use super::{canonicalize_workspace_root, trusted_for, GitTrustState};
 use crate::run_blocking_command;
 use agent_session_history::{
     list_external_agent_sessions as list_sessions,
-    preview_external_agent_session as preview_session, ExternalAgentSessionListing,
-    ExternalAgentSessionPreview, ListExternalAgentSessionsRequest,
-    PreviewExternalAgentSessionRequest,
+    preview_external_agent_session as preview_session,
+    read_external_agent_session_history as read_history, ExternalAgentSessionHistory,
+    ExternalAgentSessionListing, ExternalAgentSessionPreview, ListExternalAgentSessionsRequest,
+    PreviewExternalAgentSessionRequest, ReadExternalAgentSessionHistoryRequest,
 };
 
 #[path = "../agent_session_history.rs"]
@@ -55,6 +56,16 @@ pub(crate) async fn preview_external_agent_session(
     run_blocking_command(move || preview_session(&request)).await
 }
 
+#[tauri::command]
+pub(crate) async fn read_external_agent_session_history(
+    request: ReadExternalAgentSessionHistoryRequest,
+    trust: GitTrustState<'_>,
+) -> Result<ExternalAgentSessionHistory, String> {
+    ensure_external_session_repository_trusted(trusted_for(&trust, &request.project_root)?)?;
+    ensure_external_session_repository_contained(&request.project_root, &request.repository_root)?;
+    run_blocking_command(move || read_history(&request)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,6 +96,35 @@ mod tests {
 
         assert_eq!(listing, UNTRUSTED_EXTERNAL_SESSION_REPOSITORY_ERROR);
         assert_eq!(preview, UNTRUSTED_EXTERNAL_SESSION_REPOSITORY_ERROR);
+        let history = tauri::async_runtime::block_on(read_external_agent_session_history(
+            ReadExternalAgentSessionHistoryRequest {
+                provider: AgentCliInvocation::ClaudeCode,
+                session_id: SESSION_ID.to_string(),
+                project_root: "/nonexistent-history-root".to_string(),
+                repository_root: "/nonexistent-history-root".to_string(),
+                before_epoch_ms: 1,
+            },
+            false,
+        ))
+        .expect_err("untrusted repository must be refused before reading original history");
+        assert_eq!(history, UNTRUSTED_EXTERNAL_SESSION_REPOSITORY_ERROR);
+    }
+
+    #[test]
+    fn original_history_refuses_repository_outside_open_project() {
+        let project = std::fs::canonicalize(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let error = tauri::async_runtime::block_on(read_external_agent_session_history(
+            ReadExternalAgentSessionHistoryRequest {
+                provider: AgentCliInvocation::ClaudeCode,
+                session_id: SESSION_ID.to_string(),
+                project_root: project.to_string_lossy().into_owned(),
+                repository_root: "/".to_string(),
+                before_epoch_ms: 1,
+            },
+            true,
+        ))
+        .expect_err("foreign repository must be refused before reading original history");
+        assert_eq!(error, EXTERNAL_SESSION_REPOSITORY_CONTAINMENT_ERROR);
     }
 
     #[test]

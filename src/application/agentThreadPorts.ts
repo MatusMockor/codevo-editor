@@ -15,6 +15,8 @@ import type {
 } from "../domain/agentThread";
 import type { AgentThreadSearchResult } from "../domain/agentThreadSearch";
 import type {
+  ExternalAgentSessionHistory,
+  ExternalSessionHistoryRequest,
   ExternalAgentSessionPreview,
   ExternalAgentSessionView,
   ExternalSessionListRequest,
@@ -144,6 +146,9 @@ export interface AgentThreadStoreSurface {
 }
 
 export interface ExternalSessionGateway {
+  readExternalSessionHistory?(
+    request: ExternalSessionHistoryRequest,
+  ): Promise<ExternalAgentSessionHistory>;
   listExternalSessions(request: ExternalSessionListRequest): Promise<ExternalSessionListSnapshot>;
   previewExternalSession(
     request: ExternalSessionPreviewRequest,
@@ -233,6 +238,10 @@ export interface AgentFollowUpRequest {
 }
 
 export interface AgentThreadsSurface {
+  readonly externalHistory?: {
+    readonly states: ReadonlyMap<string, "loading" | "failed" | "unavailable" | "ready">;
+    load(threadId: string): Promise<void>;
+  };
   readonly threads: ReadonlyArray<AgentThreadView>;
   readonly repositories: ReadonlyArray<ResolvedGitRepository>;
   readonly orphanedWorktrees: ReadonlyArray<OrphanedWorktreeView>;

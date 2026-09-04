@@ -32,6 +32,13 @@ const CLAUDE_SESSION_FILE_SUFFIX: &str = ".jsonl";
 const CODEX_ROLLOUT_FILE_PREFIX: &str = "rollout-";
 const EPOCH_MS_PER_DAY: u64 = 86_400_000;
 
+#[path = "agent_session_transcript.rs"]
+mod transcript;
+pub use transcript::{
+    read_external_agent_session_history, ExternalAgentSessionHistory,
+    ReadExternalAgentSessionHistoryRequest,
+};
+
 pub type ExternalSessionProvider = AgentCliInvocation;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -868,6 +875,8 @@ struct RawClaudeLine {
     line_type: Option<String>,
     cwd: Option<String>,
     timestamp: Option<String>,
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
     #[serde(rename = "promptSource")]
     prompt_source: Option<String>,
     #[serde(rename = "isMeta")]

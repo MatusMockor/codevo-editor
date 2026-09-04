@@ -1,0 +1,2 @@
+export const MAX_AGENT_EVENT_TEXT_BYTES = 16 * 1_024;
+export const MAX_AGENT_THREAD_TITLE_BYTES = 256;

@@ -38,6 +38,73 @@ import {
 const ENCODER = new TextEncoder();
 const OWNER = { rootKey: "/workspace", ownerId: "ws-1", repositoryRoot: "/repo" } as const;
 
+describe("external history hydration", () => {
+  const sessionId = "987b95ad-c9bc-4d08-ae49-9b431efc8f87";
+  const history = {
+    provider: "claudeCode" as const,
+    sessionId,
+    exchanges: [{ role: "assistant" as const, text: "Original answer" }],
+    exchangesTruncated: false,
+    totalPreviewBytes: 15,
+  };
+  function importedState(): AgentThreadsState {
+    const imported = thread({
+      externalOrigin: { provider: "claudeCode", sessionId, importedAtEpochMs: 1_000 },
+      turns: [turn({ status: { kind: "exited", exitCode: 0 }, endedAtEpochMs: 2_000 })],
+    });
+    return { threads: new Map([[imported.threadId, imported]]) };
+  }
+
+  it("hydrates legacy history once without replacing current turns or timestamps", () => {
+    const state = importedState();
+    const action = {
+      kind: "externalHistoryLoaded",
+      threadId: "agt-t1-0001",
+      owner: OWNER,
+      history,
+    } as const;
+    const next = agentThreadsReducer(state, action);
+    const original = state.threads.get(action.threadId)!;
+    const hydrated = next.threads.get(action.threadId)!;
+    expect(hydrated.externalOrigin?.history).toEqual(history);
+    expect(hydrated.turns).toBe(original.turns);
+    expect(hydrated.updatedAtEpochMs).toBe(original.updatedAtEpochMs);
+    expect(agentThreadsReducer(next, { ...action, history: { ...history, exchanges: [] } })).toBe(
+      next,
+    );
+  });
+
+  it("rejects stale owners, foreign roots, repositories and session identities", () => {
+    const state = importedState();
+    const action = {
+      kind: "externalHistoryLoaded",
+      threadId: "agt-t1-0001",
+      owner: OWNER,
+      history,
+    } as const;
+    for (const owner of [
+      { ...OWNER, ownerId: "ws-2" },
+      { ...OWNER, rootKey: "/foreign" },
+      { ...OWNER, repositoryRoot: "/foreign" },
+    ])
+      expect(agentThreadsReducer(state, { ...action, owner })).toBe(state);
+    expect(
+      agentThreadsReducer(state, { ...action, history: { ...history, provider: "codex" } }),
+    ).toBe(state);
+    expect(
+      agentThreadsReducer(state, { ...action, history: { ...history, sessionId: "other" } }),
+    ).toBe(state);
+    expect(agentThreadsReducer(state, { ...action, threadId: "missing" })).toBe(state);
+    const rebound = agentThreadsReducer(state, {
+      kind: "ownerRebound",
+      threadId: action.threadId,
+      previousOwnerId: OWNER.ownerId,
+      owner: { ...OWNER, ownerId: "ws-next" },
+    });
+    expect(agentThreadsReducer(rebound, action)).toBe(rebound);
+  });
+});
+
 function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
   return {
     turnId: "agt-1-0a1b",

@@ -87,6 +87,90 @@ describe("AgentThreadSession", () => {
     expect(host.querySelector(".agent-session__provenance")).toBeNull();
   });
 
+  it("renders imported user and assistant messages before local turns without duplicating them", () => {
+    const props = { thread: threadView({ externalOrigin: importedOrigin() }) };
+    render(props);
+    render(props);
+
+    const history = host.querySelector('section[aria-label="Original conversation"]');
+    expect(history?.querySelectorAll("article")).toHaveLength(2);
+    expect(history?.querySelector(".agent-prompt__body")?.textContent).toBe("Original question");
+    expect(history?.querySelector(".agent-text__paragraph")?.textContent).toBe("Original answer");
+    expect(host.querySelectorAll("article.agent-turn")).toHaveLength(1);
+    expect(host.textContent?.indexOf("Original answer")).toBeLessThan(
+      host.textContent?.indexOf("Refactor the parser") ?? 0,
+    );
+    expect(history?.querySelector(".agent-prompt__meta")?.textContent).toBe("");
+    expect(history?.querySelector(".agent-work")).toBeNull();
+  });
+
+  it("copies original messages using the same clipboard controls as local messages", async () => {
+    const writeText = vi.fn(async () => undefined);
+    render({
+      thread: threadView({ externalOrigin: importedOrigin(), turns: [] }),
+      textClipboard: { canWriteText: () => true, writeText },
+    });
+
+    await act(async () => button("Copy your message").click());
+    expect(writeText).toHaveBeenLastCalledWith("Original question");
+    await act(async () => button("Copy AI response").click());
+    expect(writeText).toHaveBeenLastCalledWith("Original answer");
+  });
+
+  it("states when original history has omitted messages or text", () => {
+    render({ thread: threadView({ externalOrigin: importedOrigin(true), turns: [] }) });
+
+    expect(host.textContent).toContain("Only part of the original conversation is available.");
+    expect(host.textContent).toContain("Some messages or message text were omitted.");
+    expect(host.textContent).not.toContain("Earlier turns were dropped");
+  });
+
+  it("shows history loading and allows retry after a failure", () => {
+    const onRetryExternalHistory = vi.fn();
+    const thread = threadView({
+      externalOrigin: { ...importedOrigin(), history: undefined },
+      turns: [],
+    });
+    render({ thread, externalHistoryState: "loading", onRetryExternalHistory });
+    expect(host.textContent).toContain("Loading original conversation…");
+    expect(host.querySelector("button")).toBeNull();
+
+    render({ thread, externalHistoryState: "failed", onRetryExternalHistory });
+    expect(host.textContent).toContain("Could not load the original conversation.");
+    clickText("Retry loading history");
+    expect(onRetryExternalHistory).toHaveBeenCalledOnce();
+
+    render({ thread, externalHistoryState: "unavailable", onRetryExternalHistory });
+    expect(host.textContent).toContain("Original conversation history is unavailable.");
+  });
+
+  it("keeps persisted history visible even if a refresh is unavailable", () => {
+    render({
+      thread: threadView({ externalOrigin: importedOrigin(), turns: [] }),
+      externalHistoryState: "failed",
+    });
+
+    expect(host.textContent).toContain("Original answer");
+    expect(host.textContent).not.toContain("Could not load");
+  });
+
+  it("scrolls to the latest message after original history hydrates", () => {
+    render({
+      thread: threadView({
+        externalOrigin: { ...importedOrigin(), history: undefined },
+        turns: [],
+      }),
+      externalHistoryState: "loading",
+    });
+    const scroll = scrollContainer({ scrollHeight: 900, clientHeight: 300, scrollTop: 0 });
+    render({
+      thread: threadView({ externalOrigin: importedOrigin(), turns: [] }),
+      externalHistoryState: "ready",
+    });
+
+    expect(scroll.scrollTop).toBe(900);
+  });
+
   it("renders one turn per prompt with its assistant paragraphs", () => {
     render({
       thread: threadView({
@@ -809,6 +893,26 @@ function defaultProps(): AgentThreadSessionProps {
     thread: threadView({}),
     composerRepositoryLabel: "app",
     onReviewInDiff: () => undefined,
+  };
+}
+
+function importedOrigin(exchangesTruncated = false): NonNullable<AgentThread["externalOrigin"]> {
+  const provider = "claudeCode";
+  const sessionId = "987b95ad-c9bc-4d08-ae49-9b431efc8f87";
+  return {
+    provider,
+    sessionId,
+    importedAtEpochMs: NOW - 60_000,
+    history: {
+      provider,
+      sessionId,
+      exchanges: [
+        { role: "user", text: "Original question" },
+        { role: "assistant", text: "Original answer" },
+      ],
+      exchangesTruncated,
+      totalPreviewBytes: 32,
+    },
   };
 }
 

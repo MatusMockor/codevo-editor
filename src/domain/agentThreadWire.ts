@@ -1,4 +1,5 @@
 import { parseAgentCliVersion } from "./agentCliVersion";
+import { parseExternalAgentSessionHistory } from "./externalAgentSession";
 import {
   parseStoredAgentLaunchOptions,
   serializeAgentLaunchOptions,
@@ -75,10 +76,17 @@ function serializeExternalOrigin(
   origin: AgentThreadExternalOrigin | null,
 ): Record<string, unknown> | null {
   if (origin === null) return null;
+  const history = parseOriginHistory(
+    origin.history,
+    origin.provider,
+    origin.sessionId,
+    "thread.externalOrigin.history",
+  );
   return {
     provider: origin.provider,
     sessionId: origin.sessionId,
     importedAtEpochMs: origin.importedAtEpochMs,
+    ...(history === undefined ? {} : { history }),
   };
 }
 
@@ -236,14 +244,31 @@ function parseExternalOrigin(
 ): AgentThreadExternalOrigin | null {
   if (value === undefined || value === null) return null;
   const origin = record(value, path);
-  exactKeys(origin, ["provider", "sessionId", "importedAtEpochMs"], path);
+  boundedKeys(origin, ["provider", "sessionId", "importedAtEpochMs"], ["history"], path);
   const provider = agentCliKind(origin.provider, `${path}.provider`);
   if (provider !== providerKind) invalid(`${path}.provider`, "the thread provider kind");
+  const sessionId = externalSessionId(origin.sessionId, `${path}.sessionId`);
+  const history = parseOriginHistory(origin.history, provider, sessionId, `${path}.history`);
   return {
     provider,
-    sessionId: externalSessionId(origin.sessionId, `${path}.sessionId`),
+    sessionId,
     importedAtEpochMs: unsignedSafeInteger(origin.importedAtEpochMs, `${path}.importedAtEpochMs`),
+    ...(history === undefined ? {} : { history }),
   };
+}
+
+function parseOriginHistory(
+  value: unknown,
+  provider: AgentCliKind,
+  sessionId: string,
+  path: string,
+) {
+  if (value === undefined) return undefined;
+  const history = parseExternalAgentSessionHistory(value, path);
+  if (history.provider !== provider || history.sessionId !== sessionId) {
+    invalid(path, "history belonging to the external session");
+  }
+  return history;
 }
 
 function parseViewedAt(value: unknown, path: string): number | null {

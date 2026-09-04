@@ -6,9 +6,51 @@ import {
   invokePreviewExternalAgentSessionIpc,
   validateExternalSessionListRequest,
   validateExternalSessionPreviewRequest,
+  validateExternalSessionHistoryRequest,
+  invokeReadExternalAgentSessionHistoryIpc,
 } from "./tauriExternalSessionIpcContract";
 
 const SESSION_ID = "987b95ad-c9bc-4d08-ae49-9b431efc8f87";
+
+describe("external session history IPC", () => {
+  const request = {
+    provider: "codex" as const,
+    sessionId: SESSION_ID,
+    projectRoot: "/repo",
+    repositoryRoot: "/repo",
+    beforeEpochMs: 1_000,
+  };
+  it("forwards the immutable snapshot cutoff and rejects mismatched identity", async () => {
+    const invokeCommand = vi.fn(async () => ({
+      provider: "codex",
+      sessionId: SESSION_ID,
+      exchanges: [{ role: "assistant", text: "old answer" }],
+      exchangesTruncated: false,
+      totalPreviewBytes: 10,
+    }));
+    await expect(
+      invokeReadExternalAgentSessionHistoryIpc(invokeCommand, request),
+    ).resolves.toMatchObject({ exchanges: [{ text: "old answer" }] });
+    expect(invokeCommand).toHaveBeenCalledWith("read_external_agent_session_history", { request });
+    await expect(
+      invokeReadExternalAgentSessionHistoryIpc(invokeCommand, {
+        ...request,
+        provider: "claudeCode",
+      }),
+    ).rejects.toThrow(/identity/);
+  });
+  it("refuses unknown fields and invalid cutoffs before invoking IPC", () => {
+    for (const beforeEpochMs of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => validateExternalSessionHistoryRequest({ ...request, beforeEpochMs })).toThrow();
+    }
+    expect(() =>
+      validateExternalSessionHistoryRequest({ ...request, extra: true } as never),
+    ).toThrow();
+    expect(
+      validateExternalSessionHistoryRequest({ ...request, beforeEpochMs: 0 }).beforeEpochMs,
+    ).toBe(0);
+  });
+});
 
 function summary(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

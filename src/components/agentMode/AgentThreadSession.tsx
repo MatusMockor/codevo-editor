@@ -12,6 +12,7 @@ import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentS
 import { AgentRelativeTime, AgentWorkingDuration } from "./agentClock";
 import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
+import { AgentImportedHistory, type AgentExternalHistoryState } from "./AgentImportedHistory";
 import {
   agentWorktreeRemovalLabel,
   agentTurnDurationLabel,
@@ -51,6 +52,8 @@ export interface AgentThreadSessionProps {
   readonly findHitIndex?: number;
   readonly reveal?: AgentThreadRevealRequest | null;
   readonly textClipboard?: TextClipboardGateway | null;
+  readonly externalHistoryState?: AgentExternalHistoryState;
+  readonly onRetryExternalHistory?: () => void;
   onReviewInDiff(threadId: string): void;
 }
 
@@ -74,6 +77,8 @@ function AgentThreadSessionBody({
   onReviewInDiff,
   reveal = null,
   textClipboard = null,
+  externalHistoryState,
+  onRetryExternalHistory,
   thread,
   turnRenderProbe,
 }: AgentThreadSessionBodyProps) {
@@ -134,6 +139,7 @@ function AgentThreadSessionBody({
     lastTurn?.status.kind,
     lastTurn?.turnId,
     record.updatedAtEpochMs,
+    record.externalOrigin?.history,
     threadId,
   ]);
 
@@ -156,6 +162,16 @@ function AgentThreadSessionBody({
 
           {provenanceNote !== null && (
             <p className="agent-note agent-session__provenance">{provenanceNote}</p>
+          )}
+
+          {record.externalOrigin != null && (
+            <AgentImportedHistory
+              history={record.externalOrigin.history}
+              key={`${threadId}:${record.externalOrigin.sessionId}`}
+              onRetry={onRetryExternalHistory}
+              state={externalHistoryState}
+              textClipboard={textClipboard}
+            />
           )}
 
           {record.turns.map((turn) => (

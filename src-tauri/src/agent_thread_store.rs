@@ -30,6 +30,8 @@ pub const MAX_AGENT_THREAD_ROOT_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_AGENT_STREAM_METRIC_BYTES: u64 = 9_007_199_254_740_991;
 pub const MAX_UNREADABLE_REPORTS: usize = 16;
 pub const MAX_AGENT_INTEGRATION_REF_BYTES: usize = 512;
+pub const MAX_AGENT_EXTERNAL_HISTORY_EXCHANGES: usize = 256;
+pub const MAX_AGENT_EXTERNAL_HISTORY_BYTES: usize = 128 * 1024;
 
 pub const AGENT_THREAD_INTEGRATION_OBJECT_ID_ERROR: &str =
     "Agent thread integration object ids must be 40 lowercase hexadecimal characters.";
@@ -76,6 +78,45 @@ pub struct AgentThreadExternalOrigin {
     pub provider: AgentCliInvocation,
     pub session_id: String,
     pub imported_at_epoch_ms: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_external_history"
+    )]
+    pub history: Option<AgentThreadExternalHistory>,
+}
+
+fn deserialize_external_history<'de, D>(
+    deserializer: D,
+) -> Result<Option<AgentThreadExternalHistory>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    AgentThreadExternalHistory::deserialize(deserializer).map(Some)
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentThreadExternalHistory {
+    pub provider: AgentCliInvocation,
+    pub session_id: String,
+    pub exchanges: Vec<AgentThreadExternalExchange>,
+    pub exchanges_truncated: bool,
+    pub total_preview_bytes: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentThreadExternalExchange {
+    pub role: AgentThreadExternalExchangeRole,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentThreadExternalExchangeRole {
+    User,
+    Assistant,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -484,7 +525,30 @@ fn validate_agent_thread_external_origin(
         return Err(AGENT_THREAD_EXTERNAL_ORIGIN_PROVIDER_ERROR.to_string());
     }
     validate_resume_session_id(&origin.session_id)?;
-
+    if let Some(history) = origin.history.as_ref() {
+        if history.provider != origin.provider || history.session_id != origin.session_id {
+            return Err("Agent thread external history must match its origin.".to_string());
+        }
+        if history.exchanges.len() > MAX_AGENT_EXTERNAL_HISTORY_EXCHANGES {
+            return Err("Agent thread external history has too many exchanges.".to_string());
+        }
+        let mut total_bytes = 0;
+        for exchange in &history.exchanges {
+            if exchange.text.len() > MAX_AGENT_EVENT_TEXT_BYTES
+                || exchange.text.chars().any(|character| {
+                    character.is_control() && character != '\n' && character != '\t'
+                })
+            {
+                return Err("Agent thread external history text is out of bounds.".to_string());
+            }
+            total_bytes += exchange.text.len();
+        }
+        if total_bytes > MAX_AGENT_EXTERNAL_HISTORY_BYTES
+            || history.total_preview_bytes != total_bytes as u64
+        {
+            return Err("Agent thread external history byte count is out of bounds.".to_string());
+        }
+    }
     Ok(())
 }
 

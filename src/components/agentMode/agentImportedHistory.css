@@ -1,0 +1,32 @@
+.agent-imported-history {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.agent-imported-history__status {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.agent-imported-history__retry {
+  border: 1px solid var(--agent-hairline-strong);
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 5px 9px;
+}
+
+.agent-imported-history__retry:hover,
+.agent-imported-history__retry:focus-visible {
+  background: var(--agent-hover);
+  color: var(--agent-text-strong);
+}
+
+.agent-imported-history__retry:focus-visible {
+  outline: 1px solid var(--agent-accent);
+  outline-offset: 2px;
+}

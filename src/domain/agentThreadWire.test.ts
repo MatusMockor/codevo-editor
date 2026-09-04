@@ -212,6 +212,67 @@ describe("agentThreadWire external origin", () => {
     expect(serializeAgentThread(parseAgentThread(storedThread(null))).externalOrigin).toBeNull();
   });
 
+  it("preserves a bounded history snapshot through serialization and reload", () => {
+    const history = {
+      provider: "claudeCode",
+      sessionId: SESSION_ID,
+      exchanges: [
+        { role: "user", text: "Ahoj 👋" },
+        { role: "assistant", text: "Ahoj!" },
+      ],
+      exchangesTruncated: true,
+      totalPreviewBytes: 14,
+    };
+    const stored = storedThreadWithOrigin({
+      provider: "claudeCode",
+      sessionId: SESSION_ID,
+      importedAtEpochMs: 1,
+      history,
+    });
+    expect(serializeAgentThread(parseAgentThread(stored))).toEqual(stored);
+    expect(parseAgentThread(stored).turns).toHaveLength(1);
+  });
+
+  it("rejects malformed, oversized or foreign history snapshots", () => {
+    const history = {
+      provider: "claudeCode",
+      sessionId: SESSION_ID,
+      exchanges: [],
+      exchangesTruncated: false,
+      totalPreviewBytes: 0,
+    };
+    const invalidHistories = [
+      null,
+      { ...history, provider: "codex" },
+      { ...history, sessionId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+      { ...history, extra: true },
+      { ...history, exchanges: Array.from({ length: 257 }, () => ({ role: "user", text: "" })) },
+      { ...history, exchanges: [{ role: "user", text: "👋" }], totalPreviewBytes: 2 },
+      {
+        ...history,
+        exchanges: [{ role: "user", text: "x".repeat(16 * 1024 + 1) }],
+        totalPreviewBytes: 16 * 1024 + 1,
+      },
+      {
+        ...history,
+        exchanges: Array.from({ length: 9 }, () => ({ role: "user", text: "x".repeat(16 * 1024) })),
+        totalPreviewBytes: 9 * 16 * 1024,
+      },
+    ];
+    for (const invalidHistory of invalidHistories) {
+      expect(() =>
+        parseAgentThread(
+          storedThreadWithOrigin({
+            provider: "claudeCode",
+            sessionId: SESSION_ID,
+            importedAtEpochMs: 1,
+            history: invalidHistory,
+          }),
+        ),
+      ).toThrow(/history/);
+    }
+  });
+
   it("rejects a provider that disagrees with the thread provider kind", () => {
     expect(() =>
       parseAgentThread(

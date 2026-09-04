@@ -48,6 +48,7 @@ import {
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
 import { useExternalSessions } from "./useExternalSessions";
+import { useImportedThreadHistory } from "./useImportedThreadHistory";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
 import {
   useAgentEditorBridge,
@@ -140,6 +141,15 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     now: dependencies.now,
   });
   const threads = store.state.threads;
+  const externalHistory = useImportedThreadHistory({
+    projects,
+    threads,
+    gateway: dependencies.externalSessionGateway,
+    currentState: store.currentState,
+    dispatchAction: store.dispatchAction,
+    reportError,
+  });
+  const ensureExternalHistory = externalHistory.ensure;
 
   const changes = useAgentChangeSummary({ gitGateway, projects, threads, reportError });
 
@@ -300,13 +310,14 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const { currentState } = store;
   const markThreadViewed = useCallback(
     (threadId: string): void => {
+      void ensureExternalHistory(threadId);
       const thread = currentState().threads.get(threadId);
       if (thread === undefined) return;
       if (!agentThreadUnread(thread)) return;
       if (!ownsThread(projects, thread)) return;
       dispatchAction({ kind: "threadViewed", threadId, atEpochMs: now() });
     },
-    [currentState, dispatchAction, now, projects],
+    [currentState, dispatchAction, ensureExternalHistory, now, projects],
   );
 
   const { markUnread: markUnreadInStore, rename: renameInStore } = store;
@@ -514,6 +525,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     sendFollowUp: dispatch.sendFollowUp,
     importExternalSession,
     externalSessions,
+    externalHistory,
     stop: dispatch.stop,
     togglePin: store.togglePin,
     archive: store.archive,
