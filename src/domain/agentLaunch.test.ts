@@ -19,13 +19,15 @@ import {
 } from "./agentLaunch";
 
 describe("agentLaunch", () => {
-  it("defaults both fields to the flagless choice for every provider", () => {
+  it("keeps wire defaults flagless while the composer owns the product default", () => {
     expect(defaultAgentLaunchOptions("claudeCode")).toEqual({
       provider: "claudeCode",
       model: "default",
       mode: "default",
       effort: "default",
       context: "1m",
+      fastMode: false,
+      thinkingMode: false,
     });
     expect(defaultAgentLaunchOptions("codex")).toEqual({
       provider: "codex",
@@ -65,7 +67,9 @@ describe("agentLaunch", () => {
         ),
       ).toThrow(/launch\.model/);
     }
-    for (const mode of CODEX_EXECUTION_MODES.filter((choice) => choice !== "default")) {
+    for (const mode of CODEX_EXECUTION_MODES.filter(
+      (choice) => choice !== "default" && choice !== "auto",
+    )) {
       expect(() =>
         parseAgentLaunchOptions(
           { provider: "claudeCode", model: "default", mode, effort: "default" },
@@ -78,7 +82,9 @@ describe("agentLaunch", () => {
         parseAgentLaunchOptions({ provider: "codex", model, mode: "default" }, "launch"),
       ).toThrow(/launch\.model/);
     }
-    for (const mode of CLAUDE_PERMISSION_MODES.filter((choice) => choice !== "default")) {
+    for (const mode of CLAUDE_PERMISSION_MODES.filter(
+      (choice) => choice !== "default" && choice !== "auto",
+    )) {
       expect(() =>
         parseAgentLaunchOptions({ provider: "codex", model: "default", mode }, "launch"),
       ).toThrow(/launch\.mode/);
@@ -108,7 +114,7 @@ describe("agentLaunch", () => {
       const wire: unknown = JSON.parse(JSON.stringify(serializeAgentLaunchOptions(options)));
       expect(parseAgentLaunchOptions(wire, "launch")).toEqual(options);
     }
-    expect(pairs).toHaveLength(40);
+    expect(pairs).toHaveLength(114);
   });
 
   it("rejects non-string and casing variants of a known choice", () => {
@@ -135,6 +141,26 @@ describe("agentLaunch", () => {
     expect(parseAgentLaunchOptions(serializeAgentLaunchOptions(options), "launch")).toEqual(
       options,
     );
+  });
+
+  it("round trips executable Claude capability selections", () => {
+    const options: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "bypassPermissions",
+      effort: "ultracode",
+      context: "1m",
+      fastMode: true,
+    };
+    expect(parseAgentLaunchOptions(serializeAgentLaunchOptions(options), "launch")).toEqual(
+      options,
+    );
+    expect(() =>
+      parseAgentLaunchOptions(
+        { ...serializeAgentLaunchOptions(options), fastMode: "yes" },
+        "launch",
+      ),
+    ).toThrow(/launch\.fastMode/);
   });
 
   it("rejects unknown providers, models, and modes", () => {

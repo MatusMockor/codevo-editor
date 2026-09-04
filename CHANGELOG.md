@@ -5,6 +5,31 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.12] - 2026-09-04
+
+### Added
+
+- Added capability-aware Claude model controls for current and legacy models, including
+  model-specific reasoning, context-window, fast-mode, thinking, Ultracode, and
+  Ultrathink options that are forwarded to the CLI.
+- Added provider-reported Claude turn cost and separate weekly Fable, Opus, and Sonnet
+  usage windows when the account exposes them.
+
+### Changed
+
+- Use concrete provider models in the picker instead of a visible default sentinel,
+  make full access the composer default, and align permission, hover, selection, and
+  model-group presentation with the streamlined agent workflow.
+- Refresh provider usage after completed turns and count cached Claude input when
+  aggregating local token activity.
+
+### Fixed
+
+- Discover terminal sessions across the whole open project, including nested Git
+  repositories and sessions stored at the project root.
+- Filter foreign Codex history before applying the bounded result limit so unrelated
+  recent sessions cannot hide valid project sessions.
+
 ## [0.2.0-beta.11] - 2026-09-03
 
 ### Changed

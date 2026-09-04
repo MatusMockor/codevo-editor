@@ -273,6 +273,8 @@ fn a_launch_stamped_thread_survives_a_save_and_load_round_trip() {
         mode: crate::agent_task_spawner::agent_launch::ClaudePermissionMode::AcceptEdits,
         effort: crate::agent_task_spawner::agent_launch::ClaudeEffortChoice::Xhigh,
         context: crate::agent_task_spawner::agent_launch::ClaudeContextChoice::OneM,
+        fast_mode: false,
+        thinking_mode: false,
     });
 
     store

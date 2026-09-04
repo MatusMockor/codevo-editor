@@ -1,12 +1,29 @@
 import type { AgentCliKind } from "./agentTask";
 
-export const CLAUDE_MODEL_CHOICES = ["default", "fable", "opus", "sonnet"] as const;
+export const CLAUDE_MODEL_CHOICES = [
+  "default",
+  "fable",
+  "opus",
+  "sonnet",
+  "claude-fable-5-1",
+  "claude-fable-5",
+  "claude-opus-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-opus-4-6",
+  "claude-opus-4-5",
+  "claude-sonnet-5",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5",
+] as const;
 export type ClaudeModelChoice = (typeof CLAUDE_MODEL_CHOICES)[number];
 
 export const CLAUDE_PERMISSION_MODES = [
   "default",
   "plan",
+  "supervised",
   "acceptEdits",
+  "auto",
   "bypassPermissions",
 ] as const;
 export type ClaudePermissionMode = (typeof CLAUDE_PERMISSION_MODES)[number];
@@ -25,11 +42,21 @@ export const CODEX_EXECUTION_MODES = [
   "default",
   "readOnly",
   "workspaceWrite",
+  "auto",
   "dangerFullAccess",
 ] as const;
 export type CodexExecutionMode = (typeof CODEX_EXECUTION_MODES)[number];
 
-export const CLAUDE_EFFORT_CHOICES = ["default", "low", "medium", "high", "xhigh", "max"] as const;
+export const CLAUDE_EFFORT_CHOICES = [
+  "default",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultracode",
+  "ultrathink",
+] as const;
 export type ClaudeEffortChoice = (typeof CLAUDE_EFFORT_CHOICES)[number];
 export const CLAUDE_CONTEXT_CHOICES = ["200k", "1m"] as const;
 export type ClaudeContextChoice = (typeof CLAUDE_CONTEXT_CHOICES)[number];
@@ -40,6 +67,8 @@ export interface ClaudeLaunchOptions {
   readonly mode: ClaudePermissionMode;
   readonly effort: ClaudeEffortChoice;
   readonly context?: ClaudeContextChoice;
+  readonly fastMode?: boolean;
+  readonly thinkingMode?: boolean;
 }
 
 export interface CodexLaunchOptions {
@@ -62,6 +91,8 @@ export const DEFAULT_AGENT_LAUNCH_OPTIONS: AgentLaunchOptionsByProvider = {
     mode: "default",
     effort: "default",
     context: "1m",
+    fastMode: false,
+    thinkingMode: false,
   },
   codex: { provider: "codex", model: "default", mode: "default" },
 };
@@ -86,6 +117,8 @@ export function serializeAgentLaunchOptions(options: AgentLaunchOptions): Record
       mode: options.mode,
       effort: options.effort,
       ...(options.context === undefined ? {} : { context: options.context }),
+      ...(options.fastMode === undefined ? {} : { fastMode: options.fastMode }),
+      ...(options.thinkingMode === undefined ? {} : { thinkingMode: options.thinkingMode }),
     };
   }
   return { provider: options.provider, model: options.model, mode: options.mode };
@@ -114,7 +147,12 @@ export function agentLaunchOptionsEqual(a: AgentLaunchOptions, b: AgentLaunchOpt
   if (a.model !== b.model) return false;
   if (a.mode !== b.mode) return false;
   if (a.provider === "claudeCode" && b.provider === "claudeCode") {
-    return a.effort === b.effort && (a.context ?? "1m") === (b.context ?? "1m");
+    return (
+      a.effort === b.effort &&
+      (a.context ?? "1m") === (b.context ?? "1m") &&
+      (a.fastMode ?? false) === (b.fastMode ?? false) &&
+      (a.thinkingMode ?? false) === (b.thinkingMode ?? false)
+    );
   }
   return true;
 }
@@ -132,6 +170,12 @@ function parseLaunchOptions(value: unknown, path: string, stored: boolean): Agen
       ...(options.context === undefined
         ? {}
         : { context: member(options.context, CLAUDE_CONTEXT_CHOICES, `${path}.context`) }),
+      ...(options.fastMode === undefined
+        ? {}
+        : { fastMode: boolean(options.fastMode, `${path}.fastMode`) }),
+      ...(options.thinkingMode === undefined
+        ? {}
+        : { thinkingMode: boolean(options.thinkingMode, `${path}.thinkingMode`) }),
     };
   }
   exactKeys(options, ["provider", "model", "mode"], path);
@@ -149,7 +193,14 @@ function claudeLaunchKeys(
   const keys = ["provider", "model", "mode"];
   if (!stored || "effort" in options) keys.push("effort");
   if ("context" in options) keys.push("context");
+  if ("fastMode" in options) keys.push("fastMode");
+  if ("thinkingMode" in options) keys.push("thinkingMode");
   return keys;
+}
+
+function boolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") invalid(path, "a boolean");
+  return value;
 }
 
 function parseEffort(value: unknown, path: string, stored: boolean): ClaudeEffortChoice {

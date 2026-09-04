@@ -86,44 +86,49 @@ describe("useWorkbenchAgents composition", () => {
     harness.unmount();
   });
 
-  it("refreshes Codex subscription limits only after a successful real turn", async () => {
-    const harness = renderWorkbenchAgents({ withProjectGateways: false, providerKind: "codex" });
-    await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
-    expect(harness.agentProviderGateway.readAgentProviderUsage).not.toHaveBeenCalled();
+  it("refreshes each provider's subscription limits only after its successful real turn", async () => {
+    for (const provider of ["claudeCode", "codex"] as const) {
+      const harness = renderWorkbenchAgents({ withProjectGateways: false, providerKind: provider });
+      await waitForReact(() => expect(harness.hook().agentProjects.projects).toHaveLength(1));
+      expect(harness.agentProviderGateway.readAgentProviderUsage).not.toHaveBeenCalled();
 
-    await act(async () => {
-      await harness.hook().startThread({
-        projectRootKey: ACTIVE_ROOT,
-        repositoryRoot: ACTIVE_ROOT,
-        prompt: "Inspect the project",
-        isolation: "worktree",
-        unsafeInPlaceConfirmationKey: null,
-        launch: defaultAgentLaunchOptions("codex"),
+      await act(async () => {
+        await harness.hook().startThread({
+          projectRootKey: ACTIVE_ROOT,
+          repositoryRoot: ACTIVE_ROOT,
+          prompt: "Inspect the project",
+          isolation: "worktree",
+          unsafeInPlaceConfirmationKey: null,
+          launch: defaultAgentLaunchOptions(provider),
+        });
       });
-    });
-    const request = harness.startedRequests[0];
-    expect(request).toBeDefined();
+      const request = harness.startedRequests[0];
+      expect(request).toBeDefined();
 
-    await act(async () => {
-      harness.emitStatus({
-        taskId: request?.taskId ?? "",
-        workspaceId: ACTIVE_ID,
-        repositoryRoot: ACTIVE_ROOT,
-        isolation: "worktree",
-        worktreePath: request?.cwd ?? null,
-        sequence: 1,
-        status: { kind: "exited", exitCode: 0 },
+      await act(async () => {
+        harness.emitStatus({
+          taskId: request?.taskId ?? "",
+          workspaceId: ACTIVE_ID,
+          repositoryRoot: ACTIVE_ROOT,
+          isolation: "worktree",
+          worktreePath: request?.cwd ?? null,
+          sequence: 1,
+          status: { kind: "exited", exitCode: 0 },
+        });
       });
-    });
 
-    await waitForReact(() => {
-      expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledOnce();
-      expect(harness.hook().accountUsage.codex).toMatchObject({
-        kind: "ready",
-        snapshot: { windows: [{ id: "primary", usedPercent: 17 }] },
+      await waitForReact(() => {
+        expect(harness.agentProviderGateway.readAgentProviderUsage).toHaveBeenCalledWith({
+          provider,
+          providerGeneration: 1,
+        });
+        expect(harness.hook().accountUsage[provider]).toMatchObject({
+          kind: "ready",
+          snapshot: { provider, windows: [{ id: "primary", usedPercent: 17 }] },
+        });
       });
-    });
-    harness.unmount();
+      harness.unmount();
+    }
   });
 
   it("does not publish an aggregate non-Git project root as an agent repository", async () => {
@@ -1261,8 +1266,8 @@ function renderWorkbenchAgents(options: HarnessOptions) {
       outputTail: "",
       outputTruncated: false,
     })),
-    readAgentProviderUsage: vi.fn(async () => ({
-      provider: "codex" as const,
+    readAgentProviderUsage: vi.fn(async ({ provider }: { provider: "claudeCode" | "codex" }) => ({
+      provider,
       fetchedAtEpochMs: 1_700_000_000_000,
       windows: [
         {

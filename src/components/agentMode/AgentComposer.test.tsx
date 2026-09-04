@@ -382,14 +382,16 @@ describe("AgentComposer", () => {
   });
 
   it("keeps the model, effort and mode pickers in both composer modes", () => {
-    render({ launch: { provider: "claudeCode", model: "opus", mode: "plan", effort: "high" } });
+    render({
+      launch: { provider: "claudeCode", model: "opus", mode: "supervised", effort: "high" },
+    });
 
     expect(pickerValue("agent-launch-model")).toBe("opus");
     expect(pickerValue("agent-launch-effort")).toBe("high");
-    expect(pickerValue("agent-launch-mode")).toBe("plan");
-    expect(host.querySelector("#agent-launch-mode")?.textContent).toContain("Plan mode");
+    expect(pickerValue("agent-launch-mode")).toBe("supervised");
+    expect(host.querySelector("#agent-launch-mode")?.textContent).toContain("Supervised");
     expect(
-      host.querySelector("#agent-launch-mode")?.classList.contains("agent-picker__trigger--plan"),
+      host.querySelector("#agent-launch-mode")?.classList.contains("agent-picker__trigger--ghost"),
     ).toBe(true);
 
     render({
@@ -407,13 +409,16 @@ describe("AgentComposer", () => {
     const onLaunchChange = vi.fn();
     render({ onLaunchChange });
 
-    pickOption("agent-launch-model", "sonnet");
+    pickOption("agent-launch-model", "claude-opus-5");
 
     expect(onLaunchChange).toHaveBeenCalledWith({
       provider: "claudeCode",
-      model: "sonnet",
-      mode: "default",
-      effort: "default",
+      model: "claude-opus-5",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "1m",
+      fastMode: false,
+      thinkingMode: false,
     });
   });
 
@@ -432,9 +437,9 @@ describe("AgentComposer", () => {
     });
 
     expect(pickerOptionValues("agent-launch-mode")).toEqual([
-      "default",
       "readOnly",
       "workspaceWrite",
+      "auto",
       "dangerFullAccess",
     ]);
     expect(host.querySelector(".agent-composer__danger")).toBeNull();
@@ -443,7 +448,7 @@ describe("AgentComposer", () => {
     submitForm();
 
     expect(onSubmit).toHaveBeenCalledWith({
-      launch: { provider: "codex", model: "default", mode: "dangerFullAccess" },
+      launch: { provider: "codex", model: "gpt-5.6-sol", mode: "dangerFullAccess" },
       dangerousLaunchConfirmed: true,
     });
   });
@@ -467,7 +472,7 @@ describe("AgentComposer", () => {
     submitForm();
 
     expect(onSubmit).toHaveBeenCalledWith({
-      launch: dangerous,
+      launch: { ...dangerous, effort: "high", context: "1m" },
       dangerousLaunchConfirmed: true,
     });
   });
@@ -501,7 +506,13 @@ describe("AgentComposer", () => {
     pressAccelerator();
 
     expect(onSubmit).toHaveBeenCalledWith({
-      launch: { provider: "claudeCode", model: "sonnet", mode: "acceptEdits", effort: "max" },
+      launch: {
+        provider: "claudeCode",
+        model: "sonnet",
+        mode: "acceptEdits",
+        effort: "max",
+        context: "1m",
+      },
       dangerousLaunchConfirmed: false,
     });
   });
@@ -518,8 +529,14 @@ describe("AgentComposer", () => {
     expect(host.textContent).toContain("120k tokens from an older session");
     act(() => host.querySelector<HTMLButtonElement>(".agent-compaction-offer__action")?.click());
     expect(onCompactContext).toHaveBeenCalledWith({
-      launch: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
-      dangerousLaunchConfirmed: false,
+      launch: {
+        provider: "claudeCode",
+        model: "claude-sonnet-5",
+        mode: "bypassPermissions",
+        effort: "high",
+        context: "1m",
+      },
+      dangerousLaunchConfirmed: true,
     });
     act(() =>
       host

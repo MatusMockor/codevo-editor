@@ -219,6 +219,22 @@ describe("useExternalSessions", () => {
     harness.unmount();
   });
 
+  it("lists the whole project when the palette was opened from a nested repository", async () => {
+    const harness = renderExternalSessions({
+      projects: [project({ repositories: [repository(NESTED_REPOSITORY_ROOT)] })],
+    });
+    const target = { rootKey: ROOT_KEY, repositoryRoot: NESTED_REPOSITORY_ROOT };
+
+    await resolveInReactAct(() => harness.hook().open(target));
+
+    expect(harness.gateway.listExternalSessions).toHaveBeenCalledWith({
+      projectRoot: ROOT_KEY,
+      repositoryRoot: ROOT_KEY,
+    });
+    expect(harness.hook().target).toEqual(target);
+    harness.unmount();
+  });
+
   it("publishes a loading state while the list is in flight", async () => {
     const harness = renderExternalSessions();
     const pending = deferred<ExternalSessionListSnapshot>();

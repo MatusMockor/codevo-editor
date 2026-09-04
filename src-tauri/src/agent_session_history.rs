@@ -14,6 +14,7 @@ pub const MAX_PREVIEW_EXCHANGES: usize = 40;
 pub const PREVIEW_HEAD_EXCHANGES: usize = 8;
 pub const HEAD_READ_BYTES: usize = 256 * 1024;
 pub const TAIL_READ_BYTES: usize = 64 * 1024;
+pub const CODEX_META_READ_BYTES: usize = 32 * 1024;
 pub const PREVIEW_TOTAL_BYTES: usize = 64 * 1024;
 pub const MAX_EXTERNAL_SESSION_TEXT_BYTES: usize = 16 * 1024;
 pub const MAX_EXTERNAL_SESSION_TITLE_BYTES: usize = 256;
@@ -491,12 +492,17 @@ fn collect_codex_sessions(
     sessions: &mut Vec<ExternalAgentSessionSummary>,
     skipped: &mut u32,
 ) -> bool {
+    let mut inspected = 0usize;
     let mut opened = 0usize;
     for day_directory in codex_day_directories(sessions_directory, now_epoch_ms) {
         let Ok(entries) = fs::read_dir(&day_directory) else {
             continue;
         };
-        for entry in entries.take(MAX_SCANNED_DIRECTORY_ENTRIES) {
+        for entry in entries {
+            if inspected >= MAX_SCANNED_DIRECTORY_ENTRIES {
+                return true;
+            }
+            inspected += 1;
             let Ok(entry) = entry else {
                 bump(skipped);
                 continue;
@@ -508,6 +514,14 @@ fn collect_codex_sessions(
             let Some(session_id) = codex_rollout_session_id(name) else {
                 continue;
             };
+            match codex_session_scope_gate(&entry.path(), repository_root, &session_id) {
+                Ok(()) => {}
+                Err(SessionExclusion::Foreign) => continue,
+                Err(SessionExclusion::Skipped) => {
+                    bump(skipped);
+                    continue;
+                }
+            }
             if opened >= MAX_PROVIDER_FILES {
                 return true;
             }
@@ -520,6 +534,30 @@ fn collect_codex_sessions(
         }
     }
     false
+}
+
+fn codex_session_scope_gate(
+    path: &Path,
+    repository_root: &str,
+    session_id: &str,
+) -> Result<(), SessionExclusion> {
+    let mut file = open_history_file(path).map_err(|_| SessionExclusion::Skipped)?;
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take((CODEX_META_READ_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| SessionExclusion::Skipped)?;
+    let line_end = bytes
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .unwrap_or(bytes.len());
+    if line_end > CODEX_META_READ_BYTES {
+        return Err(SessionExclusion::Skipped);
+    }
+    let line = std::str::from_utf8(&bytes[..line_end]).map_err(|_| SessionExclusion::Skipped)?;
+    let parsed =
+        serde_json::from_str::<RawCodexLine>(line.trim()).map_err(|_| SessionExclusion::Skipped)?;
+    codex_meta_gate(&parsed, repository_root, session_id).map(|_| ())
 }
 
 fn codex_day_directories(sessions_directory: &Path, now_epoch_ms: u64) -> Vec<PathBuf> {
@@ -716,25 +754,8 @@ struct HistoryFileWindow {
 }
 
 fn read_history_windows(path: &Path, include_tail: bool) -> Result<HistoryFileWindow, ()> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
-    }
-    #[cfg(not(unix))]
-    {
-        let metadata = fs::symlink_metadata(path).map_err(|_| ())?;
-        if metadata.file_type().is_symlink() {
-            return Err(());
-        }
-    }
-    let mut file = options.open(path).map_err(|_| ())?;
+    let mut file = open_history_file(path)?;
     let metadata = file.metadata().map_err(|_| ())?;
-    if !metadata.is_file() {
-        return Err(());
-    }
     let file_bytes = metadata.len();
     let modified_epoch_ms = metadata
         .modified()
@@ -777,6 +798,29 @@ fn read_history_windows(path: &Path, include_tail: bool) -> Result<HistoryFileWi
         head_complete,
         covers_file,
     })
+}
+
+fn open_history_file(path: &Path) -> Result<fs::File, ()> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    }
+    #[cfg(not(unix))]
+    {
+        let metadata = fs::symlink_metadata(path).map_err(|_| ())?;
+        if metadata.file_type().is_symlink() {
+            return Err(());
+        }
+    }
+    let file = options.open(path).map_err(|_| ())?;
+    let metadata = file.metadata().map_err(|_| ())?;
+    if !metadata.is_file() {
+        return Err(());
+    }
+    Ok(file)
 }
 
 struct ScannedWindowLines<'a> {

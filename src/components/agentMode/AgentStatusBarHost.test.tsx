@@ -83,7 +83,9 @@ describe("AgentStatusBarHost", () => {
       }),
     });
 
-    expect(host.querySelector(".status-agent-launch")?.textContent).toBe("sonnet · plan only");
+    expect(host.querySelector(".status-agent-launch")?.textContent).toBe(
+      "sonnet · plan only · high",
+    );
   });
 
   it("stays silent when nothing is selected and nothing is remembered", () => {

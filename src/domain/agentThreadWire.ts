@@ -168,6 +168,7 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
                 inputTokens: event.usage.inputTokens,
                 outputTokens: event.usage.outputTokens,
                 contextTokens: event.usage.contextTokens,
+                ...(event.usage.costUsd === undefined ? {} : { costUsd: event.usage.costUsd }),
               },
       };
     case "contextCompaction":
@@ -511,7 +512,7 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
 function parseUsage(value: unknown, path: string): AgentTurnUsage | null {
   if (value === null) return null;
   const usage = record(value, path);
-  boundedKeys(usage, ["inputTokens", "outputTokens"], ["contextTokens"], path);
+  boundedKeys(usage, ["inputTokens", "outputTokens"], ["contextTokens", "costUsd"], path);
   return {
     inputTokens: unsignedSafeInteger(usage.inputTokens, `${path}.inputTokens`),
     outputTokens: unsignedSafeInteger(usage.outputTokens, `${path}.outputTokens`),
@@ -519,7 +520,18 @@ function parseUsage(value: unknown, path: string): AgentTurnUsage | null {
       usage.contextTokens === undefined
         ? null
         : optionalUnsignedSafeInteger(usage.contextTokens, `${path}.contextTokens`),
+    ...(usage.costUsd === undefined
+      ? {}
+      : { costUsd: optionalNonNegativeFiniteNumber(usage.costUsd, `${path}.costUsd`) }),
   };
+}
+
+function optionalNonNegativeFiniteNumber(value: unknown, path: string): number | null {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    invalid(path, "a non-negative finite number or null");
+  }
+  return value;
 }
 
 function turnStatusKind(value: unknown, path: string): AgentTurnStatus["kind"] {

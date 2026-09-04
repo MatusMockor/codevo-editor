@@ -1149,6 +1149,9 @@ mod tests {
                 "--output-format".to_string(),
                 "stream-json".to_string(),
                 "--verbose".to_string(),
+                "--dangerously-skip-permissions".to_string(),
+                "--effort".to_string(),
+                "high".to_string(),
                 "--".to_string(),
                 request.prompt.clone()
             ]
@@ -1252,6 +1255,8 @@ mod tests {
             mode: ClaudePermissionMode::BypassPermissions,
             effort: ClaudeEffortChoice::Default,
             context: ClaudeContextChoice::OneM,
+            fast_mode: false,
+            thinking_mode: false,
         };
 
         let refused = ensure_agent_task_trust(false, false, request.isolation)
@@ -1302,6 +1307,8 @@ mod tests {
             mode: ClaudePermissionMode::AcceptEdits,
             effort: ClaudeEffortChoice::High,
             context: ClaudeContextChoice::TwoHundredK,
+            fast_mode: false,
+            thinking_mode: false,
         };
 
         let prepared = prepare_test_request(&request).expect("prepare launch start");
@@ -1337,6 +1344,8 @@ mod tests {
                 mode: ClaudePermissionMode::Plan,
                 effort: ClaudeEffortChoice::Default,
                 context: ClaudeContextChoice::TwoHundredK,
+                fast_mode: false,
+                thinking_mode: false,
             }
         );
 
@@ -1366,6 +1375,9 @@ mod tests {
                 "--output-format".to_string(),
                 "stream-json".to_string(),
                 "--verbose".to_string(),
+                "--dangerously-skip-permissions".to_string(),
+                "--effort".to_string(),
+                "high".to_string(),
                 "--resume".to_string(),
                 "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string(),
                 "--".to_string(),

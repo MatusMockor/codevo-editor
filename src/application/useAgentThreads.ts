@@ -364,9 +364,10 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
       if (
         project === undefined ||
         project.origin === "closed-tab-live-tasks" ||
-        !project.repositories.some(
-          (repository) => repository.repositoryRoot === request.repositoryRoot,
-        )
+        (project.rootPath !== request.repositoryRoot &&
+          !project.repositories.some(
+            (repository) => repository.repositoryRoot === request.repositoryRoot,
+          ))
       ) {
         setNotice(warning(IMPORT_PROJECT_UNAVAILABLE_NOTICE));
         return null;

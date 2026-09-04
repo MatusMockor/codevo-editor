@@ -53,6 +53,8 @@ export type AgentTurnStatus = AgentTaskStatus | { readonly kind: "interrupted" }
 export interface AgentTurnUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** Provider-reported API-equivalent cost for the turn, when available. */
+  readonly costUsd?: number | null;
   /** Tokens occupying the provider context window after the turn, when reported. */
   readonly contextTokens: number | null;
 }

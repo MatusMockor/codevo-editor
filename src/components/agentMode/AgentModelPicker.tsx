@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -7,7 +8,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { ChevronDown, Search, Star } from "lucide-react";
+import { ChevronDown, ChevronRight, Search, Star } from "lucide-react";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
@@ -15,6 +16,7 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import {
   agentLaunchModelHint,
   agentLaunchModelLabel,
+  agentLaunchEffectiveModel,
   agentModelProviderName,
   agentModelRows,
   boundAgentModelQuery,
@@ -70,6 +72,7 @@ export function AgentModelPicker({
   const [displayProvider, setDisplayProvider] = useState<AgentCliKind>(launch.provider);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [legacyExpanded, setLegacyExpanded] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listId = `${id}-list`;
   const dialogId = `${id}-dialog`;
@@ -80,47 +83,65 @@ export function AgentModelPicker({
   const rows = useMemo(() => {
     if (filter === "favorites") {
       return providers.flatMap((provider) =>
-        agentModelRows(provider, configuredProviderModel(providerManagement, provider)),
+        agentModelRows(
+          provider,
+          configuredProviderModel(providerManagement, provider),
+          configuredProviderVersion(providerManagement, provider),
+        ),
       );
     }
     return providerIsEnabled(providerEnabled, displayProvider)
       ? agentModelRows(
           displayProvider,
           configuredProviderModel(providerManagement, displayProvider),
+          configuredProviderVersion(providerManagement, displayProvider),
         )
       : [];
   }, [displayProvider, filter, providerEnabled, providerManagement, providers]);
-  const visible = useMemo(
+  const filteredRows = useMemo(
     () => filterAgentModelRows(rows, filter, favorites.keys, query),
     [favorites.keys, filter, query, rows],
   );
+  const legacySectionVisible =
+    filter === "all" && query.trim() === "" && filteredRows.some((row) => row.isLegacy === true);
+  const currentRows = legacySectionVisible
+    ? filteredRows.filter((row) => row.isLegacy !== true)
+    : filteredRows;
+  const legacyRows = legacySectionVisible
+    ? filteredRows.filter((row) => row.isLegacy === true)
+    : [];
+  const visible =
+    legacySectionVisible && legacyExpanded ? [...currentRows, ...legacyRows] : currentRows;
   const active = clampIndex(activeIndex, visible.length);
   const activeRow = visible[active] ?? null;
   const modifier = agentPlatformModifier().glyph;
+  const configuredModel = configuredProviderModel(providerManagement, launch.provider);
+  const selectedModel = agentLaunchEffectiveModel(launch, configuredModel);
 
   const openPicker = useCallback(() => {
     if (pickerDisabled) return;
     setQuery("");
     setFilter("all");
     setDisplayProvider(launch.provider);
+    setLegacyExpanded(rows.some((row) => row.value === selectedModel && row.isLegacy === true));
     setActiveIndex(
       Math.max(
         0,
-        rows.findIndex((row) => row.value === launch.model),
+        rows.findIndex((row) => row.value === selectedModel),
       ),
     );
     show();
-  }, [launch.model, launch.provider, pickerDisabled, rows, show]);
+  }, [launch.provider, pickerDisabled, rows, selectedModel, show]);
 
   const choose = useCallback(
     (row: AgentModelRow) => {
       if (pickerDisabled) return;
       hide(true);
-      if (row.provider === launch.provider && row.value === launch.model) return;
+      if (row.provider === launch.provider && row.value === selectedModel) return;
       if (row.provider === launch.provider) onSelect(row.value);
       else onSelect(row.value, row.provider);
     },
-    [hide, launch.model, launch.provider, onSelect, pickerDisabled],
+    [hide, launch.provider, onSelect, pickerDisabled, selectedModel],
   );
 
   useLayoutEffect(() => {
@@ -198,7 +219,7 @@ export function AgentModelPicker({
         aria-haspopup="dialog"
         aria-label={label}
         className="agent-picker__trigger agent-picker__trigger--ghost"
-        data-value={launch.model}
+        data-value={selectedModel}
         disabled={pickerDisabled}
         id={id}
         onClick={() => (open ? hide(false) : openPicker())}
@@ -284,47 +305,62 @@ export function AgentModelPicker({
 
             <div aria-label={label} className="agent-model-picker__list" id={listId} role="listbox">
               {visible.map((row, index) => (
-                <div
-                  className={`agent-model-picker__row${index === active ? " agent-model-picker__row--active" : ""}${row.value === launch.model ? " agent-model-picker__row--selected" : ""}`}
-                  key={row.favoriteKey}
-                >
+                <Fragment key={row.favoriteKey}>
+                  {legacySectionVisible && legacyExpanded && index === currentRows.length && (
+                    <LegacyModelsToggle
+                      count={legacyRows.length}
+                      expanded
+                      onToggle={() => setLegacyExpanded(false)}
+                    />
+                  )}
                   <div
-                    aria-selected={row.value === launch.model}
-                    className="agent-model-picker__option"
-                    data-index={index}
-                    data-value={row.value}
-                    id={optionId(listId, index)}
-                    onClick={() => choose(row)}
-                    onMouseEnter={() => setActiveIndex(index)}
-                    role="option"
-                    title={row.hint}
+                    className={`agent-model-picker__row${index === active ? " agent-model-picker__row--active" : ""}${row.value === selectedModel ? " agent-model-picker__row--selected" : ""}`}
                   >
-                    <span aria-hidden="true" className="agent-model-picker__glyph">
-                      <AgentProviderGlyph kind={row.provider} />
-                    </span>
-                    <span className="agent-model-picker__text">
-                      <span className="agent-model-picker__label">{row.label}</span>
-                      <span className="agent-model-picker__description">{row.hint}</span>
-                    </span>
-                    {index < MAX_SHORTCUT_ROWS && (
-                      <kbd className="agent-model-picker__kbd agent-num">
-                        {modifier}
-                        {index + 1}
-                      </kbd>
-                    )}
+                    <div
+                      aria-selected={row.value === selectedModel}
+                      className="agent-model-picker__option"
+                      data-index={index}
+                      data-value={row.value}
+                      id={optionId(listId, index)}
+                      onClick={() => choose(row)}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      role="option"
+                      title={row.hint}
+                    >
+                      <span aria-hidden="true" className="agent-model-picker__glyph">
+                        <AgentProviderGlyph kind={row.provider} />
+                      </span>
+                      <span className="agent-model-picker__text">
+                        <span className="agent-model-picker__label">{row.label}</span>
+                        <span className="agent-model-picker__description">{row.hint}</span>
+                      </span>
+                      {index < MAX_SHORTCUT_ROWS && (
+                        <kbd className="agent-model-picker__kbd agent-num">
+                          {modifier}
+                          {index + 1}
+                        </kbd>
+                      )}
+                    </div>
+                    <button
+                      aria-label={favoriteLabel(row, favorites.isFavorite(row.favoriteKey))}
+                      aria-pressed={favorites.isFavorite(row.favoriteKey)}
+                      className="agent-model-picker__star"
+                      onClick={() => favorites.toggle(row.favoriteKey)}
+                      tabIndex={-1}
+                      type="button"
+                    >
+                      <Star aria-hidden="true" size={13} />
+                    </button>
                   </div>
-                  <button
-                    aria-label={favoriteLabel(row, favorites.isFavorite(row.favoriteKey))}
-                    aria-pressed={favorites.isFavorite(row.favoriteKey)}
-                    className="agent-model-picker__star"
-                    onClick={() => favorites.toggle(row.favoriteKey)}
-                    tabIndex={-1}
-                    type="button"
-                  >
-                    <Star aria-hidden="true" size={13} />
-                  </button>
-                </div>
+                </Fragment>
               ))}
+              {legacySectionVisible && !legacyExpanded && (
+                <LegacyModelsToggle
+                  count={legacyRows.length}
+                  expanded={false}
+                  onToggle={() => setLegacyExpanded(true)}
+                />
+              )}
               {visible.length === 0 && (
                 <p className="agent-model-picker__empty" role="status">
                   {emptyMessage(filter, query)}
@@ -379,6 +415,35 @@ function AgentProviderRailItem({
   );
 }
 
+function LegacyModelsToggle({
+  count,
+  expanded,
+  onToggle,
+}: {
+  readonly count: number;
+  readonly expanded: boolean;
+  onToggle(): void;
+}) {
+  return (
+    <button
+      aria-expanded={expanded}
+      className="agent-model-picker__legacy"
+      onClick={onToggle}
+      type="button"
+    >
+      <span>
+        <strong>Legacy models</strong>
+        <small>{count} models</small>
+      </span>
+      <ChevronRight
+        aria-hidden="true"
+        className={expanded ? "agent-model-picker__legacy-chevron--expanded" : undefined}
+        size={14}
+      />
+    </button>
+  );
+}
+
 function favoriteLabel(row: AgentModelRow, favorite: boolean): string {
   if (favorite) return `Remove ${row.label} from favorites`;
   return `Add ${row.label} to favorites`;
@@ -398,6 +463,14 @@ function configuredProviderModel(
 ): string | null {
   const state = management?.cliDiscovery[provider];
   return state?.kind === "detected" ? (state.configuredModel ?? null) : null;
+}
+
+function configuredProviderVersion(
+  management: AgentProviderManagementSurface | null,
+  provider: AgentCliKind,
+): string | null {
+  const state = management?.cliDiscovery[provider];
+  return state?.kind === "detected" ? state.version : null;
 }
 
 function providerAvailabilityReason(

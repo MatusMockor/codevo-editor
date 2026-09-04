@@ -8,6 +8,7 @@ export interface AgentPickerOption {
   readonly description: string | null;
   readonly tone: AgentPickerTone;
   readonly detail: ReactNode;
+  readonly icon: ReactNode;
 }
 
 export function agentPickerOption(
@@ -16,6 +17,7 @@ export function agentPickerOption(
   description: string | null = null,
   tone: AgentPickerTone = null,
   detail: ReactNode = null,
+  icon: ReactNode = null,
 ): AgentPickerOption {
-  return { value, label, description, tone, detail };
+  return { value, label, description, tone, detail, icon };
 }

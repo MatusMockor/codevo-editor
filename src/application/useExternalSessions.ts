@@ -123,7 +123,7 @@ export function useExternalSessions(
       const loaded = await attempt(() =>
         dependenciesRef.current.externalSessionGateway.listExternalSessions({
           projectRoot: project.rootPath,
-          repositoryRoot: target.repositoryRoot,
+          repositoryRoot: project.rootPath,
         }),
       );
       if (!mountedRef.current) return;

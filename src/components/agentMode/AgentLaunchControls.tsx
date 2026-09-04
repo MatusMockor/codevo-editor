@@ -1,4 +1,4 @@
-import { Lock, LockOpen } from "lucide-react";
+import { Lock, LockOpen, PenLine, Sparkles } from "lucide-react";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
@@ -15,7 +15,7 @@ import {
   type AgentLaunchChoice,
 } from "./agentLaunchPresentation";
 import { AgentModelPicker } from "./AgentModelPicker";
-import { defaultAgentComposerLaunch } from "./agentComposerLaunch";
+import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentPickerMenu } from "./AgentPickerMenu";
 import { AgentTraitsPicker } from "./AgentTraitsPicker";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
@@ -42,10 +42,13 @@ export function AgentLaunchControls({
   providerManagement = null,
   providerSwitchable = false,
 }: AgentLaunchControlsProps) {
-  const modeChoices = agentLaunchModeChoices(launch.provider);
-  const discovered = providerManagement?.cliDiscovery[launch.provider];
-  const configuredModel =
-    discovered?.kind === "detected" ? (discovered.configuredModel ?? null) : null;
+  const effectiveLaunch = normalizeAgentComposerLaunch(launch);
+  const modeChoices = agentLaunchModeChoices(effectiveLaunch.provider);
+  const configuredModelFor = (provider: AgentCliKind): string | null => {
+    const discovered = providerManagement?.cliDiscovery[provider];
+    return discovered?.kind === "detected" ? (discovered.configuredModel ?? null) : null;
+  };
+  const configuredModel = configuredModelFor(effectiveLaunch.provider);
   return (
     <div className="agent-composer__launch">
       <AgentModelPicker
@@ -54,12 +57,15 @@ export function AgentLaunchControls({
         favorites={favorites}
         id={MODEL_ID}
         label="Agent model"
-        launch={launch}
-        onSelect={(model, provider = launch.provider) =>
+        launch={effectiveLaunch}
+        onSelect={(model, provider = effectiveLaunch.provider) =>
           onLaunchChange(
             agentLaunchWithModel(
-              provider === launch.provider ? launch : defaultAgentComposerLaunch(provider),
+              provider === effectiveLaunch.provider
+                ? effectiveLaunch
+                : defaultAgentComposerLaunch(provider),
               model,
+              configuredModelFor(provider),
             ),
           )
         }
@@ -71,13 +77,13 @@ export function AgentLaunchControls({
         {agentLaunchModelHint(launch, configuredModel)}
       </span>
 
-      {launch.provider === "claudeCode" && (
+      {effectiveLaunch.provider === "claudeCode" && (
         <>
           <AgentLaunchDivider />
           <AgentTraitsPicker
             configuredModel={configuredModel}
             disabled={disabled}
-            launch={launch}
+            launch={effectiveLaunch}
             onChange={onLaunchChange}
           />
         </>
@@ -89,18 +95,18 @@ export function AgentLaunchControls({
         confirmation={null}
         describedBy={`${MODE_ID}-hint`}
         disabled={disabled}
-        icon={accessIcon(agentLaunchAccess(launch))}
+        icon={accessIcon(agentLaunchAccess(effectiveLaunch))}
         id={MODE_ID}
         label="Agent permission mode"
-        onChange={(value) => onLaunchChange(agentLaunchWithMode(launch, value))}
+        onChange={(value) => onLaunchChange(agentLaunchWithMode(effectiveLaunch, value))}
         options={modeChoices.map(toOption)}
         prefix={null}
-        tone={agentLaunchTone(launch)}
-        value={launch.mode}
+        tone={agentLaunchTone(effectiveLaunch)}
+        value={effectiveLaunch.mode}
         variant="ghost"
       />
       <span className="agent-visually-hidden" id={`${MODE_ID}-hint`}>
-        {agentLaunchModeHint(launch)}
+        {agentLaunchModeHint(effectiveLaunch)}
       </span>
     </div>
   );
@@ -116,5 +122,19 @@ function accessIcon(access: AgentLaunchAccess) {
 }
 
 function toOption(choice: AgentLaunchChoice): AgentPickerOption {
-  return agentPickerOption(choice.value, choice.label, choice.hint, choice.tone);
+  return agentPickerOption(
+    choice.value,
+    choice.label,
+    choice.hint,
+    choice.tone,
+    null,
+    modeOptionIcon(choice.value),
+  );
+}
+
+function modeOptionIcon(value: string) {
+  if (value === "supervised" || value === "readOnly") return <Lock size={14} />;
+  if (value === "acceptEdits" || value === "workspaceWrite") return <PenLine size={14} />;
+  if (value === "auto") return <Sparkles size={14} />;
+  return <LockOpen size={14} />;
 }

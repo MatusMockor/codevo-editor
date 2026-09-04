@@ -650,6 +650,50 @@ fn codex_files_beyond_the_provider_cap_do_not_claim_to_be_unreadable() {
 
     assert!(listing.sessions.is_empty());
     assert_eq!(listing.skipped, 0);
+    assert!(!listing.truncated);
+}
+
+#[test]
+fn foreign_codex_history_does_not_hide_a_project_session_after_the_provider_cap() {
+    let home = HistoryHome::create("codex-filter-before-cap");
+    let foreign = home.base.join("foreign");
+    fs::create_dir_all(&foreign).expect("create foreign repository");
+    let foreign = fs::canonicalize(foreign)
+        .expect("canonicalize foreign repository")
+        .to_string_lossy()
+        .into_owned();
+    let directory = home.codex_day_directory(0);
+    fs::create_dir_all(&directory).expect("create codex day directory");
+    for index in 0..(MAX_PROVIDER_FILES + 2) {
+        let session_id = format!("{index:08x}-0000-4000-8000-{index:012x}");
+        let path = directory.join(format!("rollout-2026-08-30T09-00-00-{session_id}.jsonl"));
+        let content = json!({
+            "timestamp": "2026-08-30T09:00:00.000Z",
+            "type": "session_meta",
+            "payload": {
+                "id": session_id,
+                "timestamp": "2026-08-30T09:00:00.000Z",
+                "cwd": foreign,
+                "source": "exec"
+            }
+        })
+        .to_string();
+        fs::write(&path, format!("{content}\n")).expect("write foreign codex session");
+    }
+    home.write_codex_session(
+        "codex-exec.jsonl",
+        CODEX_EXEC_ID,
+        &home.repository_root,
+        1,
+        NOW_EPOCH_MS - 1_000,
+    );
+
+    let listing = home.list();
+
+    assert_eq!(listing.sessions.len(), 1);
+    assert_eq!(listing.sessions[0].session_id, CODEX_EXEC_ID);
+    assert_eq!(listing.skipped, 0);
+    assert!(!listing.truncated);
 }
 
 #[test]

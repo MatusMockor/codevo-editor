@@ -24,6 +24,8 @@ export interface AgentUsageCliTokens {
   readonly outputTokens: number | null;
   readonly measuredTurns: number;
   readonly eligibleTurns: number;
+  readonly costUsd: number | null;
+  readonly costMeasuredTurns: number;
   readonly source: AgentCliUsageSource;
   readonly incomplete: boolean;
 }
@@ -77,6 +79,8 @@ interface MutableCliTokens {
   outputTokens: number | null;
   measuredTurns: number;
   eligibleTurns: number;
+  costUsd: number | null;
+  costMeasuredTurns: number;
   readonly source: AgentCliUsageSource;
   incomplete: boolean;
 }
@@ -182,6 +186,8 @@ function mutableMetrics(provider: AgentCliKind): MutableMetrics {
       outputTokens: 0,
       measuredTurns: 0,
       eligibleTurns: 0,
+      costUsd: 0,
+      costMeasuredTurns: 0,
       source: usageSource(provider),
       incomplete: false,
     },
@@ -261,7 +267,12 @@ function addCliUsage(cliUsage: MutableCliTokens, turn: AgentTurn): void {
   if (turn.status.kind !== "exited") return;
   cliUsage.eligibleTurns += 1;
   if (turn.eventsTruncated) cliUsage.incomplete = true;
-  let capturedUsage: { readonly inputTokens: number; readonly outputTokens: number } | null = null;
+  let capturedUsage: {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly contextTokens?: number | null;
+    readonly costUsd?: number | null;
+  } | null = null;
   for (const event of turn.events) {
     if (event.kind !== "result" || event.usage === null) continue;
     if (capturedUsage !== null) {
@@ -272,11 +283,27 @@ function addCliUsage(cliUsage: MutableCliTokens, turn: AgentTurn): void {
   }
   if (capturedUsage === null) return;
   cliUsage.measuredTurns += 1;
-  cliUsage.inputTokens = safeSum(cliUsage.inputTokens, capturedUsage.inputTokens);
+  // Claude reports cache creation/read tokens separately from input_tokens. The parser's
+  // contextTokens total includes that processed input, while Codex input_tokens already includes
+  // cached input. Prefer it so the Usage headline does not dramatically under-report real work.
+  cliUsage.inputTokens = safeSum(
+    cliUsage.inputTokens,
+    capturedUsage.contextTokens ?? capturedUsage.inputTokens,
+  );
   cliUsage.outputTokens = safeSum(cliUsage.outputTokens, capturedUsage.outputTokens);
+  if (capturedUsage.costUsd !== undefined && capturedUsage.costUsd !== null) {
+    cliUsage.costUsd = safeFiniteSum(cliUsage.costUsd, capturedUsage.costUsd);
+    cliUsage.costMeasuredTurns += 1;
+  }
   if (cliUsage.inputTokens === null || cliUsage.outputTokens === null) {
     cliUsage.incomplete = true;
   }
+}
+
+function safeFiniteSum(current: number | null, increment: number): number | null {
+  if (current === null || !Number.isFinite(increment) || increment < 0) return null;
+  const sum = current + increment;
+  return Number.isFinite(sum) ? sum : null;
 }
 
 function addStreamOutput(streamOutput: MutableStreamOutput, turn: AgentTurn): void {

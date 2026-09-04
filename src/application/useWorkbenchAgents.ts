@@ -387,9 +387,8 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     [options.agentProviderGateway],
   );
 
-  const refreshCodexUsageAfterTurn = useCallback(
+  const refreshProviderUsageAfterTurn = useCallback(
     (provider: "claudeCode" | "codex"): void => {
-      if (provider !== "codex") return;
       const readUsage = options.agentProviderGateway.readAgentProviderUsage;
       const management = providerManagementRef.current;
       if (readUsage === undefined || management === null) return;
@@ -442,7 +441,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     getDirtyEditorDocumentCount,
     onProjectDispatchTrustRejected: agentProjects.noteDispatchTrustRejected,
     onAccountUsageObserved: recordAccountUsage,
-    onProviderTurnCompleted: refreshCodexUsageAfterTurn,
+    onProviderTurnCompleted: refreshProviderUsageAfterTurn,
     ensureProjectLease: agentProjects.ensureProjectLease,
     ensureProjectLaunchIdentity: agentProjects.ensureProjectLaunchIdentity,
     launchIdentityForProject: agentProjects.launchIdentityForProject,

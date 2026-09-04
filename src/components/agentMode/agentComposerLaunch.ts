@@ -28,9 +28,32 @@ export function defaultAgentComposerLaunch(provider: AgentCliKind): AgentLaunchO
       mode: "bypassPermissions",
       effort: "high",
       context: "1m",
+      fastMode: false,
+      thinkingMode: false,
     };
   }
   return { provider: "codex", model: "default", mode: "dangerFullAccess" };
+}
+
+/**
+ * Stored threads created before full-access became the product default can
+ * still contain the old CLI-inherited sentinel values. Those values are wire
+ * compatibility only: the composer must always present and submit a concrete
+ * T3-style launch policy.
+ */
+export function normalizeAgentComposerLaunch(launch: AgentLaunchOptions): AgentLaunchOptions {
+  if (launch.provider === "claudeCode") {
+    return {
+      ...launch,
+      mode: launch.mode === "default" ? "bypassPermissions" : launch.mode,
+      effort: launch.effort === "default" ? "high" : launch.effort,
+      context: launch.context ?? "1m",
+    };
+  }
+  return {
+    ...launch,
+    mode: launch.mode === "default" ? "dangerFullAccess" : launch.mode,
+  };
 }
 
 export function resolveLaunchScope(
@@ -57,11 +80,15 @@ export function resolveComposerLaunch(
 ): AgentLaunchOptions {
   if (scope === null) return defaultAgentComposerLaunch(provider);
   if (choice !== null && choice.key === scope.key && choice.launch.provider === provider) {
-    return choice.launch;
+    return normalizeAgentComposerLaunch(choice.launch);
   }
-  if (scope.seed !== null && scope.seed.provider === provider) return scope.seed;
+  if (scope.seed !== null && scope.seed.provider === provider) {
+    return normalizeAgentComposerLaunch(scope.seed);
+  }
   const remembered = lastUsedLaunch(scope.rootKey);
-  if (remembered !== null && remembered.provider === provider) return remembered;
+  if (remembered !== null && remembered.provider === provider) {
+    return normalizeAgentComposerLaunch(remembered);
+  }
   return defaultAgentComposerLaunch(provider);
 }
 

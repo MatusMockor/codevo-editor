@@ -222,17 +222,16 @@ export function AgentPickerMenu({
                 role="option"
                 tabIndex={-1}
               >
-                <span className="agent-picker__mark" aria-hidden="true">
-                  {option.value === value && <Check size={12} />}
+                <span
+                  className={`agent-picker__mark${option.icon !== null ? " agent-picker__mark--icon" : ""}`}
+                  aria-hidden="true"
+                >
+                  {option.icon ?? (option.value === value && <Check size={12} />)}
                 </span>
                 <span className="agent-picker__text">
                   <span className="agent-picker__label">
                     {option.tone === "danger" && (
-                      <TriangleAlert
-                        aria-hidden="true"
-                        className="agent-picker__warn"
-                        size={11}
-                      />
+                      <TriangleAlert aria-hidden="true" className="agent-picker__warn" size={11} />
                     )}
                     {option.label}
                     {option.detail !== null && (
@@ -256,9 +255,7 @@ export function AgentPickerMenu({
                       type="checkbox"
                     />
                     <span className="agent-picker__confirmation-copy">
-                      <span className="agent-picker__confirmation-label">
-                        {confirmation.label}
-                      </span>
+                      <span className="agent-picker__confirmation-label">{confirmation.label}</span>
                       {confirmation.description !== null && (
                         <span className="agent-picker__confirmation-description">
                           {confirmation.description}

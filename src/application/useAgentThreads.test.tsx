@@ -52,6 +52,7 @@ interface Environment {
   withEditor: boolean;
   cliVersion: string | null;
   cliKind: AgentCliKind;
+  repositoryRoots: ReadonlyArray<string>;
 }
 
 const SHA_A = "a".repeat(40);
@@ -263,6 +264,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     withEditor: true,
     cliVersion: CLI_VERSION,
     cliKind: "claudeCode",
+    repositoryRoots: [ROOT],
     ...overrides,
   };
   const startedRequests: StartAgentTaskRequest[] = [];
@@ -347,13 +349,11 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     generation: environment.generation,
     trust: "trusted",
     origin: "active-tab",
-    repositories: [
-      {
-        mapping: { rootRelativePath: "" },
-        repositoryRoot: environment.rootKey,
-        repositoryRelativePath: "",
-      },
-    ],
+    repositories: environment.repositoryRoots.map((repositoryRoot) => ({
+      mapping: { rootRelativePath: "" },
+      repositoryRoot,
+      repositoryRelativePath: "",
+    })),
     isolationPolicy: "auto",
     leaseToken: 1,
   });
@@ -857,6 +857,37 @@ describe("useAgentThreads external session import", () => {
     expect(saved?.thread.provider.sessionId).toBe(EXTERNAL_ID);
     expect(saved?.thread.externalOrigin?.sessionId).toBe(EXTERNAL_ID);
     expect(saved?.thread.turns).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("imports and resumes a project-root session when Git repositories are nested", async () => {
+    const harness = renderThreads({
+      cliKind: "codex",
+      repositoryRoots: [`${ROOT}/packages/app`],
+    });
+    await storeReady(harness);
+
+    const result = await act(() =>
+      harness.hook().importExternalSession(importRequest({ provider: "codex" })),
+    );
+    const sent = await act(() =>
+      harness.hook().sendFollowUp({
+        threadId: result?.threadId ?? "",
+        prompt: "continue from the imported session",
+        launch: defaultAgentLaunchOptions("codex"),
+      }),
+    );
+
+    expect(result?.alreadyImported).toBe(false);
+    expect(sent).toBe(true);
+    expect(harness.startedRequests[harness.startedRequests.length - 1]).toEqual(
+      expect.objectContaining({
+        projectRoot: ROOT,
+        repositoryRoot: ROOT,
+        cwd: ROOT,
+        resumeSessionId: EXTERNAL_ID,
+      }),
+    );
     harness.unmount();
   });
 

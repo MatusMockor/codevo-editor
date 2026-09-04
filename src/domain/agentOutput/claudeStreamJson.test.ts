@@ -233,7 +233,7 @@ describe("parseClaudeStreamJsonLine bounds and fail-closed handling", () => {
             resetsLabel: null,
           },
           {
-            id: "seven_day_overage_included",
+            id: "seven_day_fable",
             label: "Weekly Fable limit",
             usedPercent: 27,
             windowDurationMinutes: 10_080,

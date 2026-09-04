@@ -102,7 +102,12 @@ describe("agent output parser fixtures", () => {
         kind: "result",
         text: "done",
         isError: false,
-        usage: { inputTokens: 58, outputTokens: 163, contextTokens: 64_935 },
+        usage: {
+          inputTokens: 58,
+          outputTokens: 163,
+          contextTokens: 64_935,
+          costUsd: 0.38912100000000005,
+        },
       },
     ]);
     expect(parsed.reportedSessionIds).toEqual([CLAUDE_SESSION_ID]);
@@ -117,7 +122,7 @@ describe("agent output parser fixtures", () => {
         kind: "result",
         text: "hello",
         isError: false,
-        usage: { inputTokens: 2, outputTokens: 4, contextTokens: 32_591 },
+        usage: { inputTokens: 2, outputTokens: 4, contextTokens: 32_591, costUsd: 0.34952 },
       },
     ]);
     expect(parsed.reportedSessionIds).toEqual([CLAUDE_SESSION_ID]);

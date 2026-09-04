@@ -672,6 +672,8 @@ const CLAUDE_LAUNCH: AgentLaunchOptions = AgentLaunchOptions::ClaudeCode {
     mode: ClaudePermissionMode::Default,
     effort: ClaudeEffortChoice::Default,
     context: ClaudeContextChoice::TwoHundredK,
+    fast_mode: false,
+    thinking_mode: false,
 };
 const CODEX_LAUNCH: AgentLaunchOptions = AgentLaunchOptions::Codex {
     model: CodexModelChoice::Default,

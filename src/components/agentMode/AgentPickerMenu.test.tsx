@@ -72,6 +72,20 @@ describe("AgentPickerMenu", () => {
     );
   });
 
+  it("uses a semantic option icon instead of a selected checkmark", () => {
+    render({
+      options: [agentPickerOption("full", "Full access", null, null, null, <svg data-mode-icon />)],
+      value: "full",
+    });
+
+    click(trigger());
+
+    const mark = options()[0]?.querySelector(".agent-picker__mark");
+    expect(mark?.classList.contains("agent-picker__mark--icon")).toBe(true);
+    expect(mark?.querySelector("[data-mode-icon]")).not.toBeNull();
+    expect(mark?.querySelector(".lucide-check")).toBeNull();
+  });
+
   it("reports a picked option, closes and returns focus to the trigger", () => {
     const onChange = vi.fn();
     render({ onChange });

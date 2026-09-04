@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import {
-  CLAUDE_EFFORT_CHOICES,
-  CLAUDE_MODEL_CHOICES,
-  CLAUDE_PERMISSION_MODES,
-  CODEX_EXECUTION_MODES,
-  CODEX_MODEL_CHOICES,
-} from "../../domain/agentLaunch";
+import { CLAUDE_EFFORT_CHOICES, CODEX_MODEL_CHOICES } from "../../domain/agentLaunch";
 import {
   MAX_AGENT_MODEL_QUERY_LENGTH,
   agentLaunchAccess,
@@ -64,22 +58,44 @@ describe("agentLaunchPresentation", () => {
 
     expect(agentLaunchWithModel(codex, "gpt-5.5")).toEqual({ ...codex, model: "gpt-5.5" });
     expect(agentLaunchWithMode(codex, "readOnly")).toEqual({ ...codex, mode: "readOnly" });
-    expect(agentLaunchWithModel(claude, "opus")).toEqual({ ...claude, model: "opus" });
+    expect(agentLaunchWithModel(claude, "claude-opus-5")).toEqual({
+      ...claude,
+      model: "claude-opus-5",
+      effort: "high",
+      context: "1m",
+      fastMode: false,
+      thinkingMode: false,
+    });
     expect(agentLaunchWithMode(claude, "plan")).toEqual({ ...claude, mode: "plan" });
   });
 
   it("offers exactly the closed domain choices per provider", () => {
     expect(agentLaunchModelChoices("claudeCode").map((choice) => choice.value)).toEqual([
-      ...CLAUDE_MODEL_CHOICES,
+      "claude-fable-5-1",
+      "claude-opus-5",
+      "claude-sonnet-5",
+      "claude-fable-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-opus-4-5",
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5",
     ]);
     expect(agentLaunchModeChoices("claudeCode").map((choice) => choice.value)).toEqual([
-      ...CLAUDE_PERMISSION_MODES,
+      "supervised",
+      "acceptEdits",
+      "auto",
+      "bypassPermissions",
     ]);
     expect(agentLaunchModelChoices("codex").map((choice) => choice.value)).toEqual([
-      ...CODEX_MODEL_CHOICES,
+      ...CODEX_MODEL_CHOICES.filter((model) => model !== "default"),
     ]);
     expect(agentLaunchModeChoices("codex").map((choice) => choice.value)).toEqual([
-      ...CODEX_EXECUTION_MODES,
+      "readOnly",
+      "workspaceWrite",
+      "auto",
+      "dangerFullAccess",
     ]);
   });
 
@@ -98,7 +114,7 @@ describe("agentLaunchPresentation", () => {
     }
   });
 
-  it("names the provider default without inventing a model name", () => {
+  it("resolves the Claude catalog default to a real model name", () => {
     expect(
       agentLaunchModelLabel({
         provider: "claudeCode",
@@ -106,9 +122,9 @@ describe("agentLaunchPresentation", () => {
         mode: "default",
         effort: "default",
       }),
-    ).toBe("Auto (Claude Code)");
+    ).toBe("Claude Sonnet 5");
     expect(agentLaunchModelLabel({ provider: "codex", model: "default", mode: "default" })).toBe(
-      "Auto (Codex)",
+      "GPT-5.6 Sol",
     );
     expect(
       agentLaunchModelHint({
@@ -117,7 +133,7 @@ describe("agentLaunchPresentation", () => {
         mode: "default",
         effort: "default",
       }),
-    ).toBe("No model override. Claude CLI chooses the model from its settings.");
+    ).toContain("Claude model catalog");
     expect(
       agentLaunchModeLabel({
         provider: "claudeCode",
@@ -142,20 +158,20 @@ describe("agentLaunchPresentation", () => {
       effort: "default",
     });
 
-    expect(agentLaunchModelLabel(claude("fable"))).toBe("Claude Fable 5");
+    expect(agentLaunchModelLabel(claude("fable"))).toBe("Claude Fable 5.1");
     expect(agentLaunchModelLabel(claude("opus"))).toBe("Claude Opus 5");
     expect(agentLaunchModelLabel(claude("sonnet"))).toBe("Claude Sonnet 5");
     expect(agentLaunchModelMeta(claude("opus"))).toBe("opus");
     expect(agentLaunchModeChoices("claudeCode").map((choice) => choice.label)).toEqual([
-      "Auto",
-      "Plan mode",
+      "Supervised",
       "Auto-accept edits",
+      "Auto",
       "Full access",
     ]);
     expect(agentLaunchModeChoices("codex").map((choice) => choice.label)).toEqual([
-      "Auto",
       "Read-only",
       "Workspace write",
+      "Auto",
       "Full access",
     ]);
   });
@@ -257,14 +273,17 @@ describe("agentLaunchPresentation", () => {
   it("names every claude effort level exactly once with a one line hint", () => {
     const effortChoices = agentLaunchEffortChoices();
 
-    expect(effortChoices.map((choice) => choice.value)).toEqual([...CLAUDE_EFFORT_CHOICES]);
+    expect(effortChoices.map((choice) => choice.value)).toEqual(
+      CLAUDE_EFFORT_CHOICES.filter((effort) => effort !== "default"),
+    );
     expect(effortChoices.map((choice) => choice.label)).toEqual([
-      "Default effort",
       "Low",
       "Medium",
       "High",
       "Extra high",
       "Max",
+      "Ultracode",
+      "Ultrathink",
     ]);
     for (const choice of effortChoices) {
       expect(choice.tone).toBeNull();
@@ -272,7 +291,7 @@ describe("agentLaunchPresentation", () => {
       expect(choice.hint).not.toContain("\n");
     }
     expect(new Set(effortChoices.map((choice) => choice.hint)).size).toBe(
-      CLAUDE_EFFORT_CHOICES.length,
+      CLAUDE_EFFORT_CHOICES.length - 1,
     );
   });
 
@@ -339,34 +358,53 @@ describe("agentLaunchPresentation", () => {
 describe("agent model rows", () => {
   it("lists the closed model choices per provider with a provider name and favorite key", () => {
     expect(agentModelRows("claudeCode").map((row) => row.value)).toEqual([
-      "default",
-      "fable",
-      "opus",
-      "sonnet",
+      "claude-fable-5-1",
+      "claude-opus-5",
+      "claude-sonnet-5",
+      "claude-fable-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-opus-4-5",
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5",
     ]);
     expect(agentModelRows("codex").map((row) => row.value)).toEqual([
       "default",
-      "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
       "gpt-5.4",
     ]);
-    const opus = agentModelRows("claudeCode")[2];
+    const opus = agentModelRows("claudeCode")[1];
     expect(opus?.providerName).toBe("Claude Code");
-    expect(opus?.favoriteKey).toBe(agentModelFavoriteKey("claudeCode", "opus"));
+    expect(opus?.favoriteKey).toBe(agentModelFavoriteKey("claudeCode", "claude-opus-5"));
+    expect(agentModelRows("claudeCode")[3]?.isLegacy).toBe(true);
     expect(agentModelRows("codex")[0]?.providerName).toBe("Codex");
   });
 
   it("matches a literal case-folded query against the label and provider name only", () => {
     const rows = agentModelRows("claudeCode");
     expect(filterAgentModelRows(rows, "all", new Set(), "OPUS").map((r) => r.value)).toEqual([
-      "opus",
+      "claude-opus-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-opus-4-5",
     ]);
-    expect(filterAgentModelRows(rows, "all", new Set(), "  claude code ").length).toBe(4);
+    expect(filterAgentModelRows(rows, "all", new Set(), "  claude code ").length).toBe(10);
     expect(filterAgentModelRows(rows, "all", new Set(), ".*").length).toBe(0);
     expect(filterAgentModelRows(rows, "all", new Set(), "latest").length).toBe(0);
-    expect(filterAgentModelRows(rows, "all", new Set(), "").length).toBe(4);
+    expect(filterAgentModelRows(rows, "all", new Set(), "").length).toBe(10);
+  });
+
+  it("filters models that require a newer Claude CLI", () => {
+    expect(agentModelRows("claudeCode", null, "2.1.200").map((row) => row.value)).not.toContain(
+      "claude-fable-5-1",
+    );
+    expect(agentModelRows("claudeCode", null, "2.1.260").map((row) => row.value)).toContain(
+      "claude-fable-5-1",
+    );
   });
 
   it("bounds the query length and keeps only starred rows under the favorites filter", () => {

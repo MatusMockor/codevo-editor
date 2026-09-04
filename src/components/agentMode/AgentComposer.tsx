@@ -14,9 +14,9 @@ import {
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
 import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
-import { defaultAgentComposerLaunch } from "./agentComposerLaunch";
+import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentLaunchControls } from "./AgentLaunchControls";
-import { agentLaunchMetaLabel } from "./agentLaunchPresentation";
+import { agentLaunchForDispatch, agentLaunchMetaLabel } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 import { AgentPickerMenu } from "./AgentPickerMenu";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
@@ -117,8 +117,13 @@ export function AgentComposer({
   const followUp = mode.kind === "followUp";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason = composerTargetReason(followUp, target);
-  const effectiveLaunch =
+  const selectedLaunch =
     launch.provider === launchProvider ? launch : defaultAgentComposerLaunch(launchProvider);
+  const normalizedLaunch = normalizeAgentComposerLaunch(selectedLaunch);
+  const discovery = providerManagement?.cliDiscovery[normalizedLaunch.provider];
+  const configuredModel =
+    discovery?.kind === "detected" ? (discovery.configuredModel ?? null) : null;
+  const effectiveLaunch = agentLaunchForDispatch(normalizedLaunch, configuredModel);
   const dangerousLaunch = agentLaunchIsDangerous(effectiveLaunch);
   const providerReason =
     providerEnabled[effectiveLaunch.provider] === false

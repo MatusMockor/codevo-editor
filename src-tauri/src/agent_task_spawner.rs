@@ -119,6 +119,7 @@ pub fn plan_agent_invocation(
     if !launch.matches(invocation) {
         return Err(AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR.to_string());
     }
+    launch.validate_capabilities().map_err(str::to_string)?;
     if let Some(candidate) = resume_session_id {
         validate_resume_session_id(candidate)?;
     }
@@ -224,6 +225,7 @@ fn agent_invocation_args(
     template.extend_from_slice(launch.model_args());
     template.extend_from_slice(launch.mode_args(resumed));
     template.extend_from_slice(launch.effort_args());
+    template.extend_from_slice(launch.settings_args());
     if let Some(session_id) = resume_session_id {
         match invocation {
             AgentCliInvocation::ClaudeCode => template.extend_from_slice(&["--resume", session_id]),
@@ -231,10 +233,11 @@ fn agent_invocation_args(
         }
     }
     template.push("--");
+    let prompt = launch.prompt(prompt);
     template
         .into_iter()
         .map(str::to_string)
-        .chain(std::iter::once(prompt.to_string()))
+        .chain(std::iter::once(prompt.into_owned()))
         .collect()
 }
 
@@ -532,11 +535,21 @@ mod tests {
 
     const SESSION_ID: &str = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
 
-    const CLAUDE_MODELS: [ClaudeModelChoice; 4] = [
+    const CLAUDE_MODELS: [ClaudeModelChoice; 14] = [
         ClaudeModelChoice::Default,
         ClaudeModelChoice::Fable,
         ClaudeModelChoice::Opus,
         ClaudeModelChoice::Sonnet,
+        ClaudeModelChoice::ClaudeFable51,
+        ClaudeModelChoice::ClaudeFable5,
+        ClaudeModelChoice::ClaudeOpus5,
+        ClaudeModelChoice::ClaudeOpus48,
+        ClaudeModelChoice::ClaudeOpus47,
+        ClaudeModelChoice::ClaudeOpus46,
+        ClaudeModelChoice::ClaudeOpus45,
+        ClaudeModelChoice::ClaudeSonnet5,
+        ClaudeModelChoice::ClaudeSonnet46,
+        ClaudeModelChoice::ClaudeHaiku45,
     ];
     const CLAUDE_MODES: [ClaudePermissionMode; 4] = [
         ClaudePermissionMode::Default,
@@ -559,13 +572,15 @@ mod tests {
         CodexExecutionMode::DangerFullAccess,
     ];
 
-    const CLAUDE_EFFORTS: [ClaudeEffortChoice; 6] = [
+    const CLAUDE_EFFORTS: [ClaudeEffortChoice; 8] = [
         ClaudeEffortChoice::Default,
         ClaudeEffortChoice::Low,
         ClaudeEffortChoice::Medium,
         ClaudeEffortChoice::High,
         ClaudeEffortChoice::Xhigh,
         ClaudeEffortChoice::Max,
+        ClaudeEffortChoice::Ultracode,
+        ClaudeEffortChoice::Ultrathink,
     ];
 
     fn claude_default() -> AgentLaunchOptions {
@@ -574,6 +589,8 @@ mod tests {
             mode: ClaudePermissionMode::Default,
             effort: ClaudeEffortChoice::Default,
             context: ClaudeContextChoice::OneM,
+            fast_mode: false,
+            thinking_mode: false,
         }
     }
 
@@ -909,6 +926,8 @@ mod tests {
                     mode: ClaudePermissionMode::AcceptEdits,
                     effort: ClaudeEffortChoice::Default,
                     context: ClaudeContextChoice::TwoHundredK,
+                    fast_mode: false,
+                    thinking_mode: false,
                 }
             ),
             [
@@ -925,6 +944,62 @@ mod tests {
                 "--",
                 "do it"
             ]
+        );
+    }
+
+    #[test]
+    fn claude_ultracode_and_fast_mode_reach_the_cli_as_runtime_settings() {
+        assert_eq!(
+            agent_invocation_args(
+                AgentCliInvocation::ClaudeCode,
+                "coordinate the fix",
+                None,
+                AgentLaunchOptions::ClaudeCode {
+                    model: ClaudeModelChoice::Opus,
+                    mode: ClaudePermissionMode::BypassPermissions,
+                    effort: ClaudeEffortChoice::Ultracode,
+                    context: ClaudeContextChoice::OneM,
+                    fast_mode: true,
+                    thinking_mode: false,
+                },
+            ),
+            [
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--model",
+                "opus[1m]",
+                "--dangerously-skip-permissions",
+                "--effort",
+                "xhigh",
+                "--settings",
+                r#"{"fastMode":true,"ultracode":true}"#,
+                "--",
+                "coordinate the fix",
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_ultrathink_changes_the_dispatched_prompt_without_an_invalid_effort_flag() {
+        let args = agent_invocation_args(
+            AgentCliInvocation::ClaudeCode,
+            "trace the race",
+            None,
+            AgentLaunchOptions::ClaudeCode {
+                model: ClaudeModelChoice::Fable,
+                mode: ClaudePermissionMode::BypassPermissions,
+                effort: ClaudeEffortChoice::Ultrathink,
+                context: ClaudeContextChoice::OneM,
+                fast_mode: false,
+                thinking_mode: false,
+            },
+        );
+        assert!(!args.iter().any(|arg| arg == "--effort"));
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("Ultrathink:\ntrace the race")
         );
     }
 
@@ -965,6 +1040,8 @@ mod tests {
                         mode,
                         effort,
                         context: ClaudeContextChoice::TwoHundredK,
+                        fast_mode: false,
+                        thinking_mode: false,
                     };
                     for resume in [None, Some(SESSION_ID)] {
                         let mut expected: Vec<String> =
@@ -980,12 +1057,14 @@ mod tests {
                                 .map(|arg| (*arg).to_string()),
                         );
                         expected.extend(launch.effort_args().iter().map(|arg| (*arg).to_string()));
+                        expected
+                            .extend(launch.settings_args().iter().map(|arg| (*arg).to_string()));
                         if let Some(session_id) = resume {
                             expected.push("--resume".to_string());
                             expected.push(session_id.to_string());
                         }
                         expected.push("--".to_string());
-                        expected.push("do it".to_string());
+                        expected.push(launch.prompt("do it").into_owned());
                         assert_eq!(
                             agent_invocation_args(
                                 AgentCliInvocation::ClaudeCode,

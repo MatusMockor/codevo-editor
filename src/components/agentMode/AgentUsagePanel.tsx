@@ -42,6 +42,7 @@ export function AgentUsagePanel({
     () => aggregateAgentUsage(threads, period, nowEpochMs),
     [nowEpochMs, period, threads],
   );
+  const spend = useMemo(() => localSpendSummary(usage.providers), [usage.providers]);
   const handlePeriodKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
     const target = periodTabIndex(event.key, index);
     if (target === null) return;
@@ -95,6 +96,25 @@ export function AgentUsagePanel({
             ))}
           </div>
         </header>
+        <section aria-label="API-equivalent usage" className="agent-usage-panel__spend">
+          <div>
+            <span>Estimated cost</span>
+            <strong>{spend.costUsd === null ? "—" : formatUsd(spend.costUsd)}</strong>
+          </div>
+          <div>
+            <span>Processed tokens</span>
+            <strong>{spend.tokens === null ? "—" : formatInteger(spend.tokens)}</strong>
+          </div>
+          <div>
+            <span>Completed turns</span>
+            <strong>{formatInteger(spend.completedTurns)}</strong>
+          </div>
+          <p>
+            Provider-reported API equivalent for {spend.costMeasuredTurns} of{" "}
+            {spend.costEligibleTurns} completed turns. Subscription plans are not billed at this
+            amount.
+          </p>
+        </section>
         <div
           aria-labelledby={`agent-usage-period-${period}`}
           className="agent-usage-panel__provider-grid"
@@ -250,6 +270,14 @@ function Metrics({ metrics, compact = false }: { metrics: AgentUsageMetrics; com
       {!compact ? (
         <Metric label="Tokens" value={totalTokens === null ? "—" : formatInteger(totalTokens)} />
       ) : null}
+      {!compact ? (
+        <Metric
+          label="Est. cost"
+          value={
+            usage.costMeasuredTurns === 0 || usage.costUsd === null ? "—" : formatUsd(usage.costUsd)
+          }
+        />
+      ) : null}
       <Metric label="Wall time" value={durationLabel(metrics.wallTime.totalMs)} />
     </div>
   );
@@ -323,6 +351,51 @@ function formatInteger(value: number): string {
 
 function formatPercent(value: number): string {
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}%`;
+}
+
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: value < 0.01 ? 4 : 2,
+    maximumFractionDigits: value < 0.01 ? 4 : 2,
+  }).format(value);
+}
+
+function localSpendSummary(
+  providers: Readonly<Record<AgentUsageProvider["provider"], AgentUsageProvider>>,
+): {
+  readonly costUsd: number | null;
+  readonly tokens: number | null;
+  readonly completedTurns: number;
+  readonly costMeasuredTurns: number;
+  readonly costEligibleTurns: number;
+} {
+  let costUsd = 0;
+  let tokens = 0;
+  let hasTokens = false;
+  let completedTurns = 0;
+  let costMeasuredTurns = 0;
+  let costEligibleTurns = 0;
+  for (const provider of Object.values(providers)) {
+    const metrics = provider.total;
+    const cli = metrics.cliUsage;
+    completedTurns += metrics.turnsCompleted;
+    costMeasuredTurns += cli.costMeasuredTurns;
+    costEligibleTurns += cli.eligibleTurns;
+    if (cli.costUsd !== null) costUsd += cli.costUsd;
+    if (cli.measuredTurns > 0 && cli.inputTokens !== null && cli.outputTokens !== null) {
+      tokens += cli.inputTokens + cli.outputTokens;
+      hasTokens = true;
+    }
+  }
+  return {
+    costUsd: costMeasuredTurns === 0 ? null : costUsd,
+    tokens: hasTokens ? tokens : null,
+    completedTurns,
+    costMeasuredTurns,
+    costEligibleTurns,
+  };
 }
 
 function resetLabel(epochMs: number | null, label: string | null, nowEpochMs: number): string {

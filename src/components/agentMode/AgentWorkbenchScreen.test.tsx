@@ -160,7 +160,7 @@ describe("AgentWorkbenchScreen", () => {
 
     expect(providerFooter("claudeCode")).not.toBeNull();
     expect(providerFooter("codex")).toBeNull();
-    expect(modelPicker().textContent).toContain("Auto (Claude Code)");
+    expect(modelPicker().textContent).toContain("Claude Sonnet 5");
     expect(prompt().disabled).toBe(false);
     click('button[aria-label="Agent model"]');
     expect(host.querySelector('button[aria-label="Claude Code models"]')).not.toBeNull();
@@ -185,7 +185,7 @@ describe("AgentWorkbenchScreen", () => {
 
     expect(providerFooter("claudeCode")).not.toBeNull();
     expect(providerFooter("codex")).toBeNull();
-    expect(modelPicker().textContent).toContain("Auto (Claude Code)");
+    expect(modelPicker().textContent).toContain("Claude Sonnet 5");
     expect(modelPicker().disabled).toBe(false);
     expect(prompt().disabled).toBe(false);
     expect(host.querySelector('button[aria-label="Claude Code models"]')).not.toBeNull();
@@ -206,7 +206,7 @@ describe("AgentWorkbenchScreen", () => {
       }),
     );
 
-    expect(modelPicker().textContent).toContain("Auto (Claude Code)");
+    expect(modelPicker().textContent).toContain("Claude Sonnet 5");
     expect(prompt().disabled).toBe(false);
 
     selectedProviderAuthority = { settingsRevision: 3, provider: "codex" };
@@ -227,7 +227,7 @@ describe("AgentWorkbenchScreen", () => {
 
     expect(providerFooter("claudeCode")).toBeNull();
     expect(providerFooter("codex")).toBeNull();
-    expect(modelPicker().textContent).toContain("Auto (Codex)");
+    expect(modelPicker().textContent).toContain("GPT-5.6 Sol");
     expect(modelPicker().disabled).toBe(true);
     expect(prompt().disabled).toBe(true);
 
@@ -241,7 +241,7 @@ describe("AgentWorkbenchScreen", () => {
     );
 
     expect(providerFooter("claudeCode")).not.toBeNull();
-    expect(modelPicker().textContent).toContain("Auto (Claude Code)");
+    expect(modelPicker().textContent).toContain("Claude Sonnet 5");
     expect(prompt().disabled).toBe(false);
   });
 

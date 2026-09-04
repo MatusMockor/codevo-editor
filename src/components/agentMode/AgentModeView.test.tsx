@@ -20,6 +20,7 @@ import type { AgentTurnEvent } from "../../domain/agentThread";
 import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
 import { workbenchAgentCommands } from "../../application/workbenchAgentCommands";
 import { defaultAgentComposerLaunch } from "./agentComposerLaunch";
+import { agentLaunchForDispatch } from "./agentLaunchPresentation";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
 import { WorkbenchFrameResponsiveContext } from "../workbenchFrameResponsiveContext";
 import type { ResponsivePanelRestore } from "../../domain/agentWorkbenchResponsiveLayout";
@@ -36,6 +37,7 @@ import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 
 const ROOT = "/workspace/app";
+const DEFAULT_DISPATCH_LAUNCH = agentLaunchForDispatch(defaultAgentComposerLaunch("claudeCode"));
 const NESTED = "/workspace/app/packages/api";
 const OTHER_ROOT = "/workspace/api-service";
 const NOW_TICK_MS = 3_600_000;
@@ -300,7 +302,7 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: "dirty-preview-key",
-      launch: defaultAgentComposerLaunch("claudeCode"),
+      launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
   });
@@ -333,7 +335,7 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: "dirty-preview-key",
-      launch: defaultAgentComposerLaunch("claudeCode"),
+      launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
   });
@@ -352,7 +354,7 @@ describe("AgentModeView", () => {
       prompt: "Update the router",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
-      launch: defaultAgentComposerLaunch("claudeCode"),
+      launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
   });
@@ -478,7 +480,7 @@ describe("AgentModeView", () => {
     expect(sendFollowUp).toHaveBeenCalledWith({
       threadId: "agt-1",
       prompt: "Also update the tests",
-      launch: defaultAgentComposerLaunch("claudeCode"),
+      launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
     expect(promptField().value).toBe("");
@@ -1069,7 +1071,7 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "worktree",
       unsafeInPlaceConfirmationKey: null,
-      launch: defaultAgentComposerLaunch("claudeCode"),
+      launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
   });
@@ -1112,7 +1114,7 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
-      launch: defaultAgentComposerLaunch("claudeCode"),
+      launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
   });
@@ -1275,7 +1277,7 @@ describe("AgentModeView", () => {
   it("falls back to the provider default when the root has no remembered launch", () => {
     render({ agents: surface({ agentCliKind: "codex" }) });
 
-    expect(launchSelect("agent-launch-model").value).toBe("default");
+    expect(launchSelect("agent-launch-model").value).toBe("gpt-5.6-sol");
     expect(launchSelect("agent-launch-mode").value).toBe("dangerFullAccess");
     expect(host.textContent).toContain("Full access");
   });
@@ -1291,9 +1293,9 @@ describe("AgentModeView", () => {
       projects: [activeProject(), backgroundProject()],
     });
 
-    chooseLaunch("agent-launch-model", "fable");
+    chooseLaunch("agent-launch-model", "claude-fable-5-1");
 
-    expect(launchSelect("agent-launch-model").value).toBe("fable");
+    expect(launchSelect("agent-launch-model").value).toBe("claude-fable-5-1");
 
     chooseScope(OTHER_ROOT, OTHER_ROOT);
 
@@ -1314,7 +1316,7 @@ describe("AgentModeView", () => {
       }),
     });
 
-    expect(launchSelect("agent-launch-model").value).toBe("default");
+    expect(launchSelect("agent-launch-model").value).toBe("gpt-5.6-sol");
   });
 
   it("carries full access into the start without a second confirmation", async () => {
@@ -1334,13 +1336,7 @@ describe("AgentModeView", () => {
       prompt: "Fix the parser",
       isolation: "in-place",
       unsafeInPlaceConfirmationKey: null,
-      launch: {
-        provider: "claudeCode",
-        model: "default",
-        mode: "bypassPermissions",
-        effort: "high",
-        context: "1m",
-      },
+      launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
     expect(submitButton().disabled).toBe(true);
@@ -1351,7 +1347,7 @@ describe("AgentModeView", () => {
 
     expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
 
-    chooseLaunch("agent-launch-model", "opus");
+    chooseLaunch("agent-launch-model", "claude-opus-5");
 
     expect(launchSelect("agent-launch-mode").value).toBe("bypassPermissions");
     expect(host.querySelector("#agent-launch-danger-confirm")).toBeNull();
@@ -1362,7 +1358,7 @@ describe("AgentModeView", () => {
     render({ agents: surface({ sendFollowUp, threads: [threadView({ threadId: "agt-1" })] }) });
 
     click('[data-thread-id="agt-1"]');
-    chooseLaunch("agent-launch-model", "sonnet");
+    chooseLaunch("agent-launch-model", "claude-opus-5");
     typePrompt("Also update the docs");
     await submitFormAsync();
 
@@ -1371,10 +1367,12 @@ describe("AgentModeView", () => {
       prompt: "Also update the docs",
       launch: {
         provider: "claudeCode",
-        model: "sonnet",
+        model: "claude-opus-5",
         mode: "bypassPermissions",
         effort: "high",
         context: "1m",
+        fastMode: false,
+        thinkingMode: false,
       },
       dangerousLaunchConfirmed: true,
     });
@@ -1464,8 +1462,8 @@ describe("AgentModeView", () => {
     expect(host.querySelector("select#agent-project")).toBeNull();
 
     click('[data-thread-id="agt-b"]');
-    chooseLaunch("agent-launch-model", "sonnet");
-    expect(launchSelect("agent-launch-model").value).toBe("sonnet");
+    chooseLaunch("agent-launch-model", "claude-opus-5");
+    expect(launchSelect("agent-launch-model").value).toBe("claude-opus-5");
 
     typePrompt("Also update the docs");
     await submitFormAsync();
@@ -1475,10 +1473,12 @@ describe("AgentModeView", () => {
       prompt: "Also update the docs",
       launch: {
         provider: "claudeCode",
-        model: "sonnet",
+        model: "claude-opus-5",
         mode: "bypassPermissions",
         effort: "high",
         context: "1m",
+        fastMode: false,
+        thinkingMode: false,
       },
       dangerousLaunchConfirmed: true,
     });

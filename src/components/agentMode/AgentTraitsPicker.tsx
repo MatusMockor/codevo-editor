@@ -1,16 +1,18 @@
-import { Check, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
   AgentLaunchOptions,
   ClaudeContextChoice,
   ClaudeEffortChoice,
 } from "../../domain/agentLaunch";
-import { CLAUDE_CONTEXT_CHOICES, CLAUDE_EFFORT_CHOICES } from "../../domain/agentLaunch";
 import {
+  agentClaudeLaunchTraits,
   agentLaunchContextLabel,
   agentLaunchEffortLabel,
   agentLaunchWithContext,
   agentLaunchWithEffort,
+  agentLaunchWithFastMode,
+  agentLaunchWithThinkingMode,
 } from "./agentLaunchPresentation";
 import { useAgentPopover } from "./agentPopover";
 
@@ -21,13 +23,14 @@ interface AgentTraitsPickerProps {
   onChange(next: AgentLaunchOptions): void;
 }
 
-const EFFORT_LABELS: Readonly<Record<ClaudeEffortChoice, string>> = {
-  default: "CLI default",
+const EFFORT_LABELS: Readonly<Record<Exclude<ClaudeEffortChoice, "default">, string>> = {
   low: "Low",
   medium: "Medium",
   high: "High",
-  xhigh: "Extra high",
+  xhigh: "Extra High",
   max: "Max",
+  ultracode: "Ultracode",
+  ultrathink: "Ultrathink",
 };
 
 const CONTEXT_LABELS: Readonly<Record<ClaudeContextChoice, string>> = {
@@ -42,7 +45,22 @@ export function AgentTraitsPicker({
   onChange,
 }: AgentTraitsPickerProps) {
   const popover = useAgentPopover("start", disabled);
-  const context = launch.context ?? (configuredModel?.endsWith("[1m]") ? "1m" : "200k");
+  const traits = agentClaudeLaunchTraits(launch, configuredModel);
+  const effort =
+    launch.effort !== "default" && traits.efforts.includes(launch.effort)
+      ? launch.effort
+      : traits.defaultEffort;
+  const context =
+    launch.context !== undefined && traits.contextWindows.includes(launch.context)
+      ? launch.context
+      : configuredModel?.endsWith("[1m]")
+        ? "1m"
+        : traits.defaultContext;
+  const summary = [
+    ...(traits.efforts.length > 0 ? [agentLaunchEffortLabel({ ...launch, effort })] : []),
+    ...(context === null ? [] : [agentLaunchContextLabel(context)]),
+    ...(traits.thinkingMode ? [`Thinking ${launch.thinkingMode === true ? "On" : "Off"}`] : []),
+  ].join(" · ");
   return (
     <div
       className={`agent-picker${popover.open ? " agent-picker--open" : ""}`}
@@ -62,9 +80,7 @@ export function AgentTraitsPicker({
         ref={popover.triggerRef}
         type="button"
       >
-        <span className="agent-picker__value">
-          {agentLaunchEffortLabel(launch)} · {agentLaunchContextLabel(context)}
-        </span>
+        <span className="agent-picker__value">{summary}</span>
         <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={12} />
       </button>
       {popover.open && (
@@ -80,26 +96,70 @@ export function AgentTraitsPicker({
           role="dialog"
           style={popover.style}
         >
-          <TraitGroup label="Reasoning">
-            {CLAUDE_EFFORT_CHOICES.map((effort) => (
+          {traits.efforts.length > 0 && (
+            <TraitGroup label="Reasoning">
+              {traits.efforts.map((choice) => (
+                <TraitOption
+                  checked={effort === choice}
+                  description={
+                    choice === "ultracode"
+                      ? "xhigh effort plus multi-agent workflow orchestration"
+                      : null
+                  }
+                  isDefault={traits.defaultEffort === choice}
+                  key={choice}
+                  label={EFFORT_LABELS[choice]}
+                  onSelect={() => onChange(agentLaunchWithEffort(launch, choice, configuredModel))}
+                />
+              ))}
+            </TraitGroup>
+          )}
+          {traits.contextWindows.length > 0 && context !== null && (
+            <TraitGroup label="Context Window">
+              {traits.contextWindows.map((choice) => (
+                <TraitOption
+                  checked={context === choice}
+                  isDefault={traits.defaultContext === choice}
+                  key={choice}
+                  label={CONTEXT_LABELS[choice]}
+                  onSelect={() => onChange(agentLaunchWithContext(launch, choice, configuredModel))}
+                />
+              ))}
+            </TraitGroup>
+          )}
+          {traits.fastMode && (
+            <TraitGroup label="Fast Mode">
               <TraitOption
-                checked={launch.effort === effort}
-                key={effort}
-                label={EFFORT_LABELS[effort]}
-                onSelect={() => onChange(agentLaunchWithEffort(launch, effort))}
+                checked={launch.fastMode === true}
+                isDefault={false}
+                label="On"
+                onSelect={() => onChange(agentLaunchWithFastMode(launch, true, configuredModel))}
               />
-            ))}
-          </TraitGroup>
-          <TraitGroup label="Context window">
-            {CLAUDE_CONTEXT_CHOICES.map((choice) => (
               <TraitOption
-                checked={context === choice}
-                key={choice}
-                label={CONTEXT_LABELS[choice]}
-                onSelect={() => onChange(agentLaunchWithContext(launch, choice, configuredModel))}
+                checked={launch.fastMode !== true}
+                label="Off"
+                onSelect={() => onChange(agentLaunchWithFastMode(launch, false, configuredModel))}
               />
-            ))}
-          </TraitGroup>
+            </TraitGroup>
+          )}
+          {traits.thinkingMode && (
+            <TraitGroup label="Thinking">
+              <TraitOption
+                checked={launch.thinkingMode === true}
+                label="On"
+                onSelect={() =>
+                  onChange(agentLaunchWithThinkingMode(launch, true, configuredModel))
+                }
+              />
+              <TraitOption
+                checked={launch.thinkingMode !== true}
+                label="Off"
+                onSelect={() =>
+                  onChange(agentLaunchWithThinkingMode(launch, false, configuredModel))
+                }
+              />
+            </TraitGroup>
+          )}
         </div>
       )}
     </div>
@@ -117,10 +177,14 @@ function TraitGroup({ children, label }: { readonly children: ReactNode; readonl
 
 function TraitOption({
   checked,
+  description = null,
+  isDefault = false,
   label,
   onSelect,
 }: {
   readonly checked: boolean;
+  readonly description?: string | null;
+  readonly isDefault?: boolean;
   readonly label: string;
   onSelect(): void;
 }) {
@@ -132,10 +196,15 @@ function TraitOption({
       role="radio"
       type="button"
     >
-      <span aria-hidden="true" className="agent-picker__mark">
-        {checked && <Check size={12} />}
+      <span className="agent-traits-picker__copy">
+        <span className="agent-picker__label">
+          {label}
+          {isDefault && <span className="agent-traits-picker__default">Default</span>}
+        </span>
+        {description !== null && (
+          <span className="agent-traits-picker__description">{description}</span>
+        )}
       </span>
-      <span className="agent-picker__label">{label}</span>
     </button>
   );
 }

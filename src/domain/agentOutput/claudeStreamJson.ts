@@ -62,7 +62,7 @@ function claudeLimitWindow(id: string, value: unknown): AgentAccountUsageWindow 
       ? resetsAtSeconds * 1_000
       : null;
   return {
-    id,
+    id: id === "seven_day_overage_included" ? "seven_day_fable" : id,
     label: claudeLimitLabel(id),
     usedPercent: utilization * 100,
     windowDurationMinutes: id === "five_hour" ? 300 : id.startsWith("seven_day") ? 10_080 : null,
@@ -126,7 +126,7 @@ function parseResultLine(value: Record<string, unknown>): ParsedAgentLine {
     kind: "result",
     text,
     isError: value.is_error === true || value.subtype !== "success",
-    usage: parseUsage(value.usage),
+    usage: parseUsage(value.usage, value.total_cost_usd),
   };
   const sessionId = isAgentSessionId(value.session_id) ? value.session_id : null;
   return { kind: "events", events: [event], sessionId };
@@ -170,7 +170,7 @@ function textEvents(
   return [{ kind, text }];
 }
 
-function parseUsage(value: unknown): AgentTurnUsage | null {
+function parseUsage(value: unknown, totalCostUsd: unknown): AgentTurnUsage | null {
   const usage = objectValue(value);
   if (usage === null) return null;
   const inputTokens = tokenCount(usage.input_tokens);
@@ -179,7 +179,17 @@ function parseUsage(value: unknown): AgentTurnUsage | null {
   const cacheCreationTokens = tokenCount(usage.cache_creation_input_tokens) ?? 0;
   const cacheReadTokens = tokenCount(usage.cache_read_input_tokens) ?? 0;
   const contextTokens = safeTokenSum(inputTokens, cacheCreationTokens, cacheReadTokens);
-  return { inputTokens, outputTokens, contextTokens };
+  const costUsd = nonNegativeFiniteNumber(totalCostUsd);
+  return {
+    inputTokens,
+    outputTokens,
+    contextTokens,
+    ...(costUsd === null ? {} : { costUsd }),
+  };
+}
+
+function nonNegativeFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function safeTokenSum(...values: ReadonlyArray<number>): number | null {

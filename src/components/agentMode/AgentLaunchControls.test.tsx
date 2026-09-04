@@ -35,7 +35,7 @@ describe("AgentLaunchControls", () => {
   it("lists the Claude models and permission modes with a description on every option", () => {
     renderControls({
       provider: "claudeCode",
-      model: "opus",
+      model: "claude-opus-5",
       mode: "acceptEdits",
       effort: "default",
     });
@@ -44,14 +44,18 @@ describe("AgentLaunchControls", () => {
     expect(trigger("agent-launch-mode").textContent).toContain("Auto-accept edits");
 
     open("agent-launch-model");
-    expect(optionValues("agent-launch-model")).toEqual(["default", "fable", "opus", "sonnet"]);
-    expect(selectedOption("agent-launch-model")?.dataset.value).toBe("opus");
+    expect(optionValues("agent-launch-model")).toEqual([
+      "claude-fable-5-1",
+      "claude-opus-5",
+      "claude-sonnet-5",
+    ]);
+    expect(selectedOption("agent-launch-model")?.dataset.value).toBe("claude-opus-5");
 
     open("agent-launch-mode");
     expect(options("agent-launch-mode").map((option) => optionLabel(option))).toEqual([
-      "Auto",
-      "Plan mode",
+      "Supervised",
       "Auto-accept edits",
+      "Auto",
       "Full access",
     ]);
     expect(
@@ -65,7 +69,13 @@ describe("AgentLaunchControls", () => {
   it("offers the reasoning effort for Claude only and reports the picked level", () => {
     const onLaunchChange = vi.fn();
     renderControls(
-      { provider: "claudeCode", model: "opus", mode: "default", effort: "high" },
+      {
+        provider: "claudeCode",
+        model: "opus",
+        mode: "default",
+        effort: "high",
+        context: "200k",
+      },
       onLaunchChange,
     );
 
@@ -81,8 +91,9 @@ describe("AgentLaunchControls", () => {
     expect(onLaunchChange).toHaveBeenCalledWith({
       provider: "claudeCode",
       model: "opus",
-      mode: "default",
+      mode: "bypassPermissions",
       effort: "max",
+      context: "200k",
     });
 
     renderControls({ provider: "codex", model: "default", mode: "default" });
@@ -145,9 +156,9 @@ describe("AgentLaunchControls", () => {
       expect(trigger(id).classList.contains("agent-picker__trigger--ghost")).toBe(true);
       expect(trigger(id).querySelector(".agent-picker__prefix")).toBeNull();
     }
-    expect(trigger("agent-launch-model").textContent).toBe("Auto (Claude Code)");
-    expect(trigger("agent-launch-effort").textContent).toBe("Default effort · 200k");
-    expect(trigger("agent-launch-mode").textContent).toBe("Auto");
+    expect(trigger("agent-launch-model").textContent).toBe("Claude Sonnet 5");
+    expect(trigger("agent-launch-effort").textContent).toBe("High · 1M");
+    expect(trigger("agent-launch-mode").textContent).toBe("Full access");
     const dividers = host.querySelectorAll(".agent-composer__divider");
     expect(dividers).toHaveLength(2);
     expect(dividers[0]?.getAttribute("aria-hidden")).toBe("true");
@@ -160,7 +171,12 @@ describe("AgentLaunchControls", () => {
   });
 
   it("shows an open lock only for a mode that removes the safety checks", () => {
-    renderControls({ provider: "claudeCode", model: "default", mode: "plan", effort: "default" });
+    renderControls({
+      provider: "claudeCode",
+      model: "default",
+      mode: "supervised",
+      effort: "default",
+    });
     expect(trigger("agent-launch-mode").querySelector(".lucide-lock")).not.toBeNull();
     expect(trigger("agent-launch-mode").querySelector(".lucide-lock-open")).toBeNull();
 
@@ -174,7 +190,6 @@ describe("AgentLaunchControls", () => {
 
     open("agent-launch-model");
     expect(options("agent-launch-model").map((option) => optionLabel(option))).toEqual([
-      "Auto (Codex)",
       "GPT-5.6 Sol",
       "GPT-5.6 Terra",
       "GPT-5.6 Luna",
@@ -184,25 +199,30 @@ describe("AgentLaunchControls", () => {
 
     open("agent-launch-mode");
     expect(optionValues("agent-launch-mode")).toEqual([
-      "default",
       "readOnly",
       "workspaceWrite",
+      "auto",
       "dangerFullAccess",
     ]);
   });
 
   it("labels both pickers and describes the current choice for assistive technology", () => {
-    renderControls({ provider: "claudeCode", model: "default", mode: "plan", effort: "default" });
+    renderControls({
+      provider: "claudeCode",
+      model: "default",
+      mode: "supervised",
+      effort: "default",
+    });
 
     expect(trigger("agent-launch-model").getAttribute("aria-label")).toBe("Agent model");
     expect(trigger("agent-launch-mode").getAttribute("aria-label")).toBe("Agent permission mode");
     expect(trigger("agent-launch-mode").getAttribute("aria-haspopup")).toBe("listbox");
-    expect(trigger("agent-launch-mode").title).toContain("plans the work");
+    expect(trigger("agent-launch-mode").title).toContain("Asks before commands");
 
     const modelHint = trigger("agent-launch-model").getAttribute("aria-describedby") ?? "";
     const modeHint = trigger("agent-launch-mode").getAttribute("aria-describedby") ?? "";
-    expect(host.querySelector(`#${modelHint}`)?.textContent).toContain("Claude CLI");
-    expect(host.querySelector(`#${modeHint}`)?.textContent).toContain("plans the work");
+    expect(host.querySelector(`#${modelHint}`)?.textContent).toContain("Claude model catalog");
+    expect(host.querySelector(`#${modeHint}`)?.textContent).toContain("Asks before commands");
     expect(host.querySelector(`#${modeHint}`)?.className).toBe("agent-visually-hidden");
   });
 
@@ -213,13 +233,101 @@ describe("AgentLaunchControls", () => {
       onLaunchChange,
     );
 
-    pick("agent-launch-model", "sonnet");
+    pick("agent-launch-model", "claude-opus-5");
     pick("agent-launch-mode", "bypassPermissions");
 
     expect(onLaunchChange.mock.calls.map(([value]) => value)).toEqual([
-      { provider: "claudeCode", model: "sonnet", mode: "default", effort: "default" },
-      { provider: "claudeCode", model: "default", mode: "bypassPermissions", effort: "default" },
+      {
+        provider: "claudeCode",
+        model: "claude-opus-5",
+        mode: "bypassPermissions",
+        effort: "high",
+        context: "1m",
+        fastMode: false,
+        thinkingMode: false,
+      },
     ]);
+  });
+
+  it("renders the exact Opus capability groups from the model manifest", () => {
+    renderControls({
+      provider: "claudeCode",
+      model: "opus",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "1m",
+      fastMode: false,
+    });
+
+    open("agent-launch-effort");
+    const groups = [...host.querySelectorAll<HTMLElement>('[role="group"]')];
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
+      "Reasoning",
+      "Context Window",
+      "Fast Mode",
+    ]);
+    expect(
+      [...groups[0]!.querySelectorAll<HTMLElement>('[role="radio"]')].map((option) =>
+        option.querySelector(".agent-picker__label")?.childNodes[0]?.textContent?.trim(),
+      ),
+    ).toEqual(["Low", "Medium", "High", "Extra High", "Max", "Ultracode", "Ultrathink"]);
+    expect(groups[0]!.textContent).not.toContain("CLI default");
+    expect(groups[0]!.textContent).toContain("HighDefault");
+    expect(groups[0]!.textContent).toContain(
+      "Ultracodexhigh effort plus multi-agent workflow orchestration",
+    );
+    expect(groups[1]!.textContent).toContain("1MDefault");
+    expect(groups[2]!.textContent).toContain("OnOff");
+    expect(groups[2]!.textContent).not.toContain("Default");
+  });
+
+  it("persists Ultracode and Fast Mode as executable launch options", () => {
+    const onLaunchChange = vi.fn();
+    const launch: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "1m",
+      fastMode: false,
+    };
+    renderControls(launch, onLaunchChange);
+    open("agent-launch-effort");
+    const option = (label: string) =>
+      [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find(
+        (candidate) =>
+          candidate.querySelector(".agent-picker__label")?.childNodes[0]?.textContent?.trim() ===
+          label,
+      );
+
+    act(() => option("Ultracode")?.click());
+    act(() => option("On")?.click());
+
+    expect(onLaunchChange).toHaveBeenNthCalledWith(1, { ...launch, effort: "ultracode" });
+    expect(onLaunchChange).toHaveBeenNthCalledWith(2, { ...launch, fastMode: true });
+  });
+
+  it("uses model-specific capabilities instead of showing unsupported controls", () => {
+    renderControls({
+      provider: "claudeCode",
+      model: "fable",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "1m",
+    });
+    open("agent-launch-effort");
+    expect(host.textContent).toContain("Ultracode");
+    expect(host.textContent).not.toContain("Fast Mode");
+
+    renderControls({
+      provider: "claudeCode",
+      model: "sonnet",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "200k",
+    });
+    expect(host.textContent).not.toContain("Ultracode");
+    expect(host.textContent).toContain("200kDefault");
   });
 
   it("tones plan mode but presents full access as a normal access choice", () => {

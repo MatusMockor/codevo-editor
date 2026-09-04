@@ -4,6 +4,7 @@ import { agentCliVersionLabel } from "../../domain/agentCliVersion";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import { normalizedWorkspaceRootKey } from "../../domain/workspaceRootKey";
 import { AgentStatusBar } from "./AgentStatusBar";
+import { normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { agentLaunchMetaLabel } from "./agentLaunchPresentation";
 import { agentAttentionCount } from "./agentModePresentation";
 
@@ -55,5 +56,6 @@ function resolveLaunch(
 ): AgentLaunchOptions | null {
   const rootKey = normalizedWorkspaceRootKey(workspaceRoot);
   if (rootKey === "") return null;
-  return lastUsedLaunch(rootKey);
+  const launch = lastUsedLaunch(rootKey);
+  return launch === null ? null : normalizeAgentComposerLaunch(launch);
 }

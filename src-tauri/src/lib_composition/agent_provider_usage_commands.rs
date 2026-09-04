@@ -93,11 +93,14 @@ fn parse_claude_usage(stdout: &[u8]) -> Result<Vec<AgentProviderUsageWindow>, St
         if !used_percent.is_finite() || !(0.0..=100.0).contains(&used_percent) {
             continue;
         }
+        let Some((id, display_label, duration)) = claude_usage_window_identity(label.trim()) else {
+            continue;
+        };
         windows.push(AgentProviderUsageWindow {
-            id: format!("claude-{}", windows.len()),
-            label: label.trim().chars().take(96).collect(),
+            id: id.to_string(),
+            label: display_label.to_string(),
             used_percent,
-            window_duration_minutes: None,
+            window_duration_minutes: duration,
             resets_at_epoch_ms: None,
             resets_label: Some(reset.trim().chars().take(160).collect()),
         });
@@ -109,6 +112,17 @@ fn parse_claude_usage(stdout: &[u8]) -> Result<Vec<AgentProviderUsageWindow>, St
         return Err("Claude usage did not include account limit windows.".to_string());
     }
     Ok(windows)
+}
+
+fn claude_usage_window_identity(label: &str) -> Option<(&str, &str, Option<u64>)> {
+    Some(match label {
+        "Current session" => ("five_hour", "5-hour limit", Some(300)),
+        "Current week (all models)" => ("seven_day", "Weekly limit", Some(10_080)),
+        "Current week (Fable)" => ("seven_day_fable", "Weekly Fable limit", Some(10_080)),
+        "Current week (Opus)" => ("seven_day_opus", "Weekly Opus limit", Some(10_080)),
+        "Current week (Sonnet)" => ("seven_day_sonnet", "Weekly Sonnet limit", Some(10_080)),
+        _ => return None,
+    })
 }
 
 fn parse_codex_usage(stdout: &[u8]) -> Result<Vec<AgentProviderUsageWindow>, String> {
@@ -181,11 +195,14 @@ mod tests {
 
     #[test]
     fn parses_claude_session_and_weekly_windows() {
-        let input = r#"{"result":"Current session: 6% used · resets Sep 2 at 10:40pm (Europe/Bratislava)\nCurrent week (all models): 5% used · resets Sep 8 at 8am (Europe/Bratislava)"}"#;
+        let input = r#"{"result":"Current session: 6% used · resets Sep 2 at 10:40pm (Europe/Bratislava)\nCurrent week (all models): 5% used · resets Sep 8 at 8am (Europe/Bratislava)\nCurrent week (Fable): 15% used · resets Sep 8 at 8am (Europe/Bratislava)"}"#;
         let windows = parse_claude_usage(input.as_bytes()).expect("usage");
-        assert_eq!(windows.len(), 2);
+        assert_eq!(windows.len(), 3);
         assert_eq!(windows[0].used_percent, 6.0);
-        assert_eq!(windows[1].label, "Current week (all models)");
+        assert_eq!(windows[0].id, "five_hour");
+        assert_eq!(windows[1].label, "Weekly limit");
+        assert_eq!(windows[2].id, "seven_day_fable");
+        assert_eq!(windows[2].label, "Weekly Fable limit");
     }
 
     #[test]

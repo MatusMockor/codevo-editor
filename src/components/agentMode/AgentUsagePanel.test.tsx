@@ -24,7 +24,7 @@ describe("AgentUsagePanel", () => {
     host.remove();
   });
 
-  it("renders saved-thread metrics with explicit CLI sources and no cost claim", () => {
+  it("renders saved-thread metrics with explicit CLI sources and truthful cost coverage", () => {
     render([thread("claudeCode", "project-a", 5, 7), thread("codex", "project-b", 11, 13)]);
 
     expect(host.querySelector('[aria-label="Usage"]')).not.toBeNull();
@@ -35,7 +35,20 @@ describe("AgentUsagePanel", () => {
     expect(host.textContent).toContain("Output received by Codevo");
     expect(host.textContent).toContain("Unavailable for these saved turns");
     expect(host.textContent).toContain("Older saved turns may not include this measurement");
-    expect(host.textContent?.toLowerCase()).not.toContain("cost");
+    expect(host.textContent).toContain("Estimated cost—");
+    expect(host.textContent).toContain(
+      "Provider-reported API equivalent for 0 of 2 completed turns",
+    );
+  });
+
+  it("shows provider-reported spend after a completed response", () => {
+    render([thread("claudeCode", "project-a", 5, 7, NOW - 5_000, 0.34952)]);
+
+    expect(host.textContent).toContain("Estimated cost$0.35");
+    expect(host.textContent).toContain("Processed tokens12");
+    expect(host.textContent).toContain(
+      "Provider-reported API equivalent for 1 of 1 completed turns",
+    );
   });
 
   it("renders provider account limits separately from local token activity", () => {
@@ -58,7 +71,7 @@ describe("AgentUsagePanel", () => {
                     resetsLabel: "Sep 2 at 10:40pm",
                   },
                   {
-                    id: "seven_day_overage_included",
+                    id: "seven_day_fable",
                     label: "Weekly Fable limit",
                     usedPercent: 27,
                     windowDurationMinutes: 10_080,
@@ -217,6 +230,7 @@ function thread(
   inputTokens: number | null,
   outputTokens: number | null,
   startedAtEpochMs = NOW - 5_000,
+  costUsd?: number,
 ): AgentThread {
   const usage =
     inputTokens === null || outputTokens === null ? null : { inputTokens, outputTokens };
@@ -242,7 +256,14 @@ function thread(
             kind: "result",
             text: "done",
             isError: false,
-            usage: usage === null ? null : { ...usage, contextTokens: usage.inputTokens },
+            usage:
+              usage === null
+                ? null
+                : {
+                    ...usage,
+                    contextTokens: usage.inputTokens,
+                    ...(costUsd === undefined ? {} : { costUsd }),
+                  },
           },
         ],
         eventsTruncated: false,

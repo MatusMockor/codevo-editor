@@ -52,6 +52,29 @@ describe("aggregateAgentUsage", () => {
     });
   });
 
+  it("counts provider cache tokens in processed input instead of under-reporting Claude usage", () => {
+    const cachedUsage: AgentTurnEvent = {
+      kind: "result",
+      text: "",
+      isError: false,
+      usage: { inputTokens: 2, outputTokens: 4, contextTokens: 32_591 },
+    };
+    const result = aggregateAgentUsage(
+      [
+        thread("claudeCode", "project-a", [
+          turn("cached", NOW - 2_000, { kind: "exited", exitCode: 0 }, NOW - 1_000, cachedUsage),
+        ]),
+      ],
+      "today",
+      NOW,
+    );
+
+    expect(result.providers.claudeCode.total.cliUsage).toMatchObject({
+      inputTokens: 32_591,
+      outputTokens: 4,
+    });
+  });
+
   it("uses local calendar boundaries for today, 7 days, and 30 days", () => {
     const today = agentUsagePeriodStart("today", NOW);
     const sevenDays = agentUsagePeriodStart("7days", NOW);
