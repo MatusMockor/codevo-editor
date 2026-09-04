@@ -1,31 +1,33 @@
-import { History, Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { CornerDownLeft, Folder, Search } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ExternalSessionsSurface } from "../../application/agentThreadPorts";
 import type { AgentCliKind } from "../../domain/agentTask";
-import type {
-  ExternalAgentSessionPreview,
-  ExternalAgentSessionView,
-} from "../../domain/externalAgentSession";
+import type { ExternalAgentSessionView } from "../../domain/externalAgentSession";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
-import { AgentCompactRelativeTime } from "./agentClock";
+import { AgentCompactRelativeTime, AgentRelativeTime } from "./agentClock";
 import {
   AGENT_IMPORTED_BADGE_LABEL,
   agentExternalSessionRowTitle,
   agentExternalSessionsStatusNote,
-  agentSessionTurnCountLabel,
 } from "./agentSidebarPresentation";
+import {
+  MAX_TERMINAL_SESSION_FILTER_CHARS,
+  filterTerminalSessions,
+  resolveTerminalSessionPreview,
+  terminalSessionActionLabel,
+  terminalSessionMetaSegments,
+  terminalSessionRepositoryLabel,
+  terminalSessionRoleChip,
+  terminalSessionsEmptyNote,
+  type AgentTerminalSessionMetaSegment,
+  type AgentTerminalSessionPreviewView,
+  type AgentTerminalSessionsStateKey,
+} from "./agentTerminalSessionsPresentation";
 
 const LISTBOX_ID = "agent-terminal-sessions-listbox";
 const OPTION_PREFIX = "agent-terminal-sessions-option-";
-export const MAX_TERMINAL_SESSION_FILTER_CHARS = 200;
 
 type KeyOrigin = "input" | "row" | "other";
-
-type PreviewView =
-  | { readonly kind: "idle" }
-  | { readonly kind: "loading" }
-  | { readonly kind: "failed" }
-  | { readonly kind: "ready"; readonly preview: ExternalAgentSessionPreview };
 
 export interface AgentTerminalSessionsPaletteProps {
   readonly isOpen: boolean;
@@ -50,7 +52,7 @@ export function AgentTerminalSessionsPalette({
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const sessions = surface.sessions;
-  const filtered = useMemo(() => filterSessions(sessions, query), [query, sessions]);
+  const filtered = useMemo(() => filterTerminalSessions(sessions, query), [query, sessions]);
 
   useEffect(() => {
     if (isOpen) return;
@@ -84,7 +86,11 @@ export function AgentTerminalSessionsPalette({
 
   if (!isOpen) return null;
 
-  const previewView = resolvePreviewView(surface, active ?? null, requestedSessionId);
+  const repositoryRoot = surface.target?.repositoryRoot ?? null;
+  const listboxRendered = filtered.length > 0;
+  const refreshing = surface.state === "loading" && sessions.length > 0;
+  const canActivate = surface.state === "ready" && !surface.importPending;
+  const previewView = resolveTerminalSessionPreview(surface, active ?? null, requestedSessionId);
   const statusNote = agentExternalSessionsStatusNote(
     surface.skipped,
     surface.truncated,
@@ -98,7 +104,7 @@ export function AgentTerminalSessionsPalette({
   };
 
   const activate = (session: ExternalAgentSessionView | undefined): void => {
-    if (session === undefined || surface.importPending) return;
+    if (session === undefined || !canActivate) return;
     if (session.alreadyImportedThreadId !== null) {
       onSelectImported(session.alreadyImportedThreadId);
       return;
@@ -120,7 +126,7 @@ export function AgentTerminalSessionsPalette({
       activate(active);
       return true;
     }
-    if (filtered.length === 0) return false;
+    if (!listboxRendered) return false;
     if (key === "ArrowDown") {
       setActiveIndex((current) => (current + 1) % filtered.length);
       return true;
@@ -140,87 +146,106 @@ export function AgentTerminalSessionsPalette({
     return false;
   };
 
-  const label = projectLabel ?? repositoryLabel(surface.target?.repositoryRoot ?? null);
-  const heading = label === null ? "Terminal sessions" : `Terminal sessions - ${label}`;
-  const continueLabel = actionLabel(active, surface.importPending);
-  const continueDisabled =
-    active === undefined || surface.importPending || surface.state !== "ready";
+  const label = projectLabel ?? terminalSessionRepositoryLabel(repositoryRoot);
+  const continueLabel = terminalSessionActionLabel(active, surface.importPending);
+  const continueDisabled = active === undefined || !canActivate;
 
   return (
     <div className="palette-backdrop" onMouseDown={onClose} role="presentation">
       <section
         aria-label="Terminal sessions"
-        className="quick-open agent-terminal-sessions"
+        className="agent-tsp agent-terminal-sessions"
         onKeyDown={(event) => {
           if (!handleKeyDown(event.key, keyOrigin(event.target, inputRef.current))) return;
           event.preventDefault();
         }}
         onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
       >
-        <div className="agent-terminal-sessions__header">
-          <History aria-hidden="true" size={15} />
-          <span className="agent-terminal-sessions__heading">{heading}</span>
-        </div>
-
-        <div className="palette-search">
-          <Search aria-hidden="true" size={17} />
+        <div className="agent-tsp__search">
+          <Search aria-hidden="true" size={15} />
           <input
-            aria-activedescendant={
-              boundedIndex >= 0 ? `${OPTION_PREFIX}${boundedIndex}` : undefined
-            }
+            aria-activedescendant={listboxRendered ? `${OPTION_PREFIX}${boundedIndex}` : undefined}
             aria-autocomplete="list"
-            aria-controls={LISTBOX_ID}
-            aria-expanded={filtered.length > 0}
+            aria-controls={listboxRendered ? LISTBOX_ID : undefined}
+            aria-expanded={listboxRendered}
             aria-label="Filter terminal sessions"
+            className="agent-tsp__input"
             maxLength={MAX_TERMINAL_SESSION_FILTER_CHARS}
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Filter by title or session id"
+            placeholder="Search sessions"
             ref={inputRef}
             role="combobox"
             value={query}
           />
+          {label !== null && (
+            <span
+              className="agent-tsp__chip"
+              data-chip="repository"
+              title={repositoryRoot ?? undefined}
+            >
+              <Folder aria-hidden="true" size={11} />
+              <span className="agent-tsp__chip-label">{label}</span>
+            </span>
+          )}
         </div>
 
-        <div className="quick-open-results agent-terminal-sessions__body">
-          <div className="agent-terminal-sessions__results">
-            <div className="search-everywhere-section-label">Sessions</div>
+        <div className="agent-tsp__body">
+          <div className="agent-tsp__list">
+            {listboxRendered && (
+              <div className="agent-microlabel agent-tsp__seclabel">
+                Sessions
+                {refreshing && (
+                  <span className="agent-tsp__refresh" data-refreshing="true">
+                    refreshing…
+                  </span>
+                )}
+              </div>
+            )}
             <SessionListBody
               activeIndex={boundedIndex}
               filtered={filtered}
               onHighlight={setActiveIndex}
               onOpen={activate}
+              projectLabel={label}
               query={query}
+              repositoryRoot={repositoryRoot}
               surface={surface}
             />
           </div>
-          <aside aria-label="Session preview" className="agent-terminal-sessions__preview">
-            <div className="search-everywhere-section-label">Preview</div>
-            <PreviewBody onRetry={retryPreview} view={previewView} />
+          <aside aria-label="Session preview" className="agent-tsp__drawer">
+            <PreviewDrawer
+              active={active ?? null}
+              onRetry={retryPreview}
+              repositoryRoot={repositoryRoot}
+              view={previewView}
+            />
           </aside>
         </div>
 
-        <footer className="palette-footer agent-terminal-sessions__footer">
-          <span>
-            <kbd>↑</kbd>
-            <kbd>↓</kbd> navigate
+        <footer className="agent-tsp__footer">
+          <span aria-hidden="true" className="agent-tsp__hints">
+            <span className="agent-tsp__hint">
+              <kbd className="agent-tsp__kbd">↑</kbd>
+              <kbd className="agent-tsp__kbd">↓</kbd> navigate
+            </span>
+            <span className="agent-tsp__hint">
+              <kbd className="agent-tsp__kbd">↵</kbd> continue
+            </span>
+            <span className="agent-tsp__hint">
+              <kbd className="agent-tsp__kbd">esc</kbd> close
+            </span>
           </span>
-          <span>
-            <kbd>↵</kbd> continue
-          </span>
-          <span>
-            <kbd>esc</kbd> close
-          </span>
-          <span className="agent-terminal-sessions__spacer" />
-          {statusNote !== null && (
-            <span className="agent-terminal-sessions__status">{statusNote}</span>
-          )}
+          <span className="agent-tsp__spacer" />
+          {statusNote !== null && <span className="agent-tsp__count">{statusNote}</span>}
           <button
-            className="agent-terminal-sessions__continue"
+            className="agent-tsp__continue"
             disabled={continueDisabled}
             onClick={() => activate(active)}
             type="button"
           >
             {continueLabel}
+            <CornerDownLeft aria-hidden="true" size={12} />
           </button>
         </footer>
       </section>
@@ -233,42 +258,45 @@ function SessionListBody({
   filtered,
   onHighlight,
   onOpen,
+  projectLabel,
   query,
+  repositoryRoot,
   surface,
 }: {
   readonly activeIndex: number;
   readonly filtered: ReadonlyArray<ExternalAgentSessionView>;
   onHighlight(index: number): void;
   onOpen(session: ExternalAgentSessionView): void;
+  readonly projectLabel: string | null;
   readonly query: string;
+  readonly repositoryRoot: string | null;
   readonly surface: ExternalSessionsSurface;
 }) {
-  if (surface.state === "loading") {
-    return <p className="quick-open-state">Loading terminal sessions…</p>;
-  }
-  if (surface.state === "failed") {
-    return (
-      <p className="quick-open-state agent-terminal-sessions__error">
-        <span>Terminal sessions could not be loaded.</span>
-        <button className="agent-linkbutton" onClick={() => void surface.reload()} type="button">
-          Retry
-        </button>
-      </p>
-    );
-  }
   if (surface.sessions.length === 0) {
-    return <p className="quick-open-state">No terminal sessions for this project.</p>;
+    return <SessionListState projectLabel={projectLabel} surface={surface} />;
   }
   if (filtered.length === 0) {
-    return <p className="quick-open-state">No sessions match “{query.trim()}”.</p>;
+    return (
+      <StateBlock
+        label="No matches"
+        note={`No sessions match “${query.trim()}”.`}
+        stateKey="no-matches"
+      />
+    );
   }
 
   return (
-    <div aria-label="Terminal sessions" id={LISTBOX_ID} role="listbox">
+    <div
+      aria-label="Terminal sessions"
+      className="agent-tsp__listbox"
+      id={LISTBOX_ID}
+      role="listbox"
+    >
       {filtered.map((session, index) => (
         <button
           aria-selected={index === activeIndex}
-          className={rowClassName(index === activeIndex)}
+          className="agent-tsp__row"
+          data-provider={session.provider}
           id={`${OPTION_PREFIX}${index}`}
           key={`${session.provider}:${session.sessionId}`}
           onClick={() => onHighlight(index)}
@@ -276,23 +304,18 @@ function SessionListBody({
           role="option"
           type="button"
         >
-          <AgentProviderGlyph kind={session.provider} />
-          <span className="agent-terminal-sessions__row-title">
-            {agentExternalSessionRowTitle(session)}
-          </span>
-          <span className="agent-terminal-sessions__row-meta agent-num">
-            {surface.target !== null && session.cwd !== surface.target.repositoryRoot && (
-              <span className="agent-terminal-sessions__repository" title={session.cwd}>
-                {repositoryLabel(session.cwd)}
-              </span>
-            )}
-            {session.alreadyImportedThreadId !== null && (
-              <span className="agent-terminal-sessions__badge">{AGENT_IMPORTED_BADGE_LABEL}</span>
-            )}
-            <span>{agentSessionTurnCountLabel(session.turnCount, session.turnCountExact)}</span>
-            <span>
-              <AgentCompactRelativeTime epochMs={session.lastActivityEpochMs} />
+          <AgentProviderGlyph decorative kind={session.provider} />
+          <span className="agent-tsp__text">
+            <span className="agent-tsp__title">{agentExternalSessionRowTitle(session)}</span>
+            <span className="agent-tsp__meta">
+              <MetaSegments segments={terminalSessionMetaSegments(session, repositoryRoot)} />
+              {session.alreadyImportedThreadId !== null && (
+                <span className="agent-tsp__badge">{AGENT_IMPORTED_BADGE_LABEL}</span>
+              )}
             </span>
+          </span>
+          <span className="agent-tsp__time agent-num">
+            <AgentCompactRelativeTime epochMs={session.lastActivityEpochMs} />
           </span>
         </button>
       ))}
@@ -300,40 +323,173 @@ function SessionListBody({
   );
 }
 
-function PreviewBody({ onRetry, view }: { onRetry(): void; readonly view: PreviewView }) {
-  if (view.kind === "idle") {
-    return <p className="agent-terminal-sessions__note">Select a session to preview it.</p>;
+function SessionListState({
+  projectLabel,
+  surface,
+}: {
+  readonly projectLabel: string | null;
+  readonly surface: ExternalSessionsSurface;
+}) {
+  if (surface.state === "loading") {
+    return <StateBlock label="Loading" note="Loading terminal sessions…" stateKey="loading" />;
   }
-  if (view.kind === "loading") {
-    return <p className="agent-terminal-sessions__note">Loading preview…</p>;
-  }
-  if (view.kind === "failed") {
+  if (surface.state === "failed") {
     return (
-      <p className="agent-terminal-sessions__note agent-terminal-sessions__note--error">
-        <span>The preview could not be loaded.</span>
-        <button className="agent-linkbutton" onClick={onRetry} type="button">
+      <StateBlock
+        label="Unavailable"
+        note="Terminal sessions could not be loaded."
+        stateKey="failed"
+        tone="bad"
+      >
+        <button className="agent-linkbutton" onClick={() => void surface.reload()} type="button">
           Retry
         </button>
-      </p>
+      </StateBlock>
     );
   }
-  if (view.preview.exchanges.length === 0) {
-    return <p className="agent-terminal-sessions__note">No readable messages in this session.</p>;
+  return (
+    <StateBlock
+      label="Nothing yet"
+      note={terminalSessionsEmptyNote(projectLabel)}
+      stateKey="empty"
+    />
+  );
+}
+
+function MetaSegments({
+  segments,
+}: {
+  readonly segments: ReadonlyArray<AgentTerminalSessionMetaSegment>;
+}) {
+  return (
+    <>
+      {segments.map((segment, index) => (
+        <Fragment key={segment.kind}>
+          {index > 0 && (
+            <span aria-hidden="true" className="agent-tsp__sep">
+              ·
+            </span>
+          )}
+          <span className={metaSegmentClassName(segment)}>{segment.text}</span>
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+function metaSegmentClassName(segment: AgentTerminalSessionMetaSegment): string {
+  if (segment.kind === "turns") return "agent-tsp__meta-segment agent-num";
+  return "agent-tsp__meta-segment";
+}
+
+function StateBlock({
+  children,
+  label,
+  note,
+  stateKey,
+  tone = "neutral",
+}: {
+  readonly children?: ReactNode;
+  readonly label: string;
+  readonly note: string;
+  readonly stateKey: AgentTerminalSessionsStateKey;
+  readonly tone?: "neutral" | "bad";
+}) {
+  const labelClassName =
+    tone === "bad" ? "agent-microlabel agent-microlabel--bad" : "agent-microlabel";
+  return (
+    <div className="agent-tsp__state" data-state={stateKey}>
+      <span className={labelClassName}>{label}</span>
+      <p className="agent-tsp__note">{note}</p>
+      {children}
+    </div>
+  );
+}
+
+function PreviewDrawer({
+  active,
+  onRetry,
+  repositoryRoot,
+  view,
+}: {
+  readonly active: ExternalAgentSessionView | null;
+  onRetry(): void;
+  readonly repositoryRoot: string | null;
+  readonly view: AgentTerminalSessionPreviewView;
+}) {
+  if (active === null || view.kind === "idle") {
+    return (
+      <StateBlock label="Preview" note="Select a session to preview it." stateKey="preview-idle" />
+    );
   }
 
   return (
-    <div className="agent-terminal-sessions__exchanges">
-      {view.preview.exchanges.map((exchange, index) => (
-        <article
-          className={`agent-terminal-sessions__exchange agent-terminal-sessions__exchange--${exchange.role}`}
-          key={index}
-        >
-          <span className="agent-microlabel">{exchange.role === "user" ? "you" : "agent"}</span>
-          <p className="agent-terminal-sessions__exchange-text">{exchange.text}</p>
-        </article>
-      ))}
+    <>
+      <div className="agent-tsp__drawer-head">
+        <div className="agent-tsp__drawer-title">{agentExternalSessionRowTitle(active)}</div>
+        <div className="agent-tsp__drawer-meta">
+          <AgentProviderGlyph decorative kind={active.provider} />
+          <MetaSegments segments={terminalSessionMetaSegments(active, repositoryRoot)} />
+          <span aria-hidden="true" className="agent-tsp__sep">
+            ·
+          </span>
+          <span className="agent-tsp__meta-segment">
+            <AgentRelativeTime epochMs={active.lastActivityEpochMs} />
+          </span>
+        </div>
+      </div>
+      <PreviewBody onRetry={onRetry} view={view} />
+    </>
+  );
+}
+
+function PreviewBody({
+  onRetry,
+  view,
+}: {
+  onRetry(): void;
+  readonly view: Exclude<AgentTerminalSessionPreviewView, { readonly kind: "idle" }>;
+}) {
+  if (view.kind === "loading") {
+    return <StateBlock label="Preview" note="Loading preview…" stateKey="preview-loading" />;
+  }
+  if (view.kind === "failed") {
+    return (
+      <StateBlock
+        label="Unavailable"
+        note="The preview could not be loaded."
+        stateKey="preview-failed"
+        tone="bad"
+      >
+        <button className="agent-linkbutton" onClick={onRetry} type="button">
+          Retry
+        </button>
+      </StateBlock>
+    );
+  }
+  if (view.preview.exchanges.length === 0) {
+    return (
+      <StateBlock
+        label="Preview"
+        note="No readable messages in this session."
+        stateKey="preview-empty"
+      />
+    );
+  }
+
+  return (
+    <div className="agent-tsp__log">
+      {view.preview.exchanges.map((exchange, index) => {
+        const chip = terminalSessionRoleChip(exchange.role);
+        return (
+          <article className="agent-tsp__exchange" data-role={exchange.role} key={index}>
+            <span className={chip.className}>{chip.label}</span>
+            <p className="agent-tsp__exchange-text">{exchange.text}</p>
+          </article>
+        );
+      })}
       {view.preview.exchangesTruncated && (
-        <p className="agent-terminal-sessions__note">
+        <p className="agent-tsp__note agent-tsp__note--footnote">
           Preview shows the beginning and end of a long session.
         </p>
       )}
@@ -346,53 +502,4 @@ function keyOrigin(target: EventTarget | null, input: HTMLInputElement | null): 
   if (target === input) return "input";
   if (target instanceof HTMLElement && target.getAttribute("role") === "option") return "row";
   return "other";
-}
-
-function resolvePreviewView(
-  surface: ExternalSessionsSurface,
-  active: ExternalAgentSessionView | null,
-  requested: string | null,
-): PreviewView {
-  if (active === null) return { kind: "idle" };
-  const preview = surface.preview;
-  if (preview !== null && preview.sessionId === active.sessionId) {
-    return { kind: "ready", preview };
-  }
-  if (surface.previewPending) return { kind: "loading" };
-  if (requested === active.sessionId) return { kind: "failed" };
-  return { kind: "loading" };
-}
-
-function filterSessions(
-  sessions: ReadonlyArray<ExternalAgentSessionView>,
-  rawQuery: string,
-): ReadonlyArray<ExternalAgentSessionView> {
-  const needle = rawQuery.slice(0, MAX_TERMINAL_SESSION_FILTER_CHARS).trim().toLowerCase();
-  if (needle === "") return sessions;
-  return sessions.filter(
-    (session) =>
-      session.title.toLowerCase().includes(needle) ||
-      session.sessionId.toLowerCase().includes(needle) ||
-      session.cwd.toLowerCase().includes(needle),
-  );
-}
-
-function actionLabel(active: ExternalAgentSessionView | undefined, importPending: boolean): string {
-  if (importPending) return "Importing…";
-  if (active !== undefined && active.alreadyImportedThreadId !== null) {
-    return "Open imported thread";
-  }
-  return "Continue in Codevo";
-}
-
-function repositoryLabel(repositoryRoot: string | null): string | null {
-  if (repositoryRoot === null) return null;
-  const segments = repositoryRoot.split("/").filter((segment) => segment !== "");
-  return segments[segments.length - 1] ?? null;
-}
-
-function rowClassName(activeRow: boolean): string {
-  const base = "quick-open-result agent-terminal-sessions__row";
-  if (activeRow) return `${base} active`;
-  return base;
 }

@@ -1,4 +1,5 @@
 @import "./components/agentMode/agentMode.css";
+@import "./components/agentMode/agentTerminalSessionsPalette.css";
 @import "./components/workbenchShellFrame.css";
 
 :root {

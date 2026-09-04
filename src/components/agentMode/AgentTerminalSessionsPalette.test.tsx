@@ -41,41 +41,73 @@ describe("AgentTerminalSessionsPalette", () => {
   it("renders nothing while closed", async () => {
     await render({ isOpen: false });
 
-    expect(host.querySelector(".palette-backdrop")).toBeNull();
+    expect(dialog()).toBeNull();
   });
 
-  it("names the project in the header and reuses the quick open shell", async () => {
+  it("opens as a labelled dialog with one search row and a repository chip", async () => {
     await render({});
 
-    expect(host.querySelector(".quick-open.agent-terminal-sessions")).not.toBeNull();
-    expect(host.querySelector(".agent-terminal-sessions__heading")?.textContent).toBe(
-      "Terminal sessions - app",
-    );
-    expect(host.querySelector(".palette-search input")).not.toBeNull();
-    expect(host.querySelector(".palette-footer")).not.toBeNull();
+    expect(dialog()?.hasAttribute("aria-modal")).toBe(false);
+    expect(dialog()?.getAttribute("aria-label")).toBe("Terminal sessions");
+    expect(input().getAttribute("placeholder")).toBe("Search sessions");
+    expect(repositoryChip()?.textContent).toBe("app");
+    expect(repositoryChip()?.getAttribute("title")).toBe(ROOT);
+    expect(host.querySelector(".quick-open")).toBeNull();
+    expect(host.querySelector(".palette-search")).toBeNull();
+    expect(host.querySelector(".palette-footer")).toBeNull();
   });
 
-  it("derives the header label from the repository root when no label is given", async () => {
+  it("derives the chip label from the repository root when no label is given", async () => {
     await render({ projectLabel: null });
 
-    expect(host.querySelector(".agent-terminal-sessions__heading")?.textContent).toBe(
-      "Terminal sessions - app",
-    );
+    expect(repositoryChip()?.textContent).toBe("app");
   });
 
-  it("reports the loading state truthfully", async () => {
+  it("hides the chip when neither a label nor a target is known", async () => {
+    await render({ projectLabel: null, surface: surfaceFixture({ target: null }) });
+
+    expect(repositoryChip()).toBeNull();
+  });
+
+  it("reports the initial loading state without a listbox or section label", async () => {
     await render({ surface: surfaceFixture({ sessions: [], state: "loading" }) });
 
-    expect(host.textContent).toContain("Loading terminal sessions…");
+    const state = stateBlock("loading");
+    expect(state?.textContent).toContain("Loading terminal sessions…");
+    expect(state?.previousElementSibling).toBeNull();
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+    expect(input().getAttribute("aria-expanded")).toBe("false");
+    expect(input().hasAttribute("aria-controls")).toBe(false);
+    expect(input().hasAttribute("aria-activedescendant")).toBe(false);
+    expect(continueButton()?.disabled).toBe(true);
+  });
+
+  it("keeps the retained rows and the combobox wiring during a background reload", async () => {
+    const onImport = vi.fn();
+    await render({ onImport, surface: surfaceFixture({ state: "loading" }) });
+
+    expect(options()).toHaveLength(3);
+    expect(input().getAttribute("aria-controls")).toBe("agent-terminal-sessions-listbox");
+    expect(activeDescendant()).toBe("agent-terminal-sessions-option-0");
+    expect(host.querySelector("[data-refreshing]")?.textContent).toBe("refreshing…");
+    expect(continueButton()?.disabled).toBe(true);
+
+    await press("Enter");
+    expect(onImport).not.toHaveBeenCalled();
+
+    await render({ onImport, surface: surfaceFixture({}) });
+    expect(host.querySelector("[data-refreshing]")).toBeNull();
+    expect(continueButton()?.disabled).toBe(false);
   });
 
   it("reports a failed listing and retries through the surface", async () => {
     const reload = vi.fn(async () => undefined);
     await render({ surface: surfaceFixture({ sessions: [], state: "failed", reload }) });
 
-    expect(host.textContent).toContain("Terminal sessions could not be loaded.");
+    const state = stateBlock("failed");
+    expect(state?.textContent).toContain("Terminal sessions could not be loaded.");
 
-    const retry = [...host.querySelectorAll("button")].find(
+    const retry = [...(state?.querySelectorAll("button") ?? [])].find(
       (button) => button.textContent === "Retry",
     );
     await click(retry);
@@ -83,47 +115,75 @@ describe("AgentTerminalSessionsPalette", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("names the empty state for a project without sessions", async () => {
+  it("names the repository in the empty state", async () => {
     await render({ surface: surfaceFixture({ sessions: [] }) });
 
-    expect(host.textContent).toContain("No terminal sessions for this project.");
+    const state = stateBlock("empty");
+    expect(state?.textContent).toContain("No terminal sessions for app.");
+    expect(state?.previousElementSibling).toBeNull();
   });
 
-  it("renders provider glyph, title, relative time, turn count and the Imported badge", async () => {
+  it("falls back to a generic empty state without a repository label", async () => {
+    await render({ projectLabel: null, surface: surfaceFixture({ sessions: [], target: null }) });
+
+    expect(stateBlock("empty")?.textContent).toContain("No terminal sessions for this project.");
+  });
+
+  it("renders rich rows with provider, title, meta line, relative time and the Imported badge", async () => {
     await render({});
 
-    const rows = [...host.querySelectorAll('[role="option"]')];
+    const rows = options();
     expect(rows).toHaveLength(3);
-    expect(rows[0]?.querySelector(".agent-row__provider--claude")).not.toBeNull();
-    expect(rows[1]?.querySelector(".agent-row__provider--codex")).not.toBeNull();
+    expect(rows[0]?.getAttribute("data-provider")).toBe("claudeCode");
+    expect(rows[1]?.getAttribute("data-provider")).toBe("codex");
     expect(rows[0]?.textContent).toContain("Fix the parser");
-    expect(rows[0]?.textContent).toContain("6 turns");
-    expect(rows[1]?.textContent).toContain("12+ turns");
+    expect(rows[0]?.textContent).toContain("Claude Code·6 turns");
+    expect(rows[1]?.textContent).toContain("Codex·12+ turns");
     expect(rows[0]?.textContent).toContain("5m");
-    expect(rows[0]?.querySelector(".agent-terminal-sessions__badge")).toBeNull();
-    expect(rows[2]?.querySelector(".agent-terminal-sessions__badge")?.textContent).toBe("Imported");
+    expect(rows[0]?.textContent).not.toContain("Imported");
+    expect(rows[2]?.textContent).toContain("Imported");
+  });
+
+  it("marks only the highlighted row as selected", async () => {
+    await render({});
+
+    expect(options().map((row) => row.getAttribute("aria-selected"))).toEqual([
+      "true",
+      "false",
+      "false",
+    ]);
+
+    await press("ArrowDown");
+
+    expect(options().map((row) => row.getAttribute("aria-selected"))).toEqual([
+      "false",
+      "true",
+      "false",
+    ]);
   });
 
   it("falls back to the first prompt line when a session has no title", async () => {
     await render();
 
-    const rows = [...host.querySelectorAll('[role="option"]')];
-    expect(rows[1]?.textContent).toContain("remember mango");
+    expect(options()[1]?.textContent).toContain("remember mango");
   });
 
   it("filters rows by title and by session id, and names an empty match", async () => {
     await render({});
 
     await type("parser");
-    expect(host.querySelectorAll('[role="option"]')).toHaveLength(1);
+    expect(options()).toHaveLength(1);
 
     await type(CODEX_ID.slice(0, 8));
-    expect(host.querySelectorAll('[role="option"]')).toHaveLength(1);
-    expect(host.querySelector('[role="option"]')?.textContent).toContain("remember mango");
+    expect(options()).toHaveLength(1);
+    expect(options()[0]?.textContent).toContain("remember mango");
 
     await type("no-such-session");
-    expect(host.querySelectorAll('[role="option"]')).toHaveLength(0);
-    expect(host.textContent).toContain("No sessions match");
+    expect(options()).toHaveLength(0);
+    expect(stateBlock("no-matches")?.textContent).toContain("No sessions match “no-such-session”.");
+    expect(stateBlock("no-matches")?.previousElementSibling).toBeNull();
+    expect(input().getAttribute("aria-expanded")).toBe("false");
+    expect(input().hasAttribute("aria-activedescendant")).toBe(false);
   });
 
   it("labels and filters a session from a nested repository", async () => {
@@ -133,11 +193,9 @@ describe("AgentTerminalSessionsPalette", () => {
       }),
     });
 
-    expect(host.querySelector(".agent-terminal-sessions__repository")?.textContent).toBe(
-      "ebox-crm",
-    );
+    expect(options()[0]?.textContent).toContain("Claude Code·ebox-crm·6 turns");
     await type("packages/ebox-crm");
-    expect(host.querySelectorAll('[role="option"]')).toHaveLength(1);
+    expect(options()).toHaveLength(1);
   });
 
   it("moves the selection with arrows and wraps at both ends", async () => {
@@ -153,6 +211,23 @@ describe("AgentTerminalSessionsPalette", () => {
     expect(activeDescendant()).toBe("agent-terminal-sessions-option-2");
     await press("Home");
     expect(activeDescendant()).toBe("agent-terminal-sessions-option-0");
+  });
+
+  it("selects a row on click and imports it on double click", async () => {
+    const onImport = vi.fn();
+    await render({ onImport });
+
+    const row = options()[1];
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(activeDescendant()).toBe("agent-terminal-sessions-option-1");
+    expect(onImport).not.toHaveBeenCalled();
+
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(onImport).toHaveBeenCalledWith(CODEX_ID, "codex");
   });
 
   it("imports the highlighted session on Enter", async () => {
@@ -203,6 +278,17 @@ describe("AgentTerminalSessionsPalette", () => {
     expect(onImport).not.toHaveBeenCalled();
   });
 
+  it("keeps the action gated while the listing has failed", async () => {
+    const onImport = vi.fn();
+    await render({ onImport, surface: surfaceFixture({ state: "failed" }) });
+
+    expect(options()).toHaveLength(3);
+    expect(continueButton()?.disabled).toBe(true);
+
+    await press("Enter");
+    expect(onImport).not.toHaveBeenCalled();
+  });
+
   it("clears the filter on Escape before closing on the next Escape", async () => {
     const onClose = vi.fn();
     await render({ onClose });
@@ -212,7 +298,7 @@ describe("AgentTerminalSessionsPalette", () => {
 
     expect(onClose).not.toHaveBeenCalled();
     expect(input().value).toBe("");
-    expect(host.querySelectorAll('[role="option"]')).toHaveLength(3);
+    expect(options()).toHaveLength(3);
 
     await press("Escape");
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -223,7 +309,7 @@ describe("AgentTerminalSessionsPalette", () => {
     await render({ onClose });
 
     await type("Security");
-    const row = host.querySelector<HTMLElement>('[role="option"]');
+    const row = options()[0] ?? null;
     expect(row).not.toBeNull();
 
     await pressOn(row, "Escape");
@@ -237,8 +323,7 @@ describe("AgentTerminalSessionsPalette", () => {
   it("moves the row selection with arrows while a row holds focus", async () => {
     await render({});
 
-    const row = host.querySelector<HTMLElement>('[role="option"]');
-    await pressOn(row, "ArrowDown");
+    await pressOn(options()[0] ?? null, "ArrowDown");
 
     expect(activeDescendant()).toBe("agent-terminal-sessions-option-1");
   });
@@ -261,15 +346,13 @@ describe("AgentTerminalSessionsPalette", () => {
     await render({ onClose });
 
     await act(async () => {
-      host
-        .querySelector(".quick-open")
-        ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      dialog()?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     });
     expect(onClose).not.toHaveBeenCalled();
 
     await act(async () => {
       host
-        .querySelector(".palette-backdrop")
+        .querySelector('[role="presentation"]')
         ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     });
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -299,24 +382,30 @@ describe("AgentTerminalSessionsPalette", () => {
     expect(loadPreview).toHaveBeenCalledTimes(2);
   });
 
-  it("shows the pending preview state", async () => {
-    await render({ surface: surfaceFixture({ previewPending: true }) });
+  it("invites a selection when no session is highlighted", async () => {
+    await render({ surface: surfaceFixture({ sessions: [] }) });
 
-    expect(host.querySelector(".agent-terminal-sessions__preview")?.textContent).toContain(
-      "Loading preview…",
-    );
+    expect(stateBlock("preview-idle")?.textContent).toContain("Select a session to preview it.");
   });
 
-  it("renders the exchanges of the matching preview with thread-style roles", async () => {
+  it("heads the drawer with the highlighted session and shows the pending preview state", async () => {
+    await render({ surface: surfaceFixture({ previewPending: true }) });
+
+    expect(preview()?.textContent).toContain("Fix the parser");
+    expect(preview()?.textContent).toContain("Claude Code·6 turns·5 minutes ago");
+    expect(stateBlock("preview-loading")?.textContent).toContain("Loading preview…");
+  });
+
+  it("renders the exchanges of the matching preview with you/agent role chips", async () => {
     await render({ surface: surfaceFixture({ preview: previewFixture({}) }) });
 
-    const exchanges = [...host.querySelectorAll(".agent-terminal-sessions__exchange")];
+    const exchanges = previewExchanges();
     expect(exchanges).toHaveLength(2);
-    expect(exchanges[0]?.className).toContain("agent-terminal-sessions__exchange--user");
-    expect(exchanges[0]?.querySelector(".agent-microlabel")?.textContent).toBe("you");
+    expect(exchanges[0]?.getAttribute("data-role")).toBe("user");
+    expect(exchanges[0]?.firstElementChild?.textContent).toBe("you");
     expect(exchanges[0]?.textContent).toContain("remember plum");
-    expect(exchanges[1]?.className).toContain("agent-terminal-sessions__exchange--assistant");
-    expect(exchanges[1]?.querySelector(".agent-microlabel")?.textContent).toBe("agent");
+    expect(exchanges[1]?.getAttribute("data-role")).toBe("assistant");
+    expect(exchanges[1]?.firstElementChild?.textContent).toBe("agent");
     expect(host.textContent).not.toContain("Preview shows the beginning and end");
   });
 
@@ -325,27 +414,29 @@ describe("AgentTerminalSessionsPalette", () => {
       surface: surfaceFixture({ preview: previewFixture({ exchangesTruncated: true }) }),
     });
 
-    expect(host.textContent).toContain("Preview shows the beginning and end of a long session.");
+    expect(preview()?.textContent).toContain(
+      "Preview shows the beginning and end of a long session.",
+    );
   });
 
   it("names an empty preview instead of pretending content exists", async () => {
     await render({ surface: surfaceFixture({ preview: previewFixture({ exchanges: [] }) }) });
 
-    expect(host.textContent).toContain("No readable messages in this session.");
+    expect(stateBlock("preview-empty")?.textContent).toContain(
+      "No readable messages in this session.",
+    );
+    expect(previewExchanges()).toHaveLength(0);
   });
 
   it("offers a retry when the preview failed to load", async () => {
     const loadPreview = vi.fn(async () => undefined);
     await render({ surface: surfaceFixture({ loadPreview }) });
 
-    expect(host.querySelector(".agent-terminal-sessions__preview")?.textContent).toContain(
-      "The preview could not be loaded.",
-    );
+    expect(stateBlock("preview-failed")?.textContent).toContain("The preview could not be loaded.");
 
-    const retry = [
-      ...(host.querySelector(".agent-terminal-sessions__preview")?.querySelectorAll("button") ??
-        []),
-    ].find((button) => button.textContent === "Retry");
+    const retry = [...(stateBlock("preview-failed")?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent === "Retry",
+    );
     await click(retry);
 
     expect(loadPreview).toHaveBeenCalledTimes(2);
@@ -357,31 +448,64 @@ describe("AgentTerminalSessionsPalette", () => {
       surface: surfaceFixture({ preview: previewFixture({ sessionId: CODEX_ID }) }),
     });
 
-    expect(host.querySelectorAll(".agent-terminal-sessions__exchange")).toHaveLength(0);
+    expect(previewExchanges()).toHaveLength(0);
   });
 
-  it("reports skipped and truncated counts in the footer", async () => {
+  it("shows keyboard hints and the hidden count in the footer", async () => {
     await render({ surface: surfaceFixture({ skipped: 12, truncated: true }) });
 
-    expect(host.querySelector(".agent-terminal-sessions__status")?.textContent).toBe(
+    const footerText = footer()?.textContent ?? "";
+    expect(footerText).toContain("navigate");
+    expect(footerText).toContain("continue");
+    expect(footerText).toContain("close");
+    expect(footerText).toContain(
       "12 automated or unreadable sessions hidden · showing the newest 3",
     );
   });
 
-  it("keeps the footer status silent when nothing was hidden", async () => {
+  it("keeps the footer count silent when nothing was hidden", async () => {
     await render({});
 
-    expect(host.querySelector(".agent-terminal-sessions__status")).toBeNull();
+    expect(footer()?.textContent).not.toContain("hidden");
   });
 
+  function dialog(): HTMLElement | null {
+    return host.querySelector<HTMLElement>('[role="dialog"]');
+  }
+
   function input(): HTMLInputElement {
-    const element = host.querySelector<HTMLInputElement>(".palette-search input");
+    const element = host.querySelector<HTMLInputElement>('input[role="combobox"]');
     expect(element).not.toBeNull();
     return element as HTMLInputElement;
   }
 
+  function repositoryChip(): HTMLElement | null {
+    return host.querySelector<HTMLElement>('[data-chip="repository"]');
+  }
+
+  function options(): HTMLElement[] {
+    return [...host.querySelectorAll<HTMLElement>('[role="option"]')];
+  }
+
+  function stateBlock(label: string): HTMLElement | null {
+    return host.querySelector<HTMLElement>(`[data-state="${label}"]`);
+  }
+
+  function preview(): HTMLElement | null {
+    return host.querySelector<HTMLElement>('[aria-label="Session preview"]');
+  }
+
+  function previewExchanges(): HTMLElement[] {
+    return [...(preview()?.querySelectorAll<HTMLElement>("article[data-role]") ?? [])];
+  }
+
+  function footer(): HTMLElement | null {
+    return dialog()?.querySelector<HTMLElement>("footer") ?? null;
+  }
+
   function continueButton(): HTMLButtonElement | null {
-    return host.querySelector<HTMLButtonElement>(".agent-terminal-sessions__continue");
+    const buttons = [...(footer()?.querySelectorAll("button") ?? [])];
+    return buttons[buttons.length - 1] ?? null;
   }
 
   function activeDescendant(): string | null {
