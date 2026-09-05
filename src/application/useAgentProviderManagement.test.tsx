@@ -17,7 +17,7 @@ import type { AgentCliDiscoveryGateway, AgentCliDiscoveryResult } from "../domai
 import type { AgentCliKind } from "../domain/agentTask";
 import { defaultAppSettings, type AppSettings } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
-import { AgentProviderSettingsCard } from "../components/AgentProviderSettingsCard";
+import { AgentProviderCard } from "../components/settings/AgentProviderCard";
 import {
   TauriAgentProviderGateway,
   type ListenToAgentProviderUpdateProgress,
@@ -2135,16 +2135,18 @@ function renderManagement(
     hook = useAgentProviderManagement(currentDependencies);
     if (!options.renderCard) return null;
     const preference = preferencesForTest(settings).claudeCode;
-    return createElement(AgentProviderSettingsCard, {
+    return createElement(AgentProviderCard, {
       management: hook,
+      nowEpochMs: 0,
       path: settings.agentCliPaths.claudeCode,
-      presentation: hook.providers.claudeCode.executable,
       preference,
       provider: "claudeCode",
+      rowId: "agents.providerClaudeCode",
+      signIn: null,
       onChangeEnabled: () => undefined,
-      onChangeHealthCheckIntervalSeconds: () => undefined,
       onChangePath: () => undefined,
       onCopyInstallCommand: () => undefined,
+      onResetProvider: () => undefined,
     });
   }
 

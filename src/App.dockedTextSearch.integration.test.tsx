@@ -89,7 +89,7 @@ describe("App docked text search integration", () => {
       import("./components/ScopedEditorSurface"),
       import("./components/TerminalTabsPanel"),
       import("./components/WorkbenchEditorHost"),
-      import("./components/WorkbenchSettingsDialogHost"),
+      import("./components/WorkbenchSettingsHost"),
     ]);
     localStorage.setItem(
       "editor.settings.app",

@@ -12,12 +12,12 @@ import {
   presentAgentProviderUpdateToast,
   type AgentProviderUpdateRefusalRecord,
 } from "./agentProviderUpdateToastPresenter";
-import { LazySurfaceHost, LazyWorkbenchSettingsDialogHost } from "./appLazySurfaces";
+import { LazySurfaceHost, LazyWorkbenchSettingsHost } from "./appLazySurfaces";
 import { writeClipboardText } from "./clipboardText";
 import { NoticeToastHost } from "./NoticeToastHost";
 import { composeToastNotices } from "./updateToastNotices";
 import { useNoticeToastRenderers } from "./useNoticeToastRenderers";
-import type { WorkbenchSettingsModel } from "./WorkbenchSettingsDialogHost";
+import type { WorkbenchSettingsModel } from "./WorkbenchSettingsHost";
 import type { NodeLaunchConfigurationFileGateway } from "./useNodeLaunchConfigurationsDialogController";
 
 export interface WorkbenchAppUpdaterHostProps {
@@ -25,6 +25,7 @@ export interface WorkbenchAppUpdaterHostProps {
   readonly onOpenAgentSettings: () => void;
   readonly onOpenRuntimePanel: () => void;
   readonly providerManagement: AgentProviderManagementSurface;
+  readonly settingsContainer: HTMLElement | null;
   readonly systemFontGateway: SystemFontGateway;
   readonly workbench: WorkbenchSettingsModel & {
     readonly installManagedPhpactor: () => Promise<void> | void;
@@ -43,6 +44,7 @@ export function WorkbenchAppUpdaterHost({
   onOpenAgentSettings,
   onOpenRuntimePanel,
   providerManagement,
+  settingsContainer,
   systemFontGateway,
   workbench,
   workspaceFiles,
@@ -96,8 +98,9 @@ export function WorkbenchAppUpdaterHost({
         active={workbench.settingsOpen || workbench.nodeLaunchConfigurationsOpen}
         label="settings"
       >
-        <LazyWorkbenchSettingsDialogHost
+        <LazyWorkbenchSettingsHost
           appUpdater={updater}
+          container={settingsContainer}
           providerManagement={providerManagement}
           systemFontGateway={systemFontGateway}
           workbench={workbench}

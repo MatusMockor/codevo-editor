@@ -40,15 +40,18 @@ export function WorkbenchNavigationChrome({
         onShowCommands={onShowCommands}
         onShowGitHistory={onShowGitHistory}
         onShowTodoPanel={onShowTodoPanel}
+        settingsOpen={workbench.settingsOpen}
       />
-      <WorkbenchSidebar
-        activeFileRevealSignal={activeFileRevealSignal}
-        fileStatusesByPath={fileStatusesByPath}
-        onOpenWorkspace={onOpenWorkspace}
-        onResizeStart={onResizeStart}
-        onShowGit={onShowGit}
-        workbench={workbench}
-      />
+      {workbench.settingsOpen ? null : (
+        <WorkbenchSidebar
+          activeFileRevealSignal={activeFileRevealSignal}
+          fileStatusesByPath={fileStatusesByPath}
+          onOpenWorkspace={onOpenWorkspace}
+          onResizeStart={onResizeStart}
+          onShowGit={onShowGit}
+          workbench={workbench}
+        />
+      )}
     </>
   );
 }

@@ -8,7 +8,12 @@ describe("application updater composition", () => {
       new URL("./components/WorkbenchAppUpdaterHost.tsx", import.meta.url),
       "utf8",
     );
-    expect(source).toContain("<WorkbenchAppUpdaterHost");
+    const overlays = readFileSync(
+      new URL("./components/WorkbenchOverlayDialogsHost.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("<WorkbenchOverlayDialogsHost");
+    expect(overlays).toContain("<WorkbenchAppUpdaterHost");
     expect(source).toContain("composition={workbenchComposition.appUpdater}");
     expect(source).not.toContain("appUpdaterComposition=");
     expect(host).toContain("useWorkbenchAppUpdaterComposition(");

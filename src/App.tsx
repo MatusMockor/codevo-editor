@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
 import {
   EMPTY_EDITOR_CHANGE_HUNKS,
@@ -25,8 +25,9 @@ import type { EditorGroupFocusRunner } from "./application/editorGroupFocusPort"
 import { isGitDiffDocumentPath } from "./application/useGitDiffWorkspace";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { WorkbenchBottomPanelHost } from "./components/WorkbenchBottomPanelHost";
-import { WorkbenchAppUpdaterHost } from "./components/WorkbenchAppUpdaterHost";
+import { WorkbenchOverlayDialogsHost } from "./components/WorkbenchOverlayDialogsHost";
 import { WorkbenchShellFrame } from "./components/WorkbenchShellFrame";
+import { appShellClassName } from "./components/appShellClassName";
 import { workbenchShellPlacement } from "./components/workbenchShellPlacement";
 import { useWorkbenchResizeHandles } from "./application/useWorkbenchResizeHandles";
 import { commandPaletteProps } from "./components/commandPaletteProps";
@@ -56,7 +57,6 @@ import { MarkdownPreview } from "./components/MarkdownPreview";
 import { FileStructure } from "./components/FileStructure";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ImplementationChooser } from "./components/ImplementationChooser";
-import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { NodeRunConfigurationPickerHost } from "./components/NodeRunConfigurationPickerHost";
 import { NodeDebugAttachProcessPickerHost } from "./components/NodeDebugAttachProcessPickerHost";
 import { PhpChangeSignatureDialog } from "./components/PhpChangeSignatureDialog";
@@ -573,6 +573,7 @@ function App() {
   const showCommands = useCallback(() => {
     void runCommand("commands.show");
   }, [runCommand]);
+  const [settingsContainer, setSettingsContainer] = useState<HTMLDivElement | null>(null);
   const openSettings = useCallback(() => {
     void runCommand("workbench.openSettings");
   }, [runCommand]);
@@ -1050,7 +1051,7 @@ function App() {
 
   return (
     <main
-      className={workbench.agentModeActive ? "app-shell app-shell--agent-mode" : "app-shell"}
+      className={appShellClassName(workbench.agentModeActive, workbench.settingsOpen)}
       data-theme={workbench.appSettings.theme}
       style={shellStyle}
     >
@@ -1182,6 +1183,8 @@ function App() {
           />
         }
         placement={shellPlacement}
+        settingsRef={setSettingsContainer}
+        surface={workbench.settingsOpen ? "settings" : "workbench"}
       />
 
       {workbench.agentModeActive ? (
@@ -1453,19 +1456,12 @@ function App() {
         remoteBranches={workbench.gitRemoteBranchEntries}
       />
 
-      <LanguageServerSetup
-        isOpen={workbench.languageServerSetupOpen}
-        onClose={() => workbench.setLanguageServerSetupOpen(false)}
-        isInstallingManagedPhpactor={workbench.installingManagedPhpactor}
-        onInstallManagedPhpactor={workbench.installManagedPhpactor}
-        plan={workbench.languageServerPlan}
-      />
-
-      <WorkbenchAppUpdaterHost
+      <WorkbenchOverlayDialogsHost
         composition={workbenchComposition.appUpdater}
         onOpenAgentSettings={workbench.agents.configureAgentCli}
         onOpenRuntimePanel={openRuntimePanel}
         providerManagement={workbench.agents.providerManagement}
+        settingsContainer={settingsContainer}
         systemFontGateway={systemFontGateway}
         workbench={workbench}
         workspaceFiles={workspaceGateways.files}

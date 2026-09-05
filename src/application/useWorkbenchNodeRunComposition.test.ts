@@ -142,7 +142,11 @@ describe("workbench Node run composition", () => {
       "utf8",
     );
     const host = readFileSync(
-      new URL("../components/WorkbenchSettingsDialogHost.tsx", import.meta.url),
+      new URL("../components/WorkbenchSettingsHost.tsx", import.meta.url),
+      "utf8",
+    );
+    const environment = readFileSync(
+      new URL("../components/settings/settingsEnvironment.ts", import.meta.url),
       "utf8",
     );
 
@@ -160,8 +164,8 @@ describe("workbench Node run composition", () => {
     );
     expect(host).toContain("isOpen: workbench.nodeLaunchConfigurationsOpen,");
     expect(host).toContain("onClose: workbench.closeNodeLaunchConfigurations,");
-    expect(host).toContain(
-      "onOpenNodeLaunchConfigurations={workbench.openNodeLaunchConfigurations}",
+    expect(environment).toContain(
+      "onOpenNodeLaunchConfigurations: workbench.openNodeLaunchConfigurations,",
     );
     expect(host.match(/<NodeLaunchConfigurationsDialog/g)).toHaveLength(1);
   });

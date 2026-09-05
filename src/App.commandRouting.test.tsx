@@ -504,6 +504,26 @@ describe("App command routing", () => {
     expect(mocks.commandPaletteUnmounts).toBe(0);
   });
 
+  it("swaps the workbench chrome for the settings surface while the route is open", async () => {
+    expect(host.querySelector("main")?.className).toBe("app-shell");
+    expect(host.querySelector(".sidebar")).not.toBeNull();
+    expect(buttonByTitle("Settings")?.getAttribute("aria-pressed")).toBe("false");
+
+    mocks.workbenchOverrides = { settingsOpen: true };
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector("main")?.className).toContain("app-shell--settings");
+    expect(host.querySelector(".sidebar")).toBeNull();
+    expect(buttonByTitle("Settings")?.getAttribute("aria-pressed")).toBe("true");
+    expect(host.querySelector('[data-slot="settings"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="chrome"]')?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector('[data-testid="editor-runtime-host"]')).not.toBeNull();
+  });
+
   it("routes visible exact actions through runCommand", () => {
     click(buttonByTitle("Open workspace"));
     click(buttonByText("Open"));

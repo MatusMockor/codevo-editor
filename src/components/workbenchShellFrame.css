@@ -31,7 +31,7 @@
   editor host over it using these two variables.
 */
 .app-shell {
-  --agent-surface-header-height: 36px;
+  --agent-surface-header-height: 40px;
   --agent-surface-tree-width: 220px;
 }
 
@@ -45,7 +45,7 @@
 */
 .workbench-frame[data-layout="agent"] {
   --agent-center-min-width: 360px;
-  --agent-rail-width: 272px;
+  --agent-rail-width: 256px;
   --agent-rail-inset: 8px;
   --agent-rail-collapsed-width: calc(32px + 2 * var(--agent-rail-inset));
   --agent-rail-track: var(--agent-rail-width);
@@ -61,7 +61,13 @@
   --agent-rail-track: var(--agent-rail-collapsed-width);
 }
 
-.workbench-frame[data-layout="agent"] > [data-slot="agent"] {
+.workbench-frame__chrome,
+.workbench-frame__agent {
+  display: contents;
+}
+
+.workbench-frame[data-layout="agent"] > [data-slot="agent"],
+.workbench-frame[data-layout="agent"] > .workbench-frame__agent > [data-slot="agent"] {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -97,8 +103,30 @@
 }
 
 .workbench-frame > [data-slot="surface"][hidden],
-.workbench-frame > [data-slot="editor"][hidden] {
+.workbench-frame > [data-slot="editor"][hidden],
+.workbench-frame > [data-slot="bottom"][hidden],
+.workbench-frame__chrome[hidden],
+.workbench-frame__agent[hidden] {
   display: none;
+}
+
+/*
+  Settings surface: the frame drops its layout grid and the settings slot fills it; the
+  hidden agent/editor/bottom slots stay mounted but take no space.
+*/
+.workbench-frame[data-surface="settings"] {
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+}
+
+.workbench-frame > .workbench-frame__settings,
+.workbench-frame > [data-slot="settings"] {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .workbench-frame[data-layout="agent"] > [data-slot="bottom"] .bottom-panel {
@@ -112,7 +140,10 @@
   grid-template-columns: var(--agent-rail-track) minmax(0, 1fr);
 }
 
-.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="agent"] {
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="agent"],
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"]
+  > .workbench-frame__agent
+  > [data-slot="agent"] {
   overflow: hidden;
   grid-column: 1;
 }
@@ -136,6 +167,7 @@
 }
 
 .workbench-frame[data-layout="editor-expanded"] > [data-slot="agent"],
+.workbench-frame[data-layout="editor-expanded"] > .workbench-frame__agent > [data-slot="agent"],
 .workbench-frame[data-layout="editor-expanded"] > [data-slot="surface"] {
   display: none;
 }

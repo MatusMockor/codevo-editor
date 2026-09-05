@@ -2,6 +2,7 @@ import { FolderOpen, History, ListChecks, Search, Settings as SettingsIcon } fro
 
 interface WorkbenchActivityBarProps {
   readonly hasWorkspace: boolean;
+  readonly settingsOpen?: boolean;
   onOpenSettings(): void;
   onOpenWorkspace(): void;
   onShowCommands(): void;
@@ -16,6 +17,7 @@ export function WorkbenchActivityBar({
   onShowCommands,
   onShowGitHistory,
   onShowTodoPanel,
+  settingsOpen = false,
 }: WorkbenchActivityBarProps) {
   return (
     <aside className="activity-bar" aria-label="Primary navigation">
@@ -37,6 +39,7 @@ export function WorkbenchActivityBar({
         <History aria-hidden="true" size={20} />
       </button>
       <button
+        aria-pressed={settingsOpen}
         className="activity-bar-secondary"
         onClick={onOpenSettings}
         title="Settings"

@@ -168,7 +168,7 @@ describe("WorkbenchShellFrame", () => {
     expect(frame?.style.getPropertyValue("--agent-right-panel-committed")).toBe("540px");
     expect(frame?.style.getPropertyValue("--agent-bottom-panel-committed")).toBe("280px");
     expect(host.querySelector('[data-slot="bottom"]')?.textContent).toBe("bottom");
-    expect(host.querySelector(".editor-workbench > #chrome")).not.toBeNull();
+    expect(host.querySelector('.editor-workbench > [data-slot="chrome"] > #chrome')).not.toBeNull();
   });
 
   it("stamps a closed agent appearance variant and defaults to current", () => {
@@ -240,6 +240,121 @@ describe("WorkbenchShellFrame", () => {
           chrome={<div id="chrome" />}
           editor={<div id="editor-content" />}
           placement={placementValue}
+        />,
+      ),
+    );
+  }
+});
+
+describe("WorkbenchShellFrame settings surface", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  const settingsSlots: Array<HTMLDivElement | null> = [];
+
+  beforeEach(() => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    settingsSlots.length = 0;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1_280 });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("keeps the workbench surface untouched by default", () => {
+    render("workbench");
+
+    expect(host.querySelector(".workbench-frame")?.hasAttribute("data-surface")).toBe(false);
+    expect(host.querySelector('[data-slot="settings"]')).toBeNull();
+    expect(host.querySelector('.editor-workbench > [data-slot="chrome"] > #chrome')).not.toBeNull();
+    expect(host.querySelector('[data-slot="chrome"]')?.hasAttribute("hidden")).toBe(false);
+    expect(host.querySelector('[data-slot="agent"]')?.hasAttribute("hidden")).toBe(false);
+    expect(host.querySelector('[data-slot="bottom"]')?.hasAttribute("hidden")).toBe(false);
+  });
+
+  it("keeps the chrome and agent slots mounted across a surface swap", () => {
+    render("workbench");
+
+    const chromeChild = host.querySelector("#chrome");
+    const agentChild = host.querySelector("#agent-content");
+
+    render("settings");
+
+    expect(host.querySelector("#chrome")).toBe(chromeChild);
+    expect(host.querySelector("#agent-content")).toBe(agentChild);
+
+    render("workbench");
+
+    expect(host.querySelector("#chrome")).toBe(chromeChild);
+    expect(host.querySelector("#agent-content")).toBe(agentChild);
+  });
+
+  it("hands the settings slot element to the surface owner", () => {
+    render("workbench");
+
+    expect(settingsSlots).toEqual([]);
+
+    render("settings");
+
+    expect(settingsSlots[settingsSlots.length - 1]).toBe(
+      host.querySelector('[data-slot="settings"]'),
+    );
+
+    render("workbench");
+
+    expect(settingsSlots[settingsSlots.length - 1]).toBeNull();
+  });
+
+  it("stamps the settings surface and hides the agent, editor, bottom and chrome slots", () => {
+    render("settings");
+
+    expect(host.querySelector(".workbench-frame")?.getAttribute("data-surface")).toBe("settings");
+    expect(host.querySelector('[data-slot="settings"]')?.textContent).toBe("settings page");
+    expect(host.querySelector('[data-slot="chrome"]')?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector('[data-slot="agent"]')?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector('[data-slot="bottom"]')?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector('[data-slot="editor"]')?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("keeps the editor mounted while the settings surface is shown", () => {
+    render("workbench");
+
+    const editorSlot = host.querySelector('[data-slot="editor"]');
+    const editorChild = host.querySelector("#editor-content");
+
+    expect(editorSlot?.hasAttribute("hidden")).toBe(false);
+
+    render("settings");
+
+    expect(host.querySelector('[data-slot="editor"]')).toBe(editorSlot);
+    expect(host.querySelector("#editor-content")).toBe(editorChild);
+    expect(editorSlot?.hasAttribute("hidden")).toBe(true);
+
+    render("workbench");
+
+    expect(host.querySelector("#editor-content")).toBe(editorChild);
+    expect(editorSlot?.hasAttribute("hidden")).toBe(false);
+  });
+
+  function render(surface: "workbench" | "settings"): void {
+    act(() =>
+      root.render(
+        <WorkbenchShellFrame
+          agent={<div id="agent-content">agent</div>}
+          bottom={<span>bottom</span>}
+          chrome={<div id="chrome" />}
+          editor={<div id="editor-content" />}
+          placement={placement("editor-expanded", null)}
+          settings={<div>settings page</div>}
+          settingsRef={(element) => {
+            settingsSlots.push(element);
+          }}
+          surface={surface}
         />,
       ),
     );

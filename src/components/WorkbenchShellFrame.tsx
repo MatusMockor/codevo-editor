@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode, type Ref } from "react";
 import {
   DEFAULT_AGENT_APPEARANCE_VARIANT,
   type AgentAppearanceVariant,
@@ -16,6 +16,8 @@ import {
 } from "./workbenchShellPlacement";
 import { useViewportWidth } from "./useViewportWidth";
 
+export type WorkbenchShellSurface = "workbench" | "settings";
+
 export interface WorkbenchShellFrameProps {
   readonly placement: WorkbenchShellPlacement;
   readonly agentVariant?: AgentAppearanceVariant;
@@ -23,6 +25,9 @@ export interface WorkbenchShellFrameProps {
   readonly agent: ReactNode;
   readonly editor: ReactNode;
   readonly bottom: ReactNode;
+  readonly settings?: ReactNode;
+  readonly settingsRef?: Ref<HTMLDivElement>;
+  readonly surface?: WorkbenchShellSurface;
 }
 
 export function WorkbenchShellFrame({
@@ -32,12 +37,17 @@ export function WorkbenchShellFrame({
   chrome,
   editor,
   placement,
+  settings = null,
+  settingsRef,
+  surface = "workbench",
 }: WorkbenchShellFrameProps) {
+  const settingsSurface = surface === "settings";
   const [workbenchElement, setWorkbenchElement] = useState<HTMLElement | null>(null);
   const viewportWidth = useViewportWidth(workbenchElement);
   const responsivePlacement = responsiveWorkbenchShellPlacement(placement, viewportWidth);
   const [treeReportedVisible, setTreeReportedVisible] = useState(false);
   const [frameElement, setFrameElement] = useState<HTMLDivElement | null>(null);
+  const editorHidden = responsivePlacement.editorHidden || settingsSurface;
   const style = {
     [WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE]: `${responsivePlacement.rightPanelWidth}px`,
     [WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE]: `${responsivePlacement.bottomPanelHeight}px`,
@@ -50,13 +60,16 @@ export function WorkbenchShellFrame({
       ref={setWorkbenchElement}
       style={style}
     >
-      {chrome}
+      <div className="workbench-frame__chrome" data-slot="chrome" hidden={settingsSurface}>
+        {chrome}
+      </div>
       <div
         className="workbench-frame"
         data-agent-variant={agentVariant}
         data-layout={responsivePlacement.layout}
         data-rail={responsivePlacement.rail}
         data-right-panel={responsivePlacement.rightPanelMaximized ? "maximized" : "docked"}
+        data-surface={settingsSurface ? "settings" : undefined}
         data-tree={workbenchFrameTreeState(responsivePlacement, treeReportedVisible)}
         ref={setFrameElement}
       >
@@ -66,19 +79,26 @@ export function WorkbenchShellFrame({
               <WorkbenchFrameResponsiveContext.Provider
                 value={responsivePlacement.responsiveRestore}
               >
-                {agent}
+                <div className="workbench-frame__agent" data-slot="agent" hidden={settingsSurface}>
+                  {agent}
+                </div>
               </WorkbenchFrameResponsiveContext.Provider>
             </WorkbenchFrameTreeContext.Provider>
           </WorkbenchFramePortalContext.Provider>
+          {settingsSurface ? (
+            <div className="workbench-frame__settings" data-slot="settings" ref={settingsRef}>
+              {settings}
+            </div>
+          ) : null}
           <div
-            aria-hidden={responsivePlacement.editorHidden || undefined}
+            aria-hidden={editorHidden || undefined}
             className="editor-mode-surface"
             data-slot="editor"
-            hidden={responsivePlacement.editorHidden}
+            hidden={editorHidden}
           >
             {editor}
           </div>
-          <div className="workbench-frame__bottom" data-slot="bottom">
+          <div className="workbench-frame__bottom" data-slot="bottom" hidden={settingsSurface}>
             {bottom}
           </div>
         </WorkbenchEditorTabsPortalProvider>

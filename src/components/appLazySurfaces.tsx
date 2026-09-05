@@ -110,12 +110,12 @@ export const LazySearchEverywhere = retryableLazy<
   () => import("./SearchEverywhere").then((module) => ({ default: module.SearchEverywhere })),
   "Search Everywhere",
 );
-export const LazyWorkbenchSettingsDialogHost = retryableLazy<
-  ComponentProps<typeof import("./WorkbenchSettingsDialogHost").WorkbenchSettingsDialogHost>
+export const LazyWorkbenchSettingsHost = retryableLazy<
+  ComponentProps<typeof import("./WorkbenchSettingsHost").WorkbenchSettingsHost>
 >(
   () =>
-    import("./WorkbenchSettingsDialogHost").then((module) => ({
-      default: module.WorkbenchSettingsDialogHost,
+    import("./WorkbenchSettingsHost").then((module) => ({
+      default: module.WorkbenchSettingsHost,
     })),
   "settings",
 );

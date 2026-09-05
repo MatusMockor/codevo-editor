@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -24,8 +24,25 @@ import {
 } from "./WorkbenchAppUpdaterHost";
 
 vi.mock("./appLazySurfaces", () => ({
-  LazySurfaceHost: () => null,
-  LazyWorkbenchSettingsDialogHost: () => null,
+  LazySurfaceHost: ({
+    active,
+    children,
+  }: {
+    readonly active: boolean;
+    readonly children: ReactNode;
+  }) => {
+    mocks.settingsSurfaceActive.push(active);
+    return active ? <>{children}</> : null;
+  },
+  LazyWorkbenchSettingsHost: ({ container }: { readonly container: HTMLElement | null }) => {
+    mocks.settingsContainers.push(container);
+    return null;
+  },
+}));
+
+const mocks = vi.hoisted(() => ({
+  settingsContainers: [] as Array<HTMLElement | null>,
+  settingsSurfaceActive: [] as boolean[],
 }));
 
 describe("WorkbenchAppUpdaterHost", () => {
@@ -34,6 +51,8 @@ describe("WorkbenchAppUpdaterHost", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    mocks.settingsContainers.length = 0;
+    mocks.settingsSurfaceActive.length = 0;
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -207,6 +226,21 @@ describe("WorkbenchAppUpdaterHost", () => {
     expect(host.querySelector(".toast-region")).toBeNull();
   });
 
+  it("keeps the settings surface unmounted until the settings route opens", async () => {
+    await render(hostProps({}));
+
+    expect(mocks.settingsSurfaceActive).toEqual([false]);
+    expect(mocks.settingsContainers).toEqual([]);
+  });
+
+  it("hands the frame settings slot to the lazily mounted settings host", async () => {
+    const container = document.createElement("div");
+    await render(hostProps({ settingsContainer: container, settingsOpen: true }));
+
+    expect(last(mocks.settingsSurfaceActive)).toBe(true);
+    expect(last(mocks.settingsContainers)).toBe(container);
+  });
+
   async function render(props: WorkbenchAppUpdaterHostProps): Promise<void> {
     await act(async () => {
       root.render(<WorkbenchAppUpdaterHost {...props} />);
@@ -234,6 +268,8 @@ function hostProps(overrides: {
   readonly gateway?: AppUpdaterGateway;
   readonly notices?: WorkbenchNotice[];
   readonly providerManagement?: AgentProviderManagementSurface;
+  readonly settingsContainer?: HTMLElement | null;
+  readonly settingsOpen?: boolean;
   readonly workspaceRoot?: string;
 }): WorkbenchAppUpdaterHostProps {
   const composition: WorkbenchAppUpdaterComposition = {
@@ -243,6 +279,7 @@ function hostProps(overrides: {
   };
   return {
     composition,
+    settingsContainer: overrides.settingsContainer ?? null,
     onOpenAgentSettings: overrides.configureAgentCli ?? vi.fn(),
     onOpenRuntimePanel: vi.fn(),
     providerManagement: overrides.providerManagement ?? providerManagement(),
@@ -264,7 +301,7 @@ function hostProps(overrides: {
       saveWorkbenchSettings: vi.fn(async () => undefined),
       setLanguageServerSetupOpen: vi.fn(),
       settingsInitialSection: "general",
-      settingsOpen: false,
+      settingsOpen: overrides.settingsOpen ?? false,
       setSettingsOpen: vi.fn(),
       workspaceDescriptor: null,
       workspaceIdentityDescriptor: null,
@@ -349,4 +386,8 @@ function providerManagement(
     saveWithOutcome: async () => ({ kind: "persisted", policyRegistered: false }),
     update: vi.fn(async () => null),
   };
+}
+
+function last<T>(values: ReadonlyArray<T>): T | undefined {
+  return values[values.length - 1];
 }
