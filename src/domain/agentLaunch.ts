@@ -30,6 +30,7 @@ export type ClaudePermissionMode = (typeof CLAUDE_PERMISSION_MODES)[number];
 
 export const CODEX_MODEL_CHOICES = [
   "default",
+  "gpt-6-astra",
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",

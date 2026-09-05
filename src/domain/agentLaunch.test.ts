@@ -58,6 +58,15 @@ describe("agentLaunch", () => {
     }
   });
 
+  it("preserves GPT-6 Astra through launch and saved-thread serialization", () => {
+    const value = { provider: "codex", model: "gpt-6-astra", mode: "workspaceWrite" };
+    const launch = parseAgentLaunchOptions(value, "launch");
+    expect(serializeAgentLaunchOptions(launch)).toEqual(value);
+    expect(parseStoredAgentLaunchOptions(JSON.parse(JSON.stringify(launch)), "launch")).toEqual(
+      value,
+    );
+  });
+
   it("rejects every model and mode taken from the other provider", () => {
     for (const model of CODEX_MODEL_CHOICES.filter((choice) => choice !== "default")) {
       expect(() =>
@@ -114,7 +123,7 @@ describe("agentLaunch", () => {
       const wire: unknown = JSON.parse(JSON.stringify(serializeAgentLaunchOptions(options)));
       expect(parseAgentLaunchOptions(wire, "launch")).toEqual(options);
     }
-    expect(pairs).toHaveLength(114);
+    expect(pairs).toHaveLength(119);
   });
 
   it("rejects non-string and casing variants of a known choice", () => {

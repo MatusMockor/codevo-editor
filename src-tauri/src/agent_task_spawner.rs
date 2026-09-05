@@ -557,8 +557,9 @@ mod tests {
         ClaudePermissionMode::AcceptEdits,
         ClaudePermissionMode::BypassPermissions,
     ];
-    const CODEX_MODELS: [CodexModelChoice; 6] = [
+    const CODEX_MODELS: [CodexModelChoice; 7] = [
         CodexModelChoice::Default,
+        CodexModelChoice::Gpt6Astra,
         CodexModelChoice::Gpt56Sol,
         CodexModelChoice::Gpt56Terra,
         CodexModelChoice::Gpt56Luna,
@@ -1000,6 +1001,47 @@ mod tests {
         assert_eq!(
             args.last().map(String::as_str),
             Some("Ultrathink:\ntrace the race")
+        );
+    }
+
+    #[test]
+    fn codex_astra_reaches_fresh_and_resumed_cli_invocations() {
+        let launch = AgentLaunchOptions::Codex {
+            model: CodexModelChoice::Gpt6Astra,
+            mode: CodexExecutionMode::WorkspaceWrite,
+        };
+        assert_eq!(
+            agent_invocation_args(AgentCliInvocation::CodexExec, "do it", None, launch),
+            [
+                "exec",
+                "--json",
+                "-m",
+                "gpt-6-astra",
+                "--sandbox",
+                "workspace-write",
+                "--",
+                "do it"
+            ]
+        );
+        assert_eq!(
+            agent_invocation_args(
+                AgentCliInvocation::CodexExec,
+                "do it",
+                Some(SESSION_ID),
+                launch,
+            ),
+            [
+                "exec",
+                "resume",
+                "--json",
+                "-m",
+                "gpt-6-astra",
+                "-c",
+                "sandbox_mode=\"workspace-write\"",
+                SESSION_ID,
+                "--",
+                "do it"
+            ]
         );
     }
 

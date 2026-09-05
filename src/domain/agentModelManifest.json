@@ -139,6 +139,14 @@
   ],
   "codex": [
     {
+      "choice": "gpt-6-astra",
+      "label": "GPT-6 Astra",
+      "runtimeIds": ["gpt-6-astra"],
+      "description": "Our most capable model, built for the hardest end-to-end work.",
+      "defaultEffort": "medium",
+      "contextWindows": []
+    },
+    {
       "choice": "gpt-5.6-sol",
       "label": "GPT-5.6 Sol",
       "isDefault": true,

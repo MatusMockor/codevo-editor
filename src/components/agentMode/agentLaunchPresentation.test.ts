@@ -15,6 +15,8 @@ import {
   agentLaunchEffortLabel,
   agentLaunchEffortMeta,
   agentLaunchEffortValue,
+  agentLaunchEffectiveModel,
+  agentLaunchForDispatch,
   agentLaunchMetaLabel,
   agentLaunchModeChoices,
   agentLaunchModeHint,
@@ -31,6 +33,29 @@ import {
 } from "./agentLaunchPresentation";
 
 describe("agentLaunchPresentation", () => {
+  it("resolves configured Astra consistently for display, dispatch, search, and favorites", () => {
+    const launch: AgentLaunchOptions = {
+      provider: "codex",
+      model: "default",
+      mode: "workspaceWrite",
+    };
+    expect(agentLaunchModelLabel(launch, "gpt-6-astra")).toBe("GPT-6 Astra");
+    expect(agentLaunchEffectiveModel(launch, "gpt-6-astra")).toBe("gpt-6-astra");
+    expect(agentLaunchForDispatch(launch, "gpt-6-astra")).toEqual({
+      ...launch,
+      model: "gpt-6-astra",
+    });
+    const rows = agentModelRows("codex");
+    const matches = filterAgentModelRows(rows, "all", new Set(), "astra");
+    expect(matches.map((row) => row.value)).toEqual(["gpt-6-astra"]);
+    expect(filterAgentModelRows(rows, "favorites", new Set(["codex/gpt-6-astra"]), "")).toEqual(
+      matches,
+    );
+    expect(agentLaunchForDispatch({ ...launch, model: "gpt-5.5" }, "gpt-6-astra").model).toBe(
+      "gpt-5.5",
+    );
+  });
+
   it("ignores a value that is not a choice of the current provider", () => {
     const codex: AgentLaunchOptions = { provider: "codex", model: "default", mode: "default" };
     const claude: AgentLaunchOptions = {
@@ -371,6 +396,7 @@ describe("agent model rows", () => {
     ]);
     expect(agentModelRows("codex").map((row) => row.value)).toEqual([
       "default",
+      "gpt-6-astra",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",

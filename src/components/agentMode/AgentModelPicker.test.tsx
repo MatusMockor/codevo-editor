@@ -86,6 +86,7 @@ describe("AgentModelPicker", () => {
     act(() => claude.click());
     expect(optionValues()).toEqual([
       "default",
+      "gpt-6-astra",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",

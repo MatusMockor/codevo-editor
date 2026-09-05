@@ -54,6 +54,8 @@ pub enum CodexModelChoice {
     #[default]
     #[serde(rename = "default")]
     Default,
+    #[serde(rename = "gpt-6-astra")]
+    Gpt6Astra,
     #[serde(rename = "gpt-5.6-sol")]
     Gpt56Sol,
     #[serde(rename = "gpt-5.6-terra")]
@@ -384,6 +386,7 @@ fn claude_mode_args(mode: ClaudePermissionMode) -> &'static [&'static str] {
 fn codex_model_args(model: CodexModelChoice) -> &'static [&'static str] {
     match model {
         CodexModelChoice::Default => &[],
+        CodexModelChoice::Gpt6Astra => &["-m", "gpt-6-astra"],
         CodexModelChoice::Gpt56Sol => &["-m", "gpt-5.6-sol"],
         CodexModelChoice::Gpt56Terra => &["-m", "gpt-5.6-terra"],
         CodexModelChoice::Gpt56Luna => &["-m", "gpt-5.6-luna"],
@@ -435,8 +438,9 @@ mod tests {
         ClaudePermissionMode::Auto,
         ClaudePermissionMode::BypassPermissions,
     ];
-    const CODEX_MODELS: [CodexModelChoice; 6] = [
+    const CODEX_MODELS: [CodexModelChoice; 7] = [
         CodexModelChoice::Default,
+        CodexModelChoice::Gpt6Astra,
         CodexModelChoice::Gpt56Sol,
         CodexModelChoice::Gpt56Terra,
         CodexModelChoice::Gpt56Luna,
@@ -713,8 +717,9 @@ mod tests {
 
     #[test]
     fn codex_model_table_is_exhaustive_and_flagless_by_default() {
-        let expected: [&[&str]; 6] = [
+        let expected: [&[&str]; 7] = [
             &[],
+            &["-m", "gpt-6-astra"],
             &["-m", "gpt-5.6-sol"],
             &["-m", "gpt-5.6-terra"],
             &["-m", "gpt-5.6-luna"],
@@ -816,6 +821,19 @@ mod tests {
 
     #[test]
     fn serde_uses_the_documented_wire_names() {
+        let astra_wire = r#"{"provider":"codex","model":"gpt-6-astra","mode":"workspaceWrite"}"#;
+        let astra = codex(
+            CodexModelChoice::Gpt6Astra,
+            CodexExecutionMode::WorkspaceWrite,
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentLaunchOptions>(astra_wire).expect("astra launch decodes"),
+            astra
+        );
+        assert_eq!(
+            serde_json::to_string(&astra).expect("astra launch encodes"),
+            astra_wire
+        );
         let encoded = serde_json::to_string(&codex(
             CodexModelChoice::Gpt56Sol,
             CodexExecutionMode::WorkspaceWrite,
@@ -848,6 +866,10 @@ mod tests {
 
     #[test]
     fn serde_rejects_unknown_variants_fields_and_cross_provider_pairs() {
+        for model in ["gpt-6-astra-unknown", "gpt-6-astra --help", "gpt-6"] {
+            let wire = serde_json::json!({"provider": "codex", "model": model, "mode": "default"});
+            assert!(serde_json::from_value::<AgentLaunchOptions>(wire).is_err());
+        }
         assert!(serde_json::from_str::<AgentLaunchOptions>(
             r#"{"provider":"claudeCode","model":"claude-opus-4","mode":"default"}"#
         )

@@ -5,6 +5,19 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.16] - 2026-09-05
+
+### Added
+
+- Add GPT-6 Astra to the Codex model picker, search, favorites, and saved thread
+  settings, with the exact model selection forwarded for new and resumed sessions.
+
+### Fixed
+
+- Recognize GPT-6 Astra when it is selected in the local Codex configuration instead
+  of falling back to an older model. Existing explicit selections and permissions
+  remain unchanged.
+
 ## [0.2.0-beta.15] - 2026-09-05
 
 ### Fixed

@@ -191,6 +191,7 @@ describe("AgentLaunchControls", () => {
     open("agent-launch-model");
     expect(options("agent-launch-model").map((option) => optionLabel(option))).toEqual([
       "GPT-5.6 Sol",
+      "GPT-6 Astra",
       "GPT-5.6 Terra",
       "GPT-5.6 Luna",
       "GPT-5.5",
@@ -204,6 +205,20 @@ describe("AgentLaunchControls", () => {
       "auto",
       "dangerFullAccess",
     ]);
+  });
+
+  it("selects GPT-6 Astra with its executable ID and preserves the permission mode", () => {
+    const onLaunchChange = vi.fn();
+    renderControls(
+      { provider: "codex", model: "gpt-5.6-sol", mode: "workspaceWrite" },
+      onLaunchChange,
+    );
+    pick("agent-launch-model", "gpt-6-astra");
+    expect(onLaunchChange).toHaveBeenCalledExactlyOnceWith({
+      provider: "codex",
+      model: "gpt-6-astra",
+      mode: "workspaceWrite",
+    });
   });
 
   it("labels both pickers and describes the current choice for assistive technology", () => {

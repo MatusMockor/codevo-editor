@@ -204,6 +204,11 @@ const CODEX_MODEL_TEXT: Record<CodexModelChoice, LaunchText> = {
     meta: "automatic model",
     hint: "No model override. Codex CLI chooses the model from its settings.",
   },
+  "gpt-6-astra": {
+    label: "GPT-6 Astra",
+    meta: "gpt-6-astra",
+    hint: "Runs the session on gpt-6-astra.",
+  },
   "gpt-5.6-sol": {
     label: "GPT-5.6 Sol",
     meta: "gpt-5.6-sol",
