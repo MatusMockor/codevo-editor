@@ -47,8 +47,6 @@ import { REVEAL_FAILED_NOTICE, useAgentThreadMenuCommands } from "./useAgentThre
 import { useAgentThreadNavigation } from "./useAgentThreadNavigation";
 import { useAgentViewCommands } from "./useAgentViewCommands";
 import { useWorkbenchFrameResponsiveRestore } from "../useWorkbenchFrameResponsiveRestore";
-import { AgentProviderUpdateToast } from "../AgentProviderUpdateToast";
-import { createAgentProviderUpdateToastView } from "../agentProviderUpdateToastRenderer";
 import {
   useAgentLatestCallback,
   useAgentSurfacePresentationView,
@@ -416,35 +414,8 @@ export function AgentModeView({
       agents.showFileDiff,
     ],
   );
-  const updateToast = agents.providerManagement.toast;
-  const updateToastView =
-    updateToast?.kind === "updateAvailable"
-      ? createAgentProviderUpdateToastView(updateToast.provider, updateToast.version)
-      : null;
-
   return (
     <>
-      {updateToastView === null ? null : (
-        <AgentProviderUpdateToast
-          onDismiss={() => {
-            void agents.providerManagement.dismissUpdate(
-              updateToastView.provider,
-              updateToastView.availableVersion,
-            );
-          }}
-          onOpenSettings={() => {
-            agents.providerManagement.dismissToast();
-            agents.configureAgentCli();
-          }}
-          onUpdate={() => {
-            void agents.providerManagement.update(
-              updateToastView.provider,
-              updateToastView.availableVersion,
-            );
-          }}
-          view={updateToastView}
-        />
-      )}
       <section aria-label="Agent mode" className="agent-mode" data-slot="agent">
         {notice && (
           <AgentNoticeBar

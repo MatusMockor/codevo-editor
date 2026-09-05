@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialAgentWorkbenchLayout } from "./domain/agentWorkbenchLayout";
 import type { GitChangedFile, GitFileDiff } from "./domain/git";
+import { unconfiguredAgentProviderManagement } from "./test/agentProviderManagementFixture";
 import { createEmptyDebugWatches } from "./test/debugWatchMocks";
 
 const appGitDiffClickMocks = vi.hoisted(() => ({
@@ -338,6 +339,10 @@ function createWorkbench(overrides: Record<string, unknown>) {
         layout: { ...initialAgentWorkbenchLayout, layout: "editor-expanded" },
         effectiveLayout: "editor-expanded",
         dispatch: noop,
+      },
+      agents: {
+        configureAgentCli: noop,
+        providerManagement: unconfiguredAgentProviderManagement(),
       },
       activePath: null,
       appSettings: {

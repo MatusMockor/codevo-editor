@@ -132,6 +132,72 @@ export function reduceAppUpdaterState(
   }
 }
 
+export type AppUpdateToastPresentation =
+  | {
+      readonly kind: "available";
+      readonly version: string;
+      readonly currentVersion: string;
+      readonly date: string | null;
+    }
+  | { readonly kind: "downloading"; readonly version: string }
+  | { readonly kind: "readyToInstall"; readonly version: string }
+  | { readonly kind: "installing"; readonly version: string }
+  | {
+      readonly kind: "failed";
+      readonly version: string;
+      readonly operation: Exclude<AppUpdaterOperation, "check">;
+      readonly message: string;
+    };
+
+export function presentAppUpdateToast(state: AppUpdaterState): AppUpdateToastPresentation | null {
+  switch (state.kind) {
+    case "idle":
+    case "checking":
+    case "upToDate":
+      return null;
+    case "available":
+      return {
+        kind: "available",
+        version: state.version,
+        currentVersion: state.currentVersion,
+        date: state.date,
+      };
+    case "downloading":
+      return { kind: "downloading", version: state.version };
+    case "readyToInstall":
+      return { kind: "readyToInstall", version: state.version };
+    case "installing":
+      return { kind: "installing", version: state.version };
+    case "failed":
+      if (state.release === null) return null;
+      if (state.operation === "check") return null;
+      return {
+        kind: "failed",
+        version: state.release.version,
+        operation: state.operation,
+        message: state.message,
+      };
+  }
+}
+
+export function appUpdateToastGroupKey(presentation: AppUpdateToastPresentation): string {
+  return JSON.stringify(["app-update", presentation.version]);
+}
+
+export function appUpdateToastTitle(presentation: AppUpdateToastPresentation): string {
+  switch (presentation.kind) {
+    case "available":
+    case "readyToInstall":
+      return `Update Available: Codevo v${presentation.version}`;
+    case "downloading":
+      return "Downloading update";
+    case "installing":
+      return "Installing update";
+    case "failed":
+      return "Application update failed";
+  }
+}
+
 function releasePresentation(state: AppUpdaterReleasePresentation): AppUpdaterReleasePresentation {
   return {
     currentVersion: state.currentVersion,

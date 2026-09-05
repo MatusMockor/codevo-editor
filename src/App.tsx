@@ -9,7 +9,6 @@ import { editorCursorAuthority } from "./application/editorCursorAuthority";
 import { CLOSED_PHP_CHANGE_SIGNATURE } from "./application/appClosedState";
 import { presentOptionalNodeRunWithoutDebugging } from "./application/nodeRunWithoutDebuggingPresentation";
 import { useAppFrameworkBottomPanels } from "./application/useAppFrameworkBottomPanels";
-import { useNoticeToastRenderers } from "./components/useNoticeToastRenderers";
 import { usePerfScenarioBridgeInstall } from "./components/usePerfScenarioBridgeInstall";
 import { useAppWindowTitle } from "./application/useAppBootEffects";
 import { usePrefersLightTheme } from "./application/usePrefersLightTheme";
@@ -589,16 +588,6 @@ function App() {
   const openRuntimePanel = useCallback(() => {
     void runCommand("runtime.show");
   }, [runCommand]);
-  const renderNoticeToast = useNoticeToastRenderers({
-    intelligenceMode: workbench.intelligenceMode,
-    onInstallManagedPhpactor: workbench.installManagedPhpactor,
-    isInstallingManagedPhpactor: workbench.installingManagedPhpactor,
-    onOpenLanguageServerSetup: () => workbench.setLanguageServerSetupOpen(true),
-    onOpenRuntimePanel: openRuntimePanel,
-    workspaceRoot: workbench.workspaceRoot,
-    workspaceTrusted,
-  });
-
   const ideActivity = useMemo(
     () =>
       ideActivityStatus(
@@ -1239,11 +1228,7 @@ function App() {
         />
       )}
 
-      <WorkbenchOverlayHosts
-        composition={workbenchComposition}
-        renderNotice={renderNoticeToast}
-        workbench={workbench}
-      />
+      <WorkbenchOverlayHosts composition={workbenchComposition} workbench={workbench} />
       <NodeRunConfigurationPickerHost
         launcher={workbench.nodeRunWithoutDebugging.configurationLauncher}
       />
@@ -1478,10 +1463,13 @@ function App() {
 
       <WorkbenchAppUpdaterHost
         composition={workbenchComposition.appUpdater}
+        onOpenAgentSettings={workbench.agents.configureAgentCli}
+        onOpenRuntimePanel={openRuntimePanel}
         providerManagement={workbench.agents.providerManagement}
         systemFontGateway={systemFontGateway}
         workbench={workbench}
         workspaceFiles={workspaceGateways.files}
+        workspaceTrusted={workspaceTrusted}
       />
     </main>
   );

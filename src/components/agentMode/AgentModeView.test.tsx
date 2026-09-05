@@ -228,30 +228,25 @@ describe("AgentModeView", () => {
     expect(onOpenSourceControl).toHaveBeenCalledTimes(1);
   });
 
-  it("routes an available provider update toast through exact management actions", async () => {
-    const management = providerManagement();
+  it("leaves provider update toasts to the workbench notification host", () => {
     const update = vi.fn(async () => null);
-    const dismissUpdate = vi.fn(async () => true);
-    const withToast: AgentProviderManagementSurface = {
-      ...management,
-      toast: { kind: "updateAvailable", provider: "codex", version: "0.150.1" },
-      dismissUpdate,
-      update,
-    };
-    render({ agents: surface({ providerManagement: withToast }) });
-
-    expect(host.textContent).toContain("Update available: Codex v0.150.1");
-    await act(async () => {
-      buttonWithText("Update").click();
-      await Promise.resolve();
+    render({
+      agents: surface({
+        providerManagement: {
+          ...providerManagement(),
+          toast: { kind: "updateAvailable", provider: "codex", version: "0.150.1" },
+          update,
+        },
+      }),
     });
-    expect(update).toHaveBeenCalledWith("codex", "0.150.1");
 
-    await act(async () => {
-      host.querySelector<HTMLButtonElement>('[aria-label="Dismiss notification"]')?.click();
-      await Promise.resolve();
-    });
-    expect(dismissUpdate).toHaveBeenCalledWith("codex", "0.150.1");
+    expect(host.querySelector(".toast-notification")).toBeNull();
+    expect(host.querySelector('[role="status"][class*="toast"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Dismiss notification"]')).toBeNull();
+    expect(
+      Array.from(host.querySelectorAll("button")).some((button) => button.textContent === "Update"),
+    ).toBe(false);
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("keeps a notice without a settings action free of the deep link", () => {

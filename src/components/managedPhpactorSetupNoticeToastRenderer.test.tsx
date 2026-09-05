@@ -6,9 +6,13 @@ import {
   managedPhpactorSetupNoticeGroupKey,
   managedPhpactorSetupNoticeToastRenderer,
 } from "./managedPhpactorSetupNoticeToastRenderer";
-import type { NoticeToastRendererContext } from "./useNoticeToastRenderers";
+import { unconfiguredAgentProviderManagement } from "../test/agentProviderManagementFixture";
+import type { NoticeToastRendererFactoryContext } from "./useNoticeToastRenderers";
 
-function context(overrides: Partial<NoticeToastRendererContext> = {}): NoticeToastRendererContext {
+function context(
+  overrides: Partial<NoticeToastRendererFactoryContext> = {},
+): NoticeToastRendererFactoryContext {
+  const providerManagement = unconfiguredAgentProviderManagement();
   return {
     intelligenceMode: "fullSmart",
     isInstallingManagedPhpactor: false,
@@ -17,6 +21,21 @@ function context(overrides: Partial<NoticeToastRendererContext> = {}): NoticeToa
     onOpenRuntimePanel: vi.fn(),
     workspaceRoot: "/workspace",
     workspaceTrusted: true,
+    appUpdate: null,
+    appUpdater: {
+      check: vi.fn(async () => undefined),
+      dismiss: vi.fn(),
+      download: vi.fn(async () => undefined),
+      installAndRestart: vi.fn(async () => undefined),
+      skipVersion: vi.fn(async () => undefined),
+    },
+    copyText: vi.fn(),
+    onDismissUpdateRefusal: vi.fn(),
+    onOpenAgentSettings: vi.fn(),
+    onUpdateRefused: vi.fn(),
+    providerManagement,
+    readProviderManagement: () => providerManagement,
+    providerUpdate: null,
     ...overrides,
   };
 }

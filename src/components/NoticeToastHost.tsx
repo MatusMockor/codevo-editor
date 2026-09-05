@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 
@@ -11,14 +11,21 @@ export type NoticeToastRenderer = (
   context: NoticeToastContext,
 ) => ReactNode | null;
 
+export const DEFAULT_MAX_VISIBLE_TOASTS = 2;
+
 interface NoticeToastHostProps {
   maxVisible?: number;
   notices: WorkbenchNotice[];
   renderNotice: NoticeToastRenderer;
 }
 
+interface RenderedToast {
+  readonly key: string;
+  readonly node: ReactNode;
+}
+
 export function NoticeToastHost({
-  maxVisible = 1,
+  maxVisible = DEFAULT_MAX_VISIBLE_TOASTS,
   notices,
   renderNotice,
 }: NoticeToastHostProps): ReactNode {
@@ -83,7 +90,8 @@ export function NoticeToastHost({
   }, [getNoticeDismissKey, notices]);
 
   const renderedNotices = useMemo(() => {
-    const rendered: ReactNode[] = [];
+    const rendered: RenderedToast[] = [];
+    const limit = Math.max(1, Math.floor(maxVisible));
 
     for (const notice of notices) {
       if (dismissedNoticeKeys.has(getNoticeDismissKey(notice))) {
@@ -98,9 +106,9 @@ export function NoticeToastHost({
         continue;
       }
 
-      rendered.push(<Fragment key={notice.id}>{output}</Fragment>);
+      rendered.push({ key: notice.id, node: output });
 
-      if (rendered.length >= maxVisible) {
+      if (rendered.length >= limit) {
         break;
       }
     }
@@ -112,5 +120,27 @@ export function NoticeToastHost({
     return null;
   }
 
-  return renderedNotices;
+  return (
+    <div
+      className={renderedNotices.length > 1 ? "toast-region toast-region--stacked" : "toast-region"}
+    >
+      {renderedNotices.map((entry, index) => {
+        const behind = index > 0;
+        return (
+          <div
+            aria-hidden={behind || undefined}
+            className={
+              behind
+                ? "toast-region__slot toast-region__slot--behind"
+                : "toast-region__slot toast-region__slot--front"
+            }
+            inert={behind || undefined}
+            key={entry.key}
+          >
+            {entry.node}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
