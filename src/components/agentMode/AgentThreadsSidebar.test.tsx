@@ -111,9 +111,49 @@ describe("AgentThreadsSidebar", () => {
     );
     expect(cssRule(".agent-provider-footer__refresh {")).toContain("margin-left: auto");
     expect(cssRule(".agent-provider-footer__providers:empty {")).toContain("display: none");
-    expect(AGENT_MODE_CSS).toContain("@container (max-width: 280px)");
+    expect(AGENT_MODE_CSS).not.toContain("@container (max-width: 280px)");
     expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__label");
     expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__glyph");
+    expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__action");
+    expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__provider {");
+  });
+
+  it("stacks the provider recovery actions as full-width T3 status pills", () => {
+    expect(cssRule(".agent-provider-footer__providers {")).toContain("flex-direction: column");
+    expect(cssRule(".agent-provider-footer__providers {")).toContain("align-items: stretch");
+    const pill = cssRule("\n.agent-provider-footer__pill {");
+    expect(pill).toContain("width: 100%");
+    expect(pill).toContain("min-height: 30px");
+    expect(pill).toContain("border-radius: 8px");
+    expect(pill).toContain("font-size: 12px");
+    expect(pill).toContain("font-weight: 500");
+    expect(pill).toContain("--provider-pill-tint: var(--t3-primary)");
+    expect(pill).toContain(
+      "--provider-pill-ink: color-mix(in srgb, var(--t3-primary) 55%, var(--t3-foreground))",
+    );
+    expect(pill).toContain("color-mix(in srgb, var(--provider-pill-tint) 12%, transparent)");
+    expect(pill).toContain("color-mix(in srgb, var(--provider-pill-tint) 30%, transparent)");
+    expect(pill).toContain("color: var(--provider-pill-ink)");
+    expect(pill).not.toContain("color: var(--provider-pill-tint)");
+    const success = cssRule(".agent-provider-footer__pill--success {");
+    expect(success).toContain("--provider-pill-tint: var(--t3-success)");
+    expect(success).toContain("--provider-pill-ink: var(--t3-status-done)");
+    const danger = cssRule(".agent-provider-footer__pill--danger {");
+    expect(danger).toContain("--provider-pill-tint: var(--t3-error)");
+    expect(danger).toContain("--provider-pill-ink: var(--t3-status-failed)");
+    for (const selector of [
+      '.app-shell:is([data-theme="light"], [data-theme="catppuccinLatte"], [data-theme="oneLight"])\n  .agent-provider-footer__pill--primary {',
+      '.app-shell[data-theme="system"] .agent-provider-footer__pill--primary {',
+    ]) {
+      expect(cssRule(selector)).toContain("--provider-pill-ink: var(--t3-primary)");
+    }
+    const disabled = cssRule("button.agent-provider-footer__pill:disabled {");
+    expect(disabled).not.toContain("opacity");
+    expect(disabled).not.toContain("color:");
+    expect(disabled).toContain("--provider-pill-fill");
+    expect(cssRule(".agent-provider-footer__pill-glyph {")).toContain("width: 14px");
+    expect(cssRule(".agent-provider-footer__pill-label {")).toContain("min-width: 48px");
+    expect(cssRule(".agent-provider-footer__pill-label {")).toContain("text-overflow: ellipsis");
   });
 
   it("lifts the receding rail labels to full muted under every light theme", () => {

@@ -829,11 +829,10 @@
 }
 
 /*
-  Footer: icon-only navigation, with the rare provider recovery actions wrapped onto
-  their own line above it. The actions row is dropped from the layout while idle.
+  Footer: icon-only navigation, with the rare provider recovery actions stacked as
+  full-width status pills above it. The pill column is dropped from the layout while idle.
 */
 .agent-provider-footer {
-  container-type: inline-size;
   display: flex;
   flex: 0 0 auto;
   flex-wrap: wrap;
@@ -845,51 +844,101 @@
   padding: 4px 8px 6px;
 }
 
-.agent-provider-footer__providers,
-.agent-provider-footer__provider {
-  display: flex;
-  align-items: center;
-}
-
 .agent-provider-footer__providers {
+  display: flex;
   flex: 1 1 100%;
+  flex-direction: column;
+  align-items: stretch;
   min-width: 0;
-  overflow: hidden;
   gap: 4px;
   order: -1;
+  padding-bottom: 2px;
 }
 
 .agent-provider-footer__providers:empty {
   display: none;
 }
 
-.agent-provider-footer__provider {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--agent-text-muted);
-  gap: 4px;
-}
-
-.agent-provider-footer__action {
-  flex: 0 0 auto;
-  border: 0;
-  border-radius: var(--agent-radius-sm);
-  background: transparent;
-  color: var(--agent-accent);
-  cursor: pointer;
+.agent-provider-footer__pill {
+  --provider-pill-tint: var(--t3-primary);
+  --provider-pill-ink: color-mix(in srgb, var(--t3-primary) 55%, var(--t3-foreground));
+  --provider-pill-fill: color-mix(in srgb, var(--provider-pill-tint) 12%, transparent);
+  --provider-pill-hairline: color-mix(in srgb, var(--provider-pill-tint) 30%, transparent);
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  border: 1px solid var(--provider-pill-hairline);
+  border-radius: 8px;
+  background: var(--provider-pill-fill);
+  color: var(--provider-pill-ink);
   font: inherit;
-  font-size: var(--agent-fs-xs);
-  padding: 2px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  padding: 0 10px;
+  text-align: left;
+  transition:
+    background-color var(--agent-motion-hover) var(--ease-standard),
+    border-color var(--agent-motion-hover) var(--ease-standard);
 }
 
-.agent-provider-footer__action:hover:not(:disabled) {
-  background: var(--agent-hover);
+.agent-provider-footer__pill--success {
+  --provider-pill-tint: var(--t3-success);
+  --provider-pill-ink: var(--t3-status-done);
 }
 
-.agent-provider-footer__action:disabled {
+.agent-provider-footer__pill--danger {
+  --provider-pill-tint: var(--t3-error);
+  --provider-pill-ink: var(--t3-status-failed);
+}
+
+.app-shell:is([data-theme="light"], [data-theme="catppuccinLatte"], [data-theme="oneLight"])
+  .agent-provider-footer__pill--primary {
+  --provider-pill-ink: var(--t3-primary);
+}
+
+@media (prefers-color-scheme: light) {
+  .app-shell[data-theme="system"] .agent-provider-footer__pill--primary {
+    --provider-pill-ink: var(--t3-primary);
+  }
+}
+
+.agent-provider-footer__pill-glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.agent-provider-footer__pill-label {
+  flex: 1 1 auto;
+  min-width: 48px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.agent-provider-footer__pill {
+  cursor: pointer;
+}
+
+button.agent-provider-footer__pill:hover:not(:disabled) {
+  --provider-pill-fill: color-mix(in srgb, var(--provider-pill-tint) 18%, transparent);
+  --provider-pill-hairline: color-mix(in srgb, var(--provider-pill-tint) 45%, transparent);
+}
+
+button.agent-provider-footer__pill:focus-visible {
+  outline: none;
+  box-shadow: var(--agent-focus-ring);
+}
+
+button.agent-provider-footer__pill:disabled {
+  --provider-pill-fill: color-mix(in srgb, var(--provider-pill-tint) 6%, transparent);
+  --provider-pill-hairline: color-mix(in srgb, var(--provider-pill-tint) 18%, transparent);
   cursor: default;
-  opacity: 0.45;
 }
 
 .agent-provider-footer__navigation {
@@ -906,27 +955,6 @@
 
 .agent-provider-footer__refresh {
   margin-left: auto;
-}
-
-@container (max-width: 280px) {
-  .agent-provider-footer__providers {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .agent-provider-footer__provider {
-    width: 100%;
-    flex: 0 0 auto;
-    gap: 2px;
-  }
-
-  .agent-provider-footer__action {
-    overflow: hidden;
-    padding-inline: 2px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
 }
 
 .agent-row-menu {

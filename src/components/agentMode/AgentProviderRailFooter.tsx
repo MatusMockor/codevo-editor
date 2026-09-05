@@ -1,11 +1,33 @@
-import { BarChart3, GitBranch, LoaderCircle, RefreshCw, Settings } from "lucide-react";
+import {
+  ArrowUpCircle,
+  BarChart3,
+  Check,
+  Download,
+  GitBranch,
+  LoaderCircle,
+  RefreshCw,
+  Settings,
+  ShieldCheck,
+  TriangleAlert,
+} from "lucide-react";
 import { useEffect, useRef, useState, type Ref } from "react";
-import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type {
-  AgentProviderHealthState,
-  AgentProviderPolicyRegistrationState,
-} from "../../domain/agentProviderHealth";
+  AgentProviderManagementSurface,
+  AgentProviderManagementView,
+} from "../../application/useAgentProviderManagement";
+import type { AgentProviderUpdateState } from "../../domain/agentProviderHealth";
 import type { AgentCliKind } from "../../domain/agentTask";
+import {
+  providerAvailableVersion,
+  providerFooterPillModels,
+  providerSettingsTitle,
+  providerUpdating,
+  type ProviderPillGlyph,
+  type ProviderPillIntent,
+  type ProviderPillModel,
+} from "./agentSidebarPresentation";
+
+export const AGENT_PROVIDER_UPDATED_PILL_MS = 6000;
 
 export interface AgentProviderRailFooterProps {
   readonly management: AgentProviderManagementSurface;
@@ -121,198 +143,146 @@ function ProviderFooterActions({
   readonly provider: AgentCliKind;
 }) {
   const view = management.providers[provider];
-  const updating = view.updateState.kind === "starting" || view.updateState.kind === "running";
-  const registering = view.policy.kind === "registering";
-  const available =
-    view.health.kind === "ready" && view.health.update.kind === "available"
-      ? view.health.update
-      : null;
-  const busyLabel = providerBusyLabel(provider, updating, registering);
-  const manual =
-    view.health.kind === "ready" &&
-    view.health.update.kind === "manualUpdateAvailable" &&
-    !updating;
-  const register = view.policy.kind === "unregistered" || view.policy.kind === "failed";
-  const offersUpdate = available !== null && !updating && view.policy.kind === "registered";
+  const updatedVisible = useUpdatedPillVisible(view.updateState);
+  const failedVersion = useFailedUpdateVersion(view);
+  const pills = providerFooterPillModels({ provider, view, updatedVisible, failedVersion });
 
-  if (busyLabel === null && !offersUpdate && !manual && !register) return null;
+  const run = (intent: ProviderPillIntent): void => {
+    switch (intent.kind) {
+      case "update":
+        void management.update(provider, intent.version);
+        return;
+      case "openSettings":
+        onOpenSettings();
+        return;
+      case "register":
+        void management.retryRegistration(provider);
+        return;
+      case "none":
+        return;
+      default:
+        unsupportedIntent(intent);
+    }
+  };
 
   return (
-    <span className="agent-provider-footer__provider" data-provider={provider}>
-      {busyLabel !== null ? (
-        <LoaderCircle aria-label={busyLabel} className="agent-provider-spin" role="img" size={12} />
-      ) : null}
-      {!offersUpdate || available === null ? null : (
-        <button
-          aria-label={`Update ${providerLabel(provider)} to ${available.availableVersion}`}
-          className="agent-provider-footer__action"
-          disabled={view.liveTurnCount > 0}
-          onClick={() => void management.update(provider, available.availableVersion)}
-          title={
-            view.liveTurnCount > 0
-              ? `Stop running ${providerLabel(provider)} turns first.`
-              : `Update to ${available.availableVersion}`
-          }
-          type="button"
-        >
-          Update
-        </button>
-      )}
-      {manual && view.health.kind === "ready" ? (
-        <button
-          aria-label={`View ${providerLabel(provider)} update instructions`}
-          className="agent-provider-footer__action"
-          onClick={onOpenSettings}
-          title={manualUpdateTitle(view.health)}
-          type="button"
-        >
-          Update available
-        </button>
-      ) : null}
-      {register ? (
-        <button
-          aria-label={`Retry ${providerLabel(provider)} policy registration`}
-          className="agent-provider-footer__action"
-          onClick={() => void management.retryRegistration(provider)}
-          title={providerFooterDetail(view.policy, view.health)}
-          type="button"
-        >
-          Register
-        </button>
-      ) : null}
-    </span>
+    <>
+      {pills.map((pill) => (
+        <ProviderPillView
+          key={pill.id}
+          onRun={() => run(pill.intent)}
+          pill={pill}
+          provider={provider}
+        />
+      ))}
+    </>
   );
 }
 
-function manualUpdateTitle(
-  health: Extract<AgentProviderHealthState, { readonly kind: "ready" }>,
-): string {
-  if (health.update.kind !== "manualUpdateAvailable") return readyDetail(health);
-  return `Version ${health.update.availableVersion} is available; update with the original installer.`;
+function useUpdatedPillVisible(state: AgentProviderUpdateState): boolean {
+  const succeeded = state.kind === "succeeded";
+  const [visible, setVisible] = useState(false);
+  const previous = useRef(succeeded);
+
+  useEffect(() => {
+    const became = succeeded && !previous.current;
+    previous.current = succeeded;
+    if (!became) return;
+    setVisible(true);
+    const timer = setTimeout(() => setVisible(false), AGENT_PROVIDER_UPDATED_PILL_MS);
+    return () => clearTimeout(timer);
+  }, [succeeded]);
+
+  return visible && succeeded;
 }
 
-function providerBusyLabel(
-  provider: AgentCliKind,
-  updating: boolean,
-  registering: boolean,
-): string | null {
-  if (updating) return `Updating ${providerLabel(provider)}`;
-  if (registering) return `Registering ${providerLabel(provider)}`;
-  return null;
+function useFailedUpdateVersion(view: AgentProviderManagementView): string | null {
+  const updating = providerUpdating(view.updateState);
+  const offered = providerAvailableVersion(view.health);
+  const [started, setStarted] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!updating || offered === null) return;
+    setStarted(offered);
+  }, [updating, offered]);
+
+  if (view.updateState.kind !== "failed") return null;
+  return started;
 }
 
-function providerSettingsTitle(
-  management: AgentProviderManagementSurface,
-  enabled: ReadonlyArray<AgentCliKind>,
-): string {
-  if (enabled.length === 0) return "Settings > Agents";
-  const parts = enabled.map((provider) => {
-    const view = management.providers[provider];
-    return `${providerLabel(provider)} ${providerFooterLabel(view.policy, view.health)}`;
-  });
-  return `Settings > Agents · ${parts.join(" · ")}`;
+function ProviderPillView({
+  onRun,
+  pill,
+  provider,
+}: {
+  readonly onRun: () => void;
+  readonly pill: ProviderPillModel;
+  readonly provider: AgentCliKind;
+}) {
+  const className = `agent-provider-footer__pill agent-provider-footer__pill--${pill.tone}`;
+  const title = pill.title ?? undefined;
+  const content = (
+    <>
+      <ProviderPillGlyphView glyph={pill.glyph} />
+      <span className="agent-provider-footer__pill-label">{pill.label}</span>
+    </>
+  );
+
+  if (pill.intent.kind === "none") {
+    return (
+      <span
+        aria-busy={pill.busy}
+        className={className}
+        data-pill={pill.id}
+        data-provider={provider}
+        role="status"
+        title={title}
+      >
+        {content}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      aria-label={pill.name}
+      className={className}
+      data-pill={pill.id}
+      data-provider={provider}
+      disabled={pill.disabled}
+      onClick={onRun}
+      title={title}
+      type="button"
+    >
+      {content}
+    </button>
+  );
 }
 
-function providerFooterLabel(
-  policy: AgentProviderPolicyRegistrationState,
-  health: AgentProviderHealthState,
-): string {
-  const policyLabel = providerPolicyLabel(policy);
-  if (policyLabel !== null) return policyLabel;
-  switch (health.kind) {
-    case "disabled":
-      return "Disabled";
-    case "notConfigured":
-      return "Not configured";
-    case "checking":
-      return "Checking…";
-    case "ready":
-      if (health.update.kind === "available" || health.update.kind === "manualUpdateAvailable")
-        return `v${health.update.availableVersion}`;
-      if (health.installedVersion !== null) return `v${health.installedVersion}`;
-      return "Ready";
-    case "failed":
-      return "Check failed";
+function ProviderPillGlyphView({ glyph }: { readonly glyph: ProviderPillGlyph }) {
+  const props = { "aria-hidden": true, className: "agent-provider-footer__pill-glyph", size: 14 };
+  switch (glyph) {
+    case "spinner":
+      return <LoaderCircle {...props} className={`${props.className} agent-provider-spin`} />;
+    case "check":
+      return <Check {...props} />;
+    case "update":
+      return <ArrowUpCircle {...props} />;
+    case "manual":
+      return <Download {...props} />;
+    case "register":
+      return <ShieldCheck {...props} />;
+    case "retry":
+      return <TriangleAlert {...props} />;
     default:
-      return unsupportedHealth(health);
+      return unsupportedGlyph(glyph);
   }
 }
 
-function providerPolicyLabel(policy: AgentProviderPolicyRegistrationState): string | null {
-  switch (policy.kind) {
-    case "unregistered":
-      return "Not registered";
-    case "registering":
-      return "Registering…";
-    case "registered":
-      return null;
-    case "failed":
-      return "Registration failed";
-    default:
-      return unsupportedPolicy(policy);
-  }
+function unsupportedGlyph(glyph: never): never {
+  throw new TypeError(`Unsupported provider pill glyph: ${String(glyph)}`);
 }
 
-function providerFooterDetail(
-  policy: AgentProviderPolicyRegistrationState,
-  health: AgentProviderHealthState,
-): string {
-  switch (policy.kind) {
-    case "unregistered":
-      return "Provider policy is not registered";
-    case "registering":
-      return "Registering provider policy";
-    case "failed":
-      return `Provider policy registration failed: ${policy.reason}`;
-    case "registered":
-      break;
-    default:
-      return unsupportedPolicy(policy);
-  }
-  switch (health.kind) {
-    case "disabled":
-      return "Provider disabled";
-    case "notConfigured":
-      return "CLI path not configured";
-    case "checking":
-      return "Checking provider health";
-    case "ready":
-      return readyDetail(health);
-    case "failed":
-      return `Provider check failed: ${health.reason}`;
-    default:
-      return unsupportedHealth(health);
-  }
-}
-
-function readyDetail(
-  health: Extract<AgentProviderHealthState, { readonly kind: "ready" }>,
-): string {
-  if (health.update.kind === "available") {
-    return `Update available: ${health.update.availableVersion}`;
-  }
-  if (health.update.kind === "manualUpdateAvailable") {
-    return `Update available: ${health.update.availableVersion}. Update with the original installer.`;
-  }
-  if (health.update.kind === "unavailable")
-    return "CLI update check unavailable. Open Settings for details.";
-  if (health.update.kind === "checksDisabled")
-    return "CLI update checks are disabled in the current policy.";
-  if (health.auth.kind === "signedOut") return "Signed out";
-  if (health.auth.kind === "unknown") return "Authentication unknown";
-  if (health.auth.label !== null) return `Signed in: ${health.auth.label}`;
-  return "Signed in";
-}
-
-function providerLabel(provider: AgentCliKind): string {
-  if (provider === "claudeCode") return "Claude Code";
-  return "Codex";
-}
-
-function unsupportedHealth(health: never): never {
-  throw new TypeError(`Unsupported provider health: ${String(health)}`);
-}
-
-function unsupportedPolicy(policy: never): never {
-  throw new TypeError(`Unsupported provider policy: ${String(policy)}`);
+function unsupportedIntent(intent: never): never {
+  throw new TypeError(`Unsupported provider pill intent: ${String(intent)}`);
 }

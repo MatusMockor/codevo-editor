@@ -1,5 +1,15 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type {
+  AgentProviderManagementSurface,
+  AgentProviderManagementView,
+} from "../../application/useAgentProviderManagement";
 import type { AgentProjectOrigin, AgentProjectTrust } from "../../domain/agentProject";
+import type {
+  AgentProviderHealthState,
+  AgentProviderInstaller,
+  AgentProviderPolicyRegistrationState,
+  AgentProviderUpdateState,
+} from "../../domain/agentProviderHealth";
 import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
 import {
@@ -9,6 +19,7 @@ import {
   type AgentTurnStatus,
 } from "../../domain/agentThread";
 import type { ExternalAgentSessionSummary } from "../../domain/externalAgentSession";
+import { providerUpdateResultPresentation } from "../settings/agentProviderUpdatePresentation";
 import {
   agentShipBranchLabel,
   agentThreadDisplayTitle,
@@ -676,4 +687,299 @@ export function agentThreadRevealForMatch(
     start: match.segmentStart,
     end: match.segmentEnd,
   };
+}
+
+export type ProviderPillId = "busy" | "updated" | "failed" | "update" | "manual" | "register";
+export type ProviderPillTone = "primary" | "success" | "danger";
+export type ProviderPillGlyph = "spinner" | "check" | "update" | "manual" | "register" | "retry";
+
+export type ProviderPillIntent =
+  | { readonly kind: "update"; readonly version: string }
+  | { readonly kind: "openSettings" }
+  | { readonly kind: "register" }
+  | { readonly kind: "none" };
+
+export interface ProviderPillModel {
+  readonly id: ProviderPillId;
+  readonly tone: ProviderPillTone;
+  readonly glyph: ProviderPillGlyph;
+  readonly label: string;
+  readonly name: string;
+  readonly title: string | null;
+  readonly busy: boolean;
+  readonly disabled: boolean;
+  readonly intent: ProviderPillIntent;
+}
+
+export interface ProviderFooterPillInput {
+  readonly provider: AgentCliKind;
+  readonly view: AgentProviderManagementView;
+  readonly updatedVisible: boolean;
+  readonly failedVersion: string | null;
+}
+
+export function providerFooterPillModels({
+  failedVersion,
+  provider,
+  updatedVisible,
+  view,
+}: ProviderFooterPillInput): ReadonlyArray<ProviderPillModel> {
+  const name = agentProviderLabel(provider);
+  const updating = providerUpdating(view.updateState);
+  const registering = view.policy.kind === "registering";
+  const registered = view.policy.kind === "registered";
+  const available =
+    view.health.kind === "ready" && view.health.update.kind === "available"
+      ? view.health.update
+      : null;
+  const busyLabel = providerBusyLabel(name, updating, registering);
+  const manual =
+    view.health.kind === "ready" &&
+    view.health.update.kind === "manualUpdateAvailable" &&
+    !updating;
+  const newerOffer =
+    available !== null && failedVersion !== null && available.availableVersion !== failedVersion;
+  const failed =
+    view.updateState.kind === "failed" && !manual && !newerOffer && !updateLanded(view.health);
+  const offersUpdate = available !== null && registered && !updating && !failed;
+  const canRetryUpdate = available !== null && registered;
+  const register = view.policy.kind === "unregistered" || view.policy.kind === "failed";
+  const turnsLive = view.liveTurnCount > 0;
+  const stopTurns = `Stop running ${name} turns first.`;
+  const pills: ProviderPillModel[] = [];
+
+  if (busyLabel !== null) {
+    pills.push({
+      id: "busy",
+      tone: "primary",
+      glyph: "spinner",
+      label: busyLabel,
+      name: busyLabel,
+      title: null,
+      busy: true,
+      disabled: false,
+      intent: { kind: "none" },
+    });
+  }
+  if (updatedVisible) {
+    pills.push({
+      id: "updated",
+      tone: "success",
+      glyph: "check",
+      label: `${name} updated`,
+      name: `${name} updated`,
+      title: updateResultTitle(view, available?.installer ?? null),
+      busy: false,
+      disabled: false,
+      intent: { kind: "none" },
+    });
+  }
+  if (failed) {
+    const label = `${name} update failed · Retry`;
+    const disabled = canRetryUpdate && turnsLive;
+    pills.push({
+      id: "failed",
+      tone: "danger",
+      glyph: "retry",
+      label,
+      name: `${label} — retry the ${name} update`,
+      title: disabled ? stopTurns : updateResultTitle(view, available?.installer ?? null),
+      busy: false,
+      disabled,
+      intent:
+        canRetryUpdate && available !== null
+          ? { kind: "update", version: available.availableVersion }
+          : { kind: "openSettings" },
+    });
+  }
+  if (offersUpdate && available !== null) {
+    pills.push({
+      id: "update",
+      tone: "primary",
+      glyph: "update",
+      label: `Update ${name}`,
+      name: `Update ${name} to ${available.availableVersion}`,
+      title: turnsLive ? stopTurns : `Update to ${available.availableVersion}`,
+      busy: false,
+      disabled: turnsLive,
+      intent: { kind: "update", version: available.availableVersion },
+    });
+  }
+  if (manual && view.health.kind === "ready") {
+    const label = `Update ${name} manually`;
+    pills.push({
+      id: "manual",
+      tone: "primary",
+      glyph: "manual",
+      label,
+      name: `${label} — view update instructions`,
+      title: manualUpdateTitle(view.health),
+      busy: false,
+      disabled: false,
+      intent: { kind: "openSettings" },
+    });
+  }
+  if (register) {
+    const label = `Register ${name} policy`;
+    pills.push({
+      id: "register",
+      tone: "primary",
+      glyph: "register",
+      label,
+      name: `${label} — retry registration`,
+      title: providerFooterDetail(view.policy, view.health),
+      busy: false,
+      disabled: false,
+      intent: { kind: "register" },
+    });
+  }
+
+  return pills;
+}
+
+export function providerUpdating(state: AgentProviderUpdateState): boolean {
+  return state.kind === "starting" || state.kind === "running";
+}
+
+export function providerAvailableVersion(health: AgentProviderHealthState): string | null {
+  if (health.kind !== "ready") return null;
+  if (health.update.kind !== "available") return null;
+  return health.update.availableVersion;
+}
+
+export function providerSettingsTitle(
+  management: AgentProviderManagementSurface,
+  enabled: ReadonlyArray<AgentCliKind>,
+): string {
+  if (enabled.length === 0) return "Settings > Agents";
+  const parts = enabled.map((provider) => {
+    const view = management.providers[provider];
+    return `${agentProviderLabel(provider)} ${providerFooterLabel(view.policy, view.health)}`;
+  });
+  return `Settings > Agents · ${parts.join(" · ")}`;
+}
+
+function updateLanded(health: AgentProviderHealthState): boolean {
+  return health.kind === "ready" && health.update.kind === "current";
+}
+
+function updateResultTitle(
+  view: AgentProviderManagementView,
+  installer: AgentProviderInstaller | null,
+): string | null {
+  const result = providerUpdateResultPresentation(view.updateState, installer);
+  if (result === null) return null;
+  return result.message;
+}
+
+function manualUpdateTitle(
+  health: Extract<AgentProviderHealthState, { readonly kind: "ready" }>,
+): string {
+  if (health.update.kind !== "manualUpdateAvailable") return readyDetail(health);
+  return `Version ${health.update.availableVersion} is available; update with the original installer.`;
+}
+
+function providerBusyLabel(name: string, updating: boolean, registering: boolean): string | null {
+  if (updating) return `Updating ${name}`;
+  if (registering) return `Registering ${name}`;
+  return null;
+}
+
+function providerFooterLabel(
+  policy: AgentProviderPolicyRegistrationState,
+  health: AgentProviderHealthState,
+): string {
+  const policyLabel = providerPolicyLabel(policy);
+  if (policyLabel !== null) return policyLabel;
+  switch (health.kind) {
+    case "disabled":
+      return "Disabled";
+    case "notConfigured":
+      return "Not configured";
+    case "checking":
+      return "Checking…";
+    case "ready":
+      if (health.update.kind === "available" || health.update.kind === "manualUpdateAvailable")
+        return `v${health.update.availableVersion}`;
+      if (health.installedVersion !== null) return `v${health.installedVersion}`;
+      return "Ready";
+    case "failed":
+      return "Check failed";
+    default:
+      return unsupportedHealth(health);
+  }
+}
+
+function providerPolicyLabel(policy: AgentProviderPolicyRegistrationState): string | null {
+  switch (policy.kind) {
+    case "unregistered":
+      return "Not registered";
+    case "registering":
+      return "Registering…";
+    case "registered":
+      return null;
+    case "failed":
+      return "Registration failed";
+    default:
+      return unsupportedPolicy(policy);
+  }
+}
+
+function providerFooterDetail(
+  policy: AgentProviderPolicyRegistrationState,
+  health: AgentProviderHealthState,
+): string {
+  switch (policy.kind) {
+    case "unregistered":
+      return "Provider policy is not registered";
+    case "registering":
+      return "Registering provider policy";
+    case "failed":
+      return `Provider policy registration failed: ${policy.reason}`;
+    case "registered":
+      break;
+    default:
+      return unsupportedPolicy(policy);
+  }
+  switch (health.kind) {
+    case "disabled":
+      return "Provider disabled";
+    case "notConfigured":
+      return "CLI path not configured";
+    case "checking":
+      return "Checking provider health";
+    case "ready":
+      return readyDetail(health);
+    case "failed":
+      return `Provider check failed: ${health.reason}`;
+    default:
+      return unsupportedHealth(health);
+  }
+}
+
+function readyDetail(
+  health: Extract<AgentProviderHealthState, { readonly kind: "ready" }>,
+): string {
+  if (health.update.kind === "available") {
+    return `Update available: ${health.update.availableVersion}`;
+  }
+  if (health.update.kind === "manualUpdateAvailable") {
+    return `Update available: ${health.update.availableVersion}. Update with the original installer.`;
+  }
+  if (health.update.kind === "unavailable")
+    return "CLI update check unavailable. Open Settings for details.";
+  if (health.update.kind === "checksDisabled")
+    return "CLI update checks are disabled in the current policy.";
+  if (health.auth.kind === "signedOut") return "Signed out";
+  if (health.auth.kind === "unknown") return "Authentication unknown";
+  if (health.auth.label !== null) return `Signed in: ${health.auth.label}`;
+  return "Signed in";
+}
+
+function unsupportedHealth(health: never): never {
+  throw new TypeError(`Unsupported provider health: ${String(health)}`);
+}
+
+function unsupportedPolicy(policy: never): never {
+  throw new TypeError(`Unsupported provider policy: ${String(policy)}`);
 }
