@@ -56,7 +56,6 @@ export interface AgentsSettingsSectionProps {
   readonly hasWorkspace: boolean;
   readonly workspaceSettings: WorkspaceSettings;
   onChangeAgentCliPath(kind: AgentCliKind, value: string | null): void;
-  onChangeAgentProviderCheckForUpdates(kind: AgentCliKind, value: boolean): void;
   onChangeAgentProviderEnabled(kind: AgentCliKind, value: boolean): void;
   onChangeAgentProviderHealthCheckInterval(kind: AgentCliKind, value: number): void;
   onChangeAgentCliKind(value: AgentCliKind): void;
@@ -73,7 +72,6 @@ export function AgentsSettingsSection({
   onChangeAgentAppearanceVariant,
   onChangeAgentCliKind,
   onChangeAgentCliPath,
-  onChangeAgentProviderCheckForUpdates,
   onChangeAgentProviderEnabled,
   onChangeAgentProviderHealthCheckInterval,
   onClearAgentModelFavorites,
@@ -98,9 +96,6 @@ export function AgentsSettingsSection({
         <span>Providers</span>
         <AgentProviderSettingsCard
           management={providerManagement}
-          onChangeCheckForUpdates={(value) =>
-            onChangeAgentProviderCheckForUpdates("claudeCode", value)
-          }
           onChangeEnabled={(value) => onChangeAgentProviderEnabled("claudeCode", value)}
           onChangeHealthCheckIntervalSeconds={(value) =>
             onChangeAgentProviderHealthCheckInterval("claudeCode", value)
@@ -121,7 +116,6 @@ export function AgentsSettingsSection({
         />
         <AgentProviderSettingsCard
           management={providerManagement}
-          onChangeCheckForUpdates={(value) => onChangeAgentProviderCheckForUpdates("codex", value)}
           onChangeEnabled={(value) => onChangeAgentProviderEnabled("codex", value)}
           onChangeHealthCheckIntervalSeconds={(value) =>
             onChangeAgentProviderHealthCheckInterval("codex", value)
@@ -142,7 +136,9 @@ export function AgentsSettingsSection({
         />
         <p className="settings-hint">
           Provider commands authenticate from your environment. Codevo never stores API keys or
-          tokens. Update checks stay offline unless you enable them for a provider.
+          tokens. Enabled providers check public version metadata automatically; no model prompts
+          are sent. Native or custom installations require npm for version checks and are updated
+          manually.
         </p>
       </div>
 

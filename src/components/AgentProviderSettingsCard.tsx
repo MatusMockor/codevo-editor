@@ -4,12 +4,15 @@ import type {
   AgentProviderManagementSurface,
   AgentProviderManagementView,
 } from "../application/useAgentProviderManagement";
-import type {
-  AgentProviderAuthState,
-  AgentProviderHealthState,
-  AgentProviderPolicyRegistrationState,
-  AgentProviderUpdateAvailability,
-  AgentProviderUpdateState,
+import {
+  agentProviderInstallerLabel,
+  agentProviderSelfUpdateCommandLabel,
+  type AgentProviderAuthState,
+  type AgentProviderHealthState,
+  type AgentProviderInstaller,
+  type AgentProviderPolicyRegistrationState,
+  type AgentProviderUpdateAvailability,
+  type AgentProviderUpdateState,
 } from "../domain/agentProviderHealth";
 import type { AgentProviderSignInState } from "../domain/agentProviderSignIn";
 import {
@@ -33,7 +36,6 @@ export interface AgentProviderSettingsCardProps {
   readonly preference: AgentProviderPreference;
   readonly provider: AgentCliKind;
   readonly signIn?: AgentProviderSignInCardControl;
-  onChangeCheckForUpdates(value: boolean): void;
   onChangeEnabled(value: boolean): void;
   onChangeHealthCheckIntervalSeconds(value: number): void;
   onChangePath(value: string | null): void;
@@ -48,7 +50,6 @@ export interface AgentProviderSignInCardControl {
 
 export function AgentProviderSettingsCard({
   management,
-  onChangeCheckForUpdates,
   onChangeEnabled,
   onChangeHealthCheckIntervalSeconds,
   onChangePath,
@@ -164,15 +165,10 @@ export function AgentProviderSettingsCard({
           <small>Set to 0 for manual checks only.</small>
         </label>
 
-        <label className="settings-toggle agent-provider-card__updates-toggle">
-          <input
-            checked={preference.checkForUpdates}
-            disabled={!preference.enabled}
-            onChange={(event) => onChangeCheckForUpdates(event.currentTarget.checked)}
-            type="checkbox"
-          />
-          <span>Check for updates</span>
-        </label>
+        <p className="agent-provider-card__result">
+          CLI updates are checked automatically with provider health. Installation requires your
+          confirmation and does not run during a conversation.
+        </p>
       </div>
 
       {updateAvailabilityMessage === null ? null : (
@@ -228,7 +224,7 @@ export function AgentProviderSettingsCard({
         )}
       </div>
 
-      <ProviderUpdateResult state={view.updateState} />
+      <ProviderUpdateResult installer={available?.installer ?? null} state={view.updateState} />
     </section>
   );
 }
@@ -409,7 +405,13 @@ function ProviderPolicyStatus({
   }
 }
 
-function ProviderUpdateResult({ state }: { readonly state: AgentProviderUpdateState }) {
+function ProviderUpdateResult({
+  installer,
+  state,
+}: {
+  readonly installer: AgentProviderInstaller | null;
+  readonly state: AgentProviderUpdateState;
+}) {
   switch (state.kind) {
     case "idle":
       return null;
@@ -442,7 +444,7 @@ function ProviderUpdateResult({ state }: { readonly state: AgentProviderUpdateSt
           className="agent-provider-card__result agent-provider-card__result--failed"
           role="alert"
         >
-          <span>{providerUpdateFailureLabel(state.reason)}</span>
+          <span>{providerUpdateFailureLabel(state.reason, installer)}</span>
           {state.outputTail === "" ? null : <pre>{state.outputTail}</pre>}
           {state.outputTruncated ? <small>Output was truncated.</small> : null}
         </div>
@@ -464,8 +466,12 @@ function providerUpdateAvailabilityMessage(health: AgentProviderHealthState): st
   if (health.kind !== "ready") return null;
   switch (health.update.kind) {
     case "checksDisabled":
-    case "checking":
+      return "Update checks are disabled in the current provider policy. Refresh the provider settings.";
+    case "manualUpdateAvailable":
+      return `Version ${health.update.availableVersion} is available (installed: ${health.update.installedVersion}). Update this CLI with its original installer, then Refresh. Automatic installation is not available for this installation.`;
     case "available":
+      return `Version ${health.update.availableVersion} is available (installed: ${health.update.installedVersion}). Codevo can install it with the ${agentProviderInstallerLabel(health.update.installer)}.`;
+    case "checking":
       return null;
     case "current":
       return "Up to date.";
@@ -619,6 +625,7 @@ function providerHealthFailureLabel(
 
 function providerUpdateFailureLabel(
   reason: Extract<AgentProviderUpdateState, { readonly kind: "failed" }>["reason"],
+  installer: AgentProviderInstaller | null,
 ): string {
   switch (reason) {
     case "admissionRefused":
@@ -635,9 +642,18 @@ function providerUpdateFailureLabel(
       return "The installed version did not match the requested update.";
     case "uncertain":
       return "The update result is uncertain. Refresh the provider status.";
+    case "versionNotAdvanced":
+      return `The updater finished but the installed version did not change. ${manualRetryHint(installer)}`;
     default:
       return unsupportedUpdateFailure(reason);
   }
+}
+
+function manualRetryHint(installer: AgentProviderInstaller | null): string {
+  if (installer === null || installer.kind !== "selfUpdate") {
+    return "Try again or update this CLI with its original installer.";
+  }
+  return `Try again or update manually with ${agentProviderSelfUpdateCommandLabel(installer.command)}.`;
 }
 
 function providerLabel(provider: AgentCliKind): string {

@@ -40,7 +40,7 @@ describe("AgentSettingsDialogSection provider persistence", () => {
       preference: {
         enabled: false,
         healthCheckIntervalSeconds: 300,
-        checkForUpdates: false,
+        checkForUpdates: true,
         dismissedUpdateVersion: null,
       },
     });

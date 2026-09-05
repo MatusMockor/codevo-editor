@@ -1,14 +1,14 @@
-use crate::agent_task_spawner::agent_provider::process::{
-    AgentProviderProcessPlan, ExecutableIdentity,
-};
-use crate::agent_task_spawner::agent_provider::{
-    AgentProviderInstaller, ClaudeAuthStatusCapability,
-};
+use crate::agent_task_spawner::agent_provider::process::ExecutableIdentity;
+use crate::agent_task_spawner::agent_provider::ClaudeAuthStatusCapability;
 use crate::agent_task_spawner::{AgentCliInvocation, MAX_AGENT_CLI_PATH_BYTES};
 use std::{
     sync::{Arc, Condvar, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
+
+#[path = "agent_provider_runtime/installer.rs"]
+pub(crate) mod installer;
+pub use installer::{AgentProviderUpdateCandidate, ResolvedAgentProviderInstaller};
 
 #[path = "agent_provider_runtime/resolution.rs"]
 mod resolution;
@@ -327,6 +327,9 @@ impl AgentProviderRuntimeRegistry {
                 || candidate.effective_path != lease.effective_path
                 || candidate.path_fingerprint != lease.path_fingerprint
                 || candidate.discovery_generation != lease.discovery_generation
+                || !candidate
+                    .installer
+                    .owns_provider_executable(&candidate.cli_identity)
         }) {
             return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
         }
@@ -878,71 +881,6 @@ fn configuration_slot_mut(
         AgentCliInvocation::ClaudeCode => &mut state.claude_code,
         AgentCliInvocation::CodexExec => &mut state.codex,
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ResolvedAgentProviderInstaller {
-    Npm {
-        program: ExecutableIdentity,
-        package_name: String,
-    },
-    Homebrew {
-        program: ExecutableIdentity,
-        cask: String,
-    },
-}
-
-impl ResolvedAgentProviderInstaller {
-    pub fn display(&self) -> AgentProviderInstaller {
-        match self {
-            Self::Npm { package_name, .. } => AgentProviderInstaller::Npm {
-                package_name: package_name.clone(),
-            },
-            Self::Homebrew { cask, .. } => AgentProviderInstaller::Homebrew { cask: cask.clone() },
-        }
-    }
-
-    pub fn update_plan(
-        &self,
-        provider: AgentCliInvocation,
-        version: &str,
-        effective_path: &str,
-    ) -> Result<AgentProviderProcessPlan, String> {
-        let plan = match self {
-            Self::Npm { program, .. } => AgentProviderProcessPlan::package_manager_with_effective_path(
-                program.clone(),
-                crate::agent_task_spawner::agent_provider::process::AgentProviderProcessIntent::NpmUpdate {
-                    provider,
-                    version: version.to_string(),
-                },
-                effective_path,
-            ),
-            Self::Homebrew { program, .. } => AgentProviderProcessPlan::package_manager_with_effective_path(
-                program.clone(),
-                crate::agent_task_spawner::agent_provider::process::AgentProviderProcessIntent::BrewUpdate(provider),
-                effective_path,
-            ),
-        }?;
-        let expected = match self {
-            Self::Npm { program, .. } | Self::Homebrew { program, .. } => program,
-        };
-        if plan.identity() != expected {
-            return Err("Provider installer identity changed before update.".to_string());
-        }
-        Ok(plan)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AgentProviderUpdateCandidate {
-    pub cli_path: String,
-    pub cli_identity: ExecutableIdentity,
-    pub effective_path: String,
-    pub path_fingerprint: String,
-    pub discovery_generation: u64,
-    pub installed_version: String,
-    pub available_version: String,
-    pub installer: ResolvedAgentProviderInstaller,
 }
 
 #[derive(Clone, Debug)]

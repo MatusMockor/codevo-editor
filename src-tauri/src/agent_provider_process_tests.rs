@@ -131,6 +131,60 @@ fn semantic_plans_have_fixed_arguments() {
 }
 
 #[test]
+fn self_update_plans_run_the_provider_executable_under_update_authorization() {
+    let cli = executable("exit 0");
+    let path = effective_path();
+    for provider in [
+        AgentCliInvocation::ClaudeCode,
+        AgentCliInvocation::CodexExec,
+    ] {
+        let plan = provider_plan(&cli, AgentProviderProcessIntent::SelfUpdate(provider))
+            .expect("self-update plan");
+        assert_eq!(plan.args(), ["update"]);
+        assert_eq!(plan.timeout, AGENT_PROVIDER_UPDATE_TIMEOUT);
+        assert_eq!(plan.output_limit, UPDATE_OUTPUT_BYTES);
+        assert!(plan.requires_update_authorization);
+        assert!(plan.stdin_payload.is_none());
+        assert_eq!(
+            plan.identity().canonical_path,
+            fs::canonicalize(&cli).expect("canonical provider")
+        );
+        assert_eq!(
+            plan.env
+                .iter()
+                .find(|(key, _)| key == "PATH")
+                .map(|(_, value)| value.as_str()),
+            Some(path.as_str())
+        );
+        for (key, value) in [("CI", "1"), ("NO_COLOR", "1")] {
+            assert!(plan
+                .env
+                .iter()
+                .any(|(entry, entry_value)| entry == key && entry_value == value));
+        }
+        assert!(!plan.env.iter().any(|(key, _)| key == "SHELL"));
+        assert!(plan
+            .env
+            .iter()
+            .all(|(_, value)| value.len() <= MAX_PROVIDER_ENV_VALUE_BYTES));
+        assert!(matches!(
+            execute_agent_provider_plan(&plan),
+            Err(AgentProviderProcessFailure::Uncertain(message))
+                if message == "Provider update plan requires spawn authorization."
+        ));
+    }
+    assert!(
+        AgentProviderProcessPlan::package_manager_with_effective_path(
+            executable_identity(cli.to_str().expect("path")).expect("identity"),
+            AgentProviderProcessIntent::SelfUpdate(AgentCliInvocation::CodexExec),
+            &path,
+        )
+        .is_err()
+    );
+    fs::remove_file(cli).expect("cleanup");
+}
+
+#[test]
 fn package_manager_resolution_uses_only_the_captured_effective_path() {
     let nonce = NONCE.fetch_add(1, Ordering::SeqCst);
     let directory = env::temp_dir().join(format!(

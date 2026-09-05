@@ -54,6 +54,7 @@ export type AgentProviderManagementToast =
       readonly kind: "updateAvailable";
       readonly provider: AgentCliKind;
       readonly version: string;
+      readonly manual?: true;
     }
   | {
       readonly kind: "updateSucceeded";
@@ -374,11 +375,20 @@ export function useAgentProviderManagement(
           );
           publish(provider, (current) => ({ ...current, health: { kind: "ready", ...checked } }));
           if (!ownerIsCurrent(owner)) return null;
-          if (checked.update.kind !== "available") return checked;
+          if (
+            checked.update.kind !== "available" &&
+            checked.update.kind !== "manualUpdateAvailable"
+          )
+            return checked;
           const preference = authorityRef.current[provider]?.preference;
           if (preference === undefined) return null;
           if (preference.dismissedUpdateVersion === checked.update.availableVersion) return checked;
-          setToast({ kind: "updateAvailable", provider, version: checked.update.availableVersion });
+          setToast({
+            kind: "updateAvailable",
+            provider,
+            version: checked.update.availableVersion,
+            ...(checked.update.kind === "manualUpdateAvailable" ? { manual: true as const } : {}),
+          });
           return checked;
         } catch (error) {
           if (!ownerIsCurrent(owner)) return null;
@@ -1054,7 +1064,11 @@ export function useAgentProviderManagement(
   const dismissUpdate = useCallback(
     async (provider: AgentCliKind, version: string): Promise<boolean> => {
       const health = runtimeRef.current[provider].health;
-      if (health.kind !== "ready" || health.update.kind !== "available") return false;
+      if (
+        health.kind !== "ready" ||
+        (health.update.kind !== "available" && health.update.kind !== "manualUpdateAvailable")
+      )
+        return false;
       if (health.update.availableVersion !== version) return false;
       const dismissedToast = toastRef.current;
       if (

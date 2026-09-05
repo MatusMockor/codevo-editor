@@ -84,6 +84,10 @@ describe("AgentsSettingsPanel", () => {
     act(() => clear?.click());
 
     expect(updateAppSettings).not.toHaveBeenCalled();
+    expect(host.textContent).toContain(
+      "Enabled providers check public version metadata automatically",
+    );
+    expect(host.textContent).not.toContain("Update checks stay offline");
   });
 
   it("can clear a favorite after a corrupt stored snapshot recovers", () => {
@@ -119,7 +123,7 @@ describe("AgentsSettingsPanel", () => {
     );
   });
 
-  it("updates only the selected provider preference and clears its dismissed version", () => {
+  it("explains automatic checks for both providers without a disabling toggle", () => {
     const updateAppSettings = vi.fn();
     const appSettings = {
       ...defaultAppSettings(),
@@ -151,25 +155,12 @@ describe("AgentsSettingsPanel", () => {
       ),
     );
 
-    const card = host.querySelector('[aria-label="Claude Code provider"]');
-    const checkbox = card?.querySelector<HTMLInputElement>(
-      ".agent-provider-card__updates-toggle input",
-    );
-    act(() => {
-      checkbox?.click();
-    });
-
-    expect(updateAppSettings).toHaveBeenCalledWith({
-      ...appSettings,
-      agentProviderPreferences: {
-        ...appSettings.agentProviderPreferences,
-        claudeCode: {
-          ...appSettings.agentProviderPreferences.claudeCode,
-          checkForUpdates: true,
-          dismissedUpdateVersion: null,
-        },
-      },
-    });
+    for (const name of ["Claude Code", "Codex"]) {
+      const card = host.querySelector(`[aria-label="${name} provider"]`);
+      expect(card?.textContent).toContain("CLI updates are checked automatically");
+      expect(card?.querySelector(".agent-provider-card__updates-toggle input")).toBeNull();
+    }
+    expect(updateAppSettings).not.toHaveBeenCalled();
   });
 
   it("atomically falls back when disabling the selected provider", () => {

@@ -62,8 +62,29 @@ pub fn claude_auth_capability(version: &str) -> Option<ClaudeAuthStatusCapabilit
     rename_all_fields = "camelCase"
 )]
 pub enum AgentProviderInstaller {
-    Npm { package_name: String },
-    Homebrew { cask: String },
+    Npm {
+        package_name: String,
+    },
+    Homebrew {
+        cask: String,
+    },
+    SelfUpdate {
+        command: AgentProviderSelfUpdateCommand,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentProviderSelfUpdateCommand {
+    ClaudeUpdate,
+    CodexUpdate,
+}
+
+pub fn self_update_command(provider: AgentCliInvocation) -> AgentProviderSelfUpdateCommand {
+    match provider {
+        AgentCliInvocation::ClaudeCode => AgentProviderSelfUpdateCommand::ClaudeUpdate,
+        AgentCliInvocation::CodexExec => AgentProviderSelfUpdateCommand::CodexUpdate,
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -81,6 +102,10 @@ pub enum AgentProviderUpdateAvailability {
         installed_version: String,
         available_version: String,
         installer: AgentProviderInstaller,
+    },
+    ManualUpdateAvailable {
+        installed_version: String,
+        available_version: String,
     },
     Unavailable {
         reason: AgentProviderUpdateUnavailableReason,
@@ -114,6 +139,7 @@ pub enum AgentProviderUpdateFailureReason {
     OutputLimitExceeded,
     Exited,
     Uncertain,
+    VersionNotAdvanced,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]

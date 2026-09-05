@@ -37,6 +37,7 @@ export function AgentProviderRailFooter({
             enabled={providerEnabled[provider]}
             key={provider}
             management={management}
+            onOpenSettings={onOpenSettings}
             provider={provider}
           />
         ))}
@@ -80,10 +81,12 @@ export function AgentProviderRailFooter({
 function ProviderFooterRow({
   enabled,
   management,
+  onOpenSettings,
   provider,
 }: {
   readonly enabled: boolean;
   readonly management: AgentProviderManagementSurface;
+  readonly onOpenSettings: () => void;
   readonly provider: AgentCliKind;
 }) {
   const view = management.providers[provider];
@@ -129,6 +132,19 @@ function ProviderFooterRow({
           Update
         </button>
       )}
+      {view.health.kind === "ready" &&
+      view.health.update.kind === "manualUpdateAvailable" &&
+      !updating ? (
+        <button
+          aria-label={`View ${providerLabel(provider)} update instructions`}
+          className="agent-provider-footer__action"
+          onClick={onOpenSettings}
+          title={`Version ${view.health.update.availableVersion} is available; update with the original installer.`}
+          type="button"
+        >
+          Update available
+        </button>
+      ) : null}
       {view.policy.kind === "unregistered" || view.policy.kind === "failed" ? (
         <button
           aria-label={`Retry ${providerLabel(provider)} policy registration`}
@@ -167,7 +183,8 @@ function providerFooterLabel(
     case "checking":
       return "Checking…";
     case "ready":
-      if (health.update.kind === "available") return `v${health.update.availableVersion}`;
+      if (health.update.kind === "available" || health.update.kind === "manualUpdateAvailable")
+        return `v${health.update.availableVersion}`;
       if (health.installedVersion !== null) return `v${health.installedVersion}`;
       return "Ready";
     case "failed":
@@ -230,6 +247,13 @@ function readyDetail(
   if (health.update.kind === "available") {
     return `Update available: ${health.update.availableVersion}`;
   }
+  if (health.update.kind === "manualUpdateAvailable") {
+    return `Update available: ${health.update.availableVersion}. Update with the original installer.`;
+  }
+  if (health.update.kind === "unavailable")
+    return "CLI update check unavailable. Open Settings for details.";
+  if (health.update.kind === "checksDisabled")
+    return "CLI update checks are disabled in the current policy.";
   if (health.auth.kind === "signedOut") return "Signed out";
   if (health.auth.kind === "unknown") return "Authentication unknown";
   if (health.auth.label !== null) return `Signed in: ${health.auth.label}`;

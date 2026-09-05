@@ -242,6 +242,7 @@ pub enum AgentProviderProcessIntent {
     AuthenticationStatus(AgentCliInvocation),
     AuthenticationStatusText(AgentCliInvocation),
     AccountUsage(AgentCliInvocation),
+    SelfUpdate(AgentCliInvocation),
     NpmGlobalRoot,
     NpmInventory,
     NpmAvailableVersion(AgentCliInvocation),
@@ -335,7 +336,8 @@ impl AgentProviderProcessPlan {
             AgentProviderProcessIntent::InstalledVersion(provider)
             | AgentProviderProcessIntent::AuthenticationStatus(provider)
             | AgentProviderProcessIntent::AuthenticationStatusText(provider)
-            | AgentProviderProcessIntent::AccountUsage(provider) => provider,
+            | AgentProviderProcessIntent::AccountUsage(provider)
+            | AgentProviderProcessIntent::SelfUpdate(provider) => provider,
             _ => return Err("Provider executable cannot run this operation.".to_string()),
         };
         let args = match intent {
@@ -363,16 +365,25 @@ impl AgentProviderProcessPlan {
             AgentProviderProcessIntent::AccountUsage(AgentCliInvocation::CodexExec) => {
                 vec!["app-server", "--stdio"]
             }
+            AgentProviderProcessIntent::SelfUpdate(_) => vec!["update"],
             _ => return Err("Provider executable cannot run this operation.".to_string()),
         };
-        let _ = provider;
+        let requires_update_authorization =
+            matches!(intent, AgentProviderProcessIntent::SelfUpdate(_));
+        let (timeout, output_limit) = match requires_update_authorization {
+            true => (AGENT_PROVIDER_UPDATE_TIMEOUT, UPDATE_OUTPUT_BYTES),
+            false => (
+                AGENT_PROVIDER_PROBE_TIMEOUT,
+                MAX_AGENT_PROVIDER_OUTPUT_BYTES,
+            ),
+        };
         let mut plan = Self::new(
             identity,
             args,
             effective_path,
-            AGENT_PROVIDER_PROBE_TIMEOUT,
-            MAX_AGENT_PROVIDER_OUTPUT_BYTES,
-            false,
+            timeout,
+            output_limit,
+            requires_update_authorization,
         );
         if provider == AgentCliInvocation::CodexExec
             && matches!(intent, AgentProviderProcessIntent::AccountUsage(_))

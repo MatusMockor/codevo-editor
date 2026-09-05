@@ -140,6 +140,65 @@ describe("TauriAgentProviderGateway", () => {
     });
   });
 
+  it("carries the native self-update installer and its version failure across the wire", async () => {
+    const probe = {
+      installedVersion: "0.150.1",
+      auth: { kind: "signedIn", label: null },
+      update: {
+        kind: "available",
+        installedVersion: "0.150.1",
+        availableVersion: "0.151.0",
+        installer: { kind: "selfUpdate", command: "codexUpdate" },
+      },
+      checkedAtEpochMs: 1_700_000_000_000,
+    } as const;
+    const failure = {
+      kind: "failed",
+      reason: "versionNotAdvanced",
+      outputTail: "Installer output withheld (stdout: 24 bytes, stderr: 0 bytes).",
+      outputTruncated: false,
+    } as const;
+    const invokeCommand = vi
+      .fn<InvokeAgentProviderCommand>()
+      .mockResolvedValueOnce(probe)
+      .mockResolvedValueOnce(failure);
+    const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+
+    await expect(gateway.probeAgentProviderHealth(GENERATION)).resolves.toEqual(probe);
+    await expect(gateway.updateAgentProvider(UPDATE)).resolves.toEqual(failure);
+  });
+
+  it("rejects a foreign or unknown self-update installer from the backend", async () => {
+    const invokeCommand = vi
+      .fn<InvokeAgentProviderCommand>()
+      .mockResolvedValueOnce({
+        installedVersion: "0.150.1",
+        auth: { kind: "signedOut" },
+        update: {
+          kind: "available",
+          installedVersion: "0.150.1",
+          availableVersion: "0.151.0",
+          installer: { kind: "selfUpdate", command: "claudeUpdate" },
+        },
+        checkedAtEpochMs: 1,
+      })
+      .mockResolvedValueOnce({
+        installedVersion: "0.150.1",
+        auth: { kind: "signedOut" },
+        update: {
+          kind: "available",
+          installedVersion: "0.150.1",
+          availableVersion: "0.151.0",
+          installer: { kind: "selfUpdate", command: "codexUpdate", argv: ["codex", "update"] },
+        },
+        checkedAtEpochMs: 1,
+      });
+    const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+
+    await expect(gateway.probeAgentProviderHealth(GENERATION)).rejects.toThrow(TypeError);
+    await expect(gateway.probeAgentProviderHealth(GENERATION)).rejects.toThrow(TypeError);
+  });
+
   it("returns the bounded synchronous update result", async () => {
     const result = {
       kind: "failed",

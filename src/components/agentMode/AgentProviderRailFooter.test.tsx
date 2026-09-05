@@ -72,6 +72,61 @@ describe("AgentProviderRailFooter", () => {
     expect(surface.refresh).toHaveBeenCalledWith("claudeCode");
   });
 
+  it.each(["claudeCode", "codex"] as const)(
+    "opens instructions for a manual %s update without invoking installation",
+    (provider) => {
+      const original = management({
+        health: {
+          kind: "ready",
+          installedVersion: "1.0.0",
+          checkedAtEpochMs: Date.now(),
+          auth: { kind: "signedIn", label: null },
+          update: {
+            kind: "manualUpdateAvailable",
+            installedVersion: "1.0.0",
+            availableVersion: "2.0.0",
+          },
+        },
+      });
+      const surface = {
+        ...original,
+        providers: { ...original.providers, [provider]: original.providers.claudeCode },
+      };
+      const onOpenSettings = vi.fn();
+      render(surface, onOpenSettings);
+      const name = provider === "codex" ? "Codex" : "Claude Code";
+      act(() => button(`View ${name} update instructions`).click());
+      expect(onOpenSettings).toHaveBeenCalledOnce();
+      expect(surface.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it("installs a native self-update offer instead of manual instructions", () => {
+    const onOpenSettings = vi.fn();
+    const surface = management({
+      health: {
+        kind: "ready",
+        installedVersion: "2.1.245",
+        auth: { kind: "signedIn", label: null },
+        update: {
+          kind: "available",
+          installedVersion: "2.1.245",
+          availableVersion: "2.2.0",
+          installer: { kind: "selfUpdate", command: "claudeUpdate" },
+        },
+        checkedAtEpochMs: 1,
+      },
+    });
+    render(surface, onOpenSettings);
+
+    expect(
+      host.querySelector('button[aria-label="View Claude Code update instructions"]'),
+    ).toBeNull();
+    act(() => button("Update Claude Code to 2.2.0").click());
+    expect(surface.update).toHaveBeenCalledWith("claudeCode", "2.2.0");
+    expect(onOpenSettings).not.toHaveBeenCalled();
+  });
+
   it("keeps an enabled provider visible while policy registration is unavailable", () => {
     const surface = management({
       authorityMissing: true,

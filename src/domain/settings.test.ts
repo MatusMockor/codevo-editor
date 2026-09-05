@@ -185,7 +185,7 @@ describe("normalizeAppSettings", () => {
       codex: {
         enabled: true,
         healthCheckIntervalSeconds: 86_400,
-        checkForUpdates: false,
+        checkForUpdates: true,
         dismissedUpdateVersion: null,
       },
     });

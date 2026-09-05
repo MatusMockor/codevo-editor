@@ -256,7 +256,6 @@ describe("AgentsSettingsSection agent CLI path input", () => {
       hasWorkspace: true,
       workspaceSettings: defaultWorkspaceSettings(),
       onChangeAgentCliPath: () => undefined,
-      onChangeAgentProviderCheckForUpdates: () => undefined,
       onChangeAgentProviderEnabled: () => undefined,
       onChangeAgentProviderHealthCheckInterval: () => undefined,
       onChangeAgentCliKind: () => undefined,

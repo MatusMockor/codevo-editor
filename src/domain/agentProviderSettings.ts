@@ -54,7 +54,7 @@ function defaultAgentProviderPreference(): AgentProviderPreference {
   return {
     enabled: true,
     healthCheckIntervalSeconds: DEFAULT_AGENT_PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS,
-    checkForUpdates: false,
+    checkForUpdates: true,
     dismissedUpdateVersion: null,
   };
 }
@@ -81,7 +81,8 @@ function normalizePreference(value: unknown): AgentProviderPreference | null {
     healthCheckIntervalSeconds: normalizeAgentProviderHealthCheckIntervalSeconds(
       value.healthCheckIntervalSeconds,
     ),
-    checkForUpdates: value.checkForUpdates,
+    // Retain the legacy wire field, but update checks are automatic for enabled providers.
+    checkForUpdates: true,
     dismissedUpdateVersion: dismissed.value,
   };
 }

@@ -1174,7 +1174,176 @@ fn local_fake_unknown_installer_is_truthfully_unavailable() {
             reason: AgentProviderUpdateUnavailableReason::UnknownInstaller,
         }
     );
-    assert_eq!(locator.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(locator.calls.load(Ordering::SeqCst), 3);
+}
+
+fn native_provider_fixture(
+    provider: AgentCliInvocation,
+    installed_version: &str,
+    registry_response: &str,
+) -> (IsolatedFixture, PathBuf, FixedPackageManagerLocator) {
+    let fixture = IsolatedFixture::new("native-release-metadata");
+    let cli = fixture.executable(
+        "native/provider",
+        &format!(
+            "if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{installed_version}'; exit 0; fi\nexit 9"
+        ),
+    );
+    let npm = fixture.executable(
+        "bin/npm",
+        &format!(
+            "if [ \"$1\" = \"view\" ] && [ \"$2\" = \"{}\" ] && [ \"$3\" = \"version\" ] && [ \"$4\" = \"--json\" ] && [ \"$#\" -eq 4 ]; then {registry_response}; fi\nexit 91",
+            npm_package(provider),
+        ),
+    );
+    (fixture, cli, FixedPackageManagerLocator::npm(&npm))
+}
+
+fn native_provider_registry(
+    provider: AgentCliInvocation,
+    cli: &Path,
+) -> (
+    Arc<AgentProviderRuntimeRegistry>,
+    AgentProviderPolicyReceipt,
+) {
+    let registry = Arc::new(AgentProviderRuntimeRegistry::new());
+    let receipt = registry
+        .register_policy(
+            provider,
+            1,
+            None,
+            AgentProviderPolicy {
+                enabled: true,
+                cli_path: Some(cli.to_string_lossy().into_owned()),
+                check_for_updates: true,
+            },
+        )
+        .expect("native provider policy");
+    (registry, receipt)
+}
+
+#[test]
+fn native_claude_and_codex_report_newer_metadata_without_install_authority() {
+    for (provider, installed, available) in [
+        (AgentCliInvocation::ClaudeCode, "2.1.247", "2.1.248"),
+        (AgentCliInvocation::CodexExec, "0.149.1", "0.153.0"),
+    ] {
+        let (_fixture, cli, locator) = native_provider_fixture(
+            provider,
+            installed,
+            &format!("printf '\"{available}\"\\n'; exit 0"),
+        );
+        let (registry, receipt) = native_provider_registry(provider, &cli);
+        let lease = registry
+            .acquire_health_for_generation(provider, receipt.provider_generation)
+            .expect("health lease");
+        let health = probe_health_with_locator(&registry, lease, &AtomicBool::new(false), &locator)
+            .expect("native health");
+        assert_eq!(
+            health.update,
+            AgentProviderUpdateAvailability::ManualUpdateAvailable {
+                installed_version: installed.to_string(),
+                available_version: available.to_string(),
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(&health.update).expect("wire update"),
+            json!({
+                "kind": "manualUpdateAvailable",
+                "installedVersion": installed,
+                "availableVersion": available,
+            })
+        );
+        assert!(run_agent_provider_update(
+            &registry,
+            &AgentProviderUpdateRequest {
+                provider,
+                provider_generation: receipt.provider_generation,
+                operation_id: "native-must-not-install".to_string(),
+            },
+            &AtomicBool::new(false),
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn native_release_metadata_distinguishes_current_invalid_and_failed_probes() {
+    for (response, expected) in [
+        (
+            "printf '\"0.149.1\"\\n'; exit 0",
+            AgentProviderUpdateAvailability::Current {
+                installed_version: "0.149.1".to_string(),
+            },
+        ),
+        (
+            "printf '\"0.148.0\"\\n'; exit 0",
+            AgentProviderUpdateAvailability::Current {
+                installed_version: "0.149.1".to_string(),
+            },
+        ),
+        (
+            "printf '{\"version\":\"0.153.0\"}'; exit 0",
+            AgentProviderUpdateAvailability::Unavailable {
+                reason: AgentProviderUpdateUnavailableReason::ProbeFailed,
+            },
+        ),
+        (
+            "exit 23",
+            AgentProviderUpdateAvailability::Unavailable {
+                reason: AgentProviderUpdateUnavailableReason::ProbeFailed,
+            },
+        ),
+    ] {
+        let (_fixture, cli, locator) =
+            native_provider_fixture(AgentCliInvocation::CodexExec, "0.149.1", response);
+        let (registry, receipt) = registered_registry(&cli, true);
+        assert_eq!(
+            health_with_locator(&registry, receipt, &locator).update,
+            expected
+        );
+        assert!(run_agent_provider_update(
+            &registry,
+            &update_request(receipt),
+            &AtomicBool::new(false),
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn native_release_metadata_rejects_cancelled_and_replaced_health_leases() {
+    let (_fixture, cli, locator) = native_provider_fixture(
+        AgentCliInvocation::CodexExec,
+        "0.149.1",
+        "printf '\"0.153.0\"\\n'; exit 0",
+    );
+    let (registry, receipt) = registered_registry(&cli, true);
+    let lease = registry
+        .acquire_health_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation)
+        .expect("health lease");
+    assert!(
+        probe_manual_available_version(&registry, &lease, &AtomicBool::new(true), &locator)
+            .is_err()
+    );
+    registry
+        .register_policy(
+            AgentCliInvocation::CodexExec,
+            2,
+            Some(receipt.provider_generation),
+            AgentProviderPolicy {
+                enabled: true,
+                cli_path: Some(cli.to_string_lossy().into_owned()),
+                check_for_updates: false,
+            },
+        )
+        .expect("policy replacement");
+    let calls_before = locator.calls.load(Ordering::SeqCst);
+    assert!(
+        probe_manual_available_version(&registry, &lease, &AtomicBool::new(false), &locator)
+            .is_err()
+    );
+    assert_eq!(locator.calls.load(Ordering::SeqCst), calls_before);
 }
 
 #[test]
@@ -1443,3 +1612,6 @@ fn progress_sink_failure_does_not_change_successful_final_result() {
         AgentProviderUpdateResult::Succeeded { .. }
     ));
 }
+
+#[path = "agent_provider_native_update_tests.rs"]
+mod native_update;

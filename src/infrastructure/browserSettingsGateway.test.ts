@@ -8,6 +8,55 @@ import {
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 
 describe("BrowserSettingsGateway", () => {
+  it("enables automatic CLI update checks for both providers on a fresh install", async () => {
+    const gateway = new BrowserSettingsGateway(memoryStorage());
+
+    await expect(gateway.loadAppSettings()).resolves.toMatchObject({
+      agentProviderPreferences: {
+        claudeCode: { checkForUpdates: true },
+        codex: { checkForUpdates: true },
+      },
+    });
+  });
+
+  it("migrates old CLI update preferences for both providers and preserves them on reload", async () => {
+    const storage = memoryStorage();
+    const oldPreferences = {
+      claudeCode: {
+        enabled: true,
+        checkForUpdates: false,
+        healthCheckIntervalSeconds: 600,
+        dismissedUpdateVersion: "2.1.245",
+      },
+      codex: {
+        enabled: false,
+        checkForUpdates: false,
+        healthCheckIntervalSeconds: 0,
+        dismissedUpdateVersion: "0.150.1",
+      },
+    };
+    storage.setItem(
+      "editor.settings.app",
+      JSON.stringify({ ...defaultAppSettings(), agentProviderPreferences: oldPreferences }),
+    );
+    const gateway = new BrowserSettingsGateway(storage);
+    const settings = await gateway.loadAppSettings();
+    const expected = {
+      claudeCode: { ...oldPreferences.claudeCode, checkForUpdates: true },
+      codex: { ...oldPreferences.codex, checkForUpdates: true },
+    };
+    expect(settings.agentProviderPreferences).toEqual(expected);
+
+    await gateway.saveAppSettings(settings);
+
+    expect(JSON.parse(storage.getItem("editor.settings.app") ?? "{}")).toMatchObject({
+      agentProviderPreferences: expected,
+    });
+    await expect(new BrowserSettingsGateway(storage).loadAppSettings()).resolves.toMatchObject({
+      agentProviderPreferences: expected,
+    });
+  });
+
   it("round trips favorite models with their ordering revision across reload", async () => {
     const storage = memoryStorage();
     const gateway = new BrowserSettingsGateway(storage);

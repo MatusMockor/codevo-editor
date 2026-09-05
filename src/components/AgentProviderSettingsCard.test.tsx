@@ -34,6 +34,38 @@ describe("AgentProviderSettingsCard", () => {
     expect(host.textContent).toContain("Checked just now");
   });
 
+  it.each(["claudeCode", "codex"] as const)(
+    "reports a newer native %s version without an unsafe automatic update button",
+    (provider) => {
+      const original = management({
+        health: {
+          kind: "ready",
+          installedVersion: "1.0.0",
+          checkedAtEpochMs: Date.now(),
+          auth: { kind: "signedIn", label: null },
+          update: {
+            kind: "manualUpdateAvailable",
+            installedVersion: "1.0.0",
+            availableVersion: "2.0.0",
+          },
+        },
+      });
+      const surface = {
+        ...original,
+        providers: { ...original.providers, [provider]: original.providers.claudeCode },
+      };
+      render(surface, { provider });
+      expect(host.textContent).toContain("Version 2.0.0 is available (installed: 1.0.0)");
+      expect(host.textContent).toContain("Update this CLI with its original installer");
+      expect(
+        [...host.querySelectorAll("button")].some((button) =>
+          button.textContent?.startsWith("Update to"),
+        ),
+      ).toBe(false);
+      expect(surface.update).not.toHaveBeenCalled();
+    },
+  );
+
   it("shows automatic detection without turning it into a persisted override", () => {
     const onChangePath = vi.fn();
     render(management(), {
@@ -177,9 +209,7 @@ describe("AgentProviderSettingsCard", () => {
     const onChangePath = vi.fn();
     const onChangeEnabled = vi.fn();
     const onChangeHealthCheckIntervalSeconds = vi.fn();
-    const onChangeCheckForUpdates = vi.fn();
     render(management(), {
-      onChangeCheckForUpdates,
       onChangeEnabled,
       onChangeHealthCheckIntervalSeconds,
       onChangePath,
@@ -196,8 +226,8 @@ describe("AgentProviderSettingsCard", () => {
     setInput('input[aria-label="Claude Code health check interval in seconds"]', "999999");
     expect(onChangeHealthCheckIntervalSeconds).toHaveBeenCalledWith(86_400);
 
-    toggle(".agent-provider-card__updates-toggle input", true);
-    expect(onChangeCheckForUpdates).toHaveBeenCalledWith(true);
+    expect(host.querySelector(".agent-provider-card__updates-toggle input")).toBeNull();
+    expect(host.textContent).toContain("CLI updates are checked automatically");
   });
 
   it("retains an invalid non-empty CLI path on blur without clearing the saved path", () => {
@@ -471,6 +501,61 @@ describe("AgentProviderSettingsCard", () => {
     );
   });
 
+  it("offers the built-in updater for a native self-update installation", () => {
+    const update = vi.fn(async () => null);
+    render({ ...management({ health: selfUpdateHealth() }), update });
+
+    expect(host.textContent).toContain(
+      "Version 2.2.0 is available (installed: 2.1.245). Codevo can install it with the built-in updater (claude update).",
+    );
+    expect(host.textContent).not.toContain("Update this CLI with its original installer");
+
+    click("button", "Update to 2.2.0");
+    expect(update).toHaveBeenCalledWith("claudeCode", "2.2.0");
+  });
+
+  it("explains a self-update that left the installed version unchanged", () => {
+    render(
+      management({
+        health: selfUpdateHealth(),
+        updateState: {
+          kind: "failed",
+          reason: "versionNotAdvanced",
+          outputTail: "Installer output withheld (stdout: 24 bytes, stderr: 0 bytes).",
+          outputTruncated: false,
+        },
+      }),
+    );
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      "The updater finished but the installed version did not change. Try again or update manually with claude update.",
+    );
+  });
+
+  it("keeps the original-installer hint when a version stall has no self-update authority", () => {
+    render(
+      management({
+        health: {
+          kind: "ready",
+          installedVersion: "2.1.245",
+          auth: { kind: "signedIn", label: null },
+          update: { kind: "current", installedVersion: "2.1.245" },
+          checkedAtEpochMs: Date.now(),
+        },
+        updateState: {
+          kind: "failed",
+          reason: "versionNotAdvanced",
+          outputTail: "Installer output withheld (stdout: 24 bytes, stderr: 0 bytes).",
+          outputTruncated: false,
+        },
+      }),
+    );
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      "The updater finished but the installed version did not change. Try again or update this CLI with its original installer.",
+    );
+  });
+
   function render(
     managementSurface: AgentProviderManagementSurface,
     overrides: Partial<Parameters<typeof AgentProviderSettingsCard>[0]> = {},
@@ -479,7 +564,6 @@ describe("AgentProviderSettingsCard", () => {
       root.render(
         <AgentProviderSettingsCard
           management={managementSurface}
-          onChangeCheckForUpdates={() => undefined}
           onChangeEnabled={() => undefined}
           onChangeHealthCheckIntervalSeconds={() => undefined}
           onChangePath={() => undefined}
@@ -593,6 +677,21 @@ function management(
     save: vi.fn(async () => true),
     saveWithOutcome: vi.fn(async () => ({ kind: "persisted" as const, policyRegistered: true })),
     update: vi.fn(async () => null),
+  };
+}
+
+function selfUpdateHealth() {
+  return {
+    kind: "ready" as const,
+    installedVersion: "2.1.245",
+    auth: { kind: "signedIn" as const, label: null },
+    update: {
+      kind: "available" as const,
+      installedVersion: "2.1.245",
+      availableVersion: "2.2.0",
+      installer: { kind: "selfUpdate" as const, command: "claudeUpdate" as const },
+    },
+    checkedAtEpochMs: Date.now(),
   };
 }
 

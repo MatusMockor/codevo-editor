@@ -121,13 +121,6 @@ export function AgentsSettingsPanel({
         }
         onChangeAgentCliKind={(agentCliKind) => updateAppSettings({ ...appSettings, agentCliKind })}
         onChangeAgentCliPath={changeCliPath}
-        onChangeAgentProviderCheckForUpdates={(provider, checkForUpdates) =>
-          changeProviderPreference(provider, (preference) => ({
-            ...preference,
-            checkForUpdates,
-            dismissedUpdateVersion: null,
-          }))
-        }
         onChangeAgentProviderEnabled={changeProviderEnabled}
         onChangeAgentProviderHealthCheckInterval={(provider, healthCheckIntervalSeconds) =>
           changeProviderPreference(provider, (preference) => ({

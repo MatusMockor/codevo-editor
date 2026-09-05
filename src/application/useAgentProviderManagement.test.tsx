@@ -436,6 +436,78 @@ describe("useAgentProviderManagement", () => {
     harness.unmount();
   });
 
+  it.each(["claudeCode", "codex"] as const)(
+    "announces and dismisses a newer %s without an install candidate",
+    async (provider) => {
+      const harness = renderManagement();
+      await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+      const index = harness.healthRequests.findIndex((request) => request.provider === provider);
+      const health: AgentProviderHealthProbeResult = {
+        ...currentHealth("1.0.0"),
+        update: {
+          kind: "manualUpdateAvailable",
+          installedVersion: "1.0.0",
+          availableVersion: "1.1.0",
+        },
+      };
+      await settleHealth(harness, index, health);
+      expect(harness.hook().toast).toEqual({
+        kind: "updateAvailable",
+        provider,
+        version: "1.1.0",
+        manual: true,
+      });
+      await act(async () => {
+        await expect(harness.hook().update(provider, "1.1.0")).resolves.toBe("noUpdateAvailable");
+        await expect(harness.hook().dismissUpdate(provider, "1.0.9")).resolves.toBe(false);
+        await expect(harness.hook().dismissUpdate(provider, "1.1.0")).resolves.toBe(true);
+      });
+      expect(harness.dependencies.updateGateway.updateAgentProvider).not.toHaveBeenCalled();
+      expect(harness.settings().agentProviderPreferences?.[provider].dismissedUpdateVersion).toBe(
+        "1.1.0",
+      );
+      expect(harness.hook().toast).toBeNull();
+      await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+      await settleHealth(harness, 2, health);
+      expect(harness.hook().toast).toBeNull();
+      harness.unmount();
+    },
+  );
+
+  it.each(["claudeCode", "codex"] as const)(
+    "offers an installable %s update for a native self-update installation",
+    async (provider) => {
+      const harness = renderManagement();
+      await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+      const index = harness.healthRequests.findIndex((request) => request.provider === provider);
+      const installer = {
+        kind: "selfUpdate",
+        command: provider === "codex" ? "codexUpdate" : "claudeUpdate",
+      } as const;
+      const health: AgentProviderHealthProbeResult = {
+        ...currentHealth("1.0.0"),
+        update: {
+          kind: "available",
+          installedVersion: "1.0.0",
+          availableVersion: "1.1.0",
+          installer,
+        },
+      };
+      await settleHealth(harness, index, health);
+
+      expect(harness.hook().toast).toEqual({
+        kind: "updateAvailable",
+        provider,
+        version: "1.1.0",
+      });
+      expect(harness.hook().providers[provider].health).toMatchObject({
+        kind: "ready",
+        update: { kind: "available", installer },
+      });
+      harness.unmount();
+    },
+  );
+
   it("publishes only persisted queued selected-provider receipts", async () => {
     const settings = configuredSettings();
     settings.agentCliKind = "codex";
@@ -2069,7 +2141,6 @@ function renderManagement(
       presentation: hook.providers.claudeCode.executable,
       preference,
       provider: "claudeCode",
-      onChangeCheckForUpdates: () => undefined,
       onChangeEnabled: () => undefined,
       onChangeHealthCheckIntervalSeconds: () => undefined,
       onChangePath: () => undefined,

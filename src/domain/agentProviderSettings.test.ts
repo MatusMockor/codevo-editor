@@ -10,12 +10,12 @@ import {
 const DEFAULT_PREFERENCE = {
   enabled: true,
   healthCheckIntervalSeconds: 300,
-  checkForUpdates: false,
+  checkForUpdates: true,
   dismissedUpdateVersion: null,
 } as const;
 
 describe("agent provider settings", () => {
-  it("defaults both providers without network checks", () => {
+  it("defaults both providers to automatic CLI update checks", () => {
     expect(defaultAgentProviderPreferences()).toEqual({
       claudeCode: DEFAULT_PREFERENCE,
       codex: DEFAULT_PREFERENCE,
@@ -50,7 +50,7 @@ describe("agent provider settings", () => {
       codex: {
         enabled: true,
         healthCheckIntervalSeconds: 86_400,
-        checkForUpdates: false,
+        checkForUpdates: true,
         dismissedUpdateVersion: "0.150.1",
       },
     });
@@ -58,6 +58,29 @@ describe("agent provider settings", () => {
     expect(normalizeAgentProviderHealthCheckIntervalSeconds(300.9)).toBe(300);
     expect(normalizeAgentProviderHealthCheckIntervalSeconds(Number.NaN)).toBe(300);
   });
+
+  it.each(["claudeCode", "codex"] as const)(
+    "migrates legacy disabled update checks for %s without changing other preferences",
+    (provider) => {
+      const preferences = {
+        ...defaultAgentProviderPreferences(),
+        [provider]: {
+          enabled: false,
+          healthCheckIntervalSeconds: 0,
+          checkForUpdates: false,
+          dismissedUpdateVersion: "1.2.3",
+        },
+      };
+      const normalized = normalizeAgentProviderPreferences(preferences);
+
+      expect(normalized[provider]).toEqual({
+        ...preferences[provider],
+        checkForUpdates: true,
+      });
+      expect(normalizeAgentProviderPreferences(normalized)).toEqual(normalized);
+      expect(preferences[provider].checkForUpdates).toBe(false);
+    },
+  );
 
   it("fails unknown, partial, secret-bearing, and malformed records closed", () => {
     for (const malformed of [
@@ -70,6 +93,10 @@ describe("agent provider settings", () => {
       {
         claudeCode: { ...DEFAULT_PREFERENCE, enabled: "true" },
         codex: DEFAULT_PREFERENCE,
+      },
+      {
+        claudeCode: DEFAULT_PREFERENCE,
+        codex: { ...DEFAULT_PREFERENCE, checkForUpdates: "false" },
       },
       {
         claudeCode: { ...DEFAULT_PREFERENCE, healthCheckIntervalSeconds: 300.9 },

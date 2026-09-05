@@ -10,6 +10,9 @@ use crate::agent_task_spawner::agent_provider::process::{
     AgentProviderProcessOutput, AgentProviderProcessOutputSink, AgentProviderProcessOutputStream,
     AgentProviderProcessPlan, ExecutableIdentity,
 };
+use crate::agent_task_spawner::agent_provider::runtime::installer::{
+    bounded_home_path, native_cli_artifact_matches,
+};
 use crate::agent_task_spawner::agent_provider::runtime::{
     AgentProviderPolicy, AgentProviderPolicyReceipt, AgentProviderRuntimeRegistry,
     AgentProviderUpdateCandidate, ProviderHealthLease, ResolvedAgentProviderInstaller,
@@ -17,8 +20,9 @@ use crate::agent_task_spawner::agent_provider::runtime::{
 use crate::agent_task_spawner::agent_provider::{
     brew_cask, claude_auth_capability, compare_versions, npm_package, parse_auth_state,
     parse_brew_available_version, parse_claude_text_auth_state, parse_npm_available_version,
-    parse_npm_installed_version, AgentProviderAuthState, AgentProviderHealthProbeResult,
-    AgentProviderUpdateAvailability, AgentProviderUpdateFailureReason, AgentProviderUpdateResult,
+    parse_npm_installed_version, self_update_command, AgentProviderAuthState,
+    AgentProviderHealthProbeResult, AgentProviderUpdateAvailability,
+    AgentProviderUpdateFailureReason, AgentProviderUpdateResult,
     AgentProviderUpdateUnavailableReason, ClaudeAuthStatusCapability,
 };
 use crate::agent_task_spawner::AgentCliInvocation;
@@ -27,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering as AtomicOrdering},
         Arc, Mutex,
@@ -424,16 +428,31 @@ fn run_agent_provider_update_with_spawn_barrier_and_progress_sink(
             &output,
         ));
     };
-    if installed_version != lease.candidate.available_version {
-        return Ok(update_failure(
-            AgentProviderUpdateFailureReason::Uncertain,
-            &format!("Provider reported version {installed_version} after update."),
-        ));
+    if let Some(reason) = verification_failure(&lease.candidate, &installed_version) {
+        return Ok(update_failure(reason, ""));
     }
     Ok(AgentProviderUpdateResult::Succeeded {
         previous_version: lease.candidate.installed_version.clone(),
         installed_version,
     })
+}
+
+fn verification_failure(
+    candidate: &AgentProviderUpdateCandidate,
+    installed_version: &str,
+) -> Option<AgentProviderUpdateFailureReason> {
+    if !matches!(
+        candidate.installer,
+        ResolvedAgentProviderInstaller::SelfUpdate { .. }
+    ) {
+        return (installed_version != candidate.available_version)
+            .then_some(AgentProviderUpdateFailureReason::Uncertain);
+    }
+    match compare_versions(&candidate.installed_version, installed_version) {
+        Some(Ordering::Less) => None,
+        Some(Ordering::Equal) => Some(AgentProviderUpdateFailureReason::VersionNotAdvanced),
+        _ => Some(AgentProviderUpdateFailureReason::Uncertain),
+    }
 }
 
 fn probe_health(
@@ -653,72 +672,93 @@ fn probe_update(
             None,
         );
     };
-    match probe_npm(
-        registry,
-        lease,
-        cli_identity,
-        installed_version,
-        cancelled,
-        package_manager_locator,
-    ) {
-        InstallerProbeOutcome::Resolved {
-            installer,
-            available_version,
-        } => {
-            return availability(
-                ProviderAvailabilityEvidence::new(lease, cli_identity, installed_version),
-                available_version,
+    for probe in INSTALLER_OWNERSHIP_PROBES {
+        match probe(
+            registry,
+            lease,
+            cli_identity,
+            installed_version,
+            cancelled,
+            package_manager_locator,
+        ) {
+            InstallerProbeOutcome::Resolved {
                 installer,
-            )
-        }
-        InstallerProbeOutcome::Unavailable(reason) => {
-            return (
-                AgentProviderUpdateAvailability::Unavailable { reason },
-                None,
-            )
-        }
-        InstallerProbeOutcome::NotOwned => {}
-    }
-    if registry.revalidate_health(lease).is_err() {
-        return (
-            AgentProviderUpdateAvailability::Unavailable {
-                reason: AgentProviderUpdateUnavailableReason::ProbeFailed,
-            },
-            None,
-        );
-    }
-    match probe_brew(
-        registry,
-        lease,
-        cli_identity,
-        installed_version,
-        cancelled,
-        package_manager_locator,
-    ) {
-        InstallerProbeOutcome::Resolved {
-            installer,
-            available_version,
-        } => {
-            return availability(
-                ProviderAvailabilityEvidence::new(lease, cli_identity, installed_version),
                 available_version,
-                installer,
-            )
+            } => {
+                return availability(
+                    ProviderAvailabilityEvidence::new(lease, cli_identity, installed_version),
+                    available_version,
+                    installer,
+                )
+            }
+            InstallerProbeOutcome::Unavailable(reason) => {
+                return (
+                    AgentProviderUpdateAvailability::Unavailable { reason },
+                    None,
+                )
+            }
+            InstallerProbeOutcome::NotOwned => {}
         }
-        InstallerProbeOutcome::Unavailable(reason) => {
+        if registry.revalidate_health(lease).is_err() {
             return (
-                AgentProviderUpdateAvailability::Unavailable { reason },
+                AgentProviderUpdateAvailability::Unavailable {
+                    reason: AgentProviderUpdateUnavailableReason::ProbeFailed,
+                },
                 None,
-            )
+            );
         }
-        InstallerProbeOutcome::NotOwned => {}
     }
-    (
-        AgentProviderUpdateAvailability::Unavailable {
-            reason: AgentProviderUpdateUnavailableReason::UnknownInstaller,
-        },
-        None,
+    let update =
+        match probe_manual_available_version(registry, lease, cancelled, package_manager_locator) {
+            Ok(available_version) => {
+                match compare_versions(installed_version, &available_version) {
+                    Some(Ordering::Less) => {
+                        AgentProviderUpdateAvailability::ManualUpdateAvailable {
+                            installed_version: installed_version.to_string(),
+                            available_version,
+                        }
+                    }
+                    Some(_) => AgentProviderUpdateAvailability::Current {
+                        installed_version: installed_version.to_string(),
+                    },
+                    None => AgentProviderUpdateAvailability::Unavailable {
+                        reason: AgentProviderUpdateUnavailableReason::InvalidVersion,
+                    },
+                }
+            }
+            Err(reason) => AgentProviderUpdateAvailability::Unavailable { reason },
+        };
+    (update, None)
+}
+
+fn probe_manual_available_version(
+    registry: &AgentProviderRuntimeRegistry,
+    lease: &ProviderHealthLease,
+    cancelled: &AtomicBool,
+    package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+) -> Result<String, AgentProviderUpdateUnavailableReason> {
+    registry
+        .revalidate_health(lease)
+        .map_err(|_| AgentProviderUpdateUnavailableReason::ProbeFailed)?;
+    let npm = package_manager_locator
+        .resolve("npm")
+        .ok_or(AgentProviderUpdateUnavailableReason::UnknownInstaller)?;
+    let plan = AgentProviderProcessPlan::package_manager_with_effective_path(
+        npm,
+        AgentProviderProcessIntent::NpmAvailableVersion(lease.provider),
+        &lease.effective_path,
     )
+    .map_err(|_| AgentProviderUpdateUnavailableReason::ProbeFailed)?;
+    registry
+        .revalidate_health(lease)
+        .map_err(|_| AgentProviderUpdateUnavailableReason::ProbeFailed)?;
+    let output = execute_owned(registry, cancelled, &plan)
+        .map_err(|failure| probe_failure_reason(&failure))?;
+    registry
+        .revalidate_health(lease)
+        .map_err(|_| AgentProviderUpdateUnavailableReason::ProbeFailed)?;
+    parse_npm_available_version(&output.stdout)
+        .ok_or(AgentProviderUpdateUnavailableReason::ProbeFailed)
 }
 
 enum InstallerProbeOutcome {
@@ -728,6 +768,80 @@ enum InstallerProbeOutcome {
         available_version: String,
     },
     Unavailable(AgentProviderUpdateUnavailableReason),
+}
+
+type InstallerOwnershipProbe = fn(
+    &AgentProviderRuntimeRegistry,
+    &ProviderHealthLease,
+    &ExecutableIdentity,
+    &str,
+    &AtomicBool,
+    &dyn AgentProviderPackageManagerLocator,
+) -> InstallerProbeOutcome;
+
+const INSTALLER_OWNERSHIP_PROBES: [InstallerOwnershipProbe; 3] =
+    [probe_npm, probe_brew, probe_host_native];
+
+fn probe_host_native(
+    registry: &AgentProviderRuntimeRegistry,
+    lease: &ProviderHealthLease,
+    cli_identity: &ExecutableIdentity,
+    _installed_version: &str,
+    cancelled: &AtomicBool,
+    package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+) -> InstallerProbeOutcome {
+    let Some(home) = bounded_home_directory() else {
+        return InstallerProbeOutcome::NotOwned;
+    };
+    probe_native(
+        registry,
+        lease,
+        cli_identity,
+        &home,
+        cancelled,
+        package_manager_locator,
+    )
+}
+
+fn probe_native(
+    registry: &AgentProviderRuntimeRegistry,
+    lease: &ProviderHealthLease,
+    cli_identity: &ExecutableIdentity,
+    home: &Path,
+    cancelled: &AtomicBool,
+    package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+) -> InstallerProbeOutcome {
+    if !native_cli_artifact_matches(home, &cli_identity.canonical_path, lease.provider) {
+        return InstallerProbeOutcome::NotOwned;
+    }
+    if registry.revalidate_health(lease).is_err() {
+        return InstallerProbeOutcome::Unavailable(
+            AgentProviderUpdateUnavailableReason::ProbeFailed,
+        );
+    }
+    match probe_manual_available_version(registry, lease, cancelled, package_manager_locator) {
+        Ok(available_version) => InstallerProbeOutcome::Resolved {
+            installer: ResolvedAgentProviderInstaller::SelfUpdate {
+                program: cli_identity.clone(),
+                command: self_update_command(lease.provider),
+            },
+            available_version,
+        },
+        Err(reason) => InstallerProbeOutcome::Unavailable(native_metadata_reason(reason)),
+    }
+}
+
+fn native_metadata_reason(
+    reason: AgentProviderUpdateUnavailableReason,
+) -> AgentProviderUpdateUnavailableReason {
+    if reason == AgentProviderUpdateUnavailableReason::UnknownInstaller {
+        return AgentProviderUpdateUnavailableReason::ProbeFailed;
+    }
+    reason
+}
+
+fn bounded_home_directory() -> Option<PathBuf> {
+    bounded_home_path(std::env::var("HOME").ok())
 }
 
 fn probe_npm(

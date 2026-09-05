@@ -17,9 +17,12 @@ export type AgentProviderAuthState =
   | { readonly kind: "signedOut" }
   | { readonly kind: "unknown" };
 
+export type AgentProviderSelfUpdateCommand = "claudeUpdate" | "codexUpdate";
+
 export type AgentProviderInstaller =
   | { readonly kind: "npm"; readonly packageName: "@anthropic-ai/claude-code" | "@openai/codex" }
   | { readonly kind: "homebrew"; readonly cask: "claude-code" | "codex" }
+  | { readonly kind: "selfUpdate"; readonly command: AgentProviderSelfUpdateCommand }
   | { readonly kind: "unknown" };
 
 export type AgentProviderUpdateAvailability =
@@ -31,6 +34,11 @@ export type AgentProviderUpdateAvailability =
       readonly installedVersion: string;
       readonly availableVersion: string;
       readonly installer: Exclude<AgentProviderInstaller, { readonly kind: "unknown" }>;
+    }
+  | {
+      readonly kind: "manualUpdateAvailable";
+      readonly installedVersion: string;
+      readonly availableVersion: string;
     }
   | {
       readonly kind: "unavailable";
@@ -159,7 +167,13 @@ export interface AgentProviderUpdateRequest extends AgentProviderGenerationReque
 }
 
 export type AgentProviderUpdateFailureReason =
-  "admissionRefused" | "spawnFailed" | "timedOut" | "outputLimitExceeded" | "exited" | "uncertain";
+  | "admissionRefused"
+  | "spawnFailed"
+  | "timedOut"
+  | "outputLimitExceeded"
+  | "exited"
+  | "uncertain"
+  | "versionNotAdvanced";
 
 export type AgentProviderUpdateResult =
   | {
@@ -305,7 +319,9 @@ export function parseAgentProviderHealthProbeResult(
   const installedVersion = optionalVersion(result.installedVersion, "result.installedVersion");
   const update = updateAvailability(kind, result.update, "result.update");
   if (
-    (update.kind === "current" || update.kind === "available") &&
+    (update.kind === "current" ||
+      update.kind === "available" ||
+      update.kind === "manualUpdateAvailable") &&
     update.installedVersion !== installedVersion
   ) {
     return invalid("result.update.installedVersion", "expected the observed installed version");
@@ -465,6 +481,38 @@ export function appendAgentProviderUpdateOutputTail(current: string, addition: s
   return new TextDecoder().decode(retained.slice(start));
 }
 
+export function agentProviderSelfUpdateCommandLabel(
+  command: AgentProviderSelfUpdateCommand,
+): string {
+  switch (command) {
+    case "claudeUpdate":
+      return "claude update";
+    case "codexUpdate":
+      return "codex update";
+    default: {
+      const exhaustiveCommand: never = command;
+      return exhaustiveCommand;
+    }
+  }
+}
+
+export function agentProviderInstallerLabel(installer: AgentProviderInstaller): string {
+  switch (installer.kind) {
+    case "npm":
+      return `npm package ${installer.packageName}`;
+    case "homebrew":
+      return `Homebrew cask ${installer.cask}`;
+    case "selfUpdate":
+      return `built-in updater (${agentProviderSelfUpdateCommandLabel(installer.command)})`;
+    case "unknown":
+      return "an unidentified installer";
+    default: {
+      const exhaustiveInstaller: never = installer;
+      return exhaustiveInstaller;
+    }
+  }
+}
+
 function generationRequest(value: unknown, path: string): AgentProviderGenerationRequest {
   const request = object(value, path);
   exactKeys(request, ["provider", "providerGeneration"], path);
@@ -519,6 +567,14 @@ function updateAvailability(
       installer: knownInstaller(kind, update.installer, `${path}.installer`),
     };
   }
+  if (update.kind === "manualUpdateAvailable") {
+    exactKeys(update, ["kind", "installedVersion", "availableVersion"], path);
+    return {
+      kind: "manualUpdateAvailable",
+      installedVersion: version(update.installedVersion, `${path}.installedVersion`),
+      availableVersion: version(update.availableVersion, `${path}.availableVersion`),
+    };
+  }
   if (update.kind === "unavailable") {
     exactKeys(update, ["kind", "reason"], path);
     return { kind: "unavailable", reason: unavailableReason(update.reason, `${path}.reason`) };
@@ -545,7 +601,13 @@ function knownInstaller(
     if (installer.cask !== cask) return invalid(`${path}.cask`, "provider mismatch");
     return { kind: "homebrew", cask };
   }
-  return invalid(`${path}.kind`, "expected npm or homebrew");
+  if (installer.kind === "selfUpdate") {
+    exactKeys(installer, ["kind", "command"], path);
+    const command = kind === "claudeCode" ? "claudeUpdate" : "codexUpdate";
+    if (installer.command !== command) return invalid(`${path}.command`, "provider mismatch");
+    return { kind: "selfUpdate", command };
+  }
+  return invalid(`${path}.kind`, "expected npm, homebrew, or selfUpdate");
 }
 
 function unavailableReason(
@@ -570,7 +632,8 @@ function failureReason(value: unknown, path: string): AgentProviderUpdateFailure
     value === "timedOut" ||
     value === "outputLimitExceeded" ||
     value === "exited" ||
-    value === "uncertain"
+    value === "uncertain" ||
+    value === "versionNotAdvanced"
   ) {
     return value;
   }
