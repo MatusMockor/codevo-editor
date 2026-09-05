@@ -27,7 +27,10 @@ import {
   agentTurnProjection,
   agentTurnSubagentSummary,
   agentTurnWorkFold,
+  isAgentSubagentToolItem,
   type AgentRawLine,
+  type AgentSubagentEntry,
+  type AgentSubagentSummary,
   type AgentTurnItem,
 } from "./agentModePresentation";
 
@@ -245,10 +248,9 @@ const AgentTurnView = memo(function AgentTurnView({
   const workFold = agentTurnWorkFold(projection.items, running);
   const cursor = highlight?.current ?? null;
   const promptCurrent = cursor !== null && cursor.kind === "prompt" ? cursor.occurrence : null;
-  const rawOpen = rawOutputExpanded(turn.status);
+  const rawDisclosed = rawOutputDisclosed(turn.status);
   const rawOutput =
-    rawLines.length === 0 ? null : <AgentRawOutput lines={rawLines} open={rawOpen} />;
-  const foldedRawOutput = workFold !== null && !rawOpen ? rawOutput : null;
+    rawLines.length === 0 || !rawDisclosed ? null : <AgentRawOutput lines={rawLines} />;
   const failure = turnFailure(turn.status, errorContext);
 
   return (
@@ -278,29 +280,34 @@ const AgentTurnView = memo(function AgentTurnView({
       )}
 
       <div className="agent-turn__events">
-        {subagents !== null && <AgentSubagentSummary summary={subagents} />}
+        {subagents !== null && <AgentSubagentBanner summary={subagents} />}
+        {workFold === null && subagents !== null && (
+          <AgentSubagentList entries={subagents.entries} />
+        )}
         {workFold !== null && (
           <AgentTurnWork
             errorContext={errorContext}
-            footer={foldedRawOutput}
             highlight={highlight}
             items={workFold.workItems}
             key={running ? "running-work" : "settled-work"}
             running={running}
+            subagents={subagents}
             summary={workFold.summary}
             textClipboard={textClipboard}
             turn={turn}
           />
         )}
-        {(workFold?.visibleItems ?? projection.items).map((item) => (
-          <AgentTurnItemView
-            errorContext={errorContext}
-            highlight={itemHighlight(highlight, item.key)}
-            item={item}
-            key={item.key}
-            textClipboard={textClipboard}
-          />
-        ))}
+        {(workFold?.visibleItems ?? projection.items)
+          .filter((item) => !isAgentSubagentToolItem(item))
+          .map((item) => (
+            <AgentTurnItemView
+              errorContext={errorContext}
+              highlight={itemHighlight(highlight, item.key)}
+              item={item}
+              key={item.key}
+              textClipboard={textClipboard}
+            />
+          ))}
         {empty && running && (
           <p className="agent-note">
             Waiting for output…
@@ -309,9 +316,7 @@ const AgentTurnView = memo(function AgentTurnView({
         )}
       </div>
 
-      {foldedRawOutput === null && rawOutput !== null && (
-        <div className="agent-message-actions">{rawOutput}</div>
-      )}
+      {rawOutput !== null && <div className="agent-message-actions">{rawOutput}</div>}
 
       {turn.eventsTruncated && (
         <p className="agent-note agent-note--warning">Later output was dropped to bound memory.</p>
@@ -334,15 +339,9 @@ const AgentTurnView = memo(function AgentTurnView({
   );
 });
 
-function AgentRawOutput({
-  lines,
-  open,
-}: {
-  readonly lines: ReadonlyArray<AgentRawLine>;
-  readonly open: boolean;
-}) {
+function AgentRawOutput({ lines }: { readonly lines: ReadonlyArray<AgentRawLine> }) {
   return (
-    <details className="agent-raw" open={open || undefined}>
+    <details className="agent-raw" open>
       <summary className="agent-raw__toggle">Raw output</summary>
       <pre className="agent-raw__lines">{lines.map((line) => line.raw).join("\n")}</pre>
     </details>
@@ -351,19 +350,19 @@ function AgentRawOutput({
 
 function AgentTurnWork({
   errorContext,
-  footer,
   highlight,
   items,
   running,
+  subagents,
   summary,
   textClipboard,
   turn,
 }: {
   readonly errorContext: AgentTurnErrorContext;
-  readonly footer: ReactNode;
   readonly highlight: AgentTurnHighlight | null;
   readonly items: ReadonlyArray<AgentTurnItem>;
   readonly running: boolean;
+  readonly subagents: AgentSubagentSummary | null;
   readonly summary: string;
   readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentTurn;
@@ -388,26 +387,46 @@ function AgentTurnWork({
         <ChevronDown aria-hidden="true" className="agent-work__chevron" size={14} />
       </summary>
       <div className="agent-work__events">
-        {items.map((item) => (
-          <AgentTurnItemView
-            errorContext={errorContext}
-            highlight={itemHighlight(highlight, item.key)}
-            item={item}
-            key={item.key}
-            textClipboard={textClipboard}
-          />
-        ))}
-        {footer}
+        {subagents !== null && <AgentSubagentList entries={subagents.entries} />}
+        {items
+          .filter((item) => !isAgentSubagentToolItem(item))
+          .map((item) => (
+            <AgentTurnItemView
+              errorContext={errorContext}
+              highlight={itemHighlight(highlight, item.key)}
+              item={item}
+              key={item.key}
+              textClipboard={textClipboard}
+            />
+          ))}
       </div>
     </details>
   );
 }
 
-function AgentSubagentSummary({
-  summary,
-}: {
-  readonly summary: NonNullable<ReturnType<typeof agentTurnSubagentSummary>>;
-}) {
+function AgentSubagentList({ entries }: { readonly entries: ReadonlyArray<AgentSubagentEntry> }) {
+  return (
+    <ul aria-label="Subagents" className="agent-subagent-list">
+      {entries.map((entry) => (
+        <li className="agent-subagent" key={entry.toolId}>
+          <span className="agent-subagent__name">{entry.name}</span>
+          <span className="agent-subagent__description">{entry.description}</span>
+          <span className={`agent-subagent__state agent-subagent__state--${entry.state}`}>
+            {subagentStateLabel(entry.state)}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function subagentStateLabel(state: AgentSubagentEntry["state"]): string {
+  if (state === "running") return "working";
+  if (state === "failed") return "failed";
+  return "completed";
+}
+
+function AgentSubagentBanner({ summary }: { readonly summary: AgentSubagentSummary }) {
   const states = [
     summary.running > 0 ? `${summary.running} working` : null,
     summary.completed > 0 ? `${summary.completed} completed` : null,
@@ -549,7 +568,7 @@ function AgentProviderErrorHint({ error }: { readonly error: AgentProviderError 
   );
 }
 
-function rawOutputExpanded(status: AgentTurnStatus): boolean {
+function rawOutputDisclosed(status: AgentTurnStatus): boolean {
   if (status.kind === "failed") return true;
   if (status.kind === "interrupted") return true;
 

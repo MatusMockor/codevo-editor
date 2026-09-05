@@ -321,12 +321,36 @@ describe("agentModePresentation", () => {
         { kind: "toolResult", toolId: "agent-1", outputSummary: "done", isError: false },
         { kind: "toolResult", toolId: "agent-2", outputSummary: "failed", isError: true },
       ]),
-    ).toEqual({ total: 3, running: 1, completed: 1, failed: 1 });
+    ).toEqual({
+      total: 3,
+      running: 1,
+      completed: 1,
+      failed: 1,
+      entries: [
+        { toolId: "agent-1", name: "Task", description: "Review UI", state: "completed" },
+        { toolId: "agent-2", name: "Agent", description: "Run tests", state: "failed" },
+        { toolId: "agent-3", name: "spawn_agent", description: "Audit", state: "running" },
+      ],
+    });
     expect(
       agentTurnSubagentSummary([
         { kind: "toolCall", toolId: "read-1", name: "Read", inputSummary: "a.ts" },
       ]),
     ).toBeNull();
+  });
+
+  it("counts subagents separately from other tools in the work fold summary", () => {
+    const fold = agentTurnWorkFold(
+      agentTurnProjection([
+        { kind: "toolCall", toolId: "agent-1", name: "Task", inputSummary: "Review UI" },
+        { kind: "toolCall", toolId: "agent-2", name: "Agent", inputSummary: "Run tests" },
+        { kind: "toolCall", toolId: "grep-1", name: "Grep", inputSummary: "needle" },
+        { kind: "assistantText", text: "All done." },
+      ]).items,
+      false,
+    );
+
+    expect(fold?.summary).toBe("1 other tool · 2 subagents");
   });
 
   it("renders a relative start time", () => {

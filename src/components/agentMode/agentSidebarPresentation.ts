@@ -100,12 +100,26 @@ export type AgentThreadMenuCommand =
   | { readonly kind: "archive" }
   | { readonly kind: "delete" };
 
+export type AgentThreadMenuIcon =
+  | "newThread"
+  | "pin"
+  | "unpin"
+  | "rename"
+  | "markUnread"
+  | "copyPath"
+  | "copyBranch"
+  | "copyThreadId"
+  | "stop"
+  | "archive"
+  | "delete";
+
 export type AgentThreadMenuEntry =
   | { readonly kind: "separator"; readonly id: string }
   | {
       readonly kind: "item";
       readonly id: string;
       readonly label: string;
+      readonly icon: AgentThreadMenuIcon;
       readonly disabled: boolean;
       readonly destructive: boolean;
       readonly command: AgentThreadMenuCommand | "rename";
@@ -123,32 +137,35 @@ export function agentThreadMenuEntries(
 ): ReadonlyArray<AgentThreadMenuEntry> {
   const target = props.branch === null ? "New thread" : `New thread on ${props.branch}`;
   const entries: AgentThreadMenuEntry[] = [
-    menuItem("new", target, { kind: "newThread" }),
-    menuItem("pin", props.pinned ? "Unpin" : "Pin", { kind: "togglePin" }),
+    menuItem("new", target, "newThread", { kind: "newThread" }),
+    menuItem("pin", props.pinned ? "Unpin" : "Pin", props.pinned ? "unpin" : "pin", {
+      kind: "togglePin",
+    }),
     { kind: "separator", id: "s1" },
-    menuItem("rename", "Rename", "rename"),
-    menuItem("unread", "Mark unread", { kind: "markUnread" }),
+    menuItem("rename", "Rename", "rename", "rename"),
+    menuItem("unread", "Mark unread", "markUnread", { kind: "markUnread" }),
     { kind: "separator", id: "s2" },
-    menuItem("copy-path", "Copy path", { kind: "copy", detail: "path" }),
-    menuItem("copy-branch", "Copy branch", { kind: "copy", detail: "branch" }),
-    menuItem("copy-id", "Copy thread ID", { kind: "copy", detail: "threadId" }),
+    menuItem("copy-path", "Copy path", "copyPath", { kind: "copy", detail: "path" }),
+    menuItem("copy-branch", "Copy branch", "copyBranch", { kind: "copy", detail: "branch" }),
+    menuItem("copy-id", "Copy thread ID", "copyThreadId", { kind: "copy", detail: "threadId" }),
     { kind: "separator", id: "s3" },
   ];
-  if (props.running) entries.push(menuItem("stop", "Stop", { kind: "stop" }));
+  if (props.running) entries.push(menuItem("stop", "Stop", "stop", { kind: "stop" }));
   if (!props.archived)
-    entries.push(menuItem("archive", "Archive", { kind: "archive" }, props.running));
-  entries.push(menuItem("delete", "Delete", { kind: "delete" }, false, true));
+    entries.push(menuItem("archive", "Archive", "archive", { kind: "archive" }, props.running));
+  entries.push(menuItem("delete", "Delete", "delete", { kind: "delete" }, false, true));
   return entries;
 }
 
 function menuItem(
   id: string,
   label: string,
+  icon: AgentThreadMenuIcon,
   command: AgentThreadMenuCommand | "rename",
   disabled = false,
   destructive = false,
 ): AgentThreadMenuEntry {
-  return { kind: "item", id, label, command, disabled, destructive };
+  return { kind: "item", id, label, icon, command, disabled, destructive };
 }
 
 export function agentRowStatus(view: AgentThreadView): AgentRowStatus {

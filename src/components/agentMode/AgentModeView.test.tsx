@@ -619,6 +619,7 @@ describe("AgentModeView", () => {
     clickMenuItem("Archive");
     click('[aria-label="Thread actions for Refactor the parser"]');
     clickMenuItem("Delete");
+    clickMenuItem("Confirm delete");
 
     expect(archive).toHaveBeenCalledWith("agt-1");
     expect(remove).toHaveBeenCalledWith("agt-1");

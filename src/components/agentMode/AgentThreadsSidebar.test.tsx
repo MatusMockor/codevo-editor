@@ -468,9 +468,132 @@ describe("AgentThreadsSidebar", () => {
     act(() => {
       (items[9] as HTMLButtonElement).click();
     });
+    act(() => {
+      (items[9] as HTMLButtonElement).click();
+    });
 
     expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "delete" });
     expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("requires a second activation before deleting and keeps the primed item focused", () => {
+    const onThreadMenuCommand = vi.fn();
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "Old name")])], onThreadMenuCommand });
+
+    act(() => {
+      row("agt-1").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    act(() => deleteItem().click());
+
+    expect(onThreadMenuCommand).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    expect(deleteItem().textContent).toBe("Confirm delete");
+    expect(deleteItem().classList.contains("agent-menu__item--armed")).toBe(true);
+    expect(deleteItem().getAttribute("data-armed")).toBe("true");
+    expect(document.activeElement).toBe(deleteItem());
+
+    act(() => deleteItem().click());
+
+    expect(onThreadMenuCommand).toHaveBeenCalledWith("agt-1", { kind: "delete" });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("disarms the primed delete on Escape before closing the menu", () => {
+    const onThreadMenuCommand = vi.fn();
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "Old name")])], onThreadMenuCommand });
+
+    act(() => {
+      row("agt-1").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+    act(() => deleteItem().click());
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    expect(deleteItem().textContent).toBe("Delete");
+    expect(deleteItem().classList.contains("agent-menu__item--armed")).toBe(false);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(onThreadMenuCommand).not.toHaveBeenCalled();
+  });
+
+  it("drops the primed delete when the menu is dismissed by an outside click", () => {
+    const onThreadMenuCommand = vi.fn();
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "Old name")])], onThreadMenuCommand });
+
+    const open = (): void => {
+      act(() => {
+        row("agt-1").dispatchEvent(
+          new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+        );
+      });
+    };
+
+    open();
+    act(() => deleteItem().click());
+    act(() => {
+      document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(onThreadMenuCommand).not.toHaveBeenCalled();
+
+    open();
+
+    expect(deleteItem().textContent).toBe("Delete");
+  });
+
+  it("dresses the context menu as a T3 popover with a lucide icon on every item", () => {
+    render({ groups: [group(ROOT, "app", [settled("agt-1", "Old name", { branch: "feat/x" })])] });
+
+    act(() => {
+      row("agt-1").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    const menu = document.querySelector('[role="menu"]');
+    const items = [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
+
+    expect(menu?.className).toBe("agent-menu agent-row-menu");
+    expect(menu?.querySelectorAll(".agent-menu__separator").length).toBe(3);
+    expect(items.every((item) => item.classList.contains("agent-menu__item"))).toBe(true);
+    expect(
+      items.every((item) => item.querySelector(".agent-menu__icon > svg.lucide") !== null),
+    ).toBe(true);
+    expect(items[1]?.querySelector(".lucide-pin")).not.toBeNull();
+    expect(items[2]?.querySelector(".lucide-pencil")).not.toBeNull();
+    const last = items[items.length - 1];
+    expect(last?.classList.contains("agent-menu__item--danger")).toBe(true);
+    expect(last?.querySelector(".lucide-trash2, .lucide-trash-2")).not.toBeNull();
+  });
+
+  it("swaps the pin icon once the thread is pinned", () => {
+    render({
+      groups: [group(ROOT, "app", [settled("agt-1", "Pinned", { branch: null, pinned: true })])],
+    });
+
+    act(() => {
+      row("agt-1").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    const pin = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (item) => item.textContent === "Unpin",
+    );
+
+    expect(pin?.querySelector(".lucide-pin-off")).not.toBeNull();
   });
 
   it("renames inline from the context menu and commits on Enter", () => {
@@ -863,6 +986,13 @@ describe("AgentThreadsSidebar", () => {
     const element = host.querySelector<HTMLElement>(`[data-thread-id="${threadId}"]`);
     expect(element).not.toBeNull();
     return element as HTMLElement;
+  }
+
+  function deleteItem(): HTMLButtonElement {
+    const items = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+    const element = items[items.length - 1];
+    expect(element).toBeInstanceOf(HTMLButtonElement);
+    return element as HTMLButtonElement;
   }
 
   function rowIds(): ReadonlyArray<string> {

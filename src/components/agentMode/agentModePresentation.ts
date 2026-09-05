@@ -76,11 +76,21 @@ export interface AgentToolOutcome {
   readonly isError: boolean;
 }
 
+export type AgentSubagentState = "running" | "completed" | "failed";
+
+export interface AgentSubagentEntry {
+  readonly toolId: string;
+  readonly name: string;
+  readonly description: string;
+  readonly state: AgentSubagentState;
+}
+
 export interface AgentSubagentSummary {
   readonly total: number;
   readonly running: number;
   readonly completed: number;
   readonly failed: number;
+  readonly entries: ReadonlyArray<AgentSubagentEntry>;
 }
 
 export type AgentTurnItem =
@@ -341,9 +351,14 @@ function agentWorkSummary(items: ReadonlyArray<AgentTurnItem>): string {
   let changes = 0;
   let tools = 0;
   let updates = 0;
+  let subagents = 0;
   for (const item of items) {
     if (item.kind === "assistantText") updates += 1;
     if (item.kind !== "tool") continue;
+    if (isAgentSubagentToolItem(item)) {
+      subagents += 1;
+      continue;
+    }
     const name = item.name.toLowerCase();
     if (name === "bash" || name === "shell" || name === "command_execution") commands += 1;
     else if (name === "read") reads += 1;
@@ -356,6 +371,7 @@ function agentWorkSummary(items: ReadonlyArray<AgentTurnItem>): string {
     countLabel(reads, "file read", "files read"),
     countLabel(changes, "file changed", "files changed"),
     countLabel(tools, "other tool"),
+    countLabel(subagents, "subagent"),
   ].filter((part): part is string => part !== null);
   return parts.length === 0 ? "Activity" : parts.join(" · ");
 }
@@ -379,6 +395,7 @@ export function agentTurnSubagentSummary(
   }
 
   const seen = new Set<string>();
+  const entries: AgentSubagentEntry[] = [];
   let running = 0;
   let completed = 0;
   let failed = 0;
@@ -388,13 +405,29 @@ export function agentTurnSubagentSummary(
     }
     seen.add(event.toolId);
     const result = results.get(event.toolId);
-    if (result === undefined) running += 1;
-    else if (result) failed += 1;
+    const state = subagentState(result);
+    if (state === "running") running += 1;
+    else if (state === "failed") failed += 1;
     else completed += 1;
+    entries.push({
+      toolId: event.toolId,
+      name: event.name,
+      description: event.inputSummary,
+      state,
+    });
   }
 
-  const total = running + completed + failed;
-  return total === 0 ? null : { total, running, completed, failed };
+  const total = entries.length;
+  return total === 0 ? null : { total, running, completed, failed, entries };
+}
+
+function subagentState(result: boolean | undefined): AgentSubagentState {
+  if (result === undefined) return "running";
+  return result ? "failed" : "completed";
+}
+
+export function isAgentSubagentToolItem(item: AgentTurnItem): boolean {
+  return item.kind === "tool" && isSubagentSpawnTool(item.name);
 }
 
 function isSubagentSpawnTool(name: string): boolean {

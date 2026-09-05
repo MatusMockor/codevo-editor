@@ -345,7 +345,75 @@ describe("AgentThreadSession", () => {
     expect(host.querySelector(".agent-subagents__dot--live")).not.toBeNull();
   });
 
-  it("collapses reasoning and raw output instead of dumping them", () => {
+  it("counts the subagents in the work fold summary and lists them inside the fold", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Audit the UI", { kind: "exited", exitCode: 0 }, [
+            { kind: "toolCall", toolId: "agent-1", name: "Task", inputSummary: "Review the rail" },
+            { kind: "toolCall", toolId: "agent-2", name: "Agent", inputSummary: "Run the suite" },
+            { kind: "toolResult", toolId: "agent-1", outputSummary: "done", isError: false },
+            { kind: "toolResult", toolId: "agent-2", outputSummary: "boom", isError: true },
+            { kind: "assistantText", text: "Audit finished." },
+          ]),
+        ],
+      }),
+    });
+
+    expect(host.querySelector(".agent-work__counts")?.textContent).toBe("2 subagents");
+
+    const rows = [...host.querySelectorAll('[aria-label="Subagents"] .agent-subagent')];
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.querySelector(".agent-subagent__name")?.textContent).toBe("Task");
+    expect(rows[0]?.querySelector(".agent-subagent__description")?.textContent).toBe(
+      "Review the rail",
+    );
+    expect(rows[0]?.querySelector(".agent-subagent__state")?.textContent).toBe("completed");
+    expect(rows[1]?.querySelector(".agent-subagent__state--failed")?.textContent).toBe("failed");
+    expect(rows[0]?.closest(".agent-work__events")).not.toBeNull();
+    expect(host.querySelectorAll(".agent-tool")).toHaveLength(0);
+  });
+
+  it("lists the subagents beside the turn when the turn has no work fold", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Audit the UI", { kind: "exited", exitCode: 0 }, [
+            { kind: "toolCall", toolId: "agent-1", name: "Task", inputSummary: "Review the rail" },
+          ]),
+        ],
+      }),
+    });
+
+    const list = host.querySelector('[aria-label="Subagents"]');
+
+    expect(host.querySelector(".agent-work")).toBeNull();
+    expect(list?.closest(".agent-turn__events")).not.toBeNull();
+    expect(list?.querySelectorAll(".agent-subagent")).toHaveLength(1);
+    expect(list?.querySelector(".agent-subagent__state--running")?.textContent).toBe("working");
+    expect(host.querySelectorAll(".agent-tool")).toHaveLength(0);
+    expect(host.querySelectorAll('[aria-label="Subagents"]')).toHaveLength(1);
+  });
+
+  it("omits the subagent list from turns that spawned none", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Refactor the parser", { kind: "exited", exitCode: 0 }, [
+            { kind: "toolCall", toolId: "t-1", name: "Read", inputSummary: "src/parser.ts" },
+            { kind: "toolResult", toolId: "t-1", outputSummary: "ok", isError: false },
+            { kind: "assistantText", text: "Done." },
+          ]),
+        ],
+      }),
+    });
+
+    expect(host.querySelector('[aria-label="Subagents"]')).toBeNull();
+    expect(host.querySelector(".agent-work__counts")?.textContent).not.toContain("subagent");
+  });
+
+  it("collapses reasoning and hides raw output while the turn is still running", () => {
     render({
       thread: threadView({
         turns: [
@@ -358,18 +426,14 @@ describe("AgentThreadSession", () => {
     });
 
     const reasoning = host.querySelector("details.agent-reasoning");
-    const raw = host.querySelector("details.agent-raw");
 
     expect(reasoning?.querySelector("summary")?.textContent).toBe("reasoning");
     expect((reasoning as HTMLDetailsElement | null)?.open).toBe(false);
-    expect(raw?.querySelector("summary")?.textContent).toBe("Raw output");
-    expect(raw?.querySelector("summary")?.className).toBe("agent-raw__toggle");
-    expect((raw as HTMLDetailsElement | null)?.open).toBe(false);
-    expect(raw?.closest(".agent-work__events")).not.toBeNull();
-    expect(raw?.textContent).toContain("npm warn deprecated");
+    expect(host.querySelector("details.agent-raw")).toBeNull();
+    expect(host.textContent).not.toContain("Raw output");
   });
 
-  it("tucks raw output into the turn footer when there is no work fold", () => {
+  it("offers no raw output disclosure when the turn succeeded", () => {
     render({
       thread: threadView({
         turns: [
@@ -380,17 +444,48 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    const raw = host.querySelector("details.agent-raw");
-
-    expect(raw?.closest(".agent-message-actions")).not.toBeNull();
-    expect((raw as HTMLDetailsElement | null)?.open).toBe(false);
+    expect(host.querySelector("details.agent-raw")).toBeNull();
+    expect(host.textContent).not.toContain("Raw output");
+    expect(host.textContent).not.toContain("npm warn deprecated");
   });
 
-  it("expands raw output only after the turn failed", () => {
+  it("discloses raw output already expanded after a non-zero exit", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Refactor the parser", { kind: "exited", exitCode: 2 }, [
+            { kind: "unknownLine", stream: "stderr", raw: "npm warn deprecated", clipped: false },
+          ]),
+        ],
+      }),
+    });
+
+    const raw = host.querySelector<HTMLDetailsElement>("details.agent-raw");
+
+    expect(raw?.closest(".agent-message-actions")).not.toBeNull();
+    expect(raw?.querySelector("summary")?.textContent).toBe("Raw output");
+    expect(raw?.querySelector("summary")?.className).toBe("agent-raw__toggle");
+    expect(raw?.open).toBe(true);
+    expect(raw?.textContent).toContain("npm warn deprecated");
+  });
+
+  it("discloses raw output after the turn failed or was interrupted", () => {
     render({
       thread: threadView({
         turns: [
           turn("agt-1-t1", "Refactor the parser", { kind: "failed", message: "spawn failed" }, [
+            { kind: "unknownLine", stream: "stderr", raw: "npm warn deprecated", clipped: false },
+          ]),
+        ],
+      }),
+    });
+
+    expect((host.querySelector("details.agent-raw") as HTMLDetailsElement | null)?.open).toBe(true);
+
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Refactor the parser", { kind: "interrupted" }, [
             { kind: "unknownLine", stream: "stderr", raw: "npm warn deprecated", clipped: false },
           ]),
         ],
