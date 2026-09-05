@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readAgentModeStyles } from "./agentModeCssTestSupport";
 
-const appCss = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
+const appCss = readAgentModeStyles();
 const shellCss = readFileSync(resolve(import.meta.dirname, "../workbenchShellFrame.css"), "utf8");
 const rootCss = readFileSync(resolve(import.meta.dirname, "../../App.css"), "utf8");
 
@@ -23,8 +24,46 @@ function block(source: string, marker: string): string {
   throw new Error(`Unclosed CSS body for ${marker}`);
 }
 
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, (comment) => " ".repeat(comment.length));
+}
+
+function depthAt(source: string, index: number): number {
+  let depth = 0;
+  for (let cursor = 0; cursor < index; cursor += 1) {
+    if (source[cursor] === "{") depth += 1;
+    if (source[cursor] === "}") depth -= 1;
+  }
+  return depth;
+}
+
+function selectorStart(source: string, selector: string): number {
+  const scan = withoutComments(source);
+  const needle = selector.trim();
+  const bare = needle.endsWith("{") ? needle.slice(0, -1).trim() : needle;
+  const first = scan.indexOf(needle);
+  let nested = -1;
+  for (let index = first; index >= 0; index = scan.indexOf(needle, index + 1)) {
+    const braceAt = scan.indexOf("{", index);
+    if (braceAt < 0) break;
+    const boundary = Math.max(
+      scan.lastIndexOf("{", index),
+      scan.lastIndexOf("}", index),
+      scan.lastIndexOf(";", index),
+    );
+    const parts = scan
+      .slice(boundary + 1, braceAt)
+      .split(",")
+      .map((part) => part.trim());
+    if (!parts.includes(bare)) continue;
+    if (depthAt(scan, index) === 0) return index;
+    if (nested < 0) nested = index;
+  }
+  return nested >= 0 ? nested : first;
+}
+
 function rule(selector: string, source = appCss): string {
-  const start = source.indexOf(selector);
+  const start = selectorStart(source, selector);
   expect(start, `Missing CSS selector ${selector}`).toBeGreaterThanOrEqual(0);
   return block(source.slice(start), selector);
 }
@@ -48,7 +87,6 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-turn__events")).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(rule(".agent-turn__events")).toContain("min-width: 0");
     expect(rule(".agent-raw__lines")).toContain("overflow: auto");
-    expect(rule(".agent-well__stream")).toContain("overflow: auto");
 
     const narrowCenter = block(appCss, "@container agent-center (max-width: 600px)");
     expect(rule(".agent-prompt", narrowCenter)).toContain("max-width: 100%");
@@ -111,7 +149,6 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-split__label", compactActions)).toContain("display: none");
     expect(rule(".agent-thread-head", narrowHeader)).toContain("padding-inline: 8px");
     expect(rule(".agent-thread-head__actions", narrowHeader)).not.toContain("flex-wrap");
-    expect(rule(".agent-thread-head__status-label", narrowHeader)).toContain("display: none");
     expect(rule(".agent-crumbs__heading")).toContain("text-overflow: ellipsis");
   });
 
@@ -175,10 +212,7 @@ describe("agent mode responsive layout contract", () => {
       "grid-template-rows: minmax(0, 1fr) var(--agent-bottom-panel-height)",
     );
     expect(
-      rule(
-        ".agent-mode__grid > .agent-rail,\n.agent-mode__grid > .agent-rail__chrome",
-        appCss,
-      ),
+      rule(".agent-mode__grid > .agent-rail,\n.agent-mode__grid > .agent-rail__chrome", appCss),
     ).toContain("grid-row: 1 / -1");
     expect(rule(".agent-mode__center {", appCss)).toContain("grid-row: 1");
 

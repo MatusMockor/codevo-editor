@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AGENT_MODE_STYLE_SHEETS, readAgentModeStyles } from "./agentModeCssTestSupport";
 import { AgentStatusBar, type AgentStatusBarProps } from "./AgentStatusBar";
 
 describe("AgentStatusBar", () => {
@@ -82,6 +85,70 @@ describe("AgentStatusBar", () => {
     act(() => root.render(<AgentStatusBar {...defaultProps()} {...overrides} />));
   }
 });
+
+describe("agent status bar styles", () => {
+  it("reads the t3 palette directly because it renders outside the workbench frame", () => {
+    expect(winningValue(".status-bar.status-bar--agent", "background")).toBe(
+      "var(--t3-background)",
+    );
+    expect(winningValue(".status-bar.status-bar--agent", "border-top")).toBe(
+      "1px solid var(--t3-border)",
+    );
+    expect(winningValue(".status-bar.status-bar--agent", "color")).toBe(
+      "var(--t3-muted-foreground)",
+    );
+    expect(winningValue(".status-bar.status-bar--agent", "font-size")).toBe("11px");
+    expect(
+      winningValue(".status-bar.status-bar--agent span:not(:last-child)", "border-right"),
+    ).toBe("1px solid var(--t3-border)");
+  });
+
+  it("outranks the base status bar by specificity, not by import order", () => {
+    expect(ruleBody(".status-bar--agent")).not.toContain("background:");
+    expect(ruleBody(".status-bar--agent")).not.toContain("font-size:");
+  });
+
+  it("retires the glow around the live dot", () => {
+    expect(winningValue(".status-bar--agent .status-agent-dot--live", "box-shadow")).toBe("none");
+    expect(winningValue(".status-bar--agent .status-agent-dot--live", "background")).toBe(
+      "var(--t3-primary)",
+    );
+  });
+
+  it("declares the whole bar in one stylesheet", () => {
+    const sheetsWithChildren = AGENT_MODE_STYLE_SHEETS.filter((sheet) =>
+      readSheet(sheet).includes(".status-agent"),
+    );
+    const sheetsWithBar = AGENT_MODE_STYLE_SHEETS.filter((sheet) =>
+      readSheet(sheet).includes(".status-bar--agent"),
+    );
+
+    expect(sheetsWithChildren).toEqual(["agentStatusBar.css"]);
+    expect(sheetsWithBar).toEqual(["agentModeTokens.css", "agentStatusBar.css"]);
+  });
+});
+
+const AGENT_MODE_CSS = readAgentModeStyles().replace(/\/\*[\s\S]*?\*\//g, "");
+
+function readSheet(sheet: string): string {
+  return readFileSync(resolve(import.meta.dirname, sheet), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+function ruleBody(selector: string): string {
+  return [...AGENT_MODE_CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((block) => (block[1] ?? "").split(",").some((part) => part.trim() === selector))
+    .map((block) => block[2] ?? "")
+    .join("");
+}
+
+function winningValue(selector: string, property: string): string {
+  const body = ruleBody(selector);
+  expect(body, `Missing rule ${selector}`).not.toBe("");
+  const values = [
+    ...body.matchAll(new RegExp(`(?:^|[;{\\s])${property}\\s*:\\s*([^;]+)`, "g")),
+  ].map((match) => (match[1] ?? "").trim());
+  return values[values.length - 1] ?? "";
+}
 
 function defaultProps(): AgentStatusBarProps {
   return {

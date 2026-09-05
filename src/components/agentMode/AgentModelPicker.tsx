@@ -240,7 +240,7 @@ export function AgentModelPicker({
             configuredProviderModel(providerManagement, launch.provider),
           )}
         </span>
-        <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={12} />
+        <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={14} />
       </button>
 
       {open && (

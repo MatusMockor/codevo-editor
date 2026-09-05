@@ -1,6 +1,6 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectOrigin, AgentProjectTrust } from "../../domain/agentProject";
-import type { AgentCliKind } from "../../domain/agentTask";
+import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
 import {
   runningTurn,
@@ -9,7 +9,11 @@ import {
   type AgentTurnStatus,
 } from "../../domain/agentThread";
 import type { ExternalAgentSessionSummary } from "../../domain/externalAgentSession";
-import type { AgentProjectGroup } from "./agentModePresentation";
+import {
+  agentShipBranchLabel,
+  agentThreadDisplayTitle,
+  type AgentProjectGroup,
+} from "./agentModePresentation";
 
 export const ARCHIVED_PAGE_COUNT = 20;
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
@@ -553,30 +557,52 @@ export function agentRailProjectLabels(
   return labels;
 }
 
-export interface AgentRailRowProjectScope {
-  readonly repositoryRoot: string;
-  readonly singleRepo: boolean;
+export interface AgentThreadRowModel {
+  readonly project: string;
+  readonly title: string;
+  readonly branch: string;
+  readonly filesLabel: string | null;
+  readonly provider: AgentCliKind;
+  readonly status: AgentRowStatus;
+  readonly variant: AgentRowVariant;
+  readonly recede: boolean;
 }
 
-export function agentRailRowProjectScope(
-  groups: ReadonlyArray<AgentProjectGroup>,
-  scope: AgentRailScope | null,
-): AgentRailRowProjectScope | null {
-  if (scope === null) return null;
-  const group = groups.find((candidate) => candidate.projectRootKey === scope.projectRootKey);
-  if (group === undefined) return null;
-  return { repositoryRoot: scope.repositoryRoot, singleRepo: group.singleRepo };
+export function agentThreadRowModel(
+  view: AgentThreadView,
+  on: boolean,
+  projectLabel: string = view.repositoryLabel,
+): AgentThreadRowModel {
+  const status = agentRowStatus(view);
+  const thread = view.thread;
+  return {
+    project: projectLabel,
+    title: agentThreadDisplayTitle(thread),
+    branch: agentShipBranchLabel(view.ship) ?? agentRowIsolationLabel(thread.target.isolation),
+    filesLabel: agentRowFilesLabel(view),
+    provider: thread.provider.kind,
+    status,
+    variant: agentRowVariant(view),
+    recede: agentRowRecedes(view, status, on),
+  };
 }
 
 export function agentRowProjectLabel(
-  label: string,
-  repositoryRoot: string,
-  scope: AgentRailRowProjectScope | null,
-): string | null {
-  if (scope === null) return label;
-  if (!scope.singleRepo) return label;
-  if (repositoryRoot !== scope.repositoryRoot) return label;
-  return null;
+  labels: ReadonlyMap<string, string>,
+  view: AgentThreadView,
+): string {
+  return labels.get(view.thread.owner.repositoryRoot) ?? view.repositoryLabel;
+}
+
+function agentRowIsolationLabel(isolation: AgentTaskIsolation): string {
+  return isolation === "worktree" ? "worktree" : "in place";
+}
+
+function agentRowFilesLabel(view: AgentThreadView): string | null {
+  const summary = view.changeSummary;
+  if (summary === null || summary.loading) return null;
+  const count = summary.files.length;
+  return count === 1 ? "1 file" : `${count} files`;
 }
 
 export function agentRowClassName(

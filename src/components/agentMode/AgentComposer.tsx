@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { Folder, FolderGit2, Play, Plus, Send, X } from "lucide-react";
+import { ArrowUp, Folder, FolderGit2, Loader2, Plus, X } from "lucide-react";
 import {
   useAgentModelFavorites,
   type AgentModelFavoritesPersistence,
@@ -21,6 +21,7 @@ import { formatAgentPromptBytes } from "./agentModePresentation";
 import { AgentPickerMenu } from "./AgentPickerMenu";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
 import { agentSubmitShortcut } from "./agentSubmitShortcut";
+import { agentControlTooltip } from "./agentThreadHeaderPresentation";
 import { useCompactComposerControls } from "./useCompactComposerControls";
 
 const CHECKOUT_ID = "agent-checkout";
@@ -133,6 +134,7 @@ export function AgentComposer({
   const blocked =
     submitBlocked || providerReason !== null || blockedReason !== null || targetReason !== null;
   const shortcut = agentSubmitShortcut();
+  const submitName = submitAccessibleName(dispatching, followUp);
   const caption = composerCaption({
     blockedReason,
     isolationReason,
@@ -278,20 +280,28 @@ export function AgentComposer({
           <AgentComposerBytes promptBytes={promptBytes} />
 
           <button
+            aria-busy={dispatching || undefined}
             aria-keyshortcuts={shortcut.keys}
-            className="agent-composer__send"
+            aria-label={submitName}
+            className={
+              dispatching
+                ? "agent-composer__send agent-composer__send--busy"
+                : "agent-composer__send"
+            }
             disabled={blocked}
+            title={agentControlTooltip(submitName, shortcut.keys)}
             type="submit"
           >
-            {followUp ? (
-              <Send aria-hidden="true" size={12} />
+            {dispatching ? (
+              <Loader2
+                aria-hidden="true"
+                className="agent-composer__send-spinner"
+                size={16}
+                strokeWidth={2.5}
+              />
             ) : (
-              <Play aria-hidden="true" size={12} />
+              <ArrowUp aria-hidden="true" size={16} strokeWidth={2.5} />
             )}
-            {submitLabel(dispatching, followUp)}
-            <kbd aria-hidden="true" className="agent-composer__kbd">
-              {shortcut.glyphs}
-            </kbd>
           </button>
         </div>
 
@@ -424,9 +434,10 @@ function isolationLabel(isolation: AgentTaskIsolation): string {
   return "Local checkout";
 }
 
-function submitLabel(dispatching: boolean, followUp: boolean): string {
-  if (followUp) return dispatching ? "Sending…" : "Send";
-  return dispatching ? "Starting…" : "Start agent";
+function submitAccessibleName(dispatching: boolean, followUp: boolean): string {
+  if (dispatching) return "Starting…";
+  if (followUp) return "Send follow-up";
+  return "Start agent";
 }
 
 function composerTargetReason(

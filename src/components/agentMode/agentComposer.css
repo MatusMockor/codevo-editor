@@ -1,0 +1,1091 @@
+/* Composer owns a real layout row, so a resized prompt cannot cover the session tail. */
+.agent-composer {
+  display: grid;
+  align-content: start;
+  gap: var(--agent-space-2);
+  overflow-y: auto;
+  max-height: min(44vh, 320px);
+  padding: 8px 24px 16px;
+  border-top: 0;
+  background: transparent;
+}
+
+.agent-compaction-offer {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  width: 100%;
+  max-width: 768px;
+  margin: 0 auto;
+  border-radius: var(--agent-radius-lg);
+  background: var(--agent-raised);
+  box-shadow: inset 0 0 0 1px var(--agent-hairline-strong);
+  padding: 9px 10px 9px 13px;
+}
+
+.agent-compaction-offer__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-compaction-offer__copy strong {
+  color: var(--agent-text-strong);
+  font-size: var(--agent-fs-sm);
+}
+
+.agent-compaction-offer__copy span {
+  overflow: hidden;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-compaction-offer__action,
+.agent-compaction-offer__dismiss {
+  border: 0;
+  border-radius: var(--agent-radius-md);
+  background: var(--agent-hover);
+  color: var(--agent-text);
+  cursor: pointer;
+}
+
+.agent-compaction-offer__action {
+  box-shadow: inset 0 0 0 1px var(--agent-hairline-strong);
+  font-size: var(--agent-fs-sm);
+  font-weight: 600;
+  padding: 6px 10px;
+}
+
+.agent-compaction-offer__dismiss {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+
+.agent-compaction-offer__action:hover:not(:disabled),
+.agent-compaction-offer__dismiss:hover {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+}
+
+.agent-compaction-offer__action:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.agent-composer__box {
+  display: grid;
+  width: 100%;
+  max-width: 768px;
+  margin: 0 auto;
+  border-radius: 12px;
+  background: var(--agent-composer-surface);
+  box-shadow:
+    0 0 0 1px var(--agent-composer-outline),
+    inset 0 1px var(--agent-composer-highlight),
+    var(--agent-shadow-raised);
+}
+
+.agent-composer__textarea {
+  border: none;
+  background: transparent;
+  color: var(--agent-text-strong);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  max-height: 180px;
+  min-height: 64px;
+  outline: none;
+  padding: 14px 16px 8px;
+  resize: none;
+}
+
+.agent-composer__textarea::placeholder {
+  color: var(--agent-text-muted);
+}
+
+.agent-composer__textarea:focus-visible {
+  box-shadow: none;
+}
+
+/* Context line: which thread the reply continues, above the text. */
+.agent-composer__context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--agent-space-2) var(--agent-space-3);
+  min-height: 36px;
+  border-bottom: 1px solid var(--agent-hairline);
+  padding: 4px 12px 4px 16px;
+}
+
+.agent-composer__context-label {
+  flex: none;
+  color: var(--agent-text-subtle);
+  font-size: var(--agent-fs-xs);
+}
+
+.agent-composer__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 12px;
+}
+
+/* Footer strip attached to the box: where the run lands, never what it is asked to do. */
+.agent-composer__footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  border-top: 0;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-sm);
+  margin-top: -4px;
+  padding: 0 12px 10px;
+}
+
+.agent-composer__reason + .agent-composer__footer {
+  margin-top: 0;
+  padding-top: 8px;
+}
+
+.agent-composer__footer .agent-picker__trigger--ghost,
+.agent-composer__lock {
+  height: 24px;
+  border: 1px solid var(--agent-hairline);
+  border-radius: var(--agent-radius-sm);
+  background: color-mix(in srgb, var(--agent-canvas) 50%, transparent);
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-sm);
+  font-weight: 500;
+  padding: 0 8px;
+}
+
+.agent-composer__footer .agent-picker__trigger--ghost {
+  max-width: 260px;
+}
+
+.agent-composer__footer .agent-picker__trigger--ghost:hover:not(:disabled) {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+}
+
+.agent-composer__footer .agent-picker__prefix {
+  color: var(--agent-text-subtle);
+}
+
+/* Hairline between the plain-text launch triggers. */
+.agent-composer__divider {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  background: var(--agent-hairline-strong);
+  margin-inline: 4px;
+  opacity: 0.7;
+}
+
+.agent-composer__lock {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.agent-composer__lock-glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.agent-composer__chip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  max-width: 240px;
+  border: 1px solid var(--agent-hairline);
+  border-radius: var(--agent-radius-pill);
+  color: var(--agent-text);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+.agent-composer__checkbox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  font-size: var(--agent-fs-sm);
+}
+
+.agent-composer__spacer {
+  flex: 1;
+}
+
+.agent-composer__bytes {
+  flex: none;
+  color: var(--agent-text-subtle);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  white-space: nowrap;
+}
+
+.agent-composer__bytes--over {
+  color: var(--agent-attention);
+  font-weight: 600;
+}
+
+/* Primary action: T3's round send button; the label lives in the tooltip and accessible name. */
+.agent-composer__send {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--agent-cta-bg);
+  color: var(--agent-cta-fg);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-composer__send:hover:not(:disabled) {
+  background: var(--agent-cta-bg-hover);
+}
+
+.agent-composer__send:active:not(:disabled) {
+  background: var(--agent-cta-bg);
+}
+
+.agent-composer__send:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.agent-composer__send:focus-visible {
+  outline: none;
+  box-shadow: var(--agent-focus-ring);
+}
+
+.agent-composer__send-spinner {
+  animation: agent-composer-spin 900ms linear infinite;
+}
+
+@keyframes agent-composer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-composer__send-spinner {
+    animation: none;
+  }
+}
+
+.agent-composer__reason {
+  align-items: center;
+  border-top: 1px solid var(--agent-hairline);
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-sm);
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  line-height: 1.5;
+  margin: 0;
+  padding: 8px 16px 10px;
+}
+
+.agent-composer__reason button {
+  background: transparent;
+  border: 0;
+  color: var(--agent-accent);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  padding: 0;
+}
+
+/* Composer launch controls: model, reasoning effort and permission/execution mode. */
+.agent-composer__launch {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+
+/* Narrow windows keep one control: every picker moves into this menu. */
+.agent-composer__compact {
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.agent-composer__compact-trigger {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  height: 28px;
+  min-width: 0;
+  border: 1px solid var(--agent-hairline-strong);
+  border-radius: var(--agent-radius-md);
+  background: var(--agent-fill);
+  color: var(--agent-text);
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-xs);
+  padding: 0 8px;
+  transition:
+    border-color var(--agent-motion-hover) var(--ease-standard),
+    color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-composer__compact-trigger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--agent-hairline-strong) 60%, var(--agent-text-subtle));
+  color: var(--agent-text-strong);
+}
+
+.agent-composer__compact-trigger:focus-visible,
+.agent-composer__compact-trigger[aria-expanded="true"] {
+  outline: none;
+  border-color: var(--agent-live);
+  box-shadow: var(--agent-focus-ring);
+}
+
+.agent-composer__compact-trigger:disabled {
+  color: var(--agent-text-disabled);
+  cursor: not-allowed;
+}
+
+.agent-composer__compact-summary {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--agent-text-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-composer__compact-panel {
+  position: fixed;
+  right: 10px;
+  left: 10px;
+  z-index: 30;
+  display: grid;
+  gap: var(--agent-space-2);
+  border-radius: var(--agent-radius-lg);
+  background: var(--agent-raised);
+  box-shadow:
+    0 0 0 1px var(--agent-hairline-strong),
+    0 12px 32px rgba(0, 0, 0, var(--agent-shadow-alpha));
+  padding: 10px;
+}
+
+.agent-composer__compact-panel .agent-composer__launch,
+.agent-composer__compact-panel .agent-picker {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+}
+
+.agent-composer__compact-panel .agent-composer__divider {
+  display: none;
+}
+
+.agent-composer__compact-panel .agent-picker__trigger {
+  justify-content: flex-start;
+  width: 100%;
+  max-width: none;
+}
+
+.agent-composer__compact-panel .agent-picker__value {
+  flex: 1;
+  text-align: left;
+}
+
+/*
+  Below 620px the launch and checkout pickers no longer fit beside the send
+  button, so the row keeps the compact menu and the send button only.
+*/
+@media (max-width: 620px) {
+  .agent-composer__row {
+    flex-wrap: nowrap;
+  }
+
+  .agent-composer__compact {
+    flex: 1 1 auto;
+  }
+
+  .agent-composer__compact-trigger {
+    flex: 1 1 auto;
+  }
+}
+
+/* Picker: a compact trigger that opens an anchored listbox with descriptions. */
+.agent-picker {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.agent-picker__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  max-width: 180px;
+  border: 1px solid var(--agent-hairline-strong);
+  border-radius: var(--agent-radius-md);
+  background: var(--agent-fill);
+  color: var(--agent-text);
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-xs);
+  padding: 0 6px 0 8px;
+  transition:
+    background-color var(--agent-motion-hover) var(--ease-standard),
+    border-color var(--agent-motion-hover) var(--ease-standard),
+    color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-picker__trigger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--agent-hairline-strong) 60%, var(--agent-text-subtle));
+  color: var(--agent-text-strong);
+}
+
+.agent-picker__trigger:focus-visible,
+.agent-picker--open .agent-picker__trigger {
+  outline: none;
+  border-color: var(--agent-live);
+  box-shadow: var(--agent-focus-ring);
+}
+
+.agent-picker__trigger:disabled {
+  color: var(--agent-text-disabled);
+  cursor: not-allowed;
+}
+
+.agent-picker__trigger--plan {
+  border-color: color-mix(in srgb, var(--agent-plan) 45%, transparent);
+  color: var(--agent-plan);
+}
+
+.agent-picker__trigger--danger {
+  border-color: color-mix(in srgb, var(--agent-danger) 55%, transparent);
+  background: color-mix(in srgb, var(--agent-danger) 10%, var(--agent-fill));
+  color: var(--agent-danger);
+}
+
+/* Ghost variant: plain text with an optional leading icon; no border or fill at rest. */
+.agent-picker__trigger--ghost {
+  gap: 6px;
+  height: 28px;
+  max-width: 240px;
+  border: none;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 0 8px;
+}
+
+.agent-picker__trigger--ghost:hover:not(:disabled) {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+}
+
+.agent-picker--open .agent-picker__trigger--ghost {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+  box-shadow: none;
+}
+
+.agent-picker__trigger--ghost:focus-visible {
+  box-shadow: var(--agent-focus-ring);
+}
+
+.agent-picker__trigger--ghost.agent-picker__trigger--plan {
+  background: transparent;
+  color: var(--agent-plan);
+}
+
+.agent-picker__trigger--ghost.agent-picker__trigger--danger {
+  background: transparent;
+  color: var(--agent-danger);
+}
+
+.agent-picker__trigger--ghost.agent-picker__trigger--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--agent-danger) 10%, transparent);
+  color: var(--agent-danger);
+}
+
+.agent-picker__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--agent-text-subtle);
+}
+
+.agent-picker__icon .agent-row__provider {
+  opacity: 1;
+}
+
+.agent-picker__prefix {
+  flex: none;
+  color: var(--agent-text-subtle);
+}
+
+.agent-picker__value {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-picker__chevron {
+  flex: none;
+  opacity: 0.7;
+}
+
+.agent-picker__menu {
+  position: fixed;
+  z-index: 30;
+  display: grid;
+  gap: 1px;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: min(320px, calc(100vh - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--agent-radius-xl);
+  background: var(--agent-raised);
+  box-shadow:
+    0 0 0 1px var(--agent-hairline-strong),
+    0 12px 32px rgba(0, 0, 0, var(--agent-shadow-alpha));
+  padding: 4px 0;
+}
+
+.agent-picker__option {
+  display: flex;
+  box-sizing: border-box;
+  width: calc(100% - 8px);
+  align-items: flex-start;
+  gap: var(--agent-space-3);
+  border-radius: var(--agent-radius-md);
+  color: var(--agent-text);
+  cursor: pointer;
+  margin: 0 4px;
+  outline: none;
+  padding: 8px 10px 8px 6px;
+  transition:
+    background-color var(--agent-motion-hover) var(--ease-standard),
+    color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-picker__option[aria-selected="true"] {
+  background: color-mix(in srgb, var(--agent-text-strong) 8%, transparent);
+  color: var(--agent-text-strong);
+}
+
+.agent-picker__option:hover,
+.agent-picker__option--active {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+}
+
+.agent-picker__option:focus-visible {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+  box-shadow: none;
+}
+
+.agent-picker__mark {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: var(--agent-live);
+}
+
+.agent-picker__mark--icon {
+  color: var(--agent-text-muted);
+}
+
+.agent-picker__text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.agent-picker__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--agent-fs-sm);
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.agent-picker__detail {
+  color: var(--agent-text-subtle);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+}
+
+.agent-picker__description {
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.agent-picker__warn {
+  flex: none;
+  color: var(--agent-danger);
+}
+
+.agent-picker__option--danger .agent-picker__label {
+  color: var(--agent-danger);
+}
+
+.agent-picker__option--plan .agent-picker__label {
+  color: var(--agent-plan);
+}
+
+.agent-traits-picker__menu {
+  min-width: 250px;
+  padding: 6px;
+}
+
+.agent-traits-picker__group + .agent-traits-picker__group {
+  border-top: 1px solid var(--agent-hairline);
+  margin-top: 5px;
+  padding-top: 5px;
+}
+
+.agent-traits-picker__heading {
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  font-weight: 600;
+  padding: 5px 8px 3px;
+}
+
+.agent-traits-picker__option {
+  width: 100%;
+  border: 0;
+  border-radius: var(--agent-radius-md);
+  background: transparent;
+  font: inherit;
+  margin: 0;
+  padding: 4px 7px;
+  text-align: left;
+}
+
+.agent-traits-picker__option[aria-checked="true"] {
+  background: color-mix(in srgb, var(--agent-text-strong) 8%, transparent);
+  color: var(--agent-text-strong);
+}
+
+.agent-traits-picker__option:hover {
+  background: var(--agent-fill);
+}
+
+.agent-traits-picker__copy {
+  display: grid;
+  min-width: 0;
+}
+
+.agent-traits-picker__default {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--agent-text-muted) 20%, transparent);
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-2xs);
+  line-height: 16px;
+  padding: 0 5px;
+}
+
+.agent-traits-picker__description {
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  line-height: 1.35;
+  max-width: 220px;
+  white-space: normal;
+}
+
+.agent-picker__confirmation {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--agent-danger) 35%, var(--agent-hairline));
+  color: var(--agent-text);
+  cursor: pointer;
+  margin: 3px 6px 0;
+  padding: 8px 6px 6px;
+}
+
+.agent-picker__confirmation input {
+  flex: none;
+  margin: 2px 0 0;
+}
+
+.agent-picker__confirmation-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-picker__confirmation-label {
+  color: var(--agent-danger);
+  font-size: var(--agent-fs-sm);
+  font-weight: 600;
+}
+
+.agent-picker__confirmation-description {
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  line-height: 1.4;
+}
+
+/* Model picker: a two-pane dialog with a provider rail, search and starred rows. */
+.agent-model-picker__dialog {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  width: 380px;
+  max-width: calc(100vw - 16px);
+  height: min(300px, calc(100vh - 16px));
+  max-height: min(320px, calc(100vh - 16px));
+  overflow: hidden;
+  border-radius: var(--agent-radius-xl);
+  background: var(--agent-raised);
+  box-shadow:
+    0 0 0 1px var(--agent-hairline-strong),
+    0 12px 32px rgba(0, 0, 0, var(--agent-shadow-alpha));
+}
+
+.agent-model-picker__rail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  border-right: 1px solid var(--agent-hairline);
+  background: var(--agent-well);
+  padding: 6px 5px;
+}
+
+.agent-model-picker__rail-item {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--agent-radius-md);
+  background: transparent;
+  color: var(--agent-text-subtle);
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background-color var(--agent-motion-hover) var(--ease-standard),
+    color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-model-picker__rail-item .agent-row__provider {
+  opacity: 1;
+  color: currentcolor;
+}
+
+.agent-model-picker__rail-item:hover:not([aria-disabled="true"]) {
+  background: var(--agent-row-hover);
+  color: var(--agent-text-strong);
+}
+
+.agent-model-picker__rail-item[aria-pressed="true"] {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+  box-shadow: inset 0 0 0 1px var(--agent-hairline-strong);
+}
+
+.agent-model-picker__rail-item[aria-pressed="true"] .agent-row__provider--claude {
+  color: #d97757;
+}
+
+.agent-model-picker__rail-item[aria-disabled="true"] {
+  color: var(--agent-text-disabled);
+  cursor: not-allowed;
+}
+
+.agent-model-picker__rail-item:focus-visible {
+  outline: none;
+  box-shadow: var(--agent-focus-ring);
+}
+
+.agent-model-picker__pane {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.agent-model-picker__search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  border-bottom: 1px solid var(--agent-hairline);
+  color: var(--agent-text-subtle);
+  padding: 8px 10px;
+  transition: border-color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-model-picker__search:focus-within {
+  border-bottom-color: color-mix(in srgb, var(--agent-text-muted) 55%, var(--agent-hairline));
+}
+
+.agent-model-picker__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--agent-text-strong);
+  font: inherit;
+  font-size: var(--agent-fs-md);
+  outline: none;
+  padding: 0;
+}
+
+.agent-model-picker__input:focus,
+.agent-model-picker__input:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+
+.agent-model-picker__input::placeholder {
+  color: var(--agent-text-subtle);
+}
+
+.agent-model-picker__list {
+  display: grid;
+  flex: 1 1 auto;
+  align-content: start;
+  gap: 1px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 0;
+}
+
+.agent-model-picker__row {
+  display: flex;
+  box-sizing: border-box;
+  width: calc(100% - 8px);
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--agent-radius-md);
+  color: var(--agent-text);
+  margin: 0 4px;
+  transition:
+    background-color var(--agent-motion-hover) var(--ease-standard),
+    box-shadow var(--agent-motion-hover) var(--ease-standard),
+    color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-model-picker__row--selected {
+  background: color-mix(in srgb, var(--agent-text-strong) 8%, transparent);
+}
+
+.agent-model-picker__legacy {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  border-radius: var(--agent-radius-lg);
+  background: transparent;
+  color: var(--agent-text);
+  cursor: pointer;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.agent-model-picker__legacy:hover,
+.agent-model-picker__legacy:focus-visible {
+  background: color-mix(in srgb, var(--agent-fill) 82%, var(--agent-canvas));
+  outline: none;
+}
+
+.agent-model-picker__legacy > span {
+  display: grid;
+  gap: 3px;
+}
+
+.agent-model-picker__legacy strong {
+  font-size: var(--agent-fs-xs);
+  font-weight: 600;
+}
+
+.agent-model-picker__legacy small {
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+}
+
+.agent-model-picker__legacy svg {
+  transition: transform var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-model-picker__legacy-chevron--expanded {
+  transform: rotate(90deg);
+}
+
+.agent-model-picker__row:hover,
+.agent-model-picker__row--active {
+  background: var(--agent-fill);
+  box-shadow: none;
+  color: var(--agent-text-strong);
+}
+
+.agent-model-picker__option {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--agent-space-3);
+  min-width: 0;
+  border-radius: var(--agent-radius-md);
+  cursor: pointer;
+  outline: none;
+  padding: 8px 4px 8px 8px;
+}
+
+.agent-model-picker__option[aria-selected="true"] .agent-model-picker__label {
+  color: var(--agent-live);
+}
+
+.agent-model-picker__glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.agent-model-picker__glyph .agent-row__provider {
+  opacity: 1;
+}
+
+.agent-model-picker__text {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 1px;
+  min-width: 0;
+}
+
+.agent-model-picker__label {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-model-picker__description {
+  overflow: hidden;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-sm);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-model-picker__kbd {
+  flex: none;
+  border: 1px solid var(--agent-hairline-strong);
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-fill);
+  color: var(--agent-text-subtle);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  line-height: 14px;
+  padding: 0 4px;
+}
+
+.agent-model-picker__star {
+  display: inline-flex;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--agent-radius-md);
+  background: transparent;
+  color: var(--agent-text-subtle);
+  cursor: pointer;
+  opacity: 0;
+  padding: 0;
+  margin-right: 2px;
+  transition:
+    color var(--agent-motion-hover) var(--ease-standard),
+    opacity var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-model-picker__row--active .agent-model-picker__star,
+.agent-model-picker__row:hover .agent-model-picker__star,
+.agent-model-picker__star:focus-visible,
+.agent-model-picker__star[aria-pressed="true"] {
+  opacity: 1;
+}
+
+.agent-model-picker__star:hover {
+  color: var(--agent-text-strong);
+}
+
+.agent-model-picker__star[aria-pressed="true"] {
+  color: var(--agent-attention);
+}
+
+.agent-model-picker__star[aria-pressed="true"] svg {
+  fill: currentcolor;
+}
+
+.agent-model-picker__star:focus-visible {
+  outline: none;
+  box-shadow: var(--agent-focus-ring);
+}
+
+.agent-model-picker__empty {
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  line-height: 1.45;
+  margin: 0;
+  padding: 10px 8px 12px;
+}
+
+.agent-composer__compact-panel .agent-model-picker__dialog {
+  flex-direction: row;
+}

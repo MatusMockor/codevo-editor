@@ -13,6 +13,7 @@ import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import type { AgentThreadSearchResult } from "../../domain/agentThreadSearch";
 import { AgentClockProvider } from "./agentClock";
+import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import { AgentThreadsSidebar, type AgentThreadsSidebarProps } from "./AgentThreadsSidebar";
 import {
@@ -24,7 +25,7 @@ import {
 const ROOT = "/workspace/app";
 const OTHER = "/workspace/api";
 const NOW = 1_700_000_600_000;
-const AGENT_MODE_CSS = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
+const AGENT_MODE_CSS = readAgentModeStyles();
 
 describe("AgentThreadsSidebar", () => {
   let host: HTMLDivElement;
@@ -78,9 +79,63 @@ describe("AgentThreadsSidebar", () => {
     expect(cssRule(".agent-usage-popover")).toContain("overflow: hidden");
     expect(cssRule(".agent-usage-popover:focus-visible")).toContain("box-shadow: none");
     expect(AGENT_MODE_CSS).toContain("@media (max-width: 560px)");
+  });
+
+  it("pins the T3 rail metrics: 44px chrome, two-column head and 78px cards", () => {
+    expect(cssRule("\n.agent-rail__chrome {")).toContain("height: 44px");
+    expect(cssRule("\n.agent-rail__head {")).toContain(
+      "grid-template-columns: minmax(0, 1fr) 32px",
+    );
+    expect(cssRule("\n.agent-rail__head {")).toContain("gap: 4px");
+    expect(cssRule(".agent-iconbutton {")).toContain("width: 32px");
+    expect(cssRule(".agent-iconbutton {")).toContain("border-radius: var(--t3-control-radius)");
+    expect(cssRule(".agent-search {")).toContain("height: 32px");
+    expect(cssRule(".agent-scope .agent-picker__trigger {")).toContain("height: 32px");
+    expect(cssRule(".agent-scope .agent-picker__trigger {")).toContain("background: transparent");
+    expect(cssRule(".agent-row--card {")).toContain("height: 78px");
+    expect(cssRule(".agent-row--card {")).toContain("padding: var(--agent-row-pad)");
+    expect(cssRule(".agent-row__project {")).toContain("color: var(--t3-secondary-label)");
+    expect(cssRule(".agent-row__files {")).toContain("font-family: var(--agent-mono)");
+    expect(cssRule(".agent-row__files {")).toContain("font-size: 11px");
+    expect(cssRule(".agent-row__line3 .agent-row__provider svg {")).toContain("width: 14px");
+    expect(cssRule(".agent-list__divider {")).toContain("margin: 6px var(--agent-rail-row-inset)");
+    expect(cssRule(".agent-shelf {")).toContain("font-size: 12px");
+    expect(cssRule(".agent-shelf {")).toContain("font-weight: 500");
+  });
+
+  it("keeps the footer icon-only, 44px and without a top rule", () => {
+    expect(cssRule("\n.agent-provider-footer {")).toContain("min-height: 44px");
+    expect(cssRule("\n.agent-provider-footer {")).toContain("border-top: 0");
+    expect(cssRule(".agent-provider-footer__navigation .agent-iconbutton {")).toContain(
+      "width: 28px",
+    );
+    expect(cssRule(".agent-provider-footer__refresh {")).toContain("margin-left: auto");
+    expect(cssRule(".agent-provider-footer__providers:empty {")).toContain("display: none");
     expect(AGENT_MODE_CSS).toContain("@container (max-width: 280px)");
-    expect(AGENT_MODE_CSS).toContain("flex-direction: column");
-    expect(cssRule(".agent-provider-footer__providers {")).toContain("overflow: hidden");
+    expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__label");
+    expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__glyph");
+  });
+
+  it("lifts the receding rail labels to full muted under every light theme", () => {
+    const light = AGENT_MODE_CSS.slice(AGENT_MODE_CSS.indexOf(".agent-thread-palette"));
+    for (const selector of [
+      '.app-shell:is([data-theme="light"], [data-theme="catppuccinLatte"], [data-theme="oneLight"])',
+      '.app-shell[data-theme="system"]',
+    ]) {
+      const scope = light.slice(light.indexOf(selector));
+      expect(scope).toContain(".agent-shelf,");
+      expect(scope).toContain(".agent-row--recede,");
+      expect(scope).toContain(".agent-row--slim .agent-row__title");
+      expect(scope).toContain("color: var(--agent-text-muted)");
+      expect(scope).toContain("color: var(--agent-text-strong)");
+    }
+    expect(light).toContain("@media (prefers-color-scheme: light)");
+    expect(cssRule("\n.agent-shelf {")).toContain(
+      "color: color-mix(in srgb, var(--agent-text-muted) 75%, transparent)",
+    );
+    expect(AGENT_MODE_CSS).toContain(
+      ".agent-iconbutton:focus-visible {\n  box-shadow: var(--agent-focus-ring);\n}",
+    );
   });
 
   it("routes source control and opens and closes the real usage panel", () => {
@@ -169,13 +224,13 @@ describe("AgentThreadsSidebar", () => {
     expect(host.textContent).not.toContain("+ New thread");
   });
 
-  it("renders the card lines: title, branch and provider glyph, without repeating the scope", () => {
+  it("renders the card lines: project, title, branch and provider glyph", () => {
     render({
       groups: [group(ROOT, "app", [settled("agt-1", "Fix the parser", { branch: "main" })])],
     });
 
     const card = row("agt-1");
-    expect(card.querySelector(".agent-row__project")).toBeNull();
+    expect(card.querySelector(".agent-row__project")?.textContent).toBe("app");
     expect(card.querySelector(".agent-row__title")?.textContent).toBe("Fix the parser");
     expect(card.querySelector(".agent-row__branch")?.textContent).toBe("main");
     expect(card.querySelector('[aria-label="Claude Code"] svg')).not.toBeNull();
@@ -319,7 +374,9 @@ describe("AgentThreadsSidebar", () => {
 
     click('.agent-shelf[aria-expanded="false"]');
 
-    expect(host.querySelector(".agent-shelf")?.textContent).toBe("Archived");
+    expect(host.querySelector(".agent-shelf")?.textContent).toBe(
+      `Archived (${ARCHIVED_PAGE_COUNT + 5})`,
+    );
     expect(host.querySelectorAll(".agent-row--slim[data-thread-id]")).toHaveLength(
       ARCHIVED_PAGE_COUNT,
     );

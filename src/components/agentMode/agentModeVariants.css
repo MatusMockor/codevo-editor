@@ -1,0 +1,158 @@
+/* Variant A "Graphite": flat neutral surfaces, hairline-led, one cool accent, no glow but the live dot. */
+.workbench-frame[data-agent-variant="graphite"] {
+  --agent-accent-dark: #7fa7d9;
+  --agent-accent-light: #2f6cb3;
+  --agent-live: var(--agent-accent-dark);
+  --agent-plan: var(--agent-live);
+  --agent-live-soft: color-mix(in srgb, var(--agent-live) 16%, var(--agent-canvas));
+  --agent-rail: var(--agent-canvas);
+  --agent-raised: color-mix(in srgb, var(--agent-canvas) 92%, var(--agent-ink));
+  --agent-well: color-mix(in srgb, var(--agent-canvas) 94%, var(--agent-shade));
+  --agent-fill: color-mix(in srgb, var(--agent-canvas) 90%, var(--agent-ink));
+  --agent-hover: color-mix(in srgb, var(--agent-canvas) 95%, var(--agent-ink));
+  --agent-hairline: color-mix(in srgb, var(--color-border) 72%, transparent);
+  --agent-hairline-strong: color-mix(in srgb, var(--color-border-strong) 86%, var(--agent-ink));
+  --agent-text-strong: color-mix(in srgb, var(--color-text-strong) 40%, var(--agent-ink));
+  --agent-text: color-mix(in srgb, var(--color-text) 78%, var(--agent-ink));
+  --agent-text-muted: color-mix(in srgb, var(--color-text-muted) 82%, var(--agent-ink));
+  --agent-glow: color-mix(in srgb, var(--agent-live) 38%, transparent);
+  --agent-glow-faint: transparent;
+  --agent-glow-danger: transparent;
+  --agent-ambient: none;
+  --agent-shadow-raised: 0 0 0 transparent;
+  --agent-shadow-well: 0 0 0 transparent;
+  --agent-scanline: transparent;
+  --agent-focus-ring:
+    0 0 0 1px var(--agent-live), 0 0 0 3px color-mix(in srgb, var(--agent-live) 22%, transparent);
+  --agent-radius-sm: 3px;
+  --agent-radius-md: 4px;
+  --agent-radius-lg: 6px;
+  --agent-radius-xl: 8px;
+  --agent-tracking-label: 0.12em;
+  --agent-turn-gap: 24px;
+}
+
+.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="graphite"],
+.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="graphite"],
+.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="graphite"] {
+  --agent-live: var(--agent-accent-light);
+  --agent-scanline: transparent;
+  --agent-raised: #fff;
+  --agent-well: color-mix(in srgb, var(--agent-canvas) 60%, var(--agent-shade));
+}
+
+/* Variant B "Warm paper": warm neutrals, softer contrast, rounded corners, amber accent, soft drop shadows. */
+.workbench-frame[data-agent-variant="paper"] {
+  --agent-accent-dark: #e0a95a;
+  --agent-accent-light: #a8681a;
+  --agent-warm: #7a5a38;
+  --agent-live: var(--agent-accent-dark);
+  --agent-plan: var(--agent-live);
+  --agent-live-contrast: #1d150b;
+  --agent-live-soft: color-mix(in srgb, var(--agent-live) 18%, var(--agent-canvas));
+  --agent-canvas: color-mix(in srgb, var(--color-app) 92%, var(--agent-warm));
+  --agent-rail: color-mix(in srgb, var(--color-panel-deep) 88%, var(--agent-warm));
+  --agent-raised: color-mix(in srgb, var(--color-surface) 86%, var(--agent-warm));
+  --agent-well: color-mix(in srgb, var(--color-panel-deep) 84%, var(--agent-warm));
+  --agent-fill: color-mix(in srgb, var(--color-hover-strong) 84%, var(--agent-warm));
+  --agent-hover: color-mix(in srgb, var(--color-hover) 84%, var(--agent-warm));
+  --agent-hairline: color-mix(in srgb, var(--color-border) 78%, var(--agent-warm));
+  --agent-hairline-strong: color-mix(in srgb, var(--color-border-strong) 74%, var(--agent-warm));
+  --agent-text-strong: color-mix(in srgb, var(--color-text-strong) 88%, var(--agent-warm));
+  --agent-text: color-mix(in srgb, var(--color-text) 90%, var(--agent-warm));
+  --agent-text-muted: color-mix(in srgb, var(--color-text-muted) 86%, var(--agent-warm));
+  --agent-glow: color-mix(in srgb, var(--agent-live) 42%, transparent);
+  --agent-glow-faint: color-mix(in srgb, var(--agent-live) 6%, transparent);
+  --agent-ambient: radial-gradient(
+    900px 420px at 50% -10%,
+    color-mix(in srgb, var(--agent-live) 8%, transparent),
+    transparent 62%
+  );
+  --agent-shadow-raised: 0 10px 28px rgba(38, 24, 8, calc(var(--agent-shadow-alpha) + 0.06));
+  --agent-shadow-well: inset 0 1px 0 color-mix(in srgb, var(--agent-warm) 22%, transparent);
+  --agent-scanline: transparent;
+  --agent-radius-sm: 6px;
+  --agent-radius-md: 8px;
+  --agent-radius-lg: 12px;
+  --agent-radius-xl: 16px;
+  --agent-rail-row-py: 10px;
+  --agent-session-gutter: 32px;
+  --agent-turn-gap: 26px;
+  --agent-lh-prose: 1.6;
+  --agent-tracking-label: 0.1em;
+}
+
+.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="paper"],
+.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="paper"],
+.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="paper"] {
+  --agent-warm: #efe2cc;
+  --agent-live: var(--agent-accent-light);
+  --agent-live-contrast: #fffaf2;
+  --agent-scanline: transparent;
+  --agent-canvas: color-mix(in srgb, var(--color-app) 70%, var(--agent-warm));
+  --agent-rail: color-mix(in srgb, var(--color-panel-deep) 60%, var(--agent-warm));
+  --agent-raised: color-mix(in srgb, #fff 82%, var(--agent-warm));
+  --agent-well: color-mix(in srgb, #fff 62%, var(--agent-warm));
+  --agent-hairline: color-mix(in srgb, var(--color-border) 60%, #c9b596);
+  --agent-hairline-strong: color-mix(in srgb, var(--color-border-strong) 60%, #b89f78);
+  --agent-shadow-raised: 0 10px 28px rgba(96, 68, 28, 0.12);
+}
+
+/* Variant C "Studio": deeper ambient depth, restrained violet/teal accents, denser rail. */
+.workbench-frame[data-agent-variant="studio"] {
+  --agent-accent-dark: #a78bfa;
+  --agent-accent-light: #6d4fd6;
+  --agent-ok-dark: #5fd3c7;
+  --agent-ok-light: #0f8f85;
+  --agent-tint: #4c3a8f;
+  --agent-live: var(--agent-accent-dark);
+  --agent-ok: var(--agent-ok-dark);
+  --agent-plan: var(--agent-ok);
+  --agent-live-contrast: #120c26;
+  --agent-live-soft: color-mix(in srgb, var(--agent-live) 20%, var(--agent-canvas));
+  --agent-canvas: color-mix(in srgb, var(--color-app) 95%, var(--agent-tint));
+  --agent-rail: color-mix(in srgb, var(--color-panel-deep) 82%, var(--agent-shade));
+  --agent-raised: color-mix(in srgb, var(--color-surface) 92%, var(--agent-tint));
+  --agent-well: color-mix(in srgb, var(--color-panel-deep) 76%, var(--agent-shade));
+  --agent-hairline: color-mix(in srgb, var(--color-border) 82%, var(--agent-tint));
+  --agent-hairline-strong: color-mix(in srgb, var(--color-border-strong) 72%, var(--agent-live));
+  --agent-text-strong: color-mix(in srgb, var(--color-text-strong) 70%, var(--agent-ink));
+  --agent-glow: color-mix(in srgb, var(--agent-live) 62%, transparent);
+  --agent-glow-faint: color-mix(in srgb, var(--agent-live) 13%, transparent);
+  --agent-ambient:
+    radial-gradient(1200px 560px at 56% -18%, var(--agent-glow-faint), transparent 66%),
+    radial-gradient(
+      760px 520px at 8% 110%,
+      color-mix(in srgb, var(--agent-ok) 8%, transparent),
+      transparent 62%
+    );
+  --agent-shadow-raised: 0 -14px 44px
+    color-mix(in srgb, var(--agent-live) 14%, rgba(0, 0, 0, var(--agent-shadow-alpha)));
+  --agent-shadow-well: inset 0 1px 0 color-mix(in srgb, var(--agent-live) 10%, transparent);
+  --agent-focus-ring:
+    0 0 0 1px var(--agent-live), 0 0 0 4px var(--agent-live-soft), 0 0 22px var(--agent-glow-faint);
+  --agent-radius-sm: 4px;
+  --agent-radius-md: 6px;
+  --agent-radius-lg: 10px;
+  --agent-radius-xl: 14px;
+  --agent-rail-row-py: 6px;
+  --agent-rail-row-px: 26px;
+  --agent-turn-gap: 24px;
+  --agent-fs-2xs: 10px;
+  --agent-lh-row: 1.3;
+  --agent-tracking-label: 0.16em;
+}
+
+.app-shell[data-theme="light"] .workbench-frame[data-agent-variant="studio"],
+.app-shell[data-theme="catppuccinLatte"] .workbench-frame[data-agent-variant="studio"],
+.app-shell[data-theme="oneLight"] .workbench-frame[data-agent-variant="studio"] {
+  --agent-tint: #ded6fb;
+  --agent-live: var(--agent-accent-light);
+  --agent-ok: var(--agent-ok-light);
+  --agent-live-contrast: #fff;
+  --agent-canvas: color-mix(in srgb, var(--color-app) 88%, var(--agent-tint));
+  --agent-rail: color-mix(in srgb, var(--color-panel-deep) 86%, var(--agent-tint));
+  --agent-well: color-mix(in srgb, #fff 64%, var(--agent-tint));
+  --agent-glow-faint: color-mix(in srgb, var(--agent-live) 9%, transparent);
+  --agent-shadow-raised: 0 -14px 44px color-mix(in srgb, var(--agent-live) 10%, rgba(0, 0, 0, 0.1));
+}

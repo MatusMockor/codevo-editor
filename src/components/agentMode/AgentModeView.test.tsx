@@ -461,7 +461,7 @@ describe("AgentModeView", () => {
     expect(host.querySelector('form[aria-label="Follow up on agent thread"]')).not.toBeNull();
     expect(host.querySelector("button#agent-repository")).toBeNull();
     expect(host.querySelector("button#agent-checkout")).toBeNull();
-    expect(submitButton().textContent).toContain("Send");
+    expect(submitButton().getAttribute("aria-label")).toBe("Send follow-up");
   });
 
   it("sends a follow-up into the selected thread and clears the prompt", async () => {

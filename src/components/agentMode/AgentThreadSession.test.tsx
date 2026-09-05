@@ -44,16 +44,29 @@ describe("AgentThreadSession", () => {
   });
 
   it("invites a new thread when nothing is selected", () => {
+    render({ thread: null, composerRepositoryLabel: "playablemaker" });
+
+    const title = host.querySelector(".agent-empty__title");
+    expect(title?.textContent).toBe("What should we build in playablemaker?");
+    expect(title?.querySelector(".agent-empty__project")?.textContent).toBe("playablemaker");
+    expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();
+  });
+
+  it("drops the empty-state figure, hints and copy", () => {
     render({ thread: null });
 
-    expect(host.textContent).toContain("Start a thread in app");
-    expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();
+    expect(host.querySelector(".agent-empty__figure")).toBeNull();
+    expect(host.querySelector(".agent-empty__hints")).toBeNull();
+    expect(host.querySelector(".agent-empty__chip")).toBeNull();
+    expect(host.querySelector("kbd")).toBeNull();
+    expect(host.querySelector(".agent-empty__text")).toBeNull();
   });
 
   it("names the missing repository instead of inventing one", () => {
     render({ thread: null, composerRepositoryLabel: null });
 
     expect(host.textContent).toContain("No Git repository detected");
+    expect(host.querySelector(".agent-empty__project")).toBeNull();
   });
 
   it("notes imported provenance above the first turn", () => {

@@ -1,0 +1,59 @@
+/*
+  Agent status bar: how many threads run, what waits for a decision and what the composer will
+  launch. It renders outside .workbench-frame, so it cannot read the --agent-* remap and reads the
+  --t3-* palette declared on .app-shell directly. "status-bar--agent" is one class, so it ties with
+  the base .status-bar that App.css declares after these imports; the doubled .status-bar prefix is
+  what actually wins, not the source order. This file is the only place the bar is styled.
+*/
+.status-bar.status-bar--agent {
+  border-top: 1px solid var(--t3-border);
+  background: var(--t3-background);
+  color: var(--t3-muted-foreground);
+  font-size: 11px;
+}
+
+.status-bar.status-bar--agent span:not(:last-child) {
+  border-right: 1px solid var(--t3-border);
+}
+
+.status-bar--agent .status-agent-slots {
+  display: inline-flex;
+  align-items: center;
+  color: var(--t3-muted-foreground);
+  gap: 7px;
+}
+
+.status-bar--agent .status-agent-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--t3-muted-foreground) 70%, transparent);
+  padding: 0;
+}
+
+.status-bar--agent .status-agent-dot--live {
+  background: var(--t3-primary);
+  box-shadow: none;
+}
+
+.status-bar--agent .status-agent-attention {
+  color: var(--t3-warning);
+}
+
+.status-bar--agent .status-agent-cli {
+  color: var(--t3-muted-foreground);
+  font-family: var(--t3-font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.status-bar--agent .status-agent-launch {
+  overflow: hidden;
+  color: var(--t3-muted-foreground);
+  font-family: var(--t3-font-mono);
+  font-size: 11px;
+  max-width: 32ch;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

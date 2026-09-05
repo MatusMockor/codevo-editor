@@ -5,13 +5,7 @@ import type { AgentThreadScriptsSurface } from "../../application/useAgentThread
 import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
 import { runningTurn } from "../../domain/agentThread";
 import { AgentCommitMenu } from "./AgentCommitMenu";
-import {
-  agentShipBranchLabel,
-  agentThreadDisplayTitle,
-  agentThreadLifecycleLabel,
-  agentThreadTone,
-  lastAgentTurnStatus,
-} from "./agentModePresentation";
+import { agentShipBranchLabel, agentThreadDisplayTitle } from "./agentModePresentation";
 import { AgentOpenMenu } from "./AgentOpenMenu";
 import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
 import { AgentScriptRunControl } from "./AgentScriptRunControl";
@@ -144,7 +138,6 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
             {importedLabel}
           </span>
         )}
-        {thread !== null && <ThreadStatus thread={thread} />}
       </nav>
 
       <div className="agent-thread-head__actions">
@@ -219,23 +212,5 @@ function TerminalSessionsButton({ onOpen }: { readonly onOpen: (() => void) | nu
     >
       <History aria-hidden="true" size={14} />
     </button>
-  );
-}
-
-function ThreadStatus({ thread }: { readonly thread: AgentThreadView }) {
-  const tone = agentThreadTone(thread.lifecycle, lastAgentTurnStatus(thread.thread));
-  const label = agentThreadLifecycleLabel(thread.lifecycle);
-  return (
-    <span
-      aria-label={label}
-      className={`agent-thread-head__status agent-thread-head__status--${tone}`}
-      role="status"
-      title={label}
-    >
-      <span aria-hidden="true" className={`agent-dot agent-dot--${tone}`} />
-      <span aria-hidden="true" className="agent-thread-head__status-label">
-        {label}
-      </span>
-    </span>
   );
 }

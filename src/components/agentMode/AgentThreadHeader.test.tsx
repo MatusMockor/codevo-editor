@@ -35,7 +35,7 @@ describe("AgentThreadHeader", () => {
     host.remove();
   });
 
-  it("renders the breadcrumb with a truncating title, its tooltip and the status", () => {
+  it("renders the breadcrumb with a truncating title and its tooltip", () => {
     render({ thread: threadView({ title: "A very long thread title that keeps going" }) });
 
     const title = button("Thread actions for A very long thread title that keeps going");
@@ -43,15 +43,19 @@ describe("AgentThreadHeader", () => {
     expect(host.querySelector("h2.agent-crumbs__heading")?.textContent).toBe(
       "A very long thread title that keeps going",
     );
-    const status = host.querySelector<HTMLElement>(".agent-thread-head__status");
-    expect(status?.textContent).toBe("Idle");
-    expect(status?.getAttribute("aria-label")).toBe("Idle");
-    expect(status?.getAttribute("role")).toBe("status");
-    expect(status?.title).toBe("Idle");
-    expect(host.querySelector(".agent-thread-head__status-label")?.textContent).toBe("Idle");
     expect(button("Run dev")).toBeDefined();
     expect(button("Open in Editor")).toBeDefined();
     expect(button("Commit")).toBeDefined();
+  });
+
+  it("leaves thread status to the rail row and the status bar", () => {
+    render({ thread: threadView({}) });
+
+    expect(host.querySelector(".agent-thread-head__status")).toBeNull();
+    expect(host.querySelector(".agent-thread-head__status-label")).toBeNull();
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    expect(host.querySelector(".agent-dot")).toBeNull();
+    expect(host.textContent).not.toContain("Idle");
   });
 
   it("badges a thread imported from a terminal session and leaves other threads unbadged", () => {

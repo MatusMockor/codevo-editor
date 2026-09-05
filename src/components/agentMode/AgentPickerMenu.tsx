@@ -196,7 +196,7 @@ export function AgentPickerMenu({
         )}
         {prefix !== null && <span className="agent-picker__prefix">{prefix}:</span>}
         <span className="agent-picker__value">{selected?.label ?? UNKNOWN_VALUE_LABEL}</span>
-        <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={12} />
+        <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={14} />
       </button>
 
       {open && (

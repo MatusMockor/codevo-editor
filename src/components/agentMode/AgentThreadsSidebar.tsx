@@ -25,7 +25,6 @@ import {
   agentJumpSlots,
   agentRailEmptyState,
   agentRailProjectLabels,
-  agentRailRowProjectScope,
   agentRailSections,
   agentRailViews,
   agentThreadRevealForMatch,
@@ -123,7 +122,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
 
   const views = useMemo(() => agentRailViews(groups), [groups]);
   const projectLabels = useMemo(() => agentRailProjectLabels(groups), [groups]);
-  const projectScope = useMemo(() => agentRailRowProjectScope(groups, scope), [groups, scope]);
   const usageProjectLabels = useMemo(
     () => new Map(groups.map((group) => [group.projectRootKey, group.label])),
     [groups],
@@ -315,7 +313,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
             onToggleArchived={toggleArchived}
             onTogglePin={togglePin}
             projectLabels={projectLabels}
-            projectScope={projectScope}
             sections={sections}
             selectedThreadId={selectedThreadId}
           />

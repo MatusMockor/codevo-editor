@@ -1,7 +1,5 @@
 // @vitest-environment jsdom
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { FitAddon } from "@xterm/addon-fit";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -9,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSurfaceFileTreeSurface } from "../../application/useAgentSurfaceFileTree";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import { waitForReact } from "../../test/reactTestLifecycle";
+import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import { AGENT_SURFACE_HOTKEYS, agentSurfaceForHotkey } from "./agentSurfaceHotkeys";
 import {
   AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE,
@@ -434,6 +433,73 @@ describe("AgentSurfacePanel", () => {
   }
 });
 
+describe("agent surface styles", () => {
+  it("dresses the head, tabs and layout toggles as the t3 workspace panel", () => {
+    const head = cssRule(agentModeCss, ".agent-surface__head {");
+    expect(head).toContain("height: var(--agent-surface-header-height)");
+    expect(head).toContain("background: var(--agent-canvas)");
+    expect(head).toContain("border-bottom: 1px solid var(--agent-hairline)");
+
+    const tabitem = cssRule(agentModeCss, ".agent-surface__tabitem {");
+    expect(tabitem).toContain("height: 28px");
+    expect(tabitem).toContain("color: var(--agent-text-muted)");
+    expect(cssRule(agentModeCss, ".agent-surface__tabitem--active {")).toContain(
+      "background: var(--agent-fill)",
+    );
+
+    const tab = cssRule(agentModeCss, ".agent-surface__tab {");
+    expect(tab).toContain("font-size: var(--agent-fs-sm)");
+    expect(tab).toContain("font-weight: 500");
+
+    expect(cssRule(agentModeCss, ".agent-surface__layout-controls .agent-icon-toggle {")).toContain(
+      "width: 26px",
+    );
+    expect(cssRule(agentModeCss, ".agent-surface__head > .agent-iconbutton {")).toContain(
+      "width: 26px",
+    );
+  });
+
+  it("plays the subhead microlabel as plain sans over t3 change rows", () => {
+    expect(cssRule(agentModeCss, ".agent-surface__subhead {")).toContain("height: 32px");
+
+    const microlabel = cssRule(agentModeCss, ".agent-surface__subhead .agent-microlabel {");
+    expect(microlabel).toContain("font-family: var(--agent-sans)");
+    expect(microlabel).toContain("font-size: var(--agent-fs-sm)");
+    expect(microlabel).toContain("text-transform: none");
+
+    const row = cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__row {");
+    expect(row).toContain("min-height: 28px");
+    expect(row).toContain("border-radius: var(--agent-radius-sm)");
+    expect(
+      cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__row--selected,"),
+    ).toContain("background: var(--agent-fill)");
+    expect(
+      cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__status--added,"),
+    ).toContain("color-mix(in srgb, var(--agent-ok) 10%, transparent)");
+    expect(
+      cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__status--deleted,"),
+    ).toContain("color-mix(in srgb, var(--agent-danger) 10%, transparent)");
+  });
+
+  it("keeps the tree and change list on the canvas rather than the rail", () => {
+    expect(cssRule(agentModeCss, ".agent-surface-tree {")).toContain(
+      "background: var(--agent-canvas)",
+    );
+    expect(cssRule(agentModeCss, ".agent-surface-diff__list {")).toContain(
+      "background: var(--agent-canvas)",
+    );
+  });
+
+  it("sizes the thread changes cue at the t3 body size in muted tones", () => {
+    const cue = cssRule(agentModeCss, ".agent-session__changes-cue {");
+    expect(cue).toContain("font-size: var(--agent-fs-sm)");
+    expect(cue).toContain("color: var(--agent-text-muted)");
+    expect(cssRule(agentModeCss, ".agent-session__changes-cue .agent-linkbutton {")).toContain(
+      "border-bottom-color: var(--agent-hairline-strong)",
+    );
+  });
+});
+
 function tree(): AgentSurfaceFileTreeSurface {
   return {
     rootPath: SURFACE_FIXTURE_WORKTREE,
@@ -498,7 +564,7 @@ function terminalThemeStub(): NonNullable<AgentSurfacePanelProps["terminal"]>["t
   });
 }
 
-const agentModeCss = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
+const agentModeCss = readAgentModeStyles();
 
 function cssRule(source: string, selector: string): string {
   const start = source.indexOf(selector);

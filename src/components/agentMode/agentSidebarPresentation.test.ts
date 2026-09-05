@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentProjectGroup } from "./agentModePresentation";
@@ -10,8 +10,8 @@ import {
   agentRailEmptyState,
   agentRailNewThreadTarget,
   agentRailProjectLabels,
-  agentRailRowProjectScope,
   agentRowProjectLabel,
+  agentThreadRowModel,
   agentExternalOriginNote,
   agentExternalSessionRowTitle,
   agentExternalSessionsStatusNote,
@@ -158,24 +158,40 @@ describe("agent rail sections", () => {
     expect(agentRailProjectLabels([multi]).get(ROOT)).toBe("app / app");
   });
 
-  it("hides the row project label only for the single repository of the scoped project", () => {
+  it("always resolves a row project label, falling back to the repository label", () => {
     const groups = [group(ROOT, "app", []), group(OTHER, "api", [])];
-    const scope = agentRailRowProjectScope(groups, ROOT_SCOPE);
+    const labels = agentRailProjectLabels(groups);
 
-    expect(scope).toEqual({ repositoryRoot: ROOT, singleRepo: true });
-    expect(agentRowProjectLabel("app", ROOT, scope)).toBeNull();
-    expect(agentRowProjectLabel("app / api", `${ROOT}/packages/api`, scope)).toBe("app / api");
+    expect(agentRowProjectLabel(labels, view({}))).toBe("app");
+    expect(agentRowProjectLabel(new Map(), view({}))).toBe("app");
+    const multi = { ...group(ROOT, "app", []), singleRepo: false };
+    expect(agentRowProjectLabel(agentRailProjectLabels([multi]), view({}))).toBe("app / app");
   });
 
-  it("keeps the row project label for a nested-checkout project and an unknown scope", () => {
-    const multi = { ...group(ROOT, "app", []), singleRepo: false };
-    const multiScope = agentRailRowProjectScope([multi], ROOT_SCOPE);
+  it("builds a row model with the project line, branch fallback and file count", () => {
+    const model = agentThreadRowModel(view({ threadId: "agt-1" }), false);
 
-    expect(multiScope).toEqual({ repositoryRoot: ROOT, singleRepo: false });
-    expect(agentRowProjectLabel("app / app", ROOT, multiScope)).toBe("app / app");
-    expect(agentRailRowProjectScope([], ROOT_SCOPE)).toBeNull();
-    expect(agentRailRowProjectScope([multi], null)).toBeNull();
-    expect(agentRowProjectLabel("app", ROOT, null)).toBe("app");
+    expect(model.project).toBe("app");
+    expect(agentThreadRowModel(view({}), false, "app / api").project).toBe("app / api");
+    expect(model.title).toBe("Thread agt-1");
+    expect(model.branch).toBe("worktree");
+    expect(model.filesLabel).toBeNull();
+    expect(model.provider).toBe("claudeCode");
+    expect(model.variant).toBe("card");
+    expect(model.status.kind).toBe("working");
+    expect(model.recede).toBe(true);
+    expect(agentThreadRowModel(view({ threadId: "agt-1" }), true).recede).toBe(false);
+  });
+
+  it("labels the changed file count once the summary has settled", () => {
+    const base = view({});
+    const one: AgentThreadView = { ...base, changeSummary: summary(false, ["a.ts"]) };
+    const many: AgentThreadView = { ...base, changeSummary: summary(false, ["a.ts", "b.ts"]) };
+    const pending: AgentThreadView = { ...base, changeSummary: summary(true, []) };
+
+    expect(agentThreadRowModel(one, false).filesLabel).toBe("1 file");
+    expect(agentThreadRowModel(many, false).filesLabel).toBe("2 files");
+    expect(agentThreadRowModel(pending, false).filesLabel).toBeNull();
   });
 
   it("describes the empty states truthfully", () => {
@@ -551,6 +567,25 @@ function view({
     worktreeRemoved: false,
     worktreeMissing: false,
     changeSummary: null,
+  };
+}
+
+function summary(loading: boolean, paths: ReadonlyArray<string>): AgentTaskChangeSummary {
+  return {
+    loading,
+    error: null,
+    files: paths.map((relativePath) => ({
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: null,
+      oldRelativePath: null,
+      path: `/workspace/app/${relativePath}`,
+      relativePath,
+      status: "modified" as const,
+    })),
+    truncated: false,
+    removing: false,
+    diff: null,
   };
 }
 

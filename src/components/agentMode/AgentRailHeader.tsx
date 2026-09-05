@@ -87,61 +87,49 @@ export function AgentRailHeader({
 
   return (
     <div className="agent-rail__head">
-      <div className="agent-rail__row">
-        <div className="agent-search" data-active={search.active ? "true" : undefined}>
-          <Search aria-hidden="true" className="agent-search__icon" size={16} />
-          <input
-            aria-activedescendant={searchActiveDescendant ?? undefined}
-            aria-autocomplete="list"
-            aria-controls="agent-rail-search-results"
-            aria-expanded={search.active}
-            aria-label="Search threads"
-            className="agent-search__input"
-            maxLength={MAX_THREAD_SEARCH_QUERY_CHARS}
-            onChange={(event) => search.setQuery(event.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            placeholder="Search"
-            ref={searchRef}
-            role="combobox"
-            type="search"
-            value={search.query}
-          />
-          {search.query !== "" && (
-            <button
-              aria-label="Clear thread search"
-              className="agent-search__clear"
-              onClick={() => search.clear()}
-              type="button"
-            >
-              <X aria-hidden="true" size={12} />
-            </button>
-          )}
-        </div>
-        <button
-          aria-label="New thread"
-          className="agent-iconbutton"
-          disabled={newThreadTarget === null}
-          onClick={() =>
-            newThreadTarget !== null &&
-            onNewThread(newThreadTarget.projectRootKey, newThreadTarget.repositoryRoot)
-          }
-          title="New thread (⌘N)"
-          type="button"
-        >
-          <SquarePen aria-hidden="true" size={16} />
-        </button>
-        <button
-          aria-label="Add project"
-          className="agent-iconbutton"
-          disabled={!addProjectAvailable}
-          onClick={onAddProject}
-          title="Add project"
-          type="button"
-        >
-          <FolderPlus aria-hidden="true" size={16} />
-        </button>
+      <div className="agent-search" data-active={search.active ? "true" : undefined}>
+        <Search aria-hidden="true" className="agent-search__icon" size={16} />
+        <input
+          aria-activedescendant={searchActiveDescendant ?? undefined}
+          aria-autocomplete="list"
+          aria-controls="agent-rail-search-results"
+          aria-expanded={search.active}
+          aria-label="Search threads"
+          className="agent-search__input"
+          maxLength={MAX_THREAD_SEARCH_QUERY_CHARS}
+          onChange={(event) => search.setQuery(event.target.value)}
+          onKeyDown={handleSearchKeyDown}
+          placeholder="Search"
+          ref={searchRef}
+          role="combobox"
+          type="search"
+          value={search.query}
+        />
+        {search.query !== "" && (
+          <button
+            aria-label="Clear thread search"
+            className="agent-search__clear"
+            onClick={() => search.clear()}
+            type="button"
+          >
+            <X aria-hidden="true" size={12} />
+          </button>
+        )}
       </div>
-      <div className="agent-rail__row agent-scope">
+      <button
+        aria-label="New thread"
+        className="agent-iconbutton"
+        disabled={newThreadTarget === null}
+        onClick={() =>
+          newThreadTarget !== null &&
+          onNewThread(newThreadTarget.projectRootKey, newThreadTarget.repositoryRoot)
+        }
+        title="New thread (⌘N)"
+        type="button"
+      >
+        <SquarePen aria-hidden="true" size={16} />
+      </button>
+      <div className="agent-scope">
         <AgentProjectScopeMenu
           disabled={scopeEntries.length === 0}
           entries={scopeEntries}
@@ -152,6 +140,16 @@ export function AgentRailHeader({
           value={scopeValue}
         />
       </div>
+      <button
+        aria-label="Add project"
+        className="agent-iconbutton"
+        disabled={!addProjectAvailable}
+        onClick={onAddProject}
+        title="Add project"
+        type="button"
+      >
+        <FolderPlus aria-hidden="true" size={16} />
+      </button>
       {scopeState !== null && scopeEntry !== null && (
         <div className="agent-rail__row agent-scope__state">
           <span className="agent-scope__state-label">{scopeState.label}</span>

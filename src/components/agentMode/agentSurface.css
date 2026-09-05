@@ -1,0 +1,578 @@
+/* Surfaces */
+
+/* Right panel: a tab strip of open surfaces. The surface tracks themselves belong to the shell
+   frame (workbenchShellFrame.css). */
+.agent-surface {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  border-left: 1px solid var(--agent-hairline);
+  background: var(--agent-canvas);
+  container-name: agent-surface;
+  container-type: inline-size;
+}
+
+.agent-surface__resize {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.agent-surface__head {
+  display: flex;
+  height: var(--agent-surface-header-height);
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 var(--agent-space-3);
+  border-bottom: 1px solid var(--agent-hairline);
+  background: var(--agent-canvas);
+  gap: var(--agent-space-2);
+}
+
+.agent-surface__tabs {
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--agent-space-2);
+}
+
+.agent-surface__editor-tabs {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-self: stretch;
+  border-left: 1px solid var(--agent-hairline);
+}
+
+.agent-surface__editor-tabs .editor-tabs {
+  height: calc(var(--agent-surface-header-height) - 1px);
+  min-height: 0;
+  max-height: none;
+  align-items: flex-end;
+  padding: 0 4px;
+  border-bottom: 0;
+  background: transparent;
+  gap: 2px;
+}
+
+.agent-surface__editor-tabs .editor-tab {
+  height: 32px;
+  min-width: 96px;
+  max-width: 180px;
+}
+
+.agent-surface__editor-tabs .tab-main {
+  height: 32px;
+  padding-left: 8px;
+}
+
+.agent-surface__tabitem {
+  display: inline-flex;
+  height: 28px;
+  min-width: 0;
+  max-width: 160px;
+  align-items: center;
+  border-radius: var(--agent-radius-sm);
+  color: var(--agent-text-muted);
+  transition:
+    background var(--agent-motion-hover),
+    color var(--agent-motion-hover);
+}
+
+.agent-surface__tabitem:hover {
+  background: var(--agent-row-hover);
+  color: var(--agent-text);
+}
+
+.agent-surface__tabitem--active {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+}
+
+.agent-surface__tab {
+  display: inline-flex;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  overflow: hidden;
+  align-items: center;
+  padding: 0 var(--agent-space-2) 0 var(--agent-space-3);
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--agent-fs-sm);
+  font-weight: 500;
+  gap: 6px;
+}
+
+.agent-surface__tab > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-surface__tab-close {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin-right: 2px;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    background var(--agent-motion-hover),
+    color var(--agent-motion-hover),
+    opacity var(--agent-motion-hover);
+}
+
+.agent-surface__tabitem--active .agent-surface__tab-close {
+  opacity: 0.7;
+}
+
+.agent-surface__tabitem:hover .agent-surface__tab-close,
+.agent-surface__tab-close:hover,
+.agent-surface__tab-close:focus-visible {
+  opacity: 1;
+}
+
+.agent-surface__tab-close:hover {
+  background: color-mix(in srgb, var(--agent-text-muted) 18%, transparent);
+  color: var(--agent-text-strong);
+}
+
+.agent-surface__tab:focus-visible,
+.agent-surface__tab-close:focus-visible {
+  box-shadow: var(--agent-focus-ring);
+  outline: none;
+}
+
+.agent-surface__tabpanel {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.agent-surface__tabpanel[hidden] {
+  display: none;
+}
+
+.agent-surface__layout-controls {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.agent-surface__body {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.agent-surface__head > .agent-iconbutton {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: var(--agent-radius-sm);
+}
+
+.agent-surface__layout-controls .agent-icon-toggle {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--agent-radius-sm);
+}
+
+.agent-surface__subhead {
+  display: flex;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 var(--agent-space-3) 0 var(--agent-space-4);
+  border-bottom: 1px solid var(--agent-hairline);
+  gap: var(--agent-space-3);
+}
+
+.agent-surface__subhead .agent-microlabel {
+  color: var(--agent-text-muted);
+  font-family: var(--agent-sans);
+  font-size: var(--agent-fs-sm);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.agent-surface__subhead .agent-iconbutton {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--agent-radius-sm);
+}
+
+/* Empty state: three cards, T3 spacing. */
+.agent-surface-empty {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  outline: none;
+}
+
+.agent-surface-empty__inner {
+  width: 100%;
+  max-width: 560px;
+}
+
+.agent-surface-empty__head {
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.agent-surface-empty__title {
+  margin: 0;
+  color: var(--agent-text-strong);
+  font-size: var(--agent-fs-sm);
+  font-weight: 500;
+}
+
+.agent-surface-empty__hint {
+  margin: 4px 0 0;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+}
+
+.agent-surface-empty__cards {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.agent-surface-card__slot {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-surface-card {
+  display: flex;
+  min-height: 112px;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 16px;
+  border: 1px solid var(--agent-hairline);
+  border-radius: var(--agent-radius-lg);
+  background: var(--agent-raised);
+  color: var(--agent-text);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color var(--agent-motion-hover),
+    background var(--agent-motion-hover);
+}
+
+.agent-surface-card:hover:not(:disabled) {
+  border-color: var(--agent-hairline-strong);
+  background: var(--agent-hover);
+}
+
+.agent-surface-card:focus-visible {
+  box-shadow: var(--agent-focus-ring);
+  outline: none;
+}
+
+.agent-surface-card:disabled {
+  color: var(--agent-text-disabled);
+  cursor: default;
+}
+
+.agent-surface-card__top {
+  display: flex;
+  width: 100%;
+  margin-bottom: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.agent-surface-card__icon {
+  display: inline-flex;
+  color: var(--agent-text-muted);
+}
+
+.agent-surface-card__key {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 1px solid var(--agent-hairline);
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-fill);
+  color: var(--agent-text-muted);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  font-weight: 600;
+}
+
+.agent-surface-card:disabled .agent-surface-card__key {
+  color: var(--agent-text-disabled);
+}
+
+.agent-surface-card:disabled .agent-surface-card__icon {
+  color: var(--agent-text-disabled);
+}
+
+.agent-surface-card__label {
+  font-size: var(--agent-fs-sm);
+  font-weight: 500;
+}
+
+.agent-surface-card__description {
+  margin-top: 4px;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  line-height: 1.5;
+}
+
+.agent-surface-card__reason {
+  display: flex;
+  margin: 0;
+  align-items: center;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-2xs);
+  gap: 6px;
+}
+
+@container agent-surface (max-width: 480px) {
+  .agent-surface__head {
+    min-width: 0;
+  }
+
+  .agent-surface__tabs {
+    flex: 0 1 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: var(--agent-surface-focus-gutter);
+    scroll-padding-inline: var(--agent-surface-focus-gutter);
+    scrollbar-width: none;
+  }
+
+  .agent-surface__tabitem {
+    flex: none;
+  }
+
+  .agent-surface__tab > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .agent-surface__editor-tabs {
+    max-width: 100%;
+  }
+
+  .agent-surface-empty {
+    padding: 16px;
+  }
+
+  .agent-surface-empty__cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Files: a bounded tree pane on the left and the editor well on the right. */
+.agent-surface__files {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.agent-surface-tree {
+  display: flex;
+  width: var(--agent-surface-tree-width);
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  border-right: 1px solid var(--agent-hairline);
+  background: var(--agent-canvas);
+  font-size: var(--agent-fs-sm);
+}
+
+.agent-surface-tree__viewport {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.agent-surface__editor-slot {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  background: var(--agent-well);
+}
+
+/* Diff: change list on the left, one Monaco diff editor on the right. */
+.agent-surface-diff {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.agent-surface-diff__body {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+}
+
+.agent-surface-diff__list {
+  min-height: 0;
+  border-right: 1px solid var(--agent-hairline);
+  background: var(--agent-canvas);
+  overflow-y: auto;
+}
+
+.agent-surface-diff__list .agent-changes {
+  border-top: 0;
+  gap: var(--agent-space-2);
+  padding: 6px var(--agent-space-2);
+}
+
+.agent-surface-diff__list .agent-files {
+  gap: 2px;
+  max-height: none;
+}
+
+.agent-surface-diff__list .agent-files__row {
+  min-height: 28px;
+  align-items: center;
+  gap: var(--agent-space-3);
+  padding: 0 var(--agent-space-3);
+  border-radius: var(--agent-radius-sm);
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-sm);
+}
+
+.agent-surface-diff__list .agent-files__row + .agent-files__row {
+  border-top: 0;
+}
+
+.agent-surface-diff__list .agent-files__row:hover {
+  background: var(--agent-row-hover);
+}
+
+.agent-surface-diff__list .agent-files__row--selected,
+.agent-surface-diff__list .agent-files__row--selected:hover {
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
+}
+
+/* Add and delete read as 10 % tints, the only colour the T3 change list carries. */
+.agent-surface-diff__list .agent-files__status {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--agent-radius-sm);
+  font-size: var(--agent-fs-2xs);
+  font-weight: 600;
+}
+
+.agent-surface-diff__list .agent-files__status--added,
+.agent-surface-diff__list .agent-files__status--untracked {
+  background: color-mix(in srgb, var(--agent-ok) 10%, transparent);
+}
+
+.agent-surface-diff__list .agent-files__status--deleted,
+.agent-surface-diff__list .agent-files__status--conflicted {
+  background: color-mix(in srgb, var(--agent-danger) 10%, transparent);
+}
+
+.agent-surface-diff__list .agent-files__path {
+  color: inherit;
+  font-family: var(--agent-sans);
+  font-size: var(--agent-fs-sm);
+}
+
+.agent-surface-diff__preview {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.agent-surface-diff__placeholder {
+  margin: auto;
+  color: var(--agent-text-subtle);
+}
+
+.agent-surface-diff__banner {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 6px var(--agent-space-3);
+  border-bottom: 1px solid var(--agent-hairline);
+  background: var(--agent-fill);
+}
+
+/* Terminal: fills the body; the tabs panel owns its own chrome. */
+.agent-surface-terminal {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+/* Thread body cue: replaces the inline change list. */
+.agent-session__changes-cue {
+  display: flex;
+  margin: var(--agent-space-2) 0 0;
+  align-items: center;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-sm);
+  gap: 6px;
+}
+
+.agent-session__changes-cue .agent-linkbutton {
+  border-bottom-color: var(--agent-hairline-strong);
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-sm);
+}
+
+.agent-session__changes-sep {
+  color: var(--agent-text-subtle);
+}
+
+@media (max-width: 900px) {
+  .agent-surface-empty__cards {
+    grid-template-columns: 1fr;
+  }
+}

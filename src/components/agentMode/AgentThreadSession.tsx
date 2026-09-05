@@ -496,71 +496,30 @@ function AgentThreadSessionEmpty({ repositoryLabel }: { readonly repositoryLabel
     <section aria-label="New agent thread" className="agent-session">
       <div className="agent-session__scroll">
         <div className="agent-session__body agent-session__body--empty">
-          <AgentEmptyFigure />
-          <h2 className="agent-empty__title">
-            {repositoryLabel === null
-              ? "No Git repository detected"
-              : `Start a thread in ${repositoryLabel}`}
-          </h2>
-          <p className="agent-empty__text">
-            Describe the change. The agent picks up the repository below, works through the task,
-            and comes back with output you can review.
-          </p>
-          {repositoryLabel !== null && (
-            <p className="agent-empty__hints">
-              <span className="agent-empty__hint">
-                <kbd>⌘</kbd>
-                <kbd>↩</kbd> starts the run
-              </span>
-              <span aria-hidden="true" className="agent-prompt__sep" />
-              <span className="agent-empty__hint">
-                <span className="agent-empty__chip">worktree</span> keeps your working tree
-                untouched
-              </span>
-            </p>
-          )}
+          <AgentEmptyTitle repositoryLabel={repositoryLabel} />
         </div>
       </div>
     </section>
   );
 }
 
-function AgentEmptyFigure() {
+function AgentEmptyTitle({ repositoryLabel }: { readonly repositoryLabel: string | null }) {
+  if (repositoryLabel === null) {
+    return (
+      <>
+        <h2 className="agent-empty__title">No Git repository detected</h2>
+        <p className="agent-empty__text">
+          The agent will work in this folder as it is. Open a Git repository to get branches,
+          worktrees and change review.
+        </p>
+      </>
+    );
+  }
+
   return (
-    <svg
-      aria-hidden="true"
-      className="agent-empty__figure"
-      fill="none"
-      height="56"
-      viewBox="0 0 72 56"
-      width="72"
-    >
-      <path d="M8 8v40" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
-      <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="8" cy="48" r="3" stroke="currentColor" strokeWidth="1.5" />
-      <path
-        d="M8 20c0 10 22 4 30 10"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.5"
-      />
-      <path
-        className="agent-empty__accent"
-        d="M38 30h18"
-        stroke="currentColor"
-        strokeDasharray="1 5"
-        strokeLinecap="round"
-        strokeWidth="1.5"
-      />
-      <circle
-        className="agent-empty__accent"
-        cx="61"
-        cy="30"
-        r="3.5"
-        stroke="currentColor"
-        strokeWidth="1.5"
-      />
-    </svg>
+    <h2 className="agent-empty__title">
+      What should we build in <span className="agent-empty__project">{repositoryLabel}</span>?
+    </h2>
   );
 }
 

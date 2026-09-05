@@ -13,6 +13,7 @@ import {
   type AgentComposerRepositoryOption,
   type AgentComposerTarget,
 } from "./AgentComposer";
+import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 
 describe("AgentComposer", () => {
@@ -221,7 +222,7 @@ describe("AgentComposer", () => {
     expect(context?.querySelector(".agent-composer__chip--thread")?.textContent).toBe(
       "Refactor the parser",
     );
-    expect(submitButton().textContent).toContain("Send");
+    expect(submitButton().getAttribute("aria-label")).toBe("Send follow-up");
 
     const escape = context?.querySelector<HTMLButtonElement>(".agent-composer__new");
     expect(escape).not.toBeNull();
@@ -290,14 +291,19 @@ describe("AgentComposer", () => {
     expect(formatAgentPromptBytes(999)).toBe("999");
   });
 
-  it("shows the submit shortcut on the primary button without naming the button after it", () => {
-    render({});
+  it("names the round send button and keeps the shortcut in its tooltip", () => {
+    withMacPlatform(() => render({}));
 
-    const kbd = submitButton().querySelector("kbd.agent-composer__kbd");
-    expect(kbd?.textContent).toMatch(/↩$/);
-    expect(kbd?.getAttribute("aria-hidden")).toBe("true");
-    expect(kbd?.getAttribute("aria-label")).toBeNull();
-    expect(submitButton().getAttribute("aria-keyshortcuts")).toMatch(/\+Enter$/);
+    const button = submitButton();
+    expect(button.getAttribute("aria-label")).toBe("Start agent");
+    expect(button.title).toBe("Start agent (⌘↩)");
+    expect(button.getAttribute("aria-keyshortcuts")).toBe("Meta+Enter");
+    expect(button.getAttribute("aria-busy")).toBeNull();
+    expect(button.querySelector("kbd")).toBeNull();
+    expect(button.textContent).toBe("");
+    expect(button.querySelector("svg")).not.toBeNull();
+    expect(button.classList.contains("agent-composer__send")).toBe(true);
+    expect(button.classList.contains("agent-composer__send--busy")).toBe(false);
   });
 
   it("shows checkout choices without a second confirmation step", () => {
@@ -345,7 +351,11 @@ describe("AgentComposer", () => {
   it("reports the dispatch in flight", () => {
     render({ dispatching: true, submitBlocked: true });
 
-    expect(submitButton().textContent).toContain("Starting…");
+    expect(submitButton().getAttribute("aria-label")).toBe("Starting…");
+    expect(submitButton().getAttribute("aria-busy")).toBe("true");
+    expect(submitButton().title).toMatch(/^Starting… \(.+↩\)$/);
+    expect(submitButton().classList.contains("agent-composer__send--busy")).toBe(true);
+    expect(submitButton().querySelector(".agent-composer__send-spinner")).not.toBeNull();
     expect(submitButton().disabled).toBe(true);
     expect(trigger(CHECKOUT_ID).disabled).toBe(true);
 
@@ -355,7 +365,8 @@ describe("AgentComposer", () => {
       submitBlocked: true,
     });
 
-    expect(submitButton().textContent).toContain("Sending…");
+    expect(submitButton().getAttribute("aria-label")).toBe("Starting…");
+    expect(submitButton().getAttribute("aria-busy")).toBe("true");
   });
 
   it("disables the follow-up and states the blocking reason", () => {
@@ -620,8 +631,73 @@ describe("AgentComposer", () => {
   }
 });
 
+describe("AgentComposer T3 styling contract", () => {
+  const css = readAgentModeStyles();
+
+  it("centres the composer box at 768px with the T3 radius and top highlight", () => {
+    const box = cssRule(css, "\n.agent-composer__box {");
+    expect(box).toContain("max-width: 768px");
+    expect(box).toContain("border-radius: 12px");
+    expect(box).toContain("inset 0 1px var(--agent-composer-highlight)");
+    expect(box).toContain("background: var(--agent-composer-surface)");
+    expect(cssRule(css, "\n.agent-composer {")).not.toMatch(/border-top: 1px/);
+  });
+
+  it("renders the send button as a 32px round primary control", () => {
+    const send = cssRule(css, "\n.agent-composer__send {");
+    expect(send).toContain("width: 32px");
+    expect(send).toContain("height: 32px");
+    expect(send).toContain("border-radius: 999px");
+    expect(send).toContain("background: var(--agent-cta-bg)");
+    expect(send).toContain("color: var(--agent-cta-fg)");
+    expect(cssRule(css, "\n.agent-composer__send:hover:not(:disabled) {")).toContain(
+      "background: var(--agent-cta-bg-hover)",
+    );
+    expect(cssRule(css, "\n.agent-composer__send:disabled {")).toContain("opacity: 0.5");
+    expect(cssRule(css, "\n.agent-composer__send:focus-visible {")).toContain(
+      "box-shadow: var(--agent-focus-ring)",
+    );
+    expect(css).not.toContain(".agent-composer__kbd");
+  });
+
+  it("keeps ghost pickers at 28px with the fill hover and a soft hairline divider", () => {
+    const ghost = cssRule(css, "\n.agent-picker__trigger--ghost {");
+    expect(ghost).toContain("height: 28px");
+    expect(ghost).toContain("font-size: 13px");
+    expect(cssRule(css, "\n.agent-picker__trigger--ghost:hover:not(:disabled) {")).toContain(
+      "background: var(--agent-fill)",
+    );
+    const divider = cssRule(css, "\n.agent-composer__divider {");
+    expect(divider).toContain("height: 16px");
+    expect(divider).toContain("opacity: 0.7");
+  });
+});
+
 const CHECKOUT_ID = "agent-checkout";
 const REPOSITORY_ID = "agent-repository";
+
+function cssRule(source: string, selector: string): string {
+  const start = source.indexOf(selector);
+  expect(start, `Missing CSS selector ${selector}`).toBeGreaterThanOrEqual(0);
+  const bodyStart = source.indexOf("{", start);
+  const end = source.indexOf("}", bodyStart);
+  expect(end).toBeGreaterThan(bodyStart);
+  return source.slice(bodyStart + 1, end);
+}
+
+function withMacPlatform(run: () => void): void {
+  const saved = Object.getOwnPropertyDescriptor(navigator, "userAgentData");
+  Object.defineProperty(navigator, "userAgentData", {
+    configurable: true,
+    value: { platform: "macOS" },
+  });
+  try {
+    run();
+  } finally {
+    if (saved === undefined) Reflect.deleteProperty(navigator, "userAgentData");
+    if (saved !== undefined) Object.defineProperty(navigator, "userAgentData", saved);
+  }
+}
 
 function stubMatchMedia(matches: boolean): void {
   Object.defineProperty(window, "matchMedia", {

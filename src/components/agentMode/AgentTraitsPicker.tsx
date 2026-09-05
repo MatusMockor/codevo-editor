@@ -81,7 +81,7 @@ export function AgentTraitsPicker({
         type="button"
       >
         <span className="agent-picker__value">{summary}</span>
-        <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={12} />
+        <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={14} />
       </button>
       {popover.open && (
         <div

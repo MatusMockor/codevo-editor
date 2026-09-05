@@ -1,12 +1,11 @@
 import { BarChart3, GitBranch, LoaderCircle, RefreshCw, Settings } from "lucide-react";
-import type { Ref } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type {
   AgentProviderHealthState,
   AgentProviderPolicyRegistrationState,
 } from "../../domain/agentProviderHealth";
 import type { AgentCliKind } from "../../domain/agentTask";
-import { AgentProviderGlyph } from "./AgentProviderGlyph";
 
 export interface AgentProviderRailFooterProps {
   readonly management: AgentProviderManagementSurface;
@@ -29,12 +28,31 @@ export function AgentProviderRailFooter({
   usageButtonRef,
   usageOpen,
 }: AgentProviderRailFooterProps) {
+  const enabled = PROVIDERS.filter((provider) => providerEnabled[provider]);
+  const [refreshing, setRefreshing] = useState(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const refreshAll = (): void => {
+    if (refreshing || enabled.length === 0) return;
+    setRefreshing(true);
+    void Promise.allSettled(enabled.map((provider) => management.refresh(provider))).then(() => {
+      if (!mounted.current) return;
+      setRefreshing(false);
+    });
+  };
+
   return (
     <footer className="agent-provider-footer">
       <div aria-label="Agent provider status" className="agent-provider-footer__providers">
-        {PROVIDERS.map((provider) => (
-          <ProviderFooterRow
-            enabled={providerEnabled[provider]}
+        {enabled.map((provider) => (
+          <ProviderFooterActions
             key={provider}
             management={management}
             onOpenSettings={onOpenSettings}
@@ -44,13 +62,22 @@ export function AgentProviderRailFooter({
       </div>
       <nav aria-label="Agent navigation" className="agent-provider-footer__navigation">
         <button
+          aria-label="Open provider settings"
+          className="agent-iconbutton"
+          onClick={onOpenSettings}
+          title={providerSettingsTitle(management, enabled)}
+          type="button"
+        >
+          <Settings aria-hidden="true" size={16} />
+        </button>
+        <button
           aria-label="Open Source Control"
           className="agent-iconbutton"
           onClick={onOpenSourceControl}
           title="Source Control"
           type="button"
         >
-          <GitBranch aria-hidden="true" size={14} />
+          <GitBranch aria-hidden="true" size={16} />
         </button>
         <button
           aria-controls={usageOpen ? "agent-usage-panel-dialog" : undefined}
@@ -62,29 +89,33 @@ export function AgentProviderRailFooter({
           title="Usage"
           type="button"
         >
-          <BarChart3 aria-hidden="true" size={14} />
+          <BarChart3 aria-hidden="true" size={16} />
         </button>
         <button
-          aria-label="Open provider settings"
-          className="agent-iconbutton"
-          onClick={onOpenSettings}
-          title="Settings > Agents"
+          aria-busy={refreshing}
+          aria-label="Refresh provider status"
+          className="agent-iconbutton agent-provider-footer__refresh"
+          disabled={refreshing || enabled.length === 0}
+          onClick={refreshAll}
+          title={refreshing ? "Refreshing provider status…" : "Refresh provider status"}
           type="button"
         >
-          <Settings aria-hidden="true" size={14} />
+          <RefreshCw
+            aria-hidden="true"
+            className={refreshing ? "agent-provider-spin" : undefined}
+            size={16}
+          />
         </button>
       </nav>
     </footer>
   );
 }
 
-function ProviderFooterRow({
-  enabled,
+function ProviderFooterActions({
   management,
   onOpenSettings,
   provider,
 }: {
-  readonly enabled: boolean;
   readonly management: AgentProviderManagementSurface;
   readonly onOpenSettings: () => void;
   readonly provider: AgentCliKind;
@@ -96,31 +127,26 @@ function ProviderFooterRow({
     view.health.kind === "ready" && view.health.update.kind === "available"
       ? view.health.update
       : null;
-  const updateDisabled = view.liveTurnCount > 0 || updating;
+  const busyLabel = providerBusyLabel(provider, updating, registering);
+  const manual =
+    view.health.kind === "ready" &&
+    view.health.update.kind === "manualUpdateAvailable" &&
+    !updating;
+  const register = view.policy.kind === "unregistered" || view.policy.kind === "failed";
+  const offersUpdate = available !== null && !updating && view.policy.kind === "registered";
 
-  if (!enabled) return null;
+  if (busyLabel === null && !offersUpdate && !manual && !register) return null;
 
   return (
     <span className="agent-provider-footer__provider" data-provider={provider}>
-      <span aria-hidden="true" className="agent-provider-footer__glyph">
-        <AgentProviderGlyph kind={provider} />
-      </span>
-      <span
-        className="agent-provider-footer__label"
-        title={providerFooterDetail(view.policy, view.health)}
-      >
-        {updating
-          ? `Updating ${providerLabel(provider)}`
-          : providerFooterLabel(view.policy, view.health)}
-      </span>
-      {updating || registering ? (
-        <LoaderCircle aria-hidden="true" className="agent-provider-spin" size={12} />
+      {busyLabel !== null ? (
+        <LoaderCircle aria-label={busyLabel} className="agent-provider-spin" role="img" size={12} />
       ) : null}
-      {available === null || updating || view.policy.kind !== "registered" ? null : (
+      {!offersUpdate || available === null ? null : (
         <button
           aria-label={`Update ${providerLabel(provider)} to ${available.availableVersion}`}
           className="agent-provider-footer__action"
-          disabled={updateDisabled}
+          disabled={view.liveTurnCount > 0}
           onClick={() => void management.update(provider, available.availableVersion)}
           title={
             view.liveTurnCount > 0
@@ -132,41 +158,59 @@ function ProviderFooterRow({
           Update
         </button>
       )}
-      {view.health.kind === "ready" &&
-      view.health.update.kind === "manualUpdateAvailable" &&
-      !updating ? (
+      {manual && view.health.kind === "ready" ? (
         <button
           aria-label={`View ${providerLabel(provider)} update instructions`}
           className="agent-provider-footer__action"
           onClick={onOpenSettings}
-          title={`Version ${view.health.update.availableVersion} is available; update with the original installer.`}
+          title={manualUpdateTitle(view.health)}
           type="button"
         >
           Update available
         </button>
       ) : null}
-      {view.policy.kind === "unregistered" || view.policy.kind === "failed" ? (
+      {register ? (
         <button
           aria-label={`Retry ${providerLabel(provider)} policy registration`}
           className="agent-provider-footer__action"
           onClick={() => void management.retryRegistration(provider)}
+          title={providerFooterDetail(view.policy, view.health)}
           type="button"
         >
           Register
         </button>
       ) : null}
-      {view.health.kind === "failed" ? (
-        <button
-          aria-label={`Refresh ${providerLabel(provider)} status`}
-          className="agent-provider-footer__action"
-          onClick={() => void management.refresh(provider)}
-          type="button"
-        >
-          <RefreshCw aria-hidden="true" size={11} />
-        </button>
-      ) : null}
     </span>
   );
+}
+
+function manualUpdateTitle(
+  health: Extract<AgentProviderHealthState, { readonly kind: "ready" }>,
+): string {
+  if (health.update.kind !== "manualUpdateAvailable") return readyDetail(health);
+  return `Version ${health.update.availableVersion} is available; update with the original installer.`;
+}
+
+function providerBusyLabel(
+  provider: AgentCliKind,
+  updating: boolean,
+  registering: boolean,
+): string | null {
+  if (updating) return `Updating ${providerLabel(provider)}`;
+  if (registering) return `Registering ${providerLabel(provider)}`;
+  return null;
+}
+
+function providerSettingsTitle(
+  management: AgentProviderManagementSurface,
+  enabled: ReadonlyArray<AgentCliKind>,
+): string {
+  if (enabled.length === 0) return "Settings > Agents";
+  const parts = enabled.map((provider) => {
+    const view = management.providers[provider];
+    return `${providerLabel(provider)} ${providerFooterLabel(view.policy, view.health)}`;
+  });
+  return `Settings > Agents · ${parts.join(" · ")}`;
 }
 
 function providerFooterLabel(

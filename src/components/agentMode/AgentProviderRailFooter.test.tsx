@@ -56,7 +56,7 @@ describe("AgentProviderRailFooter", () => {
     expect(button("Update Claude Code to 2.2.0").disabled).toBe(true);
   });
 
-  it("shows updater progress and supports retrying a failed health check", () => {
+  it("shows updater progress without version text and refreshes every enabled provider", () => {
     const surface = management({
       health: { kind: "failed", reason: "probeFailed", checkedAtEpochMs: null },
       updateState: {
@@ -67,9 +67,93 @@ describe("AgentProviderRailFooter", () => {
       },
     });
     render(surface);
-    expect(host.textContent).toContain("Updating Claude Code");
-    act(() => button("Refresh Claude Code status").click());
+
+    expect(
+      host.querySelector('[data-provider="claudeCode"] [aria-label="Updating Claude Code"]'),
+    ).not.toBeNull();
+    expect(host.textContent).not.toContain("Updating Claude Code");
+    expect(host.textContent).not.toContain("Check failed");
+
+    act(() => button("Refresh provider status").click());
     expect(surface.refresh).toHaveBeenCalledWith("claudeCode");
+    expect(surface.refresh).toHaveBeenCalledWith("codex");
+  });
+
+  it("keeps the navigation icon-only and moves the versions into the settings tooltip", () => {
+    render(management());
+
+    expect(host.querySelector(".agent-provider-footer__label")).toBeNull();
+    expect(host.querySelector(".agent-provider-footer__glyph")).toBeNull();
+    expect(host.textContent).not.toContain("v2.2.0");
+    expect(button("Open provider settings").title).toBe(
+      "Settings > Agents \u00b7 Claude Code v2.2.0 \u00b7 Codex Not registered",
+    );
+    expect(button("Open Source Control")).not.toBeNull();
+    expect(button("Open Usage")).not.toBeNull();
+    expect(button("Refresh provider status")).not.toBeNull();
+  });
+
+  it("renders no provider row while both providers are healthy and registered", () => {
+    const settled = management({
+      health: {
+        kind: "ready",
+        installedVersion: "2.1.245",
+        auth: { kind: "signedIn", label: null },
+        update: { kind: "current", installedVersion: "2.1.245" },
+        checkedAtEpochMs: 1,
+      },
+    });
+    render({
+      ...settled,
+      providers: { ...settled.providers, codex: settled.providers.claudeCode },
+    });
+
+    expect(host.querySelector(".agent-provider-footer__provider")).toBeNull();
+    expect(host.querySelector(".agent-provider-footer__providers")?.childElementCount).toBe(0);
+    expect(button("Refresh provider status")).not.toBeNull();
+  });
+
+  it("guards refresh against a second click while the probes are in flight", async () => {
+    let release: () => void = () => undefined;
+    const pending = new Promise<undefined>((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const refresh = vi.fn(async () => pending);
+    render({ ...management(), refresh });
+
+    act(() => button("Refresh provider status").click());
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(button("Refresh provider status").disabled).toBe(true);
+    expect(button("Refresh provider status").getAttribute("aria-busy")).toBe("true");
+
+    act(() => button("Refresh provider status").click());
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      release();
+      await pending;
+    });
+
+    expect(button("Refresh provider status").disabled).toBe(false);
+    expect(button("Refresh provider status").getAttribute("aria-busy")).toBe("false");
+    act(() => button("Refresh provider status").click());
+    expect(refresh).toHaveBeenCalledTimes(4);
+  });
+
+  it("orders the navigation settings, source control, usage, refresh", () => {
+    render(management());
+    const labels = [
+      ...host.querySelectorAll<HTMLButtonElement>(
+        'nav[aria-label="Agent navigation"] button[aria-label]',
+      ),
+    ].map((element) => element.getAttribute("aria-label"));
+
+    expect(labels).toEqual([
+      "Open provider settings",
+      "Open Source Control",
+      "Open Usage",
+      "Refresh provider status",
+    ]);
   });
 
   it.each(["claudeCode", "codex"] as const)(
@@ -134,12 +218,9 @@ describe("AgentProviderRailFooter", () => {
     });
     render(surface);
 
-    const label = host.querySelector<HTMLElement>(
-      '[data-provider="claudeCode"] .agent-provider-footer__label',
-    );
-    expect(label?.textContent).toBe("Registration failed");
-    expect(label?.title).toContain("registration failed");
-    act(() => button("Retry Claude Code policy registration").click());
+    const register = button("Retry Claude Code policy registration");
+    expect(register.title).toContain("registration failed");
+    act(() => register.click());
     expect(surface.retryRegistration).toHaveBeenCalledWith("claudeCode");
   });
 
@@ -168,9 +249,11 @@ describe("AgentProviderRailFooter", () => {
     render(surface);
 
     expect(button("Retry Claude Code policy registration")).not.toBeNull();
-    expect(button("Refresh Claude Code status")).not.toBeNull();
     expect(button("Retry Codex policy registration")).not.toBeNull();
-    expect(button("Refresh Codex status")).not.toBeNull();
+
+    act(() => button("Refresh provider status").click());
+    expect(surface.refresh).toHaveBeenCalledWith("claudeCode");
+    expect(surface.refresh).toHaveBeenCalledWith("codex");
   });
 
   function render(

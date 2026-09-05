@@ -4,7 +4,6 @@ import { AgentThreadRow } from "./AgentThreadRow";
 import {
   agentRowProjectLabel,
   type AgentRailEmptyState,
-  type AgentRailRowProjectScope,
   type AgentRailSections,
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
@@ -12,7 +11,6 @@ import {
 export interface AgentThreadListProps {
   readonly sections: AgentRailSections;
   readonly projectLabels: ReadonlyMap<string, string>;
-  readonly projectScope: AgentRailRowProjectScope | null;
   readonly selectedThreadId: string | null;
   readonly focusedThreadId: string | null;
   readonly jumpLabels: ReadonlyMap<string, string>;
@@ -36,14 +34,12 @@ export const AgentThreadList = memo(function AgentThreadList({
   onToggleArchived,
   onTogglePin,
   projectLabels,
-  projectScope,
   sections,
   selectedThreadId,
 }: AgentThreadListProps) {
   const archivedTotal = sections.archived.length + sections.hiddenArchivedCount;
   const renderRow = (view: (typeof sections.active)[number]) => {
     const threadId = view.thread.threadId;
-    const repositoryRoot = view.thread.owner.repositoryRoot;
     return (
       <AgentThreadRow
         focused={focusedThreadId === threadId}
@@ -53,11 +49,7 @@ export const AgentThreadList = memo(function AgentThreadList({
         onMenuCommand={onThreadMenuCommand}
         onSelect={onSelectThread}
         onTogglePin={onTogglePin}
-        projectLabel={agentRowProjectLabel(
-          projectLabels.get(repositoryRoot) ?? view.repositoryLabel,
-          repositoryRoot,
-          projectScope,
-        )}
+        projectLabel={agentRowProjectLabel(projectLabels, view)}
         view={view}
       />
     );
@@ -79,7 +71,7 @@ export const AgentThreadList = memo(function AgentThreadList({
             onClick={onToggleArchived}
             type="button"
           >
-            {archivedExpanded ? "Archived" : `Archived (${archivedTotal})`}
+            {`Archived (${archivedTotal})`}
             <span aria-hidden="true" className="agent-shelf__rule" />
             <ChevronDown aria-hidden="true" size={12} />
           </button>

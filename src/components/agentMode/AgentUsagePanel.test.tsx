@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentThread } from "../../domain/agentThread";
+import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import { AgentUsagePanel } from "./AgentUsagePanel";
 
 const NOW = new Date(2026, 7, 28, 12, 0, 0, 0).getTime();
@@ -223,6 +224,35 @@ describe("AgentUsagePanel", () => {
     return new KeyboardEvent("keydown", { bubbles: true, key: value });
   }
 });
+
+describe("agent usage layer styles", () => {
+  const agentModeCss = readAgentModeStyles();
+  const layer = cssRule(agentModeCss, ".workbench-frame > .agent-usage-layer {");
+
+  it("inherits the frame palette instead of remapping it to the shell colours", () => {
+    expect(layer).not.toMatch(/var\(--color-/u);
+    expect(layer).toContain("--agent-fs-md: 13px");
+    expect(layer).toContain("--agent-fs-xs: var(--agent-fs-sm)");
+  });
+
+  it("marks the selected period with the accent chip and no soft glow", () => {
+    const selected = cssRule(
+      agentModeCss,
+      '.agent-usage-panel__periods button[aria-selected="true"]',
+    );
+    expect(selected).toContain("background: var(--agent-fill)");
+    expect(selected).not.toContain("var(--agent-live-soft)");
+  });
+});
+
+function cssRule(source: string, selector: string): string {
+  const start = source.indexOf(selector);
+  expect(start, `Missing CSS selector ${selector}`).toBeGreaterThanOrEqual(0);
+  const bodyStart = source.indexOf("{", start);
+  const end = source.indexOf("}", bodyStart);
+  expect(end).toBeGreaterThan(bodyStart);
+  return source.slice(bodyStart + 1, end);
+}
 
 function thread(
   provider: AgentThread["provider"]["kind"],

@@ -153,7 +153,7 @@ export function AgentSurfacePanel({
                     tabIndex={active ? 0 : -1}
                     type="button"
                   >
-                    <Icon aria-hidden="true" size={12} />
+                    <Icon aria-hidden="true" size={14} />
                     <span>{tab.label}</span>
                   </button>
                   <button
@@ -181,7 +181,7 @@ export function AgentSurfacePanel({
             onClick={() => setTreeVisible((current) => !current)}
             type="button"
           >
-            <PanelLeft aria-hidden="true" size={13} />
+            <PanelLeft aria-hidden="true" size={14} />
           </button>
         )}
         <div className="agent-surface__layout-controls">{layoutControls}</div>

@@ -1,7 +1,5 @@
 // @vitest-environment jsdom
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +8,7 @@ import type { AgentProviderManagementSurface } from "../../application/useAgentP
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { agentModelRows, type AgentModelChoice } from "./agentLaunchPresentation";
 import { agentPlatformModifier } from "./agentSubmitShortcut";
@@ -492,7 +491,7 @@ function management(
 }
 
 describe("AgentModelPicker search styling contract", () => {
-  const css = readFileSync(resolve(import.meta.dirname, "./agentMode.css"), "utf8");
+  const css = readAgentModeStyles();
 
   it("keeps the search field borderless with only a bottom hairline", () => {
     const search = cssRule(css, ".agent-model-picker__search {");

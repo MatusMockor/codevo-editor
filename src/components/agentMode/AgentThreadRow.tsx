@@ -1,24 +1,21 @@
 import { memo, useCallback, useState, type MouseEvent } from "react";
 import { Check, Folder, FolderGit2, Pin } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import type { AgentTaskIsolation } from "../../domain/agentTask";
 import { AgentCompactRelativeTime } from "./agentClock";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
 import { AgentThreadRowMenu } from "./AgentThreadRowMenu";
 import { RenameInput, StatusSlot } from "./AgentThreadRowParts";
-import { agentShipBranchLabel, agentThreadDisplayTitle } from "./agentModePresentation";
+import { agentShipBranchLabel } from "./agentModePresentation";
 import {
   agentRowClassName,
-  agentRowRecedes,
-  agentRowStatus,
-  agentRowVariant,
   agentThreadImportedBadgeLabel,
+  agentThreadRowModel,
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
 
 export interface AgentThreadRowProps {
   readonly view: AgentThreadView;
-  readonly projectLabel: string | null;
+  readonly projectLabel: string;
   readonly on: boolean;
   readonly focused: boolean;
   readonly jumpLabel: string | null;
@@ -37,11 +34,8 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
     props;
   const thread = view.thread;
   const threadId = thread.threadId;
-  const status = agentRowStatus(view);
-  const variant = agentRowVariant(view);
-  const recede = agentRowRecedes(view, status, on);
-  const branch = agentShipBranchLabel(view.ship);
-  const title = agentThreadDisplayTitle(thread);
+  const model = agentThreadRowModel(view, on, projectLabel);
+  const status = model.status;
   const importedLabel = agentThreadImportedBadgeLabel(thread.externalOrigin);
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -64,11 +58,11 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   };
 
   const Icon = thread.target.isolation === "worktree" ? FolderGit2 : Folder;
-  const rowClass = agentRowClassName(variant, on, recede, status, view.unread);
+  const rowClass = agentRowClassName(model.variant, on, model.recede, status, view.unread);
   const menuNode = menu !== null && (
     <AgentThreadRowMenu
       archived={thread.archived}
-      branch={branch}
+      branch={agentShipBranchLabel(view.ship)}
       onClose={closeMenu}
       onCommand={command}
       onRename={() => setRenaming(true)}
@@ -79,7 +73,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
     />
   );
 
-  if (variant === "slim") {
+  if (model.variant === "slim") {
     return (
       <li className="agent-slim-slot">
         <div
@@ -99,7 +93,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
               onCommit={commitRename}
             />
           ) : (
-            <span className="agent-row__title">{title}</span>
+            <span className="agent-row__title">{model.title}</span>
           )}
           {importedLabel !== null && <ImportedBadge label={importedLabel} />}
           <span className="agent-row__time agent-num">
@@ -124,7 +118,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
       >
         <div className="agent-row__line1">
           <Icon aria-hidden="true" className="agent-row__icon" size={16} />
-          {projectLabel !== null && <span className="agent-row__project">{projectLabel}</span>}
+          <span className="agent-row__project">{model.project}</span>
           {thread.pinned && (
             <button
               aria-label="Unpin thread"
@@ -169,20 +163,16 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
               onCommit={commitRename}
             />
           ) : (
-            <span className="agent-row__title">{title}</span>
+            <span className="agent-row__title">{model.title}</span>
           )}
         </div>
         <div className="agent-row__line3">
-          <span className="agent-row__branch">
-            {branch ?? isolationLabel(thread.target.isolation)}
-          </span>
-          {view.changeSummary !== null && !view.changeSummary.loading && (
-            <span className="agent-row__files agent-num">
-              {filesLabel(view.changeSummary.files.length)}
-            </span>
+          <span className="agent-row__branch">{model.branch}</span>
+          {model.filesLabel !== null && (
+            <span className="agent-row__files agent-num">{model.filesLabel}</span>
           )}
           {importedLabel !== null && <ImportedBadge label={importedLabel} />}
-          <AgentProviderGlyph kind={thread.provider.kind} />
+          <AgentProviderGlyph kind={model.provider} />
         </div>
         {jumpLabel !== null && (
           <span aria-hidden="true" className="agent-row__jump agent-num">
@@ -201,12 +191,4 @@ function ImportedBadge({ label }: { readonly label: string }) {
       {label}
     </span>
   );
-}
-
-function filesLabel(count: number): string {
-  return count === 1 ? "1 file" : `${count} files`;
-}
-
-function isolationLabel(isolation: AgentTaskIsolation): string {
-  return isolation === "worktree" ? "worktree" : "in place";
 }
