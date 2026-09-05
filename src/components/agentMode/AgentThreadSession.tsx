@@ -1,7 +1,15 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import type { AgentTurn } from "../../domain/agentThread";
+import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
+import type { AgentCliKind } from "../../domain/agentTask";
+import {
+  agentProviderErrorHeadline,
+  classifyAgentProviderError,
+  sameAgentProviderError,
+  type AgentProviderError,
+} from "../../domain/agentOutput/agentProviderError";
+import { isAgentRawOutputNoise } from "../../domain/agentOutput/agentRawOutput";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import {
   MIN_THREAD_SEARCH_QUERY_CHARS,
@@ -19,6 +27,7 @@ import {
   agentTurnProjection,
   agentTurnSubagentSummary,
   agentTurnWorkFold,
+  type AgentRawLine,
   type AgentTurnItem,
 } from "./agentModePresentation";
 
@@ -36,6 +45,11 @@ interface AgentTurnHighlight {
 interface AgentItemHighlight {
   readonly query: string;
   readonly current: number | null;
+}
+
+interface AgentTurnErrorContext {
+  readonly provider: AgentCliKind;
+  readonly installedVersion: string | null;
 }
 
 interface AgentParagraphRun {
@@ -178,6 +192,7 @@ function AgentThreadSessionBody({
             <AgentTurnView
               highlight={highlightFor(turn.turnId)}
               key={turn.turnId}
+              provider={record.provider.kind}
               renderProbe={turnRenderProbe}
               textClipboard={textClipboard}
               turn={turn}
@@ -207,11 +222,13 @@ function AgentThreadSessionBody({
 
 const AgentTurnView = memo(function AgentTurnView({
   highlight = null,
+  provider,
   renderProbe,
   textClipboard,
   turn,
 }: {
   readonly highlight?: AgentTurnHighlight | null;
+  readonly provider: AgentCliKind;
   readonly renderProbe?: (turnId: string) => void;
   readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentTurn;
@@ -220,10 +237,19 @@ const AgentTurnView = memo(function AgentTurnView({
   const projection = agentTurnProjection(turn.events);
   const subagents = agentTurnSubagentSummary(turn.events);
   const running = turn.status.kind === "pending" || turn.status.kind === "running";
-  const empty = projection.items.length === 0 && projection.rawLines.length === 0;
+  const errorContext: AgentTurnErrorContext = { provider, installedVersion: turn.cliVersion };
+  const rawLines = projection.rawLines.filter(
+    (line) => !isAgentRawOutputNoise(provider, line.stream, line.raw),
+  );
+  const empty = projection.items.length === 0 && rawLines.length === 0;
   const workFold = agentTurnWorkFold(projection.items, running);
   const cursor = highlight?.current ?? null;
   const promptCurrent = cursor !== null && cursor.kind === "prompt" ? cursor.occurrence : null;
+  const rawOpen = rawOutputExpanded(turn.status);
+  const rawOutput =
+    rawLines.length === 0 ? null : <AgentRawOutput lines={rawLines} open={rawOpen} />;
+  const foldedRawOutput = workFold !== null && !rawOpen ? rawOutput : null;
+  const failure = turnFailure(turn.status, errorContext);
 
   return (
     <article
@@ -255,6 +281,8 @@ const AgentTurnView = memo(function AgentTurnView({
         {subagents !== null && <AgentSubagentSummary summary={subagents} />}
         {workFold !== null && (
           <AgentTurnWork
+            errorContext={errorContext}
+            footer={foldedRawOutput}
             highlight={highlight}
             items={workFold.workItems}
             key={running ? "running-work" : "settled-work"}
@@ -266,6 +294,7 @@ const AgentTurnView = memo(function AgentTurnView({
         )}
         {(workFold?.visibleItems ?? projection.items).map((item) => (
           <AgentTurnItemView
+            errorContext={errorContext}
             highlight={itemHighlight(highlight, item.key)}
             item={item}
             key={item.key}
@@ -280,13 +309,8 @@ const AgentTurnView = memo(function AgentTurnView({
         )}
       </div>
 
-      {projection.rawLines.length > 0 && (
-        <details className="agent-raw">
-          <summary className="agent-microlabel">raw output</summary>
-          <pre className="agent-raw__lines">
-            {projection.rawLines.map((line) => line.raw).join("\n")}
-          </pre>
-        </details>
+      {foldedRawOutput === null && rawOutput !== null && (
+        <div className="agent-message-actions">{rawOutput}</div>
       )}
 
       {turn.eventsTruncated && (
@@ -297,17 +321,37 @@ const AgentTurnView = memo(function AgentTurnView({
         <p className="agent-note agent-note--warning">Interrupted by app restart</p>
       )}
 
-      {turn.status.kind === "failed" && (
+      {failure !== null && !repeatsLastError(failure, projection.items, errorContext) && (
         <section className="agent-finale agent-finale--bad">
           <span className="agent-microlabel agent-microlabel--bad">run failed</span>
-          <p className="agent-finale__body">{turn.status.message}</p>
+          <p className="agent-finale__body">
+            {agentProviderErrorHeadline(failure, errorContext.installedVersion)}
+          </p>
+          <AgentProviderErrorHint error={failure} />
         </section>
       )}
     </article>
   );
 });
 
+function AgentRawOutput({
+  lines,
+  open,
+}: {
+  readonly lines: ReadonlyArray<AgentRawLine>;
+  readonly open: boolean;
+}) {
+  return (
+    <details className="agent-raw" open={open || undefined}>
+      <summary className="agent-raw__toggle">Raw output</summary>
+      <pre className="agent-raw__lines">{lines.map((line) => line.raw).join("\n")}</pre>
+    </details>
+  );
+}
+
 function AgentTurnWork({
+  errorContext,
+  footer,
   highlight,
   items,
   running,
@@ -315,6 +359,8 @@ function AgentTurnWork({
   textClipboard,
   turn,
 }: {
+  readonly errorContext: AgentTurnErrorContext;
+  readonly footer: ReactNode;
   readonly highlight: AgentTurnHighlight | null;
   readonly items: ReadonlyArray<AgentTurnItem>;
   readonly running: boolean;
@@ -344,12 +390,14 @@ function AgentTurnWork({
       <div className="agent-work__events">
         {items.map((item) => (
           <AgentTurnItemView
+            errorContext={errorContext}
             highlight={itemHighlight(highlight, item.key)}
             item={item}
             key={item.key}
             textClipboard={textClipboard}
           />
         ))}
+        {footer}
       </div>
     </details>
   );
@@ -380,10 +428,12 @@ function AgentSubagentSummary({
 }
 
 function AgentTurnItemView({
+  errorContext,
   highlight,
   item,
   textClipboard,
 }: {
+  readonly errorContext: AgentTurnErrorContext;
   readonly highlight: AgentItemHighlight | null;
   readonly item: AgentTurnItem;
   readonly textClipboard: TextClipboardGateway | null;
@@ -417,6 +467,11 @@ function AgentTurnItemView({
   }
 
   if (item.kind === "result") {
+    const error = item.isError
+      ? classifyAgentProviderError(item.text, errorContext.provider)
+      : null;
+    const text =
+      error === null ? item.text : agentProviderErrorHeadline(error, errorContext.installedVersion);
     return (
       <section
         className={item.isError ? "agent-finale agent-finale--bad" : "agent-finale"}
@@ -427,22 +482,19 @@ function AgentTurnItemView({
         >
           {item.isError ? "run failed" : "result"}
         </span>
-        {item.text !== "" && (
+        {text !== "" && (
           <p className="agent-finale__body">
             <HighlightRun
               current={highlight?.current ?? null}
               query={highlight?.query ?? ""}
-              text={item.text}
+              text={text}
             />
           </p>
         )}
-        {item.text !== "" && (
+        {error !== null && <AgentProviderErrorHint error={error} />}
+        {text !== "" && (
           <div className="agent-message-actions">
-            <AgentMessageCopyButton
-              clipboard={textClipboard}
-              label="AI response"
-              text={item.text}
-            />
+            <AgentMessageCopyButton clipboard={textClipboard} label="AI response" text={text} />
           </div>
         )}
       </section>
@@ -462,12 +514,84 @@ function AgentTurnItemView({
     );
   }
 
+  const error = classifyAgentProviderError(item.message, errorContext.provider);
+
+  if (error.detail.kind === "advisory") {
+    return (
+      <p className="agent-note" data-agent-event={item.key}>
+        {error.detail.text}
+      </p>
+    );
+  }
+
   return (
-    <section className="agent-finale agent-finale--bad">
+    <section className="agent-finale agent-finale--bad" data-agent-event={item.key}>
       <span className="agent-microlabel agent-microlabel--bad">error</span>
-      <p className="agent-finale__body">{item.message}</p>
+      <p className="agent-finale__body">
+        {agentProviderErrorHeadline(error, errorContext.installedVersion)}
+      </p>
+      <AgentProviderErrorHint error={error} />
     </section>
   );
+}
+
+function AgentProviderErrorHint({ error }: { readonly error: AgentProviderError }): ReactNode {
+  if (error.detail.kind !== "unsupportedModelForCliVersion") return null;
+
+  return (
+    <>
+      <p className="agent-note">Open Settings &gt; Agents to update it.</p>
+      <details className="agent-raw">
+        <summary className="agent-raw__toggle">Provider message</summary>
+        <pre className="agent-raw__lines">{error.raw}</pre>
+      </details>
+    </>
+  );
+}
+
+function rawOutputExpanded(status: AgentTurnStatus): boolean {
+  if (status.kind === "failed") return true;
+  if (status.kind === "interrupted") return true;
+
+  return status.kind === "exited" && status.exitCode !== 0;
+}
+
+function turnFailure(
+  status: AgentTurnStatus,
+  context: AgentTurnErrorContext,
+): AgentProviderError | null {
+  if (status.kind !== "failed") return null;
+
+  return classifyAgentProviderError(status.message, context.provider);
+}
+
+function repeatsLastError(
+  failure: AgentProviderError,
+  items: ReadonlyArray<AgentTurnItem>,
+  context: AgentTurnErrorContext,
+): boolean {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const reported = reportedError(items[index], context);
+    if (reported === null) continue;
+    if (reported.detail.kind === "advisory") continue;
+
+    return sameAgentProviderError(failure, reported);
+  }
+
+  return false;
+}
+
+function reportedError(
+  item: AgentTurnItem | undefined,
+  context: AgentTurnErrorContext,
+): AgentProviderError | null {
+  if (item === undefined) return null;
+  if (item.kind === "error") return classifyAgentProviderError(item.message, context.provider);
+  if (item.kind === "result" && item.isError) {
+    return classifyAgentProviderError(item.text, context.provider);
+  }
+
+  return null;
 }
 
 function formatTokens(tokens: number): string {

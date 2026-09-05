@@ -526,6 +526,7 @@ describe("AgentProviderCard", () => {
     ["warning", signedOutHealth(), true],
     ["danger", { kind: "notConfigured" } as AgentProviderHealthState, true],
     ["checking", { kind: "checking", generation: 1 } as AgentProviderHealthState, true],
+    ["neutral", authUnknownHealth(), true],
     ["dimmed", readyHealth(), false],
   ] as const)("marks the status dot as %s", (tone, health, enabled) => {
     render(management({ health }), {
@@ -533,6 +534,26 @@ describe("AgentProviderCard", () => {
     });
 
     expect(host.querySelector(".settings-provider__glyph")?.getAttribute("data-tone")).toBe(tone);
+  });
+
+  it("explains an unchecked sign-in instead of warning about authentication", () => {
+    render(management({ health: authUnknownHealth() }));
+
+    const description = host.querySelector(".settings-provider__desc");
+
+    expect(description?.textContent).toBe("Sign-in status not checked");
+    expect(description?.getAttribute("title")).toBe(
+      "Codevo could not determine whether you are signed in; the CLI is installed and up to date.",
+    );
+
+    const describedBy = description?.getAttribute("aria-describedby");
+
+    expect(describedBy).not.toBeNull();
+    expect(host.querySelector(`#${describedBy}`)?.textContent).toBe(
+      "Codevo could not determine whether you are signed in; the CLI is installed and up to date.",
+    );
+    expect(host.querySelector(`#${describedBy}`)?.className).toBe("settings-visually-hidden");
+    expect(host.querySelector('[aria-label="Sign in"]')).toBeNull();
   });
 
   function render(
@@ -657,6 +678,16 @@ function readyHealth(overrides: ReadyHealthOverrides = {}): AgentProviderHealthS
       },
     },
     checkedAtEpochMs: overrides.checkedAtEpochMs ?? NOW,
+  };
+}
+
+function authUnknownHealth(): AgentProviderHealthState {
+  return {
+    kind: "ready",
+    installedVersion: "2.1.245",
+    auth: { kind: "unknown" },
+    update: { kind: "current", installedVersion: "2.1.245" },
+    checkedAtEpochMs: NOW,
   };
 }
 

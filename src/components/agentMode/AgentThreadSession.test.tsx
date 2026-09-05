@@ -12,6 +12,7 @@ import type {
   AgentTurnEvent,
   AgentTurnStatus,
 } from "../../domain/agentThread";
+import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { GitChangedFile } from "../../domain/git";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
@@ -361,8 +362,64 @@ describe("AgentThreadSession", () => {
 
     expect(reasoning?.querySelector("summary")?.textContent).toBe("reasoning");
     expect((reasoning as HTMLDetailsElement | null)?.open).toBe(false);
-    expect(raw?.querySelector("summary")?.textContent).toBe("raw output");
+    expect(raw?.querySelector("summary")?.textContent).toBe("Raw output");
+    expect(raw?.querySelector("summary")?.className).toBe("agent-raw__toggle");
+    expect((raw as HTMLDetailsElement | null)?.open).toBe(false);
+    expect(raw?.closest(".agent-work__events")).not.toBeNull();
     expect(raw?.textContent).toContain("npm warn deprecated");
+  });
+
+  it("tucks raw output into the turn footer when there is no work fold", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Refactor the parser", { kind: "exited", exitCode: 0 }, [
+            { kind: "unknownLine", stream: "stderr", raw: "npm warn deprecated", clipped: false },
+          ]),
+        ],
+      }),
+    });
+
+    const raw = host.querySelector("details.agent-raw");
+
+    expect(raw?.closest(".agent-message-actions")).not.toBeNull();
+    expect((raw as HTMLDetailsElement | null)?.open).toBe(false);
+  });
+
+  it("expands raw output only after the turn failed", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Refactor the parser", { kind: "failed", message: "spawn failed" }, [
+            { kind: "unknownLine", stream: "stderr", raw: "npm warn deprecated", clipped: false },
+          ]),
+        ],
+      }),
+    });
+
+    expect((host.querySelector("details.agent-raw") as HTMLDetailsElement | null)?.open).toBe(true);
+  });
+
+  it("drops the Codex stdin notice from raw output", () => {
+    render({
+      thread: threadView({
+        provider: "codex",
+        turns: [
+          turn("agt-1-t1", "povedz ahoj", { kind: "exited", exitCode: 0 }, [
+            {
+              kind: "unknownLine",
+              stream: "stderr",
+              raw: "Reading additional input from stdin...",
+              clipped: false,
+            },
+            { kind: "assistantText", text: "Ahoj!" },
+          ]),
+        ],
+      }),
+    });
+
+    expect(host.querySelector("details.agent-raw")).toBeNull();
+    expect(host.textContent).toContain("Ahoj!");
   });
 
   it("renders the result as a finale and an error as a bad finale", () => {
@@ -380,6 +437,89 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("Done in 4 files.");
     expect(host.textContent).toContain("The MCP server refused the token.");
     expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(1);
+  });
+
+  it("explains a model the installed CLI cannot run once, without the raw JSON", () => {
+    const payload = JSON.stringify({
+      type: "error",
+      status: 400,
+      error: {
+        type: "invalid_request_error",
+        message:
+          "The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+      },
+    });
+
+    render({
+      thread: threadView({
+        provider: "codex",
+        turns: [
+          {
+            ...turn("agt-1-t1", "Refactor the parser", { kind: "failed", message: payload }, [
+              { kind: "error", message: payload },
+            ]),
+            cliVersion: "0.149.1",
+          },
+        ],
+      }),
+    });
+
+    const blocks = host.querySelectorAll(".agent-finale--bad");
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.querySelector(".agent-finale__body")?.textContent).toBe(
+      "Codex 0.149.1 cannot run gpt-6-astra. Update Codex and try again.",
+    );
+    expect(blocks[0]?.querySelector(".agent-note")?.textContent).toBe(
+      "Open Settings > Agents to update it.",
+    );
+    expect(blocks[0]?.querySelector(".agent-finale__body")?.textContent).not.toContain(
+      "invalid_request_error",
+    );
+    expect(blocks[0]?.querySelector("details.agent-raw")?.textContent).toContain(
+      "invalid_request_error",
+    );
+  });
+
+  it("keeps the Codex hook-trust notice a quiet note inside the work fold", () => {
+    const notice =
+      "`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.";
+
+    render({
+      thread: threadView({
+        provider: "codex",
+        turns: [
+          turn("agt-1-t1", "povedz ahoj", { kind: "exited", exitCode: 0 }, [
+            { kind: "error", message: notice },
+            { kind: "reasoning", text: "Answering." },
+            { kind: "assistantText", text: "Ahoj!" },
+          ]),
+        ],
+      }),
+    });
+
+    const note = host.querySelector(".agent-note");
+
+    expect(note?.textContent).toBe(notice);
+    expect(note?.closest(".agent-work__events")).not.toBeNull();
+    expect(host.querySelector(".agent-finale--bad")).toBeNull();
+    expect(host.querySelector(".agent-microlabel--bad")).toBeNull();
+  });
+
+  it("keeps an unknown run failure and its full text", () => {
+    render({
+      thread: threadView({
+        turns: [
+          turn("agt-1-t1", "Refactor the parser", { kind: "failed", message: "spawn failed" }, [
+            { kind: "error", message: "The MCP server refused the token." },
+          ]),
+        ],
+      }),
+    });
+
+    expect(host.textContent).toContain("The MCP server refused the token.");
+    expect(host.textContent).toContain("spawn failed");
+    expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(2);
   });
 
   it("renders only the last rendered-events window and counts the hidden ones", () => {
@@ -930,6 +1070,7 @@ function importedOrigin(exchangesTruncated = false): NonNullable<AgentThread["ex
 }
 
 interface ThreadViewOptions {
+  readonly provider?: AgentCliKind;
   readonly status?: AgentTurnStatus;
   readonly turns?: ReadonlyArray<AgentTurn>;
   readonly externalOrigin?: AgentThread["externalOrigin"];
@@ -950,7 +1091,7 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
     threadId: "agt-1",
     owner: { rootKey: ROOT, ownerId: "agent-root:app", repositoryRoot: ROOT },
     target: { isolation: "worktree", worktreePath: WORKTREE },
-    provider: { kind: "claudeCode", sessionId: "session-abcdefgh" },
+    provider: { kind: overrides.provider ?? "claudeCode", sessionId: "session-abcdefgh" },
     title: "Refactor the parser",
     pinned: false,
     archived: false,

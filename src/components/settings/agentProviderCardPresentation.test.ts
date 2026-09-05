@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { AgentProviderManagementView } from "../../application/useAgentProviderManagement";
-import type { AgentProviderHealthState } from "../../domain/agentProviderHealth";
+import type {
+  AgentProviderHealthState,
+  AgentProviderUpdateAvailability,
+} from "../../domain/agentProviderHealth";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import {
+  providerAuthLabel,
   providerCheckedLabel,
   providerChecksSummaryLabel,
   providerHeadline,
+  providerHeadlineTitle,
   providerSettingsAtDefault,
   providerStatusTone,
 } from "./agentProviderCardPresentation";
@@ -46,9 +51,52 @@ describe("agentProviderCardPresentation", () => {
     ["danger", { kind: "notConfigured" } as AgentProviderHealthState, true],
     ["danger", { kind: "failed", reason: "probeFailed", checkedAtEpochMs: NOW } as const, true],
     ["checking", { kind: "checking", generation: 1 } as const, true],
+    ["neutral", authUnknown(), true],
+    ["neutral", authUnknown({ kind: "checksDisabled" }), true],
+    [
+      "warning",
+      authUnknown({
+        kind: "manualUpdateAvailable",
+        installedVersion: "2.1.245",
+        availableVersion: "2.2.0",
+      }),
+      true,
+    ],
     ["dimmed", ready(NOW), false],
   ])("maps the status dot to %s", (tone, health, enabled) => {
     expect(providerStatusTone(enabled, view({ health }))).toBe(tone);
+  });
+
+  it("explains an unchecked sign-in only while the CLI is installed and up to date", () => {
+    expect(providerHeadlineTitle(view({ health: authUnknown() }), true)).toBe(
+      "Codevo could not determine whether you are signed in; the CLI is installed and up to date.",
+    );
+    expect(
+      providerHeadlineTitle(view({ health: authUnknown({ kind: "checksDisabled" }) }), true),
+    ).toBe(
+      "Codevo could not determine whether you are signed in; the CLI is installed and update checks are disabled.",
+    );
+    expect(
+      providerHeadlineTitle(
+        view({
+          health: authUnknown({
+            kind: "manualUpdateAvailable",
+            installedVersion: "2.1.245",
+            availableVersion: "2.2.0",
+          }),
+        }),
+        true,
+      ),
+    ).toBeNull();
+    expect(providerHeadlineTitle(view({ health: ready(NOW) }), true)).toBeNull();
+    expect(providerHeadlineTitle(view({ health: authUnknown() }), false)).toBeNull();
+  });
+
+  it("stops calling an unchecked sign-in an authentication problem", () => {
+    expect(providerHeadline(view({ health: authUnknown() }), true)).toBe(
+      "Sign-in status not checked",
+    );
+    expect(providerAuthLabel(authUnknown())).toBe("Sign-in status not checked");
   });
 
   it.each([
@@ -161,6 +209,18 @@ function signedOut(): AgentProviderHealthState {
     installedVersion: "2.1.245",
     auth: { kind: "signedOut" },
     update: { kind: "current", installedVersion: "2.1.245" },
+    checkedAtEpochMs: NOW,
+  };
+}
+
+function authUnknown(
+  update: AgentProviderUpdateAvailability = { kind: "current", installedVersion: "2.1.245" },
+): AgentProviderHealthState {
+  return {
+    kind: "ready",
+    installedVersion: "2.1.245",
+    auth: { kind: "unknown" },
+    update,
     checkedAtEpochMs: NOW,
   };
 }

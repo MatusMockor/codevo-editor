@@ -1223,6 +1223,19 @@ code.settings-readout,
   background: var(--settings-danger);
 }
 
+.settings-provider__glyph[data-tone="neutral"] .settings-provider__dot {
+  background: var(--settings-muted-fg);
+}
+
+.settings-visually-hidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .settings-provider__glyph[data-tone="checking"] .settings-provider__dot {
   top: -3px;
   left: -3px;

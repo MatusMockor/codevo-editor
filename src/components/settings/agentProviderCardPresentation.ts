@@ -3,6 +3,7 @@ import type {
   AgentProviderAuthState,
   AgentProviderHealthState,
   AgentProviderPolicyRegistrationState,
+  AgentProviderUpdateAvailability,
 } from "../../domain/agentProviderHealth";
 import type { AgentProviderSignInState } from "../../domain/agentProviderSignIn";
 import {
@@ -11,7 +12,16 @@ import {
 } from "../../domain/agentProviderSettings";
 import type { AgentCliKind } from "../../domain/agentSettings";
 
-export type AgentProviderStatusTone = "success" | "warning" | "danger" | "checking" | "dimmed";
+export type AgentProviderStatusTone =
+  "success" | "warning" | "danger" | "checking" | "neutral" | "dimmed";
+
+export const AGENT_PROVIDER_AUTH_UNKNOWN_LABEL = "Sign-in status not checked";
+export const AGENT_PROVIDER_AUTH_UNKNOWN_TITLE =
+  "Codevo could not determine whether you are signed in; the CLI is installed and up to date.";
+export const AGENT_PROVIDER_AUTH_UNKNOWN_TITLE_WITHOUT_CHECKS =
+  "Codevo could not determine whether you are signed in; the CLI is installed and update checks are disabled.";
+
+type AgentProviderReadyHealth = Extract<AgentProviderHealthState, { readonly kind: "ready" }>;
 
 export interface AgentProviderSignInPresentation {
   readonly role: "status" | "alert";
@@ -56,9 +66,52 @@ export function providerStatusTone(
     case "failed":
       return "danger";
     case "ready":
-      return view.health.auth.kind === "signedIn" ? "success" : "warning";
+      return readyStatusTone(view.health);
     default:
       return unsupportedProviderValue(view.health, "provider health state");
+  }
+}
+
+export function providerHeadlineTitle(
+  view: AgentProviderManagementView,
+  enabled: boolean,
+): string | null {
+  if (!enabled) return null;
+  if (view.health.kind !== "ready") return null;
+  if (view.health.auth.kind !== "unknown") return null;
+  if (providerUpdateProblem(view.health.update)) return null;
+  if (view.health.update.kind === "checksDisabled") {
+    return AGENT_PROVIDER_AUTH_UNKNOWN_TITLE_WITHOUT_CHECKS;
+  }
+
+  return AGENT_PROVIDER_AUTH_UNKNOWN_TITLE;
+}
+
+function readyStatusTone(health: AgentProviderReadyHealth): AgentProviderStatusTone {
+  switch (health.auth.kind) {
+    case "signedIn":
+      return "success";
+    case "signedOut":
+      return "warning";
+    case "unknown":
+      return providerUpdateProblem(health.update) ? "warning" : "neutral";
+    default:
+      return unsupportedProviderValue(health.auth, "provider auth state");
+  }
+}
+
+function providerUpdateProblem(update: AgentProviderUpdateAvailability): boolean {
+  switch (update.kind) {
+    case "checking":
+    case "checksDisabled":
+    case "current":
+      return false;
+    case "available":
+    case "manualUpdateAvailable":
+    case "unavailable":
+      return true;
+    default:
+      return unsupportedProviderValue(update, "provider update availability");
   }
 }
 
@@ -121,7 +174,7 @@ export function providerAuthLabel(health: AgentProviderHealthState): string {
     case "signedOut":
       return "Signed out";
     case "unknown":
-      return "Authentication unknown";
+      return AGENT_PROVIDER_AUTH_UNKNOWN_LABEL;
     default:
       return unsupportedProviderValue(health.auth, "provider auth state");
   }
@@ -239,7 +292,7 @@ function authHeadline(auth: AgentProviderAuthState): string {
     case "signedOut":
       return "Not authenticated - Sign in via the CLI to authenticate again.";
     case "unknown":
-      return "Authentication unknown.";
+      return AGENT_PROVIDER_AUTH_UNKNOWN_LABEL;
     default:
       return unsupportedProviderValue(auth, "provider auth state");
   }

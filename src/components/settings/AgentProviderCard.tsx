@@ -11,6 +11,7 @@ import { SettingsButton } from "./primitives/SettingsButton";
 import { SettingsSwitch } from "./primitives/SettingsSwitch";
 import {
   providerHeadline,
+  providerHeadlineTitle,
   providerLabel,
   providerSettingsAtDefault,
   providerSignedOut,
@@ -81,6 +82,8 @@ export function AgentProviderCard({
     signInOffered ? signInBlockedReason : null,
   );
   const signInStatusId = `${provider}-sign-in-status`;
+  const headlineTitle = providerHeadlineTitle(view, enabled);
+  const headlineTitleId = `${provider}-headline-note`;
   const updateBlockedReason = providerUpdateBlockedReason(
     provider,
     view,
@@ -168,7 +171,18 @@ export function AgentProviderCard({
               </SettingsButton>
             )}
           </div>
-          <p className="settings-provider__desc">{providerHeadline(view, enabled)}</p>
+          <p
+            aria-describedby={headlineTitle === null ? undefined : headlineTitleId}
+            className="settings-provider__desc"
+            title={headlineTitle ?? undefined}
+          >
+            {providerHeadline(view, enabled)}
+          </p>
+          {headlineTitle === null ? null : (
+            <span className="settings-visually-hidden" id={headlineTitleId}>
+              {headlineTitle}
+            </span>
+          )}
           {signInStatus === null ? (
             <span id={signInStatusId} />
           ) : (

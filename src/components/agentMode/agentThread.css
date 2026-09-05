@@ -358,10 +358,7 @@
 }
 
 .agent-raw {
-  border-radius: var(--agent-radius-md);
-  background: var(--agent-well);
-  box-shadow: inset 0 0 0 1px var(--agent-hairline);
-  padding: 6px 10px;
+  min-width: 0;
 }
 
 .agent-raw > summary {
@@ -369,9 +366,24 @@
   list-style: none;
 }
 
+.agent-raw__toggle {
+  color: var(--agent-text-subtle);
+  font-size: var(--agent-fs-2xs);
+  transition: color 120ms ease;
+}
+
+.agent-raw__toggle:hover,
+.agent-raw[open] > .agent-raw__toggle {
+  color: var(--agent-text-muted);
+}
+
 .agent-raw__lines {
   overflow: auto;
   max-height: 220px;
+  border-radius: 10px;
+  background: var(--agent-code-background);
+  box-shadow: inset 0 0 0 1px var(--agent-hairline);
+  padding: 8px 10px;
   color: var(--agent-text-muted);
   font-family: var(--agent-mono);
   font-size: var(--agent-fs-xs);
