@@ -40,20 +40,15 @@ pub enum AgentProviderAuthState {
 pub enum ClaudeAuthStatusCapability {
     Json,
     Text,
-    Unavailable,
 }
 
-const CLAUDE_AUTH_CAPABILITY_FIXTURES: [(&str, ClaudeAuthStatusCapability); 3] = [
-    ("2.1.247", ClaudeAuthStatusCapability::Json),
-    ("2.1.83", ClaudeAuthStatusCapability::Text),
-    ("0.2.0", ClaudeAuthStatusCapability::Unavailable),
+const CLAUDE_AUTH_LABEL_KEYS: [&str; 5] = [
+    "subscriptionType",
+    "orgName",
+    "email",
+    "authMethod",
+    "apiProvider",
 ];
-
-pub fn claude_auth_capability(version: &str) -> Option<ClaudeAuthStatusCapability> {
-    CLAUDE_AUTH_CAPABILITY_FIXTURES
-        .iter()
-        .find_map(|(candidate, capability)| (*candidate == version).then_some(*capability))
-}
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(
@@ -203,51 +198,37 @@ fn parse_claude_auth(output: &str) -> AgentProviderAuthState {
     let Some(object) = value.as_object() else {
         return AgentProviderAuthState::Unknown;
     };
-    if object.keys().any(|key| {
-        !matches!(
-            key.as_str(),
-            "loggedIn"
-                | "authMethod"
-                | "apiProvider"
-                | "analyticsDisabled"
-                | "email"
-                | "orgId"
-                | "orgName"
-                | "subscriptionType"
-        )
-    }) {
-        return AgentProviderAuthState::Unknown;
-    }
     let Some(logged_in) = object.get("loggedIn").and_then(Value::as_bool) else {
         return AgentProviderAuthState::Unknown;
     };
-    if object
-        .get("analyticsDisabled")
-        .is_some_and(|value| !value.is_boolean())
-    {
-        return AgentProviderAuthState::Unknown;
-    }
-    if [
-        "authMethod",
-        "apiProvider",
-        "email",
-        "orgId",
-        "orgName",
-        "subscriptionType",
-    ]
-    .into_iter()
-    .any(|key| object.get(key).is_some_and(|value| !value.is_string()))
+    if CLAUDE_AUTH_LABEL_KEYS
+        .into_iter()
+        .any(|key| object.get(key).is_some_and(|value| !value.is_string()))
     {
         return AgentProviderAuthState::Unknown;
     }
     if !logged_in {
         return AgentProviderAuthState::SignedOut;
     }
-    let label = ["subscriptionType", "orgName", "email", "authMethod"]
+    let label = CLAUDE_AUTH_LABEL_KEYS
         .into_iter()
         .filter_map(|key| object.get(key).and_then(Value::as_str))
         .find_map(valid_auth_label);
     AgentProviderAuthState::SignedIn { label }
+}
+
+pub fn parse_claude_auth_state(
+    stdout: &[u8],
+    stderr: &[u8],
+) -> (AgentProviderAuthState, ClaudeAuthStatusCapability) {
+    let structured = parse_auth_state(AgentCliInvocation::ClaudeCode, stdout, stderr);
+    if structured != AgentProviderAuthState::Unknown {
+        return (structured, ClaudeAuthStatusCapability::Json);
+    }
+    (
+        parse_claude_text_auth_state(stdout, stderr),
+        ClaudeAuthStatusCapability::Text,
+    )
 }
 
 pub fn parse_claude_text_auth_state(stdout: &[u8], stderr: &[u8]) -> AgentProviderAuthState {
@@ -641,19 +622,6 @@ mod tests {
     #[test]
     fn auth_parsers_fail_closed() {
         assert_eq!(
-            claude_auth_capability("2.1.247"),
-            Some(ClaudeAuthStatusCapability::Json)
-        );
-        assert_eq!(
-            claude_auth_capability("2.1.83"),
-            Some(ClaudeAuthStatusCapability::Text)
-        );
-        assert_eq!(
-            claude_auth_capability("0.2.0"),
-            Some(ClaudeAuthStatusCapability::Unavailable)
-        );
-        assert_eq!(claude_auth_capability("9.9.9"), None);
-        assert_eq!(
             parse_auth_state(
                 AgentCliInvocation::ClaudeCode,
                 br#"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","analyticsDisabled":false,"email":"person@example.com","orgId":"org-1","orgName":"Example","subscriptionType":"Pro"}"#,
@@ -678,15 +646,104 @@ mod tests {
             AgentProviderAuthState::Unknown
         );
         assert_eq!(
+            parse_auth_state(AgentCliInvocation::ClaudeCode, br#"{"loggedIn":1}"#, b""),
+            AgentProviderAuthState::Unknown
+        );
+        assert_eq!(
             parse_auth_state(
                 AgentCliInvocation::ClaudeCode,
-                br#"{"loggedIn":true,"future":1}"#,
+                br#"{"loggedIn":true,"loggedIn":false}"#,
                 b""
             ),
             AgentProviderAuthState::Unknown
         );
     }
 
+    #[test]
+    fn claude_status_json_tolerates_added_fields_and_bounds_labels() {
+        let signed_in_max = (
+            AgentProviderAuthState::SignedIn {
+                label: Some("max".to_string()),
+            },
+            ClaudeAuthStatusCapability::Json,
+        );
+        assert_eq!(
+            parse_claude_auth_state(
+                br#"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","analyticsDisabled":false,"projectsDirectory":"/Users/person/.claude/projects","email":"person@example.com","orgId":"org-1","orgName":"Example Org","subscriptionType":"max"}"#,
+                b""
+            ),
+            signed_in_max
+        );
+        assert_eq!(
+            parse_claude_auth_state(
+                b"{\n  \"loggedIn\": true,\n  \"authMethod\": \"claude.ai\",\n  \"apiProvider\": \"firstParty\",\n  \"analyticsDisabled\": false,\n  \"projectsDirectory\": \"/Users/person/.claude/projects\",\n  \"email\": \"person@example.com\",\n  \"orgId\": \"org-1\",\n  \"orgName\": \"Example Org\",\n  \"subscriptionType\": \"max\"\n}\n",
+                b""
+            ),
+            signed_in_max
+        );
+        assert_eq!(
+            parse_claude_auth_state(
+                br#"{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty","projectsDirectory":"/tmp/.claude/projects"}"#,
+                b""
+            ),
+            (
+                AgentProviderAuthState::SignedOut,
+                ClaudeAuthStatusCapability::Json
+            )
+        );
+        assert_eq!(
+            parse_claude_auth_state(br#"{"loggedIn":true}"#, b""),
+            (
+                AgentProviderAuthState::SignedIn { label: None },
+                ClaudeAuthStatusCapability::Json
+            )
+        );
+        for output in [
+            br#"{"authMethod":"claude.ai"}"#.as_slice(),
+            b"not json at all".as_slice(),
+            b"".as_slice(),
+            br#"{"loggedIn":true,"authMethod":["claude.ai"]}"#.as_slice(),
+        ] {
+            assert_eq!(
+                parse_claude_auth_state(output, b"").0,
+                AgentProviderAuthState::Unknown,
+                "{output:?}"
+            );
+        }
+        assert_eq!(
+            parse_claude_auth_state(b"Logged in using Claude", b""),
+            (
+                AgentProviderAuthState::SignedIn {
+                    label: Some("Claude".to_string())
+                },
+                ClaudeAuthStatusCapability::Text
+            )
+        );
+        let oversized = "m".repeat(MAX_AGENT_PROVIDER_LABEL_BYTES + 1);
+        assert_eq!(
+            parse_claude_auth_state(
+                format!(r#"{{"loggedIn":true,"subscriptionType":"{oversized}","authMethod":"claude.ai"}}"#)
+                    .as_bytes(),
+                b""
+            ),
+            (
+                AgentProviderAuthState::SignedIn {
+                    label: Some("claude.ai".to_string())
+                },
+                ClaudeAuthStatusCapability::Json
+            )
+        );
+        assert_eq!(
+            parse_claude_auth_state(
+                format!(r#"{{"loggedIn":true,"subscriptionType":"{oversized}"}}"#).as_bytes(),
+                b"",
+            ),
+            (
+                AgentProviderAuthState::SignedIn { label: None },
+                ClaudeAuthStatusCapability::Json
+            )
+        );
+    }
     #[test]
     fn package_manager_json_is_exact_and_bounded() {
         assert_eq!(

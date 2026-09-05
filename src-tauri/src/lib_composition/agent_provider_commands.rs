@@ -18,8 +18,8 @@ use crate::agent_task_spawner::agent_provider::runtime::{
     AgentProviderUpdateCandidate, ProviderHealthLease, ResolvedAgentProviderInstaller,
 };
 use crate::agent_task_spawner::agent_provider::{
-    brew_cask, claude_auth_capability, compare_versions, npm_package, parse_auth_state,
-    parse_brew_available_version, parse_claude_text_auth_state, parse_npm_available_version,
+    brew_cask, compare_versions, npm_package, parse_auth_state, parse_brew_available_version,
+    parse_claude_auth_state, parse_claude_text_auth_state, parse_npm_available_version,
     parse_npm_installed_version, self_update_command, AgentProviderAuthState,
     AgentProviderHealthProbeResult, AgentProviderUpdateAvailability,
     AgentProviderUpdateFailureReason, AgentProviderUpdateResult,
@@ -487,13 +487,7 @@ fn probe_health_with_locator(
         .map_err(|_| "Provider version probe failed.".to_string())?;
     let installed = parse_version_output(&installed_output);
     revalidate_health_identity(provider_registry, &lease, &identity)?;
-    let auth = probe_auth(
-        provider_registry,
-        &lease,
-        &identity,
-        installed.as_deref(),
-        cancelled,
-    );
+    let auth = probe_auth(provider_registry, &lease, &identity, cancelled);
     revalidate_health_identity(provider_registry, &lease, &identity)?;
     let (update, candidate) = probe_update(
         provider_registry,
@@ -518,11 +512,10 @@ fn probe_auth(
     registry: &AgentProviderRuntimeRegistry,
     lease: &ProviderHealthLease,
     identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
-    installed_version: Option<&str>,
     cancelled: &AtomicBool,
 ) -> AgentProviderAuthState {
     if lease.provider == AgentCliInvocation::ClaudeCode {
-        return probe_claude_auth(registry, lease, identity, installed_version, cancelled);
+        return probe_claude_auth(registry, lease, identity, cancelled);
     }
     let plan = AgentProviderProcessPlan::provider_owned_with_effective_path(
         identity.clone(),
@@ -545,25 +538,10 @@ fn probe_claude_auth(
     registry: &AgentProviderRuntimeRegistry,
     lease: &ProviderHealthLease,
     identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
-    installed_version: Option<&str>,
     cancelled: &AtomicBool,
 ) -> AgentProviderAuthState {
     let cached = registry.claude_auth_capability(lease, identity);
-    let selected = cached.or_else(|| installed_version.and_then(claude_auth_capability));
-    if selected == Some(ClaudeAuthStatusCapability::Unavailable) {
-        let _ = registry.cache_claude_auth_capability(
-            lease,
-            identity,
-            ClaudeAuthStatusCapability::Unavailable,
-        );
-        return AgentProviderAuthState::Unknown;
-    }
-    if selected == Some(ClaudeAuthStatusCapability::Text) {
-        let _ = registry.cache_claude_auth_capability(
-            lease,
-            identity,
-            ClaudeAuthStatusCapability::Text,
-        );
+    if cached == Some(ClaudeAuthStatusCapability::Text) {
         return probe_claude_text_auth(registry, lease, identity, cancelled);
     }
     let Ok(plan) = AgentProviderProcessPlan::provider_owned_with_effective_path(
@@ -578,28 +556,90 @@ fn probe_claude_auth(
     }
     match execute_owned(registry, cancelled, &plan) {
         Ok(output) => {
-            let _ = registry.cache_claude_auth_capability(
-                lease,
-                identity,
-                ClaudeAuthStatusCapability::Json,
-            );
-            parse_auth_state(lease.provider, &output.stdout, &output.stderr)
+            observed_claude_auth_state(registry, lease, identity, &output.stdout, &output.stderr)
         }
-        Err(AgentProviderProcessFailure::Exited { stdout, stderr })
-            if selected.is_none() && unsupported_json_option(&stdout, &stderr) =>
-        {
-            if revalidate_health_identity(registry, lease, identity).is_err() {
-                return AgentProviderAuthState::Unknown;
-            }
-            let _ = registry.cache_claude_auth_capability(
-                lease,
-                identity,
-                ClaudeAuthStatusCapability::Text,
-            );
-            probe_claude_text_auth(registry, lease, identity, cancelled)
+        Err(AgentProviderProcessFailure::Exited { stdout, stderr }) => {
+            claude_auth_state_after_exit(
+                registry, lease, identity, cancelled, cached, &stdout, &stderr,
+            )
         }
         Err(_) => AgentProviderAuthState::Unknown,
     }
+}
+
+fn claude_auth_state_after_exit(
+    registry: &AgentProviderRuntimeRegistry,
+    lease: &ProviderHealthLease,
+    identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
+    cancelled: &AtomicBool,
+    cached: Option<ClaudeAuthStatusCapability>,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> AgentProviderAuthState {
+    if cached.is_none() && unsupported_json_option(stdout, stderr) {
+        return claude_text_auth_after_fallback(
+            registry,
+            lease,
+            identity,
+            cancelled,
+            ClaudeTextFallback::JsonUnsupported,
+        );
+    }
+    let observed = observed_claude_auth_state(registry, lease, identity, stdout, stderr);
+    if observed != AgentProviderAuthState::Unknown {
+        return observed;
+    }
+    if cached.is_some() {
+        return AgentProviderAuthState::Unknown;
+    }
+    claude_text_auth_after_fallback(
+        registry,
+        lease,
+        identity,
+        cancelled,
+        ClaudeTextFallback::JsonInconclusive,
+    )
+}
+
+fn observed_claude_auth_state(
+    registry: &AgentProviderRuntimeRegistry,
+    lease: &ProviderHealthLease,
+    identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> AgentProviderAuthState {
+    let (observed, capability) = parse_claude_auth_state(stdout, stderr);
+    if observed == AgentProviderAuthState::Unknown {
+        return AgentProviderAuthState::Unknown;
+    }
+    let _ = registry.cache_claude_auth_capability(lease, identity, capability);
+    observed
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClaudeTextFallback {
+    JsonUnsupported,
+    JsonInconclusive,
+}
+
+fn claude_text_auth_after_fallback(
+    registry: &AgentProviderRuntimeRegistry,
+    lease: &ProviderHealthLease,
+    identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
+    cancelled: &AtomicBool,
+    fallback: ClaudeTextFallback,
+) -> AgentProviderAuthState {
+    if revalidate_health_identity(registry, lease, identity).is_err() {
+        return AgentProviderAuthState::Unknown;
+    }
+    if fallback == ClaudeTextFallback::JsonUnsupported {
+        let _ = registry.cache_claude_auth_capability(
+            lease,
+            identity,
+            ClaudeAuthStatusCapability::Text,
+        );
+    }
+    probe_claude_text_auth(registry, lease, identity, cancelled)
 }
 
 fn unsupported_json_option(stdout: &[u8], stderr: &[u8]) -> bool {

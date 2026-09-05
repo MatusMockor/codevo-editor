@@ -483,205 +483,227 @@ fn health_probe_uses_the_closed_version_and_auth_plans() {
     fs::remove_file(executable).expect("cleanup");
 }
 
-#[test]
-fn claude_capabilities_select_text_unavailable_and_cache_unknown_fallback() {
-    let text = provider_executable(
-            "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ] && [ -z \"$3\" ]; then echo 'Logged in using Claude'; exit 0; fi\nexit 9",
-        );
-    let text_registry = Arc::new(AgentProviderRuntimeRegistry::new());
-    let text_receipt = text_registry
+fn claude_auth_probes(
+    body: &str,
+    probes: usize,
+    cancelled: bool,
+) -> (
+    Vec<AgentProviderAuthState>,
+    Option<ClaudeAuthStatusCapability>,
+) {
+    let executable = provider_executable(body);
+    let registry = Arc::new(AgentProviderRuntimeRegistry::new());
+    let receipt = registry
         .register_policy(
             AgentCliInvocation::ClaudeCode,
             1,
             None,
             AgentProviderPolicy {
                 enabled: true,
-                cli_path: Some(text.to_string_lossy().into_owned()),
+                cli_path: Some(executable.to_string_lossy().into_owned()),
                 check_for_updates: false,
             },
         )
-        .expect("text policy");
-    let text_lease = text_registry
-        .acquire_health_for_generation(
-            AgentCliInvocation::ClaudeCode,
-            text_receipt.provider_generation,
-        )
-        .expect("text lease");
-    let text_identity = executable_identity(text.to_str().expect("text path")).expect("identity");
-    assert_eq!(
-        probe_auth(
-            &text_registry,
-            &text_lease,
-            &text_identity,
-            Some("2.1.83"),
-            &AtomicBool::new(false),
-        ),
-        AgentProviderAuthState::SignedIn {
-            label: Some("Claude".to_string())
-        }
-    );
-    drop(text_lease);
-    fs::remove_file(text).expect("text cleanup");
-
-    let marker = std::env::temp_dir().join(format!(
-        "codevo-provider-auth-marker-{}-{}",
-        std::process::id(),
-        NONCE.fetch_add(1, Ordering::SeqCst)
-    ));
-    let unavailable = provider_executable(&format!(
-        "if [ \"$1\" = \"auth\" ]; then echo hit > '{}'; fi\nexit 9",
-        marker.display()
-    ));
-    let unavailable_registry = Arc::new(AgentProviderRuntimeRegistry::new());
-    let unavailable_receipt = unavailable_registry
-        .register_policy(
-            AgentCliInvocation::ClaudeCode,
-            1,
-            None,
-            AgentProviderPolicy {
-                enabled: true,
-                cli_path: Some(unavailable.to_string_lossy().into_owned()),
-                check_for_updates: false,
-            },
-        )
-        .expect("unavailable policy");
-    let unavailable_lease = unavailable_registry
-        .acquire_health_for_generation(
-            AgentCliInvocation::ClaudeCode,
-            unavailable_receipt.provider_generation,
-        )
-        .expect("unavailable lease");
-    let unavailable_identity =
-        executable_identity(unavailable.to_str().expect("path")).expect("unavailable identity");
-    assert_eq!(
-        probe_auth(
-            &unavailable_registry,
-            &unavailable_lease,
-            &unavailable_identity,
-            Some("0.2.0"),
-            &AtomicBool::new(false),
-        ),
-        AgentProviderAuthState::Unknown
-    );
-    assert!(!marker.exists());
-    drop(unavailable_lease);
-    fs::remove_file(unavailable).expect("unavailable cleanup");
-
-    let fallback_marker = std::env::temp_dir().join(format!(
-        "codevo-provider-auth-fallback-{}-{}",
-        std::process::id(),
-        NONCE.fetch_add(1, Ordering::SeqCst)
-    ));
-    let fallback = provider_executable(&format!(
-            "if [ \"$3\" = \"--json\" ]; then echo json >> '{}'; echo \"error: unknown option '--json'\" >&2; exit 1; fi\nif [ \"$1\" = \"auth\" ]; then echo 'Logged in using Claude'; exit 0; fi\nexit 9",
-            fallback_marker.display()
-        ));
-    let fallback_registry = Arc::new(AgentProviderRuntimeRegistry::new());
-    let fallback_receipt = fallback_registry
-        .register_policy(
-            AgentCliInvocation::ClaudeCode,
-            1,
-            None,
-            AgentProviderPolicy {
-                enabled: true,
-                cli_path: Some(fallback.to_string_lossy().into_owned()),
-                check_for_updates: false,
-            },
-        )
-        .expect("fallback policy");
-    let fallback_identity =
-        executable_identity(fallback.to_str().expect("path")).expect("fallback identity");
-    for _ in 0..2 {
-        let lease = fallback_registry
+        .expect("policy");
+    let identity = executable_identity(executable.to_str().expect("path")).expect("identity");
+    let flag = AtomicBool::new(cancelled);
+    let mut states = Vec::with_capacity(probes);
+    let mut capability = None;
+    for _ in 0..probes {
+        let lease = registry
             .acquire_health_for_generation(
                 AgentCliInvocation::ClaudeCode,
-                fallback_receipt.provider_generation,
+                receipt.provider_generation,
             )
-            .expect("fallback lease");
-        assert!(matches!(
-            probe_auth(
-                &fallback_registry,
-                &lease,
-                &fallback_identity,
-                Some("9.9.9"),
-                &AtomicBool::new(false),
-            ),
-            AgentProviderAuthState::SignedIn { .. }
-        ));
+            .expect("health lease");
+        states.push(probe_auth(&registry, &lease, &identity, &flag));
+        capability = registry.claude_auth_capability(&lease, &identity);
         drop(lease);
     }
-    assert_eq!(
-        fs::read_to_string(&fallback_marker).expect("fallback marker"),
-        "json\n"
-    );
-    fs::remove_file(fallback).expect("fallback cleanup");
-    fs::remove_file(fallback_marker).expect("marker cleanup");
+    fs::remove_file(executable).expect("cleanup");
+    (states, capability)
+}
 
-    let retry_marker = std::env::temp_dir().join(format!(
-        "codevo-provider-auth-retry-{}-{}",
+fn probe_marker(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "codevo-provider-auth-{label}-{}-{}",
         std::process::id(),
         NONCE.fetch_add(1, Ordering::SeqCst)
-    ));
-    let retry = provider_executable(&format!(
-            "if [ \"$3\" = \"--json\" ] && [ ! -f '{}' ]; then touch '{}'; echo transient >&2; exit 1; fi\nif [ \"$3\" = \"--json\" ]; then echo \"error: unknown option '--json'\" >&2; exit 1; fi\nif [ \"$1\" = \"auth\" ]; then echo 'Logged in using Claude'; exit 0; fi\nexit 9",
-            retry_marker.display(),
-            retry_marker.display()
-        ));
-    let retry_registry = Arc::new(AgentProviderRuntimeRegistry::new());
-    let retry_receipt = retry_registry
-        .register_policy(
-            AgentCliInvocation::ClaudeCode,
-            1,
-            None,
-            AgentProviderPolicy {
-                enabled: true,
-                cli_path: Some(retry.to_string_lossy().into_owned()),
-                check_for_updates: false,
+    ))
+}
+
+#[test]
+fn claude_auth_status_json_is_read_without_a_version_fixture() {
+    let (states, capability) = claude_auth_probes(
+        "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ]; then echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"analyticsDisabled\":false,\"projectsDirectory\":\"/tmp/projects\",\"email\":\"person@example.com\",\"orgId\":\"org-1\",\"orgName\":\"Example Org\",\"subscriptionType\":\"max\"}'; exit 0; fi\nexit 9",
+        1,
+        false,
+    );
+    assert_eq!(
+        states,
+        vec![AgentProviderAuthState::SignedIn {
+            label: Some("max".to_string())
+        }]
+    );
+    assert_eq!(capability, Some(ClaudeAuthStatusCapability::Json));
+}
+
+#[test]
+fn claude_auth_status_json_reports_signed_out_on_a_non_zero_exit() {
+    let (states, capability) = claude_auth_probes(
+        "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ]; then echo '{\"loggedIn\":false,\"authMethod\":\"none\",\"apiProvider\":\"firstParty\",\"projectsDirectory\":\"/tmp/projects\"}'; exit 1; fi\nexit 9",
+        1,
+        false,
+    );
+    assert_eq!(states, vec![AgentProviderAuthState::SignedOut]);
+    assert_eq!(capability, Some(ClaudeAuthStatusCapability::Json));
+}
+
+#[test]
+fn claude_auth_status_fails_closed_on_unusable_output() {
+    for body in [
+        "if [ \"$1\" = \"auth\" ]; then echo 'not json at all'; exit 0; fi\nexit 9",
+        "if [ \"$1\" = \"auth\" ]; then echo '{\"authMethod\":\"claude.ai\"}'; exit 0; fi\nexit 9",
+        "if [ \"$1\" = \"auth\" ]; then echo '{\"loggedIn\":\"yes\"}'; exit 0; fi\nexit 9",
+        "exit 9",
+    ] {
+        let (states, capability) = claude_auth_probes(body, 1, false);
+        assert_eq!(states, vec![AgentProviderAuthState::Unknown], "{body}");
+        assert_eq!(capability, None, "{body}");
+    }
+}
+
+#[test]
+fn claude_auth_status_caches_the_json_capability_and_never_falls_back() {
+    let marker = probe_marker("json-cache");
+    let (states, capability) = claude_auth_probes(
+        &format!(
+            "if [ \"$1\" = \"auth\" ] && [ -z \"$3\" ]; then echo text >> '{}'; fi\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ]; then echo '{{\"loggedIn\":true,\"subscriptionType\":\"Pro\"}}'; exit 0; fi\nexit 9",
+            marker.display()
+        ),
+        2,
+        false,
+    );
+    assert_eq!(
+        states,
+        vec![
+            AgentProviderAuthState::SignedIn {
+                label: Some("Pro".to_string())
+            };
+            2
+        ]
+    );
+    assert_eq!(capability, Some(ClaudeAuthStatusCapability::Json));
+    assert!(!marker.exists());
+}
+
+#[test]
+fn claude_text_capability_is_cached_only_for_an_exact_unsupported_option_error() {
+    let marker = probe_marker("text-cache");
+    let (states, capability) = claude_auth_probes(
+        &format!(
+            "if [ \"$3\" = \"--json\" ]; then echo json >> '{}'; echo \"error: unknown option '--json'\" >&2; exit 1; fi\nif [ \"$1\" = \"auth\" ]; then echo 'Logged in using Claude'; exit 0; fi\nexit 9",
+            marker.display()
+        ),
+        2,
+        false,
+    );
+    assert_eq!(
+        states,
+        vec![
+            AgentProviderAuthState::SignedIn {
+                label: Some("Claude".to_string())
+            };
+            2
+        ]
+    );
+    assert_eq!(capability, Some(ClaudeAuthStatusCapability::Text));
+    assert_eq!(fs::read_to_string(&marker).expect("marker"), "json\n");
+    fs::remove_file(marker).expect("marker cleanup");
+}
+
+#[test]
+fn claude_text_output_is_read_without_pinning_the_capability() {
+    let (states, capability) = claude_auth_probes(
+        "if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ] && [ -z \"$3\" ]; then echo 'Logged in using Claude'; exit 0; fi\nexit 9",
+        2,
+        false,
+    );
+    assert_eq!(
+        states,
+        vec![
+            AgentProviderAuthState::SignedIn {
+                label: Some("Claude".to_string())
+            };
+            2
+        ]
+    );
+    assert_eq!(capability, None);
+}
+
+#[test]
+fn claude_auth_probe_reports_unknown_without_caching_on_timeout() {
+    let (states, capability) = claude_auth_probes(
+        "if [ \"$1\" = \"auth\" ]; then sleep 30; fi\nexit 9",
+        1,
+        false,
+    );
+    assert_eq!(states, vec![AgentProviderAuthState::Unknown]);
+    assert_eq!(capability, None);
+}
+
+#[test]
+fn claude_auth_probe_reports_unknown_without_caching_on_an_output_flood() {
+    let (states, capability) = claude_auth_probes(
+        "if [ \"$1\" = \"auth\" ]; then while :; do printf '{\"loggedIn\":true}'; done; fi\nexit 9",
+        1,
+        false,
+    );
+    assert_eq!(states, vec![AgentProviderAuthState::Unknown]);
+    assert_eq!(capability, None);
+}
+
+#[test]
+fn a_cached_json_capability_never_falls_back_to_the_text_plan() {
+    let text_marker = probe_marker("json-pinned-text");
+    let seen_marker = probe_marker("json-pinned-seen");
+    let (states, capability) = claude_auth_probes(
+        &format!(
+            "if [ \"$1\" = \"auth\" ] && [ -z \"$3\" ]; then echo text >> '{text}'; fi\nif [ ! -f '{seen}' ]; then touch '{seen}'; echo '{{\"loggedIn\":true,\"subscriptionType\":\"Pro\"}}'; exit 0; fi\necho \"error: unknown option '--json'\" >&2\nexit 1",
+            text = text_marker.display(),
+            seen = seen_marker.display()
+        ),
+        2,
+        false,
+    );
+    assert_eq!(
+        states,
+        vec![
+            AgentProviderAuthState::SignedIn {
+                label: Some("Pro".to_string())
             },
-        )
-        .expect("retry policy");
-    let retry_identity =
-        executable_identity(retry.to_str().expect("path")).expect("retry identity");
-    let first_retry_lease = retry_registry
-        .acquire_health_for_generation(
-            AgentCliInvocation::ClaudeCode,
-            retry_receipt.provider_generation,
-        )
-        .expect("first retry lease");
-    assert_eq!(
-        probe_auth(
-            &retry_registry,
-            &first_retry_lease,
-            &retry_identity,
-            Some("9.9.9"),
-            &AtomicBool::new(false),
-        ),
-        AgentProviderAuthState::Unknown
+            AgentProviderAuthState::Unknown,
+        ]
     );
-    assert_eq!(
-        retry_registry.claude_auth_capability(&first_retry_lease, &retry_identity),
-        None
-    );
-    drop(first_retry_lease);
-    let second_retry_lease = retry_registry
-        .acquire_health_for_generation(
-            AgentCliInvocation::ClaudeCode,
-            retry_receipt.provider_generation,
-        )
-        .expect("second retry lease");
-    assert!(matches!(
-        probe_auth(
-            &retry_registry,
-            &second_retry_lease,
-            &retry_identity,
-            Some("9.9.9"),
-            &AtomicBool::new(false),
+    assert_eq!(capability, Some(ClaudeAuthStatusCapability::Json));
+    assert!(!text_marker.exists());
+    fs::remove_file(seen_marker).expect("seen marker cleanup");
+}
+
+#[test]
+fn claude_auth_probe_stops_before_spawning_when_cancelled() {
+    let marker = probe_marker("cancelled");
+    let (states, capability) = claude_auth_probes(
+        &format!(
+            "echo ran >> '{}'\necho '{{\"loggedIn\":true}}'\nexit 0",
+            marker.display()
         ),
-        AgentProviderAuthState::SignedIn { .. }
-    ));
-    drop(second_retry_lease);
-    fs::remove_file(retry).expect("retry cleanup");
-    fs::remove_file(retry_marker).expect("retry marker cleanup");
+        1,
+        true,
+    );
+    assert_eq!(states, vec![AgentProviderAuthState::Unknown]);
+    assert_eq!(capability, None);
+    assert!(!marker.exists());
 }
 
 #[test]
