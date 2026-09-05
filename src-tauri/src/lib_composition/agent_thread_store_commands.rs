@@ -187,6 +187,53 @@ mod tests {
     }
 
     #[test]
+    fn save_requests_accept_reported_usage_and_context_compaction_events() {
+        let mut thread = thread_json();
+        thread["turns"] = json!([{
+            "turnId": "agt-turn-0001",
+            "prompt": "do it",
+            "status": { "kind": "exited", "exitCode": 0 },
+            "startedAtEpochMs": 1,
+            "endedAtEpochMs": 2,
+            "events": [
+                { "kind": "contextCompaction", "beforeTokens": 180_000, "afterTokens": 42_000 },
+                {
+                    "kind": "result",
+                    "text": "done",
+                    "isError": false,
+                    "usage": {
+                        "inputTokens": 2,
+                        "outputTokens": 4,
+                        "contextTokens": 33_000,
+                        "costUsd": 0.125
+                    }
+                }
+            ],
+            "eventsTruncated": false,
+            "lastStatusSequence": 1,
+            "lastOutputSequence": 1,
+            "launch": null,
+            "cliVersion": null
+        }]);
+
+        let request = serde_json::from_value::<SaveAgentThreadRequest>(json!({
+            "rootKey": root_key(),
+            "ownerId": agent_root_owner_id(&root_key()),
+            "thread": thread
+        }))
+        .expect("deserialize a save request carrying reported usage");
+
+        agent_thread_store::validate_agent_thread_document(
+            &root_key(),
+            &AgentThreadDocument {
+                schema_version: AGENT_THREAD_SCHEMA_VERSION,
+                thread: request.thread,
+            },
+        )
+        .expect("reported usage and compaction stay within bounds");
+    }
+
+    #[test]
     fn snapshot_responses_use_the_camel_case_wire_shape() {
         let snapshot = AgentThreadsSnapshot {
             threads: vec![AgentThread {

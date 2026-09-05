@@ -25,6 +25,8 @@ import type {
 } from "./agentThreadPorts";
 import {
   LEGACY_AGENT_THREAD_PIN_STORAGE_KEY_PREFIX,
+  MAX_PERSIST_FAILURE_REASON_CHARS,
+  PERSIST_FAILURE_NOTICE,
   useAgentThreadStore,
   type AgentThreadStoreDependencies,
 } from "./useAgentThreadStore";
@@ -504,7 +506,7 @@ describe("useAgentThreadStore persistence", () => {
     await waitForReact(() => {
       expect(harness.setNotice).toHaveBeenCalledWith({
         kind: "warning",
-        message: "Some agent conversations could not be saved.",
+        message: PERSIST_FAILURE_NOTICE,
         action: null,
       });
     });
@@ -986,7 +988,7 @@ describe("useAgentThreadStore persistent identity", () => {
   });
 });
 
-describe("useAgentThreadStore store-full", () => {
+describe("useAgentThreadStore persist failure notices", () => {
   it("surfaces the store-full notice when the backend refuses to evict for a save", async () => {
     const harness = await renderLoadedStore();
     harness.gateway.saveAgentThread.mockRejectedValueOnce(new Error(AGENT_THREAD_STORE_FULL_ERROR));
@@ -1002,6 +1004,119 @@ describe("useAgentThreadStore store-full", () => {
       );
     });
     expect(harness.reportError).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("names the bounded backend cap that refused the save", async () => {
+    const harness = await renderLoadedStore();
+    harness.gateway.saveAgentThread.mockRejectedValueOnce(
+      new Error("Agent thread exceeds the maximum of 64 turns."),
+    );
+
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
+
+    await waitForReact(() => {
+      expect(harness.setNotice).toHaveBeenCalledWith({
+        kind: "warning",
+        message: `${PERSIST_FAILURE_NOTICE} Agent thread exceeds the maximum of 64 turns.`,
+        action: null,
+      });
+    });
+    harness.unmount();
+  });
+
+  it("clips an unbounded backend reason and drops control characters", async () => {
+    const harness = await renderLoadedStore();
+    harness.gateway.saveAgentThread.mockRejectedValueOnce(
+      new Error(`Agent turn event text\n\texceeds the supported length. ${"x".repeat(400)}`),
+    );
+
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
+
+    await waitForReact(() => {
+      expect(harness.setNotice).toHaveBeenCalledTimes(1);
+    });
+    const [notice] = harness.setNotice.mock.calls[0];
+    const message = notice?.message ?? "";
+
+    expect(
+      message.startsWith(`${PERSIST_FAILURE_NOTICE} Agent turn event text exceeds the supported`),
+    ).toBe(true);
+    expect(message).not.toMatch(/[\n\t]/u);
+    expect([...message].length).toBeLessThanOrEqual(
+      [...PERSIST_FAILURE_NOTICE].length + MAX_PERSIST_FAILURE_REASON_CHARS + 2,
+    );
+    harness.unmount();
+  });
+
+  it("never echoes a rejected document value from a serde type mismatch", async () => {
+    const harness = await renderLoadedStore();
+    harness.gateway.saveAgentThread.mockRejectedValueOnce(
+      new Error(
+        'invalid args `request` for command `save_agent_thread`: invalid type: string "s3cret-prompt-text", expected u64',
+      ),
+    );
+
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
+
+    await waitForReact(() => {
+      expect(harness.setNotice).toHaveBeenCalledWith({
+        kind: "warning",
+        message: PERSIST_FAILURE_NOTICE,
+        action: null,
+      });
+    });
+    expect(
+      harness.setNotice.mock.calls.every(([notice]) => !notice?.message.includes("s3cret")),
+    ).toBe(true);
+    harness.unmount();
+  });
+
+  it("re-notifies when a later save fails for a different bounded reason", async () => {
+    const harness = await renderLoadedStore();
+    harness.gateway.saveAgentThread.mockRejectedValue(
+      new Error("Agent thread exceeds the maximum of 64 turns."),
+    );
+
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
+    await waitForReact(() => {
+      expect(harness.setNotice).toHaveBeenCalledTimes(1);
+    });
+
+    harness.gateway.saveAgentThread.mockRejectedValue(
+      new Error("Agent turn exceeds the maximum of 512 events."),
+    );
+    act(() => harness.hook().togglePin("agt-1-0a1b"));
+
+    await waitForReact(() => {
+      expect(harness.setNotice).toHaveBeenLastCalledWith({
+        kind: "warning",
+        message: `${PERSIST_FAILURE_NOTICE} Agent turn exceeds the maximum of 512 events.`,
+        action: null,
+      });
+    });
+    harness.unmount();
+  });
+
+  it("re-fires the store-full notice on every refusal", async () => {
+    const harness = await renderLoadedStore();
+    harness.gateway.saveAgentThread.mockRejectedValue(new Error(AGENT_THREAD_STORE_FULL_ERROR));
+
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
+    await waitForReact(() => {
+      expect(harness.setNotice).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => harness.hook().togglePin("agt-1-0a1b"));
+    await waitForReact(() => {
+      expect(harness.setNotice).toHaveBeenCalledTimes(2);
+    });
+    expect(harness.setNotice).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: "warning",
+        message: expect.stringContaining("store is full"),
+      }),
+    );
     harness.unmount();
   });
 });

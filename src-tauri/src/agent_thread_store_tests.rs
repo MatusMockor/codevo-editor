@@ -845,6 +845,149 @@ fn agent_thread_document_round_trips_the_exact_wire_shape() {
 }
 
 #[test]
+fn a_reported_usage_and_compaction_document_round_trips_the_typescript_wire_shape() {
+    let mut source = document_json();
+    source["thread"]["owner"]["ownerId"] = json!(agent_root_owner_id("/workspace"));
+    source["thread"]["turns"][0]["events"] = json!([
+        {
+            "kind": "result",
+            "text": "done",
+            "isError": false,
+            "usage": {
+                "inputTokens": 1,
+                "outputTokens": 2,
+                "contextTokens": 33_000,
+                "costUsd": 0.125
+            }
+        },
+        { "kind": "result", "text": "", "isError": true, "usage": null },
+        { "kind": "contextCompaction", "beforeTokens": 180_000, "afterTokens": 42_000 },
+        { "kind": "contextCompaction", "beforeTokens": null, "afterTokens": null }
+    ]);
+
+    let document: AgentThreadDocument =
+        serde_json::from_value(source.clone()).expect("reported usage document loads");
+
+    assert_eq!(
+        document.thread.turns[0].events[0],
+        AgentTurnEvent::Result {
+            text: "done".to_string(),
+            is_error: false,
+            usage: Some(AgentTurnUsage {
+                input_tokens: 1,
+                output_tokens: 2,
+                context_tokens: Some(33_000),
+                cost_usd: Some(0.125),
+            }),
+        }
+    );
+    assert_eq!(
+        document.thread.turns[0].events[2],
+        AgentTurnEvent::ContextCompaction {
+            before_tokens: Some(180_000),
+            after_tokens: Some(42_000),
+        }
+    );
+    assert_eq!(
+        serde_json::to_value(&document).expect("serialize document"),
+        source
+    );
+    validate_agent_thread_document("/workspace", &document)
+        .expect("reported usage and compaction are within bounds");
+}
+
+#[test]
+fn a_pre_context_usage_document_loads_and_keeps_the_absent_fields_absent() {
+    let mut source = document_json();
+    source["thread"]["owner"]["ownerId"] = json!(agent_root_owner_id("/workspace"));
+
+    let document: AgentThreadDocument =
+        serde_json::from_value(source.clone()).expect("pre-context usage document loads");
+
+    assert_eq!(
+        document.thread.turns[0].events[4],
+        AgentTurnEvent::Result {
+            text: "done".to_string(),
+            is_error: false,
+            usage: Some(AgentTurnUsage {
+                input_tokens: 1,
+                output_tokens: 2,
+                context_tokens: None,
+                cost_usd: None,
+            }),
+        }
+    );
+
+    let reserialized = serde_json::to_value(&document).expect("serialize document");
+    let usage = &reserialized["thread"]["turns"][0]["events"][4]["usage"];
+
+    assert!(
+        usage.get("contextTokens").is_none(),
+        "an absent context token count stays absent"
+    );
+    assert!(usage.get("costUsd").is_none(), "absent cost stays absent");
+    assert_eq!(reserialized, source);
+}
+
+#[test]
+fn out_of_bounds_usage_and_compaction_tokens_are_refused() {
+    let mut source = document_json();
+    source["thread"]["owner"]["ownerId"] = json!(agent_root_owner_id("/workspace"));
+    let base: AgentThreadDocument =
+        serde_json::from_value(source).expect("baseline document loads");
+
+    for usage in [
+        AgentTurnUsage {
+            input_tokens: MAX_AGENT_SAFE_INTEGER + 1,
+            output_tokens: 2,
+            context_tokens: None,
+            cost_usd: None,
+        },
+        AgentTurnUsage {
+            input_tokens: 1,
+            output_tokens: 2,
+            context_tokens: Some(MAX_AGENT_SAFE_INTEGER + 1),
+            cost_usd: None,
+        },
+        AgentTurnUsage {
+            input_tokens: 1,
+            output_tokens: 2,
+            context_tokens: None,
+            cost_usd: Some(-1.0),
+        },
+        AgentTurnUsage {
+            input_tokens: 1,
+            output_tokens: 2,
+            context_tokens: None,
+            cost_usd: Some(f64::INFINITY),
+        },
+    ] {
+        let mut invalid = base.clone();
+        invalid.thread.turns[0].events = vec![AgentTurnEvent::Result {
+            text: "done".to_string(),
+            is_error: false,
+            usage: Some(usage),
+        }];
+
+        assert!(
+            validate_agent_thread_document("/workspace", &invalid).is_err(),
+            "out of bounds usage must be refused"
+        );
+    }
+
+    let mut invalid_compaction = base;
+    invalid_compaction.thread.turns[0].events = vec![AgentTurnEvent::ContextCompaction {
+        before_tokens: Some(MAX_AGENT_SAFE_INTEGER + 1),
+        after_tokens: None,
+    }];
+
+    assert!(
+        validate_agent_thread_document("/workspace", &invalid_compaction).is_err(),
+        "out of bounds compaction tokens must be refused"
+    );
+}
+
+#[test]
 fn an_absent_integration_receipt_parses_as_none() {
     let mut without_integration = document_json();
     without_integration["thread"]

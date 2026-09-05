@@ -175,7 +175,56 @@ describe("agentThreadWire context metadata", () => {
       usage: { inputTokens: 10, outputTokens: 2, contextTokens: null },
     });
   });
+
+  it("emits the persisted usage fields the backend store accepts", () => {
+    const withCost = storedThreadWithTurn({
+      ...STORED_TURN,
+      launch: null,
+      events: [
+        {
+          kind: "result",
+          text: "done",
+          isError: false,
+          usage: { inputTokens: 10, outputTokens: 2, contextTokens: null, costUsd: 0.125 },
+        },
+        { kind: "contextCompaction", beforeTokens: null, afterTokens: null },
+      ],
+    });
+
+    expect(serializeAgentThread(parseAgentThread(withCost))).toEqual(withCost);
+    expect(Object.keys(usageOf(serializeAgentThread(parseAgentThread(withCost))))).toEqual([
+      "inputTokens",
+      "outputTokens",
+      "contextTokens",
+      "costUsd",
+    ]);
+
+    const withoutCost = storedThreadWithTurn({
+      ...STORED_TURN,
+      launch: null,
+      events: [
+        {
+          kind: "result",
+          text: "done",
+          isError: false,
+          usage: { inputTokens: 10, outputTokens: 2, contextTokens: 120_000 },
+        },
+      ],
+    });
+
+    expect(Object.keys(usageOf(serializeAgentThread(parseAgentThread(withoutCost))))).toEqual([
+      "inputTokens",
+      "outputTokens",
+      "contextTokens",
+    ]);
+  });
 });
+
+function usageOf(serialized: Record<string, unknown>): Record<string, unknown> {
+  const turns = serialized.turns as ReadonlyArray<Record<string, unknown>>;
+  const events = turns[0].events as ReadonlyArray<Record<string, unknown>>;
+  return events[0].usage as Record<string, unknown>;
+}
 
 describe("agentThreadWire external origin", () => {
   const SESSION_ID = "987b95ad-c9bc-4d08-ae49-9b431efc8f87";

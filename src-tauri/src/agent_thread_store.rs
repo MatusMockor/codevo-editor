@@ -27,7 +27,8 @@ pub const MAX_AGENT_TOOL_SUMMARY_BYTES: usize = 512;
 pub const MAX_AGENT_THREAD_TITLE_BYTES: usize = 256;
 pub const MAX_AGENT_THREAD_FILE_BYTES: usize = 1024 * 1024;
 pub const MAX_AGENT_THREAD_ROOT_BYTES: u64 = 16 * 1024 * 1024;
-pub const MAX_AGENT_STREAM_METRIC_BYTES: u64 = 9_007_199_254_740_991;
+pub const MAX_AGENT_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+pub const MAX_AGENT_STREAM_METRIC_BYTES: u64 = MAX_AGENT_SAFE_INTEGER;
 pub const MAX_UNREADABLE_REPORTS: usize = 16;
 pub const MAX_AGENT_INTEGRATION_REF_BYTES: usize = 512;
 pub const MAX_AGENT_EXTERNAL_HISTORY_EXCHANGES: usize = 256;
@@ -43,14 +44,14 @@ pub const AGENT_THREAD_EXTERNAL_ORIGIN_PROVIDER_ERROR: &str =
 const FNV1A_64_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A_64_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentThreadDocument {
     pub schema_version: u32,
     pub thread: AgentThread,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentThread {
     pub thread_id: String,
@@ -172,7 +173,7 @@ pub struct AgentProviderSession {
     pub session_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentTurn {
     pub turn_id: String,
@@ -221,11 +222,15 @@ impl AgentTurnStatus {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentTurnUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -235,7 +240,7 @@ pub enum AgentOutputStream {
     Stderr,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum AgentTurnEvent {
     AssistantText {
@@ -261,6 +266,11 @@ pub enum AgentTurnEvent {
         text: String,
         is_error: bool,
         usage: Option<AgentTurnUsage>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ContextCompaction {
+        before_tokens: Option<u64>,
+        after_tokens: Option<u64>,
     },
     Error {
         message: String,
@@ -304,7 +314,7 @@ pub struct UnreadableAgentThread {
     pub reason: String,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq)]
 pub struct AgentThreadLoadResult {
     pub threads: Vec<AgentThread>,
     pub unreadable: Vec<UnreadableAgentThread>,
@@ -624,7 +634,42 @@ fn validate_agent_turn_cli_version(cli_version: Option<&str>) -> Result<(), Stri
     Ok(())
 }
 
+fn validate_agent_turn_usage(usage: &AgentTurnUsage) -> Result<(), String> {
+    if usage.input_tokens > MAX_AGENT_SAFE_INTEGER
+        || usage.output_tokens > MAX_AGENT_SAFE_INTEGER
+        || usage
+            .context_tokens
+            .is_some_and(|tokens| tokens > MAX_AGENT_SAFE_INTEGER)
+    {
+        return Err("Agent turn usage exceeds the supported token count.".to_string());
+    }
+    if usage
+        .cost_usd
+        .is_some_and(|cost| !cost.is_finite() || cost < 0.0)
+    {
+        return Err("Agent turn usage cost is not a non-negative finite amount.".to_string());
+    }
+    Ok(())
+}
+
 fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
+    if let AgentTurnEvent::Result {
+        usage: Some(usage), ..
+    } = event
+    {
+        validate_agent_turn_usage(usage)?;
+    }
+    if let AgentTurnEvent::ContextCompaction {
+        before_tokens,
+        after_tokens,
+    } = event
+    {
+        if before_tokens.is_some_and(|tokens| tokens > MAX_AGENT_SAFE_INTEGER)
+            || after_tokens.is_some_and(|tokens| tokens > MAX_AGENT_SAFE_INTEGER)
+        {
+            return Err("Agent context compaction exceeds the supported token count.".to_string());
+        }
+    }
     let (text_bytes, summary_bytes) = match event {
         AgentTurnEvent::AssistantText { text } | AgentTurnEvent::Reasoning { text } => {
             (text.len(), 0)
@@ -640,6 +685,7 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
             ..
         } => (0, tool_id.len().max(output_summary.len())),
         AgentTurnEvent::Result { text, .. } => (text.len(), 0),
+        AgentTurnEvent::ContextCompaction { .. } => (0, 0),
         AgentTurnEvent::Error { message } => (message.len(), 0),
         AgentTurnEvent::UnknownLine { raw, .. } => (raw.len(), 0),
     };

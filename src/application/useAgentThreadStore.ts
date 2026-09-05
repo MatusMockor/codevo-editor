@@ -41,9 +41,23 @@ import type {
 export const LEGACY_AGENT_THREAD_PIN_STORAGE_KEY_PREFIX = "mockor.agents.threadPins.";
 export const MIN_AGENT_THREAD_PERSIST_INTERVAL_MS = 1_000;
 
-const PERSIST_FAILURE_NOTICE = "Some agent conversations could not be saved.";
+export const PERSIST_FAILURE_NOTICE = "Some agent conversations could not be saved.";
+export const MAX_PERSIST_FAILURE_REASON_CHARS = 180;
 const STORE_FULL_NOTICE =
   "The saved-thread store is full. Unpin or remove older threads so new conversations can be saved.";
+
+const BACKEND_REASON_PREFIXES = [
+  "Agent context ",
+  "Agent project ",
+  "Agent session ",
+  "Agent task ",
+  "Agent thread ",
+  "Agent tool ",
+  "Agent turn ",
+  "The agent thread ",
+  "The saved thread ",
+  "Unable to ",
+] as const;
 
 export interface AgentThreadLegacyPinStorage {
   removeItem(key: string): void;
@@ -89,7 +103,7 @@ export function useAgentThreadStore(
   const slotsRef = useRef<Map<string, ThreadPersistSlot>>(new Map());
   const dirtyRef = useRef<Map<string, PersistUrgency>>(new Map());
   const deleteQueueRef = useRef<DeleteAgentThreadRequest[]>([]);
-  const persistFailureNoticeShownRef = useRef(false);
+  const persistFailureNoticeShownRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
     dependenciesRef.current = dependencies;
@@ -123,14 +137,11 @@ export function useAgentThreadStore(
   const notePersistFailure = useCallback((error: unknown): void => {
     dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, error);
     if (!mountedRef.current) return;
-    if (errorMessageOf(error) === AGENT_THREAD_STORE_FULL_ERROR) {
-      persistFailureNoticeShownRef.current = true;
-      dependenciesRef.current.setNotice(warning(STORE_FULL_NOTICE));
-      return;
-    }
-    if (persistFailureNoticeShownRef.current) return;
-    persistFailureNoticeShownRef.current = true;
-    dependenciesRef.current.setNotice(warning(PERSIST_FAILURE_NOTICE));
+    const message = persistFailureMessage(error);
+    const refusalStaysVisible = message === STORE_FULL_NOTICE;
+    if (!refusalStaysVisible && persistFailureNoticeShownRef.current === message) return;
+    persistFailureNoticeShownRef.current = message;
+    dependenciesRef.current.setNotice(warning(message));
   }, []);
 
   const runSave = useCallback(
@@ -156,7 +167,7 @@ export function useAgentThreadStore(
       if (!saved.ok && ownsProjectRoot(dependenciesRef.current.projects, authority)) {
         notePersistFailure(saved.error);
       }
-      if (saved.ok) persistFailureNoticeShownRef.current = false;
+      if (saved.ok) persistFailureNoticeShownRef.current = null;
       const pending = slot.pending;
       slot.pending = null;
       if (pending === null) return;
@@ -497,6 +508,25 @@ function removeIntent(state: AgentThreadsState, threadId: string): PersistIntent
       threadId,
     },
   };
+}
+
+function persistFailureMessage(error: unknown): string {
+  const raw = errorMessageOf(error);
+  if (raw === AGENT_THREAD_STORE_FULL_ERROR) return STORE_FULL_NOTICE;
+  const reason = boundedPersistFailureReason(raw);
+  if (reason === null) return PERSIST_FAILURE_NOTICE;
+  return `${PERSIST_FAILURE_NOTICE} ${reason}`;
+}
+
+function boundedPersistFailureReason(raw: string): string | null {
+  const collapsed = raw
+    .replace(/\p{Cc}|\p{Cf}/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!BACKEND_REASON_PREFIXES.some((prefix) => collapsed.startsWith(prefix))) return null;
+  const points = [...collapsed];
+  if (points.length <= MAX_PERSIST_FAILURE_REASON_CHARS) return collapsed;
+  return `${points.slice(0, MAX_PERSIST_FAILURE_REASON_CHARS).join("")}…`;
 }
 
 function persistentSaveRequest(thread: AgentThread): SaveAgentThreadRequest {
