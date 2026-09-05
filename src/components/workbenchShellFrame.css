@@ -61,13 +61,11 @@
   --agent-rail-track: var(--agent-rail-collapsed-width);
 }
 
-.workbench-frame__chrome,
-.workbench-frame__agent {
+.workbench-frame__chrome {
   display: contents;
 }
 
-.workbench-frame[data-layout="agent"] > [data-slot="agent"],
-.workbench-frame[data-layout="agent"] > .workbench-frame__agent > [data-slot="agent"] {
+.workbench-frame[data-layout="agent"] > [data-slot="agent"] {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -105,19 +103,23 @@
 .workbench-frame > [data-slot="surface"][hidden],
 .workbench-frame > [data-slot="editor"][hidden],
 .workbench-frame > [data-slot="bottom"][hidden],
-.workbench-frame__chrome[hidden],
-.workbench-frame__agent[hidden] {
+.workbench-frame__chrome[hidden] {
   display: none;
 }
 
 /*
-  Settings surface: the frame drops its layout grid and the settings slot fills it; the
-  hidden agent/editor/bottom slots stay mounted but take no space.
+  Settings surface: the frame drops its layout grid and the settings slot fills it; every
+  other child (agent, surface, editor, bottom, lazy fallbacks) stays mounted but takes no
+  space.
 */
 .workbench-frame[data-surface="settings"] {
   display: flex;
   overflow: hidden;
   flex-direction: column;
+}
+
+.workbench-frame[data-surface="settings"] > *:not([data-slot="settings"]) {
+  display: none;
 }
 
 .workbench-frame > .workbench-frame__settings,
@@ -140,10 +142,7 @@
   grid-template-columns: var(--agent-rail-track) minmax(0, 1fr);
 }
 
-.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="agent"],
-.workbench-frame[data-layout="agent"][data-right-panel="maximized"]
-  > .workbench-frame__agent
-  > [data-slot="agent"] {
+.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="agent"] {
   overflow: hidden;
   grid-column: 1;
 }
@@ -167,7 +166,6 @@
 }
 
 .workbench-frame[data-layout="editor-expanded"] > [data-slot="agent"],
-.workbench-frame[data-layout="editor-expanded"] > .workbench-frame__agent > [data-slot="agent"],
 .workbench-frame[data-layout="editor-expanded"] > [data-slot="surface"] {
   display: none;
 }

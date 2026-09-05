@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -222,6 +224,17 @@ describe("WorkbenchShellFrame", () => {
     expect(frame()).toBe("hidden");
   });
 
+  it("keeps every slot the agent renders a direct child of the frame grid", () => {
+    render(placement("agent", "files"), <AgentSlots />);
+    const frame = host.querySelector(".workbench-frame");
+
+    expect(frame).not.toBeNull();
+    expect(host.querySelector('[data-slot="agent"]')?.parentElement).toBe(frame);
+    expect(host.querySelector('[data-slot="surface"]')?.parentElement).toBe(frame);
+    expect(host.querySelector('[data-slot="editor"]')?.parentElement).toBe(frame);
+    expect(host.querySelector('[data-slot="bottom"]')?.parentElement).toBe(frame);
+  });
+
   it("portals the agent row menu into the frame that scopes the agent tokens", () => {
     render(placement("agent", null), <RowMenuHost />);
 
@@ -249,12 +262,19 @@ describe("WorkbenchShellFrame", () => {
 describe("WorkbenchShellFrame settings surface", () => {
   let host: HTMLDivElement;
   let root: Root;
+  let shellStyles: HTMLStyleElement;
   const settingsSlots: Array<HTMLDivElement | null> = [];
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     settingsSlots.length = 0;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1_280 });
+    shellStyles = document.createElement("style");
+    shellStyles.textContent = readFileSync(
+      resolve(import.meta.dirname, "./workbenchShellFrame.css"),
+      "utf8",
+    );
+    document.head.append(shellStyles);
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -263,6 +283,7 @@ describe("WorkbenchShellFrame settings surface", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    shellStyles.remove();
   });
 
   it("keeps the workbench surface untouched by default", () => {
@@ -309,16 +330,37 @@ describe("WorkbenchShellFrame settings surface", () => {
     expect(settingsSlots[settingsSlots.length - 1]).toBeNull();
   });
 
-  it("stamps the settings surface and hides the agent, editor, bottom and chrome slots", () => {
+  it("stamps the settings surface over the agent slots and hides the editor, bottom and chrome slots", () => {
     render("settings");
 
-    expect(host.querySelector(".workbench-frame")?.getAttribute("data-surface")).toBe("settings");
+    const frame = host.querySelector(".workbench-frame");
+    expect(frame?.getAttribute("data-surface")).toBe("settings");
     expect(host.querySelector('[data-slot="settings"]')?.textContent).toBe("settings page");
+    expect(display('[data-slot="settings"]')).toBe("grid");
     expect(host.querySelector('[data-slot="chrome"]')?.hasAttribute("hidden")).toBe(true);
-    expect(host.querySelector('[data-slot="agent"]')?.hasAttribute("hidden")).toBe(true);
+    expect(host.querySelector('[data-slot="agent"]')?.parentElement).toBe(frame);
+    expect(display('[data-slot="agent"]')).toBe("none");
+    expect(host.querySelector('[data-slot="surface"]')?.parentElement).toBe(frame);
+    expect(display('[data-slot="surface"]')).toBe("none");
     expect(host.querySelector('[data-slot="bottom"]')?.hasAttribute("hidden")).toBe(true);
     expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
     expect(host.querySelector('[data-slot="editor"]')?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("hides an agent fallback that carries no slot while the settings surface is shown", () => {
+    const fallback = <div role="status">Loading agent workspace…</div>;
+    render("workbench", fallback);
+    expect(display('[role="status"]')).not.toBe("none");
+
+    render("settings", fallback);
+    expect(host.querySelector('[role="status"]')?.parentElement).toBe(
+      host.querySelector(".workbench-frame"),
+    );
+    expect(display('[role="status"]')).toBe("none");
+    expect(display('[data-slot="settings"]')).toBe("grid");
+
+    render("workbench", fallback);
+    expect(display('[role="status"]')).not.toBe("none");
   });
 
   it("keeps the editor mounted while the settings surface is shown", () => {
@@ -341,11 +383,17 @@ describe("WorkbenchShellFrame settings surface", () => {
     expect(editorSlot?.hasAttribute("hidden")).toBe(false);
   });
 
-  function render(surface: "workbench" | "settings"): void {
+  function display(selector: string): string {
+    const element = host.querySelector(selector);
+    expect(element, `Missing ${selector}`).not.toBeNull();
+    return element === null ? "" : getComputedStyle(element).display;
+  }
+
+  function render(surface: "workbench" | "settings", agent: ReactNode = <AgentSlots />): void {
     act(() =>
       root.render(
         <WorkbenchShellFrame
-          agent={<div id="agent-content">agent</div>}
+          agent={agent}
           bottom={<span>bottom</span>}
           chrome={<div id="chrome" />}
           editor={<div id="editor-content" />}
@@ -360,6 +408,17 @@ describe("WorkbenchShellFrame settings surface", () => {
     );
   }
 });
+
+function AgentSlots() {
+  return (
+    <>
+      <div data-slot="agent" id="agent-content">
+        agent
+      </div>
+      <div data-slot="surface">surface</div>
+    </>
+  );
+}
 
 function RowMenuHost() {
   return (

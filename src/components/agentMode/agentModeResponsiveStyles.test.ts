@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
@@ -22,6 +22,17 @@ function block(source: string, marker: string): string {
   }
 
   throw new Error(`Unclosed CSS body for ${marker}`);
+}
+
+function allStyles(): string {
+  const agentSheets = readdirSync(import.meta.dirname)
+    .filter((name) => name.endsWith(".css"))
+    .map((name) => readFileSync(resolve(import.meta.dirname, name), "utf8"));
+  const settingsCss = readFileSync(
+    resolve(import.meta.dirname, "../settings/settings.css"),
+    "utf8",
+  );
+  return [rootCss, shellCss, settingsCss, appCss, ...agentSheets].join("");
 }
 
 function withoutComments(source: string): string {
@@ -233,6 +244,42 @@ describe("agent mode responsive layout contract", () => {
         shellCss,
       ),
     ).toContain("display: none");
+  });
+
+  it("places the agent slots as direct frame children and hides them only through the settings surface", () => {
+    expect(shellCss).not.toContain("workbench-frame__agent");
+    expect(shellCss.match(/display: contents/g)).toHaveLength(1);
+    expect(rule(".workbench-frame__chrome {", shellCss)).toContain("display: contents");
+
+    const surface = rule('.workbench-frame[data-layout="agent"] > [data-slot="surface"]', shellCss);
+    expect(surface).toContain("grid-column: 3");
+    expect(surface).toContain("grid-row: 1 / -1");
+    expect(
+      rule(
+        '.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="surface"]',
+        shellCss,
+      ),
+    ).toContain("grid-column: 2");
+    expect(
+      rule('.workbench-frame[data-layout="editor-expanded"] > [data-slot="surface"]', shellCss),
+    ).toContain("display: none");
+
+    expect(rule('.workbench-frame[data-surface="settings"] {', shellCss)).toContain(
+      "display: flex",
+    );
+    expect(
+      rule('.workbench-frame[data-surface="settings"] > *:not([data-slot="settings"])', shellCss),
+    ).toContain("display: none");
+  });
+
+  it("offsets the editor overlay by the same header token that sizes the surface head", () => {
+    const editor = rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss);
+    expect(editor).toContain("padding-top: var(--agent-surface-header-height)");
+    expect(editor).toContain("padding-left: var(--agent-surface-tree-width)");
+    expect(editor).toContain("grid-row: 1 / -1");
+    expect(rule(".agent-surface__head")).toContain("height: var(--agent-surface-header-height)");
+    expect(rule(".app-shell {", shellCss)).toContain("--agent-surface-header-height: 40px");
+    expect(allStyles().match(/--agent-surface-header-height:/g)).toHaveLength(1);
   });
 
   it("pins the maximized frame rail column to the rail track and moves the bottom panel under the surface", () => {

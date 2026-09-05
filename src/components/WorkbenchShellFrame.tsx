@@ -79,9 +79,7 @@ export function WorkbenchShellFrame({
               <WorkbenchFrameResponsiveContext.Provider
                 value={responsivePlacement.responsiveRestore}
               >
-                <div className="workbench-frame__agent" data-slot="agent" hidden={settingsSurface}>
-                  {agent}
-                </div>
+                {agent}
               </WorkbenchFrameResponsiveContext.Provider>
             </WorkbenchFrameTreeContext.Provider>
           </WorkbenchFramePortalContext.Provider>
