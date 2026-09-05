@@ -12,6 +12,7 @@ import { waitForReact } from "../test/reactTestLifecycle";
 import { useJsTestExplorer, type JsTestExplorerState } from "./useJsTestExplorer";
 import type { JsTestExecutionRootResolver } from "./jsTestExecutionRootResolver";
 import type { JsTestBatchGateway } from "../domain/jsTestBatch";
+import * as jsTestDeclarationParser from "../domain/jsTestDeclarations";
 
 const ROOT_A = "/workspace/a";
 const ROOT_B = "/workspace/b";
@@ -2298,29 +2299,70 @@ test("same", () => {});`,
     harness.unmount();
   });
 
-  it("stops and marks discovery truncated at the aggregate source-byte budget", async () => {
-    // Four UTF-8 bytes per scalar crosses the byte budget with fewer parser passes,
-    // keeping the boundary test fast under coverage instrumentation.
-    const largeSource = "💩".repeat(1024 * 1024);
-    const gateway = discovery({
-      enumerateJsTestFiles: vi.fn(async () => ({
-        files: Array.from({ length: 40 }, (_, index) => `${index}.test.ts`),
-        truncated: false,
-        visited: 40,
-      })),
-      readTextFileBounded: vi.fn(async () => ({
-        status: "ok" as const,
-        content: largeSource,
-      })),
-    });
-    const harness = renderExplorer({ discoveryGateway: gateway });
-    await act(async () => harness.hook().refresh());
+  it.each([
+    { fileCount: 16, truncated: false },
+    { fileCount: 40, truncated: true },
+  ])(
+    "enforces the aggregate source-byte budget for $fileCount files",
+    async ({ fileCount, truncated }) => {
+      // Keep each mocked read within the real 2 MiB port limit. Multibyte padding
+      // distinguishes the aggregate UTF-8 budget from a UTF-16 character count.
+      const fileBytes = 2 * 1024 * 1024;
+      const paddingBytes = fileBytes - new TextEncoder().encode(`/**/\n${TEST_SOURCE}`).byteLength;
+      const largeSource = `/*${"💩".repeat(Math.floor(paddingBytes / 4))}${" ".repeat(paddingBytes % 4)}*/\n${TEST_SOURCE}`;
+      expect(new TextEncoder().encode(largeSource).byteLength).toBe(fileBytes);
+      const gateway = discovery({
+        enumerateJsTestFiles: vi.fn(async () => ({
+          files: Array.from({ length: fileCount }, (_, index) => `${index}.test.ts`),
+          truncated: false,
+          visited: fileCount,
+        })),
+        readTextFileBounded: vi.fn(async () => ({
+          status: "ok" as const,
+          content: largeSource,
+        })),
+      });
+      // This is an orchestration budget test, not a 32 MiB parser benchmark.
+      // Keep byte accounting real while reusing a real small-source parse result;
+      // the other discovery tests continue exercising the unmocked parser.
+      const declarations = jsTestDeclarationParser.jsTestDeclarations(TEST_SOURCE);
+      const parse = vi
+        .spyOn(jsTestDeclarationParser, "jsTestDeclarations")
+        .mockReturnValue(declarations);
+      const harness = renderExplorer({ discoveryGateway: gateway });
+      try {
+        await act(async () => harness.hook().refresh());
 
-    expect(harness.hook().isLoading).toBe(false);
-    expect(harness.hook().truncated).toBe(true);
-    expect(vi.mocked(gateway.readTextFileBounded).mock.calls.length).toBeLessThan(40);
-    harness.unmount();
-  });
+        expect(harness.hook().isLoading).toBe(false);
+        expect(harness.hook().error).toBeNull();
+        expect(harness.hook().truncated).toBe(truncated);
+        // Exactly 16 full-size files fit the 32 MiB aggregate budget. Files already
+        // in flight may settle, but excess files are neither parsed nor published.
+        expect(parse).toHaveBeenCalledTimes(16);
+        expect(parse.mock.calls.every(([source]) => source === largeSource)).toBe(true);
+        expect(harness.hook().tree?.children).toHaveLength(16);
+        expect(
+          harness
+            .hook()
+            .tree?.children.map((file) => file.filePath)
+            .sort(),
+        ).toEqual(Array.from({ length: 16 }, (_, index) => `${index}.test.ts`).sort());
+        const reads = vi.mocked(gateway.readTextFileBounded).mock.calls;
+        if (truncated) {
+          expect(reads.length).toBeGreaterThan(16);
+          expect(reads.length).toBeLessThanOrEqual(16 + 8);
+        } else {
+          expect(reads).toHaveLength(16);
+        }
+        expect(reads.every(([root, , maxBytes]) => root === ROOT_A && maxBytes === fileBytes)).toBe(
+          true,
+        );
+      } finally {
+        parse.mockRestore();
+        harness.unmount();
+      }
+    },
+  );
 
   it("ignores an older discovery failure after a newer refresh succeeds", async () => {
     const oldEnumeration = deferred<{

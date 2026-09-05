@@ -5,6 +5,22 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.15] - 2026-09-05
+
+### Fixed
+
+- Restore original user messages and assistant responses in imported terminal chats,
+  including older imports, and retain them after restarting without provider requests.
+- Keep later local turns separate, support nested project directories, and preserve
+  literal HTML/XML user messages in imported history.
+- Stabilize the test-discovery byte-budget regression that blocked beta.14 publication
+  without relaxing the production limits or the test timeout.
+
+### Changed
+
+- Show loading, retry, and partial-history states for imported conversations. Very large
+  sessions use a bounded text snapshot and may show only part of the original chat.
+
 ## [0.2.0-beta.14] - 2026-09-05
 
 ### Fixed
