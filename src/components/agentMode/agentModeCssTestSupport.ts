@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readStyleSheet } from "../cssContractTestSupport";
 
 export const AGENT_MODE_STYLE_SHEETS = [
   "agentModeTokens.css",
@@ -13,8 +12,12 @@ export const AGENT_MODE_STYLE_SHEETS = [
   "agentStatusBar.css",
 ] as const;
 
+export function agentModeSheetPath(sheet: (typeof AGENT_MODE_STYLE_SHEETS)[number]): string {
+  return `components/agentMode/${sheet}`;
+}
+
 export function readAgentModeStyles(): string {
-  return AGENT_MODE_STYLE_SHEETS.map((sheet) =>
-    readFileSync(resolve(import.meta.dirname, sheet), "utf8"),
+  return AGENT_MODE_STYLE_SHEETS.map(
+    (sheet) => readStyleSheet(agentModeSheetPath(sheet)).source,
   ).join("");
 }

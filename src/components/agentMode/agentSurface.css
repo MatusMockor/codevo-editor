@@ -1,7 +1,7 @@
 /* Surfaces */
 
-/* Right panel: a tab strip of open surfaces. The surface tracks themselves belong to the shell
-   frame (workbenchShellFrame.css). */
+/* Right panel: a tab strip of open surfaces on the side tone. The surface tracks themselves belong
+   to the shell frame (workbenchShellFrame.css). */
 .agent-surface {
   position: relative;
   display: flex;
@@ -9,8 +9,7 @@
   min-height: 0;
   height: 100%;
   flex-direction: column;
-  border-left: 1px solid var(--agent-hairline);
-  background: var(--agent-canvas);
+  background: var(--codevo-side);
   container-name: agent-surface;
   container-type: inline-size;
 }
@@ -31,8 +30,6 @@
   flex: 0 0 auto;
   align-items: center;
   padding: 0 var(--agent-space-3);
-  border-bottom: 1px solid var(--agent-hairline);
-  background: var(--agent-canvas);
   gap: var(--agent-space-2);
 }
 
@@ -42,22 +39,21 @@
   min-width: 0;
   flex: 0 1 auto;
   align-items: center;
-  gap: var(--agent-space-2);
+  gap: var(--agent-space-1);
 }
 
 .agent-surface__editor-tabs {
   overflow: hidden;
   min-width: 0;
   flex: 1 1 auto;
-  align-self: stretch;
-  border-left: 1px solid var(--agent-hairline);
+  align-self: center;
 }
 
 .agent-surface__editor-tabs .editor-tabs {
-  height: calc(var(--agent-surface-header-height) - 1px);
+  height: 30px;
   min-height: 0;
   max-height: none;
-  align-items: flex-end;
+  align-items: center;
   padding: 0 4px;
   border-bottom: 0;
   background: transparent;
@@ -65,16 +61,27 @@
 }
 
 .agent-surface__editor-tabs .editor-tab {
-  height: 32px;
+  height: 28px;
   min-width: 96px;
   max-width: 180px;
+  border-radius: var(--agent-radius-sm);
+}
+
+.agent-surface__editor-tabs .editor-tab.active {
+  background: var(--codevo-raised);
+  box-shadow: var(--codevo-shadow-card);
+}
+
+.agent-surface__editor-tabs .tab-main,
+.agent-surface__editor-tabs .tab-close {
+  height: 28px;
 }
 
 .agent-surface__editor-tabs .tab-main {
-  height: 32px;
   padding-left: 8px;
 }
 
+/* Surface tabs are tonal chips: hover tone at rest, raised when active. */
 .agent-surface__tabitem {
   display: inline-flex;
   height: 28px;
@@ -85,16 +92,18 @@
   color: var(--agent-text-muted);
   transition:
     background var(--agent-motion-hover),
-    color var(--agent-motion-hover);
+    color var(--agent-motion-hover),
+    box-shadow var(--agent-motion-hover);
 }
 
 .agent-surface__tabitem:hover {
-  background: var(--agent-row-hover);
+  background: var(--codevo-hover);
   color: var(--agent-text);
 }
 
 .agent-surface__tabitem--active {
-  background: var(--agent-fill);
+  background: var(--codevo-raised);
+  box-shadow: var(--codevo-shadow-card);
   color: var(--agent-text-strong);
 }
 
@@ -106,7 +115,7 @@
   flex: 1 1 auto;
   overflow: hidden;
   align-items: center;
-  padding: 0 var(--agent-space-2) 0 var(--agent-space-3);
+  padding: 0 6px 0 10px;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -130,7 +139,7 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  margin-right: 2px;
+  margin-right: 4px;
   border: 0;
   border-radius: var(--agent-radius-sm);
   background: transparent;
@@ -154,7 +163,7 @@
 }
 
 .agent-surface__tab-close:hover {
-  background: color-mix(in srgb, var(--agent-text-muted) 18%, transparent);
+  background: var(--codevo-hover);
   color: var(--agent-text-strong);
 }
 
@@ -203,69 +212,44 @@
   border-radius: var(--agent-radius-sm);
 }
 
-.agent-surface__subhead {
-  display: flex;
-  height: 32px;
-  flex: 0 0 auto;
-  align-items: center;
-  padding: 0 var(--agent-space-3) 0 var(--agent-space-4);
-  border-bottom: 1px solid var(--agent-hairline);
-  gap: var(--agent-space-3);
-}
-
-.agent-surface__subhead .agent-microlabel {
-  color: var(--agent-text-muted);
-  font-family: var(--agent-sans);
-  font-size: var(--agent-fs-sm);
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.agent-surface__subhead .agent-iconbutton {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--agent-radius-sm);
-}
-
-/* Empty state: three cards, T3 spacing. */
+/* Chooser: one column of raised cards with the key hint in the corner. */
 .agent-surface-empty {
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 0 22px 40px;
   outline: none;
 }
 
 .agent-surface-empty__inner {
   width: 100%;
-  max-width: 560px;
+  max-width: 320px;
 }
 
 .agent-surface-empty__head {
-  margin-bottom: 20px;
+  margin-bottom: 18px;
   text-align: center;
 }
 
 .agent-surface-empty__title {
   margin: 0;
   color: var(--agent-text-strong);
-  font-size: var(--agent-fs-sm);
-  font-weight: 500;
+  font-size: var(--agent-fs-md);
+  font-weight: 600;
 }
 
 .agent-surface-empty__hint {
   margin: 4px 0 0;
   color: var(--agent-text-muted);
-  font-size: var(--agent-fs-xs);
+  font-size: var(--agent-fs-sm);
 }
 
 .agent-surface-empty__cards {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .agent-surface-card__slot {
@@ -276,26 +260,25 @@
 }
 
 .agent-surface-card {
+  position: relative;
   display: flex;
-  min-height: 112px;
   width: 100%;
   flex-direction: column;
-  align-items: flex-start;
-  padding: 16px;
-  border: 1px solid var(--agent-hairline);
+  align-items: stretch;
+  padding: 12px 40px 12px 14px;
+  border: 0;
   border-radius: var(--agent-radius-lg);
-  background: var(--agent-raised);
+  background: var(--codevo-raised);
+  box-shadow: var(--codevo-shadow-card);
   color: var(--agent-text);
   cursor: pointer;
+  gap: 4px;
   text-align: left;
-  transition:
-    border-color var(--agent-motion-hover),
-    background var(--agent-motion-hover);
+  transition: background var(--agent-motion-hover);
 }
 
 .agent-surface-card:hover:not(:disabled) {
-  border-color: var(--agent-hairline-strong);
-  background: var(--agent-hover);
+  background: var(--codevo-hover);
 }
 
 .agent-surface-card:focus-visible {
@@ -304,56 +287,67 @@
 }
 
 .agent-surface-card:disabled {
-  color: var(--agent-text-disabled);
+  background: transparent;
+  box-shadow: none;
+  color: var(--agent-text-subtle);
   cursor: default;
 }
 
-.agent-surface-card__top {
+.agent-surface-card__title {
   display: flex;
-  width: 100%;
-  margin-bottom: 12px;
+  min-width: 0;
   align-items: center;
-  justify-content: space-between;
+  color: var(--agent-text-strong);
+  font-size: var(--agent-fs-md);
+  font-weight: 500;
+  gap: 8px;
 }
 
 .agent-surface-card__icon {
   display: inline-flex;
+  flex: none;
   color: var(--agent-text-muted);
 }
 
 .agent-surface-card__key {
+  position: absolute;
+  top: 12px;
+  right: 12px;
   display: inline-flex;
   min-width: 18px;
   height: 18px;
   align-items: center;
   justify-content: center;
   padding: 0 5px;
-  border: 1px solid var(--agent-hairline);
-  border-radius: var(--agent-radius-sm);
-  background: var(--agent-fill);
+  border-radius: 6px;
+  background: var(--codevo-hover);
   color: var(--agent-text-muted);
-  font-family: var(--agent-mono);
+  font-family: var(--agent-sans);
   font-size: var(--agent-fs-2xs);
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.agent-surface-card:disabled .agent-surface-card__title,
+.agent-surface-card:disabled .agent-surface-card__icon,
+.agent-surface-card:disabled .agent-surface-card__description {
+  color: var(--agent-text-subtle);
 }
 
 .agent-surface-card:disabled .agent-surface-card__key {
-  color: var(--agent-text-disabled);
-}
-
-.agent-surface-card:disabled .agent-surface-card__icon {
+  background: transparent;
   color: var(--agent-text-disabled);
 }
 
 .agent-surface-card__label {
-  font-size: var(--agent-fs-sm);
-  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-surface-card__description {
-  margin-top: 4px;
   color: var(--agent-text-muted);
-  font-size: var(--agent-fs-xs);
+  font-size: var(--agent-fs-sm);
   line-height: 1.5;
 }
 
@@ -400,17 +394,19 @@
   .agent-surface-empty {
     padding: 16px;
   }
-
-  .agent-surface-empty__cards {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
-/* Files: a bounded tree pane on the left and the editor well on the right. */
+/* Files: the tree on the side tone and the editor well on the canvas tone. Docked, the tree sits
+   left; maximized, the row reverses so the tree docks right of the editor. With no document open
+   the frame stamps data-editor="empty", the editor well collapses and the tree fills the body. */
 .agent-surface__files {
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
+}
+
+.workbench-frame[data-right-panel="maximized"] .agent-surface__files {
+  flex-direction: row-reverse;
 }
 
 .agent-surface-tree {
@@ -420,9 +416,69 @@
   min-height: 0;
   flex: 0 0 auto;
   flex-direction: column;
-  border-right: 1px solid var(--agent-hairline);
-  background: var(--agent-canvas);
+  background: var(--codevo-side);
   font-size: var(--agent-fs-sm);
+}
+
+.workbench-frame[data-editor="empty"] .agent-surface-tree {
+  width: auto;
+  flex: 1 1 auto;
+}
+
+.agent-surface-tree__tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 4px 8px;
+  gap: 4px;
+}
+
+.agent-surface-tree__tools .agent-iconbutton {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--agent-radius-sm);
+}
+
+.agent-surface-tree__search {
+  display: flex;
+  height: 28px;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text-subtle);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--agent-fs-sm);
+  gap: 8px;
+  text-align: left;
+  transition:
+    background var(--agent-motion-hover),
+    color var(--agent-motion-hover);
+}
+
+.agent-surface-tree__search > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-surface-tree__search:hover:not(:disabled) {
+  background: var(--codevo-hover);
+  color: var(--agent-text-muted);
+}
+
+.agent-surface-tree__search:focus-visible {
+  box-shadow: var(--agent-focus-ring);
+  outline: none;
+}
+
+.agent-surface-tree__search:disabled {
+  color: var(--agent-text-disabled);
+  cursor: default;
 }
 
 .agent-surface-tree__viewport {
@@ -435,10 +491,18 @@
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
-  background: var(--agent-well);
+  background: var(--codevo-canvas);
 }
 
-/* Diff: change list on the left, one Monaco diff editor on the right. */
+.workbench-frame[data-right-panel="maximized"] .agent-surface__editor-slot {
+  background: transparent;
+}
+
+.workbench-frame[data-editor="empty"] .agent-surface__editor-slot {
+  display: none;
+}
+
+/* Diff: change list on the side tone, one Monaco diff editor on a canvas block. */
 .agent-surface-diff {
   display: flex;
   min-height: 0;
@@ -455,8 +519,8 @@
 
 .agent-surface-diff__list {
   min-height: 0;
-  border-right: 1px solid var(--agent-hairline);
-  background: var(--agent-canvas);
+  padding: 0 var(--agent-space-2) var(--agent-space-3);
+  background: var(--codevo-side);
   overflow-y: auto;
 }
 
@@ -476,9 +540,12 @@
   align-items: center;
   gap: var(--agent-space-3);
   padding: 0 var(--agent-space-3);
-  border-radius: var(--agent-radius-sm);
-  color: var(--agent-text-muted);
+  border-radius: 7px;
+  color: var(--agent-text);
   font-size: var(--agent-fs-sm);
+  transition:
+    background var(--agent-motion-hover),
+    box-shadow var(--agent-motion-hover);
 }
 
 .agent-surface-diff__list .agent-files__row + .agent-files__row {
@@ -486,41 +553,44 @@
 }
 
 .agent-surface-diff__list .agent-files__row:hover {
-  background: var(--agent-row-hover);
+  background: var(--codevo-hover);
 }
 
 .agent-surface-diff__list .agent-files__row--selected,
 .agent-surface-diff__list .agent-files__row--selected:hover {
-  background: var(--agent-fill);
+  background: var(--codevo-raised);
+  box-shadow: var(--codevo-shadow-card);
   color: var(--agent-text-strong);
 }
 
-/* Add and delete read as 10 % tints, the only colour the T3 change list carries. */
+/* Add and delete read as soft tints, the only colour the change list carries. */
 .agent-surface-diff__list .agent-files__status {
   display: inline-flex;
   width: 16px;
   height: 16px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--agent-radius-sm);
+  border-radius: 6px;
   font-size: var(--agent-fs-2xs);
   font-weight: 600;
 }
 
 .agent-surface-diff__list .agent-files__status--added,
 .agent-surface-diff__list .agent-files__status--untracked {
-  background: color-mix(in srgb, var(--agent-ok) 10%, transparent);
+  background: var(--codevo-ok-soft);
+  color: var(--codevo-ok);
 }
 
 .agent-surface-diff__list .agent-files__status--deleted,
 .agent-surface-diff__list .agent-files__status--conflicted {
-  background: color-mix(in srgb, var(--agent-danger) 10%, transparent);
+  background: var(--codevo-danger-soft);
+  color: var(--codevo-danger);
 }
 
 .agent-surface-diff__list .agent-files__path {
   color: inherit;
-  font-family: var(--agent-sans);
-  font-size: var(--agent-fs-sm);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
 }
 
 .agent-surface-diff__preview {
@@ -528,6 +598,10 @@
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  margin: 0 var(--agent-space-3) var(--agent-space-3) 0;
+  border-radius: var(--agent-radius-md);
+  background: var(--codevo-canvas);
+  overflow: hidden;
 }
 
 .agent-surface-diff__placeholder {
@@ -539,16 +613,19 @@
   flex: 0 0 auto;
   margin: 0;
   padding: 6px var(--agent-space-3);
-  border-bottom: 1px solid var(--agent-hairline);
-  background: var(--agent-fill);
+  background: var(--codevo-well);
 }
 
-/* Terminal: fills the body; the tabs panel owns its own chrome. */
+/* Terminal: one canvas block with radius 10; the tabs panel owns its own chrome inside it. */
 .agent-surface-terminal {
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
+  margin: 0 var(--agent-space-3) var(--agent-space-3);
+  border-radius: var(--agent-radius-md);
+  background: var(--codevo-canvas);
+  overflow: hidden;
 }
 
 /* Thread body cue: replaces the inline change list. */
@@ -562,17 +639,11 @@
 }
 
 .agent-session__changes-cue .agent-linkbutton {
-  border-bottom-color: var(--agent-hairline-strong);
+  border-bottom: 0;
   color: var(--agent-text-muted);
   font-size: var(--agent-fs-sm);
 }
 
 .agent-session__changes-sep {
   color: var(--agent-text-subtle);
-}
-
-@media (max-width: 900px) {
-  .agent-surface-empty__cards {
-    grid-template-columns: 1fr;
-  }
 }

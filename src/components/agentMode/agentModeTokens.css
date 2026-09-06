@@ -1,56 +1,188 @@
-/*
-  Agent mode — "quiet instrument panel".
-  Every value below derives from the theme primitives, so light and every dark
-  palette are covered by construction. Variants (data-agent-variant) reassign
-  tokens only; they never add selectors or layout. The palette is scoped to the
-  shell frame so every frame slot — the agent view and the right-panel surface
-  host — inherits it without borrowing another slot's class.
-*/
+.app-shell {
+  --codevo-side: var(--color-sidebar);
+  --codevo-canvas: var(--color-app);
+  --codevo-raised: var(--color-surface);
+  --codevo-well: var(--color-control);
+  --codevo-hover: var(--color-hover);
+  --codevo-active: var(--color-active);
+  --codevo-selected: var(--color-hover-strong);
+  --codevo-fg-strong: var(--color-text-strong);
+  --codevo-fg: var(--color-text);
+  --codevo-fg-muted: var(--color-text-muted);
+  --codevo-fg-subtle: var(--color-text-subtle);
+  --codevo-fg-disabled: var(--color-disabled);
+  --codevo-primary: var(--color-accent);
+  --codevo-primary-fg: var(--color-accent-text);
+  --codevo-primary-soft: color-mix(in srgb, var(--codevo-primary) 16%, transparent);
+  --codevo-ok: var(--color-success);
+  --codevo-warn: var(--color-warning);
+  --codevo-danger: var(--color-error);
+  --codevo-ok-soft: color-mix(in srgb, var(--codevo-ok) 14%, transparent);
+  --codevo-warn-soft: color-mix(in srgb, var(--codevo-warn) 14%, transparent);
+  --codevo-danger-soft: color-mix(in srgb, var(--codevo-danger) 14%, transparent);
+  --codevo-diff-add: color-mix(in srgb, var(--codevo-ok) 13%, transparent);
+  --codevo-diff-del: color-mix(in srgb, var(--codevo-danger) 13%, transparent);
+  --codevo-ft-ts: #3b8eea;
+  --codevo-ft-tsx: #38bdf8;
+  --codevo-ft-js: #e8d44d;
+  --codevo-ft-json: #e5a33b;
+  --codevo-ft-npm: #d64a3a;
+  --codevo-ft-md: #8fa3b8;
+  --codevo-ft-css: #7f9cf5;
+  --codevo-ft-sh: #4cc38a;
+  --codevo-ft-docker: #3aa0e6;
+  --codevo-ft-git: #f0603f;
+  --codevo-ft-env: #d7c26b;
+  --codevo-ft-lock: #8a8f98;
+  --codevo-shadow-card: none;
+  --codevo-shadow-float: 0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --codevo-shadow-window: 0 30px 80px rgba(0, 0, 0, 0.55);
+  --codevo-separator-inset: 0 -1px 0 var(--codevo-well);
+  --codevo-focus-ring: 0 0 0 2px var(--codevo-canvas), 0 0 0 4px var(--codevo-primary);
+  --codevo-r-sm: 8px;
+  --codevo-r-md: 10px;
+  --codevo-r-lg: 12px;
+  --codevo-r-xl: 14px;
+  --codevo-r-pill: 999px;
+  --codevo-fs-hero: 26px;
+  --codevo-fs-title: 20px;
+  --codevo-fs-heading: 15px;
+  --codevo-fs-body: 13.5px;
+  --codevo-fs-ui: 13px;
+  --codevo-fs-meta: 12px;
+  --codevo-fs-small: 11px;
+  --codevo-fs-label: 10px;
+  --codevo-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --codevo-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --codevo-icon: 16px;
+  --codevo-icon-stroke: 1.75;
+  --shadow-pop: var(--codevo-shadow-float);
+  --focus-ring: var(--codevo-focus-ring);
+}
+
+.app-shell[data-theme="light"],
+.app-shell[data-theme="catppuccinLatte"],
+.app-shell[data-theme="oneLight"] {
+  --codevo-primary-soft: color-mix(in srgb, var(--codevo-primary) 12%, transparent);
+  --codevo-ok-soft: color-mix(in srgb, var(--codevo-ok) 12%, transparent);
+  --codevo-warn-soft: color-mix(in srgb, var(--codevo-warn) 12%, transparent);
+  --codevo-danger-soft: color-mix(in srgb, var(--codevo-danger) 10%, transparent);
+  --codevo-diff-add: color-mix(in srgb, var(--codevo-ok) 13%, transparent);
+  --codevo-diff-del: color-mix(in srgb, var(--codevo-danger) 12%, transparent);
+  --codevo-ft-ts: #2f6fd0;
+  --codevo-ft-tsx: #0e8ec2;
+  --codevo-ft-js: #b39a12;
+  --codevo-ft-json: #c07d1a;
+  --codevo-ft-npm: #c53b2c;
+  --codevo-ft-md: #5f7389;
+  --codevo-ft-css: #4d6ee0;
+  --codevo-ft-sh: #1f9d5f;
+  --codevo-ft-docker: #1f7fc4;
+  --codevo-ft-git: #d9502f;
+  --codevo-ft-env: #9c8a2b;
+  --codevo-ft-lock: #7a7f88;
+  --codevo-shadow-card: 0 1px 2px rgba(18, 20, 30, 0.05), 0 6px 20px rgba(18, 20, 30, 0.05);
+  --codevo-shadow-float: 0 18px 48px rgba(18, 20, 30, 0.16), 0 2px 8px rgba(18, 20, 30, 0.08);
+  --codevo-shadow-window: 0 30px 80px rgba(18, 20, 30, 0.18);
+}
+
+@media (prefers-color-scheme: light) {
+  .app-shell[data-theme="system"] {
+    --codevo-primary-soft: color-mix(in srgb, var(--codevo-primary) 12%, transparent);
+    --codevo-ok-soft: color-mix(in srgb, var(--codevo-ok) 12%, transparent);
+    --codevo-warn-soft: color-mix(in srgb, var(--codevo-warn) 12%, transparent);
+    --codevo-danger-soft: color-mix(in srgb, var(--codevo-danger) 10%, transparent);
+    --codevo-diff-add: color-mix(in srgb, var(--codevo-ok) 13%, transparent);
+    --codevo-diff-del: color-mix(in srgb, var(--codevo-danger) 12%, transparent);
+    --codevo-ft-ts: #2f6fd0;
+    --codevo-ft-tsx: #0e8ec2;
+    --codevo-ft-js: #b39a12;
+    --codevo-ft-json: #c07d1a;
+    --codevo-ft-npm: #c53b2c;
+    --codevo-ft-md: #5f7389;
+    --codevo-ft-css: #4d6ee0;
+    --codevo-ft-sh: #1f9d5f;
+    --codevo-ft-docker: #1f7fc4;
+    --codevo-ft-git: #d9502f;
+    --codevo-ft-env: #9c8a2b;
+    --codevo-ft-lock: #7a7f88;
+    --codevo-shadow-card: 0 1px 2px rgba(18, 20, 30, 0.05), 0 6px 20px rgba(18, 20, 30, 0.05);
+    --codevo-shadow-float: 0 18px 48px rgba(18, 20, 30, 0.16), 0 2px 8px rgba(18, 20, 30, 0.08);
+    --codevo-shadow-window: 0 30px 80px rgba(18, 20, 30, 0.18);
+  }
+}
+
 .workbench-frame {
-  --agent-accent: var(--agent-live);
-  --agent-shade: #000;
+  --agent-sans: var(--codevo-sans);
+  --agent-mono: var(--codevo-mono);
+  --agent-canvas: var(--codevo-canvas);
+  --agent-rail: var(--codevo-side);
+  --agent-raised: var(--codevo-raised);
+  --agent-well: var(--codevo-well);
+  --agent-fill: var(--codevo-active);
+  --agent-hover: var(--codevo-hover);
+  --agent-hairline: var(--codevo-hover);
+  --agent-hairline-strong: var(--codevo-active);
+  --agent-text-strong: var(--codevo-fg-strong);
+  --agent-text: var(--codevo-fg);
+  --agent-text-muted: var(--codevo-fg-muted);
+  --agent-text-subtle: var(--codevo-fg-subtle);
+  --agent-text-disabled: var(--codevo-fg-disabled);
+  --agent-accent: var(--codevo-primary);
+  --agent-live: var(--codevo-primary);
+  --agent-live-soft: var(--codevo-primary-soft);
+  --agent-live-contrast: var(--codevo-primary-fg);
+  --agent-plan: var(--codevo-primary);
+  --agent-ok: var(--codevo-ok);
+  --agent-attention: var(--codevo-warn);
+  --agent-danger: var(--codevo-danger);
+  --agent-stopped: var(--codevo-fg-subtle);
+  --agent-archived: var(--codevo-fg-subtle);
+  --agent-status-working: var(--codevo-ok);
+  --agent-status-done: var(--codevo-ok);
+  --agent-status-failed: var(--codevo-danger);
+  --agent-status-stopped: var(--codevo-warn);
+  --agent-mark: var(--codevo-primary-soft);
+  --agent-glow: var(--codevo-primary-soft);
+  --agent-glow-faint: transparent;
+  --agent-glow-danger: var(--codevo-danger-soft);
+  --agent-ambient: none;
+  --agent-scanline: transparent;
+  --agent-shade: var(--codevo-side);
+  --agent-ink: var(--codevo-fg-strong);
   --agent-shadow-alpha: 0.28;
-  --agent-canvas: var(--color-app);
-  --agent-rail: var(--color-panel-deep);
-  --agent-raised: var(--color-surface);
-  --agent-well: color-mix(in srgb, var(--color-panel-deep) 88%, var(--agent-shade));
-  --agent-fill: var(--color-hover-strong);
-  --agent-hover: var(--color-hover);
-  --agent-hairline: var(--color-border);
-  --agent-hairline-strong: var(--color-border-strong);
-  --agent-text-strong: var(--color-text-strong);
-  --agent-text: var(--color-text);
-  --agent-text-muted: var(--color-text-muted);
-  --agent-text-subtle: var(--color-text-subtle);
-  --agent-text-disabled: var(--color-disabled);
-  --agent-live: var(--color-accent);
-  --agent-live-soft: var(--color-accent-soft);
-  --agent-live-contrast: var(--color-app);
-  /* CTA contrast is kept separate from decorative accent text. All shipped dark
-     accents clear 4.5:1 against black; light palettes override below. */
-  --agent-action-contrast: #000;
-  --agent-action-tone: #fff;
-  --agent-glow: color-mix(in srgb, var(--agent-live) 55%, transparent);
-  --agent-glow-faint: color-mix(in srgb, var(--agent-live) 9%, transparent);
-  --agent-glow-danger: color-mix(in srgb, var(--agent-danger) 35%, transparent);
-  --agent-ok: var(--color-success);
-  --agent-attention: var(--color-warning);
-  --agent-danger: var(--color-danger);
-  --agent-stopped: var(--agent-text-subtle);
-  --agent-archived: var(--agent-text-subtle);
-  --agent-plan: var(--agent-live);
-  --agent-focus-ring:
-    0 0 0 1px var(--agent-live), 0 0 0 3px color-mix(in srgb, var(--agent-live) 24%, transparent);
-  --agent-scanline: color-mix(in srgb, var(--agent-text) 2%, transparent);
-  --agent-ambient:
-    radial-gradient(1100px 520px at 52% -14%, var(--agent-glow-faint), transparent 64%),
-    radial-gradient(
-      880px 560px at 24% 116%,
-      color-mix(in srgb, var(--agent-live) 5%, transparent),
-      transparent 60%
-    );
-  --agent-shadow-raised: 0 -10px 30px rgba(0, 0, 0, var(--agent-shadow-alpha));
-  --agent-shadow-well: inset 0 1px 0 color-mix(in srgb, var(--agent-ink) 6%, transparent);
+  --agent-shadow-raised: var(--codevo-shadow-card);
+  --agent-shadow-well: none;
+  --agent-focus-ring: var(--codevo-focus-ring);
+  --agent-row-hover: var(--codevo-hover);
+  --agent-row-active: var(--codevo-active);
+  --agent-row-selected: var(--codevo-raised);
+  --agent-row-radius: var(--codevo-r-md);
+  --agent-row-pad: 8px 10px;
+  --agent-composer-surface: var(--codevo-raised);
+  --agent-composer-outline: transparent;
+  --agent-composer-highlight: transparent;
+  --agent-outline-button-bg: var(--codevo-raised);
+  --agent-outline-button-hover: var(--codevo-hover);
+  --agent-code-background: var(--codevo-well);
+  --agent-cta-bg: var(--codevo-primary);
+  --agent-cta-fg: var(--codevo-primary-fg);
+  --agent-cta-bg-hover: var(--codevo-primary);
+  --agent-radius-sm: var(--codevo-r-sm);
+  --agent-radius-md: var(--codevo-r-md);
+  --agent-radius-lg: var(--codevo-r-lg);
+  --agent-radius-xl: var(--codevo-r-xl);
+  --agent-radius-pill: var(--codevo-r-pill);
+  --agent-fs-2xs: var(--codevo-fs-small);
+  --agent-fs-xs: var(--codevo-fs-meta);
+  --agent-fs-sm: var(--codevo-fs-meta);
+  --agent-fs-md: var(--codevo-fs-ui);
+  --agent-fs-lg: var(--codevo-fs-heading);
+  --agent-fs-xl: var(--codevo-fs-title);
+  --agent-lh-row: 1.35;
+  --agent-lh-prose: 1.6;
+  --agent-tracking-label: 0.02em;
   --agent-space-1: 2px;
   --agent-space-2: 4px;
   --agent-space-3: 8px;
@@ -62,277 +194,24 @@
   --agent-rail-min-width: 208px;
   --agent-rail-row-inset: 10px;
   --agent-rail-gap: 8px;
-  --agent-row-hover: var(--agent-hover);
-  --agent-row-active: var(--agent-fill);
-  --agent-row-selected: color-mix(in srgb, var(--agent-fill) 70%, transparent);
-  --agent-row-radius: 6px;
-  --agent-status-working: var(--agent-live);
-  --agent-status-done: var(--agent-ok);
-  --agent-status-failed: var(--agent-danger);
-  --agent-status-stopped: var(--agent-attention);
-  --agent-mark: color-mix(in srgb, var(--agent-live) 25%, transparent);
   --agent-rail-row-py: 8px;
   --agent-rail-row-px: 30px;
-  --agent-session-gutter: 28px;
-  --agent-turn-gap: 22px;
-  --agent-radius-sm: 4px;
-  --agent-radius-md: 6px;
-  --agent-radius-lg: 8px;
-  --agent-radius-xl: 12px;
-  --agent-radius-pill: 999px;
-  --agent-fs-2xs: 10.5px;
-  --agent-fs-xs: 11px;
-  --agent-fs-sm: 12px;
-  --agent-fs-md: 13px;
-  --agent-fs-lg: 15px;
-  --agent-fs-xl: 18px;
-  --agent-lh-row: 1.35;
-  --agent-lh-prose: 1.55;
-  --agent-tracking-label: 0.14em;
+  --agent-session-gutter: 24px;
+  --agent-turn-gap: 28px;
   --agent-motion-hover: 120ms;
   --agent-motion-select: 180ms;
   --agent-motion-enter: 200ms;
-  --agent-mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-}
-/*
-  Scheme primitives: the only values that cannot derive from a theme color.
-  Dark palettes shade toward black and ink toward white; light palettes invert.
-*/
-.workbench-frame {
-  --agent-ink: #fff;
 }
 
 .app-shell[data-theme="light"] .workbench-frame,
 .app-shell[data-theme="catppuccinLatte"] .workbench-frame,
 .app-shell[data-theme="oneLight"] .workbench-frame {
-  --agent-shade: #fff;
-  --agent-ink: #000;
   --agent-shadow-alpha: 0.1;
-  --agent-scanline: color-mix(in srgb, var(--agent-text) 4%, transparent);
-  --agent-live-contrast: #fff;
-  --agent-action-contrast: #fff;
-  --agent-action-tone: #000;
-  --agent-focus-ring:
-    0 0 0 1px var(--agent-live), 0 0 0 3px color-mix(in srgb, var(--agent-live) 18%, transparent);
-  --agent-shadow-well: inset 0 1px 0 color-mix(in srgb, var(--agent-ink) 4%, transparent);
-}
-
-.app-shell[data-theme="oneLight"] .workbench-frame {
-  --agent-action-contrast: #000;
-  --agent-action-tone: #fff;
 }
 
 @media (prefers-color-scheme: light) {
   .app-shell[data-theme="system"] .workbench-frame {
-    --agent-shade: #fff;
-    --agent-ink: #000;
     --agent-shadow-alpha: 0.1;
-    --agent-scanline: color-mix(in srgb, var(--agent-text) 4%, transparent);
-    --agent-live-contrast: #fff;
-    --agent-action-contrast: #fff;
-    --agent-action-tone: #000;
-    --agent-focus-ring:
-      0 0 0 1px var(--agent-live), 0 0 0 3px color-mix(in srgb, var(--agent-live) 18%, transparent);
-    --agent-shadow-well: inset 0 1px 0 color-mix(in srgb, var(--agent-ink) 4%, transparent);
-  }
-}
-
-.app-shell {
-  --t3-background: #0e0e0e;
-  --t3-sidebar: #000;
-  --t3-card: color-mix(in srgb, var(--t3-background) 97%, #fff);
-  --t3-foreground: #f1f3f7;
-  --t3-muted-foreground: #a3a3a3;
-  --t3-secondary-label: var(--t3-muted-foreground);
-  --t3-accent: #191a1d;
-  --t3-accent-foreground: #f7f9ff;
-  --t3-border: rgba(255, 255, 255, 0.08);
-  --t3-input: rgba(255, 255, 255, 0.18);
-  --t3-primary: oklch(57.1% 0.21 264);
-  --t3-primary-foreground: #fff;
-  --t3-ring: var(--t3-primary);
-  --t3-row-hover: rgba(241, 243, 247, 0.08);
-  --t3-row-active: rgba(241, 243, 247, 0.11);
-  --t3-row-selected: rgba(241, 243, 247, 0.07);
-  --t3-composer-surface: color-mix(in srgb, var(--t3-background) 96%, #fff);
-  --t3-composer-outline: rgba(255, 255, 255, 0.09);
-  --t3-composer-highlight: rgba(255, 255, 255, 0.04);
-  --t3-composer-shadow: 0 14px 32px -18px rgba(0, 0, 0, 0.75);
-  --t3-code-background: color-mix(in srgb, var(--t3-card) 90%, var(--t3-background));
-  --t3-outline-button-bg: rgba(255, 255, 255, 0.06);
-  --t3-outline-button-hover: rgba(255, 255, 255, 0.12);
-  --t3-status-working: oklch(74.6% 0.16 232.661);
-  --t3-status-done: oklch(84.5% 0.143 164.978);
-  --t3-status-failed: oklch(80.8% 0.114 19.571);
-  --t3-status-input: oklch(78.5% 0.115 274.713);
-  --t3-success: oklch(76.5% 0.177 163.223);
-  --t3-error: #fb414a;
-  --t3-warning: oklch(76.9% 0.188 70.08);
-  --t3-radius-sm: 6px;
-  --t3-radius-md: 8px;
-  --t3-radius-lg: 10px;
-  --t3-radius-xl: 14px;
-  --t3-radius-2xl: 18px;
-  --t3-control-radius: 8px;
-  --t3-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --t3-font-mono:
-    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-  --agent-sans: var(--t3-font-sans);
-}
-
-.app-shell[data-theme="light"],
-.app-shell[data-theme="catppuccinLatte"],
-.app-shell[data-theme="oneLight"] {
-  --t3-background: oklch(99.2% 0 0);
-  --t3-sidebar: oklch(98.5% 0 0);
-  --t3-card: #fff;
-  --t3-foreground: oklch(27.4% 0.006 286.033);
-  --t3-muted-foreground: oklch(55.2% 0.016 285.938);
-  --t3-accent: oklch(96.7% 0.001 286.375);
-  --t3-accent-foreground: oklch(21% 0.006 285.885);
-  --t3-border: oklch(92% 0.004 286.32);
-  --t3-input: oklch(87.1% 0.006 286.286);
-  --t3-primary: oklch(48.8% 0.217 264);
-  --t3-row-hover: oklch(99.2% 0 0);
-  --t3-row-active: #fff;
-  --t3-row-selected: #fff;
-  --t3-composer-surface: #fff;
-  --t3-composer-outline: var(--t3-border);
-  --t3-composer-highlight: transparent;
-  --t3-composer-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
-  --t3-code-background: oklch(98.5% 0 0);
-  --t3-outline-button-bg: #fff;
-  --t3-outline-button-hover: var(--t3-accent);
-  --t3-status-working: oklch(58.8% 0.158 241.966);
-  --t3-status-done: oklch(50.8% 0.118 165.612);
-  --t3-status-failed: oklch(50.5% 0.213 27.518);
-  --t3-status-input: oklch(51.1% 0.262 276.966);
-  --t3-success: oklch(59.6% 0.145 163.225);
-  --t3-error: oklch(63.7% 0.237 25.331);
-  --t3-warning: oklch(66.6% 0.179 58.318);
-}
-
-@media (prefers-color-scheme: light) {
-  .app-shell[data-theme="system"] {
-    --t3-background: oklch(99.2% 0 0);
-    --t3-sidebar: oklch(98.5% 0 0);
-    --t3-card: #fff;
-    --t3-foreground: oklch(27.4% 0.006 286.033);
-    --t3-muted-foreground: oklch(55.2% 0.016 285.938);
-    --t3-accent: oklch(96.7% 0.001 286.375);
-    --t3-accent-foreground: oklch(21% 0.006 285.885);
-    --t3-border: oklch(92% 0.004 286.32);
-    --t3-input: oklch(87.1% 0.006 286.286);
-    --t3-primary: oklch(48.8% 0.217 264);
-    --t3-row-hover: oklch(99.2% 0 0);
-    --t3-row-active: #fff;
-    --t3-row-selected: #fff;
-    --t3-composer-surface: #fff;
-    --t3-composer-outline: var(--t3-border);
-    --t3-composer-highlight: transparent;
-    --t3-composer-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
-    --t3-code-background: oklch(98.5% 0 0);
-    --t3-outline-button-bg: #fff;
-    --t3-outline-button-hover: var(--t3-accent);
-    --t3-status-working: oklch(58.8% 0.158 241.966);
-    --t3-status-done: oklch(50.8% 0.118 165.612);
-    --t3-status-failed: oklch(50.5% 0.213 27.518);
-    --t3-status-input: oklch(51.1% 0.262 276.966);
-    --t3-success: oklch(59.6% 0.145 163.225);
-    --t3-error: oklch(63.7% 0.237 25.331);
-    --t3-warning: oklch(66.6% 0.179 58.318);
-  }
-}
-
-.workbench-frame {
-  --agent-sans: var(--t3-font-sans);
-  --agent-mono: var(--t3-font-mono);
-  --agent-canvas: var(--t3-background);
-  --agent-rail: var(--t3-sidebar);
-  --agent-raised: var(--t3-composer-surface);
-  --agent-well: var(--t3-code-background);
-  --agent-fill: var(--t3-accent);
-  --agent-hover: var(--t3-row-hover);
-  --agent-hairline: var(--t3-border);
-  --agent-hairline-strong: var(--t3-input);
-  --agent-text-strong: var(--t3-foreground);
-  --agent-text: color-mix(in srgb, var(--t3-foreground) 90%, transparent);
-  --agent-text-muted: var(--t3-muted-foreground);
-  --agent-text-subtle: color-mix(in srgb, var(--t3-muted-foreground) 70%, transparent);
-  --agent-text-disabled: color-mix(in srgb, var(--t3-muted-foreground) 55%, transparent);
-  --agent-live: var(--t3-primary);
-  --agent-live-soft: color-mix(in srgb, var(--t3-primary) 16%, var(--t3-background));
-  --agent-live-contrast: var(--t3-primary-foreground);
-  --agent-action-contrast: var(--t3-primary-foreground);
-  --agent-action-tone: #fff;
-  --agent-ok: var(--t3-success);
-  --agent-danger: var(--t3-error);
-  --agent-attention: var(--t3-warning);
-  --agent-status-working: var(--t3-status-working);
-  --agent-status-done: var(--t3-status-done);
-  --agent-status-failed: var(--t3-status-failed);
-  --agent-row-hover: var(--t3-row-hover);
-  --agent-row-active: var(--t3-row-active);
-  --agent-row-selected: var(--t3-row-selected);
-  --agent-row-radius: var(--t3-radius-md);
-  --agent-row-pad: 8px 10px;
-  --agent-radius-sm: var(--t3-radius-sm);
-  --agent-radius-md: var(--t3-radius-md);
-  --agent-radius-lg: var(--t3-radius-lg);
-  --agent-radius-xl: var(--t3-radius-xl);
-  --agent-focus-ring:
-    0 0 0 1px var(--agent-live), 0 0 0 3px color-mix(in srgb, var(--t3-ring) 50%, transparent);
-  --agent-shadow-raised: var(--t3-composer-shadow);
-  --agent-glow: color-mix(in srgb, var(--t3-primary) 40%, transparent);
-  --agent-ambient: none;
-  --agent-scanline: transparent;
-  --agent-composer-surface: var(--t3-composer-surface);
-  --agent-composer-outline: var(--t3-composer-outline);
-  --agent-composer-highlight: var(--t3-composer-highlight);
-  --agent-outline-button-bg: var(--t3-outline-button-bg);
-  --agent-outline-button-hover: var(--t3-outline-button-hover);
-  --agent-code-background: var(--t3-code-background);
-  --agent-cta-bg: var(--t3-primary);
-  --agent-cta-fg: var(--t3-primary-foreground);
-  --agent-cta-bg-hover: color-mix(in srgb, var(--t3-primary) 88%, #fff);
-  --agent-fs-2xs: 11px;
-  --agent-fs-xs: 12px;
-  --agent-fs-sm: 12px;
-  --agent-fs-md: 14px;
-  --agent-fs-lg: 16px;
-  --agent-lh-prose: 1.6;
-  --agent-tracking-label: 0.02em;
-  --agent-turn-gap: 28px;
-  --agent-session-gutter: 24px;
-}
-
-.app-shell[data-theme="light"] .workbench-frame,
-.app-shell[data-theme="catppuccinLatte"] .workbench-frame,
-.app-shell[data-theme="oneLight"] .workbench-frame {
-  --agent-hover: var(--t3-accent);
-  --agent-text: color-mix(in srgb, var(--t3-foreground) 92%, transparent);
-  --agent-text-subtle: color-mix(in srgb, var(--t3-muted-foreground) 88%, transparent);
-  --agent-live-contrast: var(--t3-primary-foreground);
-  --agent-action-contrast: var(--t3-primary-foreground);
-  --agent-action-tone: #000;
-  --agent-scanline: transparent;
-  --agent-cta-bg-hover: color-mix(in srgb, var(--t3-primary) 88%, #000);
-  --agent-focus-ring:
-    0 0 0 1px var(--agent-live), 0 0 0 3px color-mix(in srgb, var(--t3-ring) 50%, transparent);
-}
-
-@media (prefers-color-scheme: light) {
-  .app-shell[data-theme="system"] .workbench-frame {
-    --agent-hover: var(--t3-accent);
-    --agent-text: color-mix(in srgb, var(--t3-foreground) 92%, transparent);
-    --agent-text-subtle: color-mix(in srgb, var(--t3-muted-foreground) 88%, transparent);
-    --agent-live-contrast: var(--t3-primary-foreground);
-    --agent-action-contrast: var(--t3-primary-foreground);
-    --agent-action-tone: #000;
-    --agent-scanline: transparent;
-    --agent-cta-bg-hover: color-mix(in srgb, var(--t3-primary) 88%, #000);
-    --agent-focus-ring:
-      0 0 0 1px var(--agent-live), 0 0 0 3px color-mix(in srgb, var(--t3-ring) 50%, transparent);
   }
 }
 
@@ -340,5 +219,5 @@
 .agent-surface-host,
 .agent-usage-layer,
 .status-bar--agent {
-  font-family: var(--agent-sans);
+  font-family: var(--codevo-sans);
 }

@@ -7,6 +7,7 @@ import type { TabDropPosition } from "../domain/tabOrdering";
 import { EditorTabs } from "./EditorTabs";
 import { getTabId, getTabPanelId } from "./tabIds";
 import { useWorkbenchEditorTabsPortalTarget } from "./workbenchEditorTabsPortalContext";
+import { useWorkbenchFrameEditorReport } from "./workbenchFrameEditorReport";
 
 export type EditorGroupDocument = EditorDocument | ImageTab | MarkdownPreviewTab;
 export type EditorGroupSurface =
@@ -58,6 +59,7 @@ export const EditorGroupView = memo(function EditorGroupView(props: EditorGroupV
   const activeDocument = group.activePath ? byPath.get(group.activePath) : undefined;
   const groupElementRef = useRef<HTMLElement | null>(null);
   const editorTabsPortalTarget = useWorkbenchEditorTabsPortalTarget();
+  useWorkbenchFrameEditorReport(documents.length === 0);
   const surface: EditorGroupSurface =
     activeDocument && group.activePath
       ? { kind: "document", document: activeDocument, path: group.activePath }
@@ -128,6 +130,7 @@ function editorGroupViewPropsEqual(
 ): boolean {
   if (
     previous.active !== next.active ||
+    (previous.documents.length === 0) !== (next.documents.length === 0) ||
     previous.contentRevision !== next.contentRevision ||
     previous.group !== next.group ||
     previous.groupId !== next.groupId ||

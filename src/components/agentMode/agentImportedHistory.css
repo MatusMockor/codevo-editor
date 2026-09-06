@@ -11,22 +11,28 @@
 }
 
 .agent-imported-history__retry {
-  border: 1px solid var(--agent-hairline-strong);
-  border-radius: var(--agent-radius-sm);
-  background: transparent;
-  color: var(--agent-text);
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  border: 0;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-raised);
+  box-shadow: var(--codevo-shadow-card);
+  color: var(--codevo-fg);
   cursor: pointer;
   font: inherit;
-  padding: 5px 9px;
+  font-size: var(--codevo-fs-meta);
+  font-weight: 500;
+  padding: 0 10px;
 }
 
 .agent-imported-history__retry:hover,
 .agent-imported-history__retry:focus-visible {
-  background: var(--agent-hover);
-  color: var(--agent-text-strong);
+  background: var(--codevo-hover);
+  color: var(--codevo-fg-strong);
 }
 
 .agent-imported-history__retry:focus-visible {
-  outline: 1px solid var(--agent-accent);
-  outline-offset: 2px;
+  box-shadow: var(--codevo-focus-ring);
+  outline: none;
 }

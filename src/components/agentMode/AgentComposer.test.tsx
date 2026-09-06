@@ -631,45 +631,85 @@ describe("AgentComposer", () => {
   }
 });
 
-describe("AgentComposer T3 styling contract", () => {
+describe("AgentComposer Airy styling contract", () => {
   const css = readAgentModeStyles();
 
-  it("centres the composer box at 768px with the T3 radius and top highlight", () => {
+  it("centres the composer box at 768px, raised on radius 14 with the card shadow only", () => {
     const box = cssRule(css, "\n.agent-composer__box {");
     expect(box).toContain("max-width: 768px");
-    expect(box).toContain("border-radius: 12px");
-    expect(box).toContain("inset 0 1px var(--agent-composer-highlight)");
+    expect(box).toContain("border-radius: var(--agent-radius-xl)");
+    expect(box).toContain("box-shadow: var(--agent-shadow-raised)");
     expect(box).toContain("background: var(--agent-composer-surface)");
+    expect(box).not.toContain("--agent-composer-outline");
+    expect(box).not.toContain("--agent-composer-highlight");
+    expect(cssRule(css, "\n.agent-composer__box:focus-within {")).toContain(
+      "box-shadow: var(--agent-shadow-raised), var(--codevo-focus-ring)",
+    );
     expect(cssRule(css, "\n.agent-composer {")).not.toMatch(/border-top: 1px/);
+    expect(cssRule(css, "\n.agent-composer__textarea {")).toContain(
+      "font-size: var(--codevo-fs-body)",
+    );
+    expect(cssRule(css, "\n.agent-composer__context {")).not.toContain("border-bottom");
+    expect(cssRule(css, "\n.agent-composer__reason {")).not.toContain("border-top");
   });
 
-  it("renders the send button as a 32px round primary control", () => {
+  it("renders the send button as a 30px round primary control that idles on the active tone", () => {
     const send = cssRule(css, "\n.agent-composer__send {");
-    expect(send).toContain("width: 32px");
-    expect(send).toContain("height: 32px");
+    expect(send).toContain("width: 30px");
+    expect(send).toContain("height: 30px");
     expect(send).toContain("border-radius: 999px");
     expect(send).toContain("background: var(--agent-cta-bg)");
     expect(send).toContain("color: var(--agent-cta-fg)");
     expect(cssRule(css, "\n.agent-composer__send:hover:not(:disabled) {")).toContain(
       "background: var(--agent-cta-bg-hover)",
     );
-    expect(cssRule(css, "\n.agent-composer__send:disabled {")).toContain("opacity: 0.5");
+    const idle = cssRule(css, "\n.agent-composer__send:disabled {");
+    expect(idle).toContain("background: var(--agent-fill)");
+    expect(idle).toContain("color: var(--agent-text-muted)");
+    expect(idle).not.toContain("opacity");
     expect(cssRule(css, "\n.agent-composer__send:focus-visible {")).toContain(
       "box-shadow: var(--agent-focus-ring)",
     );
     expect(css).not.toContain(".agent-composer__kbd");
   });
 
-  it("keeps ghost pickers at 28px with the fill hover and a soft hairline divider", () => {
+  it("keeps ghost pickers at 28px on radius 8 with the hover tone and a tone divider", () => {
     const ghost = cssRule(css, "\n.agent-picker__trigger--ghost {");
     expect(ghost).toContain("height: 28px");
     expect(ghost).toContain("font-size: 13px");
+    expect(ghost).toContain("border-radius: var(--agent-radius-sm)");
     expect(cssRule(css, "\n.agent-picker__trigger--ghost:hover:not(:disabled) {")).toContain(
-      "background: var(--agent-fill)",
+      "background: var(--agent-hover)",
     );
+    const footerGhost = cssRule(
+      css,
+      "\n.agent-composer__footer .agent-picker__trigger--ghost,\n.agent-composer__lock {",
+    );
+    expect(footerGhost).toContain("height: 28px");
+    expect(footerGhost).toContain("border-radius: var(--agent-radius-sm)");
+    expect(footerGhost).not.toContain("border:");
+    expect(css).toMatch(/\n\.agent-composer__lock \{[^}]*background: var\(--agent-well\)/);
+    expect(cssRule(css, "\n.agent-composer__chip {")).toContain("background: var(--agent-well)");
     const divider = cssRule(css, "\n.agent-composer__divider {");
     expect(divider).toContain("height: 16px");
+    expect(divider).toContain("background: var(--agent-hover)");
     expect(divider).toContain("opacity: 0.7");
+  });
+
+  it("floats picker menus and the compact panel on the float shadow without rings", () => {
+    for (const selector of [
+      "\n.agent-picker__menu {",
+      "\n.agent-composer__compact-panel {",
+      "\n.agent-model-picker__dialog {",
+    ]) {
+      const rule = cssRule(css, selector);
+      expect(rule, selector).toContain("box-shadow: var(--codevo-shadow-float)");
+      expect(rule, selector).not.toContain("0 0 0 1px");
+    }
+    const trigger = cssRule(css, "\n.agent-picker__trigger {");
+    expect(trigger).toContain("background: var(--agent-well)");
+    expect(trigger).toContain("border-radius: var(--agent-radius-sm)");
+    expect(trigger).not.toContain("border:");
   });
 });
 

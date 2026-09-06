@@ -63,6 +63,7 @@ export type AgentWorkbenchScreenWorkbench = Pick<
   | "openProblemNotice"
   | "openWorkspaceRoot"
   | "previewFile"
+  | "runCommand"
   | "saveWorkbenchSettings"
   | "setSidebarView"
   | "showBottomPanelView"
@@ -90,6 +91,7 @@ export interface AgentWorkbenchScreenProps {
 }
 
 export const ADD_PROJECT_REFUSED_REASON = "Unable to add that project.";
+export const SEARCH_FILES_COMMAND = "file.quickOpen";
 const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGateway();
 const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
   new TauriDirectoryListingGateway();
@@ -144,7 +146,14 @@ export function AgentWorkbenchScreen({
     [persistedProviderProjection.selectedProvider, workbench.agents],
   );
   const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
-  const { openWorkspaceRoot } = workbench;
+  const { openWorkspaceRoot, runCommand } = workbench;
+  const searchFiles = useCallback(() => {
+    runCommand(SEARCH_FILES_COMMAND);
+  }, [runCommand]);
+  const searchFilesShortcut = useMemo(
+    () => shortcutForCommand(appSettings.keymap, SEARCH_FILES_COMMAND),
+    [appSettings.keymap],
+  );
   const { saveWorkbenchSettings } = workbench;
   const { bottomPanelView, bottomPanelVisible, hideBottomPanel, showBottomPanelView } = workbench;
   const workspaceId = workbench.workspaceIdentityDescriptor?.workspaceId ?? null;
@@ -295,8 +304,10 @@ export function AgentWorkbenchScreen({
         activePath: workbench.activePath,
         revealActivePathSignal: activeFileRevealSignal,
         fileStatusesByPath,
+        searchFilesShortcut,
         onOpenFile: openPinnedFile,
         onPreviewFile: previewFile,
+        onSearchFiles: searchFiles,
       },
       diff: {
         monacoTheme,
@@ -339,6 +350,8 @@ export function AgentWorkbenchScreen({
       previewFile,
       revealPath,
       scripts,
+      searchFiles,
+      searchFilesShortcut,
       shortcuts,
       showTerminalPanel,
       terminalGateway,

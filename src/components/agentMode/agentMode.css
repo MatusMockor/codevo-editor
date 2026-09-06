@@ -77,20 +77,24 @@
   align-items: center;
   gap: 5px;
   border: none;
-  border-bottom: 1px solid var(--agent-hairline-strong);
   border-radius: 0;
   background: none;
-  color: var(--agent-text-muted);
+  color: var(--codevo-fg-muted);
   cursor: pointer;
   font: inherit;
-  font-size: var(--agent-fs-sm);
+  font-size: var(--codevo-fs-meta);
   padding: 2px 0;
-  transition: color var(--agent-motion-hover) var(--ease-standard);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+  transition:
+    color var(--agent-motion-hover) var(--ease-standard),
+    text-decoration-color var(--agent-motion-hover) var(--ease-standard);
 }
 
 .agent-linkbutton:hover:not(:disabled) {
-  border-color: var(--agent-text-strong);
-  color: var(--agent-text-strong);
+  color: var(--codevo-fg-strong);
+  text-decoration-color: currentColor;
 }
 
 .agent-linkbutton:disabled {
@@ -109,34 +113,32 @@
 }
 
 .agent-dot--running {
-  background: var(--agent-live);
-  box-shadow: 0 0 8px var(--agent-glow);
+  background: var(--codevo-ok);
 }
 
 .agent-dot--running::after {
   content: "";
   position: absolute;
-  border: 1px solid var(--agent-live);
   border-radius: 50%;
+  background: radial-gradient(circle, transparent 58%, var(--codevo-ok) 62%);
   inset: -4px;
   opacity: 0;
   animation: agent-ring 2s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
 }
 
 .agent-dot--done {
-  border: 1.5px solid var(--agent-ok);
-  background: transparent;
+  background: radial-gradient(circle, transparent 46%, var(--codevo-ok) 52%);
 }
 
 .agent-dot--failed {
   border-radius: 1.5px;
-  background: var(--agent-danger);
-  box-shadow: 0 0 6px var(--agent-glow-danger);
+  background: var(--codevo-danger);
 }
 
 .agent-dot--queued {
-  border: 1.5px dashed var(--agent-text-subtle);
-  background: transparent;
+  background: repeating-conic-gradient(var(--codevo-fg-subtle) 0 30deg, transparent 30deg 60deg);
+  -webkit-mask: radial-gradient(circle, transparent 46%, #000 52%);
+  mask: radial-gradient(circle, transparent 46%, #000 52%);
 }
 
 .agent-dot--stopped {
@@ -171,10 +173,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  border-bottom: 1px solid var(--agent-hairline);
-  background: var(--agent-rail);
-  color: var(--agent-text-muted);
-  font-size: var(--agent-fs-sm);
+  background: var(--codevo-raised);
+  color: var(--codevo-fg-muted);
+  font-size: var(--codevo-fs-meta);
   padding: 7px 16px;
 }
 
@@ -196,15 +197,15 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-control);
+  border: none;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-well);
   padding: 2px;
 }
 
 .workbench-mode-switch button {
   border: none;
-  border-radius: calc(var(--radius-md) - 3px);
+  border-radius: calc(var(--codevo-r-sm) - 2px);
   background: none;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -243,8 +244,6 @@
 
   .agent-rail {
     overflow: hidden;
-    border-right: none;
-    border-bottom: 1px solid var(--agent-hairline);
   }
 
   .agent-rail__head {
@@ -340,8 +339,9 @@
 }
 
 .agent-dot--archived {
-  border: 1.5px dotted var(--agent-text-subtle);
-  background: transparent;
+  background: repeating-conic-gradient(var(--codevo-fg-subtle) 0 20deg, transparent 20deg 45deg);
+  -webkit-mask: radial-gradient(circle, transparent 46%, #000 52%);
+  mask: radial-gradient(circle, transparent 46%, #000 52%);
 }
 
 .agent-session__status--archived,
@@ -363,10 +363,10 @@
   align-items: center;
   gap: 5px;
   height: 24px;
-  border: 1px solid transparent;
-  border-radius: var(--agent-radius-md);
+  border: none;
+  border-radius: 7px;
   background: none;
-  color: var(--agent-text-muted);
+  color: var(--codevo-fg-muted);
   cursor: pointer;
   font-size: var(--agent-fs-xs);
   padding: 0 8px;
@@ -382,40 +382,77 @@
 
 .agent-composer__new:focus-visible {
   outline: none;
-  box-shadow: var(--agent-focus-ring);
+  box-shadow: var(--codevo-focus-ring);
 }
 
-/* Add project browser: the shared quick-open shell with a path crumb header,
-   a directory listbox and an action footer. */
+.agent-add-project {
+  border: 0;
+  border-radius: var(--codevo-r-xl);
+  background: var(--codevo-raised);
+  box-shadow: var(--codevo-shadow-float);
+}
+
 .agent-add-project__path {
   display: flex;
   flex: none;
   align-items: center;
   gap: var(--agent-space-3);
-  border-bottom: 1px solid var(--agent-hairline);
-  padding: var(--agent-space-2) var(--agent-space-4);
-  color: var(--agent-text-muted);
+  height: 48px;
+  padding: 0 12px 0 10px;
+  color: var(--codevo-fg-muted);
 }
 
 .agent-add-project__back {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
 }
 
 .agent-add-project__path-value {
   overflow: hidden;
   min-width: 0;
-  color: var(--agent-text-strong);
+  color: var(--codevo-fg-strong);
   font-family: var(--agent-mono);
-  font-size: var(--agent-fs-sm);
+  font-size: var(--codevo-fs-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agent-add-project .palette-search {
+  height: 32px;
+  border-bottom: 0;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-well);
+  color: var(--codevo-fg-muted);
+  margin: 0 10px 6px;
+  padding: 0 10px;
+}
+
+.agent-add-project .palette-search input {
+  height: 32px;
+  color: var(--codevo-fg-strong);
+}
+
+.agent-add-project .palette-search input::placeholder {
+  color: var(--codevo-fg-subtle);
+}
+
+.agent-add-project .palette-search:focus-within {
+  box-shadow: var(--codevo-focus-ring);
 }
 
 .agent-add-project__results {
   display: flex;
   min-height: 0;
   flex-direction: column;
+  padding: 0 10px 8px;
+}
+
+.agent-add-project .search-everywhere-section-label {
+  color: var(--codevo-fg-subtle);
+  font-size: var(--codevo-fs-label);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  padding: 6px 10px 4px;
 }
 
 .agent-add-project__list {
@@ -425,15 +462,27 @@
 
 .agent-add-project__row {
   grid-template-columns: 20px minmax(0, 1fr);
-  min-height: 32px;
+  min-height: 34px;
+  border-radius: var(--codevo-r-sm);
+  color: var(--codevo-fg);
 }
 
 .agent-add-project__row svg {
-  color: var(--agent-text-muted);
+  color: var(--codevo-fg-muted);
+}
+
+.agent-add-project__row:hover,
+.agent-add-project__row.active {
+  background: var(--codevo-hover);
+  color: var(--codevo-fg-strong);
+}
+
+.agent-add-project__row.active::before {
+  display: none;
 }
 
 .agent-add-project__row.active svg {
-  color: var(--agent-live);
+  color: var(--codevo-fg-strong);
 }
 
 .agent-add-project__error {
@@ -443,10 +492,10 @@
 }
 
 .agent-add-project__note {
-  padding: var(--agent-space-2) var(--agent-space-4);
+  padding: var(--agent-space-2) 20px;
   margin: 0;
-  color: var(--agent-text-subtle);
-  font-size: var(--agent-fs-xs);
+  color: var(--codevo-fg-subtle);
+  font-size: var(--codevo-fs-meta);
 }
 
 .agent-add-project__options {
@@ -454,30 +503,46 @@
   flex: none;
   align-items: center;
   gap: var(--agent-space-4);
-  border-top: 1px solid var(--agent-hairline);
-  padding: var(--agent-space-2) var(--agent-space-4);
+  padding: 6px 20px 4px;
 }
 
 .agent-add-project__toggle {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: var(--agent-text-muted);
+  color: var(--codevo-fg-muted);
   cursor: pointer;
-  font-size: var(--agent-fs-sm);
+  font-size: var(--codevo-fs-meta);
 }
 
 .agent-add-project__reason {
   overflow: hidden;
   min-width: 0;
-  color: var(--agent-text-subtle);
-  font-size: var(--agent-fs-xs);
+  color: var(--codevo-fg-subtle);
+  font-size: var(--codevo-fs-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .agent-add-project__footer {
+  height: 36px;
+  border-top: 0;
   gap: var(--agent-space-3);
+  color: var(--codevo-fg-muted);
+  font-size: 11.5px;
+  padding: 0 16px;
+}
+
+.agent-add-project__footer kbd {
+  min-width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--codevo-well);
+  color: var(--codevo-fg-muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 0 5px;
 }
 
 .agent-add-project__spacer {
@@ -488,15 +553,15 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  height: 26px;
+  height: 24px;
   border: none;
-  border-radius: var(--agent-radius-md);
-  background: var(--agent-live);
-  color: var(--agent-live-contrast);
+  border-radius: 7px;
+  background: var(--codevo-primary);
+  color: var(--codevo-primary-fg);
   cursor: pointer;
-  font-size: var(--agent-fs-sm);
+  font-size: var(--codevo-fs-meta);
   font-weight: 600;
-  padding: 0 12px;
+  padding: 0 10px;
   transition: filter var(--agent-motion-hover) var(--ease-standard);
 }
 
@@ -504,9 +569,14 @@
   filter: brightness(1.08);
 }
 
+.agent-add-project__add:focus-visible {
+  box-shadow: var(--codevo-focus-ring);
+  outline: none;
+}
+
 .agent-add-project__add:disabled {
-  background: var(--agent-hairline-strong);
-  color: var(--agent-text-disabled);
+  background: var(--codevo-active);
+  color: var(--codevo-fg-disabled);
   cursor: not-allowed;
 }
 
@@ -514,25 +584,24 @@
   display: flex;
   align-items: center;
   padding: var(--agent-space-2) var(--agent-space-3);
-  border-bottom: 1px solid var(--agent-hairline);
-  background: var(--agent-rail);
+  background: var(--codevo-raised);
   gap: var(--agent-space-2);
 }
 
 .agent-find__input {
   min-width: 0;
   flex: 1;
-  padding: 4px 8px;
-  border: 1px solid var(--agent-hairline-strong);
-  border-radius: var(--agent-radius-sm);
-  background: var(--agent-well);
-  color: var(--agent-text);
-  font-size: var(--agent-fs-sm);
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--codevo-r-sm);
+  background: var(--codevo-well);
+  color: var(--codevo-fg);
+  font-size: var(--codevo-fs-meta);
 }
 
 .agent-find__input:focus-visible {
-  border-color: var(--agent-live);
-  box-shadow: var(--agent-focus-ring);
+  box-shadow: var(--codevo-focus-ring);
   outline: none;
 }
 
@@ -577,7 +646,7 @@
 
 .agent-find__step:focus-visible,
 .agent-find__close:focus-visible {
-  box-shadow: var(--agent-focus-ring);
+  box-shadow: var(--codevo-focus-ring);
   outline: none;
 }
 

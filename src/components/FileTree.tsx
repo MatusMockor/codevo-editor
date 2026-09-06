@@ -8,7 +8,7 @@ import { ContextMenu } from "./ContextMenu";
 import { getTreeGitStatusClassName } from "./gitStatusClassName";
 import { TreeEntryIcon } from "./TreeEntryIcon";
 
-const TREE_ROW_HEIGHT = 32;
+export const TREE_ROW_HEIGHT = 26;
 const TREE_ROW_OVERSCAN = 8;
 const TREE_VIEWPORT_FALLBACK_HEIGHT = 360;
 const TREE_PADDING_TOP = 6;
@@ -500,7 +500,7 @@ const TreeRow = memo(function TreeRow({
           className={getChevronClassName(isExpandable, isExpanded)}
           size={15}
         />
-        <TreeEntryIcon kind={entry.kind} expanded={isExpanded} />
+        <TreeEntryIcon kind={entry.kind} expanded={isExpanded} name={entry.name} />
         <span>{entry.name}</span>
         {isLoading ? (
           <small aria-live="polite" className="tree-row-meta" role="status">

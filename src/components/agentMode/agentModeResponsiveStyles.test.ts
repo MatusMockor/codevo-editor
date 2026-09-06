@@ -169,9 +169,9 @@ describe("agent mode responsive layout contract", () => {
 
     expect(surface).toContain("container-name: agent-surface");
     expect(surface).toContain("container-type: inline-size");
-    expect(rule(".agent-surface-empty__cards", narrow)).toContain(
-      "grid-template-columns: minmax(0, 1fr)",
-    );
+    expect(rule(".agent-surface-empty__cards")).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(rule(".agent-surface-empty__inner")).toContain("max-width: 320px");
+    expect(rule(".agent-surface-empty", narrow)).toContain("padding: 16px");
     expect(rule(".agent-surface__tab > span", narrow)).toContain("clip-path: inset(50%)");
     expect(rule(".agent-surface__tabs", narrow)).toContain("overflow-x: auto");
     expect(rule(".agent-surface__tabs", narrow)).toContain(
@@ -288,8 +288,8 @@ describe("agent mode responsive layout contract", () => {
       shellCss,
     );
     expect(maximizedFrame).not.toContain("grid-template-columns: auto");
-    expect(maximizedFrame).toContain(
-      "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr)",
+    expect(maximizedFrame.replace(/\s+/g, " ")).toContain(
+      "grid-template-columns: var(--agent-rail-track) minmax(0, 1fr) var(--agent-surface-tree-width)",
     );
 
     const maximizedAgent = rule(
@@ -303,7 +303,7 @@ describe("agent mode responsive layout contract", () => {
         '.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="bottom"]',
         shellCss,
       ),
-    ).toContain("grid-column: 2");
+    ).toContain("grid-column: 2 / 4");
   });
 
   it("composes the collapsed rail with the maximized panel through the frame-owned rail track", () => {

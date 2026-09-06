@@ -27,6 +27,7 @@ const ACTIONS: ReadonlyArray<AgentWorkbenchLayoutAction> = [
   { kind: "showSurfaceChooser" },
   { kind: "toggleRightPanel" },
   { kind: "toggleMaximized" },
+  { kind: "maximizeRightPanel" },
   { kind: "collapseEditor" },
   { kind: "resizeRightPanel", width: 700 },
   { kind: "resizeBottomPanel", height: 400 },
@@ -366,6 +367,40 @@ describe("agentWorkbenchLayoutReducer", () => {
       expect(
         agentWorkbenchLayoutReducer(maximized, { kind: "closeSurfaceTab", surface: "files" }),
       ).toEqual(open([], null));
+    });
+  });
+
+  describe("maximizeRightPanel", () => {
+    const maximize = { kind: "maximizeRightPanel" } as const;
+
+    it("maximizes an open panel once and then stays put", () => {
+      const state = open(["files"], "files");
+      const maximized = agentWorkbenchLayoutReducer(state, maximize);
+      expect(maximized).toEqual(open(["files"], "files", { rightPanelMaximized: true }));
+      expect(agentWorkbenchLayoutReducer(maximized, maximize)).toBe(maximized);
+    });
+
+    it("restores to the docked width without touching the open surfaces", () => {
+      const maximized = agentWorkbenchLayoutReducer(open(["files", "diff"], "files"), maximize);
+      expect(agentWorkbenchLayoutReducer(maximized, { kind: "toggleMaximized" })).toEqual(
+        open(["files", "diff"], "files"),
+      );
+    });
+
+    it("refuses to maximize without an active surface", () => {
+      expect(agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, maximize)).toBe(
+        initialAgentWorkbenchLayout,
+      );
+      expect(agentWorkbenchLayoutReducer(EXPANDED, maximize)).toBe(EXPANDED);
+      const chooser = open([], null);
+      expect(agentWorkbenchLayoutReducer(chooser, maximize)).toBe(chooser);
+    });
+
+    it("reopens a closed panel maximized on its active tab", () => {
+      const closed = layoutOf({ openSurfaces: ["files", "diff"], activeSurface: "diff" });
+      expect(agentWorkbenchLayoutReducer(closed, maximize)).toEqual(
+        open(["files", "diff"], "diff", { rightPanelMaximized: true }),
+      );
     });
   });
 

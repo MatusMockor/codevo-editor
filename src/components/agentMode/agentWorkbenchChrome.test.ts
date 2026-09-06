@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentTerminalPanelIntent,
+  ariaKeyShortcuts,
   initialAgentTerminalPanelIntentState,
   type AgentTerminalPanelIntentState,
 } from "./agentWorkbenchChrome";
@@ -167,3 +168,20 @@ function adopt(): AgentTerminalPanelIntentState {
     persisted: false,
   }).state;
 }
+
+describe("ariaKeyShortcuts", () => {
+  it("spells keymap chords in the aria-keyshortcuts vocabulary", () => {
+    expect(ariaKeyShortcuts("Cmd+P")).toBe("Meta+P");
+    expect(ariaKeyShortcuts("Ctrl+Shift+p")).toBe("Control+Shift+P");
+    expect(ariaKeyShortcuts("Alt+Enter")).toBe("Alt+Enter");
+    expect(ariaKeyShortcuts("f")).toBe("F");
+  });
+
+  it("returns nothing for an empty, oversized or unknown-modifier chord", () => {
+    expect(ariaKeyShortcuts("")).toBe("");
+    expect(ariaKeyShortcuts(" + ")).toBe("");
+    expect(ariaKeyShortcuts(`Cmd+${"P".repeat(80)}`)).toBe("");
+    expect(ariaKeyShortcuts("Mod+P")).toBe("");
+    expect(ariaKeyShortcuts("Cmd Shift+P")).toBe("");
+  });
+});

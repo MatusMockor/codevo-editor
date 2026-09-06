@@ -16,6 +16,7 @@ import {
 } from "../../domain/agentProviderSettings";
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentCliKind } from "../../domain/agentTask";
+import { shortcutForCommand } from "../../domain/keymap";
 import {
   agentThreadAttention,
   agentThreadUnread,
@@ -40,9 +41,11 @@ import {
   type RecordedAgentWorkbenchLayout,
 } from "./agentWorkbenchChromeTestFixtures";
 import { externalSessionsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
+import { ariaKeyShortcuts } from "./agentWorkbenchChrome";
 import {
   ADD_PROJECT_REFUSED_REASON,
   AgentWorkbenchScreen,
+  SEARCH_FILES_COMMAND,
   type AgentWorkbenchScreenProps,
   type AgentWorkbenchScreenWorkbench,
 } from "./AgentWorkbenchScreen";
@@ -372,6 +375,26 @@ describe("AgentWorkbenchScreen", () => {
     expect(other.showBottomPanelView).not.toHaveBeenCalled();
   });
 
+  it("runs Quick Open from the Files tree search button with the keymap chord", () => {
+    const layout = recordedLayoutState({
+      rightPanel: "open",
+      openSurfaces: ["files"],
+      activeSurface: "files",
+    });
+    const workbench = createWorkbench(ROOT_A, { agentWorkbench: layout });
+    render(workbench);
+    click('[data-thread-id="agt-1"]');
+
+    const search = host.querySelector<HTMLButtonElement>(".agent-surface-tree__search");
+    expect(search?.getAttribute("aria-keyshortcuts")).toBe(
+      ariaKeyShortcuts(shortcutForCommand(defaultAppSettings().keymap, SEARCH_FILES_COMMAND)),
+    );
+    click(".agent-surface-tree__search");
+
+    expect(workbench.runCommand).toHaveBeenCalledWith(SEARCH_FILES_COMMAND);
+    expect(layout.actions).toEqual([]);
+  });
+
   it("opens the editor sidebar with scripts from the scripts menu", async () => {
     const layout = recordedLayoutState();
     const workbench = createWorkbench(ROOT_A, { agentWorkbench: layout });
@@ -518,6 +541,7 @@ type MockedWorkbench = AgentWorkbenchScreenWorkbench & {
   readonly openWorkspaceRoot: ReturnType<typeof vi.fn>;
   readonly agentWorkbench: RecordedAgentWorkbenchLayout;
   readonly hideBottomPanel: ReturnType<typeof vi.fn>;
+  readonly runCommand: ReturnType<typeof vi.fn>;
   readonly setSidebarView: ReturnType<typeof vi.fn>;
   readonly showBottomPanelView: ReturnType<typeof vi.fn>;
 };
@@ -566,6 +590,7 @@ function createWorkbench(
     openProblemNotice: vi.fn(async () => true),
     openWorkspaceRoot: vi.fn(async () => true),
     previewFile: vi.fn(),
+    runCommand: vi.fn(() => "executed" as const),
     setSidebarView: vi.fn(),
     showBottomPanelView: vi.fn(),
     workspaceIdentityDescriptor: {

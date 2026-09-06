@@ -87,20 +87,18 @@ describe("AgentStatusBar", () => {
 });
 
 describe("agent status bar styles", () => {
-  it("reads the t3 palette directly because it renders outside the workbench frame", () => {
-    expect(winningValue(".status-bar.status-bar--agent", "background")).toBe(
-      "var(--t3-background)",
+  it("reads the codevo ladder directly because it renders outside the workbench frame", () => {
+    expect(winningValue(".status-bar.status-bar--agent", "background")).toBe("var(--codevo-side)");
+    expect(winningValue(".status-bar.status-bar--agent", "border-top")).toBe("0");
+    expect(winningValue(".status-bar.status-bar--agent", "color")).toBe("var(--codevo-fg-muted)");
+    expect(winningValue(".status-bar.status-bar--agent", "font-size")).toBe(
+      "var(--codevo-fs-small)",
     );
-    expect(winningValue(".status-bar.status-bar--agent", "border-top")).toBe(
-      "1px solid var(--t3-border)",
-    );
-    expect(winningValue(".status-bar.status-bar--agent", "color")).toBe(
-      "var(--t3-muted-foreground)",
-    );
-    expect(winningValue(".status-bar.status-bar--agent", "font-size")).toBe("11px");
     expect(
       winningValue(".status-bar.status-bar--agent span:not(:last-child)", "border-right"),
-    ).toBe("1px solid var(--t3-border)");
+    ).toBe("0");
+    expect(AGENT_STATUS_BAR_CSS).not.toContain("--t3-");
+    expect(AGENT_STATUS_BAR_CSS).not.toContain("--agent-");
   });
 
   it("outranks the base status bar by specificity, not by import order", () => {
@@ -108,10 +106,16 @@ describe("agent status bar styles", () => {
     expect(ruleBody(".status-bar--agent")).not.toContain("font-size:");
   });
 
-  it("retires the glow around the live dot", () => {
+  it("marks live slots with the ok tone and no glow", () => {
     expect(winningValue(".status-bar--agent .status-agent-dot--live", "box-shadow")).toBe("none");
     expect(winningValue(".status-bar--agent .status-agent-dot--live", "background")).toBe(
-      "var(--t3-primary)",
+      "var(--codevo-ok)",
+    );
+    expect(winningValue(".status-bar--agent .status-agent-attention", "color")).toBe(
+      "var(--codevo-warn)",
+    );
+    expect(winningValue(".status-bar--agent .status-agent-cli", "font-family")).toBe(
+      "var(--codevo-mono)",
     );
   });
 
@@ -128,6 +132,7 @@ describe("agent status bar styles", () => {
   });
 });
 
+const AGENT_STATUS_BAR_CSS = readSheet("agentStatusBar.css");
 const AGENT_MODE_CSS = readAgentModeStyles().replace(/\/\*[\s\S]*?\*\//g, "");
 
 function readSheet(sheet: string): string {

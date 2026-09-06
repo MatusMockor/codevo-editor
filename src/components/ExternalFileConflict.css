@@ -1,8 +1,7 @@
 .external-file-conflict-bar {
   align-items: center;
-  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-panel));
-  border-bottom: 1px solid
-    color-mix(in srgb, var(--color-warning) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--color-app));
+  border: 0;
   color: var(--color-text);
   display: flex;
   gap: 9px;
@@ -82,11 +81,7 @@
 }
 
 .external-file-conflict-action-primary {
-  border-color: color-mix(
-    in srgb,
-    var(--color-accent) 55%,
-    var(--color-border-strong)
-  );
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border-strong));
 }
 
 .external-file-conflict-action-warning {
@@ -95,8 +90,8 @@
 
 .external-file-compare-dialog {
   background: var(--color-modal);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
+  border: 0;
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-pop);
   color: var(--color-text);
   height: min(78vh, 760px);

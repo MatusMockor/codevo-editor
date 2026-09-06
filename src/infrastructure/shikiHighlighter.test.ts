@@ -80,7 +80,7 @@ describe("buildShikiTheme", () => {
     const theme = buildShikiTheme(calmDark);
     expect(theme.name).toBe("calm-dark");
     expect(theme.type).toBe("dark");
-    expect(theme.colors["editor.background"]).toBe("#16181d");
+    expect(theme.colors["editor.background"]).toBe("#13151a");
     const scopeColor = (scope: string) =>
       theme.tokenColors.find((t) => t.scope.includes(scope))?.settings.foreground;
     expect(scopeColor("entity.name.function")).toBe(calmDark.func);

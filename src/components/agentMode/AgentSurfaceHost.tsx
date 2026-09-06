@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode } from "react";
+import { memo, useCallback, useMemo, type ReactNode } from "react";
 import type { AgentThreadView, AgentThreadsSurface } from "../../application/agentThreadPorts";
 import {
   useAgentSurfaceFileTree,
@@ -6,13 +6,15 @@ import {
   type AgentSurfaceFileTreeTarget,
 } from "../../application/useAgentSurfaceFileTree";
 import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
+import type { FileEntry } from "../../domain/workspace";
 import { agentSurfaceTargetGone } from "./agentModePresentation";
+import type { AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
 import {
   AgentSurfacePanel,
   type AgentSurfaceDiffPanelProps,
   type AgentSurfaceTerminalPanelProps,
 } from "./AgentSurfacePanel";
-import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
+import type { AgentWorkbenchChrome, AgentWorkbenchFileTreeChrome } from "./agentWorkbenchChrome";
 
 export type AgentSurfaceHostAgents = Pick<
   AgentThreadsSurface,
@@ -62,17 +64,29 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     fileChanges: fileTreeChrome?.fileChanges ?? null,
   });
 
-  const fileTree =
-    fileTreeChrome === null || thread === null
-      ? null
-      : {
-          tree,
-          activePath: fileTreeChrome.activePath,
-          revealActivePathSignal: fileTreeChrome.revealActivePathSignal,
-          fileStatusesByPath: fileTreeChrome.fileStatusesByPath,
-          onOpenFile: fileTreeChrome.onOpenFile,
-          onPreviewFile: fileTreeChrome.onPreviewFile,
-        };
+  const dispatchLayout = chrome.layout.dispatch;
+  const maximizeForDocument = useCallback(
+    () => dispatchLayout({ kind: "maximizeRightPanel" }),
+    [dispatchLayout],
+  );
+  const fileTree = useMemo<AgentSurfaceFileTreeProps | null>(() => {
+    if (fileTreeChrome === null || thread === null) return null;
+    return {
+      tree,
+      activePath: fileTreeChrome.activePath,
+      revealActivePathSignal: fileTreeChrome.revealActivePathSignal,
+      fileStatusesByPath: fileTreeChrome.fileStatusesByPath,
+      searchFiles: searchFilesFromChrome(fileTreeChrome),
+      onOpenFile: (entry: FileEntry) => {
+        fileTreeChrome.onOpenFile(entry);
+        maximizeForDocument();
+      },
+      onPreviewFile: (entry: FileEntry) => {
+        fileTreeChrome.onPreviewFile(entry);
+        maximizeForDocument();
+      },
+    };
+  }, [fileTreeChrome, maximizeForDocument, thread, tree]);
 
   const diff = useMemo<AgentSurfaceDiffPanelProps | null>(
     () =>
@@ -144,6 +158,14 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     </div>
   );
 });
+
+function searchFilesFromChrome(
+  chrome: AgentWorkbenchFileTreeChrome,
+): AgentSurfaceFileTreeProps["searchFiles"] {
+  const open = chrome.onSearchFiles;
+  if (open === undefined) return null;
+  return { shortcut: chrome.searchFilesShortcut ?? "", open };
+}
 
 function fileTreeTarget(
   workspaceId: string | null,

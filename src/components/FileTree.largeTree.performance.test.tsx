@@ -4,15 +4,18 @@ import { act, useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "../domain/workspace";
-import { FileTree } from "./FileTree";
+import { FileTree, TREE_ROW_HEIGHT } from "./FileTree";
 
 const ROOT_PATH = "/workspace";
 const SOURCE_PATH = `${ROOT_PATH}/src`;
 const DIRECTORY_COUNT = 200;
 const FILES_PER_DIRECTORY = 99;
 const DESCENDANT_COUNT = DIRECTORY_COUNT + DIRECTORY_COUNT * FILES_PER_DIRECTORY;
-const FALLBACK_WINDOW_ROW_LIMIT = 28;
+const FALLBACK_WINDOW_ROW_LIMIT = 30;
 const EXPANDED_TREE_DIRECTORY_READS = DIRECTORY_COUNT + 2;
+const TREE_VERTICAL_PADDING = 16;
+const EXPANDED_TREE_CONTENT_HEIGHT =
+  (DESCENDANT_COUNT + 1) * TREE_ROW_HEIGHT + TREE_VERTICAL_PADDING;
 
 describe("FileTree large-tree performance contracts", () => {
   let host: HTMLDivElement;
@@ -41,7 +44,8 @@ describe("FileTree large-tree performance contracts", () => {
     expect(DESCENDANT_COUNT).toBe(20_000);
     expect(visibleRows()).toHaveLength(FALLBACK_WINDOW_ROW_LIMIT);
     expect(directoryReadCount(fixture.directoryReads)).toBe(EXPANDED_TREE_DIRECTORY_READS);
-    expect(virtualContent().style.height).toBe("640048px");
+    expect(virtualContent().style.height).toBe(`${EXPANDED_TREE_CONTENT_HEIGHT}px`);
+    expect(EXPANDED_TREE_CONTENT_HEIGHT).toBe(520_042);
   });
 
   it("bounds traversal and mounted rows across repeated expand and collapse operations", () => {

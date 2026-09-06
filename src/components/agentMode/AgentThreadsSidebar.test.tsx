@@ -81,31 +81,102 @@ describe("AgentThreadsSidebar", () => {
     expect(AGENT_MODE_CSS).toContain("@media (max-width: 560px)");
   });
 
-  it("pins the T3 rail metrics: 44px chrome, two-column head and 78px cards", () => {
+  it("pins the Airy rail metrics: 44px chrome, two-column head and 78px cards", () => {
+    expect(cssRule("\n.agent-rail {")).toContain("background: var(--codevo-side)");
+    expect(cssRule("\n.agent-rail {")).toContain("padding: 0 6px 8px");
+    expect(cssRule("\n.agent-rail {")).not.toContain("border");
     expect(cssRule("\n.agent-rail__chrome {")).toContain("height: 44px");
     expect(cssRule("\n.agent-rail__head {")).toContain(
       "grid-template-columns: minmax(0, 1fr) 32px",
     );
     expect(cssRule("\n.agent-rail__head {")).toContain("gap: 4px");
+    expect(cssRule("\n.agent-rail__head {")).toContain("padding: 0 4px 4px");
+    expect(cssRule("\n.agent-rail__scroll {")).toContain("padding: 6px 4px 4px");
     expect(cssRule(".agent-iconbutton {")).toContain("width: 32px");
-    expect(cssRule(".agent-iconbutton {")).toContain("border-radius: var(--t3-control-radius)");
-    expect(cssRule(".agent-search {")).toContain("height: 32px");
-    expect(cssRule(".agent-scope .agent-picker__trigger {")).toContain("height: 32px");
+    expect(cssRule(".agent-iconbutton {")).toContain("border-radius: var(--codevo-r-sm)");
+    expect(cssRule(".agent-search {")).toContain("height: 30px");
+    expect(cssRule(".agent-search {")).toContain("border-radius: var(--codevo-r-sm)");
+    expect(cssRule(".agent-search {")).toContain("background: var(--codevo-raised)");
+    expect(cssRule(".agent-scope .agent-picker__trigger {")).toContain("height: 30px");
     expect(cssRule(".agent-scope .agent-picker__trigger {")).toContain("background: transparent");
+    expect(cssRule(".agent-row {")).toContain("border-radius: var(--codevo-r-md)");
+    expect(cssRule(".agent-row:hover {")).toContain("background: var(--codevo-hover)");
+    const on = cssRule(".agent-row--selected,\n.agent-row--on,\n.agent-row--on:hover {");
+    expect(on).toContain("background: var(--codevo-raised)");
+    expect(on).toContain("box-shadow: var(--codevo-shadow-card)");
     expect(cssRule(".agent-row--card {")).toContain("height: 78px");
+    expect(cssRule(".agent-row--card {")).toContain("border-radius: var(--codevo-r-md)");
     expect(cssRule(".agent-row--card {")).toContain("padding: var(--agent-row-pad)");
-    expect(cssRule(".agent-row__project {")).toContain("color: var(--t3-secondary-label)");
+    expect(cssRule(".agent-row__project {")).toContain("color: var(--codevo-fg-muted)");
     expect(cssRule(".agent-row__files {")).toContain("font-family: var(--agent-mono)");
     expect(cssRule(".agent-row__files {")).toContain("font-size: 11px");
     expect(cssRule(".agent-row__line3 .agent-row__provider svg {")).toContain("width: 14px");
+    expect(cssRule(".agent-list__divider {")).toContain("background: var(--codevo-hover)");
     expect(cssRule(".agent-list__divider {")).toContain("margin: 6px var(--agent-rail-row-inset)");
+    expect(cssRule(".agent-shelf__rule {")).toContain("background: var(--codevo-hover)");
     expect(cssRule(".agent-shelf {")).toContain("font-size: 12px");
     expect(cssRule(".agent-shelf {")).toContain("font-weight: 500");
   });
 
+  it("fills the rail search with the well tone under every light theme", () => {
+    for (const selector of [
+      '.app-shell:is([data-theme="light"], [data-theme="catppuccinLatte"], [data-theme="oneLight"])\n  .agent-search {',
+      '.app-shell[data-theme="system"] .agent-search {',
+    ]) {
+      expect(cssRule(selector)).toContain("background: var(--codevo-well)");
+    }
+  });
+
+  it("floats the rail menus as raised 12px sheets with 30px rows and tone separators", () => {
+    const menu = cssRule(".agent-menu.agent-scope-menu__menu,\n.agent-menu.agent-row-menu {");
+    expect(menu).toContain("border-radius: var(--codevo-r-lg)");
+    expect(menu).toContain("background: var(--codevo-raised)");
+    expect(menu).toContain("box-shadow: var(--codevo-shadow-float)");
+    const item = cssRule(
+      ".agent-scope-menu__menu .agent-menu__item,\n.agent-row-menu .agent-menu__item {",
+    );
+    expect(item).toContain("min-height: 30px");
+    expect(item).toContain("border-radius: 7px");
+    const highlight = cssRule(
+      ".agent-scope-menu__menu .agent-menu__item:hover:not(:disabled),\n.agent-scope-menu__menu .agent-menu__item:focus-visible,\n.agent-row-menu .agent-menu__item:hover:not(:disabled),\n.agent-row-menu .agent-menu__item:focus-visible {",
+    );
+    expect(highlight).toContain("background: var(--codevo-active)");
+    expect(highlight).not.toContain("box-shadow");
+    const focus = cssRule(
+      ".agent-scope-menu__menu .agent-menu__item:focus-visible,\n.agent-row-menu .agent-menu__item:focus-visible {",
+    );
+    expect(focus).toContain("box-shadow: var(--codevo-focus-ring)");
+    expect(AGENT_MODE_CSS).toContain(
+      ".agent-row-menu .agent-menu__item--armed:focus-visible {\n  box-shadow: var(--codevo-focus-ring);\n}",
+    );
+    const separator = cssRule(
+      ".agent-scope-menu__menu .agent-menu__separator,\n.agent-row-menu .agent-menu__separator {",
+    );
+    expect(separator).toContain("height: 1px");
+    expect(separator).toContain("background: var(--codevo-hover)");
+    expect(separator).not.toContain("border");
+    expect(cssRule(".agent-scope-menu__search {")).toContain("background: var(--codevo-well)");
+    expect(cssRule(".agent-scope-menu__search {")).not.toContain("border-bottom");
+  });
+
+  it("styles the thread search palette as a raised 14px sheet with primary marks", () => {
+    const palette = cssRule("\n.agent-thread-palette {");
+    expect(palette).toContain("border-radius: var(--codevo-r-xl)");
+    expect(palette).toContain("background: var(--codevo-raised)");
+    expect(palette).toContain("box-shadow: var(--codevo-shadow-float)");
+    expect(cssRule(".agent-thread-palette .palette-search {")).toContain("border-bottom: 0");
+    expect(cssRule(".agent-thread-palette .palette-search input {")).toContain("height: 46px");
+    expect(cssRule(".agent-search-row {")).toContain("min-height: 32px");
+    expect(cssRule(".agent-search-row--active {")).toContain("background: var(--codevo-hover)");
+    expect(cssRule(".agent-search-row--active {")).not.toContain("box-shadow");
+    const mark = cssRule(".agent-search-row__title mark,\n.agent-search-row__snippet mark {");
+    expect(mark).toContain("color: var(--codevo-primary)");
+    expect(mark).toContain("background: transparent");
+  });
+
   it("keeps the footer icon-only, 44px and without a top rule", () => {
     expect(cssRule("\n.agent-provider-footer {")).toContain("min-height: 44px");
-    expect(cssRule("\n.agent-provider-footer {")).toContain("border-top: 0");
+    expect(cssRule("\n.agent-provider-footer {")).not.toContain("border");
     expect(cssRule(".agent-provider-footer__navigation .agent-iconbutton {")).toContain(
       "width: 28px",
     );
@@ -118,35 +189,32 @@ describe("AgentThreadsSidebar", () => {
     expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__provider {");
   });
 
-  it("stacks the provider recovery actions as full-width T3 status pills", () => {
+  it("stacks the provider recovery actions as full-width soft-tinted pills", () => {
     expect(cssRule(".agent-provider-footer__providers {")).toContain("flex-direction: column");
     expect(cssRule(".agent-provider-footer__providers {")).toContain("align-items: stretch");
     const pill = cssRule("\n.agent-provider-footer__pill {");
     expect(pill).toContain("width: 100%");
     expect(pill).toContain("min-height: 30px");
-    expect(pill).toContain("border-radius: 8px");
-    expect(pill).toContain("font-size: 12px");
+    expect(pill).toContain("border: none");
+    expect(pill).toContain("border-radius: var(--codevo-r-sm)");
+    expect(pill).toContain("font-size: var(--codevo-fs-meta)");
     expect(pill).toContain("font-weight: 500");
-    expect(pill).toContain("--provider-pill-tint: var(--t3-primary)");
-    expect(pill).toContain(
-      "--provider-pill-ink: color-mix(in srgb, var(--t3-primary) 55%, var(--t3-foreground))",
-    );
-    expect(pill).toContain("color-mix(in srgb, var(--provider-pill-tint) 12%, transparent)");
-    expect(pill).toContain("color-mix(in srgb, var(--provider-pill-tint) 30%, transparent)");
+    expect(pill).toContain("--provider-pill-tint: var(--codevo-primary)");
+    expect(pill).toContain("--provider-pill-ink: var(--codevo-primary)");
+    expect(pill).toContain("--provider-pill-fill: var(--codevo-primary-soft)");
+    expect(pill).toContain("background: var(--provider-pill-fill)");
     expect(pill).toContain("color: var(--provider-pill-ink)");
+    expect(pill).not.toContain("hairline");
     expect(pill).not.toContain("color: var(--provider-pill-tint)");
     const success = cssRule(".agent-provider-footer__pill--success {");
-    expect(success).toContain("--provider-pill-tint: var(--t3-success)");
-    expect(success).toContain("--provider-pill-ink: var(--t3-status-done)");
+    expect(success).toContain("--provider-pill-tint: var(--codevo-ok)");
+    expect(success).toContain("--provider-pill-ink: var(--codevo-ok)");
+    expect(success).toContain("--provider-pill-fill: var(--codevo-ok-soft)");
     const danger = cssRule(".agent-provider-footer__pill--danger {");
-    expect(danger).toContain("--provider-pill-tint: var(--t3-error)");
-    expect(danger).toContain("--provider-pill-ink: var(--t3-status-failed)");
-    for (const selector of [
-      '.app-shell:is([data-theme="light"], [data-theme="catppuccinLatte"], [data-theme="oneLight"])\n  .agent-provider-footer__pill--primary {',
-      '.app-shell[data-theme="system"] .agent-provider-footer__pill--primary {',
-    ]) {
-      expect(cssRule(selector)).toContain("--provider-pill-ink: var(--t3-primary)");
-    }
+    expect(danger).toContain("--provider-pill-tint: var(--codevo-danger)");
+    expect(danger).toContain("--provider-pill-ink: var(--codevo-danger)");
+    expect(danger).toContain("--provider-pill-fill: var(--codevo-danger-soft)");
+    expect(AGENT_MODE_CSS).not.toContain(".agent-provider-footer__pill--primary");
     const disabled = cssRule("button.agent-provider-footer__pill:disabled {");
     expect(disabled).not.toContain("opacity");
     expect(disabled).not.toContain("color:");
@@ -164,17 +232,21 @@ describe("AgentThreadsSidebar", () => {
     ]) {
       const scope = light.slice(light.indexOf(selector));
       expect(scope).toContain(".agent-shelf,");
+      expect(scope).toContain(".agent-rail__note,");
       expect(scope).toContain(".agent-row--recede,");
-      expect(scope).toContain(".agent-row--slim .agent-row__title");
-      expect(scope).toContain("color: var(--agent-text-muted)");
-      expect(scope).toContain("color: var(--agent-text-strong)");
+      expect(scope).toContain(".agent-row__line3,");
+      expect(scope).toContain(".agent-row__time,");
+      expect(scope).toContain(".agent-row--slim .agent-row__title,");
+      expect(scope).toContain(".agent-search-results__note");
+      expect(scope).toContain("color: var(--codevo-fg-muted)");
+      expect(scope).toContain("color: var(--codevo-fg-strong)");
     }
     expect(light).toContain("@media (prefers-color-scheme: light)");
     expect(cssRule("\n.agent-shelf {")).toContain(
-      "color: color-mix(in srgb, var(--agent-text-muted) 75%, transparent)",
+      "color: color-mix(in srgb, var(--codevo-fg-muted) 75%, transparent)",
     );
     expect(AGENT_MODE_CSS).toContain(
-      ".agent-iconbutton:focus-visible {\n  box-shadow: var(--agent-focus-ring);\n}",
+      ".agent-iconbutton:focus-visible {\n  box-shadow: var(--codevo-focus-ring);\n}",
     );
   });
 

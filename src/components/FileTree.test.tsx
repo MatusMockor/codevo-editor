@@ -4,7 +4,7 @@ import { act, useState } from "react";
 import type { ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FileTree } from "./FileTree";
+import { FileTree, TREE_ROW_HEIGHT } from "./FileTree";
 import type { FileEntry } from "../domain/workspace";
 
 describe("FileTree", () => {
@@ -106,8 +106,8 @@ describe("FileTree", () => {
     const failedRow = rowByLabel("src");
     const failedRowShell = failedRow.closest<HTMLElement>(".tree-row-shell");
     expect(failedRow.hasAttribute("aria-busy")).toBe(false);
-    expect(failedRowShell?.style.height).toBe("32px");
-    expect(failedRow.style.height).toBe("32px");
+    expect(failedRowShell?.style.height).toBe(`${TREE_ROW_HEIGHT}px`);
+    expect(failedRow.style.height).toBe(`${TREE_ROW_HEIGHT}px`);
     expect(failedRow.querySelector('[role="status"]')?.textContent).toBe("Could not load");
 
     const retry = retryButton();
@@ -312,7 +312,7 @@ describe("FileTree", () => {
         },
       });
 
-      expect(host.querySelectorAll(".tree-row")).toHaveLength(28);
+      expect(host.querySelectorAll(".tree-row")).toHaveLength(30);
 
       measuredHeight = 960;
 
@@ -320,7 +320,7 @@ describe("FileTree", () => {
         animationFrame.flush();
       });
 
-      expect(host.querySelectorAll(".tree-row")).toHaveLength(46);
+      expect(host.querySelectorAll(".tree-row")).toHaveLength(53);
     } finally {
       animationFrame.restore();
       viewport.restore();

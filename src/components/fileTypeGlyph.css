@@ -1,0 +1,71 @@
+.file-glyph {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--codevo-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--codevo-fg-subtle);
+}
+
+.file-glyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+.file-glyph--ts {
+  color: var(--codevo-ft-ts);
+}
+
+.file-glyph--tsx {
+  color: var(--codevo-ft-tsx);
+}
+
+.file-glyph--js {
+  color: var(--codevo-ft-js);
+}
+
+.file-glyph--json {
+  color: var(--codevo-ft-json);
+}
+
+.file-glyph--npm {
+  color: var(--codevo-ft-npm);
+}
+
+.file-glyph--md {
+  color: var(--codevo-ft-md);
+}
+
+.file-glyph--css {
+  color: var(--codevo-ft-css);
+}
+
+.file-glyph--sh {
+  color: var(--codevo-ft-sh);
+}
+
+.file-glyph--docker {
+  color: var(--codevo-ft-docker);
+}
+
+.file-glyph--git {
+  color: var(--codevo-ft-git);
+}
+
+.file-glyph--env {
+  color: var(--codevo-ft-env);
+}
+
+.file-glyph--lock {
+  color: var(--codevo-ft-lock);
+}
+
+.file-glyph--file {
+  color: var(--codevo-fg-subtle);
+}

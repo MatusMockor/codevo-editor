@@ -42,6 +42,7 @@ export type AgentWorkbenchLayoutAction =
   | { readonly kind: "showSurfaceChooser" }
   | { readonly kind: "toggleRightPanel" }
   | { readonly kind: "toggleMaximized" }
+  | { readonly kind: "maximizeRightPanel" }
   | { readonly kind: "toggleRail" }
   | { readonly kind: "expandEditor" }
   | { readonly kind: "collapseEditor" }
@@ -117,6 +118,8 @@ export function agentWorkbenchLayoutReducer(
       return toggleRightPanel(state);
     case "toggleMaximized":
       return toggleMaximized(state);
+    case "maximizeRightPanel":
+      return maximizeRightPanel(state);
     case "toggleRail":
       return { ...state, rail: state.rail === "expanded" ? "collapsed" : "expanded" };
     case "expandEditor":
@@ -279,6 +282,13 @@ function toggleMaximized(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
     return { ...opened, rightPanelMaximized: !state.rightPanelMaximized };
   }
 
+  return { ...opened, rightPanelMaximized: true };
+}
+
+function maximizeRightPanel(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
+  const opened = openRightPanel(state);
+  if (opened.activeSurface === null) return state;
+  if (opened === state && state.rightPanelMaximized) return state;
   return { ...opened, rightPanelMaximized: true };
 }
 

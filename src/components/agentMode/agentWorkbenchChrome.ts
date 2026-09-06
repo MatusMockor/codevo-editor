@@ -20,8 +20,39 @@ export interface AgentWorkbenchFileTreeChrome {
   readonly activePath: string | null;
   readonly revealActivePathSignal: number;
   readonly fileStatusesByPath?: Record<string, GitChangeStatus>;
+  readonly searchFilesShortcut?: string;
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
+  onSearchFiles?(): void;
+}
+
+const MAX_ARIA_KEYSHORTCUT_LENGTH = 64;
+const ARIA_MODIFIERS: ReadonlyMap<string, string> = new Map([
+  ["cmd", "Meta"],
+  ["command", "Meta"],
+  ["meta", "Meta"],
+  ["ctrl", "Control"],
+  ["control", "Control"],
+  ["alt", "Alt"],
+  ["option", "Alt"],
+  ["shift", "Shift"],
+]);
+
+export function ariaKeyShortcuts(shortcut: string): string {
+  if (shortcut.length > MAX_ARIA_KEYSHORTCUT_LENGTH) return "";
+  const parts = shortcut
+    .split("+")
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  if (parts.length === 0) return "";
+  const key = parts[parts.length - 1] ?? "";
+  const modifiers: string[] = [];
+  for (const part of parts.slice(0, -1)) {
+    const modifier = ARIA_MODIFIERS.get(part.toLowerCase());
+    if (modifier === undefined) return "";
+    modifiers.push(modifier);
+  }
+  return [...modifiers, key.length === 1 ? key.toUpperCase() : key].join("+");
 }
 
 export interface AgentWorkbenchDiffChrome {

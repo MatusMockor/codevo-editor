@@ -9,6 +9,7 @@ import {
   WorkbenchEditorTabsPortalProvider,
   WorkbenchEditorTabsPortalTarget,
 } from "./workbenchEditorTabsPortal";
+import { WorkbenchFrameEditorContext } from "./workbenchFrameEditorReport";
 
 describe("EditorGroupView", () => {
   it("orders group membership and always owns the active tabpanel wrapper", () => {
@@ -150,6 +151,94 @@ describe("EditorGroupView", () => {
 
     act(() => root.unmount());
     host.remove();
+  });
+
+  it("reports whether any document is open to the workbench frame", () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const report = vi.fn();
+
+    const render = (documents: EditorDocument[]) => {
+      act(() =>
+        root.render(
+          <WorkbenchFrameEditorContext.Provider value={report}>
+            <EditorGroupView
+              active
+              documents={documents}
+              group={{
+                activePath: documents[0]?.path ?? null,
+                openPaths: documents.map((document) => document.path),
+                previewPath: null,
+              }}
+              groupId="group/a"
+              onActivateGroup={vi.fn()}
+              onActivateTab={vi.fn()}
+              onCloseTab={vi.fn()}
+              onMoveTab={vi.fn()}
+              onPinTab={vi.fn()}
+              onReorderTab={vi.fn()}
+              projectId="project"
+              renderContent={() => null}
+            />
+          </WorkbenchFrameEditorContext.Provider>,
+        ),
+      );
+    };
+
+    render([doc("/one.ts")]);
+    expect(report).toHaveBeenLastCalledWith(expect.any(String), "documents");
+    const key = report.mock.calls[0]?.[0];
+
+    render([]);
+    expect(report).toHaveBeenLastCalledWith(key, "empty");
+
+    render([doc("/two.ts")]);
+    expect(report).toHaveBeenLastCalledWith(key, "documents");
+
+    act(() => root.unmount());
+    expect(report).toHaveBeenLastCalledWith(key, null);
+  });
+
+  it("re-reports an empty sibling group when the host document list changes under it", () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const report = vi.fn();
+    const emptyGroup = { activePath: null, openPaths: [], previewPath: null };
+    const handlers = {
+      onActivateGroup: vi.fn(),
+      onActivateTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onMoveTab: vi.fn(),
+      onPinTab: vi.fn(),
+      onReorderTab: vi.fn(),
+      renderContent: () => null,
+    };
+    const render = (documents: EditorDocument[]) => {
+      act(() =>
+        root.render(
+          <WorkbenchFrameEditorContext.Provider value={report}>
+            <EditorGroupView
+              active={false}
+              documents={documents}
+              group={emptyGroup}
+              groupId="group/empty"
+              projectId="project"
+              {...handlers}
+            />
+          </WorkbenchFrameEditorContext.Provider>,
+        ),
+      );
+    };
+
+    render([]);
+    expect(report).toHaveBeenLastCalledWith(expect.any(String), "empty");
+
+    render([doc("/other-group.ts")]);
+    expect(report).toHaveBeenLastCalledWith(expect.any(String), "documents");
+
+    render([]);
+    expect(report).toHaveBeenLastCalledWith(expect.any(String), "empty");
+    act(() => root.unmount());
   });
 
   it("keeps inactive group tabs with their group when the active group uses the Files header", () => {

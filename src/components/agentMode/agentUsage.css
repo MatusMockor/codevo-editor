@@ -1,10 +1,5 @@
-/*
-  Usage layer: a workspace page beside the rail. It inherits the frame's T3 palette and only
-  narrows the type scale to the 12/13 px the page reads at; no local colour remap.
-*/
 .workbench-frame > .agent-usage-layer {
   --agent-fs-xs: var(--agent-fs-sm);
-  --agent-fs-md: 13px;
   position: fixed;
   z-index: 80;
   top: var(--window-chrome-height);
@@ -20,7 +15,6 @@
   display: flex;
   overflow: hidden;
   flex-direction: column;
-  border-left: 1px solid var(--agent-hairline);
   background: var(--agent-canvas);
   color: var(--agent-text);
   inset: 0;
@@ -38,7 +32,6 @@
   flex: none;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--agent-hairline);
   padding: 0 12px 0 20px;
 }
 
@@ -179,8 +172,7 @@
   height: 6px;
   overflow: hidden;
   border-radius: var(--agent-radius-pill);
-  background: var(--agent-fill);
-  box-shadow: inset 0 0 0 1px var(--agent-hairline);
+  background: var(--agent-well);
 }
 
 .agent-usage-panel__meter > span {
@@ -219,8 +211,10 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px 32px;
-  padding: 18px 0;
-  border-block: 1px solid var(--agent-hairline);
+  border-radius: var(--agent-radius-lg);
+  background: var(--agent-raised);
+  box-shadow: var(--agent-shadow-raised);
+  padding: 18px 20px;
 }
 
 .agent-usage-panel__spend > div {
@@ -306,7 +300,8 @@
 }
 
 .agent-usage-panel__periods button {
-  border: 1px solid var(--agent-hairline);
+  height: 28px;
+  border: 0;
   border-radius: var(--agent-radius-sm);
   background: transparent;
   color: var(--agent-text-muted);
@@ -314,7 +309,7 @@
   font: inherit;
   font-size: var(--agent-fs-xs);
   font-weight: 500;
-  padding: 4px 8px;
+  padding: 0 10px;
 }
 
 .agent-usage-panel__periods button:hover {
@@ -323,9 +318,13 @@
 }
 
 .agent-usage-panel__periods button[aria-selected="true"] {
-  border-color: var(--agent-hairline-strong);
   background: var(--agent-fill);
   color: var(--agent-text-strong);
+}
+
+.agent-usage-panel__periods button:focus-visible {
+  outline: none;
+  box-shadow: var(--agent-focus-ring);
 }
 
 .agent-usage-panel [aria-label$=" projects"],

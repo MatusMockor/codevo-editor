@@ -231,17 +231,31 @@ describe("agent usage layer styles", () => {
 
   it("inherits the frame palette instead of remapping it to the shell colours", () => {
     expect(layer).not.toMatch(/var\(--color-/u);
-    expect(layer).toContain("--agent-fs-md: 13px");
+    expect(layer).not.toContain("--agent-fs-md");
     expect(layer).toContain("--agent-fs-xs: var(--agent-fs-sm)");
   });
 
-  it("marks the selected period with the accent chip and no soft glow", () => {
+  it("marks the selected period with the active tone and no border or glow", () => {
     const selected = cssRule(
       agentModeCss,
       '.agent-usage-panel__periods button[aria-selected="true"]',
     );
     expect(selected).toContain("background: var(--agent-fill)");
     expect(selected).not.toContain("var(--agent-live-soft)");
+    expect(selected).not.toContain("border-color");
+    expect(cssRule(agentModeCss, ".agent-usage-panel__periods button {")).toContain("border: 0");
+  });
+
+  it("separates the usage page by tone, not by hairlines", () => {
+    expect(cssRule(agentModeCss, ".agent-usage-popover {")).not.toContain("border-left");
+    expect(cssRule(agentModeCss, ".agent-usage-popover__header {")).not.toContain("border-bottom");
+    const spend = cssRule(agentModeCss, ".agent-usage-panel__spend {");
+    expect(spend).not.toContain("border-block");
+    expect(spend).toContain("background: var(--agent-raised)");
+    expect(spend).toContain("box-shadow: var(--agent-shadow-raised)");
+    const meter = cssRule(agentModeCss, ".agent-usage-panel__meter {");
+    expect(meter).toContain("background: var(--agent-well)");
+    expect(meter).not.toContain("box-shadow");
   });
 });
 

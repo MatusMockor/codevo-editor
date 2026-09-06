@@ -4,11 +4,10 @@
   width: min(880px, calc(100vw - 36px));
   height: min(520px, calc(100vh - 80px));
   flex-direction: column;
+  border: 0;
   border-radius: var(--agent-radius-xl);
   background: var(--agent-raised);
-  box-shadow:
-    0 0 0 1px var(--agent-hairline-strong),
-    var(--shadow-pop);
+  box-shadow: var(--codevo-shadow-float);
   color: var(--agent-text);
   font-size: var(--agent-fs-sm);
 }
@@ -18,9 +17,9 @@
   flex: none;
   align-items: center;
   gap: 10px;
-  height: 44px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--agent-hairline);
+  height: 46px;
+  padding: 0 16px;
+  border: 0;
   color: var(--agent-text-muted);
 }
 
@@ -52,8 +51,9 @@
   max-width: 200px;
   height: 20px;
   padding: 0 8px;
-  border: 1px solid var(--agent-hairline-strong);
+  border: 0;
   border-radius: var(--agent-radius-pill);
+  background: var(--agent-well);
   color: var(--agent-text-muted);
   font-size: var(--agent-fs-xs);
   white-space: nowrap;
@@ -68,7 +68,9 @@
   display: grid;
   min-height: 0;
   flex: 1 1 auto;
+  gap: 10px;
   grid-template-columns: minmax(0, 1fr) min(300px, 40%);
+  padding: 0 8px 8px;
 }
 
 .agent-tsp__list {
@@ -76,7 +78,7 @@
   overflow-y: auto;
   min-height: 0;
   flex-direction: column;
-  padding: 4px 6px 6px;
+  padding: 0 2px 4px;
 }
 
 .agent-tsp__seclabel {
@@ -88,7 +90,7 @@
 }
 
 .agent-tsp__refresh {
-  color: color-mix(in srgb, var(--agent-text-subtle) 80%, transparent);
+  color: var(--agent-text-subtle);
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: none;
@@ -104,11 +106,11 @@
   position: relative;
   display: grid;
   width: 100%;
-  min-height: 40px;
+  min-height: 32px;
   align-items: center;
-  padding: 5px 10px 5px 8px;
+  padding: 7px 10px;
   border: 0;
-  border-radius: var(--agent-radius-md);
+  border-radius: var(--agent-radius-sm);
   background: transparent;
   color: inherit;
   column-gap: 10px;
@@ -126,17 +128,10 @@
 
 .agent-tsp__row[aria-selected="true"] {
   background: var(--agent-fill);
-  box-shadow: inset 2px 0 0 var(--agent-live);
 }
 
 .agent-tsp__row:focus-visible {
   box-shadow: var(--agent-focus-ring);
-}
-
-.agent-tsp__row[aria-selected="true"]:focus-visible {
-  box-shadow:
-    inset 2px 0 0 var(--agent-live),
-    var(--agent-focus-ring);
 }
 
 .agent-tsp__row[aria-selected="true"] .agent-row__provider {
@@ -166,7 +161,7 @@
   overflow: hidden;
   align-items: center;
   gap: 6px;
-  color: color-mix(in srgb, var(--agent-text-muted) 85%, transparent);
+  color: var(--agent-text-subtle);
   font-size: var(--agent-fs-xs);
   white-space: nowrap;
 }
@@ -182,12 +177,13 @@
 }
 
 .agent-tsp__badge {
-  border: 1px solid color-mix(in srgb, var(--agent-ok) 45%, transparent);
+  border: 0;
   border-radius: var(--agent-radius-pill);
-  color: var(--agent-ok);
+  background: var(--agent-well);
+  color: var(--agent-text-muted);
   font-size: var(--agent-fs-2xs);
   line-height: 1.4;
-  padding: 0 6px;
+  padding: 0 8px;
 }
 
 .agent-tsp__time {
@@ -211,7 +207,7 @@
 }
 
 .agent-tsp__note--footnote {
-  color: color-mix(in srgb, var(--agent-text-muted) 70%, transparent);
+  color: var(--agent-text-subtle);
 }
 
 .agent-tsp__state .agent-linkbutton {
@@ -220,18 +216,19 @@
 
 .agent-tsp__drawer {
   display: flex;
+  overflow: hidden;
   min-height: 0;
   flex-direction: column;
-  border-left: 1px solid var(--agent-hairline);
+  border: 0;
+  border-radius: var(--agent-radius-md);
   background: var(--agent-well);
-  box-shadow: var(--agent-shadow-well);
 }
 
 .agent-tsp__drawer-head {
   display: grid;
   flex: none;
   padding: 12px 14px 10px;
-  border-bottom: 1px solid var(--agent-hairline);
+  border: 0;
   gap: 3px;
 }
 
@@ -269,7 +266,7 @@
   min-height: 0;
   flex-direction: column;
   gap: 10px;
-  padding: 10px 14px 12px;
+  padding: 0 14px 12px;
 }
 
 .agent-tsp__exchange {
@@ -312,9 +309,10 @@
   flex: none;
   align-items: center;
   gap: 14px;
-  padding: 7px 12px 7px 14px;
-  border-top: 1px solid var(--agent-hairline);
-  color: var(--agent-text-subtle);
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  color: var(--agent-text-muted);
   font-size: var(--agent-fs-xs);
 }
 
@@ -332,15 +330,15 @@
 
 .agent-tsp__kbd {
   display: inline-flex;
-  min-width: 16px;
-  height: 16px;
+  min-width: 18px;
+  height: 18px;
   align-items: center;
   justify-content: center;
-  padding: 0 4px;
-  border: 1px solid var(--agent-hairline);
+  padding: 0 5px;
+  border: 0;
   border-radius: var(--agent-radius-sm);
-  background: var(--agent-raised);
-  color: var(--agent-text-subtle);
+  background: var(--agent-well);
+  color: var(--agent-text-muted);
   font-family: inherit;
   font-size: var(--agent-fs-2xs);
   line-height: 1;
@@ -354,7 +352,7 @@
   overflow: hidden;
   min-width: 0;
   flex: 0 1 auto;
-  color: color-mix(in srgb, var(--agent-text-muted) 75%, transparent);
+  color: var(--agent-text-subtle);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -366,9 +364,9 @@
   align-items: center;
   gap: 6px;
   padding: 0 10px;
-  border: 1px solid var(--agent-hairline-strong);
-  border-radius: var(--agent-radius-md);
-  background: var(--agent-fill);
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-well);
   color: var(--agent-text-strong);
   cursor: pointer;
   font: inherit;
@@ -394,10 +392,5 @@
   .agent-tsp__body {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
-  }
-
-  .agent-tsp__drawer {
-    border-top: 1px solid var(--agent-hairline);
-    border-left: none;
   }
 }

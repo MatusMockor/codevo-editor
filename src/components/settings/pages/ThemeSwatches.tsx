@@ -8,16 +8,16 @@ interface ThemePalette {
 }
 
 const THEME_PALETTES: Readonly<Record<AppTheme, ThemePalette>> = {
-  dark: { app: "#16181d", sidebar: "#1c1f26", accent: "#8aa9c9" },
-  light: { app: "#f5f7f9", sidebar: "#ffffff", accent: "#3d7c8a" },
-  system: { app: "#16181d", sidebar: "#f5f7f9", accent: "#8aa9c9" },
-  ayuMirage: { app: "#1f2430", sidebar: "#242936", accent: "#ffcc66" },
-  materialDeepOcean: { app: "#0f111a", sidebar: "#181a24", accent: "#84ffff" },
-  oneDarkPro: { app: "#282c34", sidebar: "#21252b", accent: "#61afef" },
-  dracula: { app: "#282a36", sidebar: "#21222c", accent: "#bd93f9" },
-  catppuccinMocha: { app: "#1e1e2e", sidebar: "#181825", accent: "#cba6f7" },
-  catppuccinLatte: { app: "#eff1f5", sidebar: "#e6e9ef", accent: "#8839ef" },
-  oneLight: { app: "#fafafa", sidebar: "#eaeaeb", accent: "#4078f2" },
+  dark: { app: "#13151a", sidebar: "#0c0d10", accent: "#4fcdb3" },
+  light: { app: "#f0f2f5", sidebar: "#fbfcfd", accent: "#13836f" },
+  system: { app: "#13151a", sidebar: "#fbfcfd", accent: "#4fcdb3" },
+  ayuMirage: { app: "#1f2430", sidebar: "#1f2430", accent: "#ffcc66" },
+  materialDeepOcean: { app: "#0f111a", sidebar: "#0f111a", accent: "#84ffff" },
+  oneDarkPro: { app: "#282c34", sidebar: "#282c34", accent: "#61afef" },
+  dracula: { app: "#282a36", sidebar: "#282a36", accent: "#bd93f9" },
+  catppuccinMocha: { app: "#1e1e2e", sidebar: "#1e1e2e", accent: "#cba6f7" },
+  catppuccinLatte: { app: "#eff1f5", sidebar: "#eff1f5", accent: "#8839ef" },
+  oneLight: { app: "#fafafa", sidebar: "#fafafa", accent: "#4078f2" },
   darkPlus: { app: "#1e1e1e", sidebar: "#252526", accent: "#007acc" },
 };
 

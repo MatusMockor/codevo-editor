@@ -103,16 +103,16 @@ export function AgentSurfaceEmptyState({
                   onClick={() => onChooseSurface(kind)}
                   type="button"
                 >
-                  <span className="agent-surface-card__top">
+                  <span className="agent-surface-card__title">
                     <span className="agent-surface-card__icon">
-                      <Icon aria-hidden="true" size={18} />
+                      <Icon aria-hidden="true" size={16} />
                     </span>
-                    <kbd aria-hidden="true" className="agent-surface-card__key">
-                      {AGENT_SURFACE_HOTKEYS[kind]}
-                    </kbd>
+                    <span className="agent-surface-card__label">{card.label}</span>
                   </span>
-                  <span className="agent-surface-card__label">{card.label}</span>
                   <span className="agent-surface-card__description">{description}</span>
+                  <kbd aria-hidden="true" className="agent-surface-card__key">
+                    {AGENT_SURFACE_HOTKEYS[kind]}
+                  </kbd>
                 </button>
                 {reason !== null && (
                   <p className="agent-surface-card__reason" id={`agent-surface-card-${kind}`}>

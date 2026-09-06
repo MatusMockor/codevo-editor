@@ -20,7 +20,7 @@
   margin: 0 auto;
   border-radius: var(--agent-radius-lg);
   background: var(--agent-raised);
-  box-shadow: inset 0 0 0 1px var(--agent-hairline-strong);
+  box-shadow: var(--agent-shadow-raised);
   padding: 9px 10px 9px 13px;
 }
 
@@ -53,7 +53,6 @@
 }
 
 .agent-compaction-offer__action {
-  box-shadow: inset 0 0 0 1px var(--agent-hairline-strong);
   font-size: var(--agent-fs-sm);
   font-weight: 600;
   padding: 6px 10px;
@@ -83,12 +82,14 @@
   width: 100%;
   max-width: 768px;
   margin: 0 auto;
-  border-radius: 12px;
+  border-radius: var(--agent-radius-xl);
   background: var(--agent-composer-surface);
-  box-shadow:
-    0 0 0 1px var(--agent-composer-outline),
-    inset 0 1px var(--agent-composer-highlight),
-    var(--agent-shadow-raised);
+  box-shadow: var(--agent-shadow-raised);
+  transition: box-shadow var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-composer__box:focus-within {
+  box-shadow: var(--agent-shadow-raised), var(--codevo-focus-ring);
 }
 
 .agent-composer__textarea {
@@ -96,7 +97,7 @@
   background: transparent;
   color: var(--agent-text-strong);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--codevo-fs-body);
   line-height: 1.5;
   max-height: 180px;
   min-height: 64px;
@@ -106,7 +107,7 @@
 }
 
 .agent-composer__textarea::placeholder {
-  color: var(--agent-text-muted);
+  color: var(--agent-text-subtle);
 }
 
 .agent-composer__textarea:focus-visible {
@@ -120,8 +121,7 @@
   align-items: center;
   gap: var(--agent-space-2) var(--agent-space-3);
   min-height: 36px;
-  border-bottom: 1px solid var(--agent-hairline);
-  padding: 4px 12px 4px 16px;
+  padding: 6px 12px 0 16px;
 }
 
 .agent-composer__context-label {
@@ -158,10 +158,9 @@
 
 .agent-composer__footer .agent-picker__trigger--ghost,
 .agent-composer__lock {
-  height: 24px;
-  border: 1px solid var(--agent-hairline);
+  height: 28px;
   border-radius: var(--agent-radius-sm);
-  background: color-mix(in srgb, var(--agent-canvas) 50%, transparent);
+  background: transparent;
   color: var(--agent-text-muted);
   font-size: var(--agent-fs-sm);
   font-weight: 500;
@@ -173,7 +172,7 @@
 }
 
 .agent-composer__footer .agent-picker__trigger--ghost:hover:not(:disabled) {
-  background: var(--agent-fill);
+  background: var(--agent-hover);
   color: var(--agent-text-strong);
 }
 
@@ -186,7 +185,7 @@
   flex: none;
   width: 1px;
   height: 16px;
-  background: var(--agent-hairline-strong);
+  background: var(--agent-hover);
   margin-inline: 4px;
   opacity: 0.7;
 }
@@ -197,6 +196,7 @@
   align-items: center;
   gap: 6px;
   overflow: hidden;
+  background: var(--agent-well);
   white-space: nowrap;
 }
 
@@ -213,12 +213,13 @@
   gap: 5px;
   overflow: hidden;
   max-width: 240px;
-  border: 1px solid var(--agent-hairline);
+  height: 20px;
   border-radius: var(--agent-radius-pill);
+  background: var(--agent-well);
   color: var(--agent-text);
   font-family: var(--agent-mono);
   font-size: var(--agent-fs-2xs);
-  padding: 2px 9px;
+  padding: 0 9px;
   white-space: nowrap;
 }
 
@@ -253,15 +254,17 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border: 0;
   border-radius: 999px;
   background: var(--agent-cta-bg);
   color: var(--agent-cta-fg);
   cursor: pointer;
   padding: 0;
-  transition: background-color var(--agent-motion-hover) var(--ease-standard);
+  transition:
+    background-color var(--agent-motion-hover) var(--ease-standard),
+    color var(--agent-motion-hover) var(--ease-standard);
 }
 
 .agent-composer__send:hover:not(:disabled) {
@@ -273,8 +276,9 @@
 }
 
 .agent-composer__send:disabled {
+  background: var(--agent-fill);
+  color: var(--agent-text-muted);
   cursor: not-allowed;
-  opacity: 0.5;
 }
 
 .agent-composer__send:focus-visible {
@@ -300,7 +304,6 @@
 
 .agent-composer__reason {
   align-items: center;
-  border-top: 1px solid var(--agent-hairline);
   color: var(--agent-text-muted);
   font-size: var(--agent-fs-sm);
   display: flex;
@@ -308,7 +311,7 @@
   justify-content: space-between;
   line-height: 1.5;
   margin: 0;
-  padding: 8px 16px 10px;
+  padding: 0 16px 10px;
 }
 
 .agent-composer__reason button {
@@ -346,9 +349,8 @@
   overflow: hidden;
   height: 28px;
   min-width: 0;
-  border: 1px solid var(--agent-hairline-strong);
-  border-radius: var(--agent-radius-md);
-  background: var(--agent-fill);
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-well);
   color: var(--agent-text);
   cursor: pointer;
   font: inherit;
@@ -356,19 +358,18 @@
   font-size: var(--agent-fs-xs);
   padding: 0 8px;
   transition:
-    border-color var(--agent-motion-hover) var(--ease-standard),
+    background-color var(--agent-motion-hover) var(--ease-standard),
     color var(--agent-motion-hover) var(--ease-standard);
 }
 
 .agent-composer__compact-trigger:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--agent-hairline-strong) 60%, var(--agent-text-subtle));
+  background: var(--agent-hover);
   color: var(--agent-text-strong);
 }
 
 .agent-composer__compact-trigger:focus-visible,
 .agent-composer__compact-trigger[aria-expanded="true"] {
   outline: none;
-  border-color: var(--agent-live);
   box-shadow: var(--agent-focus-ring);
 }
 
@@ -394,9 +395,7 @@
   gap: var(--agent-space-2);
   border-radius: var(--agent-radius-lg);
   background: var(--agent-raised);
-  box-shadow:
-    0 0 0 1px var(--agent-hairline-strong),
-    0 12px 32px rgba(0, 0, 0, var(--agent-shadow-alpha));
+  box-shadow: var(--codevo-shadow-float);
   padding: 10px;
 }
 
@@ -455,9 +454,8 @@
   gap: 5px;
   height: 28px;
   max-width: 180px;
-  border: 1px solid var(--agent-hairline-strong);
-  border-radius: var(--agent-radius-md);
-  background: var(--agent-fill);
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-well);
   color: var(--agent-text);
   cursor: pointer;
   font: inherit;
@@ -466,19 +464,17 @@
   padding: 0 6px 0 8px;
   transition:
     background-color var(--agent-motion-hover) var(--ease-standard),
-    border-color var(--agent-motion-hover) var(--ease-standard),
     color var(--agent-motion-hover) var(--ease-standard);
 }
 
 .agent-picker__trigger:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--agent-hairline-strong) 60%, var(--agent-text-subtle));
+  background: var(--agent-hover);
   color: var(--agent-text-strong);
 }
 
 .agent-picker__trigger:focus-visible,
 .agent-picker--open .agent-picker__trigger {
   outline: none;
-  border-color: var(--agent-live);
   box-shadow: var(--agent-focus-ring);
 }
 
@@ -488,13 +484,12 @@
 }
 
 .agent-picker__trigger--plan {
-  border-color: color-mix(in srgb, var(--agent-plan) 45%, transparent);
+  background: var(--agent-live-soft);
   color: var(--agent-plan);
 }
 
 .agent-picker__trigger--danger {
-  border-color: color-mix(in srgb, var(--agent-danger) 55%, transparent);
-  background: color-mix(in srgb, var(--agent-danger) 10%, var(--agent-fill));
+  background: var(--agent-glow-danger);
   color: var(--agent-danger);
 }
 
@@ -514,7 +509,7 @@
 }
 
 .agent-picker__trigger--ghost:hover:not(:disabled) {
-  background: var(--agent-fill);
+  background: var(--agent-hover);
   color: var(--agent-text-strong);
 }
 
@@ -581,11 +576,9 @@
   max-height: min(320px, calc(100vh - 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-radius: var(--agent-radius-xl);
+  border-radius: var(--agent-radius-lg);
   background: var(--agent-raised);
-  box-shadow:
-    0 0 0 1px var(--agent-hairline-strong),
-    0 12px 32px rgba(0, 0, 0, var(--agent-shadow-alpha));
+  box-shadow: var(--codevo-shadow-float);
   padding: 4px 0;
 }
 
@@ -684,9 +677,16 @@
 }
 
 .agent-traits-picker__group + .agent-traits-picker__group {
-  border-top: 1px solid var(--agent-hairline);
   margin-top: 5px;
-  padding-top: 5px;
+  padding-top: 6px;
+}
+
+.agent-traits-picker__group + .agent-traits-picker__group::before {
+  content: "";
+  display: block;
+  height: 1px;
+  background: var(--agent-hover);
+  margin: 0 4px 5px;
 }
 
 .agent-traits-picker__heading {
@@ -742,11 +742,12 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  border-top: 1px solid color-mix(in srgb, var(--agent-danger) 35%, var(--agent-hairline));
+  border-radius: var(--agent-radius-md);
+  background: var(--agent-glow-danger);
   color: var(--agent-text);
   cursor: pointer;
-  margin: 3px 6px 0;
-  padding: 8px 6px 6px;
+  margin: 4px 4px 0;
+  padding: 8px 8px 7px;
 }
 
 .agent-picker__confirmation input {
@@ -784,9 +785,7 @@
   overflow: hidden;
   border-radius: var(--agent-radius-xl);
   background: var(--agent-raised);
-  box-shadow:
-    0 0 0 1px var(--agent-hairline-strong),
-    0 12px 32px rgba(0, 0, 0, var(--agent-shadow-alpha));
+  box-shadow: var(--codevo-shadow-float);
 }
 
 .agent-model-picker__rail {
@@ -794,7 +793,6 @@
   flex: none;
   flex-direction: column;
   gap: 2px;
-  border-right: 1px solid var(--agent-hairline);
   background: var(--agent-well);
   padding: 6px 5px;
 }
@@ -829,7 +827,6 @@
 .agent-model-picker__rail-item[aria-pressed="true"] {
   background: var(--agent-fill);
   color: var(--agent-text-strong);
-  box-shadow: inset 0 0 0 1px var(--agent-hairline-strong);
 }
 
 .agent-model-picker__rail-item[aria-pressed="true"] .agent-row__provider--claude {
@@ -859,14 +856,17 @@
   flex: none;
   align-items: center;
   gap: 7px;
-  border-bottom: 1px solid var(--agent-hairline);
+  height: 30px;
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-well);
   color: var(--agent-text-subtle);
-  padding: 8px 10px;
-  transition: border-color var(--agent-motion-hover) var(--ease-standard);
+  margin: 6px 6px 2px;
+  padding: 0 10px;
+  transition: box-shadow var(--agent-motion-hover) var(--ease-standard);
 }
 
 .agent-model-picker__search:focus-within {
-  border-bottom-color: color-mix(in srgb, var(--agent-text-muted) 55%, var(--agent-hairline));
+  box-shadow: var(--agent-focus-ring);
 }
 
 .agent-model-picker__input {
@@ -1024,14 +1024,14 @@
 
 .agent-model-picker__kbd {
   flex: none;
-  border: 1px solid var(--agent-hairline-strong);
-  border-radius: var(--agent-radius-sm);
-  background: var(--agent-fill);
-  color: var(--agent-text-subtle);
-  font-family: var(--agent-mono);
+  border-radius: 6px;
+  background: var(--agent-well);
+  color: var(--agent-text-muted);
+  font-family: var(--agent-sans);
   font-size: var(--agent-fs-2xs);
-  line-height: 14px;
-  padding: 0 4px;
+  font-weight: 500;
+  line-height: 18px;
+  padding: 0 5px;
 }
 
 .agent-model-picker__star {

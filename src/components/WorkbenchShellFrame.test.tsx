@@ -11,6 +11,7 @@ import {
 } from "../domain/agentWorkbenchLayout";
 import { AgentThreadRowMenu } from "./agentMode/AgentThreadRowMenu";
 import { WorkbenchShellFrame } from "./WorkbenchShellFrame";
+import { useWorkbenchFrameEditorReport } from "./workbenchFrameEditorReport";
 import { useWorkbenchFrameTreeReport } from "./workbenchFrameTreeReport";
 import {
   workbenchFrameTreeState,
@@ -224,6 +225,37 @@ describe("WorkbenchShellFrame", () => {
     expect(frame()).toBe("hidden");
   });
 
+  it("stamps data-editor from the editor host report and keeps the editor mounted while empty", () => {
+    const frame = () => host.querySelector(".workbench-frame")?.getAttribute("data-editor");
+    render(placement("agent", "files"));
+    expect(frame()).toBe("documents");
+
+    renderEditor(placement("agent", "files"), <EditorReporter empty />);
+    const editorSlot = host.querySelector('[data-slot="editor"]');
+    expect(frame()).toBe("empty");
+    expect(editorSlot?.hasAttribute("hidden")).toBe(false);
+    expect(host.querySelector("#editor-reporter")).not.toBeNull();
+
+    renderEditor(placement("agent", "files"), <EditorReporter empty={false} />);
+    expect(frame()).toBe("documents");
+    expect(host.querySelector('[data-slot="editor"]')).toBe(editorSlot);
+
+    renderEditor(
+      placement("agent", "files"),
+      <>
+        <EditorReporter empty />
+        <EditorReporter empty={false} />
+      </>,
+    );
+    expect(frame()).toBe("documents");
+
+    renderEditor(placement("agent", "files"), <EditorReporter empty />);
+    expect(frame()).toBe("empty");
+
+    render(placement("agent", "files"));
+    expect(frame()).toBe("documents");
+  });
+
   it("keeps every slot the agent renders a direct child of the frame grid", () => {
     render(placement("agent", "files"), <AgentSlots />);
     const frame = host.querySelector(".workbench-frame");
@@ -252,6 +284,20 @@ describe("WorkbenchShellFrame", () => {
           bottom={<span>bottom</span>}
           chrome={<div id="chrome" />}
           editor={<div id="editor-content" />}
+          placement={placementValue}
+        />,
+      ),
+    );
+  }
+
+  function renderEditor(placementValue: WorkbenchShellPlacement, editor: ReactNode): void {
+    act(() =>
+      root.render(
+        <WorkbenchShellFrame
+          agent={<div data-slot="agent">agent</div>}
+          bottom={<span>bottom</span>}
+          chrome={<div id="chrome" />}
+          editor={editor}
           placement={placementValue}
         />,
       ),
@@ -441,6 +487,11 @@ function RowMenuHost() {
 function TreeReporter({ visible }: { readonly visible: boolean }) {
   useWorkbenchFrameTreeReport(visible);
   return <div data-slot="agent">agent</div>;
+}
+
+function EditorReporter({ empty }: { readonly empty: boolean }) {
+  useWorkbenchFrameEditorReport(empty);
+  return <div id="editor-reporter" />;
 }
 
 function emptyOpenPanelPlacement(bottomPanelVisible = false): WorkbenchShellPlacement {

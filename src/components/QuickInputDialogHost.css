@@ -1,7 +1,7 @@
 .quick-input-dialog {
   background: var(--color-modal);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
+  border: 0;
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-pop);
   color: var(--color-text);
   margin: auto;
@@ -27,8 +27,8 @@
 }
 
 .quick-input-dialog input {
-  background: var(--color-panel-deep);
-  border: 1px solid var(--color-border-strong);
+  background: var(--color-control);
+  border: 0;
   border-radius: var(--radius-sm);
   color: var(--color-text-strong);
   font: inherit;
@@ -58,7 +58,7 @@
 
 .quick-input-dialog button {
   background: var(--color-control);
-  border: 1px solid var(--color-border-strong);
+  border: 0;
   border-radius: var(--radius-sm);
   color: var(--color-text);
   font: inherit;
@@ -68,7 +68,6 @@
 
 .quick-input-dialog .quick-input-submit {
   background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-active-text);
+  color: var(--color-accent-text);
   font-weight: 600;
 }

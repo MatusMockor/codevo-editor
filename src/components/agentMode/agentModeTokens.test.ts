@@ -1,81 +1,72 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readAgentModeStyles } from "./agentModeCssTestSupport";
+import {
+  buildTokenTable,
+  customPropertyDeclarations,
+  lastOf,
+  parseCssRules,
+  readStyleSheet,
+  referencesSelf,
+  selectorParts,
+  varReferences,
+  type CssRule,
+} from "../cssContractTestSupport";
+import { AGENT_MODE_STYLE_SHEETS, agentModeSheetPath } from "./agentModeCssTestSupport";
 
-const agentCss = readAgentModeStyles();
-const frameCss = readFileSync(resolve(import.meta.dirname, "../workbenchShellFrame.css"), "utf8");
-const agentStyles = `${agentCss}\n${frameCss}`;
-
-const DECLARATION = /(--agent-[\w-]+)\s*:\s*([^;{}]*);/g;
-const REFERENCE = /var\(\s*(--agent-[\w-]+)/g;
-const ANY_DECLARATION = /(--[\w-]+)\s*:\s*([^;{}]*);/g;
-const T3_REFERENCE = /var\(\s*(--t3-[\w-]+)/g;
-const BLOCK = /([^{}]*)\{([^{}]*)\}/g;
-const DECLARES_TOKEN = /--agent-[\w-]+\s*:/;
-const TOKEN_SCOPE = /\.workbench-frame|\.app-shell|\.editor-workbench/;
-const LIGHT_SELECTORS = [
-  '.app-shell[data-theme="light"]',
-  '.app-shell[data-theme="catppuccinLatte"]',
-  '.app-shell[data-theme="oneLight"]',
+const FRAME_SHEET = "components/workbenchShellFrame.css";
+const TOKEN_SCOPE = /^(\.workbench-frame|\.app-shell|\.editor-workbench)/;
+const LIGHT_FRAME_SELECTORS = [
+  '.app-shell[data-theme="light"] .workbench-frame',
+  '.app-shell[data-theme="catppuccinLatte"] .workbench-frame',
+  '.app-shell[data-theme="oneLight"] .workbench-frame',
 ] as const;
 
-function declarations(source: string): ReadonlyArray<{ name: string; value: string }> {
-  return [...source.matchAll(DECLARATION)].map((match) => ({
-    name: match[1] ?? "",
-    value: match[2] ?? "",
-  }));
+const agentRules = AGENT_MODE_STYLE_SHEETS.flatMap((sheet) => {
+  const path = agentModeSheetPath(sheet);
+  return parseCssRules(readStyleSheet(path).source, path).rules;
+});
+const frameRules = parseCssRules(readStyleSheet(FRAME_SHEET).source, FRAME_SHEET).rules;
+const allRules = [...agentRules, ...frameRules];
+const tokenRules = agentRules.filter(
+  (rule) => rule.sheet === agentModeSheetPath("agentModeTokens.css"),
+);
+
+function declaredNames(rules: readonly CssRule[], prefix: string): ReadonlySet<string> {
+  return new Set(customPropertyDeclarations(rules, prefix).map((entry) => entry.property));
 }
 
-function anyDeclarations(source: string): ReadonlyArray<{ name: string; value: string }> {
-  return [...source.matchAll(ANY_DECLARATION)].map((match) => ({
-    name: match[1] ?? "",
-    value: match[2] ?? "",
-  }));
-}
-
-function references(source: string): ReadonlySet<string> {
-  return new Set([...source.matchAll(REFERENCE)].map((match) => match[1] ?? ""));
-}
-
-function anyReferences(pattern: RegExp, source: string): ReadonlySet<string> {
-  return new Set([...source.matchAll(pattern)].map((match) => match[1] ?? ""));
-}
-
-function blocks(source: string): ReadonlyArray<{ selector: string; body: string }> {
-  return [...source.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(BLOCK)].map((match) => ({
-    selector: (match[1] ?? "").trim(),
-    body: match[2] ?? "",
-  }));
-}
-
-function appShellBodies(source: string): ReadonlyArray<{ selector: string; body: string }> {
-  return blocks(source).filter((entry) =>
-    entry.selector.split(",").every((part) => part.trim().startsWith(".app-shell")),
+function frameBase(): readonly CssRule[] {
+  return tokenRules.filter(
+    (rule) => rule.selector === ".workbench-frame" && rule.context.length === 0,
   );
 }
 
 describe("agent mode token contract", () => {
   it("never declares a token in terms of itself", () => {
-    const cycles = declarations(agentStyles)
-      .filter((declaration) => references(declaration.value).has(declaration.name))
-      .map((declaration) => declaration.name);
+    const cycles = customPropertyDeclarations(allRules, "--")
+      .filter((entry) => referencesSelf(entry.property, entry.value))
+      .map((entry) => entry.property);
 
     expect(cycles).toEqual([]);
   });
 
   it("defines every agent token it references across the agent styles and the shell frame", () => {
-    const defined = new Set(declarations(agentStyles).map((declaration) => declaration.name));
-    const undefinedTokens = [...references(agentStyles)]
-      .filter((name) => !defined.has(name))
+    const defined = declaredNames(allRules, "--agent-");
+    const undefinedTokens = [
+      ...new Set(
+        allRules.flatMap((rule) =>
+          rule.declarations.flatMap((declaration) => varReferences(declaration.value)),
+        ),
+      ),
+    ]
+      .filter((name) => name.startsWith("--agent-") && !defined.has(name))
       .sort();
 
     expect(undefinedTokens).toEqual([]);
   });
 
   it("keeps the frame-owned layout tokens out of the agent visual styles", () => {
-    const agentDefined = new Set(declarations(agentCss).map((declaration) => declaration.name));
-    const frameDefined = new Set(declarations(frameCss).map((declaration) => declaration.name));
+    const agentDefined = declaredNames(agentRules, "--agent-");
+    const frameDefined = declaredNames(frameRules, "--agent-");
 
     for (const token of [
       "--agent-rail-track",
@@ -90,113 +81,95 @@ describe("agent mode token contract", () => {
   });
 
   it("declares every agent token inside the shell frame scope", () => {
-    const scopes = [...agentStyles.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(BLOCK)]
-      .filter((match) => DECLARES_TOKEN.test(match[2] ?? ""))
-      .map((match) => (match[1] ?? "").trim())
-      .filter((selector) => !selector.startsWith("@") && selector.length > 0);
-
-    const unscoped = scopes.filter((selector) =>
-      selector.split(",").some((part: string) => !TOKEN_SCOPE.test(part)),
-    );
+    const unscoped = allRules
+      .filter((rule) => rule.declarations.some((entry) => entry.property.startsWith("--agent-")))
+      .map((rule) => rule.selector)
+      .filter((selector) => selectorParts(selector).some((part) => !TOKEN_SCOPE.test(part)));
 
     expect(unscoped).toEqual([]);
   });
 
-  it("never declares a t3 or shell token in terms of itself", () => {
-    const cycles = anyDeclarations(agentStyles)
-      .filter((declaration) =>
-        anyReferences(/var\(\s*(--[\w-]+)/g, declaration.value).has(declaration.name),
-      )
-      .map((declaration) => declaration.name);
-
-    expect(cycles).toEqual([]);
-  });
-
-  it("declares every referenced t3 token on the app shell", () => {
-    const declared = new Set(
-      appShellBodies(agentStyles).flatMap((entry) =>
-        anyDeclarations(entry.body)
-          .map((declaration) => declaration.name)
-          .filter((name) => name.startsWith("--t3-")),
-      ),
-    );
-    const missing = [...anyReferences(T3_REFERENCE, agentStyles)]
-      .filter((name) => !declared.has(name))
-      .sort();
-
-    expect(missing).toEqual([]);
-  });
-
-  it("overrides the t3 palette for every light theme selector", () => {
-    for (const selector of LIGHT_SELECTORS) {
-      const light = appShellBodies(agentStyles).filter(
-        (entry) =>
-          entry.selector.split(",").some((part) => part.trim() === selector) &&
-          /--t3-[\w-]+\s*:/.test(entry.body),
-      );
-
-      expect(light.length, selector).toBeGreaterThan(0);
-      const declared = new Set(
-        light.flatMap((entry) =>
-          anyDeclarations(entry.body).map((declaration) => declaration.name),
-        ),
-      );
-      for (const token of ["--t3-background", "--t3-primary", "--t3-border"]) {
-        expect(declared.has(token), `${selector} ${token}`).toBe(true);
-      }
+  it("remaps every agent role to the codevo ladder or a dimension", () => {
+    const base = buildTokenTable(frameBase(), "--agent-");
+    const expectation: ReadonlyArray<readonly [string, string]> = [
+      ["--agent-canvas", "var(--codevo-canvas)"],
+      ["--agent-rail", "var(--codevo-side)"],
+      ["--agent-raised", "var(--codevo-raised)"],
+      ["--agent-well", "var(--codevo-well)"],
+      ["--agent-fill", "var(--codevo-active)"],
+      ["--agent-hover", "var(--codevo-hover)"],
+      ["--agent-hairline", "var(--codevo-hover)"],
+      ["--agent-hairline-strong", "var(--codevo-active)"],
+      ["--agent-text-strong", "var(--codevo-fg-strong)"],
+      ["--agent-text", "var(--codevo-fg)"],
+      ["--agent-text-muted", "var(--codevo-fg-muted)"],
+      ["--agent-text-subtle", "var(--codevo-fg-subtle)"],
+      ["--agent-text-disabled", "var(--codevo-fg-disabled)"],
+      ["--agent-live", "var(--codevo-primary)"],
+      ["--agent-live-soft", "var(--codevo-primary-soft)"],
+      ["--agent-live-contrast", "var(--codevo-primary-fg)"],
+      ["--agent-ok", "var(--codevo-ok)"],
+      ["--agent-attention", "var(--codevo-warn)"],
+      ["--agent-danger", "var(--codevo-danger)"],
+      ["--agent-status-working", "var(--codevo-ok)"],
+      ["--agent-status-failed", "var(--codevo-danger)"],
+      ["--agent-row-selected", "var(--codevo-raised)"],
+      ["--agent-focus-ring", "var(--codevo-focus-ring)"],
+      ["--agent-shadow-raised", "var(--codevo-shadow-card)"],
+      ["--agent-shadow-well", "none"],
+      ["--agent-ambient", "none"],
+      ["--agent-scanline", "transparent"],
+      ["--agent-composer-outline", "transparent"],
+      ["--agent-composer-highlight", "transparent"],
+      ["--agent-cta-bg", "var(--codevo-primary)"],
+      ["--agent-cta-fg", "var(--codevo-primary-fg)"],
+      ["--agent-radius-sm", "var(--codevo-r-sm)"],
+      ["--agent-radius-md", "var(--codevo-r-md)"],
+      ["--agent-radius-lg", "var(--codevo-r-lg)"],
+      ["--agent-radius-xl", "var(--codevo-r-xl)"],
+      ["--agent-radius-pill", "var(--codevo-r-pill)"],
+      ["--agent-fs-2xs", "var(--codevo-fs-small)"],
+      ["--agent-fs-xs", "var(--codevo-fs-meta)"],
+      ["--agent-fs-sm", "var(--codevo-fs-meta)"],
+      ["--agent-fs-md", "var(--codevo-fs-ui)"],
+      ["--agent-fs-lg", "var(--codevo-fs-heading)"],
+      ["--agent-fs-xl", "var(--codevo-fs-title)"],
+      ["--agent-sans", "var(--codevo-sans)"],
+      ["--agent-mono", "var(--codevo-mono)"],
+    ];
+    for (const [name, value] of expectation) {
+      expect(lastOf(base.get(name)), name).toBe(value);
     }
   });
 
-  it("retires the ambient gradient and the scanline on the frame base scope", () => {
-    const base = blocks(agentCss)
-      .filter((entry) => entry.selector === ".workbench-frame")
-      .flatMap((entry) => declarations(entry.body));
-    const ambient = base.filter((entry) => entry.name === "--agent-ambient");
-    const scanline = base.filter((entry) => entry.name === "--agent-scanline");
-
-    expect(ambient[ambient.length - 1]?.value.trim()).toBe("none");
-    expect(scanline[scanline.length - 1]?.value.trim()).toBe("transparent");
-  });
-
-  it("raises the subtle text mix on every light surface", () => {
-    const MIX = /color-mix\(in srgb, var\(--t3-muted-foreground\) (\d+)%, transparent\)/;
-    const lightFrames = blocks(agentCss).filter(
-      (entry) =>
-        entry.selector
-          .split(",")
-          .every((part) => LIGHT_SELECTORS.some((light) => part.trim().startsWith(light))) &&
-        /--agent-text-subtle\s*:/.test(entry.body),
-    );
-    const systemFrame = blocks(agentCss).filter(
-      (entry) =>
-        entry.selector.trim() === '.app-shell[data-theme="system"] .workbench-frame' &&
-        /--agent-text-subtle\s*:/.test(entry.body),
-    );
-
-    expect(lightFrames.length).toBeGreaterThan(0);
-    expect(systemFrame.length).toBeGreaterThan(0);
-    for (const entry of [...lightFrames, ...systemFrame]) {
-      const subtle = declarations(entry.body).find(
-        (declaration) => declaration.name === "--agent-text-subtle",
+  it("keeps the light frame overrides down to the shadow alpha scalar", () => {
+    for (const selector of LIGHT_FRAME_SELECTORS) {
+      const rules = tokenRules.filter(
+        (rule) => rule.context.length === 0 && selectorParts(rule.selector).includes(selector),
       );
-      const mix = MIX.exec(subtle?.value ?? "");
-      expect(mix, entry.selector).not.toBeNull();
-      expect(Number(mix?.[1] ?? 0), entry.selector).toBeGreaterThanOrEqual(85);
+      const declared = [...declaredNames(rules, "--agent-")];
+      expect(declared, selector).toEqual(["--agent-shadow-alpha"]);
     }
   });
 
-  it("keeps the rail track at the t3 width", () => {
-    const railWidth = declarations(frameCss).find((entry) => entry.name === "--agent-rail-width");
+  it("keeps the rail track at the frame width", () => {
+    const railWidth = buildTokenTable(frameRules, "--agent-rail-width").get("--agent-rail-width");
 
-    expect(railWidth?.value.trim()).toBe("256px");
+    expect(lastOf(railWidth)).toBe("256px");
   });
 
-  it("gives the focus ring and well shadow real base values", () => {
-    const base = declarations(agentCss);
-    const focusRing = base.find((declaration) => declaration.name === "--agent-focus-ring");
-    const shadowWell = base.find((declaration) => declaration.name === "--agent-shadow-well");
+  it("stamps the agent surfaces with the codevo sans stack", () => {
+    const stamp = tokenRules.find((rule) =>
+      selectorParts(rule.selector).includes(".status-bar--agent"),
+    );
+    const fontFamily = stamp?.declarations.find((entry) => entry.property === "font-family");
 
-    expect(focusRing?.value).toContain("0 0 0 1px var(--agent-live)");
-    expect(shadowWell?.value).toContain("inset 0 1px 0");
+    expect(selectorParts(stamp?.selector ?? "")).toEqual([
+      ".agent-mode",
+      ".agent-surface-host",
+      ".agent-usage-layer",
+      ".status-bar--agent",
+    ]);
+    expect(fontFamily?.value).toBe("var(--codevo-sans)");
   });
 });

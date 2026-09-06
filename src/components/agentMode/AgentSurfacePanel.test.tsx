@@ -434,22 +434,41 @@ describe("AgentSurfacePanel", () => {
 });
 
 describe("agent surface styles", () => {
-  it("dresses the head, tabs and layout toggles as the t3 workspace panel", () => {
+  it("sets the panel and its head on the side tone with no rule between them", () => {
+    const surface = cssRule(agentModeCss, ".agent-surface {");
+    expect(surface).toContain("background: var(--codevo-side)");
+    expect(surface).not.toContain("border");
+
     const head = cssRule(agentModeCss, ".agent-surface__head {");
     expect(head).toContain("height: var(--agent-surface-header-height)");
-    expect(head).toContain("background: var(--agent-canvas)");
-    expect(head).toContain("border-bottom: 1px solid var(--agent-hairline)");
+    expect(head).not.toContain("border");
+    expect(head).not.toContain("background");
+  });
 
+  it("plays the surface tabs as tonal chips with a raised active chip", () => {
     const tabitem = cssRule(agentModeCss, ".agent-surface__tabitem {");
     expect(tabitem).toContain("height: 28px");
+    expect(tabitem).toContain("border-radius: var(--agent-radius-sm)");
     expect(tabitem).toContain("color: var(--agent-text-muted)");
-    expect(cssRule(agentModeCss, ".agent-surface__tabitem--active {")).toContain(
-      "background: var(--agent-fill)",
+    expect(cssRule(agentModeCss, ".agent-surface__tabitem:hover {")).toContain(
+      "background: var(--codevo-hover)",
     );
+
+    const active = cssRule(agentModeCss, ".agent-surface__tabitem--active {");
+    expect(active).toContain("background: var(--codevo-raised)");
+    expect(active).toContain("box-shadow: var(--codevo-shadow-card)");
 
     const tab = cssRule(agentModeCss, ".agent-surface__tab {");
     expect(tab).toContain("font-size: var(--agent-fs-sm)");
     expect(tab).toContain("font-weight: 500");
+
+    expect(cssRule(agentModeCss, ".agent-surface__editor-tabs {")).not.toContain("border");
+    const editorTab = cssRule(agentModeCss, ".agent-surface__editor-tabs .editor-tab {");
+    expect(editorTab).toContain("height: 28px");
+    expect(editorTab).toContain("border-radius: var(--agent-radius-sm)");
+    expect(cssRule(agentModeCss, ".agent-surface__editor-tabs .editor-tab.active {")).toContain(
+      "background: var(--codevo-raised)",
+    );
 
     expect(cssRule(agentModeCss, ".agent-surface__layout-controls .agent-icon-toggle {")).toContain(
       "width: 26px",
@@ -459,43 +478,62 @@ describe("agent surface styles", () => {
     );
   });
 
-  it("plays the subhead microlabel as plain sans over t3 change rows", () => {
-    expect(cssRule(agentModeCss, ".agent-surface__subhead {")).toContain("height: 32px");
+  it("drops the files subhead and gives the tree a tools row on the side tone", () => {
+    expect(agentModeCss).not.toContain(".agent-surface__subhead");
 
-    const microlabel = cssRule(agentModeCss, ".agent-surface__subhead .agent-microlabel {");
-    expect(microlabel).toContain("font-family: var(--agent-sans)");
-    expect(microlabel).toContain("font-size: var(--agent-fs-sm)");
-    expect(microlabel).toContain("text-transform: none");
+    const tree = cssRule(agentModeCss, ".agent-surface-tree {");
+    expect(tree).toContain("width: var(--agent-surface-tree-width)");
+    expect(tree).toContain("background: var(--codevo-side)");
+    expect(tree).not.toContain("border");
 
+    expect(cssRule(agentModeCss, ".agent-surface-tree__tools {")).toContain("padding: 4px 8px");
+    const search = cssRule(agentModeCss, ".agent-surface-tree__search {");
+    expect(search).toContain("height: 28px");
+    expect(search).toContain("background: transparent");
+    expect(search).toContain("border-radius: var(--agent-radius-sm)");
+    expect(search).toContain("color: var(--agent-text-subtle)");
+    expect(cssRule(agentModeCss, ".agent-surface-tree__search:hover:not(:disabled) {")).toContain(
+      "background: var(--codevo-hover)",
+    );
+    expect(cssRule(agentModeCss, ".agent-surface__editor-slot {")).toContain(
+      "background: var(--codevo-canvas)",
+    );
+  });
+
+  it("keeps the change list on the side tone and lifts the open row", () => {
+    expect(cssRule(agentModeCss, ".agent-surface-diff__list {")).toContain(
+      "background: var(--codevo-side)",
+    );
     const row = cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__row {");
     expect(row).toContain("min-height: 28px");
-    expect(row).toContain("border-radius: var(--agent-radius-sm)");
-    expect(
-      cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__row--selected,"),
-    ).toContain("background: var(--agent-fill)");
+    expect(row).toContain("border-radius: 7px");
+    const selected = cssRule(
+      agentModeCss,
+      ".agent-surface-diff__list .agent-files__row--selected,",
+    );
+    expect(selected).toContain("background: var(--codevo-raised)");
+    expect(selected).toContain("box-shadow: var(--codevo-shadow-card)");
     expect(
       cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__status--added,"),
-    ).toContain("color-mix(in srgb, var(--agent-ok) 10%, transparent)");
+    ).toContain("background: var(--codevo-ok-soft)");
     expect(
       cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__status--deleted,"),
-    ).toContain("color-mix(in srgb, var(--agent-danger) 10%, transparent)");
+    ).toContain("background: var(--codevo-danger-soft)");
+
+    const preview = cssRule(agentModeCss, ".agent-surface-diff__preview {");
+    expect(preview).toContain("background: var(--codevo-canvas)");
+    expect(preview).toContain("border-radius: var(--agent-radius-md)");
+    const terminal = cssRule(agentModeCss, ".agent-surface-terminal {");
+    expect(terminal).toContain("background: var(--codevo-canvas)");
+    expect(terminal).toContain("border-radius: var(--agent-radius-md)");
   });
 
-  it("keeps the tree and change list on the canvas rather than the rail", () => {
-    expect(cssRule(agentModeCss, ".agent-surface-tree {")).toContain(
-      "background: var(--agent-canvas)",
-    );
-    expect(cssRule(agentModeCss, ".agent-surface-diff__list {")).toContain(
-      "background: var(--agent-canvas)",
-    );
-  });
-
-  it("sizes the thread changes cue at the t3 body size in muted tones", () => {
+  it("sizes the thread changes cue at the meta size with no underline rule", () => {
     const cue = cssRule(agentModeCss, ".agent-session__changes-cue {");
     expect(cue).toContain("font-size: var(--agent-fs-sm)");
     expect(cue).toContain("color: var(--agent-text-muted)");
     expect(cssRule(agentModeCss, ".agent-session__changes-cue .agent-linkbutton {")).toContain(
-      "border-bottom-color: var(--agent-hairline-strong)",
+      "border-bottom: 0",
     );
   });
 });
@@ -529,6 +567,7 @@ function defaultProps(): AgentSurfacePanelProps {
       tree: tree(),
       activePath: null,
       revealActivePathSignal: 0,
+      searchFiles: null,
       onOpenFile: () => undefined,
       onPreviewFile: () => undefined,
     },
