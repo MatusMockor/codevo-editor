@@ -5,16 +5,31 @@ import type {
   TerminalRuntimeStatus,
 } from "../../domain/terminal";
 import { TauriTerminalGateway } from "../../infrastructure/tauriTerminalGateway";
+import type { ComposerScope } from "./agentComposerTarget";
 import {
+  NO_AGENT_SURFACE_SCOPE,
+  SURFACE_FILES_FOREIGN_ROOT_DESCRIPTION,
+  SURFACE_FILES_NO_PROJECT_DESCRIPTION,
+  SURFACE_FILES_PROJECT_DESCRIPTION,
+  SURFACE_FILES_THREAD_DESCRIPTION,
+  SURFACE_FILES_UNTRUSTED_DESCRIPTION,
   SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
   SURFACE_NO_THREAD_REASON,
   SURFACE_UNTRUSTED_TERMINAL_REASON,
   SURFACE_WORKTREE_GONE_REASON,
   agentSurfaceBlockedReason,
+  agentSurfaceFilesDescription,
+  agentSurfaceForeignRootMessage,
+  agentSurfaceScopeFor,
   agentSurfaceTerminalLaunchTargetFor,
   withTerminalLaunchTarget,
 } from "./agentSurfacePolicy";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
+import { projectFixture } from "./agentThreadsSurfaceTestFixtures";
+
+function projectDescriptor() {
+  return projectFixture({ rootKey: "key:app", ownerId: "owner-1", generation: 3 });
+}
 
 describe("withTerminalLaunchTarget", () => {
   it("forwards every port method of a real class gateway and pins the launch target", async () => {
@@ -126,6 +141,135 @@ describe("agentSurfaceBlockedReason", () => {
     expect(agentSurfaceBlockedReason("files", gone, true, SURFACE_FIXTURE_ROOT)).toBe(
       SURFACE_WORKTREE_GONE_REASON,
     );
+  });
+
+  it("resolves the surface scope from the composer scope and the live project authority", () => {
+    const scope: ComposerScope = {
+      kind: "repository",
+      projectRootKey: "key:app",
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+      ownerId: "owner-1",
+      generation: 3,
+    };
+    const project = projectDescriptor();
+
+    expect(agentSurfaceScopeFor(scope, [project], SURFACE_FIXTURE_ROOT)).toEqual({
+      kind: "repository",
+      projectRootKey: "key:app",
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+      ownerId: "owner-1",
+      generation: 3,
+    });
+    expect(
+      agentSurfaceScopeFor(scope, [{ ...project, trust: "untrusted" }], SURFACE_FIXTURE_ROOT),
+    ).toEqual({
+      kind: "untrusted",
+      projectRootKey: "key:app",
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+    });
+    expect(
+      agentSurfaceScopeFor(scope, [{ ...project, trust: "unknown" }], SURFACE_FIXTURE_ROOT).kind,
+    ).toBe("untrusted");
+
+    expect(agentSurfaceScopeFor(null, [project], SURFACE_FIXTURE_ROOT)).toBe(
+      NO_AGENT_SURFACE_SCOPE,
+    );
+    expect(
+      agentSurfaceScopeFor(
+        { kind: "missing", projectRootKey: "key:app", repositoryRoot: SURFACE_FIXTURE_ROOT },
+        [project],
+        SURFACE_FIXTURE_ROOT,
+      ),
+    ).toBe(NO_AGENT_SURFACE_SCOPE);
+    expect(agentSurfaceScopeFor(scope, [], SURFACE_FIXTURE_ROOT)).toBe(NO_AGENT_SURFACE_SCOPE);
+    expect(agentSurfaceScopeFor(scope, [{ ...project, generation: 4 }], SURFACE_FIXTURE_ROOT)).toBe(
+      NO_AGENT_SURFACE_SCOPE,
+    );
+    expect(
+      agentSurfaceScopeFor(scope, [{ ...project, ownerId: "owner-2" }], SURFACE_FIXTURE_ROOT),
+    ).toBe(NO_AGENT_SURFACE_SCOPE);
+    expect(
+      agentSurfaceScopeFor(
+        scope,
+        [{ ...project, origin: "closed-tab-live-tasks" }],
+        SURFACE_FIXTURE_ROOT,
+      ),
+    ).toBe(NO_AGENT_SURFACE_SCOPE);
+    expect(
+      agentSurfaceScopeFor(scope, [{ ...project, repositories: [] }], SURFACE_FIXTURE_ROOT),
+    ).toBe(NO_AGENT_SURFACE_SCOPE);
+  });
+
+  it("describes the Files card by thread first, then by scope", () => {
+    const repository = agentSurfaceScopeFor(
+      {
+        kind: "repository",
+        projectRootKey: "key:app",
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+        ownerId: "owner-1",
+        generation: 3,
+      },
+      [projectDescriptor()],
+      SURFACE_FIXTURE_ROOT,
+    );
+    expect(agentSurfaceFilesDescription(surfaceThreadView(), NO_AGENT_SURFACE_SCOPE)).toBe(
+      SURFACE_FILES_THREAD_DESCRIPTION,
+    );
+    expect(agentSurfaceFilesDescription(null, repository)).toBe(SURFACE_FILES_PROJECT_DESCRIPTION);
+    expect(
+      agentSurfaceFilesDescription(null, {
+        kind: "untrusted",
+        projectRootKey: "key:app",
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    ).toBe(SURFACE_FILES_UNTRUSTED_DESCRIPTION);
+    expect(agentSurfaceFilesDescription(null, NO_AGENT_SURFACE_SCOPE)).toBe(
+      SURFACE_FILES_NO_PROJECT_DESCRIPTION,
+    );
+    expect(
+      agentSurfaceFilesDescription(null, {
+        kind: "foreignRoot",
+        projectRootKey: "key:other",
+        repositoryRoot: "/workspace/other",
+        rootPath: "/workspace/other",
+        label: "other",
+      }),
+    ).toBe(SURFACE_FILES_FOREIGN_ROOT_DESCRIPTION);
+    expect(agentSurfaceForeignRootMessage("other")).toBe(
+      "Files browse the active workspace only. Switch to other to browse its files.",
+    );
+  });
+
+  it("marks a scope outside the active workspace root as foreign before trust applies", () => {
+    const scope: ComposerScope = {
+      kind: "repository",
+      projectRootKey: "key:app",
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+      ownerId: "owner-1",
+      generation: 3,
+    };
+    const project = projectDescriptor();
+    const foreign = {
+      kind: "foreignRoot",
+      projectRootKey: "key:app",
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+      rootPath: SURFACE_FIXTURE_ROOT,
+      label: "app",
+    };
+    expect(agentSurfaceScopeFor(scope, [project], "/workspace/other")).toEqual(foreign);
+    expect(agentSurfaceScopeFor(scope, [project], null)).toEqual(foreign);
+    expect(agentSurfaceScopeFor(scope, [project], "/workspace/ap")).toEqual(foreign);
+    expect(agentSurfaceScopeFor(scope, [{ ...project, trust: "untrusted" }], null)).toEqual(
+      foreign,
+    );
+    expect(agentSurfaceScopeFor(scope, [project], "/workspace").kind).toBe("repository");
+    expect(
+      agentSurfaceScopeFor(
+        { ...scope, repositoryRoot: "/workspace/other" },
+        [project],
+        SURFACE_FIXTURE_ROOT,
+      ),
+    ).toBe(NO_AGENT_SURFACE_SCOPE);
   });
 
   it("derives the launch target from the thread id and isolation only", () => {

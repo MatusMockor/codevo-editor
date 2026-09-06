@@ -8,6 +8,8 @@ import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
 import { waitForReact } from "../test/reactTestLifecycle";
 import {
   AGENT_SURFACE_TREE_ROOT_ERROR,
+  agentSurfaceChangeEventConcernsRoot,
+  agentSurfaceTreeTargetKey,
   MAX_AGENT_SURFACE_TREE_DIRECTORIES,
   MAX_AGENT_SURFACE_TREE_ENTRIES,
   agentSurfaceTreeDepth,
@@ -21,6 +23,7 @@ import {
 const ROOT = "/workspace/app";
 const WORKTREE = `${ROOT}/.worktrees/agt-1`;
 const TARGET: AgentSurfaceFileTreeTarget = {
+  kind: "thread",
   workspaceId: "ws-1",
   threadId: "agt-1",
   rootPath: WORKTREE,
@@ -204,7 +207,7 @@ describe("useAgentSurfaceFileTree", () => {
     await waitForReact(() => expect(harness.readDirectoryBounded).toHaveBeenCalledTimes(2));
 
     const other = `${ROOT}/.worktrees/agt-2`;
-    harness.setTarget({ workspaceId: "ws-1", threadId: "agt-2", rootPath: other });
+    harness.setTarget({ kind: "thread", workspaceId: "ws-1", threadId: "agt-2", rootPath: other });
     await act(async () => {
       release([file(`${WORKTREE}/src/late.ts`)]);
       await Promise.resolve();
@@ -277,6 +280,14 @@ describe("useAgentSurfaceFileTree", () => {
     harness.emit(change(`${WORKTREE}/src/new.ts`));
     harness.emit(change(`${WORKTREE}/docs/new.md`));
     harness.emit(change(`${ROOT}/src/other.ts`));
+    harness.emit({ ...change(`${WORKTREE}/src/foreign.ts`), rootPath: "/workspace/other" });
+    harness.emit({ ...change(`${WORKTREE}/src/foreign.ts`), rootPath: `${ROOT}-sibling` });
+    harness.emit({
+      rootPath: "/workspace/other",
+      kind: "rescanRequired",
+      path: "/workspace/other",
+      relativePath: "",
+    });
     await waitForReact(() =>
       expect(harness.readDirectoryBounded.mock.calls.length).toBe(reads + 1),
     );
@@ -288,6 +299,40 @@ describe("useAgentSurfaceFileTree", () => {
 
     harness.unmount();
     expect(harness.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("rescans only for rescanRequired events from the tree root or one of its ancestors", async () => {
+    const harness = renderTree({
+      listings: { [WORKTREE]: { entries: [directory(`${WORKTREE}/src`)], truncated: false } },
+      withChanges: true,
+    });
+    await waitForReact(() => expect(harness.listeners).toHaveLength(1));
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toBeDefined());
+    const reads = harness.readDirectoryBounded.mock.calls.length;
+
+    harness.emit({
+      rootPath: "/workspace/other",
+      kind: "rescanRequired",
+      path: "/workspace/other",
+      relativePath: "",
+    });
+    await act(async () => Promise.resolve());
+    expect(harness.readDirectoryBounded.mock.calls.length).toBe(reads);
+
+    harness.emit({ rootPath: ROOT, kind: "rescanRequired", path: ROOT, relativePath: "" });
+    await waitForReact(() =>
+      expect(harness.readDirectoryBounded.mock.calls.length).toBe(reads + 1),
+    );
+    expect(agentSurfaceChangeEventConcernsRoot(WORKTREE, ROOT)).toBe(true);
+    expect(agentSurfaceChangeEventConcernsRoot(WORKTREE, `${WORKTREE}/src`)).toBe(true);
+    expect(agentSurfaceChangeEventConcernsRoot(WORKTREE, `${ROOT}-sibling`)).toBe(false);
+    expect(agentSurfaceTreeTargetKey(TARGET)).toBe(
+      JSON.stringify(["thread", "ws-1", "agt-1", WORKTREE]),
+    );
+    expect(
+      agentSurfaceTreeTargetKey({ kind: "project", ownerId: "o", generation: 2, rootPath: ROOT }),
+    ).toBe(JSON.stringify(["project", "o", 2, ROOT]));
+    harness.unmount();
   });
 
   it("exposes pure helpers for depth and ordering", () => {

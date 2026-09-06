@@ -39,6 +39,7 @@ import { agentThreadHeaderProject, type AgentWorkbenchChrome } from "./agentWork
 import { AgentClockProvider } from "./agentClock";
 import { agentProjectGroups } from "./agentModePresentation";
 import { agentProjectTerminalSessionsTarget } from "./agentSidebarPresentation";
+import { agentSurfaceScopeFor } from "./agentSurfacePolicy";
 import { useAgentAddProject } from "./useAgentAddProject";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentShipActions } from "./useAgentShipActions";
@@ -129,6 +130,11 @@ export function AgentModeView({
       ? null
       : (presentationThreads.find((view) => view.thread.threadId === selectedThreadId) ?? null);
   const surfaceThread = useAgentSurfacePresentationView(selectedThread);
+  const composerScope = navigation.composerScope;
+  const surfaceScope = useMemo(
+    () => agentSurfaceScopeFor(composerScope, projects, workspaceRoot),
+    [composerScope, projects, workspaceRoot],
+  );
 
   const composer = useAgentComposerControllerState({
     agents,
@@ -581,6 +587,9 @@ export function AgentModeView({
           onActivateSurface={activateSurface}
           onCloseSurfaceTab={closeSurfaceTab}
           onOpenSurface={openSurfaceCommand}
+          onSwitchScope={chrome.addProject === null ? null : addProject.addProject}
+          onTrustScope={trustProject}
+          scope={surfaceScope}
           thread={surfaceThread}
           workspaceRoot={workspaceRoot}
         />

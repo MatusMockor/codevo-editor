@@ -7,9 +7,13 @@ import type { AgentSurfaceFileTreeSurface } from "../../application/useAgentSurf
 import {
   AgentSurfaceFileTree,
   SURFACE_TREE_GONE_MESSAGE,
+  SURFACE_TREE_NO_PROJECT_MESSAGE,
+  SURFACE_TREE_PROJECT_GONE_MESSAGE,
   SURFACE_TREE_SEARCH_LABEL,
+  SURFACE_TREE_UNTRUSTED_MESSAGE,
   type AgentSurfaceFileTreeProps,
 } from "./AgentSurfaceFileTree";
+import { agentSurfaceForeignRootMessage } from "./agentSurfacePolicy";
 import { SURFACE_FIXTURE_WORKTREE } from "./agentSurfaceTestFixtures";
 import { installResizeObserver } from "./agentSurfaceTerminalTestSupport";
 
@@ -78,6 +82,75 @@ describe("AgentSurfaceFileTree", () => {
     expect(host.querySelector(".agent-surface-tree__viewport")).toBeNull();
   });
 
+  it("labels a project tree and explains why it is unavailable without loading rows", () => {
+    render({
+      source: "project",
+      tree: { ...tree(), rootPath: null },
+      unavailable: { kind: "noProject" },
+    });
+    expect(host.querySelector("section")?.getAttribute("aria-label")).toBe("Project files");
+    expect(host.querySelector("[data-agent-surface-tree-unavailable]")?.textContent).toBe(
+      SURFACE_TREE_NO_PROJECT_MESSAGE,
+    );
+    expect(host.querySelector(".agent-surface-tree__viewport")).toBeNull();
+    expect(
+      host.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace files"]')?.disabled,
+    ).toBe(true);
+
+    const onTrust = vi.fn();
+    render({
+      source: "project",
+      tree: { ...tree(), rootPath: null },
+      unavailable: { kind: "untrusted", onTrust },
+    });
+    const note = host.querySelector("[data-agent-surface-tree-unavailable]");
+    expect(note?.textContent).toBe(`${SURFACE_TREE_UNTRUSTED_MESSAGE}Trust`);
+    act(() => note?.querySelector<HTMLButtonElement>('[aria-label="Trust the project"]')?.click());
+    expect(onTrust).toHaveBeenCalledTimes(1);
+
+    render({
+      source: "project",
+      tree: { ...tree(), rootPath: null },
+      unavailable: { kind: "untrusted", onTrust: null },
+    });
+    expect(host.querySelector('[aria-label="Trust the project"]')).toBeNull();
+  });
+
+  it("explains a foreign-root scope with a switch affordance only when one is reachable", () => {
+    const onSwitch = vi.fn();
+    render({
+      source: "project",
+      tree: { ...tree(), rootPath: null },
+      unavailable: { kind: "foreignRoot", label: "other", onSwitch },
+    });
+    const note = host.querySelector("[data-agent-surface-tree-unavailable]");
+    expect(note?.textContent).toBe(`${agentSurfaceForeignRootMessage("other")}Switch`);
+    expect(host.querySelector(".agent-surface-tree__viewport")).toBeNull();
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Switch to other"]')?.click());
+    expect(onSwitch).toHaveBeenCalledTimes(1);
+
+    render({
+      source: "project",
+      tree: { ...tree(), rootPath: null },
+      unavailable: { kind: "foreignRoot", label: "other", onSwitch: null },
+    });
+    expect(host.querySelector("[data-agent-surface-tree-unavailable]")?.textContent).toBe(
+      agentSurfaceForeignRootMessage("other"),
+    );
+    expect(host.querySelector('[aria-label="Switch to other"]')).toBeNull();
+  });
+
+  it("words the missing-root fallback by source", () => {
+    render({ source: "project", tree: { ...tree(), rootPath: null }, unavailable: null });
+    expect(host.querySelector("[data-agent-surface-tree-unavailable]")?.textContent).toBe(
+      SURFACE_TREE_PROJECT_GONE_MESSAGE,
+    );
+    render({ source: "thread", tree: { ...tree(), rootPath: null }, unavailable: null });
+    expect(host.querySelector("[data-agent-surface-tree-unavailable]")?.textContent).toBe(
+      SURFACE_TREE_GONE_MESSAGE,
+    );
+  });
+
   it("reports a truncated folder listing", () => {
     render({ tree: { ...tree(), truncatedDirectories: new Set([SURFACE_FIXTURE_WORKTREE]) } });
     expect(host.querySelector(".agent-note--warning")?.textContent).toContain(
@@ -107,7 +180,9 @@ function tree(): AgentSurfaceFileTreeSurface {
 
 function defaultProps(): AgentSurfaceFileTreeProps {
   return {
+    source: "thread",
     tree: tree(),
+    unavailable: null,
     activePath: null,
     revealActivePathSignal: 0,
     searchFiles: { shortcut: "Cmd+P", open: () => undefined },

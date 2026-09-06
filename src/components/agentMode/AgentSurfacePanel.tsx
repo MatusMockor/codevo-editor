@@ -14,7 +14,11 @@ import type { AgentSurfaceDiffProps } from "./AgentSurfaceDiff";
 import { AgentSurfaceEmptyState } from "./AgentSurfaceEmptyState";
 import { AgentSurfaceFileTree, type AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
 import type { AgentSurfaceTerminalProps } from "./AgentSurfaceTerminal";
-import { SURFACE_NO_THREAD_REASON, agentSurfaceBlockedReason } from "./agentSurfacePolicy";
+import {
+  SURFACE_NO_THREAD_REASON,
+  agentSurfaceBlockedReason,
+  type AgentSurfaceScope,
+} from "./agentSurfacePolicy";
 import { useWorkbenchFrameEditorState } from "../workbenchFrameEditorReport";
 import { useWorkbenchFrameTreeReport } from "../workbenchFrameTreeReport";
 import { WorkbenchEditorTabsPortalTarget } from "../workbenchEditorTabsPortal";
@@ -37,6 +41,7 @@ export type AgentSurfaceTerminalPanelProps = Omit<
 export interface AgentSurfacePanelProps {
   readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
   readonly thread: AgentThreadView | null;
+  readonly scope: AgentSurfaceScope;
   readonly workspaceRoot: string | null;
   readonly workspaceTrusted: boolean;
   readonly layoutControls: ReactNode;
@@ -85,6 +90,7 @@ export function AgentSurfacePanel({
   onOpenSurface,
   onResizeStart,
   onTrustWorkspace,
+  scope,
   terminal,
   thread,
   workspaceRoot,
@@ -196,6 +202,7 @@ export function AgentSurfacePanel({
             autoFocus={chooserAutoFocus && !hidden}
             onChooseSurface={onOpenSurface}
             onTrustWorkspace={onTrustWorkspace}
+            scope={scope}
             thread={thread}
             workspaceRoot={workspaceRoot}
             workspaceTrusted={workspaceTrusted}

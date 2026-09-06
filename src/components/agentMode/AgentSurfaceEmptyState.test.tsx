@@ -6,8 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import { AgentSurfaceEmptyState, type AgentSurfaceEmptyStateProps } from "./AgentSurfaceEmptyState";
 import { AGENT_SURFACE_HOTKEYS } from "./agentSurfaceHotkeys";
-import { SURFACE_NO_THREAD_REASON } from "./agentSurfacePolicy";
-import { surfaceThreadView } from "./agentSurfaceTestFixtures";
+import {
+  NO_AGENT_SURFACE_SCOPE,
+  SURFACE_FILES_NO_PROJECT_DESCRIPTION,
+  SURFACE_FILES_PROJECT_DESCRIPTION,
+  SURFACE_FILES_UNTRUSTED_DESCRIPTION,
+  SURFACE_NO_THREAD_REASON,
+} from "./agentSurfacePolicy";
+import { surfaceRepositoryScope, surfaceThreadView } from "./agentSurfaceTestFixtures";
 
 describe("AgentSurfaceEmptyState", () => {
   let host: HTMLDivElement;
@@ -70,6 +76,37 @@ describe("AgentSurfaceEmptyState", () => {
     expect(onChooseSurface).toHaveBeenCalledWith("files");
   });
 
+  it("describes the Files card by the rail scope when no thread is selected", () => {
+    render({ thread: null, scope: surfaceRepositoryScope() });
+    expect(filesDescription()).toBe(SURFACE_FILES_PROJECT_DESCRIPTION);
+    expect(
+      host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]')?.disabled,
+    ).toBe(false);
+
+    render({
+      thread: null,
+      scope: {
+        kind: "untrusted",
+        projectRootKey: "/workspace/app",
+        repositoryRoot: "/workspace/app",
+      },
+    });
+    expect(filesDescription()).toBe(SURFACE_FILES_UNTRUSTED_DESCRIPTION);
+
+    render({ thread: null, scope: NO_AGENT_SURFACE_SCOPE });
+    expect(filesDescription()).toBe(SURFACE_FILES_NO_PROJECT_DESCRIPTION);
+    expect(
+      host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]')?.disabled,
+    ).toBe(false);
+  });
+
+  function filesDescription(): string {
+    return (
+      host.querySelector('[aria-label="Open Files surface"] .agent-surface-card__description')
+        ?.textContent ?? ""
+    );
+  }
+
   function render(overrides: Partial<AgentSurfaceEmptyStateProps> = {}): void {
     act(() => root.render(<AgentSurfaceEmptyState {...defaultProps()} {...overrides} />));
   }
@@ -118,6 +155,7 @@ function cssRule(source: string, selector: string): string {
 function defaultProps(): AgentSurfaceEmptyStateProps {
   return {
     thread: surfaceThreadView(),
+    scope: surfaceRepositoryScope(),
     workspaceRoot: "/workspace/app",
     workspaceTrusted: true,
     onChooseSurface: () => undefined,

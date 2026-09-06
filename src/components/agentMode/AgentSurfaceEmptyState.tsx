@@ -7,11 +7,13 @@ import {
   SURFACE_UNTRUSTED_TERMINAL_REASON,
   agentSurfaceBlockedReason,
   agentSurfaceFilesDescription,
+  type AgentSurfaceScope,
 } from "./agentSurfacePolicy";
 import { AGENT_SURFACE_HOTKEYS, agentSurfaceForHotkey } from "./agentSurfaceHotkeys";
 
 export interface AgentSurfaceEmptyStateProps {
   readonly thread: AgentThreadView | null;
+  readonly scope: AgentSurfaceScope;
   readonly workspaceRoot: string | null;
   readonly workspaceTrusted: boolean;
   readonly autoFocus?: boolean;
@@ -46,6 +48,7 @@ export function AgentSurfaceEmptyState({
   autoFocus = false,
   onChooseSurface,
   onTrustWorkspace,
+  scope,
   thread,
   workspaceRoot,
   workspaceTrusted,
@@ -89,7 +92,7 @@ export function AgentSurfaceEmptyState({
             const reason = blockedReason(kind);
             const Icon = card.icon;
             const description =
-              kind === "files" ? agentSurfaceFilesDescription(thread) : card.description;
+              kind === "files" ? agentSurfaceFilesDescription(thread, scope) : card.description;
             const showTrust =
               reason === SURFACE_UNTRUSTED_TERMINAL_REASON && onTrustWorkspace !== undefined;
             return (

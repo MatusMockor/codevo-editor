@@ -6,9 +6,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalTheme } from "../../domain/settings";
 import type { FileEntry } from "../../domain/workspace";
 import { waitForReact } from "../../test/reactTestLifecycle";
+import {
+  SURFACE_TREE_NO_PROJECT_MESSAGE,
+  SURFACE_TREE_UNTRUSTED_MESSAGE,
+} from "./AgentSurfaceFileTree";
 import { AgentSurfaceHost, type AgentSurfaceHostProps } from "./AgentSurfaceHost";
-import { SURFACE_FOREIGN_ROOT_TERMINAL_REASON } from "./agentSurfacePolicy";
-import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
+import {
+  NO_AGENT_SURFACE_SCOPE,
+  SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
+  agentSurfaceForeignRootMessage,
+  type AgentSurfaceScope,
+} from "./agentSurfacePolicy";
+import {
+  SURFACE_FIXTURE_ROOT,
+  SURFACE_FIXTURE_WORKTREE,
+  surfaceRepositoryScope,
+  surfaceThreadView,
+} from "./agentSurfaceTestFixtures";
 import { fakeTerminalGateway, installResizeObserver } from "./agentSurfaceTerminalTestSupport";
 import {
   UNAVAILABLE_AGENT_SCRIPT_RUNNER,
@@ -29,6 +43,8 @@ vi.mock("@xterm/addon-fit", async () =>
 );
 
 const TABLIST = '[role="tablist"][aria-label="Terminal sessions"]';
+const FILES_LAYOUT = { openSurfaces: ["files"], activeSurface: "files" } as const;
+const OTHER_ROOT = "/workspace/other";
 
 describe("AgentSurfaceHost", () => {
   let host: HTMLDivElement;
@@ -119,10 +135,7 @@ describe("AgentSurfaceHost", () => {
     });
     const onOpenFile = vi.fn();
     const onPreviewFile = vi.fn();
-    render({
-      chrome: filesChrome(layout, { onOpenFile, onPreviewFile }),
-      layout: { openSurfaces: ["files"], activeSurface: "files" },
-    });
+    render({ chrome: filesChrome(layout, { onOpenFile, onPreviewFile }), layout: FILES_LAYOUT });
     const row = await treeRow("users.ts");
 
     act(() => row.click());
@@ -153,10 +166,7 @@ describe("AgentSurfaceHost", () => {
       activeSurface: "files",
       rightPanelMaximized: true,
     });
-    render({
-      chrome: filesChrome(maximized),
-      layout: { openSurfaces: ["files"], activeSurface: "files" },
-    });
+    render({ chrome: filesChrome(maximized), layout: FILES_LAYOUT });
     await treeRow("users.ts");
 
     const restored = recordedLayoutState(
@@ -166,10 +176,7 @@ describe("AgentSurfaceHost", () => {
       }),
     );
     expect(restored.layout.rightPanelMaximized).toBe(false);
-    render({
-      chrome: filesChrome(restored),
-      layout: { openSurfaces: ["files"], activeSurface: "files" },
-    });
+    render({ chrome: filesChrome(restored), layout: FILES_LAYOUT });
 
     expect(host.querySelector("[data-agent-surface-tree]")).not.toBeNull();
     expect(host.querySelector(".agent-surface__editor-slot")).not.toBeNull();
@@ -185,7 +192,7 @@ describe("AgentSurfaceHost", () => {
     });
     render({
       chrome: filesChrome(layout, { onSearchFiles, searchFilesShortcut: "Ctrl+P" }),
-      layout: { openSurfaces: ["files"], activeSurface: "files" },
+      layout: FILES_LAYOUT,
     });
     await treeRow("users.ts");
 
@@ -196,12 +203,236 @@ describe("AgentSurfaceHost", () => {
     expect(layout.actions).toEqual([]);
   });
 
+  describe("without a selected thread", () => {
+    it("browses the trusted rail scope repository root with Refresh and Search files", async () => {
+      const readDirectory = vi.fn(listing);
+      const onSearchFiles = vi.fn();
+      const layout = recordedLayoutState(FILES_LAYOUT);
+      render({
+        chrome: filesChrome(layout, { files: { readDirectory }, onSearchFiles }),
+        layout: FILES_LAYOUT,
+        thread: null,
+        scope: surfaceRepositoryScope(OTHER_ROOT),
+      });
+
+      const row = await treeRow(`${OTHER_ROOT}/users.ts`);
+      expect(readDirectory).toHaveBeenCalledWith(OTHER_ROOT);
+      expect(readDirectory).not.toHaveBeenCalledWith(SURFACE_FIXTURE_WORKTREE);
+      expect(row).not.toBeNull();
+      expect(host.querySelector("[data-agent-surface-tree]")?.getAttribute("aria-label")).toBe(
+        "Project files",
+      );
+      expect(host.querySelector("[data-agent-surface-tree-unavailable]")).toBeNull();
+
+      const refresh = host.querySelector<HTMLButtonElement>(
+        '[aria-label="Refresh workspace files"]',
+      );
+      expect(refresh?.disabled).toBe(false);
+      act(() => refresh?.click());
+      await waitForReact(() => expect(readDirectory).toHaveBeenCalledTimes(2));
+
+      act(() => host.querySelector<HTMLButtonElement>(".agent-surface-tree__search")?.click());
+      expect(onSearchFiles).toHaveBeenCalledTimes(1);
+    });
+
+    it("opens a scope file through the chrome and maximizes the docked panel", async () => {
+      const onOpenFile = vi.fn();
+      const onPreviewFile = vi.fn();
+      const layout = recordedLayoutState({ rightPanel: "open", ...FILES_LAYOUT });
+      render({
+        chrome: filesChrome(layout, { onOpenFile, onPreviewFile }),
+        layout: FILES_LAYOUT,
+        thread: null,
+        scope: surfaceRepositoryScope(),
+      });
+      const row = await treeRow(`${SURFACE_FIXTURE_ROOT}/users.ts`);
+
+      act(() => row.click());
+      expect(onPreviewFile).toHaveBeenCalledWith(
+        expect.objectContaining({ path: `${SURFACE_FIXTURE_ROOT}/users.ts` }),
+      );
+      act(() => {
+        row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      });
+      expect(onOpenFile).toHaveBeenCalledWith(
+        expect.objectContaining({ path: `${SURFACE_FIXTURE_ROOT}/users.ts` }),
+      );
+      expect(layout.actions).toEqual([
+        { kind: "maximizeRightPanel" },
+        { kind: "maximizeRightPanel" },
+      ]);
+    });
+
+    it("shows the trust notice for an untrusted scope and never reads its files", async () => {
+      const readDirectory = vi.fn(listing);
+      const onTrustScope = vi.fn();
+      const layout = recordedLayoutState(FILES_LAYOUT);
+      render({
+        chrome: filesChrome(layout, { files: { readDirectory } }),
+        layout: FILES_LAYOUT,
+        thread: null,
+        scope: { kind: "untrusted", projectRootKey: "key:other", repositoryRoot: OTHER_ROOT },
+        onTrustScope,
+      });
+      await act(async () => Promise.resolve());
+
+      const note = host.querySelector("[data-agent-surface-tree-unavailable]");
+      expect(note?.textContent).toBe(`${SURFACE_TREE_UNTRUSTED_MESSAGE}Trust`);
+      expect(host.querySelector(".tree-row")).toBeNull();
+      expect(readDirectory).not.toHaveBeenCalled();
+      expect(
+        host.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace files"]')?.disabled,
+      ).toBe(true);
+
+      act(() => host.querySelector<HTMLButtonElement>('[aria-label="Trust the project"]')?.click());
+      expect(onTrustScope).toHaveBeenCalledWith("key:other");
+    });
+
+    it("never mounts a tree for a foreign-root scope and offers the switch affordance", async () => {
+      const readDirectory = vi.fn(listing);
+      const onSwitchScope = vi.fn();
+      const layout = recordedLayoutState(FILES_LAYOUT);
+      const scope: AgentSurfaceScope = {
+        kind: "foreignRoot",
+        projectRootKey: "key:other",
+        repositoryRoot: OTHER_ROOT,
+        rootPath: OTHER_ROOT,
+        label: "other",
+      };
+      render({
+        chrome: filesChrome(layout, { files: { readDirectory }, activePath: `${OTHER_ROOT}/a.ts` }),
+        layout: FILES_LAYOUT,
+        thread: null,
+        scope,
+        onSwitchScope,
+      });
+      await act(async () => Promise.resolve());
+
+      expect(host.querySelector("[data-agent-surface-tree-unavailable]")?.textContent).toBe(
+        `${agentSurfaceForeignRootMessage("other")}Switch`,
+      );
+      expect(host.querySelector(".tree-row")).toBeNull();
+      expect(host.querySelector(".tree-row.active")).toBeNull();
+      expect(readDirectory).not.toHaveBeenCalled();
+      expect(host.querySelector(".agent-surface__editor-slot")).not.toBeNull();
+
+      act(() => host.querySelector<HTMLButtonElement>('[aria-label="Switch to other"]')?.click());
+      expect(onSwitchScope).toHaveBeenCalledWith(OTHER_ROOT);
+      expect(layout.actions).toEqual([]);
+
+      render({
+        chrome: filesChrome(layout, { files: { readDirectory } }),
+        layout: FILES_LAYOUT,
+        thread: null,
+        scope,
+        onSwitchScope: null,
+      });
+      expect(host.querySelector('[aria-label="Switch to other"]')).toBeNull();
+      expect(readDirectory).not.toHaveBeenCalled();
+    });
+
+    it("keeps the editor placeholder with a truthful note when the scope has no project", async () => {
+      const readDirectory = vi.fn(listing);
+      const layout = recordedLayoutState(FILES_LAYOUT);
+      render({
+        chrome: filesChrome(layout, { files: { readDirectory } }),
+        layout: FILES_LAYOUT,
+        thread: null,
+        scope: NO_AGENT_SURFACE_SCOPE,
+      });
+      await act(async () => Promise.resolve());
+
+      expect(host.querySelector("[data-agent-surface-tree-unavailable]")?.textContent).toBe(
+        SURFACE_TREE_NO_PROJECT_MESSAGE,
+      );
+      expect(host.querySelector(".agent-surface__editor-slot")).not.toBeNull();
+      expect(host.querySelector(".tree-row")).toBeNull();
+      expect(readDirectory).not.toHaveBeenCalled();
+    });
+
+    it("drops rows of a superseded scope across A -> B -> A", async () => {
+      const pending = new Map<string, (entries: FileEntry[]) => void>();
+      const readDirectory = vi.fn(
+        (path: string) =>
+          new Promise<FileEntry[]>((resolve) => {
+            pending.set(`${path}#${readDirectory.mock.calls.length}`, resolve);
+          }),
+      );
+      const layout = recordedLayoutState(FILES_LAYOUT);
+      const chromeWithFiles = filesChrome(layout, { files: { readDirectory } });
+      const scopeA = surfaceRepositoryScope(SURFACE_FIXTURE_ROOT, 1);
+      const scopeB = surfaceRepositoryScope(OTHER_ROOT, 1);
+
+      render({ chrome: chromeWithFiles, layout: FILES_LAYOUT, thread: null, scope: scopeA });
+      await waitForReact(() => expect(readDirectory).toHaveBeenCalledTimes(1));
+      render({ chrome: chromeWithFiles, layout: FILES_LAYOUT, thread: null, scope: scopeB });
+      await waitForReact(() => expect(readDirectory).toHaveBeenCalledTimes(2));
+      render({ chrome: chromeWithFiles, layout: FILES_LAYOUT, thread: null, scope: scopeA });
+      await waitForReact(() => expect(readDirectory).toHaveBeenCalledTimes(3));
+
+      await act(async () => {
+        pending.get(`${SURFACE_FIXTURE_ROOT}#1`)?.([file(`${SURFACE_FIXTURE_ROOT}/stale-a.ts`)]);
+        pending.get(`${OTHER_ROOT}#2`)?.([file(`${OTHER_ROOT}/stale-b.ts`)]);
+        await Promise.resolve();
+      });
+      expect(rowPaths()).toEqual([]);
+
+      await act(async () => {
+        pending.get(`${SURFACE_FIXTURE_ROOT}#3`)?.([file(`${SURFACE_FIXTURE_ROOT}/fresh-a.ts`)]);
+        await Promise.resolve();
+      });
+      await waitForReact(() => expect(rowPaths()).toEqual([`${SURFACE_FIXTURE_ROOT}/fresh-a.ts`]));
+    });
+
+    it("resets the tree when the same scope root is re-leased under a new generation", async () => {
+      const readDirectory = vi.fn(listing);
+      const layout = recordedLayoutState(FILES_LAYOUT);
+      const chromeWithFiles = filesChrome(layout, { files: { readDirectory } });
+      render({
+        chrome: chromeWithFiles,
+        layout: FILES_LAYOUT,
+        thread: null,
+        scope: surfaceRepositoryScope(SURFACE_FIXTURE_ROOT, 1),
+      });
+      await treeRow("users.ts");
+      render({
+        chrome: chromeWithFiles,
+        layout: FILES_LAYOUT,
+        thread: null,
+        scope: surfaceRepositoryScope(SURFACE_FIXTURE_ROOT, 2),
+      });
+      await waitForReact(() => expect(readDirectory).toHaveBeenCalledTimes(2));
+    });
+  });
+
+  it("keeps the thread checkout tree when a thread is selected, whatever the rail scope", async () => {
+    const readDirectory = vi.fn(listing);
+    const layout = recordedLayoutState(FILES_LAYOUT);
+    render({
+      chrome: filesChrome(layout, { files: { readDirectory } }),
+      layout: FILES_LAYOUT,
+      scope: surfaceRepositoryScope(OTHER_ROOT),
+    });
+    await treeRow(`${SURFACE_FIXTURE_WORKTREE}/users.ts`);
+    expect(readDirectory).toHaveBeenCalledWith(SURFACE_FIXTURE_WORKTREE);
+    expect(readDirectory).not.toHaveBeenCalledWith(OTHER_ROOT);
+    expect(host.querySelector("[data-agent-surface-tree]")?.getAttribute("aria-label")).toBe(
+      "Thread files",
+    );
+  });
+
+  function rowPaths(): string[] {
+    return Array.from(host.querySelectorAll<HTMLButtonElement>(".tree-row")).map(
+      (row) => row.title,
+    );
+  }
+
   async function treeRow(name: string): Promise<HTMLButtonElement> {
     let row: HTMLButtonElement | null = null;
     await waitForReact(() => {
       row =
         Array.from(host.querySelectorAll<HTMLButtonElement>(".tree-row")).find((candidate) =>
-          candidate.textContent?.includes(name),
+          candidate.textContent?.includes(name.slice(name.lastIndexOf("/") + 1)),
         ) ?? null;
       expect(row).not.toBeNull();
     });
@@ -213,6 +444,14 @@ describe("AgentSurfaceHost", () => {
   }
 });
 
+function file(path: string): FileEntry {
+  return { name: path.slice(path.lastIndexOf("/") + 1), path, kind: "file" };
+}
+
+async function listing(path: string): Promise<FileEntry[]> {
+  return [file(`${path}/users.ts`)];
+}
+
 function filesChrome(
   layout: RecordedAgentWorkbenchLayout,
   overrides: Partial<AgentWorkbenchFileTreeChrome> = {},
@@ -221,11 +460,7 @@ function filesChrome(
     ...chrome(fakeTerminalGateway()),
     layout,
     fileTree: {
-      files: {
-        readDirectory: async (path: string): Promise<FileEntry[]> => [
-          { name: "users.ts", path: `${path}/users.ts`, kind: "file" },
-        ],
-      },
+      files: { readDirectory: listing },
       fileChanges: null,
       activePath: null,
       revealActivePathSignal: 0,
@@ -266,10 +501,12 @@ function chrome(
 }
 
 function defaultProps(): AgentSurfaceHostProps {
+  const scope: AgentSurfaceScope = surfaceRepositoryScope();
   return {
     chrome: chrome(fakeTerminalGateway()),
     layout: { openSurfaces: [], activeSurface: null },
     thread: surfaceThreadView(),
+    scope,
     workspaceRoot: SURFACE_FIXTURE_ROOT,
     hidden: false,
     chooserAutoFocus: true,
@@ -284,5 +521,7 @@ function defaultProps(): AgentSurfaceHostProps {
     onOpenSurface: () => undefined,
     onActivateSurface: () => undefined,
     onCloseSurfaceTab: () => undefined,
+    onTrustScope: () => undefined,
+    onSwitchScope: null,
   };
 }

@@ -5,9 +5,23 @@ import {
 } from "../../domain/agentThread";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import type { GitChangeStatus, GitChangedFile } from "../../domain/git";
+import type { AgentSurfaceScope } from "./agentSurfacePolicy";
 
 export const SURFACE_FIXTURE_ROOT = "/workspace/app";
 export const SURFACE_FIXTURE_WORKTREE = `${SURFACE_FIXTURE_ROOT}/.worktrees/agt-1`;
+
+export function surfaceRepositoryScope(
+  repositoryRoot: string = SURFACE_FIXTURE_ROOT,
+  generation = 1,
+): Extract<AgentSurfaceScope, { kind: "repository" }> {
+  return {
+    kind: "repository",
+    projectRootKey: repositoryRoot,
+    repositoryRoot,
+    ownerId: `agent-root:${repositoryRoot}`,
+    generation,
+  };
+}
 
 export function surfaceThreadView(overrides: Partial<AgentThreadView> = {}): AgentThreadView {
   const thread: AgentThread = {

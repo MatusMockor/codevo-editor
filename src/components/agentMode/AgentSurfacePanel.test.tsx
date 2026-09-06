@@ -20,13 +20,17 @@ import {
 } from "./AgentSurfacePanel";
 import {
   SURFACE_FILES_THREAD_DESCRIPTION,
-  SURFACE_FILES_WORKSPACE_DESCRIPTION,
+  SURFACE_FILES_PROJECT_DESCRIPTION,
   SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
   SURFACE_NO_THREAD_REASON,
   SURFACE_UNTRUSTED_TERMINAL_REASON,
   SURFACE_WORKTREE_GONE_REASON,
 } from "./agentSurfacePolicy";
-import { SURFACE_FIXTURE_WORKTREE, surfaceThreadView } from "./agentSurfaceTestFixtures";
+import {
+  SURFACE_FIXTURE_WORKTREE,
+  surfaceRepositoryScope,
+  surfaceThreadView,
+} from "./agentSurfaceTestFixtures";
 import { fakeTerminalGateway, installResizeObserver } from "./agentSurfaceTerminalTestSupport";
 
 vi.mock("@xterm/xterm", async () =>
@@ -117,7 +121,7 @@ describe("AgentSurfacePanel", () => {
 
   it("tells the Files card what it opens with and without a thread", () => {
     render({ thread: null });
-    expect(filesCardDescription()).toBe(SURFACE_FILES_WORKSPACE_DESCRIPTION);
+    expect(filesCardDescription()).toBe(SURFACE_FILES_PROJECT_DESCRIPTION);
 
     render({ thread: surfaceThreadView() });
     expect(filesCardDescription()).toBe(SURFACE_FILES_THREAD_DESCRIPTION);
@@ -614,13 +618,16 @@ function defaultProps(): AgentSurfacePanelProps {
   return {
     layout: open([], null),
     thread,
+    scope: surfaceRepositoryScope(),
     workspaceRoot: "/workspace/app",
     workspaceTrusted: true,
     layoutControls: null,
     hidden: false,
     chooserAutoFocus: true,
     fileTree: {
+      source: "thread",
       tree: tree(),
+      unavailable: null,
       activePath: null,
       revealActivePathSignal: 0,
       searchFiles: null,

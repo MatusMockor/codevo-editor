@@ -1,20 +1,14 @@
-import { memo, useCallback, useMemo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import type { AgentThreadView, AgentThreadsSurface } from "../../application/agentThreadPorts";
-import {
-  useAgentSurfaceFileTree,
-  type AgentSurfaceFileTreeDependencies,
-  type AgentSurfaceFileTreeTarget,
-} from "../../application/useAgentSurfaceFileTree";
 import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
-import type { FileEntry } from "../../domain/workspace";
-import { agentSurfaceTargetGone } from "./agentModePresentation";
-import type { AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
 import {
   AgentSurfacePanel,
   type AgentSurfaceDiffPanelProps,
   type AgentSurfaceTerminalPanelProps,
 } from "./AgentSurfacePanel";
-import type { AgentWorkbenchChrome, AgentWorkbenchFileTreeChrome } from "./agentWorkbenchChrome";
+import type { AgentSurfaceScope } from "./agentSurfacePolicy";
+import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
+import { useAgentSurfaceScopeTree } from "./useAgentSurfaceScopeTree";
 
 export type AgentSurfaceHostAgents = Pick<
   AgentThreadsSurface,
@@ -25,6 +19,7 @@ export interface AgentSurfaceHostProps {
   readonly chrome: AgentWorkbenchChrome;
   readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
   readonly thread: AgentThreadView | null;
+  readonly scope: AgentSurfaceScope;
   readonly workspaceRoot: string | null;
   readonly agents: AgentSurfaceHostAgents;
   readonly layoutControls: ReactNode;
@@ -33,11 +28,9 @@ export interface AgentSurfaceHostProps {
   onOpenSurface(surface: AgentSurfaceKind): void;
   onActivateSurface(surface: AgentSurfaceKind): void;
   onCloseSurfaceTab(surface: AgentSurfaceKind): void;
+  onTrustScope(projectRootKey: string): void;
+  readonly onSwitchScope: ((rootPath: string) => void) | null;
 }
-
-const UNAVAILABLE_FILES: AgentSurfaceFileTreeDependencies["files"] = {
-  readDirectory: () => Promise.reject(new Error("The file tree is not available here.")),
-};
 
 export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   agents,
@@ -49,44 +42,20 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   onActivateSurface,
   onCloseSurfaceTab,
   onOpenSurface,
+  onSwitchScope,
+  onTrustScope,
+  scope,
   thread,
   workspaceRoot,
 }: AgentSurfaceHostProps) {
-  const fileTreeChrome = chrome.fileTree;
-  const filesOpen = layout.openSurfaces.includes("files");
-  const target = useMemo(
-    () => fileTreeTarget(chrome.workspaceId, thread, filesOpen),
-    [chrome.workspaceId, filesOpen, thread],
-  );
-  const tree = useAgentSurfaceFileTree({
-    target,
-    files: fileTreeChrome?.files ?? UNAVAILABLE_FILES,
-    fileChanges: fileTreeChrome?.fileChanges ?? null,
+  const fileTree = useAgentSurfaceScopeTree({
+    chrome,
+    thread,
+    scope,
+    filesOpen: layout.openSurfaces.includes("files"),
+    onSwitchScope,
+    onTrustScope,
   });
-
-  const dispatchLayout = chrome.layout.dispatch;
-  const maximizeForDocument = useCallback(
-    () => dispatchLayout({ kind: "maximizeRightPanel" }),
-    [dispatchLayout],
-  );
-  const fileTree = useMemo<AgentSurfaceFileTreeProps | null>(() => {
-    if (fileTreeChrome === null || thread === null) return null;
-    return {
-      tree,
-      activePath: fileTreeChrome.activePath,
-      revealActivePathSignal: fileTreeChrome.revealActivePathSignal,
-      fileStatusesByPath: fileTreeChrome.fileStatusesByPath,
-      searchFiles: searchFilesFromChrome(fileTreeChrome),
-      onOpenFile: (entry: FileEntry) => {
-        fileTreeChrome.onOpenFile(entry);
-        maximizeForDocument();
-      },
-      onPreviewFile: (entry: FileEntry) => {
-        fileTreeChrome.onPreviewFile(entry);
-        maximizeForDocument();
-      },
-    };
-  }, [fileTreeChrome, maximizeForDocument, thread, tree]);
 
   const diff = useMemo<AgentSurfaceDiffPanelProps | null>(
     () =>
@@ -150,6 +119,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
         onOpenSurface={onOpenSurface}
         onResizeStart={chrome.onResizeRightPanelStart}
         onTrustWorkspace={chrome.onTrustWorkspace}
+        scope={scope}
         terminal={terminal}
         thread={thread}
         workspaceRoot={workspaceRoot}
@@ -158,26 +128,3 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     </div>
   );
 });
-
-function searchFilesFromChrome(
-  chrome: AgentWorkbenchFileTreeChrome,
-): AgentSurfaceFileTreeProps["searchFiles"] {
-  const open = chrome.onSearchFiles;
-  if (open === undefined) return null;
-  return { shortcut: chrome.searchFilesShortcut ?? "", open };
-}
-
-function fileTreeTarget(
-  workspaceId: string | null,
-  thread: AgentThreadView | null,
-  filesOpen: boolean,
-): AgentSurfaceFileTreeTarget | null {
-  if (!filesOpen || workspaceId === null || thread === null) return null;
-  if (agentSurfaceTargetGone(thread)) return null;
-  const record = thread.thread;
-  return {
-    workspaceId,
-    threadId: record.threadId,
-    rootPath: record.target.worktreePath ?? record.owner.repositoryRoot,
-  };
-}
