@@ -135,22 +135,35 @@ describe("expanded editing shell layout contract", () => {
     );
   });
 
-  it("hides the editor overlay and lets the tree fill while no document is open", () => {
+  it("hides the editor overlay only while no document is open and a tree is showing", () => {
+    const treeOnly =
+      '.workbench-frame[data-layout="agent"][data-editor="empty"][data-tree="visible"] > [data-slot="editor"]';
+    expect(declarations(shell, treeOnly).get("display")).toBe("none");
     expect(
-      declarations(
+      rulesFor(
         shell,
         '.workbench-frame[data-layout="agent"][data-editor="empty"] > [data-slot="editor"]',
-      ).get("display"),
-    ).toBe("none");
-    const tree = declarations(surface, '.workbench-frame[data-editor="empty"] .agent-surface-tree');
+      ),
+    ).toEqual([]);
+    expect(rulesFor(shell, '.workbench-frame[data-editor="empty"] > [data-slot="editor"]')).toEqual(
+      [],
+    );
+
+    const tree = declarations(
+      surface,
+      '.workbench-frame[data-editor="empty"][data-tree="visible"] .agent-surface-tree',
+    );
     expect(tree.get("flex")).toBe("11auto");
     expect(tree.get("width")).toBe("auto");
     expect(
       declarations(
         surface,
-        '.workbench-frame[data-editor="empty"] .agent-surface__editor-slot',
+        '.workbench-frame[data-editor="empty"][data-tree="visible"] .agent-surface__editor-slot',
       ).get("display"),
     ).toBe("none");
+    expect(
+      rulesFor(surface, '.workbench-frame[data-editor="empty"] .agent-surface__editor-slot'),
+    ).toEqual([]);
   });
 
   it("docks the tree right only in the maximized state", () => {
@@ -182,9 +195,9 @@ describe("expanded editing shell layout contract", () => {
 });
 
 describe("workbenchFrameEditorReport", () => {
-  it("collapses to empty only when every mounted group reports no documents", () => {
+  it("starts empty and reports documents while any mounted group holds one", () => {
     let reports = EMPTY_WORKBENCH_FRAME_EDITOR_REPORTS;
-    expect(workbenchFrameEditorState(reports)).toBe("documents");
+    expect(workbenchFrameEditorState(reports)).toBe("empty");
 
     reports = nextWorkbenchFrameEditorReports(reports, "a", "empty");
     expect(workbenchFrameEditorState(reports)).toBe("empty");
@@ -196,7 +209,7 @@ describe("workbenchFrameEditorReport", () => {
     expect(workbenchFrameEditorState(reports)).toBe("empty");
 
     reports = nextWorkbenchFrameEditorReports(reports, "a", null);
-    expect(workbenchFrameEditorState(reports)).toBe("documents");
+    expect(workbenchFrameEditorState(reports)).toBe("empty");
     expect(reports.size).toBe(0);
   });
 

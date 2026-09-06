@@ -398,7 +398,8 @@
 
 /* Files: the tree on the side tone and the editor well on the canvas tone. Docked, the tree sits
    left; maximized, the row reverses so the tree docks right of the editor. With no document open
-   the frame stamps data-editor="empty", the editor well collapses and the tree fills the body. */
+   and a tree showing (data-editor="empty" + data-tree="visible") the editor well collapses and
+   the tree fills the body; without a tree the editor placeholder stays. */
 .agent-surface__files {
   display: flex;
   min-height: 0;
@@ -420,7 +421,7 @@
   font-size: var(--agent-fs-sm);
 }
 
-.workbench-frame[data-editor="empty"] .agent-surface-tree {
+.workbench-frame[data-editor="empty"][data-tree="visible"] .agent-surface-tree {
   width: auto;
   flex: 1 1 auto;
 }
@@ -498,7 +499,7 @@
   background: transparent;
 }
 
-.workbench-frame[data-editor="empty"] .agent-surface__editor-slot {
+.workbench-frame[data-editor="empty"][data-tree="visible"] .agent-surface__editor-slot {
   display: none;
 }
 

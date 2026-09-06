@@ -17,6 +17,8 @@ export const WorkbenchFrameEditorContext = createContext<WorkbenchFrameEditorRep
   () => undefined,
 );
 
+export const WorkbenchFrameEditorStateContext = createContext<WorkbenchFrameEditorState>("empty");
+
 export function useWorkbenchFrameEditorReport(empty: boolean): void {
   const report = useContext(WorkbenchFrameEditorContext);
   const key = useId();
@@ -24,6 +26,10 @@ export function useWorkbenchFrameEditorReport(empty: boolean): void {
     report(key, empty ? "empty" : "documents");
     return () => report(key, null);
   }, [empty, key, report]);
+}
+
+export function useWorkbenchFrameEditorState(): WorkbenchFrameEditorState {
+  return useContext(WorkbenchFrameEditorStateContext);
 }
 
 export function nextWorkbenchFrameEditorReports(
@@ -50,19 +56,18 @@ export function nextWorkbenchFrameEditorReports(
   return next;
 }
 
+export function workbenchFrameEditorState(
+  reports: WorkbenchFrameEditorReports,
+): WorkbenchFrameEditorState {
+  for (const state of reports.values()) {
+    if (state === "documents") return "documents";
+  }
+  return "empty";
+}
+
 function firstEmptyReport(reports: WorkbenchFrameEditorReports): string | null {
   for (const [key, state] of reports) {
     if (state === "empty") return key;
   }
   return null;
-}
-
-export function workbenchFrameEditorState(
-  reports: WorkbenchFrameEditorReports,
-): WorkbenchFrameEditorState {
-  if (reports.size === 0) return "documents";
-  for (const state of reports.values()) {
-    if (state === "documents") return "documents";
-  }
-  return "empty";
 }

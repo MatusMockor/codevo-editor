@@ -8,6 +8,7 @@ import { WorkbenchFrameTreeContext } from "./workbenchFrameTreeReport";
 import {
   EMPTY_WORKBENCH_FRAME_EDITOR_REPORTS,
   WorkbenchFrameEditorContext,
+  WorkbenchFrameEditorStateContext,
   nextWorkbenchFrameEditorReports,
   workbenchFrameEditorState,
   type WorkbenchFrameEditorReporter,
@@ -61,6 +62,7 @@ export function WorkbenchShellFrame({
     setEditorReports((current) => nextWorkbenchFrameEditorReports(current, key, state));
   }, []);
   const [frameElement, setFrameElement] = useState<HTMLDivElement | null>(null);
+  const editorState = workbenchFrameEditorState(editorReports);
   const editorHidden = responsivePlacement.editorHidden || settingsSurface;
   const style = {
     [WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE]: `${responsivePlacement.rightPanelWidth}px`,
@@ -80,7 +82,7 @@ export function WorkbenchShellFrame({
       <div
         className="workbench-frame"
         data-agent-variant={agentVariant}
-        data-editor={workbenchFrameEditorState(editorReports)}
+        data-editor={editorState}
         data-layout={responsivePlacement.layout}
         data-rail={responsivePlacement.rail}
         data-right-panel={responsivePlacement.rightPanelMaximized ? "maximized" : "docked"}
@@ -92,11 +94,13 @@ export function WorkbenchShellFrame({
           <WorkbenchFrameEditorContext.Provider value={reportEditor}>
             <WorkbenchFramePortalContext.Provider value={frameElement}>
               <WorkbenchFrameTreeContext.Provider value={setTreeReportedVisible}>
-                <WorkbenchFrameResponsiveContext.Provider
-                  value={responsivePlacement.responsiveRestore}
-                >
-                  {agent}
-                </WorkbenchFrameResponsiveContext.Provider>
+                <WorkbenchFrameEditorStateContext.Provider value={editorState}>
+                  <WorkbenchFrameResponsiveContext.Provider
+                    value={responsivePlacement.responsiveRestore}
+                  >
+                    {agent}
+                  </WorkbenchFrameResponsiveContext.Provider>
+                </WorkbenchFrameEditorStateContext.Provider>
               </WorkbenchFrameTreeContext.Provider>
             </WorkbenchFramePortalContext.Provider>
             {settingsSurface ? (

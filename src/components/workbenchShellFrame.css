@@ -108,8 +108,10 @@
   pointer-events: auto;
 }
 
-/* Tree-only Files surface: no document is open, so the editor overlay yields to the tree. */
-.workbench-frame[data-layout="agent"][data-editor="empty"] > [data-slot="editor"] {
+/* Tree-only Files surface: no document is open and a tree is showing, so the editor overlay
+   yields to the tree. Without a tree the overlay keeps its empty-editor placeholder. */
+.workbench-frame[data-layout="agent"][data-editor="empty"][data-tree="visible"]
+  > [data-slot="editor"] {
   display: none;
 }
 

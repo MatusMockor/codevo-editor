@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSurfaceFileTreeSurface } from "../../application/useAgentSurfaceFileTree";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import { waitForReact } from "../../test/reactTestLifecycle";
+import {
+  WorkbenchFrameEditorStateContext,
+  type WorkbenchFrameEditorState,
+} from "../workbenchFrameEditorReport";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import { AGENT_SURFACE_HOTKEYS, agentSurfaceForHotkey } from "./agentSurfaceHotkeys";
 import {
@@ -140,13 +144,16 @@ describe("AgentSurfacePanel", () => {
     expect(onTrustWorkspace).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the Files surface as tree plus an empty editor slot and toggles the tree", () => {
+  it("fills the Files surface with the tree while no document is open and hides the toggle", () => {
     render({ layout: open(["files"], "files") });
 
     const aside = host.querySelector("aside.agent-surface");
     expect(aside?.getAttribute("data-surface")).toBe("files");
     expect(aside?.getAttribute("data-tree")).toBe("visible");
     expect(host.querySelector("[data-agent-surface-tree]")).not.toBeNull();
+    expect(host.querySelector(".agent-surface-tree__tools")).not.toBeNull();
+    expect(host.querySelector(".agent-surface-tree__search")).not.toBeNull();
+    expect(host.querySelector('[aria-label="Toggle file tree"]')).toBeNull();
     const slot = host.querySelector(
       `.agent-surface__editor-slot[${AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE}]`,
     );
@@ -154,8 +161,48 @@ describe("AgentSurfacePanel", () => {
     expect(slot?.childElementCount).toBe(0);
     expect(host.querySelector(".monaco-editor")).toBeNull();
     expect(host.querySelector(".agent-surface__head .agent-surface__editor-tabs")).not.toBeNull();
+  });
+
+  it("offers the tree toggle only while a document is open and toggles the tree", () => {
+    render({ layout: open(["files"], "files") }, "documents");
+
+    const aside = host.querySelector("aside.agent-surface");
+    expect(aside?.getAttribute("data-tree")).toBe("visible");
+    expect(host.querySelector("[data-agent-surface-tree]")).not.toBeNull();
 
     click('[aria-label="Toggle file tree"]');
+    expect(aside?.getAttribute("data-tree")).toBe("hidden");
+    expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
+    expect(host.querySelector(`[${AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE}]`)).not.toBeNull();
+    expect(
+      host.querySelector('[aria-label="Toggle file tree"]')?.getAttribute("aria-pressed"),
+    ).toBe("false");
+
+    click('[aria-label="Toggle file tree"]');
+    expect(aside?.getAttribute("data-tree")).toBe("visible");
+  });
+
+  it("brings a hidden tree back as soon as the last document closes", () => {
+    render({ layout: open(["files"], "files") }, "documents");
+    click('[aria-label="Toggle file tree"]');
+    expect(host.querySelector("aside.agent-surface")?.getAttribute("data-tree")).toBe("hidden");
+
+    render({ layout: open(["files"], "files") }, "empty");
+    const aside = host.querySelector("aside.agent-surface");
+    expect(aside?.getAttribute("data-tree")).toBe("visible");
+    expect(host.querySelector("[data-agent-surface-tree]")).not.toBeNull();
+    expect(host.querySelector(".agent-surface-tree__search")).not.toBeNull();
+    expect(host.querySelector('[aria-label="Toggle file tree"]')).toBeNull();
+
+    render({ layout: open(["files"], "files") }, "documents");
+    expect(host.querySelector("aside.agent-surface")?.getAttribute("data-tree")).toBe("hidden");
+    expect(host.querySelector('[aria-label="Toggle file tree"]')).not.toBeNull();
+  });
+
+  it("keeps the editor slot for a Files surface without a thread tree", () => {
+    render({ layout: open(["files"], "files"), fileTree: null, thread: null }, "empty");
+
+    const aside = host.querySelector("aside.agent-surface");
     expect(aside?.getAttribute("data-tree")).toBe("hidden");
     expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
     expect(host.querySelector(`[${AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE}]`)).not.toBeNull();
@@ -415,8 +462,17 @@ describe("AgentSurfacePanel", () => {
     );
   }
 
-  function render(overrides: Partial<AgentSurfacePanelProps> = {}): void {
-    act(() => root.render(<AgentSurfacePanel {...defaultProps()} {...overrides} />));
+  function render(
+    overrides: Partial<AgentSurfacePanelProps> = {},
+    editorState: WorkbenchFrameEditorState = "empty",
+  ): void {
+    act(() =>
+      root.render(
+        <WorkbenchFrameEditorStateContext.Provider value={editorState}>
+          <AgentSurfacePanel {...defaultProps()} {...overrides} />
+        </WorkbenchFrameEditorStateContext.Provider>,
+      ),
+    );
   }
 
   function click(selector: string): void {

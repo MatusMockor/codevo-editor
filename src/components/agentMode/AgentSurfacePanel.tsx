@@ -15,6 +15,7 @@ import { AgentSurfaceEmptyState } from "./AgentSurfaceEmptyState";
 import { AgentSurfaceFileTree, type AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
 import type { AgentSurfaceTerminalProps } from "./AgentSurfaceTerminal";
 import { SURFACE_NO_THREAD_REASON, agentSurfaceBlockedReason } from "./agentSurfacePolicy";
+import { useWorkbenchFrameEditorState } from "../workbenchFrameEditorReport";
 import { useWorkbenchFrameTreeReport } from "../workbenchFrameTreeReport";
 import { WorkbenchEditorTabsPortalTarget } from "../workbenchEditorTabsPortal";
 
@@ -91,7 +92,10 @@ export function AgentSurfacePanel({
 }: AgentSurfacePanelProps) {
   const { activeSurface, openSurfaces } = layout;
   const [treeVisible, setTreeVisible] = useState(true);
-  const treeShown = !hidden && activeSurface === "files" && treeVisible && fileTree !== null;
+  const documentOpen = useWorkbenchFrameEditorState() === "documents";
+  const filesActive = !hidden && activeSurface === "files" && fileTree !== null;
+  const treeShown = filesActive && (treeVisible || !documentOpen);
+  const treeToggleShown = filesActive && documentOpen;
   useWorkbenchFrameTreeReport(treeShown);
   const tabRefs = useRef(new Map<AgentSurfaceKind, HTMLButtonElement | null>());
   const chooserShown = activeSurface === null;
@@ -173,7 +177,7 @@ export function AgentSurfacePanel({
         )}
         {activeSurface === "files" && !hidden && <WorkbenchEditorTabsPortalTarget />}
         {activeSurface !== "files" && <span className="agent-session__spacer" />}
-        {activeSurface === "files" && fileTree !== null && (
+        {treeToggleShown && (
           <button
             aria-label="Toggle file tree"
             aria-pressed={treeVisible}

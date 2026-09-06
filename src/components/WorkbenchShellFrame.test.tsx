@@ -11,7 +11,10 @@ import {
 } from "../domain/agentWorkbenchLayout";
 import { AgentThreadRowMenu } from "./agentMode/AgentThreadRowMenu";
 import { WorkbenchShellFrame } from "./WorkbenchShellFrame";
-import { useWorkbenchFrameEditorReport } from "./workbenchFrameEditorReport";
+import {
+  useWorkbenchFrameEditorReport,
+  useWorkbenchFrameEditorState,
+} from "./workbenchFrameEditorReport";
 import { useWorkbenchFrameTreeReport } from "./workbenchFrameTreeReport";
 import {
   workbenchFrameTreeState,
@@ -228,7 +231,7 @@ describe("WorkbenchShellFrame", () => {
   it("stamps data-editor from the editor host report and keeps the editor mounted while empty", () => {
     const frame = () => host.querySelector(".workbench-frame")?.getAttribute("data-editor");
     render(placement("agent", "files"));
-    expect(frame()).toBe("documents");
+    expect(frame()).toBe("empty");
 
     renderEditor(placement("agent", "files"), <EditorReporter empty />);
     const editorSlot = host.querySelector('[data-slot="editor"]');
@@ -253,7 +256,36 @@ describe("WorkbenchShellFrame", () => {
     expect(frame()).toBe("empty");
 
     render(placement("agent", "files"));
-    expect(frame()).toBe("documents");
+    expect(frame()).toBe("empty");
+  });
+
+  it("hands the editor state to the agent slot so the surface can keep its tree while empty", () => {
+    const state = () => host.querySelector("#editor-state")?.textContent;
+    act(() =>
+      root.render(
+        <WorkbenchShellFrame
+          agent={<EditorStateProbe />}
+          bottom={<span>bottom</span>}
+          chrome={<div id="chrome" />}
+          editor={<div id="editor-content" />}
+          placement={placement("agent", "files")}
+        />,
+      ),
+    );
+    expect(state()).toBe("empty");
+
+    act(() =>
+      root.render(
+        <WorkbenchShellFrame
+          agent={<EditorStateProbe />}
+          bottom={<span>bottom</span>}
+          chrome={<div id="chrome" />}
+          editor={<EditorReporter empty={false} />}
+          placement={placement("agent", "files")}
+        />,
+      ),
+    );
+    expect(state()).toBe("documents");
   });
 
   it("keeps every slot the agent renders a direct child of the frame grid", () => {
@@ -492,6 +524,15 @@ function TreeReporter({ visible }: { readonly visible: boolean }) {
 function EditorReporter({ empty }: { readonly empty: boolean }) {
   useWorkbenchFrameEditorReport(empty);
   return <div id="editor-reporter" />;
+}
+
+function EditorStateProbe() {
+  const state = useWorkbenchFrameEditorState();
+  return (
+    <div data-slot="agent" id="editor-state">
+      {state}
+    </div>
+  );
 }
 
 function emptyOpenPanelPlacement(bottomPanelVisible = false): WorkbenchShellPlacement {
