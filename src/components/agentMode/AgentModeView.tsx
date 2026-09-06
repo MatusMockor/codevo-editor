@@ -39,7 +39,10 @@ import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
 import { agentThreadHeaderProject, type AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 import { AgentClockProvider } from "./agentClock";
 import { agentProjectGroups } from "./agentModePresentation";
-import { agentProjectTerminalSessionsTarget } from "./agentSidebarPresentation";
+import {
+  agentProjectTerminalSessionsTarget,
+  type AgentRailScope,
+} from "./agentSidebarPresentation";
 import { agentSurfaceScopeFor, agentThreadCheckoutRoot } from "./agentSurfacePolicy";
 import { useAgentAddProject } from "./useAgentAddProject";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
@@ -276,6 +279,15 @@ export function AgentModeView({
   const threadMenuCommand = useAgentLatestCallback(menu.handleThreadMenuCommand);
   const projectMenuCommand = useAgentLatestCallback(menu.handleProjectCommand);
   const newThread = useAgentLatestCallback(startNewThread);
+  const changeProjectScope = useAgentLatestCallback((scope: AgentRailScope) => {
+    if (!navigation.setProjectScope(scope.projectRootKey)) return;
+    if (sessionThread !== null) return;
+    composer.clearSelection();
+  });
+  const newProjectThread = useAgentLatestCallback(() => {
+    if (navigation.newThreadTarget() === null) return;
+    composer.clearSelection();
+  });
   const activateSurface = useAgentLatestCallback(surface.activateSurface);
   const closeSurfaceTab = useAgentLatestCallback(surface.closeSurfaceTab);
   const openSurfaceCommand = useAgentLatestCallback(openSurface);
@@ -283,16 +295,11 @@ export function AgentModeView({
   const revealFailed = useCallback(() => setLocalNotice(REVEAL_FAILED_NOTICE), []);
 
   const navigationCommands = navigation.commands;
-  const newThreadTarget = navigation.newThreadTarget;
   const surfaceBlocked = surface.surfaceBlocked;
   const commandHandlers = useMemo<AgentViewCommandHandlers>(
     () => ({
       ...navigationCommands,
-      newThread: () => {
-        const next = newThreadTarget();
-        if (next === null) return;
-        startNewThread(next.projectRootKey, next.repositoryRoot);
-      },
+      newThread: newProjectThread,
       runPreferredScript: () => {
         if (scripts.preferred === null) return;
         scripts.runScript(scripts.preferred.key);
@@ -303,14 +310,7 @@ export function AgentModeView({
       },
       surfaceBlocked,
     }),
-    [
-      navigationCommands,
-      newThreadTarget,
-      scripts,
-      selectedThreadId,
-      startNewThread,
-      surfaceBlocked,
-    ],
+    [navigationCommands, scripts, selectedThreadId, newProjectThread, surfaceBlocked],
   );
   useAgentViewCommands(viewCommands, commandHandlers);
 
@@ -456,9 +456,9 @@ export function AgentModeView({
                 accountUsage={agents.accountUsage ?? IDLE_ACCOUNT_USAGE}
                 groups={groups}
                 onAddProject={addProject.openDialog}
-                onChangeScope={navigation.setRailScope}
+                onChangeScope={changeProjectScope}
                 onCollapseSidebar={toggleRail}
-                onNewThread={newThread}
+                onNewThread={newProjectThread}
                 onOpenProviderSettings={agents.configureAgentCli}
                 onOpenSourceControl={onOpenSourceControl}
                 onProjectCommand={projectMenuCommand}

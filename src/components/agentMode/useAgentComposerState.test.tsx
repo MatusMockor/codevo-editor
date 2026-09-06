@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useMemo } from "react";
+import { act, StrictMode, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
@@ -22,6 +22,7 @@ import {
   type AgentComposerState,
 } from "./useAgentComposerState";
 import { useAgentThreadNavigation, type AgentThreadNavigation } from "./useAgentThreadNavigation";
+import { COMPOSER_REPOSITORY_PREFERENCE_KEY } from "./useAgentComposerRepositoryPreference";
 
 interface Captured {
   readonly composer: AgentComposerState;
@@ -34,6 +35,7 @@ describe("useAgentComposerState", () => {
   let captured: Captured | null;
 
   beforeEach(() => {
+    localStorage.removeItem(COMPOSER_REPOSITORY_PREFERENCE_KEY);
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     host = document.createElement("div");
     document.body.append(host);
@@ -42,6 +44,7 @@ describe("useAgentComposerState", () => {
   });
 
   afterEach(() => {
+    localStorage.removeItem(COMPOSER_REPOSITORY_PREFERENCE_KEY);
     act(() => root.unmount());
     host.remove();
   });
@@ -87,6 +90,139 @@ describe("useAgentComposerState", () => {
     });
     expect(current().composer.composerProps.prompt).toBe("");
     expect(current().navigation.selectedThreadId).toBe("agt-new");
+  });
+
+  it("restores a deliberate nested selection after remount and lets root replace that memory", () => {
+    render(threadsSurfaceFixture());
+    act(() => current().composer.composerProps.onSelectRepository(FIXTURE_NESTED_ROOT));
+    act(() => root.unmount());
+    root = createRoot(host);
+    render(threadsSurfaceFixture());
+    expect(current().composer.target?.repositoryRoot).toBe(FIXTURE_NESTED_ROOT);
+    act(() => current().composer.composerProps.onSelectRepository(SURFACE_FIXTURE_ROOT));
+    act(() => current().composer.clearSelection());
+    expect(current().composer.target?.repositoryRoot).toBe(SURFACE_FIXTURE_ROOT);
+  });
+
+  it("does not use a remembered repository through an untrusted project or missing membership", () => {
+    localStorage.setItem(
+      COMPOSER_REPOSITORY_PREFERENCE_KEY,
+      JSON.stringify({
+        version: 1,
+        entries: [{ projectRootKey: SURFACE_FIXTURE_ROOT, repositoryRoot: FIXTURE_NESTED_ROOT }],
+      }),
+    );
+    render(threadsSurfaceFixture(), [projectFixture({ trust: "untrusted" })]);
+    expect(current().composer.target).toBeNull();
+    render(threadsSurfaceFixture(), [projectFixture({ repositories: [] })]);
+    expect(current().composer.target?.repositoryRoot).toBe(SURFACE_FIXTURE_ROOT);
+  });
+
+  it("rejects a retained repository callback after trust or owner generation changes", () => {
+    render(threadsSurfaceFixture());
+    const choose = current().composer.composerProps.onSelectRepository;
+    render(threadsSurfaceFixture(), [projectFixture({ trust: "untrusted" })]);
+    act(() => choose(FIXTURE_NESTED_ROOT));
+    expect(localStorage.getItem(COMPOSER_REPOSITORY_PREFERENCE_KEY)).toBeNull();
+    render(threadsSurfaceFixture(), [projectFixture({ generation: 9 })]);
+    act(() => choose(FIXTURE_NESTED_ROOT));
+    expect(localStorage.getItem(COMPOSER_REPOSITORY_PREFERENCE_KEY)).toBeNull();
+    expect(current().composer.target?.repositoryRoot).toBe(SURFACE_FIXTURE_ROOT);
+  });
+
+  it("rejects old new-thread repository callbacks through a same-project follow-up and back", () => {
+    const agents = threadsSurfaceFixture({ threads: [surfaceThreadView()] });
+    render(agents);
+    const choose = current().composer.composerProps.onSelectRepository;
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => choose(FIXTURE_NESTED_ROOT));
+    expect(localStorage.getItem(COMPOSER_REPOSITORY_PREFERENCE_KEY)).toBeNull();
+    act(() => current().composer.clearSelection());
+    act(() => choose(FIXTURE_NESTED_ROOT));
+    expect(localStorage.getItem(COMPOSER_REPOSITORY_PREFERENCE_KEY)).toBeNull();
+    expect(current().composer.target?.repositoryRoot).toBe(SURFACE_FIXTURE_ROOT);
+  });
+
+  it("prevents an unmounted composer's callback from overwriting a replacement's root preference", () => {
+    render(threadsSurfaceFixture());
+    const choose = current().composer.composerProps.onSelectRepository;
+    act(() => root.unmount());
+    root = createRoot(host);
+    render(threadsSurfaceFixture());
+    act(() => current().composer.composerProps.onSelectRepository(SURFACE_FIXTURE_ROOT));
+    const stored = localStorage.getItem(COMPOSER_REPOSITORY_PREFERENCE_KEY);
+    act(() => choose(FIXTURE_NESTED_ROOT));
+    expect(localStorage.getItem(COMPOSER_REPOSITORY_PREFERENCE_KEY)).toBe(stored);
+    expect(current().composer.target?.repositoryRoot).toBe(SURFACE_FIXTURE_ROOT);
+  });
+
+  it("keeps a live repository callback usable after StrictMode repeats effect setup", () => {
+    act(() =>
+      root.render(
+        <StrictMode>
+          <Harness
+            agents={threadsSurfaceFixture()}
+            projects={[projectFixture()]}
+            providerEnabled={{ claudeCode: true, codex: true }}
+          />
+        </StrictMode>,
+      ),
+    );
+    act(() => current().composer.composerProps.onSelectRepository(FIXTURE_NESTED_ROOT));
+    expect(current().composer.target?.repositoryRoot).toBe(FIXTURE_NESTED_ROOT);
+    expect(localStorage.getItem(COMPOSER_REPOSITORY_PREFERENCE_KEY)).toContain(FIXTURE_NESTED_ROOT);
+  });
+
+  it("expires repository interactions through root A B A without rejecting routine republishing", () => {
+    render(threadsSurfaceFixture());
+    const first = current().composer.composerProps.onSelectRepository;
+    render(threadsSurfaceFixture());
+    act(() => first(FIXTURE_NESTED_ROOT));
+    expect(current().composer.target?.repositoryRoot).toBe(FIXTURE_NESTED_ROOT);
+    act(() => current().composer.composerProps.onSelectRepository(SURFACE_FIXTURE_ROOT));
+    const stored = localStorage.getItem(COMPOSER_REPOSITORY_PREFERENCE_KEY);
+    act(() => first(FIXTURE_NESTED_ROOT));
+    expect(localStorage.getItem(COMPOSER_REPOSITORY_PREFERENCE_KEY)).toBe(stored);
+    expect(current().composer.target?.repositoryRoot).toBe(SURFACE_FIXTURE_ROOT);
+  });
+
+  it("lets an explicit rail root replace a nested choice under the same automatic project scope", () => {
+    render(threadsSurfaceFixture());
+    act(() => current().composer.composerProps.onSelectRepository(FIXTURE_NESTED_ROOT));
+    act(() =>
+      current().navigation.setRailScope({
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    );
+    expect(current().composer.target?.repositoryRoot).toBe(SURFACE_FIXTURE_ROOT);
+  });
+
+  it("restores each project's preference across A B A and preserves a deliberate root scope", () => {
+    const otherRoot = "/workspace/other";
+    const otherNested = `${otherRoot}/api`;
+    const other = projectFixture({
+      rootKey: otherRoot,
+      rootPath: otherRoot,
+      ownerId: "other-owner",
+      repositories: [fixtureRepository(otherRoot, ""), fixtureRepository(otherNested, "api")],
+    });
+    render(threadsSurfaceFixture());
+    act(() => current().composer.composerProps.onSelectRepository(FIXTURE_NESTED_ROOT));
+    render(threadsSurfaceFixture(), [other]);
+    expect(current().composer.target?.repositoryRoot).toBe(otherRoot);
+    act(() => current().composer.composerProps.onSelectRepository(otherNested));
+    render(threadsSurfaceFixture(), [projectFixture({ generation: 3 })]);
+    expect(current().composer.target?.repositoryRoot).toBe(FIXTURE_NESTED_ROOT);
+    act(() =>
+      current().navigation.setRailScope({
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    );
+    expect(current().composer.target?.repositoryRoot).toBe(SURFACE_FIXTURE_ROOT);
+    render(threadsSurfaceFixture(), [{ ...other, generation: 4 }]);
+    expect(current().composer.target?.repositoryRoot).toBe(otherNested);
   });
 
   it("shows a quiet checking caption without the in-place risk confirmation", () => {

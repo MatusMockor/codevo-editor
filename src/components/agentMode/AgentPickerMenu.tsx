@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -9,12 +8,11 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { Check, ChevronDown, TriangleAlert } from "lucide-react";
-import {
-  agentPickerGroupHeading,
-  type AgentPickerOption,
-  type AgentPickerTone,
-} from "./agentPickerOption";
+import { ChevronDown } from "lucide-react";
+import { type AgentPickerOption, type AgentPickerTone } from "./agentPickerOption";
+import { AgentCheckoutSearchInput, AgentCheckoutSearchPages } from "./AgentCheckoutSearchControls";
+import { useCheckoutSearch } from "./useCheckoutSearch";
+import { AgentPickerRows } from "./AgentPickerRows";
 import { AGENT_POPOVER_METRICS, useAgentPopoverPlacement } from "./agentPopover";
 
 export type { AgentPickerOption, AgentPickerTone } from "./agentPickerOption";
@@ -35,6 +33,7 @@ export interface AgentPickerMenuProps {
   readonly align: AgentPickerAlign;
   readonly variant?: AgentPickerVariant;
   readonly menuLayout?: "default" | "checkout";
+  readonly searchIdentity?: object;
   readonly icon?: ReactNode;
   readonly confirmation?: AgentPickerConfirmation | null;
   onChange(value: string): void;
@@ -67,12 +66,16 @@ export function AgentPickerMenu({
   onOpen,
   options,
   prefix,
+  searchIdentity,
   tone,
   value,
   variant = "default",
 }: AgentPickerMenuProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const search = useCheckoutSearch(options, menuLayout === "checkout", open, searchIdentity);
+  const visibleOptions = search.visibleOptions;
+  const focusedIndex = clamp(activeIndex, visibleOptions.length);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -96,18 +99,18 @@ export function AgentPickerMenu({
   const openMenu = useCallback(
     (index: number) => {
       if (disabled || options.length === 0) return;
-      setActiveIndex(clamp(index, options.length));
+      setActiveIndex(clamp(index, visibleOptions.length));
       setOpen(true);
       if (!open) onOpen?.();
     },
-    [disabled, onOpen, open, options.length],
+    [disabled, onOpen, open, options.length, visibleOptions.length],
   );
 
   const choose = useCallback(
     (option: AgentPickerOption) => {
       if (disabled) return;
       if (option.value === confirmation?.value && !confirmation.checked) {
-        setActiveIndex(options.indexOf(option));
+        setActiveIndex(visibleOptions.indexOf(option));
         setOpen(true);
         if (option.value !== value) onChange(option.value);
         return;
@@ -116,7 +119,7 @@ export function AgentPickerMenu({
       if (option.value === value) return;
       onChange(option.value);
     },
-    [close, confirmation, disabled, onChange, options, value],
+    [close, confirmation, disabled, onChange, visibleOptions, value],
   );
 
   useEffect(() => {
@@ -137,8 +140,16 @@ export function AgentPickerMenu({
 
   useLayoutEffect(() => {
     if (!open) return;
-    menuRef.current?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)?.focus();
-  }, [activeIndex, open]);
+    const active = document.activeElement;
+    if (
+      search.enabled &&
+      active instanceof HTMLElement &&
+      (active.tagName === "INPUT" || active.tagName === "BUTTON") &&
+      menuRef.current?.contains(active)
+    )
+      return;
+    menuRef.current?.querySelector<HTMLElement>(`[data-index="${focusedIndex}"]`)?.focus();
+  }, [focusedIndex, open, search.enabled, visibleOptions]);
 
   const onTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -148,7 +159,7 @@ export function AgentPickerMenu({
   };
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    const next = nextIndex(event.key, activeIndex, options.length);
+    const next = nextIndex(event.key, focusedIndex, visibleOptions.length);
     if (next !== null) {
       event.preventDefault();
       event.stopPropagation();
@@ -157,7 +168,7 @@ export function AgentPickerMenu({
     }
     if (event.key === "Tab") {
       event.stopPropagation();
-      close(true);
+      if (!search.enabled) close(true);
       return;
     }
     if (event.key === "Escape") {
@@ -169,7 +180,7 @@ export function AgentPickerMenu({
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     event.stopPropagation();
-    const option = options[activeIndex];
+    const option = visibleOptions[focusedIndex];
     if (option === undefined) return;
     choose(option);
   };
@@ -217,81 +228,71 @@ export function AgentPickerMenu({
 
       {open && (
         <div
-          aria-label={label}
-          aria-multiselectable={options.some((option) => option.selected) || undefined}
+          aria-label={search.enabled ? undefined : label}
+          aria-multiselectable={
+            search.enabled ? undefined : options.some((option) => option.selected) || undefined
+          }
           className={`agent-picker__menu agent-picker__menu--${align}${menuLayout === "checkout" ? " agent-picker__menu--checkout" : ""}`}
-          id={listId}
+          id={search.enabled ? undefined : listId}
           onKeyDown={onMenuKeyDown}
           ref={menuRef}
-          role="listbox"
+          role={search.enabled ? undefined : "listbox"}
           style={placement.style}
         >
-          {options.map((option, index) => (
-            <Fragment key={option.value}>
-              {agentPickerGroupHeading(options, index) !== null && (
-                <div className="agent-picker__group" role="presentation">
-                  {agentPickerGroupHeading(options, index)}
-                </div>
-              )}
-              <div
-                aria-selected={option.selected || option.value === value}
-                className={optionClassName(option, index === activeIndex)}
-                data-index={index}
-                data-value={option.value}
-                id={`${listId}-${index}`}
-                onClick={() => choose(option)}
-                onMouseEnter={() => setActiveIndex(index)}
-                role="option"
-                tabIndex={-1}
-              >
-                <span
-                  className={`agent-picker__mark${option.icon !== null ? " agent-picker__mark--icon" : ""}`}
-                  aria-hidden="true"
-                >
-                  {option.icon ??
-                    (menuLayout !== "checkout" && option.value === value && <Check size={12} />)}
-                </span>
-                <span className="agent-picker__text">
-                  <span className="agent-picker__label">
-                    {option.tone === "danger" && (
-                      <TriangleAlert aria-hidden="true" className="agent-picker__warn" size={11} />
-                    )}
-                    {option.label}
-                    {option.detail !== null && (
-                      <span className="agent-picker__detail agent-num">{option.detail}</span>
-                    )}
-                  </span>
-                  {option.description !== null && (
-                    <span className="agent-picker__description">{option.description}</span>
-                  )}
-                </span>
-                {menuLayout === "checkout" && (option.selected || option.value === value) && (
-                  <Check aria-hidden="true" className="agent-picker__selection" size={14} />
-                )}
-              </div>
-              {confirmation !== null &&
-                option.value === value &&
-                option.value === confirmation.value && (
-                  <label className="agent-picker__confirmation" htmlFor={confirmation.id}>
-                    <input
-                      checked={confirmation.checked}
-                      disabled={confirmation.disabled}
-                      id={confirmation.id}
-                      onChange={(event) => confirmation.onChange(event.target.checked)}
-                      type="checkbox"
-                    />
-                    <span className="agent-picker__confirmation-copy">
-                      <span className="agent-picker__confirmation-label">{confirmation.label}</span>
-                      {confirmation.description !== null && (
-                        <span className="agent-picker__confirmation-description">
-                          {confirmation.description}
-                        </span>
-                      )}
-                    </span>
-                  </label>
-                )}
-            </Fragment>
-          ))}
+          {search.enabled && (
+            <AgentCheckoutSearchInput
+              query={search.query}
+              listId={listId}
+              onQuery={search.setQuery}
+              onClose={() => close(true)}
+              onFocusList={() => {
+                const index = search.keyboardEntryIndex;
+                if (index === null) return;
+                setActiveIndex(index);
+                menuRef.current?.querySelector<HTMLElement>(`[data-index="${index}"]`)?.focus();
+              }}
+            />
+          )}
+          {search.enabled ? (
+            <div
+              role="listbox"
+              id={listId}
+              aria-label={label}
+              aria-multiselectable="true"
+              aria-busy={search.busy}
+            >
+              <AgentPickerRows
+                options={visibleOptions}
+                activeIndex={focusedIndex}
+                value={value}
+                listId={listId}
+                menuLayout={menuLayout}
+                confirmation={confirmation}
+                onChoose={choose}
+                onActiveIndex={setActiveIndex}
+              />
+            </div>
+          ) : (
+            <AgentPickerRows
+              options={visibleOptions}
+              activeIndex={focusedIndex}
+              value={value}
+              listId={listId}
+              menuLayout={menuLayout}
+              confirmation={confirmation}
+              onChoose={choose}
+              onActiveIndex={setActiveIndex}
+            />
+          )}
+          {search.enabled && (
+            <AgentCheckoutSearchPages
+              page={search.page}
+              total={search.total}
+              excluded={search.excluded}
+              onPage={search.setPage}
+              onClose={() => close(true)}
+            />
+          )}
         </div>
       )}
     </div>
@@ -302,13 +303,6 @@ function triggerClassName(tone: AgentPickerTone, variant: AgentPickerVariant): s
   const classes = ["agent-picker__trigger"];
   if (variant === "ghost") classes.push("agent-picker__trigger--ghost");
   if (tone !== null) classes.push(`agent-picker__trigger--${tone}`);
-  return classes.join(" ");
-}
-
-function optionClassName(option: AgentPickerOption, active: boolean): string {
-  const classes = ["agent-picker__option"];
-  if (active) classes.push("agent-picker__option--active");
-  if (option.tone !== null) classes.push(`agent-picker__option--${option.tone}`);
   return classes.join(" ");
 }
 

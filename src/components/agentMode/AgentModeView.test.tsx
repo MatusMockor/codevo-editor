@@ -35,6 +35,7 @@ import { externalSessionsSurfaceFixture } from "./agentThreadsSurfaceTestFixture
 import type { ExternalAgentSessionView } from "../../domain/externalAgentSession";
 import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
+import { COMPOSER_REPOSITORY_PREFERENCE_KEY } from "./useAgentComposerRepositoryPreference";
 
 const ROOT = "/workspace/app";
 const DEFAULT_DISPATCH_LAUNCH = agentLaunchForDispatch(defaultAgentComposerLaunch("claudeCode"));
@@ -166,6 +167,7 @@ describe("AgentModeView", () => {
   let root: Root;
 
   beforeEach(() => {
+    localStorage.removeItem(COMPOSER_REPOSITORY_PREFERENCE_KEY);
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     host = document.createElement("div");
     document.body.append(host);
@@ -174,6 +176,7 @@ describe("AgentModeView", () => {
 
   afterEach(() => {
     act(() => root.unmount());
+    localStorage.removeItem(COMPOSER_REPOSITORY_PREFERENCE_KEY);
     host.remove();
     sessionReveals.length = 0;
     document.querySelectorAll('[role="menu"]').forEach((menu) => menu.remove());
@@ -370,6 +373,70 @@ describe("AgentModeView", () => {
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
     });
+  });
+
+  it("restores repository choices through the Project scope menu and keeps explicit checkout root", () => {
+    const otherNested = `${OTHER_ROOT}/service`;
+    const bridge = createAgentViewCommandBridge();
+    render({
+      viewCommands: bridge,
+      projects: [
+        defaultActiveProject(),
+        {
+          ...backgroundProject(),
+          repositories: [repository(OTHER_ROOT, ""), repository(otherNested, "service")],
+        },
+      ],
+    });
+    pickOption("agent-checkout", `root:${NESTED}`);
+    chooseScope(OTHER_ROOT);
+    pickOption("agent-checkout", `root:${otherNested}`);
+    chooseScope(ROOT);
+    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
+      "packages/api",
+    );
+    click('button[aria-label="New thread"]');
+    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
+      "packages/api",
+    );
+    act(() => bridge.run("agent.newThread"));
+    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
+      "packages/api",
+    );
+    chooseScope(OTHER_ROOT);
+    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain("service");
+    chooseScope(ROOT);
+    pickOption("agent-checkout", `root:${ROOT}`);
+    chooseScope(OTHER_ROOT);
+    chooseScope(ROOT);
+    click("button#agent-checkout");
+    expect(
+      host
+        .querySelector(`[role="option"][data-value="root:${ROOT}"]`)
+        ?.getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(
+      host
+        .querySelector(`[role="option"][data-value="root:${NESTED}"]`)
+        ?.getAttribute("aria-selected"),
+    ).toBe("false");
+  });
+
+  it("opens a draining project's scope without making a new composer launch available", () => {
+    render({
+      projects: [
+        defaultActiveProject(),
+        { ...backgroundProject(), origin: "closed-tab-live-tasks" },
+      ],
+    });
+    chooseScope(OTHER_ROOT);
+    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("api-service");
+    expect(submitButton().disabled).toBe(true);
+    expect(
+      host
+        .querySelector('button[aria-label="New thread"]')
+        ?.hasAttribute("disabled"),
+    ).toBe(true);
   });
 
   it("clears the prompt and opens the created thread after a start", async () => {

@@ -83,6 +83,7 @@ export interface AgentThreadNavigation {
   readonly terminalSessions: AgentTerminalSessionsPaletteState;
   readonly commands: AgentNavigationCommandHandlers;
   setRailScope(scope: AgentRailScope): void;
+  setProjectScope(projectRootKey: string): boolean;
   selectThread(threadId: string, reveal?: AgentThreadRevealRequest): void;
   selectStartedThread(threadId: string): void;
   clearSelectedThread(): void;
@@ -100,12 +101,18 @@ interface AgentNavigationScopeAuthority {
 }
 
 interface AgentNavigationScopeState {
+  readonly intent: "automatic" | "explicit";
   readonly railScope: AgentRailScope | null;
   readonly authority: AgentNavigationScopeAuthority | null;
   readonly order: ReadonlyArray<string>;
 }
 
-const NO_SCOPE_STATE: AgentNavigationScopeState = { railScope: null, authority: null, order: [] };
+const NO_SCOPE_STATE: AgentNavigationScopeState = {
+  intent: "automatic",
+  railScope: null,
+  authority: null,
+  order: [],
+};
 
 export function useAgentThreadNavigation({
   agents,
@@ -115,6 +122,8 @@ export function useAgentThreadNavigation({
   projects,
 }: AgentThreadNavigationOptions): AgentThreadNavigation {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const currentProjectsRef = useRef(projects);
+  currentProjectsRef.current = projects;
   const [storedScopeState, setScopeState] = useState<AgentNavigationScopeState>(NO_SCOPE_STATE);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [terminalSessionsTarget, setTerminalSessionsTarget] =
@@ -214,10 +223,32 @@ export function useAgentThreadNavigation({
   const setRailScope = useCallback(
     (scope: AgentRailScope) => {
       setScopeState((current) => ({
+        intent: "explicit",
         railScope: scope,
         authority: captureScopeAuthority(scope, projects),
         order: current.order,
       }));
+    },
+    [projects],
+  );
+
+  const setProjectScope = useCallback(
+    (projectRootKey: string) => {
+      const captured = projects.find((project) => project.rootKey === projectRootKey);
+      const live = currentProjectsRef.current.find((project) => project.rootKey === projectRootKey);
+      if (captured === undefined || live === undefined) return false;
+      if (captured.ownerId !== live.ownerId || captured.generation !== live.generation)
+        return false;
+      const railScope = { projectRootKey: live.rootKey, repositoryRoot: live.rootPath };
+      const authority = captureScopeAuthority(railScope, currentProjectsRef.current);
+      if (authority === null) return false;
+      setScopeState((current) => ({
+        intent: "automatic",
+        railScope,
+        authority,
+        order: current.order,
+      }));
+      return true;
     },
     [projects],
   );
@@ -329,6 +360,7 @@ export function useAgentThreadNavigation({
     terminalSessions,
     commands,
     setRailScope,
+    setProjectScope,
     selectThread,
     selectStartedThread,
     clearSelectedThread,
@@ -369,6 +401,7 @@ function reconcileScopeState(
   }
   const railScope = agentRailScopeFromEntry(next);
   const replacement: AgentNavigationScopeState = {
+    intent: entry === null ? "automatic" : current.intent,
     railScope,
     authority: captureScopeAuthority(railScope, projects),
     order,
@@ -381,6 +414,7 @@ function sameScopeState(
   right: AgentNavigationScopeState,
 ): boolean {
   if (!sameAgentRailScopeOrder(left.order, right.order)) return false;
+  if (left.intent !== right.intent) return false;
   if (left.railScope?.projectRootKey !== right.railScope?.projectRootKey) return false;
   if (left.railScope?.repositoryRoot !== right.railScope?.repositoryRoot) return false;
   if (left.authority?.ownerId !== right.authority?.ownerId) return false;
@@ -440,7 +474,7 @@ function resolveComposerScope(
   }
   if (!agentProjectOwnsLaunchRoot(project, scope.repositoryRoot)) return missing;
   return {
-    kind: "repository",
+    kind: state.intent === "automatic" ? "project" : "repository",
     projectRootKey: scope.projectRootKey,
     repositoryRoot: scope.repositoryRoot,
     ownerId: authority.ownerId,

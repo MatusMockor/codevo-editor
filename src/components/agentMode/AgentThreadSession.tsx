@@ -25,6 +25,7 @@ import {
   agentWorktreeRemovalLabel,
   agentTurnDurationLabel,
   agentTurnProjection,
+  agentTextParagraphs,
   agentTurnSubagentSummary,
   agentTurnWorkFold,
   isAgentSubagentToolItem,
@@ -446,29 +447,28 @@ function AgentSubagentBanner({ summary }: { readonly summary: AgentSubagentSumma
   );
 }
 
+interface AgentTurnItemViewProps {
+  readonly errorContext: AgentTurnErrorContext;
+  readonly highlight: AgentItemHighlight | null;
+  readonly item: AgentTurnItem;
+  readonly textClipboard: TextClipboardGateway | null;
+}
+
 function AgentTurnItemView({
   errorContext,
   highlight,
   item,
   textClipboard,
-}: {
-  readonly errorContext: AgentTurnErrorContext;
-  readonly highlight: AgentItemHighlight | null;
-  readonly item: AgentTurnItem;
-  readonly textClipboard: TextClipboardGateway | null;
-}) {
+}: AgentTurnItemViewProps) {
   if (item.kind === "assistantText") {
     return (
-      <div className="agent-text" data-agent-event={item.key}>
-        {paragraphRuns(item.paragraphs, highlight).map((run, index) => (
-          <p className="agent-text__paragraph" key={`${item.key}p${index}`}>
-            <HighlightRun current={run.current} query={highlight?.query ?? ""} text={run.text} />
-          </p>
-        ))}
-        <div className="agent-message-actions">
-          <AgentMessageCopyButton clipboard={textClipboard} label="AI response" text={item.text} />
-        </div>
-      </div>
+      <AgentAssistantText
+        eventKey={item.key}
+        current={highlight?.current ?? null}
+        query={highlight?.query ?? ""}
+        text={item.text}
+        textClipboard={textClipboard}
+      />
     );
   }
 
@@ -553,6 +553,34 @@ function AgentTurnItemView({
     </section>
   );
 }
+
+const AgentAssistantText = memo(function AgentAssistantText({
+  eventKey,
+  current,
+  query,
+  text,
+  textClipboard,
+}: {
+  readonly eventKey: string;
+  readonly current: number | null;
+  readonly query: string;
+  readonly text: string;
+  readonly textClipboard: TextClipboardGateway | null;
+}) {
+  const highlight = query === "" ? null : { query, current };
+  return (
+    <div className="agent-text" data-agent-event={eventKey}>
+      {paragraphRuns(agentTextParagraphs(text), highlight).map((run, index) => (
+        <p className="agent-text__paragraph" key={`${eventKey}p${index}`}>
+          <HighlightRun current={run.current} query={query} text={run.text} />
+        </p>
+      ))}
+      <div className="agent-message-actions">
+        <AgentMessageCopyButton clipboard={textClipboard} label="AI response" text={text} />
+      </div>
+    </div>
+  );
+});
 
 function AgentProviderErrorHint({ error }: { readonly error: AgentProviderError }): ReactNode {
   if (error.detail.kind !== "unsupportedModelForCliVersion") return null;

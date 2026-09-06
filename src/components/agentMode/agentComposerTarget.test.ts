@@ -16,6 +16,82 @@ const ACTIVE_ROOT = "/workspace/app";
 const BACKGROUND_ROOT = "/workspace/api";
 
 describe("resolveComposerTarget", () => {
+  it("validates automatic project scope authority before consulting remembered membership", () => {
+    const nested = `${ACTIVE_ROOT}/api`;
+    const project = {
+      ...activeProject(),
+      repositories: [{ repositoryRoot: nested, label: "api" }],
+    };
+    const preferences = new Map([[ACTIVE_ROOT, nested]]);
+    const scope = { ...selection(ACTIVE_ROOT, "agent-root:app", 1), kind: "project" as const };
+    expect(resolveComposerTarget([project], null, null, scope, preferences)?.repositoryRoot).toBe(
+      nested,
+    );
+    expect(
+      resolveComposerTarget([{ ...project, generation: 2 }], null, null, scope, preferences),
+    ).toBeNull();
+    expect(
+      resolveComposerTarget(
+        [{ ...project, ownerId: "replacement" }],
+        null,
+        null,
+        scope,
+        preferences,
+      ),
+    ).toBeNull();
+    expect(resolveComposerTarget([], null, null, scope, preferences)).toBeNull();
+  });
+
+  it("uses remembered membership only for the active default target and falls back after removal", () => {
+    const nested = `${ACTIVE_ROOT}/api`;
+    const project = {
+      ...activeProject(),
+      repositories: [{ repositoryRoot: nested, label: "api" }],
+    };
+    const preferences = new Map([
+      [ACTIVE_ROOT, nested],
+      [BACKGROUND_ROOT, `${BACKGROUND_ROOT}/web`],
+    ]);
+    expect(resolveComposerTarget([project], null, null, null, preferences)?.repositoryRoot).toBe(
+      nested,
+    );
+    expect(
+      resolveComposerTarget([activeProject()], null, null, null, preferences)?.repositoryRoot,
+    ).toBe(ACTIVE_ROOT);
+    expect(resolveComposerTarget([], null, null, null, preferences)).toBeNull();
+    expect(
+      resolveComposerTarget(
+        [project],
+        selection(ACTIVE_ROOT, "agent-root:app", 0),
+        null,
+        null,
+        preferences,
+      ),
+    ).toBeNull();
+    expect(
+      resolveComposerTarget(
+        [project],
+        { kind: "missing", projectRootKey: ACTIVE_ROOT, repositoryRoot: nested },
+        null,
+        null,
+        preferences,
+      ),
+    ).toBeNull();
+    expect(
+      resolveComposerTarget(
+        [project],
+        null,
+        null,
+        { ...selection(ACTIVE_ROOT, "agent-root:app", 1), kind: "repository" },
+        preferences,
+      )?.repositoryRoot,
+    ).toBe(ACTIVE_ROOT);
+    expect(
+      resolveComposerTarget([project], null, threadView(BACKGROUND_ROOT), null, preferences)
+        ?.repositoryRoot,
+    ).toBe(BACKGROUND_ROOT);
+  });
+
   it("targets the active-tab project when no project is scoped", () => {
     const target = resolveComposerTarget([backgroundProject(), activeProject()], null, null, null);
 

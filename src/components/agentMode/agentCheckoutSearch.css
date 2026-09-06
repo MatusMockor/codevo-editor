@@ -1,0 +1,66 @@
+.agent-checkout-search {
+  position: sticky;
+  top: -6px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 6px 4px;
+  padding: 8px 10px;
+  border-radius: var(--agent-radius-md);
+  color: var(--agent-text-muted);
+  background: var(--agent-well);
+}
+
+.agent-checkout-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  font: inherit;
+  color: var(--agent-text-strong);
+  background: transparent;
+}
+
+.agent-checkout-search:focus-within {
+  background: var(--agent-hover);
+  color: var(--agent-text-strong);
+}
+
+.agent-checkout-pages {
+  position: sticky;
+  bottom: -6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--agent-raised);
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+}
+
+.agent-checkout-pages span {
+  flex: 1;
+}
+
+.agent-checkout-pages button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--agent-radius-md);
+  background: transparent;
+  color: var(--agent-text-strong);
+  cursor: pointer;
+}
+
+.agent-checkout-pages button:hover:not(:disabled) {
+  background: var(--agent-hover);
+}
+
+.agent-checkout-pages button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

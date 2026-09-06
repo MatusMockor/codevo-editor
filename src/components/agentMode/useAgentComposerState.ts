@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { useAgentComposerRepositoryInteraction } from "./useAgentComposerRepositoryInteraction";
+import {
+  useAgentComposerRepositoryPreference,
+  type ComposerRepositoryPreferenceStorage,
+} from "./useAgentComposerRepositoryPreference";
 import {
   MAX_AGENT_TASK_PROMPT_BYTES,
   type AgentCliKind,
@@ -64,6 +69,7 @@ export interface AgentComposerStateOptions {
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly selectedThread: AgentThreadView | null;
   readonly railScope: ComposerScope | null;
+  readonly repositoryPreferenceStorage?: ComposerRepositoryPreferenceStorage;
   onClearSelectedThread(): void;
   onThreadStarted(threadId: string): void;
 }
@@ -129,9 +135,13 @@ export function useAgentComposerControllerState({
   projects,
   providerEnabled,
   railScope,
+  repositoryPreferenceStorage,
   selectedThread,
 }: AgentComposerStateOptions): AgentComposerControllerState {
   const [selection, setSelection] = useState<ComposerSelection | null>(null);
+  const { preferences, rememberRepository } = useAgentComposerRepositoryPreference(
+    repositoryPreferenceStorage,
+  );
   const [isolationChoice, setIsolationChoice] = useState<IsolationChoice | null>(null);
   const [launchChoice, setLaunchChoice] = useState<LaunchChoice | null>(null);
 
@@ -139,8 +149,10 @@ export function useAgentComposerControllerState({
     () => composerProjectOptions(groups, projects),
     [groups, projects],
   );
-  const scopedProjectRootKey = railScope?.kind === "repository" ? railScope.projectRootKey : null;
-  const scopedRepositoryRoot = railScope?.kind === "repository" ? railScope.repositoryRoot : null;
+  const scopedProjectRootKey =
+    railScope !== null && railScope.kind !== "missing" ? railScope.projectRootKey : null;
+  const scopedRepositoryRoot =
+    railScope !== null && railScope.kind !== "missing" ? railScope.repositoryRoot : null;
   useLayoutEffect(() => {
     if (scopedProjectRootKey === null || scopedRepositoryRoot === null) return;
     setSelection((current) => {
@@ -153,12 +165,27 @@ export function useAgentComposerControllerState({
       }
       return null;
     });
-  }, [scopedProjectRootKey, scopedRepositoryRoot]);
-  const target = resolveComposerTarget(composerProjects, selection, selectedThread, railScope);
+  }, [railScope?.kind, scopedProjectRootKey, scopedRepositoryRoot]);
+  const target = resolveComposerTarget(
+    composerProjects,
+    selection,
+    selectedThread,
+    railScope,
+    preferences,
+  );
   const composerRoot = target?.repositoryRoot ?? null;
+  const repositorySelectionAuthorityRef = useRef({ projects: composerProjects, target });
+  repositorySelectionAuthorityRef.current = { projects: composerProjects, target };
   const composerProjectRootKey = target?.projectRootKey ?? null;
   const composerProject =
     projects.find((project) => project.rootKey === target?.projectRootKey) ?? null;
+  const repositoryInteractionIsCurrent = useAgentComposerRepositoryInteraction(
+    composerProject,
+    target,
+    railScope,
+    selection,
+    selectedThread,
+  );
   const composerLabel =
     composerTargetLabel(composerProjects, target) ??
     groups.flatMap((group) => group.repos).find((repo) => repo.repositoryRoot === composerRoot)
@@ -316,12 +343,25 @@ export function useAgentComposerControllerState({
 
   const selectRepository = useCallback(
     (repositoryRoot: string) => {
+      if (!repositoryInteractionIsCurrent()) return;
       if (target === null) return;
       const project =
         composerProjects.find((candidate) => candidate.projectRootKey === target.projectRootKey) ??
         null;
       if (project === null) return;
+      const current = repositorySelectionAuthorityRef.current;
+      if (current.target?.projectRootKey !== target.projectRootKey) return;
+      const liveProject = current.projects.find(
+        (candidate) => candidate.projectRootKey === target.projectRootKey,
+      );
+      if (
+        liveProject?.ownerId !== project.ownerId ||
+        liveProject?.generation !== project.generation
+      )
+        return;
+      if (!composerProjectOwnsRoot(liveProject, repositoryRoot)) return;
       if (!composerProjectOwnsRoot(project, repositoryRoot)) return;
+      rememberRepository(target.projectRootKey, repositoryRoot);
       setSelection({
         kind: "bound",
         projectRootKey: target.projectRootKey,
@@ -330,7 +370,7 @@ export function useAgentComposerControllerState({
         generation: project.generation,
       });
     },
-    [composerProjects, target],
+    [composerProjects, rememberRepository, repositoryInteractionIsCurrent, target],
   );
 
   const changeIsolation = useCallback(

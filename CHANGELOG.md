@@ -5,6 +5,23 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Run frontend and Rust release checks concurrently while retaining both as build prerequisites.
+- Avoid redrawing unchanged composer controls while typing and unchanged response text while streaming.
+
+### Added
+
+- Search and paginated results in the checkout menu for projects with many repositories.
+- Remember the last repository selected for each project, with validated fallback when it is removed.
+
+### Fixed
+
+- Keep debug DMG smoke builds independent of updater signing keys.
+- Test debugger descriptor quotas independently from completion latency limits.
+
 ## [0.2.0-beta.17] - 2026-09-07
 
 ### Changed

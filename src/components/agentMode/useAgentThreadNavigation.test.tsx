@@ -43,6 +43,46 @@ describe("useAgentThreadNavigation", () => {
     vi.useRealTimers();
   });
 
+  it("distinguishes automatic project targeting from deliberately choosing the same project root", () => {
+    render(threadsSurfaceFixture());
+    expect(current().composerScope?.kind).toBe("project");
+    act(() =>
+      current().setRailScope({
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    );
+    expect(current().composerScope?.kind).toBe("repository");
+    render(threadsSurfaceFixture());
+    expect(current().composerScope?.kind).toBe("repository");
+  });
+
+  it("selects project context separately from an exact repository and rejects stale scope callbacks", () => {
+    render(threadsSurfaceFixture());
+    act(() =>
+      current().setRailScope({
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: FIXTURE_NESTED_ROOT,
+      }),
+    );
+    expect(current().composerScope?.kind).toBe("repository");
+    act(() => expect(current().setProjectScope(SURFACE_FIXTURE_ROOT)).toBe(true));
+    expect(current().composerScope?.kind).toBe("project");
+    expect(current().railScope?.repositoryRoot).toBe(SURFACE_FIXTURE_ROOT);
+    const retained = current().setProjectScope;
+    render(threadsSurfaceFixture(), [projectFixture({ generation: 8 })]);
+    act(() => expect(retained(SURFACE_FIXTURE_ROOT)).toBe(false));
+    act(() => expect(current().setProjectScope("/missing")).toBe(false));
+  });
+
+  it("allows inspecting a closed project with live tasks while keeping new-thread targeting unavailable", () => {
+    const draining = { ...project(OTHER_ROOT, "api"), origin: "closed-tab-live-tasks" as const };
+    render(threadsSurfaceFixture(), [projectFixture(), draining]);
+    act(() => expect(current().setProjectScope(OTHER_ROOT)).toBe(true));
+    expect(current().railScope?.projectRootKey).toBe(OTHER_ROOT);
+    expect(current().newThreadTarget()).toBeNull();
+  });
+
   it("selects threads, marks them viewed, and forgets a removed selection", () => {
     const markThreadViewed = vi.fn();
     render(threadsSurfaceFixture({ threads: [view("agt-1"), view("agt-2")], markThreadViewed }));

@@ -1,5 +1,5 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp, Folder, FolderGit2, Loader2, Plus, X } from "lucide-react";
+import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { ArrowUp, Loader2, Plus, X } from "lucide-react";
 import {
   useAgentModelFavorites,
   type AgentModelFavoritesPersistence,
@@ -13,24 +13,17 @@ import {
   type AgentTaskIsolation,
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
-import {
-  agentComposerCheckoutChoice,
-  agentComposerCheckoutOptions,
-  agentComposerNestedTargetLabel,
-  type AgentComposerTarget,
-} from "./agentComposerCheckout";
+import { agentComposerNestedTargetLabel, type AgentComposerTarget } from "./agentComposerCheckout";
 import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentLaunchControls } from "./AgentLaunchControls";
 import { agentLaunchForDispatch, agentLaunchSummaryLabel } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
-import { AgentPickerMenu } from "./AgentPickerMenu";
-import type { AgentPickerOption } from "./agentPickerOption";
+import { AgentComposerCheckout, AgentComposerLockedCheckout } from "./AgentComposerControls";
 import { agentSubmitShortcut } from "./agentSubmitShortcut";
 import { agentControlTooltip } from "./agentThreadHeaderPresentation";
 import { useCompactComposerControls } from "./useCompactComposerControls";
 
-const CHECKOUT_ID = "agent-checkout";
 const NO_TARGET_REASON = "Choose a project in the rail to start a thread.";
 
 export type { AgentComposerRepositoryOption, AgentComposerTarget } from "./agentComposerCheckout";
@@ -113,13 +106,20 @@ export function AgentComposer({
   const followUp = mode.kind === "followUp";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason = composerTargetReason(followUp, target);
-  const selectedLaunch =
-    launch.provider === launchProvider ? launch : defaultAgentComposerLaunch(launchProvider);
-  const normalizedLaunch = normalizeAgentComposerLaunch(selectedLaunch);
+  const normalizedLaunch = useMemo(
+    () =>
+      normalizeAgentComposerLaunch(
+        launch.provider === launchProvider ? launch : defaultAgentComposerLaunch(launchProvider),
+      ),
+    [launch, launchProvider],
+  );
   const discovery = providerManagement?.cliDiscovery[normalizedLaunch.provider];
   const configuredModel =
     discovery?.kind === "detected" ? (discovery.configuredModel ?? null) : null;
-  const effectiveLaunch = agentLaunchForDispatch(normalizedLaunch, configuredModel);
+  const effectiveLaunch = useMemo(
+    () => agentLaunchForDispatch(normalizedLaunch, configuredModel),
+    [normalizedLaunch, configuredModel],
+  );
   const dangerousLaunch = agentLaunchIsDangerous(effectiveLaunch);
   const providerReason =
     providerEnabled[effectiveLaunch.provider] === false
@@ -139,16 +139,28 @@ export function AgentComposer({
     worktreeOnlyReason,
   });
 
-  const launchControls = (
-    <AgentLaunchControls
-      disabled={dispatching || allProvidersDisabled}
-      favorites={favorites}
-      launch={effectiveLaunch}
-      onLaunchChange={onLaunchChange}
-      providerEnabled={providerEnabled}
-      providerManagement={providerManagement}
-      providerSwitchable={!followUp}
-    />
+  const launchControls = useMemo(
+    () => (
+      <AgentLaunchControls
+        disabled={dispatching || allProvidersDisabled}
+        favorites={favorites}
+        launch={effectiveLaunch}
+        onLaunchChange={onLaunchChange}
+        providerEnabled={providerEnabled}
+        providerManagement={providerManagement}
+        providerSwitchable={!followUp}
+      />
+    ),
+    [
+      dispatching,
+      allProvidersDisabled,
+      favorites,
+      effectiveLaunch,
+      onLaunchChange,
+      providerEnabled,
+      providerManagement,
+      followUp,
+    ],
   );
 
   const nestedTargetLabel = agentComposerNestedTargetLabel(target);
@@ -345,89 +357,6 @@ function AgentComposerBytes({ promptBytes }: { readonly promptBytes: number }) {
       {formatAgentPromptBytes(promptBytes)} / {formatAgentPromptBytes(MAX_AGENT_TASK_PROMPT_BYTES)}
     </span>
   );
-}
-
-function AgentComposerCheckout({
-  disabled,
-  isolation,
-  onIsolationChange,
-  onRefreshIsolation,
-  onSelectRepository,
-  target,
-  worktreeAvailable,
-  worktreeOnly,
-}: {
-  readonly isolation: AgentTaskIsolation;
-  readonly disabled: boolean;
-  readonly target: AgentComposerTarget | null;
-  readonly worktreeAvailable: boolean;
-  readonly worktreeOnly: boolean;
-  onIsolationChange(isolation: AgentTaskIsolation): void;
-  onRefreshIsolation?(): void;
-  onSelectRepository(repositoryRoot: string): void;
-}) {
-  const options = worktreeOnly
-    ? lockedWorktreeOptions(target)
-    : agentComposerCheckoutOptions(target, worktreeAvailable);
-  const lockedWithoutChoice =
-    worktreeOnly && options.length < 2 && onRefreshIsolation === undefined;
-  const choose = (value: string): void => {
-    const choice = agentComposerCheckoutChoice(value);
-    if (choice === null) return;
-    if (choice.kind === "root") {
-      onSelectRepository(choice.repositoryRoot);
-      return;
-    }
-    if (worktreeOnly) return;
-    onIsolationChange(choice.isolation);
-  };
-  return (
-    <AgentPickerMenu
-      align="start"
-      confirmation={null}
-      describedBy={null}
-      disabled={disabled || lockedWithoutChoice}
-      icon={isolationGlyph(isolation)}
-      id={CHECKOUT_ID}
-      label="Checkout for this thread"
-      menuLayout="checkout"
-      onChange={choose}
-      onOpen={onRefreshIsolation}
-      options={options}
-      prefix={null}
-      tone={null}
-      value={isolation}
-      variant="ghost"
-    />
-  );
-}
-
-function lockedWorktreeOptions(
-  target: AgentComposerTarget | null,
-): ReadonlyArray<AgentPickerOption> {
-  return agentComposerCheckoutOptions(target, true).filter((option) => option.value !== "in-place");
-}
-
-function AgentComposerLockedCheckout({ isolation }: { readonly isolation: AgentTaskIsolation }) {
-  return (
-    <span className="agent-composer__lock">
-      <span aria-hidden="true" className="agent-composer__lock-glyph">
-        {isolationGlyph(isolation)}
-      </span>
-      <span className="agent-visually-hidden">Checkout:</span>
-      {isolationLabel(isolation)}
-    </span>
-  );
-}
-
-function isolationGlyph(isolation: AgentTaskIsolation): ReactNode {
-  if (isolation === "worktree") return <FolderGit2 size={12} />;
-  return <Folder size={12} />;
-}
-
-function isolationLabel(isolation: AgentTaskIsolation): string {
-  if (isolation === "worktree") return "Isolated worktree";
-  return "Local checkout";
 }
 
 function submitAccessibleName(dispatching: boolean, followUp: boolean): string {

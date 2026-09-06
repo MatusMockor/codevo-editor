@@ -456,7 +456,7 @@ function appendTurnItem({
       kind: "assistantText",
       key,
       text: event.text,
-      paragraphs: paragraphsOf(event.text),
+      paragraphs: agentTextParagraphs(event.text),
     });
     return;
   }
@@ -546,7 +546,7 @@ function toolCallIndex(
   return calls;
 }
 
-function paragraphsOf(text: string): ReadonlyArray<string> {
+export function agentTextParagraphs(text: string): ReadonlyArray<string> {
   const paragraphs = text
     .split(PARAGRAPH_SEPARATOR)
     .map((paragraph) => paragraph.trim())

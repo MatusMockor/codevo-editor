@@ -27,7 +27,7 @@ export type ComposerSelection =
 
 export type ComposerScope =
   | ({
-      readonly kind: "repository";
+      readonly kind: "repository" | "project";
       readonly ownerId: string;
       readonly generation: number;
     } & ComposerTarget)
@@ -46,6 +46,7 @@ export function resolveComposerTarget(
   selection: ComposerSelection | null,
   selectedThread: AgentThreadView | null,
   scope: ComposerScope | null,
+  preferences: ReadonlyMap<string, string> | null = null,
 ): ComposerTarget | null {
   if (selectedThread !== null) {
     const owner = selectedThread.thread.owner;
@@ -55,14 +56,34 @@ export function resolveComposerTarget(
   if (selection?.kind === "missing") return null;
   if (scope?.kind === "missing") return null;
   if (selection !== null) return findComposerTarget(projects, selection);
-  if (scope !== null) return findComposerTarget(projects, scope);
+  if (scope !== null) {
+    const scoped = findComposerTarget(projects, scope);
+    if (scoped === null || scope.kind === "repository") return scoped;
+    const project = projects.find(
+      (candidate) => candidate.projectRootKey === scoped.projectRootKey,
+    );
+    if (project === undefined) return null;
+    return preferredProjectTarget(project, preferences);
+  }
 
   const project = projects.find((candidate) => candidate.origin === "active-tab") ?? null;
   if (project === null) {
     return null;
   }
 
-  return { projectRootKey: project.projectRootKey, repositoryRoot: project.rootPath };
+  return preferredProjectTarget(project, preferences);
+}
+
+function preferredProjectTarget(
+  project: AgentComposerProjectOption,
+  preferences: ReadonlyMap<string, string> | null,
+): ComposerTarget {
+  const preferredRoot = preferences?.get(project.projectRootKey);
+  const repositoryRoot =
+    preferredRoot !== undefined && composerProjectOwnsRoot(project, preferredRoot)
+      ? preferredRoot
+      : project.rootPath;
+  return { projectRootKey: project.projectRootKey, repositoryRoot };
 }
 
 function findComposerTarget(

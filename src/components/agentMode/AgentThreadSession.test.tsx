@@ -24,6 +24,17 @@ import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
 const ROOT = "/workspace/app";
 const WORKTREE = `${ROOT}/.worktrees/agt-1`;
 const NOW = 1_700_000_600_000;
+const messageRenders = vi.hoisted(() => vi.fn<(text: string) => void>());
+
+vi.mock("./AgentMessageCopyButton", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./AgentMessageCopyButton")>();
+  return {
+    AgentMessageCopyButton(props: Parameters<typeof original.AgentMessageCopyButton>[0]) {
+      messageRenders(props.text);
+      return <original.AgentMessageCopyButton {...props} />;
+    },
+  };
+});
 
 describe("AgentThreadSession", () => {
   let host: HTMLDivElement;
@@ -932,6 +943,122 @@ describe("AgentThreadSession", () => {
 
     expect(renders.filter((turnId) => turnId !== "agt-1-run")).toEqual([]);
     expect(renders).toHaveLength(200);
+  });
+
+  it("keeps unchanged response bodies idle while the current response streams", async () => {
+    const writeText = vi.fn(async () => undefined);
+    const textClipboard = { canWriteText: () => true, writeText };
+    const history: AgentTurnEvent[] = Array.from({ length: 120 }, (_, index) => ({
+      kind: "assistantText",
+      text: `Completed paragraph ${index}`,
+    }));
+    const stream = (text: string): void =>
+      render({
+        textClipboard,
+        thread: threadView({
+          turns: [
+            turn("active", "Continue", { kind: "running" }, [
+              ...history,
+              { kind: "assistantText", text },
+            ]),
+          ],
+        }),
+      });
+    stream("Live 0");
+    messageRenders.mockClear();
+
+    for (let chunk = 1; chunk <= 50; chunk += 1) stream(`Live ${chunk}`);
+
+    const responses = messageRenders.mock.calls
+      .map(([text]) => text)
+      .filter((text) => text !== "Continue");
+    expect(responses).toEqual(Array.from({ length: 50 }, (_, index) => `Live ${index + 1}`));
+    expect(host.querySelectorAll(".agent-text__paragraph")).toHaveLength(121);
+    expect(host.querySelector('[data-agent-event="e120"]')?.textContent).toBe("Live 50");
+    const copy = host.querySelector<HTMLButtonElement>('[data-agent-event="e120"] button');
+    await act(async () => copy?.click());
+    expect(writeText).toHaveBeenLastCalledWith("Live 50");
+
+    stream("Live 51\n\nLatest paragraph");
+    expect(copy?.getAttribute("aria-label")).toBe("Copy AI response");
+    await act(async () => copy?.click());
+    expect(writeText).toHaveBeenLastCalledWith("Live 51\n\nLatest paragraph");
+  });
+
+  it("updates copied output when a stream is replaced at the same event position", async () => {
+    const firstWrite = vi.fn(async () => undefined);
+    const secondWrite = vi.fn(async () => undefined);
+    const show = (text: string, writeText: TextClipboardGateway["writeText"]): void =>
+      render({
+        textClipboard: { canWriteText: () => true, writeText },
+        thread: threadView({
+          turns: [
+            turn("active", "Continue", { kind: "running" }, [{ kind: "assistantText", text }]),
+          ],
+        }),
+      });
+    show("First", firstWrite);
+    show("Replacement", secondWrite);
+    await act(async () => button("Copy AI response").click());
+    expect(firstWrite).not.toHaveBeenCalled();
+    expect(secondWrite).toHaveBeenLastCalledWith("Replacement");
+
+    show("Replacement", firstWrite);
+    await act(async () => button("Copied AI response").click());
+    expect(firstWrite).toHaveBeenLastCalledWith("Replacement");
+  });
+
+  it("removes find highlights without changing the streamed response text", () => {
+    const thread = findThreadView();
+    render({ thread, findQuery: FIND_QUERY, findHits: FIND_HITS, findHitIndex: 2 });
+    expect(
+      host.querySelector('[data-agent-event="e0"] mark.agent-find__hit--current'),
+    ).not.toBeNull();
+
+    render({ thread, findQuery: "", findHits: [], findHitIndex: undefined });
+    expect(host.querySelectorAll("mark")).toHaveLength(0);
+    expect(host.querySelector('[data-agent-event="e0"]')?.textContent).toBe(
+      "the parser is ready.nothing else here.",
+    );
+  });
+
+  it("keeps an old copy completion out of a replacement thread with the same event key", async () => {
+    let completeCopy: (() => void) | undefined;
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          completeCopy = resolve;
+        }),
+    );
+    const textClipboard = { canWriteText: () => true, writeText };
+    render({
+      textClipboard,
+      thread: threadView({
+        turns: [
+          turn("first-turn", "First", { kind: "running" }, [
+            { kind: "assistantText", text: "Old output" },
+          ]),
+        ],
+      }),
+    });
+    await act(async () => button("Copy AI response").click());
+
+    const replacement = threadView({
+      turns: [
+        turn("replacement-turn", "Next", { kind: "running" }, [
+          { kind: "assistantText", text: "New output" },
+        ]),
+      ],
+    });
+    render({
+      textClipboard,
+      thread: { ...replacement, thread: { ...replacement.thread, threadId: "replacement-thread" } },
+    });
+    await act(async () => completeCopy?.());
+
+    expect(button("Copy AI response")).not.toBeNull();
+    expect(host.querySelector('[data-agent-event="e0"]')?.textContent).toBe("New output");
+    expect(host.textContent).not.toContain("Old output");
   });
 
   it("marks every find hit in the prompt and the assistant text", () => {
