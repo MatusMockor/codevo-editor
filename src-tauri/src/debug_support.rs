@@ -572,9 +572,9 @@ mod process_tests {
 
         assert!(finished_rx.recv_timeout(Duration::from_secs(2)).is_ok());
         assert_eq!(
-            finished_rx.try_recv(),
-            Err(mpsc::TryRecvError::Disconnected),
-            "process completion ran more than once"
+            finished_rx.recv_timeout(Duration::from_secs(2)),
+            Err(mpsc::RecvTimeoutError::Disconnected),
+            "process completion ran more than once or retained its sender"
         );
         assert!(!process_is_running(process_id));
     }
