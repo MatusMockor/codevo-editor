@@ -18,6 +18,7 @@ import {
   agentLaunchEffectiveModel,
   agentLaunchForDispatch,
   agentLaunchMetaLabel,
+  agentLaunchSummaryLabel,
   agentLaunchModeChoices,
   agentLaunchModeHint,
   agentLaunchModeLabel,
@@ -377,6 +378,28 @@ describe("agentLaunchPresentation", () => {
     expect(
       agentLaunchMetaLabel({ provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" }),
     ).toBe("gpt-5.5 · workspace write");
+  });
+
+  it("summarises the collapsed composer chip with the picker display labels", () => {
+    expect(
+      agentLaunchSummaryLabel({
+        provider: "claudeCode",
+        model: "claude-fable-5-1",
+        mode: "bypassPermissions",
+        effort: "high",
+      }),
+    ).toBe("Claude Fable 5.1 · Full access · High");
+    expect(
+      agentLaunchSummaryLabel({
+        provider: "claudeCode",
+        model: "claude-fable-5-1",
+        mode: "acceptEdits",
+        effort: "default",
+      }),
+    ).toBe("Claude Fable 5.1 · Auto-accept edits");
+    expect(
+      agentLaunchSummaryLabel({ provider: "codex", model: "gpt-5.5", mode: "workspaceWrite" }),
+    ).toBe("GPT-5.5 · Workspace write");
   });
 });
 

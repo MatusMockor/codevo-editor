@@ -1,7 +1,7 @@
 import { useEffect, useState, type RefObject } from "react";
 
-export const COMPACT_COMPOSER_QUERY = "(max-width: 620px)";
-const COMPACT_COMPOSER_MAX_INLINE_SIZE = 620;
+export const COMPACT_COMPOSER_MAX_INLINE_SIZE = 560;
+export const COMPACT_COMPOSER_QUERY = `(max-width: ${COMPACT_COMPOSER_MAX_INLINE_SIZE}px)`;
 
 export function useCompactComposerControls(
   ownerRef: RefObject<HTMLElement | null> | null = null,

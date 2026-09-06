@@ -242,6 +242,19 @@
     grid-template-rows: minmax(112px, 28vh) minmax(0, 1fr);
   }
 
+  /* Stacked track: the rail keeps the first row and the centre column moves under it, so the
+     thread and composer own the single column instead of an implicit zero-width one. */
+  .agent-mode__grid > .agent-rail,
+  .agent-mode__grid > .agent-rail__chrome {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .agent-mode__center {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
   .agent-rail {
     overflow: hidden;
   }

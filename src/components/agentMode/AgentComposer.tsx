@@ -16,7 +16,7 @@ import {
 import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentLaunchControls } from "./AgentLaunchControls";
-import { agentLaunchForDispatch, agentLaunchMetaLabel } from "./agentLaunchPresentation";
+import { agentLaunchForDispatch, agentLaunchSummaryLabel } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 import { AgentPickerMenu } from "./AgentPickerMenu";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
@@ -266,7 +266,7 @@ export function AgentComposer({
           {compact ? (
             <AgentComposerCompactMenu
               disabled={dispatching || allProvidersDisabled}
-              summary={agentLaunchMetaLabel(effectiveLaunch)}
+              summary={agentLaunchSummaryLabel(effectiveLaunch, configuredModel)}
             >
               {launchControls}
               {targetControls}

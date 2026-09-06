@@ -3,7 +3,10 @@
 import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useCompactComposerControls } from "./useCompactComposerControls";
+import {
+  COMPACT_COMPOSER_MAX_INLINE_SIZE,
+  useCompactComposerControls,
+} from "./useCompactComposerControls";
 
 describe("useCompactComposerControls", () => {
   let callbacks: ResizeObserverCallback[];
@@ -70,6 +73,23 @@ describe("useCompactComposerControls", () => {
     deliverResize();
 
     expect(host.textContent).toBe("compact");
+  });
+
+  it("keeps the full launch row on every center that still holds it", () => {
+    stubViewport(1_280, false);
+    renderProbe(COMPACT_COMPOSER_MAX_INLINE_SIZE + 1);
+
+    expect(host.textContent).toBe("wide");
+
+    center().dataset.inlineSize = String(COMPACT_COMPOSER_MAX_INLINE_SIZE);
+    deliverResize();
+
+    expect(host.textContent).toBe("compact");
+
+    center().dataset.inlineSize = "612";
+    deliverResize();
+
+    expect(host.textContent).toBe("wide");
   });
 
   it("disconnects its owner and ignores a stale callback after unmount", () => {

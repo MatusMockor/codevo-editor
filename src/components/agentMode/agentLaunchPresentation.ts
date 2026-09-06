@@ -557,6 +557,15 @@ export function agentLaunchMetaLabel(launch: AgentLaunchOptions): string {
   return `${base} · ${agentLaunchEffortMeta(launch)}`;
 }
 
+export function agentLaunchSummaryLabel(
+  launch: AgentLaunchOptions,
+  configuredModel: string | null = null,
+): string {
+  const base = `${agentLaunchModelLabel(launch, configuredModel)} · ${agentLaunchModeLabel(launch)}`;
+  if (agentLaunchEffortValue(launch) === "default") return base;
+  return `${base} · ${agentLaunchEffortLabel(launch)}`;
+}
+
 export function agentLaunchWithModel(
   launch: AgentLaunchOptions,
   value: string,

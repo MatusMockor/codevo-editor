@@ -231,7 +231,7 @@ describe("AgentComposer", () => {
     expect(onNewThread).toHaveBeenCalledTimes(1);
   });
 
-  it("collapses every picker into one menu below 620px", () => {
+  it("collapses every picker into one menu below 560px", () => {
     stubMatchMedia(true);
     render();
 
@@ -243,6 +243,8 @@ describe("AgentComposer", () => {
       'button[aria-label="More composer controls"]',
     );
     expect(menu).not.toBeNull();
+    expect(menu?.textContent).toBe("Claude Sonnet 5 · Full access · High");
+    expect(menu?.getAttribute("title")).toBe("Claude Sonnet 5 · Full access · High");
     act(() => menu?.click());
 
     const panel = host.querySelector(".agent-composer__compact-panel");

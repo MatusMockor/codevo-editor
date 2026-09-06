@@ -424,10 +424,12 @@
 }
 
 /*
-  Below 620px the launch and checkout pickers no longer fit beside the send
-  button, so the row keeps the compact menu and the send button only.
+  Below 560px of centre column the launch and checkout pickers no longer fit beside the send
+  button, so the row keeps the compact menu and the send button only. The centre column keeps
+  the authority (useCompactComposerControls); this viewport query is the fallback for a
+  composer rendered outside the agent centre.
 */
-@media (max-width: 620px) {
+@media (max-width: 560px) {
   .agent-composer__row {
     flex-wrap: nowrap;
   }
