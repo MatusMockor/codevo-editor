@@ -505,7 +505,8 @@ describe("App command routing", () => {
   });
 
   it("swaps the workbench chrome for the settings surface while the route is open", async () => {
-    expect(host.querySelector("main")?.className).toBe("app-shell");
+    expect(host.querySelector("main")?.className).not.toContain("app-shell--settings");
+    expect(host.querySelector("main")?.className).not.toContain("app-shell--agent-mode");
     expect(host.querySelector(".sidebar")).not.toBeNull();
     expect(buttonByTitle("Settings")?.getAttribute("aria-pressed")).toBe("false");
 

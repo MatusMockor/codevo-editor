@@ -26,6 +26,7 @@ import type {
 } from "../../application/agentViewCommandBridge";
 import { AgentComposerController } from "./AgentComposerController";
 import { AgentPanelLayoutControls } from "./AgentPanelLayoutControls";
+import { AgentRailResizeHandle } from "./AgentRailResizeHandle";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
 import { AgentAddProjectDialog } from "./AgentAddProjectDialog";
 import { AgentNoticeBar } from "./AgentNoticeBar";
@@ -433,7 +434,7 @@ export function AgentModeView({
         <AgentClockProvider nowTickMs={nowTickMs}>
           <div className="agent-mode__grid">
             {layout.rail === "collapsed" ? (
-              <div className="agent-rail__chrome">
+              <div className="agent-rail__chrome" data-tauri-drag-region="">
                 <button
                   aria-expanded="false"
                   aria-label="Expand sidebar"
@@ -469,6 +470,13 @@ export function AgentModeView({
                 scopeEntries={navigation.scopeEntries}
                 search={navigation.search}
                 selectedThreadId={selectedThread?.thread.threadId ?? null}
+              />
+            )}
+            {layout.rail === "expanded" && (
+              <AgentRailResizeHandle
+                onReset={surface.resetRailWidth}
+                onResize={surface.resizeRail}
+                width={layout.railWidth}
               />
             )}
 
@@ -607,6 +615,12 @@ function providerNotice(toast: AgentProviderManagementToast | null): AgentTasksN
       return {
         kind: "info",
         message: `${providerLabel(toast.provider)} updated to v${toast.version}.`,
+        action: null,
+      };
+    case "updateAlreadyCurrent":
+      return {
+        kind: "info",
+        message: `The updater ran but ${providerLabel(toast.provider)} is still on v${toast.version}.`,
         action: null,
       };
     case "updateFailed":

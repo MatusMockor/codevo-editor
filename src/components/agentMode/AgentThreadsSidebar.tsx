@@ -255,7 +255,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
 
   return (
     <aside aria-label="Agent threads" className="agent-rail" ref={railRef}>
-      <div className="agent-rail__chrome">
+      <div className="agent-rail__chrome" data-tauri-drag-region="">
         <button
           aria-expanded="true"
           aria-label="Collapse sidebar"

@@ -48,8 +48,9 @@ describe("agentSurfaceHostPlacement", () => {
 
 describe("workbenchShellPlacement", () => {
   it.each([
-    { viewportWidth: 1_180, expectedWidth: 540, responsiveMaximized: false },
-    { viewportWidth: 1_000, expectedWidth: 392, responsiveMaximized: false },
+    { viewportWidth: 1_280, expectedWidth: 464, responsiveMaximized: false },
+    { viewportWidth: 1_180, expectedWidth: 372, responsiveMaximized: false },
+    { viewportWidth: 1_000, expectedWidth: 540, responsiveMaximized: true },
     { viewportWidth: 720, expectedWidth: 540, responsiveMaximized: true },
   ])(
     "keeps the centre and right panel disjoint at $viewportWidth pixels",
@@ -82,7 +83,7 @@ describe("workbenchShellPlacement", () => {
         layout: layoutOf({ rightPanel: "open", rightPanelWidth: 700 }),
         viewportWidth: 1_180,
       }),
-    ).toMatchObject({ rightPanelWidth: 572, responsiveMaximized: false });
+    ).toMatchObject({ rightPanelWidth: 372, responsiveMaximized: false });
   });
 
   it("hides the editor while the panel is closed even when the files tab stays open", () => {
@@ -106,6 +107,7 @@ describe("workbenchShellPlacement", () => {
       responsiveMaximized: false,
       responsiveRestore: "none",
       rail: "expanded",
+      railWidth: 256,
       rightPanelWidth: 0,
       bottomPanelHeight: 0,
     });
@@ -145,6 +147,7 @@ describe("workbenchShellPlacement", () => {
       responsiveMaximized: false,
       responsiveRestore: "none",
       rail: "collapsed",
+      railWidth: 256,
       rightPanelWidth: 620,
       bottomPanelHeight: 200,
     });
@@ -166,6 +169,7 @@ describe("workbenchShellPlacement", () => {
       responsiveMaximized: false,
       responsiveRestore: "none",
       rail: "expanded",
+      railWidth: 256,
       rightPanelWidth: 0,
       bottomPanelHeight: 0,
     });

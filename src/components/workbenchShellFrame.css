@@ -22,6 +22,8 @@
 .editor-workbench {
   --agent-right-panel-committed: 0px;
   --agent-bottom-panel-committed: 0px;
+  --agent-rail-committed: 256px;
+  --agent-rail-width: var(--agent-rail-committed);
   --agent-right-panel-width: var(--agent-right-panel-committed);
   --agent-bottom-panel-height: var(--agent-bottom-panel-committed);
 }
@@ -50,8 +52,7 @@
   agent grid below reuses the same track so both columns stay aligned.
 */
 .workbench-frame[data-layout="agent"] {
-  --agent-center-min-width: 360px;
-  --agent-rail-width: 256px;
+  --agent-center-min-width: 560px;
   --agent-rail-inset: 8px;
   --agent-rail-collapsed-width: calc(32px + 2 * var(--agent-rail-inset));
   --agent-rail-track: var(--agent-rail-width);
@@ -228,7 +229,7 @@
 */
 @media (max-width: 1180px) {
   .workbench-frame[data-layout="agent"][data-rail="expanded"] {
-    --agent-rail-track: 248px;
+    --agent-rail-track: min(var(--agent-rail-width), 248px);
   }
 }
 

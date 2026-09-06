@@ -2,7 +2,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  min-width: var(--agent-rail-min-width);
+  min-width: min(var(--agent-rail-min-width), 100%);
   background: var(--codevo-side);
   min-height: 0;
   padding: 0 6px 8px;
@@ -18,7 +18,46 @@
 }
 
 .agent-rail > .agent-rail__chrome {
-  padding: 0 6px 0 4px;
+  padding: 0 6px 0 max(4px, var(--window-native-controls-inset, 0px));
+}
+
+.agent-mode__grid > .agent-rail__chrome {
+  height: calc(44px + var(--window-native-controls-row, 0px));
+  padding-top: var(--window-native-controls-row, 0px);
+}
+
+.agent-mode__grid > .agent-rail,
+.agent-mode__grid > .agent-rail__chrome {
+  grid-column: 1;
+}
+
+.agent-rail-resize {
+  z-index: 3;
+  width: 9px;
+  margin-inline-end: -5px;
+  background: none;
+  cursor: col-resize;
+  grid-column: 1;
+  grid-row: 1 / -1;
+  justify-self: end;
+  touch-action: none;
+  transition: background-color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-rail-resize:hover,
+.agent-rail-resize:focus-visible {
+  background: var(--codevo-primary-soft);
+  outline: none;
+}
+
+.agent-rail-resize:focus-visible {
+  box-shadow: var(--codevo-focus-ring);
+}
+
+@media (max-width: 720px) {
+  .agent-rail-resize {
+    display: none;
+  }
 }
 
 .agent-rail__head {

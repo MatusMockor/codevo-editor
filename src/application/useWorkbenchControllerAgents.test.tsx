@@ -192,6 +192,7 @@ describe("useWorkbenchControllerAgents layout surface", () => {
       activeSurface: "terminal",
       rightPanelMaximized: false,
       rail: "expanded",
+      railWidth: 256,
       rightPanelWidth: 540,
       bottomPanelHeight: 280,
       bottomPanel: false,
@@ -375,7 +376,7 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     })),
     updateAgentProvider: vi.fn(async () => ({
       kind: "failed" as const,
-      reason: "admissionRefused" as const,
+      reason: "authorityChanged" as const,
       outputTail: "",
       outputTruncated: false,
     })),

@@ -63,6 +63,18 @@ describe("AgentThreadsSidebar", () => {
     expect(host.textContent).not.toContain("running");
   });
 
+  it("hands the rail chrome row to the window as a drag region", () => {
+    render();
+
+    const chrome = host.querySelector(".agent-rail__chrome");
+    expect(chrome?.getAttribute("data-tauri-drag-region")).toBe("");
+    expect(
+      chrome
+        ?.querySelector('[aria-label="Collapse sidebar"]')
+        ?.hasAttribute("data-tauri-drag-region"),
+    ).toBe(false);
+  });
+
   it("places provider status after the independently scrolling thread list", () => {
     render();
 

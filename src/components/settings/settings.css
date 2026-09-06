@@ -82,6 +82,10 @@
   padding: 14px 10px;
 }
 
+.app-shell--agent-mode .settings-screen__sidebar {
+  padding-top: calc(14px + var(--window-native-controls-row, 0px));
+}
+
 .settings-search {
   position: relative;
   display: flex;

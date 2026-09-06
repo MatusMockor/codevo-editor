@@ -1,5 +1,9 @@
 import { useCallback, useState } from "react";
-import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
+import {
+  DEFAULT_AGENT_RAIL_WIDTH,
+  type AgentSurfaceKind,
+  type AgentWorkbenchLayout,
+} from "../../domain/agentWorkbenchLayout";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
   agentSurfaceHostPlacement,
@@ -24,6 +28,8 @@ export interface AgentSurfaceLayout {
   surfaceBlocked(surface: AgentSurfaceKind): boolean;
   toggleRightPanel(): void;
   toggleRail(): void;
+  resizeRail(width: number): void;
+  resetRailWidth(): void;
   toggleMaximized(): void;
 }
 
@@ -67,6 +73,14 @@ export function useAgentSurfaceLayout({
     dispatchLayout({ kind: "toggleRightPanel" });
   }, [dispatchLayout]);
   const toggleRail = useCallback(() => dispatchLayout({ kind: "toggleRail" }), [dispatchLayout]);
+  const resizeRail = useCallback(
+    (width: number) => dispatchLayout({ kind: "resizeRail", width }),
+    [dispatchLayout],
+  );
+  const resetRailWidth = useCallback(
+    () => dispatchLayout({ kind: "resizeRail", width: DEFAULT_AGENT_RAIL_WIDTH }),
+    [dispatchLayout],
+  );
   const toggleMaximized = useCallback(
     () => dispatchLayout({ kind: "toggleMaximized" }),
     [dispatchLayout],
@@ -87,6 +101,8 @@ export function useAgentSurfaceLayout({
     surfaceBlocked,
     toggleRightPanel,
     toggleRail,
+    resizeRail,
+    resetRailWidth,
     toggleMaximized,
   };
 }

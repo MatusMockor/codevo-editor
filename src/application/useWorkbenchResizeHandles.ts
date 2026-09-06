@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState, type CSSProperties, type PointerEvent }
 import {
   MAX_AGENT_BOTTOM_PANEL_HEIGHT,
   MAX_AGENT_RIGHT_PANEL_WIDTH,
+  DEFAULT_AGENT_RAIL_WIDTH,
   MIN_AGENT_BOTTOM_PANEL_HEIGHT,
   MIN_AGENT_RIGHT_PANEL_WIDTH,
   clampAgentBottomPanelHeight,
@@ -28,7 +29,10 @@ export const AGENT_RIGHT_PANEL_WIDTH_VARIABLE = "--agent-right-panel-width";
 export const AGENT_BOTTOM_PANEL_HEIGHT_VARIABLE = "--agent-bottom-panel-height";
 
 export interface AgentPanelResizeCommit {
-  readonly layout: Pick<AgentWorkbenchLayout, "rail" | "rightPanelWidth" | "bottomPanelHeight">;
+  readonly layout: Pick<
+    AgentWorkbenchLayout,
+    "rail" | "railWidth" | "rightPanelWidth" | "bottomPanelHeight"
+  >;
   onResizeRightPanel(width: number): void;
   onResizeBottomPanel(height: number): void;
 }
@@ -53,8 +57,9 @@ export function maxWorkbenchBottomPanelHeight(viewportHeight: number): number {
 export function maxAgentRightPanelWidth(
   viewportWidth: number,
   rail: AgentRailState = "expanded",
+  expandedRailWidth: number = DEFAULT_AGENT_RAIL_WIDTH,
 ): number {
-  const railWidth = agentWorkbenchRailWidth(rail, viewportWidth);
+  const railWidth = agentWorkbenchRailWidth(rail, viewportWidth, expandedRailWidth);
   const availableWidth = viewportWidth - railWidth - AGENT_CENTER_MIN_WIDTH;
   return Math.max(
     MIN_AGENT_RIGHT_PANEL_WIDTH,
@@ -121,6 +126,7 @@ export function useWorkbenchResizeHandles(
   const { onResizeBottomPanel, onResizeRightPanel } = agentPanels;
   const agentRightPanelWidth = agentPanels.layout.rightPanelWidth;
   const agentRail = agentPanels.layout.rail;
+  const agentRailWidth = agentPanels.layout.railWidth;
   const agentBottomPanelHeight = agentPanels.layout.bottomPanelHeight;
 
   const startAgentRightPanelResize = useCallback(
@@ -136,7 +142,11 @@ export function useWorkbenchResizeHandles(
           width = clamp(
             startWidth + startX - moveEvent.clientX,
             MIN_AGENT_RIGHT_PANEL_WIDTH,
-            maxAgentRightPanelWidth(frame?.clientWidth || window.innerWidth, agentRail),
+            maxAgentRightPanelWidth(
+              frame?.clientWidth || window.innerWidth,
+              agentRail,
+              agentRailWidth,
+            ),
           );
           frame?.style.setProperty(AGENT_RIGHT_PANEL_WIDTH_VARIABLE, `${width}px`);
         },
@@ -146,7 +156,7 @@ export function useWorkbenchResizeHandles(
         },
       );
     },
-    [agentRail, agentRightPanelWidth, onResizeRightPanel],
+    [agentRail, agentRailWidth, agentRightPanelWidth, onResizeRightPanel],
   );
 
   const startAgentBottomPanelResize = useCallback(

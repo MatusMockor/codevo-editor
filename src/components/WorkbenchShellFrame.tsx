@@ -18,6 +18,7 @@ import { WorkbenchEditorTabsPortalProvider } from "./workbenchEditorTabsPortal";
 import { WorkbenchFrameResponsiveContext } from "./workbenchFrameResponsiveContext";
 import {
   WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE,
+  WORKBENCH_FRAME_RAIL_VARIABLE,
   WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE,
   responsiveWorkbenchShellPlacement,
   workbenchFrameTreeState,
@@ -67,6 +68,7 @@ export function WorkbenchShellFrame({
   const style = {
     [WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE]: `${responsivePlacement.rightPanelWidth}px`,
     [WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE]: `${responsivePlacement.bottomPanelHeight}px`,
+    [WORKBENCH_FRAME_RAIL_VARIABLE]: `${responsivePlacement.railWidth}px`,
   } as CSSProperties;
 
   return (

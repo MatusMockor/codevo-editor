@@ -28,6 +28,7 @@ const diffLayout: AgentWorkbenchLayout = {
   activeSurface: "diff",
   rightPanelMaximized: false,
   rail: "expanded",
+  railWidth: 256,
   rightPanelWidth: 700,
   bottomPanelHeight: 320,
 };
@@ -39,6 +40,7 @@ const terminalLayout: AgentWorkbenchLayout = {
   activeSurface: "terminal",
   rightPanelMaximized: false,
   rail: "expanded",
+  railWidth: 256,
   rightPanelWidth: 420,
   bottomPanelHeight: 200,
 };
@@ -332,6 +334,7 @@ describe("useAgentWorkbenchLayout", () => {
           activeSurface: "diff",
           rightPanelMaximized: false,
           rail: "expanded",
+          railWidth: initialAgentWorkbenchLayout.railWidth,
           rightPanelWidth: initialAgentWorkbenchLayout.rightPanelWidth,
           bottomPanelHeight: initialAgentWorkbenchLayout.bottomPanelHeight,
           bottomPanel: false,

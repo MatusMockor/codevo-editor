@@ -381,7 +381,7 @@ function fakeAgentProviderGateway(): NonNullable<
     }),
     updateAgentProvider: async () => ({
       kind: "failed",
-      reason: "admissionRefused",
+      reason: "authorityChanged",
       outputTail: "",
       outputTruncated: false,
     }),

@@ -33,6 +33,13 @@
   gap: var(--agent-space-2);
 }
 
+.workbench-frame[data-right-panel="maximized"] .agent-surface__head {
+  padding-left: max(
+    var(--agent-space-3),
+    calc(var(--window-native-controls-inset, 0px) - var(--agent-rail-track, 0px))
+  );
+}
+
 .agent-surface__tabs {
   display: flex;
   overflow: hidden;

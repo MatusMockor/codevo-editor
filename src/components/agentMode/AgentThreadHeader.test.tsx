@@ -48,6 +48,16 @@ describe("AgentThreadHeader", () => {
     expect(button("Commit")).toBeDefined();
   });
 
+  it("hands the thread header to the window as a drag region", () => {
+    render({ thread: threadView({}) });
+
+    const header = host.querySelector(".agent-thread-head");
+    expect(header?.getAttribute("data-tauri-drag-region")).toBe("");
+    expect(
+      header?.querySelector(".agent-crumbs__project")?.hasAttribute("data-tauri-drag-region"),
+    ).toBe(false);
+  });
+
   it("leaves thread status to the rail row and the status bar", () => {
     render({ thread: threadView({}) });
 

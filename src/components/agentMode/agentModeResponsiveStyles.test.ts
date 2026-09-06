@@ -1,7 +1,13 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readStyleSheet } from "../cssContractTestSupport";
+import { AGENT_CENTER_MIN_WIDTH } from "../../domain/agentWorkbenchResponsiveLayout";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
+import {
+  COMPACT_COMPOSER_MAX_INLINE_SIZE,
+  COMPACT_COMPOSER_QUERY,
+} from "./useCompactComposerControls";
 
 const appCss = readAgentModeStyles();
 const shellCss = readFileSync(resolve(import.meta.dirname, "../workbenchShellFrame.css"), "utf8");
@@ -87,6 +93,34 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-session__body")).not.toMatch(/padding:[^;]*148px/);
   });
 
+  it("keeps the composer launch row full while the center column can hold it", () => {
+    const center = rule(".agent-mode__center {");
+    expect(center).toContain("container-name: agent-center");
+    expect(center).toContain("container-type: inline-size");
+
+    const compact = block(appCss, `@media (max-width: ${COMPACT_COMPOSER_MAX_INLINE_SIZE}px)`);
+    expect(rule(".agent-composer__row", compact)).toContain("flex-wrap: nowrap");
+    expect(COMPACT_COMPOSER_QUERY).toBe(`(max-width: ${COMPACT_COMPOSER_MAX_INLINE_SIZE}px)`);
+    expect(COMPACT_COMPOSER_MAX_INLINE_SIZE).toBeLessThan(620);
+
+    expect(rule(".agent-composer__box")).toContain("max-width: 768px");
+    expect(appCss).not.toContain("@container agent-composer");
+    for (const boxQuery of ["@container agent-center (max-width: 900px)"]) {
+      expect(block(appCss, boxQuery)).not.toContain(".agent-composer__launch");
+    }
+  });
+
+  it("gives the stacked narrow grid the whole column instead of an implicit empty track", () => {
+    const stacked = block(appCss, "@media (max-width: 720px)");
+
+    expect(rule(".agent-mode__grid", stacked)).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(rule(".agent-mode__center", stacked)).toContain("grid-column: 1");
+    expect(rule(".agent-mode__center", stacked)).toContain("grid-row: 2");
+    expect(
+      rule(".agent-mode__grid > .agent-rail,\n  .agent-mode__grid > .agent-rail__chrome", stacked),
+    ).toContain("grid-row: 1");
+  });
+
   it("reflows thread content inside the docked center column", () => {
     expect(rule(".agent-session")).toContain("min-width: 0");
     expect(rule(".agent-session__scroll")).toContain("min-width: 0");
@@ -134,7 +168,7 @@ describe("agent mode responsive layout contract", () => {
     const narrow = block(appCss, "@media (max-width: 720px)");
 
     expect(rule('.workbench-frame[data-layout="agent"][data-rail="expanded"]', tablet)).toContain(
-      "--agent-rail-track: 248px",
+      "--agent-rail-track: min(var(--agent-rail-width), 248px)",
     );
     expect(
       rule('.workbench-frame[data-layout="agent"][data-right-panel="docked"]', shellNarrow),
@@ -148,6 +182,50 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-mode__grid", narrow)).toContain(
       "grid-template-rows: minmax(112px, 28vh) minmax(0, 1fr)",
     );
+  });
+
+  it("pins the rail and its resize handle to the first frame track", () => {
+    const rail = rule(".agent-mode__grid > .agent-rail,\n.agent-mode__grid > .agent-rail__chrome");
+    const placement = rule(
+      ".agent-mode__grid > .agent-rail,\n.agent-mode__grid > .agent-rail__chrome {",
+      readStyleSheet("components/agentMode/agentRail.css").source,
+    );
+    const handle = rule(".agent-rail-resize {");
+
+    expect(rail).toContain("grid-row: 1 / -1");
+    expect(placement).toContain("grid-column: 1");
+    expect(handle).toContain("grid-column: 1");
+    expect(handle).toContain("grid-row: 1 / -1");
+    expect(handle).toContain("justify-self: end");
+  });
+
+  it("drops the rail handle and the header inset once the rail stacks above the thread", () => {
+    const railCss = readStyleSheet("components/agentMode/agentRail.css").source;
+    const threadCss = readStyleSheet("components/agentMode/agentThread.css").source;
+    const narrowRail = block(railCss, "@media (max-width: 720px)");
+    const narrowThread = block(threadCss, "@media (max-width: 720px)");
+
+    expect(rule(".agent-rail-resize", narrowRail)).toContain("display: none");
+    expect(rule(".agent-thread-head", narrowThread)).toContain("padding-left: 8px");
+  });
+
+  it("keeps the workbench row alive when the macOS agent chrome row is zero height", () => {
+    const shell = rule(".app-shell {", rootCss);
+    const macAgent = rule(".app-shell--agent-mode.app-shell--mac {", rootCss);
+    const hiddenChrome = rule(".app-shell--agent-mode.app-shell--mac > .window-chrome", rootCss);
+
+    expect(shell).toContain("grid-template-rows: var(--window-chrome-height) minmax(0, 1fr) 28px");
+    expect(macAgent).toContain("--window-chrome-height: 0px");
+    expect(hiddenChrome).not.toContain("display: none");
+    expect(hiddenChrome).toContain("visibility: hidden");
+    expect(hiddenChrome).toContain("height: 0");
+  });
+
+  it("reserves a composer-sized centre track before the right panel takes width", () => {
+    expect(rule('.workbench-frame[data-layout="agent"] {', shellCss)).toContain(
+      "--agent-center-min-width: 560px",
+    );
+    expect(AGENT_CENTER_MIN_WIDTH).toBe(560);
   });
 
   it("collapses header action labels from the center column before wrapping the header", () => {

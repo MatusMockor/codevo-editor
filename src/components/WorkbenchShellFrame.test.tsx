@@ -22,6 +22,8 @@ import {
   type WorkbenchShellPlacement,
 } from "./workbenchShellPlacement";
 
+const CLAMPED_RIGHT_PANEL_WIDTH_AT_1280 = 464;
+
 describe("workbenchShellPlacement", () => {
   it("hides the editor in the agent layout unless the Files surface is open", () => {
     expect(placement("agent", null).editorHidden).toBe(true);
@@ -156,13 +158,24 @@ describe("WorkbenchShellFrame", () => {
     expect(frame?.getAttribute("data-rail")).toBe("expanded");
   });
 
+  it("publishes the persisted rail width the rail handle writes to", () => {
+    render({ ...placement("agent", "diff", true), railWidth: 384 });
+    const frame = host.querySelector<HTMLElement>(".editor-workbench");
+
+    expect(frame?.style.getPropertyValue("--agent-rail-committed")).toBe("384px");
+
+    render({ ...placement("agent", "diff", true), railWidth: 208 });
+    expect(frame?.style.getPropertyValue("--agent-rail-committed")).toBe("208px");
+  });
+
   it("keeps the right panel track while an open panel shows no surface", () => {
     render(emptyOpenPanelPlacement());
     const frame = host.querySelector<HTMLElement>(".editor-workbench");
 
     expect(frame?.style.getPropertyValue("--agent-right-panel-committed")).toBe(
-      `${DEFAULT_AGENT_RIGHT_PANEL_WIDTH}px`,
+      `${CLAMPED_RIGHT_PANEL_WIDTH_AT_1280}px`,
     );
+    expect(CLAMPED_RIGHT_PANEL_WIDTH_AT_1280).toBeLessThan(DEFAULT_AGENT_RIGHT_PANEL_WIDTH);
     expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
     expect(host.querySelector(".workbench-frame")?.getAttribute("data-tree")).toBe("hidden");
   });
@@ -171,8 +184,9 @@ describe("WorkbenchShellFrame", () => {
     render(placement("agent", "diff", true));
     const frame = host.querySelector<HTMLElement>(".editor-workbench");
 
-    expect(frame?.style.getPropertyValue("--agent-right-panel-committed")).toBe("540px");
+    expect(frame?.style.getPropertyValue("--agent-right-panel-committed")).toBe("464px");
     expect(frame?.style.getPropertyValue("--agent-bottom-panel-committed")).toBe("280px");
+    expect(frame?.style.getPropertyValue("--agent-rail-committed")).toBe("256px");
     expect(host.querySelector('[data-slot="bottom"]')?.textContent).toBe("bottom");
     expect(host.querySelector('.editor-workbench > [data-slot="chrome"] > #chrome')).not.toBeNull();
   });

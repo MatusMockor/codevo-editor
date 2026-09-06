@@ -4,16 +4,20 @@ import { responsiveAgentPanelPlacement } from "./agentWorkbenchResponsiveLayout"
 describe("responsiveAgentPanelPlacement", () => {
   it.each([
     {
+      viewportWidth: 1_280,
+      expected: { maximized: false, restore: "none", width: 464 },
+    },
+    {
       viewportWidth: 1_180,
-      expected: { maximized: false, restore: "none", width: 540 },
+      expected: { maximized: false, restore: "none", width: 372 },
     },
     {
       viewportWidth: 1_000,
-      expected: { maximized: false, restore: "none", width: 392 },
+      expected: { maximized: true, restore: "collapseRail", width: 540 },
     },
     {
       viewportWidth: 900,
-      expected: { maximized: true, restore: "collapseRail", width: 540 },
+      expected: { maximized: true, restore: "closePanel", width: 540 },
     },
     {
       viewportWidth: 720,
@@ -50,8 +54,21 @@ describe("responsiveAgentPanelPlacement", () => {
         maximized: false,
         rail: "collapsed",
         requestedWidth: 540,
-        viewportWidth: 900,
+        viewportWidth: 1_280,
       }),
-    ).toEqual({ maximized: false, restore: "none", width: 492 });
+    ).toEqual({ maximized: false, restore: "none", width: 540 });
+  });
+
+  it("clamps the panel against a widened rail before it maximizes", () => {
+    expect(
+      responsiveAgentPanelPlacement({
+        hidden: false,
+        maximized: false,
+        rail: "expanded",
+        railWidth: 420,
+        requestedWidth: 540,
+        viewportWidth: 1_400,
+      }),
+    ).toEqual({ maximized: false, restore: "none", width: 420 });
   });
 });

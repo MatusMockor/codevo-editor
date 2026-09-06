@@ -4,7 +4,10 @@ import { act, type PointerEvent as ReactPointerEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DEFAULT_AGENT_RAIL_WIDTH,
+  MAX_AGENT_RAIL_WIDTH,
   MIN_AGENT_BOTTOM_PANEL_HEIGHT,
+  MIN_AGENT_RIGHT_PANEL_WIDTH,
   type AgentWorkbenchLayout,
 } from "../domain/agentWorkbenchLayout";
 import {
@@ -76,12 +79,12 @@ describe("useWorkbenchResizeHandles", () => {
     act(() => harness.result().startAgentRightPanelResize(pointerEvent(harness.handle(), 900, 0)));
     act(() => dispatchPointerMove(800, 0));
 
-    expect(harness.frame().style.getPropertyValue("--agent-right-panel-width")).toBe("640px");
+    expect(harness.frame().style.getPropertyValue("--agent-right-panel-width")).toBe("464px");
     expect(commit.widths).toEqual([]);
 
     act(() => dispatchPointerUp());
 
-    expect(commit.widths).toEqual([640]);
+    expect(commit.widths).toEqual([464]);
     expect(harness.frame().style.getPropertyValue("--agent-right-panel-width")).toBe("");
     harness.unmount();
   });
@@ -117,15 +120,36 @@ describe("useWorkbenchResizeHandles", () => {
     harness.unmount();
   });
 
-  it("reserves the rail and a 360 pixel centre while sizing the right panel", () => {
-    expect(maxAgentRightPanelWidth(1_180)).toBe(572);
-    expect(maxAgentRightPanelWidth(1_000)).toBe(392);
-    expect(maxAgentRightPanelWidth(720)).toBe(360);
+  it("reserves the rail and the composer-sized centre while sizing the right panel", () => {
+    expect(maxAgentRightPanelWidth(1_280)).toBe(464);
+    expect(maxAgentRightPanelWidth(1_180)).toBe(372);
+    expect(maxAgentRightPanelWidth(1_000)).toBe(MIN_AGENT_RIGHT_PANEL_WIDTH);
+    expect(maxAgentRightPanelWidth(720)).toBe(MIN_AGENT_RIGHT_PANEL_WIDTH);
+  });
+
+  it("sizes the right panel against the persisted rail width, not the default", () => {
+    expect(maxAgentRightPanelWidth(1_400, "expanded", MAX_AGENT_RAIL_WIDTH)).toBe(
+      MAX_AGENT_RAIL_WIDTH,
+    );
+    expect(maxAgentRightPanelWidth(1_400, "expanded", DEFAULT_AGENT_RAIL_WIDTH)).toBe(584);
+    expect(maxAgentRightPanelWidth(1_400, "collapsed", MAX_AGENT_RAIL_WIDTH)).toBe(792);
+  });
+
+  it("previews a widened rail drag at the same width the committed placement uses", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1_400 });
+    const commit = recordingCommit({ railWidth: MAX_AGENT_RAIL_WIDTH, rightPanelWidth: 540 });
+    const harness = renderHandles(commit);
+
+    act(() => harness.result().startAgentRightPanelResize(pointerEvent(harness.handle(), 800, 0)));
+    act(() => dispatchPointerMove(400, 0));
+
+    expect(harness.frame().style.getPropertyValue("--agent-right-panel-width")).toBe("420px");
+    harness.unmount();
   });
 
   it.each([
-    { viewportWidth: 1_000, expectedWidth: 540 },
-    { viewportWidth: 900, expectedWidth: 492 },
+    { viewportWidth: 1_000, expectedWidth: 392 },
+    { viewportWidth: 900, expectedWidth: 360 },
   ])(
     "keeps a collapsed-rail panel stable at $viewportWidth pixels",
     ({ expectedWidth, viewportWidth }) => {
@@ -155,10 +179,10 @@ describe("useWorkbenchResizeHandles", () => {
     act(() => dispatchPointerMove(850, 0));
     act(() => window.dispatchEvent(new Event("blur")));
 
-    expect(commit.widths).toEqual([590]);
+    expect(commit.widths).toEqual([464]);
 
     act(() => dispatchPointerMove(700, 0));
-    expect(commit.widths).toEqual([590]);
+    expect(commit.widths).toEqual([464]);
     harness.unmount();
   });
 
@@ -169,7 +193,7 @@ describe("useWorkbenchResizeHandles", () => {
 });
 
 function recordingCommit(
-  overrides: Partial<Pick<AgentWorkbenchLayout, "rail" | "rightPanelWidth">> = {},
+  overrides: Partial<Pick<AgentWorkbenchLayout, "rail" | "railWidth" | "rightPanelWidth">> = {},
 ): AgentPanelResizeCommit & {
   readonly widths: number[];
   readonly heights: number[];
@@ -181,6 +205,7 @@ function recordingCommit(
     layout: {
       bottomPanelHeight: 320,
       rail: overrides.rail ?? "expanded",
+      railWidth: overrides.railWidth ?? DEFAULT_AGENT_RAIL_WIDTH,
       rightPanelWidth: overrides.rightPanelWidth ?? 540,
     },
     onResizeBottomPanel: (height) => heights.push(height),

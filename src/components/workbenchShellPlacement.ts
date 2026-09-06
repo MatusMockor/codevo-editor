@@ -1,7 +1,8 @@
-import type {
-  AgentRailState,
-  AgentWorkbenchLayout,
-  AgentWorkbenchLayoutMode,
+import {
+  DEFAULT_AGENT_RAIL_WIDTH,
+  type AgentRailState,
+  type AgentWorkbenchLayout,
+  type AgentWorkbenchLayoutMode,
 } from "../domain/agentWorkbenchLayout";
 import {
   responsiveAgentPanelPlacement,
@@ -12,6 +13,7 @@ export type { ResponsivePanelRestore } from "../domain/agentWorkbenchResponsiveL
 
 export const WORKBENCH_FRAME_RIGHT_PANEL_VARIABLE = "--agent-right-panel-committed";
 export const WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE = "--agent-bottom-panel-committed";
+export const WORKBENCH_FRAME_RAIL_VARIABLE = "--agent-rail-committed";
 
 export interface WorkbenchShellPlacementInput {
   readonly effectiveLayout: AgentWorkbenchLayoutMode;
@@ -22,6 +24,7 @@ export interface WorkbenchShellPlacementInput {
     | "activeSurface"
     | "rightPanelMaximized"
     | "rail"
+    | "railWidth"
     | "rightPanelWidth"
     | "bottomPanelHeight"
   >;
@@ -38,6 +41,7 @@ export interface WorkbenchShellPlacement {
   readonly responsiveMaximized: boolean;
   readonly responsiveRestore: ResponsivePanelRestore;
   readonly rail: AgentRailState;
+  readonly railWidth: number;
   readonly rightPanelWidth: number;
   readonly bottomPanelHeight: number;
 }
@@ -82,6 +86,7 @@ export function workbenchShellPlacement({
       responsiveMaximized: false,
       responsiveRestore: "none",
       rail: "expanded",
+      railWidth: DEFAULT_AGENT_RAIL_WIDTH,
       rightPanelWidth: 0,
       bottomPanelHeight: 0,
     };
@@ -98,6 +103,7 @@ export function workbenchShellPlacement({
     responsiveMaximized: false,
     responsiveRestore: "none",
     rail: layout.rail,
+    railWidth: layout.railWidth,
     rightPanelWidth: rightPanelHidden ? 0 : layout.rightPanelWidth,
     bottomPanelHeight: bottomPanelVisible ? layout.bottomPanelHeight : 0,
   };
@@ -113,6 +119,7 @@ export function responsiveWorkbenchShellPlacement(
     hidden: placement.rightPanelHidden,
     maximized: placement.rightPanelMaximized,
     rail: placement.rail,
+    railWidth: placement.railWidth,
     requestedWidth: placement.rightPanelWidth,
     viewportWidth,
   });

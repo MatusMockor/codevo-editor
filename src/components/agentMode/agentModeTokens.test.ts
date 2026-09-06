@@ -152,10 +152,11 @@ describe("agent mode token contract", () => {
     }
   });
 
-  it("keeps the rail track at the frame width", () => {
-    const railWidth = buildTokenTable(frameRules, "--agent-rail-width").get("--agent-rail-width");
+  it("keeps the rail track at the committed frame width", () => {
+    const table = buildTokenTable(frameRules, "--agent-rail-");
 
-    expect(lastOf(railWidth)).toBe("256px");
+    expect(lastOf(table.get("--agent-rail-width"))).toBe("var(--agent-rail-committed)");
+    expect(lastOf(table.get("--agent-rail-committed"))).toBe("256px");
   });
 
   it("stamps the agent surfaces with the codevo sans stack", () => {

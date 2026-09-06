@@ -10,6 +10,10 @@ export const MIN_AGENT_RIGHT_PANEL_WIDTH = 360;
 export const MAX_AGENT_RIGHT_PANEL_WIDTH = 1200;
 export const DEFAULT_AGENT_RIGHT_PANEL_WIDTH = 540;
 
+export const MIN_AGENT_RAIL_WIDTH = 200;
+export const MAX_AGENT_RAIL_WIDTH = 420;
+export const DEFAULT_AGENT_RAIL_WIDTH = 256;
+
 export const MIN_AGENT_BOTTOM_PANEL_HEIGHT = 120;
 export const MAX_AGENT_BOTTOM_PANEL_HEIGHT = 900;
 export const DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT = 280;
@@ -27,6 +31,7 @@ export interface AgentWorkbenchLayout {
   readonly activeSurface: AgentSurfaceKind | null;
   readonly rightPanelMaximized: boolean;
   readonly rail: AgentRailState;
+  readonly railWidth: number;
   readonly rightPanelWidth: number;
   readonly bottomPanelHeight: number;
 }
@@ -47,6 +52,7 @@ export type AgentWorkbenchLayoutAction =
   | { readonly kind: "expandEditor" }
   | { readonly kind: "collapseEditor" }
   | { readonly kind: "toggleEditorExpanded" }
+  | { readonly kind: "resizeRail"; readonly width: number }
   | { readonly kind: "resizeRightPanel"; readonly width: number }
   | { readonly kind: "resizeBottomPanel"; readonly height: number };
 
@@ -63,6 +69,7 @@ export const initialAgentWorkbenchLayout: AgentWorkbenchLayout = {
   openSurfaces: NO_SURFACES,
   activeSurface: null,
   rail: "expanded",
+  railWidth: DEFAULT_AGENT_RAIL_WIDTH,
   rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
   bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
 };
@@ -90,6 +97,10 @@ export function clampAgentRightPanelWidth(width: number): number {
     MAX_AGENT_RIGHT_PANEL_WIDTH,
     DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
   );
+}
+
+export function clampAgentRailWidth(width: number): number {
+  return clamp(width, MIN_AGENT_RAIL_WIDTH, MAX_AGENT_RAIL_WIDTH, DEFAULT_AGENT_RAIL_WIDTH);
 }
 
 export function clampAgentBottomPanelHeight(height: number): number {
@@ -128,6 +139,8 @@ export function agentWorkbenchLayoutReducer(
       return collapseEditor(state);
     case "toggleEditorExpanded":
       return state.layout === "editor-expanded" ? collapseEditor(state) : expandEditor(state);
+    case "resizeRail":
+      return resizeRail(state, action.width);
     case "resizeRightPanel":
       return resizeRightPanel(state, action.width);
     case "resizeBottomPanel":
@@ -177,6 +190,7 @@ export function serializeAgentWorkbenchLayout(
     activeSurface: state.activeSurface,
     rightPanelMaximized: state.rightPanelMaximized,
     rail: state.rail,
+    railWidth: state.railWidth,
     rightPanelWidth: state.rightPanelWidth,
     bottomPanelHeight: state.bottomPanelHeight,
     bottomPanel,
@@ -194,6 +208,7 @@ export function agentWorkbenchLayoutsEqual(
     left.activeSurface === right.activeSurface &&
     left.rightPanelMaximized === right.rightPanelMaximized &&
     left.rail === right.rail &&
+    left.railWidth === right.railWidth &&
     left.rightPanelWidth === right.rightPanelWidth &&
     left.bottomPanelHeight === right.bottomPanelHeight
   );
@@ -302,6 +317,11 @@ function collapseEditor(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
   return openRightPanel(state);
 }
 
+function resizeRail(state: AgentWorkbenchLayout, width: number): AgentWorkbenchLayout {
+  const railWidth = clampAgentRailWidth(width);
+  return railWidth === state.railWidth ? state : { ...state, railWidth };
+}
+
 function resizeRightPanel(state: AgentWorkbenchLayout, width: number): AgentWorkbenchLayout {
   const rightPanelWidth = clampAgentRightPanelWidth(width);
   return rightPanelWidth === state.rightPanelWidth ? state : { ...state, rightPanelWidth };
@@ -314,9 +334,10 @@ function resizeBottomPanel(state: AgentWorkbenchLayout, height: number): AgentWo
 
 function parseIndependentFields(
   value: Record<string, unknown>,
-): Pick<AgentWorkbenchLayout, "rail" | "rightPanelWidth" | "bottomPanelHeight"> {
+): Pick<AgentWorkbenchLayout, "rail" | "railWidth" | "rightPanelWidth" | "bottomPanelHeight"> {
   return {
     rail: isAgentRailState(value.rail) ? value.rail : initialAgentWorkbenchLayout.rail,
+    railWidth: parseSize(value.railWidth, clampAgentRailWidth),
     rightPanelWidth: parseSize(value.rightPanelWidth, clampAgentRightPanelWidth),
     bottomPanelHeight: parseSize(value.bottomPanelHeight, clampAgentBottomPanelHeight),
   };

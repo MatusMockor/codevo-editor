@@ -743,6 +743,8 @@ button {
 
 .app-shell {
   --window-chrome-height: 36px;
+  --window-native-controls-inset: 0px;
+  --window-native-controls-row: 0px;
 
   color-scheme: dark;
   display: grid;
@@ -771,6 +773,20 @@ button {
 
 .app-shell--settings:not(.app-shell--agent-mode) {
   grid-template-columns: 46px minmax(0, 1fr);
+}
+
+.app-shell--agent-mode.app-shell--mac {
+  --window-chrome-height: 0px;
+  --window-native-controls-inset: 78px;
+  --window-native-controls-row: 36px;
+  --toast-top: 60px;
+}
+
+.app-shell--agent-mode.app-shell--mac > .window-chrome {
+  overflow: hidden;
+  height: 0;
+  min-height: 0;
+  visibility: hidden;
 }
 
 .window-chrome {

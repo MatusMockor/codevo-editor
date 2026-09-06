@@ -228,6 +228,20 @@ describe("AgentModeView", () => {
     expect(onOpenSourceControl).toHaveBeenCalledTimes(1);
   });
 
+  it("reports an already-current settlement with the installed version, not a new offer", () => {
+    render({
+      agents: surface({
+        providerManagement: {
+          ...providerManagement(),
+          toast: { kind: "updateAlreadyCurrent", provider: "claudeCode", version: "2.1.261" },
+        },
+      }),
+    });
+
+    expect(host.textContent).toContain("The updater ran but Claude Code is still on v2.1.261.");
+    expect(host.textContent).not.toContain("updated to v2.1.261");
+  });
+
   it("leaves provider update toasts to the workbench notification host", () => {
     const update = vi.fn(async () => null);
     render({
@@ -854,6 +868,45 @@ describe("AgentModeView", () => {
 
     expect(layout.actions).toEqual([{ kind: "toggleRail" }]);
     expect(reduceRecordedLayout(layout).rail).toBe("collapsed");
+  });
+
+  it("resizes and resets the rail from the bounded rail separator", () => {
+    const layout = recordedLayoutState();
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      chrome: chromeFixture({ layout }),
+    });
+
+    const handle = host.querySelector<HTMLElement>('[aria-label="Resize thread rail"]');
+    expect(handle?.getAttribute("role")).toBe("separator");
+    expect(handle?.getAttribute("aria-orientation")).toBe("vertical");
+    expect(handle?.getAttribute("aria-valuenow")).toBe("256");
+
+    act(() => {
+      handle?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "End" }));
+    });
+    act(() => {
+      handle?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+
+    expect(layout.actions).toEqual([
+      { kind: "resizeRail", width: 420 },
+      { kind: "resizeRail", width: 256 },
+    ]);
+    expect(reduceRecordedLayout(layout).railWidth).toBe(256);
+  });
+
+  it("keeps the collapsed rail chrome a drag region and drops the rail separator", () => {
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      chrome: chromeFixture({ layout: recordedLayoutState({ rail: "collapsed" }) }),
+    });
+
+    expect(host.querySelector('[aria-label="Resize thread rail"]')).toBeNull();
+    expect(host.querySelector(".agent-rail__chrome")?.getAttribute("data-tauri-drag-region")).toBe(
+      "",
+    );
+    expect(host.querySelector('[aria-label="Expand sidebar"]')).not.toBeNull();
   });
 
   it("routes the right panel command to the plain layout action", async () => {

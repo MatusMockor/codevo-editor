@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_SURFACE_KINDS,
   DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
+  DEFAULT_AGENT_RAIL_WIDTH,
   DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
   MAX_AGENT_BOTTOM_PANEL_HEIGHT,
   MAX_AGENT_OPEN_SURFACES,
+  MAX_AGENT_RAIL_WIDTH,
   MAX_AGENT_RIGHT_PANEL_WIDTH,
   MIN_AGENT_BOTTOM_PANEL_HEIGHT,
+  MIN_AGENT_RAIL_WIDTH,
   MIN_AGENT_RIGHT_PANEL_WIDTH,
   agentWorkbenchLayoutReducer,
   agentWorkbenchLayoutSnapshotsEqual,
@@ -29,6 +32,7 @@ const ACTIONS: ReadonlyArray<AgentWorkbenchLayoutAction> = [
   { kind: "toggleMaximized" },
   { kind: "maximizeRightPanel" },
   { kind: "collapseEditor" },
+  { kind: "resizeRail", width: 320 },
   { kind: "resizeRightPanel", width: 700 },
   { kind: "resizeBottomPanel", height: 400 },
 ];
@@ -653,6 +657,52 @@ describe("toggleRail", () => {
   });
 });
 
+describe("resizeRail", () => {
+  const resize = (width: number): AgentWorkbenchLayout =>
+    agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, { kind: "resizeRail", width });
+
+  it("clamps the rail width to the supported bounds and rounds it", () => {
+    expect(resize(10).railWidth).toBe(MIN_AGENT_RAIL_WIDTH);
+    expect(resize(9000).railWidth).toBe(MAX_AGENT_RAIL_WIDTH);
+    expect(resize(311.6).railWidth).toBe(312);
+  });
+
+  it("falls back to the default width for a non-finite request", () => {
+    expect(resize(Number.NaN).railWidth).toBe(DEFAULT_AGENT_RAIL_WIDTH);
+    expect(resize(Number.POSITIVE_INFINITY).railWidth).toBe(DEFAULT_AGENT_RAIL_WIDTH);
+  });
+
+  it("keeps state identity when the clamped width does not change", () => {
+    const widened = resize(320);
+    expect(agentWorkbenchLayoutReducer(widened, { kind: "resizeRail", width: 320 })).toBe(widened);
+    expect(resize(DEFAULT_AGENT_RAIL_WIDTH)).toBe(initialAgentWorkbenchLayout);
+  });
+
+  it("resets to the default width and reports the change through the equality check", () => {
+    const widened = resize(400);
+    const reset = agentWorkbenchLayoutReducer(widened, {
+      kind: "resizeRail",
+      width: DEFAULT_AGENT_RAIL_WIDTH,
+    });
+    expect(reset.railWidth).toBe(DEFAULT_AGENT_RAIL_WIDTH);
+    expect(agentWorkbenchLayoutsEqual(widened, reset)).toBe(false);
+    expect(agentWorkbenchLayoutsEqual(reset, initialAgentWorkbenchLayout)).toBe(true);
+  });
+
+  it("round-trips the rail width through the persisted snapshot", () => {
+    const widened = resize(384);
+    expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(widened, false))).toEqual(
+      widened,
+    );
+    expect(parseAgentWorkbenchLayout({ layout: "agent", railWidth: 9000 }).railWidth).toBe(
+      MAX_AGENT_RAIL_WIDTH,
+    );
+    expect(parseAgentWorkbenchLayout({ layout: "agent", railWidth: "wide" }).railWidth).toBe(
+      DEFAULT_AGENT_RAIL_WIDTH,
+    );
+  });
+});
+
 describe("parsePersistedAgentBottomPanel", () => {
   it("accepts only a persisted true flag", () => {
     expect(parsePersistedAgentBottomPanel({ bottomPanel: true })).toBe(true);
@@ -674,6 +724,7 @@ describe("serializeAgentWorkbenchLayout", () => {
       activeSurface: "terminal",
       rightPanelMaximized: true,
       rail: "expanded",
+      railWidth: DEFAULT_AGENT_RAIL_WIDTH,
       rightPanelWidth: DEFAULT_AGENT_RIGHT_PANEL_WIDTH,
       bottomPanelHeight: DEFAULT_AGENT_BOTTOM_PANEL_HEIGHT,
       bottomPanel: true,
