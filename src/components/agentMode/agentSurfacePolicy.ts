@@ -1,6 +1,6 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { isInsideAgentSurfaceRoot } from "../../application/useAgentSurfaceFileTree";
-import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentThreadTarget } from "../../domain/agentThread";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import {
@@ -46,6 +46,7 @@ export type AgentSurfaceScope =
       readonly kind: "repository";
       readonly projectRootKey: string;
       readonly repositoryRoot: string;
+      readonly rootPath: string;
       readonly ownerId: string;
       readonly generation: number;
     };
@@ -64,10 +65,8 @@ export function agentSurfaceScopeFor(
     return NO_AGENT_SURFACE_SCOPE;
   }
   if (project.origin === "closed-tab-live-tasks") return NO_AGENT_SURFACE_SCOPE;
-  if (!project.repositories.some((repo) => repo.repositoryRoot === scope.repositoryRoot)) {
-    return NO_AGENT_SURFACE_SCOPE;
-  }
-  if (workspaceRoot === null || !isInsideAgentSurfaceRoot(workspaceRoot, scope.repositoryRoot)) {
+  if (!agentProjectOwnsLaunchRoot(project, scope.repositoryRoot)) return NO_AGENT_SURFACE_SCOPE;
+  if (workspaceRoot === null || !isInsideAgentSurfaceRoot(workspaceRoot, project.rootPath)) {
     return {
       kind: "foreignRoot",
       projectRootKey: scope.projectRootKey,
@@ -87,9 +86,28 @@ export function agentSurfaceScopeFor(
     kind: "repository",
     projectRootKey: scope.projectRootKey,
     repositoryRoot: scope.repositoryRoot,
+    rootPath: project.rootPath,
     ownerId: scope.ownerId,
     generation: scope.generation,
   };
+}
+
+export function agentThreadCheckoutRoot(
+  thread: AgentThreadView,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+): string {
+  const worktreePath = thread.thread.target.worktreePath;
+  if (worktreePath !== null) return worktreePath;
+  const owner = thread.thread.owner;
+  const project = projects.find((candidate) => candidate.rootKey === owner.rootKey) ?? null;
+  if (project === null) return owner.repositoryRoot;
+  if (
+    project.ownerId !== owner.ownerId &&
+    project.runtimeOwnerIds?.includes(owner.ownerId) !== true
+  )
+    return owner.repositoryRoot;
+  if (!agentProjectOwnsLaunchRoot(project, owner.repositoryRoot)) return owner.repositoryRoot;
+  return project.rootPath;
 }
 
 export function agentSurfaceFilesDescription(

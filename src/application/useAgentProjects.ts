@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef } from "react";
 import {
   MAX_AGENT_PROJECT_ROOTS,
+  agentProjectOwnsLaunchRoot,
   agentRootOwnerId,
   type AgentProjectDescriptor,
   type AgentProjectOrigin,
@@ -69,9 +70,7 @@ export interface AgentProjectsSurface {
     isCurrent: () => boolean,
   ): Promise<AgentWorkspaceProjectCloseResult>;
   ensureProjectLease(rootKey: string): Promise<boolean>;
-  ensureProjectLaunchIdentity?(
-    rootKey: string,
-  ): Promise<AgentProjectLaunchIdentity | null>;
+  ensureProjectLaunchIdentity?(rootKey: string): Promise<AgentProjectLaunchIdentity | null>;
   launchIdentityForProject(rootKey: string): AgentProjectLaunchIdentity | null;
   isCurrentRepositoryOwner(authority: AgentProjectAuthority, repositoryRoot: string): boolean;
   noteDispatchTrustRejected(rootKey: string): void;
@@ -201,8 +200,9 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
           : normalizedWorkspaceRootKey(deps.activeWorkspaceRoot);
       const repositories =
         entry.rootKey === activeRootKey ? deps.activeWorkspaceRepositories : entry.repositories;
-      return (
-        repositories?.some((repository) => repository.repositoryRoot === repositoryRoot) === true
+      return agentProjectOwnsLaunchRoot(
+        { rootPath: entry.rootPath, repositories: repositories ?? [] },
+        repositoryRoot,
       );
     },
     [],
@@ -981,10 +981,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       const activated = await attempt(() => activateWorkspaceRoot(currentEntry.rootPath));
       if (!activated.ok) {
         const current = entriesRef.current.get(rootKey);
-        if (
-          current?.generation === authority.generation &&
-          current.ownerId === authority.ownerId
-        ) {
+        if (current?.generation === authority.generation && current.ownerId === authority.ownerId) {
           dependenciesRef.current.reportError(AGENT_PROJECTS_SOURCE, activated.error);
         }
         return null;

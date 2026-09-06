@@ -52,6 +52,34 @@ describe("AgentPickerMenu", () => {
     expect(host.querySelector('[role="listbox"]')).toBeNull();
   });
 
+  it("refreshes on mouse and keyboard opening but not closing or choosing", () => {
+    const onOpen = vi.fn();
+    render({ onOpen });
+    click(trigger());
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    click(trigger());
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    key(trigger(), "ArrowDown");
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    key(trigger(), "ArrowUp");
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    click(options()[1]);
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    key(trigger(), "ArrowUp");
+    expect(onOpen).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not refresh a disabled or empty picker", () => {
+    const onOpen = vi.fn();
+    render({ onOpen, disabled: true });
+    click(trigger());
+    key(trigger(), "ArrowDown");
+    render({ onOpen, options: [] });
+    click(trigger());
+    key(trigger(), "ArrowDown");
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
   it("opens an anchored listbox with the selected option checked and focused", () => {
     render({ value: "plan" });
 

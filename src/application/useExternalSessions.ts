@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { AgentProjectDescriptor } from "../domain/agentProject";
+import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentThread } from "../domain/agentThread";
 import type { AgentCliKind } from "../domain/agentTask";
 import {
@@ -319,10 +319,7 @@ function authorityForTarget(
 ): AgentProjectAuthority | null {
   const project = projectByRootKey(projects, target.rootKey);
   if (project === undefined) return null;
-  if (
-    !project.repositories.some((repository) => repository.repositoryRoot === target.repositoryRoot)
-  )
-    return null;
+  if (!agentProjectOwnsLaunchRoot(project, target.repositoryRoot)) return null;
   return projectAuthority(project);
 }
 

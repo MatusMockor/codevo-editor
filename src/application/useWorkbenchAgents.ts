@@ -467,7 +467,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
       if (!isCurrentRepositoryOwner(authority, request.repositoryRoot)) return null;
       const launchIdentity = launchIdentityForProject(request.projectRootKey);
       if (launchIdentity === null) return null;
-      const outcome = await refreshIsolationStatus(request.repositoryRoot);
+      const outcome = await refreshIsolationStatus(request.repositoryRoot, request.projectRootKey);
       if (outcome?.kind !== "ready") return null;
       if (
         outcome.authority.rootKey !== authority.rootKey ||

@@ -1,6 +1,6 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectOrigin } from "../../domain/agentProject";
-import type { AgentComposerRepositoryOption, AgentComposerTarget } from "./AgentComposer";
+import type { AgentComposerRepositoryOption, AgentComposerTarget } from "./agentComposerCheckout";
 
 export interface AgentComposerProjectOption {
   readonly projectRootKey: string;
@@ -8,6 +8,7 @@ export interface AgentComposerProjectOption {
   readonly generation: number;
   readonly label: string;
   readonly origin: AgentProjectOrigin;
+  readonly rootPath: string;
   readonly repositories: ReadonlyArray<AgentComposerRepositoryOption>;
 }
 
@@ -32,6 +33,14 @@ export type ComposerScope =
     } & ComposerTarget)
   | ({ readonly kind: "missing" } & ComposerTarget);
 
+export function composerProjectOwnsRoot(
+  project: AgentComposerProjectOption,
+  repositoryRoot: string,
+): boolean {
+  if (repositoryRoot === project.rootPath) return true;
+  return project.repositories.some((candidate) => candidate.repositoryRoot === repositoryRoot);
+}
+
 export function resolveComposerTarget(
   projects: ReadonlyArray<AgentComposerProjectOption>,
   selection: ComposerSelection | null,
@@ -53,12 +62,7 @@ export function resolveComposerTarget(
     return null;
   }
 
-  const repository = project.repositories[0] ?? null;
-  if (repository === null) {
-    return null;
-  }
-
-  return { projectRootKey: project.projectRootKey, repositoryRoot: repository.repositoryRoot };
+  return { projectRootKey: project.projectRootKey, repositoryRoot: project.rootPath };
 }
 
 function findComposerTarget(
@@ -71,12 +75,8 @@ function findComposerTarget(
   if ("kind" in preferred && preferred.kind === "missing") return null;
   if ("ownerId" in preferred && project.ownerId !== preferred.ownerId) return null;
   if ("generation" in preferred && project.generation !== preferred.generation) return null;
-  const repository =
-    project.repositories.find(
-      (candidate) => candidate.repositoryRoot === preferred.repositoryRoot,
-    ) ?? null;
-  if (repository === null) return null;
-  return { projectRootKey: project.projectRootKey, repositoryRoot: repository.repositoryRoot };
+  if (!composerProjectOwnsRoot(project, preferred.repositoryRoot)) return null;
+  return { projectRootKey: project.projectRootKey, repositoryRoot: preferred.repositoryRoot };
 }
 
 export function composerTargetView(
@@ -88,7 +88,22 @@ export function composerTargetView(
   if (project === undefined) return null;
   return {
     projectLabel: project.label,
+    projectRoot: project.rootPath,
     repositoryOptions: project.repositories,
     selectedRepositoryRoot: target.repositoryRoot,
   };
+}
+
+export function composerTargetLabel(
+  projects: ReadonlyArray<AgentComposerProjectOption>,
+  target: ComposerTarget | null,
+): string | null {
+  if (target === null) return null;
+  const project = projects.find((candidate) => candidate.projectRootKey === target.projectRootKey);
+  if (project === undefined) return null;
+  if (target.repositoryRoot === project.rootPath) return project.label;
+  return (
+    project.repositories.find((candidate) => candidate.repositoryRoot === target.repositoryRoot)
+      ?.label ?? null
+  );
 }

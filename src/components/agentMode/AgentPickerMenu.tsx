@@ -10,7 +10,11 @@ import {
   type ReactNode,
 } from "react";
 import { Check, ChevronDown, TriangleAlert } from "lucide-react";
-import type { AgentPickerOption, AgentPickerTone } from "./agentPickerOption";
+import {
+  agentPickerGroupHeading,
+  type AgentPickerOption,
+  type AgentPickerTone,
+} from "./agentPickerOption";
 import { useAgentPopoverPlacement } from "./agentPopover";
 
 export type { AgentPickerOption, AgentPickerTone } from "./agentPickerOption";
@@ -33,6 +37,7 @@ export interface AgentPickerMenuProps {
   readonly icon?: ReactNode;
   readonly confirmation?: AgentPickerConfirmation | null;
   onChange(value: string): void;
+  onOpen?(): void;
 }
 
 export interface AgentPickerConfirmation {
@@ -56,6 +61,7 @@ export function AgentPickerMenu({
   id,
   label,
   onChange,
+  onOpen,
   options,
   prefix,
   tone,
@@ -83,8 +89,9 @@ export function AgentPickerMenu({
       if (disabled || options.length === 0) return;
       setActiveIndex(clamp(index, options.length));
       setOpen(true);
+      if (!open) onOpen?.();
     },
-    [disabled, options.length],
+    [disabled, onOpen, open, options.length],
   );
 
   const choose = useCallback(
@@ -202,6 +209,7 @@ export function AgentPickerMenu({
       {open && (
         <div
           aria-label={label}
+          aria-multiselectable={options.some((option) => option.selected) || undefined}
           className={`agent-picker__menu agent-picker__menu--${align}`}
           id={listId}
           onKeyDown={onMenuKeyDown}
@@ -211,8 +219,13 @@ export function AgentPickerMenu({
         >
           {options.map((option, index) => (
             <Fragment key={option.value}>
+              {agentPickerGroupHeading(options, index) !== null && (
+                <div className="agent-picker__group" role="presentation">
+                  {agentPickerGroupHeading(options, index)}
+                </div>
+              )}
               <div
-                aria-selected={option.value === value}
+                aria-selected={option.selected || option.value === value}
                 className={optionClassName(option, index === activeIndex)}
                 data-index={index}
                 data-value={option.value}

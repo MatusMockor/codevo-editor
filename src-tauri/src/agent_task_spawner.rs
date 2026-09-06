@@ -219,8 +219,10 @@ fn agent_invocation_args(
         AgentCliInvocation::ClaudeCode => {
             vec!["-p", "--output-format", "stream-json", "--verbose"]
         }
-        AgentCliInvocation::CodexExec if resumed => vec!["exec", "resume", "--json"],
-        AgentCliInvocation::CodexExec => vec!["exec", "--json"],
+        AgentCliInvocation::CodexExec if resumed => {
+            vec!["exec", "resume", "--json", "--skip-git-repo-check"]
+        }
+        AgentCliInvocation::CodexExec => vec!["exec", "--json", "--skip-git-repo-check"],
     };
     template.extend_from_slice(launch.model_args());
     template.extend_from_slice(launch.mode_args(resumed));
@@ -890,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_first_turn_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
+    fn codex_first_turn_allows_trusted_projects_without_a_git_repository() {
         assert_eq!(
             agent_invocation_args(
                 AgentCliInvocation::CodexExec,
@@ -898,12 +900,12 @@ mod tests {
                 None,
                 codex_default()
             ),
-            ["exec", "--json", "--", "do it"]
+            ["exec", "--json", "--skip-git-repo-check", "--", "do it"]
         );
     }
 
     #[test]
-    fn codex_follow_up_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
+    fn codex_follow_up_allows_trusted_projects_without_a_git_repository() {
         assert_eq!(
             agent_invocation_args(
                 AgentCliInvocation::CodexExec,
@@ -911,7 +913,15 @@ mod tests {
                 Some(SESSION_ID),
                 codex_default()
             ),
-            ["exec", "resume", "--json", SESSION_ID, "--", "do it"]
+            [
+                "exec",
+                "resume",
+                "--json",
+                "--skip-git-repo-check",
+                SESSION_ID,
+                "--",
+                "do it"
+            ]
         );
     }
 
@@ -1015,6 +1025,7 @@ mod tests {
             [
                 "exec",
                 "--json",
+                "--skip-git-repo-check",
                 "-m",
                 "gpt-6-astra",
                 "--sandbox",
@@ -1034,6 +1045,7 @@ mod tests {
                 "exec",
                 "resume",
                 "--json",
+                "--skip-git-repo-check",
                 "-m",
                 "gpt-6-astra",
                 "-c",
@@ -1061,6 +1073,7 @@ mod tests {
                 "exec",
                 "resume",
                 "--json",
+                "--skip-git-repo-check",
                 "-m",
                 "gpt-5.5",
                 "-c",
@@ -1131,8 +1144,8 @@ mod tests {
                 let launch = AgentLaunchOptions::Codex { model, mode };
                 for resume in [None, Some(SESSION_ID)] {
                     let mut expected: Vec<String> = match resume {
-                        Some(_) => vec!["exec", "resume", "--json"],
-                        None => vec!["exec", "--json"],
+                        Some(_) => vec!["exec", "resume", "--json", "--skip-git-repo-check"],
+                        None => vec!["exec", "--json", "--skip-git-repo-check"],
                     }
                     .into_iter()
                     .map(str::to_string)

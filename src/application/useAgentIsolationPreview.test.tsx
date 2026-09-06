@@ -243,6 +243,72 @@ describe("useAgentIsolationPreview", () => {
     harness.unmount();
   });
 
+  it("rejects a foreign plain-folder status in preview and preflight", async () => {
+    const harness = renderPreview({ status: { known: false, dirty: false } });
+    harness.git.getStatus.mockResolvedValue({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath: "/foreign",
+    });
+
+    expect(await act(() => harness.hook().refreshIsolationStatus(ROOT))).toEqual({
+      kind: "failed",
+    });
+    expect(harness.hook().isolationPreview(ROOT).repositoryStatus?.kind).toBe("failed");
+    const preflight = await act(() =>
+      harness.hook().preflightInPlace(ROOT, projectAuthority(harness.project()), null),
+    );
+    expect(preflight.kind).toBe("status-failed");
+    harness.unmount();
+  });
+
+  it("treats a plain folder as an in-place target with no repository hazards", async () => {
+    const harness = renderPreview({ status: { known: false, dirty: false }, liveTasks: 1 });
+    harness.git.getStatus.mockImplementation(async (rootPath: string) => ({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath,
+      upstream: null,
+    }));
+    const authority = projectAuthority(harness.project());
+
+    const outcome = await act(() => harness.hook().refreshIsolationStatus(ROOT));
+    expect(outcome).toEqual({ kind: "ready", authority });
+
+    const preview = harness.hook().isolationPreview(ROOT);
+    expect(preview.repositoryStatus).toEqual({ kind: "notRepository" });
+    expect(preview.recommended).toEqual({ kind: "in-place" });
+    expect(preview.inPlaceGuard).toEqual({ kind: "unsafe", reasons: ["agent-active"] });
+    expect(preview.confirmationKey).not.toBeNull();
+
+    harness.environment.liveTasks = 0;
+    const preflight = await act(() => harness.hook().preflightInPlace(ROOT, authority, null));
+    expect(preflight).toEqual({ kind: "ok" });
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("keeps a plain folder worktree-only for a background project", async () => {
+    const harness = renderPreview({ origin: "background-tab" });
+    harness.git.getStatus.mockImplementation(async (rootPath: string) => ({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath,
+      upstream: null,
+    }));
+
+    await act(() => harness.hook().refreshIsolationStatus(ROOT));
+
+    const preview = harness.hook().isolationPreview(ROOT);
+    expect(preview.repositoryStatus).toEqual({ kind: "notRepository" });
+    expect(preview.recommended).toEqual({ kind: "worktree", reason: "policy" });
+    expect(preview.inPlaceAllowed).toBe(false);
+    harness.unmount();
+  });
+
   describe("preflightInPlace", () => {
     it("passes a clean repository and records the fresh status", async () => {
       const harness = renderPreview({ status: { known: false, dirty: false } });
@@ -307,6 +373,98 @@ describe("useAgentIsolationPreview", () => {
     });
   });
 
+  it.each([false, true])(
+    "uses exact nested-project trust and rejects ambiguous roots, reversed=%s",
+    async (reverse) => {
+      const nestedRoot = `${ROOT}/pkg`;
+      const harness = renderPreview({}, (project) => {
+        const parent: AgentProjectDescriptor = {
+          ...project,
+          origin: "background-tab",
+          trust: "untrusted",
+          repositories: [
+            {
+              mapping: { rootRelativePath: "pkg" },
+              repositoryRoot: nestedRoot,
+              repositoryRelativePath: "pkg",
+            },
+          ],
+        };
+        const nested: AgentProjectDescriptor = {
+          ...project,
+          rootKey: nestedRoot,
+          rootPath: nestedRoot,
+          ownerId: "nested",
+          repositories: [],
+        };
+        return reverse ? [nested, parent] : [parent, nested];
+      });
+      expect(harness.hook().isolationPreview(nestedRoot).repositoryStatus?.kind).toBe(
+        "unavailable",
+      );
+      expect(await harness.hook().refreshIsolationStatus(nestedRoot)).toEqual({
+        kind: "unavailable",
+      });
+      expect(harness.hook().isolationPreview(nestedRoot, ROOT).inPlaceAllowed).toBe(false);
+      expect(harness.hook().isolationPreview(nestedRoot, nestedRoot).inPlaceAllowed).toBe(true);
+      expect(await harness.hook().refreshIsolationStatus(ROOT, nestedRoot)).toEqual({
+        kind: "unavailable",
+      });
+      const outcome = await act(() =>
+        harness.hook().refreshIsolationStatus(nestedRoot, nestedRoot),
+      );
+      expect(outcome.kind).toBe("ready");
+      if (outcome.kind !== "ready") throw new Error("Expected ready nested project");
+      expect(
+        await act(() => harness.hook().preflightInPlace(nestedRoot, outcome.authority, null)),
+      ).toEqual({ kind: "ok" });
+      expect(harness.hook().isolationPreview(nestedRoot, ROOT).confirmationKey).toBeNull();
+      harness.unmount();
+    },
+  );
+
+  it("keeps pending probes and cached status separate for overlapping projects", async () => {
+    const nestedRoot = `${ROOT}/pkg`;
+    const harness = renderPreview({ status: { known: false, dirty: false } }, (project) => [
+      {
+        ...project,
+        repositories: [
+          {
+            mapping: { rootRelativePath: "pkg" },
+            repositoryRoot: nestedRoot,
+            repositoryRelativePath: "pkg",
+          },
+        ],
+      },
+      {
+        ...project,
+        rootKey: nestedRoot,
+        rootPath: nestedRoot,
+        ownerId: "nested",
+        repositories: [],
+      },
+    ]);
+    const slow = createDeferred<GitStatus>();
+    harness.git.getStatus.mockImplementationOnce(() => slow.promise);
+    await act(async () => {
+      const parent = harness.hook().refreshIsolationStatus(nestedRoot, ROOT);
+      expect((await harness.hook().refreshIsolationStatus(nestedRoot, nestedRoot)).kind).toBe(
+        "ready",
+      );
+      slow.resolve({
+        branch: "main",
+        changes: [change()],
+        isRepository: true,
+        rootPath: nestedRoot,
+      });
+      expect((await parent).kind).toBe("ready");
+    });
+    expect(harness.hook().isolationContext(nestedRoot, ROOT).repositoryDirty).toBe(true);
+    expect(harness.hook().isolationContext(nestedRoot, nestedRoot).repositoryDirty).toBe(false);
+    expect(harness.hook().isolationPreview(nestedRoot).repositoryStatus?.kind).toBe("unavailable");
+    harness.unmount();
+  });
+
   it("labels every isolation reason and guard reason", () => {
     expect(agentIsolationReasonLabel({ kind: "in-place" })).toContain("clean");
     for (const reason of [
@@ -342,7 +500,10 @@ function change(): GitChangedFile {
   };
 }
 
-function renderPreview(overrides: Partial<Environment> = {}) {
+function renderPreview(
+  overrides: Partial<Environment> = {},
+  projects?: (project: AgentProjectDescriptor) => ReadonlyArray<AgentProjectDescriptor>,
+) {
   const environment: Environment = {
     present: true,
     generation: 1,
@@ -380,7 +541,7 @@ function renderPreview(overrides: Partial<Environment> = {}) {
   });
   const dependencies: AgentIsolationPreviewDependencies = {
     get projects() {
-      return environment.present ? [project()] : [];
+      return environment.present ? (projects?.(project()) ?? [project()]) : [];
     },
     gitGateway: git,
     getRepositoryStatus: () => environment.status,

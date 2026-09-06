@@ -288,7 +288,6 @@ describe("AgentProjectScopeMenu", () => {
       label,
       projectRootKey: repositoryRoot,
       repositoryRoot,
-      repositoryResolved: true,
       trust: "trusted",
       origin: "active-tab",
       rootPath: repositoryRoot,

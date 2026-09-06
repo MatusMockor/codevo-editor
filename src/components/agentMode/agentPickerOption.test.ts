@@ -10,6 +10,8 @@ describe("agentPickerOption", () => {
       tone: null,
       detail: null,
       icon: null,
+      group: null,
+      selected: false,
     });
   });
 

@@ -734,6 +734,7 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
         [
             "exec".to_string(),
             "--json".to_string(),
+            "--skip-git-repo-check".to_string(),
             "--".to_string(),
             "ship".to_string()
         ]
@@ -775,6 +776,7 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "exec".to_string(),
             "resume".to_string(),
             "--json".to_string(),
+            "--skip-git-repo-check".to_string(),
             "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string(),
             "--".to_string(),
             "ship".to_string()

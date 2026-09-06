@@ -210,7 +210,9 @@ describe("useAgentChangeSummary changes", () => {
   });
 
   it("ignores a thread whose repository is foreign to its claimed project", async () => {
-    const harness = renderChangeSummary({ projects: [project({ repositories: [] })] });
+    const harness = renderChangeSummary({
+      projects: [project({ rootPath: "/workspace/elsewhere", repositories: [] })],
+    });
 
     await act(() => harness.hook().showChanges(THREAD_ID));
 

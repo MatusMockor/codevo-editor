@@ -42,25 +42,116 @@ describe("AgentComposer", () => {
     expect(host.querySelector("textarea#agent-prompt")).not.toBeNull();
   });
 
-  it("offers the repositories of the target project only when there is a choice", () => {
+  it("keeps the nested repositories inside the checkout menu instead of a Repo picker", () => {
     render();
 
-    expect(pickerOptionLabels(REPOSITORY_ID)).toEqual(["app", "packages/api"]);
-    expect(pickerValue(REPOSITORY_ID)).toBe("/workspace/app");
-    expect(trigger(REPOSITORY_ID).getAttribute("aria-label")).toBe("Repository in app");
-
-    render({ target: { ...target(), repositoryOptions: [repo("/workspace/app", "app")] } });
-
     expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
+    expect(host.querySelector(".agent-composer__row .agent-picker__prefix")).toBeNull();
+    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual([
+      "Local checkout",
+      "Isolated worktree",
+      "app",
+      "packages/api",
+    ]);
+    expect(pickerGroupHeadings(CHECKOUT_ID)).toEqual(["Run in repository"]);
+    const selectedOptions = pickerOptions(CHECKOUT_ID).filter(
+      (option) => option.getAttribute("aria-selected") === "true",
+    );
+    expect(selectedOptions).toHaveLength(2);
+    expect(selectedOptions[0]?.textContent).toContain("Local checkout");
+    expect(selectedOptions[1]?.textContent).toBe("appProject folder");
+    expect(pickerOptionDescriptions(CHECKOUT_ID)).toEqual([
+      "Runs in app.",
+      "Runs in a new git worktree of app.",
+      "Project folder",
+      "",
+    ]);
+    expect(host.querySelector("[data-agent-composer-target]")).toBeNull();
+
+    render({ target: { ...target(), repositoryOptions: [] } });
+
+    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Local checkout", "Isolated worktree"]);
+    expect(pickerGroupHeadings(CHECKOUT_ID)).toEqual([]);
   });
 
-  it("changes the repository of the next thread", () => {
+  it("changes the repository of the next thread from the checkout menu and names it", () => {
     const onSelectRepository = vi.fn();
-    render({ onSelectRepository });
+    const onIsolationChange = vi.fn();
+    render({ onIsolationChange, onSelectRepository });
 
-    pickOption(REPOSITORY_ID, "/workspace/app/packages/api");
+    pickOption(CHECKOUT_ID, "root:/workspace/app/packages/api");
 
     expect(onSelectRepository).toHaveBeenCalledWith("/workspace/app/packages/api");
+    expect(onIsolationChange).not.toHaveBeenCalled();
+
+    render({
+      target: { ...target(), selectedRepositoryRoot: "/workspace/app/packages/api" },
+    });
+
+    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toBe(
+      "Repository:in packages/api",
+    );
+    expect(pickerOptionDescriptions(CHECKOUT_ID)[0]).toBe("Runs in packages/api.");
+    openPicker(CHECKOUT_ID);
+    const menu = host.querySelector('[role="listbox"][aria-label="Checkout for this thread"]');
+    expect(menu?.getAttribute("aria-multiselectable")).toBe("true");
+    const selected = [...(menu?.querySelectorAll('[role="option"][aria-selected="true"]') ?? [])];
+    expect(selected).toHaveLength(2);
+    expect(selected[0]?.textContent).toContain("Local checkout");
+    expect(selected[1]?.textContent).toBe("packages/api");
+    expect(
+      menu?.querySelector('[data-value="root:/workspace/app"]')?.getAttribute("aria-selected"),
+    ).toBe("false");
+    act(() => trigger(CHECKOUT_ID).click());
+  });
+
+  it("offers only the local checkout when the target is not a Git repository", () => {
+    const onIsolationChange = vi.fn();
+    render({ onIsolationChange, worktreeAvailable: false });
+
+    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Local checkout", "app", "packages/api"]);
+    expect(pickerValue(CHECKOUT_ID)).toBe("in-place");
+    expect(
+      host.querySelector(`#${CHECKOUT_ID}-list [role="option"][data-value="worktree"]`),
+    ).toBeNull();
+
+    render({ onIsolationChange, prompt: "Fix it", worktreeAvailable: false });
+    expect(submitButton().disabled).toBe(false);
+  });
+
+  it("refreshes repository status when the checkout menu opens with mouse or keyboard", () => {
+    const onRefreshIsolation = vi.fn();
+    render({ onRefreshIsolation, worktreeAvailable: false });
+    openPicker(CHECKOUT_ID);
+    expect(onRefreshIsolation).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[role="option"][data-value="worktree"]')).toBeNull();
+    render({ onRefreshIsolation, worktreeAvailable: true });
+    expect(host.querySelector('[role="option"][data-value="worktree"]')?.textContent).toContain(
+      "Isolated worktree",
+    );
+    act(() => trigger(CHECKOUT_ID).click());
+    act(() => {
+      trigger(CHECKOUT_ID).dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+      );
+    });
+    expect(onRefreshIsolation).toHaveBeenCalledTimes(2);
+    render({ onRefreshIsolation, worktreeAvailable: false });
+    expect(host.querySelector('[role="option"][data-value="worktree"]')).toBeNull();
+  });
+
+  it("keeps status refresh reachable for a background plain folder without nested repositories", () => {
+    const onRefreshIsolation = vi.fn();
+    render({
+      onRefreshIsolation,
+      isolation: "worktree",
+      worktreeOnly: true,
+      worktreeAvailable: false,
+      target: { ...target(), repositoryOptions: [] },
+    });
+    expect(trigger(CHECKOUT_ID).disabled).toBe(false);
+    openPicker(CHECKOUT_ID);
+    expect(onRefreshIsolation).toHaveBeenCalledTimes(1);
   });
 
   it("blocks a new thread while no project owns the composer", () => {
@@ -97,7 +188,6 @@ describe("AgentComposer", () => {
     expect(trigger("agent-launch-effort").disabled).toBe(true);
     expect(trigger("agent-launch-mode").disabled).toBe(true);
     expect(trigger(CHECKOUT_ID).disabled).toBe(true);
-    expect(trigger(REPOSITORY_ID).disabled).toBe(true);
     expect(host.querySelector<HTMLTextAreaElement>("#agent-prompt")?.disabled).toBe(true);
     const settings = [...host.querySelectorAll("button")].find(
       (button) => button.textContent === "Open provider settings",
@@ -137,14 +227,20 @@ describe("AgentComposer", () => {
     expect(host.querySelector("#agent-launch-danger-confirm")).toBeNull();
   });
 
-  it("blocks a project that has no repository and names it", () => {
-    render({ prompt: "Fix it", target: { ...target(), repositoryOptions: [] } });
+  it("lets a plain project folder start a thread and states that it runs in place", () => {
+    render({
+      isolationReason: "Not a Git repository · runs in place",
+      prompt: "Fix it",
+      target: { ...target(), repositoryOptions: [] },
+      worktreeAvailable: false,
+    });
 
-    expect(submitButton().disabled).toBe(true);
+    expect(submitButton().disabled).toBe(false);
     expect(host.querySelector(".agent-composer__reason")?.textContent).toBe(
-      "No Git repository detected in app.",
+      "Not a Git repository · runs in place",
     );
-    expect(host.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
+    expect(host.textContent).not.toContain("uncommitted");
+    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Local checkout"]);
   });
 
   it("picks the checkout in the footer strip attached to the box", () => {
@@ -155,10 +251,13 @@ describe("AgentComposer", () => {
     const footer = host.querySelector(".agent-composer__footer");
     expect(footer?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
     expect(box?.lastElementChild).toBe(footer);
-    expect(footer?.querySelector(`#${REPOSITORY_ID}`)).not.toBeNull();
+    expect(footer?.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
     expect(pickerValue(CHECKOUT_ID)).toBe("in-place");
     expect(trigger(CHECKOUT_ID).textContent).toContain("Local checkout");
-    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Local checkout", "Isolated worktree"]);
+    expect(pickerOptionLabels(CHECKOUT_ID).slice(0, 2)).toEqual([
+      "Local checkout",
+      "Isolated worktree",
+    ]);
 
     pickOption(CHECKOUT_ID, "worktree");
 
@@ -187,10 +286,21 @@ describe("AgentComposer", () => {
         "This project is not the active tab, so the agent only runs in an isolated worktree.",
     });
 
-    expect(trigger(CHECKOUT_ID).disabled).toBe(true);
+    expect(trigger(CHECKOUT_ID).disabled).toBe(false);
     expect(pickerValue(CHECKOUT_ID)).toBe("worktree");
+    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Isolated worktree", "app", "packages/api"]);
     expect(host.textContent).toContain("only runs in an isolated worktree");
     expect(host.textContent).not.toContain("The working tree is clean.");
+
+    render({
+      isolation: "worktree",
+      target: { ...target(), repositoryOptions: [] },
+      worktreeOnly: true,
+      worktreeOnlyReason:
+        "This project is not the active tab, so the agent only runs in an isolated worktree.",
+    });
+
+    expect(trigger(CHECKOUT_ID).disabled).toBe(true);
   });
 
   it("shows the thread's checkout as a locked chip in follow-up mode", () => {
@@ -251,7 +361,7 @@ describe("AgentComposer", () => {
     expect(panel?.querySelector("#agent-launch-model")).not.toBeNull();
     expect(panel?.querySelector("#agent-launch-effort")).not.toBeNull();
     expect(panel?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
-    expect(panel?.querySelector(`#${REPOSITORY_ID}`)).not.toBeNull();
+    expect(panel?.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
     expect(submitButton()).not.toBeNull();
   });
 
@@ -600,6 +710,19 @@ describe("AgentComposer", () => {
     );
   }
 
+  function pickerOptionDescriptions(id: string): ReadonlyArray<string> {
+    return pickerOptions(id).map(
+      (option) => option.querySelector(".agent-picker__description")?.textContent ?? "",
+    );
+  }
+
+  function pickerGroupHeadings(id: string): ReadonlyArray<string> {
+    openPicker(id);
+    const headings = [...host.querySelectorAll<HTMLElement>(`#${id}-list .agent-picker__group`)];
+    act(() => trigger(id).click());
+    return headings.map((heading) => heading.textContent ?? "");
+  }
+
   function pickOption(id: string, value: string): void {
     openPicker(id);
     const option = host.querySelector<HTMLElement>(
@@ -765,10 +888,8 @@ function repo(repositoryRoot: string, label: string): AgentComposerRepositoryOpt
 function target(): AgentComposerTarget {
   return {
     projectLabel: "app",
-    repositoryOptions: [
-      repo("/workspace/app", "app"),
-      repo("/workspace/app/packages/api", "packages/api"),
-    ],
+    projectRoot: "/workspace/app",
+    repositoryOptions: [repo("/workspace/app/packages/api", "packages/api")],
     selectedRepositoryRoot: "/workspace/app",
   };
 }
@@ -780,6 +901,7 @@ function defaultProps(): AgentComposerProps {
     promptBytes: 0,
     isolation: "in-place",
     isolationReason: null,
+    worktreeAvailable: true,
     worktreeOnly: false,
     worktreeOnlyReason: null,
     guard: { kind: "safe" },

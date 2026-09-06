@@ -353,7 +353,11 @@ describe("AgentModeView", () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({ agents: surface({ startThread }) });
 
-    pickOption("agent-repository", NESTED);
+    expect(host.querySelector("#agent-repository")).toBeNull();
+    pickOption("agent-checkout", `root:${NESTED}`);
+    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
+      "packages/api",
+    );
     typePrompt("Update the router");
     submitForm();
 
@@ -1108,7 +1112,11 @@ describe("AgentModeView", () => {
 
     chooseScope(OTHER_ROOT);
 
-    expect(pickerTrigger("agent-checkout").disabled).toBe(true);
+    expect(pickerTrigger("agent-checkout").disabled).toBe(false);
+    click("button#agent-checkout");
+    expect(host.querySelector('[role="option"][data-value="in-place"]')).toBeNull();
+    expect(host.querySelector('[role="option"][data-value="worktree"]')).not.toBeNull();
+    click("button#agent-checkout");
     expect(host.textContent).toContain("not the active tab");
 
     typePrompt("Fix the parser");
@@ -2374,7 +2382,7 @@ describe("AgentModeView", () => {
     });
   });
 
-  it("opens header sessions for a project-root thread with only nested repositories", () => {
+  it("opens header sessions at the project folder for a project-root thread with only nested repositories", () => {
     const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
     const project = activeProject();
     const nestedRoot = `${ROOT}/packages/api`;
@@ -2394,7 +2402,7 @@ describe("AgentModeView", () => {
     expect(terminalSessionsPalette()).not.toBeNull();
     expect(externalSessions.open).toHaveBeenCalledExactlyOnceWith({
       rootKey: ROOT,
-      repositoryRoot: nestedRoot,
+      repositoryRoot: ROOT,
     });
   });
 

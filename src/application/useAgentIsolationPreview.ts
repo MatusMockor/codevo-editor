@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef } from "react";
-import type { AgentProjectDescriptor } from "../domain/agentProject";
+import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../domain/agentProject";
 import {
   defaultAgentTaskIsolation,
   inPlaceDispatchGuard,
@@ -14,7 +14,6 @@ import {
   attempt,
   errorMessageOf,
   isCurrentProjectOwner,
-  owningProjectForRepository,
   projectAuthority,
   sameOptionalProjectAuthority,
   sameProjectAuthority,
@@ -47,9 +46,12 @@ export type InPlacePreflight =
   | { readonly kind: "unsafe"; readonly label: string };
 
 export interface AgentIsolationPreviewSurface {
-  isolationContext(repositoryRoot: string): AgentTaskIsolationContext;
-  isolationPreview(repositoryRoot: string): AgentIsolationPreview;
-  refreshIsolationStatus(repositoryRoot: string): Promise<AgentRepositoryProbeOutcome>;
+  isolationContext(repositoryRoot: string, projectRootKey?: string): AgentTaskIsolationContext;
+  isolationPreview(repositoryRoot: string, projectRootKey?: string): AgentIsolationPreview;
+  refreshIsolationStatus(
+    repositoryRoot: string,
+    projectRootKey?: string,
+  ): Promise<AgentRepositoryProbeOutcome>;
   preflightInPlace(
     repositoryRoot: string,
     authority: AgentProjectAuthority,
@@ -83,98 +85,109 @@ export function useAgentIsolationPreview(
     };
   }, []);
 
-  const isolationContext = useCallback((repositoryRoot: string): AgentTaskIsolationContext => {
-    const deps = dependenciesRef.current;
-    const project = owningProjectForRepository(deps.projects, repositoryRoot);
-    const authority = project === undefined ? null : projectAuthority(project);
-    const fresh = statusesRef.current.get(repositoryRoot);
-    const status =
-      fresh !== undefined && authority !== null && sameProjectAuthority(fresh.authority, authority)
-        ? fresh.snapshot
-        : deps.getRepositoryStatus(repositoryRoot);
-    return {
-      workspacePolicy: normalizeAgentIsolationPolicy(project?.isolationPolicy ?? "auto"),
-      repositoryStatusKnown: status.known,
-      repositoryDirty: status.dirty,
-      dirtyEditorDocumentsInRepository:
-        project?.origin === "active-tab"
-          ? Math.max(0, Math.trunc(deps.getDirtyEditorDocumentCount(repositoryRoot)))
-          : 0,
-      liveAgentTasksInRepository: deps.liveAgentTasksInRepository(repositoryRoot),
-      plannedParallelDispatch: false,
-    };
-  }, []);
+  const isolationContext = useCallback(
+    (repositoryRoot: string, projectRootKey?: string): AgentTaskIsolationContext => {
+      const deps = dependenciesRef.current;
+      const project = isolationProject(deps.projects, repositoryRoot, projectRootKey);
+      const authority = project === undefined ? null : projectAuthority(project);
+      const fresh = statusesRef.current.get(isolationStatusKey(project?.rootKey, repositoryRoot));
+      const status =
+        fresh !== undefined &&
+        authority !== null &&
+        sameProjectAuthority(fresh.authority, authority)
+          ? fresh.snapshot
+          : project === undefined
+            ? { known: false, dirty: false }
+            : deps.getRepositoryStatus(repositoryRoot);
+      return {
+        workspacePolicy: normalizeAgentIsolationPolicy(project?.isolationPolicy ?? "auto"),
+        repositoryStatusKnown: status.known,
+        repositoryDirty: status.dirty,
+        dirtyEditorDocumentsInRepository:
+          project?.origin === "active-tab"
+            ? Math.max(0, Math.trunc(deps.getDirtyEditorDocumentCount(repositoryRoot)))
+            : 0,
+        liveAgentTasksInRepository: deps.liveAgentTasksInRepository(repositoryRoot),
+        plannedParallelDispatch: false,
+      };
+    },
+    [],
+  );
 
-  const nextRequestGeneration = useCallback((repositoryRoot: string): number => {
-    const generation = (requestGenerationsRef.current.get(repositoryRoot) ?? 0) + 1;
+  const nextRequestGeneration = useCallback((statusKey: string): number => {
+    const generation = (requestGenerationsRef.current.get(statusKey) ?? 0) + 1;
     requestGenerationsRef.current = new Map(requestGenerationsRef.current).set(
-      repositoryRoot,
+      statusKey,
       generation,
     );
     return generation;
   }, []);
 
-  const storeStatus = useCallback((repositoryRoot: string, status: FreshIsolationStatus): void => {
-    statusesRef.current = new Map(statusesRef.current).set(repositoryRoot, status);
+  const storeStatus = useCallback((statusKey: string, status: FreshIsolationStatus): void => {
+    statusesRef.current = new Map(statusesRef.current).set(statusKey, status);
     if (mountedRef.current) publishGeneration();
   }, []);
 
   const refreshIsolationStatus = useCallback(
-    async (repositoryRoot: string): Promise<AgentRepositoryProbeOutcome> => {
+    async (
+      repositoryRoot: string,
+      projectRootKey?: string,
+    ): Promise<AgentRepositoryProbeOutcome> => {
       const deps = dependenciesRef.current;
-      const project = owningProjectForRepository(deps.projects, repositoryRoot);
+      const project = isolationProject(deps.projects, repositoryRoot, projectRootKey);
       if (project === undefined || project.trust !== "trusted") return { kind: "unavailable" };
       const authority = projectAuthority(project);
-      const requestGeneration = nextRequestGeneration(repositoryRoot);
+      const statusKey = isolationStatusKey(authority.rootKey, repositoryRoot);
+      const requestGeneration = nextRequestGeneration(statusKey);
       if (!isCurrentTrustedProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
         return { kind: "stale" };
       }
-      storeStatus(repositoryRoot, checkingIsolationStatus(authority));
+      storeStatus(statusKey, checkingIsolationStatus(authority));
       const result = await attempt(() => deps.gitGateway.getStatus(repositoryRoot));
       if (!isCurrentTrustedProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
         return { kind: "stale" };
       }
-      if (requestGenerationsRef.current.get(repositoryRoot) !== requestGeneration) {
+      if (requestGenerationsRef.current.get(statusKey) !== requestGeneration) {
         return { kind: "stale" };
       }
       if (!result.ok) {
         deps.reportError(AGENT_TASKS_SOURCE, result.error);
-        storeStatus(repositoryRoot, failedIsolationStatus(authority, result.error));
+        storeStatus(statusKey, failedIsolationStatus(authority, result.error));
         return { kind: "failed" };
       }
       const status = freshIsolationStatus(authority, repositoryRoot, result.value);
-      storeStatus(repositoryRoot, status);
-      return status.state.kind === "ready" ? { kind: "ready", authority } : { kind: "failed" };
+      storeStatus(statusKey, status);
+      return probeSettled(status.state) ? { kind: "ready", authority } : { kind: "failed" };
     },
     [nextRequestGeneration, storeStatus],
   );
 
   const isolationPreview = useCallback(
-    (repositoryRoot: string): AgentIsolationPreview => {
+    (repositoryRoot: string, projectRootKey?: string): AgentIsolationPreview => {
       const deps = dependenciesRef.current;
-      const project = owningProjectForRepository(deps.projects, repositoryRoot);
+      const project = isolationProject(deps.projects, repositoryRoot, projectRootKey);
       const inPlaceAllowed = project?.origin === "active-tab" && project.trust === "trusted";
-      const context = isolationContext(repositoryRoot);
       const authority = project === undefined ? null : projectAuthority(project);
+      const context = isolationContext(repositoryRoot, projectRootKey);
+      const statusKey = isolationStatusKey(project?.rootKey, repositoryRoot);
       const repositoryStatus = repositoryProbeState(
         project,
         authority,
-        statusesRef.current.get(repositoryRoot),
+        statusesRef.current.get(statusKey),
         context,
       );
       const confirmationKey =
         authority !== null &&
-        sameOptionalProjectAuthority(statusesRef.current.get(repositoryRoot)?.authority, authority)
+        sameOptionalProjectAuthority(statusesRef.current.get(statusKey)?.authority, authority)
           ? isolationConfirmationKey(repositoryRoot, context, authority)
           : null;
       return {
         repositoryRoot,
         repositoryStatus,
-        recommended: inPlaceAllowed
-          ? recommendedIsolation(context)
-          : { kind: "worktree", reason: "policy" },
-        inPlaceGuard:
-          repositoryStatus.kind === "ready" ? inPlaceDispatchGuard(context) : { kind: "safe" },
+        recommended: recommendedFor(repositoryStatus, context, inPlaceAllowed),
+        inPlaceGuard: probeSettled(repositoryStatus)
+          ? inPlaceDispatchGuard(context)
+          : { kind: "safe" },
         inPlaceAllowed,
         confirmationKey,
       };
@@ -189,7 +202,8 @@ export function useAgentIsolationPreview(
       unsafeInPlaceConfirmationKey: string | null,
     ): Promise<InPlacePreflight> => {
       const deps = dependenciesRef.current;
-      const requestGeneration = nextRequestGeneration(repositoryRoot);
+      const statusKey = isolationStatusKey(authority.rootKey, repositoryRoot);
+      const requestGeneration = nextRequestGeneration(statusKey);
       if (!isCurrentTrustedProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
         return { kind: "owner-lost" };
       }
@@ -197,19 +211,19 @@ export function useAgentIsolationPreview(
       if (!isCurrentTrustedProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
         return { kind: "owner-lost" };
       }
-      if (requestGenerationsRef.current.get(repositoryRoot) !== requestGeneration) {
+      if (requestGenerationsRef.current.get(statusKey) !== requestGeneration) {
         return { kind: "superseded" };
       }
       if (!status.ok) {
-        storeStatus(repositoryRoot, failedIsolationStatus(authority, status.error));
+        storeStatus(statusKey, failedIsolationStatus(authority, status.error));
         return { kind: "status-failed", error: status.error };
       }
       const fresh = freshIsolationStatus(authority, repositoryRoot, status.value);
-      storeStatus(repositoryRoot, fresh);
+      storeStatus(statusKey, fresh);
       if (fresh.state.kind === "failed") {
         return { kind: "status-failed", error: new Error(fresh.state.message) };
       }
-      const context = isolationContext(repositoryRoot);
+      const context = isolationContext(repositoryRoot, authority.rootKey);
       const guard = inPlaceDispatchGuard(context);
       const confirmationKey = isolationConfirmationKey(repositoryRoot, context, authority);
       if (
@@ -229,6 +243,25 @@ export function useAgentIsolationPreview(
   return { isolationContext, isolationPreview, refreshIsolationStatus, preflightInPlace };
 }
 
+function isolationStatusKey(projectRootKey: string | undefined, repositoryRoot: string): string {
+  return JSON.stringify([projectRootKey ?? null, repositoryRoot]);
+}
+
+function isolationProject(
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  repositoryRoot: string,
+  projectRootKey?: string,
+): AgentProjectDescriptor | undefined {
+  if (projectRootKey !== undefined) {
+    return projects.find(
+      (project) =>
+        project.rootKey === projectRootKey && agentProjectOwnsLaunchRoot(project, repositoryRoot),
+    );
+  }
+  const owners = projects.filter((project) => agentProjectOwnsLaunchRoot(project, repositoryRoot));
+  return owners.length === 1 ? owners[0] : undefined;
+}
+
 function isCurrentTrustedProjectOwner(
   dependenciesRef: {
     readonly current: Pick<AgentIsolationPreviewDependencies, "projects">;
@@ -238,7 +271,11 @@ function isCurrentTrustedProjectOwner(
   repositoryRoot: string,
 ): boolean {
   if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return false;
-  const project = owningProjectForRepository(dependenciesRef.current.projects, repositoryRoot);
+  const project = isolationProject(
+    dependenciesRef.current.projects,
+    repositoryRoot,
+    authority.rootKey,
+  );
   return (
     project !== undefined &&
     project.trust === "trusted" &&
@@ -251,11 +288,18 @@ function freshIsolationStatus(
   repositoryRoot: string,
   status: GitStatus,
 ): FreshIsolationStatus {
-  if (!status.isRepository || status.rootPath !== repositoryRoot) {
+  if (status.rootPath !== repositoryRoot) {
     return failedIsolationStatus(
       authority,
       new Error("Git did not return status for the selected repository."),
     );
+  }
+  if (!status.isRepository) {
+    return {
+      authority,
+      snapshot: { known: true, dirty: false },
+      state: { kind: "notRepository" },
+    };
   }
   return {
     authority,
@@ -316,6 +360,20 @@ function repositoryProbeState(
     return fresh.state;
   }
   return context.repositoryStatusKnown ? { kind: "ready" } : { kind: "checking" };
+}
+
+function probeSettled(state: AgentRepositoryProbeState): boolean {
+  return state.kind === "ready" || state.kind === "notRepository";
+}
+
+function recommendedFor(
+  state: AgentRepositoryProbeState,
+  context: AgentTaskIsolationContext,
+  inPlaceAllowed: boolean,
+): AgentIsolationDefault {
+  if (!inPlaceAllowed) return { kind: "worktree", reason: "policy" };
+  if (state.kind === "notRepository") return { kind: "in-place" };
+  return recommendedIsolation(context);
 }
 
 function recommendedIsolation(context: AgentTaskIsolationContext): AgentIsolationDefault {

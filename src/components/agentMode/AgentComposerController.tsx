@@ -72,9 +72,11 @@ function agentComposerControllerPropsEqual(
     leftProps.isolation === rightProps.isolation &&
     leftProps.isolationReason === rightProps.isolationReason &&
     leftProps.launchProvider === rightProps.launchProvider &&
+    leftProps.worktreeAvailable === rightProps.worktreeAvailable &&
     leftProps.worktreeOnly === rightProps.worktreeOnly &&
     leftProps.worktreeOnlyReason === rightProps.worktreeOnlyReason &&
     leftProps.onIsolationChange === rightProps.onIsolationChange &&
+    leftProps.onRefreshIsolation === rightProps.onRefreshIsolation &&
     leftProps.onLaunchChange === rightProps.onLaunchChange &&
     leftProps.onNewThread === rightProps.onNewThread &&
     leftProps.onSelectRepository === rightProps.onSelectRepository &&
@@ -99,6 +101,7 @@ function sameComposerTarget(
 ): boolean {
   if (left === null || right === null) return left === right;
   if (left.projectLabel !== right.projectLabel) return false;
+  if (left.projectRoot !== right.projectRoot) return false;
   if (left.selectedRepositoryRoot !== right.selectedRepositoryRoot) return false;
   if (left.repositoryOptions.length !== right.repositoryOptions.length) return false;
   return left.repositoryOptions.every((option, index) => {

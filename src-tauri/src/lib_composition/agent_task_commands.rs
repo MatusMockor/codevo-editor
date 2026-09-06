@@ -1234,6 +1234,7 @@ mod tests {
                 "exec".to_string(),
                 "resume".to_string(),
                 "--json".to_string(),
+                "--skip-git-repo-check".to_string(),
                 "-m".to_string(),
                 "gpt-5.6-sol".to_string(),
                 "-c".to_string(),

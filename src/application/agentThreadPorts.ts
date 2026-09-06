@@ -47,6 +47,7 @@ export interface AgentRepositoryStatusSnapshot {
 export type AgentRepositoryProbeState =
   | { readonly kind: "checking" }
   | { readonly kind: "ready" }
+  | { readonly kind: "notRepository" }
   | { readonly kind: "failed"; readonly message: string }
   | { readonly kind: "unavailable"; readonly message: string };
 
@@ -258,8 +259,11 @@ export interface AgentThreadsSurface {
   renameThread(threadId: string, title: string): void;
   threadCopyDetail(threadId: string, detail: AgentThreadCopyDetail): string | null;
   lastUsedLaunch(projectRootKey: string): AgentLaunchOptions | null;
-  isolationPreview(repositoryRoot: string): AgentIsolationPreview;
-  refreshIsolationStatus(repositoryRoot: string): Promise<AgentRepositoryProbeOutcome | void>;
+  isolationPreview(repositoryRoot: string, projectRootKey?: string): AgentIsolationPreview;
+  refreshIsolationStatus(
+    repositoryRoot: string,
+    projectRootKey?: string,
+  ): Promise<AgentRepositoryProbeOutcome | void>;
   startThread(request: AgentThreadStartRequest): Promise<AgentThreadStartResult | null>;
   sendFollowUp(request: AgentFollowUpRequest): Promise<boolean>;
   importExternalSession(

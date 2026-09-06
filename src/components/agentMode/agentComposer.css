@@ -206,6 +206,16 @@
   align-items: center;
 }
 
+.agent-composer__target {
+  flex: 0 1 auto;
+  overflow: hidden;
+  min-width: 0;
+  color: var(--agent-text-subtle);
+  font-size: var(--agent-fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-composer__chip {
   display: flex;
   flex: none;
@@ -645,6 +655,16 @@
   font-size: var(--agent-fs-sm);
   line-height: 18px;
   white-space: nowrap;
+}
+
+.agent-picker__group {
+  color: var(--agent-text-subtle);
+  font-size: var(--agent-fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-top: 4px;
+  padding: 6px 10px 2px;
+  text-transform: uppercase;
 }
 
 .agent-picker__detail {

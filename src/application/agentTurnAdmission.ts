@@ -1,4 +1,4 @@
-import type { AgentProjectDescriptor } from "../domain/agentProject";
+import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../domain/agentProject";
 import {
   agentLaunchIsDangerous,
   agentLaunchMatchesProvider,
@@ -108,10 +108,7 @@ export function admitStart(
     return null;
   }
   const project = projectByRootKey(deps.projects, request.projectRootKey);
-  if (
-    project === undefined ||
-    !project.repositories.some((repository) => repository.repositoryRoot === request.repositoryRoot)
-  ) {
+  if (project === undefined || !agentProjectOwnsLaunchRoot(project, request.repositoryRoot)) {
     deps.setNotice(warning("Select a repository from this workspace."));
     return null;
   }

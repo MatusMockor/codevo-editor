@@ -46,6 +46,28 @@ export interface AgentRootLeaseGateway {
 
 export const MAX_AGENT_PROJECT_ROOTS = 8;
 
+export type AgentProjectLaunchRoots = Pick<AgentProjectDescriptor, "rootPath" | "repositories">;
+
+export function agentProjectOwnsLaunchRoot(
+  project: AgentProjectLaunchRoots,
+  launchRoot: string,
+): boolean {
+  if (launchRoot === project.rootPath) return true;
+  return project.repositories.some((repository) => repository.repositoryRoot === launchRoot);
+}
+
+export function agentProjectRootIsRepository(project: AgentProjectLaunchRoots): boolean {
+  return project.repositories.some((repository) => repository.repositoryRoot === project.rootPath);
+}
+
+export function agentProjectNestedRepositories(
+  project: AgentProjectLaunchRoots,
+): ReadonlyArray<ResolvedGitRepository> {
+  return project.repositories.filter(
+    (repository) => repository.repositoryRoot !== project.rootPath,
+  );
+}
+
 const FNV1A_64_OFFSET_BASIS = 0xcbf29ce484222325n;
 const FNV1A_64_PRIME = 0x100000001b3n;
 const FNV1A_64_MASK = 0xffffffffffffffffn;

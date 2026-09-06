@@ -22,9 +22,14 @@ import {
   agentSurfaceForeignRootMessage,
   agentSurfaceScopeFor,
   agentSurfaceTerminalLaunchTargetFor,
+  agentThreadCheckoutRoot,
   withTerminalLaunchTarget,
 } from "./agentSurfacePolicy";
-import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
+import {
+  SURFACE_FIXTURE_ROOT,
+  SURFACE_FIXTURE_WORKTREE,
+  surfaceThreadView,
+} from "./agentSurfaceTestFixtures";
 import { projectFixture } from "./agentThreadsSurfaceTestFixtures";
 
 function projectDescriptor() {
@@ -157,6 +162,7 @@ describe("agentSurfaceBlockedReason", () => {
       kind: "repository",
       projectRootKey: "key:app",
       repositoryRoot: SURFACE_FIXTURE_ROOT,
+      rootPath: SURFACE_FIXTURE_ROOT,
       ownerId: "owner-1",
       generation: 3,
     });
@@ -196,8 +202,80 @@ describe("agentSurfaceBlockedReason", () => {
       ),
     ).toBe(NO_AGENT_SURFACE_SCOPE);
     expect(
-      agentSurfaceScopeFor(scope, [{ ...project, repositories: [] }], SURFACE_FIXTURE_ROOT),
+      agentSurfaceScopeFor(
+        { ...scope, repositoryRoot: `${SURFACE_FIXTURE_ROOT}/elsewhere` },
+        [{ ...project, repositories: [] }],
+        SURFACE_FIXTURE_ROOT,
+      ),
     ).toBe(NO_AGENT_SURFACE_SCOPE);
+  });
+
+  it("roots the Files scope at the project folder even when only nested repositories exist", () => {
+    const nested = `${SURFACE_FIXTURE_ROOT}/pa-ai-be`;
+    const project = {
+      ...projectDescriptor(),
+      repositories: [
+        {
+          mapping: { rootRelativePath: "pa-ai-be" },
+          repositoryRoot: nested,
+          repositoryRelativePath: "",
+        },
+      ],
+    };
+    const scope: ComposerScope = {
+      kind: "repository",
+      projectRootKey: "key:app",
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+      ownerId: "owner-1",
+      generation: 3,
+    };
+
+    const folder = agentSurfaceScopeFor(scope, [project], SURFACE_FIXTURE_ROOT);
+    expect(folder.kind).toBe("repository");
+    expect(folder.kind === "repository" && folder.rootPath).toBe(SURFACE_FIXTURE_ROOT);
+
+    const scopedToNested = agentSurfaceScopeFor(
+      { ...scope, repositoryRoot: nested },
+      [project],
+      SURFACE_FIXTURE_ROOT,
+    );
+    expect(scopedToNested.kind === "repository" && scopedToNested.rootPath).toBe(
+      SURFACE_FIXTURE_ROOT,
+    );
+  });
+
+  it("browses an in-place thread at its project folder and a worktree thread at its checkout", () => {
+    const nested = `${SURFACE_FIXTURE_ROOT}/pa-ai-be`;
+    const project = {
+      ...projectFixture(),
+      repositories: [
+        {
+          mapping: { rootRelativePath: "pa-ai-be" },
+          repositoryRoot: nested,
+          repositoryRelativePath: "",
+        },
+      ],
+    };
+    const inPlace = surfaceThreadView({
+      thread: {
+        ...surfaceThreadView().thread,
+        owner: { ...surfaceThreadView().thread.owner, repositoryRoot: nested },
+        target: { isolation: "in-place", worktreePath: null },
+      },
+    });
+    const worktree = surfaceThreadView();
+    const stranger = surfaceThreadView({
+      thread: {
+        ...surfaceThreadView().thread,
+        owner: { rootKey: "key:other", ownerId: "owner-9", repositoryRoot: "/workspace/other" },
+        target: { isolation: "in-place", worktreePath: null },
+      },
+    });
+
+    expect(agentThreadCheckoutRoot(inPlace, [project])).toBe(SURFACE_FIXTURE_ROOT);
+    expect(agentThreadCheckoutRoot(worktree, [project])).toBe(SURFACE_FIXTURE_WORKTREE);
+    expect(agentThreadCheckoutRoot(stranger, [project])).toBe("/workspace/other");
+    expect(agentThreadCheckoutRoot(inPlace, [{ ...project, ownerId: "owner-2" }])).toBe(nested);
   });
 
   it("describes the Files card by thread first, then by scope", () => {

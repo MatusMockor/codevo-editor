@@ -8,6 +8,7 @@ import {
   agentCompactTimeLabel,
   agentJumpSlots,
   agentRailEmptyState,
+  agentProjectTerminalSessionsTarget,
   agentRailNewThreadTarget,
   agentRailProjectLabels,
   agentRowProjectLabel,
@@ -373,6 +374,33 @@ describe("agent rail scope", () => {
     ]);
 
     expect(entries.map((entry) => entry.label)).toEqual(["Developer", "Closed"]);
+    expect(entries[0]?.repositoryRoot).toBe(ROOT);
+    expect(entries[0]?.repositoryCount).toBe(2);
+  });
+
+  it("scopes a folder of nested repositories to the folder itself, even without a root repository", () => {
+    const folder = group(ROOT, "playablemaker", []);
+    const entries = agentRailScopeEntries([
+      {
+        ...folder,
+        singleRepo: false,
+        repos: [
+          { ...folder.repos[0]!, repositoryRoot: `${ROOT}/pa-ai-be`, label: "pa-ai-be" },
+          { ...folder.repos[0]!, repositoryRoot: `${ROOT}/pa-build-be`, label: "pa-build-be" },
+        ],
+      },
+      { ...group(OTHER, "empty", []), repos: [] },
+    ]);
+
+    expect(entries.map((entry) => entry.repositoryRoot)).toEqual([ROOT, OTHER]);
+    expect(agentRailNewThreadTarget(ROOT_SCOPE, entries)).toEqual(ROOT_SCOPE);
+    expect(agentProjectTerminalSessionsTarget(ROOT_SCOPE, entries)).toEqual(ROOT_SCOPE);
+    expect(
+      agentProjectTerminalSessionsTarget(
+        { projectRootKey: ROOT, repositoryRoot: `${ROOT}/pa-ai-be` },
+        entries,
+      ),
+    ).toEqual({ projectRootKey: ROOT, repositoryRoot: `${ROOT}/pa-ai-be` });
     expect(agentProjectRepositoryCountLabel(entries[0]!)).toBe("2 repos");
   });
 

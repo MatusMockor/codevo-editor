@@ -1,4 +1,4 @@
-import type { AgentProjectDescriptor } from "../domain/agentProject";
+import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentTasksNotice } from "./agentThreadPorts";
 
 export const AGENT_TASKS_SOURCE = "Agents";
@@ -83,9 +83,7 @@ export function owningProjectForRepository(
   projects: ReadonlyArray<AgentProjectDescriptor>,
   repositoryRoot: string,
 ): AgentProjectDescriptor | undefined {
-  return projects.find((project) =>
-    project.repositories.some((repository) => repository.repositoryRoot === repositoryRoot),
-  );
+  return projects.find((project) => agentProjectOwnsLaunchRoot(project, repositoryRoot));
 }
 
 export function sameProjectAuthority(
@@ -121,7 +119,7 @@ export function isCurrentProjectOwner(
     project.runtimeOwnerIds?.includes(authority.ownerId) !== true
   )
     return false;
-  return project.repositories.some((repository) => repository.repositoryRoot === repositoryRoot);
+  return agentProjectOwnsLaunchRoot(project, repositoryRoot);
 }
 
 export function isCurrentTaskLaunchAuthority(

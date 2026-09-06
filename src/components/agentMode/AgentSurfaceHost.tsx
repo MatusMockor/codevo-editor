@@ -19,6 +19,7 @@ export interface AgentSurfaceHostProps {
   readonly chrome: AgentWorkbenchChrome;
   readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
   readonly thread: AgentThreadView | null;
+  readonly threadRootPath: string | null;
   readonly scope: AgentSurfaceScope;
   readonly workspaceRoot: string | null;
   readonly agents: AgentSurfaceHostAgents;
@@ -46,11 +47,13 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   onTrustScope,
   scope,
   thread,
+  threadRootPath,
   workspaceRoot,
 }: AgentSurfaceHostProps) {
   const fileTree = useAgentSurfaceScopeTree({
     chrome,
     thread,
+    threadRootPath,
     scope,
     filesOpen: layout.openSurfaces.includes("files"),
     onSwitchScope,

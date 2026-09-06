@@ -16,6 +16,8 @@ import {
 } from "./agentThreadsSurfaceTestFixtures";
 import {
   IMPORTED_THREAD_COMPOSER_CAPTION,
+  NOT_REPOSITORY_COMPOSER_CAPTION,
+  NOT_REPOSITORY_WORKTREE_ONLY_CAPTION,
   useAgentComposerState,
   type AgentComposerState,
 } from "./useAgentComposerState";
@@ -57,13 +59,17 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerLabel).toBe("app");
     expect(props.mode).toEqual({ kind: "new" });
     expect(props.submitBlocked).toBe(true);
-    expect(refreshIsolationStatus).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
+    expect(refreshIsolationStatus).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT, SURFACE_FIXTURE_ROOT);
 
     act(() => current().composer.composerProps.onPromptChange("Refactor the parser"));
     expect(current().composer.composerProps.submitBlocked).toBe(false);
 
     act(() => current().composer.composerProps.onSelectRepository(FIXTURE_NESTED_ROOT));
     expect(current().composer.target?.repositoryRoot).toBe(FIXTURE_NESTED_ROOT);
+    expect(refreshIsolationStatus).toHaveBeenLastCalledWith(
+      FIXTURE_NESTED_ROOT,
+      SURFACE_FIXTURE_ROOT,
+    );
 
     const launch = defaultAgentLaunchOptions("claudeCode");
     await act(async () => {
@@ -102,6 +108,98 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.submitBlocked).toBe(true);
   });
 
+  it("targets a plain project folder in place with a truthful status and no repository risk", async () => {
+    const startThread = vi.fn(async () => ({ threadId: "agt-folder" }));
+    const nested = `${SURFACE_FIXTURE_ROOT}/pa-ai-be`;
+    const folder = projectFixture({ repositories: [fixtureRepository(nested, "pa-ai-be")] });
+    render(
+      threadsSurfaceFixture({
+        startThread,
+        isolationPreview: (repositoryRoot) => ({
+          repositoryRoot,
+          repositoryStatus: { kind: "notRepository" },
+          recommended: { kind: "in-place" },
+          inPlaceGuard: { kind: "safe" },
+          inPlaceAllowed: true,
+          confirmationKey: "folder-key",
+        }),
+      }),
+      [folder],
+    );
+
+    expect(current().composer.target).toEqual({
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+    });
+    expect(current().composer.composerLabel).toBe("app");
+    const props = current().composer.composerProps;
+    expect(props.isolation).toBe("in-place");
+    expect(props.worktreeAvailable).toBe(false);
+    expect(props.isolationReason).toBe(NOT_REPOSITORY_COMPOSER_CAPTION);
+    expect(props.guard).toEqual({ kind: "safe" });
+    expect(props.target).toEqual({
+      projectLabel: "app",
+      projectRoot: SURFACE_FIXTURE_ROOT,
+      repositoryOptions: [{ repositoryRoot: nested, label: "pa-ai-be" }],
+      selectedRepositoryRoot: SURFACE_FIXTURE_ROOT,
+    });
+
+    act(() => current().composer.composerProps.onIsolationChange("worktree"));
+    expect(current().composer.composerProps.isolation).toBe("in-place");
+
+    act(() => current().composer.composerProps.onPromptChange("Wire the services"));
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
+    const launch = defaultAgentLaunchOptions("claudeCode");
+    await act(async () => {
+      current().composer.composerProps.onSubmit({ launch, dangerousLaunchConfirmed: false });
+    });
+
+    expect(startThread).toHaveBeenCalledWith({
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      repositoryRoot: SURFACE_FIXTURE_ROOT,
+      prompt: "Wire the services",
+      isolation: "in-place",
+      unsafeInPlaceConfirmationKey: null,
+      launch,
+      dangerousLaunchConfirmed: false,
+    });
+  });
+
+  it("blocks a plain folder in a background project that can only use worktrees", () => {
+    const background = projectFixture({
+      rootKey: "/workspace/other",
+      rootPath: "/workspace/other",
+      ownerId: "agent-root:other",
+      label: "other",
+      origin: "background-tab",
+      repositories: [fixtureRepository("/workspace/other/api", "api")],
+    });
+    render(
+      threadsSurfaceFixture({
+        isolationPreview: (repositoryRoot) => ({
+          repositoryRoot,
+          repositoryStatus: { kind: "notRepository" },
+          recommended: { kind: "worktree", reason: "policy" },
+          inPlaceGuard: { kind: "safe" },
+          inPlaceAllowed: false,
+          confirmationKey: null,
+        }),
+      }),
+      [background],
+    );
+    act(() => current().composer.startNewThread("/workspace/other", "/workspace/other"));
+    act(() => current().composer.composerProps.onPromptChange("Go"));
+
+    expect(current().composer.composerProps.isolation).toBe("worktree");
+    expect(current().composer.composerProps.submitBlocked).toBe(true);
+    expect(current().composer.composerProps.isolationReason).toBe(
+      NOT_REPOSITORY_WORKTREE_ONLY_CAPTION,
+    );
+
+    act(() => current().composer.composerProps.onSelectRepository("/workspace/other/api"));
+    expect(current().composer.target?.repositoryRoot).toBe("/workspace/other/api");
+  });
+
   it("surfaces the actionable repository probe failure and keeps dispatch blocked", () => {
     render(
       threadsSurfaceFixture({
@@ -138,6 +236,52 @@ describe("useAgentComposerState", () => {
 
     render(agents, [projectFixture({ ownerId: "owner-a", generation: 3 })]);
     expect(refreshIsolationStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it("refreshes repository eligibility at the exact current target after Git is added or removed", () => {
+    let diskIsRepository = false;
+    let probedIsRepository = false;
+    const refreshIsolationStatus = vi.fn(async () => {
+      probedIsRepository = diskIsRepository;
+    });
+    const agents = threadsSurfaceFixture({
+      refreshIsolationStatus,
+      isolationPreview: (repositoryRoot) => ({
+        repositoryRoot,
+        repositoryStatus: probedIsRepository ? { kind: "ready" } : { kind: "notRepository" },
+        recommended: { kind: "in-place" },
+        inPlaceGuard: { kind: "safe" },
+        inPlaceAllowed: true,
+        confirmationKey: "repository-key",
+      }),
+    });
+    const projects = [projectFixture()];
+    render(agents, projects);
+    expect(current().composer.composerProps.worktreeAvailable).toBe(false);
+    diskIsRepository = true;
+    act(() => current().composer.composerProps.onRefreshIsolation?.());
+    expect(refreshIsolationStatus).toHaveBeenLastCalledWith(
+      SURFACE_FIXTURE_ROOT,
+      SURFACE_FIXTURE_ROOT,
+    );
+    render(agents, projects);
+    expect(current().composer.composerProps.worktreeAvailable).toBe(true);
+    act(() => current().composer.composerProps.onIsolationChange("worktree"));
+    expect(current().composer.composerProps.isolation).toBe("worktree");
+
+    diskIsRepository = false;
+    act(() => current().composer.composerProps.onRefreshIsolation?.());
+    render(agents, projects);
+    expect(current().composer.composerProps.worktreeAvailable).toBe(false);
+    expect(current().composer.composerProps.isolation).toBe("in-place");
+    expect(current().composer.composerProps.isolationReason).toBe(NOT_REPOSITORY_COMPOSER_CAPTION);
+
+    act(() => current().composer.composerProps.onSelectRepository(FIXTURE_NESTED_ROOT));
+    act(() => current().composer.composerProps.onRefreshIsolation?.());
+    expect(refreshIsolationStatus).toHaveBeenLastCalledWith(
+      FIXTURE_NESTED_ROOT,
+      SURFACE_FIXTURE_ROOT,
+    );
   });
 
   it("keeps the prompt when the thread does not start", async () => {

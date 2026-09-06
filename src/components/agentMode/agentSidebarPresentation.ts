@@ -50,7 +50,6 @@ export interface AgentRailScopeEntry {
   readonly label: string;
   readonly projectRootKey: string;
   readonly repositoryRoot: string;
-  readonly repositoryResolved: boolean;
   readonly trust: AgentProjectTrust;
   readonly origin: AgentProjectOrigin;
   readonly rootPath: string | null;
@@ -226,14 +225,13 @@ export function agentRailScopeEntries(
 
   for (const group of groups) {
     if (group.kind !== "project") continue;
-    const repo = group.repos[0];
-    if (repo === undefined) continue;
+    const repositoryRoot = group.rootPath ?? group.repos[0]?.repositoryRoot ?? null;
+    if (repositoryRoot === null) continue;
     entries.push({
       value: agentRailScopeValue(group.projectRootKey),
       label: group.label,
       projectRootKey: group.projectRootKey,
-      repositoryRoot: repo.repositoryRoot,
-      repositoryResolved: repo.repositoryResolved,
+      repositoryRoot,
       trust: group.trust,
       origin: group.origin,
       rootPath: group.rootPath,
@@ -486,11 +484,7 @@ export function agentProjectTerminalSessionsTarget(
   if (project === null) return null;
   const entry = agentRailScopeEntryFor(entries, project.projectRootKey);
   if (entry === null || !usable(entry)) return null;
-  return {
-    projectRootKey: project.projectRootKey,
-    repositoryRoot:
-      project.repositoryRoot === entry.rootPath ? entry.repositoryRoot : project.repositoryRoot,
-  };
+  return { projectRootKey: project.projectRootKey, repositoryRoot: project.repositoryRoot };
 }
 
 function usable(entry: AgentRailScopeEntry | null): boolean {

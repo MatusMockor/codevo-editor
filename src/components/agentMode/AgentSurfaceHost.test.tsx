@@ -212,11 +212,13 @@ describe("AgentSurfaceHost", () => {
         chrome: filesChrome(layout, { files: { readDirectory }, onSearchFiles }),
         layout: FILES_LAYOUT,
         thread: null,
-        scope: surfaceRepositoryScope(OTHER_ROOT),
+        threadRootPath: null,
+        scope: { ...surfaceRepositoryScope(OTHER_ROOT), repositoryRoot: `${OTHER_ROOT}/pa-ai-be` },
       });
 
       const row = await treeRow(`${OTHER_ROOT}/users.ts`);
       expect(readDirectory).toHaveBeenCalledWith(OTHER_ROOT);
+      expect(readDirectory).not.toHaveBeenCalledWith(`${OTHER_ROOT}/pa-ai-be`);
       expect(readDirectory).not.toHaveBeenCalledWith(SURFACE_FIXTURE_WORKTREE);
       expect(row).not.toBeNull();
       expect(host.querySelector("[data-agent-surface-tree]")?.getAttribute("aria-label")).toBe(
@@ -405,6 +407,42 @@ describe("AgentSurfaceHost", () => {
     });
   });
 
+  it("browses the project folder for an in-place thread and the checkout for a worktree thread", async () => {
+    const readDirectory = vi.fn(listing);
+    const layout = recordedLayoutState(FILES_LAYOUT);
+    const nested = `${SURFACE_FIXTURE_ROOT}/pa-ai-be`;
+    const inPlace = surfaceThreadView({
+      thread: {
+        ...surfaceThreadView().thread,
+        owner: { ...surfaceThreadView().thread.owner, repositoryRoot: nested },
+        target: { isolation: "in-place", worktreePath: null },
+      },
+    });
+    render({
+      chrome: filesChrome(layout, { files: { readDirectory } }),
+      layout: FILES_LAYOUT,
+      scope: surfaceRepositoryScope(OTHER_ROOT),
+      thread: inPlace,
+      threadRootPath: SURFACE_FIXTURE_ROOT,
+    });
+
+    await treeRow(`${SURFACE_FIXTURE_ROOT}/users.ts`);
+    expect(readDirectory).toHaveBeenCalledWith(SURFACE_FIXTURE_ROOT);
+    expect(readDirectory).not.toHaveBeenCalledWith(nested);
+    expect(readDirectory).not.toHaveBeenCalledWith(OTHER_ROOT);
+
+    render({
+      chrome: filesChrome(layout, { files: { readDirectory } }),
+      layout: FILES_LAYOUT,
+      scope: surfaceRepositoryScope(OTHER_ROOT),
+      thread: surfaceThreadView(),
+      threadRootPath: SURFACE_FIXTURE_WORKTREE,
+    });
+
+    await treeRow(`${SURFACE_FIXTURE_WORKTREE}/users.ts`);
+    expect(readDirectory).toHaveBeenCalledWith(SURFACE_FIXTURE_WORKTREE);
+  });
+
   it("keeps the thread checkout tree when a thread is selected, whatever the rail scope", async () => {
     const readDirectory = vi.fn(listing);
     const layout = recordedLayoutState(FILES_LAYOUT);
@@ -506,6 +544,7 @@ function defaultProps(): AgentSurfaceHostProps {
     chrome: chrome(fakeTerminalGateway()),
     layout: { openSurfaces: [], activeSurface: null },
     thread: surfaceThreadView(),
+    threadRootPath: SURFACE_FIXTURE_WORKTREE,
     scope,
     workspaceRoot: SURFACE_FIXTURE_ROOT,
     hidden: false,

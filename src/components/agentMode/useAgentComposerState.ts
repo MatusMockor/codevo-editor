@@ -18,6 +18,8 @@ import {
   type LaunchChoice,
 } from "./agentComposerLaunch";
 import {
+  composerProjectOwnsRoot,
+  composerTargetLabel,
   composerTargetView,
   resolveComposerTarget,
   type AgentComposerProjectOption,
@@ -37,6 +39,9 @@ import {
 
 export const IMPORTED_THREAD_COMPOSER_CAPTION =
   "Runs in the project checkout - imported sessions continue where the terminal session ran.";
+export const NOT_REPOSITORY_COMPOSER_CAPTION = "Not a Git repository · runs in place";
+export const NOT_REPOSITORY_WORKTREE_ONLY_CAPTION =
+  "This folder is not a Git repository, so it cannot run in an isolated worktree. Choose a repository from the checkout menu.";
 
 export type AgentComposerSurface = Pick<
   AgentThreadsSurface,
@@ -151,25 +156,35 @@ export function useAgentComposerControllerState({
   }, [scopedProjectRootKey, scopedRepositoryRoot]);
   const target = resolveComposerTarget(composerProjects, selection, selectedThread, railScope);
   const composerRoot = target?.repositoryRoot ?? null;
+  const composerProjectRootKey = target?.projectRootKey ?? null;
   const composerProject =
     projects.find((project) => project.rootKey === target?.projectRootKey) ?? null;
   const composerLabel =
+    composerTargetLabel(composerProjects, target) ??
     groups.flatMap((group) => group.repos).find((repo) => repo.repositoryRoot === composerRoot)
-      ?.label ?? null;
+      ?.label ??
+    null;
   const worktreeOnly = composerProject !== null && agentProjectWorktreeOnly(composerProject.origin);
   const worktreeOnlyReason =
     composerProject === null ? null : agentProjectWorktreeOnlyReason(composerProject.origin);
 
-  const preview = composerRoot === null ? null : agents.isolationPreview(composerRoot);
+  const preview =
+    composerRoot === null || composerProjectRootKey === null
+      ? null
+      : agents.isolationPreview(composerRoot, composerProjectRootKey);
   const refreshIsolationStatus = agents.refreshIsolationStatus;
   const composerProbeAuthorityKey =
     composerProject === null
       ? null
       : `${composerProject.rootKey}\u0000${composerProject.ownerId}\u0000${composerProject.generation}\u0000${composerProject.trust}`;
   useEffect(() => {
-    if (composerRoot === null) return;
-    void refreshIsolationStatus(composerRoot);
-  }, [composerProbeAuthorityKey, composerRoot, refreshIsolationStatus]);
+    if (composerRoot === null || composerProjectRootKey === null) return;
+    void refreshIsolationStatus(composerRoot, composerProjectRootKey);
+  }, [composerProbeAuthorityKey, composerProjectRootKey, composerRoot, refreshIsolationStatus]);
+  const refreshIsolation = useCallback(() => {
+    if (composerRoot === null || composerProjectRootKey === null) return;
+    void refreshIsolationStatus(composerRoot, composerProjectRootKey);
+  }, [composerProjectRootKey, composerRoot, refreshIsolationStatus]);
   // A new thread starts in the project's local checkout unless the workspace
   // explicitly requires isolation. Repository status still supplies the
   // in-place safety guard below, and background projects remain worktree-only.
@@ -179,11 +194,17 @@ export function useAgentComposerControllerState({
     isolationChoice !== null && isolationChoice.repositoryRoot === composerRoot
       ? isolationChoice.isolation
       : recommended;
-  const isolation: AgentTaskIsolation = worktreeOnly ? "worktree" : chosen;
-  const guard =
-    preview?.repositoryStatus !== undefined && preview.repositoryStatus.kind !== "ready"
-      ? ({ kind: "safe" } as const)
-      : (preview?.inPlaceGuard ?? { kind: "safe" as const });
+  const probeState = preview?.repositoryStatus ?? null;
+  const notRepository = probeState?.kind === "notRepository";
+  const probeSettled =
+    probeState === null || probeState.kind === "ready" || probeState.kind === "notRepository";
+  const worktreeAvailable = !notRepository;
+  const isolation: AgentTaskIsolation = worktreeOnly
+    ? "worktree"
+    : worktreeAvailable
+      ? chosen
+      : "in-place";
+  const guard = probeSettled ? (preview?.inPlaceGuard ?? { kind: "safe" as const }) : SAFE_GUARD;
   const confirmationKey = preview?.confirmationKey ?? null;
   const unsafeInPlaceConfirmationKey =
     isolation === "in-place" && guard.kind === "unsafe" ? confirmationKey : null;
@@ -213,7 +234,8 @@ export function useAgentComposerControllerState({
     (composerMode.kind === "followUp" && composerMode.blockedReason !== null) ||
     (selectedThread === null &&
       (target === null ||
-        (preview?.repositoryStatus !== undefined && preview.repositoryStatus.kind !== "ready") ||
+        !probeSettled ||
+        (notRepository && worktreeOnly) ||
         (isolation === "in-place" && guard.kind === "unsafe" && confirmationKey === null)));
 
   const startNewThread = useCallback(
@@ -221,11 +243,8 @@ export function useAgentComposerControllerState({
       onClearSelectedThread();
       const project =
         composerProjects.find((candidate) => candidate.projectRootKey === projectRootKey) ?? null;
-      const repository =
-        project?.repositories.find((candidate) => candidate.repositoryRoot === repositoryRoot) ??
-        null;
       setSelection(
-        project === null || repository === null
+        project === null || !composerProjectOwnsRoot(project, repositoryRoot)
           ? { kind: "missing", projectRootKey, repositoryRoot }
           : {
               kind: "bound",
@@ -302,9 +321,7 @@ export function useAgentComposerControllerState({
         composerProjects.find((candidate) => candidate.projectRootKey === target.projectRootKey) ??
         null;
       if (project === null) return;
-      if (!project.repositories.some((candidate) => candidate.repositoryRoot === repositoryRoot)) {
-        return;
-      }
+      if (!composerProjectOwnsRoot(project, repositoryRoot)) return;
       setSelection({
         kind: "bound",
         projectRootKey: target.projectRootKey,
@@ -319,9 +336,10 @@ export function useAgentComposerControllerState({
   const changeIsolation = useCallback(
     (next: AgentTaskIsolation) => {
       if (composerRoot === null) return;
+      if (next === "worktree" && !worktreeAvailable) return;
       setIsolationChoice({ repositoryRoot: composerRoot, isolation: next });
     },
-    [composerRoot],
+    [composerRoot, worktreeAvailable],
   );
 
   const changeLaunch = useCallback(
@@ -337,15 +355,18 @@ export function useAgentComposerControllerState({
     guard,
     isolation,
     isolationReason:
-      importedThreadCaption(selectedThread) ?? isolationStatusCaption(preview, isolation),
+      importedThreadCaption(selectedThread) ??
+      isolationStatusCaption(preview, isolation, worktreeOnly),
     launch: composerLaunch,
     launchProvider: agentCliKind,
     mode: composerMode,
     onIsolationChange: changeIsolation,
+    onRefreshIsolation: refreshIsolation,
     onLaunchChange: changeLaunch,
     onNewThread: clearSelection,
     onSelectRepository: selectRepository,
     target: composerTargetView(composerProjects, target),
+    worktreeAvailable,
     worktreeOnly,
     worktreeOnlyReason,
   };
@@ -361,10 +382,13 @@ export function useAgentComposerControllerState({
   };
 }
 
+const SAFE_GUARD = { kind: "safe" } as const;
+
 function isolationStatusCaption(
   preview: ReturnType<AgentComposerSurface["isolationPreview"]> | null,
   isolation: AgentTaskIsolation,
-) {
+  worktreeOnly: boolean,
+): string | null {
   if (preview === null) return null;
   if (preview.repositoryStatus === undefined) {
     return preview.recommended.kind === isolation
@@ -377,6 +401,8 @@ function isolationStatusCaption(
     case "failed":
     case "unavailable":
       return preview.repositoryStatus.message;
+    case "notRepository":
+      return worktreeOnly ? NOT_REPOSITORY_WORKTREE_ONLY_CAPTION : NOT_REPOSITORY_COMPOSER_CAPTION;
     case "ready":
       return preview.recommended.kind === isolation
         ? agentIsolationReasonLabel(preview.recommended)
@@ -525,16 +551,16 @@ function composerProjectOptions(
           generation: project.generation,
           label: group.label,
           origin: group.origin,
+          rootPath: project.rootPath,
           repositories: group.repos
-            .filter((repo) => repo.repositoryResolved)
+            .filter((repo) => repo.repositoryResolved && repo.repositoryRoot !== project.rootPath)
             .map((repo) => ({
               repositoryRoot: repo.repositoryRoot,
               label: repo.label,
             })),
         },
       ];
-    })
-    .filter((option) => option.repositories.length > 0);
+    });
 }
 
 function useComposerMode(

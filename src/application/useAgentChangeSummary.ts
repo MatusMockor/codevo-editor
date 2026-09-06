@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { AgentProjectDescriptor } from "../domain/agentProject";
+import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentThread } from "../domain/agentThread";
 import type { GitChangedFile, GitGateway } from "../domain/git";
 import {
@@ -399,12 +399,7 @@ function changeTarget(
   const project = projectByOwnerId(dependencies.projects, thread.owner.ownerId);
   if (project === undefined) return null;
   if (project.rootKey !== thread.owner.rootKey) return null;
-  if (
-    !project.repositories.some(
-      (repository) => repository.repositoryRoot === thread.owner.repositoryRoot,
-    )
-  )
-    return null;
+  if (!agentProjectOwnsLaunchRoot(project, thread.owner.repositoryRoot)) return null;
   return {
     worktreePath: thread.target.worktreePath,
     repositoryRoot: thread.owner.repositoryRoot,

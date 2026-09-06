@@ -250,7 +250,11 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-surface-empty__cards")).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(rule(".agent-surface-empty__inner")).toContain("max-width: 320px");
     expect(rule(".agent-surface-empty", narrow)).toContain("padding: 16px");
-    expect(rule(".agent-surface__tab > span", narrow)).toContain("clip-path: inset(50%)");
+    expect(rule(".agent-surface__tab > span", narrow)).not.toContain("clip-path");
+    expect(rule(".agent-surface__tab > span", narrow)).not.toContain("width: 1px");
+    expect(rule(".agent-surface__tab > span", narrow)).toContain("min-width: 3ch");
+    expect(rule(".agent-surface__tabitem", narrow)).toContain("flex: 0 1 auto");
+    expect(rule(".agent-surface__tabitem--active", narrow)).toContain("flex: 0 0 auto");
     expect(rule(".agent-surface__tabs", narrow)).toContain("overflow-x: auto");
     expect(rule(".agent-surface__tabs", narrow)).toContain(
       "padding: var(--agent-surface-focus-gutter)",

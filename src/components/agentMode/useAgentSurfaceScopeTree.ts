@@ -19,6 +19,7 @@ import type { AgentWorkbenchChrome, AgentWorkbenchFileTreeChrome } from "./agent
 export interface AgentSurfaceScopeTreeOptions {
   readonly chrome: Pick<AgentWorkbenchChrome, "workspaceId" | "fileTree" | "layout">;
   readonly thread: AgentThreadView | null;
+  readonly threadRootPath: string | null;
   readonly scope: AgentSurfaceScope;
   readonly filesOpen: boolean;
   readonly onSwitchScope: ((rootPath: string) => void) | null;
@@ -34,32 +35,34 @@ const NO_PROJECT: AgentSurfaceTreeUnavailable = { kind: "noProject" };
 export function agentSurfaceTreeTarget(
   workspaceId: string | null,
   thread: AgentThreadView | null,
+  threadRootPath: string | null,
   scope: AgentSurfaceScope,
   filesOpen: boolean,
 ): AgentSurfaceFileTreeTarget | null {
   if (!filesOpen) return null;
-  if (thread !== null) return threadTreeTarget(workspaceId, thread);
+  if (thread !== null) return threadTreeTarget(workspaceId, thread, threadRootPath);
   if (scope.kind !== "repository") return null;
   return {
     kind: "project",
     ownerId: scope.ownerId,
     generation: scope.generation,
-    rootPath: scope.repositoryRoot,
+    rootPath: scope.rootPath,
   };
 }
 
 function threadTreeTarget(
   workspaceId: string | null,
   thread: AgentThreadView,
+  threadRootPath: string | null,
 ): AgentSurfaceFileTreeTarget | null {
   if (workspaceId === null) return null;
+  if (threadRootPath === null) return null;
   if (agentSurfaceTargetGone(thread)) return null;
-  const record = thread.thread;
   return {
     kind: "thread",
     workspaceId,
-    threadId: record.threadId,
-    rootPath: record.target.worktreePath ?? record.owner.repositoryRoot,
+    threadId: thread.thread.threadId,
+    rootPath: threadRootPath,
   };
 }
 
@@ -96,11 +99,12 @@ export function useAgentSurfaceScopeTree({
   onTrustScope,
   scope,
   thread,
+  threadRootPath,
 }: AgentSurfaceScopeTreeOptions): AgentSurfaceFileTreeProps | null {
   const fileTreeChrome = chrome.fileTree;
   const target = useMemo(
-    () => agentSurfaceTreeTarget(chrome.workspaceId, thread, scope, filesOpen),
-    [chrome.workspaceId, filesOpen, scope, thread],
+    () => agentSurfaceTreeTarget(chrome.workspaceId, thread, threadRootPath, scope, filesOpen),
+    [chrome.workspaceId, filesOpen, scope, thread, threadRootPath],
   );
   const tree = useAgentSurfaceFileTree({
     target,

@@ -6,6 +6,7 @@ import {
   type AgentThread,
 } from "../../domain/agentThread";
 import {
+  composerTargetLabel,
   composerTargetView,
   resolveComposerTarget,
   type AgentComposerProjectOption,
@@ -147,17 +148,58 @@ describe("resolveComposerTarget", () => {
 });
 
 describe("composerTargetView", () => {
-  it("projects the label and repositories of the resolved project", () => {
-    const view = composerTargetView([activeProject()], {
+  it("projects the label, the project folder and the nested repositories of the resolved project", () => {
+    const nested = `${ACTIVE_ROOT}/packages/api`;
+    const project = {
+      ...activeProject(),
+      repositories: [{ repositoryRoot: nested, label: "api" }],
+    };
+    const view = composerTargetView([project], {
       projectRootKey: ACTIVE_ROOT,
       repositoryRoot: ACTIVE_ROOT,
     });
 
     expect(view).toEqual({
       projectLabel: "app",
-      repositoryOptions: [{ repositoryRoot: ACTIVE_ROOT, label: "app" }],
+      projectRoot: ACTIVE_ROOT,
+      repositoryOptions: [{ repositoryRoot: nested, label: "api" }],
       selectedRepositoryRoot: ACTIVE_ROOT,
     });
+    expect(
+      composerTargetLabel([project], { projectRootKey: ACTIVE_ROOT, repositoryRoot: nested }),
+    ).toBe("api");
+    expect(
+      composerTargetLabel([project], { projectRootKey: ACTIVE_ROOT, repositoryRoot: ACTIVE_ROOT }),
+    ).toBe("app");
+  });
+
+  it("defaults a project that is only a folder of repositories to the folder itself", () => {
+    const nested = `${ACTIVE_ROOT}/pa-ai-be`;
+    const folder = {
+      ...activeProject(),
+      repositories: [{ repositoryRoot: nested, label: "pa-ai-be" }],
+    };
+
+    expect(resolveComposerTarget([folder], null, null, null)).toEqual({
+      projectRootKey: ACTIVE_ROOT,
+      repositoryRoot: ACTIVE_ROOT,
+    });
+    expect(
+      resolveComposerTarget(
+        [folder],
+        selection(ACTIVE_ROOT, "agent-root:app", 1, nested),
+        null,
+        null,
+      ),
+    ).toEqual({ projectRootKey: ACTIVE_ROOT, repositoryRoot: nested });
+    expect(
+      resolveComposerTarget(
+        [folder],
+        selection(ACTIVE_ROOT, "agent-root:app", 1, `${ACTIVE_ROOT}/mongo-init`),
+        null,
+        null,
+      ),
+    ).toBeNull();
   });
 
   it("returns no view for a target whose project is gone", () => {
@@ -177,7 +219,8 @@ function activeProject(): AgentComposerProjectOption {
     generation: 1,
     label: "app",
     origin: "active-tab",
-    repositories: [{ repositoryRoot: ACTIVE_ROOT, label: "app" }],
+    rootPath: ACTIVE_ROOT,
+    repositories: [],
   };
 }
 
@@ -188,7 +231,8 @@ function backgroundProject(): AgentComposerProjectOption {
     generation: 1,
     label: "api-service",
     origin: "background-tab",
-    repositories: [{ repositoryRoot: BACKGROUND_ROOT, label: "api-service" }],
+    rootPath: BACKGROUND_ROOT,
+    repositories: [],
   };
 }
 

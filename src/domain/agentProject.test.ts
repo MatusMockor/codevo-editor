@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { MAX_AGENT_TASK_PATH_BYTES, MAX_AGENT_TASK_WORKSPACE_ID_BYTES } from "./agentTask";
 import {
+  agentProjectNestedRepositories,
+  agentProjectOwnsLaunchRoot,
+  agentProjectRootIsRepository,
   agentRootOwnerId,
   fnv1a64hex,
   MAX_AGENT_PROJECT_ROOTS,
@@ -34,6 +37,57 @@ describe("agent project domain", () => {
       MAX_AGENT_TASK_WORKSPACE_ID_BYTES,
     );
     expect(ownerId).not.toMatch(/\p{Cc}/u);
+  });
+});
+
+describe("agent project launch roots", () => {
+  const nested = {
+    mapping: { rootRelativePath: "pa-ai-be" },
+    repositoryRoot: "/projects/playablemaker/pa-ai-be",
+    repositoryRelativePath: "",
+  };
+  const rootRepository = {
+    mapping: { rootRelativePath: "" },
+    repositoryRoot: "/projects/playablemaker",
+    repositoryRelativePath: "",
+  };
+
+  it("always owns the project folder and every nested repository, nothing else", () => {
+    const folder = { rootPath: "/projects/playablemaker", repositories: [nested] };
+    expect(agentProjectOwnsLaunchRoot(folder, "/projects/playablemaker")).toBe(true);
+    expect(agentProjectOwnsLaunchRoot(folder, nested.repositoryRoot)).toBe(true);
+    expect(agentProjectOwnsLaunchRoot(folder, "/projects/playablemaker/mongo-init")).toBe(false);
+    expect(agentProjectOwnsLaunchRoot(folder, "/projects/other")).toBe(false);
+  });
+
+  it("tells a repository root apart from a plain folder that only contains repositories", () => {
+    expect(
+      agentProjectRootIsRepository({ rootPath: "/projects/playablemaker", repositories: [nested] }),
+    ).toBe(false);
+    expect(
+      agentProjectRootIsRepository({
+        rootPath: "/projects/playablemaker",
+        repositories: [rootRepository, nested],
+      }),
+    ).toBe(true);
+    expect(agentProjectRootIsRepository({ rootPath: "/projects/empty", repositories: [] })).toBe(
+      false,
+    );
+  });
+
+  it("lists nested repositories without the project root itself", () => {
+    expect(
+      agentProjectNestedRepositories({
+        rootPath: "/projects/playablemaker",
+        repositories: [rootRepository, nested],
+      }),
+    ).toEqual([nested]);
+    expect(
+      agentProjectNestedRepositories({
+        rootPath: "/projects/playablemaker",
+        repositories: [rootRepository],
+      }),
+    ).toEqual([]);
   });
 });
 

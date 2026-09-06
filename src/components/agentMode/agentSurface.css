@@ -373,7 +373,8 @@
   }
 
   .agent-surface__tabs {
-    flex: 0 1 auto;
+    flex: 1 1 auto;
+    min-width: 0;
     overflow-x: auto;
     overflow-y: hidden;
     padding: var(--agent-surface-focus-gutter);
@@ -382,16 +383,16 @@
   }
 
   .agent-surface__tabitem {
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .agent-surface__tabitem--active {
+    flex: 0 0 auto;
   }
 
   .agent-surface__tab > span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
+    min-width: 3ch;
   }
 
   .agent-surface__editor-tabs {

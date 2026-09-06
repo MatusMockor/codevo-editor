@@ -18,6 +18,7 @@ export function surfaceRepositoryScope(
     kind: "repository",
     projectRootKey: repositoryRoot,
     repositoryRoot,
+    rootPath: repositoryRoot,
     ownerId: `agent-root:${repositoryRoot}`,
     generation,
   };

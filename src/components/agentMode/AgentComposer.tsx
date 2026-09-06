@@ -13,36 +13,27 @@ import {
   type AgentTaskIsolation,
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
+import {
+  agentComposerCheckoutChoice,
+  agentComposerCheckoutOptions,
+  agentComposerNestedTargetLabel,
+  type AgentComposerTarget,
+} from "./agentComposerCheckout";
 import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentLaunchControls } from "./AgentLaunchControls";
 import { agentLaunchForDispatch, agentLaunchSummaryLabel } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 import { AgentPickerMenu } from "./AgentPickerMenu";
-import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
+import type { AgentPickerOption } from "./agentPickerOption";
 import { agentSubmitShortcut } from "./agentSubmitShortcut";
 import { agentControlTooltip } from "./agentThreadHeaderPresentation";
 import { useCompactComposerControls } from "./useCompactComposerControls";
 
 const CHECKOUT_ID = "agent-checkout";
-const REPOSITORY_ID = "agent-repository";
 const NO_TARGET_REASON = "Choose a project in the rail to start a thread.";
 
-const CHECKOUT_OPTIONS: ReadonlyArray<AgentPickerOption> = [
-  agentPickerOption("in-place", "Local checkout", "Runs in the project's own checkout."),
-  agentPickerOption("worktree", "Isolated worktree", "Runs in a new git worktree."),
-];
-
-export interface AgentComposerRepositoryOption {
-  readonly repositoryRoot: string;
-  readonly label: string;
-}
-
-export interface AgentComposerTarget {
-  readonly projectLabel: string;
-  readonly repositoryOptions: ReadonlyArray<AgentComposerRepositoryOption>;
-  readonly selectedRepositoryRoot: string | null;
-}
+export type { AgentComposerRepositoryOption, AgentComposerTarget } from "./agentComposerCheckout";
 
 export type AgentComposerMode =
   | { readonly kind: "new" }
@@ -66,6 +57,7 @@ export interface AgentComposerProps {
   readonly promptBytes: number;
   readonly isolation: AgentTaskIsolation;
   readonly isolationReason: string | null;
+  readonly worktreeAvailable: boolean;
   readonly worktreeOnly: boolean;
   readonly worktreeOnlyReason: string | null;
   readonly guard: InPlaceDispatchGuard;
@@ -78,6 +70,7 @@ export interface AgentComposerProps {
   onSelectRepository(repositoryRoot: string): void;
   onPromptChange(prompt: string): void;
   onIsolationChange(isolation: AgentTaskIsolation): void;
+  onRefreshIsolation?(): void;
   onLaunchChange(launch: AgentLaunchOptions): void;
   onNewThread(): void;
   onOpenProviderSettings(): void;
@@ -95,6 +88,7 @@ export function AgentComposer({
   modelFavoritesPersistence = null,
   mode,
   onIsolationChange,
+  onRefreshIsolation,
   onLaunchChange,
   onNewThread,
   onOpenProviderSettings,
@@ -108,6 +102,7 @@ export function AgentComposer({
   providerManagement = null,
   submitBlocked,
   target,
+  worktreeAvailable,
   worktreeOnly,
   worktreeOnlyReason,
 }: AgentComposerProps) {
@@ -156,18 +151,25 @@ export function AgentComposer({
     />
   );
 
+  const nestedTargetLabel = agentComposerNestedTargetLabel(target);
   const targetControls = followUp ? null : (
     <>
       <AgentComposerCheckout
-        disabled={dispatching || worktreeOnly || allProvidersDisabled}
+        disabled={dispatching || allProvidersDisabled}
         isolation={isolation}
         onIsolationChange={onIsolationChange}
-      />
-      <AgentComposerRepository
-        disabled={dispatching || allProvidersDisabled}
+        onRefreshIsolation={onRefreshIsolation}
         onSelectRepository={onSelectRepository}
         target={target}
+        worktreeAvailable={worktreeAvailable && !worktreeOnly}
+        worktreeOnly={worktreeOnly}
       />
+      {nestedTargetLabel !== null && (
+        <span className="agent-composer__target" data-agent-composer-target>
+          <span className="agent-visually-hidden">Repository:</span>
+          in {nestedTargetLabel}
+        </span>
+      )}
     </>
   );
 
@@ -349,28 +351,60 @@ function AgentComposerCheckout({
   disabled,
   isolation,
   onIsolationChange,
+  onRefreshIsolation,
+  onSelectRepository,
+  target,
+  worktreeAvailable,
+  worktreeOnly,
 }: {
   readonly isolation: AgentTaskIsolation;
   readonly disabled: boolean;
+  readonly target: AgentComposerTarget | null;
+  readonly worktreeAvailable: boolean;
+  readonly worktreeOnly: boolean;
   onIsolationChange(isolation: AgentTaskIsolation): void;
+  onRefreshIsolation?(): void;
+  onSelectRepository(repositoryRoot: string): void;
 }) {
+  const options = worktreeOnly
+    ? lockedWorktreeOptions(target)
+    : agentComposerCheckoutOptions(target, worktreeAvailable);
+  const lockedWithoutChoice =
+    worktreeOnly && options.length < 2 && onRefreshIsolation === undefined;
+  const choose = (value: string): void => {
+    const choice = agentComposerCheckoutChoice(value);
+    if (choice === null) return;
+    if (choice.kind === "root") {
+      onSelectRepository(choice.repositoryRoot);
+      return;
+    }
+    if (worktreeOnly) return;
+    onIsolationChange(choice.isolation);
+  };
   return (
     <AgentPickerMenu
       align="start"
       confirmation={null}
       describedBy={null}
-      disabled={disabled}
+      disabled={disabled || lockedWithoutChoice}
       icon={isolationGlyph(isolation)}
       id={CHECKOUT_ID}
       label="Checkout for this thread"
-      onChange={(value) => changeIsolation(value, onIsolationChange)}
-      options={CHECKOUT_OPTIONS}
+      onChange={choose}
+      onOpen={onRefreshIsolation}
+      options={options}
       prefix={null}
       tone={null}
       value={isolation}
       variant="ghost"
     />
   );
+}
+
+function lockedWorktreeOptions(
+  target: AgentComposerTarget | null,
+): ReadonlyArray<AgentPickerOption> {
+  return agentComposerCheckoutOptions(target, true).filter((option) => option.value !== "in-place");
 }
 
 function AgentComposerLockedCheckout({ isolation }: { readonly isolation: AgentTaskIsolation }) {
@@ -383,45 +417,6 @@ function AgentComposerLockedCheckout({ isolation }: { readonly isolation: AgentT
       {isolationLabel(isolation)}
     </span>
   );
-}
-
-function AgentComposerRepository({
-  disabled,
-  onSelectRepository,
-  target,
-}: {
-  readonly target: AgentComposerTarget | null;
-  readonly disabled: boolean;
-  onSelectRepository(repositoryRoot: string): void;
-}) {
-  if (target === null) return null;
-  if (target.repositoryOptions.length < 2) return null;
-
-  return (
-    <AgentPickerMenu
-      align="start"
-      describedBy={null}
-      disabled={disabled}
-      id={REPOSITORY_ID}
-      label={`Repository in ${target.projectLabel}`}
-      onChange={onSelectRepository}
-      options={target.repositoryOptions.map((option) =>
-        agentPickerOption(option.repositoryRoot, option.label),
-      )}
-      prefix="Repo"
-      tone={null}
-      value={target.selectedRepositoryRoot ?? ""}
-      variant="ghost"
-    />
-  );
-}
-
-function changeIsolation(
-  value: string,
-  onIsolationChange: (isolation: AgentTaskIsolation) => void,
-): void {
-  if (value !== "in-place" && value !== "worktree") return;
-  onIsolationChange(value);
 }
 
 function isolationGlyph(isolation: AgentTaskIsolation): ReactNode {
@@ -446,9 +441,6 @@ function composerTargetReason(
 ): string | null {
   if (followUp) return null;
   if (target === null) return NO_TARGET_REASON;
-  if (target.repositoryOptions.length === 0) {
-    return `No Git repository detected in ${target.projectLabel}.`;
-  }
   return null;
 }
 

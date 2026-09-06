@@ -5,7 +5,7 @@ import type {
   AgentThreadView,
   ExternalSessionsSurface,
 } from "../../application/agentThreadPorts";
-import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../../domain/agentProject";
 import type {
   AgentJumpSlot,
   AgentViewCommandHandlers,
@@ -345,9 +345,7 @@ function terminalSessionsTargetIsOpen(
   const project = projects.find((candidate) => candidate.rootKey === target.projectRootKey);
   if (project === undefined) return false;
   if (project.origin === "closed-tab-live-tasks") return false;
-  return project.repositories.some(
-    (repository) => repository.repositoryRoot === target.repositoryRoot,
-  );
+  return agentProjectOwnsLaunchRoot(project, target.repositoryRoot);
 }
 
 function reconcileScopeState(
@@ -418,9 +416,7 @@ function captureScopeAuthority(
 ): AgentNavigationScopeAuthority | null {
   const project = projects.find((candidate) => candidate.rootKey === scope.projectRootKey) ?? null;
   if (project === null) return null;
-  if (!project.repositories.some((repo) => repo.repositoryRoot === scope.repositoryRoot)) {
-    return null;
-  }
+  if (!agentProjectOwnsLaunchRoot(project, scope.repositoryRoot)) return null;
   return { ownerId: project.ownerId, generation: project.generation };
 }
 
@@ -442,9 +438,7 @@ function resolveComposerScope(
   if (project.ownerId !== authority.ownerId || project.generation !== authority.generation) {
     return missing;
   }
-  if (!project.repositories.some((repo) => repo.repositoryRoot === scope.repositoryRoot)) {
-    return missing;
-  }
+  if (!agentProjectOwnsLaunchRoot(project, scope.repositoryRoot)) return missing;
   return {
     kind: "repository",
     projectRootKey: scope.projectRootKey,
