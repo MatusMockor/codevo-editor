@@ -81,6 +81,46 @@ describe("agent provider update toast callbacks", () => {
     ]);
   });
 
+  it("continues update-all past a provider the updater left unchanged", async () => {
+    const states: Record<AgentCliKind, AgentProviderUpdateState> = {
+      claudeCode: { kind: "idle" },
+      codex: { kind: "idle" },
+    };
+    const port = portWith({
+      update: vi.fn<Port["update"]>(async (provider) => {
+        states[provider] =
+          provider === "claudeCode"
+            ? {
+                kind: "alreadyCurrent",
+                installedVersion: "2.0.0",
+                offeredVersion: "2.1.0",
+                outputTail: "",
+                outputTruncated: false,
+              }
+            : { kind: "succeeded", previousVersion: "0.152.0", installedVersion: "0.153.4" };
+        return null;
+      }),
+    });
+    const readManagement = () => ({
+      ...port,
+      providers: {
+        claudeCode: { ...port.providers.claudeCode, updateState: states.claudeCode },
+        codex: { ...port.providers.codex, updateState: states.codex },
+      },
+    });
+    const callbacks = createAgentProviderUpdateToastCallbacks({
+      ...dependencies(port),
+      readManagement,
+    });
+
+    await callbacks.onUpdateAll([CLAUDE, CODEX]);
+
+    expect(port.update.mock.calls).toEqual([
+      ["claudeCode", "2.1.0"],
+      ["codex", "0.153.4"],
+    ]);
+  });
+
   it("reports refusals instead of treating them as a started update", async () => {
     const port = portWith({ update: vi.fn<Port["update"]>(async () => "turnActive") });
     const onUpdateRefused = vi.fn();

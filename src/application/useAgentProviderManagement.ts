@@ -8,8 +8,6 @@ import {
   type MutableRefObject,
 } from "react";
 import {
-  appendAgentProviderUpdateOutputTail,
-  MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES,
   type AgentProviderHealthGateway,
   type AgentProviderHealthProbeResult,
   type AgentProviderHealthState,
@@ -19,20 +17,28 @@ import {
   type AgentProviderUpdateProgressEvent,
   type AgentProviderUpdateState,
 } from "../domain/agentProviderHealth";
-import {
-  defaultAgentProviderPreferences,
-  type AgentProviderPreference,
-  type PersistedAgentProviderSettingsAuthority,
-} from "../domain/agentProviderSettings";
+import type { PersistedAgentProviderSettingsAuthority } from "../domain/agentProviderSettings";
 import {
   agentCliExecutablePresentation,
-  normalizeAgentCliPath,
   type AgentCliDiscoveryGateway,
   type AgentCliDiscoveryResult,
   type AgentCliExecutablePresentation,
 } from "../domain/agentSettings";
 import type { AgentCliKind } from "../domain/agentTask";
 import type { AppSettings, SettingsGateway } from "../domain/settings";
+import {
+  agentProviderPreferences as preferences,
+  applyIntent,
+  commitPersistedIntent,
+  persistedCandidate,
+  proposedFields,
+  providerFields,
+  rollbackIntent,
+  type AgentProviderSettingsIntent,
+  type PersistedProviderSlice,
+  type ProviderFields,
+  type QueuedIntent,
+} from "./agentProviderSettingsIntent";
 import { appSettingsSaveCoordinatorFor } from "./appSettingsSaveCoordinator";
 import type {
   AgentProviderAdmissionAuthority,
@@ -44,10 +50,22 @@ import {
   agentProviderHealthWithPersistedUpdateAuthority,
   effectiveAgentProviderCliPath,
 } from "./agentProviderDiscoveryAdmission";
+import {
+  AGENT_PROVIDER_UPDATE_HEALTH_SETTLE_TIMEOUT_MS,
+  AGENT_PROVIDER_UPDATE_REGISTRATION_TIMEOUT_MS,
+  alreadyCurrentUpdateState,
+  boundedProgressSubscription,
+  boundedSettlement,
+  currentUpdateOutput,
+  failedUpdateState,
+  idempotentUnlisten,
+  mergedUpdateOutput,
+  runningUpdateWith,
+  updateStateBeforeRegistration,
+} from "./agentProviderUpdateRun";
 import { useAgentCliDiscovery, type AgentCliDiscoveryPublication } from "./useAgentCliDiscovery";
 
 const PROVIDERS: readonly AgentCliKind[] = ["claudeCode", "codex"];
-const AGENT_PROVIDER_UPDATE_PROGRESS_SUBSCRIBE_TIMEOUT_MS = 1_000;
 
 export type AgentProviderManagementToast =
   | {
@@ -61,16 +79,24 @@ export type AgentProviderManagementToast =
       readonly provider: AgentCliKind;
       readonly version: string;
     }
+  | {
+      readonly kind: "updateAlreadyCurrent";
+      readonly provider: AgentCliKind;
+      readonly version: string;
+    }
   | { readonly kind: "updateFailed"; readonly provider: AgentCliKind };
 
 export type AgentProviderUpdateRefusal =
   | "disabled"
   | "notConfigured"
   | "policyUnavailable"
+  | "statusUnknown"
   | "noUpdateAvailable"
   | "turnActive"
   | "signInActive"
   | "alreadyUpdating";
+
+type AgentProviderUpdateRegistrationOutcome = "registered" | "policyUnavailable" | "statusUnknown";
 
 export type AgentProviderSettingsSaveOutcome =
   | { readonly kind: "persisted"; readonly policyRegistered: boolean }
@@ -93,12 +119,7 @@ export interface AgentProviderManagementView {
   readonly signInActive?: boolean;
 }
 
-export interface AgentProviderSettingsIntent {
-  readonly provider: AgentCliKind;
-  readonly preference?: AgentProviderPreference;
-  readonly cliPath?: string | null;
-  readonly selectedProvider?: AgentCliKind;
-}
+export type { AgentProviderSettingsIntent } from "./agentProviderSettingsIntent";
 
 export interface AgentProviderManagementSurface {
   readonly cliDiscovery: AgentCliDiscoveryResult;
@@ -169,28 +190,6 @@ interface ProviderOwner {
   readonly updateGateway: AgentProviderUpdateGateway;
 }
 
-interface ProviderFields {
-  readonly preference: AgentProviderPreference;
-  readonly cliPath: string | null;
-}
-
-interface QueuedIntent extends AgentProviderSettingsIntent {
-  readonly hydrationGeneration: number;
-  readonly revision: number;
-  readonly proposed: ProviderFields;
-  readonly cliPathOwned: boolean;
-  readonly preferenceOwned: boolean;
-  readonly selectedOwned: boolean;
-  readonly proposedSelected: AgentCliKind;
-  readonly preservedUpdateOperationId: string | null;
-}
-
-interface PersistedProviderSlice {
-  readonly fields: Readonly<Record<AgentCliKind, ProviderFields>>;
-  readonly selectedProvider: AgentCliKind;
-  readonly selectedSettingsRevision: number;
-}
-
 const initialRuntime = (): Record<AgentCliKind, ProviderRuntime> => ({
   claudeCode: {
     configurationRevision: 0,
@@ -241,6 +240,7 @@ export function useAgentProviderManagement(
   });
   const selectedRevisionRef = useRef(0);
   const updateOperationRef = useRef<Partial<Record<AgentCliKind, string>>>({});
+  const updateInFlightRef = useRef<Partial<Record<AgentCliKind, true>>>({});
   const updateProgressUnlistenRef = useRef<
     Partial<Record<AgentCliKind, { readonly operationId: string; readonly unlisten: () => void }>>
   >({});
@@ -806,11 +806,53 @@ export function useAgentProviderManagement(
     [register],
   );
 
-  const update = useCallback(
+  const registerBeforeUpdate = useCallback(
+    async (provider: AgentCliKind): Promise<AgentProviderUpdateRegistrationOutcome> => {
+      const lifecycleGeneration = hydrationGenerationRef.current;
+      const gateways = {
+        workspaceGeneration: dependenciesRef.current.workspaceGeneration,
+        policyGateway: dependenciesRef.current.policyGateway,
+        healthGateway: dependenciesRef.current.healthGateway,
+        updateGateway: dependenciesRef.current.updateGateway,
+      };
+      const stillOwned = (): boolean =>
+        mountedRef.current &&
+        hydrationReadyRef.current &&
+        hydrationGenerationRef.current === lifecycleGeneration &&
+        dependenciesRef.current.workspaceGeneration === gateways.workspaceGeneration &&
+        dependenciesRef.current.policyGateway === gateways.policyGateway &&
+        dependenciesRef.current.healthGateway === gateways.healthGateway &&
+        dependenciesRef.current.updateGateway === gateways.updateGateway;
+      const registration = await boundedSettlement(
+        retryRegistration(provider),
+        AGENT_PROVIDER_UPDATE_REGISTRATION_TIMEOUT_MS,
+      );
+      if (registration.kind === "timedOut") return "policyUnavailable";
+      if (!stillOwned()) return "policyUnavailable";
+      if (runtimeRef.current[provider].policy.kind !== "registered") return "policyUnavailable";
+      const pendingHealth = inFlightHealthRef.current[provider]?.promise;
+      if (pendingHealth === undefined) return "statusUnknown";
+      const settledHealth = await boundedSettlement(
+        pendingHealth,
+        AGENT_PROVIDER_UPDATE_HEALTH_SETTLE_TIMEOUT_MS,
+      );
+      if (settledHealth.kind === "timedOut") return "policyUnavailable";
+      if (!stillOwned()) return "policyUnavailable";
+      if (runtimeRef.current[provider].policy.kind !== "registered") return "policyUnavailable";
+      return "registered";
+    },
+    [retryRegistration],
+  );
+
+  const runUpdate = useCallback(
     async (
       provider: AgentCliKind,
       offeredVersion: string,
     ): Promise<AgentProviderUpdateRefusal | null> => {
+      if (runtimeRef.current[provider].policy.kind !== "registered") {
+        const outcome = await registerBeforeUpdate(provider);
+        if (outcome !== "registered") return outcome;
+      }
       const offeredHealth = runtimeRef.current[provider].health;
       if (offeredHealth.kind !== "ready") return "noUpdateAvailable";
       if (offeredHealth.update.kind !== "available") return "noUpdateAvailable";
@@ -938,25 +980,76 @@ export function useAgentProviderManagement(
             operationId,
           );
           const finalSummary = result.outputTail === "" ? "" : `${result.outputTail}\n`;
-          const combinedOutputBytes = new TextEncoder().encode(
-            `${streamed.outputTail}${finalSummary}`,
-          ).byteLength;
+          const merged = mergedUpdateOutput(streamed, finalSummary, result.outputTruncated);
           delete updateOperationRef.current[provider];
           publish(provider, (current) => ({
             ...current,
             configurationRevision: current.configurationRevision + 1,
             healthGeneration: current.healthGeneration + 1,
-            updateState: {
-              ...result,
-              outputTail: appendAgentProviderUpdateOutputTail(streamed.outputTail, finalSummary),
-              outputTruncated:
-                result.outputTruncated ||
-                streamed.outputTruncated ||
-                combinedOutputBytes > MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES,
-            },
+            updateState: failedUpdateState(result.reason, offeredVersion, merged),
           }));
           scheduleHealth(provider);
           setToast({ kind: "updateFailed", provider });
+          return null;
+        }
+        if (result.kind === "alreadyCurrent") {
+          const streamed = currentUpdateOutput(
+            runtimeRef.current[provider].updateState,
+            operationId,
+          );
+          publish(provider, (current) => ({
+            ...current,
+            configurationRevision: current.configurationRevision + 1,
+            healthGeneration: current.healthGeneration + 1,
+            updateState: alreadyCurrentUpdateState(
+              result.installedVersion,
+              offeredVersion,
+              streamed,
+            ),
+          }));
+          const alreadyCurrentOwner = currentOwner(provider);
+          if (alreadyCurrentOwner === null) return null;
+          const settledHealth = await refreshHealth(provider);
+          if (!ownerIsCurrent(alreadyCurrentOwner)) return null;
+          const disagreement = updateSettlementDisagreement(settledHealth, result.installedVersion);
+          if (disagreement !== null) {
+            delete updateOperationRef.current[provider];
+            publish(provider, (current) => ({
+              ...current,
+              updateState: failedUpdateState(disagreement, offeredVersion, streamed),
+            }));
+            scheduleHealth(provider);
+            setToast({ kind: "updateFailed", provider });
+            return null;
+          }
+          scheduleHealth(provider);
+          const offeredPreference = authorityRef.current[provider]?.preference;
+          if (!stillOffers(settledHealth, offeredVersion) || offeredPreference === undefined) {
+            if (updateOperationRef.current[provider] === operationId) {
+              delete updateOperationRef.current[provider];
+            }
+            return null;
+          }
+          if (offeredPreference.dismissedUpdateVersion !== offeredVersion) {
+            const dismissal = await saveWithOutcome(
+              {
+                provider,
+                preference: { ...offeredPreference, dismissedUpdateVersion: offeredVersion },
+              },
+              operationId,
+            );
+            if (dismissal.kind !== "persisted") {
+              if (updateOperationRef.current[provider] === operationId) {
+                delete updateOperationRef.current[provider];
+              }
+              return null;
+            }
+            if (!mountedRef.current) return null;
+            if (runtimeRef.current[provider].updateState.kind !== "alreadyCurrent") return null;
+          }
+          if (updateOperationRef.current[provider] !== operationId) return null;
+          delete updateOperationRef.current[provider];
+          setToast({ kind: "updateAlreadyCurrent", provider, version: result.installedVersion });
           return null;
         }
         publish(provider, (current) => ({
@@ -968,24 +1061,17 @@ export function useAgentProviderManagement(
         if (settledOwner === null) return null;
         const health = await refreshHealth(provider);
         if (!ownerIsCurrent(settledOwner)) return null;
-        if (health === null) {
+        const mismatch = updateSettlementDisagreement(health, result.installedVersion);
+        if (mismatch !== null) {
           const streamed = currentUpdateOutput(
             runtimeRef.current[provider].updateState,
             operationId,
           );
           delete updateOperationRef.current[provider];
-          publishUpdateFailure(provider, "uncertain", streamed, publish);
-          scheduleHealth(provider);
-          setToast({ kind: "updateFailed", provider });
-          return null;
-        }
-        if (health.installedVersion !== result.installedVersion) {
-          const streamed = currentUpdateOutput(
-            runtimeRef.current[provider].updateState,
-            operationId,
-          );
-          delete updateOperationRef.current[provider];
-          publishUpdateFailure(provider, "versionMismatch", streamed, publish);
+          publish(provider, (current) => ({
+            ...current,
+            updateState: failedUpdateState(mismatch, offeredVersion, streamed),
+          }));
           scheduleHealth(provider);
           setToast({ kind: "updateFailed", provider });
           return null;
@@ -1023,12 +1109,7 @@ export function useAgentProviderManagement(
           ...current,
           configurationRevision: current.configurationRevision + 1,
           healthGeneration: current.healthGeneration + 1,
-          updateState: {
-            kind: "failed",
-            reason: "uncertain",
-            outputTail: streamed.outputTail,
-            outputTruncated: streamed.outputTruncated,
-          },
+          updateState: failedUpdateState("uncertain", offeredVersion, streamed),
         }));
         scheduleHealth(provider);
         setToast({ kind: "updateFailed", provider });
@@ -1056,9 +1137,26 @@ export function useAgentProviderManagement(
       publish,
       readCliDiscovery,
       refreshHealth,
+      registerBeforeUpdate,
       saveWithOutcome,
       scheduleHealth,
     ],
+  );
+
+  const update = useCallback(
+    async (
+      provider: AgentCliKind,
+      offeredVersion: string,
+    ): Promise<AgentProviderUpdateRefusal | null> => {
+      if (updateInFlightRef.current[provider] === true) return "alreadyUpdating";
+      updateInFlightRef.current[provider] = true;
+      try {
+        return await runUpdate(provider, offeredVersion);
+      } finally {
+        delete updateInFlightRef.current[provider];
+      }
+    },
+    [runUpdate],
   );
 
   const dismissUpdate = useCallback(
@@ -1144,6 +1242,7 @@ export function useAgentProviderManagement(
       for (const provider of PROVIDERS) clearTimer(provider);
       inFlightHealthRef.current = {};
       updateOperationRef.current = {};
+      updateInFlightRef.current = {};
       for (const subscription of Object.values(updateProgressUnlistenRef.current)) {
         try {
           subscription?.unlisten();
@@ -1352,74 +1451,22 @@ export function useAgentProviderManagement(
   );
 }
 
-function preferences(settings: AppSettings) {
-  return settings.agentProviderPreferences ?? defaultAgentProviderPreferences();
+function updateSettlementDisagreement(
+  health: AgentProviderHealthProbeResult | null,
+  installedVersion: string,
+): "uncertain" | "versionMismatch" | null {
+  if (health === null) return "uncertain";
+  if (health.installedVersion !== installedVersion) return "versionMismatch";
+  return null;
 }
 
-function runningUpdateWith(
-  state: AgentProviderUpdateState,
-  operationId: string,
-  addition: string,
-  truncated: boolean,
-): Extract<AgentProviderUpdateState, { readonly kind: "running" }> {
-  const current = currentUpdateOutput(state, operationId);
-  const exceededTail =
-    new TextEncoder().encode(`${current.outputTail}${addition}`).byteLength >
-    MAX_AGENT_PROVIDER_UPDATE_OUTPUT_TAIL_BYTES;
-  return {
-    kind: "running",
-    operationId,
-    outputTail: appendAgentProviderUpdateOutputTail(current.outputTail, addition),
-    outputTruncated: current.outputTruncated || truncated || exceededTail,
-  };
-}
-
-function currentUpdateOutput(
-  state: AgentProviderUpdateState,
-  operationId: string,
-): { readonly outputTail: string; readonly outputTruncated: boolean } {
-  if (state.kind !== "running" || state.operationId !== operationId) {
-    return { outputTail: "", outputTruncated: false };
-  }
-  return { outputTail: state.outputTail, outputTruncated: state.outputTruncated };
-}
-
-function idempotentUnlisten(unlisten: () => void): () => void {
-  let active = true;
-  return () => {
-    if (!active) return;
-    active = false;
-    unlisten();
-  };
-}
-
-function boundedProgressSubscription(
-  subscription: Promise<() => void>,
-): Promise<
-  { readonly kind: "subscribed"; readonly unlisten: () => void } | { readonly kind: "timedOut" }
-> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      resolve({ kind: "timedOut" });
-    }, AGENT_PROVIDER_UPDATE_PROGRESS_SUBSCRIBE_TIMEOUT_MS);
-    subscription.then(
-      (unlisten) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ kind: "subscribed", unlisten });
-      },
-      (error: unknown) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
+function stillOffers(
+  health: AgentProviderHealthProbeResult | null,
+  offeredVersion: string,
+): boolean {
+  if (health === null) return false;
+  if (health.update.kind !== "available") return false;
+  return health.update.availableVersion === offeredVersion;
 }
 
 function currentSelectedProviderAuthority(
@@ -1437,109 +1484,6 @@ function currentSelectedProviderAuthority(
   if (publication.healthGateway !== healthGateway) return null;
   if (publication.updateGateway !== updateGateway) return null;
   return { provider: publication.provider, settingsRevision: publication.settingsRevision };
-}
-
-function providerFields(settings: AppSettings, provider: AgentCliKind): ProviderFields {
-  return { preference: preferences(settings)[provider], cliPath: settings.agentCliPaths[provider] };
-}
-
-function proposedFields(
-  previous: ProviderFields,
-  intent: AgentProviderSettingsIntent,
-): ProviderFields {
-  if (intent.cliPath === undefined) {
-    return { preference: intent.preference ?? previous.preference, cliPath: previous.cliPath };
-  }
-  const cliPath = intent.cliPath === null ? null : normalizeAgentCliPath(intent.cliPath);
-  if (intent.cliPath !== null && cliPath === null) throw new TypeError("Invalid agent CLI path.");
-  return { preference: intent.preference ?? previous.preference, cliPath };
-}
-
-function applyIntent(settings: AppSettings, intent: QueuedIntent): AppSettings {
-  return {
-    ...settings,
-    agentCliKind: intent.selectedOwned ? intent.proposedSelected : settings.agentCliKind,
-    agentCliPaths: intent.cliPathOwned
-      ? { ...settings.agentCliPaths, [intent.provider]: intent.proposed.cliPath }
-      : settings.agentCliPaths,
-    agentProviderPreferences: intent.preferenceOwned
-      ? {
-          ...preferences(settings),
-          [intent.provider]: intent.proposed.preference,
-        }
-      : preferences(settings),
-  };
-}
-
-function persistedCandidate(
-  settings: AppSettings,
-  persisted: PersistedProviderSlice,
-  intent: QueuedIntent,
-): AppSettings {
-  const restored: AppSettings = {
-    ...settings,
-    agentCliKind: persisted.selectedProvider,
-    agentCliPaths: {
-      claudeCode: persisted.fields.claudeCode.cliPath,
-      codex: persisted.fields.codex.cliPath,
-    },
-    agentProviderPreferences: {
-      claudeCode: persisted.fields.claudeCode.preference,
-      codex: persisted.fields.codex.preference,
-    },
-  };
-  return applyIntent(restored, intent);
-}
-
-function commitPersistedIntent(
-  persisted: PersistedProviderSlice,
-  intent: QueuedIntent,
-): PersistedProviderSlice {
-  const previous = persisted.fields[intent.provider];
-  return {
-    fields: {
-      ...persisted.fields,
-      [intent.provider]: {
-        cliPath: intent.cliPathOwned ? intent.proposed.cliPath : previous.cliPath,
-        preference: intent.preferenceOwned ? intent.proposed.preference : previous.preference,
-      },
-    },
-    selectedProvider: intent.selectedOwned ? intent.proposedSelected : persisted.selectedProvider,
-    selectedSettingsRevision: intent.selectedOwned
-      ? intent.revision
-      : persisted.selectedSettingsRevision,
-  };
-}
-
-function rollbackIntent(
-  intent: QueuedIntent,
-  persistedSliceRef: MutableRefObject<PersistedProviderSlice>,
-  dependenciesRef: MutableRefObject<AgentProviderManagementDependencies>,
-  cliPathRevisionRef: MutableRefObject<Record<AgentCliKind, number>>,
-  preferenceRevisionRef: MutableRefObject<Record<AgentCliKind, number>>,
-  selectedRevisionRef: MutableRefObject<number>,
-): void {
-  const current = dependenciesRef.current.appSettingsRef.current;
-  const rollbackCliPath =
-    intent.cliPathOwned && cliPathRevisionRef.current[intent.provider] === intent.revision;
-  const rollbackPreference =
-    intent.preferenceOwned && preferenceRevisionRef.current[intent.provider] === intent.revision;
-  const rollbackSelected = intent.selectedOwned && selectedRevisionRef.current === intent.revision;
-  if (!rollbackCliPath && !rollbackPreference && !rollbackSelected) return;
-  const persisted = persistedSliceRef.current;
-  dependenciesRef.current.applyAppSettings({
-    ...current,
-    agentCliKind: rollbackSelected ? persisted.selectedProvider : current.agentCliKind,
-    agentCliPaths: rollbackCliPath
-      ? { ...current.agentCliPaths, [intent.provider]: persisted.fields[intent.provider].cliPath }
-      : current.agentCliPaths,
-    agentProviderPreferences: rollbackPreference
-      ? {
-          ...preferences(current),
-          [intent.provider]: persisted.fields[intent.provider].preference,
-        }
-      : preferences(current),
-  });
 }
 
 function registrationIsCurrent(
@@ -1712,46 +1656,8 @@ function updateRefusal(
   return null;
 }
 
-function updateStateBeforeRegistration(state: AgentProviderUpdateState): AgentProviderUpdateState {
-  switch (state.kind) {
-    case "starting":
-    case "running":
-      return { kind: "idle" };
-    case "idle":
-    case "succeeded":
-    case "failed":
-      return state;
-    default:
-      return unsupportedUpdateState(state);
-  }
-}
-
 function unsupportedDiscoveryStatus(status: never): never {
   throw new TypeError(`Unsupported agent CLI discovery status: ${String(status)}.`);
-}
-
-function publishUpdateFailure(
-  provider: AgentCliKind,
-  reason: "uncertain" | "versionMismatch",
-  output: { readonly outputTail: string; readonly outputTruncated: boolean },
-  publish: (
-    provider: AgentCliKind,
-    transform: (current: ProviderRuntime) => ProviderRuntime,
-  ) => void,
-): void {
-  publish(provider, (current) => ({
-    ...current,
-    updateState: {
-      kind: "failed",
-      reason,
-      outputTail: output.outputTail,
-      outputTruncated: output.outputTruncated,
-    },
-  }));
-}
-
-function unsupportedUpdateState(state: never): never {
-  throw new TypeError(`Unsupported provider update state: ${String(state)}.`);
 }
 
 function policyRegistrationFailureReason(

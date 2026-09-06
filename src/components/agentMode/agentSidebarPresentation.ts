@@ -733,9 +733,22 @@ export interface ProviderFooterPillInput {
   readonly view: AgentProviderManagementView;
   readonly updatedVisible: boolean;
   readonly failedVersion: string | null;
+  readonly dismissedVersion?: string | null;
+}
+
+export function providerUpdateSettledAtOffer(
+  updateState: AgentProviderUpdateState,
+  dismissedVersion: string | null,
+  offeredVersion: string,
+): boolean {
+  if (updateState.kind === "alreadyCurrent" && updateState.offeredVersion === offeredVersion) {
+    return true;
+  }
+  return dismissedVersion === offeredVersion;
 }
 
 export function providerFooterPillModels({
+  dismissedVersion = null,
   failedVersion,
   provider,
   updatedVisible,
@@ -758,7 +771,10 @@ export function providerFooterPillModels({
     available !== null && failedVersion !== null && available.availableVersion !== failedVersion;
   const failed =
     view.updateState.kind === "failed" && !manual && !newerOffer && !updateLanded(view.health);
-  const offersUpdate = available !== null && registered && !updating && !failed;
+  const settledAtOffer =
+    available !== null &&
+    providerUpdateSettledAtOffer(view.updateState, dismissedVersion, available.availableVersion);
+  const offersUpdate = available !== null && registered && !updating && !failed && !settledAtOffer;
   const canRetryUpdate = available !== null && registered;
   const register = view.policy.kind === "unregistered" || view.policy.kind === "failed";
   const turnsLive = view.liveTurnCount > 0;

@@ -46,6 +46,7 @@ describe("composeToastNotices", () => {
           reason: "exited",
           outputTail: "",
           installedVersion: null,
+          offeredVersion: null,
           retryVersion: null,
         },
       },

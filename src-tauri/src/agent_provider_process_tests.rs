@@ -488,8 +488,7 @@ fn installer_replacement_during_spawn_authorization_is_rejected_before_spawn() {
                 true
             },
         ),
-        Err(AgentProviderProcessFailure::Uncertain(message))
-            if message == "Provider executable identity changed before launch."
+        Err(AgentProviderProcessFailure::IdentityChanged)
     ));
     assert!(!marker.exists());
     fs::remove_file(cli).expect("replacement cleanup");
@@ -545,16 +544,12 @@ fn interpreter_replacement_during_spawn_authorization_is_rejected_before_spawn()
                 fs::rename(&swapped_interpreter, &retained_for_callback)
                     .expect("retain interpreter");
                 fs::copy("/bin/sh", &swapped_interpreter).expect("replacement interpreter");
-                fs::set_permissions(
-                    &swapped_interpreter,
-                    fs::Permissions::from_mode(0o755),
-                )
-                .expect("replacement interpreter permissions");
+                fs::set_permissions(&swapped_interpreter, fs::Permissions::from_mode(0o755))
+                    .expect("replacement interpreter permissions");
                 true
             },
         ),
-        Err(AgentProviderProcessFailure::Uncertain(message))
-            if message == "Provider executable identity changed before launch."
+        Err(AgentProviderProcessFailure::IdentityChanged)
     ));
     assert!(!marker.exists());
     fs::remove_file(cli).expect("provider cleanup");

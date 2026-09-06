@@ -47,11 +47,18 @@ export type AgentProviderUpdateToastPresentation =
       readonly version: AgentProviderUpdateVersion;
     }
   | {
+      readonly kind: "alreadyCurrent";
+      readonly provider: AgentCliKind;
+      readonly installedVersion: AgentProviderUpdateVersion;
+      readonly offeredVersion: AgentProviderUpdateVersion | null;
+    }
+  | {
       readonly kind: "failed";
       readonly provider: AgentCliKind;
       readonly reason: AgentProviderUpdateToastFailureReason | null;
       readonly outputTail: string;
       readonly installedVersion: string | null;
+      readonly offeredVersion: AgentProviderUpdateVersion | null;
       readonly retryVersion: AgentProviderUpdateVersion | null;
     }
   | {
@@ -128,6 +135,13 @@ export function agentProviderUpdateToastGroupKey(
         presentation.provider,
         presentation.version,
       ]);
+    case "alreadyCurrent":
+      return JSON.stringify([
+        "agent-provider-update-already-current",
+        presentation.provider,
+        presentation.installedVersion,
+        presentation.offeredVersion,
+      ]);
     case "failed":
       return JSON.stringify(["agent-provider-update-failed", presentation.provider]);
     case "refused":
@@ -154,6 +168,8 @@ export function agentProviderUpdateToastTitle(
       return "Updating provider";
     case "updated":
       return `${agentProviderLabel(presentation.provider)} updated: v${presentation.version}`;
+    case "alreadyCurrent":
+      return `${agentProviderLabel(presentation.provider)} did not change version`;
     case "failed":
       return "Provider update failed";
     case "refused":
@@ -182,6 +198,8 @@ export function presentAgentProviderUpdateToast(
       if (!version) return null;
       return { kind: "updated", provider: toast.provider, version };
     }
+    case "updateAlreadyCurrent":
+      return presentAlreadyCurrent(source.providers[toast.provider], toast.provider, toast.version);
     case "updateFailed":
       return presentFailed(source.providers[toast.provider], toast.provider);
     default:
@@ -195,8 +213,14 @@ export function agentProviderUpdateFailureSentence(
   switch (reason) {
     case null:
       return "Check provider settings for details.";
-    case "admissionRefused":
-      return "The update was refused by the provider policy.";
+    case "operationSuperseded":
+      return "Another provider update replaced this one.";
+    case "authorityChanged":
+      return "Provider settings changed while the update was starting.";
+    case "executableChanged":
+      return "The provider executable changed while the update was starting.";
+    case "installerUnsupported":
+      return "The detected installer cannot run this update.";
     case "spawnFailed":
       return "The installer could not be started.";
     case "timedOut":
@@ -207,8 +231,6 @@ export function agentProviderUpdateFailureSentence(
       return "The installer exited with an error.";
     case "uncertain":
       return "The installer result could not be verified.";
-    case "versionNotAdvanced":
-      return "The installed version did not change.";
     case "versionMismatch":
       return "The installed version does not match the offered update.";
     default:
@@ -224,6 +246,8 @@ export function agentProviderUpdateRefusalSentence(refusal: AgentProviderUpdateR
       return "The provider CLI path is not configured.";
     case "policyUnavailable":
       return "The provider policy is not registered yet.";
+    case "statusUnknown":
+      return "The provider status could not be refreshed.";
     case "noUpdateAvailable":
       return "The offered update is no longer available.";
     case "turnActive":
@@ -301,18 +325,37 @@ function pendingOneClickUpdate(
   );
 }
 
+function presentAlreadyCurrent(
+  view: AgentProviderManagementView,
+  provider: AgentCliKind,
+  version: string,
+): AgentProviderUpdateToastPresentation | null {
+  const installedVersion = parseUpdateVersion(version);
+  if (!installedVersion) return null;
+  const settled = view.updateState.kind === "alreadyCurrent" ? view.updateState : null;
+  return {
+    kind: "alreadyCurrent",
+    provider,
+    installedVersion,
+    offeredVersion: parseUpdateVersion(settled?.offeredVersion ?? null),
+  };
+}
+
 function presentFailed(
   view: AgentProviderManagementView,
   provider: AgentCliKind,
 ): AgentProviderUpdateToastPresentation {
   const failure = view.updateState.kind === "failed" ? view.updateState : null;
+  const retryVersion = retryVersionFor(view);
+  const attempted = parseUpdateVersion(failure?.attemptedVersion ?? null);
   return {
     kind: "failed",
     provider,
     reason: failure?.reason ?? null,
     outputTail: failure?.outputTail ?? "",
     installedVersion: view.health.kind === "ready" ? view.health.installedVersion : null,
-    retryVersion: retryVersionFor(view),
+    offeredVersion: attempted ?? retryVersion,
+    retryVersion,
   };
 }
 

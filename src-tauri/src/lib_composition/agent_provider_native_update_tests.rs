@@ -190,7 +190,7 @@ fn admitted_self_update_runs_the_provider_update_command_and_accepts_any_advance
 }
 
 #[test]
-fn admitted_self_update_that_does_not_advance_reports_version_not_advanced() {
+fn admitted_self_update_that_does_not_advance_reports_already_current() {
     let (_fixture, cli) = self_update_fixture("self-update-stalled", "exit 0");
     let (registry, receipt) = registered_registry(&cli, true);
     admit_self_update_candidate(&registry, receipt);
@@ -201,12 +201,16 @@ fn admitted_self_update_that_does_not_advance_reports_version_not_advanced() {
 
     assert_eq!(
         result,
-        AgentProviderUpdateResult::Failed {
-            reason: AgentProviderUpdateFailureReason::VersionNotAdvanced,
-            output_tail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes)."
-                .to_string(),
-            output_truncated: false,
+        AgentProviderUpdateResult::AlreadyCurrent {
+            installed_version: "0.150.1".to_string(),
         }
+    );
+    assert_eq!(
+        serde_json::to_value(&result).expect("already current result"),
+        json!({
+            "kind": "alreadyCurrent",
+            "installedVersion": "0.150.1",
+        })
     );
 }
 
@@ -224,19 +228,25 @@ fn self_update_verification_requires_a_strictly_newer_installed_version() {
         "2.1.262",
     );
 
-    assert_eq!(verification_failure(&self_update, "2.1.262"), None);
-    assert_eq!(verification_failure(&self_update, "2.1.300"), None);
     assert_eq!(
-        verification_failure(&self_update, "2.1.261"),
-        Some(AgentProviderUpdateFailureReason::VersionNotAdvanced)
+        verification_outcome(&self_update, "2.1.262"),
+        UpdateVerificationOutcome::Advanced
     );
     assert_eq!(
-        verification_failure(&self_update, "2.1.260"),
-        Some(AgentProviderUpdateFailureReason::Uncertain)
+        verification_outcome(&self_update, "2.1.300"),
+        UpdateVerificationOutcome::Advanced
     );
     assert_eq!(
-        verification_failure(&self_update, "not-a-version"),
-        Some(AgentProviderUpdateFailureReason::Uncertain)
+        verification_outcome(&self_update, "2.1.261"),
+        UpdateVerificationOutcome::AlreadyCurrent
+    );
+    assert_eq!(
+        verification_outcome(&self_update, "2.1.260"),
+        UpdateVerificationOutcome::Uncertain
+    );
+    assert_eq!(
+        verification_outcome(&self_update, "not-a-version"),
+        UpdateVerificationOutcome::Uncertain
     );
 
     let npm = candidate(
@@ -247,10 +257,13 @@ fn self_update_verification_requires_a_strictly_newer_installed_version() {
         "0.150.1",
         "0.151.0",
     );
-    assert_eq!(verification_failure(&npm, "0.151.0"), None);
     assert_eq!(
-        verification_failure(&npm, "0.152.0"),
-        Some(AgentProviderUpdateFailureReason::Uncertain)
+        verification_outcome(&npm, "0.151.0"),
+        UpdateVerificationOutcome::Advanced
+    );
+    assert_eq!(
+        verification_outcome(&npm, "0.152.0"),
+        UpdateVerificationOutcome::Uncertain
     );
     let brew = candidate(
         ResolvedAgentProviderInstaller::Homebrew {
@@ -260,10 +273,13 @@ fn self_update_verification_requires_a_strictly_newer_installed_version() {
         "0.150.1",
         "0.151.0",
     );
-    assert_eq!(verification_failure(&brew, "0.151.0"), None);
     assert_eq!(
-        verification_failure(&brew, "0.150.1"),
-        Some(AgentProviderUpdateFailureReason::Uncertain)
+        verification_outcome(&brew, "0.151.0"),
+        UpdateVerificationOutcome::Advanced
+    );
+    assert_eq!(
+        verification_outcome(&brew, "0.150.1"),
+        UpdateVerificationOutcome::Uncertain
     );
 }
 
@@ -301,7 +317,7 @@ fn self_update_wire_shape_is_closed_and_rejects_unknown_installer_kinds() {
     );
     assert_eq!(
         serde_json::to_value(AgentProviderUpdateResult::Failed {
-            reason: AgentProviderUpdateFailureReason::VersionNotAdvanced,
+            reason: AgentProviderUpdateFailureReason::AuthorityChanged,
             output_tail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes)."
                 .to_string(),
             output_truncated: false,
@@ -309,7 +325,7 @@ fn self_update_wire_shape_is_closed_and_rejects_unknown_installer_kinds() {
         .expect("failed update"),
         json!({
             "kind": "failed",
-            "reason": "versionNotAdvanced",
+            "reason": "authorityChanged",
             "outputTail": "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
             "outputTruncated": false,
         })
@@ -426,7 +442,7 @@ fn self_update_provider_swap_at_the_spawn_boundary_refuses_without_updating() {
         matches!(
             &result,
             AgentProviderUpdateResult::Failed {
-                reason: AgentProviderUpdateFailureReason::AdmissionRefused,
+                reason: AgentProviderUpdateFailureReason::ExecutableChanged,
                 ..
             }
         ),

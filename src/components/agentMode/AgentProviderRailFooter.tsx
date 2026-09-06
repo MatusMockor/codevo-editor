@@ -145,7 +145,15 @@ function ProviderFooterActions({
   const view = management.providers[provider];
   const updatedVisible = useUpdatedPillVisible(view.updateState);
   const failedVersion = useFailedUpdateVersion(view);
-  const pills = providerFooterPillModels({ provider, view, updatedVisible, failedVersion });
+  const dismissedVersion =
+    management.authority(provider)?.preference.dismissedUpdateVersion ?? null;
+  const pills = providerFooterPillModels({
+    dismissedVersion,
+    provider,
+    view,
+    updatedVisible,
+    failedVersion,
+  });
 
   const run = (intent: ProviderPillIntent): void => {
     switch (intent.kind) {

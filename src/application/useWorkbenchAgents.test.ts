@@ -1262,7 +1262,7 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     })),
     updateAgentProvider: vi.fn(async () => ({
       kind: "failed" as const,
-      reason: "admissionRefused" as const,
+      reason: "authorityChanged" as const,
       outputTail: "",
       outputTruncated: false,
     })),

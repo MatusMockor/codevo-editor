@@ -215,6 +215,7 @@ describe("agent provider update toast presenter", () => {
       reason: "timedOut",
       outputTail: "npm ERR! network",
       installedVersion: "0.152.0",
+      offeredVersion: "0.153.4",
       retryVersion: "0.153.4",
     });
 
@@ -227,8 +228,98 @@ describe("agent provider update toast presenter", () => {
       reason: null,
       outputTail: "",
       installedVersion: null,
+      offeredVersion: null,
       retryVersion: null,
     });
+  });
+
+  it("reports the version the failed attempt used while retry follows the newer offer", () => {
+    const failed = presentAgentProviderUpdateToast(
+      source({
+        toast: { kind: "updateFailed", provider: "codex" },
+        codex: {
+          health: {
+            ...CODEX_UPDATE,
+            update: {
+              kind: "available",
+              installedVersion: "0.152.0",
+              availableVersion: "0.154.0",
+              installer: { kind: "npm", packageName: "@openai/codex" },
+            },
+          },
+          updateState: {
+            kind: "failed",
+            reason: "timedOut",
+            attemptedVersion: "0.153.4",
+            outputTail: "",
+            outputTruncated: false,
+          },
+        },
+      }),
+    );
+
+    expect(failed).toEqual({
+      kind: "failed",
+      provider: "codex",
+      reason: "timedOut",
+      outputTail: "",
+      installedVersion: "0.152.0",
+      offeredVersion: "0.153.4",
+      retryVersion: "0.154.0",
+    });
+  });
+
+  it("presents an already-current outcome with the offered version it did not apply", () => {
+    expect(
+      presentAgentProviderUpdateToast(
+        source({
+          toast: { kind: "updateAlreadyCurrent", provider: "claudeCode", version: "2.1.261" },
+          claudeCode: {
+            updateState: {
+              kind: "alreadyCurrent",
+              installedVersion: "2.1.261",
+              offeredVersion: "2.1.263",
+              outputTail: "",
+              outputTruncated: false,
+            },
+          },
+        }),
+      ),
+    ).toEqual({
+      kind: "alreadyCurrent",
+      provider: "claudeCode",
+      installedVersion: "2.1.261",
+      offeredVersion: "2.1.263",
+    });
+    expect(
+      presentAgentProviderUpdateToast(
+        source({
+          toast: { kind: "updateAlreadyCurrent", provider: "claudeCode", version: "2.1.261" },
+        }),
+      ),
+    ).toEqual({
+      kind: "alreadyCurrent",
+      provider: "claudeCode",
+      installedVersion: "2.1.261",
+      offeredVersion: null,
+    });
+    expect(
+      presentAgentProviderUpdateToast(
+        source({
+          toast: { kind: "updateAlreadyCurrent", provider: "claudeCode", version: "not a version" },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      agentProviderUpdateToastTitle({
+        kind: "alreadyCurrent",
+        provider: "claudeCode",
+        installedVersion: createAgentProviderUpdateToastView("claudeCode", "2.1.261")!
+          .availableVersion,
+        offeredVersion: createAgentProviderUpdateToastView("claudeCode", "2.1.263")!
+          .availableVersion,
+      }),
+    ).toBe("Claude Code did not change version");
   });
 
   it("returns nothing without a toast and fails closed on malformed versions", () => {
@@ -259,7 +350,14 @@ describe("agent provider update toast presenter", () => {
         reason: null,
         outputTail: "",
         installedVersion: null,
+        offeredVersion: null,
         retryVersion: null,
+      }),
+      agentProviderUpdateToastGroupKey({
+        kind: "alreadyCurrent",
+        provider: "codex",
+        installedVersion: view.availableVersion,
+        offeredVersion: null,
       }),
       agentProviderUpdateToastGroupKey({
         kind: "refused",
@@ -333,6 +431,33 @@ describe("agent provider update toast presenter", () => {
       "The installer exited with an error.",
     );
     expect(agentProviderUpdateFailureSentence("versionMismatch")).toContain("does not match");
+    expect(agentProviderUpdateFailureSentence("operationSuperseded")).toBe(
+      "Another provider update replaced this one.",
+    );
+    expect(agentProviderUpdateFailureSentence("authorityChanged")).toBe(
+      "Provider settings changed while the update was starting.",
+    );
+    expect(agentProviderUpdateFailureSentence("executableChanged")).toBe(
+      "The provider executable changed while the update was starting.",
+    );
+    expect(agentProviderUpdateFailureSentence("installerUnsupported")).toBe(
+      "The detected installer cannot run this update.",
+    );
+    for (const reason of [
+      "operationSuperseded",
+      "authorityChanged",
+      "executableChanged",
+      "installerUnsupported",
+      "spawnFailed",
+      "timedOut",
+      "outputLimitExceeded",
+      "exited",
+      "uncertain",
+      "versionMismatch",
+      null,
+    ] as const) {
+      expect(agentProviderUpdateFailureSentence(reason)).not.toContain("provider policy");
+    }
     expect(agentProviderUpdateInstallerLabel("npm")).toBe("npm");
     expect(agentProviderUpdateInstallerLabel("homebrew")).toBe("Homebrew");
     expect(agentProviderUpdateInstallerLabel("selfUpdate")).toBe("built-in updater");

@@ -921,6 +921,7 @@ fn is_executable(_metadata: &fs::Metadata) -> bool {
 #[derive(Debug)]
 pub enum AgentProviderProcessFailure {
     Spawn(String),
+    IdentityChanged,
     TimedOut { stdout: Vec<u8>, stderr: Vec<u8> },
     OutputLimitExceeded { stdout: Vec<u8>, stderr: Vec<u8> },
     Exited { stdout: Vec<u8>, stderr: Vec<u8> },
@@ -1059,9 +1060,7 @@ fn execute_agent_provider_plan_cancellable_inner(
                         stderr: Vec::new(),
                     });
                 }
-                return Err(AgentProviderProcessFailure::Uncertain(
-                    "Provider executable identity changed before launch.".to_string(),
-                ));
+                return Err(AgentProviderProcessFailure::IdentityChanged);
             }
             Err(BoundExecutableSpawnFailure::Spawn(error)) => {
                 return Err(AgentProviderProcessFailure::Spawn(error.to_string()));

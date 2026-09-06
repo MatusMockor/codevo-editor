@@ -15,7 +15,8 @@ use crate::agent_task_spawner::agent_provider::runtime::installer::{
 };
 use crate::agent_task_spawner::agent_provider::runtime::{
     AgentProviderPolicy, AgentProviderPolicyReceipt, AgentProviderRuntimeRegistry,
-    AgentProviderUpdateCandidate, ProviderHealthLease, ResolvedAgentProviderInstaller,
+    AgentProviderUpdateCandidate, ProviderHealthLease, ProviderResolutionMismatch,
+    ResolvedAgentProviderInstaller,
 };
 use crate::agent_task_spawner::agent_provider::{
     brew_cask, compare_versions, npm_package, parse_auth_state, parse_brew_available_version,
@@ -303,31 +304,25 @@ fn run_agent_provider_update_with_spawn_barrier_and_progress_sink(
     )?;
     if lease.operation_id != request.operation_id {
         return Ok(update_failure(
-            AgentProviderUpdateFailureReason::AdmissionRefused,
+            AgentProviderUpdateFailureReason::OperationSuperseded,
             "Provider update operation changed.",
         ));
     }
-    if provider_registry
-        .revalidate_update_authority(&lease)
-        .is_err()
-    {
+    if let Err(mismatch) = provider_registry.revalidate_update_authority(&lease) {
         return Ok(update_failure(
-            AgentProviderUpdateFailureReason::AdmissionRefused,
+            update_authority_reason(mismatch),
             "Provider update authority changed.",
         ));
     }
     if !lease.candidate.cli_identity.is_current_for_spawn() {
         return Ok(update_failure(
-            AgentProviderUpdateFailureReason::AdmissionRefused,
+            AgentProviderUpdateFailureReason::ExecutableChanged,
             "Provider executable identity changed.",
         ));
     }
-    if provider_registry
-        .revalidate_update_authority(&lease)
-        .is_err()
-    {
+    if let Err(mismatch) = provider_registry.revalidate_update_authority(&lease) {
         return Ok(update_failure(
-            AgentProviderUpdateFailureReason::AdmissionRefused,
+            update_authority_reason(mismatch),
             "Provider update authority changed.",
         ));
     }
@@ -339,17 +334,14 @@ fn run_agent_provider_update_with_spawn_barrier_and_progress_sink(
         Ok(plan) => plan,
         Err(message) => {
             return Ok(update_failure(
-                AgentProviderUpdateFailureReason::AdmissionRefused,
+                AgentProviderUpdateFailureReason::InstallerUnsupported,
                 &message,
             ))
         }
     };
-    if provider_registry
-        .revalidate_update_authority(&lease)
-        .is_err()
-    {
+    if let Err(mismatch) = provider_registry.revalidate_update_authority(&lease) {
         return Ok(update_failure(
-            AgentProviderUpdateFailureReason::AdmissionRefused,
+            update_authority_reason(mismatch),
             "Provider update authority changed.",
         ));
     }
@@ -362,10 +354,10 @@ fn run_agent_provider_update_with_spawn_barrier_and_progress_sink(
         progress_sink,
     ) {
         Ok(output) => output,
-        Err(UpdateExecutionFailure::AuthorityLost) => {
+        Err(UpdateExecutionFailure::AuthorityLost(mismatch)) => {
             return Ok(update_failure(
-                AgentProviderUpdateFailureReason::AdmissionRefused,
-                "Provider executable identity changed before installer launch.",
+                update_authority_reason(mismatch),
+                "Provider update authority changed before installer launch.",
             ))
         }
         Err(UpdateExecutionFailure::Process(failure)) => {
@@ -428,30 +420,59 @@ fn run_agent_provider_update_with_spawn_barrier_and_progress_sink(
             &output,
         ));
     };
-    if let Some(reason) = verification_failure(&lease.candidate, &installed_version) {
-        return Ok(update_failure(reason, ""));
+    match verification_outcome(&lease.candidate, &installed_version) {
+        UpdateVerificationOutcome::Uncertain => Ok(update_failure(
+            AgentProviderUpdateFailureReason::Uncertain,
+            "",
+        )),
+        UpdateVerificationOutcome::AlreadyCurrent => {
+            Ok(AgentProviderUpdateResult::AlreadyCurrent { installed_version })
+        }
+        UpdateVerificationOutcome::Advanced => Ok(AgentProviderUpdateResult::Succeeded {
+            previous_version: lease.candidate.installed_version.clone(),
+            installed_version,
+        }),
     }
-    Ok(AgentProviderUpdateResult::Succeeded {
-        previous_version: lease.candidate.installed_version.clone(),
-        installed_version,
-    })
 }
 
-fn verification_failure(
+fn update_authority_reason(
+    mismatch: ProviderResolutionMismatch,
+) -> AgentProviderUpdateFailureReason {
+    match mismatch {
+        ProviderResolutionMismatch::Executable => {
+            AgentProviderUpdateFailureReason::ExecutableChanged
+        }
+        ProviderResolutionMismatch::Environment | ProviderResolutionMismatch::State => {
+            AgentProviderUpdateFailureReason::AuthorityChanged
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdateVerificationOutcome {
+    Advanced,
+    AlreadyCurrent,
+    Uncertain,
+}
+
+fn verification_outcome(
     candidate: &AgentProviderUpdateCandidate,
     installed_version: &str,
-) -> Option<AgentProviderUpdateFailureReason> {
-    if !matches!(
+) -> UpdateVerificationOutcome {
+    let self_update = matches!(
         candidate.installer,
         ResolvedAgentProviderInstaller::SelfUpdate { .. }
-    ) {
-        return (installed_version != candidate.available_version)
-            .then_some(AgentProviderUpdateFailureReason::Uncertain);
+    );
+    if !self_update && installed_version != candidate.available_version {
+        return UpdateVerificationOutcome::Uncertain;
+    }
+    if !self_update {
+        return UpdateVerificationOutcome::Advanced;
     }
     match compare_versions(&candidate.installed_version, installed_version) {
-        Some(Ordering::Less) => None,
-        Some(Ordering::Equal) => Some(AgentProviderUpdateFailureReason::VersionNotAdvanced),
-        _ => Some(AgentProviderUpdateFailureReason::Uncertain),
+        Some(Ordering::Less) => UpdateVerificationOutcome::Advanced,
+        Some(Ordering::Equal) => UpdateVerificationOutcome::AlreadyCurrent,
+        _ => UpdateVerificationOutcome::Uncertain,
     }
 }
 
@@ -1243,8 +1264,31 @@ fn execute_owned(
 }
 
 enum UpdateExecutionFailure {
-    AuthorityLost,
+    AuthorityLost(ProviderResolutionMismatch),
     Process(AgentProviderProcessFailure),
+}
+
+#[derive(Default)]
+struct UpdateAuthorityLoss(Mutex<Option<ProviderResolutionMismatch>>);
+
+impl UpdateAuthorityLoss {
+    fn record(&self, mismatch: ProviderResolutionMismatch) {
+        let mut recorded = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if recorded.is_some() {
+            return;
+        }
+        *recorded = Some(mismatch);
+    }
+
+    fn observed(&self) -> Option<ProviderResolutionMismatch> {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 struct ProviderUpdateProcessOutputSink {
@@ -1360,7 +1404,7 @@ fn execute_update_owned(
     before_spawn_validation: impl FnOnce(),
     progress_sink: Arc<dyn AgentProviderUpdateProgressSink>,
 ) -> Result<AgentProviderProcessOutput, UpdateExecutionFailure> {
-    let authority_lost = AtomicBool::new(false);
+    let authority_loss = UpdateAuthorityLoss::default();
     let process_output_sink: Arc<dyn AgentProviderProcessOutputSink> =
         Arc::new(ProviderUpdateProcessOutputSink::new(
             lease.provider,
@@ -1373,24 +1417,18 @@ fn execute_update_owned(
         || registry.operations_closed() || cancelled.load(AtomicOrdering::Acquire),
         || {
             before_spawn_validation();
-            let current = registry.revalidate_update_authority(lease).is_ok();
-            if !current {
-                authority_lost.store(true, AtomicOrdering::Release);
-            }
-            current
+            let Err(mismatch) = registry.revalidate_update_authority(lease) else {
+                return true;
+            };
+            authority_loss.record(mismatch);
+            false
         },
         process_output_sink,
     );
-    match result {
-        Ok(_) if authority_lost.load(AtomicOrdering::Acquire) => {
-            Err(UpdateExecutionFailure::AuthorityLost)
-        }
-        Ok(output) => Ok(output),
-        Err(_) if authority_lost.load(AtomicOrdering::Acquire) => {
-            Err(UpdateExecutionFailure::AuthorityLost)
-        }
-        Err(failure) => Err(UpdateExecutionFailure::Process(failure)),
+    if let Some(mismatch) = authority_loss.observed() {
+        return Err(UpdateExecutionFailure::AuthorityLost(mismatch));
     }
+    result.map_err(UpdateExecutionFailure::Process)
 }
 
 struct ProviderRequestCancellation {
@@ -1432,6 +1470,10 @@ fn process_update_failure(failure: AgentProviderProcessFailure) -> AgentProvider
             drop(message);
             update_failure(AgentProviderUpdateFailureReason::SpawnFailed, "")
         }
+        AgentProviderProcessFailure::IdentityChanged => update_failure(
+            AgentProviderUpdateFailureReason::ExecutableChanged,
+            "Provider executable identity changed before installer launch.",
+        ),
         AgentProviderProcessFailure::TimedOut { stdout, stderr } => {
             AgentProviderUpdateResult::Failed {
                 reason: AgentProviderUpdateFailureReason::TimedOut,

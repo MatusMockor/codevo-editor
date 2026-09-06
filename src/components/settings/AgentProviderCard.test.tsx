@@ -471,13 +471,13 @@ describe("AgentProviderCard", () => {
     );
   });
 
-  it("explains a self-update that left the installed version unchanged", () => {
+  it("explains an installer that cannot run the offered update", () => {
     render(
       management({
         health: readyHealth({ installer: { kind: "selfUpdate", command: "claudeUpdate" } }),
         updateState: {
           kind: "failed",
-          reason: "versionNotAdvanced",
+          reason: "installerUnsupported",
           outputTail: "Installer output withheld (stdout: 24 bytes, stderr: 0 bytes).",
           outputTruncated: false,
         },
@@ -485,17 +485,17 @@ describe("AgentProviderCard", () => {
     );
 
     expect(host.querySelector('[role="alert"]')?.textContent).toContain(
-      "The updater finished but the installed version did not change. Try again or update manually with claude update.",
+      "The detected installer cannot run this update. Try again or update manually with claude update.",
     );
   });
 
-  it("keeps the original-installer hint when a version stall has no self-update authority", () => {
+  it("keeps the original-installer hint when the installer has no self-update authority", () => {
     render(
       management({
         health: readyHealth({ update: { kind: "current", installedVersion: "2.1.245" } }),
         updateState: {
           kind: "failed",
-          reason: "versionNotAdvanced",
+          reason: "installerUnsupported",
           outputTail: "Installer output withheld (stdout: 24 bytes, stderr: 0 bytes).",
           outputTruncated: false,
         },
@@ -503,7 +503,7 @@ describe("AgentProviderCard", () => {
     );
 
     expect(host.querySelector('[role="alert"]')?.textContent).toContain(
-      "The updater finished but the installed version did not change. Try again or update this CLI with its original installer.",
+      "The detected installer cannot run this update. Try again or update this CLI with its original installer.",
     );
   });
 

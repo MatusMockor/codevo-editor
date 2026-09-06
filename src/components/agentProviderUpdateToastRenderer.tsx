@@ -144,6 +144,7 @@ function dismissPresentation(
       dismiss();
       return;
     case "updated":
+    case "alreadyCurrent":
     case "failed":
       context.callbacks.onDismissToast();
       dismiss();

@@ -42,6 +42,19 @@ pub struct AgentProviderPolicy {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProviderResolutionMismatch {
+    Executable,
+    Environment,
+    State,
+}
+
+impl ProviderResolutionMismatch {
+    fn stale_error(self) -> String {
+        AGENT_PROVIDER_STALE_ERROR.to_string()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AgentProviderPolicyReceipt {
     pub provider: AgentCliInvocation,
     pub settings_revision: u64,
@@ -545,22 +558,46 @@ impl AgentProviderRuntimeRegistry {
         policy: &AgentProviderPolicy,
         expected: ResolvedProviderExecutableRef<'_>,
     ) -> Result<(), String> {
+        self.revalidate_resolution_with(provider, policy, expected, ResolutionEpoch::Exact)
+            .map_err(ProviderResolutionMismatch::stale_error)
+    }
+
+    fn revalidate_update_resolution(
+        &self,
+        provider: AgentCliInvocation,
+        policy: &AgentProviderPolicy,
+        expected: ResolvedProviderExecutableRef<'_>,
+    ) -> Result<(), ProviderResolutionMismatch> {
+        self.revalidate_resolution_with(provider, policy, expected, ResolutionEpoch::NotRegressed)
+    }
+
+    fn revalidate_resolution_with(
+        &self,
+        provider: AgentCliInvocation,
+        policy: &AgentProviderPolicy,
+        expected: ResolvedProviderExecutableRef<'_>,
+        epoch: ResolutionEpoch,
+    ) -> Result<(), ProviderResolutionMismatch> {
         if !expected.cli_identity.is_current_for_spawn() {
-            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+            return Err(ProviderResolutionMismatch::Executable);
         }
-        let observed = self.resolve_provider(provider, policy, false)?;
-        if observed.cli_path != expected.cli_path
-            || observed.cli_identity != *expected.cli_identity
-            || observed.effective_path != expected.effective_path
-            || observed.path_fingerprint != expected.path_fingerprint
-            || observed.discovery_generation != expected.discovery_generation
+        let observed = self
+            .resolve_provider(provider, policy, false)
+            .map_err(|_| ProviderResolutionMismatch::Executable)?;
+        if observed.cli_path != expected.cli_path || observed.cli_identity != *expected.cli_identity
         {
-            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+            return Err(ProviderResolutionMismatch::Executable);
+        }
+        if observed.effective_path != expected.effective_path
+            || observed.path_fingerprint != expected.path_fingerprint
+            || !epoch.accepts(observed.discovery_generation, expected.discovery_generation)
+        {
+            return Err(ProviderResolutionMismatch::Environment);
         }
         if !expected.cli_identity.is_current_for_spawn()
             || !observed.cli_identity.is_current_for_spawn()
         {
-            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+            return Err(ProviderResolutionMismatch::Executable);
         }
         Ok(())
     }
@@ -633,20 +670,24 @@ impl AgentProviderRuntimeRegistry {
             && configuration.candidate.as_ref() == Some(&lease.candidate)
     }
 
-    pub fn revalidate_update_authority(&self, lease: &ProviderUpdateLease) -> Result<(), String> {
+    pub fn revalidate_update_authority(
+        &self,
+        lease: &ProviderUpdateLease,
+    ) -> Result<(), ProviderResolutionMismatch> {
         if !self.update_is_current(lease) {
-            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+            return Err(ProviderResolutionMismatch::State);
         }
         let policy = {
             let state = self.state();
-            let configuration = configuration(&state, lease.provider)
-                .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
+            let Some(configuration) = configuration(&state, lease.provider) else {
+                return Err(ProviderResolutionMismatch::State);
+            };
             if configuration.generation != lease.generation {
-                return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+                return Err(ProviderResolutionMismatch::State);
             }
             configuration.policy.clone()
         };
-        self.revalidate_resolution(
+        self.revalidate_update_resolution(
             lease.provider,
             &policy,
             ResolvedProviderExecutableRef {
@@ -658,7 +699,7 @@ impl AgentProviderRuntimeRegistry {
             },
         )?;
         if !self.update_is_current(lease) {
-            return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
+            return Err(ProviderResolutionMismatch::State);
         }
         Ok(())
     }
@@ -681,7 +722,7 @@ impl AgentProviderRuntimeRegistry {
         resolved: &ResolvedProviderExecutable,
     ) -> Result<(), String> {
         let policy = self.update_policy(lease)?;
-        self.revalidate_resolution(
+        self.revalidate_update_resolution(
             lease.provider,
             &policy,
             ResolvedProviderExecutableRef {
@@ -691,7 +732,8 @@ impl AgentProviderRuntimeRegistry {
                 path_fingerprint: &resolved.path_fingerprint,
                 discovery_generation: resolved.discovery_generation,
             },
-        )?;
+        )
+        .map_err(ProviderResolutionMismatch::stale_error)?;
         if !self.update_is_current(lease) {
             return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
         }
@@ -880,6 +922,21 @@ fn configuration_slot_mut(
     match provider {
         AgentCliInvocation::ClaudeCode => &mut state.claude_code,
         AgentCliInvocation::CodexExec => &mut state.codex,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ResolutionEpoch {
+    Exact,
+    NotRegressed,
+}
+
+impl ResolutionEpoch {
+    fn accepts(self, observed: u64, expected: u64) -> bool {
+        match self {
+            Self::Exact => observed == expected,
+            Self::NotRegressed => observed >= expected,
+        }
     }
 }
 

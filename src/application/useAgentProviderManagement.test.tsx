@@ -19,6 +19,10 @@ import { defaultAppSettings, type AppSettings } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
 import { AgentProviderCard } from "../components/settings/AgentProviderCard";
 import {
+  agentProviderUpdateFailureSentence,
+  presentAgentProviderUpdateToast,
+} from "../components/agentProviderUpdateToastPresenter";
+import {
   TauriAgentProviderGateway,
   type ListenToAgentProviderUpdateProgress,
 } from "../infrastructure/tauriAgentProviderGateway";
@@ -29,6 +33,10 @@ import {
   type AgentProviderManagementSurface,
 } from "./useAgentProviderManagement";
 import { isCurrentAgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
+import {
+  AGENT_PROVIDER_UPDATE_HEALTH_SETTLE_TIMEOUT_MS,
+  AGENT_PROVIDER_UPDATE_REGISTRATION_TIMEOUT_MS,
+} from "./agentProviderUpdateRun";
 import { appSettingsSaveCoordinatorFor } from "./appSettingsSaveCoordinator";
 
 const PATH_A = "/usr/local/bin/claude";
@@ -1382,7 +1390,7 @@ describe("useAgentProviderManagement", () => {
     await settleHealth(harness, 0, availableHealth("1.0.0", "1.1.0"));
     vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockResolvedValueOnce({
       kind: "failed",
-      reason: "admissionRefused",
+      reason: "authorityChanged",
       outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
       outputTruncated: false,
     });
@@ -1394,6 +1402,348 @@ describe("useAgentProviderManagement", () => {
     });
 
     expect(harness.dependencies.updateGateway.updateAgentProvider).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("names the exact cause and both versions when the Claude Code self-update fails", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, claudeSelfUpdateHealth("2.1.261", "2.1.263"));
+    expect(harness.hook().toast).toEqual({
+      kind: "updateAvailable",
+      provider: "claudeCode",
+      version: "2.1.263",
+    });
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockResolvedValueOnce({
+      kind: "failed",
+      reason: "authorityChanged",
+      outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
+      outputTruncated: false,
+    });
+
+    await act(async () => {
+      await expect(harness.hook().update("claudeCode", "2.1.263")).resolves.toBeNull();
+    });
+
+    expect(harness.hook().providers.claudeCode.updateState).toMatchObject({
+      kind: "failed",
+      reason: "authorityChanged",
+    });
+    expect(harness.hook().toast).toEqual({ kind: "updateFailed", provider: "claudeCode" });
+    const presentation = presentAgentProviderUpdateToast(harness.hook());
+    expect(presentation).toMatchObject({
+      kind: "failed",
+      provider: "claudeCode",
+      reason: "authorityChanged",
+      installedVersion: "2.1.261",
+      offeredVersion: "2.1.263",
+      retryVersion: "2.1.263",
+    });
+    const sentence = agentProviderUpdateFailureSentence(
+      presentation?.kind === "failed" ? presentation.reason : null,
+    );
+    expect(sentence).toBe("Provider settings changed while the update was starting.");
+    expect(sentence).not.toContain("refused by the provider policy");
+    harness.unmount();
+  });
+
+  it("settles an already-current self-update as informational and stops re-offering it", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, claudeSelfUpdateHealth("2.1.261", "2.1.263"));
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockResolvedValueOnce({
+      kind: "alreadyCurrent",
+      installedVersion: "2.1.261",
+    });
+
+    let updatePromise!: Promise<unknown>;
+    act(() => {
+      updatePromise = harness.hook().update("claudeCode", "2.1.263");
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, claudeSelfUpdateHealth("2.1.261", "2.1.263"));
+    await act(async () => {
+      await expect(updatePromise).resolves.toBeNull();
+    });
+
+    expect(harness.hook().providers.claudeCode.updateState).toEqual({
+      kind: "alreadyCurrent",
+      installedVersion: "2.1.261",
+      offeredVersion: "2.1.263",
+      outputTail: "",
+      outputTruncated: true,
+    });
+    expect(harness.hook().toast).toEqual({
+      kind: "updateAlreadyCurrent",
+      provider: "claudeCode",
+      version: "2.1.261",
+    });
+    expect(harness.settings().agentProviderPreferences?.claudeCode.dismissedUpdateVersion).toBe(
+      "2.1.263",
+    );
+    expect(presentAgentProviderUpdateToast(harness.hook())).toEqual({
+      kind: "alreadyCurrent",
+      provider: "claudeCode",
+      installedVersion: "2.1.261",
+      offeredVersion: "2.1.263",
+    });
+
+    await waitForReact(() => expect(harness.healthCalls.length).toBeGreaterThanOrEqual(4));
+    await settleHealth(harness, 3, claudeSelfUpdateHealth("2.1.261", "2.1.263"));
+    expect(harness.hook().toast).toEqual({
+      kind: "updateAlreadyCurrent",
+      provider: "claudeCode",
+      version: "2.1.261",
+    });
+    harness.unmount();
+  });
+
+  it("does not claim an unchanged version when the confirming probe fails", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, claudeSelfUpdateHealth("2.1.261", "2.1.263"));
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockResolvedValueOnce({
+      kind: "alreadyCurrent",
+      installedVersion: "2.1.261",
+    });
+
+    let updatePromise!: Promise<unknown>;
+    act(() => {
+      updatePromise = harness.hook().update("claudeCode", "2.1.263");
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await failHealth(harness, 2, new Error("Update probe offline."));
+    await act(async () => {
+      await expect(updatePromise).resolves.toBeNull();
+    });
+
+    expect(harness.hook().providers.claudeCode.updateState).toEqual({
+      kind: "failed",
+      reason: "uncertain",
+      attemptedVersion: "2.1.263",
+      outputTail: "",
+      outputTruncated: true,
+    });
+    expect(harness.hook().toast).toEqual({ kind: "updateFailed", provider: "claudeCode" });
+    expect(
+      harness.settings().agentProviderPreferences?.claudeCode.dismissedUpdateVersion,
+    ).toBeNull();
+    harness.unmount();
+  });
+
+  it("reports a version disagreement instead of an unchanged version", async () => {
+    const harness = renderManagement();
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 0, claudeSelfUpdateHealth("2.1.261", "2.1.263"));
+    vi.mocked(harness.dependencies.updateGateway.updateAgentProvider).mockResolvedValueOnce({
+      kind: "alreadyCurrent",
+      installedVersion: "2.1.261",
+    });
+
+    let updatePromise!: Promise<unknown>;
+    act(() => {
+      updatePromise = harness.hook().update("claudeCode", "2.1.263");
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
+    await settleHealth(harness, 2, currentHealth("2.1.263"));
+    await act(async () => {
+      await expect(updatePromise).resolves.toBeNull();
+    });
+
+    expect(harness.hook().providers.claudeCode.updateState).toMatchObject({
+      kind: "failed",
+      reason: "versionMismatch",
+      attemptedVersion: "2.1.263",
+    });
+    expect(harness.hook().toast).toEqual({ kind: "updateFailed", provider: "claudeCode" });
+    expect(
+      harness.settings().agentProviderPreferences?.claudeCode.dismissedUpdateVersion,
+    ).toBeNull();
+    harness.unmount();
+  });
+
+  it("refuses a second concurrent update instead of starting a parallel attempt", async () => {
+    let claudeLookups = 0;
+    const harness = renderManagement(
+      configuredSettings(),
+      () => 0,
+      true,
+      (provider) => {
+        if (provider !== "claudeCode") return { kind: "unregistered" };
+        claudeLookups += 1;
+        if (claudeLookups === 1) return Promise.reject(new Error("Provider policy store offline."));
+        return { kind: "unregistered" };
+      },
+    );
+    await waitForReact(() =>
+      expect(harness.hook().providers.claudeCode.policy.kind).toBe("failed"),
+    );
+
+    let first!: Promise<unknown>;
+    let second!: Promise<unknown>;
+    act(() => {
+      first = harness.hook().update("claudeCode", "2.1.263");
+      second = harness.hook().update("claudeCode", "2.1.263");
+    });
+    await act(async () => {
+      await expect(second).resolves.toBe("alreadyUpdating");
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    await settleHealth(harness, 1, claudeSelfUpdateHealth("2.1.261", "2.1.263"));
+    await act(async () => {
+      await expect(first).resolves.toBeNull();
+    });
+
+    expect(harness.dependencies.policyGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(2);
+    expect(harness.dependencies.updateGateway.updateAgentProvider).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("fails closed when pre-update registration never settles", async () => {
+    vi.useFakeTimers();
+    const harness = renderManagement(
+      configuredSettings(),
+      () => 0,
+      true,
+      (provider) =>
+        provider === "claudeCode"
+          ? new Promise<AgentProviderCurrentPolicyResult>(() => undefined)
+          : { kind: "unregistered" },
+    );
+    await act(async () => undefined);
+
+    let updatePromise!: Promise<unknown>;
+    act(() => {
+      updatePromise = harness.hook().update("claudeCode", "2.1.263");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_PROVIDER_UPDATE_REGISTRATION_TIMEOUT_MS);
+    });
+
+    await expect(updatePromise).resolves.toBe("policyUnavailable");
+    expect(harness.dependencies.updateGateway.updateAgentProvider).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("fails closed when the pre-update health probe never settles", async () => {
+    vi.useFakeTimers();
+    let claudeLookups = 0;
+    const harness = renderManagement(
+      configuredSettings(),
+      () => 0,
+      true,
+      (provider) => {
+        if (provider !== "claudeCode") return { kind: "unregistered" };
+        claudeLookups += 1;
+        if (claudeLookups === 1) return Promise.reject(new Error("Provider policy store offline."));
+        return { kind: "unregistered" };
+      },
+    );
+    await act(async () => undefined);
+    await act(async () => undefined);
+    expect(harness.hook().providers.claudeCode.policy.kind).toBe("failed");
+
+    let updatePromise!: Promise<unknown>;
+    act(() => {
+      updatePromise = harness.hook().update("claudeCode", "2.1.263");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_PROVIDER_UPDATE_HEALTH_SETTLE_TIMEOUT_MS);
+    });
+
+    await expect(updatePromise).resolves.toBe("policyUnavailable");
+    expect(harness.dependencies.updateGateway.updateAgentProvider).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("refuses truthfully when provider status was never probed", async () => {
+    const settings = configuredSettings();
+    const pathless: AppSettings = {
+      ...settings,
+      agentCliPaths: { ...settings.agentCliPaths, claudeCode: null },
+    };
+    let claudeLookups = 0;
+    const harness = renderManagement(
+      pathless,
+      () => 0,
+      true,
+      (provider) => {
+        if (provider !== "claudeCode") return { kind: "unregistered" };
+        claudeLookups += 1;
+        if (claudeLookups === 1) return Promise.reject(new Error("Provider policy store offline."));
+        return { kind: "unregistered" };
+      },
+    );
+    await waitForReact(() =>
+      expect(harness.hook().providers.claudeCode.policy.kind).toBe("failed"),
+    );
+
+    await act(async () => {
+      await expect(harness.hook().update("claudeCode", "2.1.263")).resolves.toBe("statusUnknown");
+    });
+
+    expect(harness.hook().providers.claudeCode.policy.kind).toBe("registered");
+    expect(harness.dependencies.updateGateway.updateAgentProvider).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("registers an unregistered policy before running the requested update", async () => {
+    let claudeLookups = 0;
+    const harness = renderManagement(
+      configuredSettings(),
+      () => 0,
+      true,
+      (provider) => {
+        if (provider !== "claudeCode") return { kind: "unregistered" };
+        claudeLookups += 1;
+        if (claudeLookups === 1) return Promise.reject(new Error("Provider policy store offline."));
+        return { kind: "unregistered" };
+      },
+    );
+    await waitForReact(() =>
+      expect(harness.hook().providers.claudeCode.policy.kind).toBe("failed"),
+    );
+    expect(harness.healthCalls).toHaveLength(1);
+
+    let updatePromise!: Promise<unknown>;
+    act(() => {
+      updatePromise = harness.hook().update("claudeCode", "2.1.263");
+    });
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(2));
+    expect(harness.healthRequests[1]?.provider).toBe("claudeCode");
+    await settleHealth(harness, 1, claudeSelfUpdateHealth("2.1.261", "2.1.263"));
+    await act(async () => {
+      await expect(updatePromise).resolves.toBeNull();
+    });
+
+    expect(harness.hook().providers.claudeCode.policy.kind).toBe("registered");
+    expect(harness.dependencies.updateGateway.updateAgentProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "claudeCode" }),
+    );
+    harness.unmount();
+  });
+
+  it("refuses with policyUnavailable when registration still fails at update time", async () => {
+    const harness = renderManagement(
+      configuredSettings(),
+      () => 0,
+      true,
+      (provider) =>
+        provider === "claudeCode"
+          ? Promise.reject(new Error("Provider policy store offline."))
+          : { kind: "unregistered" },
+    );
+    await waitForReact(() =>
+      expect(harness.hook().providers.claudeCode.policy.kind).toBe("failed"),
+    );
+
+    await act(async () => {
+      await expect(harness.hook().update("claudeCode", "2.1.263")).resolves.toBe(
+        "policyUnavailable",
+      );
+    });
+
+    expect(harness.dependencies.updateGateway.updateAgentProvider).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -1417,6 +1767,7 @@ describe("useAgentProviderManagement", () => {
     expect(harness.hook().providers.claudeCode.updateState).toEqual({
       kind: "failed",
       reason: "exited",
+      attemptedVersion: "1.1.0",
       outputTail: "Installer output withheld (stdout: 42 bytes, stderr: 17 bytes).\n",
       outputTruncated: true,
     });
@@ -1532,6 +1883,7 @@ describe("useAgentProviderManagement", () => {
     expect(harness.hook().providers.claudeCode.updateState).toEqual({
       kind: "failed",
       reason: "exited",
+      attemptedVersion: "1.1.0",
       outputTail:
         "Installer stdout activity: 17 bytes.\nInstaller output withheld (stdout: 0 bytes, stderr: 17 bytes).\n",
       outputTruncated: true,
@@ -1750,6 +2102,7 @@ describe("useAgentProviderManagement", () => {
     expect(harness.hook().providers.claudeCode.updateState).toEqual({
       kind: "failed",
       reason: "versionMismatch",
+      attemptedVersion: "1.1.0",
       outputTail: "Installer stderr activity: 27 bytes.\n",
       outputTruncated: false,
     });
@@ -2226,6 +2579,23 @@ function availableHealth(
   };
 }
 
+function claudeSelfUpdateHealth(
+  installedVersion: string,
+  availableVersion: string,
+): AgentProviderHealthProbeResult {
+  return {
+    installedVersion,
+    auth: { kind: "signedIn", label: "Max" },
+    update: {
+      kind: "available",
+      installedVersion,
+      availableVersion,
+      installer: { kind: "selfUpdate", command: "claudeUpdate" },
+    },
+    checkedAtEpochMs: 1_700_000_000_000,
+  };
+}
+
 function codexAvailableHealth(
   installedVersion: string,
   availableVersion: string,
@@ -2241,6 +2611,12 @@ function codexAvailableHealth(
     },
     checkedAtEpochMs: 1_700_000_000_000,
   };
+}
+
+async function failHealth(harness: Harness, index: number, error: unknown): Promise<void> {
+  const call = harness.healthCalls[index];
+  if (call === undefined) throw new Error(`Missing health call ${index}.`);
+  await act(async () => call.reject(error));
 }
 
 async function settleHealth(

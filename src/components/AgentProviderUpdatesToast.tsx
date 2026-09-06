@@ -40,7 +40,9 @@ export function AgentProviderUpdatesToast({
   presentation,
 }: AgentProviderUpdatesToastProps): ReactElement {
   const autoHideKey =
-    presentation.kind === "updated" ? agentProviderUpdateToastGroupKey(presentation) : null;
+    presentation.kind === "updated" || presentation.kind === "alreadyCurrent"
+      ? agentProviderUpdateToastGroupKey(presentation)
+      : null;
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
 
@@ -112,6 +114,28 @@ export function AgentProviderUpdatesToast({
           title={agentProviderUpdateToastTitle(presentation)}
         />
       );
+    case "alreadyCurrent":
+      return (
+        <ToastNotification
+          actions={[
+            { id: "settings", label: "Settings", onClick: onOpenSettings, tone: "secondary" },
+          ]}
+          description={`The updater ran but ${agentProviderLabel(presentation.provider)} is still on v${presentation.installedVersion}.`}
+          icon={
+            <ToastMark badge="update">
+              <AgentProviderGlyph decorative kind={presentation.provider} />
+            </ToastMark>
+          }
+          meta={[
+            presentation.offeredVersion === null
+              ? `${agentProviderLabel(presentation.provider)} v${presentation.installedVersion}`
+              : `v${presentation.offeredVersion} is published but did not apply to this install.`,
+          ]}
+          onClose={onDismiss}
+          template="info"
+          title={agentProviderUpdateToastTitle(presentation)}
+        />
+      );
     case "failed":
       return (
         <ToastNotification
@@ -119,6 +143,7 @@ export function AgentProviderUpdatesToast({
           description={`${agentProviderLabel(presentation.provider)} failed to update. Check provider settings for details.`}
           meta={[
             agentProviderUpdateFailureSentence(presentation.reason),
+            presentation.offeredVersion ? `offered v${presentation.offeredVersion}` : null,
             presentation.installedVersion ? `still on v${presentation.installedVersion}` : null,
           ]}
           onClose={onDismiss}
@@ -182,6 +207,8 @@ function failureClipboardText(
 ): string {
   const lines = [
     `${agentProviderLabel(presentation.provider)} update failed: ${agentProviderUpdateFailureSentence(presentation.reason)}`,
+    `Offered version: ${presentation.offeredVersion ?? "unknown"}`,
+    `Installed version: ${presentation.installedVersion ?? "unknown"}`,
   ];
   if (presentation.outputTail.length > 0) lines.push(presentation.outputTail);
   return lines.join("\n");

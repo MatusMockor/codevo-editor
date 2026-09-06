@@ -1065,13 +1065,58 @@ fn local_fake_cli_swap_at_installer_spawn_boundary_refuses_without_installing() 
     )
     .expect("closed admission result");
 
+    assert!(
+        matches!(
+            result,
+            AgentProviderUpdateResult::Failed {
+                reason: AgentProviderUpdateFailureReason::ExecutableChanged,
+                ..
+            }
+        ),
+        "got {result:?}"
+    );
+    assert!(!npm.install_marker.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn local_fake_installer_swap_at_the_spawn_boundary_reports_an_executable_change() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let npm = npm_fixture("printf '0.151.0\\n' > '$VERSION_PATH'; exit 0");
+    let locator = FixedPackageManagerLocator::npm(&npm.manager_path);
+    let (registry, receipt) = registered_registry(&npm.provider_path, true);
+    let health = health_with_locator(&registry, receipt, &locator);
     assert!(matches!(
-        result,
-        AgentProviderUpdateResult::Failed {
-            reason: AgentProviderUpdateFailureReason::AdmissionRefused,
-            ..
-        }
+        health.update,
+        AgentProviderUpdateAvailability::Available { .. }
     ));
+    let manager_path = npm.manager_path.clone();
+    let retained_path = npm.manager_path.with_extension("retained");
+
+    let result = run_agent_provider_update_with_spawn_barrier(
+        &registry,
+        &update_request(receipt),
+        &AtomicBool::new(false),
+        move || {
+            fs::rename(&manager_path, &retained_path).expect("retain admitted installer");
+            fs::write(&manager_path, "#!/bin/sh\nexit 0\n").expect("replacement installer");
+            fs::set_permissions(&manager_path, fs::Permissions::from_mode(0o755))
+                .expect("replacement permissions");
+        },
+    )
+    .expect("closed admission result");
+
+    assert!(
+        matches!(
+            result,
+            AgentProviderUpdateResult::Failed {
+                reason: AgentProviderUpdateFailureReason::ExecutableChanged,
+                ..
+            }
+        ),
+        "got {result:?}"
+    );
     assert!(!npm.install_marker.exists());
 }
 
@@ -1637,3 +1682,6 @@ fn progress_sink_failure_does_not_change_successful_final_result() {
 
 #[path = "agent_provider_native_update_tests.rs"]
 mod native_update;
+
+#[path = "agent_provider_update_authority_tests.rs"]
+mod update_authority;

@@ -128,13 +128,15 @@ pub struct AgentProviderHealthProbeResult {
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum AgentProviderUpdateFailureReason {
-    AdmissionRefused,
+    OperationSuperseded,
+    AuthorityChanged,
+    ExecutableChanged,
+    InstallerUnsupported,
     SpawnFailed,
     TimedOut,
     OutputLimitExceeded,
     Exited,
     Uncertain,
-    VersionNotAdvanced,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -146,6 +148,9 @@ pub enum AgentProviderUpdateFailureReason {
 pub enum AgentProviderUpdateResult {
     Succeeded {
         previous_version: String,
+        installed_version: String,
+    },
+    AlreadyCurrent {
         installed_version: String,
     },
     Failed {

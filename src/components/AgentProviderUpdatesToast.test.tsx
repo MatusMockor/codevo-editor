@@ -18,6 +18,10 @@ const CLAUDE = createAgentProviderUpdateToastView("claudeCode", "2.1.0", undefin
   installedVersion: "2.0.0",
   installer: "homebrew",
 })!;
+const CLAUDE_UPDATE_VERSION = createAgentProviderUpdateToastView(
+  "claudeCode",
+  "2.1.263",
+)!.availableVersion;
 
 describe("AgentProviderUpdatesToast", () => {
   let host: HTMLDivElement;
@@ -122,19 +126,94 @@ describe("AgentProviderUpdatesToast", () => {
       reason: "exited",
       outputTail: "npm ERR! code 1",
       installedVersion: "0.152.0",
+      offeredVersion: CODEX.availableVersion,
       retryVersion: CODEX.availableVersion,
     });
 
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Provider update failed");
     expect(host.textContent).toContain("The installer exited with an error.");
+    expect(host.textContent).toContain("offered v0.153.4");
     expect(host.textContent).toContain("still on v0.152.0");
 
     act(() => button("Copy error").click());
     expect(handlers.onCopyError).toHaveBeenCalledWith(
-      "Codex update failed: The installer exited with an error.\nnpm ERR! code 1",
+      [
+        "Codex update failed: The installer exited with an error.",
+        "Offered version: 0.153.4",
+        "Installed version: 0.152.0",
+        "npm ERR! code 1",
+      ].join("\n"),
     );
     act(() => button("Retry").click());
     expect(handlers.onRetry).toHaveBeenCalledWith("codex", "0.153.4");
+  });
+
+  it("names the exact cause and both versions for a policy-free failure", () => {
+    render({
+      kind: "failed",
+      provider: "claudeCode",
+      reason: "authorityChanged",
+      outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
+      installedVersion: "2.1.261",
+      offeredVersion: CLAUDE_UPDATE_VERSION,
+      retryVersion: CLAUDE_UPDATE_VERSION,
+    });
+
+    expect(host.textContent).toContain("Provider settings changed while the update was starting.");
+    expect(host.textContent).not.toContain("refused by the provider policy");
+    expect(host.textContent).toContain("offered v2.1.263");
+    expect(host.textContent).toContain("still on v2.1.261");
+
+    act(() => button("Copy error").click());
+    expect(handlers.onCopyError).toHaveBeenCalledWith(
+      [
+        "Claude Code update failed: Provider settings changed while the update was starting.",
+        "Offered version: 2.1.263",
+        "Installed version: 2.1.261",
+        "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
+      ].join("\n"),
+    );
+  });
+
+  it("reports an unchanged version without claiming the provider is up to date", () => {
+    render({
+      kind: "alreadyCurrent",
+      provider: "claudeCode",
+      installedVersion: CLAUDE.availableVersion,
+      offeredVersion: CODEX.availableVersion,
+    });
+
+    expect(host.querySelector('[role="status"]')?.textContent).toContain(
+      "Claude Code did not change version",
+    );
+    expect(host.textContent).toContain("The updater ran but Claude Code is still on v2.1.0.");
+    expect(host.textContent).toContain(
+      `v${CODEX.availableVersion} is published but did not apply to this install.`,
+    );
+    expect(host.textContent).not.toContain("already up to date");
+    expect(buttons()).toEqual(["Settings"]);
+
+    act(() => button("Settings").click());
+    expect(handlers.onOpenSettings).toHaveBeenCalledOnce();
+  });
+
+  it("auto-hides the unchanged-version toast on the same bounded delay", () => {
+    render({
+      kind: "alreadyCurrent",
+      provider: "claudeCode",
+      installedVersion: CLAUDE.availableVersion,
+      offeredVersion: CLAUDE_UPDATE_VERSION,
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(AGENT_PROVIDER_UPDATED_TOAST_VISIBLE_MS - 1);
+    });
+    expect(handlers.onDismiss).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(handlers.onDismiss).toHaveBeenCalledOnce();
   });
 
   it("hides retry when no exact offered version can be retried", () => {
@@ -144,6 +223,7 @@ describe("AgentProviderUpdatesToast", () => {
       reason: null,
       outputTail: "",
       installedVersion: null,
+      offeredVersion: null,
       retryVersion: null,
     });
 

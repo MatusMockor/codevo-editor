@@ -72,7 +72,23 @@ export function providerUpdateBlockedReason(
   }
   if (providerUpdating(view)) return "The provider is already updating.";
 
+  const settled = settledInstalledVersion(view, available.availableVersion);
+  if (settled !== null) {
+    return `The updater already ran and left ${providerLabel(provider)} on v${settled}.`;
+  }
+
   return null;
+}
+
+function settledInstalledVersion(
+  view: AgentProviderManagementView,
+  offeredVersion: string,
+): string | null {
+  const state = view.updateState;
+  if (state.kind !== "alreadyCurrent") return null;
+  if (state.offeredVersion !== offeredVersion) return null;
+
+  return state.installedVersion;
 }
 
 export function providerManualUpdateCommand(installer: AgentProviderInstaller): string | null {
@@ -113,6 +129,14 @@ export function providerUpdateResultPresentation(
         "status",
         `Updated from ${state.previousVersion} to ${state.installedVersion}.`,
       );
+    case "alreadyCurrent":
+      return result(
+        "neutral",
+        "status",
+        alreadyCurrentLabel(state.installedVersion, state.offeredVersion, installer),
+        state.outputTail,
+        state.outputTruncated,
+      );
     case "failed":
       return result(
         "danger",
@@ -124,6 +148,17 @@ export function providerUpdateResultPresentation(
     default:
       return unsupportedProviderValue(state, "provider update state");
   }
+}
+
+function alreadyCurrentLabel(
+  installedVersion: string,
+  offeredVersion: string | null,
+  installer: AgentProviderInstaller | null,
+): string {
+  const observed = `The updater ran but the installed version is still v${installedVersion}.`;
+  if (offeredVersion === null) return `${observed} ${manualRetryHint(installer)}`;
+
+  return `${observed} v${offeredVersion} is published for this provider and may not apply to this install. ${manualRetryHint(installer)}`;
 }
 
 function updateUnavailableMessage(
@@ -148,8 +183,14 @@ function updateFailureLabel(
   installer: AgentProviderInstaller | null,
 ): string {
   switch (reason) {
-    case "admissionRefused":
-      return "The update was refused.";
+    case "operationSuperseded":
+      return "Another provider update replaced this one.";
+    case "authorityChanged":
+      return `Provider settings changed while the update was starting. ${manualRetryHint(installer)}`;
+    case "executableChanged":
+      return `The provider executable changed while the update was starting. ${manualRetryHint(installer)}`;
+    case "installerUnsupported":
+      return `The detected installer cannot run this update. ${manualRetryHint(installer)}`;
     case "spawnFailed":
       return "The updater could not start.";
     case "timedOut":
@@ -162,8 +203,6 @@ function updateFailureLabel(
       return "The installed version did not match the requested update.";
     case "uncertain":
       return "The update result is uncertain. Refresh the provider status.";
-    case "versionNotAdvanced":
-      return `The updater finished but the installed version did not change. ${manualRetryHint(installer)}`;
     default:
       return unsupportedProviderValue(reason, "provider update failure");
   }

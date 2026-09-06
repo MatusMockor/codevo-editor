@@ -419,28 +419,61 @@ describe("provider update contracts", () => {
     ).toMatchObject({ reason: "outputLimitExceeded", outputTruncated: true });
   });
 
-  it("parses the closed versionNotAdvanced update failure", () => {
+  it("parses every closed update failure reason", () => {
+    const outputTail = "Installer output withheld (stdout: 12 bytes, stderr: 0 bytes).";
+    for (const reason of [
+      "operationSuperseded",
+      "authorityChanged",
+      "executableChanged",
+      "installerUnsupported",
+      "spawnFailed",
+      "timedOut",
+      "exited",
+      "uncertain",
+    ] as const) {
+      expect(
+        parseAgentProviderUpdateResult({
+          kind: "failed",
+          reason,
+          outputTail,
+          outputTruncated: false,
+        }),
+      ).toEqual({ kind: "failed", reason, outputTail, outputTruncated: false });
+    }
+  });
+
+  it("rejects the removed admission and version-stall failure reasons", () => {
+    for (const reason of [
+      "admissionRefused",
+      "versionNotAdvanced",
+      "authoritychanged",
+      "AuthorityChanged",
+    ]) {
+      expect(() =>
+        parseAgentProviderUpdateResult({
+          kind: "failed",
+          reason,
+          outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
+          outputTruncated: false,
+        }),
+      ).toThrow(TypeError);
+    }
+  });
+
+  it("parses the informational alreadyCurrent outcome fail-closed", () => {
     expect(
-      parseAgentProviderUpdateResult({
-        kind: "failed",
-        reason: "versionNotAdvanced",
-        outputTail: "Installer output withheld (stdout: 12 bytes, stderr: 0 bytes).",
-        outputTruncated: false,
-      }),
-    ).toEqual({
-      kind: "failed",
-      reason: "versionNotAdvanced",
-      outputTail: "Installer output withheld (stdout: 12 bytes, stderr: 0 bytes).",
-      outputTruncated: false,
-    });
-    expect(() =>
-      parseAgentProviderUpdateResult({
-        kind: "failed",
-        reason: "versionnotadvanced",
-        outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
-        outputTruncated: false,
-      }),
-    ).toThrow(TypeError);
+      parseAgentProviderUpdateResult({ kind: "alreadyCurrent", installedVersion: "2.1.261" }),
+    ).toEqual({ kind: "alreadyCurrent", installedVersion: "2.1.261" });
+    for (const malformed of [
+      { kind: "alreadyCurrent" },
+      { kind: "alreadyCurrent", installedVersion: null },
+      { kind: "alreadyCurrent", installedVersion: "v2.1.261" },
+      { kind: "alreadyCurrent", installedVersion: "2.1.261", previousVersion: "2.1.261" },
+      { kind: "alreadycurrent", installedVersion: "2.1.261" },
+      { kind: "noop", installedVersion: "2.1.261" },
+    ]) {
+      expect(() => parseAgentProviderUpdateResult(malformed)).toThrow(TypeError);
+    }
   });
 
   it("rejects process identifiers, unbounded output, and unknown failures", () => {

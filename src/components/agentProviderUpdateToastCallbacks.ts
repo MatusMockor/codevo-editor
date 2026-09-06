@@ -84,7 +84,7 @@ export function createAgentProviderUpdateToastCallbacks(
         const started = await update(view.provider, view.availableVersion);
         if (!started) return;
         const outcome = management().providers[view.provider].updateState;
-        if (outcome.kind !== "succeeded") return;
+        if (outcome.kind !== "succeeded" && outcome.kind !== "alreadyCurrent") return;
       }
     },
   };

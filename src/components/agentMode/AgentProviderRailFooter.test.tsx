@@ -26,6 +26,14 @@ const RUNNING_UPDATE: AgentProviderManagementView["updateState"] = {
   outputTruncated: false,
 };
 
+const ALREADY_CURRENT_AT_2_2_0: AgentProviderManagementView["updateState"] = {
+  kind: "alreadyCurrent",
+  installedVersion: "2.1.245",
+  offeredVersion: "2.2.0",
+  outputTail: "up to date",
+  outputTruncated: false,
+};
+
 const SUCCEEDED_UPDATE: AgentProviderManagementView["updateState"] = {
   kind: "succeeded",
   previousVersion: "2.1.245",
@@ -111,6 +119,22 @@ describe("AgentProviderRailFooter", () => {
 
     render(management({ liveTurnCount: 1 }));
     expect(button("Update Claude Code to 2.2.0").disabled).toBe(true);
+  });
+
+  it("drops the offer pill once the settled version is persisted as dismissed", () => {
+    render(management({ dismissedUpdateVersion: "2.2.0" }));
+    expect(host.querySelector('button[aria-label="Update Claude Code to 2.2.0"]')).toBeNull();
+
+    render(management({ dismissedUpdateVersion: "2.1.9" }));
+    expect(host.querySelector('button[aria-label="Update Claude Code to 2.2.0"]')).not.toBeNull();
+  });
+
+  it("keeps offering the update while the settlement names another version", () => {
+    render(management({ updateState: ALREADY_CURRENT_AT_2_2_0 }));
+    expect(host.querySelector('button[aria-label="Update Claude Code to 2.2.0"]')).toBeNull();
+
+    render(management({ updateState: { ...ALREADY_CURRENT_AT_2_2_0, offeredVersion: "2.1.9" } }));
+    expect(host.querySelector('button[aria-label="Update Claude Code to 2.2.0"]')).not.toBeNull();
   });
 
   it("shows updater progress as a busy status pill and refreshes every enabled provider", () => {
@@ -515,6 +539,28 @@ describe("providerFooterPillModels", () => {
     expect(models(view()).map((pill) => pill.id)).toEqual(["update"]);
   });
 
+  it("withdraws the offer once the updater settled already-current at that exact version", () => {
+    const settled = view({ updateState: ALREADY_CURRENT_AT_2_2_0 });
+    expect(models(settled).map((pill) => pill.id)).toEqual([]);
+  });
+
+  it("keeps offering a newer version after an already-current settlement of an older offer", () => {
+    const settled = view({
+      updateState: { ...ALREADY_CURRENT_AT_2_2_0, offeredVersion: "2.1.9" },
+    });
+    expect(models(settled).map((pill) => pill.id)).toEqual(["update"]);
+
+    const unknownOffer = view({
+      updateState: { ...ALREADY_CURRENT_AT_2_2_0, offeredVersion: null },
+    });
+    expect(models(unknownOffer).map((pill) => pill.id)).toEqual(["update"]);
+  });
+
+  it("withdraws the offer for a persisted dismissed version and no other", () => {
+    expect(models(view(), null, false, "2.2.0").map((pill) => pill.id)).toEqual([]);
+    expect(models(view(), null, false, "2.1.9").map((pill) => pill.id)).toEqual(["update"]);
+  });
+
   it("blocks the update while turns are live and explains why", () => {
     const [update] = models(view({ liveTurnCount: 1 }));
     expect(update?.disabled).toBe(true);
@@ -623,8 +669,10 @@ describe("providerFooterPillModels", () => {
     current: AgentProviderManagementView,
     failedVersion: string | null = null,
     updatedVisible = false,
+    dismissedVersion: string | null = null,
   ) {
     return providerFooterPillModels({
+      dismissedVersion,
       provider: "claudeCode",
       view: current,
       updatedVisible,
@@ -645,9 +693,20 @@ function management(
     readonly liveTurnCount?: number;
     readonly policy?: AgentProviderManagementSurface["providers"]["claudeCode"]["policy"];
     readonly updateState?: AgentProviderManagementSurface["providers"]["claudeCode"]["updateState"];
+    readonly dismissedUpdateVersion?: string;
   } = {},
 ): AgentProviderManagementSurface {
-  const preferences = defaultAgentProviderPreferences();
+  const defaults = defaultAgentProviderPreferences();
+  const preferences =
+    overrides.dismissedUpdateVersion === undefined
+      ? defaults
+      : {
+          ...defaults,
+          claudeCode: {
+            ...defaults.claudeCode,
+            dismissedUpdateVersion: overrides.dismissedUpdateVersion,
+          },
+        };
   return {
     cliDiscovery: {
       ...defaultAgentCliDiscoveryResult(),

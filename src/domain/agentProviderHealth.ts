@@ -167,13 +167,15 @@ export interface AgentProviderUpdateRequest extends AgentProviderGenerationReque
 }
 
 export type AgentProviderUpdateFailureReason =
-  | "admissionRefused"
+  | "operationSuperseded"
+  | "authorityChanged"
+  | "executableChanged"
+  | "installerUnsupported"
   | "spawnFailed"
   | "timedOut"
   | "outputLimitExceeded"
   | "exited"
-  | "uncertain"
-  | "versionNotAdvanced";
+  | "uncertain";
 
 export type AgentProviderUpdateResult =
   | {
@@ -181,6 +183,7 @@ export type AgentProviderUpdateResult =
       readonly previousVersion: string;
       readonly installedVersion: string;
     }
+  | { readonly kind: "alreadyCurrent"; readonly installedVersion: string }
   | {
       readonly kind: "failed";
       readonly reason: AgentProviderUpdateFailureReason;
@@ -203,8 +206,16 @@ export type AgentProviderUpdateState =
       readonly installedVersion: string;
     }
   | {
+      readonly kind: "alreadyCurrent";
+      readonly installedVersion: string;
+      readonly offeredVersion: string | null;
+      readonly outputTail: string;
+      readonly outputTruncated: boolean;
+    }
+  | {
       readonly kind: "failed";
       readonly reason: AgentProviderUpdateFailureReason | "versionMismatch";
+      readonly attemptedVersion?: string;
       readonly outputTail: string;
       readonly outputTruncated: boolean;
     };
@@ -354,6 +365,13 @@ export function parseAgentProviderUpdateResult(value: unknown): AgentProviderUpd
       installedVersion: version(result.installedVersion, "result.installedVersion"),
     };
   }
+  if (result.kind === "alreadyCurrent") {
+    exactKeys(result, ["kind", "installedVersion"], "result");
+    return {
+      kind: "alreadyCurrent",
+      installedVersion: version(result.installedVersion, "result.installedVersion"),
+    };
+  }
   if (result.kind === "failed") {
     exactKeys(result, ["kind", "reason", "outputTail", "outputTruncated"], "result");
     const reason = failureReason(result.reason, "result.reason");
@@ -371,7 +389,7 @@ export function parseAgentProviderUpdateResult(value: unknown): AgentProviderUpd
       outputTruncated,
     };
   }
-  return invalid("result.kind", "expected succeeded or failed");
+  return invalid("result.kind", "expected succeeded, alreadyCurrent, or failed");
 }
 
 function parseAgentProviderUpdateOutputSummary(value: unknown): string {
@@ -627,13 +645,15 @@ function unavailableReason(
 
 function failureReason(value: unknown, path: string): AgentProviderUpdateFailureReason {
   if (
-    value === "admissionRefused" ||
+    value === "operationSuperseded" ||
+    value === "authorityChanged" ||
+    value === "executableChanged" ||
+    value === "installerUnsupported" ||
     value === "spawnFailed" ||
     value === "timedOut" ||
     value === "outputLimitExceeded" ||
     value === "exited" ||
-    value === "uncertain" ||
-    value === "versionNotAdvanced"
+    value === "uncertain"
   ) {
     return value;
   }

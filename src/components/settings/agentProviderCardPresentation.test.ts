@@ -161,10 +161,44 @@ describe("agentProviderCardPresentation", () => {
     ).toBeNull();
   });
 
+  it("stops offering an update the updater already ran without changing the version", () => {
+    const available = availableUpdate(withUpdate());
+    const settled = {
+      kind: "alreadyCurrent",
+      installedVersion: "2.1.245",
+      offeredVersion: "2.2.0",
+      outputTail: "",
+      outputTruncated: false,
+    } as const;
+
+    expect(available?.availableVersion).toBe("2.2.0");
+    expect(
+      providerUpdateBlockedReason(
+        "codex",
+        view({ health: withUpdate(), updateState: settled }),
+        available,
+        true,
+        false,
+      ),
+    ).toBe("The updater already ran and left Codex on v2.1.245.");
+    expect(
+      providerUpdateBlockedReason(
+        "codex",
+        view({
+          health: withUpdate(),
+          updateState: { ...settled, offeredVersion: "2.1.9" },
+        }),
+        available,
+        true,
+        false,
+      ),
+    ).toBeNull();
+  });
+
   it("keeps the self-update hint only when a self-update installer offered the version", () => {
     const failed = {
       kind: "failed",
-      reason: "versionNotAdvanced",
+      reason: "installerUnsupported",
       outputTail: "",
       outputTruncated: false,
     } as const;
@@ -177,6 +211,76 @@ describe("agentProviderCardPresentation", () => {
       "update this CLI with its original installer.",
     );
     expect(providerUpdateResultPresentation({ kind: "idle" }, null)).toBeNull();
+  });
+
+  it("labels every closed update failure reason without naming the provider policy", () => {
+    const messages = (
+      [
+        "operationSuperseded",
+        "authorityChanged",
+        "executableChanged",
+        "installerUnsupported",
+        "spawnFailed",
+        "timedOut",
+        "outputLimitExceeded",
+        "exited",
+        "uncertain",
+        "versionMismatch",
+      ] as const
+    ).map(
+      (reason) =>
+        providerUpdateResultPresentation(
+          { kind: "failed", reason, outputTail: "", outputTruncated: false },
+          { kind: "selfUpdate", command: "claudeUpdate" },
+        )?.message ?? "",
+    );
+
+    expect(new Set(messages).size).toBe(messages.length);
+    for (const message of messages) {
+      expect(message.length).toBeGreaterThan(0);
+      expect(message).not.toContain("provider policy");
+    }
+    expect(messages[1]).toBe(
+      "Provider settings changed while the update was starting. Try again or update manually with claude update.",
+    );
+    expect(messages[2]).toBe(
+      "The provider executable changed while the update was starting. Try again or update manually with claude update.",
+    );
+  });
+
+  it("reports an already-current outcome as observed evidence, never as up to date", () => {
+    const alreadyCurrent = {
+      kind: "alreadyCurrent",
+      installedVersion: "2.1.261",
+      offeredVersion: "2.1.263",
+      outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
+      outputTruncated: true,
+    } as const;
+
+    expect(
+      providerUpdateResultPresentation(alreadyCurrent, {
+        kind: "selfUpdate",
+        command: "claudeUpdate",
+      }),
+    ).toEqual({
+      tone: "neutral",
+      role: "status",
+      message:
+        "The updater ran but the installed version is still v2.1.261. v2.1.263 is published for this provider and may not apply to this install. Try again or update manually with claude update.",
+      outputTail: "Installer output withheld (stdout: 0 bytes, stderr: 0 bytes).",
+      outputTruncated: true,
+    });
+    expect(providerUpdateResultPresentation(alreadyCurrent, null)?.message).toContain(
+      "update this CLI with its original installer.",
+    );
+    expect(providerUpdateResultPresentation(alreadyCurrent, null)?.message).not.toContain(
+      "latest version",
+    );
+    expect(
+      providerUpdateResultPresentation({ ...alreadyCurrent, offeredVersion: null }, null)?.message,
+    ).toBe(
+      "The updater ran but the installed version is still v2.1.261. Try again or update this CLI with its original installer.",
+    );
   });
 
   it("detects provider settings that still match the defaults", () => {

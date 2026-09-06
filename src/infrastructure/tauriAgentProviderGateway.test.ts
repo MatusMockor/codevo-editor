@@ -154,7 +154,7 @@ describe("TauriAgentProviderGateway", () => {
     } as const;
     const failure = {
       kind: "failed",
-      reason: "versionNotAdvanced",
+      reason: "installerUnsupported",
       outputTail: "Installer output withheld (stdout: 24 bytes, stderr: 0 bytes).",
       outputTruncated: false,
     } as const;
