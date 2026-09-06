@@ -30,11 +30,55 @@ env:
   NODE_OPTIONS: --max-old-space-size=6144
 
 jobs:
-  checks:
-    name: Checks
+  frontend-checks:
+    name: Frontend Checks
     runs-on: macos-15
 
     steps:
+      - name: Validate dispatch identifier
+        env:
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+        run: |
+          if ! [[ "$DISPATCH_ID" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; then
+            echo "::error::dispatch_id must be a UUID"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run check
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Frontend build
+        run: npm run build
+
+  rust-checks:
+    name: Rust Checks
+    runs-on: macos-15
+
+    steps:
+      - name: Validate dispatch identifier
+        env:
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+        run: |
+          if ! [[ "$DISPATCH_ID" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; then
+            echo "::error::dispatch_id must be a UUID"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -52,24 +96,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate dispatch identifier
-        env:
-          DISPATCH_ID: ${{ inputs.dispatch_id }}
-        run: |
-          if ! [[ "$DISPATCH_ID" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; then
-            echo "::error::dispatch_id must be a UUID"
-            exit 1
-          fi
-
-      - name: TypeScript check
-        run: npm run check
-
-      - name: Frontend tests
-        run: npm test
-
-      - name: Frontend build
-        run: npm run build
-
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test
@@ -77,7 +103,7 @@ jobs:
   smoke-dmg:
     name: Debug DMG Smoke
     runs-on: macos-15
-    needs: checks
+    needs: [frontend-checks, rust-checks]
     if: ${{ inputs.mode == 'smoke' }}
 
     steps:
@@ -118,7 +144,7 @@ jobs:
   release-build:
     name: Release Build
     runs-on: macos-15
-    needs: checks
+    needs: [frontend-checks, rust-checks]
     if: ${{ inputs.mode == 'signed-release' || inputs.mode == 'beta' }}
 
     steps:
