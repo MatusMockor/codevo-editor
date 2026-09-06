@@ -5,6 +5,31 @@ All notable changes to Codevo Editor are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-beta.17] - 2026-09-07
+
+### Changed
+
+- Refresh the workbench, settings, agent threads, and notifications with the Airy
+  design, an overlay title bar, and a resizable thread sidebar.
+- Make the checkout picker wider and roomier, with separate checkout and repository
+  groups, consistent menu styling, and viewport-aware scrolling.
+- Move nested repository selection into the checkout picker and use the project
+  folder as the default target for new agent threads.
+
+### Fixed
+
+- Browse the complete project in Files before starting a thread and for in-place
+  threads, while isolated worktree threads keep their own checkout tree.
+- Keep Files visible without an open document and retain its label in narrow panels.
+- Start Codex threads in trusted project folders without Git, show their status
+  accurately, and refresh checkout choices when the Git state changes.
+- Preserve project authority when open projects overlap and reject stale or foreign
+  repository-status results.
+- Improve provider sign-in detection, update installed CLIs from the application,
+  and avoid refusing updates during discovery refreshes.
+- Preserve turn usage telemetry, clarify provider errors, and keep successful turn
+  output quiet while retaining access to details.
+
 ## [0.2.0-beta.16] - 2026-09-05
 
 ### Added

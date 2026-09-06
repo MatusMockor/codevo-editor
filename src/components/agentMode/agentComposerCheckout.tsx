@@ -1,4 +1,4 @@
-import { Check, FolderGit2 } from "lucide-react";
+import { Folder, FolderGit2, GitBranch, Monitor } from "lucide-react";
 import type { AgentTaskIsolation } from "../../domain/agentTask";
 import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
 
@@ -31,6 +31,9 @@ export function agentComposerCheckoutOptions(
       "in-place",
       "Local checkout",
       selectedLabel === null ? "Runs in the project's own checkout." : `Runs in ${selectedLabel}.`,
+      null,
+      null,
+      <Monitor size={15} />,
     ),
   ];
   if (worktreeAvailable) {
@@ -41,6 +44,9 @@ export function agentComposerCheckoutOptions(
         selectedLabel === null
           ? "Runs in a new git worktree."
           : `Runs in a new git worktree of ${selectedLabel}.`,
+        null,
+        null,
+        <GitBranch size={15} />,
       ),
     );
   }
@@ -52,11 +58,7 @@ export function agentComposerCheckoutOptions(
       description,
       null,
       null,
-      repositoryRoot === target.selectedRepositoryRoot ? (
-        <Check size={12} />
-      ) : (
-        <FolderGit2 size={12} />
-      ),
+      repositoryRoot === target.projectRoot ? <Folder size={15} /> : <FolderGit2 size={15} />,
       RUN_IN_REPOSITORY_GROUP,
       repositoryRoot === target.selectedRepositoryRoot,
     );

@@ -311,6 +311,51 @@ describe("AgentPickerMenu", () => {
     width.mockRestore();
   });
 
+  it("gives checkout choices more room while preserving viewport placement and keyboard selection", () => {
+    const onChange = vi.fn();
+    const onOpen = vi.fn();
+    render({
+      menuLayout: "checkout",
+      value: "local",
+      onChange,
+      onOpen,
+      options: [
+        agentPickerOption("local", "Local checkout"),
+        agentPickerOption("worktree", "Isolated worktree"),
+        agentPickerOption("project", "Project", null, null, null, null, "Run in repository", true),
+        agentPickerOption("nested", "packages/api", null, null, null, null, "Run in repository"),
+      ],
+    });
+    let top = window.innerHeight - 40;
+    const rect = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(() => domRect(top));
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(500);
+
+    key(trigger(), "ArrowDown");
+
+    expect(listbox().style.maxHeight).toBe("520px");
+    expect(listbox().getAttribute("aria-multiselectable")).toBe("true");
+    expect(
+      options().filter((option) => option.getAttribute("aria-selected") === "true"),
+    ).toHaveLength(2);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+
+    top = window.innerHeight / 2;
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(Number.parseInt(listbox().style.maxHeight, 10)).toBeLessThan(520);
+    expect(Number.parseInt(listbox().style.maxHeight, 10)).toBeLessThanOrEqual(top - 12);
+
+    key(listbox(), "End");
+    expect(document.activeElement?.textContent).toBe("packages/api");
+    key(listbox(), "Enter");
+    expect(onChange).toHaveBeenCalledWith("nested");
+    expect(document.activeElement).toBe(trigger());
+
+    rect.mockRestore();
+    height.mockRestore();
+  });
+
   it("clamps a start aligned menu that would overflow the right edge", () => {
     render({});
     const rect = vi

@@ -15,7 +15,7 @@ import {
   type AgentPickerOption,
   type AgentPickerTone,
 } from "./agentPickerOption";
-import { useAgentPopoverPlacement } from "./agentPopover";
+import { AGENT_POPOVER_METRICS, useAgentPopoverPlacement } from "./agentPopover";
 
 export type { AgentPickerOption, AgentPickerTone } from "./agentPickerOption";
 
@@ -34,6 +34,7 @@ export interface AgentPickerMenuProps {
   readonly describedBy: string | null;
   readonly align: AgentPickerAlign;
   readonly variant?: AgentPickerVariant;
+  readonly menuLayout?: "default" | "checkout";
   readonly icon?: ReactNode;
   readonly confirmation?: AgentPickerConfirmation | null;
   onChange(value: string): void;
@@ -51,6 +52,7 @@ export interface AgentPickerConfirmation {
 }
 
 const UNKNOWN_VALUE_LABEL = "Select…";
+const CHECKOUT_POPOVER_METRICS = { ...AGENT_POPOVER_METRICS, maxHeight: 520 };
 
 export function AgentPickerMenu({
   align,
@@ -60,6 +62,7 @@ export function AgentPickerMenu({
   icon = null,
   id,
   label,
+  menuLayout = "default",
   onChange,
   onOpen,
   options,
@@ -73,7 +76,13 @@ export function AgentPickerMenu({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const placement = useAgentPopoverPlacement(open, triggerRef, menuRef, align);
+  const placement = useAgentPopoverPlacement(
+    open,
+    triggerRef,
+    menuRef,
+    align,
+    menuLayout === "checkout" ? CHECKOUT_POPOVER_METRICS : AGENT_POPOVER_METRICS,
+  );
   const listId = `${id}-list`;
   const selectedIndex = options.findIndex((option) => option.value === value);
   const selected = selectedIndex < 0 ? null : (options[selectedIndex] ?? null);
@@ -210,7 +219,7 @@ export function AgentPickerMenu({
         <div
           aria-label={label}
           aria-multiselectable={options.some((option) => option.selected) || undefined}
-          className={`agent-picker__menu agent-picker__menu--${align}`}
+          className={`agent-picker__menu agent-picker__menu--${align}${menuLayout === "checkout" ? " agent-picker__menu--checkout" : ""}`}
           id={listId}
           onKeyDown={onMenuKeyDown}
           ref={menuRef}
@@ -239,7 +248,8 @@ export function AgentPickerMenu({
                   className={`agent-picker__mark${option.icon !== null ? " agent-picker__mark--icon" : ""}`}
                   aria-hidden="true"
                 >
-                  {option.icon ?? (option.value === value && <Check size={12} />)}
+                  {option.icon ??
+                    (menuLayout !== "checkout" && option.value === value && <Check size={12} />)}
                 </span>
                 <span className="agent-picker__text">
                   <span className="agent-picker__label">
@@ -255,6 +265,9 @@ export function AgentPickerMenu({
                     <span className="agent-picker__description">{option.description}</span>
                   )}
                 </span>
+                {menuLayout === "checkout" && (option.selected || option.value === value) && (
+                  <Check aria-hidden="true" className="agent-picker__selection" size={14} />
+                )}
               </div>
               {confirmation !== null &&
                 option.value === value &&

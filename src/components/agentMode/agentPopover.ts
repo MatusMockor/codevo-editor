@@ -151,6 +151,7 @@ export function useAgentPopoverPlacement(
   triggerRef: RefObject<HTMLElement | null>,
   popoverRef: RefObject<HTMLElement | null>,
   align: AgentPopoverAlign,
+  metrics: AgentPopoverMetrics = AGENT_POPOVER_METRICS,
 ): AgentPopoverPlacementHandle {
   const [position, setPosition] = useState<AgentPopoverPosition | null>(null);
 
@@ -174,6 +175,7 @@ export function useAgentPopoverPlacement(
         align,
         viewport,
         agentPopoverFrame(block, viewport),
+        metrics,
       );
       setPosition((current) =>
         current !== null && samePopoverPosition(current, next) ? current : next,
@@ -191,7 +193,7 @@ export function useAgentPopoverPlacement(
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [align, open, popoverRef, triggerRef]);
+  }, [align, metrics, open, popoverRef, triggerRef]);
 
   return { placement: position?.placement ?? "down", style: agentPopoverStyle(position, align) };
 }

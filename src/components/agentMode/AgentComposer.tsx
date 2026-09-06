@@ -390,6 +390,7 @@ function AgentComposerCheckout({
       icon={isolationGlyph(isolation)}
       id={CHECKOUT_ID}
       label="Checkout for this thread"
+      menuLayout="checkout"
       onChange={choose}
       onOpen={onRefreshIsolation}
       options={options}
