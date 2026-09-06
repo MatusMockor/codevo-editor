@@ -717,22 +717,39 @@ fn exhausted_completion_descriptor_quota_keeps_shallow_member_labels() {
     let (registry, sink) = start_session_with_mock(&server.url, Vec::new(), MOCK_REQUEST_TIMEOUT);
     let (pause_generation, frame_id) = exact_pause_owner(&registry, &sink);
 
-    let completion = registry
-        .with_session(WORKSPACE_KEY, |adapter| {
-            adapter.completions(DebugCompletionRequest {
-                pause_generation,
-                frame_id,
-                query: DebugCompletionQuery::Member {
-                    root: DebugCompletionRoot::Binding("item".into()),
-                    path: Vec::new(),
-                    prefix: String::new(),
-                },
-            })
-        })
-        .expect("session")
-        .expect("descriptor quota exhaustion degrades");
+    crate::debug_cdp::completions::with_test_completion_deadline(MOCK_REQUEST_TIMEOUT, || {
+        let request = || DebugCompletionRequest {
+            pause_generation,
+            frame_id,
+            query: DebugCompletionQuery::Member {
+                root: DebugCompletionRoot::Binding("item".into()),
+                path: Vec::new(),
+                prefix: String::new(),
+            },
+        };
+        let completion = registry
+            .with_session(WORKSPACE_KEY, |adapter| adapter.completions(request()))
+            .expect("session")
+            .expect("descriptor quota exhaustion degrades");
 
-    assert_eq!(completion.items.len(), 1);
-    assert_eq!(completion.items[0].label, "shallow");
-    assert!(completion.is_incomplete);
+        assert_eq!(completion.items.len(), 1);
+        assert_eq!(completion.items[0].label, "shallow");
+        assert!(completion.is_incomplete);
+
+        let exhausted = registry
+            .with_session(WORKSPACE_KEY, |adapter| adapter.completions(request()))
+            .expect("session")
+            .expect("exhausted descriptor quota stays incomplete");
+
+        assert!(exhausted.items.is_empty());
+        assert!(exhausted.is_incomplete);
+        assert_eq!(
+            server
+                .params_for("Runtime.getProperties")
+                .iter()
+                .map(|params| params["objectId"].as_str().expect("object ID"))
+                .collect::<Vec<_>>(),
+            vec!["scope-local-1", "item", "quota-prototype", "scope-local-1"]
+        );
+    });
 }
