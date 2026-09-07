@@ -37,7 +37,7 @@ describe("AgentOpenMenu", () => {
     expect(host.querySelector('[role="menu"]')).toBeNull();
   });
 
-  it("lists reveal, terminal, editor and copy entries in the menu", async () => {
+  it("lists reveal, terminal, editor, history and copy entries in the menu", async () => {
     const onRevealPath = vi.fn(() => Promise.resolve());
     const onCopyPath = vi.fn();
     const onOpenSurface = vi.fn();
@@ -50,6 +50,7 @@ describe("AgentOpenMenu", () => {
       "Reveal in Finder",
       "Open in Terminal",
       "Open in Editor",
+      "Open Git History",
       "Copy path",
     ]);
     expect(button("Open options").getAttribute("aria-expanded")).toBe("true");
@@ -63,6 +64,11 @@ describe("AgentOpenMenu", () => {
     act(() => button("Open options").click());
     act(() => item("Open in Terminal").click());
     expect(onOpenSurface).toHaveBeenCalledWith("terminal");
+
+    act(() => button("Open options").click());
+    act(() => item("Open Git History").click());
+    expect(onOpenSurface).toHaveBeenCalledWith("history");
+    expect(host.querySelector('[role="menu"]')).toBeNull();
 
     act(() => button("Open options").click());
     act(() => item("Copy path").click());

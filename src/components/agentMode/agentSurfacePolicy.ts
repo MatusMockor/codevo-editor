@@ -142,7 +142,7 @@ export function agentSurfaceBlockedReason(
   workspaceTrusted: boolean,
   workspaceRoot: string | null,
 ): string | null {
-  if (kind === "files") return filesSurfaceBlockedReason(thread);
+  if (kind === "files" || kind === "history") return filesSurfaceBlockedReason(thread);
   if (thread === null) return SURFACE_NO_THREAD_REASON;
   if (agentSurfaceTargetGone(thread)) return SURFACE_WORKTREE_GONE_REASON;
   if (kind !== "terminal") return null;

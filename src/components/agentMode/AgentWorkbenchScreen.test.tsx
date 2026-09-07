@@ -592,7 +592,6 @@ function baseProps(workbench: AgentWorkbenchScreenWorkbench): AgentWorkbenchScre
     },
     terminalTheme: terminalThemeForAppTheme("dark"),
     workbench,
-    workspaceTrusted: true,
   };
 }
 

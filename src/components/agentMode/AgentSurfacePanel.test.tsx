@@ -4,6 +4,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
+import type { Commit } from "../../domain/git";
 import type { AgentSurfaceFileTreeSurface } from "../../application/useAgentSurfaceFileTree";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import { waitForReact } from "../../test/reactTestLifecycle";
@@ -75,12 +77,12 @@ describe("AgentSurfacePanel", () => {
     host.remove();
   });
 
-  it("shows the chooser with three cards, key hints and no tab strip", () => {
+  it("shows the chooser with four cards, key hints and no tab strip", () => {
     const onOpenSurface = vi.fn();
     render({ onOpenSurface });
 
     expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
-    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(3);
+    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(4);
     expect(host.querySelector("[data-surface]")?.getAttribute("data-surface")).toBe("empty");
     expect(host.querySelector('[role="tablist"][aria-label="Surfaces"]')).toBeNull();
     expect(host.querySelector('[aria-label="Add surface"]')).toBeNull();
@@ -90,6 +92,7 @@ describe("AgentSurfacePanel", () => {
       AGENT_SURFACE_HOTKEYS.files,
       AGENT_SURFACE_HOTKEYS.diff,
       AGENT_SURFACE_HOTKEYS.terminal,
+      AGENT_SURFACE_HOTKEYS.history,
     ]);
     expect(
       host.querySelector('[aria-label="Open Diff surface"]')?.getAttribute("aria-keyshortcuts"),
@@ -136,6 +139,7 @@ describe("AgentSurfacePanel", () => {
 
     render({ thread: surfaceThreadView({ worktreeMissing: true }) });
     expect(reasons()).toEqual([
+      SURFACE_WORKTREE_GONE_REASON,
       SURFACE_WORKTREE_GONE_REASON,
       SURFACE_WORKTREE_GONE_REASON,
       SURFACE_WORKTREE_GONE_REASON,
@@ -308,6 +312,64 @@ describe("AgentSurfacePanel", () => {
     expect(host.querySelector("[data-agent-surface-terminal]")).toBeNull();
     await waitForReact(() => expect(gateway.stop).toHaveBeenCalledWith(1));
     expect(host.querySelector("[data-agent-surface-diff]")).not.toBeNull();
+  });
+
+  it("loads history only while active and discards a result after switching away", async () => {
+    let settle!: (commits: Commit[]) => void;
+    const pending = new Promise<Commit[]>((resolve) => {
+      settle = resolve;
+    });
+    const gateway: AgentGitHistoryGateway = {
+      getRepoStatus: vi.fn(async () => ({ gitAvailable: true, isRepository: true })),
+      getCommitLog: vi.fn().mockReturnValueOnce(pending).mockResolvedValue([]),
+      getCommitDetails: vi.fn(),
+      getCommitFiles: vi.fn(),
+      getCommitDiff: vi.fn(),
+    };
+    const history: NonNullable<AgentSurfacePanelProps["history"]> = {
+      scope: {
+        kind: "available",
+        target: { rootPath: SURFACE_FIXTURE_WORKTREE, ownerKey: "history-owner" },
+      },
+      gateway,
+      monacoTheme: "calm-dark",
+    };
+    render({ layout: open(["files", "history"], "files"), history });
+    await act(async () => Promise.resolve());
+    expect(gateway.getRepoStatus).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="Git history"]')).toBeNull();
+
+    render({ layout: open(["files", "history"], "history"), history });
+    await waitForReact(() => expect(gateway.getCommitLog).toHaveBeenCalledTimes(1));
+    expect(gateway.getRepoStatus).toHaveBeenCalledWith(SURFACE_FIXTURE_WORKTREE);
+    expect(host.querySelector('[aria-label="Git history"]')).not.toBeNull();
+
+    render({ layout: open(["files", "history"], "files"), history });
+    expect(host.querySelector('[aria-label="Git history"]')).toBeNull();
+    await act(async () =>
+      settle([
+        {
+          hash: "stale",
+          abbrevHash: "stale",
+          subject: "Stale hidden result",
+          authorName: "Contributor",
+          authorEmail: "",
+          date: "2026-09-07",
+          labels: [],
+          parents: [],
+        },
+      ]),
+    );
+    expect(host.textContent).not.toContain("Stale hidden result");
+
+    render({ layout: open(["files", "history"], "history"), history });
+    await waitForReact(() =>
+      expect(host.textContent).toContain("No commits in this repository yet."),
+    );
+    expect(gateway.getCommitLog).toHaveBeenCalledTimes(2);
+    expect(host.textContent).not.toContain("Stale hidden result");
+    render({ layout: open(["files", "history"], "history"), hidden: true, history });
+    expect(host.querySelector('[aria-label="Git history"]')).toBeNull();
   });
 
   it("keeps an active terminal visible while inactive tabs close and hides it without stopping", async () => {

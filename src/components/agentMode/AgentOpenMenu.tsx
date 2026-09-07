@@ -1,5 +1,12 @@
 import { useId, useLayoutEffect, type KeyboardEvent } from "react";
-import { ChevronDown, Copy, FolderOpen, PanelsTopLeft, SquareTerminal } from "lucide-react";
+import {
+  ChevronDown,
+  Copy,
+  FolderOpen,
+  History,
+  PanelsTopLeft,
+  SquareTerminal,
+} from "lucide-react";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import { focusMenuItem, useAgentPopover } from "./agentPopover";
 import { agentOpenBlockedReason, type AgentOpenTarget } from "./agentThreadHeaderPresentation";
@@ -107,6 +114,11 @@ export function AgentOpenMenu({
             icon={<PanelsTopLeft size={13} />}
             label="Open in Editor"
             onSelect={() => choose(() => onOpenSurface("files"))}
+          />
+          <MenuItem
+            icon={<History size={13} />}
+            label="Open Git History"
+            onSelect={() => choose(() => onOpenSurface("history"))}
           />
           <div aria-hidden="true" className="agent-menu__separator" />
           <MenuItem

@@ -9,11 +9,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Browse repository commits, changed files, and historical diffs from History in the
+  agent right panel.
 - Explain failed, stopped, and interrupted thread counts on hover, and let users
   hide or restore the indicator from the status bar context menu per project.
 
 ### Fixed
 
+- Use a subtle neutral divider highlight when resizing the agent thread sidebar.
 - Keep macOS builds working alongside the Linux backend compatibility fixes.
 
 ## [0.2.0-beta.18] - 2026-09-07

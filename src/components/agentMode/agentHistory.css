@@ -1,0 +1,129 @@
+.agent-history {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  color: var(--codevo-fg);
+}
+
+.agent-history__root {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--codevo-fg-muted);
+}
+
+.agent-history__commits {
+  flex: 1 1 240px;
+  min-height: 120px;
+  overflow: auto;
+}
+
+.agent-history__commit,
+.agent-history__file {
+  display: flex;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-history__commit {
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 14px;
+}
+
+.agent-history__commit:hover,
+.agent-history__file:hover {
+  background: var(--codevo-hover);
+}
+
+.agent-history__commit[aria-pressed="true"],
+.agent-history__file[aria-pressed="true"] {
+  background: var(--codevo-raised);
+}
+
+.agent-history__subject {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--codevo-fg-strong);
+}
+
+.agent-history__metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--codevo-fg-muted);
+}
+
+.agent-history__metadata > span {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-history__pages {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 5px;
+  color: var(--codevo-fg-muted);
+  font-size: 10px;
+}
+
+.agent-history__details {
+  flex: 0 1 45%;
+  min-height: 64px;
+  overflow: auto;
+  padding: 12px 14px;
+}
+
+.agent-history__details h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.agent-history__message {
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-history__file {
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 11px;
+}
+
+.agent-history__file > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-history__file > span:first-child {
+  color: var(--codevo-fg-muted);
+}
+
+.agent-history__diff {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 0 320px;
+  min-height: 320px;
+}

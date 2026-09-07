@@ -1,3 +1,4 @@
+import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
 import {
   useCallback,
   useEffect,
@@ -81,9 +82,9 @@ export interface AgentWorkbenchScreenProps {
   readonly files: AgentSurfaceFileTreeDependencies["files"];
   readonly fileChanges: AgentSurfaceFileTreeDependencies["fileChanges"];
   readonly terminalGateway: TerminalGateway;
+  readonly gitHistoryGateway?: AgentGitHistoryGateway | null;
   readonly monacoTheme: MonacoAppTheme;
   readonly terminalTheme: TerminalTheme;
-  readonly workspaceTrusted: boolean;
   readonly textClipboard?: TextClipboardGateway | null;
   readonly revealPathGateway?: RevealPathGateway;
   readonly directoryListingGateway?: DirectoryListingGateway;
@@ -112,6 +113,7 @@ export function AgentWorkbenchScreen({
   fileChanges,
   fileStatusesByPath,
   files,
+  gitHistoryGateway = null,
   monacoTheme,
   onResizeRightPanelStart,
   onTrustWorkspace,
@@ -120,8 +122,8 @@ export function AgentWorkbenchScreen({
   terminalTheme,
   textClipboard = DEFAULT_TEXT_CLIPBOARD,
   workbench,
-  workspaceTrusted,
 }: AgentWorkbenchScreenProps) {
+  const workspaceTrusted = !!workbench.workspaceTrust?.trusted;
   const projects = workbench.agents.agentProjects;
   const { agentWorkbench, appSettings, nodePackageScripts, workspaceRoot } = workbench;
   const providerPreferences =
@@ -337,6 +339,7 @@ export function AgentWorkbenchScreen({
       scripts,
       workspaceId,
       workspaceTrusted,
+      gitHistoryGateway,
       fileTree: {
         files,
         fileChanges,
@@ -379,6 +382,7 @@ export function AgentWorkbenchScreen({
       fileChanges,
       fileStatusesByPath,
       files,
+      gitHistoryGateway,
       monacoTheme,
       onResizeRightPanelStart,
       onToggleBottomPanel,

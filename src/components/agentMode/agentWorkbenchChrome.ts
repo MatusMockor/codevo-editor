@@ -1,3 +1,4 @@
+import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
 import type { PointerEvent } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentSurfaceFileTreeDependencies } from "../../application/useAgentSurfaceFileTree";
@@ -93,6 +94,7 @@ export interface AgentWorkbenchChrome {
   readonly fileTree: AgentWorkbenchFileTreeChrome | null;
   readonly diff: AgentWorkbenchDiffChrome;
   readonly terminal: AgentWorkbenchTerminalChrome | null;
+  readonly gitHistoryGateway?: AgentGitHistoryGateway | null;
   readonly addProject: AgentWorkbenchAddProjectChrome | null;
   onToggleBottomPanel(): void;
   onShowTerminalPanel(): void;

@@ -1085,13 +1085,13 @@ function App() {
             fileChanges={workspaceGateways.fileChanges}
             fileStatusesByPath={fileStatusesByPath}
             files={workspaceGateways.files}
+            gitHistoryGateway={gitHistoryGateway}
             monacoTheme={monacoTheme}
             onResizeRightPanelStart={startAgentRightPanelResize}
             onTrustWorkspace={trustWorkspace}
             terminalGateway={terminalGateway}
             terminalTheme={terminalTheme}
             workbench={workbench}
-            workspaceTrusted={workspaceTrusted}
           />
         }
         bottom={

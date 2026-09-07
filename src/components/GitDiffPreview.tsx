@@ -32,6 +32,7 @@ interface GitDiffPreviewProps {
   isLoading: boolean;
   monacoTheme: MonacoAppTheme;
   previewIdentity?: string;
+  comparisonLabels?: { readonly original: string; readonly modified: string };
   editorFontFamily?: string;
   editorFontLigatures?: boolean;
   editorFontSize?: number;
@@ -66,6 +67,7 @@ export function GitDiffPreview({
   isLoading,
   monacoTheme,
   previewIdentity,
+  comparisonLabels,
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
@@ -427,8 +429,8 @@ export function GitDiffPreview({
         </div>
       </header>
       <div className="git-diff-pane-labels" aria-label="Compared versions">
-        <span>{changeIsStaged ? "HEAD" : "Index"}</span>
-        <span>{changeIsStaged ? "Staged" : "Working tree"}</span>
+        <span>{comparisonLabels?.original ?? (changeIsStaged ? "HEAD" : "Index")}</span>
+        <span>{comparisonLabels?.modified ?? (changeIsStaged ? "Staged" : "Working tree")}</span>
       </div>
       <div className="git-diff-editor" data-testid="git-monaco-diff">
         {fallbackReason ? (
@@ -457,8 +459,8 @@ export function GitDiffPreview({
               // with the zero sentinel.
               lineHeight: diffEditorLineHeight(editorFontSize),
               minimap: { enabled: false },
-              modifiedAriaLabel: "Current file content",
-              originalAriaLabel: "Base file content",
+              modifiedAriaLabel: comparisonLabels?.modified ?? "Current file content",
+              originalAriaLabel: comparisonLabels?.original ?? "Base file content",
               originalEditable: false,
               readOnly: true,
               renderIndicators: true,

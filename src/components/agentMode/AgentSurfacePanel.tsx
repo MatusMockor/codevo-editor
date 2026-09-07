@@ -1,4 +1,5 @@
-import { FolderTree, GitCompare, PanelLeft, SquareTerminal, X } from "lucide-react";
+import type { AgentSurfaceHistoryProps } from "./AgentSurfaceHistory";
+import { FolderTree, GitCompare, History, PanelLeft, SquareTerminal, X } from "lucide-react";
 import {
   Suspense,
   lazy,
@@ -25,6 +26,10 @@ import { WorkbenchEditorTabsPortalTarget } from "../workbenchEditorTabsPortal";
 
 export const AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE = "data-agent-editor-slot";
 
+const LazyAgentSurfaceHistory = lazy(() =>
+  import("./AgentSurfaceHistory").then((module) => ({ default: module.AgentSurfaceHistory })),
+);
+
 const LazyAgentSurfaceDiff = lazy(() =>
   import("./AgentSurfaceDiff").then((module) => ({ default: module.AgentSurfaceDiff })),
 );
@@ -50,6 +55,7 @@ export interface AgentSurfacePanelProps {
   readonly fileTree: AgentSurfaceFileTreeProps | null;
   readonly diff: AgentSurfaceDiffPanelProps | null;
   readonly terminal: AgentSurfaceTerminalPanelProps | null;
+  readonly history?: AgentSurfaceHistoryProps | null;
   onOpenSurface(surface: AgentSurfaceKind): void;
   onActivateSurface(surface: AgentSurfaceKind): void;
   onCloseSurfaceTab(surface: AgentSurfaceKind): void;
@@ -67,6 +73,7 @@ const TABS: ReadonlyArray<SurfaceTab> = [
   { kind: "files", label: "Files", icon: FolderTree },
   { kind: "diff", label: "Diff", icon: GitCompare },
   { kind: "terminal", label: "Terminal", icon: SquareTerminal },
+  { kind: "history", label: "History", icon: History },
 ];
 
 function nextAgentSurfaceTabIndex(key: string, count: number, current: number): number | null {
@@ -83,6 +90,7 @@ export function AgentSurfacePanel({
   diff,
   fileTree,
   hidden,
+  history = null,
   layout,
   layoutControls,
   onActivateSurface,
@@ -221,6 +229,8 @@ export function AgentSurfacePanel({
             <SurfaceBody
               diff={diff}
               fileTree={fileTree}
+              history={history}
+              historyActive={!hidden && activeSurface === "history"}
               kind={kind}
               terminal={terminal}
               terminalActive={!hidden && activeSurface === "terminal"}
@@ -238,6 +248,8 @@ export function AgentSurfacePanel({
 }
 
 interface SurfaceBodyProps {
+  readonly history: AgentSurfaceHistoryProps | null;
+  readonly historyActive: boolean;
   readonly kind: AgentSurfaceKind;
   readonly thread: AgentThreadView | null;
   readonly workspaceRoot: string | null;
@@ -251,6 +263,8 @@ interface SurfaceBodyProps {
 }
 
 function SurfaceBody({
+  history,
+  historyActive,
   diff,
   fileTree,
   kind,
@@ -271,6 +285,16 @@ function SurfaceBody({
           {...{ [AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE]: "" }}
         />
       </div>
+    );
+  }
+
+  if (kind === "history") {
+    if (!historyActive) return null;
+    if (history === null) return <p className="agent-note">Git history is unavailable.</p>;
+    return (
+      <Suspense fallback={<p className="agent-note">Loading Git history…</p>}>
+        <LazyAgentSurfaceHistory {...history} />
+      </Suspense>
     );
   }
 
@@ -306,7 +330,7 @@ function agentSurfaceLayoutRevision(
   hidden: boolean,
 ): number {
   const openMask = openSurfaces.reduce((mask, surface) => mask | agentSurfaceMask(surface), 0);
-  return hidden ? openMask | 8 : openMask;
+  return hidden ? openMask | 16 : openMask;
 }
 
 function agentSurfaceMask(surface: AgentSurfaceKind): number {
@@ -317,5 +341,7 @@ function agentSurfaceMask(surface: AgentSurfaceKind): number {
       return 2;
     case "terminal":
       return 4;
+    case "history":
+      return 8;
   }
 }

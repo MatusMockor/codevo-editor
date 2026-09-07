@@ -1,3 +1,5 @@
+import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { agentGitHistoryScope } from "./agentGitHistoryTarget";
 import { memo, useMemo, type ReactNode } from "react";
 import type { AgentThreadView, AgentThreadsSurface } from "../../application/agentThreadPorts";
 import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
@@ -17,6 +19,8 @@ export type AgentSurfaceHostAgents = Pick<
 
 export interface AgentSurfaceHostProps {
   readonly chrome: AgentWorkbenchChrome;
+  readonly projects?: ReadonlyArray<AgentProjectDescriptor>;
+  readonly selectedRepositoryRoot?: string | null;
   readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
   readonly thread: AgentThreadView | null;
   readonly threadRootPath: string | null;
@@ -45,6 +49,8 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   onOpenSurface,
   onSwitchScope,
   onTrustScope,
+  projects = [],
+  selectedRepositoryRoot = null,
   scope,
   thread,
   threadRootPath,
@@ -111,6 +117,18 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
       hidden={hidden}
     >
       <AgentSurfacePanel
+        history={{
+          scope: agentGitHistoryScope(
+            projects,
+            thread,
+            scope,
+            workspaceRoot,
+            chrome.workspaceTrusted,
+            selectedRepositoryRoot,
+          ),
+          gateway: chrome.gitHistoryGateway ?? null,
+          ...chrome.diff,
+        }}
         chooserAutoFocus={chooserAutoFocus}
         diff={diff}
         hidden={hidden}

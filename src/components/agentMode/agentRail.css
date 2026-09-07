@@ -32,6 +32,7 @@
 }
 
 .agent-rail-resize {
+  position: relative;
   z-index: 3;
   width: 9px;
   margin-inline-end: -5px;
@@ -41,16 +42,27 @@
   grid-row: 1 / -1;
   justify-self: end;
   touch-action: none;
+}
+
+.agent-rail-resize::before {
+  position: absolute;
+  inset-block: 0;
+  left: 3px;
+  width: 3px;
+  background: transparent;
+  content: "";
+  pointer-events: none;
   transition: background-color var(--agent-motion-hover) var(--ease-standard);
 }
 
-.agent-rail-resize:hover,
-.agent-rail-resize:focus-visible {
-  background: var(--codevo-primary-soft);
-  outline: none;
+.agent-rail-resize:hover::before,
+.agent-rail-resize:active::before,
+.agent-rail-resize:focus-visible::before {
+  background: color-mix(in srgb, var(--codevo-fg-muted) 25%, var(--codevo-canvas));
 }
 
 .agent-rail-resize:focus-visible {
+  outline: none;
   box-shadow: var(--codevo-focus-ring);
 }
 

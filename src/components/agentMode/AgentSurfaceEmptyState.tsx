@@ -1,4 +1,4 @@
-import { FolderTree, GitCompare, SquareTerminal } from "lucide-react";
+import { FolderTree, GitCompare, History, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { AGENT_SURFACE_KINDS, type AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
@@ -28,6 +28,12 @@ interface SurfaceCard {
 }
 
 const CARDS: ReadonlyArray<SurfaceCard> = [
+  {
+    kind: "history",
+    label: "History",
+    description: "Browse commits and file changes in this checkout.",
+    icon: History,
+  },
   {
     kind: "files",
     label: "Files",

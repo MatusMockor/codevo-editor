@@ -779,7 +779,7 @@ describe("AgentModeView", () => {
     click('[data-agent-thread-head] button[aria-label^="Toggle right panel"]');
     rerender();
     expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
-    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(3);
+    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(4);
     expect(host.querySelector('[aria-label^="Expand to editor"]')).toBeNull();
 
     click('[aria-label="Open Files surface"]');

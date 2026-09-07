@@ -4,6 +4,7 @@ export const AGENT_SURFACE_HOTKEYS: Readonly<Record<AgentSurfaceKind, string>> =
   files: "F",
   diff: "D",
   terminal: "T",
+  history: "H",
 };
 
 export function agentSurfaceForHotkey(key: string): AgentSurfaceKind | null {

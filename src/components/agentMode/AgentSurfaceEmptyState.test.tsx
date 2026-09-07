@@ -35,7 +35,7 @@ describe("AgentSurfaceEmptyState", () => {
     render();
 
     const cards = Array.from(host.querySelectorAll<HTMLButtonElement>(".agent-surface-card"));
-    expect(cards).toHaveLength(3);
+    expect(cards).toHaveLength(4);
     expect(host.querySelector(".agent-surface-card__top")).toBeNull();
     for (const card of cards) {
       expect(Array.from(card.children).map((child) => child.className)).toEqual([
@@ -55,6 +55,7 @@ describe("AgentSurfaceEmptyState", () => {
       AGENT_SURFACE_HOTKEYS.files,
       AGENT_SURFACE_HOTKEYS.diff,
       AGENT_SURFACE_HOTKEYS.terminal,
+      AGENT_SURFACE_HOTKEYS.history,
     ]);
   });
 

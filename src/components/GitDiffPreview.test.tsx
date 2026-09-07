@@ -1191,6 +1191,23 @@ describe("GitDiffPreview", () => {
     });
   }
 
+  it("labels worktree, staged and historical comparisons truthfully", async () => {
+    const labels = () =>
+      Array.from(host.querySelectorAll(".git-diff-pane-labels span")).map(
+        (node) => node.textContent,
+      );
+    await renderPreview(diff());
+    expect(labels()).toEqual(["Index", "Working tree"]);
+    await renderPreview({ ...diff(), change: { ...diff().change, isStaged: true } });
+    expect(labels()).toEqual(["HEAD", "Staged"]);
+    await renderPreview(diff(), { comparisonLabels: { original: "Parent", modified: "a63331b" } });
+    expect(labels()).toEqual(["Parent", "a63331b"]);
+    await renderPreview(diff(), {
+      comparisonLabels: { original: "Empty tree", modified: "b63331b" },
+    });
+    expect(labels()).toEqual(["Empty tree", "b63331b"]);
+  });
+
   async function renderPreview(
     current: GitFileDiff | null,
     overrides: Partial<ComponentProps<typeof GitDiffPreview>> = {},

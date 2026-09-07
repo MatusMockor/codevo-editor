@@ -1,4 +1,4 @@
-export const AGENT_SURFACE_KINDS = ["files", "diff", "terminal"] as const;
+export const AGENT_SURFACE_KINDS = ["files", "diff", "terminal", "history"] as const;
 export type AgentSurfaceKind = (typeof AGENT_SURFACE_KINDS)[number];
 
 export const MAX_AGENT_OPEN_SURFACES = AGENT_SURFACE_KINDS.length;

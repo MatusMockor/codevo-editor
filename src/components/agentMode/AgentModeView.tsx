@@ -619,6 +619,8 @@ export function AgentModeView({
           onOpenSurface={openSurfaceCommand}
           onSwitchScope={chrome.addProject === null ? null : addProject.addProject}
           onTrustScope={trustProject}
+          projects={projects}
+          selectedRepositoryRoot={composer.composerProps.target?.selectedRepositoryRoot ?? null}
           scope={surfaceScope}
           thread={surfaceThread}
           threadRootPath={surfaceThreadRootPath}
