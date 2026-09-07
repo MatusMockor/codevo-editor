@@ -5,49 +5,47 @@ import {
   debugAppLaunchExecutable,
 } from "./debug-tauri-processes.mjs";
 
-describe("debugAppExecutables", () => {
-  it("launches the current bundled Codevo executable", () => {
-    const repoRoot = path.join(path.sep, "workspace", "editor");
+const repoRoot = path.join(path.sep, "workspace", "editor");
+const debugRoot = path.join(repoRoot, "src-tauri", "target", "debug");
+const macosBundleExecutable = path.join(
+  debugRoot,
+  "bundle",
+  "macos",
+  "Codevo Editor.app",
+  "Contents",
+  "MacOS",
+  "codevo-editor",
+);
 
-    expect(debugAppLaunchExecutable(repoRoot)).toBe(
-      path.join(
-        repoRoot,
-        "src-tauri",
-        "target",
-        "debug",
-        "bundle",
-        "macos",
-        "Codevo Editor.app",
-        "Contents",
-        "MacOS",
-        "codevo-editor",
-      ),
+describe("debugAppLaunchExecutable", () => {
+  it("launches the bundled app executable on macOS", () => {
+    expect(debugAppLaunchExecutable(repoRoot, "darwin")).toBe(
+      macosBundleExecutable,
     );
   });
 
-  it("matches current and legacy debug executables during the rename transition", () => {
-    const repoRoot = path.join(path.sep, "workspace", "editor");
+  it("launches the plain Cargo binary on Linux, where no app bundle exists", () => {
+    expect(debugAppLaunchExecutable(repoRoot, "linux")).toBe(
+      path.join(debugRoot, "codevo-editor"),
+    );
+  });
 
+  it("launches the Windows executable with its extension", () => {
+    expect(debugAppLaunchExecutable(repoRoot, "win32")).toBe(
+      path.join(debugRoot, "codevo-editor.exe"),
+    );
+  });
+});
+
+describe("debugAppExecutables", () => {
+  it("matches current and legacy debug executables on every platform", () => {
     expect(debugAppExecutables(repoRoot)).toEqual([
-      path.join(repoRoot, "src-tauri", "target", "debug", "codevo-editor"),
+      path.join(debugRoot, "codevo-editor"),
+      path.join(debugRoot, "codevo-editor.exe"),
+      macosBundleExecutable,
+      path.join(debugRoot, "mockor-editor"),
       path.join(
-        repoRoot,
-        "src-tauri",
-        "target",
-        "debug",
-        "bundle",
-        "macos",
-        "Codevo Editor.app",
-        "Contents",
-        "MacOS",
-        "codevo-editor",
-      ),
-      path.join(repoRoot, "src-tauri", "target", "debug", "mockor-editor"),
-      path.join(
-        repoRoot,
-        "src-tauri",
-        "target",
-        "debug",
+        debugRoot,
         "bundle",
         "macos",
         "Mockor Editor.app",
@@ -56,5 +54,15 @@ describe("debugAppExecutables", () => {
         "mockor-editor",
       ),
     ]);
+  });
+
+  it("includes every launch target it must be able to clean up", () => {
+    const executables = debugAppExecutables(repoRoot);
+
+    for (const platform of ["darwin", "linux", "win32"]) {
+      expect(executables).toContain(
+        debugAppLaunchExecutable(repoRoot, platform),
+      );
+    }
   });
 });
