@@ -89,11 +89,29 @@ describe("agent row status", () => {
     const working = view({ status: { kind: "running" } });
     const unread = view({ status: { kind: "exited", exitCode: 0 }, endedAtEpochMs: NOW });
 
-    expect(agentRowRecedes(idle, agentRowStatus(idle), false)).toBe(true);
-    expect(agentRowRecedes(working, agentRowStatus(working), false)).toBe(true);
-    expect(agentRowRecedes(idle, agentRowStatus(idle), true)).toBe(false);
-    expect(agentRowRecedes(unread, agentRowStatus(unread), false)).toBe(false);
-    expect(agentRowRecedes(idle, { kind: "failed" }, false)).toBe(false);
+    expect(agentRowRecedes(idle, false)).toBe(true);
+    expect(agentRowRecedes(working, false)).toBe(true);
+    expect(agentRowRecedes(idle, true)).toBe(false);
+    expect(agentRowRecedes(unread, false)).toBe(false);
+  });
+
+  it.each<AgentTurnStatus>([
+    { kind: "failed", message: "boom" },
+    { kind: "exited", exitCode: 2 },
+    { kind: "stopped" },
+    { kind: "interrupted" },
+  ])("recedes a read $kind thread while retaining its status", (status) => {
+    const unread = view({ status, endedAtEpochMs: NOW - 1 });
+    const read = view({ status, endedAtEpochMs: NOW - 1, viewedAtEpochMs: NOW });
+    const statusBeforeReading = agentThreadRowModel(unread, false).status;
+
+    expect(agentThreadRowModel(unread, false).recede).toBe(false);
+    expect(agentThreadRowModel(read, true).recede).toBe(false);
+    expect(agentThreadRowModel(read, false).recede).toBe(true);
+    expect(agentThreadRowModel(read, false).status).toEqual(statusBeforeReading);
+    expect(agentRowStatusLabel(statusBeforeReading)).toBe(
+      status.kind === "failed" || status.kind === "exited" ? "Failed" : "Stopped",
+    );
   });
 
   it("builds the row class list from the variant and states", () => {

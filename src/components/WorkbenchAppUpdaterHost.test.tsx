@@ -227,10 +227,21 @@ describe("WorkbenchAppUpdaterHost", () => {
   });
 
   it("keeps the settings surface unmounted until the settings route opens", async () => {
-    await render(hostProps({}));
+    const container = document.createElement("div");
+    const props = hostProps({ gateway: updaterGateway(), settingsContainer: container });
+    await render(props);
 
-    expect(mocks.settingsSurfaceActive).toEqual([false]);
+    await waitForReact(() => {
+      expect(host.textContent).toContain("Update Available: Codevo v0.2.0");
+    });
+    expect(mocks.settingsSurfaceActive.length).toBeGreaterThan(0);
+    expect(mocks.settingsSurfaceActive.every((active) => !active)).toBe(true);
     expect(mocks.settingsContainers).toEqual([]);
+
+    await render({ ...props, workbench: { ...props.workbench, settingsOpen: true } });
+
+    expect(last(mocks.settingsSurfaceActive)).toBe(true);
+    expect(last(mocks.settingsContainers)).toBe(container);
   });
 
   it("hands the frame settings slot to the lazily mounted settings host", async () => {

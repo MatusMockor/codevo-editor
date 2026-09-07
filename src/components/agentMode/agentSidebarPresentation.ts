@@ -177,14 +177,10 @@ export function agentRowStatus(view: AgentThreadView): AgentRowStatus {
   return { kind: "none" };
 }
 
-export function agentRowRecedes(
-  view: AgentThreadView,
-  status: AgentRowStatus,
-  on: boolean,
-): boolean {
+export function agentRowRecedes(view: AgentThreadView, on: boolean): boolean {
   if (on) return false;
   if (view.unread) return false;
-  return status.kind === "none" || status.kind === "working";
+  return true;
 }
 
 export function agentRowVariant(view: AgentThreadView): AgentRowVariant {
@@ -603,7 +599,7 @@ export function agentThreadRowModel(
     provider: thread.provider.kind,
     status,
     variant: agentRowVariant(view),
-    recede: agentRowRecedes(view, status, on),
+    recede: agentRowRecedes(view, on),
   };
 }
 

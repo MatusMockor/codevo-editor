@@ -7,6 +7,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.18] - 2026-09-07
+
 ### Changed
 
 - Run frontend and Rust release checks concurrently while retaining both as build prerequisites.
@@ -20,6 +22,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Dim read stopped and failed thread titles while retaining their colored status labels.
 - Select the newly added project in the agent sidebar after its exact open request completes.
 - Keep model choices while a project is still preparing instead of reverting to the default model.
 - Keep debug DMG smoke builds independent of updater signing keys.
