@@ -263,6 +263,7 @@ type WorkspaceSessionGroupViewStates = NonNullable<WorkspaceSessionState["viewSt
 
 export interface StatusBarItemVisibility {
   activePath: boolean;
+  agentAttention: boolean;
   cursorPosition: boolean;
   dirtyCount: boolean;
   gitBranch: boolean;
@@ -425,6 +426,7 @@ export function defaultWorkspaceSessionState(): WorkspaceSessionState {
 export function defaultStatusBarItemVisibility(): StatusBarItemVisibility {
   return {
     activePath: true,
+    agentAttention: true,
     cursorPosition: true,
     dirtyCount: true,
     gitBranch: true,
@@ -991,6 +993,7 @@ export function normalizeStatusBarItemVisibility(value: unknown): StatusBarItemV
 
   return {
     activePath: normalizeBoolean(value.activePath, defaults.activePath),
+    agentAttention: normalizeBoolean(value.agentAttention, defaults.agentAttention),
     cursorPosition: normalizeBoolean(value.cursorPosition, defaults.cursorPosition),
     dirtyCount: normalizeBoolean(value.dirtyCount, defaults.dirtyCount),
     gitBranch: normalizeBoolean(value.gitBranch, defaults.gitBranch),

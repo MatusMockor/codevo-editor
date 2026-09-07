@@ -1,3 +1,5 @@
+import type { StatusBarItemVisibility } from "../../domain/settings";
+import { agentAttentionExplanation } from "./agentAttentionPresentation";
 import { useMemo } from "react";
 import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
 import { agentCliVersionLabel } from "../../domain/agentCliVersion";
@@ -18,18 +20,27 @@ export type AgentStatusBarAgents = Pick<
   | "agentCliVersion"
 >;
 
-export interface AgentStatusBarHostProps {
+export interface AgentStatusBarWorkbench {
   readonly agents: AgentStatusBarAgents;
+  readonly workspaceSettings: { readonly statusBar: StatusBarItemVisibility };
+  readonly setStatusBarItemVisibility: (
+    key: keyof StatusBarItemVisibility,
+    visible: boolean,
+  ) => void;
   readonly workspaceRoot: string | null;
-  readonly workspaceTrusted: boolean;
 }
 
-export function AgentStatusBarHost({
-  agents,
-  workspaceRoot,
-  workspaceTrusted,
-}: AgentStatusBarHostProps) {
+export interface AgentStatusBarHostProps {
+  readonly workbench: AgentStatusBarWorkbench;
+}
+
+export function AgentStatusBarHost({ workbench }: AgentStatusBarHostProps) {
+  const { agents, workspaceRoot, workspaceSettings, setStatusBarItemVisibility } = workbench;
   const attentionCount = useMemo(() => agentAttentionCount(agents.threads), [agents.threads]);
+  const attentionExplanation = useMemo(
+    () => agentAttentionExplanation(agents.threads),
+    [agents.threads],
+  );
   const lastUsedLaunch = agents.lastUsedLaunch;
   const launchLabel = useMemo(() => {
     const launch = resolveLaunch(lastUsedLaunch, workspaceRoot);
@@ -40,12 +51,14 @@ export function AgentStatusBarHost({
   return (
     <AgentStatusBar
       attentionCount={attentionCount}
+      attentionExplanation={attentionExplanation}
+      statusBar={workspaceSettings.statusBar}
+      onChangeVisibility={setStatusBarItemVisibility}
       cliVersionLabel={cliVersionLabel}
       launchLabel={launchLabel}
       liveTaskCount={agents.liveTaskCount}
       maxConcurrentAgentTasks={agents.maxConcurrentAgentTasks}
       workspaceRoot={workspaceRoot}
-      workspaceTrusted={workspaceTrusted}
     />
   );
 }

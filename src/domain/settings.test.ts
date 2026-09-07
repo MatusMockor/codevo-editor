@@ -119,6 +119,7 @@ describe("settings defaults", () => {
       },
       statusBar: {
         activePath: true,
+        agentAttention: true,
         cursorPosition: true,
         dirtyCount: true,
         gitBranch: true,
@@ -691,6 +692,7 @@ describe("normalizeWorkspaceSettings", () => {
       },
       statusBar: {
         activePath: true,
+        agentAttention: true,
         cursorPosition: true,
         dirtyCount: false,
         gitBranch: true,
@@ -704,6 +706,21 @@ describe("normalizeWorkspaceSettings", () => {
         workspaceTrust: true,
       },
     });
+  });
+
+  it.each([undefined, null, "false", 0, {}, []])(
+    "defaults missing or invalid agent attention visibility to visible: %j",
+    (agentAttention) => {
+      expect(
+        normalizeWorkspaceSettings({ statusBar: { agentAttention } }).statusBar.agentAttention,
+      ).toBe(true);
+    },
+  );
+
+  it.each([true, false])("preserves agent attention visibility: %s", (agentAttention) => {
+    expect(
+      normalizeWorkspaceSettings({ statusBar: { agentAttention } }).statusBar.agentAttention,
+    ).toBe(agentAttention);
   });
 
   it("keeps old workspace settings compatible", () => {

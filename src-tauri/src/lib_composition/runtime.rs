@@ -4,6 +4,8 @@ use crate::smart_mode::SmartModeService;
 // Capability modules below use explicit imports; the runtime remains the one
 // broad crate boundary until command registration is generated from typed groups.
 use crate::*;
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

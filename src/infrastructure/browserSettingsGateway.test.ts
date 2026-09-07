@@ -569,6 +569,7 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        agentAttention: true,
         cursorPosition: true,
         dirtyCount: true,
         gitBranch: true,
@@ -686,6 +687,7 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        agentAttention: true,
         cursorPosition: true,
         dirtyCount: true,
         gitBranch: true,
@@ -798,6 +800,7 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        agentAttention: true,
         cursorPosition: true,
         dirtyCount: true,
         gitBranch: true,
@@ -811,6 +814,21 @@ describe("BrowserSettingsGateway", () => {
         workspaceTrust: true,
       },
     });
+  });
+
+  it("preserves hidden agent attention through saving and reloading a workspace", async () => {
+    const storage = memoryStorage();
+    const settings = defaultWorkspaceSettings();
+    const identity = { canonicalKey: "/project" };
+
+    await new BrowserSettingsGateway(storage).saveWorkspaceSettings(identity, {
+      ...settings,
+      statusBar: { ...settings.statusBar, agentAttention: false },
+    });
+
+    const reloaded = await new BrowserSettingsGateway(storage).loadWorkspaceSettings(identity);
+    expect(reloaded.statusBar.agentAttention).toBe(false);
+    expect(reloaded.statusBar.message).toBe(true);
   });
 
   it("falls back when persisted JSON is invalid", async () => {
@@ -903,6 +921,7 @@ describe("BrowserSettingsGateway", () => {
       },
       statusBar: {
         activePath: true,
+        agentAttention: true,
         cursorPosition: true,
         dirtyCount: true,
         gitBranch: true,

@@ -1,15 +1,21 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
+import { defaultStatusBarItemVisibility } from "../../domain/settings";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import type { AgentThread, AgentThreadAttention, AgentTurn } from "../../domain/agentThread";
+import type {
+  AgentThread,
+  AgentThreadAttention,
+  AgentTurn,
+  AgentTurnStatus,
+} from "../../domain/agentThread";
 import {
   AgentStatusBarHost,
   type AgentStatusBarAgents,
-  type AgentStatusBarHostProps,
+  type AgentStatusBarWorkbench,
 } from "./AgentStatusBarHost";
 
 const ROOT = "/workspace/app";
@@ -43,6 +49,63 @@ describe("AgentStatusBarHost", () => {
     });
 
     expect(host.querySelector(".status-agent-attention")?.textContent).toBe("2 need attention");
+  });
+
+  it("explains exact failed, stopped and interrupted latest run counts, independent of unread", () => {
+    render({
+      agents: agents({
+        threads: [
+          threadView({
+            threadId: "failed",
+            attention: "attention",
+            status: { kind: "failed", message: "private error" },
+          }),
+          threadView({
+            threadId: "exited",
+            attention: "attention",
+            status: { kind: "exited", exitCode: 2 },
+          }),
+          threadView({ threadId: "stopped", attention: "attention", status: { kind: "stopped" } }),
+          threadView({
+            threadId: "interrupted",
+            attention: "attention",
+            status: { kind: "interrupted" },
+          }),
+          threadView({
+            threadId: "archived",
+            attention: "archived",
+            status: { kind: "failed", message: "private error" },
+          }),
+          threadView({ threadId: "settled", attention: "settled" }),
+        ],
+      }),
+    });
+    const indicator = host.querySelector<HTMLElement>(".status-agent-attention");
+    expect(indicator?.textContent).toBe("4 need attention");
+    expect(indicator?.title).toContain("2 failed · 1 stopped · 1 interrupted.");
+    expect(indicator?.title).toContain("Reading a thread does not clear its run status");
+    expect(indicator?.title).not.toContain("private error");
+  });
+
+  it("forwards persisted visibility and the change callback", () => {
+    const changes: Array<[string, boolean]> = [];
+    render({
+      agents: agents({
+        threads: [
+          threadView({ threadId: "stopped", attention: "attention", status: { kind: "stopped" } }),
+        ],
+      }),
+      workspaceSettings: {
+        statusBar: { ...defaultStatusBarItemVisibility(), agentAttention: false },
+      },
+      setStatusBarItemVisibility: (key, value) => changes.push([key, value]),
+    });
+    expect(host.querySelector(".status-agent-attention")).toBeNull();
+    act(() =>
+      host.querySelector("footer")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })),
+    );
+    act(() => document.querySelector<HTMLButtonElement>('[role="menuitemcheckbox"]')?.click());
+    expect(changes).toEqual([["agentAttention", true]]);
   });
 
   it("names the workspace project's remembered launch, not a thread's turn launch", () => {
@@ -120,16 +183,17 @@ describe("AgentStatusBarHost", () => {
     expect(host.textContent).toContain("2/4 agents running");
   });
 
-  function render(overrides: Partial<AgentStatusBarHostProps> = {}): void {
-    act(() => root.render(<AgentStatusBarHost {...defaultProps()} {...overrides} />));
+  function render(overrides: Partial<AgentStatusBarWorkbench> = {}): void {
+    act(() => root.render(<AgentStatusBarHost workbench={{ ...defaultProps(), ...overrides }} />));
   }
 });
 
-function defaultProps(): AgentStatusBarHostProps {
+function defaultProps(): AgentStatusBarWorkbench {
   return {
     agents: agents({}),
     workspaceRoot: ROOT,
-    workspaceTrusted: true,
+    workspaceSettings: { statusBar: defaultStatusBarItemVisibility() },
+    setStatusBarItemVisibility: () => undefined,
   };
 }
 
@@ -150,10 +214,12 @@ interface ThreadViewOptions {
   readonly rootKey?: string;
   readonly attention?: AgentThreadAttention;
   readonly launch?: AgentLaunchOptions | null;
+  readonly status?: AgentTurnStatus;
 }
 
 function threadView({
   attention = "settled",
+  status = { kind: "exited", exitCode: 0 },
   launch = null,
   rootKey = ROOT,
   threadId,
@@ -168,7 +234,7 @@ function threadView({
     archived: false,
     createdAtEpochMs: 1_700_000_000_000,
     updatedAtEpochMs: 1_700_000_000_000,
-    turns: [turn(threadId, launch)],
+    turns: [{ ...turn(threadId, launch), status }],
     turnsTruncated: false,
     viewedAtEpochMs: null,
     externalOrigin: null,

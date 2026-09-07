@@ -1188,11 +1188,7 @@ function App() {
       />
 
       {workbench.agentModeActive ? (
-        <AgentStatusBarHost
-          agents={workbench.agents}
-          workspaceRoot={workbench.workspaceRoot}
-          workspaceTrusted={workspaceTrusted}
-        />
+        <AgentStatusBarHost workbench={workbench} />
       ) : (
         <StatusBar
           activeLanguage={activeLanguage}

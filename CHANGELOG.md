@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Explain failed, stopped, and interrupted thread counts on hover, and let users
+  hide or restore the indicator from the status bar context menu per project.
+
+### Fixed
+
+- Keep macOS builds working alongside the Linux backend compatibility fixes.
+
 ## [0.2.0-beta.18] - 2026-09-07
 
 ### Changed
