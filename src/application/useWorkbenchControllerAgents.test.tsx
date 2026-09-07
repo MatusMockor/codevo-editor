@@ -110,8 +110,7 @@ describe("useAgentProjectGateways", () => {
 
 describe("useWorkbenchControllerAgents layout surface", () => {
   it("advances active trust authority when the agent project grants trust", async () => {
-    const harness = renderAgents();
-    harness.rerender({ workspaceTrust: { rootPath: ROOT_A, trusted: false } });
+    const harness = renderAgents({ initialTrust: false, openedAdmission: true });
     await harness.settle();
 
     await act(async () => {
@@ -310,6 +309,8 @@ function normalizedAgentWorkbench(bottomPanel: boolean): unknown {
 }
 
 interface HarnessOverrides {
+  initialTrust?: boolean;
+  openedAdmission?: boolean;
   readonly bottomPanelVisible?: boolean;
   readonly workspaceRoot?: string | null;
   readonly editorSessionOwnerKey?: string | null;
@@ -430,14 +431,35 @@ function renderAgents(overrides: HarnessOverrides = {}) {
       loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
       saveAppSettings: vi.fn(async () => undefined),
     },
-    workspaceIdentityByRootRef: { current: {} },
+    workspaceIdentityByRootRef: {
+      current: overrides.openedAdmission
+        ? {
+            [ROOT_A]: {
+              workspaceId: "workspace-a",
+              admissionToken: 1,
+              selectedPath: ROOT_A,
+              canonicalRoot: ROOT_A,
+              caseSensitive: true,
+              unicodeNormalizationPolicy: "preserved",
+              policy: { caseSensitive: true, unicodeNormalization: "none" },
+            },
+          }
+        : {},
+    },
     workspaceIdentityDescriptor: { workspaceId: "workspace-a" },
     workspaceRoot: overrides.workspaceRoot === undefined ? ROOT_A : overrides.workspaceRoot,
     workspaceSettingsRef,
-    workspaceTrust: { rootPath: ROOT_A, trusted: true },
+    workspaceTrust: { rootPath: ROOT_A, trusted: overrides.initialTrust ?? true },
     workspaceTrustGateway: {
-      getTrust: vi.fn(async (rootPath: string) => ({ rootPath, trusted: true })),
+      getTrust: vi.fn(async (rootPath: string) => ({
+        rootPath,
+        trusted: overrides.initialTrust ?? true,
+      })),
       setTrust: vi.fn(async (rootPath: string, trusted: boolean) => ({ rootPath, trusted })),
+      grantOpenedProject: vi.fn(async (identity) => ({
+        rootPath: identity.canonicalRoot,
+        trusted: true,
+      })),
     },
     terminalGateway: {
       stop: vi.fn(async (sessionId) => ({ kind: "stopped" as const, sessionId })),

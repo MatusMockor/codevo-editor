@@ -114,8 +114,8 @@ describe("AgentSurfaceTerminal", () => {
     expect(host.querySelector(".agent-note--warning")?.textContent).toContain(
       SURFACE_TERMINAL_UNTRUSTED_MESSAGE,
     );
-    act(() => host.querySelector<HTMLElement>('[aria-label="Trust the workspace"]')?.click());
-    expect(onTrustWorkspace).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[aria-label="Trust the workspace"]')).toBeNull();
+    expect(onTrustWorkspace).not.toHaveBeenCalled();
 
     await act(async () => Promise.resolve());
     expect(host.querySelector(TABLIST)).toBeNull();

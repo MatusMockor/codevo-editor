@@ -17,7 +17,6 @@ export function AgentStatusBar({
   liveTaskCount,
   maxConcurrentAgentTasks,
   workspaceRoot,
-  workspaceTrusted,
 }: AgentStatusBarProps) {
   const live = liveTaskCount > 0;
   const dotClassName = live ? "status-agent-dot status-agent-dot--live" : "status-agent-dot";
@@ -41,7 +40,6 @@ export function AgentStatusBar({
         </span>
       )}
       {workspaceRoot ? <span>{displayBaseName(workspaceRoot)}</span> : null}
-      {workspaceRoot ? <span>{workspaceTrusted ? "Trusted" : "Untrusted"}</span> : null}
     </footer>
   );
 }

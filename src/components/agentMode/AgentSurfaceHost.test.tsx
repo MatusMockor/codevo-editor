@@ -279,15 +279,15 @@ describe("AgentSurfaceHost", () => {
       await act(async () => Promise.resolve());
 
       const note = host.querySelector("[data-agent-surface-tree-unavailable]");
-      expect(note?.textContent).toBe(`${SURFACE_TREE_UNTRUSTED_MESSAGE}Trust`);
+      expect(note?.textContent).toBe(SURFACE_TREE_UNTRUSTED_MESSAGE);
       expect(host.querySelector(".tree-row")).toBeNull();
       expect(readDirectory).not.toHaveBeenCalled();
       expect(
         host.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace files"]')?.disabled,
       ).toBe(true);
 
-      act(() => host.querySelector<HTMLButtonElement>('[aria-label="Trust the project"]')?.click());
-      expect(onTrustScope).toHaveBeenCalledWith("key:other");
+      expect(host.querySelector('[aria-label="Trust the project"]')).toBeNull();
+      expect(onTrustScope).not.toHaveBeenCalled();
     });
 
     it("never mounts a tree for a foreign-root scope and offers the switch affordance", async () => {

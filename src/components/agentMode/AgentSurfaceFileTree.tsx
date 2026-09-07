@@ -97,8 +97,7 @@ function unavailableAction(unavailable: AgentSurfaceTreeUnavailable): Unavailabl
     case "noProject":
       return null;
     case "untrusted":
-      if (unavailable.onTrust === null) return null;
-      return { label: "Trust", ariaLabel: "Trust the project", run: unavailable.onTrust };
+      return null;
     case "foreignRoot":
       if (unavailable.onSwitch === null) return null;
       return {

@@ -432,11 +432,9 @@ describe("AgentModeView", () => {
     chooseScope(OTHER_ROOT);
     expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("api-service");
     expect(submitButton().disabled).toBe(true);
-    expect(
-      host
-        .querySelector('button[aria-label="New thread"]')
-        ?.hasAttribute("disabled"),
-    ).toBe(true);
+    expect(host.querySelector('button[aria-label="New thread"]')?.hasAttribute("disabled")).toBe(
+      true,
+    );
   });
 
   it("clears the prompt and opens the created thread after a start", async () => {
@@ -1243,7 +1241,7 @@ describe("AgentModeView", () => {
     });
   });
 
-  it("keeps an untrusted project out of the composer and routes its trust action", () => {
+  it("keeps an unavailable project out of the composer without a trust action", () => {
     const onTrustProject = vi.fn();
     render({
       onTrustProject,
@@ -1252,11 +1250,12 @@ describe("AgentModeView", () => {
 
     expect(host.textContent).toContain("Choose a project in the rail to start a thread.");
     expect(submitButton().disabled).toBe(true);
-    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Untrusted");
+    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe(
+      "Project unavailable",
+    );
 
-    click('[aria-label="Trust project api-service"]');
-
-    expect(onTrustProject).toHaveBeenCalledWith(OTHER_ROOT);
+    expect(host.querySelector('[aria-label="Trust project api-service"]')).toBeNull();
+    expect(onTrustProject).not.toHaveBeenCalled();
   });
 
   it("runs the project actions from the gear of a rail project row", () => {
@@ -1273,17 +1272,13 @@ describe("AgentModeView", () => {
 
     openProjectMenu("api-service");
     expect(projectMenuLabels()).toEqual([
-      "Trust project",
       "Close project",
       "Terminal sessions…",
       "Reveal in Finder",
       "Copy path",
     ]);
 
-    clickMenuItem("Trust project");
-    expect(onTrustProject).toHaveBeenCalledWith(OTHER_ROOT);
-
-    openProjectMenu("api-service");
+    expect(onTrustProject).not.toHaveBeenCalled();
     clickMenuItem("Close project");
     expect(onCloseProject).toHaveBeenCalledWith(OTHER_ROOT);
 
@@ -1300,7 +1295,9 @@ describe("AgentModeView", () => {
     chooseScope(OTHER_ROOT);
 
     expect(pickerTrigger("agent-rail-scope").textContent).toContain("api-service");
-    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe("Untrusted");
+    expect(host.querySelector(".agent-scope__state-label")?.textContent).toBe(
+      "Project unavailable",
+    );
   });
 
   it("closes a project from the close button on its scope row", () => {
@@ -2355,27 +2352,92 @@ describe("AgentModeView", () => {
     }
   });
 
-  it("adds the highlighted home directory from the rail add-project dialog", async () => {
-    const addProject = vi.fn(async () => undefined);
-    render({
-      chrome: chromeFixture({ addProject: { gateway: addProjectGateway(), addProject } }),
-    });
+  it.each([false, true])(
+    "adds by keyboard without overriding newer manual scope navigation (%s)",
+    async (manualNavigation) => {
+      const addProject = vi.fn(async () => ({
+        rootPath: OTHER_ROOT,
+        ownerId: "agent-root:api-service",
+        isCurrent: () => true,
+      }));
+      const agents = surface({ threads: [threadView({ threadId: "agt-1" })] });
+      render({
+        agents,
+        projects: [activeProject(), backgroundProject()],
+        chrome: chromeFixture({ addProject: { gateway: addProjectGateway(), addProject } }),
+      });
 
-    click('button[aria-label="Add project"]');
-    await waitForReact(() => {
-      expect(host.querySelector(".agent-add-project")).not.toBeNull();
-    });
+      click('[data-thread-id="agt-1"]');
+      expect(selectedSessionId()).toBe("agt-1");
+      click('button[aria-label="Add project"]');
+      await waitForReact(() => {
+        expect(host.querySelector(".agent-add-project")).not.toBeNull();
+      });
 
-    const input = host.querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]');
-    expect(input).not.toBeNull();
-    act(() => {
-      input?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+      const input = host.querySelector<HTMLInputElement>(
+        '.agent-add-project input[role="combobox"]',
       );
-    });
+      expect(input).not.toBeNull();
+      act(() => {
+        input?.dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+        );
+      });
 
-    expect(addProject).toHaveBeenCalledWith(ADD_PROJECT_HOME);
-    expect(host.querySelector(".agent-add-project")).toBeNull();
+      if (manualNavigation) {
+        chooseScope(OTHER_ROOT);
+        chooseScope(ROOT);
+      }
+      expect(addProject).toHaveBeenCalledWith(ADD_PROJECT_HOME);
+      expect(host.querySelector(".agent-add-project")).toBeNull();
+      await act(async () => {});
+      render({
+        agents,
+        chrome: chromeFixture({ addProject: { gateway: addProjectGateway(), addProject } }),
+        projects: [
+          { ...activeProject(), origin: "background-tab" },
+          { ...backgroundProject(), origin: "active-tab" },
+        ],
+        workspaceRoot: OTHER_ROOT,
+      });
+      expect(pickerTrigger("agent-rail-scope").textContent).toContain(
+        manualNavigation ? "app" : "api-service",
+      );
+      expect(selectedSessionId()).toBe(manualNavigation ? "agt-1" : null);
+    },
+  );
+
+  it("keeps a newer explicit checkout selection when adding a project settles later", async () => {
+    const addProject = vi.fn(async () => ({
+      rootPath: OTHER_ROOT,
+      ownerId: "agent-root:api-service",
+      isCurrent: () => true,
+    }));
+    const chrome = chromeFixture({ addProject: { gateway: addProjectGateway(), addProject } });
+    render({ chrome });
+    click('button[aria-label="Add project"]');
+    await act(async () => {});
+    act(() => {
+      host
+        .querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]')
+        ?.dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+        );
+    });
+    pickOption("agent-checkout", `root:${NESTED}`);
+    await act(async () => {});
+    render({
+      chrome,
+      projects: [
+        { ...defaultActiveProject(), origin: "background-tab" },
+        { ...backgroundProject(), origin: "active-tab" },
+      ],
+      workspaceRoot: OTHER_ROOT,
+    });
+    expect(pickerTrigger("agent-rail-scope").textContent).toContain("app");
+    expect(host.querySelector("[data-agent-composer-target]")?.textContent).toContain(
+      "packages/api",
+    );
   });
 
   it("keeps the rail add-project button disabled without add-project chrome", () => {

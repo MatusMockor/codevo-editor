@@ -113,6 +113,7 @@ export function AgentModeView({
 }: AgentModeViewProps) {
   const [localNotice, setLocalNotice] = useState<AgentTasksNotice | null>(null);
   const [commitMenuOpenSignal, setCommitMenuOpenSignal] = useState(0);
+  const [projectSelectionIntent, setProjectSelectionIntent] = useState(0);
 
   const presentationThreads = useAgentThreadPresentationViews(agents.threads);
   const groups = useMemo(
@@ -158,9 +159,11 @@ export function AgentModeView({
   const changeIsolation = useAgentLatestCallback(composer.composerProps.onIsolationChange);
   const changeLaunch = useAgentLatestCallback(composer.composerProps.onLaunchChange);
   const clearComposer = useAgentLatestCallback(composer.composerProps.onNewThread);
-  const selectComposerRepository = useAgentLatestCallback(
-    composer.composerProps.onSelectRepository,
-  );
+  const selectComposerRepository = useAgentLatestCallback((repositoryRoot: string) => {
+    chrome.addProject?.cancelSelection?.();
+    setProjectSelectionIntent((current) => current + 1);
+    composer.composerProps.onSelectRepository(repositoryRoot);
+  });
   const composerProps = {
     ...composer.composerProps,
     onIsolationChange: changeIsolation,
@@ -280,11 +283,15 @@ export function AgentModeView({
   const projectMenuCommand = useAgentLatestCallback(menu.handleProjectCommand);
   const newThread = useAgentLatestCallback(startNewThread);
   const changeProjectScope = useAgentLatestCallback((scope: AgentRailScope) => {
+    chrome.addProject?.cancelSelection?.();
+    setProjectSelectionIntent((current) => current + 1);
     if (!navigation.setProjectScope(scope.projectRootKey)) return;
     if (sessionThread !== null) return;
     composer.clearSelection();
   });
   const newProjectThread = useAgentLatestCallback(() => {
+    chrome.addProject?.cancelSelection?.();
+    setProjectSelectionIntent((current) => current + 1);
     if (navigation.newThreadTarget() === null) return;
     composer.clearSelection();
   });
@@ -328,7 +335,18 @@ export function AgentModeView({
     agents.providerManagement.dismissToast();
   }, [agents, localNotice]);
 
+  const addProjectSelectionIdentity = useMemo(
+    () => ({ selectedThreadId, projectSelectionIntent }),
+    [selectedThreadId, projectSelectionIntent],
+  );
+  const selectAddedProject = useAgentLatestCallback((project: AgentProjectDescriptor) => {
+    if (!navigation.setProjectScope(project.rootKey)) return;
+    navigation.clearSelectedThread();
+    composer.clearSelection();
+  });
   const addProject = useAgentAddProject({
+    selectionIdentity: addProjectSelectionIdentity,
+    onProjectAdded: selectAddedProject,
     chrome: chrome.addProject,
     projects,
     reportNotice: setLocalNotice,

@@ -449,11 +449,70 @@ describe("AgentWorkbenchScreen", () => {
       );
     });
 
-    expect(workbench.openWorkspaceRoot).toHaveBeenCalledWith("/Users/dev");
+    expect(workbench.openWorkspaceRootWithReceipt).toHaveBeenCalledWith("/Users/dev");
   });
 
+  it.each([false, true])(
+    "selects an added project after keyed remount and delayed descriptor (empty rail: %s)",
+    async (emptyRail) => {
+      const next = createWorkbench(ROOT_B);
+      const result = await next.openWorkspaceRootWithReceipt(ROOT_B);
+      let complete: (
+        result: Awaited<ReturnType<AgentWorkbenchScreenWorkbench["openWorkspaceRootWithReceipt"]>>,
+      ) => void = () => undefined;
+      const pending = new Promise<
+        Awaited<ReturnType<AgentWorkbenchScreenWorkbench["openWorkspaceRootWithReceipt"]>>
+      >((resolve) => {
+        complete = resolve;
+      });
+      const opening = vi.fn(() => pending);
+      const first = createWorkbench(ROOT_A, { openWorkspaceRootWithReceipt: opening });
+      render(first);
+      click('[data-thread-id="agt-1"]');
+      click('button[aria-label="Add project"]');
+      await act(async () => {});
+      await act(async () => {
+        host
+          .querySelector<HTMLInputElement>('.agent-add-project input[role="combobox"]')
+          ?.dispatchEvent(
+            new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+          );
+      });
+      const nextAgents = {
+        ...next.agents,
+        agentProjects: {
+          ...next.agents.agentProjects,
+          projects: emptyRail ? [] : [{ ...project(ROOT_A), origin: "background-tab" as const }],
+        },
+      };
+      render({ ...next, agents: nextAgents, openWorkspaceRootWithReceipt: opening });
+      await act(async () => complete(result));
+      expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).toBeNull();
+      render({
+        ...next,
+        openWorkspaceRootWithReceipt: opening,
+        agents: {
+          ...nextAgents,
+          agentProjects: {
+            ...nextAgents.agentProjects,
+            projects: [
+              { ...project(ROOT_A), origin: "background-tab" },
+              { ...project(ROOT_B), ownerId: "workspace-app", label: "api" },
+            ],
+          },
+        },
+      });
+      expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("api");
+    },
+  );
+
   it("reports the refusal when the workspace open flow declines the directory", async () => {
-    const workbench = createWorkbench(ROOT_A, { openWorkspaceRoot: vi.fn(async () => false) });
+    const workbench = createWorkbench(ROOT_A, {
+      openWorkspaceRootWithReceipt: vi.fn(async () => ({
+        outcome: { kind: "failed" as const, requestToken: 1 },
+        isCurrent: () => false,
+      })),
+    });
     render(workbench);
 
     click('button[aria-label="Add project"]');
@@ -468,7 +527,7 @@ describe("AgentWorkbenchScreen", () => {
     });
     await act(async () => {});
 
-    expect(workbench.openWorkspaceRoot).toHaveBeenCalledWith("/Users/dev");
+    expect(workbench.openWorkspaceRootWithReceipt).toHaveBeenCalledWith("/Users/dev");
     expect(host.textContent).toContain(ADD_PROJECT_REFUSED_REASON);
   });
 
@@ -538,7 +597,7 @@ function baseProps(workbench: AgentWorkbenchScreenWorkbench): AgentWorkbenchScre
 }
 
 type MockedWorkbench = AgentWorkbenchScreenWorkbench & {
-  readonly openWorkspaceRoot: ReturnType<typeof vi.fn>;
+  readonly openWorkspaceRootWithReceipt: ReturnType<typeof vi.fn>;
   readonly agentWorkbench: RecordedAgentWorkbenchLayout;
   readonly hideBottomPanel: ReturnType<typeof vi.fn>;
   readonly runCommand: ReturnType<typeof vi.fn>;
@@ -588,7 +647,28 @@ function createWorkbench(
     nodePackageScripts,
     openPinnedFile: vi.fn(),
     openProblemNotice: vi.fn(async () => true),
-    openWorkspaceRoot: vi.fn(async () => true),
+    openWorkspaceRootWithReceipt: vi.fn(async () => ({
+      isCurrent: () => true,
+      outcome: {
+        kind: "opened" as const,
+        receipt: {
+          kind: "registeredWorkspaceOpenReceipt" as const,
+          canonicalRoot: workspaceRoot,
+          workspaceId: "workspace-app",
+          selectedPath: workspaceRoot,
+          requestToken: 1,
+          admissionGeneration: 1,
+          admissionToken: 1,
+          descriptor: {
+            canonicalRoot: workspaceRoot,
+            caseSensitive: true,
+            selectedPath: workspaceRoot,
+            unicodeNormalizationPolicy: "preserved" as const,
+            workspaceId: "workspace-app",
+          },
+        },
+      },
+    })),
     previewFile: vi.fn(),
     runCommand: vi.fn(() => "executed" as const),
     setSidebarView: vi.fn(),

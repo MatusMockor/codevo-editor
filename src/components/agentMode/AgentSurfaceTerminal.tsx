@@ -12,7 +12,8 @@ import {
 } from "./agentSurfacePolicy";
 
 export const SURFACE_TERMINAL_GONE_MESSAGE = "This thread's checkout is gone.";
-export const SURFACE_TERMINAL_UNTRUSTED_MESSAGE = "Trust the workspace to start a terminal.";
+export const SURFACE_TERMINAL_UNTRUSTED_MESSAGE =
+  "Project unavailable. Reopen it or check its workspace settings.";
 export const SURFACE_TERMINAL_FOREIGN_ROOT_MESSAGE = SURFACE_FOREIGN_ROOT_TERMINAL_REASON;
 
 const LazyTerminalTabsPanel = lazy(() =>
@@ -39,7 +40,6 @@ export function AgentSurfaceTerminal({
   isActive,
   layoutRevision,
   onOpenLink,
-  onTrustWorkspace,
   profileId,
   profileLabel,
   shellIntegrationEnabled,
@@ -83,19 +83,7 @@ export function AgentSurfaceTerminal({
   if (!workspaceTrusted) {
     return (
       <section aria-label="Thread terminal" className="agent-surface-terminal">
-        <p className="agent-note agent-note--warning">
-          {SURFACE_TERMINAL_UNTRUSTED_MESSAGE}
-          {onTrustWorkspace !== undefined && (
-            <button
-              aria-label="Trust the workspace"
-              className="agent-linkbutton"
-              onClick={onTrustWorkspace}
-              type="button"
-            >
-              Trust
-            </button>
-          )}
-        </p>
+        <p className="agent-note agent-note--warning">{SURFACE_TERMINAL_UNTRUSTED_MESSAGE}</p>
       </section>
     );
   }

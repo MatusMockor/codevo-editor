@@ -1,3 +1,6 @@
+#[path = "workspace_opened_project_trust.rs"]
+mod opened_project;
+
 use crate::debug_adapter::DebugSessionRegistry;
 use crate::debug_cdp::NodeAttachCandidatePublicationRegistry;
 use crate::eslint::EslintProcessRegistry;
@@ -119,4 +122,24 @@ fn revoke_workspace_non_debug_trust(
 ) {
     eslint_processes.stop_root(root);
     let _ = terminal_sessions.stop_root(root);
+}
+
+#[tauri::command]
+pub(crate) async fn grant_opened_project_trust(
+    target: opened_project::OpenedProjectTrustTarget,
+    app: AppHandle,
+) -> Result<WorkspaceTrustState, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let registry = app.state::<WorkspaceRegistry>();
+        let service = app.state::<Mutex<WorkspaceTrustService>>();
+        opened_project::grant(&registry, &service, target, |state| {
+            app.state::<Arc<EslintProcessRegistry>>()
+                .activate_root(Path::new(&state.root_path));
+            app.state::<Arc<DebugSessionRegistry>>()
+                .activate_root(&state.root_path);
+        })
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }

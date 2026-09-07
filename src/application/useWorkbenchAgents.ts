@@ -91,6 +91,7 @@ export interface WorkbenchAgentsOptions {
   readonly editorBridge?: AgentEditorBridgePort | null;
   readonly agentProjectGateways?: WorkbenchAgentProjectGateways;
   readonly agentModeActive: boolean;
+  readonly trustRevisionForOwner?: (ownerId: string) => number;
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly applyAppSettings: (settings: AppSettings) => void;
   readonly settingsHydrated: boolean;
@@ -277,6 +278,8 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
 
   const agentProjects = useAgentProjects({
     enabled: projectGateways !== undefined,
+    autoAdmitOpenedProjects: options.agentModeActive,
+    trustRevisionForOwner: options.trustRevisionForOwner,
     appSettingsRef: options.appSettingsRef,
     activeWorkspaceId: workspaceId,
     activeWorkspaceRoot: workspaceRoot,

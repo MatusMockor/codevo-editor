@@ -20,7 +20,8 @@ import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust
 import { normalizedWorkspaceRootKey, workspaceDisplayName } from "../domain/workspaceRootKey";
 import { workspaceSettingsIdentity } from "./workbenchController/workspaceIdentityPolicy";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
-import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
+import type { WorkbenchPrompter } from "./workbenchPrompter";
+import { AgentOpenedProjectAdmission } from "./agentOpenedProjectAdmission";
 import type { AgentProjectAuthority, AgentProjectLaunchIdentity } from "./agentProjectAuthority";
 
 export const MAX_CONCURRENT_AGENT_PROJECT_LOADS = 2;
@@ -32,6 +33,8 @@ export interface AgentRepositoryDiscoveryGateway {
 
 export interface AgentProjectsDependencies {
   readonly enabled: boolean;
+  readonly autoAdmitOpenedProjects?: boolean;
+  readonly trustRevisionForOwner?: (ownerId: string) => number;
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly activeWorkspaceId: string | null;
   readonly activeWorkspaceRoot: string | null;
@@ -159,6 +162,8 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
     new Map<string, { readonly workspaceId: string; readonly workspaceGeneration: number }>(),
   );
   const closedWorkspaceIdsByRootRef = useRef(new Map<string, string>());
+  const autoAdmissionEnabledRef = useRef(false);
+  const openedAdmissionRef = useRef(new AgentOpenedProjectAdmission());
   const activeLoadsRef = useRef(0);
   const loadQueueRef = useRef<Array<() => void>>([]);
   const mountedRef = useRef(true);
@@ -378,6 +383,9 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
         if (initial === null || initial.releasing) return;
         const rootPath = initial.rootPath;
         const deps = dependenciesRef.current;
+        const descriptor = deps.descriptorForRoot(rootPath);
+        const workspaceGeneration = initial.workspaceGeneration;
+        const trustRevision = deps.trustRevisionForOwner?.(initial.workspaceId ?? ownerId) ?? 0;
 
         const trustResult = await attempt(() => deps.trustGateway.getTrust(rootPath));
         if (entryForOwner(rootKey, generation, ownerId) === null) return;
@@ -388,9 +396,64 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
           ? trustResult.value.trusted
             ? "trusted"
             : "untrusted"
-          : "unknown";
-        const trust =
-          activeWorkspaceTrustForRoot(dependenciesRef.current, rootPath) ?? gatewayTrust;
+          : "untrusted";
+        let trust = activeWorkspaceTrustForRoot(dependenciesRef.current, rootPath) ?? gatewayTrust;
+        const isAdmissionCurrent = (): boolean => {
+          const current = entryForOwner(rootKey, generation, ownerId);
+          const identity = dependenciesRef.current.descriptorForRoot(rootPath);
+          return (
+            current !== null &&
+            current.admitted &&
+            current.workspaceGeneration === workspaceGeneration &&
+            current.workspaceId === descriptor?.workspaceId &&
+            !current.releasing &&
+            !closeAuthoritiesRef.current.has(rootKey) &&
+            dependenciesRef.current.enabled &&
+            dependenciesRef.current.autoAdmitOpenedProjects === true &&
+            (dependenciesRef.current.trustRevisionForOwner?.(initial.workspaceId ?? ownerId) ??
+              0) === trustRevision &&
+            descriptor !== null &&
+            identity?.workspaceId === descriptor.workspaceId &&
+            identity.admissionToken === descriptor.admissionToken &&
+            identity.canonicalRoot === descriptor.canonicalRoot
+          );
+        };
+        if (descriptor !== null && trustResult.ok && deps.autoAdmitOpenedProjects === true) {
+          const admitted = await attempt(() =>
+            openedAdmissionRef.current.authorize(
+              descriptor,
+              { rootPath, trusted: trust === "trusted" },
+              deps.trustGateway,
+              isAdmissionCurrent,
+            ),
+          );
+          if (!isAdmissionCurrent()) {
+            const current = entryForOwner(rootKey, generation, ownerId);
+            const identity = dependenciesRef.current.descriptorForRoot(rootPath);
+            if (
+              current?.workspaceGeneration === workspaceGeneration &&
+              current.trust === "unknown" &&
+              identity?.workspaceId === descriptor.workspaceId &&
+              identity.admissionToken === descriptor.admissionToken
+            ) {
+              applyEntryTrust(rootKey, generation, "untrusted");
+            }
+            return;
+          }
+          if (!admitted.ok)
+            dependenciesRef.current.reportError(AGENT_PROJECTS_SOURCE, admitted.error);
+          if (admitted.ok && admitted.value !== null) {
+            trust = "trusted";
+            if (dependenciesRef.current.activeWorkspaceId === descriptor.workspaceId) {
+              dependenciesRef.current.onActiveWorkspaceTrustChanged(
+                rootPath,
+                descriptor.workspaceId,
+                true,
+              );
+              return;
+            }
+          }
+        }
         if (!applyEntryTrust(rootKey, generation, trust)) return;
 
         if (trust === "trusted") {
@@ -466,6 +529,9 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
 
   useEffect(() => {
     const deps = dependenciesRef.current;
+    const autoAdmissionEnabled = deps.autoAdmitOpenedProjects === true;
+    const admissionEnabledNow = autoAdmissionEnabled && !autoAdmissionEnabledRef.current;
+    autoAdmissionEnabledRef.current = autoAdmissionEnabled;
     const admission = computeAdmission(deps);
     const activeKey =
       deps.activeWorkspaceRoot === null
@@ -495,6 +561,10 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       const existing = current.get(candidate.rootKey);
       if (existing !== undefined) {
         let entry = existing;
+        if (admissionEnabledNow && !entry.releasing) {
+          scheduled.push({ rootKey: candidate.rootKey, generation: entry.generation });
+          changed = true;
+        }
         if (!entry.releasing) {
           if (!entry.admitted) {
             entry = { ...entry, admitted: true };
@@ -545,6 +615,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
               workspaceGeneration: entry.workspaceGeneration + 1,
               retiredWorkspaceIds,
             };
+            scheduled.push({ rootKey: candidate.rootKey, generation: entry.generation });
             changed = true;
           }
           const replaceOwnerId =
@@ -561,6 +632,10 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
           }
           const activeTrust = activeWorkspaceTrustForRoot(deps, candidate.rootPath);
           if (activeTrust !== null && entry.trust !== activeTrust) {
+            if (activeTrust === "untrusted" && entry.trust === "trusted") {
+              const identity = deps.descriptorForRoot(entry.rootPath);
+              if (identity !== null) openedAdmissionRef.current.revoke(identity);
+            }
             if (activeTrust === "untrusted" && entry.leaseToken !== null) {
               releaseLease({ rootPath: entry.rootPath, leaseToken: entry.leaseToken });
               entry = { ...entry, trust: activeTrust, leaseToken: null };
@@ -660,6 +735,11 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
       }
       for (const ownerId of entryOwnerIds(entry)) deps.releaseProjectTasks(ownerId);
     }
+    openedAdmissionRef.current.retain(
+      [...next.values()]
+        .filter((entry) => entry.admitted)
+        .map((entry) => deps.descriptorForRoot(entry.rootPath)?.canonicalRoot ?? entry.rootPath),
+    );
     entriesRef.current = next;
     overflowRef.current = admission.overflow;
     for (const load of scheduled) scheduleProjectLoad(load.rootKey, load.generation);
@@ -676,67 +756,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
     [runProjectLoad],
   );
 
-  const trustProject = useCallback(
-    async (rootKey: string): Promise<void> => {
-      const entry = entriesRef.current.get(rootKey);
-      if (entry === undefined || entry.releasing) return;
-      if (!dependenciesRef.current.enabled) return;
-      if (entry.trust === "trusted") return;
-      const generation = entry.generation;
-      const ownerId = entry.ownerId;
-      const workspaceId = entry.workspaceId;
-      const workspaceGeneration = entry.workspaceGeneration;
-      const confirmed = await confirmWorkbenchAction(
-        dependenciesRef.current.prompter,
-        `Trust this project to run agents?\n\n${entry.rootPath}`,
-      );
-      if (!confirmed) return;
-      const current = entryForOwner(rootKey, generation, ownerId);
-      if (
-        current === null ||
-        current.workspaceId !== workspaceId ||
-        current.workspaceGeneration !== workspaceGeneration ||
-        current.releasing ||
-        current.trust === "trusted"
-      )
-        return;
-      const granted = await attempt(() =>
-        dependenciesRef.current.trustGateway.setTrust(entry.rootPath, true),
-      );
-      if (!granted.ok) {
-        const afterFailure = entryForOwner(rootKey, generation, ownerId);
-        if (
-          afterFailure === null ||
-          afterFailure.workspaceId !== workspaceId ||
-          afterFailure.workspaceGeneration !== workspaceGeneration
-        )
-          return;
-        dependenciesRef.current.reportError(AGENT_PROJECTS_SOURCE, granted.error);
-        return;
-      }
-      const afterGrant = entryForOwner(rootKey, generation, ownerId);
-      if (
-        afterGrant === null ||
-        afterGrant.workspaceId !== workspaceId ||
-        afterGrant.workspaceGeneration !== workspaceGeneration
-      )
-        return;
-      const activeRoot = dependenciesRef.current.activeWorkspaceRoot;
-      const activeOwnerId = dependenciesRef.current.activeWorkspaceId;
-      if (
-        activeRoot !== null &&
-        workspaceId !== null &&
-        activeOwnerId === workspaceId &&
-        normalizedWorkspaceRootKey(activeRoot) === entry.rootKey
-      ) {
-        dependenciesRef.current.onActiveWorkspaceTrustChanged(entry.rootPath, activeOwnerId, true);
-        return;
-      }
-      if (!patchEntry(rootKey, generation, { trust: "trusted" })) return;
-      await runProjectLoad(rootKey, generation);
-    },
-    [entryForOwner, patchEntry, runProjectLoad],
-  );
+  const trustProject = refreshProject;
 
   const releaseProject = useCallback(
     async (rootKey: string): Promise<void> => {
@@ -1019,6 +1039,8 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
     (rootKey: string): void => {
       const entry = entriesRef.current.get(rootKey);
       if (entry === undefined) return;
+      const identity = dependenciesRef.current.descriptorForRoot(entry.rootPath);
+      if (identity !== null) openedAdmissionRef.current.revoke(identity);
       if (entry.trust === "untrusted") return;
       const activeRoot = dependenciesRef.current.activeWorkspaceRoot;
       const activeOwnerId = dependenciesRef.current.activeWorkspaceId;

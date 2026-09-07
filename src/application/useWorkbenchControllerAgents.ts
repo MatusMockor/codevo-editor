@@ -227,6 +227,11 @@ export function useWorkbenchControllerAgents(
     setBottomPanelVisible(true);
   }, [setBottomPanelView, setBottomPanelVisible, setSettingsOpen]);
 
+  const trustRevisionForOwner = useCallback(
+    (ownerId: string): number => workspaceTrustRevisionByOwnerRef.current[ownerId] ?? 0,
+    [workspaceTrustRevisionByOwnerRef],
+  );
+
   const handleActiveWorkspaceTrustChanged = useCallback(
     (rootPath: string, ownerId: string, trusted: boolean): void => {
       if (activeWorkspaceRoot === null) return;
@@ -279,6 +284,7 @@ export function useWorkbenchControllerAgents(
     gitRepositoryStatuses: options.gitRepositoryStatuses,
     openDocuments: options.openDocuments,
     onActiveWorkspaceTrustChanged: handleActiveWorkspaceTrustChanged,
+    trustRevisionForOwner,
     prompter: options.prompter,
     reportError: options.reportError,
     revealTerminal,

@@ -4,7 +4,6 @@ import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { AGENT_SURFACE_KINDS, type AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import {
   SURFACE_FILES_THREAD_DESCRIPTION,
-  SURFACE_UNTRUSTED_TERMINAL_REASON,
   agentSurfaceBlockedReason,
   agentSurfaceFilesDescription,
   type AgentSurfaceScope,
@@ -47,7 +46,6 @@ const CARDS: ReadonlyArray<SurfaceCard> = [
 export function AgentSurfaceEmptyState({
   autoFocus = false,
   onChooseSurface,
-  onTrustWorkspace,
   scope,
   thread,
   workspaceRoot,
@@ -93,8 +91,6 @@ export function AgentSurfaceEmptyState({
             const Icon = card.icon;
             const description =
               kind === "files" ? agentSurfaceFilesDescription(thread, scope) : card.description;
-            const showTrust =
-              reason === SURFACE_UNTRUSTED_TERMINAL_REASON && onTrustWorkspace !== undefined;
             return (
               <div className="agent-surface-card__slot" key={kind}>
                 <button
@@ -120,16 +116,6 @@ export function AgentSurfaceEmptyState({
                 {reason !== null && (
                   <p className="agent-surface-card__reason" id={`agent-surface-card-${kind}`}>
                     {reason}
-                    {showTrust && (
-                      <button
-                        aria-label="Trust the workspace"
-                        className="agent-linkbutton"
-                        onClick={onTrustWorkspace}
-                        type="button"
-                      >
-                        Trust
-                      </button>
-                    )}
                   </p>
                 )}
               </div>

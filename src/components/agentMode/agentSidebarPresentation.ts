@@ -343,7 +343,7 @@ function isStoppedTurnStatus(status: AgentTurnStatus): boolean {
 
 export interface AgentRailScopeState {
   readonly label: string;
-  readonly action: "trust" | "release" | null;
+  readonly action: "release" | null;
 }
 
 export type AgentRailEmptyState =
@@ -409,7 +409,8 @@ export function agentRailDetachedThreadCount(groups: ReadonlyArray<AgentProjectG
 
 export function agentRailScopeState(entry: AgentRailScopeEntry | null): AgentRailScopeState | null {
   if (entry === null) return null;
-  if (entry.trust !== "trusted") return { label: "Untrusted", action: "trust" };
+  if (entry.trust === "unknown") return { label: "Opening project…", action: null };
+  if (entry.trust === "untrusted") return { label: "Project unavailable", action: null };
   if (entry.origin === "background-tab") return { label: "Background", action: null };
   if (entry.origin === "closed-tab-live-tasks") return { label: "Tab closed", action: "release" };
   return null;
@@ -435,9 +436,6 @@ export function agentProjectMenuEntries(
   entry: AgentRailScopeEntry,
 ): ReadonlyArray<AgentProjectMenuEntry> {
   const entries: AgentProjectMenuEntry[] = [];
-  if (entry.trust !== "trusted") {
-    entries.push(projectMenuEntry("trust", "Trust project", "trust", false));
-  }
   if (entry.origin === "closed-tab-live-tasks" && entry.rootPath !== null) {
     entries.push(projectMenuEntry("release", "Release project", "release", false));
   }

@@ -614,7 +614,7 @@ describe("useWorkbenchAgents composition", () => {
     harness.unmount();
   });
 
-  it("keeps trust rejections out of Problems across grant and retry", async () => {
+  it("keeps trust rejections out of Problems after externally restored trust and retry", async () => {
     const harness = renderWorkbenchAgents({
       withProjectGateways: true,
       workspaceTabs: [ACTIVE_ROOT, BACKGROUND_ROOT],
@@ -674,7 +674,7 @@ describe("useWorkbenchAgents composition", () => {
       ).not.toBeNull();
     });
 
-    expect(harness.trust.setTrust).toHaveBeenCalledWith(BACKGROUND_ROOT, true);
+    expect(harness.trust.setTrust).not.toHaveBeenCalled();
     expect(harness.worktree.addAgentWorktree).toHaveBeenCalledTimes(2);
     expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
     expect(harness.reportError).not.toHaveBeenCalled();

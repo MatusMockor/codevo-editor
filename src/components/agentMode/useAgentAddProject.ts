@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentTasksNotice } from "../../application/agentThreadPorts";
 import type { AgentWorkbenchAddProjectChrome } from "./agentWorkbenchChrome";
@@ -7,6 +7,8 @@ export interface AgentAddProjectOptions {
   readonly chrome: AgentWorkbenchAddProjectChrome | null;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly workspaceRoot: string | null;
+  readonly selectionIdentity: object;
+  onProjectAdded(project: AgentProjectDescriptor): void;
   reportNotice(notice: AgentTasksNotice): void;
 }
 
@@ -26,8 +28,49 @@ export function useAgentAddProject({
   projects,
   reportNotice,
   workspaceRoot,
+  selectionIdentity,
+  onProjectAdded,
 }: AgentAddProjectOptions): AgentAddProjectState {
   const [open, setOpen] = useState(false);
+  const [receipt, setReceipt] = useState<{
+    readonly rootPath: string;
+    readonly ownerId: string;
+    readonly generation: number;
+    isCurrent(): boolean;
+  } | null>(null);
+  const authority = useRef({ generation: 0, identity: selectionIdentity, mounted: true });
+  if (authority.current.identity !== selectionIdentity) {
+    chrome?.cancelSelection?.();
+    authority.current = {
+      ...authority.current,
+      identity: selectionIdentity,
+      generation: authority.current.generation + 1,
+    };
+  }
+  useLayoutEffect(() => {
+    authority.current.mounted = true;
+    return () => {
+      authority.current.mounted = false;
+      authority.current.generation += 1;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const selection = chrome?.receipt ?? receipt;
+    if (selection === null || !selection.isCurrent()) return;
+    if (!authority.current.mounted) return;
+    if (chrome?.receipt == null && receipt?.generation !== authority.current.generation) return;
+    const project = projects.find(
+      (candidate) =>
+        candidate.rootPath === selection.rootPath &&
+        candidate.ownerId === selection.ownerId &&
+        candidate.origin === "active-tab",
+    );
+    if (project === undefined) return;
+    setReceipt(null);
+    chrome?.consumeSelection?.(selection);
+    authority.current.generation += 1;
+    onProjectAdded(project);
+  }, [chrome, onProjectAdded, projects, receipt]);
 
   const projectRootPaths = useMemo(
     () => [
@@ -52,15 +95,33 @@ export function useAgentAddProject({
     (path: string) => {
       if (chrome === null) return;
       setOpen(false);
-      void chrome.addProject(path).catch((error: unknown) => {
-        reportAddProjectNotice(error instanceof Error ? error.message : String(error));
-      });
+      const generation = ++authority.current.generation;
+      setReceipt(null);
+      void chrome
+        .addProject(path)
+        .then((opened) => {
+          if (!authority.current.mounted || authority.current.generation !== generation) return;
+          if (!opened.isCurrent()) return;
+          setReceipt({ ...opened, generation });
+        })
+        .catch((error: unknown) => {
+          if (!authority.current.mounted || authority.current.generation !== generation) return;
+          reportAddProjectNotice(error instanceof Error ? error.message : String(error));
+        });
     },
     [chrome, reportAddProjectNotice],
   );
 
-  const openDialog = useCallback(() => setOpen(true), []);
-  const closeDialog = useCallback(() => setOpen(false), []);
+  const openDialog = useCallback(() => {
+    authority.current.generation += 1;
+    chrome?.cancelSelection?.();
+    setOpen(true);
+  }, [chrome]);
+  const closeDialog = useCallback(() => {
+    authority.current.generation += 1;
+    chrome?.cancelSelection?.();
+    setOpen(false);
+  }, [chrome]);
 
   return {
     open,

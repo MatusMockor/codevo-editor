@@ -45,7 +45,6 @@ export function AgentRailHeader({
   onProjectCommand,
   onReleaseProject,
   onSearchKeyDown,
-  onTrustProject,
   overflowRootPaths,
   scope,
   scopeEntries,
@@ -153,16 +152,6 @@ export function AgentRailHeader({
       {scopeState !== null && scopeEntry !== null && (
         <div className="agent-rail__row agent-scope__state">
           <span className="agent-scope__state-label">{scopeState.label}</span>
-          {scopeState.action === "trust" && (
-            <button
-              aria-label={`Trust project ${scopeEntry.label}`}
-              className="agent-linkbutton"
-              onClick={() => onTrustProject(scopeEntry.projectRootKey)}
-              type="button"
-            >
-              Trust
-            </button>
-          )}
           {scopeState.action === "release" && (
             <button
               aria-label={`Release project ${scopeEntry.label}`}

@@ -535,6 +535,30 @@ export function useWorkspaceOpenRequestLifecycle({
     },
     [requestUserOpenWorkspacePath],
   );
+  const openWorkspaceRootWithReceipt = useCallback(
+    async (path: string) => {
+      const outcome = await requestUserOpenWorkspacePath(path);
+      return {
+        outcome,
+        isCurrent: () => {
+          if (!workbenchMountedRef.current || outcome.kind !== "opened") return false;
+          const receipt = outcome.receipt;
+          if (openWorkspaceRequestTokenRef.current !== receipt.requestToken) return false;
+          if (receipt.kind !== "registeredWorkspaceOpenReceipt") return false;
+          return (
+            ownedWorkspaceIdentityGenerationByIdRef.current[receipt.workspaceId] ===
+            receipt.admissionGeneration
+          );
+        },
+      };
+    },
+    [
+      requestUserOpenWorkspacePath,
+      workbenchMountedRef,
+      openWorkspaceRequestTokenRef,
+      ownedWorkspaceIdentityGenerationByIdRef,
+    ],
+  );
   const activateWorkspaceTab = useCallback(
     async (path: string) => {
       retireStartupRestoreIntent();
@@ -573,5 +597,6 @@ export function useWorkspaceOpenRequestLifecycle({
     openWorkspace,
     openWorkspacePath,
     openWorkspaceRoot,
+    openWorkspaceRootWithReceipt,
   } as const;
 }

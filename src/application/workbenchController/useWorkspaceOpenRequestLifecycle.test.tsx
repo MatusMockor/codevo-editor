@@ -134,6 +134,21 @@ describe("useWorkspaceOpenRequestLifecycle open intents", () => {
     expect(harness.currentWorkspaceRoot()).toBe(admitted.selectedPath);
   });
 
+  it("keeps an exact add receipt current only until a newer open intent", async () => {
+    const admitted = descriptor("workspace-alias", "/selected/alias", "/canonical/alias", 41);
+    const gateway = identityGateway({ openPath: vi.fn(async () => admitted) });
+    const harness = renderLifecycle(gateway);
+    const first = await harness.lifecycle().openWorkspaceRootWithReceipt("/requested/alias");
+    expect(first.outcome).toMatchObject({
+      kind: "opened",
+      receipt: { canonicalRoot: admitted.canonicalRoot, workspaceId: admitted.workspaceId },
+    });
+    expect(first.isCurrent()).toBe(true);
+    const second = await harness.lifecycle().openWorkspaceRootWithReceipt("/requested/alias");
+    expect(first.isCurrent()).toBe(false);
+    expect(second.isCurrent()).toBe(true);
+  });
+
   it("returns the exact alias and admission generation in a startup restore receipt", async () => {
     const admitted = descriptor("workspace-alias", "/selected/alias", "/canonical/alias", 41);
     const gateway = identityGateway({ openPath: vi.fn(async () => admitted) });

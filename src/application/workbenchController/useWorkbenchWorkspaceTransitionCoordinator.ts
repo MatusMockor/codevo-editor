@@ -1853,6 +1853,7 @@ export function useWorkbenchWorkspaceTransitionCoordinator(
     openWorkspace,
     openWorkspacePath,
     openWorkspaceRoot,
+    openWorkspaceRootWithReceipt,
   } = useWorkspaceOpenRequestLifecycle({
     completeDeferredIdentityCleanup: flushDeferredWorkspaceIdentityCleanup,
     currentWorkspaceRootRef,
@@ -1922,6 +1923,7 @@ export function useWorkbenchWorkspaceTransitionCoordinator(
     openWorkspace,
     openWorkspacePath,
     openWorkspaceRoot,
+    openWorkspaceRootWithReceipt,
     resetWorkspaceTodosRef,
     runWithIssuedWriteDrainRef,
   };

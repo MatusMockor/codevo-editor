@@ -23,6 +23,8 @@ pub struct WorkspaceTrustState {
 #[serde(rename_all = "camelCase")]
 struct PersistedWorkspaceTrust {
     trusted_roots: Vec<String>,
+    #[serde(default)]
+    revoked_roots: Vec<String>,
 }
 
 pub struct WorkspaceTrustService {
@@ -30,6 +32,7 @@ pub struct WorkspaceTrustService {
     root_generations: HashMap<String, u64>,
     storage_path: PathBuf,
     trusted_roots: HashSet<String>,
+    revoked_roots: HashSet<String>,
     launches: Arc<WorkspaceTrustLaunchRegistry>,
 }
 
@@ -66,6 +69,7 @@ impl WorkspaceTrustService {
                 root_generations: HashMap::new(),
                 storage_path,
                 trusted_roots: HashSet::new(),
+                revoked_roots: HashSet::new(),
                 launches: Arc::new(WorkspaceTrustLaunchRegistry::default()),
             });
         }
@@ -78,6 +82,7 @@ impl WorkspaceTrustService {
             root_generations: HashMap::new(),
             storage_path,
             trusted_roots: persisted.trusted_roots.into_iter().collect(),
+            revoked_roots: persisted.revoked_roots.into_iter().collect(),
             launches: Arc::new(WorkspaceTrustLaunchRegistry::default()),
         })
     }
@@ -127,26 +132,39 @@ impl WorkspaceTrustService {
     }
 
     pub fn set(&mut self, root_path: &str, trusted: bool) -> io::Result<WorkspaceTrustState> {
-        let normalized_path = normalize_root_path(root_path);
+        self.set_canonical(normalize_root_path(root_path), trusted)
+    }
+
+    fn set_canonical(
+        &mut self,
+        normalized_path: String,
+        trusted: bool,
+    ) -> io::Result<WorkspaceTrustState> {
         let next_generation = self.generation.checked_add(1).ok_or_else(|| {
             io::Error::other("workspace trust generation capacity has been exhausted")
         })?;
 
         if trusted {
             let inserted = self.trusted_roots.insert(normalized_path.clone());
+            let was_revoked = self.revoked_roots.remove(&normalized_path);
 
             if let Err(error) = self.save() {
                 if inserted {
                     self.trusted_roots.remove(&normalized_path);
                 }
-
+                if was_revoked {
+                    self.revoked_roots.insert(normalized_path.clone());
+                }
                 return Err(error);
             }
             self.generation = next_generation;
             self.root_generations
                 .insert(normalized_path.clone(), next_generation);
 
-            return Ok(self.get(&normalized_path));
+            return Ok(WorkspaceTrustState {
+                root_path: normalized_path,
+                trusted: true,
+            });
         }
 
         if self.launches.has_active(&normalized_path)? {
@@ -157,19 +175,44 @@ impl WorkspaceTrustService {
         }
 
         let removed = self.trusted_roots.remove(&normalized_path);
+        let newly_revoked = self.revoked_roots.insert(normalized_path.clone());
 
         if let Err(error) = self.save() {
             if removed {
                 self.trusted_roots.insert(normalized_path.clone());
             }
-
+            if newly_revoked {
+                self.revoked_roots.remove(&normalized_path);
+            }
             return Err(error);
         }
         self.generation = next_generation;
         self.root_generations
             .insert(normalized_path.clone(), next_generation);
 
-        Ok(self.get(&normalized_path))
+        Ok(WorkspaceTrustState {
+            root_path: normalized_path,
+            trusted: false,
+        })
+    }
+
+    pub(crate) fn grant_opened_canonical_root(
+        &mut self,
+        root: &str,
+    ) -> io::Result<WorkspaceTrustState> {
+        if self.revoked_roots.contains(root) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "workspace trust was revoked",
+            ));
+        }
+        if self.trusted_roots.contains(root) {
+            return Ok(WorkspaceTrustState {
+                root_path: root.to_owned(),
+                trusted: true,
+            });
+        }
+        self.set_canonical(root.to_owned(), true)
     }
 
     #[cfg(feature = "perf-capture")]
@@ -228,8 +271,13 @@ impl WorkspaceTrustService {
         let mut trusted_roots = self.trusted_roots.iter().cloned().collect::<Vec<_>>();
         trusted_roots.sort();
 
-        let content = serde_json::to_string_pretty(&PersistedWorkspaceTrust { trusted_roots })
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let mut revoked_roots = self.revoked_roots.iter().cloned().collect::<Vec<_>>();
+        revoked_roots.sort();
+        let content = serde_json::to_string_pretty(&PersistedWorkspaceTrust {
+            trusted_roots,
+            revoked_roots,
+        })
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         fs::write(&self.storage_path, content)
     }
 }

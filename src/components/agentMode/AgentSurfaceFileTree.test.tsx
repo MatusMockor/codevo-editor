@@ -104,9 +104,9 @@ describe("AgentSurfaceFileTree", () => {
       unavailable: { kind: "untrusted", onTrust },
     });
     const note = host.querySelector("[data-agent-surface-tree-unavailable]");
-    expect(note?.textContent).toBe(`${SURFACE_TREE_UNTRUSTED_MESSAGE}Trust`);
-    act(() => note?.querySelector<HTMLButtonElement>('[aria-label="Trust the project"]')?.click());
-    expect(onTrust).toHaveBeenCalledTimes(1);
+    expect(note?.textContent).toBe(SURFACE_TREE_UNTRUSTED_MESSAGE);
+    expect(note?.querySelector('[aria-label="Trust the project"]')).toBeNull();
+    expect(onTrust).not.toHaveBeenCalled();
 
     render({
       source: "project",

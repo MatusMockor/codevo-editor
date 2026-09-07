@@ -165,14 +165,20 @@ describe("AgentProjectScopeMenu", () => {
     ]);
   });
 
-  it("offers Trust project only while the project is untrusted", () => {
+  it("keeps project actions available without a separate trust action", () => {
     render({
       entries: [entry(ROOT, "app", { trust: "untrusted" })],
     });
     openMenu();
     click(gears()[0]);
 
-    expect(menuItemLabels()).toContain("Trust project");
+    expect(menuItemLabels()).not.toContain("Trust project");
+    expect(menuItemLabels()).toEqual([
+      "Close project",
+      "Terminal sessions…",
+      "Reveal in Finder",
+      "Copy path",
+    ]);
   });
 
   it("offers Release project only for a project whose tab was closed", () => {

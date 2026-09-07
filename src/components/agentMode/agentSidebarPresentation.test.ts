@@ -271,7 +271,7 @@ describe("agent rail scope", () => {
       agentRailScopeEntries([group(ROOT, "app", [], { origin: "background-tab" })]),
     );
 
-    expect(agentRailScopeState(untrusted)).toEqual({ label: "Untrusted", action: "trust" });
+    expect(agentRailScopeState(untrusted)).toEqual({ label: "Project unavailable", action: null });
     expect(agentRailScopeState(closed)).toEqual({ label: "Tab closed", action: "release" });
     expect(agentRailScopeState(background)).toEqual({ label: "Background", action: null });
     expect(agentRailScopeState(null)).toBeNull();
@@ -293,11 +293,12 @@ describe("agent rail scope", () => {
       "Reveal in Finder",
       "Copy path",
     ]);
-    expect(agentProjectMenuEntries(untrusted)[0]).toEqual({
-      id: "trust",
-      label: "Trust project",
-      command: "trust",
-      disabled: false,
+    expect(agentProjectMenuEntries(untrusted).some((entry) => entry.command === "trust")).toBe(
+      false,
+    );
+    expect(agentRailScopeState({ ...untrusted, trust: "unknown" })).toEqual({
+      label: "Opening project…",
+      action: null,
     });
     expect(agentProjectMenuEntries(closed)[0]?.command).toBe("release");
     expect(agentProjectMenuEntries(detached).map((entry) => entry.command)).toEqual([

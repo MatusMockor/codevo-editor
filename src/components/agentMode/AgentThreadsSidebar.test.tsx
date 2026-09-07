@@ -905,9 +905,9 @@ describe("AgentThreadsSidebar", () => {
     });
 
     expect(rowIds()).toEqual(["agt-2"]);
-    expect(host.querySelector(".agent-scope__state")?.textContent).toContain("Untrusted");
-    click('[aria-label="Trust project api"]');
-    expect(onTrustProject).toHaveBeenCalledWith(OTHER);
+    expect(host.querySelector(".agent-scope__state")?.textContent).toContain("Project unavailable");
+    expect(host.querySelector('[aria-label="Trust project api"]')).toBeNull();
+    expect(onTrustProject).not.toHaveBeenCalled();
     expect(host.querySelector(".agent-trust")).toBeNull();
   });
 

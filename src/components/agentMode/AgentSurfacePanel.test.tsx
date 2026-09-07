@@ -144,8 +144,11 @@ describe("AgentSurfacePanel", () => {
     const onTrustWorkspace = vi.fn();
     render({ workspaceTrusted: false, onTrustWorkspace });
     expect(reasons()).toEqual([SURFACE_UNTRUSTED_TERMINAL_REASON]);
-    click('[aria-label="Trust the workspace"]');
-    expect(onTrustWorkspace).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[aria-label="Trust the workspace"]')).toBeNull();
+    expect(
+      host.querySelector<HTMLButtonElement>('[aria-label="Open Terminal surface"]')?.disabled,
+    ).toBe(true);
+    expect(onTrustWorkspace).not.toHaveBeenCalled();
   });
 
   it("fills the Files surface with the tree while no document is open and hides the toggle", () => {

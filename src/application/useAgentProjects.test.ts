@@ -17,7 +17,7 @@ import {
   type WorkspaceSettingsIdentity,
 } from "../domain/settings";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
-import type { WorkspaceTrustState } from "../domain/trust";
+import type { WorkspaceTrustState, WorkspaceOpenedProjectIdentity } from "../domain/trust";
 import { waitForReact } from "../test/reactTestLifecycle";
 import {
   useAgentProjects,
@@ -318,7 +318,7 @@ describe("useAgentProjects background root loading", () => {
     harness.unmount();
   });
 
-  it("renders a trust gateway failure as unknown trust fail-closed", async () => {
+  it("renders a trust gateway failure as unavailable and fail-closed", async () => {
     const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
     harness.trust.getTrust.mockImplementation(async (rootPath: string) => {
       if (rootPath === BACKGROUND_ROOT) {
@@ -331,7 +331,7 @@ describe("useAgentProjects background root loading", () => {
       const project = harness
         .hook()
         .projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT);
-      expect(project?.trust).toBe("unknown");
+      expect(project?.trust).toBe("untrusted");
     });
 
     expect(harness.reportError).toHaveBeenCalledWith("Agents", expect.any(Error));
@@ -462,9 +462,7 @@ describe("useAgentProjects lifecycle", () => {
     };
     expect(harness.hook().launchIdentityForProject(BACKGROUND_ROOT)).toEqual(expectedIdentity);
 
-    const identity = await act(() =>
-      harness.hook().ensureProjectLaunchIdentity?.(BACKGROUND_ROOT),
-    );
+    const identity = await act(() => harness.hook().ensureProjectLaunchIdentity?.(BACKGROUND_ROOT));
 
     expect(harness.activateWorkspaceRoot).not.toHaveBeenCalled();
     expect(identity).toEqual(expectedIdentity);
@@ -474,8 +472,9 @@ describe("useAgentProjects lifecycle", () => {
   it("retains an active repository when its workspace becomes a background tab", async () => {
     const harness = renderAgentProjects({ tabs: [ACTIVE_ROOT, BACKGROUND_ROOT] });
     await waitForReact(() => {
-      expect(harness.hook().projects.find((project) => project.rootKey === ACTIVE_ROOT)?.repositories)
-        .toEqual([activeRepository(ACTIVE_ROOT)]);
+      expect(
+        harness.hook().projects.find((project) => project.rootKey === ACTIVE_ROOT)?.repositories,
+      ).toEqual([activeRepository(ACTIVE_ROOT)]);
     });
 
     harness.environment.activeWorkspaceId = "workspace-background";
@@ -505,9 +504,7 @@ describe("useAgentProjects lifecycle", () => {
       ).toBe("closed-tab-live-tasks");
     });
 
-    const identity = await act(() =>
-      harness.hook().ensureProjectLaunchIdentity?.(BACKGROUND_ROOT),
-    );
+    const identity = await act(() => harness.hook().ensureProjectLaunchIdentity?.(BACKGROUND_ROOT));
 
     expect(identity).toBeNull();
     expect(harness.hook().launchIdentityForProject(BACKGROUND_ROOT)).toBeNull();
@@ -986,174 +983,188 @@ describe("useAgentProjects lifecycle", () => {
 });
 
 describe("useAgentProjects trust actions", () => {
-  it("promotes active controller trust when trust is granted from the project menu", async () => {
-    const harness = renderAgentProjects();
-    harness.environment.activeWorkspaceTrust = { rootPath: ACTIVE_ROOT, trusted: false };
-    harness.environment.trustedByRoot.set(ACTIVE_ROOT, false);
-    harness.rerender();
-    await waitForReact(() => expect(harness.hook().projects[0]?.trust).toBe("untrusted"));
-
-    await act(async () => {
-      await harness.hook().trustProject(ACTIVE_ROOT);
+  it("admits an explicitly opened background project without a second confirmation", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 7 };
+    const harness = renderAgentProjects({
+      tabs: [BACKGROUND_ROOT],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
     });
-    harness.rerender();
-
-    await waitForReact(() => {
-      expect(harness.hook().projects[0]?.trust).toBe("trusted");
-      expect(harness.hook().projects[0]?.leaseToken).not.toBeNull();
-    });
-    expect(harness.activeTrustChanges).toContainEqual({
-      ownerId: ACTIVE_ID,
-      rootPath: ACTIVE_ROOT,
-      trusted: true,
-    });
-    harness.unmount();
-  });
-
-  it("grants trust only after an explicit confirmation and then refreshes the root", async () => {
-    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT], confirmResult: false });
-    harness.environment.trustedByRoot.set(BACKGROUND_ROOT, false);
-    await waitForReact(() => {
-      const project = harness
-        .hook()
-        .projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT);
-      expect(project?.trust).toBe("untrusted");
-    });
-
-    await act(async () => {
-      await harness.hook().trustProject(BACKGROUND_ROOT);
-    });
-    expect(harness.trust.setTrust).not.toHaveBeenCalled();
-
-    harness.environment.confirmResult = true;
-    await act(async () => {
-      await harness.hook().trustProject(BACKGROUND_ROOT);
-    });
-
-    expect(harness.confirm.mock.calls[0]?.[0]).toContain(BACKGROUND_ROOT);
-    expect(harness.trust.setTrust).toHaveBeenCalledWith(BACKGROUND_ROOT, true);
-    await waitForReact(() => {
-      const project = harness
-        .hook()
-        .projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT);
-      expect(project?.trust).toBe("trusted");
-      expect(project?.leaseToken).not.toBeNull();
-    });
-    harness.unmount();
-  });
-
-  it("drops a confirmed trust request after same-root owner replacement", async () => {
-    const confirmation = createDeferred<boolean>();
-    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
-    harness.environment.trustedByRoot.set(BACKGROUND_ROOT, false);
-    await waitForReact(() => {
+    await waitForReact(() =>
       expect(
-        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT)?.trust,
-      ).toBe("untrusted");
-    });
-    harness.confirm.mockImplementationOnce(() => confirmation.promise as never);
+        harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.leaseToken,
+      ).not.toBeNull(),
+    );
+    expect(harness.trust.grantOpenedProject).toHaveBeenCalledExactlyOnceWith(descriptor);
+    expect(harness.confirm).not.toHaveBeenCalled();
+    expect(harness.trust.setTrust).not.toHaveBeenCalled();
+    harness.unmount();
+  });
 
-    let pending!: Promise<void>;
-    act(() => {
-      pending = harness.hook().trustProject(BACKGROUND_ROOT);
+  it("migrates the active opened project and updates controller trust", async () => {
+    const descriptor = { ...descriptorFor(ACTIVE_ROOT, ACTIVE_ID), admissionToken: 8 };
+    const harness = renderAgentProjects({
+      descriptors: [[ACTIVE_ROOT, descriptor]],
+      untrustedRoots: [ACTIVE_ROOT],
     });
+    await waitForReact(() =>
+      expect(harness.activeTrustChanges).toContainEqual({
+        rootPath: ACTIVE_ROOT,
+        ownerId: ACTIVE_ID,
+        trusted: true,
+      }),
+    );
+    harness.rerender();
+    await waitForReact(() => expect(harness.hook().projects[0]?.leaseToken).not.toBeNull());
+    expect(harness.trust.grantOpenedProject).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("never grants a path without an opened descriptor", async () => {
+    const harness = renderAgentProjects({
+      tabs: [BACKGROUND_ROOT],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "untrusted",
+      ),
+    );
+    await act(async () => harness.hook().trustProject(BACKGROUND_ROOT));
+    expect(harness.trust.grantOpenedProject).not.toHaveBeenCalled();
+    expect(harness.trust.setTrust).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not regrant an explicit rejection during the same admission", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 9 };
+    const harness = renderAgentProjects({
+      tabs: [BACKGROUND_ROOT],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "trusted",
+      ),
+    );
+    harness.environment.trustedByRoot.set(BACKGROUND_ROOT, false);
+    act(() => harness.hook().noteDispatchTrustRejected(BACKGROUND_ROOT));
+    await act(async () => harness.hook().refreshProject(BACKGROUND_ROOT));
+    expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+      "untrusted",
+    );
+    expect(harness.trust.grantOpenedProject).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("does not publish a grant completed after dispatch rejection", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 13 };
+    const pending = createDeferred<WorkspaceTrustState>();
+    const harness = renderAgentProjects({
+      tabs: [BACKGROUND_ROOT],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    harness.trust.grantOpenedProject.mockImplementationOnce(() => pending.promise);
+    await waitForReact(() => expect(harness.trust.grantOpenedProject).toHaveBeenCalled());
+    act(() => harness.hook().noteDispatchTrustRejected(BACKGROUND_ROOT));
+    await act(async () => pending.resolve({ rootPath: BACKGROUND_ROOT, trusted: true }));
+    expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+      "untrusted",
+    );
+    expect(
+      harness.lease.acquireAgentRootLease.mock.calls.some(
+        ([request]) => request.rootPath === BACKGROUND_ROOT,
+      ),
+    ).toBe(false);
+    harness.unmount();
+  });
+
+  it("only admits opened projects after switching from editor into agent mode", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 15 };
+    const harness = renderAgentProjects({
+      tabs: [BACKGROUND_ROOT],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
+      autoAdmitOpenedProjects: false,
+    });
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "untrusted",
+      ),
+    );
+    expect(harness.trust.grantOpenedProject).not.toHaveBeenCalled();
+    harness.environment.autoAdmitOpenedProjects = true;
+    harness.rerender();
+    await waitForReact(() =>
+      expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).toBe(
+        "trusted",
+      ),
+    );
+    expect(harness.trust.grantOpenedProject).toHaveBeenCalledExactlyOnceWith(descriptor);
+    harness.unmount();
+  });
+
+  it("rejects a pending grant after a manual trust intent without a boolean transition", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 14 };
+    const pending = createDeferred<WorkspaceTrustState>();
+    const harness = renderAgentProjects({
+      tabs: [BACKGROUND_ROOT],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    harness.trust.grantOpenedProject.mockImplementationOnce(() => pending.promise);
+    await waitForReact(() => expect(harness.trust.grantOpenedProject).toHaveBeenCalled());
+    harness.environment.trustRevision += 1;
+    await act(async () => pending.resolve({ rootPath: BACKGROUND_ROOT, trusted: true }));
+    expect(harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.trust).not.toBe(
+      "trusted",
+    );
+    expect(
+      harness.lease.acquireAgentRootLease.mock.calls.some(
+        ([request]) => request.rootPath === BACKGROUND_ROOT,
+      ),
+    ).toBe(false);
+    harness.unmount();
+  });
+
+  it("keeps a failed admission blocked and does not retry on refresh", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 10 };
+    const harness = renderAgentProjects({
+      tabs: [BACKGROUND_ROOT],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    harness.trust.grantOpenedProject.mockRejectedValueOnce(new Error("registration failed"));
+    await waitForReact(() => expect(harness.reportError).toHaveBeenCalled());
+    await act(async () => harness.hook().refreshProject(BACKGROUND_ROOT));
+    expect(
+      harness.hook().projects.find((p) => p.rootKey === BACKGROUND_ROOT)?.leaseToken,
+    ).toBeNull();
+    expect(harness.trust.grantOpenedProject).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("drops an in-flight admission after the opened project is closed", async () => {
+    const descriptor = { ...descriptorFor(BACKGROUND_ROOT, "background"), admissionToken: 11 };
+    const pending = createDeferred<WorkspaceTrustState>();
+    const harness = renderAgentProjects({
+      tabs: [BACKGROUND_ROOT],
+      descriptors: [[BACKGROUND_ROOT, descriptor]],
+      untrustedRoots: [BACKGROUND_ROOT],
+    });
+    harness.trust.grantOpenedProject.mockImplementationOnce(() => pending.promise);
+    await waitForReact(() => expect(harness.trust.grantOpenedProject).toHaveBeenCalled());
     harness.environment.tabs = [];
     harness.rerender();
-    await waitForReact(() => {
-      expect(
-        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT),
-      ).toBeUndefined();
-    });
-    harness.environment.tabs = [BACKGROUND_ROOT];
-    harness.rerender();
-    await waitForReact(() => {
-      expect(
-        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT)
-          ?.generation,
-      ).toBe(2);
-    });
-
-    await act(async () => {
-      confirmation.resolve(true);
-      await pending;
-    });
-
-    expect(harness.trust.setTrust).not.toHaveBeenCalled();
-    harness.unmount();
-  });
-
-  it("drops a confirmed trust request after same-generation owner promotion", async () => {
-    const confirmation = createDeferred<boolean>();
-    const harness = renderAgentProjects({ activeWorkspaceId: null });
-    harness.environment.activeWorkspaceTrust = { rootPath: ACTIVE_ROOT, trusted: false };
-    harness.environment.trustedByRoot.set(ACTIVE_ROOT, false);
-    harness.rerender();
-    await waitForReact(() => expect(harness.hook().projects[0]?.trust).toBe("untrusted"));
-    const generation = harness.hook().projects[0]?.generation;
-    const initialOwnerId = harness.hook().projects[0]?.ownerId;
-    harness.confirm.mockImplementationOnce(() => confirmation.promise as never);
-
-    let pending!: Promise<void>;
-    act(() => {
-      pending = harness.hook().trustProject(ACTIVE_ROOT);
-    });
-    harness.environment.activeWorkspaceId = ACTIVE_ID;
-    harness.rerender();
-    await waitForReact(() => {
-      expect(harness.hook().projects[0]?.generation).toBe(generation);
-      expect(harness.hook().projects[0]?.ownerId).not.toBe(initialOwnerId);
-    });
-
-    await act(async () => {
-      confirmation.resolve(true);
-      await pending;
-    });
-
-    expect(harness.trust.setTrust).not.toHaveBeenCalled();
-    harness.unmount();
-  });
-
-  it("does not report a stale trust failure after same-root owner replacement", async () => {
-    let rejectTrust!: (error: Error) => void;
-    const trustFailure = new Promise<WorkspaceTrustState>((_resolve, reject) => {
-      rejectTrust = reject;
-    });
-    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
-    harness.environment.trustedByRoot.set(BACKGROUND_ROOT, false);
-    await waitForReact(() => {
-      expect(
-        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT)?.trust,
-      ).toBe("untrusted");
-    });
-    harness.trust.setTrust.mockImplementationOnce(() => trustFailure);
-
-    let pending!: Promise<void>;
-    act(() => {
-      pending = harness.hook().trustProject(BACKGROUND_ROOT);
-    });
-    await waitForReact(() => expect(harness.trust.setTrust).toHaveBeenCalledOnce());
-    harness.environment.tabs = [];
-    harness.rerender();
-    await waitForReact(() => {
-      expect(
-        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT),
-      ).toBeUndefined();
-    });
-    harness.environment.tabs = [BACKGROUND_ROOT];
-    harness.rerender();
-    await waitForReact(() => {
-      expect(
-        harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT)
-          ?.generation,
-      ).toBe(2);
-    });
-
-    await act(async () => {
-      rejectTrust(new Error("trust failed"));
-      await pending;
-    });
-
-    expect(harness.reportError).not.toHaveBeenCalled();
+    await act(async () => pending.resolve({ rootPath: BACKGROUND_ROOT, trusted: true }));
+    expect(harness.hook().projects.some((p) => p.rootKey === BACKGROUND_ROOT)).toBe(false);
+    expect(
+      harness.lease.acquireAgentRootLease.mock.calls.some(
+        ([request]) => request.rootPath === BACKGROUND_ROOT,
+      ),
+    ).toBe(false);
     harness.unmount();
   });
 
@@ -1224,6 +1235,8 @@ describe("useAgentProjects trust actions", () => {
 });
 
 interface Environment {
+  trustRevision: number;
+  autoAdmitOpenedProjects: boolean;
   enabled: boolean;
   activeWorkspaceId: string | null;
   activeWorkspaceRoot: string | null;
@@ -1244,6 +1257,8 @@ interface Environment {
 }
 
 interface HarnessOptions {
+  untrustedRoots?: ReadonlyArray<string>;
+  autoAdmitOpenedProjects?: boolean;
   enabled?: boolean;
   activeWorkspaceId?: string | null;
   tabs?: ReadonlyArray<string>;
@@ -1255,6 +1270,8 @@ interface HarnessOptions {
 
 function renderAgentProjects(options: HarnessOptions = {}) {
   const environment: Environment = {
+    trustRevision: 0,
+    autoAdmitOpenedProjects: options.autoAdmitOpenedProjects ?? true,
     enabled: options.enabled ?? true,
     activeWorkspaceId:
       options.activeWorkspaceId === undefined ? ACTIVE_ID : options.activeWorkspaceId,
@@ -1265,7 +1282,9 @@ function renderAgentProjects(options: HarnessOptions = {}) {
     deferTrust: options.deferTrust ?? false,
     deferLease: options.deferLease ?? false,
     liveOwners: new Set<string>(),
-    trustedByRoot: new Map<string, boolean>(),
+    trustedByRoot: new Map<string, boolean>(
+      (options.untrustedRoots ?? []).map((root) => [root, false]),
+    ),
     descriptorsByRoot: new Map<string, WorkspaceIdentityDescriptor>(options.descriptors ?? []),
     workspaceSettingsByRoot: new Map<string, WorkspaceSettings>(),
     detectedByRoot: new Map<string, string[]>(),
@@ -1285,6 +1304,12 @@ function renderAgentProjects(options: HarnessOptions = {}) {
   };
 
   const trust = {
+    grantOpenedProject: vi.fn(
+      async (descriptor: WorkspaceOpenedProjectIdentity): Promise<WorkspaceTrustState> => {
+        environment.trustedByRoot.set(descriptor.selectedPath, true);
+        return { rootPath: descriptor.selectedPath, trusted: true };
+      },
+    ),
     getTrust: vi.fn(async (rootPath: string): Promise<WorkspaceTrustState> => {
       environment.concurrentTrustCalls += 1;
       environment.maxConcurrentTrustCalls = Math.max(
@@ -1369,6 +1394,10 @@ function renderAgentProjects(options: HarnessOptions = {}) {
   });
 
   const dependencies: AgentProjectsDependencies = {
+    get autoAdmitOpenedProjects() {
+      return environment.autoAdmitOpenedProjects;
+    },
+    trustRevisionForOwner: () => environment.trustRevision,
     get enabled() {
       return environment.enabled;
     },

@@ -39,12 +39,12 @@ describe("AgentStatusBar", () => {
     expect(host.querySelector(".status-agent-dot")).not.toBeNull();
   });
 
-  it("names the workspace and its exact trust state", () => {
+  it("names the workspace without a redundant trust status", () => {
     render({ workspaceRoot: "/projects/myproject", workspaceTrusted: false });
 
     const labels = [...host.querySelectorAll("footer > span")].map((span) => span.textContent);
     expect(labels).toContain("myproject");
-    expect(labels).toContain("Untrusted");
+    expect(labels).not.toContain("Untrusted");
     expect(labels).not.toContain("Trusted");
   });
 

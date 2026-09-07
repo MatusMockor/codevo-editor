@@ -45,6 +45,7 @@ import {
   agentTerminalPanelIntent,
   initialAgentTerminalPanelIntentState,
   type AgentWorkbenchChrome,
+  type AgentAddedProjectReceipt,
 } from "./agentWorkbenchChrome";
 
 type Workbench = ReturnType<typeof useWorkbenchController>;
@@ -61,7 +62,7 @@ export type AgentWorkbenchScreenWorkbench = Pick<
   | "nodePackageScripts"
   | "openPinnedFile"
   | "openProblemNotice"
-  | "openWorkspaceRoot"
+  | "openWorkspaceRootWithReceipt"
   | "previewFile"
   | "runCommand"
   | "saveWorkbenchSettings"
@@ -146,7 +147,7 @@ export function AgentWorkbenchScreen({
     [persistedProviderProjection.selectedProvider, workbench.agents],
   );
   const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
-  const { openWorkspaceRoot, runCommand } = workbench;
+  const { openWorkspaceRootWithReceipt, runCommand } = workbench;
   const searchFiles = useCallback(() => {
     runCommand(SEARCH_FILES_COMMAND);
   }, [runCommand]);
@@ -278,15 +279,53 @@ export function AgentWorkbenchScreen({
     [openProblemNotice],
   );
 
+  const [addedProjectReceipt, setAddedProjectReceipt] = useState<AgentAddedProjectReceipt | null>(
+    null,
+  );
+  const addSelectionEpoch = useRef(0);
+  const addMounted = useRef(true);
+  useLayoutEffect(() => {
+    addMounted.current = true;
+    return () => {
+      addMounted.current = false;
+      addSelectionEpoch.current += 1;
+    };
+  }, []);
+  const cancelAddSelection = useCallback(() => {
+    addSelectionEpoch.current += 1;
+  }, []);
+  const consumeAddSelection = useCallback((receipt: AgentAddedProjectReceipt) => {
+    setAddedProjectReceipt((current) => (current === receipt ? null : current));
+  }, []);
   const addProject = useMemo(
     () => ({
       gateway: directoryListingGateway,
+      receipt: addedProjectReceipt,
+      cancelSelection: cancelAddSelection,
+      consumeSelection: consumeAddSelection,
       addProject: async (path: string) => {
-        const opened = await openWorkspaceRoot(path);
-        if (!opened) throw new Error(ADD_PROJECT_REFUSED_REASON);
+        const epoch = ++addSelectionEpoch.current;
+        const { outcome, isCurrent } = await openWorkspaceRootWithReceipt(path);
+        if (outcome.kind !== "opened") throw new Error(ADD_PROJECT_REFUSED_REASON);
+        if (outcome.receipt.kind !== "registeredWorkspaceOpenReceipt") {
+          throw new Error(ADD_PROJECT_REFUSED_REASON);
+        }
+        const receipt = {
+          rootPath: outcome.receipt.selectedPath,
+          ownerId: outcome.receipt.workspaceId,
+          isCurrent: () => addMounted.current && addSelectionEpoch.current === epoch && isCurrent(),
+        };
+        if (receipt.isCurrent()) setAddedProjectReceipt(receipt);
+        return receipt;
       },
     }),
-    [directoryListingGateway, openWorkspaceRoot],
+    [
+      addedProjectReceipt,
+      cancelAddSelection,
+      consumeAddSelection,
+      directoryListingGateway,
+      openWorkspaceRootWithReceipt,
+    ],
   );
 
   const shortcuts = useMemo(() => layoutShortcuts(appSettings.keymap), [appSettings.keymap]);

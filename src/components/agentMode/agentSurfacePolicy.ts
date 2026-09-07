@@ -14,13 +14,15 @@ import { agentSurfaceTargetGone } from "./agentModePresentation";
 
 export const SURFACE_NO_THREAD_REASON = "Select a thread first";
 export const SURFACE_WORKTREE_GONE_REASON = "The worktree no longer exists";
-export const SURFACE_UNTRUSTED_TERMINAL_REASON = "Trust the workspace to start a terminal";
+export const SURFACE_UNTRUSTED_TERMINAL_REASON =
+  "Project unavailable. Reopen it or check its workspace settings.";
 export const SURFACE_FOREIGN_ROOT_TERMINAL_REASON =
   "Terminal is available for the workspace root repository only.";
 
 export const SURFACE_FILES_THREAD_DESCRIPTION = "Browse and edit the thread's checkout.";
 export const SURFACE_FILES_PROJECT_DESCRIPTION = "Browse and edit the project's files.";
-export const SURFACE_FILES_UNTRUSTED_DESCRIPTION = "Trust the project to browse its files.";
+export const SURFACE_FILES_UNTRUSTED_DESCRIPTION =
+  "Project unavailable. Reopen it or check its workspace settings.";
 export const SURFACE_FILES_NO_PROJECT_DESCRIPTION = "Add a project to browse files.";
 export const SURFACE_FILES_FOREIGN_ROOT_DESCRIPTION = "Files browse the active workspace only.";
 

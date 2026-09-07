@@ -11,6 +11,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Run frontend and Rust release checks concurrently while retaining both as build prerequisites.
 - Avoid redrawing unchanged composer controls while typing and unchanged response text while streaming.
+- Prepare explicitly opened agent projects without a separate Trust step, while preserving workspace ownership and explicit revocations.
 
 ### Added
 
@@ -19,6 +20,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Select the newly added project in the agent sidebar after its exact open request completes.
+- Keep model choices while a project is still preparing instead of reverting to the default model.
 - Keep debug DMG smoke builds independent of updater signing keys.
 - Test debugger descriptor quotas independently from completion latency limits.
 

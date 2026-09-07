@@ -69,9 +69,18 @@ export interface AgentWorkbenchTerminalChrome {
   onOpenLink?(path: string, line?: number, column?: number): void;
 }
 
+export interface AgentAddedProjectReceipt {
+  readonly rootPath: string;
+  readonly ownerId: string;
+  isCurrent(): boolean;
+}
+
 export interface AgentWorkbenchAddProjectChrome {
   readonly gateway: DirectoryListingGateway;
-  addProject(path: string): Promise<void>;
+  readonly receipt?: AgentAddedProjectReceipt | null;
+  cancelSelection?(): void;
+  consumeSelection?(receipt: AgentAddedProjectReceipt): void;
+  addProject(path: string): Promise<AgentAddedProjectReceipt>;
 }
 
 export interface AgentWorkbenchChrome {
