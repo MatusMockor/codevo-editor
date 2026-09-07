@@ -7,7 +7,12 @@ import type {
   WorkspaceFileChangeEvent,
   WorkspaceFileChangeGateway,
 } from "../../domain/workspaceFileChange";
-import { useWorkspaceFileChangeSubscription } from "./useWorkspaceFileChangeSubscription";
+import { rescanOpenWorkspaceDocuments } from "../rescanOpenWorkspaceDocuments";
+import type { EditorDocument } from "../../domain/workspace";
+import {
+  useWorkbenchWorkspaceFileChangeSubscription,
+  useWorkspaceFileChangeSubscription,
+} from "./useWorkspaceFileChangeSubscription";
 
 const ROOT = "/workspace";
 const CHANGE: WorkspaceFileChangeEvent = {
@@ -98,4 +103,102 @@ describe("useWorkspaceFileChangeSubscription", () => {
     expect(gateway.subscribeFileChanges).toHaveBeenCalledTimes(1);
     act(() => root.unmount());
   });
+});
+
+it("retains both nested repository scopes when a second rescan supersedes a pending read", async () => {
+  const root = createRoot(document.createElement("div"));
+  let listener: ((event: WorkspaceFileChangeEvent) => void) | undefined;
+  let settle!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  const paths = ["/workspace/repo-a/file.ts", "/workspace/repo-b/file.ts"];
+  const documents: Record<string, EditorDocument> = Object.fromEntries(
+    paths.map((path) => [
+      path,
+      {
+        path,
+        name: "file.ts",
+        language: "typescript",
+        content: "before",
+        savedContent: "before",
+      },
+    ]),
+  );
+  let first = true;
+  const files = {
+    readDirectory: vi.fn(async (directory: string) => {
+      if (first) {
+        first = false;
+        await pending;
+      }
+      return paths
+        .filter((path) => path.startsWith(`${directory}/`))
+        .map((path) => ({ path, name: "file.ts", kind: "file" as const }));
+    }),
+  };
+  const gateway: WorkspaceFileChangeGateway = {
+    startWatching: vi.fn(async () => undefined),
+    subscribeFileChanges: vi.fn(async (handler) => {
+      listener = handler;
+      return () => undefined;
+    }),
+  };
+  const handleWorkspaceFileChange = vi.fn();
+  const reportError = vi.fn();
+  function Harness() {
+    useWorkbenchWorkspaceFileChangeSubscription({
+      currentWorkspaceRootRef: useRef<string | null>(ROOT),
+      externallyRemovedDocumentRootByPathRef: useRef({}),
+      gateway,
+      handleExternalFileChange: async () => false,
+      handleWorkspaceDiscoveryFileChange: vi.fn(),
+      handleWorkspaceFileChange,
+      markExternallyRemovedDocumentPath: vi.fn(),
+      refreshEditorConfigRoot: vi.fn(),
+      reportError,
+      setMessage: vi.fn(),
+      workspaceRoot: ROOT,
+      rescanOpenDocuments: (event, dispatch, isCurrent) =>
+        rescanOpenWorkspaceDocuments({
+          event,
+          dispatch,
+          isCurrent,
+          documents,
+          files,
+          reportIncomplete: vi.fn(),
+        }),
+    });
+    return null;
+  }
+  await act(async () => root.render(<Harness />));
+  await act(async () =>
+    listener?.({
+      rootPath: ROOT,
+      path: "/workspace/repo-a",
+      relativePath: "repo-a",
+      kind: "rescanRequired",
+    }),
+  );
+  await act(async () =>
+    listener?.({
+      rootPath: ROOT,
+      path: "/workspace/repo-b",
+      relativePath: "repo-b",
+      kind: "rescanRequired",
+    }),
+  );
+  await act(async () => {
+    settle();
+    await pending;
+  });
+  await vi.waitFor(() =>
+    expect(
+      handleWorkspaceFileChange.mock.calls
+        .filter(([event]) => event.kind === "modified")
+        .map(([event]) => event.path),
+    ).toEqual(paths),
+  );
+  expect(reportError).not.toHaveBeenCalled();
+  act(() => root.unmount());
 });

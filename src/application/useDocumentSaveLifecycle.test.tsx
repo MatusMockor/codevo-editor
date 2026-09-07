@@ -1109,44 +1109,47 @@ describe("useDocumentSaveLifecycle", () => {
     harness.unmount();
   });
 
-  it("runs save participants for the admitted exact-live document instead of the stale React object", async () => {
-    const staleReactDocument = {
-      ...document("stale react", "saved"),
-      language: "typescript",
-      name: "User.ts",
-    };
-    const exactDocument = Object.freeze({
-      ...staleReactDocument,
-      content: "exact live",
-    });
-    const participant: DocumentSaveParticipant = {
-      id: "test.exact-live",
-      appliesTo: () => true,
-      run: vi.fn(async (content, context) => {
-        expect(context.document).toBe(exactDocument);
-        expect(context.isStale()).toBe(false);
-        return `${content}+participant`;
-      }),
-    };
-    const admission = exactLiveSaveAdmission(exactDocument);
-    const harness = renderLifecycle({
-      activeDocument: staleReactDocument,
-      activeLiveDocumentSaveCoordinator: admission.coordinator,
-      saveParticipants: [participant],
-    });
+  it.each(["typescript", "plaintext", "php", "markdown", "rust"])(
+    "runs %s save participants for the admitted exact-live document instead of the stale React object",
+    async (language) => {
+      const staleReactDocument = {
+        ...document("saved", "saved"),
+        language,
+        name: "User.ts",
+      };
+      const exactDocument = Object.freeze({
+        ...staleReactDocument,
+        content: "exact live",
+      });
+      const participant: DocumentSaveParticipant = {
+        id: "test.exact-live",
+        appliesTo: () => true,
+        run: vi.fn(async (content, context) => {
+          expect(context.document).toBe(exactDocument);
+          expect(context.isStale()).toBe(false);
+          return `${content}+participant`;
+        }),
+      };
+      const admission = exactLiveSaveAdmission(exactDocument);
+      const harness = renderLifecycle({
+        activeDocument: staleReactDocument,
+        activeLiveDocumentSaveCoordinator: admission.coordinator,
+        saveParticipants: [participant],
+      });
 
-    await act(async () => {
-      await harness.lifecycle().saveDocument(PATH);
-    });
+      await act(async () => {
+        await harness.lifecycle().saveDocument(PATH);
+      });
 
-    expect(participant.run).toHaveBeenCalledOnce();
-    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
-      PATH,
-      "exact live+participant",
-    );
-    expect(harness.documentsRef.current[PATH]).toBe(staleReactDocument);
-    harness.unmount();
-  });
+      expect(participant.run).toHaveBeenCalledOnce();
+      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+        PATH,
+        "exact live+participant",
+      );
+      expect(harness.documentsRef.current[PATH]).toBe(staleReactDocument);
+      harness.unmount();
+    },
+  );
 
   it.each(["edit", "retirement", "workspace A → B → A"] as const)(
     "stops an exact-live participant save when %s invalidates its authority during await",

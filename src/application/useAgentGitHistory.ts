@@ -8,6 +8,9 @@ import type {
   GitBranches,
 } from "../domain/git";
 
+import type { WorkspaceFileChangeGateway } from "../domain/workspaceFileChange";
+import { agentSurfaceChangeEventConcernsRoot } from "./useAgentSurfaceFileTree";
+
 export type AgentGitHistoryGateway = Pick<
   GitHistoryGateway,
   | "getBranches"
@@ -100,9 +103,11 @@ function historyBranchRefs(branches: GitBranches): Set<string> {
 export function useAgentGitHistory({
   target,
   gateway,
+  fileChanges = null,
 }: {
   readonly target: AgentGitHistoryTarget | null;
   readonly gateway: AgentGitHistoryGateway | null;
+  readonly fileChanges?: Pick<WorkspaceFileChangeGateway, "subscribeFileChanges"> | null;
 }) {
   const rootPath = target?.rootPath ?? null;
   const ownerKey = target?.ownerKey ?? null;
@@ -225,6 +230,37 @@ export function useAgentGitHistory({
       lease.current += 1;
     };
   }, [rootPath, ownerKey, gateway, request]);
+
+  useEffect(() => {
+    if (rootPath === null || gateway === null || fileChanges === null) return;
+    let active = true;
+    let release: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    void fileChanges
+      .subscribeFileChanges((event) => {
+        if (!active || owner.current !== identity || event.kind !== "rescanRequired") return;
+        if (!agentSurfaceChangeEventConcernsRoot(rootPath, event.rootPath)) return;
+        if (timer !== undefined) return;
+        timer = setTimeout(() => {
+          timer = undefined;
+          if (!active || owner.current !== identity) return;
+          setRequest((previous) => ({ ...previous, refresh: previous.refresh + 1 }));
+        }, 150);
+      })
+      .then((unsubscribe) => {
+        if (!active) {
+          unsubscribe();
+          return;
+        }
+        release = unsubscribe;
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      if (timer !== undefined) clearTimeout(timer);
+      release?.();
+    };
+  }, [rootPath, gateway, fileChanges, identity]);
 
   const owns = (generation: number) =>
     generation === lease.current &&

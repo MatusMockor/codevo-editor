@@ -72,6 +72,8 @@ type EditorSession = Pick<
   | "previewPathRef"
   | "resolveActiveDocumentSessionAuthority"
   | "resolveDocumentSessionLifecycleAuthority"
+  | "resolveDocumentSessionDirtyProjection"
+  | "refreshExternalCleanDocument"
   | "setActivePath"
   | "setDocuments"
   | "setMarkdownPreviewTabs"
@@ -354,6 +356,8 @@ export function useWorkbenchEditorNavigationCoordinator({
     isEditorGroupDocumentSessionAuthorityCurrent,
     resolveActiveDocumentSessionAuthority,
     resolveDocumentSessionLifecycleAuthority,
+    resolveDocumentSessionDirtyProjection,
+    refreshExternalCleanDocument,
   } = editorSession;
   const {
     currentEditorSessionOwnerKeyRef,
@@ -575,6 +579,7 @@ export function useWorkbenchEditorNavigationCoordinator({
     },
     commandContext: {
       activeDocument,
+      resolveDocumentSessionDirtyProjection,
       workspaceRoot,
     },
     markdown: {
@@ -1115,7 +1120,11 @@ export function useWorkbenchEditorNavigationCoordinator({
     renameEntry,
     deleteActiveDocument,
     handleWorkspaceFileChange,
+    protectLiveDocumentFromExternalChange,
+    rescanOpenDocuments,
   } = useWorkbenchFileOperations({
+    resolveDocumentSessionDirtyProjection,
+    refreshExternalCleanDocument,
     workspaceRoot,
     workspaceDescriptor,
     activePhpFrameworkProviders,
@@ -1501,6 +1510,8 @@ export function useWorkbenchEditorNavigationCoordinator({
       renameEntry,
       deleteActiveDocument,
       handleWorkspaceFileChange,
+      protectLiveDocumentFromExternalChange,
+      rescanOpenDocuments,
     },
   };
 }

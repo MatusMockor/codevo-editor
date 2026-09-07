@@ -1762,6 +1762,8 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     handleExternalFileChange,
     handleWorkspaceDiscoveryFileChange,
     handleWorkspaceFileChange: fileOperations.handleWorkspaceFileChange,
+    protectLiveDocumentFromExternalChange: fileOperations.protectLiveDocumentFromExternalChange,
+    rescanOpenDocuments: fileOperations.rescanOpenDocuments,
     markExternallyRemovedDocumentPath,
     refreshEditorConfigRoot,
     reportError,

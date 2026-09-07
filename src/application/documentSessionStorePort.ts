@@ -147,6 +147,16 @@ export interface DocumentSessionStorePort {
   ): DocumentSessionMutationResult;
   deactivateOwner(owner: DocumentSessionOwnerLease): boolean;
   detachLiveDocument(attachment: DocumentSessionLiveAttachmentLease): boolean;
+  prepareDocumentReload(
+    receipt: DocumentSessionReceipt,
+  ):
+    | ((content: string, revision: EditorDocument["revision"]) => DocumentSessionMutationResult)
+    | null;
+  refreshCleanDocument(
+    receipt: DocumentSessionReceipt,
+    content: string,
+    revision: EditorDocument["revision"],
+  ): DocumentSessionMutationResult;
   edit(receipt: DocumentSessionReceipt, content: string): DocumentSessionMutationResult;
   getDocumentSnapshot(document: DocumentSessionDocumentLease): DocumentSessionDocumentSnapshot;
   getOwnerSnapshot(owner: DocumentSessionOwnerLease): DocumentSessionOwnerSnapshot;

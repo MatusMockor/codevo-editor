@@ -1,5 +1,9 @@
+import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
+import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
+import { useActiveManifestWorkspaces } from "./useActiveManifestWorkspaces";
+import { useAgentWorktreeDocumentRefresh } from "./refreshAgentWorktreeDocuments";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type {
   WorkbenchControllerOptions,
   WorkbenchWorkspaceGateways,
@@ -110,8 +114,6 @@ import { useRecentNavigation } from "./useNavigationHistory";
 import { useLanguageServerDocumentSyncState } from "./useLanguageServerDocumentSyncState";
 import { usePhpFrameworkResolution } from "./usePhpFrameworkResolution";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
-import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
-import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
 
 export type {
   PhpCodeActionDescriptor,
@@ -257,28 +259,12 @@ export function useWorkbenchController(
     workspaceRuntimeOwnerRef,
   } = useActiveWorkspaceOwners(workspaceRoot, workspaceIdentityDescriptor);
   const [workspaceDescriptor, setWorkspaceDescriptor] = useState<WorkspaceDescriptor | null>(null);
-  useEffect(() => {
-    if (
-      !workspaceRoot ||
-      !workspaceDescriptor ||
-      !workspaceRootKeysEqual(workspaceRoot, workspaceDescriptor.rootPath)
-    ) {
-      return;
-    }
-
-    return registerActiveComposerManifestWorkspace({
-      packages: workspaceDescriptor.php?.packages ?? [],
-      rootPath: workspaceRoot,
-    });
-  }, [workspaceDescriptor, workspaceRoot]);
-  useEffect(() => {
-    if (!workspaceRoot || !workspaceDescriptor) return;
-    if (!workspaceRootKeysEqual(workspaceRoot, workspaceDescriptor.rootPath)) return;
-    return registerActiveNpmManifestWorkspace({
-      packages: workspaceDescriptor.javaScriptTypeScript?.packages ?? [],
-      rootPath: workspaceRoot,
-    });
-  }, [workspaceDescriptor, workspaceRoot]);
+  useActiveManifestWorkspaces(
+    workspaceRoot,
+    workspaceDescriptor,
+    registerActiveComposerManifestWorkspace,
+    registerActiveNpmManifestWorkspace,
+  );
   const [packageScriptsByRoot, setPackageScriptsByRoot] = useState<
     Record<
       string,
@@ -381,6 +367,9 @@ export function useWorkbenchController(
     isEditorGroupDocumentSessionAuthorityCurrent,
     resolveActiveDocumentSessionAuthority,
     resolveDocumentSessionLifecycleAuthority,
+    resolveDocumentSessionDirtyProjection,
+    refreshExternalCleanDocument,
+    prepareExternalDocumentReload,
     resolveEditorGroupDocumentSessionAuthority,
     resetEditorSurfaceState,
     restoreEditorSurface,
@@ -1714,6 +1703,20 @@ export function useWorkbenchController(
     },
   });
 
+  const agentWorktreeFileSync = useAgentWorktreeDocumentRefresh({
+    refreshExternalCleanDocument,
+    resolveDocumentSessionDirtyProjection,
+    documentsRef,
+    activeDocumentRef,
+    setDocuments,
+    workspaceFiles,
+    reportChangedDocuments,
+    reportNotice: setMessage,
+    reportError,
+    editorSessionOwnerKey,
+    currentEditorSessionOwnerKeyRef,
+  });
+
   const agents = useWorkbenchControllerAgents({
     activateWorkspaceRoot: workspaceTransition.activateWorkspaceTab,
     applyAppSettings,
@@ -1892,6 +1895,7 @@ export function useWorkbenchController(
   const { phpChangeSignature } = editorFile;
   const documentSaveClose = useWorkbenchDocumentSaveCloseCoordinator({
     saveAuthority: {
+      prepareExternalDocumentReload,
       activeDocumentRef,
       activePath,
       canonicalDocumentSaveRoot,
@@ -2566,6 +2570,7 @@ export function useWorkbenchController(
   return {
     ...editorNavigationSurface,
     activeDocument,
+    agentWorktreeFileSync,
     activeImage,
     activeMarkdownPreview,
     activeDocumentGitBaseline,
@@ -2582,6 +2587,7 @@ export function useWorkbenchController(
     isEditorGroupDocumentSessionAuthorityCurrent,
     resolveActiveDocumentSessionAuthority,
     resolveDocumentSessionLifecycleAuthority,
+    resolveDocumentSessionDirtyProjection,
     resolveEditorGroupDocumentSessionAuthority,
     isOpeningFile,
     appSettings,

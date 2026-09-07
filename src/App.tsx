@@ -125,6 +125,7 @@ const {
   editorChangeHunksGateway,
   gitGateway,
   gitHistoryGateway,
+  agentSurfaceGateways,
   indexProgressGateway,
   javaScriptTypeScriptLanguageServerDiagnosticsGateway,
   javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway,
@@ -1082,10 +1083,9 @@ function App() {
           <LazyAgentWorkbenchHost
             active={workbench.agentModeActive}
             activeFileRevealSignal={activeFileRevealSignal}
-            fileChanges={workspaceGateways.fileChanges}
             fileStatusesByPath={fileStatusesByPath}
             files={workspaceGateways.files}
-            gitHistoryGateway={gitHistoryGateway}
+            {...agentSurfaceGateways}
             monacoTheme={monacoTheme}
             onResizeRightPanelStart={startAgentRightPanelResize}
             onTrustWorkspace={trustWorkspace}

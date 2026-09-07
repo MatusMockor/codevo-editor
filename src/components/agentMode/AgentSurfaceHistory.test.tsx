@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
 import type { Commit, DiffPayload, FileChange } from "../../domain/git";
 import { waitForReact } from "../../test/reactTestLifecycle";
+import type { AgentSurfaceHistoryProps } from "./AgentSurfaceHistory";
 import { AgentSurfaceHistory } from "./AgentSurfaceHistory";
 import type { AgentHistoryRepositories } from "./agentHistoryRepositories";
 import type { AgentGitHistoryScope } from "./agentGitHistoryTarget";
@@ -36,10 +37,12 @@ let gateway: AgentGitHistoryGateway;
 async function render(
   currentScope: AgentGitHistoryScope = scope,
   repositories?: AgentHistoryRepositories,
+  checkout?: AgentSurfaceHistoryProps["checkout"],
 ) {
   await act(async () =>
     root.render(
       <AgentSurfaceHistory
+        checkout={checkout}
         repositories={repositories}
         scope={currentScope}
         gateway={gateway}
@@ -488,4 +491,89 @@ it("does not repeat the commit subject in its message body", async () => {
   await act(async () => button("Fix Linux startup").click());
   expect(host.textContent?.match(/Fix Linux startup/g)).toHaveLength(2);
   expect(host.textContent).toContain("Use the platform-specific launcher.");
+});
+
+async function selectFeatureBranch() {
+  await act(async () => button("History branch").click());
+  const option = Array.from(host.querySelectorAll<HTMLElement>('[role="option"]')).find((item) =>
+    item.textContent?.includes("feature/graph"),
+  );
+  if (option === undefined) throw new Error("Missing feature branch");
+  await act(async () => option.click());
+}
+
+it("requires an explicit checkout action and refreshes the working branch after it succeeds", async () => {
+  vi.mocked(gateway.getBranches).mockResolvedValue({
+    current: "main",
+    local: ["main", "feature/graph"],
+    remotes: {},
+  });
+  const switchBranch = vi.fn(async () => {
+    vi.mocked(gateway.getBranches).mockResolvedValue({
+      current: "feature/graph",
+      local: ["main", "feature/graph"],
+      remotes: {},
+    });
+  });
+  await render(scope, undefined, { gateway: { switchBranch }, guard: () => null });
+  expect(host.textContent).toContain("Working: main");
+  expect(host.querySelector(".agent-history__switch")).toBeNull();
+  await selectFeatureBranch();
+  expect(switchBranch).not.toHaveBeenCalled();
+  await act(async () => button("Switch to this branch").click());
+  expect(switchBranch).toHaveBeenCalledExactlyOnceWith(
+    "/workspace/app/packages/api",
+    "feature/graph",
+  );
+  expect(host.textContent).toContain("Working: feature/graph");
+  expect(host.querySelector(".agent-history__switch")).toBeNull();
+});
+
+it("explains why checkout is blocked while still allowing history browsing", async () => {
+  vi.mocked(gateway.getBranches).mockResolvedValue({
+    current: "main",
+    local: ["main", "feature/graph"],
+    remotes: {},
+  });
+  const switchBranch = vi.fn(async () => {});
+  await render(scope, undefined, {
+    gateway: { switchBranch },
+    guard: () => "Save your unsaved files before switching branches.",
+  });
+  await selectFeatureBranch();
+  const action = button("Switch to this branch");
+  expect(action.disabled).toBe(true);
+  expect(
+    document.getElementById(action.getAttribute("aria-describedby") ?? "")?.textContent,
+  ).toContain("Save your unsaved files");
+  expect(gateway.getCommitLog).toHaveBeenLastCalledWith(
+    "/workspace/app/packages/api",
+    expect.objectContaining({ branch: "refs/heads/feature/graph" }),
+  );
+  expect(switchBranch).not.toHaveBeenCalled();
+});
+
+it("shows a pending checkout and reports its error without claiming the branch changed", async () => {
+  vi.mocked(gateway.getBranches).mockResolvedValue({
+    current: "main",
+    local: ["main", "feature/graph"],
+    remotes: {},
+  });
+  let reject: ((reason: Error) => void) | undefined;
+  const switchBranch = vi.fn(
+    () =>
+      new Promise<void>((_, rejectPromise) => {
+        reject = rejectPromise;
+      }),
+  );
+  await render(scope, undefined, { gateway: { switchBranch }, guard: () => null });
+  await selectFeatureBranch();
+  await act(async () => button("Switch to this branch").click());
+  expect(button("Switching branch").disabled).toBe(true);
+  await act(async () => reject?.(new Error("Commit or stash conflicting changes first.")));
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+    "Commit or stash conflicting changes first.",
+  );
+  expect(host.textContent).toContain("Working: main");
+  expect(button("Switch to this branch").disabled).toBe(false);
 });

@@ -91,6 +91,8 @@ export const CODEVO_APP_VERSION = packageMetadata.version;
  * how PHP and JavaScript/TypeScript runtime variants are configured.
  */
 export function createWorkbenchComposition() {
+  const gitGateway = new TauriGitGateway();
+  const gitHistoryGateway = new TauriGitHistoryGateway();
   const workspaceIdentityGateway = new TauriWorkspaceIdentityGateway();
   const workspaceGateway = new TauriWorkspaceGateway(workspaceIdentityGateway);
   const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
@@ -124,8 +126,14 @@ export function createWorkbenchComposition() {
     debugTextClipboard: new BrowserTextClipboardGateway(),
     dirtyCloseDecisionCoordinator: new DirtyCloseDecisionCoordinator(),
     editorChangeHunksGateway: new BrowserEditorChangeHunksGateway(),
-    gitGateway: new TauriGitGateway(),
-    gitHistoryGateway: new TauriGitHistoryGateway(),
+    gitGateway,
+    gitHistoryGateway,
+    agentSurfaceGateways: {
+      gitBranchGateway: gitGateway,
+      gitHistoryGateway,
+      fileChanges: workspaceFileChangeGateway,
+      worktreeFileChanges: workspaceFileChangeGateway,
+    },
     gitWorktreeGateway: new TauriGitWorktreeGateway(),
     indexProgressGateway: new TauriIndexProgressGateway(),
     javaScriptTypeScriptLanguageServerDiagnosticsGateway: new TauriLanguageServerDiagnosticsGateway(

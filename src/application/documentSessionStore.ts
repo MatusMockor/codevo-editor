@@ -1,4 +1,10 @@
 import {
+  createStoredCompatibilityProjection,
+  compatibilityProjectionLeaseEqual,
+  type StoredCompatibilityProjection,
+} from "./documentSessionCompatibilityProjection";
+import { prepareDocumentSessionCleanRefresh } from "./documentSessionCleanRefresh";
+import {
   UNAVAILABLE_DOCUMENT_SESSION_DOCUMENT_SNAPSHOT,
   UNAVAILABLE_DOCUMENT_SESSION_OWNER_SNAPSHOT,
   type DocumentSessionDocumentLease,
@@ -130,14 +136,6 @@ interface StoredOwner {
   snapshot: DocumentSessionOwnerSnapshot;
   readonly subscribers: Set<OwnerSubscriber>;
   readonly workspaceId: string;
-}
-
-interface StoredCompatibilityProjection {
-  readonly activation: DocumentSessionCompatibilityProjectionActivation;
-  readonly clear: () => void;
-  readonly deleteDocument: (path: string) => void;
-  readonly replaceAll: (documents: Readonly<Record<string, Readonly<EditorDocument>>>) => void;
-  readonly setDocument: (document: Readonly<EditorDocument>) => void;
 }
 
 type AvailableDocumentSnapshot = Extract<
@@ -796,6 +794,78 @@ export class DocumentSessionStore implements DocumentSessionStorePort {
       return true;
     }
     return true;
+  }
+
+  refreshCleanDocument(
+    candidate: DocumentSessionReceipt,
+    content: string,
+    revision: EditorDocument["revision"],
+  ): DocumentSessionMutationResult {
+    return this.replaceExternalDocument(candidate, content, revision, "clean-refresh");
+  }
+
+  prepareDocumentReload(
+    candidate: DocumentSessionReceipt,
+  ):
+    | ((content: string, revision: EditorDocument["revision"]) => DocumentSessionMutationResult)
+    | null {
+    if (this.publishing || !this.isCurrent(candidate)) return null;
+    const resolved = this.documentForReceipt(candidate);
+    if (!resolved) return null;
+    const attachment = resolved.document.liveAttachment;
+    const checkpoint = attachment?.checkpoint;
+    const expiresAt = Date.now() + 30_000;
+    let used = false;
+    return (content, revision) => {
+      if (used || Date.now() > expiresAt) return rejectedMutation("stale-receipt");
+      used = true;
+      const current = this.documentForReceipt(candidate);
+      if (
+        !current ||
+        current.document.liveAttachment !== attachment ||
+        attachment?.checkpoint !== checkpoint
+      )
+        return rejectedMutation("stale-receipt");
+      return this.replaceExternalDocument(candidate, content, revision, "discard-reload");
+    };
+  }
+
+  private replaceExternalDocument(
+    candidate: DocumentSessionReceipt,
+    content: string,
+    revision: EditorDocument["revision"],
+    mode: "clean-refresh" | "discard-reload",
+  ): DocumentSessionMutationResult {
+    if (this.publishing) return rejectedMutation("reentrant-operation");
+    if (!this.isCurrent(candidate)) return rejectedMutation("stale-receipt");
+    const resolved = this.documentForReceipt(candidate);
+    if (!resolved) return rejectedMutation("stale-receipt");
+    const { document, owner } = resolved;
+    const prepared = prepareDocumentSessionCleanRefresh({
+      mode,
+      content,
+      revision,
+      document: document.document,
+      dirty: effectiveDirty(document),
+      saveInFlight: document.issuedSaves.size > 0,
+      retainedBytes: document.snapshot.estimatedRetainedBytes,
+      byteLimit: this.limits.maxRetainedEstimatedBytes,
+      admitBytes: (bytes) => this.makeDocumentCapacity(0, bytes),
+    });
+    if (prepared.status === "rejected") return prepared;
+    const wasDirty = effectiveDirty(document);
+    document.liveAttachment?.holders.clear();
+    document.liveAttachment = null;
+    document.liveDirty = false;
+    this.replaceStoredDocument(
+      owner,
+      document,
+      prepared.document,
+      document.document.content !== content,
+    );
+    this.publishDirtyTransition(owner, wasDirty, false);
+    this.emitDocument(owner, document);
+    return applied(document, receipt(ownerLease(owner), document));
   }
 
   edit(candidate: DocumentSessionReceipt, content: string): DocumentSessionMutationResult {
@@ -1627,79 +1697,6 @@ function rejectedCompatibilityReconciliation(
   >["reason"],
 ): DocumentSessionCompatibilityReconciliationResult {
   return { reason, status: "rejected" };
-}
-
-function createStoredCompatibilityProjection(
-  owner: DocumentSessionOwnerLease,
-  documents: ReadonlyMap<string, StoredDocument>,
-): StoredCompatibilityProjection {
-  let records = Object.create(null) as Record<string, Readonly<EditorDocument>>;
-  for (const document of documents.values()) {
-    records[document.document.path] = document.document;
-  }
-  const proxyTarget = Object.create(null) as Record<string, never>;
-  const projection = new Proxy(proxyTarget, {
-    defineProperty: () => false,
-    deleteProperty: () => false,
-    get: (_target, property) =>
-      Object.prototype.hasOwnProperty.call(records, property)
-        ? records[property as string]
-        : undefined,
-    getOwnPropertyDescriptor: (_target, property) => {
-      if (!Object.prototype.hasOwnProperty.call(records, property)) {
-        return undefined;
-      }
-      return {
-        configurable: true,
-        enumerable: true,
-        value: records[property as string],
-        writable: false,
-      };
-    },
-    getPrototypeOf: () => null,
-    has: (_target, property) => Object.prototype.hasOwnProperty.call(records, property),
-    isExtensible: () => true,
-    ownKeys: () => Reflect.ownKeys(records),
-    preventExtensions: () => false,
-    set: () => false,
-    setPrototypeOf: () => false,
-  }) as Readonly<Record<string, Readonly<EditorDocument>>>;
-  const activation = Object.freeze({
-    lease: Object.freeze({
-      authority: Object.freeze({}),
-      ownerGeneration: owner.generation,
-      ownerIncarnation: owner.incarnation,
-      ownerKey: owner.ownerKey,
-    }),
-    projection,
-  });
-  return {
-    activation,
-    clear: () => {
-      records = Object.create(null) as Record<string, Readonly<EditorDocument>>;
-    },
-    deleteDocument: (path) => {
-      delete records[path];
-    },
-    replaceAll: (documentsByPath) => {
-      records = documentsByPath as Record<string, Readonly<EditorDocument>>;
-    },
-    setDocument: (document) => {
-      records[document.path] = document;
-    },
-  };
-}
-
-function compatibilityProjectionLeaseEqual(
-  current: DocumentSessionCompatibilityProjectionLease,
-  candidate: DocumentSessionCompatibilityProjectionLease,
-): boolean {
-  return (
-    current.authority === candidate.authority &&
-    current.ownerGeneration === candidate.ownerGeneration &&
-    current.ownerIncarnation === candidate.ownerIncarnation &&
-    current.ownerKey === candidate.ownerKey
-  );
 }
 
 function documentBelongsToOwner(owner: StoredOwner, input: DocumentSessionOpenInput): boolean {

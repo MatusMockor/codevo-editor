@@ -99,6 +99,10 @@ export interface EditorSessionState {
   previewPath: string | null;
   previewPathRef: MutableRefObject<string | null>;
   reconcileDocumentSessionTopology(update: SetStateAction<Documents>): boolean;
+  prepareExternalDocumentReload(
+    expected: EditorDocument,
+  ): ((replacement: EditorDocument) => boolean) | null;
+  refreshExternalCleanDocument(expected: EditorDocument, replacement: EditorDocument): boolean;
   reportChangedDocuments: (paths: readonly string[]) => void;
   isDocumentSessionLifecycleAuthorityCurrent(
     authority: EditorSessionDocumentLifecycleAuthority,
@@ -348,6 +352,69 @@ export function useEditorSessionState(
       effectiveDocumentContentCommitCoalescingPolicy,
       synchronizeActiveGroupRefs,
     ],
+  );
+  const prepareExternalDocumentReload = useCallback(
+    (expected: EditorDocument): ((replacement: EditorDocument) => boolean) | null => {
+      if (documentsRef.current[expected.path] !== expected) return null;
+      const authority = documentAuthorityRef.current!;
+      const lifecycle = authority.resolveLifecycle(expected.path);
+      const commit = lifecycle ? authority.prepareDocumentReload(lifecycle) : null;
+      if (documentSessionAuthorityActiveRef.current && !commit) return null;
+      const expiresAt = Date.now() + 30_000;
+      let used = false;
+      return (replacement) => {
+        if (used || Date.now() > expiresAt) return false;
+        used = true;
+        if (
+          documentsRef.current[expected.path] !== expected ||
+          replacement.path !== expected.path ||
+          replacement.content !== replacement.savedContent
+        )
+          return false;
+        if (commit && !commit(replacement)) return false;
+        if (!commit && documentSessionAuthorityActiveRef.current) return false;
+        for (const [groupId, selection] of groupSelectionLeasesRef.current) {
+          if (selection.path === expected.path) groupSelectionLeasesRef.current.delete(groupId);
+        }
+        setDocuments((current) =>
+          current[expected.path] === expected
+            ? { ...current, [expected.path]: replacement }
+            : current,
+        );
+        if (documentSessionAuthorityActiveRef.current) advanceDocumentSessionAuthorityRevision();
+        return true;
+      };
+    },
+    [advanceDocumentSessionAuthorityRevision, setDocuments],
+  );
+  const refreshExternalCleanDocument = useCallback(
+    (expected: EditorDocument, replacement: EditorDocument): boolean => {
+      if (
+        documentsRef.current[expected.path] !== expected ||
+        replacement.path !== expected.path ||
+        expected.content !== expected.savedContent ||
+        replacement.content !== replacement.savedContent
+      )
+        return false;
+      const authority = documentAuthorityRef.current!;
+      const lifecycle = authority.resolveLifecycle(expected.path);
+      if (
+        documentSessionAuthorityActiveRef.current &&
+        (!lifecycle || !authority.refreshCleanDocument(lifecycle, replacement))
+      )
+        return false;
+      for (const [groupId, selection] of groupSelectionLeasesRef.current) {
+        if (selection.path === expected.path) groupSelectionLeasesRef.current.delete(groupId);
+      }
+      setDocuments((current) =>
+        current[expected.path] === expected
+          ? { ...current, [expected.path]: replacement }
+          : current,
+      );
+      if (documentSessionAuthorityActiveRef.current) advanceDocumentSessionAuthorityRevision();
+      return true;
+    },
+    [advanceDocumentSessionAuthorityRevision, setDocuments],
   );
   const reconcileDocumentSessionTopology = useCallback(
     (update: SetStateAction<Documents>): boolean => {
@@ -876,6 +943,8 @@ export function useEditorSessionState(
     previewPath,
     previewPathRef,
     reconcileDocumentSessionTopology,
+    refreshExternalCleanDocument,
+    prepareExternalDocumentReload,
     reportChangedDocuments,
     isDocumentSessionLifecycleAuthorityCurrent,
     isEditorGroupDocumentSessionAuthorityCurrent,

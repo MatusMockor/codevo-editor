@@ -14,6 +14,8 @@ use std::{
     time::Duration,
 };
 
+mod git_head;
+
 /// Debounce window used to coalesce raw OS file-system events before they are
 /// forwarded downstream. A burst of events (mass save, format-on-save,
 /// `git checkout`) collapses into a single batch flush per window, deduplicated
@@ -327,9 +329,16 @@ where
 }
 
 pub struct NativeNotifyWorkspaceFileWatcher;
+pub struct GitAwareNativeWorkspaceFileWatcher;
+
+enum NativeMetadataWatch {
+    Ignore,
+    GitHead,
+}
 
 pub struct NotifyWorkspaceWatchSession {
-    _watcher: RecommendedWatcher,
+    _git_head: Option<git_head::GitHeadWatchSession>,
+    _watcher: Arc<Mutex<RecommendedWatcher>>,
     // Owns the per-session coalescing sink (buffer + flush window). Dropping the
     // session releases it, so a stopped/dropped watcher leaves no buffered state
     // or armed flush behind for its root.
@@ -344,43 +353,89 @@ impl WorkspaceFileWatcher for NativeNotifyWorkspaceFileWatcher {
         request: WorkspaceWatchRequest,
         sink: Arc<dyn WorkspaceWatchEventSink>,
     ) -> io::Result<Box<dyn WorkspaceWatchSession>> {
-        let root = request.root_path.canonicalize()?;
-        let matcher = Arc::new(GitignoreWorkspaceIgnoreMatcher::load(&root)?);
-        let event_root = root.clone();
-        // Coalesce raw OS events per session before they reach the real sink so a
-        // burst collapses into one batch flush (deduplicated per path). Per-root
-        // isolation is intrinsic: this buffer belongs to exactly this session.
-        let scheduler: Arc<dyn WorkspaceWatchFlushScheduler> = Arc::new(
-            TimerWorkspaceWatchFlushScheduler::new(WORKSPACE_WATCH_COALESCE_WINDOW),
-        );
-        let coalescer = CoalescingWorkspaceWatchEventSink::new(sink, scheduler);
-        let event_sink: Arc<dyn WorkspaceWatchEventSink> = Arc::clone(&coalescer) as _;
-        let mut watcher =
-            notify::recommended_watcher(move |result: notify::Result<NotifyEvent>| match result {
-                Ok(event) => {
-                    let events = normalize_notify_event(&event_root, &event, matcher.as_ref());
-
-                    if events.is_empty() {
-                        return;
-                    }
-
-                    event_sink.publish(WorkspaceWatchEventBatch { events });
-                }
-                Err(error) => event_sink.error(WorkspaceWatchError {
-                    message: error.to_string(),
-                }),
-            })
-            .map_err(to_io_error)?;
-
-        watcher
-            .watch(&root, RecursiveMode::Recursive)
-            .map_err(to_io_error)?;
-
-        Ok(Box::new(NotifyWorkspaceWatchSession {
-            _watcher: watcher,
-            _coalescer: coalescer,
-        }))
+        watch_native(request, sink, NativeMetadataWatch::Ignore)
     }
+}
+
+impl WorkspaceFileWatcher for GitAwareNativeWorkspaceFileWatcher {
+    fn watch(
+        &self,
+        request: WorkspaceWatchRequest,
+        sink: Arc<dyn WorkspaceWatchEventSink>,
+    ) -> io::Result<Box<dyn WorkspaceWatchSession>> {
+        watch_native(request, sink, NativeMetadataWatch::GitHead)
+    }
+}
+
+fn watch_native(
+    request: WorkspaceWatchRequest,
+    sink: Arc<dyn WorkspaceWatchEventSink>,
+    metadata: NativeMetadataWatch,
+) -> io::Result<Box<dyn WorkspaceWatchSession>> {
+    let root = request.root_path.canonicalize()?;
+    let matcher = Arc::new(GitignoreWorkspaceIgnoreMatcher::load(&root)?);
+    let metadata = match metadata {
+        NativeMetadataWatch::Ignore => None,
+        NativeMetadataWatch::GitHead => {
+            let (events, receiver) = git_head::GitHeadWatchEvents::new();
+            Some((Arc::new(events), receiver))
+        }
+    };
+    let event_git_head = metadata.as_ref().map(|(events, _)| Arc::clone(events));
+    let event_root = root.clone();
+    // Coalesce raw OS events per session before they reach the real sink so a
+    // burst collapses into one batch flush (deduplicated per path). Per-root
+    // isolation is intrinsic: this buffer belongs to exactly this session.
+    let scheduler: Arc<dyn WorkspaceWatchFlushScheduler> = Arc::new(
+        TimerWorkspaceWatchFlushScheduler::new(WORKSPACE_WATCH_COALESCE_WINDOW),
+    );
+    let coalescer = CoalescingWorkspaceWatchEventSink::new(sink, scheduler);
+    let event_sink: Arc<dyn WorkspaceWatchEventSink> = Arc::clone(&coalescer) as _;
+    let mut watcher =
+        notify::recommended_watcher(move |result: notify::Result<NotifyEvent>| match result {
+            Ok(event) => {
+                let mut events = normalize_notify_event(&event_root, &event, matcher.as_ref());
+                if !matches!(event.kind, EventKind::Access(_)) {
+                    if let Some(rescan) = event_git_head
+                        .as_ref()
+                        .and_then(|events| events.rescan_for_paths(&event_root, &event.paths))
+                    {
+                        events.push(rescan);
+                    }
+                }
+
+                if events.is_empty() {
+                    return;
+                }
+
+                event_sink.publish(WorkspaceWatchEventBatch { events });
+            }
+            Err(error) => event_sink.error(WorkspaceWatchError {
+                message: error.to_string(),
+            }),
+        })
+        .map_err(to_io_error)?;
+
+    watcher
+        .watch(&root, RecursiveMode::Recursive)
+        .map_err(to_io_error)?;
+    let watcher = Arc::new(Mutex::new(watcher));
+    let git_head = metadata
+        .map(|(events, receiver)| {
+            events.start(
+                root,
+                Arc::clone(&watcher),
+                receiver,
+                Arc::clone(&coalescer) as _,
+            )
+        })
+        .transpose()?;
+
+    Ok(Box::new(NotifyWorkspaceWatchSession {
+        _git_head: git_head,
+        _watcher: watcher,
+        _coalescer: coalescer,
+    }))
 }
 
 pub struct WatchmanWorkspaceFileWatcher;

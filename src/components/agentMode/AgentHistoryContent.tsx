@@ -1,5 +1,6 @@
 import { FolderGit2, RefreshCw, X } from "lucide-react";
 import { Suspense, lazy, useMemo, type ReactNode } from "react";
+import { AgentHistoryCheckoutAction } from "./AgentHistoryCheckoutAction";
 import { AgentHistoryGraph } from "./AgentHistoryGraph";
 import { historyDate, historyMessage } from "./agentHistoryPresentation";
 import { AgentHistoryBranchPicker } from "./AgentHistoryBranchPicker";
@@ -17,10 +18,12 @@ export function AgentHistoryContent({
   scope,
   gateway,
   repositoryPicker,
+  checkout,
+  fileChanges,
   ...editor
 }: AgentSurfaceHistoryProps & { readonly repositoryPicker?: ReactNode }) {
   const target = scope.kind === "available" ? scope.target : null;
-  const history = useAgentGitHistory({ target, gateway });
+  const history = useAgentGitHistory({ target, gateway, fileChanges });
   const message =
     history.details === null ? "" : historyMessage(history.details.subject, history.details.body);
   const diff = useMemo(() => historyDiff(history.diff), [history.diff]);
@@ -56,6 +59,15 @@ export function AgentHistoryContent({
           </>
         )}
       </header>
+      {target !== null && history.branches !== null && (
+        <AgentHistoryCheckoutAction
+          target={target}
+          branches={history.branches}
+          filter={history.branchFilter}
+          checkout={checkout}
+          onSuccess={history.refresh}
+        />
+      )}
       {scope.kind === "unavailable" && <p className="agent-note">{scope.reason}</p>}
       {scope.kind === "available" && history.status === "loading" && (
         <p className="agent-note" role="status">

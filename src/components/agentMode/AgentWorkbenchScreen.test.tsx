@@ -1,3 +1,4 @@
+import { waitForReact } from "../../test/reactTestLifecycle";
 // @vitest-environment jsdom
 
 import { act } from "react";
@@ -529,6 +530,75 @@ describe("AgentWorkbenchScreen", () => {
 
     expect(workbench.openWorkspaceRootWithReceipt).toHaveBeenCalledWith("/Users/dev");
     expect(host.textContent).toContain(ADD_PROJECT_REFUSED_REASON);
+  });
+
+  it("updates branch checkout availability immediately after saving and dispatch settlement", async () => {
+    const dirty = {
+      path: `${ROOT_A}/file.ts`,
+      name: "file.ts",
+      language: "typescript",
+      content: "draft",
+      savedContent: "saved",
+    };
+    const gateway: NonNullable<AgentWorkbenchScreenProps["gitHistoryGateway"]> = {
+      getRepoStatus: async () => ({ gitAvailable: true, isRepository: true }),
+      getBranches: async () => ({ current: "main", local: ["main", "feature"], remotes: {} }),
+      getCommitLog: async () => [],
+      getCommitDetails: async () => {
+        throw new Error("unused");
+      },
+      getCommitFiles: async () => [],
+      getCommitDiff: async () => {
+        throw new Error("unused");
+      },
+    };
+    let workbench = createWorkbench(ROOT_A, {
+      openDocuments: [dirty],
+      workspaceTrust: { rootPath: ROOT_A, trusted: true },
+      agentWorkbench: recordedLayoutState({
+        rightPanel: "open",
+        openSurfaces: ["history"],
+        activeSurface: "history",
+      }),
+    });
+    const mutation = { switchBranch: vi.fn(async () => undefined) };
+    const show = async () => {
+      await act(async () =>
+        root.render(
+          <AgentWorkbenchScreen
+            {...defaultProps(workbench)}
+            gitHistoryGateway={gateway}
+            gitBranchGateway={mutation}
+          />,
+        ),
+      );
+    };
+    await show();
+    await waitForReact(() =>
+      expect(host.querySelector('[aria-label="History branch"]')).not.toBeNull(),
+    );
+    click('[aria-label="History branch"]');
+    const option = [...host.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
+      item.textContent?.includes("feature"),
+    );
+    expect(option).toBeDefined();
+    await act(async () => option?.click());
+    const switchButton = () =>
+      [...host.querySelectorAll("button")].find(
+        (item) => item.textContent === "Switch to this branch",
+      );
+    await waitForReact(() => expect(switchButton()).toBeDefined());
+    expect(switchButton()?.disabled).toBe(true);
+    workbench = { ...workbench, openDocuments: [{ ...dirty, savedContent: "draft" }] };
+    await show();
+    expect(switchButton()?.disabled).toBe(false);
+    workbench = { ...workbench, agents: { ...workbench.agents, dispatching: true } };
+    await show();
+    expect(switchButton()?.disabled).toBe(true);
+    workbench = { ...workbench, agents: { ...workbench.agents, dispatching: false } };
+    await show();
+    expect(switchButton()?.disabled).toBe(false);
+    expect(mutation.switchBranch).not.toHaveBeenCalled();
   });
 
   function render(workbench: AgentWorkbenchScreenWorkbench): void {

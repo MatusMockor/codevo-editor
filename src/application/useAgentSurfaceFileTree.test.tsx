@@ -335,6 +335,138 @@ describe("useAgentSurfaceFileTree", () => {
     harness.unmount();
   });
 
+  it("coalesces a checkout burst and never publishes a listing read before the change", async () => {
+    const harness = renderTree({ withChanges: true });
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toBeDefined());
+    let settle: (listing: Listing) => void = () => undefined;
+    harness.readDirectoryBounded.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+    act(() => harness.hook().refresh());
+    const reads = harness.readDirectoryBounded.mock.calls.length;
+    for (let index = 0; index < 100; index += 1) harness.emit(change(`${WORKTREE}/new.ts`));
+    harness.emit({ rootPath: ROOT, kind: "rescanRequired", path: ROOT, relativePath: "" });
+    expect(harness.readDirectoryBounded).toHaveBeenCalledTimes(reads);
+    harness.readDirectoryBounded.mockResolvedValueOnce({
+      entries: [file(`${WORKTREE}/new.ts`)],
+      truncated: false,
+    });
+    await act(async () => settle({ entries: [file(`${WORKTREE}/old.ts`)], truncated: false }));
+    await waitForReact(() =>
+      expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([file(`${WORKTREE}/new.ts`)]),
+    );
+    expect(harness.readDirectoryBounded).toHaveBeenCalledTimes(reads + 1);
+    harness.unmount();
+  });
+
+  it("invalidates collapsed listings after a nested repository checkout", async () => {
+    const child = `${WORKTREE}/repo`;
+    const listings = {
+      [WORKTREE]: { entries: [directory(child)], truncated: false },
+      [child]: { entries: [file(`${child}/old.ts`)], truncated: false },
+    };
+    const harness = renderTree({ listings, withChanges: true });
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toBeDefined());
+    act(() => harness.hook().toggleDirectory(child));
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[child]).toBeDefined());
+    act(() => harness.hook().toggleDirectory(child));
+    listings[child] = { entries: [file(`${child}/new.ts`)], truncated: false };
+    harness.emit({ rootPath: child, kind: "rescanRequired", path: child, relativePath: "" });
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toBeDefined());
+    expect(harness.hook().entriesByDirectory[child]).toBeUndefined();
+    act(() => harness.hook().toggleDirectory(child));
+    await waitForReact(() =>
+      expect(harness.hook().entriesByDirectory[child]).toEqual([file(`${child}/new.ts`)]),
+    );
+    harness.unmount();
+  });
+
+  it("removes cached descendants when their directory disappears", async () => {
+    const child = `${WORKTREE}/src`;
+    const nested = `${child}/nested`;
+    const listings = {
+      [WORKTREE]: { entries: [directory(child)], truncated: false },
+      [child]: { entries: [directory(nested)], truncated: false },
+      [nested]: { entries: [file(`${nested}/old.ts`)], truncated: false },
+    };
+    const harness = renderTree({ listings, withChanges: true });
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toBeDefined());
+    act(() => harness.hook().toggleDirectory(child));
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[child]).toBeDefined());
+    act(() => harness.hook().toggleDirectory(nested));
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[nested]).toBeDefined());
+    listings[WORKTREE] = { entries: [], truncated: false };
+    harness.emit({ ...change(child), kind: "deleted", fileKind: "directory" });
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([]));
+    expect(harness.hook().entriesByDirectory[child]).toBeUndefined();
+    expect(harness.hook().entriesByDirectory[nested]).toBeUndefined();
+    expect(harness.hook().expandedDirectories.size).toBe(0);
+    harness.unmount();
+  });
+
+  it("does not resurrect a removed subtree from a late descendant listing", async () => {
+    const child = `${WORKTREE}/src`;
+    const nested = `${child}/nested`;
+    const listings = {
+      [WORKTREE]: { entries: [directory(child)], truncated: false },
+      [child]: { entries: [directory(nested)], truncated: false },
+    };
+    const harness = renderTree({ listings, withChanges: true });
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toBeDefined());
+    act(() => harness.hook().toggleDirectory(child));
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[child]).toBeDefined());
+    let settle: (listing: Listing) => void = () => undefined;
+    harness.readDirectoryBounded.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+    act(() => harness.hook().toggleDirectory(nested));
+    listings[WORKTREE] = { entries: [], truncated: false };
+    harness.emit({ ...change(child), kind: "deleted", fileKind: "directory" });
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([]));
+    await act(async () => settle({ entries: [file(`${nested}/stale.ts`)], truncated: false }));
+    expect(harness.hook().entriesByDirectory[nested]).toBeUndefined();
+    expect(harness.hook().loadingDirectories.size).toBe(0);
+    harness.unmount();
+  });
+
+  it("rejects an old listing and retained subscription after owner A to B to A", async () => {
+    const harness = renderTree({ withChanges: true });
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toBeDefined());
+    const oldListener = harness.listeners[0];
+    const oldSurface = harness.hook();
+    let settle: (listing: Listing) => void = () => undefined;
+    harness.readDirectoryBounded.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+    act(() => harness.hook().refresh());
+    harness.setTarget({ ...TARGET, rootPath: "/other" });
+    harness.setTarget(TARGET);
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([]));
+    const reads = harness.readDirectoryBounded.mock.calls.length;
+    await act(async () => {
+      oldSurface.refresh();
+      oldSurface.toggleDirectory(`${WORKTREE}/stale`);
+      oldSurface.retryDirectory(WORKTREE);
+      oldListener?.({ rootPath: ROOT, kind: "rescanRequired", path: ROOT, relativePath: "" });
+      oldSurface.refresh();
+      oldSurface.toggleDirectory(`${WORKTREE}/stale`);
+      oldSurface.retryDirectory(WORKTREE);
+      settle({ entries: [file(`${WORKTREE}/stale.ts`)], truncated: false });
+    });
+    expect(harness.hook().entriesByDirectory[WORKTREE]).toEqual([]);
+    expect(harness.readDirectoryBounded).toHaveBeenCalledTimes(reads);
+    harness.unmount();
+  });
+
   it("exposes pure helpers for depth and ordering", () => {
     expect(agentSurfaceTreeDepth(WORKTREE, WORKTREE)).toBe(0);
     expect(agentSurfaceTreeDepth(WORKTREE, `${WORKTREE}/a/b/c`)).toBe(3);

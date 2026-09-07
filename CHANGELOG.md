@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.21] - 2026-09-08
+
+### Added
+
+- Switch local and remote working branches explicitly from agent History on macOS
+  and Linux, with the working branch shown separately from the history filter.
+
+### Fixed
+
+- Refresh repository trees and clean open files when a user or agent switches
+  branches, including selected external worktrees, while preserving unsaved text.
+- Keep file watching active in large projects and handle Git metadata changes in
+  nested repositories and linked worktrees.
+
 ## [0.2.0-beta.20] - 2026-09-07
 
 ### Added

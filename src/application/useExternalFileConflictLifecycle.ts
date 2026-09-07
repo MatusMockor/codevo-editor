@@ -42,6 +42,9 @@ interface ExternalFileConflictLifecycleDependencies {
   documentsRef: MutableRefObject<Record<string, EditorDocument>>;
   openPathsRef: MutableRefObject<string[]>;
   resolveDocumentSaveOwnership?: ResolveDocumentSaveOwnership;
+  prepareExternalDocumentReload?: (
+    expected: EditorDocument,
+  ) => ((replacement: EditorDocument) => boolean) | null;
   documentSelfWrites: DocumentSelfWriteCoordinator;
   reportChangedDocuments: (paths: readonly string[]) => void;
   setActivePath: Dispatch<SetStateAction<string | null>>;
@@ -58,6 +61,7 @@ export function useExternalFileConflictLifecycle({
   documentsRef,
   openPathsRef,
   resolveDocumentSaveOwnership,
+  prepareExternalDocumentReload,
   documentSelfWrites,
   reportChangedDocuments,
   setActivePath,
@@ -587,6 +591,11 @@ export function useExternalFileConflictLifecycle({
         return;
       }
 
+      const reloadDocument = requested === "reload" ? documentsRef.current[activePath] : null;
+      const commitReload =
+        reloadDocument && prepareExternalDocumentReload
+          ? prepareExternalDocumentReload(reloadDocument)
+          : null;
       const target = externalFileConflictRef(conflict);
       if (requested === "compare") {
         publish(
@@ -812,15 +821,33 @@ export function useExternalFileConflictLifecycle({
       }
 
       if (requested === "reload") {
+        if (
+          disposedRef.current ||
+          live !== reloadDocument ||
+          !actionStillOwnsActiveDocument() ||
+          stateForOwnership(actionOwnership).conflict !== conflict
+        ) {
+          failAction("The editor changed before it could be reloaded. Your open buffer was kept.");
+          return;
+        }
         const refreshed = {
           ...live,
           content: conflict.disk.content,
           savedContent: conflict.disk.content,
           revision: conflict.disk.revision ?? null,
         };
-        documentsRef.current = { ...documentsRef.current, [activePath]: refreshed };
-        activeDocumentRef.current = refreshed;
-        setDocuments(documentsRef.current);
+        if (prepareExternalDocumentReload) {
+          if (!commitReload || !commitReload(refreshed)) {
+            failAction(
+              "The editor changed before it could be reloaded. Your open buffer was kept.",
+            );
+            return;
+          }
+        } else {
+          documentsRef.current = { ...documentsRef.current, [activePath]: refreshed };
+          activeDocumentRef.current = refreshed;
+          setDocuments(documentsRef.current);
+        }
         reportChangedDocuments([activePath]);
       }
 
@@ -876,6 +903,7 @@ export function useExternalFileConflictLifecycle({
       ownershipKey,
       publish,
       reportChangedDocuments,
+      prepareExternalDocumentReload,
       resolveOwnership,
       setActivePath,
       setDocuments,

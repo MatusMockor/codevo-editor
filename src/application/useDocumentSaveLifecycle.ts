@@ -418,16 +418,17 @@ export function useDocumentSaveLifecycle(
         lease,
       };
       const legacyDocument = activeDocumentSaveStore.current(target);
-      const liveAdmission =
-        legacyDocument && isJavaScriptTypeScriptLanguageServerDocument(legacyDocument)
-          ? activeLiveSaveCoordinator.admit({
-              document: legacyDocument,
-              legacySaveStore: activeDocumentSaveStore,
-              lease,
-              requireExactLiveSave: activeDocumentRef.current?.path === identity.path,
-              target,
-            })
-          : { status: "fallback" as const };
+      const liveAdmission = legacyDocument
+        ? activeLiveSaveCoordinator.admit({
+            document: legacyDocument,
+            legacySaveStore: activeDocumentSaveStore,
+            lease,
+            requireExactLiveSave:
+              isJavaScriptTypeScriptLanguageServerDocument(legacyDocument) &&
+              activeDocumentRef.current?.path === identity.path,
+            target,
+          })
+        : { status: "fallback" as const };
       if (liveAdmission.status === "rejected") {
         const result: DocumentSaveResult = {
           status: "blocked",

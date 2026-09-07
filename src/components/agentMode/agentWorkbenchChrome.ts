@@ -1,3 +1,9 @@
+import type {
+  WorkspaceFileChangeGateway,
+  WorkspaceFileChangeEvent,
+} from "../../domain/workspaceFileChange";
+import type { AgentBranchCheckoutGateway } from "../../application/useAgentBranchCheckout";
+import type { AgentGitHistoryTarget } from "../../application/useAgentGitHistory";
 import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
 import type { PointerEvent } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
@@ -95,6 +101,19 @@ export interface AgentWorkbenchChrome {
   readonly diff: AgentWorkbenchDiffChrome;
   readonly terminal: AgentWorkbenchTerminalChrome | null;
   readonly gitHistoryGateway?: AgentGitHistoryGateway | null;
+  readonly branchCheckout?: {
+    readonly gateway: AgentBranchCheckoutGateway;
+    readonly guard: (target: AgentGitHistoryTarget) => string | null;
+  } | null;
+  readonly worktreeSync?: {
+    readonly gateway: WorkspaceFileChangeGateway;
+    readonly workspaceOwnerKey: string | null;
+    readonly openWorkspaceRoots: readonly string[];
+    readonly control: {
+      refreshDocuments(event: WorkspaceFileChangeEvent, isCurrent: () => boolean): Promise<void>;
+      reportError(error: unknown): void;
+    };
+  } | null;
   readonly addProject: AgentWorkbenchAddProjectChrome | null;
   onToggleBottomPanel(): void;
   onShowTerminalPanel(): void;

@@ -638,3 +638,113 @@ function saveSnapshot(
     utf8BytesUpperBound: content.length * 3,
   });
 }
+
+it("refreshes a clean external baseline and revokes the old live attachment", () => {
+  const sidecar = activatedSidecar();
+  const lifecycle = sidecar.resolveLifecycle(PATH)!;
+  const group = sidecar.createGroupAuthority(lifecycle, "editor-main", PATH, {})!;
+  const attachment = sidecar.attachEditorGroupLiveDocument(
+    group,
+    {
+      captureCurrentContent: () => "saved",
+      holderIncarnation: {},
+      modelIncarnation: {},
+    },
+    revision(1, 1, 5),
+    () => true,
+  )!;
+  expect(attachment).not.toBeNull();
+  const replacement = { ...DOCUMENT, content: "new branch", savedContent: "new branch" };
+  expect(sidecar.refreshCleanDocument(lifecycle, replacement)).toBe(true);
+  expect(sidecar.documentDirty(lifecycle)).toBe(false);
+  expect(attachment.observe(revision(2, 2, 6))).toBe(false);
+  const nextGroup = sidecar.createGroupAuthority(lifecycle, "editor-main", PATH, {})!;
+  const nextAttachment = sidecar.attachEditorGroupLiveDocument(
+    nextGroup,
+    {
+      captureCurrentContent: () => "new branch",
+      holderIncarnation: {},
+      modelIncarnation: {},
+    },
+    revision(2, 2, 10),
+    () => true,
+  )!;
+  expect(nextAttachment).not.toBeNull();
+  expect(sidecar.documentDirty(lifecycle)).toBe(false);
+  expect(nextAttachment.observe(revision(3, 3, 11))).toBe(true);
+  expect(sidecar.documentDirty(lifecycle)).toBe(true);
+});
+
+it("refuses clean baseline refresh after live edits and owner replacement", () => {
+  const sidecar = activatedSidecar();
+  const lifecycle = sidecar.resolveLifecycle(PATH)!;
+  const group = sidecar.createGroupAuthority(lifecycle, "editor-main", PATH, {})!;
+  const attachment = sidecar.attachEditorGroupLiveDocument(
+    group,
+    {
+      captureCurrentContent: () => "saved",
+      holderIncarnation: {},
+      modelIncarnation: {},
+    },
+    revision(1, 1, 5),
+    () => true,
+  )!;
+  attachment.observe(revision(2, 2, 6));
+  expect(sidecar.refreshCleanDocument(lifecycle, DOCUMENT)).toBe(false);
+  expect(sidecar.documentDirty(lifecycle)).toBe(true);
+  activateWorkspaceA(sidecar);
+  expect(sidecar.refreshCleanDocument(lifecycle, DOCUMENT)).toBe(false);
+});
+
+it("explicit reload discards the captured dirty live revision once and resets its baseline", () => {
+  const sidecar = activatedSidecar();
+  const lifecycle = sidecar.resolveLifecycle(PATH)!;
+  const group = sidecar.createGroupAuthority(lifecycle, "editor-main", PATH, {})!;
+  const attachment = sidecar.attachEditorGroupLiveDocument(
+    group,
+    {
+      captureCurrentContent: () => "saved",
+      holderIncarnation: {},
+      modelIncarnation: {},
+    },
+    revision(1, 1, 5),
+    () => true,
+  )!;
+  attachment.observe(revision(2, 2, 6));
+  expect(sidecar.refreshCleanDocument(lifecycle, DOCUMENT)).toBe(false);
+  const commit = sidecar.prepareDocumentReload(lifecycle)!;
+  const replacement = { ...DOCUMENT, content: "disk", savedContent: "disk" };
+  expect(commit(replacement)).toBe(true);
+  expect(sidecar.documentDirty(lifecycle)).toBe(false);
+  expect(commit(replacement)).toBe(false);
+  expect(attachment.observe(revision(3, 3, 7))).toBe(false);
+});
+
+it("explicit reload rejects subsequent live edits and an expired capture", () => {
+  const sidecar = activatedSidecar();
+  const lifecycle = sidecar.resolveLifecycle(PATH)!;
+  const group = sidecar.createGroupAuthority(lifecycle, "editor-main", PATH, {})!;
+  const attachment = sidecar.attachEditorGroupLiveDocument(
+    group,
+    {
+      captureCurrentContent: () => "saved",
+      holderIncarnation: {},
+      modelIncarnation: {},
+    },
+    revision(1, 1, 5),
+    () => true,
+  )!;
+  attachment.observe(revision(2, 2, 6));
+  const commit = sidecar.prepareDocumentReload(lifecycle)!;
+  attachment.observe(revision(3, 3, 7));
+  expect(commit(DOCUMENT)).toBe(false);
+  expect(sidecar.documentDirty(lifecycle)).toBe(true);
+  const expired = sidecar.prepareDocumentReload(lifecycle)!;
+  const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 30_001);
+  try {
+    expect(expired(DOCUMENT)).toBe(false);
+  } finally {
+    now.mockRestore();
+  }
+  expect(sidecar.documentDirty(lifecycle)).toBe(true);
+});

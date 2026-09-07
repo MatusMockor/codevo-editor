@@ -1,5 +1,5 @@
 use crate::file_watcher::{
-    CommandWatchmanAvailability, NativeNotifyWorkspaceFileWatcher, PreferredWorkspaceFileWatcher,
+    CommandWatchmanAvailability, GitAwareNativeWorkspaceFileWatcher, PreferredWorkspaceFileWatcher,
     WatchmanWorkspaceFileWatcher, WorkspaceFileWatcher, WorkspaceWatchError, WorkspaceWatchEvent,
     WorkspaceWatchEventBatch, WorkspaceWatchEventKind, WorkspaceWatchEventSink,
     WorkspaceWatchFileKind, WorkspaceWatchRequest, WorkspaceWatchSession,
@@ -359,7 +359,7 @@ impl WorkspaceFileChangeWatchRegistry {
     ) -> Result<WorkspaceFileWatchStartReceipt, String> {
         let watcher = PreferredWorkspaceFileWatcher::new(
             WatchmanWorkspaceFileWatcher,
-            NativeNotifyWorkspaceFileWatcher,
+            GitAwareNativeWorkspaceFileWatcher,
             CommandWatchmanAvailability,
         );
 

@@ -157,28 +157,57 @@ function storeDirectory(
   entries: FileEntry[],
   truncated: boolean,
 ): TreeState {
-  const cache = new Map(state.cache);
+  let child = path;
+  while (child !== root) {
+    const parent = parentDirectory(child);
+    const siblings = state.cache.get(parent);
+    if (siblings !== undefined && !state.truncated.has(parent)) {
+      if (!siblings.some((entry) => entry.path === child && entry.kind === "directory")) {
+        return dropDirectory(state, path);
+      }
+    }
+    child = parent;
+  }
+  let retained = state;
+  if (!truncated) {
+    const children = new Set(
+      entries.filter((entry) => entry.kind === "directory").map((entry) => entry.path),
+    );
+    for (const cached of state.cache.keys()) {
+      if (parentDirectory(cached) === path && !children.has(cached)) {
+        retained = dropDirectory(retained, cached);
+      }
+    }
+  }
+  const cache = new Map(retained.cache);
   cache.delete(path);
   cache.set(path, entries);
   const next: TreeState = {
-    ...state,
+    ...retained,
     cache,
-    loading: withoutValue(state.loading, path),
-    failed: withoutValue(state.failed, path),
-    truncated: truncated ? withValue(state.truncated, path) : withoutValue(state.truncated, path),
+    loading: withoutValue(retained.loading, path),
+    failed: withoutValue(retained.failed, path),
+    truncated: truncated
+      ? withValue(retained.truncated, path)
+      : withoutValue(retained.truncated, path),
   };
   return evictOverflow(next, path, root);
 }
 
 function dropDirectory(state: TreeState, path: string): TreeState {
-  if (!state.cache.has(path)) return state;
   const cache = new Map(state.cache);
-  cache.delete(path);
+  for (const cached of cache.keys()) {
+    if (isInsideAgentSurfaceRoot(path, cached)) cache.delete(cached);
+  }
+  const retain = (values: ReadonlySet<string>) =>
+    new Set([...values].filter((value) => !isInsideAgentSurfaceRoot(path, value)));
   return {
     ...state,
     cache,
-    expanded: withoutValue(state.expanded, path),
-    truncated: withoutValue(state.truncated, path),
+    expanded: retain(state.expanded),
+    loading: retain(state.loading),
+    failed: retain(state.failed),
+    truncated: retain(state.truncated),
   };
 }
 
@@ -188,13 +217,17 @@ export function useAgentSurfaceFileTree(
   const { target, files, fileChanges } = dependencies;
   const targetKey = agentSurfaceTreeTargetKey(target);
   const rootPath = target?.rootPath ?? null;
+  const owner = useMemo(() => ({ targetKey }), [targetKey]);
+  const ownerRef = useRef(owner);
   const rootErrorMessage = agentSurfaceTreeRootError(target);
   const [state, setState] = useState<TreeState>(EMPTY_STATE);
   const generationRef = useRef(0);
   const stateRef = useRef(state);
   const filesRef = useRef(files);
+  const requestsRef = useRef(new Map<string, { dirty: boolean }>());
 
   useLayoutEffect(() => {
+    ownerRef.current = owner;
     stateRef.current = state;
     filesRef.current = files;
   });
@@ -218,36 +251,61 @@ export function useAgentSurfaceFileTree(
 
   const loadDirectory = useCallback(
     async (root: string, path: string): Promise<void> => {
+      if (ownerRef.current !== owner) return;
       if (!isInsideAgentSurfaceRoot(root, path)) return;
       if (agentSurfaceTreeDepth(root, path) > MAX_AGENT_SURFACE_TREE_DEPTH) return;
+      const requests = requestsRef.current;
+      const pending = requests.get(path);
+      if (pending !== undefined) {
+        pending.dirty = true;
+        return;
+      }
+      if (path !== root && requests.size >= MAX_AGENT_SURFACE_TREE_DIRECTORIES) return;
+      const request = { dirty: false };
+      requests.set(path, request);
       const generation = generationRef.current;
+      const ownsRequest = () =>
+        generation === generationRef.current && requests.get(path) === request;
       setState((current) => ({
         ...current,
         loading: withValue(current.loading, path),
         failed: withoutValue(current.failed, path),
       }));
-      try {
-        const result = await readDirectory(path);
-        if (generation !== generationRef.current) return;
-        setState((current) => ({
-          ...storeDirectory(current, root, path, result.entries, result.truncated),
-          rootError: path === root ? null : current.rootError,
-        }));
-      } catch {
-        if (generation !== generationRef.current) return;
-        setState((current) => ({
-          ...current,
-          loading: withoutValue(current.loading, path),
-          failed: withValue(current.failed, path),
-          rootError: path === root ? rootErrorMessage : current.rootError,
-        }));
-      }
+      do {
+        request.dirty = false;
+        try {
+          const result = await readDirectory(path);
+          if (!ownsRequest()) return;
+          if (request.dirty) continue;
+          setState((current) => {
+            if (generation !== generationRef.current) return current;
+            return {
+              ...storeDirectory(current, root, path, result.entries, result.truncated),
+              rootError: path === root ? null : current.rootError,
+            };
+          });
+        } catch {
+          if (!ownsRequest()) return;
+          if (request.dirty) continue;
+          setState((current) => {
+            if (generation !== generationRef.current) return current;
+            return {
+              ...dropDirectory(current, path),
+              loading: withoutValue(current.loading, path),
+              failed: withValue(current.failed, path),
+              rootError: path === root ? rootErrorMessage : current.rootError,
+            };
+          });
+        }
+      } while (request.dirty && ownsRequest());
+      requests.delete(path);
     },
-    [readDirectory, rootErrorMessage],
+    [owner, readDirectory, rootErrorMessage],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     generationRef.current += 1;
+    requestsRef.current = new Map();
     setState(EMPTY_STATE);
     if (rootPath === null) return;
     void loadDirectory(rootPath, rootPath);
@@ -257,17 +315,26 @@ export function useAgentSurfaceFileTree(
   }, [loadDirectory, rootPath, targetKey]);
 
   const refresh = useCallback((): void => {
-    if (rootPath === null) return;
+    if (rootPath === null || ownerRef.current !== owner) return;
     const current = stateRef.current;
+    for (const path of requestsRef.current.keys()) {
+      if (path !== rootPath && !current.expanded.has(path)) requestsRef.current.delete(path);
+    }
+    setState((previous) => ({
+      ...previous,
+      cache: new Map(),
+      truncated: new Set(),
+      loading: new Set(requestsRef.current.keys()),
+    }));
     void loadDirectory(rootPath, rootPath);
     for (const path of current.expanded) {
-      if (current.cache.has(path)) void loadDirectory(rootPath, path);
+      void loadDirectory(rootPath, path);
     }
-  }, [loadDirectory, rootPath]);
+  }, [loadDirectory, owner, rootPath]);
 
   const toggleDirectory = useCallback(
     (path: string): void => {
-      if (rootPath === null) return;
+      if (rootPath === null || ownerRef.current !== owner) return;
       if (!isInsideAgentSurfaceRoot(rootPath, path)) return;
       if (agentSurfaceTreeDepth(rootPath, path) > MAX_AGENT_SURFACE_TREE_DEPTH) return;
       const current = stateRef.current;
@@ -279,15 +346,15 @@ export function useAgentSurfaceFileTree(
       if (current.cache.has(path) || current.loading.has(path)) return;
       void loadDirectory(rootPath, path);
     },
-    [loadDirectory, rootPath],
+    [loadDirectory, owner, rootPath],
   );
 
   const retryDirectory = useCallback(
     (path: string): void => {
-      if (rootPath === null) return;
+      if (rootPath === null || ownerRef.current !== owner) return;
       void loadDirectory(rootPath, path);
     },
-    [loadDirectory, rootPath],
+    [loadDirectory, owner, rootPath],
   );
 
   useEffect(() => {
@@ -296,7 +363,7 @@ export function useAgentSurfaceFileTree(
     let unsubscribe: (() => void) | null = null;
     let disposed = false;
     const onEvent = (event: WorkspaceFileChangeEvent): void => {
-      if (generation !== generationRef.current) return;
+      if (disposed || generation !== generationRef.current) return;
       if (!agentSurfaceChangeEventConcernsRoot(rootPath, event.rootPath)) return;
       if (event.kind === "rescanRequired") {
         refresh();
@@ -308,7 +375,7 @@ export function useAgentSurfaceFileTree(
         .filter((directory) => isInsideAgentSurfaceRoot(rootPath, directory));
       for (const directory of new Set(touched)) {
         const current = stateRef.current;
-        if (!current.cache.has(directory)) continue;
+        if (!current.cache.has(directory) && !requestsRef.current.has(directory)) continue;
         if (current.expanded.has(directory) || directory === rootPath) {
           void loadDirectory(rootPath, directory);
           continue;

@@ -15,6 +15,7 @@ const MAX_DIFF_SNAPSHOT_BYTES: u64 = 2_000_000;
 static HUNK_REVERT_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) mod bounded_process;
+mod branch_checkout;
 mod history;
 mod history_log;
 mod history_refs;
@@ -1162,15 +1163,13 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
     }
 
     fn checkout_remote_branch(&self, root: &Path, name: &str) -> io::Result<Vec<GitBranch>> {
-        let root = root.canonicalize()?;
-        let name = safe_remote_branch_name(name)?;
-
-        run_git(
-            &root,
-            ["switch", "--track", "--", name.as_str()],
+        let root = branch_checkout::checkout(
+            root,
+            name,
+            branch_checkout::CheckoutBranchKind::Remote,
             self.trusted,
         )?;
-        self.branch_list(&root)
+        root.branches(self.trusted)
     }
 
     fn current_branch(&self, root: &Path) -> io::Result<Option<String>> {
@@ -1213,13 +1212,13 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
     }
 
     fn switch_branch(&self, root: &Path, name: &str) -> io::Result<()> {
-        let root = root.canonicalize()?;
-        let name = safe_branch_name(name)?;
-
-        // `git switch <name>` (no `-f`/`--discard`) refuses when local changes
-        // would be overwritten, surfacing git's "commit or stash" error verbatim.
-        // Work is never discarded; the front end turns the failure into a notice.
-        run_git(&root, ["switch", "--", name.as_str()], self.trusted)
+        branch_checkout::checkout(
+            root,
+            name,
+            branch_checkout::CheckoutBranchKind::Local,
+            self.trusted,
+        )
+        .map(|_| ())
     }
 }
 
@@ -1650,38 +1649,6 @@ fn safe_branch_name(name: &str) -> io::Result<String> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Git branch name is invalid.",
-        ));
-    }
-
-    Ok(trimmed.to_string())
-}
-
-fn safe_remote_branch_name(name: &str) -> io::Result<String> {
-    let trimmed = name.trim();
-
-    if trimmed.is_empty()
-        || !trimmed.contains('/')
-        || trimmed.starts_with('-')
-        || trimmed.contains("@{")
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Git remote branch name is invalid.",
-        ));
-    }
-
-    let full_ref = format!("refs/remotes/{trimmed}");
-    let valid = git_command(true)
-        .arg("check-ref-format")
-        .arg(&full_ref)
-        .output()?
-        .status
-        .success();
-
-    if !valid {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Git remote branch name is invalid.",
         ));
     }
 
@@ -2992,6 +2959,7 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     include!("git/history_graph_tests.rs");
+    include!("git/branch_checkout_tests.rs");
     use super::{
         amend_selected_staged_changes, detect_git_repositories, git_command, hunk_identity,
         load_commit_details, load_commit_diff, load_commit_files, load_commit_log,

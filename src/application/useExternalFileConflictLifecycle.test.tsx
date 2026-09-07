@@ -31,6 +31,9 @@ async function createHarness(
     typeof useExternalFileConflictLifecycle
   >[0]["resolveDocumentSaveOwnership"],
   documentSelfWrites = new DocumentSelfWriteCoordinator(),
+  prepareExternalDocumentReload?: Parameters<
+    typeof useExternalFileConflictLifecycle
+  >[0]["prepareExternalDocumentReload"],
 ) {
   const host = document.createElement("div");
   const root = createRoot(host);
@@ -50,6 +53,7 @@ async function createHarness(
       activePath: PATH,
       resolveDocumentSaveOwnership,
       documentSelfWrites,
+      prepareExternalDocumentReload,
       reportChangedDocuments,
       setActivePath: vi.fn(),
       setDocuments: vi.fn(),
@@ -1015,3 +1019,66 @@ function revision(contentHash: number) {
     contentHash: String(contentHash),
   };
 }
+
+it("commits an explicit reload through its prepared owner receipt before publishing document state", async () => {
+  const commit = vi.fn((replacement: EditorDocument) => {
+    expect(test.refs.documentsRef.current[PATH].content).toBe("local");
+    test.refs.documentsRef.current[PATH] = replacement;
+    test.refs.activeDocumentRef.current = replacement;
+    return true;
+  });
+  const prepare = vi.fn(() => commit);
+  const test = await createHarness(undefined, {}, undefined, undefined, prepare);
+  await act(async () => {
+    await test.lifecycle().handleFileChange(modified());
+  });
+  const expected = test.refs.documentsRef.current[PATH];
+  await act(async () => {
+    await test.lifecycle().action("reload");
+  });
+  expect(prepare).toHaveBeenCalledWith(expected);
+  expect(commit).toHaveBeenCalledOnce();
+  expect(test.refs.documentsRef.current[PATH]).toMatchObject({
+    content: "disk",
+    savedContent: "disk",
+  });
+  expect(test.lifecycle().activeState.conflict).toBeNull();
+  expect(test.reportChangedDocuments).toHaveBeenCalledWith([PATH]);
+  act(() => test.root.unmount());
+});
+
+it("retains the buffer and conflict when the prepared live reload receipt refuses a newer edit", async () => {
+  const commit = vi.fn(() => false);
+  const test = await createHarness(undefined, {}, undefined, undefined, () => commit);
+  await act(async () => {
+    await test.lifecycle().handleFileChange(modified());
+  });
+  const expected = test.refs.documentsRef.current[PATH];
+  await act(async () => {
+    await test.lifecycle().action("reload");
+  });
+  expect(commit).toHaveBeenCalledOnce();
+  expect(test.refs.documentsRef.current[PATH]).toBe(expected);
+  expect(test.lifecycle().activeState.conflict).not.toBeNull();
+  expect(test.lifecycle().activeState.error).toContain("open buffer was kept");
+  expect(test.reportChangedDocuments).not.toHaveBeenCalled();
+  act(() => test.root.unmount());
+});
+
+it("rejects a replaced document between preparing and committing the reload", async () => {
+  const commit = vi.fn(() => true);
+  const test = await createHarness(undefined, {}, undefined, undefined, () => {
+    test.refs.documentsRef.current[PATH] = editorDocument("newer edit");
+    return commit;
+  });
+  await act(async () => {
+    await test.lifecycle().handleFileChange(modified());
+  });
+  await act(async () => {
+    await test.lifecycle().action("reload");
+  });
+  expect(commit).not.toHaveBeenCalled();
+  expect(test.refs.documentsRef.current[PATH].content).toBe("newer edit");
+  expect(test.lifecycle().activeState.conflict).not.toBeNull();
+  act(() => test.root.unmount());
+});

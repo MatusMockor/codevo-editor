@@ -3,6 +3,9 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
+import { DocumentSessionStore } from "./documentSessionStore";
+import { EditorSessionDocumentAuthoritySidecar } from "./editorSessionDocumentAuthority";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
@@ -30,14 +33,9 @@ function createDeferred<T>() {
   return { promise, resolve };
 }
 
-function createSaveExclusionMock(
-  beforeOperation: () => Promise<void> = async () => {},
-) {
+function createSaveExclusionMock(beforeOperation: () => Promise<void> = async () => {}) {
   const mock = vi.fn(
-    async (
-      _scope: DocumentSaveInvalidationScope,
-      operation: () => Promise<unknown>,
-    ) => {
+    async (_scope: DocumentSaveInvalidationScope, operation: () => Promise<unknown>) => {
       await beforeOperation();
       return operation();
     },
@@ -470,10 +468,7 @@ describe("useWorkbenchFileOperations close intent", () => {
     const activeDocumentRef: { current: EditorDocument | null } = {
       current: document,
     };
-    const confirm = vi
-      .fn()
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    const confirm = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
     const closeDocument = vi.fn(
       (
         path: string,
@@ -495,9 +490,7 @@ describe("useWorkbenchFileOperations close intent", () => {
         const nextDocuments = { ...documentsRef.current };
         delete nextDocuments[path];
         documentsRef.current = nextDocuments;
-        openPathsRef.current = openPathsRef.current.filter(
-          (openPath) => openPath !== path,
-        );
+        openPathsRef.current = openPathsRef.current.filter((openPath) => openPath !== path);
         if (activeDocumentRef.current?.path === path) {
           activeDocumentRef.current = null;
         }
@@ -516,9 +509,7 @@ describe("useWorkbenchFileOperations close intent", () => {
     await act(async () => operations().deleteActiveDocument());
 
     expect(confirm).toHaveBeenCalledOnce();
-    expect(dependencies.workspaceFiles.deletePath).toHaveBeenCalledWith(
-      document.path,
-    );
+    expect(dependencies.workspaceFiles.deletePath).toHaveBeenCalledWith(document.path);
     expect(closeDocument).toHaveBeenCalledWith(document.path, {
       recordRecentlyClosed: false,
       skipConfirmation: true,
@@ -530,10 +521,7 @@ describe("useWorkbenchFileOperations close intent", () => {
 });
 
 describe("useWorkbenchFileOperations save exclusion", () => {
-  const canonicalOwnership = (
-    rootPath = ROOT,
-    path = `${ROOT}/src/Owned.txt`,
-  ) => ({
+  const canonicalOwnership = (rootPath = ROOT, path = `${ROOT}/src/Owned.txt`) => ({
     canonicalRoot: "/real/workspace",
     workspaceId: WORKSPACE_ID,
     workspaceRelativePath: path.slice(rootPath.length + 1),
@@ -548,12 +536,14 @@ describe("useWorkbenchFileOperations save exclusion", () => {
       savedContent: "content",
     };
     const runWithDocumentSaveExclusion = createSaveExclusionMock();
-    const operations = renderHook(makeDependencies("", {
-      activeDocumentRef: { current: document },
-      resolveDocumentSaveOwnership: canonicalOwnership,
-      runWithDocumentSaveExclusion,
-      prompter: { prompt: vi.fn(() => "Renamed.txt"), confirm: vi.fn() },
-    }));
+    const operations = renderHook(
+      makeDependencies("", {
+        activeDocumentRef: { current: document },
+        resolveDocumentSaveOwnership: canonicalOwnership,
+        runWithDocumentSaveExclusion,
+        prompter: { prompt: vi.fn(() => "Renamed.txt"), confirm: vi.fn() },
+      }),
+    );
 
     await act(async () => operations().renameActiveDocument());
 
@@ -565,18 +555,22 @@ describe("useWorkbenchFileOperations save exclusion", () => {
 
   it("uses canonical ownership for directory rename exclusion", async () => {
     const runWithDocumentSaveExclusion = createSaveExclusionMock();
-    const operations = renderHook(makeDependencies("", {
-      applyJavaScriptTypeScriptRenameEdits: vi.fn(async () => true),
-      resolveDocumentSaveOwnership: canonicalOwnership,
-      runWithDocumentSaveExclusion,
-      prompter: { prompt: vi.fn(() => "renamed"), confirm: vi.fn() },
-    }));
+    const operations = renderHook(
+      makeDependencies("", {
+        applyJavaScriptTypeScriptRenameEdits: vi.fn(async () => true),
+        resolveDocumentSaveOwnership: canonicalOwnership,
+        runWithDocumentSaveExclusion,
+        prompter: { prompt: vi.fn(() => "renamed"), confirm: vi.fn() },
+      }),
+    );
 
-    await act(async () => operations().renameEntry({
-      kind: "directory",
-      name: "src",
-      path: `${ROOT}/src`,
-    }));
+    await act(async () =>
+      operations().renameEntry({
+        kind: "directory",
+        name: "src",
+        path: `${ROOT}/src`,
+      }),
+    );
 
     expect(runWithDocumentSaveExclusion.mock.calls[0]?.[0]).toEqual({
       kind: "directory",
@@ -593,13 +587,15 @@ describe("useWorkbenchFileOperations save exclusion", () => {
       savedContent: "content",
     };
     const runWithDocumentSaveExclusion = createSaveExclusionMock();
-    const operations = renderHook(makeDependencies("", {
-      activeDocumentRef: { current: document },
-      applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
-      resolveDocumentSaveOwnership: canonicalOwnership,
-      runWithDocumentSaveExclusion,
-      prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
-    }));
+    const operations = renderHook(
+      makeDependencies("", {
+        activeDocumentRef: { current: document },
+        applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
+        resolveDocumentSaveOwnership: canonicalOwnership,
+        runWithDocumentSaveExclusion,
+        prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
+      }),
+    );
 
     await act(async () => operations().deleteActiveDocument());
 
@@ -628,9 +624,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
     await act(async () => operations().deleteActiveDocument());
 
     expect(dependencies.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
-    expect(
-      dependencies.applyJavaScriptTypeScriptDeleteEdits,
-    ).not.toHaveBeenCalled();
+    expect(dependencies.applyJavaScriptTypeScriptDeleteEdits).not.toHaveBeenCalled();
     expect(dependencies.workspaceFiles.deletePath).not.toHaveBeenCalled();
   });
 
@@ -643,9 +637,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
       savedContent: "content",
     };
     const exclusion = createDeferred<void>();
-    const runWithDocumentSaveExclusion = createSaveExclusionMock(
-      () => exclusion.promise,
-    );
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(() => exclusion.promise);
     const dependencies = makeDependencies("", {
       activeDocumentRef: { current: document },
       runWithDocumentSaveExclusion,
@@ -664,9 +656,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
         path: document.path,
         rootPath: ROOT,
       });
-      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[1]).toEqual(
-        expect.any(Function),
-      );
+      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[1]).toEqual(expect.any(Function));
     });
     expect(dependencies.workspaceFiles.renamePath).not.toHaveBeenCalled();
 
@@ -691,9 +681,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
     };
     const refresh = createDeferred<void>();
     let excluded = false;
-    const runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion = async <
-      T,
-    >(
+    const runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion = async <T,>(
       _scope: DocumentSaveInvalidationScope,
       operation: () => Promise<T>,
     ) => {
@@ -743,9 +731,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
     };
     const currentWorkspaceRootRef = { current: ROOT };
     const exclusion = createDeferred<void>();
-    const runWithDocumentSaveExclusion = createSaveExclusionMock(
-      () => exclusion.promise,
-    );
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(() => exclusion.promise);
     const dependencies = makeDependencies("", {
       activeDocumentRef: { current: document },
       currentWorkspaceRootRef,
@@ -774,9 +760,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
   it("runs directory rename with the exact directory-save scope", async () => {
     const oldPath = `${ROOT}/src`;
     const exclusion = createDeferred<void>();
-    const runWithDocumentSaveExclusion = createSaveExclusionMock(
-      () => exclusion.promise,
-    );
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(() => exclusion.promise);
     const dependencies = makeDependencies("", {
       applyJavaScriptTypeScriptRenameEdits: vi.fn(async () => true),
       runWithDocumentSaveExclusion,
@@ -799,9 +783,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
         path: oldPath,
         rootPath: ROOT,
       });
-      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[1]).toEqual(
-        expect.any(Function),
-      );
+      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[1]).toEqual(expect.any(Function));
     });
     expect(dependencies.workspaceFiles.renamePath).not.toHaveBeenCalled();
 
@@ -810,19 +792,14 @@ describe("useWorkbenchFileOperations save exclusion", () => {
       await renamePromise;
     });
 
-    expect(dependencies.workspaceFiles.renamePath).toHaveBeenCalledWith(
-      oldPath,
-      `${ROOT}/source`,
-    );
+    expect(dependencies.workspaceFiles.renamePath).toHaveBeenCalledWith(oldPath, `${ROOT}/source`);
   });
 
   it("aborts directory rename when the workspace changes while entering save exclusion", async () => {
     const oldPath = `${ROOT}/src`;
     const currentWorkspaceRootRef = { current: ROOT };
     const exclusion = createDeferred<void>();
-    const runWithDocumentSaveExclusion = createSaveExclusionMock(
-      () => exclusion.promise,
-    );
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(() => exclusion.promise);
     const dependencies = makeDependencies("", {
       applyJavaScriptTypeScriptRenameEdits: vi.fn(async () => true),
       currentWorkspaceRootRef,
@@ -861,9 +838,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
       savedContent: "content",
     };
     const exclusion = createDeferred<void>();
-    const runWithDocumentSaveExclusion = createSaveExclusionMock(
-      () => exclusion.promise,
-    );
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(() => exclusion.promise);
     const dependencies = makeDependencies("", {
       activeDocumentRef: { current: document },
       applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
@@ -883,9 +858,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
         path: document.path,
         rootPath: ROOT,
       });
-      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[1]).toEqual(
-        expect.any(Function),
-      );
+      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[1]).toEqual(expect.any(Function));
     });
     expect(dependencies.workspaceFiles.deletePath).not.toHaveBeenCalled();
 
@@ -894,9 +867,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
       await deletePromise;
     });
 
-    expect(dependencies.workspaceFiles.deletePath).toHaveBeenCalledWith(
-      document.path,
-    );
+    expect(dependencies.workspaceFiles.deletePath).toHaveBeenCalledWith(document.path);
   });
 
   it("aborts active file delete when the workspace changes while entering save exclusion", async () => {
@@ -909,9 +880,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
     };
     const currentWorkspaceRootRef = { current: ROOT };
     const exclusion = createDeferred<void>();
-    const runWithDocumentSaveExclusion = createSaveExclusionMock(
-      () => exclusion.promise,
-    );
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(() => exclusion.promise);
     const dependencies = makeDependencies("", {
       activeDocumentRef: { current: document },
       applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
@@ -999,14 +968,10 @@ describe("useWorkbenchFileOperations external modification refresh", () => {
           reportedDocuments.push(documentsRef.current[reportedPath]);
         });
       });
-      const setDocuments: WorkbenchFileOperationsDependencies["setDocuments"] =
-        (update) => {
-          documentsRef.current =
-            typeof update === "function"
-              ? update(documentsRef.current)
-              : update;
-          activeDocumentRef.current = documentsRef.current[path] ?? null;
-        };
+      const setDocuments: WorkbenchFileOperationsDependencies["setDocuments"] = (update) => {
+        documentsRef.current = typeof update === "function" ? update(documentsRef.current) : update;
+        activeDocumentRef.current = documentsRef.current[path] ?? null;
+      };
       const dependencies = makeDependencies("", {
         activeDocumentRef,
         documentsRef,
@@ -1069,12 +1034,12 @@ describe("useWorkbenchFileOperations framework cache invalidation", () => {
       [ROOT, path],
       [ROOT, previousPath],
     ]);
-    expect(
-      dependencies.invalidatePhpFrameworkSourcePath,
-    ).toHaveBeenNthCalledWith(1, ROOT, path);
-    expect(
-      dependencies.invalidatePhpFrameworkSourcePath,
-    ).toHaveBeenNthCalledWith(2, ROOT, previousPath);
+    expect(dependencies.invalidatePhpFrameworkSourcePath).toHaveBeenNthCalledWith(1, ROOT, path);
+    expect(dependencies.invalidatePhpFrameworkSourcePath).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      previousPath,
+    );
     expect(invalidatePhpTraitHostClassNames).toHaveBeenCalledOnce();
     expect(invalidatePhpTraitHostClassNames).toHaveBeenCalledWith(ROOT);
   });
@@ -1098,8 +1063,69 @@ describe("useWorkbenchFileOperations framework cache invalidation", () => {
     );
 
     expect(invalidateFrameworkCachesForPath).not.toHaveBeenCalled();
-    expect(
-      dependencies.invalidatePhpFrameworkSourcePath,
-    ).not.toHaveBeenCalled();
+    expect(dependencies.invalidatePhpFrameworkSourcePath).not.toHaveBeenCalled();
   });
+});
+
+it("protects legacy-clean documents with dirty live authority before external removal", () => {
+  const path = `${ROOT}/live.ts`;
+  const document: EditorDocument = {
+    path,
+    name: "live.ts",
+    language: "typescript",
+    content: "saved",
+    savedContent: "saved",
+  };
+  const sidecar = new EditorSessionDocumentAuthoritySidecar(new DocumentSessionStore());
+  const resolve = () => ({
+    canonicalRoot: ROOT,
+    workspaceId: WORKSPACE_ID,
+    workspaceRelativePath: "live.ts",
+  });
+  expect(
+    sidecar.activateOwner(
+      {
+        canonicalRoot: ROOT,
+        rootPath: ROOT,
+        workspaceId: WORKSPACE_ID,
+        ownerKey: createEditorSessionOwnerKey(WORKSPACE_ID, ROOT),
+      },
+      resolve,
+      { [path]: document },
+    ),
+  ).toBe(true);
+  const lifecycle = sidecar.resolveLifecycle(path)!;
+  const group = sidecar.createGroupAuthority(lifecycle, "main", path, {})!;
+  const revision = (version: number) => ({
+    alternativeVersionId: version,
+    contentVersion: version,
+    modelVersionId: version,
+    mode: version === 1 ? ("retained" as const) : ("incremental" as const),
+    utf16Length: 5,
+  });
+  const attachment = sidecar.attachEditorGroupLiveDocument(
+    group,
+    { captureCurrentContent: () => "saved", modelIncarnation: {}, holderIncarnation: {} },
+    revision(1),
+    () => true,
+  )!;
+  expect(attachment.observe(revision(2))).toBe(true);
+  const dependencies = makeDependencies("", {
+    documentsRef: { current: { [path]: document } },
+    resolveDocumentSessionDirtyProjection: () => sidecar.resolveDocumentDirtyProjection(lifecycle),
+  });
+  const operations = renderHook(dependencies);
+  expect(
+    operations().protectLiveDocumentFromExternalChange({
+      rootPath: ROOT,
+      path,
+      relativePath: "live.ts",
+      kind: "deleted",
+      fileKind: "file",
+    }),
+  ).toBe(true);
+  expect(dependencies.closeDocument).not.toHaveBeenCalled();
+  expect(dependencies.setMessage).toHaveBeenCalledWith(
+    expect.stringContaining("unsaved editor changes were kept"),
+  );
 });

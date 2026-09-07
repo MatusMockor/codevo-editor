@@ -1,3 +1,4 @@
+import { useAgentWorktreeFileChanges } from "../../application/useAgentWorktreeFileChanges";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { agentGitHistoryScope } from "./agentGitHistoryTarget";
 import { agentHistoryRepositories } from "./agentHistoryRepositories";
@@ -118,6 +119,43 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     [projects, thread, scope, historyScope],
   );
 
+  useAgentWorktreeFileChanges({
+    project:
+      historyScope.kind === "available" && thread !== null
+        ? (projects.find((candidate) => candidate.rootKey === thread.thread.owner.rootKey) ?? null)
+        : null,
+    thread: thread?.thread ?? null,
+    workspaceOwnerKey: chrome.worktreeSync?.workspaceOwnerKey ?? null,
+    openWorkspaceRoots: chrome.worktreeSync?.openWorkspaceRoots ?? [],
+    gateway: chrome.worktreeSync?.gateway ?? null,
+    handleChange: chrome.worktreeSync?.control.refreshDocuments ?? unavailableWorktreeRefresh,
+    reportError: chrome.worktreeSync?.control.reportError ?? unavailableWorktreeError,
+  });
+  const checkout = useMemo(() => {
+    const control = chrome.branchCheckout;
+    if (control === undefined || control === null) return null;
+    return {
+      gateway: control.gateway,
+      guard: (target: { readonly rootPath: string; readonly ownerKey: string }) => {
+        const current = { historyScope, historyRepositories };
+        const scopes = [
+          current.historyScope,
+          ...(current.historyRepositories?.options.map((item) => item.scope) ?? []),
+        ];
+        if (
+          !scopes.some(
+            (candidate) =>
+              candidate.kind === "available" &&
+              candidate.target.rootPath === target.rootPath &&
+              candidate.target.ownerKey === target.ownerKey,
+          )
+        )
+          return "This checkout is no longer available. Select it again.";
+        return control.guard(target);
+      },
+    };
+  }, [chrome.branchCheckout, historyScope, historyRepositories]);
+
   return (
     <div
       aria-hidden={hidden || undefined}
@@ -130,6 +168,8 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
           scope: historyScope,
           repositories: historyRepositories,
           gateway: chrome.gitHistoryGateway ?? null,
+          checkout,
+          fileChanges: chrome.fileTree?.fileChanges ?? null,
           ...chrome.diff,
         }}
         chooserAutoFocus={chooserAutoFocus}
@@ -152,3 +192,6 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     </div>
   );
 });
+
+const unavailableWorktreeRefresh = async () => undefined;
+const unavailableWorktreeError = () => undefined;

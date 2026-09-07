@@ -457,6 +457,49 @@ export class EditorSessionDocumentAuthoritySidecar {
     return { status: "applied" };
   }
 
+  prepareDocumentReload(
+    authority: EditorSessionDocumentLifecycleAuthority,
+  ): ((replacement: EditorDocument) => boolean) | null {
+    const capabilities = this.lifecycleCapabilities(authority);
+    if (!capabilities || !this.isLifecycleCurrent(authority)) return null;
+    const receipt = this.store.capture(capabilities.lease);
+    if (!receipt) return null;
+    const commit = this.store.prepareDocumentReload(receipt);
+    if (!commit) return null;
+    const expiresAt = Date.now() + 30_000;
+    let used = false;
+    return (replacement) => {
+      if (used || Date.now() > expiresAt) return false;
+      used = true;
+      if (
+        !this.isLifecycleCurrent(authority) ||
+        replacement.path !== capabilities.lease.path ||
+        replacement.content !== replacement.savedContent
+      )
+        return false;
+      return commit(replacement.content, replacement.revision).status === "applied";
+    };
+  }
+
+  refreshCleanDocument(
+    authority: EditorSessionDocumentLifecycleAuthority,
+    replacement: EditorDocument,
+  ): boolean {
+    const capabilities = this.lifecycleCapabilities(authority);
+    if (!capabilities || !this.isLifecycleCurrent(authority)) return false;
+    if (
+      replacement.path !== capabilities.lease.path ||
+      replacement.content !== replacement.savedContent
+    )
+      return false;
+    const receipt = this.store.capture(capabilities.lease);
+    if (!receipt) return false;
+    return (
+      this.store.refreshCleanDocument(receipt, replacement.content, replacement.revision).status ===
+      "applied"
+    );
+  }
+
   resolveLifecycle(path: string): EditorSessionDocumentLifecycleAuthority | null {
     const authority = this.authorities.get(path);
     return authority && this.isLifecycleCurrent(authority) ? authority : null;

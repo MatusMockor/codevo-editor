@@ -37,7 +37,13 @@ interface WorkbenchWorkspaceFileChangeSubscriptionInput {
   readonly gateway: WorkspaceFileChangeGateway;
   readonly handleExternalFileChange: (event: WorkspaceFileChangeEvent) => Promise<unknown>;
   readonly handleWorkspaceDiscoveryFileChange: (event: WorkspaceFileChangeEvent) => void;
+  readonly protectLiveDocumentFromExternalChange?: (event: WorkspaceFileChangeEvent) => boolean;
   readonly handleWorkspaceFileChange: (event: WorkspaceFileChangeEvent) => void;
+  readonly rescanOpenDocuments?: (
+    event: WorkspaceFileChangeEvent,
+    dispatch: (event: WorkspaceFileChangeEvent) => Promise<void>,
+    isCurrent: () => boolean,
+  ) => Promise<void>;
   readonly markExternallyRemovedDocumentPath: (rootPath: string, path: string) => void;
   readonly refreshEditorConfigRoot: (rootPath: string) => void;
   readonly reportError: (source: string, error: unknown) => void;
@@ -53,6 +59,8 @@ export function useWorkbenchWorkspaceFileChangeSubscription({
   handleExternalFileChange,
   handleWorkspaceDiscoveryFileChange,
   handleWorkspaceFileChange,
+  protectLiveDocumentFromExternalChange,
+  rescanOpenDocuments,
   markExternallyRemovedDocumentPath,
   refreshEditorConfigRoot,
   reportError,
@@ -60,7 +68,15 @@ export function useWorkbenchWorkspaceFileChangeSubscription({
   workspaceRoot,
 }: WorkbenchWorkspaceFileChangeSubscriptionInput): void {
   const eventHandlerRef = useRef<WorkspaceFileChangeSubscriptionHandler>(() => undefined);
-  eventHandlerRef.current = (event, isCurrent) => {
+  const pendingRescan = useRef<(() => Promise<void>) | null>(null);
+  const rescanRunning = useRef(false);
+  const rescanSequence = useRef(0);
+  const handleEvent = async (
+    event: WorkspaceFileChangeEvent,
+    isCurrent: IsCurrentWorkspaceFileChangeSubscription,
+  ) => {
+    if (!isCurrent()) return;
+    if (protectLiveDocumentFromExternalChange?.(event)) return;
     const removedEventToken = beginReportedWorkspaceFileTombstoneEvent(
       externallyRemovedDocumentRootByPathRef.current,
       event,
@@ -70,7 +86,9 @@ export function useWorkbenchWorkspaceFileChangeSubscription({
     handleWorkspaceDiscoveryFileChange(event);
     refreshEditorConfigForFileChange(event, refreshEditorConfigRoot);
 
-    void handleExternalFileChange(event).then((consumed) => {
+    const consumed = await handleExternalFileChange(event);
+    if (!isCurrent()) return;
+    {
       const removalStillCurrent =
         !removedEventToken ||
         reconcileExternallyRemovedDocumentEvent(
@@ -87,7 +105,39 @@ export function useWorkbenchWorkspaceFileChangeSubscription({
         if (removedPath) markExternallyRemovedDocumentPath(event.rootPath, removedPath);
       }
       if (!consumed) handleWorkspaceFileChange(event);
+    }
+  };
+  eventHandlerRef.current = (event, isCurrent) => {
+    void handleEvent(event, isCurrent).catch((error) => {
+      if (isCurrent()) reportError("Workspace", error);
     });
+    if (event.kind !== "rescanRequired" || !rescanOpenDocuments) return;
+    const sequence = ++rescanSequence.current;
+    const rescanIsCurrent = () => isCurrent() && sequence === rescanSequence.current;
+    const rescanEvent = rescanRunning.current
+      ? { ...event, path: event.rootPath, relativePath: "" }
+      : event;
+    pendingRescan.current = () =>
+      rescanOpenDocuments(
+        rescanEvent,
+        (child) => handleEvent(child, rescanIsCurrent),
+        rescanIsCurrent,
+      );
+    if (rescanRunning.current) return;
+    rescanRunning.current = true;
+    void (async () => {
+      try {
+        while (pendingRescan.current) {
+          const run = pendingRescan.current;
+          pendingRescan.current = null;
+          await run();
+        }
+      } catch (error) {
+        if (isCurrent()) reportError("Workspace", error);
+      } finally {
+        rescanRunning.current = false;
+      }
+    })();
   };
 
   useWorkspaceFileChangeSubscription({

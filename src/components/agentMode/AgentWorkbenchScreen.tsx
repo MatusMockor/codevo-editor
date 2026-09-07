@@ -1,3 +1,9 @@
+import { useAgentCheckoutDirtyRevision } from "../../application/useAgentCheckoutDirtyRevision";
+import { getEditorDocumentDirtySnapshot } from "../../application/editorSessionDirtyProjection";
+import type { WorkspaceFileChangeGateway } from "../../domain/workspaceFileChange";
+import { runningTurn } from "../../domain/agentThread";
+import type { AgentBranchCheckoutGateway } from "../../application/useAgentBranchCheckout";
+import { agentBranchCheckoutBlockedReason } from "../../application/agentBranchCheckoutPolicy";
 import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
 import {
   useCallback,
@@ -73,7 +79,18 @@ export type AgentWorkbenchScreenWorkbench = Pick<
   | "workspaceRoot"
   | "workspaceSettings"
   | "workspaceTrust"
-> & { readonly agents: WorkbenchAgentsSurface };
+> &
+  Partial<
+    Pick<
+      Workbench,
+      | "openDocuments"
+      | "agentWorktreeFileSync"
+      | "resolveDocumentSessionDirtyProjection"
+      | "documentSessionAuthorityRevision"
+    >
+  > & {
+    readonly agents: WorkbenchAgentsSurface;
+  };
 
 export interface AgentWorkbenchScreenProps {
   readonly workbench: AgentWorkbenchScreenWorkbench;
@@ -83,6 +100,8 @@ export interface AgentWorkbenchScreenProps {
   readonly fileChanges: AgentSurfaceFileTreeDependencies["fileChanges"];
   readonly terminalGateway: TerminalGateway;
   readonly gitHistoryGateway?: AgentGitHistoryGateway | null;
+  readonly gitBranchGateway?: AgentBranchCheckoutGateway | null;
+  readonly worktreeFileChanges?: WorkspaceFileChangeGateway | null;
   readonly monacoTheme: MonacoAppTheme;
   readonly terminalTheme: TerminalTheme;
   readonly textClipboard?: TextClipboardGateway | null;
@@ -114,6 +133,8 @@ export function AgentWorkbenchScreen({
   fileStatusesByPath,
   files,
   gitHistoryGateway = null,
+  gitBranchGateway = null,
+  worktreeFileChanges = null,
   monacoTheme,
   onResizeRightPanelStart,
   onTrustWorkspace,
@@ -331,6 +352,38 @@ export function AgentWorkbenchScreen({
   );
 
   const shortcuts = useMemo(() => layoutShortcuts(appSettings.keymap), [appSettings.keymap]);
+  const checkoutDirtyRevision = useAgentCheckoutDirtyRevision(
+    workbench.openDocuments,
+    workbench.resolveDocumentSessionDirtyProjection,
+    workbench.documentSessionAuthorityRevision?.ownerDirtyCountProjection ?? null,
+  );
+  const branchCheckout = useMemo(() => {
+    if (gitBranchGateway === null) return null;
+    return {
+      gateway: gitBranchGateway,
+      dirtyRevision: checkoutDirtyRevision,
+      guard: (target: { readonly rootPath: string; readonly ownerKey: string }) => {
+        const current = workbench;
+        if (!current.workspaceTrust?.trusted)
+          return "This project is not available for branch switching.";
+        return agentBranchCheckoutBlockedReason(
+          target.rootPath,
+          current.openDocuments,
+          current.agents.threads.map(({ thread }) => ({
+            rootPath: thread.target.worktreePath ?? thread.owner.repositoryRoot,
+            running: runningTurn(thread) !== null,
+          })),
+          current.agents.dispatching,
+          (path) => {
+            const projection = current.resolveDocumentSessionDirtyProjection?.(path) ?? null;
+            if (projection === null) return false;
+            const snapshot = getEditorDocumentDirtySnapshot(projection);
+            return snapshot.status === "unavailable" || snapshot.dirty;
+          },
+        );
+      },
+    };
+  }, [checkoutDirtyRevision, gitBranchGateway, workbench]);
   const chrome = useMemo<AgentWorkbenchChrome>(
     () => ({
       layout: agentWorkbench,
@@ -340,6 +393,21 @@ export function AgentWorkbenchScreen({
       workspaceId,
       workspaceTrusted,
       gitHistoryGateway,
+      branchCheckout,
+      worktreeSync:
+        workbench.agentWorktreeFileSync === undefined || worktreeFileChanges === null
+          ? null
+          : {
+              gateway: worktreeFileChanges,
+              control: workbench.agentWorktreeFileSync,
+              workspaceOwnerKey: workbench.agentWorktreeFileSync.workspaceOwnerKey,
+              openWorkspaceRoots: [
+                ...new Set([
+                  ...appSettings.workspaceTabs,
+                  ...(workbench.workspaceRoot === null ? [] : [workbench.workspaceRoot]),
+                ]),
+              ],
+            },
       fileTree: {
         files,
         fileChanges,
@@ -383,6 +451,11 @@ export function AgentWorkbenchScreen({
       fileStatusesByPath,
       files,
       gitHistoryGateway,
+      branchCheckout,
+      workbench.agentWorktreeFileSync,
+      workbench.workspaceRoot,
+      worktreeFileChanges,
+      appSettings.workspaceTabs,
       monacoTheme,
       onResizeRightPanelStart,
       onToggleBottomPanel,

@@ -1988,3 +1988,71 @@ describe("useEditorSessionState", () => {
     harness.unmount();
   });
 });
+
+it("atomically refreshes clean content and rebinds its selected group authority", () => {
+  const harness = renderEditorSessionState();
+  const expected = { ...DOCUMENT_A, content: "saved" };
+  act(() => {
+    const session = harness.session();
+    expect(
+      session.activateDocumentSessionAuthority(
+        {
+          canonicalRoot: "/workspace",
+          rootPath: "/workspace",
+          workspaceId: "workspace",
+          ownerKey: createEditorSessionOwnerKey("workspace", "/workspace"),
+        },
+        injectedResolver("workspace", "/workspace", "/workspace", "/workspace/"),
+        { [expected.path]: expected },
+      ),
+    ).toBe(true);
+    session.setDocuments({ [expected.path]: expected });
+    session.updateEditorGroups(() =>
+      createInitialEditorGroupsState("editor-main", {
+        activePath: expected.path,
+        openPaths: [expected.path],
+        previewPath: null,
+      }),
+    );
+  });
+  const before = harness.session().resolveActiveDocumentSessionAuthority()!;
+  let text = "saved";
+  const source = { captureCurrentContent: () => text, holderIncarnation: {}, modelIncarnation: {} };
+  const attachment = harness
+    .session()
+    .attachEditorGroupLiveDocument(before, source, liveRevision(1))!;
+  const replacement = { ...expected, content: "branch", savedContent: "branch" };
+  act(() => {
+    expect(harness.session().refreshExternalCleanDocument(expected, replacement)).toBe(true);
+  });
+  expect(harness.session().documentsRef.current[expected.path]).toBe(replacement);
+  expect(harness.session().activeDocumentRef.current).toBe(replacement);
+  const after = harness.session().resolveActiveDocumentSessionAuthority()!;
+  expect(after).not.toBe(before);
+  expect(harness.session().isEditorGroupDocumentSessionAuthorityCurrent(before)).toBe(false);
+  expect(attachment.observe(liveRevision(2))).toBe(false);
+  text = "branch";
+  const rebound = harness
+    .session()
+    .attachEditorGroupLiveDocument(after, source, { ...liveRevision(1), utf16Length: 6 });
+  expect(rebound).not.toBeNull();
+  act(() => {
+    expect(harness.session().refreshExternalCleanDocument(expected, expected)).toBe(false);
+  });
+  expect(harness.session().documentsRef.current[expected.path]).toBe(replacement);
+  act(() => {
+    expect(rebound!.observe(liveRevision(2))).toBe(true);
+  });
+  act(() => {
+    expect(harness.session().refreshExternalCleanDocument(replacement, expected)).toBe(false);
+  });
+  const reload = harness.session().prepareExternalDocumentReload(replacement)!;
+  act(() => {
+    expect(reload(expected)).toBe(true);
+  });
+  expect(harness.session().documentsRef.current[expected.path]).toBe(expected);
+  expect(harness.session().resolveActiveDocumentSessionAuthority()).not.toBe(after);
+  expect(harness.session().isEditorGroupDocumentSessionAuthorityCurrent(after)).toBe(false);
+  expect(reload(replacement)).toBe(false);
+  harness.unmount();
+});

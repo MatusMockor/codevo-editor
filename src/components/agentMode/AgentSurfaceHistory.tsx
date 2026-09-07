@@ -1,3 +1,6 @@
+import type { WorkspaceFileChangeGateway } from "../../domain/workspaceFileChange";
+import type { AgentBranchCheckoutGateway } from "../../application/useAgentBranchCheckout";
+import type { AgentGitHistoryTarget } from "../../application/useAgentGitHistory";
 import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
 import type { AgentGitHistoryScope } from "./agentGitHistoryTarget";
 import type { AgentWorkbenchDiffChrome } from "./agentWorkbenchChrome";
@@ -8,6 +11,11 @@ import { AgentHistoryContent } from "./AgentHistoryContent";
 export interface AgentSurfaceHistoryProps extends AgentWorkbenchDiffChrome {
   readonly scope: AgentGitHistoryScope;
   readonly gateway: AgentGitHistoryGateway | null;
+  readonly checkout?: {
+    readonly gateway: AgentBranchCheckoutGateway;
+    readonly guard: (target: AgentGitHistoryTarget) => string | null;
+  } | null;
+  readonly fileChanges?: Pick<WorkspaceFileChangeGateway, "subscribeFileChanges"> | null;
   readonly repositories?: AgentHistoryRepositories | null;
 }
 

@@ -37,9 +37,10 @@ let root: Root;
 let host: HTMLDivElement;
 let result: ReturnType<typeof useAgentGitHistory>;
 let gateway: AgentGitHistoryGateway;
+let fileChanges: Parameters<typeof useAgentGitHistory>[0]["fileChanges"];
 const a = { rootPath: "/a", ownerKey: "a" };
 function Harness({ target }: { target: AgentGitHistoryTarget | null }) {
-  result = useAgentGitHistory({ target, gateway });
+  result = useAgentGitHistory({ target, gateway, fileChanges });
   return null;
 }
 async function render(target: AgentGitHistoryTarget | null = a) {
@@ -48,6 +49,7 @@ async function render(target: AgentGitHistoryTarget | null = a) {
   });
 }
 beforeEach(() => {
+  fileChanges = null;
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   host = document.createElement("div");
   root = createRoot(host);
@@ -446,4 +448,68 @@ it("rejects branch and commit count exhaustion", async () => {
   await act(async () => result.refresh());
   expect(result.status).toBe("error");
   expect(result.commits).toEqual([]);
+});
+
+it("coalesces scoped checkout rescans while preserving the selected branch", async () => {
+  vi.useFakeTimers();
+  try {
+    let emit!: Parameters<NonNullable<typeof fileChanges>["subscribeFileChanges"]>[0];
+    const release = vi.fn();
+    fileChanges = {
+      subscribeFileChanges: vi.fn(async (listener) => {
+        emit = listener;
+        return release;
+      }),
+    };
+    await render();
+    await act(async () => result.selectBranch({ kind: "branch", ref: "refs/heads/feature" }));
+    vi.mocked(gateway.getCommitLog).mockClear();
+    await act(async () => {
+      emit({ rootPath: "/foreign", kind: "rescanRequired", path: "/foreign", relativePath: "" });
+      emit({ rootPath: "/a", kind: "modified", path: "/a/file", relativePath: "file" });
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(gateway.getCommitLog).not.toHaveBeenCalled();
+    await act(async () => {
+      for (let index = 0; index < 10; index += 1)
+        emit({ rootPath: "/a", kind: "rescanRequired", path: "/a", relativePath: "" });
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(gateway.getCommitLog).toHaveBeenCalledTimes(1);
+    expect(gateway.getCommitLog).toHaveBeenLastCalledWith(
+      "/a",
+      expect.objectContaining({ branch: "refs/heads/feature" }),
+    );
+    await render(null);
+    expect(release).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("discards pending checkout rescans and old subscriptions across A to B to A", async () => {
+  vi.useFakeTimers();
+  try {
+    const listeners: Parameters<NonNullable<typeof fileChanges>["subscribeFileChanges"]>[0][] = [];
+    fileChanges = {
+      subscribeFileChanges: vi.fn(async (listener) => {
+        listeners.push(listener);
+        return vi.fn();
+      }),
+    };
+    await render();
+    await act(async () =>
+      listeners[0]({ rootPath: "/a", kind: "rescanRequired", path: "/a", relativePath: "" }),
+    );
+    await render({ rootPath: "/b", ownerKey: "b" });
+    await render();
+    vi.mocked(gateway.getCommitLog).mockClear();
+    await act(async () => {
+      listeners[0]({ rootPath: "/a", kind: "rescanRequired", path: "/a", relativePath: "" });
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(gateway.getCommitLog).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
 });

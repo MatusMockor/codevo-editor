@@ -1,4 +1,10 @@
 import {
+  editorDocumentExternalChangeProtection,
+  type ResolveEditorDocumentDirtyProjection,
+} from "./editorDocumentExternalChangeProtection";
+import { rescanOpenWorkspaceDocuments } from "./rescanOpenWorkspaceDocuments";
+import { useExternalCleanDocumentRefresh } from "./useExternalCleanDocumentRefresh";
+import {
   useCallback,
   useEffect,
   useRef,
@@ -7,10 +13,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { FilePrefetchCache } from "../domain/filePrefetchCache";
-import {
-  canRefreshDocumentFromExternalFileChange,
-  type WorkspaceFileChangeEvent,
-} from "../domain/workspaceFileChange";
+import { type WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
 import {
   isJavaScriptTypeScriptLanguageServerDocument,
   isLanguageServerDocument,
@@ -22,7 +25,6 @@ import {
   getParentPath,
   isLspExcludedDirectoryPath,
   joinWorkspacePath,
-  readWorkspaceTextFileSnapshot,
   workspaceRelativePath,
   type EditorDocument,
   type FileEntry,
@@ -31,11 +33,7 @@ import {
 } from "../domain/workspace";
 import { phpNewFileTemplate } from "../domain/phpNewFileTemplate";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
-import {
-  removeBookmarksForPath,
-  renameBookmarksForPath,
-  type Bookmark,
-} from "../domain/bookmarks";
+import { removeBookmarksForPath, renameBookmarksForPath, type Bookmark } from "../domain/bookmarks";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { confirmWorkbenchAction, type WorkbenchPrompter } from "./workbenchPrompter";
 import type {
@@ -61,6 +59,8 @@ interface CloseDocumentOptions {
 }
 
 export interface WorkbenchFileOperationsDependencies {
+  resolveDocumentSessionDirtyProjection?: ResolveEditorDocumentDirtyProjection;
+  refreshExternalCleanDocument?: (expected: EditorDocument, replacement: EditorDocument) => boolean;
   workspaceRoot: string | null;
   workspaceDescriptor: WorkspaceDescriptor | null;
   activePath: string | null;
@@ -88,48 +88,31 @@ export interface WorkbenchFileOperationsDependencies {
   setPreviewPath: Dispatch<SetStateAction<string | null>>;
   applyJavaScriptTypeScriptCreateEdits: (path: string) => Promise<boolean>;
   applyJavaScriptTypeScriptDeleteEdits: (path: string) => Promise<boolean>;
-  applyJavaScriptTypeScriptRenameEdits: (
-    oldPath: string,
-    newPath: string,
-  ) => Promise<boolean>;
+  applyJavaScriptTypeScriptRenameEdits: (oldPath: string, newPath: string) => Promise<boolean>;
   applyPhpRenameEdits: (oldPath: string, newPath: string) => Promise<void>;
   clearLanguageServerDiagnosticsForPath: (
     rootPath: string | null | undefined,
     path: string,
   ) => void;
-  closeDocument: (
-    path: string,
-    options?: CloseDocumentOptions,
-  ) => Promise<unknown> | void;
+  closeDocument: (path: string, options?: CloseDocumentOptions) => Promise<unknown> | void;
   forgetExternallyRemovedDocumentPath: (path: string) => void;
   forgetRecentFile: (path: string) => void;
   forgetRecentLocationsForPath: (path: string) => void;
   invalidateFrameworkCachesForPath: (rootPath: string, path: string) => void;
   resolveDocumentSaveOwnership?: ResolveDocumentSaveOwnership;
   runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
-  invalidatePhpFrameworkSourcePath: (
-    rootPath: string,
-    path: string,
-  ) => void;
-  invalidatePhpFrameworkBindingsForFileChange: (
-    event: WorkspaceFileChangeEvent,
-  ) => void;
+  invalidatePhpFrameworkSourcePath: (rootPath: string, path: string) => void;
+  invalidatePhpFrameworkBindingsForFileChange: (event: WorkspaceFileChangeEvent) => void;
   invalidatePhpTraitHostClassNames?: (rootPath: string) => void;
   markExternallyRemovedDocumentPath: (rootPath: string, path: string) => void;
   notifyJavaScriptTypeScriptFileCreated: (path: string) => Promise<void>;
   notifyJavaScriptTypeScriptFileDeleted: (path: string) => Promise<void>;
-  notifyJavaScriptTypeScriptFileRenamed: (
-    oldPath: string,
-    newPath: string,
-  ) => Promise<void>;
+  notifyJavaScriptTypeScriptFileRenamed: (oldPath: string, newPath: string) => Promise<void>;
   notifyPhpFileRenamed: (oldPath: string, newPath: string) => Promise<void>;
   openFile: (entry: FileEntry, options?: OpenFileOptions) => Promise<boolean>;
   refreshDirectory: (path: string) => Promise<void>;
   refreshGitStatus: () => Promise<void>;
-  remapRecentFile: (
-    oldPath: string,
-    entry: { name: string; path: string },
-  ) => void;
+  remapRecentFile: (oldPath: string, entry: { name: string; path: string }) => void;
   remapRecentLocations: (
     oldPath: string,
     entry: { name: string; path: string; relativePath: string },
@@ -141,13 +124,8 @@ export interface WorkbenchFileOperationsDependencies {
   ) => void;
   reportChangedDocuments: (paths: readonly string[]) => void;
   syncClosedDocument: (document: EditorDocument) => Promise<void>;
-  syncClosedJavaScriptTypeScriptDocument: (
-    document: EditorDocument,
-  ) => Promise<void>;
-  workspacePathBelongsToRoot: (
-    path: string,
-    workspaceRoot: string | null | undefined,
-  ) => boolean;
+  syncClosedJavaScriptTypeScriptDocument: (document: EditorDocument) => Promise<void>;
+  workspacePathBelongsToRoot: (path: string, workspaceRoot: string | null | undefined) => boolean;
 }
 
 export interface WorkbenchFileOperations {
@@ -156,7 +134,13 @@ export interface WorkbenchFileOperations {
   renameActiveDocument: () => Promise<void>;
   renameEntry: (entry: FileEntry) => Promise<void>;
   deleteActiveDocument: () => Promise<void>;
+  protectLiveDocumentFromExternalChange: (event: WorkspaceFileChangeEvent) => boolean;
   handleWorkspaceFileChange: (event: WorkspaceFileChangeEvent) => void;
+  rescanOpenDocuments: (
+    event: WorkspaceFileChangeEvent,
+    dispatch: (event: WorkspaceFileChangeEvent) => Promise<void>,
+    isCurrent: () => boolean,
+  ) => Promise<void>;
 }
 
 export function useWorkbenchFileOperations(
@@ -164,6 +148,7 @@ export function useWorkbenchFileOperations(
 ): WorkbenchFileOperations {
   const {
     workspaceRoot,
+    resolveDocumentSessionDirtyProjection,
     workspaceDescriptor,
     activePath,
     sidebarView,
@@ -213,7 +198,6 @@ export function useWorkbenchFileOperations(
     refreshGitStatus,
     remapRecentFile,
     remapRecentLocations,
-    reportChangedDocuments,
     reportErrorForActiveWorkspaceRoot,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
@@ -221,12 +205,8 @@ export function useWorkbenchFileOperations(
   } = dependencies;
 
   const pendingWorkspaceDirectoryRefreshesRef = useRef<Set<string>>(new Set());
-  const workspaceDirectoryRefreshTimerRef = useRef<
-    ReturnType<typeof setTimeout> | null
-  >(null);
-  const workspaceGitStatusRefreshTimerRef = useRef<
-    ReturnType<typeof setTimeout> | null
-  >(null);
+  const workspaceDirectoryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const workspaceGitStatusRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const createFile = useCallback(async () => {
     if (!workspaceRoot) {
@@ -236,10 +216,7 @@ export function useWorkbenchFileOperations(
     const requestedRoot = workspaceRoot;
     const relativePath = await prompter.prompt("New file path");
 
-    if (
-      !relativePath ||
-      !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-    ) {
+    if (!relativePath || !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
       return;
     }
 
@@ -262,11 +239,7 @@ export function useWorkbenchFileOperations(
       );
 
       if (template) {
-        await createWorkspaceTextFileWithContent(
-          workspaceFiles,
-          path,
-          template.content,
-        );
+        await createWorkspaceTextFileWithContent(workspaceFiles, path, template.content);
       } else {
         await workspaceFiles.createTextFile(path);
       }
@@ -313,10 +286,7 @@ export function useWorkbenchFileOperations(
     const requestedRoot = workspaceRoot;
     const relativePath = await prompter.prompt("New folder path");
 
-    if (
-      !relativePath ||
-      !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-    ) {
+    if (!relativePath || !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
       return;
     }
 
@@ -391,10 +361,7 @@ export function useWorkbenchFileOperations(
       }
 
       if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
-        const mayRename = await applyJavaScriptTypeScriptRenameEdits(
-          document.path,
-          nextPath,
-        );
+        const mayRename = await applyJavaScriptTypeScriptRenameEdits(document.path, nextPath);
         if (!mayRename) {
           return;
         }
@@ -419,21 +386,14 @@ export function useWorkbenchFileOperations(
           await notifyJavaScriptTypeScriptFileRenamed(document.path, nextPath);
         }
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
         await syncClosedDocument(document);
         await syncClosedJavaScriptTypeScriptDocument(document);
 
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -460,19 +420,11 @@ export function useWorkbenchFileOperations(
         remapRecentLocations(oldPath, {
           name: nextName,
           path: nextPath,
-          relativePath:
-            workspaceRelativePath(requestedRoot, nextPath) ?? nextPath,
+          relativePath: workspaceRelativePath(requestedRoot, nextPath) ?? nextPath,
         });
-        setBookmarks((current) =>
-          renameBookmarksForPath(current, oldPath, nextPath),
-        );
+        setBookmarks((current) => renameBookmarksForPath(current, oldPath, nextPath));
         await refreshDirectory(parentPath);
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -552,31 +504,18 @@ export function useWorkbenchFileOperations(
         if (!skipLspRename) {
           await applyPhpRenameEdits(oldPath, nextPath);
 
-          const mayRename = await applyJavaScriptTypeScriptRenameEdits(
-            oldPath,
-            nextPath,
-          );
+          const mayRename = await applyJavaScriptTypeScriptRenameEdits(oldPath, nextPath);
           if (!mayRename) {
             return;
           }
         }
 
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
         await runWithDocumentSaveExclusion(invalidationScope, async () => {
-          if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            )
-          ) {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
             return;
           }
           await workspaceFiles.renamePath(oldPath, nextPath);
@@ -588,12 +527,7 @@ export function useWorkbenchFileOperations(
             await notifyJavaScriptTypeScriptFileRenamed(oldPath, nextPath);
           }
 
-          if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            )
-          ) {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
             return;
           }
 
@@ -606,17 +540,13 @@ export function useWorkbenchFileOperations(
 
           for (const diagnosticPath of diagnosticPaths) {
             if (isPathInDirectory(diagnosticPath, oldPath)) {
-              clearLanguageServerDiagnosticsForPath(
-                requestedRoot,
-                diagnosticPath,
-              );
+              clearLanguageServerDiagnosticsForPath(requestedRoot, diagnosticPath);
             }
           }
 
           const remappedDocuments = Object.values(documentsRef.current).filter(
             (document) =>
-              remapPathForDirectoryRename(document.path, oldPath, nextPath) !==
-              document.path,
+              remapPathForDirectoryRename(document.path, oldPath, nextPath) !== document.path,
           );
           await Promise.all(
             remappedDocuments.flatMap((document) => [
@@ -627,11 +557,7 @@ export function useWorkbenchFileOperations(
 
           const nextDocuments: Record<string, EditorDocument> = {};
           for (const document of Object.values(documentsRef.current)) {
-            const remappedPath = remapPathForDirectoryRename(
-              document.path,
-              oldPath,
-              nextPath,
-            );
+            const remappedPath = remapPathForDirectoryRename(document.path, oldPath, nextPath);
             const remappedDocument =
               remappedPath === document.path
                 ? document
@@ -648,11 +574,7 @@ export function useWorkbenchFileOperations(
             remapPathForDirectoryRename(path, oldPath, nextPath),
           );
           const nextPreviewPath = previewPathRef.current
-            ? remapPathForDirectoryRename(
-                previewPathRef.current,
-                oldPath,
-                nextPath,
-              )
+            ? remapPathForDirectoryRename(previewPathRef.current, oldPath, nextPath)
             : null;
           const nextActivePath = activePath
             ? remapPathForDirectoryRename(activePath, oldPath, nextPath)
@@ -670,11 +592,7 @@ export function useWorkbenchFileOperations(
           setPreviewPath(nextPreviewPath);
           setActivePath(nextActivePath);
           setEntriesByDirectory((current) =>
-            remapEntriesByDirectoryForDirectoryRename(
-              current,
-              oldPath,
-              nextPath,
-            ),
+            remapEntriesByDirectoryForDirectoryRename(current, oldPath, nextPath),
           );
           setExpandedDirectories((current) =>
             remapPathSetForDirectoryRename(current, oldPath, nextPath),
@@ -683,18 +601,10 @@ export function useWorkbenchFileOperations(
             remapPathSetForDirectoryRename(current, oldPath, nextPath),
           );
 
-          const directoriesToRefresh = new Set([
-            parentPath,
-            getParentPath(nextPath),
-          ]);
+          const directoriesToRefresh = new Set([parentPath, getParentPath(nextPath)]);
           for (const directory of directoriesToRefresh) {
             await refreshDirectory(directory);
-            if (
-              !workspaceRootKeysEqual(
-                currentWorkspaceRootRef.current,
-                requestedRoot,
-              )
-            ) {
+            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
               return;
             }
           }
@@ -761,10 +671,7 @@ export function useWorkbenchFileOperations(
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
       documentsRef.current[document.path] === requestedDocumentSlot;
 
-    const confirmed = await confirmWorkbenchAction(
-      prompter,
-      `Delete ${document.name}?`,
-    );
+    const confirmed = await confirmWorkbenchAction(prompter, `Delete ${document.name}?`);
     if (!isCurrentDeleteOwner()) return;
     if (!confirmed) {
       return;
@@ -794,12 +701,7 @@ export function useWorkbenchFileOperations(
         if (!isCurrentDeleteOwner()) return;
         await workspaceFiles.deletePath(deletedPath);
         filePrefetchCacheRef.current.invalidate(deletedPath);
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -814,12 +716,7 @@ export function useWorkbenchFileOperations(
           recordRecentlyClosed: false,
           skipConfirmation: true,
         });
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
         const remainingDocument = documentsRef.current[deletedPath];
@@ -831,12 +728,7 @@ export function useWorkbenchFileOperations(
         setBookmarks((current) => removeBookmarksForPath(current, deletedPath));
         clearLanguageServerDiagnosticsForPath(requestedRoot, deletedPath);
         await refreshDirectory(parentPath);
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -870,15 +762,11 @@ export function useWorkbenchFileOperations(
 
   const flushPendingWorkspaceDirectoryRefreshes = useCallback(() => {
     workspaceDirectoryRefreshTimerRef.current = null;
-    const directories = Array.from(
-      pendingWorkspaceDirectoryRefreshesRef.current,
-    );
+    const directories = Array.from(pendingWorkspaceDirectoryRefreshesRef.current);
     pendingWorkspaceDirectoryRefreshesRef.current = new Set();
 
     directories.forEach((directory) => {
-      if (
-        !workspacePathBelongsToRoot(directory, currentWorkspaceRootRef.current)
-      ) {
+      if (!workspacePathBelongsToRoot(directory, currentWorkspaceRootRef.current)) {
         return;
       }
 
@@ -914,12 +802,7 @@ export function useWorkbenchFileOperations(
       workspaceGitStatusRefreshTimerRef.current = setTimeout(() => {
         workspaceGitStatusRefreshTimerRef.current = null;
 
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -946,64 +829,51 @@ export function useWorkbenchFileOperations(
     ],
   );
 
-  const refreshOpenDocumentFromExternalFileChange = useCallback(
-    async (requestedRoot: string, path: string): Promise<void> => {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
+  const refreshOpenDocumentFromExternalFileChange = useExternalCleanDocumentRefresh(dependencies);
 
-      const openDocument = documentsRef.current[path];
+  const rescanOpenDocuments = useCallback(
+    (
+      event: WorkspaceFileChangeEvent,
+      dispatch: (event: WorkspaceFileChangeEvent) => Promise<void>,
+      isCurrent: () => boolean,
+    ) =>
+      rescanOpenWorkspaceDocuments({
+        event,
+        documents: documentsRef.current,
+        files: workspaceFiles,
+        dispatch,
+        isCurrent,
+        reportIncomplete: () =>
+          setMessage(
+            "Some open files could not be checked after the repository changed. Reopen affected files to refresh them.",
+          ),
+      }),
+    [documentsRef, setMessage, workspaceFiles],
+  );
 
-      if (!canRefreshDocumentFromExternalFileChange(openDocument)) {
-        return;
-      }
-
-      let refreshedSnapshot;
-
-      try {
-        refreshedSnapshot = await readWorkspaceTextFileSnapshot(
-          workspaceFiles,
-          path,
-        );
-      } catch {
-        return;
-      }
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      const latestDocument = documentsRef.current[path];
-
-      if (!canRefreshDocumentFromExternalFileChange(latestDocument)) {
-        return;
-      }
-
-      setDocuments((current) => {
-        const currentDocument = current[path];
-
-        if (!canRefreshDocumentFromExternalFileChange(currentDocument)) {
-          return current;
-        }
-
-        return {
-          ...current,
-          [path]: {
-            ...currentDocument,
-            content: refreshedSnapshot.content,
-            savedContent: refreshedSnapshot.content,
-            revision: refreshedSnapshot.revision,
-          },
-        };
-      });
-      reportChangedDocuments([path]);
+  const protectLiveDocumentFromExternalChange = useCallback(
+    (event: WorkspaceFileChangeEvent): boolean => {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.rootPath)) return false;
+      if (event.kind === "rescanRequired" || event.fileKind === "directory") return false;
+      const path = event.kind === "renamed" ? event.previousPath : event.path;
+      if (!path) return false;
+      const document = documentsRef.current[path];
+      if (!document || document.content !== document.savedContent) return false;
+      const projection = resolveDocumentSessionDirtyProjection?.(path) ?? null;
+      const reason = editorDocumentExternalChangeProtection(projection);
+      if (reason === null) return false;
+      setMessage(reason);
+      queueWorkspaceDirectoryRefresh(getParentPath(path));
+      queueWorkspaceGitStatusRefresh(event.rootPath);
+      return true;
     },
     [
       currentWorkspaceRootRef,
+      resolveDocumentSessionDirtyProjection,
       documentsRef,
-      reportChangedDocuments,
-      setDocuments,
-      workspaceFiles,
+      queueWorkspaceDirectoryRefresh,
+      queueWorkspaceGitStatusRefresh,
+      setMessage,
     ],
   );
 
@@ -1011,10 +881,7 @@ export function useWorkbenchFileOperations(
     (event: WorkspaceFileChangeEvent) => {
       const requestedRoot = currentWorkspaceRootRef.current;
 
-      if (
-        !requestedRoot ||
-        !workspaceRootKeysEqual(requestedRoot, event.rootPath)
-      ) {
+      if (!requestedRoot || !workspaceRootKeysEqual(requestedRoot, event.rootPath)) {
         return;
       }
 
@@ -1028,6 +895,11 @@ export function useWorkbenchFileOperations(
       if (event.previousPath) {
         invalidatePhpFrameworkSourcePath(requestedRoot, event.previousPath);
         invalidateFrameworkCachesForPath(requestedRoot, event.previousPath);
+      }
+
+      if (event.kind === "rescanRequired") {
+        queueWorkspaceDirectoryRefresh(requestedRoot);
+        return;
       }
 
       if (event.kind === "deleted") {
@@ -1089,6 +961,8 @@ export function useWorkbenchFileOperations(
     renameEntry,
     deleteActiveDocument,
     handleWorkspaceFileChange,
+    protectLiveDocumentFromExternalChange,
+    rescanOpenDocuments,
   };
 }
 
@@ -1111,9 +985,7 @@ function resolveDocumentSaveInvalidationScope(
 }
 
 function isPathInDirectory(path: string, directoryPath: string): boolean {
-  return (
-    path === directoryPath || path.startsWith(`${directoryPath.replace(/\/+$/, "")}/`)
-  );
+  return path === directoryPath || path.startsWith(`${directoryPath.replace(/\/+$/, "")}/`);
 }
 
 function remapPathForDirectoryRename(

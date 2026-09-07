@@ -37,7 +37,7 @@
       "rawLines": 2623,
       "structuralTokens": 15582
     },
-    "src-tauri/src/git.rs": { "rawLines": 6749, "structuralTokens": 42531 },
+    "src-tauri/src/git.rs": { "rawLines": 6717, "structuralTokens": 42361 },
     "src-tauri/src/index.rs": { "rawLines": 2089, "structuralTokens": 10272 },
     "src-tauri/src/lib.rs": { "rawLines": 210, "structuralTokens": 797 },
     "src-tauri/src/lsp_features.rs": {
@@ -53,7 +53,7 @@
       "rawLines": 2145,
       "structuralTokens": 14163
     },
-    "src/App.tsx": { "rawLines": 1470, "structuralTokens": 7295 },
+    "src/App.tsx": { "rawLines": 1470, "structuralTokens": 7291 },
     "src/application/useDocumentSync.ts": {
       "rawLines": 1526,
       "structuralTokens": 5300
@@ -64,7 +64,7 @@
     },
     "src/application/useWorkbenchController.ts": {
       "rawLines": 2848,
-      "structuralTokens": 9934
+      "structuralTokens": 9877
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 2502,

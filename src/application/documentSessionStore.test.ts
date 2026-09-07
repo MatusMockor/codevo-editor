@@ -1745,3 +1745,45 @@ function limits(overrides: Partial<DocumentSessionStoreLimits>): DocumentSession
     ...overrides,
   };
 }
+
+it("rejects external baseline refresh for stale receipts and pending saves without mutation", () => {
+  const store = new DocumentSessionStore();
+  const owner = activate(store, OWNER_A, ROOT_A);
+  const document = open(store, owner, "src/a.ts", "base");
+  const receipt = store.capture(document)!;
+  const permit = store.issueSave(receipt)!;
+  expect(store.refreshCleanDocument(receipt, "other", undefined)).toEqual({
+    status: "rejected",
+    reason: "save-in-flight",
+  });
+  expect(store.cancelSave(permit)).toBe(true);
+  expect(store.refreshCleanDocument(receipt, "other", undefined).status).toBe("applied");
+  expect(store.refreshCleanDocument(receipt, "stale", undefined)).toEqual({
+    status: "rejected",
+    reason: "stale-receipt",
+  });
+  expect(store.getDocumentSnapshot(document)).toMatchObject({
+    status: "available",
+    dirty: false,
+    document: { content: "other", savedContent: "other" },
+  });
+});
+
+it("explicit reload refuses pending saves and a replaced owner", () => {
+  const store = new DocumentSessionStore();
+  const owner = activate(store, OWNER_A, ROOT_A);
+  const document = open(store, owner, "src/a.ts", "base");
+  const receipt = store.capture(document)!;
+  const reload = store.prepareDocumentReload(receipt)!;
+  const save = store.issueSave(receipt)!;
+  expect(reload("disk", undefined)).toEqual({ status: "rejected", reason: "save-in-flight" });
+  store.cancelSave(save);
+  expect(reload("disk", undefined)).toEqual({ status: "rejected", reason: "stale-receipt" });
+  const oldOwnerReload = store.prepareDocumentReload(receipt)!;
+  store.deactivateOwner(owner);
+  activate(store, OWNER_A, ROOT_A);
+  expect(oldOwnerReload("disk", undefined)).toEqual({
+    status: "rejected",
+    reason: "stale-receipt",
+  });
+});
