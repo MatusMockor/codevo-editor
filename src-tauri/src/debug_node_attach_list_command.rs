@@ -9,7 +9,9 @@ use crate::trust::WorkspaceTrustService;
 use crate::workspace_registry::WorkspaceRegistry;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager, State};
+#[cfg(target_os = "macos")]
+use tauri::Manager;
+use tauri::{AppHandle, State};
 
 const MAX_ROOT_PATH_BYTES: usize = 32 * 1024;
 
@@ -23,6 +25,7 @@ pub(crate) struct NodeDebugAttachCandidateListRequest {
 #[serde(tag = "status", rename_all = "lowercase")]
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 pub(crate) enum NodeDebugAttachCandidateListResult {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Ok {
         candidates: Vec<NodeDebugAttachCandidateWire>,
         truncated: bool,
@@ -125,6 +128,7 @@ fn valid_root_path(root_path: &str) -> bool {
         && !root_path.chars().any(char::is_control)
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn retain_trusted_workspace(
     registry: &WorkspaceRegistry,
     trust: &Mutex<WorkspaceTrustService>,
@@ -159,6 +163,7 @@ fn retain_trusted_workspace(
     Ok((retained, snapshot))
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn revalidate_workspace(
     registry: &WorkspaceRegistry,
     root_path: &str,
@@ -173,6 +178,7 @@ fn revalidate_workspace(
     Ok(())
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn trust_snapshot_current(
     trust: &Mutex<WorkspaceTrustService>,
     expected: &crate::trust::WorkspaceTrustSnapshot,
@@ -188,6 +194,7 @@ fn trust_snapshot_current(
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn ok_result(listing: NodeAttachCandidateList) -> NodeDebugAttachCandidateListResult {
     NodeDebugAttachCandidateListResult::Ok {
         candidates: listing.candidates.into_iter().map(Into::into).collect(),

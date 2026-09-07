@@ -77,6 +77,7 @@ pub(crate) enum NodeLaunchProgram {
         canonical_path: PathBuf,
         executable: Arc<std::fs::File>,
     },
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     TrustedLiveNode {
         canonical_path: PathBuf,
         fingerprint: NodeExecutableFingerprint,

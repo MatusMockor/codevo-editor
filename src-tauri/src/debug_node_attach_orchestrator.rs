@@ -24,10 +24,9 @@ use attach_candidate_registry::{
 };
 #[cfg(target_os = "macos")]
 use attach_candidates::collect_fresh_terminal_observations;
-use attach_candidates::{
-    EndpointObservationFailure, EndpointObservedNodeAttachCandidate, TerminalAuthorityObservation,
-};
-#[cfg(target_os = "macos")]
+#[cfg(any(test, target_os = "macos"))]
+use attach_candidates::TerminalAuthorityObservation;
+use attach_candidates::{EndpointObservationFailure, EndpointObservedNodeAttachCandidate};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;

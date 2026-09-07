@@ -132,6 +132,7 @@ fn probe_native_node_watch_executable(
         );
     }
 
+    #[cfg_attr(target_os = "linux", allow(unused_variables))]
     let fingerprint = fingerprint_retained_executable(&executable)?;
     #[cfg(target_os = "linux")]
     let version = run_bounded_probe(Arc::clone(&executable), "--version")?;
@@ -371,6 +372,7 @@ fn descriptor_executable_command(executable: Arc<File>) -> Result<Command, Strin
     {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
+        use std::path::PathBuf;
 
         let descriptor = executable.as_raw_fd();
         let program = PathBuf::from(format!("/proc/self/fd/{descriptor}"));

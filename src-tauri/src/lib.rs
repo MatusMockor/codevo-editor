@@ -190,7 +190,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock},
 };
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 mod lib_composition;
 
 pub use lib_composition::run;

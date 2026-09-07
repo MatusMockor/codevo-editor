@@ -26,9 +26,11 @@ pub(super) use endpoint::NodeAttachEndpointFailure;
 pub(super) use inventory::collect_fresh_terminal_observations;
 #[cfg(test)]
 pub(super) use inventory::terminal_authority_observation_for_test;
+#[cfg(any(test, target_os = "macos"))]
+pub(super) use inventory::TerminalAuthorityObservation;
 pub(super) use inventory::{
     EndpointObservationFailure, EndpointObservedNodeAttachCandidate,
-    EndpointObservedNodeAttachCandidateIssue, TerminalAuthorityObservation,
+    EndpointObservedNodeAttachCandidateIssue,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
