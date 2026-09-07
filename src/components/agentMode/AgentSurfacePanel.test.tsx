@@ -321,6 +321,7 @@ describe("AgentSurfacePanel", () => {
     });
     const gateway: AgentGitHistoryGateway = {
       getRepoStatus: vi.fn(async () => ({ gitAvailable: true, isRepository: true })),
+      getBranches: vi.fn(async () => ({ current: "main", local: ["main"], remotes: {} })),
       getCommitLog: vi.fn().mockReturnValueOnce(pending).mockResolvedValue([]),
       getCommitDetails: vi.fn(),
       getCommitFiles: vi.fn(),

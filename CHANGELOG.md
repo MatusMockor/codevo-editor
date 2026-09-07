@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Browse a visual commit graph with branch and tag labels, local and remote branch
+  filters, and expandable commit details in the agent History panel.
+
+### Changed
+
+- Keep History navigation compact and load older commits into the same graph.
+
 ## [0.2.0-beta.19] - 2026-09-07
 
 ### Added

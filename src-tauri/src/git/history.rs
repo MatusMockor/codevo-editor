@@ -1,12 +1,17 @@
+use super::history_log::parse_commit_log_output;
 use super::{
     git_command, language_for_path, safe_commit_sha, CommitDiffPayload, CommitFileChange,
-    GitCommit, GitCommitDetails, GitCommitFilters,
+    GitCommitDetails,
 };
 use std::{io, path::Path, time::Duration};
 
 const MAX_HISTORY_BYTES: usize = 2_000_000;
 
-fn history_output<S: AsRef<str>>(root: &Path, args: Vec<S>, trusted: bool) -> io::Result<String> {
+pub(super) fn history_output<S: AsRef<str>>(
+    root: &Path,
+    args: Vec<S>,
+    trusted: bool,
+) -> io::Result<String> {
     let mut command = git_command(trusted);
     command
         .arg("-C")
@@ -37,163 +42,6 @@ fn history_blob(root: &Path, object: &str, trusted: bool) -> io::Result<String> 
     Ok(content)
 }
 
-pub fn load_commit_log(
-    root: &Path,
-    filters: GitCommitFilters,
-    trusted: bool,
-) -> io::Result<Vec<GitCommit>> {
-    if [
-        &filters.author,
-        &filters.branch,
-        &filters.cursor,
-        &filters.path,
-        &filters.query,
-    ]
-    .into_iter()
-    .flatten()
-    .any(|value| value.len() > 4096 || value.contains('\0'))
-    {
-        return Err(io::Error::other(
-            "Git history filter exceeds the supported limits.",
-        ));
-    }
-    let limit = filters.limit.unwrap_or(100);
-    if !(1..=500).contains(&limit) {
-        return Err(io::Error::other(
-            "Git history page limit must be between 1 and 500.",
-        ));
-    }
-    let mut args: Vec<String> = vec![
-        "log".to_string(),
-        "--date=iso-strict".to_string(),
-        "--decorate=short".to_string(),
-        format!("--max-count={limit}"),
-        "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P%x1f%B%x1f%D%x00".to_string(),
-    ];
-
-    if let Some(skip) = filters
-        .cursor
-        .as_deref()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-    {
-        args.push(format!("--skip={skip}"));
-    }
-
-    if let Some(author) = filters.author.as_deref().filter(|value| !value.is_empty()) {
-        args.push(format!("--author={author}"));
-    }
-
-    if let Some(query) = filters.query.as_deref().filter(|value| !value.is_empty()) {
-        args.push("--regexp-ignore-case".to_string());
-        args.push(format!("--grep={query}"));
-    }
-
-    let range_ref = filters.branch.unwrap_or_else(|| "HEAD".to_string());
-    if !git_ref_has_commits(root, &range_ref, trusted)? {
-        return Ok(Vec::new());
-    }
-
-    args.push(range_ref);
-
-    if let Some(path) = filters.path.as_deref().filter(|value| !value.is_empty()) {
-        args.push("--".to_string());
-        args.push(path.to_string());
-    }
-
-    let output = history_output(root, args, trusted)?;
-    Ok(parse_commit_log_output(&output))
-}
-
-fn git_ref_has_commits(root: &Path, reference: &str, trusted: bool) -> io::Result<bool> {
-    if reference.is_empty() || reference.starts_with('-') || reference.len() > 4096 {
-        return Err(io::Error::other("Invalid history reference."));
-    }
-    match history_output(root, vec!["rev-parse", "--verify", reference], trusted) {
-        Ok(_) => Ok(true),
-        Err(error) => {
-            if reference == "HEAD" {
-                let symbolic = history_output(root, vec!["symbolic-ref", "-q", "HEAD"], trusted)?;
-                let refs = history_output(
-                    root,
-                    vec!["for-each-ref", "--format=%(refname)", symbolic.trim()],
-                    trusted,
-                )?;
-                if !refs.lines().any(|line| line == symbolic.trim()) {
-                    return Ok(false);
-                }
-            }
-            Err(error)
-        }
-    }
-}
-
-fn parse_commit_log_output(output: &str) -> Vec<GitCommit> {
-    output
-        .split('\0')
-        .filter(|entry| !entry.trim().is_empty())
-        .filter_map(|entry| {
-            let fields: Vec<&str> = entry.split('\x1f').collect();
-            if fields.len() < 9 {
-                return None;
-            }
-
-            Some(parse_git_commit_from_fields(&fields))
-        })
-        .collect()
-}
-
-fn parse_git_commit_from_fields(fields: &[&str]) -> GitCommit {
-    let labels = parse_git_labels(fields[8]);
-    let parents = fields[6]
-        .split_whitespace()
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .collect();
-
-    GitCommit {
-        abbrev_hash: fields[1].trim().to_string(),
-        author_email: fields[3].trim().to_string(),
-        author_name: fields[2].trim().to_string(),
-        date: fields[4].trim().to_string(),
-        hash: fields[0].trim().to_string(),
-        labels,
-        parents,
-        subject: fields[5].trim().to_string(),
-    }
-}
-
-fn parse_git_labels(value: &str) -> Vec<String> {
-    let raw = value.trim().trim_start_matches('(').trim_end_matches(')');
-    if raw.is_empty() {
-        return Vec::new();
-    }
-
-    raw.split(',')
-        .filter_map(|piece| {
-            let label = piece.trim();
-            if label.is_empty() || label == "HEAD" || label == "tag: HEAD" {
-                return None;
-            }
-
-            if label.starts_with("tag: ") || label.starts_with("origin/") {
-                Some(label.to_string())
-            } else if label.starts_with("HEAD -> ") {
-                Some(
-                    label
-                        .split("->")
-                        .nth(1)
-                        .map(str::trim)
-                        .unwrap_or_default()
-                        .to_string(),
-                )
-            } else {
-                Some(label.to_string())
-            }
-        })
-        .collect()
-}
-
 pub fn load_commit_details(
     root: &Path,
     commit_hash: &str,
@@ -201,17 +49,16 @@ pub fn load_commit_details(
 ) -> io::Result<GitCommitDetails> {
     let commit_hash = safe_commit_sha(commit_hash)?;
     let command =
-        "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P%x1f%B%x1f%D%x00".to_string();
+        "--pretty=format:%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%P%x00%B%x00%D%x00".to_string();
     let output = history_output(root, vec!["show", "-s", &command, &commit_hash], trusted)?;
-    let commit = output
-        .split('\0')
-        .find(|entry| !entry.trim().is_empty())
-        .and_then(|entry| {
-            let fields: Vec<&str> = entry.split('\x1f').collect();
-            (fields.len() >= 9).then(|| parse_git_commit_from_fields(&fields))
-        })
+    let mut commit = parse_commit_log_output(&output)?
+        .into_iter()
+        .next()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Commit not found."))?;
 
+    commit.labels = super::history_refs::load_commit_labels(root, trusted)?
+        .remove(&commit.hash)
+        .unwrap_or_default();
     let body = history_output(
         root,
         vec!["log", "-1", "--pretty=%B", &commit_hash],

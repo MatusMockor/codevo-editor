@@ -62,6 +62,7 @@ beforeEach(() => {
   root = createRoot(host);
   preview.props.length = 0;
   gateway = {
+    getBranches: vi.fn(async () => ({ current: "main", local: ["main"], remotes: {} })),
     getRepoStatus: vi.fn(async () => ({ gitAvailable: true, isRepository: true })),
     getCommitLog: vi.fn(async () => [commit]),
     getCommitDetails: vi.fn(async () => ({
@@ -100,8 +101,8 @@ it("opens commit details and renamed file history without mutation actions", asy
   await render();
   expect(gateway.getRepoStatus).toHaveBeenCalledWith("/workspace/app/packages/api");
   expect(gateway.getCommitDetails).not.toHaveBeenCalled();
-  expect(button("Newer commits").disabled).toBe(true);
-  expect(button("Older commits").disabled).toBe(true);
+  expect(host.querySelector('[aria-label="Load more commits"]')).toBeNull();
+  expect(host.querySelector('[aria-label="Close commit details"]')).toBeNull();
   await act(async () => button("Fix Linux startup").click());
   expect(gateway.getCommitDetails).toHaveBeenCalledWith("/workspace/app/packages/api", commit.hash);
   expect(host.textContent).toContain("Use the platform-specific launcher.");
@@ -320,4 +321,171 @@ it("ignores a pending sibling history after selecting a different repository", a
   expect(host.textContent).toContain("Fix Linux startup");
   await render({ kind: "unavailable", reason: "Project unavailable." });
   expect(host.textContent).not.toContain("Fix Linux startup");
+});
+
+it("closes the commit inspector and its diff while preserving the graph selection choices", async () => {
+  await render();
+  await act(async () => button("Fix Linux startup").click());
+  await act(async () => button("src/new.ts").click());
+  await waitForReact(() =>
+    expect(host.querySelector('[aria-label="Historical file diff"]')).not.toBeNull(),
+  );
+  await act(async () => button("Close commit details").click());
+  expect(host.querySelector('[aria-label="Commit files"]')).toBeNull();
+  expect(host.querySelector('[aria-label="Historical file diff"]')).toBeNull();
+  expect(host.textContent).not.toContain("Use the platform-specific launcher.");
+  expect(button("Fix Linux startup").getAttribute("aria-pressed")).toBe("false");
+  expect(host.querySelector('[aria-label="History branch"]')).not.toBeNull();
+  expect(gateway.getCommitLog).toHaveBeenCalledTimes(1);
+});
+
+it("filters the graph by exact local and remote branches without checking out a branch", async () => {
+  vi.mocked(gateway.getBranches).mockResolvedValue({
+    current: "main",
+    local: ["main", "feature/graph"],
+    remotes: { origin: ["main", "feature/graph"] },
+  });
+  await render();
+  expect(gateway.getCommitLog).toHaveBeenLastCalledWith(
+    "/workspace/app/packages/api",
+    expect.objectContaining({ allBranches: true }),
+  );
+  for (const [label, ref] of [
+    ["feature/graph", "refs/heads/feature/graph"],
+    ["origin/feature/graph", "refs/remotes/origin/feature/graph"],
+  ]) {
+    await act(async () => button("History branch").click());
+    const option = Array.from(host.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (item) =>
+        item.textContent?.includes(label!) &&
+        (label!.startsWith("origin/") || !item.textContent.includes("origin/")),
+    );
+    expect(option).toBeDefined();
+    await act(async () => option?.click());
+    expect(gateway.getCommitLog).toHaveBeenLastCalledWith(
+      "/workspace/app/packages/api",
+      expect.objectContaining({ branch: ref }),
+    );
+  }
+  expect(host.textContent).toContain("Fix Linux startup");
+});
+
+it("extends the visible commit graph instead of replacing it with a disconnected page", async () => {
+  const commits = Array.from({ length: 51 }, (_, index) => ({
+    ...commit,
+    hash: `commit-${index}`,
+    abbrevHash: `hash-${index}`,
+    subject: `Change ${index}`,
+    parents: index === 50 ? [] : [`commit-${index + 1}`],
+  }));
+  vi.mocked(gateway.getCommitLog).mockResolvedValue(commits);
+  await render();
+  expect(host.textContent).toContain("Change 0");
+  expect(host.textContent).not.toContain("Change 50");
+  await act(async () => button("Load more commits").click());
+  expect(gateway.getCommitLog).toHaveBeenLastCalledWith(
+    "/workspace/app/packages/api",
+    expect.objectContaining({ limit: 101, cursor: "0" }),
+  );
+  expect(host.textContent).toContain("Change 0");
+  expect(host.textContent).toContain("Change 50");
+  expect(host.querySelector('[aria-label="Load more commits"]')).toBeNull();
+});
+
+it("shows branch and tag references beside their commit", async () => {
+  vi.mocked(gateway.getCommitLog).mockResolvedValue([
+    { ...commit, labels: ["HEAD -> main", "tag: v1.0", "origin/main"] },
+  ]);
+  await render();
+  const row = button("Fix Linux startup");
+  expect(row.textContent).toContain("main");
+  expect(row.textContent).toContain("v1.0");
+  expect(row.textContent).toContain("origin/main");
+});
+
+it("searches a large branch list with branch-specific guidance and bounded results", async () => {
+  vi.useFakeTimers();
+  vi.mocked(gateway.getBranches).mockResolvedValue({
+    current: "main",
+    local: ["main", ...Array.from({ length: 65 }, (_, index) => `feature-${index}`)],
+    remotes: {},
+  });
+  await render();
+  await act(async () => button("History branch").click());
+  const input = host.querySelector<HTMLInputElement>('[aria-label="Search branches"]');
+  expect(input).not.toBeNull();
+  expect(host.querySelectorAll('[role="option"]').length).toBeLessThanOrEqual(52);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+      input,
+      "feature-64",
+    );
+    input?.dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(150);
+  });
+  const option = Array.from(host.querySelectorAll<HTMLElement>('[role="option"]')).find((item) =>
+    item.textContent?.includes("feature-64"),
+  );
+  expect(option).toBeDefined();
+  await act(async () => option?.click());
+  expect(gateway.getCommitLog).toHaveBeenLastCalledWith(
+    "/workspace/app/packages/api",
+    expect.objectContaining({ branch: "refs/heads/feature-64" }),
+  );
+});
+
+it("preserves branch search while an equivalent history refresh completes", async () => {
+  vi.useFakeTimers();
+  vi.mocked(gateway.getBranches).mockImplementation(async () => ({
+    current: "main",
+    local: ["main", ...Array.from({ length: 65 }, (_, index) => `feature-${index}`)],
+    remotes: {},
+  }));
+  const commits = Array.from({ length: 51 }, (_, index) => ({
+    ...commit,
+    hash: `refresh-${index}`,
+    subject: `Change ${index}`,
+  }));
+  let finish: ((value: Commit[]) => void) | undefined;
+  vi.mocked(gateway.getCommitLog)
+    .mockResolvedValueOnce(commits)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+  await render();
+  await act(async () => button("Load more commits").click());
+  await act(async () => button("History branch").click());
+  const input = host.querySelector<HTMLInputElement>('[aria-label="Search branches"]');
+  expect(input).not.toBeNull();
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+      input,
+      "feature-64",
+    );
+    input?.dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(150);
+  });
+  await act(async () => finish?.(commits));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(150);
+  });
+  expect(host.querySelector<HTMLInputElement>('[aria-label="Search branches"]')?.value).toBe(
+    "feature-64",
+  );
+  expect(host.querySelector('[role="listbox"]')?.textContent).toContain("feature-64");
+});
+
+it("does not repeat the commit subject in its message body", async () => {
+  vi.mocked(gateway.getCommitDetails).mockResolvedValue({
+    ...commit,
+    body: `${commit.subject}\n\nUse the platform-specific launcher.`,
+    containingBranches: [],
+  });
+  await render();
+  await act(async () => button("Fix Linux startup").click());
+  expect(host.textContent?.match(/Fix Linux startup/g)).toHaveLength(2);
+  expect(host.textContent).toContain("Use the platform-specific launcher.");
 });

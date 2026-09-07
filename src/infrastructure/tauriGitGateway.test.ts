@@ -332,8 +332,13 @@ describe("TauriGitGateway", () => {
     await gateway.getCommitDiff("/workspace", "abc123", "src/User.php");
     await gateway.getCommitFiles("/workspace", "abc123");
     await gateway.getCommitLog("/workspace", { branch: "main", limit: 20 });
+    await gateway.getCommitLog("/workspace", { allBranches: true, limit: 51 });
     await gateway.getRepoStatus("/workspace");
 
+    expect(invoke).toHaveBeenCalledWith("get_git_commit_log", {
+      filters: { allBranches: true, limit: 51 },
+      rootPath: "/workspace",
+    });
     expect(invoke).toHaveBeenCalledWith("get_git_branches", {
       rootPath: "/workspace",
     });

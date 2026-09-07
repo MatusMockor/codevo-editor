@@ -34,6 +34,7 @@ export interface AgentPickerMenuProps {
   readonly variant?: AgentPickerVariant;
   readonly menuLayout?: "default" | "checkout";
   readonly searchIdentity?: object;
+  readonly searchSubject?: "repositories" | "branches";
   readonly icon?: ReactNode;
   readonly confirmation?: AgentPickerConfirmation | null;
   onChange(value: string): void;
@@ -67,6 +68,7 @@ export function AgentPickerMenu({
   options,
   prefix,
   searchIdentity,
+  searchSubject = "repositories",
   tone,
   value,
   variant = "default",
@@ -241,6 +243,7 @@ export function AgentPickerMenu({
         >
           {search.enabled && (
             <AgentCheckoutSearchInput
+              subject={searchSubject}
               query={search.query}
               listId={listId}
               onQuery={search.setQuery}
@@ -286,6 +289,7 @@ export function AgentPickerMenu({
           )}
           {search.enabled && (
             <AgentCheckoutSearchPages
+              subject={searchSubject}
               page={search.page}
               total={search.total}
               excluded={search.excluded}

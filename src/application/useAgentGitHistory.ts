@@ -5,22 +5,34 @@ import type {
   DiffPayload,
   FileChange,
   GitHistoryGateway,
+  GitBranches,
 } from "../domain/git";
 
 export type AgentGitHistoryGateway = Pick<
   GitHistoryGateway,
-  "getRepoStatus" | "getCommitLog" | "getCommitDetails" | "getCommitFiles" | "getCommitDiff"
+  | "getBranches"
+  | "getRepoStatus"
+  | "getCommitLog"
+  | "getCommitDetails"
+  | "getCommitFiles"
+  | "getCommitDiff"
 >;
 export interface AgentGitHistoryTarget {
   readonly rootPath: string;
   readonly ownerKey: string;
 }
+export type AgentGitHistoryBranchFilter =
+  | { readonly kind: "all" }
+  | { readonly kind: "head" }
+  | { readonly kind: "branch"; readonly ref: string };
 interface HistoryState {
+  readonly branches: GitBranches | null;
+  readonly branchFilter: AgentGitHistoryBranchFilter;
   readonly status: "loading" | "ready" | "unavailable" | "error";
   readonly reason: string | null;
   readonly commits: readonly Commit[];
-  readonly page: number;
   readonly hasNext: boolean;
+  readonly loadingMore: boolean;
   readonly selectedHash: string | null;
   readonly details: CommitDetails | null;
   readonly files: readonly FileChange[];
@@ -48,8 +60,10 @@ const initial: HistoryState = {
   status: "loading",
   reason: null,
   commits: [],
-  page: 0,
+  branches: null,
+  branchFilter: { kind: "all" },
   hasNext: false,
+  loadingMore: false,
   ...selection,
 };
 
@@ -67,6 +81,22 @@ function diffFailureReason(error: unknown): string {
   }
 }
 
+function historyBranchRefs(branches: GitBranches): Set<string> {
+  const refs = [
+    ...branches.local.map((name) => `refs/heads/${name}`),
+    ...Object.entries(branches.remotes).flatMap(([remote, names]) =>
+      names.map((name) => `refs/remotes/${remote}/${name}`),
+    ),
+  ];
+  if (
+    refs.length > 5000 ||
+    refs.some((ref) => ref.length > 4096 || /[\x00-\x20\x7f]/.test(ref)) ||
+    new Set(refs).size !== refs.length
+  )
+    throw new Error("Invalid branches");
+  return new Set(refs);
+}
+
 export function useAgentGitHistory({
   target,
   gateway,
@@ -78,7 +108,11 @@ export function useAgentGitHistory({
   const ownerKey = target?.ownerKey ?? null;
   const identity = useMemo(() => ({ rootPath, ownerKey, gateway }), [rootPath, ownerKey, gateway]);
   const [state, setState] = useState<HistoryState>(initial);
-  const [request, setRequest] = useState({ page: 0, refresh: 0 });
+  const [request, setRequest] = useState<{
+    count: number;
+    refresh: number;
+    filter: AgentGitHistoryBranchFilter;
+  }>({ count: 50, refresh: 0, filter: { kind: "all" } });
   const lease = useRef(0);
   const detailRequest = useRef(0);
   const fileRequest = useRef(0);
@@ -89,7 +123,9 @@ export function useAgentGitHistory({
     owner.current = identity;
     lease.current += 1;
     setRequest((previous) =>
-      previous.page === 0 && previous.refresh === 0 ? previous : { page: 0, refresh: 0 },
+      previous.count === 50 && previous.refresh === 0 && previous.filter.kind === "all"
+        ? previous
+        : { count: 50, refresh: 0, filter: { kind: "all" } },
     );
     setState(initial);
     return () => {
@@ -117,7 +153,7 @@ export function useAgentGitHistory({
         active = false;
       };
     }
-    setState({ ...initial, page: request.page });
+    setState((previous) => ({ ...previous, ...selection, branchFilter: request.filter }));
     void (async () => {
       try {
         const repo = await gateway.getRepoStatus(rootPath);
@@ -132,35 +168,56 @@ export function useAgentGitHistory({
           });
           return;
         }
+        const branches = await gateway.getBranches(rootPath);
+        if (!valid()) return;
+        const refs = historyBranchRefs(branches);
+        if (request.filter.kind === "branch" && !refs.has(request.filter.ref)) {
+          setState({
+            ...initial,
+            branches,
+            branchFilter: request.filter,
+            status: "error",
+            reason: "This branch is no longer available. Choose another branch or refresh.",
+          });
+          return;
+        }
+        const limit = Math.min(request.count + 1, 500);
         const commits = await gateway.getCommitLog(rootPath, {
-          limit: 51,
-          cursor: String(request.page * 50),
+          limit,
+          cursor: "0",
+          ...(request.filter.kind === "all"
+            ? { allBranches: true }
+            : request.filter.kind === "branch"
+              ? { branch: request.filter.ref }
+              : {}),
         });
         if (!valid()) return;
         if (
-          new Set(commits.slice(0, 50).map((commit) => commit.hash)).size !==
-          Math.min(commits.length, 50)
+          commits.length > limit ||
+          new Set(commits.map((commit) => commit.hash)).size !== commits.length
         )
-          throw new Error("Duplicate commits");
+          throw new Error("Invalid commit page");
         setState({
           ...initial,
           status: "ready",
-          page: request.page,
-          commits: commits.slice(0, 50),
-          hasNext: commits.length > 50 && request.page < 999,
+          branches,
+          branchFilter: request.filter,
+          commits: commits.slice(0, request.count),
+          hasNext: commits.length > request.count && request.count < 500,
           reason:
-            commits.length > 50 && request.page === 999
-              ? "History is limited to the latest 50,000 commits."
+            commits.length === 500 && request.count === 500
+              ? "Showing up to 500 commits. Choose a branch to narrow the history."
               : null,
         });
       } catch {
         if (!valid()) return;
-        setState({
-          ...initial,
-          status: "error",
-          page: request.page,
+        setState((previous) => ({
+          ...previous,
+          status: previous.loadingMore ? "ready" : "error",
+          loadingMore: false,
+          branchFilter: request.filter,
           reason: "Could not load Git history. Try refreshing.",
-        });
+        }));
       }
     })();
     return () => {
@@ -175,9 +232,10 @@ export function useAgentGitHistory({
     owner.current.rootPath === rootPath &&
     owner.current.ownerKey === ownerKey &&
     owner.current.gateway === gateway;
+  const actionGeneration = lease.current;
   const selectCommit = (hash: string) => {
     if (
-      owner.current !== identity ||
+      !owns(actionGeneration) ||
       rootPath === null ||
       gateway === null ||
       currentState.current.status !== "ready" ||
@@ -228,7 +286,7 @@ export function useAgentGitHistory({
     const snapshot = currentState.current;
     const hash = snapshot.selectedHash;
     if (
-      owner.current !== identity ||
+      !owns(actionGeneration) ||
       rootPath === null ||
       gateway === null ||
       hash === null ||
@@ -270,19 +328,32 @@ export function useAgentGitHistory({
       }
     })();
   };
-  const navigate = (page: number) => {
-    if (owner.current !== identity) return;
+  const navigate = (count: number, filter: AgentGitHistoryBranchFilter) => {
+    if (!owns(actionGeneration)) return;
     lease.current += 1;
     selectedCommit.current = null;
-    setState({ ...initial, page });
-    setRequest((previous) => ({ page, refresh: previous.refresh + 1 }));
+    const loadingMore =
+      count > state.commits.length && state.status === "ready" && filter === request.filter;
+    setState((previous) =>
+      loadingMore
+        ? { ...previous, ...selection, loadingMore: true, reason: null }
+        : { ...initial, branches: previous.branches, branchFilter: filter },
+    );
+    setRequest((previous) => ({ count, filter, refresh: previous.refresh + 1 }));
   };
   return {
     ...state,
     selectCommit,
     selectFile,
+    clearSelection: () => {
+      if (!owns(actionGeneration)) return;
+      detailRequest.current += 1;
+      fileRequest.current += 1;
+      selectedCommit.current = null;
+      setState((previous) => ({ ...previous, ...selection }));
+    },
     closeDiff: () => {
-      if (owner.current !== identity) return;
+      if (!owns(actionGeneration)) return;
       fileRequest.current += 1;
       setState((previous) => ({
         ...previous,
@@ -292,12 +363,19 @@ export function useAgentGitHistory({
         diffError: null,
       }));
     },
-    nextPage: () => {
-      if (state.status === "ready" && state.hasNext) navigate(state.page + 1);
+    selectBranch: (filter: AgentGitHistoryBranchFilter) => {
+      if (!owns(actionGeneration)) return;
+      if (
+        filter.kind === "branch" &&
+        (!state.branches || !historyBranchRefs(state.branches).has(filter.ref))
+      )
+        return;
+      navigate(50, filter);
     },
-    previousPage: () => {
-      if (state.status === "ready" && state.page > 0) navigate(state.page - 1);
+    loadMore: () => {
+      if (state.status === "ready" && !state.loadingMore && state.hasNext)
+        navigate(Math.min(state.commits.length + 50, 500), request.filter);
     },
-    refresh: () => navigate(0),
+    refresh: () => navigate(50, request.filter),
   };
 }

@@ -32,32 +32,35 @@ export function AgentHistoryRepositoryBrowser({
   const selected = repositories.options.find((option) => option.value === value);
   return (
     <section className="agent-history-browser" aria-label="Repository history">
-      <div className="agent-history-browser__picker">
-        <span className="agent-history__metadata">History in {repositories.projectLabel}</span>
-        <AgentPickerMenu
-          id={id}
-          label="History repository"
-          options={options}
-          value={selected?.value ?? repositories.defaultValue}
-          disabled={false}
-          tone={null}
-          prefix={null}
-          describedBy={null}
-          align="start"
-          menuLayout="checkout"
-          searchIdentity={searchIdentity}
-          onChange={setValue}
-        />
-        <span className="agent-history__metadata">{selected?.description}</span>
-      </div>
-      <div className="agent-history-browser__content">
-        <AgentHistoryContent
-          {...props}
-          scope={
-            selected?.scope ?? { kind: "unavailable", reason: "Choose an available repository." }
-          }
-        />
-      </div>
+      <AgentHistoryContent
+        {...props}
+        repositoryPicker={
+          <div
+            className="agent-history-browser__picker"
+            title={selected?.description ?? repositories.projectLabel}
+          >
+            <AgentPickerMenu
+              id={id}
+              label="History repository"
+              options={options}
+              value={selected?.value ?? repositories.defaultValue}
+              disabled={false}
+              tone={null}
+              prefix={null}
+              icon={<FolderGit2 size={13} />}
+              variant="ghost"
+              describedBy={null}
+              align="start"
+              menuLayout="checkout"
+              searchIdentity={searchIdentity}
+              onChange={setValue}
+            />
+          </div>
+        }
+        scope={
+          selected?.scope ?? { kind: "unavailable", reason: "Choose an available repository." }
+        }
+      />
     </section>
   );
 }

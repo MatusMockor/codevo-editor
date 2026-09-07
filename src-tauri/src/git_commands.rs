@@ -120,6 +120,7 @@ pub(crate) async fn get_git_commit_graph_page(
         let commits = load_commit_log(
             &root,
             GitCommitFilters {
+                all_branches: None,
                 author: None,
                 branch: None,
                 cursor,

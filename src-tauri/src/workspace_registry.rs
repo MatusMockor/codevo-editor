@@ -779,13 +779,23 @@ mod tests {
     }
 
     fn temp_root(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "mockor-registry-{label}-{}-{}",
-            std::process::id(),
-            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
+        for _ in 0..128 {
+            let parent = std::env::temp_dir().join(format!(
+                "mockor-registry-fixture-{label}-{}-{}",
+                std::process::id(),
+                NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&parent) {
+                Ok(()) => {
+                    let root = parent.join("root");
+                    fs::create_dir(&root).unwrap();
+                    return root;
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("cannot create registry test fixture: {error}"),
+            }
+        }
+        panic!("cannot allocate a fresh registry test fixture");
     }
 
     #[test]

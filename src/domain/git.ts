@@ -64,6 +64,7 @@ export interface CommitDetails extends Commit {
 }
 
 export interface GitCommitFilters {
+  readonly allBranches?: boolean;
   author?: string;
   branch?: string | null;
   cursor?: string;

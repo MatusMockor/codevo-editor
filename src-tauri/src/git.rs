@@ -16,9 +16,13 @@ static HUNK_REVERT_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) mod bounded_process;
 mod history;
+mod history_log;
+mod history_refs;
 mod repository_discovery;
 
-pub use history::{load_commit_details, load_commit_diff, load_commit_files, load_commit_log};
+pub use history::{load_commit_details, load_commit_diff, load_commit_files};
+pub use history_log::load_commit_log;
+pub use history_refs::load_git_branches;
 
 pub use repository_discovery::{detect_git_repositories, DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH};
 
@@ -144,8 +148,9 @@ pub struct GitBranches {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GitCommitFilters {
+    pub all_branches: Option<bool>,
     pub author: Option<String>,
     pub branch: Option<String>,
     pub cursor: Option<String>,
@@ -502,6 +507,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         load_commit_log(
             &root,
             GitCommitFilters {
+                all_branches: None,
                 author: None,
                 branch: None,
                 cursor: None,
@@ -681,6 +687,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             let commits = load_commit_log(
                 &root,
                 GitCommitFilters {
+                    all_branches: None,
                     author: None,
                     branch: None,
                     cursor: None,
@@ -750,6 +757,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             let commits = load_commit_log(
                 &root,
                 GitCommitFilters {
+                    all_branches: None,
                     author: None,
                     branch: None,
                     cursor: None,
@@ -1245,51 +1253,6 @@ pub fn git_available() -> bool {
         .arg("--version")
         .output()
         .is_ok_and(|output| output.status.success())
-}
-
-pub fn load_git_branches(root: &Path, trusted: bool) -> io::Result<GitBranches> {
-    let local = git_output_vec(root, vec!["branch", "--format=%(refname:short)"], trusted)?;
-    let remotes = git_output_vec(
-        root,
-        vec!["branch", "--remotes", "--format=%(refname:short)"],
-        trusted,
-    )?;
-
-    let mut remote_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for line in remotes.lines() {
-        let line = line.trim();
-
-        if line.is_empty() {
-            continue;
-        }
-
-        let mut parts = line.splitn(2, '/');
-        let remote = parts.next().unwrap_or("");
-        let branch = parts.next();
-
-        if remote.is_empty() || branch.is_none() {
-            continue;
-        }
-
-        let branch = branch.unwrap_or_default();
-        if branch == "HEAD" || branch.starts_with("HEAD ->") {
-            continue;
-        }
-
-        let remote_branches = remote_groups.entry(remote.to_string()).or_default();
-        remote_branches.push(branch.to_string());
-    }
-
-    Ok(GitBranches {
-        current: current_branch(root, trusted).ok().flatten(),
-        local: local
-            .lines()
-            .map(str::trim)
-            .map(str::to_owned)
-            .filter(|branch| !branch.is_empty())
-            .collect(),
-        remotes: remote_groups,
-    })
 }
 
 fn current_branch(root: &Path, trusted: bool) -> io::Result<Option<String>> {
@@ -3028,6 +2991,7 @@ fn language_for_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    include!("git/history_graph_tests.rs");
     use super::{
         amend_selected_staged_changes, detect_git_repositories, git_command, hunk_identity,
         load_commit_details, load_commit_diff, load_commit_files, load_commit_log,
@@ -6528,6 +6492,7 @@ mod tests {
 
     fn empty_commit_filters() -> GitCommitFilters {
         GitCommitFilters {
+            all_branches: None,
             author: None,
             branch: None,
             cursor: None,

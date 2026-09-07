@@ -4,6 +4,7 @@ import { CHECKOUT_REPOSITORY_PAGE_SIZE, CHECKOUT_SEARCH_QUERY_LIMIT } from "./ag
 import "./agentCheckoutSearch.css";
 
 interface SearchInputProps {
+  readonly subject?: "repositories" | "branches";
   readonly query: string;
   readonly listId: string;
   onQuery(query: string): void;
@@ -12,6 +13,7 @@ interface SearchInputProps {
 }
 
 export function AgentCheckoutSearchInput({
+  subject = "repositories",
   query,
   listId,
   onQuery,
@@ -38,14 +40,14 @@ export function AgentCheckoutSearchInput({
       <Search size={14} aria-hidden="true" />
       <input
         ref={inputRef}
-        aria-label="Search repositories"
+        aria-label={`Search ${subject}`}
         aria-controls={listId}
         autoComplete="off"
         spellCheck={false}
         maxLength={CHECKOUT_SEARCH_QUERY_LIMIT}
         onChange={(event) => onQuery(event.target.value)}
         onKeyDown={onKeyDown}
-        placeholder="Search repositories…"
+        placeholder={`Search ${subject}…`}
         type="search"
         value={query}
       />
@@ -54,6 +56,7 @@ export function AgentCheckoutSearchInput({
 }
 
 interface SearchPagesProps {
+  readonly subject?: "repositories" | "branches";
   readonly page: number;
   readonly total: number | null;
   readonly excluded: number;
@@ -62,6 +65,7 @@ interface SearchPagesProps {
 }
 
 export function AgentCheckoutSearchPages({
+  subject = "repositories",
   page,
   total,
   excluded,
@@ -71,10 +75,10 @@ export function AgentCheckoutSearchPages({
   const pages = Math.max(1, Math.ceil((total ?? 0) / CHECKOUT_REPOSITORY_PAGE_SIZE));
   const summary =
     total === null
-      ? "Searching repositories…"
+      ? `Searching ${subject}…`
       : total === 0
-        ? "No matching repositories"
-        : `${page * CHECKOUT_REPOSITORY_PAGE_SIZE + 1}–${Math.min((page + 1) * CHECKOUT_REPOSITORY_PAGE_SIZE, total)} of ${total} repositories`;
+        ? `No matching ${subject}`
+        : `${page * CHECKOUT_REPOSITORY_PAGE_SIZE + 1}–${Math.min((page + 1) * CHECKOUT_REPOSITORY_PAGE_SIZE, total)} of ${total} ${subject}`;
   return (
     <div
       className="agent-checkout-pages"
@@ -88,11 +92,11 @@ export function AgentCheckoutSearchPages({
       <span role="status" aria-live="polite">
         {summary}
         {excluded > 0 &&
-          ` · ${excluded} repositories exceed the search limit. Clear search to browse them.`}
+          ` · ${excluded} ${subject} exceed the search limit. Clear search to browse them.`}
       </span>
       <button
         type="button"
-        aria-label="Previous repository page"
+        aria-label={`Previous ${subject === "branches" ? "branch" : "repository"} page`}
         disabled={total === null || page === 0}
         onClick={() => onPage(page - 1)}
       >
@@ -100,7 +104,7 @@ export function AgentCheckoutSearchPages({
       </button>
       <button
         type="button"
-        aria-label="Next repository page"
+        aria-label={`Next ${subject === "branches" ? "branch" : "repository"} page`}
         disabled={total === null || page + 1 >= pages}
         onClick={() => onPage(page + 1)}
       >
