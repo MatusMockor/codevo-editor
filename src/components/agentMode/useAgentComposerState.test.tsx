@@ -755,6 +755,88 @@ describe("useAgentComposerState", () => {
     });
   });
 
+  it.each<AgentLaunchOptions>([
+    {
+      provider: "claudeCode",
+      model: "fable",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "1m",
+    },
+    { provider: "codex", model: "gpt-5.6-sol", mode: "dangerFullAccess" },
+  ])("retains $model while an existing untrusted project becomes ready", async (launch) => {
+    const startThread = vi.fn(async () => ({ threadId: "new-model-thread" }));
+    const agents = threadsSurfaceFixture({ startThread });
+    render(agents, [projectFixture({ trust: "untrusted" })]);
+    expect(current().composer.target).toBeNull();
+    act(() => current().composer.composerProps.onLaunchChange(launch));
+    expect(current().composer.composerProps.launch).toEqual(launch);
+    act(() => current().composer.composerProps.onPromptChange("Use this model"));
+    expect(current().composer.composerProps.submitBlocked).toBe(true);
+    await act(async () =>
+      current().composer.composerProps.onSubmit({ launch, dangerousLaunchConfirmed: false }),
+    );
+    expect(startThread).not.toHaveBeenCalled();
+    render(threadsSurfaceFixture({ startThread }), [projectFixture({ trust: "untrusted" })]);
+    expect(current().composer.composerProps.launch).toEqual(launch);
+    render(agents, [projectFixture()]);
+    expect(current().composer.composerProps.launch).toEqual(launch);
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
+    await act(async () =>
+      current().composer.composerProps.onSubmit({
+        launch: current().composer.composerProps.launch,
+        dangerousLaunchConfirmed: false,
+      }),
+    );
+    expect(startThread).toHaveBeenCalledWith(expect.objectContaining({ launch }));
+  });
+
+  it("keeps an untrusted project's model draft scoped away from another project", () => {
+    const background = projectFixture({
+      rootKey: "/workspace/other",
+      rootPath: "/workspace/other",
+      ownerId: "other-owner",
+      origin: "background-tab",
+      trust: "untrusted",
+    });
+    render(threadsSurfaceFixture(), [projectFixture({ trust: "untrusted" }), background]);
+    const launch: AgentLaunchOptions = {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      mode: "dangerFullAccess",
+    };
+    act(() => current().composer.composerProps.onLaunchChange(launch));
+    act(() =>
+      current().navigation.setRailScope({
+        projectRootKey: background.rootKey,
+        repositoryRoot: background.rootPath,
+      }),
+    );
+    expect(current().composer.composerProps.launch.provider).toBe("claudeCode");
+    expect(current().composer.target).toBeNull();
+    act(() =>
+      current().navigation.setRailScope({
+        projectRootKey: SURFACE_FIXTURE_ROOT,
+        repositoryRoot: SURFACE_FIXTURE_ROOT,
+      }),
+    );
+    expect(current().composer.composerProps.launch).toEqual(launch);
+    expect(current().composer.target).toBeNull();
+  });
+
+  it("lets an empty composer retain a model draft without permitting submission", () => {
+    render(threadsSurfaceFixture(), []);
+    const launch: AgentLaunchOptions = {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      mode: "dangerFullAccess",
+    };
+    act(() => current().composer.composerProps.onLaunchChange(launch));
+    act(() => current().composer.composerProps.onPromptChange("Draft"));
+    expect(current().composer.composerProps.launch).toEqual(launch);
+    expect(current().composer.composerProps.submitBlocked).toBe(true);
+  });
+
   it("keeps a provider selected from the new-thread model picker", () => {
     render(threadsSurfaceFixture(), undefined, { claudeCode: true, codex: true });
     expect(current().composer.composerProps.launchProvider).toBe("claudeCode");

@@ -235,10 +235,15 @@ export function useAgentComposerControllerState({
   const confirmationKey = preview?.confirmationKey ?? null;
   const unsafeInPlaceConfirmationKey =
     isolation === "in-place" && guard.kind === "unsafe" ? confirmationKey : null;
-  const targetRootKey = target?.projectRootKey ?? null;
+  const launchProjectRootKey =
+    target?.projectRootKey ??
+    selection?.projectRootKey ??
+    railScope?.projectRootKey ??
+    projects.find((project) => project.origin === "active-tab")?.rootKey ??
+    null;
   const launchScope = useMemo(
-    () => resolveLaunchScope(selectedThread, targetRootKey),
-    [selectedThread, targetRootKey],
+    () => resolveLaunchScope(selectedThread, launchProjectRootKey),
+    [selectedThread, launchProjectRootKey],
   );
   const selectedLaunchProvider =
     launchChoice !== null && launchChoice.key === launchScope?.key
@@ -384,7 +389,6 @@ export function useAgentComposerControllerState({
 
   const changeLaunch = useCallback(
     (next: AgentComposerSubmission["launch"]) => {
-      if (launchScope === null) return;
       setLaunchChoice({ key: launchScope.key, launch: next });
     },
     [launchScope],

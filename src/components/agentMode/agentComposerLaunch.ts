@@ -16,7 +16,7 @@ export interface LaunchChoice {
 
 export interface LaunchScope {
   readonly key: string;
-  readonly rootKey: string;
+  readonly rootKey: string | null;
   readonly seed: AgentLaunchOptions | null;
 }
 
@@ -59,7 +59,7 @@ export function normalizeAgentComposerLaunch(launch: AgentLaunchOptions): AgentL
 export function resolveLaunchScope(
   selectedThread: AgentThreadView | null,
   targetRootKey: string | null,
-): LaunchScope | null {
+): LaunchScope {
   if (selectedThread !== null) {
     const thread = selectedThread.thread;
     return {
@@ -68,7 +68,7 @@ export function resolveLaunchScope(
       seed: lastAgentTurn(thread)?.launch ?? null,
     };
   }
-  if (targetRootKey === null) return null;
+  if (targetRootKey === null) return { key: "draft", rootKey: null, seed: null };
   return { key: `root:${targetRootKey}`, rootKey: targetRootKey, seed: null };
 }
 
@@ -85,7 +85,7 @@ export function resolveComposerLaunch(
   if (scope.seed !== null && scope.seed.provider === provider) {
     return normalizeAgentComposerLaunch(scope.seed);
   }
-  const remembered = lastUsedLaunch(scope.rootKey);
+  const remembered = scope.rootKey === null ? null : lastUsedLaunch(scope.rootKey);
   if (remembered !== null && remembered.provider === provider) {
     return normalizeAgentComposerLaunch(remembered);
   }
