@@ -1,5 +1,6 @@
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { agentGitHistoryScope } from "./agentGitHistoryTarget";
+import { agentHistoryRepositories } from "./agentHistoryRepositories";
 import { memo, useMemo, type ReactNode } from "react";
 import type { AgentThreadView, AgentThreadsSurface } from "../../application/agentThreadPorts";
 import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
@@ -20,7 +21,6 @@ export type AgentSurfaceHostAgents = Pick<
 export interface AgentSurfaceHostProps {
   readonly chrome: AgentWorkbenchChrome;
   readonly projects?: ReadonlyArray<AgentProjectDescriptor>;
-  readonly selectedRepositoryRoot?: string | null;
   readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
   readonly thread: AgentThreadView | null;
   readonly threadRootPath: string | null;
@@ -50,7 +50,6 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   onSwitchScope,
   onTrustScope,
   projects = [],
-  selectedRepositoryRoot = null,
   scope,
   thread,
   threadRootPath,
@@ -109,6 +108,16 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     workspaceRoot,
   ]);
 
+  const historyScope = useMemo(
+    () =>
+      agentGitHistoryScope(projects, thread, scope, workspaceRoot, chrome.workspaceTrusted, null),
+    [projects, thread, scope, workspaceRoot, chrome.workspaceTrusted],
+  );
+  const historyRepositories = useMemo(
+    () => agentHistoryRepositories(projects, thread, scope, historyScope),
+    [projects, thread, scope, historyScope],
+  );
+
   return (
     <div
       aria-hidden={hidden || undefined}
@@ -118,14 +127,8 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     >
       <AgentSurfacePanel
         history={{
-          scope: agentGitHistoryScope(
-            projects,
-            thread,
-            scope,
-            workspaceRoot,
-            chrome.workspaceTrusted,
-            selectedRepositoryRoot,
-          ),
+          scope: historyScope,
+          repositories: historyRepositories,
           gateway: chrome.gitHistoryGateway ?? null,
           ...chrome.diff,
         }}

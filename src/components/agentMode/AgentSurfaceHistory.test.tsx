@@ -6,6 +6,7 @@ import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistor
 import type { Commit, DiffPayload, FileChange } from "../../domain/git";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { AgentSurfaceHistory } from "./AgentSurfaceHistory";
+import type { AgentHistoryRepositories } from "./agentHistoryRepositories";
 import type { AgentGitHistoryScope } from "./agentGitHistoryTarget";
 
 const preview = vi.hoisted(() => ({ props: [] as Array<Record<string, unknown>> }));
@@ -32,10 +33,18 @@ const scope: AgentGitHistoryScope = {
 let root: Root;
 let host: HTMLDivElement;
 let gateway: AgentGitHistoryGateway;
-async function render(currentScope: AgentGitHistoryScope = scope) {
+async function render(
+  currentScope: AgentGitHistoryScope = scope,
+  repositories?: AgentHistoryRepositories,
+) {
   await act(async () =>
     root.render(
-      <AgentSurfaceHistory scope={currentScope} gateway={gateway} monacoTheme="calm-dark" />,
+      <AgentSurfaceHistory
+        repositories={repositories}
+        scope={currentScope}
+        gateway={gateway}
+        monacoTheme="calm-dark"
+      />,
     ),
   );
 }
@@ -84,6 +93,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+  vi.useRealTimers();
 });
 
 it("opens commit details and renamed file history without mutation actions", async () => {
@@ -172,4 +182,142 @@ it("shows detail failures without displaying stale changed files", async () => {
   );
   expect(host.querySelector('[aria-label="Commit files"]')).toBeNull();
   expect(gateway.getCommitDiff).not.toHaveBeenCalled();
+});
+
+const repositoryChoices: AgentHistoryRepositories = {
+  identity: "project-generation-1",
+  projectLabel: "Projects",
+  defaultValue: "root:choose",
+  options: [
+    {
+      value: "root:choose",
+      label: "Choose a repository",
+      description: "Projects",
+      scope: {
+        kind: "unavailable",
+        reason: "Choose a repository to browse its commits and changed files.",
+      },
+    },
+    {
+      value: "root:/projects/api",
+      label: "api",
+      description: "packages/api",
+      scope: { kind: "available", target: { rootPath: "/projects/api", ownerKey: "owner-1" } },
+    },
+    {
+      value: "root:/projects/web",
+      label: "web",
+      description: "packages/web",
+      scope: { kind: "available", target: { rootPath: "/projects/web", ownerKey: "owner-1" } },
+    },
+  ],
+};
+
+it("lets a parent-folder user choose history without reading the parent as a repository", async () => {
+  await render(scope, repositoryChoices);
+  expect(gateway.getRepoStatus).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("Choose a repository");
+  await act(async () => button("History repository").click());
+  const api = Array.from(host.querySelectorAll<HTMLElement>('[role="option"]')).find((option) =>
+    option.textContent?.includes("packages/api"),
+  );
+  expect(api).toBeDefined();
+  await act(async () => api?.click());
+  expect(gateway.getRepoStatus).toHaveBeenLastCalledWith("/projects/api");
+  expect(host.textContent).toContain("Fix Linux startup");
+  await render(scope, { ...repositoryChoices, identity: "project-generation-2" });
+  expect(host.textContent).toContain("Choose a repository");
+  expect(host.textContent).not.toContain("Fix Linux startup");
+  await render(scope, repositoryChoices);
+  expect(host.textContent).not.toContain("Fix Linux startup");
+  expect(gateway.getRepoStatus).toHaveBeenCalledTimes(1);
+});
+
+it("switches history through keyboard choices without affecting a thread checkout", async () => {
+  const checkout = {
+    ...repositoryChoices,
+    defaultValue: "root:checkout",
+    options: [
+      { ...repositoryChoices.options[0]!, value: "root:checkout", label: "Thread checkout", scope },
+      ...repositoryChoices.options.slice(1),
+    ],
+  };
+  await render(scope, checkout);
+  expect(gateway.getRepoStatus).toHaveBeenLastCalledWith("/workspace/app/packages/api");
+  await act(async () =>
+    button("History repository").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+    ),
+  );
+  const options = host.querySelectorAll<HTMLElement>('[role="option"]');
+  await act(async () =>
+    options[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })),
+  );
+  await act(async () =>
+    options[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+  );
+  expect(gateway.getRepoStatus).toHaveBeenLastCalledWith("/projects/api");
+  expect(scope).toEqual({
+    kind: "available",
+    target: { rootPath: "/workspace/app/packages/api", ownerKey: "owner-1" },
+  });
+});
+
+it("preserves a repository search across equivalent project updates", async () => {
+  vi.useFakeTimers();
+  const repositories = {
+    ...repositoryChoices,
+    options: [
+      repositoryChoices.options[0]!,
+      ...Array.from({ length: 65 }, (_, index) => ({
+        ...repositoryChoices.options[1]!,
+        value: `root:/projects/repo-${index}`,
+        label: `repo-${index}`,
+      })),
+    ],
+  };
+  await render(scope, repositories);
+  await act(async () => button("History repository").click());
+  const input = host.querySelector<HTMLInputElement>('[aria-label="Search repositories"]');
+  expect(input).not.toBeNull();
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+      input,
+      "repo-64",
+    );
+    input?.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  for (let index = 0; index < 4; index += 1) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30);
+    });
+    await render(scope, { ...repositories, options: [...repositories.options] });
+  }
+  expect(host.querySelector<HTMLInputElement>('[aria-label="Search repositories"]')?.value).toBe(
+    "repo-64",
+  );
+  expect(host.querySelector('[role="listbox"]')?.textContent).toContain("repo-64");
+  expect(host.querySelectorAll('[role="option"]').length).toBeLessThanOrEqual(51);
+});
+
+it("ignores a pending sibling history after selecting a different repository", async () => {
+  let finish: ((commits: Commit[]) => void) | undefined;
+  vi.mocked(gateway.getCommitLog).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await render(scope, repositoryChoices);
+  await act(async () => button("History repository").click());
+  await act(async () => host.querySelectorAll<HTMLElement>('[role="option"]')[1]?.click());
+  expect(gateway.getRepoStatus).toHaveBeenLastCalledWith("/projects/api");
+  await act(async () => button("History repository").click());
+  await act(async () => host.querySelectorAll<HTMLElement>('[role="option"]')[2]?.click());
+  expect(gateway.getRepoStatus).toHaveBeenLastCalledWith("/projects/web");
+  await act(async () => finish?.([{ ...commit, subject: "Stale API commit" }]));
+  expect(host.textContent).not.toContain("Stale API commit");
+  expect(host.textContent).toContain("Fix Linux startup");
+  await render({ kind: "unavailable", reason: "Project unavailable." });
+  expect(host.textContent).not.toContain("Fix Linux startup");
 });

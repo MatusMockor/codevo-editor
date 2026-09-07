@@ -31,7 +31,7 @@ const CARDS: ReadonlyArray<SurfaceCard> = [
   {
     kind: "history",
     label: "History",
-    description: "Browse commits and file changes in this checkout.",
+    description: "Browse commits and file changes across your repositories.",
     icon: History,
   },
   {
