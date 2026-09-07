@@ -7,6 +7,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.20] - 2026-09-07
+
 ### Added
 
 - Browse a visual commit graph with branch and tag labels, local and remote branch
