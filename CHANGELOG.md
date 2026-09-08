@@ -7,6 +7,19 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.23] - 2026-09-09
+
+### Fixed
+
+- Keep the model picker visible in narrow composers, with secondary settings under
+  a separate more-controls menu.
+- Overlay the right panel over part of the chat in narrow windows instead of
+  automatically maximizing it, preserving drafts and panel resize behavior.
+- Allow dragging the window from the right-panel header while keeping controls,
+  editor tabs, and menus interactive.
+- Allow maximizing and restoring the surface chooser before selecting a surface.
+- Keep the open-editors switcher above the editor when the right panel overlays chat.
+
 ## [0.2.0-beta.22] - 2026-09-08
 
 ### Added
