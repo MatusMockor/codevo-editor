@@ -14,10 +14,9 @@ import {
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
 import { agentComposerNestedTargetLabel, type AgentComposerTarget } from "./agentComposerCheckout";
-import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentLaunchControls } from "./AgentLaunchControls";
-import { agentLaunchForDispatch, agentLaunchSummaryLabel } from "./agentLaunchPresentation";
+import { agentLaunchForDispatch } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 import { AgentComposerCheckout, AgentComposerLockedCheckout } from "./AgentComposerControls";
 import { agentSubmitShortcut } from "./agentSubmitShortcut";
@@ -139,6 +138,44 @@ export function AgentComposer({
     worktreeOnlyReason,
   });
 
+  const nestedTargetLabel = agentComposerNestedTargetLabel(target);
+  const targetControls = useMemo(
+    () =>
+      followUp ? null : (
+        <>
+          <AgentComposerCheckout
+            disabled={dispatching || allProvidersDisabled}
+            isolation={isolation}
+            onIsolationChange={onIsolationChange}
+            onRefreshIsolation={onRefreshIsolation}
+            onSelectRepository={onSelectRepository}
+            target={target}
+            worktreeAvailable={worktreeAvailable && !worktreeOnly}
+            worktreeOnly={worktreeOnly}
+          />
+          {nestedTargetLabel !== null && (
+            <span className="agent-composer__target" data-agent-composer-target>
+              <span className="agent-visually-hidden">Repository:</span>
+              in {nestedTargetLabel}
+            </span>
+          )}
+        </>
+      ),
+    [
+      followUp,
+      dispatching,
+      allProvidersDisabled,
+      isolation,
+      onIsolationChange,
+      onRefreshIsolation,
+      onSelectRepository,
+      target,
+      worktreeAvailable,
+      worktreeOnly,
+      nestedTargetLabel,
+    ],
+  );
+
   const launchControls = useMemo(
     () => (
       <AgentLaunchControls
@@ -146,6 +183,7 @@ export function AgentComposer({
         favorites={favorites}
         launch={effectiveLaunch}
         onLaunchChange={onLaunchChange}
+        presentation={compact ? { kind: "compact", checkout: targetControls } : { kind: "inline" }}
         providerEnabled={providerEnabled}
         providerManagement={providerManagement}
         providerSwitchable={!followUp}
@@ -157,32 +195,12 @@ export function AgentComposer({
       favorites,
       effectiveLaunch,
       onLaunchChange,
+      compact,
+      targetControls,
       providerEnabled,
       providerManagement,
       followUp,
     ],
-  );
-
-  const nestedTargetLabel = agentComposerNestedTargetLabel(target);
-  const targetControls = followUp ? null : (
-    <>
-      <AgentComposerCheckout
-        disabled={dispatching || allProvidersDisabled}
-        isolation={isolation}
-        onIsolationChange={onIsolationChange}
-        onRefreshIsolation={onRefreshIsolation}
-        onSelectRepository={onSelectRepository}
-        target={target}
-        worktreeAvailable={worktreeAvailable && !worktreeOnly}
-        worktreeOnly={worktreeOnly}
-      />
-      {nestedTargetLabel !== null && (
-        <span className="agent-composer__target" data-agent-composer-target>
-          <span className="agent-visually-hidden">Repository:</span>
-          in {nestedTargetLabel}
-        </span>
-      )}
-    </>
   );
 
   const footer = followUp ? <AgentComposerLockedCheckout isolation={isolation} /> : targetControls;
@@ -276,18 +294,8 @@ export function AgentComposer({
           value={prompt}
         />
 
-        <div className="agent-composer__row">
-          {compact ? (
-            <AgentComposerCompactMenu
-              disabled={dispatching || allProvidersDisabled}
-              summary={agentLaunchSummaryLabel(effectiveLaunch, configuredModel)}
-            >
-              {launchControls}
-              {targetControls}
-            </AgentComposerCompactMenu>
-          ) : (
-            launchControls
-          )}
+        <div className="agent-composer__row" data-presentation={compact ? "compact" : "inline"}>
+          {launchControls}
 
           <span className="agent-composer__spacer" />
 

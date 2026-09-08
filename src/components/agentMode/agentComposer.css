@@ -343,30 +343,27 @@
   min-width: 0;
 }
 
-/* Narrow windows keep one control: every picker moves into this menu. */
 .agent-composer__compact {
   position: relative;
   display: inline-flex;
-  flex: 0 1 auto;
+  flex: none;
   min-width: 0;
 }
 
 .agent-composer__compact-trigger {
   display: inline-flex;
-  flex: 0 1 auto;
+  flex: none;
   align-items: center;
-  gap: 6px;
-  overflow: hidden;
+  justify-content: center;
+  width: 28px;
   height: 28px;
-  min-width: 0;
+  border: none;
   border-radius: var(--agent-radius-sm);
-  background: var(--agent-well);
-  color: var(--agent-text);
+  background: transparent;
+  color: var(--agent-text-muted);
   cursor: pointer;
   font: inherit;
-  font-family: var(--agent-mono);
-  font-size: var(--agent-fs-xs);
-  padding: 0 8px;
+  padding: 0;
   transition:
     background-color var(--agent-motion-hover) var(--ease-standard),
     color var(--agent-motion-hover) var(--ease-standard);
@@ -386,14 +383,6 @@
 .agent-composer__compact-trigger:disabled {
   color: var(--agent-text-disabled);
   cursor: not-allowed;
-}
-
-.agent-composer__compact-summary {
-  overflow: hidden;
-  min-width: 0;
-  color: var(--agent-text-subtle);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .agent-composer__compact-panel {
@@ -433,24 +422,26 @@
   text-align: left;
 }
 
-/*
-  Below 560px of centre column the launch and checkout pickers no longer fit beside the send
-  button, so the row keeps the compact menu and the send button only. The centre column keeps
-  the authority (useCompactComposerControls); this viewport query is the fallback for a
-  composer rendered outside the agent centre.
-*/
-@media (max-width: 560px) {
-  .agent-composer__row {
-    flex-wrap: nowrap;
-  }
+.agent-composer__row[data-presentation="compact"] {
+  flex-wrap: nowrap;
+}
 
-  .agent-composer__compact {
-    flex: 1 1 auto;
-  }
+.agent-composer__row[data-presentation="compact"] > .agent-composer__spacer {
+  display: block;
+}
 
-  .agent-composer__compact-trigger {
-    flex: 1 1 auto;
-  }
+.agent-composer__launch[data-presentation="compact"] {
+  flex: 0 1 auto;
+  gap: 4px;
+}
+
+.agent-composer__launch[data-presentation="compact"] > .agent-picker {
+  flex: 0 1 auto;
+}
+
+.agent-composer__launch[data-presentation="compact"] > .agent-picker > .agent-picker__trigger {
+  width: auto;
+  max-width: 100%;
 }
 
 /* Picker: a compact trigger that opens an anchored listbox with descriptions. */

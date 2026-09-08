@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
 import { Lock, LockOpen, PenLine, Sparkles } from "lucide-react";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
@@ -24,6 +26,8 @@ const MODEL_ID = "agent-launch-model";
 const MODE_ID = "agent-launch-mode";
 
 export interface AgentLaunchControlsProps {
+  readonly presentation?:
+    { readonly kind: "inline" } | { readonly kind: "compact"; readonly checkout: ReactNode };
   readonly launch: AgentLaunchOptions;
   readonly disabled: boolean;
   readonly favorites: AgentModelFavorites;
@@ -35,6 +39,7 @@ export interface AgentLaunchControlsProps {
 
 export function AgentLaunchControls({
   disabled,
+  presentation = { kind: "inline" },
   favorites,
   launch,
   onLaunchChange,
@@ -49,34 +54,8 @@ export function AgentLaunchControls({
     return discovered?.kind === "detected" ? (discovered.configuredModel ?? null) : null;
   };
   const configuredModel = configuredModelFor(effectiveLaunch.provider);
-  return (
-    <div className="agent-composer__launch">
-      <AgentModelPicker
-        describedBy={`${MODEL_ID}-hint`}
-        disabled={disabled}
-        favorites={favorites}
-        id={MODEL_ID}
-        label="Agent model"
-        launch={effectiveLaunch}
-        onSelect={(model, provider = effectiveLaunch.provider) =>
-          onLaunchChange(
-            agentLaunchWithModel(
-              provider === effectiveLaunch.provider
-                ? effectiveLaunch
-                : defaultAgentComposerLaunch(provider),
-              model,
-              configuredModelFor(provider),
-            ),
-          )
-        }
-        providerEnabled={providerEnabled}
-        providerManagement={providerManagement}
-        providerSwitchable={providerSwitchable}
-      />
-      <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
-        {agentLaunchModelHint(launch, configuredModel)}
-      </span>
-
+  const secondaryControls = (
+    <>
       {effectiveLaunch.provider === "claudeCode" && (
         <>
           <AgentLaunchDivider />
@@ -108,6 +87,44 @@ export function AgentLaunchControls({
       <span className="agent-visually-hidden" id={`${MODE_ID}-hint`}>
         {agentLaunchModeHint(effectiveLaunch)}
       </span>
+    </>
+  );
+  return (
+    <div className="agent-composer__launch" data-presentation={presentation.kind}>
+      <AgentModelPicker
+        describedBy={`${MODEL_ID}-hint`}
+        disabled={disabled}
+        favorites={favorites}
+        id={MODEL_ID}
+        label="Agent model"
+        launch={effectiveLaunch}
+        onSelect={(model, provider = effectiveLaunch.provider) =>
+          onLaunchChange(
+            agentLaunchWithModel(
+              provider === effectiveLaunch.provider
+                ? effectiveLaunch
+                : defaultAgentComposerLaunch(provider),
+              model,
+              configuredModelFor(provider),
+            ),
+          )
+        }
+        providerEnabled={providerEnabled}
+        providerManagement={providerManagement}
+        providerSwitchable={providerSwitchable}
+      />
+      <span className="agent-visually-hidden" id={`${MODEL_ID}-hint`}>
+        {agentLaunchModelHint(launch, configuredModel)}
+      </span>
+
+      {presentation.kind === "compact" ? (
+        <AgentComposerCompactMenu disabled={disabled}>
+          {secondaryControls}
+          {presentation.checkout}
+        </AgentComposerCompactMenu>
+      ) : (
+        secondaryControls
+      )}
     </div>
   );
 }

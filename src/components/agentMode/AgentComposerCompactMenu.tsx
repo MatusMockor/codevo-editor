@@ -4,16 +4,11 @@ import { useAgentPopover } from "./agentPopover";
 import { focusFirstInPopover, trapPopoverTab } from "./agentPopoverFocus";
 
 export interface AgentComposerCompactMenuProps {
-  readonly summary: string;
   readonly disabled: boolean;
   readonly children: ReactNode;
 }
 
-export function AgentComposerCompactMenu({
-  children,
-  disabled,
-  summary,
-}: AgentComposerCompactMenuProps) {
+export function AgentComposerCompactMenu({ children, disabled }: AgentComposerCompactMenuProps) {
   const popover = useAgentPopover("start", disabled);
   const { open, popoverRef } = popover;
 
@@ -32,11 +27,10 @@ export function AgentComposerCompactMenu({
         disabled={disabled}
         onClick={popover.toggle}
         ref={popover.triggerRef}
-        title={summary}
+        title="More composer controls"
         type="button"
       >
         <Ellipsis aria-hidden="true" size={14} />
-        <span className="agent-composer__compact-summary agent-num">{summary}</span>
       </button>
 
       {open && (

@@ -341,28 +341,83 @@ describe("AgentComposer", () => {
     expect(onNewThread).toHaveBeenCalledTimes(1);
   });
 
-  it("collapses every picker into one menu below 560px", () => {
+  it("keeps the model picker inline and moves secondary controls into overflow below 560px", () => {
     stubMatchMedia(true);
     render();
 
     expect(host.querySelector(".agent-composer__footer")).toBeNull();
     expect(host.querySelector(`#${CHECKOUT_ID}`)).toBeNull();
-    expect(host.querySelector("#agent-launch-model")).toBeNull();
+    expect(host.querySelector("#agent-launch-model")).not.toBeNull();
 
     const menu = host.querySelector<HTMLButtonElement>(
       'button[aria-label="More composer controls"]',
     );
     expect(menu).not.toBeNull();
-    expect(menu?.textContent).toBe("Claude Sonnet 5 · Full access · High");
-    expect(menu?.getAttribute("title")).toBe("Claude Sonnet 5 · Full access · High");
+    expect(menu?.textContent).toBe("");
+    expect(menu?.getAttribute("title")).toBe("More composer controls");
     act(() => menu?.click());
 
     const panel = host.querySelector(".agent-composer__compact-panel");
-    expect(panel?.querySelector("#agent-launch-model")).not.toBeNull();
+    expect(panel?.querySelector("#agent-launch-model")).toBeNull();
     expect(panel?.querySelector("#agent-launch-effort")).not.toBeNull();
     expect(panel?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
     expect(panel?.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
     expect(submitButton()).not.toBeNull();
+  });
+
+  it("changes models directly and permission and repository through narrow overflow", () => {
+    stubMatchMedia(true);
+    const onLaunchChange = vi.fn();
+    const onSelectRepository = vi.fn();
+    render({ onLaunchChange, onSelectRepository });
+
+    pickOption("agent-launch-model", "claude-opus-5");
+    expect(onLaunchChange).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "claude-opus-5" }),
+    );
+    act(() =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="More composer controls"]')?.click(),
+    );
+    pickOption("agent-launch-mode", "supervised");
+    expect(onLaunchChange).toHaveBeenCalledWith(expect.objectContaining({ mode: "supervised" }));
+    expect(host.querySelector('[aria-label="Composer controls"]')).not.toBeNull();
+    pickOption(CHECKOUT_ID, "root:/workspace/app/packages/api");
+    expect(onSelectRepository).toHaveBeenCalledWith("/workspace/app/packages/api");
+  });
+
+  it("keeps the model picker mounted while resizing and removes open overflow when widening", () => {
+    let matches = false;
+    const listeners: Array<() => void> = [];
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        get matches() {
+          return matches;
+        },
+        addEventListener: (_type: string, listener: () => void) => listeners.push(listener),
+        removeEventListener: () => undefined,
+      }),
+    });
+    render();
+    const model = trigger("agent-launch-model");
+    openPicker("agent-launch-model");
+    const search = host.querySelector('[aria-label="Search models"]');
+    matches = true;
+    act(() => listeners.forEach((listener) => listener()));
+    expect(trigger("agent-launch-model")).toBe(model);
+    expect(host.querySelector('[aria-label="Search models"]')).toBe(search);
+    act(() => model.click());
+    act(() =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="More composer controls"]')?.click(),
+    );
+    expect(host.querySelector('[aria-label="Composer controls"]')).not.toBeNull();
+    matches = false;
+    act(() => listeners.forEach((listener) => listener()));
+    expect(host.querySelector('[aria-label="Composer controls"]')).toBeNull();
+    expect(host.querySelector('button[aria-label="More composer controls"]')).toBeNull();
+    expect(trigger("agent-launch-model")).toBe(model);
+    expect(host.querySelector("#agent-launch-mode")).not.toBeNull();
+    expect(host.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
   });
 
   it("keeps the locked checkout visible while the compact menu holds the pickers", () => {
@@ -373,7 +428,7 @@ describe("AgentComposer", () => {
     });
 
     expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Isolated worktree");
-    expect(host.querySelector("#agent-launch-model")).toBeNull();
+    expect(host.querySelector("#agent-launch-model")).not.toBeNull();
   });
 
   it("keeps the byte counter quiet until the prompt nears the cap", () => {

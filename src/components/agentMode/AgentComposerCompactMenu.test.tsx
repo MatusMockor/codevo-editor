@@ -51,13 +51,14 @@ describe("AgentComposerCompactMenu", () => {
 
   it("opens the hosted controls from one labelled trigger", () => {
     render(
-      <AgentComposerCompactMenu disabled={false} summary="opus · plan only">
+      <AgentComposerCompactMenu disabled={false}>
         <button type="button">Model</button>
       </AgentComposerCompactMenu>,
     );
 
     expect(trigger().getAttribute("aria-expanded")).toBe("false");
-    expect(trigger().title).toBe("opus · plan only");
+    expect(trigger().title).toBe("More composer controls");
+    expect(trigger().textContent).toBe("");
     expect(host.querySelector(".agent-composer__compact-panel")).toBeNull();
 
     act(() => trigger().click());
@@ -70,7 +71,7 @@ describe("AgentComposerCompactMenu", () => {
 
   it("moves focus into the panel, traps Tab and clamps the panel horizontally", () => {
     render(
-      <AgentComposerCompactMenu disabled={false} summary="opus">
+      <AgentComposerCompactMenu disabled={false}>
         <button type="button">Model</button>
         <button type="button">Effort</button>
       </AgentComposerCompactMenu>,
@@ -97,7 +98,7 @@ describe("AgentComposerCompactMenu", () => {
 
   it("closes on Escape, on an outside pointer press and while dispatching", () => {
     render(
-      <AgentComposerCompactMenu disabled={false} summary="opus">
+      <AgentComposerCompactMenu disabled={false}>
         <button type="button">Model</button>
       </AgentComposerCompactMenu>,
     );
@@ -120,7 +121,7 @@ describe("AgentComposerCompactMenu", () => {
 
     act(() => trigger().click());
     render(
-      <AgentComposerCompactMenu disabled={true} summary="opus">
+      <AgentComposerCompactMenu disabled={true}>
         <button type="button">Model</button>
       </AgentComposerCompactMenu>,
     );

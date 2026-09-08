@@ -98,8 +98,12 @@ describe("agent mode responsive layout contract", () => {
     expect(center).toContain("container-name: agent-center");
     expect(center).toContain("container-type: inline-size");
 
-    const compact = block(appCss, `@media (max-width: ${COMPACT_COMPOSER_MAX_INLINE_SIZE}px)`);
-    expect(rule(".agent-composer__row", compact)).toContain("flex-wrap: nowrap");
+    expect(rule('.agent-composer__row[data-presentation="compact"]')).toContain(
+      "flex-wrap: nowrap",
+    );
+    expect(rule('.agent-composer__launch[data-presentation="compact"]')).toContain(
+      "flex: 0 1 auto",
+    );
     expect(COMPACT_COMPOSER_QUERY).toBe(`(max-width: ${COMPACT_COMPOSER_MAX_INLINE_SIZE}px)`);
     expect(COMPACT_COMPOSER_MAX_INLINE_SIZE).toBeLessThan(620);
 
