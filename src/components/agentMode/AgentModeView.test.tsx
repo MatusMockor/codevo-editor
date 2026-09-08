@@ -824,6 +824,27 @@ describe("AgentModeView", () => {
     expect(host.querySelector('.agent-surface [aria-label="Close panel"]')).toBeNull();
   });
 
+  it("maximizes and restores the surface chooser before any surface is selected", () => {
+    let layout = recordedLayoutState({ rightPanel: "open" });
+    const rerender = (): void => {
+      layout = recordedLayoutState(reduceRecordedLayout(layout));
+      render({ chrome: chromeFixture({ layout }) });
+    };
+    rerender();
+    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
+    click('.agent-surface [aria-label="Maximize panel"]');
+    rerender();
+    expect(reduceRecordedLayout(layout)).toMatchObject({
+      rightPanelMaximized: true,
+      activeSurface: null,
+      openSurfaces: [],
+    });
+    expect(host.querySelectorAll(".agent-surface-card")).toHaveLength(4);
+    click('.agent-surface [aria-label="Restore panel"]');
+    rerender();
+    expect(reduceRecordedLayout(layout).rightPanelMaximized).toBe(false);
+  });
+
   it.each([
     { responsivePanelRestore: "collapseRail", expectedKind: "toggleRail" },
     { responsivePanelRestore: "closePanel", expectedKind: "toggleRightPanel" },

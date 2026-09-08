@@ -71,7 +71,7 @@ function everyReachableState(): ReadonlyArray<AgentWorkbenchLayout> {
     for (const activeSurface of [null, ...openSurfaces]) {
       states.push(layoutOf({ layout: "editor-expanded", openSurfaces, activeSurface }));
       states.push(layoutOf({ rightPanel: "closed", openSurfaces, activeSurface }));
-      for (const rightPanelMaximized of activeSurface === null ? [false] : [false, true]) {
+      for (const rightPanelMaximized of [false, true]) {
         states.push(open(openSurfaces, activeSurface, { rightPanelMaximized }));
       }
     }
@@ -87,7 +87,6 @@ function expectConsistent(state: AgentWorkbenchLayout): void {
   }
   if (state.rightPanelMaximized) {
     expect(state.rightPanel).toBe("open");
-    expect(state.activeSurface).not.toBeNull();
   }
   if (state.layout === "editor-expanded") {
     expect(state.rightPanel).toBe("closed");
@@ -278,7 +277,7 @@ describe("agentWorkbenchLayoutReducer", () => {
       ).toEqual(open(["files", "diff"], null));
     });
 
-    it("leaves the maximized panel because the chooser has no active surface", () => {
+    it("restores the panel width when explicitly showing the chooser", () => {
       expect(
         agentWorkbenchLayoutReducer(open(["files"], "files", { rightPanelMaximized: true }), {
           kind: "showSurfaceChooser",
@@ -349,14 +348,23 @@ describe("agentWorkbenchLayoutReducer", () => {
       expect(agentWorkbenchLayoutReducer(maximized, { kind: "toggleMaximized" })).toEqual(state);
     });
 
-    it("refuses to maximize the chooser because it has no active surface", () => {
-      expect(
-        agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, { kind: "toggleMaximized" }),
-      ).toBe(initialAgentWorkbenchLayout);
-      expect(agentWorkbenchLayoutReducer(EXPANDED, { kind: "toggleMaximized" })).toBe(EXPANDED);
-      expect(agentWorkbenchLayoutReducer(open([], null), { kind: "toggleMaximized" })).toEqual(
-        open([], null),
-      );
+    it("maximizes and restores the chooser without activating retained tabs", () => {
+      for (const surfaces of [[], ["files", "diff"]] as const) {
+        const chooser = open(surfaces, null, { rightPanelWidth: 640 });
+        const maximized = agentWorkbenchLayoutReducer(chooser, { kind: "toggleMaximized" });
+        expect(maximized).toEqual({ ...chooser, rightPanelMaximized: true });
+        expect(agentWorkbenchLayoutReducer(maximized, { kind: "toggleMaximized" })).toEqual(
+          chooser,
+        );
+      }
+    });
+
+    it("opens and maximizes an empty panel from closed and expanded layouts", () => {
+      for (const state of [initialAgentWorkbenchLayout, EXPANDED]) {
+        expect(agentWorkbenchLayoutReducer(state, { kind: "toggleMaximized" })).toEqual(
+          open([], null, { rightPanelMaximized: true }),
+        );
+      }
     });
 
     it("reopens a closed panel maximized on its active tab", () => {
@@ -391,13 +399,20 @@ describe("agentWorkbenchLayoutReducer", () => {
       );
     });
 
-    it("refuses to maximize without an active surface", () => {
-      expect(agentWorkbenchLayoutReducer(initialAgentWorkbenchLayout, maximize)).toBe(
-        initialAgentWorkbenchLayout,
-      );
-      expect(agentWorkbenchLayoutReducer(EXPANDED, maximize)).toBe(EXPANDED);
-      const chooser = open([], null);
-      expect(agentWorkbenchLayoutReducer(chooser, maximize)).toBe(chooser);
+    it("maximizes the chooser once without activating retained tabs", () => {
+      for (const chooser of [open([], null), open(["files", "diff"], null)]) {
+        const maximized = agentWorkbenchLayoutReducer(chooser, maximize);
+        expect(maximized).toEqual({ ...chooser, rightPanelMaximized: true });
+        expect(agentWorkbenchLayoutReducer(maximized, maximize)).toBe(maximized);
+      }
+    });
+
+    it("opens and maximizes an empty panel from closed and expanded layouts", () => {
+      for (const state of [initialAgentWorkbenchLayout, EXPANDED]) {
+        expect(agentWorkbenchLayoutReducer(state, maximize)).toEqual(
+          open([], null, { rightPanelMaximized: true }),
+        );
+      }
     });
 
     it("reopens a closed panel maximized on its active tab", () => {
@@ -586,6 +601,15 @@ describe("parseAgentWorkbenchLayout", () => {
     expect(
       parseAgentWorkbenchLayout({ layout: "agent", rightPanel: "open", rightPanelMaximized: 1 }),
     ).toEqual(open([], null));
+  });
+
+  it("round-trips an explicitly maximized chooser with or without retained tabs", () => {
+    for (const chooser of [open([], null), open(["files", "diff"], null)]) {
+      const maximized = { ...chooser, rightPanelMaximized: true, rightPanelWidth: 640 };
+      expect(parseAgentWorkbenchLayout(serializeAgentWorkbenchLayout(maximized, false))).toEqual(
+        maximized,
+      );
+    }
   });
 
   it("closes the panel persisted alongside the expanded layout but keeps its tabs", () => {

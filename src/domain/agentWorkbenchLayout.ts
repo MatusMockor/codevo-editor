@@ -162,8 +162,7 @@ export function parseAgentWorkbenchLayout(value: unknown): AgentWorkbenchLayout 
   const activeSurface = parseActiveSurface(value, openSurfaces);
   const rightPanel =
     layout === "editor-expanded" ? "closed" : parseRightPanel(value.rightPanel, openSurfaces);
-  const rightPanelMaximized =
-    value.rightPanelMaximized === true && rightPanel === "open" && activeSurface !== null;
+  const rightPanelMaximized = value.rightPanelMaximized === true && rightPanel === "open";
 
   return {
     layout,
@@ -275,12 +274,8 @@ function showSurfaceChooser(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
 }
 
 function openRightPanel(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
+  if (state.layout === "agent" && state.rightPanel === "open") return state;
   const activeSurface = state.activeSurface ?? state.openSurfaces[0] ?? null;
-  const unchanged =
-    state.layout === "agent" &&
-    state.rightPanel === "open" &&
-    state.activeSurface === activeSurface;
-  if (unchanged) return state;
   return { ...state, layout: "agent", rightPanel: "open", activeSurface };
 }
 
@@ -292,7 +287,6 @@ function toggleRightPanel(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
 
 function toggleMaximized(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
   const opened = openRightPanel(state);
-  if (opened.activeSurface === null) return state;
   if (state.layout === "agent" && state.rightPanel === "open") {
     return { ...opened, rightPanelMaximized: !state.rightPanelMaximized };
   }
@@ -302,7 +296,6 @@ function toggleMaximized(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
 
 function maximizeRightPanel(state: AgentWorkbenchLayout): AgentWorkbenchLayout {
   const opened = openRightPanel(state);
-  if (opened.activeSurface === null) return state;
   if (opened === state && state.rightPanelMaximized) return state;
   return { ...opened, rightPanelMaximized: true };
 }
