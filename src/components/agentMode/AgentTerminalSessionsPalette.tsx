@@ -1,10 +1,10 @@
 import { CornerDownLeft, Folder, Search } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ExternalSessionsSurface } from "../../application/agentThreadPorts";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { ExternalAgentSessionView } from "../../domain/externalAgentSession";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
-import { AgentCompactRelativeTime, AgentRelativeTime } from "./agentClock";
+import { AgentCompactRelativeTime } from "./agentClock";
 import {
   AGENT_IMPORTED_BADGE_LABEL,
   agentExternalSessionRowTitle,
@@ -17,12 +17,19 @@ import {
   terminalSessionActionLabel,
   terminalSessionMetaSegments,
   terminalSessionRepositoryLabel,
-  terminalSessionRoleChip,
-  terminalSessionsEmptyNote,
-  type AgentTerminalSessionMetaSegment,
-  type AgentTerminalSessionPreviewView,
-  type AgentTerminalSessionsStateKey,
 } from "./agentTerminalSessionsPresentation";
+
+import {
+  MetaSegments,
+  PreviewDrawer,
+  SessionListState,
+  StateBlock,
+} from "./AgentTerminalSessionsContent";
+import {
+  useTerminalSessionSelection,
+  terminalSessionSelectionKey,
+  MAX_SESSION_SELECTION,
+} from "./useTerminalSessionSelection";
 
 const LISTBOX_ID = "agent-terminal-sessions-listbox";
 const OPTION_PREFIX = "agent-terminal-sessions-option-";
@@ -33,6 +40,11 @@ export interface AgentTerminalSessionsPaletteProps {
   readonly isOpen: boolean;
   readonly surface: ExternalSessionsSurface;
   readonly projectLabel?: string | null;
+  onImportMany?(
+    sessions: ReadonlyArray<{ readonly sessionId: string; readonly provider: AgentCliKind }>,
+  ): void;
+  readonly importProgress?: { readonly completed: number; readonly total: number } | null;
+  readonly importNotice?: string | null;
   onClose(): void;
   onImport(sessionId: string, provider: AgentCliKind): void;
   onSelectImported(threadId: string): void;
@@ -43,6 +55,9 @@ export function AgentTerminalSessionsPalette({
   onClose,
   onImport,
   onSelectImported,
+  onImportMany,
+  importProgress = null,
+  importNotice = null,
   projectLabel = null,
   surface,
 }: AgentTerminalSessionsPaletteProps) {
@@ -52,6 +67,9 @@ export function AgentTerminalSessionsPalette({
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const sessions = surface.sessions;
+  const selection = useTerminalSessionSelection(isOpen, surface.target, sessions);
+  const batchEnabled = onImportMany !== undefined;
+  const importRunning = surface.importPending || importProgress !== null;
   const filtered = useMemo(() => filterTerminalSessions(sessions, query), [query, sessions]);
 
   useEffect(() => {
@@ -89,7 +107,7 @@ export function AgentTerminalSessionsPalette({
   const repositoryRoot = surface.target?.repositoryRoot ?? null;
   const listboxRendered = filtered.length > 0;
   const refreshing = surface.state === "loading" && sessions.length > 0;
-  const canActivate = surface.state === "ready" && !surface.importPending;
+  const canActivate = surface.state === "ready" && !importRunning;
   const previewView = resolveTerminalSessionPreview(surface, active ?? null, requestedSessionId);
   const statusNote = agentExternalSessionsStatusNote(
     surface.skipped,
@@ -112,6 +130,15 @@ export function AgentTerminalSessionsPalette({
     onImport(session.sessionId, session.provider);
   };
 
+  const activateSelection = (): void => {
+    if (!canActivate) return;
+    if (selection.selected.length > 0 && onImportMany !== undefined) {
+      onImportMany(selection.selected.map(({ sessionId, provider }) => ({ sessionId, provider })));
+      return;
+    }
+    activate(active);
+  };
+
   const handleKeyDown = (key: string, origin: KeyOrigin): boolean => {
     if (key === "Escape") {
       if (origin === "input" && query !== "") {
@@ -123,7 +150,7 @@ export function AgentTerminalSessionsPalette({
     }
     if (origin === "other") return false;
     if (key === "Enter") {
-      activate(active);
+      activateSelection();
       return true;
     }
     if (!listboxRendered) return false;
@@ -147,8 +174,16 @@ export function AgentTerminalSessionsPalette({
   };
 
   const label = projectLabel ?? terminalSessionRepositoryLabel(repositoryRoot);
-  const continueLabel = terminalSessionActionLabel(active, surface.importPending);
-  const continueDisabled = active === undefined || !canActivate;
+  const continueLabel =
+    importProgress !== null
+      ? `Importing ${importProgress.completed} of ${importProgress.total}…`
+      : importRunning
+        ? "Importing…"
+        : selection.selected.length > 0
+          ? `Import ${selection.selected.length} ${selection.selected.length === 1 ? "session" : "sessions"}`
+          : terminalSessionActionLabel(active, importRunning);
+  const continueDisabled =
+    (active === undefined && selection.selected.length === 0) || !canActivate;
 
   return (
     <div className="palette-backdrop" onMouseDown={onClose} role="presentation">
@@ -165,17 +200,19 @@ export function AgentTerminalSessionsPalette({
         <div className="agent-tsp__search">
           <Search aria-hidden="true" size={15} />
           <input
-            aria-activedescendant={listboxRendered ? `${OPTION_PREFIX}${boundedIndex}` : undefined}
-            aria-autocomplete="list"
+            aria-activedescendant={
+              !batchEnabled && listboxRendered ? `${OPTION_PREFIX}${boundedIndex}` : undefined
+            }
+            aria-autocomplete={batchEnabled ? undefined : "list"}
             aria-controls={listboxRendered ? LISTBOX_ID : undefined}
-            aria-expanded={listboxRendered}
+            aria-expanded={batchEnabled ? undefined : listboxRendered}
             aria-label="Filter terminal sessions"
             className="agent-tsp__input"
             maxLength={MAX_TERMINAL_SESSION_FILTER_CHARS}
             onChange={(event) => setQuery(event.currentTarget.value)}
             placeholder="Search sessions"
             ref={inputRef}
-            role="combobox"
+            role={batchEnabled ? "searchbox" : "combobox"}
             value={query}
           />
           {label !== null && (
@@ -202,11 +239,49 @@ export function AgentTerminalSessionsPalette({
                 )}
               </div>
             )}
+            {batchEnabled && sessions.length > 0 && (
+              <div className="agent-tsp__selection">
+                <span>{selection.selected.length} selected</span>
+                <button
+                  className="agent-linkbutton"
+                  disabled={
+                    !canActivate ||
+                    selection.selected.length >= MAX_SESSION_SELECTION ||
+                    !filtered.some(
+                      (session) =>
+                        session.alreadyImportedThreadId === null &&
+                        !selection.keys.has(terminalSessionSelectionKey(session)),
+                    )
+                  }
+                  onClick={() => selection.select(filtered)}
+                  type="button"
+                >
+                  Select filtered
+                </button>
+                <button
+                  className="agent-linkbutton"
+                  disabled={!canActivate || selection.selected.length === 0}
+                  onClick={selection.clear}
+                  type="button"
+                >
+                  Clear
+                </button>
+                <span className="agent-tsp__selection-limit">
+                  Up to {MAX_SESSION_SELECTION} at a time
+                </span>
+              </div>
+            )}
             <SessionListBody
               activeIndex={boundedIndex}
               filtered={filtered}
               onHighlight={setActiveIndex}
-              onOpen={activate}
+              onOpen={(session) => {
+                if (selection.selected.length > 0) return;
+                activate(session);
+              }}
+              selection={batchEnabled ? selection.keys : null}
+              selectionDisabled={!canActivate}
+              onToggle={selection.toggle}
               projectLabel={label}
               query={query}
               repositoryRoot={repositoryRoot}
@@ -223,6 +298,16 @@ export function AgentTerminalSessionsPalette({
           </aside>
         </div>
 
+        {importNotice !== null && (
+          <p className="agent-tsp__import-notice" role="status">
+            {importNotice}
+          </p>
+        )}
+        {importProgress !== null && (
+          <p className="agent-tsp__import-notice" role="status">
+            Importing {importProgress.completed} of {importProgress.total} sessions…
+          </p>
+        )}
         <footer className="agent-tsp__footer">
           <span aria-hidden="true" className="agent-tsp__hints">
             <span className="agent-tsp__hint">
@@ -241,7 +326,7 @@ export function AgentTerminalSessionsPalette({
           <button
             className="agent-tsp__continue"
             disabled={continueDisabled}
-            onClick={() => activate(active)}
+            onClick={activateSelection}
             type="button"
           >
             {continueLabel}
@@ -258,6 +343,9 @@ function SessionListBody({
   filtered,
   onHighlight,
   onOpen,
+  selection,
+  selectionDisabled,
+  onToggle,
   projectLabel,
   query,
   repositoryRoot,
@@ -267,6 +355,9 @@ function SessionListBody({
   readonly filtered: ReadonlyArray<ExternalAgentSessionView>;
   onHighlight(index: number): void;
   onOpen(session: ExternalAgentSessionView): void;
+  readonly selection: ReadonlySet<string> | null;
+  readonly selectionDisabled: boolean;
+  onToggle(session: ExternalAgentSessionView): void;
   readonly projectLabel: string | null;
   readonly query: string;
   readonly repositoryRoot: string | null;
@@ -290,209 +381,55 @@ function SessionListBody({
       aria-label="Terminal sessions"
       className="agent-tsp__listbox"
       id={LISTBOX_ID}
-      role="listbox"
+      role={selection === null ? "listbox" : "group"}
     >
       {filtered.map((session, index) => (
-        <button
-          aria-selected={index === activeIndex}
-          className="agent-tsp__row"
-          data-provider={session.provider}
-          id={`${OPTION_PREFIX}${index}`}
-          key={`${session.provider}:${session.sessionId}`}
-          onClick={() => onHighlight(index)}
-          onDoubleClick={() => onOpen(session)}
-          role="option"
-          type="button"
-        >
-          <AgentProviderGlyph decorative kind={session.provider} />
-          <span className="agent-tsp__text">
-            <span className="agent-tsp__title">{agentExternalSessionRowTitle(session)}</span>
-            <span className="agent-tsp__meta">
-              <MetaSegments segments={terminalSessionMetaSegments(session, repositoryRoot)} />
-              {session.alreadyImportedThreadId !== null && (
-                <span className="agent-tsp__badge">{AGENT_IMPORTED_BADGE_LABEL}</span>
-              )}
-            </span>
-          </span>
-          <span className="agent-tsp__time agent-num">
-            <AgentCompactRelativeTime epochMs={session.lastActivityEpochMs} />
-          </span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function SessionListState({
-  projectLabel,
-  surface,
-}: {
-  readonly projectLabel: string | null;
-  readonly surface: ExternalSessionsSurface;
-}) {
-  if (surface.state === "loading") {
-    return <StateBlock label="Loading" note="Loading terminal sessions…" stateKey="loading" />;
-  }
-  if (surface.state === "failed") {
-    return (
-      <StateBlock
-        label="Unavailable"
-        note="Terminal sessions could not be loaded."
-        stateKey="failed"
-        tone="bad"
-      >
-        <button className="agent-linkbutton" onClick={() => void surface.reload()} type="button">
-          Retry
-        </button>
-      </StateBlock>
-    );
-  }
-  return (
-    <StateBlock
-      label="Nothing yet"
-      note={terminalSessionsEmptyNote(projectLabel)}
-      stateKey="empty"
-    />
-  );
-}
-
-function MetaSegments({
-  segments,
-}: {
-  readonly segments: ReadonlyArray<AgentTerminalSessionMetaSegment>;
-}) {
-  return (
-    <>
-      {segments.map((segment, index) => (
-        <Fragment key={segment.kind}>
-          {index > 0 && (
-            <span aria-hidden="true" className="agent-tsp__sep">
-              ·
-            </span>
+        <div className="agent-tsp__selectable-row" key={terminalSessionSelectionKey(session)}>
+          {selection !== null && (
+            <input
+              type="checkbox"
+              aria-label={`Select ${agentExternalSessionRowTitle(session)} for import`}
+              checked={selection.has(terminalSessionSelectionKey(session))}
+              disabled={
+                selectionDisabled ||
+                session.alreadyImportedThreadId !== null ||
+                (selection.size >= MAX_SESSION_SELECTION &&
+                  !selection.has(terminalSessionSelectionKey(session)))
+              }
+              onChange={() => onToggle(session)}
+            />
           )}
-          <span className={metaSegmentClassName(segment)}>{segment.text}</span>
-        </Fragment>
-      ))}
-    </>
-  );
-}
-
-function metaSegmentClassName(segment: AgentTerminalSessionMetaSegment): string {
-  if (segment.kind === "turns") return "agent-tsp__meta-segment agent-num";
-  return "agent-tsp__meta-segment";
-}
-
-function StateBlock({
-  children,
-  label,
-  note,
-  stateKey,
-  tone = "neutral",
-}: {
-  readonly children?: ReactNode;
-  readonly label: string;
-  readonly note: string;
-  readonly stateKey: AgentTerminalSessionsStateKey;
-  readonly tone?: "neutral" | "bad";
-}) {
-  const labelClassName =
-    tone === "bad" ? "agent-microlabel agent-microlabel--bad" : "agent-microlabel";
-  return (
-    <div className="agent-tsp__state" data-state={stateKey}>
-      <span className={labelClassName}>{label}</span>
-      <p className="agent-tsp__note">{note}</p>
-      {children}
-    </div>
-  );
-}
-
-function PreviewDrawer({
-  active,
-  onRetry,
-  repositoryRoot,
-  view,
-}: {
-  readonly active: ExternalAgentSessionView | null;
-  onRetry(): void;
-  readonly repositoryRoot: string | null;
-  readonly view: AgentTerminalSessionPreviewView;
-}) {
-  if (active === null || view.kind === "idle") {
-    return (
-      <StateBlock label="Preview" note="Select a session to preview it." stateKey="preview-idle" />
-    );
-  }
-
-  return (
-    <>
-      <div className="agent-tsp__drawer-head">
-        <div className="agent-tsp__drawer-title">{agentExternalSessionRowTitle(active)}</div>
-        <div className="agent-tsp__drawer-meta">
-          <AgentProviderGlyph decorative kind={active.provider} />
-          <MetaSegments segments={terminalSessionMetaSegments(active, repositoryRoot)} />
-          <span aria-hidden="true" className="agent-tsp__sep">
-            ·
-          </span>
-          <span className="agent-tsp__meta-segment">
-            <AgentRelativeTime epochMs={active.lastActivityEpochMs} />
-          </span>
+          <button
+            aria-selected={selection === null ? index === activeIndex : undefined}
+            aria-label={
+              selection === null ? undefined : `Preview ${agentExternalSessionRowTitle(session)}`
+            }
+            aria-current={selection !== null && index === activeIndex ? "true" : undefined}
+            data-highlighted={index === activeIndex}
+            className="agent-tsp__row"
+            data-provider={session.provider}
+            id={`${OPTION_PREFIX}${index}`}
+            onClick={() => onHighlight(index)}
+            onDoubleClick={() => onOpen(session)}
+            role={selection === null ? "option" : undefined}
+            type="button"
+          >
+            <AgentProviderGlyph decorative kind={session.provider} />
+            <span className="agent-tsp__text">
+              <span className="agent-tsp__title">{agentExternalSessionRowTitle(session)}</span>
+              <span className="agent-tsp__meta">
+                <MetaSegments segments={terminalSessionMetaSegments(session, repositoryRoot)} />
+                {session.alreadyImportedThreadId !== null && (
+                  <span className="agent-tsp__badge">{AGENT_IMPORTED_BADGE_LABEL}</span>
+                )}
+              </span>
+            </span>
+            <span className="agent-tsp__time agent-num">
+              <AgentCompactRelativeTime epochMs={session.lastActivityEpochMs} />
+            </span>
+          </button>
         </div>
-      </div>
-      <PreviewBody onRetry={onRetry} view={view} />
-    </>
-  );
-}
-
-function PreviewBody({
-  onRetry,
-  view,
-}: {
-  onRetry(): void;
-  readonly view: Exclude<AgentTerminalSessionPreviewView, { readonly kind: "idle" }>;
-}) {
-  if (view.kind === "loading") {
-    return <StateBlock label="Preview" note="Loading preview…" stateKey="preview-loading" />;
-  }
-  if (view.kind === "failed") {
-    return (
-      <StateBlock
-        label="Unavailable"
-        note="The preview could not be loaded."
-        stateKey="preview-failed"
-        tone="bad"
-      >
-        <button className="agent-linkbutton" onClick={onRetry} type="button">
-          Retry
-        </button>
-      </StateBlock>
-    );
-  }
-  if (view.preview.exchanges.length === 0) {
-    return (
-      <StateBlock
-        label="Preview"
-        note="No readable messages in this session."
-        stateKey="preview-empty"
-      />
-    );
-  }
-
-  return (
-    <div className="agent-tsp__log">
-      {view.preview.exchanges.map((exchange, index) => {
-        const chip = terminalSessionRoleChip(exchange.role);
-        return (
-          <article className="agent-tsp__exchange" data-role={exchange.role} key={index}>
-            <span className={chip.className}>{chip.label}</span>
-            <p className="agent-tsp__exchange-text">{exchange.text}</p>
-          </article>
-        );
-      })}
-      {view.preview.exchangesTruncated && (
-        <p className="agent-tsp__note agent-tsp__note--footnote">
-          Preview shows the beginning and end of a long session.
-        </p>
-      )}
+      ))}
     </div>
   );
 }
@@ -500,6 +437,12 @@ function PreviewBody({
 function keyOrigin(target: EventTarget | null, input: HTMLInputElement | null): KeyOrigin {
   if (target === null) return "other";
   if (target === input) return "input";
-  if (target instanceof HTMLElement && target.getAttribute("role") === "option") return "row";
+  if (
+    target instanceof HTMLElement &&
+    (target.getAttribute("role") === "option" ||
+      target.hasAttribute("data-highlighted") ||
+      (target instanceof HTMLInputElement && target.type === "checkbox"))
+  )
+    return "row";
   return "other";
 }

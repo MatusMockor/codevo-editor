@@ -2624,6 +2624,47 @@ describe("AgentModeView", () => {
     expect(selectedSessionId()).toBe("agt-1");
   });
 
+  it("imports selected sessions into separate threads and closes only after the batch", async () => {
+    const secondId = "34fbe185-9c1d-4e6a-8b21-7f3a5d90c413";
+    const importExternalSession = vi.fn(async (request: { sessionId: string }) => ({
+      threadId: request.sessionId === secondId ? "agt-2" : "agt-1",
+      alreadyImported: false,
+    }));
+    const externalSessions = externalSessionsSurfaceFixture({
+      state: "ready",
+      target: { rootKey: ROOT, repositoryRoot: ROOT },
+      sessions: [
+        externalSessionView(),
+        externalSessionView({ sessionId: secondId, title: "Second session" }),
+        externalSessionView({
+          sessionId: "34fbe185-9c1d-4e6a-8b21-7f3a5d90c414",
+          alreadyImportedThreadId: "agt-existing",
+        }),
+      ],
+      close: vi.fn(),
+    });
+    render({
+      agents: surface({
+        externalSessions,
+        importExternalSession,
+        threads: [threadView({ threadId: "agt-1" }), threadView({ threadId: "agt-2" })],
+      }),
+      projects: [activeProject()],
+    });
+    openProjectMenu("app");
+    clickMenuItem("Terminal sessions…");
+    act(() => buttonWithText("Select filtered").click());
+    act(() => buttonWithText("Import 2 sessions").click());
+    await waitForReact(() => expect(terminalSessionsPalette()).toBeNull());
+    expect(importExternalSession).toHaveBeenCalledTimes(2);
+    expect(importExternalSession.mock.calls.map(([request]) => request.sessionId)).toEqual([
+      "34fbe185-9c1d-4e6a-8b21-7f3a5d90c412",
+      secondId,
+    ]);
+    expect(externalSessions.close).toHaveBeenCalledTimes(1);
+    expect(selectedSessionId()).toBe("agt-1");
+  });
+
   it("imports a nested terminal session into the repository recorded by that session", () => {
     const importExternalSession = vi.fn(async () => null);
     const externalSessions = externalSessionsSurfaceFixture({
@@ -2633,7 +2674,12 @@ describe("AgentModeView", () => {
     });
     render({
       agents: surface({ externalSessions, importExternalSession }),
-      projects: [activeProject()],
+      projects: [
+        {
+          ...activeProject(),
+          repositories: [repository(ROOT, ""), repository(NESTED, "packages/api")],
+        },
+      ],
     });
 
     openProjectMenu("app");

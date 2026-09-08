@@ -44,6 +44,7 @@ import {
   type AgentRailScope,
 } from "./agentSidebarPresentation";
 import { agentSurfaceScopeFor, agentThreadCheckoutRoot } from "./agentSurfacePolicy";
+import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentAddProject } from "./useAgentAddProject";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentShipActions } from "./useAgentShipActions";
@@ -202,6 +203,23 @@ export function AgentModeView({
   const terminalSessionsPalette = navigation.terminalSessions;
   const terminalSessionsTarget = terminalSessionsPalette.target;
   const selectThread = navigation.selectThread;
+  const selectImportedThread = useCallback(
+    (threadId: string) => {
+      selectThread(threadId);
+      terminalSessionsPalette.close();
+      externalSessions?.close();
+    },
+    [externalSessions, selectThread, terminalSessionsPalette],
+  );
+  const sessionImport = useAgentSessionImport({
+    open: terminalSessionsPalette.open,
+    target: terminalSessionsTarget,
+    projects,
+    surface: externalSessions,
+    importSession: agents.importExternalSession,
+    onComplete: selectImportedThread,
+  });
+  const cancelSessionImport = sessionImport.cancel;
   const openTerminalSessions = useCallback(
     (projectRootKey: string, repositoryRoot: string) => {
       if (externalSessions === null) {
@@ -209,49 +227,16 @@ export function AgentModeView({
         return;
       }
       if (!terminalSessionsPalette.openFor(projectRootKey, repositoryRoot)) return;
+      cancelSessionImport();
       void externalSessions.open({ rootKey: projectRootKey, repositoryRoot });
     },
-    [externalSessions, terminalSessionsPalette],
+    [cancelSessionImport, externalSessions, terminalSessionsPalette],
   );
   const closeTerminalSessions = useCallback(() => {
+    cancelSessionImport();
     terminalSessionsPalette.close();
     externalSessions?.close();
-  }, [externalSessions, terminalSessionsPalette]);
-  const selectImportedThread = useCallback(
-    (threadId: string) => {
-      selectThread(threadId);
-      closeTerminalSessions();
-    },
-    [closeTerminalSessions, selectThread],
-  );
-  const importExternalSessionAction = agents.importExternalSession;
-  const importTerminalSession = useCallback(
-    (sessionId: string, provider: AgentCliKind) => {
-      if (externalSessions === null) return;
-      if (terminalSessionsTarget === null) return;
-      const session =
-        externalSessions.sessions.find(
-          (candidate) => candidate.sessionId === sessionId && candidate.provider === provider,
-        ) ?? null;
-      if (session === null) return;
-      if (session.alreadyImportedThreadId !== null) {
-        selectImportedThread(session.alreadyImportedThreadId);
-        return;
-      }
-      void importExternalSessionAction({
-        projectRootKey: terminalSessionsTarget.projectRootKey,
-        repositoryRoot: session.cwd,
-        provider,
-        sessionId,
-        title: session.title,
-        firstPrompt: session.firstPrompt,
-      }).then((result) => {
-        if (result === null) return;
-        selectImportedThread(result.threadId);
-      });
-    },
-    [externalSessions, importExternalSessionAction, selectImportedThread, terminalSessionsTarget],
-  );
+  }, [cancelSessionImport, externalSessions, terminalSessionsPalette]);
   const newThreadTargetForRail = navigation.newThreadTarget;
   const railTerminalSessionsTarget = useMemo(
     () => newThreadTargetForRail(),
@@ -595,14 +580,17 @@ export function AgentModeView({
           result={navigation.search.result}
           titles={navigation.palette.titles}
         />
-        {externalSessions !== null && (
+        {sessionImport.surface !== null && (
           <AgentTerminalSessionsPalette
             isOpen={terminalSessionsPalette.open}
             onClose={closeTerminalSessions}
-            onImport={importTerminalSession}
+            onImport={sessionImport.importOne}
+            onImportMany={sessionImport.importMany}
+            importProgress={sessionImport.importProgress}
+            importNotice={sessionImport.importNotice}
             onSelectImported={selectImportedThread}
             projectLabel={terminalSessionsProjectLabel}
-            surface={externalSessions}
+            surface={sessionImport.surface}
           />
         )}
       </section>

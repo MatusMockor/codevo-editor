@@ -469,12 +469,194 @@ describe("AgentTerminalSessionsPalette", () => {
     expect(footer()?.textContent).not.toContain("hidden");
   });
 
+  it("imports checked sessions together while preview navigation stays independent", async () => {
+    const onImportMany = vi.fn();
+    const onImport = vi.fn();
+    await render({ onImportMany, onImport });
+    await checkAt(0);
+    expect(continueButton()?.textContent).toBe("Import 1 session");
+    await checkAt(1);
+    expect(continueButton()?.textContent).toBe("Import 2 sessions");
+    await press("End");
+    expect(host.querySelector('[data-highlighted="true"]')?.textContent).toContain(
+      "Security review",
+    );
+    await act(async () =>
+      host
+        .querySelector(".agent-tsp__row")
+        ?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+    );
+    expect(onImport).not.toHaveBeenCalled();
+    expect(onImportMany).not.toHaveBeenCalled();
+    await press("Enter");
+    expect(onImportMany).toHaveBeenCalledWith([
+      { sessionId: CLAUDE_ID, provider: "claudeCode" },
+      { sessionId: CODEX_ID, provider: "codex" },
+    ]);
+    expect(onImport).not.toHaveBeenCalled();
+  });
+
+  it("preserves checked sessions across filters, selects filtered results and clears explicitly", async () => {
+    const onImportMany = vi.fn();
+    await render({ onImportMany });
+    await checkAt(0);
+    await type(CODEX_ID);
+    await click(
+      [...host.querySelectorAll("button")].find(
+        (button) => button.textContent === "Select filtered",
+      ),
+    );
+    await type("no-match");
+    expect(continueButton()?.disabled).toBe(false);
+    await press("Enter");
+    expect(onImportMany.mock.calls[0]?.[0]).toHaveLength(2);
+    await click(
+      [...host.querySelectorAll("button")].find((button) => button.textContent === "Clear"),
+    );
+    expect(host.textContent).toContain("0 selected");
+    expect(continueButton()?.disabled).toBe(true);
+  });
+
+  it("resets selection on close and target A to B to A replacement", async () => {
+    const onImportMany = vi.fn();
+    await render({ onImportMany });
+    await checkAt(0);
+    await render({ onImportMany, isOpen: false });
+    await render({ onImportMany });
+    expect(checkboxes()[0]?.checked).toBe(false);
+    await checkAt(0);
+    await render({
+      onImportMany,
+      surface: surfaceFixture({ target: { rootKey: "other", repositoryRoot: ROOT } }),
+    });
+    expect(checkboxes()[0]?.checked).toBe(false);
+    await render({ onImportMany });
+    expect(checkboxes()[0]?.checked).toBe(false);
+  });
+
+  it("clears selection when the target is reopened at the same path", async () => {
+    const onImportMany = vi.fn();
+    const surface = surfaceFixture({});
+    await render({ onImportMany, surface });
+    await checkAt(0);
+    await render({ onImportMany, surface: { ...surface, previewPending: true } });
+    expect(checkboxes()[0]?.checked).toBe(true);
+    await render({
+      onImportMany,
+      surface: { ...surface, target: { rootKey: ROOT, repositoryRoot: ROOT } },
+    });
+    expect(checkboxes()[0]?.checked).toBe(false);
+  });
+
+  it("prunes removed or imported sessions and never selects imported entries", async () => {
+    const onImportMany = vi.fn();
+    await render({ onImportMany });
+    expect(checkboxes()[2]?.disabled).toBe(true);
+    await checkAt(0);
+    await checkAt(1);
+    await render({
+      onImportMany,
+      surface: surfaceFixture({
+        sessions: [sessionFixture({ alreadyImportedThreadId: "existing" })],
+      }),
+    });
+    expect(host.textContent).toContain("0 selected");
+    await render({ onImportMany });
+    expect(checkboxes().some((checkbox) => checkbox.checked)).toBe(false);
+  });
+
+  it("uses provider and session ID together for selection identity", async () => {
+    const onImportMany = vi.fn();
+    await render({
+      onImportMany,
+      surface: surfaceFixture({
+        sessions: [sessionFixture({}), sessionFixture({ provider: "codex" })],
+      }),
+    });
+    await checkAt(0);
+    expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([true, false]);
+    await checkAt(1);
+    await press("Enter");
+    expect(onImportMany).toHaveBeenCalledWith([
+      { sessionId: CLAUDE_ID, provider: "claudeCode" },
+      { sessionId: CLAUDE_ID, provider: "codex" },
+    ]);
+  });
+
+  it("bounds selection at 50 with a visible explanation and permits deselection", async () => {
+    const onImportMany = vi.fn();
+    await render({
+      onImportMany,
+      surface: surfaceFixture({
+        sessions: Array.from({ length: 52 }, (_, index) =>
+          sessionFixture({ sessionId: `session-${index}` }),
+        ),
+      }),
+    });
+    await click(
+      [...host.querySelectorAll("button")].find(
+        (button) => button.textContent === "Select filtered",
+      ),
+    );
+    expect(checkboxes().filter((checkbox) => checkbox.checked)).toHaveLength(50);
+    expect(checkboxes()[50]?.disabled).toBe(true);
+    expect(host.textContent).toContain("Up to 50 at a time");
+    await checkAt(0);
+    expect(checkboxes()[50]?.disabled).toBe(false);
+    await checkAt(50);
+    await press("Enter");
+    expect(onImportMany.mock.calls[0]?.[0]).toHaveLength(50);
+  });
+
+  it("disables selection and activation during batch progress and displays the outcome", async () => {
+    const onImportMany = vi.fn();
+    const onImport = vi.fn();
+    await render({
+      onImportMany,
+      onImport,
+      importProgress: { completed: 1, total: 3 },
+      importNotice: "One session could not be imported.",
+    });
+    expect(checkboxes().every((checkbox) => checkbox.disabled)).toBe(true);
+    expect(continueButton()?.disabled).toBe(true);
+    expect(continueButton()?.textContent).toBe("Importing 1 of 3…");
+    expect(host.textContent).toContain("One session could not be imported.");
+    await press("Enter");
+    expect(onImportMany).not.toHaveBeenCalled();
+    expect(onImport).not.toHaveBeenCalled();
+    expect(host.querySelector("button input")).toBeNull();
+  });
+
+  it("uses native controls for batch selection and imports once from a focused checkbox", async () => {
+    const onImportMany = vi.fn();
+    await render({ onImportMany });
+    expect(input().getAttribute("role")).toBe("searchbox");
+    expect(input().hasAttribute("aria-activedescendant")).toBe(false);
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+    expect(host.querySelector('[role="group"][aria-label="Terminal sessions"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Preview Fix the parser"]')).not.toBeNull();
+    await checkAt(0);
+    await pressOn(checkboxes()[0] ?? null, "Enter");
+    expect(onImportMany).toHaveBeenCalledTimes(1);
+    expect(onImportMany).toHaveBeenCalledWith([{ sessionId: CLAUDE_ID, provider: "claudeCode" }]);
+  });
+
+  function checkboxes(): HTMLInputElement[] {
+    return [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+  }
+
+  async function checkAt(index: number): Promise<void> {
+    await act(async () => checkboxes()[index]?.click());
+  }
+
   function dialog(): HTMLElement | null {
     return host.querySelector<HTMLElement>('[role="dialog"]');
   }
 
   function input(): HTMLInputElement {
-    const element = host.querySelector<HTMLInputElement>('input[role="combobox"]');
+    const element = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Filter terminal sessions"]',
+    );
     expect(element).not.toBeNull();
     return element as HTMLInputElement;
   }
