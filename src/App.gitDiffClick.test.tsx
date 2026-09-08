@@ -497,15 +497,13 @@ function fileName(relativePath: string): string {
 }
 
 async function waitForText(container: ParentNode, expectedText: string): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (container.textContent?.includes(expectedText)) {
-      return;
-    }
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-  }
-
-  throw new Error(`Timed out waiting for rendered text: ${expectedText}`);
+  await vi.waitFor(
+    async () => {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(container.textContent).toContain(expectedText);
+    },
+    { timeout: 2_000, interval: 10 },
+  );
 }

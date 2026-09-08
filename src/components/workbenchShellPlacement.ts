@@ -39,6 +39,7 @@ export interface WorkbenchShellPlacement {
   readonly surfacesMounted: boolean;
   readonly rightPanelMaximized: boolean;
   readonly responsiveMaximized: boolean;
+  readonly rightPanelOverlay: boolean;
   readonly responsiveRestore: ResponsivePanelRestore;
   readonly rail: AgentRailState;
   readonly railWidth: number;
@@ -84,6 +85,7 @@ export function workbenchShellPlacement({
       surfacesMounted: false,
       rightPanelMaximized: false,
       responsiveMaximized: false,
+      rightPanelOverlay: false,
       responsiveRestore: "none",
       rail: "expanded",
       railWidth: DEFAULT_AGENT_RAIL_WIDTH,
@@ -101,6 +103,7 @@ export function workbenchShellPlacement({
     surfacesMounted: host.mounted,
     rightPanelMaximized: !rightPanelHidden && layout.rightPanelMaximized,
     responsiveMaximized: false,
+    rightPanelOverlay: false,
     responsiveRestore: "none",
     rail: layout.rail,
     railWidth: layout.railWidth,
@@ -125,8 +128,9 @@ export function responsiveWorkbenchShellPlacement(
   });
   return {
     ...placement,
-    rightPanelMaximized: placement.rightPanelMaximized || responsive.maximized,
-    responsiveMaximized: responsive.maximized,
+    rightPanelMaximized: placement.rightPanelMaximized,
+    responsiveMaximized: false,
+    rightPanelOverlay: responsive.overlay,
     responsiveRestore: responsive.restore,
     rightPanelWidth: responsive.width,
   };

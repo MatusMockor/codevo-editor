@@ -9,7 +9,9 @@ export const AGENT_EXPANDED_RAIL_WIDTH = DEFAULT_AGENT_RAIL_WIDTH;
 export const AGENT_COMPACT_RAIL_WIDTH = 248;
 export const AGENT_COLLAPSED_RAIL_WIDTH = 48;
 export const AGENT_COMPACT_RAIL_BREAKPOINT = 1180;
-export const AGENT_RESPONSIVE_MAXIMIZE_BREAKPOINT = 720;
+export const AGENT_HIDDEN_RAIL_BREAKPOINT = 720;
+export const AGENT_OVERLAY_MAX_WIDTH = 420;
+export const AGENT_OVERLAY_CENTER_PEEK = 160;
 
 export type ResponsivePanelRestore = "none" | "collapseRail" | "closePanel";
 
@@ -23,7 +25,7 @@ export interface ResponsiveAgentPanelInput {
 }
 
 export interface ResponsiveAgentPanelPlacement {
-  readonly maximized: boolean;
+  readonly overlay: boolean;
   readonly restore: ResponsivePanelRestore;
   readonly width: number;
 }
@@ -36,35 +38,33 @@ export function responsiveAgentPanelPlacement({
   requestedWidth,
   viewportWidth,
 }: ResponsiveAgentPanelInput): ResponsiveAgentPanelPlacement {
-  if (hidden) return { maximized: false, restore: "none", width: 0 };
-  if (!Number.isFinite(viewportWidth)) {
-    return { maximized: false, restore: "none", width: requestedWidth };
+  const docked = { overlay: false, restore: "none" as const };
+  if (hidden) return { ...docked, width: 0 };
+  if (maximized || !Number.isFinite(viewportWidth)) {
+    return { ...docked, width: requestedWidth };
   }
 
   const boundedViewportWidth = Math.max(0, Math.floor(viewportWidth));
-  if (boundedViewportWidth <= AGENT_RESPONSIVE_MAXIMIZE_BREAKPOINT) {
-    return { maximized: true, restore: "closePanel", width: requestedWidth };
-  }
-
   const railWidth = agentWorkbenchRailWidth(rail, boundedViewportWidth, expandedRailWidth);
   const availableWidth = boundedViewportWidth - railWidth - AGENT_CENTER_MIN_WIDTH;
   if (availableWidth < MIN_AGENT_RIGHT_PANEL_WIDTH) {
-    const collapsedAvailableWidth =
-      boundedViewportWidth - AGENT_COLLAPSED_RAIL_WIDTH - AGENT_CENTER_MIN_WIDTH;
-    const restore =
-      rail === "expanded" && collapsedAvailableWidth >= MIN_AGENT_RIGHT_PANEL_WIDTH
-        ? "collapseRail"
-        : "closePanel";
-    return { maximized: true, restore, width: requestedWidth };
+    return {
+      overlay: true,
+      restore: "none",
+      width: Math.min(requestedWidth, agentOverlayPanelMaxWidth(boundedViewportWidth, railWidth)),
+    };
   }
 
-  if (maximized) return { maximized: false, restore: "none", width: requestedWidth };
+  return { ...docked, width: Math.min(requestedWidth, availableWidth) };
+}
 
-  return {
-    maximized: false,
-    restore: "none",
-    width: Math.min(requestedWidth, availableWidth),
-  };
+export function agentOverlayPanelMaxWidth(viewportWidth: number, railWidth: number): number {
+  const contentWidth = Math.max(0, viewportWidth - railWidth);
+  return Math.min(
+    contentWidth,
+    AGENT_OVERLAY_MAX_WIDTH,
+    Math.max(MIN_AGENT_RIGHT_PANEL_WIDTH, contentWidth - AGENT_OVERLAY_CENTER_PEEK),
+  );
 }
 
 export function agentWorkbenchRailWidth(
@@ -72,6 +72,7 @@ export function agentWorkbenchRailWidth(
   viewportWidth: number,
   expandedWidth: number = AGENT_EXPANDED_RAIL_WIDTH,
 ): number {
+  if (viewportWidth <= AGENT_HIDDEN_RAIL_BREAKPOINT) return 0;
   if (rail === "collapsed") return AGENT_COLLAPSED_RAIL_WIDTH;
   if (viewportWidth <= AGENT_COMPACT_RAIL_BREAKPOINT) {
     return Math.min(expandedWidth, AGENT_COMPACT_RAIL_WIDTH);

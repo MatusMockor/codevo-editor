@@ -13,6 +13,7 @@ import {
 import {
   AGENT_CENTER_MIN_WIDTH,
   agentWorkbenchRailWidth,
+  agentOverlayPanelMaxWidth,
 } from "../domain/agentWorkbenchResponsiveLayout";
 
 export const MIN_SIDEBAR_WIDTH = 180;
@@ -61,6 +62,9 @@ export function maxAgentRightPanelWidth(
 ): number {
   const railWidth = agentWorkbenchRailWidth(rail, viewportWidth, expandedRailWidth);
   const availableWidth = viewportWidth - railWidth - AGENT_CENTER_MIN_WIDTH;
+  if (availableWidth < MIN_AGENT_RIGHT_PANEL_WIDTH) {
+    return agentOverlayPanelMaxWidth(viewportWidth, railWidth);
+  }
   return Math.max(
     MIN_AGENT_RIGHT_PANEL_WIDTH,
     Math.min(
@@ -133,7 +137,8 @@ export function useWorkbenchResizeHandles(
     (event: PointerEvent<HTMLElement>) => {
       const frame = agentWorkbenchFrame(event);
       const startX = event.clientX;
-      const startWidth = agentRightPanelWidth;
+      const surface = frame?.querySelector<HTMLElement>('[data-slot="surface"]');
+      const startWidth = surface?.getBoundingClientRect().width || agentRightPanelWidth;
       let width = startWidth;
 
       startPointerDrag(

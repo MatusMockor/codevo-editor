@@ -140,7 +140,7 @@ export function AgentSurfacePanel({
         onPointerDown={onResizeStart}
         role="separator"
       />
-      <header className="agent-surface__head" data-agent-surface-head>
+      <header className="agent-surface__head" data-agent-surface-head data-tauri-drag-region="deep">
         {openSurfaces.length > 0 && (
           <div aria-label="Surfaces" className="agent-surface__tabs" role="tablist">
             {openSurfaces.map((kind, index) => {

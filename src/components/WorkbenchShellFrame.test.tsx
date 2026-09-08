@@ -145,6 +145,31 @@ describe("WorkbenchShellFrame", () => {
     expect(frame?.getAttribute("data-right-panel")).toBe("docked");
   });
 
+  it("overlays the panel on narrow windows without remounting the editor or setting maximize", () => {
+    render(placement("agent", "files"));
+    const frame = host.querySelector(".workbench-frame");
+    const editor = host.querySelector("#editor-content");
+    for (const width of [1000, 900, 720]) {
+      act(() => {
+        Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+        window.dispatchEvent(new Event("resize"));
+      });
+      expect(frame?.getAttribute("data-right-panel")).toBe("overlay");
+      expect(host.querySelector("#editor-content")).toBe(editor);
+      expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(false);
+    }
+    render(placement("agent", "files", false, true));
+    expect(frame?.getAttribute("data-right-panel")).toBe("maximized");
+    render(placement("agent", "files"));
+    expect(frame?.getAttribute("data-right-panel")).toBe("overlay");
+    act(() => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(frame?.getAttribute("data-right-panel")).toBe("docked");
+    expect(host.querySelector("#editor-content")).toBe(editor);
+  });
+
   it("stamps the rail state on the frame so the bottom panel track follows the rail", () => {
     render(placement("agent", null, true));
     const frame = host.querySelector(".workbench-frame");

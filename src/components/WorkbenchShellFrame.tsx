@@ -87,7 +87,13 @@ export function WorkbenchShellFrame({
         data-editor={editorState}
         data-layout={responsivePlacement.layout}
         data-rail={responsivePlacement.rail}
-        data-right-panel={responsivePlacement.rightPanelMaximized ? "maximized" : "docked"}
+        data-right-panel={
+          responsivePlacement.rightPanelMaximized
+            ? "maximized"
+            : responsivePlacement.rightPanelOverlay
+              ? "overlay"
+              : "docked"
+        }
         data-surface={settingsSurface ? "settings" : undefined}
         data-tree={workbenchFrameTreeState(responsivePlacement, treeReportedVisible)}
         ref={setFrameElement}

@@ -245,6 +245,27 @@ describe("workbenchFrameEditorReport", () => {
     );
   });
 
+  it("keeps the center track while overlaying the surface and editor at the viewport right edge", () => {
+    const overlay = '.workbench-frame[data-layout="agent"][data-right-panel="overlay"]';
+    expect(declarations(shell, overlay).get("grid-template-columns")).toBe(
+      "var(--agent-rail-track)minmax(var(--agent-center-min-width),1fr)0",
+    );
+    expect(declarations(shell, `${overlay} .agent-mode__grid`).get("grid-template-rows")).toBe(
+      "minmax(0,1fr)var(--agent-bottom-panel-height)",
+    );
+    expect(declarations(shell, `${overlay} .agent-mode__center`).get("grid-column")).toBe("2");
+    expect(declarations(shell, `${overlay} .agent-mode__center`).get("grid-row")).toBe("1");
+    const slots = `${overlay} > [data-slot="surface"], ${overlay} > [data-slot="editor"]`;
+    const placement = declarations(shell, slots);
+    expect(placement.get("position")).toBe("absolute");
+    expect(placement.get("right")).toBe("0");
+    expect(placement.get("width")).toBe("var(--agent-right-panel-width)");
+    expect(placement.get("grid-column")).toBe("auto");
+    expect(placement.get("grid-row")).toBe("auto");
+    expect(declarations(shell, `${overlay} > [data-slot="surface"]`).get("z-index")).toBe("2");
+    expect(declarations(shell, `${overlay} > [data-slot="editor"]`).get("z-index")).toBe("3");
+  });
+
   it("narrows the docked tree and drops the rail track before the editor column collapses", () => {
     const compactRules = parsed.rules.filter(
       (rule) =>

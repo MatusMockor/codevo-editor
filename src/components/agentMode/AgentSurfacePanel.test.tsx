@@ -77,6 +77,25 @@ describe("AgentSurfacePanel", () => {
     host.remove();
   });
 
+  it.each([open([], null), open(["diff"], "diff")])(
+    "keeps the surface header draggable while its controls remain interactive: %j",
+    (layout) => {
+      render({ layout, layoutControls: <button type="button">Toggle panel</button> });
+      const header = host.querySelector("[data-agent-surface-head]");
+      expect(header?.getAttribute("data-tauri-drag-region")).toBe("deep");
+      expect(
+        header?.querySelector(".agent-session__spacer")?.closest("[data-tauri-drag-region]"),
+      ).toBe(header);
+      for (const button of header?.querySelectorAll("button") ?? []) {
+        expect(button.hasAttribute("data-tauri-drag-region")).toBe(false);
+        expect(button.querySelector("[data-tauri-drag-region]")).toBeNull();
+      }
+      expect(
+        host.querySelector(".agent-surface__body")?.closest("[data-tauri-drag-region]"),
+      ).toBeNull();
+    },
+  );
+
   it("shows the chooser with four cards, key hints and no tab strip", () => {
     const onOpenSurface = vi.fn();
     render({ onOpenSurface });

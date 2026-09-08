@@ -7,7 +7,6 @@ import {
   DEFAULT_AGENT_RAIL_WIDTH,
   MAX_AGENT_RAIL_WIDTH,
   MIN_AGENT_BOTTOM_PANEL_HEIGHT,
-  MIN_AGENT_RIGHT_PANEL_WIDTH,
   type AgentWorkbenchLayout,
 } from "../domain/agentWorkbenchLayout";
 import {
@@ -123,8 +122,8 @@ describe("useWorkbenchResizeHandles", () => {
   it("reserves the rail and the composer-sized centre while sizing the right panel", () => {
     expect(maxAgentRightPanelWidth(1_280)).toBe(464);
     expect(maxAgentRightPanelWidth(1_180)).toBe(372);
-    expect(maxAgentRightPanelWidth(1_000)).toBe(MIN_AGENT_RIGHT_PANEL_WIDTH);
-    expect(maxAgentRightPanelWidth(720)).toBe(MIN_AGENT_RIGHT_PANEL_WIDTH);
+    expect(maxAgentRightPanelWidth(1_000)).toBe(420);
+    expect(maxAgentRightPanelWidth(720)).toBe(420);
   });
 
   it("sizes the right panel against the persisted rail width, not the default", () => {
@@ -149,7 +148,7 @@ describe("useWorkbenchResizeHandles", () => {
 
   it.each([
     { viewportWidth: 1_000, expectedWidth: 392 },
-    { viewportWidth: 900, expectedWidth: 360 },
+    { viewportWidth: 900, expectedWidth: 420 },
   ])(
     "keeps a collapsed-rail panel stable at $viewportWidth pixels",
     ({ expectedWidth, viewportWidth }) => {
@@ -170,6 +169,22 @@ describe("useWorkbenchResizeHandles", () => {
       harness.unmount();
     },
   );
+
+  it("starts resizing from the rendered overlay width instead of its larger saved width", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+    const commit = recordingCommit({ rightPanelWidth: 700 });
+    const harness = renderHandles(commit);
+    const surface = document.createElement("div");
+    surface.dataset.slot = "surface";
+    surface.getBoundingClientRect = () => ({ width: 420 }) as DOMRect;
+    harness.frame().append(surface);
+    act(() => harness.result().startAgentRightPanelResize(pointerEvent(harness.handle(), 500, 0)));
+    act(() => dispatchPointerMove(530, 0));
+    expect(harness.frame().style.getPropertyValue("--agent-right-panel-width")).toBe("390px");
+    act(() => dispatchPointerUp());
+    expect(commit.widths).toEqual([390]);
+    harness.unmount();
+  });
 
   it("settles the agent drag when the window loses focus", () => {
     const commit = recordingCommit();

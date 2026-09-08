@@ -130,7 +130,12 @@ export function MruEntriesOverlay<Entry extends MruEntry>({
   }, [activeEntry?.path, activeIndex]);
 
   return (
-    <div className="palette-backdrop" role="presentation" onMouseDown={onBackdrop}>
+    <div
+      className="palette-backdrop"
+      data-tauri-drag-region="false"
+      role="presentation"
+      onMouseDown={onBackdrop}
+    >
       <section
         aria-label={ariaLabel}
         className="quick-open"

@@ -67,6 +67,14 @@ describe("RecentFilesSwitcher", () => {
     expect(host.querySelector(".quick-open")).toBeNull();
   });
 
+  it("keeps backdrop dismissal outside a portalled window drag region", () => {
+    const { onClose } = render({});
+    const backdrop = host.querySelector(".palette-backdrop");
+    expect(backdrop?.getAttribute("data-tauri-drag-region")).toBe("false");
+    act(() => backdrop?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("renders a footer hint row", () => {
     render({});
     expect(host.querySelector(".palette-footer")).not.toBeNull();

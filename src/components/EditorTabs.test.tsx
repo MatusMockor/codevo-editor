@@ -75,6 +75,7 @@ describe("EditorTabs", () => {
     const tabs = [...host.querySelectorAll(".editor-tab")];
 
     expect(tabs).toHaveLength(2);
+    for (const tab of tabs) expect(tab.getAttribute("data-tauri-drag-region")).toBe("false");
     expect(host.textContent).toContain("App.tsx");
     expect(host.textContent).toContain("main.tsx");
 
@@ -551,10 +552,12 @@ describe("EditorTabs", () => {
     });
 
     expect(selectedSwitcherName(host)).toBe("Editor13.ts");
-    expect(host.querySelector("[role='status']")?.textContent).toBe("Editor13.ts");
+    expect(document.body.querySelector("[role='status']")?.textContent).toBe("Editor13.ts");
     expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
-    expect(host.querySelector(".palette-footer")?.textContent).toContain("release ctrl to open");
-    expect(host.querySelector(".palette-footer")?.textContent).not.toContain("navigate");
+    expect(document.body.querySelector(".palette-footer")?.textContent).toContain(
+      "release ctrl to open",
+    );
+    expect(document.body.querySelector(".palette-footer")?.textContent).not.toContain("navigate");
   });
 
   it("cycles backward through open-editor MRU with Ctrl+Shift+Tab", async () => {
@@ -606,7 +609,7 @@ describe("EditorTabs", () => {
       pressWindowKey("keydown", "Escape", { ctrlKey: true });
     });
 
-    expect(host.querySelector("[aria-label='Open editors']")).toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
     expect(host.querySelector(".tab-main[aria-selected='true']")?.textContent).toContain("A.ts");
     expect(activate).not.toHaveBeenCalled();
   });
@@ -716,9 +719,9 @@ describe("EditorTabs", () => {
       editor.focus();
       pressWindowKey("keydown", "Tab", { ctrlKey: true });
     });
-    const activeEntry = [...host.querySelectorAll<HTMLButtonElement>("[role='option']")].find(
-      (entry) => entry.textContent?.includes("A.ts"),
-    );
+    const activeEntry = [
+      ...document.body.querySelectorAll<HTMLButtonElement>("[role='option']"),
+    ].find((entry) => entry.textContent?.includes("A.ts"));
     expect(activeEntry).toBeDefined();
 
     act(() => {
@@ -749,7 +752,7 @@ describe("EditorTabs", () => {
       editor.focus();
       pressWindowKey("keydown", "Tab", { ctrlKey: true });
     });
-    const highlightedEntry = host.querySelector<HTMLButtonElement>(
+    const highlightedEntry = document.body.querySelector<HTMLButtonElement>(
       "[aria-label='Open editors'] [aria-selected='true']",
     );
     act(() => {
@@ -771,7 +774,7 @@ describe("EditorTabs", () => {
     act(() => pressWindowKey("keydown", "Tab", { ctrlKey: true }));
     act(() => window.dispatchEvent(new Event("blur")));
 
-    expect(host.querySelector("[aria-label='Open editors']")).toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
     expect(document.activeElement).toBe(editor);
   });
 
@@ -784,13 +787,13 @@ describe("EditorTabs", () => {
       pressWindowKey("keydown", "Escape", { ctrlKey: true });
       pressWindowKey("keydown", "Tab", { ctrlKey: true });
     });
-    expect(host.querySelector("[aria-label='Open editors']")).toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
 
     act(() => {
       pressWindowKey("keyup", "Control");
       pressWindowKey("keydown", "Tab", { ctrlKey: true });
     });
-    expect(host.querySelector("[aria-label='Open editors']")).not.toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).not.toBeNull();
   });
 
   it("clears an open session when the MRU scope changes without a remount", async () => {
@@ -815,10 +818,10 @@ describe("EditorTabs", () => {
 
     await act(async () => root.render(<Harness projectId="/workspace-one" />));
     act(() => pressWindowKey("keydown", "Tab", { ctrlKey: true }));
-    expect(host.querySelector("[aria-label='Open editors']")).not.toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).not.toBeNull();
 
     await act(async () => root.render(<Harness projectId="/workspace-two" />));
-    expect(host.querySelector("[aria-label='Open editors']")).toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
   });
 
   it("keeps one MRU scope for trailing-separator workspace aliases", async () => {
@@ -845,7 +848,7 @@ describe("EditorTabs", () => {
     act(() => pressWindowKey("keydown", "Tab", { ctrlKey: true }));
     await act(async () => root.render(<Harness projectId="/workspace/" />));
 
-    expect(host.querySelector("[aria-label='Open editors']")).not.toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).not.toBeNull();
   });
 
   it("resets retained default-scope MRU state between harnesses", async () => {
@@ -891,7 +894,7 @@ describe("EditorTabs", () => {
       pressWindowKey("keydown", "Tab", { ctrlKey: true });
     });
 
-    expect(host.querySelector("[aria-label='Open editors']")).toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
     expect(activate).not.toHaveBeenCalled();
   });
 
@@ -902,7 +905,7 @@ describe("EditorTabs", () => {
     const input = document.createElement("input");
     host.querySelector(".editor-panel")?.append(input);
     act(() => dispatchKey(input, "keydown", "Tab", { ctrlKey: true }));
-    expect(host.querySelector("[aria-label='Open editors']")).not.toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).not.toBeNull();
     act(() => pressWindowKey("keydown", "Escape", { ctrlKey: true }));
     act(() => pressWindowKey("keyup", "Control"));
 
@@ -914,7 +917,7 @@ describe("EditorTabs", () => {
     host.append(modal);
     act(() => dispatchKey(modalInput, "keydown", "Tab", { ctrlKey: true }));
 
-    expect(host.querySelector("[aria-label='Open editors']")).toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
   });
 
   it.each([
@@ -933,7 +936,7 @@ describe("EditorTabs", () => {
     host.append(surface);
     act(() => dispatchKey(input, "keydown", "Tab", { ctrlKey: true }));
 
-    expect(host.querySelector("[aria-label='Open editors']")).toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
   });
 
   it("switches only within the active editor group", async () => {
@@ -1041,14 +1044,14 @@ describe("EditorTabs", () => {
       host.querySelector<HTMLTextAreaElement>("[aria-label='Left editor']")?.focus();
       pressWindowKey("keydown", "Tab", { ctrlKey: true });
     });
-    expect(host.querySelector("[aria-label='Open editors']")).not.toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).not.toBeNull();
 
     await act(async () => {
       activateGroup?.("right");
       await Promise.resolve();
     });
 
-    expect(host.querySelector("[aria-label='Open editors']")).toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
     expect(document.activeElement).toBe(
       host.querySelector<HTMLTextAreaElement>("[aria-label='Right editor']"),
     );
@@ -1223,15 +1226,16 @@ function dispatchKey(
 }
 
 function switcherNames(host: HTMLElement): string[] {
-  return [...host.querySelectorAll("[aria-label='Open editors'] strong")].map(
+  return [...host.ownerDocument.body.querySelectorAll("[aria-label='Open editors'] strong")].map(
     (node) => node.textContent ?? "",
   );
 }
 
 function selectedSwitcherName(host: HTMLElement): string | undefined {
   return (
-    host.querySelector("[aria-label='Open editors'] [aria-selected='true'] strong")?.textContent ??
-    undefined
+    host.ownerDocument.body.querySelector(
+      "[aria-label='Open editors'] [aria-selected='true'] strong",
+    )?.textContent ?? undefined
   );
 }
 

@@ -392,7 +392,7 @@ describe("EditorGroupView", () => {
       firstEditor?.focus();
       pressWindowKey("keydown", "Tab", { ctrlKey: true });
     });
-    expect(host.querySelector("[aria-label='Open editors']")).not.toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).not.toBeNull();
 
     act(() => pressWindowKey("keyup", "Control"));
     expect(firstActivations).toEqual(["/first-b.ts"]);
@@ -405,17 +405,17 @@ describe("EditorGroupView", () => {
       pressWindowKey("keydown", "Tab", { ctrlKey: true });
       pressWindowKey("keydown", "Escape", { ctrlKey: true });
     });
-    expect(host.querySelector("[aria-label='Open editors']")).toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
     expect(firstActivations).toEqual(["/first-b.ts"]);
     act(() => pressWindowKey("keyup", "Control"));
 
     act(() => pressWindowKey("keydown", "Tab", { ctrlKey: true }));
-    expect(host.querySelector("[aria-label='Open editors']")).not.toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).not.toBeNull();
     await act(async () => {
       replaceActiveGroup(false);
       await Promise.resolve();
     });
-    expect(host.querySelector("[aria-label='Open editors']")).toBeNull();
+    expect(document.body.querySelector("[aria-label='Open editors']")).toBeNull();
     expect(host.querySelectorAll("#files-header .editor-tabs")).toHaveLength(1);
     act(() => {
       pressWindowKey("keyup", "Control");

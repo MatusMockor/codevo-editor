@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import type { OpenEditorMruEntry } from "../application/useOpenEditorsMru";
 import { MruEntriesOverlay } from "./RecentFilesSwitcher";
 
@@ -20,7 +21,7 @@ export function OpenEditorsSwitcher({
     return null;
   }
 
-  return (
+  return createPortal(
     <MruEntriesOverlay
       activeIndex={activeIndex}
       ariaLabel="Open editors"
@@ -43,6 +44,7 @@ export function OpenEditorsSwitcher({
       }
       onBackdrop={onCancel}
       onEntry={(entry) => onSelect(entry.path)}
-    />
+    />,
+    document.body,
   );
 }

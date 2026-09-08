@@ -170,6 +170,7 @@ function EditorTabsComponent({
                 dropTarget?.path === document.path ? dropTarget.position : null,
               )}
               draggable
+              data-tauri-drag-region="false"
               key={document.path}
               onAuxClick={(event) => handleAuxClick(document.path, event)}
               onDragEnd={() => setDropTarget(null)}
