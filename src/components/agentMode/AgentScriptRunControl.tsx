@@ -112,6 +112,7 @@ export function AgentScriptRunControl({ onOpenScriptsView, scripts }: AgentScrip
         <div
           aria-label="Scripts"
           className="agent-menu agent-menu--scripts"
+          data-tauri-drag-region="false"
           id={menuId}
           onKeyDown={onMenuKeyDown}
           ref={popover.popoverRef}

@@ -48,15 +48,33 @@ describe("AgentThreadHeader", () => {
     expect(button("Commit")).toBeDefined();
   });
 
-  it("hands the thread header to the window as a drag region", () => {
-    render({ thread: threadView({}) });
+  it.each([null, threadView({})])(
+    "hands blank breadcrumb and action areas to the native window without taking over controls (%s)",
+    (thread) => {
+      render({ thread });
 
-    const header = host.querySelector(".agent-thread-head");
-    expect(header?.getAttribute("data-tauri-drag-region")).toBe("");
-    expect(
-      header?.querySelector(".agent-crumbs__project")?.hasAttribute("data-tauri-drag-region"),
-    ).toBe(false);
-  });
+      const header = host.querySelector("header");
+      expect(header?.getAttribute("data-tauri-drag-region")).toBe("deep");
+      for (const selector of [
+        '[aria-label="Thread breadcrumb"]',
+        ".agent-crumbs__sep",
+        ".agent-thread-head__actions",
+        ".agent-thread-head__tools",
+        ".agent-thread-head__divider",
+        "[data-panel-layout-controls]",
+      ]) {
+        const target = host.querySelector(selector);
+        expect(target, selector).not.toBeNull();
+        expect(target?.closest("[data-tauri-drag-region]")).toBe(header);
+      }
+      for (const control of host.querySelectorAll("button")) {
+        expect(control.hasAttribute("data-tauri-drag-region"), control.ariaLabel ?? undefined).toBe(
+          false,
+        );
+        expect(control.querySelector("[data-tauri-drag-region]")).toBeNull();
+      }
+    },
+  );
 
   it("leaves thread status to the rail row and the status bar", () => {
     render({ thread: threadView({}) });
@@ -66,6 +84,24 @@ describe("AgentThreadHeader", () => {
     expect(host.querySelector('[role="status"]')).toBeNull();
     expect(host.querySelector(".agent-dot")).toBeNull();
     expect(host.textContent).not.toContain("Idle");
+  });
+
+  it.each([
+    ["Open options", "menu"],
+    ["Choose a script", "menu"],
+    ["Ship options", "dialog"],
+  ])("keeps the %s popup and its content out of the native drag region", async (label, role) => {
+    render({});
+
+    act(() => button(label).click());
+    await act(async () => {});
+
+    const popup = host.querySelector(`[role="${role}"]`);
+    expect(popup).not.toBeNull();
+    expect(popup?.getAttribute("data-tauri-drag-region")).toBe("false");
+    for (const content of popup?.querySelectorAll("*") ?? []) {
+      expect(content.closest("[data-tauri-drag-region]")).toBe(popup);
+    }
   });
 
   it("badges a thread imported from a terminal session and leaves other threads unbadged", () => {
@@ -130,6 +166,7 @@ describe("AgentThreadHeader", () => {
     const input = host.querySelector<HTMLInputElement>('input[aria-label="Rename thread"]');
     expect(input).not.toBeNull();
     expect(input?.value).toBe("Refactor the parser");
+    expect(input?.hasAttribute("data-tauri-drag-region")).toBe(false);
 
     act(() => {
       setValue(input as HTMLInputElement, "Parser cleanup");

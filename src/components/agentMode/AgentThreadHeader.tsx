@@ -94,7 +94,7 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
   };
 
   return (
-    <header className="agent-thread-head" data-agent-thread-head data-tauri-drag-region="">
+    <header className="agent-thread-head" data-agent-thread-head data-tauri-drag-region="deep">
       <nav aria-label="Thread breadcrumb" className="agent-crumbs" onContextMenu={onContextMenu}>
         <button
           aria-label={projectLabel === null ? "New thread" : `New thread in ${projectLabel}`}

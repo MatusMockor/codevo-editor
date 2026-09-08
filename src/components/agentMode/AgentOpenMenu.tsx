@@ -94,6 +94,7 @@ export function AgentOpenMenu({
         <div
           aria-label="Open options"
           className="agent-menu"
+          data-tauri-drag-region="false"
           id={menuId}
           onKeyDown={onMenuKeyDown}
           ref={popover.popoverRef}

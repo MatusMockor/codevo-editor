@@ -123,6 +123,7 @@ export function AgentCommitMenu({ actions, openSignal = 0, thread }: AgentCommit
         <div
           aria-label={`Ship ${thread.thread.title}`}
           className="agent-popover agent-popover--ship"
+          data-tauri-drag-region="false"
           id={popoverId}
           onKeyDown={trapPopoverTab}
           ref={popoverRef}

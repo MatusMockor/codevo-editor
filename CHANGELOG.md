@@ -7,6 +7,18 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.22] - 2026-09-08
+
+### Added
+
+- Select and import multiple terminal sessions as separate threads, with filtering,
+  selection counts, duplicate protection, and partial-import retry support.
+
+### Fixed
+
+- Move the application window by dragging the free space across the agent thread
+  header while keeping its buttons and menus interactive.
+
 ## [0.2.0-beta.21] - 2026-09-08
 
 ### Added
