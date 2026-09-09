@@ -7,13 +7,19 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.28] - 2026-09-09
+
 ### Fixed
 
-- Refresh enabled CLI providers through one shared discovery request, avoiding competing refresh
-  generations and repeated clicks starting duplicate checks.
-- Remove redundant full executable scans during provider validation while retaining content,
-  path and launch checks. The measured validation stage now reads each executable twice instead
-  of six times.
+- Reduce CPU usage when checking CLI updates. The sidebar button and periodic checks now compare
+  the known installed version with small online metadata, without launching CLI processes,
+  scanning executables or checking sign-in status.
+- Keep full CLI diagnostics available in Settings and validate the selected update before
+  installation. Discard outdated update checks when diagnostics, settings or installation change.
+- Share discovery during full provider refreshes, coalesce repeated checks and remove redundant
+  executable scans while preserving content, path and launch validation.
+- Avoid unnecessary package-manager probes and repeated installed-version commands during
+  diagnostics, and spread the remaining maintenance hashing into short cancellable intervals.
 
 ## [0.2.0-beta.27] - 2026-09-09
 
