@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.25] - 2026-09-09
+
+### Fixed
+
+- On macOS, install verified application updates during preparation and defer only
+  the restart, so choosing Later and reopening the app uses the new version.
+- Restore the pending-restart state when checking again after postponement, without
+  downloading or installing the same update twice.
+
 ## [0.2.0-beta.24] - 2026-09-09
 
 ### Changed
