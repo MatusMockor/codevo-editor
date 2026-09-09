@@ -7,6 +7,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.26] - 2026-09-09
+
 ### Added
 
 - Browse and filter composer commands with `/`, with keyboard navigation and direct access to
