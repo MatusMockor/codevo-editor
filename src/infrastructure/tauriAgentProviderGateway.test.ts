@@ -6,6 +6,7 @@ import type {
 } from "../domain/agentProviderHealth";
 import {
   AGENT_PROVIDER_UPDATE_PROGRESS_EVENT,
+  CHECK_AGENT_PROVIDER_UPDATES_IPC_COMMAND,
   GET_AGENT_PROVIDER_POLICY_IPC_COMMAND,
   PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND,
   READ_AGENT_PROVIDER_USAGE_IPC_COMMAND,
@@ -44,9 +45,42 @@ describe("TauriAgentProviderGateway", () => {
     expect(REGISTER_AGENT_PROVIDER_POLICY_IPC_COMMAND).toBe("register_agent_provider_policy");
     expect(GET_AGENT_PROVIDER_POLICY_IPC_COMMAND).toBe("get_agent_provider_policy");
     expect(PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND).toBe("probe_agent_provider_health");
+    expect(CHECK_AGENT_PROVIDER_UPDATES_IPC_COMMAND).toBe("check_agent_provider_updates");
     expect(READ_AGENT_PROVIDER_USAGE_IPC_COMMAND).toBe("read_agent_provider_usage");
     expect(UPDATE_AGENT_PROVIDER_IPC_COMMAND).toBe("update_agent_provider");
     expect(AGENT_PROVIDER_UPDATE_PROGRESS_EVENT).toBe("agent-provider-update://progress");
+  });
+
+  it("checks update metadata through a separate command without requesting diagnostics", async () => {
+    const result = {
+      update: { kind: "current", installedVersion: "1.2.3" },
+      checkedAtEpochMs: 123,
+    };
+    const invokeCommand = vi.fn<InvokeAgentProviderCommand>().mockResolvedValue(result);
+    const gateway = new TauriAgentProviderGateway(invokeCommand, available);
+    await expect(gateway.checkAgentProviderUpdates(GENERATION)).resolves.toEqual(result);
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith(
+      CHECK_AGENT_PROVIDER_UPDATES_IPC_COMMAND,
+      {
+        request: GENERATION,
+      },
+    );
+  });
+
+  it("rejects update checks outside native runtime and malformed requests before invoking", async () => {
+    const invokeCommand = vi.fn<InvokeAgentProviderCommand>();
+    await expect(
+      new TauriAgentProviderGateway(invokeCommand, unavailable).checkAgentProviderUpdates(
+        GENERATION,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      new TauriAgentProviderGateway(invokeCommand, available).checkAgentProviderUpdates({
+        ...GENERATION,
+        providerGeneration: 0,
+      }),
+    ).rejects.toThrow();
+    expect(invokeCommand).not.toHaveBeenCalled();
   });
 
   it("reads bounded account usage for the exact provider generation", async () => {

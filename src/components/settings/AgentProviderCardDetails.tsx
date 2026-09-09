@@ -94,8 +94,8 @@ export function AgentProviderCardDetails({
 
       <p className="settings-provider__status">
         {intervalSeconds === 0
-          ? `${label} is checked only when you refresh manually.`
-          : `${label} health check interval: ${intervalSeconds} seconds.`}
+          ? `${label} updates are checked only when you request them.`
+          : `${label} update check interval: ${intervalSeconds} seconds.`}
       </p>
     </div>
   );

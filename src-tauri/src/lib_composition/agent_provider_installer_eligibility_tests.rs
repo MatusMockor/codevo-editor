@@ -35,7 +35,7 @@ fn manual_release_checks_need_no_package_manager_and_fetch_each_time() {
             .acquire_health_for_generation(provider, receipt.provider_generation)
             .expect("health lease");
         for available_version in ["1.2.2", "1.2.3"] {
-            let (availability, candidate) = probe_update(
+            let (availability, candidate, _) = probe_update(
                 &registry,
                 &lease,
                 &lease.cli_identity,
@@ -207,6 +207,18 @@ fn known_installed_version_skips_version_process_but_refreshes_authentication() 
     assert_eq!(result.installed_version.as_deref(), Some("1.2.1"));
     assert!(!version_marker.exists());
     assert!(auth_marker.exists());
+    let cached = registry
+        .acquire_update_check(AgentCliInvocation::CodexExec, receipt.provider_generation)
+        .expect("metadata lease");
+    assert_eq!(cached.installed_version.as_deref(), Some("1.2.1"));
+    let diagnostic = registry
+        .acquire_health_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation)
+        .expect("diagnostics supersede metadata");
+    assert!(registry.revalidate_update_check(&cached).is_err());
+    drop(cached);
+    registry
+        .revalidate_health(&diagnostic)
+        .expect("metadata drop preserves health permit");
 }
 
 #[test]

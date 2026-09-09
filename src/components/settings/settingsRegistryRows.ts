@@ -176,9 +176,9 @@ export const SETTINGS_ROW_TABLE = [
   row(
     "agents.healthCheckInterval",
     "agents",
-    "Health check interval",
-    "Refresh provider availability, versions, and auth state in the background. Applies to both providers; 0 seconds means manual refreshes only.",
-    ["agent", "provider", "health", "interval", "refresh"],
+    "Update check interval",
+    "Compare known CLI versions with the latest available releases in the background, without checking sign-in status. Applies to both providers; 0 seconds means manual update checks only.",
+    ["agent", "provider", "update", "interval", "refresh"],
   ),
   row(
     "agents.checkCliUpdates",

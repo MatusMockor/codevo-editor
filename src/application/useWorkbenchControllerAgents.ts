@@ -167,6 +167,7 @@ const unavailableAgentProviderGateway: AgentProviderPolicyGateway &
   AgentProviderUpdateGateway = {
   currentAgentProviderPolicy: () => Promise.reject(new Error("Provider gateway is unavailable.")),
   registerAgentProviderPolicy: () => Promise.reject(new Error("Provider gateway is unavailable.")),
+  checkAgentProviderUpdates: () => Promise.reject(new Error("Provider gateway is unavailable.")),
   probeAgentProviderHealth: () => Promise.reject(new Error("Provider gateway is unavailable.")),
   updateAgentProvider: () => Promise.reject(new Error("Provider gateway is unavailable.")),
 };

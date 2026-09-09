@@ -65,6 +65,7 @@ import {
 } from "./agentProviderUpdateRun";
 import { useAgentCliDiscovery, type AgentCliDiscoveryPublication } from "./useAgentCliDiscovery";
 
+import { createAgentProviderUpdateChecks } from "./agentProviderUpdateChecks";
 import { refreshAgentProviderBatch } from "./agentProviderRefresh";
 
 const PROVIDERS: readonly AgentCliKind[] = ["claudeCode", "codex"];
@@ -413,6 +414,66 @@ export function useAgentProviderManagement(
     [currentOwner, ownerIsCurrent, publish],
   );
 
+  const updateChecks = useMemo(
+    () =>
+      createAgentProviderUpdateChecks({
+        capture: (provider) => {
+          const owner = currentOwner(provider);
+          const current = runtimeRef.current[provider];
+          if (
+            owner === null ||
+            current.health.kind !== "ready" ||
+            current.health.installedVersion === null
+          )
+            return null;
+          if (!authorityRef.current[provider]?.preference.checkForUpdates) return null;
+          if (current.updateState.kind === "starting" || current.updateState.kind === "running")
+            return null;
+          const generation = current.healthGeneration;
+          return {
+            request: { provider, providerGeneration: owner.providerGeneration },
+            installedVersion: current.health.installedVersion,
+            gateway: owner.healthGateway,
+            current: () =>
+              ownerIsCurrent(owner) && runtimeRef.current[provider].healthGeneration === generation,
+            publish: (update) => {
+              publish(provider, (latest) => {
+                if (latest.health.kind !== "ready") return latest;
+                const health = agentProviderHealthWithPersistedUpdateAuthority(
+                  { ...latest.health, update },
+                  authorityRef.current[provider]?.preference,
+                );
+                return { ...latest, health: { kind: "ready", ...health } };
+              });
+              const checked = runtimeRef.current[provider].health;
+              if (checked.kind !== "ready") return;
+              if (
+                checked.update.kind !== "available" &&
+                checked.update.kind !== "manualUpdateAvailable"
+              )
+                return;
+              if (
+                authorityRef.current[provider]?.preference.dismissedUpdateVersion ===
+                checked.update.availableVersion
+              )
+                return;
+              setToast({
+                kind: "updateAvailable",
+                provider,
+                version: checked.update.availableVersion,
+                ...(checked.update.kind === "manualUpdateAvailable"
+                  ? { manual: true as const }
+                  : {}),
+              });
+            },
+            reportError: (error) =>
+              dependenciesRef.current.reportError("Agent provider update check", error),
+          };
+        },
+      }),
+    [currentOwner, ownerIsCurrent, publish],
+  );
+
   const scheduleHealth = useCallback(
     (provider: AgentCliKind): void => {
       clearTimer(provider);
@@ -422,13 +483,13 @@ export function useAgentProviderManagement(
       if (interval === 0) return;
       timerRef.current[provider] = setTimeout(() => {
         if (!ownerIsCurrent(owner)) return;
-        void refreshHealth(provider).finally(() => {
+        void updateChecks.check(provider).finally(() => {
           if (!ownerIsCurrent(owner)) return;
           scheduleHealth(provider);
         });
       }, interval * 1_000);
     },
-    [clearTimer, currentOwner, ownerIsCurrent, refreshHealth],
+    [clearTimer, currentOwner, ownerIsCurrent, updateChecks],
   );
 
   const applyDiscoveryGeneration = useCallback(
@@ -856,6 +917,24 @@ export function useAgentProviderManagement(
         const outcome = await registerBeforeUpdate(provider);
         if (outcome !== "registered") return outcome;
       }
+      if (updateChecks.needsDiagnostics(provider)) {
+        const refusal = updateRefusal(
+          provider,
+          dependenciesRef.current.appSettingsRef.current,
+          runtimeRef.current[provider],
+          currentOwner(provider) !== null,
+          dependenciesRef.current.liveTurnCount(provider),
+          dependenciesRef.current.signInActive(provider),
+        );
+        if (refusal !== null) return refusal;
+        const checkOwner = currentOwner(provider);
+        if (checkOwner === null) return "policyUnavailable";
+        const confirmed = await refreshHealth(provider);
+        if (!ownerIsCurrent(checkOwner)) return "statusUnknown";
+        if (confirmed === null || !stillOffers(confirmed, offeredVersion))
+          return "noUpdateAvailable";
+        updateChecks.confirmDiagnostics(provider);
+      }
       const offeredHealth = runtimeRef.current[provider].health;
       if (offeredHealth.kind !== "ready") return "noUpdateAvailable";
       if (offeredHealth.update.kind !== "available") return "noUpdateAvailable";
@@ -1141,6 +1220,7 @@ export function useAgentProviderManagement(
       readCliDiscovery,
       refreshHealth,
       registerBeforeUpdate,
+      updateChecks,
       saveWithOutcome,
       scheduleHealth,
     ],
@@ -1405,39 +1485,10 @@ export function useAgentProviderManagement(
     },
     [refreshProviders],
   );
-  const batchRef = useRef<{
-    readonly current: () => boolean;
-    readonly promise: Promise<void>;
-  } | null>(null);
-  const refreshAll = useCallback((): Promise<void> => {
-    const existing = batchRef.current;
-    if (existing !== null && existing.current()) return existing.promise;
-    if (!mountedRef.current || !dependenciesRef.current.settingsHydrated) return Promise.resolve();
-    const requested = PROVIDERS.filter(
-      (provider) => persistedSliceRef.current.fields[provider].preference.enabled,
-    );
-    if (requested.length === 0) return Promise.resolve();
-    const lifecycle = hydrationGenerationRef.current;
-    const workspace = dependenciesRef.current.workspaceGeneration;
-    const gateway = dependenciesRef.current.discoveryGateway;
-    const revision = settingsRevisionRef.current;
-    const pending = refreshProviders(requested);
-    const generation = cliDiscovery.currentGeneration();
-    const current = () =>
-      mountedRef.current &&
-      hydrationGenerationRef.current === lifecycle &&
-      dependenciesRef.current.workspaceGeneration === workspace &&
-      dependenciesRef.current.discoveryGateway === gateway &&
-      settingsRevisionRef.current === revision &&
-      cliDiscovery.currentGeneration() === generation;
-    const promise = pending
-      .then(() => undefined)
-      .finally(() => {
-        if (batchRef.current?.promise === promise) batchRef.current = null;
-      });
-    batchRef.current = { current, promise };
-    return promise;
-  }, [cliDiscovery, refreshProviders]);
+  const refreshAll = useCallback(
+    (): Promise<void> => updateChecks.checkAll(PROVIDERS),
+    [updateChecks],
+  );
   const refresh = useCallback(
     async (provider: AgentCliKind): Promise<void> => {
       await refreshProvider(provider);

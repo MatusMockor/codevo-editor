@@ -369,6 +369,10 @@ function renderAgents(overrides: HarnessOverrides = {}) {
         providerGeneration: 1,
       }),
     ),
+    checkAgentProviderUpdates: async () => ({
+      update: { kind: "checksDisabled" as const },
+      checkedAtEpochMs: 0,
+    }),
     probeAgentProviderHealth: vi.fn(async () => ({
       installedVersion: "1.0.0",
       auth: { kind: "unknown" as const },

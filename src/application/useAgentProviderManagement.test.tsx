@@ -67,57 +67,94 @@ afterEach(() => {
 });
 
 describe("useAgentProviderManagement", () => {
-  it.each([false, true])(
-    "batches enabled providers behind one discovery automatic=%s",
-    async (automatic) => {
-      const settings = configuredSettings();
-      if (automatic) settings.agentCliPaths = { claudeCode: null, codex: null };
-      const discovered: AgentCliDiscoveryResult = {
-        claudeCode: { kind: "detected", path: PATH_A, version: "1.0.0" },
-        codex: { kind: "detected", path: "/usr/local/bin/codex", version: "1.0.0" },
-      };
-      const discoverAgentClis = vi.fn(async () => discovered);
-      const harness = renderManagement(
-        settings,
-        () => 0,
-        true,
-        () => ({ kind: "unregistered" }),
-        {
-          discoveryGateway: { discoverAgentClis },
-        },
-      );
+  it("checks updates without rediscovery or health probes and coalesces clicks", async () => {
+    const harness = renderManagement();
+    await act(async () => undefined);
+    await act(async () => {
+      for (const call of harness.healthCalls) call.resolve(currentHealth("1.0.0"));
+    });
+    const pending = deferred<{
+      update: AgentProviderHealthProbeResult["update"];
+      checkedAtEpochMs: number;
+    }>();
+    const check = vi.mocked(harness.dependencies.healthGateway.checkAgentProviderUpdates);
+    check.mockImplementation(() => pending.promise);
+    const initial = harness.healthCalls.length;
+    let first!: Promise<void>;
+    act(() => {
+      first = harness.hook().refreshAll();
+      expect(harness.hook().refreshAll()).toBe(first);
+    });
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(harness.dependencies.discoveryGateway.discoverAgentClis).not.toHaveBeenCalled();
+    expect(harness.healthCalls).toHaveLength(initial);
+    await act(async () => {
+      pending.resolve({ update: availableHealth("1.0.0", "2.0.0").update, checkedAtEpochMs: 999 });
+      await first;
+    });
+    expect(harness.hook().providers.claudeCode.health).toEqual({
+      kind: "ready",
+      ...currentHealth("1.0.0"),
+      update: availableHealth("1.0.0", "2.0.0").update,
+    });
+    harness.unmount();
+  });
+
+  it("keeps healthy status on metadata failure and permits retry", async () => {
+    const harness = renderManagement();
+    await act(async () => undefined);
+    await act(async () => {
+      for (const call of harness.healthCalls) call.resolve(currentHealth("1.0.0"));
+    });
+    const check = vi.mocked(harness.dependencies.healthGateway.checkAgentProviderUpdates);
+    check.mockRejectedValueOnce(new Error("Offline"));
+    await act(async () => harness.hook().refreshAll());
+    expect(harness.hook().providers.claudeCode.health).toMatchObject({
+      kind: "ready",
+      auth: currentHealth("1.0.0").auth,
+      update: { kind: "unavailable", reason: "probeFailed" },
+    });
+    await act(async () => harness.hook().refreshAll());
+    expect(check).toHaveBeenCalledTimes(4);
+    expect(harness.healthCalls).toHaveLength(2);
+    harness.unmount();
+  });
+
+  it.each(["confirmed", "versionChanged", "turnStarted"] as const)(
+    "rechecks update authority after an informational offer: %s",
+    async (outcome) => {
+      let turns = 0;
+      const harness = renderManagement(configuredSettings(), () => turns);
       await act(async () => undefined);
       await act(async () => {
         for (const call of harness.healthCalls) call.resolve(currentHealth("1.0.0"));
       });
-      const initialHealth = harness.healthCalls.length;
-      const pending = deferred<AgentCliDiscoveryResult>();
-      discoverAgentClis.mockClear();
-      discoverAgentClis.mockImplementation(() => pending.promise);
-      let first!: Promise<void>;
-      let second!: Promise<void>;
+      vi.mocked(harness.dependencies.healthGateway.checkAgentProviderUpdates).mockResolvedValue({
+        update: availableHealth("1.0.0", "2.0.0").update,
+        checkedAtEpochMs: 99,
+      });
+      await act(async () => harness.hook().refreshAll());
+      let pending!: Promise<unknown>;
       act(() => {
-        first = harness.hook().refreshAll();
-        second = harness.hook().refreshAll();
+        pending = harness.hook().update("claudeCode", "2.0.0");
       });
-      expect(first).toBe(second);
-      expect(discoverAgentClis).toHaveBeenCalledOnce();
-      await act(async () => pending.resolve(discovered));
-      expect(
-        harness.healthRequests.slice(initialHealth).map((request) => request.provider),
-      ).toEqual(["claudeCode", "codex"]);
+      expect(harness.healthCalls).toHaveLength(3);
+      expect(harness.dependencies.updateGateway.updateAgentProvider).not.toHaveBeenCalled();
+      if (outcome === "turnStarted") turns = 1;
       await act(async () => {
-        for (const call of harness.healthCalls.slice(initialHealth))
-          call.resolve(currentHealth("1.0.0"));
-        await first;
+        harness.healthCalls[2]!.resolve(
+          outcome === "versionChanged" ? currentHealth("2.0.0") : availableHealth("1.0.0", "2.0.0"),
+        );
+        await pending;
       });
-      expect(harness.hook().providers.claudeCode.health.kind).toBe("ready");
-      expect(harness.hook().providers.codex.health.kind).toBe("ready");
+      expect(harness.dependencies.updateGateway.updateAgentProvider).toHaveBeenCalledTimes(
+        outcome === "confirmed" ? 1 : 0,
+      );
       harness.unmount();
     },
   );
 
-  it("does not batch health checks for disabled providers", async () => {
+  it("does not diagnose or check disabled providers on a footer refresh", async () => {
     const settings = configuredSettings();
     settings.agentProviderPreferences = {
       ...settings.agentProviderPreferences,
@@ -125,63 +162,69 @@ describe("useAgentProviderManagement", () => {
     };
     const harness = renderManagement(settings);
     await act(async () => undefined);
+    await act(async () => harness.hook().refreshAll());
+    expect(harness.dependencies.healthGateway.checkAgentProviderUpdates).not.toHaveBeenCalled();
     await settleHealth(harness, 0, currentHealth("1.0.0"));
-    let pending!: Promise<void>;
-    act(() => {
-      pending = harness.hook().refreshAll();
-    });
-    await act(async () => undefined);
-    expect(harness.healthRequests.map((request) => request.provider)).toEqual([
-      "claudeCode",
-      "claudeCode",
-    ]);
-    await settleHealth(harness, 1, currentHealth("1.0.0"));
-    await pending;
+    await act(async () => harness.hook().refreshAll());
+    expect(
+      harness.dependencies.healthGateway.checkAgentProviderUpdates,
+    ).toHaveBeenCalledExactlyOnceWith({ provider: "claudeCode", providerGeneration: 1 });
+    expect(harness.healthCalls).toHaveLength(1);
     harness.unmount();
-    settings.agentProviderPreferences = {
-      ...settings.agentProviderPreferences,
-      claudeCode: { ...settings.agentProviderPreferences.claudeCode, enabled: false },
-    };
-    const disabled = renderManagement(settings);
-    await act(async () => {
-      await disabled.hook().refreshAll();
-    });
-    expect(disabled.dependencies.discoveryGateway.discoverAgentClis).not.toHaveBeenCalled();
-    expect(disabled.healthCalls).toHaveLength(0);
-    disabled.unmount();
   });
 
-  it.each(["unmount", "failure"] as const)("retires pending batch work on %s", async (outcome) => {
-    const pending = deferred<AgentCliDiscoveryResult>();
-    const harness = renderManagement(
-      configuredSettings(),
-      () => 0,
-      true,
-      () => ({ kind: "unregistered" }),
-      {
-        discoveryGateway: { discoverAgentClis: vi.fn(() => pending.promise) },
-      },
-    );
-    await act(async () => undefined);
-    await act(async () => {
-      for (const call of harness.healthCalls) call.resolve(currentHealth("1.0.0"));
-    });
-    const initialHealth = harness.healthCalls.length;
-    let batch!: Promise<void>;
-    act(() => {
-      batch = harness.hook().refreshAll();
-    });
-    if (outcome === "unmount") harness.unmount();
-    await act(async () => {
-      if (outcome === "failure") pending.reject(new Error("Discovery failed"));
-      if (outcome === "unmount")
-        pending.resolve({ claudeCode: { kind: "notFound" }, codex: { kind: "notFound" } });
-      await batch;
-    });
-    expect(harness.healthCalls).toHaveLength(initialHealth);
-    expect(harness.errors).toHaveLength(outcome === "failure" ? 1 : 0);
-    if (outcome !== "unmount") harness.unmount();
-  });
+  it.each(["diagnostic", "configuration", "unmount"] as const)(
+    "drops pending metadata after %s changes its owner",
+    async (replacement) => {
+      const harness = renderManagement();
+      await act(async () => undefined);
+      await act(async () => {
+        for (const call of harness.healthCalls) call.resolve(currentHealth("1.0.0"));
+      });
+      const metadata = deferred<{
+        update: AgentProviderHealthProbeResult["update"];
+        checkedAtEpochMs: number;
+      }>();
+      vi.mocked(harness.dependencies.healthGateway.checkAgentProviderUpdates).mockReturnValue(
+        metadata.promise,
+      );
+      let pending!: Promise<void>;
+      act(() => {
+        pending = harness.hook().refreshAll();
+      });
+      let diagnostic: Promise<void> | null = null;
+      if (replacement === "diagnostic") {
+        act(() => {
+          diagnostic = harness.hook().refresh("claudeCode");
+        });
+        await act(async () => undefined);
+        await settleHealth(harness, 2, currentHealth("3.0.0"));
+        await act(async () => diagnostic);
+      }
+      if (replacement === "configuration") {
+        await act(async () => {
+          await harness.hook().save({ provider: "claudeCode", cliPath: PATH_B });
+        });
+        await settleHealth(harness, 2, currentHealth("3.0.0"));
+      }
+      if (replacement === "unmount") harness.unmount();
+      await act(async () => {
+        metadata.resolve({
+          update: availableHealth("1.0.0", "9.0.0").update,
+          checkedAtEpochMs: 99,
+        });
+        await pending;
+      });
+      if (replacement !== "unmount") {
+        expect(harness.hook().providers.claudeCode.health).toMatchObject({
+          kind: "ready",
+          installedVersion: "3.0.0",
+          update: { kind: "current" },
+        });
+        harness.unmount();
+      }
+    },
+  );
 
   it("keeps a null persisted override while admitting the exact detected executable", async () => {
     const discovery = deferred<AgentCliDiscoveryResult>();
@@ -346,8 +389,8 @@ describe("useAgentProviderManagement", () => {
       await settleHealth(harness, index, currentHealth(index === 0 ? "2.0.0" : "1.2.3"));
     }
     await act(async () => vi.advanceTimersByTime(1_000));
-    expect(harness.healthCalls).toHaveLength(initialHealthCount + 1);
-    await settleHealth(harness, initialHealthCount, currentHealth("1.2.3"));
+    expect(harness.healthCalls).toHaveLength(initialHealthCount);
+    expect(harness.dependencies.healthGateway.checkAgentProviderUpdates).toHaveBeenCalledOnce();
 
     let refresh!: Promise<void>;
     act(() => {
@@ -359,11 +402,11 @@ describe("useAgentProviderManagement", () => {
         codex: { kind: "notFound" },
       }),
     );
-    await waitForReact(() => expect(harness.healthCalls).toHaveLength(initialHealthCount + 2));
-    await settleHealth(harness, initialHealthCount + 1, currentHealth("1.2.3"));
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(initialHealthCount + 1));
+    await settleHealth(harness, initialHealthCount, currentHealth("1.2.3"));
     await act(async () => refresh);
     await act(async () => vi.advanceTimersByTime(1_000));
-    expect(harness.healthCalls).toHaveLength(initialHealthCount + 3);
+    expect(harness.healthCalls).toHaveLength(initialHealthCount + 1);
     harness.unmount();
   });
 
@@ -754,7 +797,7 @@ describe("useAgentProviderManagement", () => {
     harness.unmount();
   });
 
-  it("settles a periodic health probe while another provider is reconfigured", async () => {
+  it("settles a periodic update check while another provider is reconfigured", async () => {
     vi.useFakeTimers();
     const settings = configuredSettings();
     settings.agentProviderPreferences = {
@@ -774,7 +817,7 @@ describe("useAgentProviderManagement", () => {
     await settleHealth(harness, 0, currentHealth("1.0.0"));
     await settleHealth(harness, 1, currentHealth("2.0.0"));
     await act(async () => vi.advanceTimersByTime(1_000));
-    expect(harness.healthCalls).toHaveLength(3);
+    expect(harness.dependencies.healthGateway.checkAgentProviderUpdates).toHaveBeenCalledOnce();
 
     let saved!: Promise<boolean>;
     act(() => {
@@ -789,13 +832,12 @@ describe("useAgentProviderManagement", () => {
     await act(async () => {
       await expect(saved).resolves.toBe(true);
     });
-    await waitForReact(() => expect(harness.healthCalls).toHaveLength(4));
-    await settleHealth(harness, 2, currentHealth("1.0.1"));
+    await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
     expect(harness.hook().providers.claudeCode.health).toMatchObject({
       kind: "ready",
-      installedVersion: "1.0.1",
+      installedVersion: "1.0.0",
     });
-    await settleHealth(harness, 3, currentHealth("2.0.0"));
+    await settleHealth(harness, 2, currentHealth("2.0.0"));
     harness.unmount();
   });
 
@@ -1182,6 +1224,10 @@ describe("useAgentProviderManagement", () => {
         registerAgentProviderPolicy,
       },
       healthGateway: {
+        checkAgentProviderUpdates: vi.fn(async () => ({
+          update: { kind: "current" as const, installedVersion: "1.0.0" },
+          checkedAtEpochMs: 99,
+        })),
         probeAgentProviderHealth: vi.fn(
           () => new Promise<AgentProviderHealthProbeResult>(() => undefined),
         ),
@@ -1246,10 +1292,10 @@ describe("useAgentProviderManagement", () => {
     await waitForReact(() => expect(harness.healthCalls).toHaveLength(3));
     await settleHealth(harness, 2, currentHealth("1.0.0"));
     await act(async () => vi.advanceTimersByTime(1_000));
-    expect(harness.healthCalls).toHaveLength(4);
+    expect(harness.healthCalls).toHaveLength(3);
     harness.unmount();
     await act(async () => vi.runOnlyPendingTimers());
-    expect(harness.healthCalls).toHaveLength(4);
+    expect(harness.healthCalls).toHaveLength(3);
   });
 
   it("retires probes and timers across workspace A to B to A generations", async () => {
@@ -1294,7 +1340,7 @@ describe("useAgentProviderManagement", () => {
       installedVersion: "2.0.0",
     });
     await act(async () => vi.advanceTimersByTime(1_000));
-    expect(harness.healthCalls).toHaveLength(7);
+    expect(harness.healthCalls).toHaveLength(6);
     harness.unmount();
   });
 
@@ -2568,6 +2614,10 @@ function renderManagement(
       ),
     },
     healthGateway: {
+      checkAgentProviderUpdates: vi.fn(async () => ({
+        update: { kind: "current" as const, installedVersion: "1.0.0" },
+        checkedAtEpochMs: 99,
+      })),
       probeAgentProviderHealth: vi.fn((request) => {
         healthRequests.push(request);
         const call = deferred<AgentProviderHealthProbeResult>();

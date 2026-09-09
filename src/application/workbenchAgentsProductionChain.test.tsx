@@ -475,6 +475,10 @@ function fakeAgentProviderGateway(): NonNullable<
       settingsRevision: request.settingsRevision,
       providerGeneration: 1,
     }),
+    checkAgentProviderUpdates: async () => ({
+      update: { kind: "checksDisabled" as const },
+      checkedAtEpochMs: 0,
+    }),
     probeAgentProviderHealth: async () => ({
       installedVersion: "1.0.0",
       auth: { kind: "unknown" },

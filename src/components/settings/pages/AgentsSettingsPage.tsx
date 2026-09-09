@@ -92,14 +92,14 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
             </span>
             <SettingsButton
               busy={checking}
-              label="Refresh provider status"
+              label="Run CLI diagnostics"
               onClick={() => {
                 for (const provider of AGENT_PROVIDERS) {
                   void management.refresh(provider);
                 }
               }}
               size="micro"
-              title="Refresh provider status"
+              title="Run CLI diagnostics"
               variant="ghostMuted"
             >
               <RefreshCw aria-hidden="true" size={13} />

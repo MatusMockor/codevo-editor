@@ -118,11 +118,11 @@ export function AgentProviderRailFooter({
         </button>
         <button
           aria-busy={refreshing}
-          aria-label="Refresh provider status"
+          aria-label="Check CLI updates"
           className="agent-iconbutton agent-provider-footer__refresh"
           disabled={refreshing || enabled.length === 0}
           onClick={refreshAll}
-          title={refreshing ? "Refreshing provider status…" : "Refresh provider status"}
+          title={refreshing ? "Checking CLI updates…" : "Check CLI updates"}
           type="button"
         >
           <RefreshCw

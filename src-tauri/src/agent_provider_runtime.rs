@@ -6,9 +6,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "agent_provider_runtime/lifecycle.rs"]
+mod lifecycle;
+
 #[path = "agent_provider_runtime/installer.rs"]
 pub(crate) mod installer;
 pub use installer::{AgentProviderUpdateCandidate, ResolvedAgentProviderInstaller};
+
+#[path = "agent_provider_runtime/update_check.rs"]
+pub(crate) mod update_check;
 
 #[path = "agent_provider_runtime/resolution.rs"]
 mod resolution;
@@ -68,9 +74,12 @@ struct ProviderConfiguration {
     generation: u64,
     turn_count: usize,
     health_count: usize,
+    update_check_count: usize,
     updating: bool,
     signing_in: bool,
     candidate: Option<AgentProviderUpdateCandidate>,
+    update_observation: Option<update_check::ProviderUpdateObservation>,
+    update_observation_revision: u64,
     claude_auth_capability: Option<ClaudeAuthCapabilityCache>,
 }
 
@@ -82,9 +91,12 @@ impl ProviderConfiguration {
             generation,
             turn_count: 0,
             health_count: 0,
+            update_check_count: 0,
             updating: false,
             signing_in: false,
             candidate: None,
+            update_observation: None,
+            update_observation_revision: 0,
             claude_auth_capability: None,
         }
     }
@@ -96,6 +108,7 @@ struct ProviderRuntimeState {
     starts_closed: bool,
     update_active: bool,
     health_count: usize,
+    update_check_count: usize,
     claude_code: Option<ProviderConfiguration>,
     codex: Option<ProviderConfiguration>,
 }
@@ -298,6 +311,8 @@ impl AgentProviderRuntimeRegistry {
         if configuration.updating || configuration.health_count > 0 {
             return Err(AGENT_PROVIDER_UPDATING_ERROR.to_string());
         }
+        configuration.update_observation_revision =
+            configuration.update_observation_revision.wrapping_add(1);
         configuration.health_count += 1;
         let policy = configuration.policy.clone();
         state.health_count += 1;
@@ -449,6 +464,9 @@ impl AgentProviderRuntimeRegistry {
             .candidate
             .clone()
             .ok_or_else(|| AGENT_PROVIDER_STALE_ERROR.to_string())?;
+        configuration.update_observation = None;
+        configuration.update_observation_revision =
+            configuration.update_observation_revision.wrapping_add(1);
         configuration.updating = true;
         state.update_active = true;
         Ok(ProviderUpdateLease {
@@ -790,50 +808,6 @@ impl AgentProviderRuntimeRegistry {
             return Err(AGENT_PROVIDER_STALE_ERROR.to_string());
         }
         Ok(configuration.policy.clone())
-    }
-
-    pub fn close_operation_admission(&self) {
-        let mut state = self.state();
-        state.starts_closed = true;
-        state.next_generation = state.next_generation.wrapping_add(1).max(1);
-        let claude_generation = state.next_generation;
-        if let Some(configuration) = state.claude_code.as_mut() {
-            configuration.generation = claude_generation;
-            configuration.candidate = None;
-        }
-        state.next_generation = state.next_generation.wrapping_add(1).max(1);
-        let codex_generation = state.next_generation;
-        if let Some(configuration) = state.codex.as_mut() {
-            configuration.generation = codex_generation;
-            configuration.candidate = None;
-        }
-    }
-
-    pub fn operations_closed(&self) -> bool {
-        self.state().starts_closed
-    }
-
-    pub fn shutdown_operations(&self, timeout: Duration) -> bool {
-        self.close_operation_admission();
-        let deadline = Instant::now() + timeout;
-        let mut state = self.state();
-        while state.health_count > 0 || state.update_active || sign_in_active(&state) {
-            let now = Instant::now();
-            if now >= deadline {
-                return false;
-            }
-            let remaining = deadline.saturating_duration_since(now);
-            let Ok((next, result)) = self.settlement.wait_timeout(state, remaining) else {
-                return false;
-            };
-            state = next;
-            if result.timed_out()
-                && (state.health_count > 0 || state.update_active || sign_in_active(&state))
-            {
-                return false;
-            }
-        }
-        true
     }
 
     fn release_turn(&self, provider: AgentCliInvocation, _generation: u64) {
@@ -1469,6 +1443,9 @@ mod tests {
             )
             .expect("candidate");
         drop(health);
+        let metadata = registry
+            .acquire_update_check(AgentCliInvocation::ClaudeCode, receipt.provider_generation)
+            .expect("metadata lease");
         let update = registry
             .acquire_update(
                 AgentCliInvocation::ClaudeCode,
@@ -1487,6 +1464,8 @@ mod tests {
             Some(AGENT_PROVIDER_UPDATING_ERROR.to_string())
         );
         drop(update);
+        assert!(registry.revalidate_update_check(&metadata).is_err());
+        drop(metadata);
         assert!(registry
             .acquire_turn(
                 AgentCliInvocation::ClaudeCode,

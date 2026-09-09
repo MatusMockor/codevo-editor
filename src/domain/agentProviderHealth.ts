@@ -157,9 +157,17 @@ export interface AgentProviderPolicyGateway {
 }
 
 export interface AgentProviderHealthGateway {
+  checkAgentProviderUpdates(
+    request: AgentProviderGenerationRequest,
+  ): Promise<AgentProviderUpdateCheckResult>;
   probeAgentProviderHealth(
     request: AgentProviderGenerationRequest,
   ): Promise<AgentProviderHealthProbeResult>;
+}
+
+export interface AgentProviderUpdateCheckResult {
+  readonly update: Exclude<AgentProviderUpdateAvailability, { readonly kind: "checking" }>;
+  readonly checkedAtEpochMs: number;
 }
 
 export interface AgentProviderUpdateRequest extends AgentProviderGenerationRequest {
@@ -341,6 +349,18 @@ export function parseAgentProviderHealthProbeResult(
     installedVersion,
     auth: authState(result.auth, "result.auth"),
     update,
+    checkedAtEpochMs: unsignedInteger(result.checkedAtEpochMs, "result.checkedAtEpochMs"),
+  };
+}
+
+export function parseAgentProviderUpdateCheckResult(
+  kind: AgentCliKind,
+  value: unknown,
+): AgentProviderUpdateCheckResult {
+  const result = object(value, "result");
+  exactKeys(result, ["update", "checkedAtEpochMs"], "result");
+  return {
+    update: updateAvailability(kind, result.update, "result.update"),
     checkedAtEpochMs: unsignedInteger(result.checkedAtEpochMs, "result.checkedAtEpochMs"),
   };
 }

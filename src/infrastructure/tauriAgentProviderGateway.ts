@@ -8,6 +8,7 @@ import {
 import {
   parseAgentProviderCurrentPolicyResult,
   parseAgentProviderHealthProbeResult,
+  parseAgentProviderUpdateCheckResult,
   parseAgentProviderPolicyRegistrationReceipt,
   parseAgentProviderUpdateResult,
   parseAgentProviderUpdateProgressEvent,
@@ -20,6 +21,7 @@ import {
   type AgentProviderGenerationRequest,
   type AgentProviderHealthGateway,
   type AgentProviderHealthProbeResult,
+  type AgentProviderUpdateCheckResult,
   type AgentProviderPolicyGateway,
   type AgentProviderPolicyRegistrationReceipt,
   type AgentProviderPolicyRegistrationRequest,
@@ -32,6 +34,7 @@ import {
 export const REGISTER_AGENT_PROVIDER_POLICY_IPC_COMMAND = "register_agent_provider_policy" as const;
 export const GET_AGENT_PROVIDER_POLICY_IPC_COMMAND = "get_agent_provider_policy" as const;
 export const PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND = "probe_agent_provider_health" as const;
+export const CHECK_AGENT_PROVIDER_UPDATES_IPC_COMMAND = "check_agent_provider_updates" as const;
 export const UPDATE_AGENT_PROVIDER_IPC_COMMAND = "update_agent_provider" as const;
 export const READ_AGENT_PROVIDER_USAGE_IPC_COMMAND = "read_agent_provider_usage" as const;
 export const AGENT_PROVIDER_UPDATE_PROGRESS_EVENT = "agent-provider-update://progress" as const;
@@ -109,6 +112,17 @@ export class TauriAgentProviderGateway
     return parseAgentProviderHealthProbeResult(
       validated.provider,
       await this.invokeCommand(PROBE_AGENT_PROVIDER_HEALTH_IPC_COMMAND, { request: validated }),
+    );
+  }
+
+  async checkAgentProviderUpdates(
+    request: AgentProviderGenerationRequest,
+  ): Promise<AgentProviderUpdateCheckResult> {
+    this.requireRuntime();
+    const validated = validateAgentProviderHealthProbeRequest(request);
+    return parseAgentProviderUpdateCheckResult(
+      validated.provider,
+      await this.invokeCommand(CHECK_AGENT_PROVIDER_UPDATES_IPC_COMMAND, { request: validated }),
     );
   }
 

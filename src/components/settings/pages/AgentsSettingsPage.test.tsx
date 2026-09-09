@@ -71,7 +71,7 @@ describe("AgentsSettingsPage", () => {
     expect(row?.querySelector('[role="switch"]')).toBeNull();
   });
 
-  it("applies the health check interval to both providers and notes a divergence", () => {
+  it("applies the update check interval to both providers and notes a divergence", () => {
     const onPublishAppSettings = vi.fn();
     const onUpdateAppSettings = vi.fn();
     const preferences = defaultAgentProviderPreferences();
@@ -107,7 +107,7 @@ describe("AgentsSettingsPage", () => {
 
     expect(host.textContent).toContain("Checked");
 
-    act(() => byLabel("Refresh provider status").click());
+    act(() => byLabel("Run CLI diagnostics").click());
 
     expect(management.refresh).toHaveBeenCalledWith("claudeCode");
     expect(management.refresh).toHaveBeenCalledWith("codex");

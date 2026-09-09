@@ -155,7 +155,7 @@ describe("AgentProviderRailFooter", () => {
     expect(host.textContent).not.toContain("Installing");
     expect(host.textContent).not.toContain("Check failed");
 
-    act(() => button("Refresh provider status").click());
+    act(() => button("Check CLI updates").click());
     expect(surface.refreshAll).toHaveBeenCalledOnce();
     expect(surface.refresh).not.toHaveBeenCalled();
   });
@@ -322,7 +322,7 @@ describe("AgentProviderRailFooter", () => {
     );
     expect(button("Open Source Control")).not.toBeNull();
     expect(button("Open Usage")).not.toBeNull();
-    expect(button("Refresh provider status")).not.toBeNull();
+    expect(button("Check CLI updates")).not.toBeNull();
   });
 
   it("renders no provider row while both providers are healthy and registered", () => {
@@ -342,7 +342,7 @@ describe("AgentProviderRailFooter", () => {
 
     expect(host.querySelector(".agent-provider-footer__pill")).toBeNull();
     expect(host.querySelector(".agent-provider-footer__providers")?.childElementCount).toBe(0);
-    expect(button("Refresh provider status")).not.toBeNull();
+    expect(button("Check CLI updates")).not.toBeNull();
   });
 
   it("guards refresh against a second click while the probes are in flight", async () => {
@@ -354,14 +354,14 @@ describe("AgentProviderRailFooter", () => {
     render({ ...management(), refreshAll: refresh });
 
     act(() => {
-      button("Refresh provider status").click();
-      button("Refresh provider status").click();
+      button("Check CLI updates").click();
+      button("Check CLI updates").click();
     });
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(button("Refresh provider status").disabled).toBe(true);
-    expect(button("Refresh provider status").getAttribute("aria-busy")).toBe("true");
+    expect(button("Check CLI updates").disabled).toBe(true);
+    expect(button("Check CLI updates").getAttribute("aria-busy")).toBe("true");
 
-    act(() => button("Refresh provider status").click());
+    act(() => button("Check CLI updates").click());
     expect(refresh).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -369,9 +369,9 @@ describe("AgentProviderRailFooter", () => {
       await pending;
     });
 
-    expect(button("Refresh provider status").disabled).toBe(false);
-    expect(button("Refresh provider status").getAttribute("aria-busy")).toBe("false");
-    act(() => button("Refresh provider status").click());
+    expect(button("Check CLI updates").disabled).toBe(false);
+    expect(button("Check CLI updates").getAttribute("aria-busy")).toBe("false");
+    act(() => button("Check CLI updates").click());
     expect(refresh).toHaveBeenCalledTimes(2);
   });
 
@@ -380,9 +380,9 @@ describe("AgentProviderRailFooter", () => {
       throw new Error("Refresh failed");
     });
     render({ ...management(), refreshAll });
-    await act(async () => button("Refresh provider status").click());
-    expect(button("Refresh provider status").disabled).toBe(false);
-    await act(async () => button("Refresh provider status").click());
+    await act(async () => button("Check CLI updates").click());
+    expect(button("Check CLI updates").disabled).toBe(false);
+    await act(async () => button("Check CLI updates").click());
     expect(refreshAll).toHaveBeenCalledTimes(2);
   });
 
@@ -398,7 +398,7 @@ describe("AgentProviderRailFooter", () => {
       "Open provider settings",
       "Open Source Control",
       "Open Usage",
-      "Refresh provider status",
+      "Check CLI updates",
     ]);
   });
 
@@ -495,7 +495,7 @@ describe("AgentProviderRailFooter", () => {
     expect(button("Register Claude Code policy — retry registration")).not.toBeNull();
     expect(button("Register Codex policy — retry registration")).not.toBeNull();
 
-    act(() => button("Refresh provider status").click());
+    act(() => button("Check CLI updates").click());
     expect(surface.refreshAll).toHaveBeenCalledOnce();
     expect(surface.refresh).not.toHaveBeenCalled();
   });

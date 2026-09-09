@@ -1,3 +1,6 @@
+#[path = "agent_provider_update_check.rs"]
+mod update_check;
+pub(crate) use update_check::*;
 #[path = "../agent_provider_registry.rs"]
 mod registry_metadata;
 use crate::agent_task_spawner::agent_provider::agent_cli_version::{
@@ -523,7 +526,7 @@ fn probe_health_with_sources(
     revalidate_health_identity(provider_registry, &lease, &identity)?;
     let auth = probe_auth(provider_registry, &lease, &identity, cancelled);
     revalidate_health_identity(provider_registry, &lease, &identity)?;
-    let (update, candidate) = probe_update(
+    let (update, candidate, installer) = probe_update(
         provider_registry,
         &lease,
         &identity,
@@ -535,6 +538,7 @@ fn probe_health_with_sources(
     revalidate_health_identity(provider_registry, &lease, &identity)?;
     provider_registry.cache_candidate(&lease, candidate)?;
     revalidate_health_identity(provider_registry, &lease, &identity)?;
+    provider_registry.cache_update_observation(&lease, installed.clone(), installer)?;
     Ok(AgentProviderHealthProbeResult {
         installed_version: installed,
         auth,
@@ -735,15 +739,17 @@ fn probe_update(
 ) -> (
     AgentProviderUpdateAvailability,
     Option<AgentProviderUpdateCandidate>,
+    Option<crate::agent_task_spawner::agent_provider::AgentProviderInstaller>,
 ) {
     if !lease.policy.check_for_updates {
-        return (AgentProviderUpdateAvailability::ChecksDisabled, None);
+        return (AgentProviderUpdateAvailability::ChecksDisabled, None, None);
     }
     let Some(installed_version) = installed_version else {
         return (
             AgentProviderUpdateAvailability::Unavailable {
                 reason: AgentProviderUpdateUnavailableReason::InvalidVersion,
             },
+            None,
             None,
         );
     };
@@ -761,15 +767,18 @@ fn probe_update(
                 installer,
                 available_version,
             } => {
-                return availability(
+                let display = installer.display();
+                let (update, candidate) = availability(
                     ProviderAvailabilityEvidence::new(lease, cli_identity, installed_version),
                     available_version,
                     installer,
-                )
+                );
+                return (update, candidate, Some(display));
             }
             InstallerProbeOutcome::Unavailable(reason) => {
                 return (
                     AgentProviderUpdateAvailability::Unavailable { reason },
+                    None,
                     None,
                 )
             }
@@ -780,6 +789,7 @@ fn probe_update(
                 AgentProviderUpdateAvailability::Unavailable {
                     reason: AgentProviderUpdateUnavailableReason::ProbeFailed,
                 },
+                None,
                 None,
             );
         }
@@ -799,7 +809,7 @@ fn probe_update(
         },
         Err(reason) => AgentProviderUpdateAvailability::Unavailable { reason },
     };
-    (update, None)
+    (update, None, None)
 }
 
 fn probe_manual_available_version(

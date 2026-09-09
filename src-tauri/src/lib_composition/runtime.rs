@@ -510,6 +510,7 @@ pub fn run() {
             agent_provider_commands::register_agent_provider_policy,
             agent_provider_commands::get_agent_provider_policy,
             agent_provider_commands::probe_agent_provider_health,
+            agent_provider_commands::check_agent_provider_updates,
             agent_provider_commands::update_agent_provider,
             agent_provider_usage_commands::read_agent_provider_usage,
             agent_provider_sign_in_commands::start_agent_provider_sign_in,
