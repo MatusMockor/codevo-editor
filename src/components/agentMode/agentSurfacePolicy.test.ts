@@ -14,7 +14,7 @@ import {
   SURFACE_FILES_THREAD_DESCRIPTION,
   SURFACE_FILES_UNTRUSTED_DESCRIPTION,
   SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
-  SURFACE_NO_THREAD_REASON,
+  SURFACE_NO_PROJECT_REASON,
   SURFACE_UNTRUSTED_TERMINAL_REASON,
   SURFACE_WORKTREE_GONE_REASON,
   agentSurfaceBlockedReason,
@@ -137,10 +137,10 @@ describe("agentSurfaceBlockedReason", () => {
   it("keeps Files open without a thread and blocks the thread-bound surfaces", () => {
     expect(agentSurfaceBlockedReason("files", null, true, SURFACE_FIXTURE_ROOT)).toBeNull();
     expect(agentSurfaceBlockedReason("diff", null, true, SURFACE_FIXTURE_ROOT)).toBe(
-      SURFACE_NO_THREAD_REASON,
+      SURFACE_NO_PROJECT_REASON,
     );
     expect(agentSurfaceBlockedReason("terminal", null, true, SURFACE_FIXTURE_ROOT)).toBe(
-      SURFACE_NO_THREAD_REASON,
+      SURFACE_NO_PROJECT_REASON,
     );
     const gone = surfaceThreadView({ worktreeMissing: true });
     expect(agentSurfaceBlockedReason("files", gone, true, SURFACE_FIXTURE_ROOT)).toBe(
@@ -340,7 +340,7 @@ describe("agentSurfaceBlockedReason", () => {
     expect(agentSurfaceScopeFor(scope, [{ ...project, trust: "untrusted" }], null)).toEqual(
       foreign,
     );
-    expect(agentSurfaceScopeFor(scope, [project], "/workspace").kind).toBe("repository");
+    expect(agentSurfaceScopeFor(scope, [project], "/workspace").kind).toBe("foreignRoot");
     expect(
       agentSurfaceScopeFor(
         { ...scope, repositoryRoot: "/workspace/other" },

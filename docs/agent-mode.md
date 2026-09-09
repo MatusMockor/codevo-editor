@@ -14,6 +14,12 @@ A project must be trusted before an agent can start there. A background project 
 only in an isolated worktree. A project whose tab was closed while tasks are still live is being
 released: its existing work is retained, but new threads and follow-ups are blocked.
 
+Selecting a project or one of its threads activates that project's workspace automatically.
+The right panel follows the selected project; a selected thread uses its own checkout. While a
+project is opening, the panel hides the previous project's content. If opening fails, use Retry.
+Activating a selected thread's workspace retains that thread through the transition.
+Manually selecting a workspace tab selects that project in the agent view as well.
+
 ## Start a thread and follow up
 
 Choose a project or repository, write a prompt, select the provider/model and permission mode,
@@ -58,11 +64,14 @@ with arguments keep the normal prompt behavior.
 ## Review and work with a thread
 
 The thread header's **Open** menu can reveal the checkout in Finder, open its terminal or Files
-surface, or copy its path. The right-panel surface controls and shortcuts expose three surfaces:
+surface, or copy its path. The right-panel surface controls expose four surfaces:
 
-- **Files** browses the thread checkout and opens files in the editor.
-- **Diff** lists the thread's changed files and opens file diffs or editor diff documents.
-- **Terminal** opens a terminal rooted in the selected thread's checkout.
+- **Files** browses the selected project or thread checkout and opens files in the editor.
+- **Diff** lists the selected project's changes, or the thread's changed files when a thread is
+  selected, and opens file diffs or editor diff documents.
+- **Terminal** opens a terminal in the selected project or thread checkout, including nested
+  repositories and isolated worktrees.
+- **History** browses the selected project's repositories or the selected thread's checkout.
 
 The standard editor remains available by expanding the editor. Its tabs, navigation, file and
 local history, Git history, Source Control, and bottom terminal continue to work normally. The

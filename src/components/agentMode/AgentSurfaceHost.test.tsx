@@ -6,17 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalTheme } from "../../domain/settings";
 import type { FileEntry } from "../../domain/workspace";
 import { waitForReact } from "../../test/reactTestLifecycle";
-import {
-  SURFACE_TREE_NO_PROJECT_MESSAGE,
-  SURFACE_TREE_UNTRUSTED_MESSAGE,
-} from "./AgentSurfaceFileTree";
 import { AgentSurfaceHost, type AgentSurfaceHostProps } from "./AgentSurfaceHost";
-import {
-  NO_AGENT_SURFACE_SCOPE,
-  SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
-  agentSurfaceForeignRootMessage,
-  type AgentSurfaceScope,
-} from "./agentSurfacePolicy";
+import { NO_AGENT_SURFACE_SCOPE, type AgentSurfaceScope } from "./agentSurfacePolicy";
 import {
   SURFACE_FIXTURE_ROOT,
   SURFACE_FIXTURE_WORKTREE,
@@ -96,23 +87,78 @@ describe("AgentSurfaceHost", () => {
       layout: { openSurfaces: ["terminal"], activeSurface: "terminal" },
       thread,
     });
-    await waitForReact(() =>
-      expect(
-        host.querySelector('[data-surface-panel="terminal"] .agent-note--warning'),
-      ).not.toBeNull(),
+    await act(async () => Promise.resolve());
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(
+      "Select an available project to use this panel.",
     );
-    expect(
-      host.querySelector('[data-surface-panel="terminal"] .agent-note--warning')?.textContent,
-    ).toBe(SURFACE_FOREIGN_ROOT_TERMINAL_REASON);
     expect(host.querySelector(TABLIST)).toBeNull();
     expect(gateway.start).not.toHaveBeenCalled();
-
     render({ chrome: chrome(gateway), layout: { openSurfaces: [], activeSurface: null }, thread });
-    const card = host.querySelector<HTMLButtonElement>('[aria-label="Open Terminal surface"]');
-    expect(card?.disabled).toBe(true);
-    expect(host.querySelector("#agent-surface-card-terminal")?.textContent).toBe(
-      SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
+    expect(host.querySelector('[aria-label="Open Terminal surface"]')).toBeNull();
+  });
+
+  it("opens a project terminal before its first thread exists", async () => {
+    const gateway = fakeTerminalGateway();
+    render({
+      chrome: chrome(gateway),
+      thread: null,
+      threadRootPath: null,
+      layout: { openSurfaces: ["terminal"], activeSurface: "terminal" },
+    });
+    await waitForReact(() => expect(gateway.start).toHaveBeenCalledTimes(1));
+    expect(gateway.start).toHaveBeenCalledWith(
+      SURFACE_FIXTURE_ROOT,
+      { cols: 80, rows: 24 },
+      undefined,
+      false,
+      { kind: "workspaceRoot" },
     );
+    expect(host.querySelector('[aria-label="Project terminal"]')).not.toBeNull();
+  });
+
+  it("masks every surface during activation and offers retry after failure", async () => {
+    const gateway = fakeTerminalGateway();
+    const readDirectory = vi.fn(listing);
+    const layout = recordedLayoutState(FILES_LAYOUT);
+    const retry = vi.fn();
+    const base = {
+      ...filesChrome(layout, { files: { readDirectory } }),
+      terminal: chrome(gateway).terminal,
+    };
+    for (const activeSurface of ["files", "diff", "history", "terminal"] as const) {
+      render({
+        chrome: {
+          ...base,
+          workspaceActivation: {
+            state: { kind: "pending", rootPath: SURFACE_FIXTURE_ROOT },
+            select: vi.fn(),
+            retry,
+          },
+        },
+        layout: { openSurfaces: [activeSurface], activeSurface },
+      });
+      await act(async () => Promise.resolve());
+      expect(host.querySelector('[role="status"]')?.textContent).toBe("Opening project…");
+      expect(host.querySelector('[role="tab"]')).not.toBeNull();
+      expect(host.querySelector(".agent-surface__editor-slot")).toBeNull();
+      expect(host.querySelector('[role="tabpanel"]')).toBeNull();
+    }
+    expect(readDirectory).not.toHaveBeenCalled();
+    expect(gateway.start).not.toHaveBeenCalled();
+    render({
+      chrome: {
+        ...base,
+        workspaceActivation: {
+          state: { kind: "failed", rootPath: SURFACE_FIXTURE_ROOT, message: "Could not open app." },
+          select: vi.fn(),
+          retry,
+        },
+      },
+      layout: FILES_LAYOUT,
+    });
+    act(() => host.querySelector<HTMLButtonElement>('[role="status"] button')?.click());
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("Could not open app.");
   });
 
   it("offers no terminal without a registered workspace root", async () => {
@@ -214,6 +260,7 @@ describe("AgentSurfaceHost", () => {
         thread: null,
         threadRootPath: null,
         scope: { ...surfaceRepositoryScope(OTHER_ROOT), repositoryRoot: `${OTHER_ROOT}/pa-ai-be` },
+        workspaceRoot: OTHER_ROOT,
       });
 
       const row = await treeRow(`${OTHER_ROOT}/users.ts`);
@@ -278,19 +325,19 @@ describe("AgentSurfaceHost", () => {
       });
       await act(async () => Promise.resolve());
 
-      const note = host.querySelector("[data-agent-surface-tree-unavailable]");
-      expect(note?.textContent).toBe(SURFACE_TREE_UNTRUSTED_MESSAGE);
+      const note = host.querySelector('[role="status"]');
+      expect(note?.textContent).toBe("Select an available project to use this panel.");
       expect(host.querySelector(".tree-row")).toBeNull();
       expect(readDirectory).not.toHaveBeenCalled();
       expect(
-        host.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace files"]')?.disabled,
-      ).toBe(true);
+        host.querySelector<HTMLButtonElement>('[aria-label="Refresh workspace files"]'),
+      ).toBeNull();
 
       expect(host.querySelector('[aria-label="Trust the project"]')).toBeNull();
       expect(onTrustScope).not.toHaveBeenCalled();
     });
 
-    it("never mounts a tree for a foreign-root scope and offers the switch affordance", async () => {
+    it("hides foreign project content until its workspace is activated", async () => {
       const readDirectory = vi.fn(listing);
       const onSwitchScope = vi.fn();
       const layout = recordedLayoutState(FILES_LAYOUT);
@@ -310,16 +357,16 @@ describe("AgentSurfaceHost", () => {
       });
       await act(async () => Promise.resolve());
 
-      expect(host.querySelector("[data-agent-surface-tree-unavailable]")?.textContent).toBe(
-        `${agentSurfaceForeignRootMessage("other")}Switch`,
+      expect(host.querySelector('[role="status"]')?.textContent).toBe(
+        "Select an available project to use this panel.",
       );
       expect(host.querySelector(".tree-row")).toBeNull();
       expect(host.querySelector(".tree-row.active")).toBeNull();
       expect(readDirectory).not.toHaveBeenCalled();
-      expect(host.querySelector(".agent-surface__editor-slot")).not.toBeNull();
+      expect(host.querySelector(".agent-surface__editor-slot")).toBeNull();
 
       act(() => host.querySelector<HTMLButtonElement>('[aria-label="Switch to other"]')?.click());
-      expect(onSwitchScope).toHaveBeenCalledWith(OTHER_ROOT);
+      expect(onSwitchScope).not.toHaveBeenCalled();
       expect(layout.actions).toEqual([]);
 
       render({
@@ -333,7 +380,7 @@ describe("AgentSurfaceHost", () => {
       expect(readDirectory).not.toHaveBeenCalled();
     });
 
-    it("keeps the editor placeholder with a truthful note when the scope has no project", async () => {
+    it("hides the editor portal with a truthful note when the scope has no project", async () => {
       const readDirectory = vi.fn(listing);
       const layout = recordedLayoutState(FILES_LAYOUT);
       render({
@@ -344,10 +391,10 @@ describe("AgentSurfaceHost", () => {
       });
       await act(async () => Promise.resolve());
 
-      expect(host.querySelector("[data-agent-surface-tree-unavailable]")?.textContent).toBe(
-        SURFACE_TREE_NO_PROJECT_MESSAGE,
+      expect(host.querySelector('[role="status"]')?.textContent).toBe(
+        "Select an available project to use this panel.",
       );
-      expect(host.querySelector(".agent-surface__editor-slot")).not.toBeNull();
+      expect(host.querySelector(".agent-surface__editor-slot")).toBeNull();
       expect(host.querySelector(".tree-row")).toBeNull();
       expect(readDirectory).not.toHaveBeenCalled();
     });
@@ -367,7 +414,13 @@ describe("AgentSurfaceHost", () => {
 
       render({ chrome: chromeWithFiles, layout: FILES_LAYOUT, thread: null, scope: scopeA });
       await waitForReact(() => expect(readDirectory).toHaveBeenCalledTimes(1));
-      render({ chrome: chromeWithFiles, layout: FILES_LAYOUT, thread: null, scope: scopeB });
+      render({
+        chrome: chromeWithFiles,
+        layout: FILES_LAYOUT,
+        thread: null,
+        scope: scopeB,
+        workspaceRoot: OTHER_ROOT,
+      });
       await waitForReact(() => expect(readDirectory).toHaveBeenCalledTimes(2));
       render({ chrome: chromeWithFiles, layout: FILES_LAYOUT, thread: null, scope: scopeA });
       await waitForReact(() => expect(readDirectory).toHaveBeenCalledTimes(3));
@@ -421,7 +474,7 @@ describe("AgentSurfaceHost", () => {
     render({
       chrome: filesChrome(layout, { files: { readDirectory } }),
       layout: FILES_LAYOUT,
-      scope: surfaceRepositoryScope(OTHER_ROOT),
+      scope: surfaceRepositoryScope(),
       thread: inPlace,
       threadRootPath: SURFACE_FIXTURE_ROOT,
     });
@@ -434,7 +487,7 @@ describe("AgentSurfaceHost", () => {
     render({
       chrome: filesChrome(layout, { files: { readDirectory } }),
       layout: FILES_LAYOUT,
-      scope: surfaceRepositoryScope(OTHER_ROOT),
+      scope: surfaceRepositoryScope(),
       thread: surfaceThreadView(),
       threadRootPath: SURFACE_FIXTURE_WORKTREE,
     });
@@ -443,20 +496,19 @@ describe("AgentSurfaceHost", () => {
     expect(readDirectory).toHaveBeenCalledWith(SURFACE_FIXTURE_WORKTREE);
   });
 
-  it("keeps the thread checkout tree when a thread is selected, whatever the rail scope", async () => {
+  it("hides a thread checkout when the selected project does not own it", async () => {
     const readDirectory = vi.fn(listing);
     const layout = recordedLayoutState(FILES_LAYOUT);
     render({
       chrome: filesChrome(layout, { files: { readDirectory } }),
       layout: FILES_LAYOUT,
       scope: surfaceRepositoryScope(OTHER_ROOT),
+      workspaceRoot: OTHER_ROOT,
     });
-    await treeRow(`${SURFACE_FIXTURE_WORKTREE}/users.ts`);
-    expect(readDirectory).toHaveBeenCalledWith(SURFACE_FIXTURE_WORKTREE);
-    expect(readDirectory).not.toHaveBeenCalledWith(OTHER_ROOT);
-    expect(host.querySelector("[data-agent-surface-tree]")?.getAttribute("aria-label")).toBe(
-      "Thread files",
-    );
+    await act(async () => Promise.resolve());
+    expect(readDirectory).not.toHaveBeenCalled();
+    expect(host.querySelector(".tree-row")).toBeNull();
+    expect(host.querySelector(".agent-surface__editor-slot")).toBeNull();
   });
 
   function rowPaths(): string[] {

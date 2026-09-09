@@ -11,15 +11,12 @@ import {
 } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentSurfaceKind, AgentWorkbenchLayout } from "../../domain/agentWorkbenchLayout";
+import type { AgentSurfaceProjectDiffProps } from "./AgentSurfaceProjectDiff";
 import type { AgentSurfaceDiffProps } from "./AgentSurfaceDiff";
 import { AgentSurfaceEmptyState } from "./AgentSurfaceEmptyState";
 import { AgentSurfaceFileTree, type AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
 import type { AgentSurfaceTerminalProps } from "./AgentSurfaceTerminal";
-import {
-  SURFACE_NO_THREAD_REASON,
-  agentSurfaceBlockedReason,
-  type AgentSurfaceScope,
-} from "./agentSurfacePolicy";
+import { agentSurfaceBlockedReason, type AgentSurfaceScope } from "./agentSurfacePolicy";
 import { useWorkbenchFrameEditorState } from "../workbenchFrameEditorReport";
 import { useWorkbenchFrameTreeReport } from "../workbenchFrameTreeReport";
 import { WorkbenchEditorTabsPortalTarget } from "../workbenchEditorTabsPortal";
@@ -28,6 +25,12 @@ export const AGENT_SURFACE_EDITOR_SLOT_ATTRIBUTE = "data-agent-editor-slot";
 
 const LazyAgentSurfaceHistory = lazy(() =>
   import("./AgentSurfaceHistory").then((module) => ({ default: module.AgentSurfaceHistory })),
+);
+
+const LazyAgentSurfaceProjectDiff = lazy(() =>
+  import("./AgentSurfaceProjectDiff").then((module) => ({
+    default: module.AgentSurfaceProjectDiff,
+  })),
 );
 
 const LazyAgentSurfaceDiff = lazy(() =>
@@ -44,6 +47,7 @@ export type AgentSurfaceTerminalPanelProps = Omit<
 >;
 
 export interface AgentSurfacePanelProps {
+  readonly unavailable?: ReactNode;
   readonly layout: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">;
   readonly thread: AgentThreadView | null;
   readonly scope: AgentSurfaceScope;
@@ -54,6 +58,7 @@ export interface AgentSurfacePanelProps {
   readonly chooserAutoFocus: boolean;
   readonly fileTree: AgentSurfaceFileTreeProps | null;
   readonly diff: AgentSurfaceDiffPanelProps | null;
+  readonly projectDiff?: AgentSurfaceProjectDiffProps | null;
   readonly terminal: AgentSurfaceTerminalPanelProps | null;
   readonly history?: AgentSurfaceHistoryProps | null;
   onOpenSurface(surface: AgentSurfaceKind): void;
@@ -86,8 +91,10 @@ function nextAgentSurfaceTabIndex(key: string, count: number, current: number): 
 }
 
 export function AgentSurfacePanel({
+  unavailable = null,
   chooserAutoFocus,
   diff,
+  projectDiff = null,
   fileTree,
   hidden,
   history = null,
@@ -107,7 +114,8 @@ export function AgentSurfacePanel({
   const { activeSurface, openSurfaces } = layout;
   const [treeVisible, setTreeVisible] = useState(true);
   const documentOpen = useWorkbenchFrameEditorState() === "documents";
-  const filesActive = !hidden && activeSurface === "files" && fileTree !== null;
+  const filesActive =
+    unavailable === null && !hidden && activeSurface === "files" && fileTree !== null;
   const treeShown = filesActive && (treeVisible || !documentOpen);
   const treeToggleShown = filesActive && documentOpen;
   useWorkbenchFrameTreeReport(treeShown);
@@ -189,7 +197,9 @@ export function AgentSurfacePanel({
             })}
           </div>
         )}
-        {activeSurface === "files" && !hidden && <WorkbenchEditorTabsPortalTarget />}
+        {unavailable === null && activeSurface === "files" && !hidden && (
+          <WorkbenchEditorTabsPortalTarget />
+        )}
         {activeSurface !== "files" && <span className="agent-session__spacer" />}
         {treeToggleShown && (
           <button
@@ -205,7 +215,8 @@ export function AgentSurfacePanel({
         <div className="agent-surface__layout-controls">{layoutControls}</div>
       </header>
       <div className="agent-surface__body" data-agent-surface-body>
-        {chooserShown && (
+        {unavailable}
+        {unavailable === null && chooserShown && (
           <AgentSurfaceEmptyState
             autoFocus={chooserAutoFocus && !hidden}
             onChooseSurface={onOpenSurface}
@@ -216,38 +227,42 @@ export function AgentSurfacePanel({
             workspaceTrusted={workspaceTrusted}
           />
         )}
-        {openSurfaces.map((kind) => (
-          <div
-            aria-labelledby={`agent-surface-tab-${kind}`}
-            className="agent-surface__tabpanel"
-            data-surface-panel={kind}
-            hidden={activeSurface !== kind}
-            id={`agent-surface-panel-${kind}`}
-            key={kind}
-            role="tabpanel"
-          >
-            <SurfaceBody
-              diff={diff}
-              fileTree={fileTree}
-              history={history}
-              historyActive={!hidden && activeSurface === "history"}
-              kind={kind}
-              terminal={terminal}
-              terminalActive={!hidden && activeSurface === "terminal"}
-              terminalLayoutRevision={terminalLayoutRevision}
-              thread={thread}
-              treeShown={treeShown}
-              workspaceRoot={workspaceRoot}
-              workspaceTrusted={workspaceTrusted}
-            />
-          </div>
-        ))}
+        {unavailable === null &&
+          openSurfaces.map((kind) => (
+            <div
+              aria-labelledby={`agent-surface-tab-${kind}`}
+              className="agent-surface__tabpanel"
+              data-surface-panel={kind}
+              hidden={activeSurface !== kind}
+              id={`agent-surface-panel-${kind}`}
+              key={kind}
+              role="tabpanel"
+            >
+              <SurfaceBody
+                diff={diff}
+                projectDiff={projectDiff}
+                scope={scope}
+                fileTree={fileTree}
+                history={history}
+                historyActive={!hidden && activeSurface === "history"}
+                kind={kind}
+                terminal={terminal}
+                terminalActive={!hidden && activeSurface === "terminal"}
+                terminalLayoutRevision={terminalLayoutRevision}
+                thread={thread}
+                treeShown={treeShown}
+                workspaceRoot={workspaceRoot}
+                workspaceTrusted={workspaceTrusted}
+              />
+            </div>
+          ))}
       </div>
     </aside>
   );
 }
 
 interface SurfaceBodyProps {
+  readonly scope: AgentSurfaceScope;
   readonly history: AgentSurfaceHistoryProps | null;
   readonly historyActive: boolean;
   readonly kind: AgentSurfaceKind;
@@ -257,12 +272,15 @@ interface SurfaceBodyProps {
   readonly treeShown: boolean;
   readonly fileTree: AgentSurfaceFileTreeProps | null;
   readonly diff: AgentSurfaceDiffPanelProps | null;
+  readonly projectDiff?: AgentSurfaceProjectDiffProps | null;
   readonly terminal: AgentSurfaceTerminalPanelProps | null;
   readonly terminalActive: boolean;
   readonly terminalLayoutRevision: number;
 }
 
 function SurfaceBody({
+  scope,
+  projectDiff,
   history,
   historyActive,
   diff,
@@ -298,12 +316,21 @@ function SurfaceBody({
     );
   }
 
-  const reason = agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot);
-  if (reason !== null || thread === null) {
-    return <p className="agent-note agent-note--warning">{reason ?? SURFACE_NO_THREAD_REASON}</p>;
+  const reason = agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot, scope);
+  if (reason !== null) {
+    return <p className="agent-note agent-note--warning">{reason}</p>;
   }
 
   if (kind === "diff") {
+    if (thread === null) {
+      if (projectDiff === null || projectDiff === undefined)
+        return <p className="agent-note">Project changes are unavailable.</p>;
+      return (
+        <Suspense fallback={<p className="agent-note">Loading project changes…</p>}>
+          <LazyAgentSurfaceProjectDiff {...projectDiff} />
+        </Suspense>
+      );
+    }
     if (diff === null) return null;
     return (
       <Suspense fallback={<p className="agent-note">Loading the diff surface…</p>}>

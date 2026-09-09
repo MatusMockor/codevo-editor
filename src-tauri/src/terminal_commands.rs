@@ -1,3 +1,5 @@
+mod repository_target;
+
 use crate::{
     agent_cli_discovery::AgentCliDiscovery,
     canonicalize_workspace_root,
@@ -29,6 +31,13 @@ pub enum TerminalLaunchTarget {
     WorkspaceRoot,
     #[serde(rename_all = "camelCase")]
     AgentWorktree { thread_id: String },
+    #[serde(rename_all = "camelCase")]
+    RepositoryRoot { repository_relative_path: String },
+    #[serde(rename_all = "camelCase")]
+    RepositoryAgentWorktree {
+        repository_relative_path: String,
+        thread_id: String,
+    },
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -54,6 +63,13 @@ fn resolve_terminal_launch_root(
         TerminalLaunchTarget::AgentWorktree { thread_id } => {
             resolve_agent_worktree_launch_root(workspace_root, thread_id)
         }
+        TerminalLaunchTarget::RepositoryRoot {
+            repository_relative_path,
+        } => repository_target::resolve(workspace_root, repository_relative_path, None),
+        TerminalLaunchTarget::RepositoryAgentWorktree {
+            repository_relative_path,
+            thread_id,
+        } => repository_target::resolve(workspace_root, repository_relative_path, Some(thread_id)),
     }
 }
 
@@ -80,6 +96,11 @@ fn open_terminal_launch_directory(
     workspace_root: &Path,
     target: &TerminalLaunchTarget,
 ) -> Result<TerminalLaunchDirectory, String> {
+    if let Some(result) =
+        repository_target::open(registry, retained_workspace, workspace_root, target)
+    {
+        return result;
+    }
     let cwd = resolve_terminal_launch_root(workspace_root, target)?;
     if let TerminalLaunchTarget::AgentWorktree { thread_id } = target {
         let directory = open_agent_worktree_directory(registry, workspace_root, thread_id)?;

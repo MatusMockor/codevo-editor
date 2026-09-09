@@ -11,7 +11,7 @@ import {
   SURFACE_FILES_NO_PROJECT_DESCRIPTION,
   SURFACE_FILES_PROJECT_DESCRIPTION,
   SURFACE_FILES_UNTRUSTED_DESCRIPTION,
-  SURFACE_NO_THREAD_REASON,
+  SURFACE_NO_PROJECT_REASON,
 } from "./agentSurfacePolicy";
 import { surfaceRepositoryScope, surfaceThreadView } from "./agentSurfaceTestFixtures";
 
@@ -61,7 +61,7 @@ describe("AgentSurfaceEmptyState", () => {
 
   it("keeps the accessible names, key shortcuts and disabled reasons", () => {
     const onChooseSurface = vi.fn();
-    render({ onChooseSurface, thread: null });
+    render({ onChooseSurface, thread: null, scope: { kind: "none" } });
 
     const files = host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]');
     expect(files?.getAttribute("aria-keyshortcuts")).toBe("F");
@@ -70,7 +70,7 @@ describe("AgentSurfaceEmptyState", () => {
     expect(diff?.disabled).toBe(true);
     expect(diff?.getAttribute("aria-describedby")).toBe("agent-surface-card-diff");
     expect(host.querySelector("#agent-surface-card-diff")?.textContent).toBe(
-      SURFACE_NO_THREAD_REASON,
+      SURFACE_NO_PROJECT_REASON,
     );
 
     act(() => files?.click());

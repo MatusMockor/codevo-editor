@@ -1,3 +1,5 @@
+import type { AgentSurfaceProjectDiffState } from "./AgentSurfaceProjectDiff";
+import type { AgentProjectWorkspaceSync } from "./useAgentProjectWorkspaceSync";
 import type {
   WorkspaceFileChangeGateway,
   WorkspaceFileChangeEvent,
@@ -91,6 +93,8 @@ export interface AgentWorkbenchAddProjectChrome {
 }
 
 export interface AgentWorkbenchChrome {
+  readonly projectDiff?: AgentSurfaceProjectDiffState | null;
+  readonly workspaceActivation?: AgentProjectWorkspaceSync;
   readonly layout: AgentWorkbenchLayoutState;
   readonly bottomPanelVisible: boolean;
   readonly shortcuts: AgentPanelLayoutShortcuts | null;

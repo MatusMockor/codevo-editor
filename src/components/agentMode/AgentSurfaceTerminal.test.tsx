@@ -62,6 +62,36 @@ describe("AgentSurfaceTerminal", () => {
     await waitForReact(() => expect(gateway.acknowledgeStart).toHaveBeenCalledWith(1));
   });
 
+  it.each(["in-place", "worktree"] as const)(
+    "starts a nested repository %s terminal under its registered project",
+    async (isolation) => {
+      const gateway = fakeTerminalGateway();
+      const original = surfaceThreadView();
+      const thread = surfaceThreadView({
+        thread: {
+          ...original.thread,
+          owner: { ...original.thread.owner, repositoryRoot: "/workspace/app/nested" },
+          target: {
+            isolation,
+            worktreePath:
+              isolation === "worktree" ? "/workspace/app/nested/.worktrees/agt-1" : null,
+          },
+        },
+      });
+      render({ terminalGateway: gateway, thread });
+      await waitForReact(() => expect(gateway.start).toHaveBeenCalledTimes(1));
+      expect(gateway.start).toHaveBeenCalledWith(
+        "/workspace/app",
+        { cols: 80, rows: 24 },
+        undefined,
+        false,
+        isolation === "worktree"
+          ? { kind: "repositoryAgentWorktree", repositoryRelativePath: "nested", threadId: "agt-1" }
+          : { kind: "repositoryRoot", repositoryRelativePath: "nested" },
+      );
+    },
+  );
+
   it("uses the workspace-root target for in-place threads and restarts only on thread change", async () => {
     const gateway = fakeTerminalGateway();
     const inPlace = () =>

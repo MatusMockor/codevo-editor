@@ -13,6 +13,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   model, permission, thread, and provider controls. Show Claude-specific actions only for Claude
   and context compaction only in an existing Claude thread.
 
+- Browse project changes and open a project terminal from the right panel without selecting a
+  thread. Support terminals for threads in nested repositories and their isolated worktrees.
+
+### Fixed
+
+- Synchronize the selected agent project with its workspace so Files, History, Diff and Terminal
+  follow the selection. Preserve the selected thread while activating its workspace and hide
+  previous-project content during loading or failed activation.
+
 ## [0.2.0-beta.25] - 2026-09-09
 
 ### Fixed

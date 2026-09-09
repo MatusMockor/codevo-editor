@@ -1,6 +1,5 @@
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentGitHistoryTarget } from "../../application/useAgentGitHistory";
-import { isInsideAgentSurfaceRoot } from "../../application/useAgentSurfaceFileTree";
 import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../../domain/agentProject";
 import { agentSurfaceTargetGone, agentSurfaceTargetPath } from "./agentModePresentation";
 import type { AgentSurfaceScope } from "./agentSurfacePolicy";
@@ -34,7 +33,7 @@ export function agentGitHistoryScope(
       project.trust !== "trusted" ||
       project.origin === "closed-tab-live-tasks" ||
       workspaceRoot === null ||
-      !isInsideAgentSurfaceRoot(workspaceRoot, project.rootPath) ||
+      workspaceRoot !== project.rootPath ||
       !agentProjectOwnsLaunchRoot(project, rootPath)
     )
       return unavailable("Select an available repository.");
@@ -53,7 +52,7 @@ export function agentGitHistoryScope(
     project.runtimeOwnerIds?.includes(owner.ownerId) !== true
   )
     return unavailable("This thread's project is no longer available.");
-  if (workspaceRoot === null || !isInsideAgentSurfaceRoot(workspaceRoot, project.rootPath))
+  if (workspaceRoot !== project.rootPath)
     return unavailable(`Switch to ${project.label} to browse its Git history.`);
   if (project.trust !== "trusted" || !agentProjectOwnsLaunchRoot(project, owner.repositoryRoot))
     return unavailable("Project unavailable. Reopen it or check its workspace settings.");

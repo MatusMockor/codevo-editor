@@ -1,7 +1,8 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import {
   isInsideAgentSurfaceRoot,
+  agentSurfaceTreeTargetKey,
   useAgentSurfaceFileTree,
   type AgentSurfaceFileTreeDependencies,
   type AgentSurfaceFileTreeTarget,
@@ -17,7 +18,10 @@ import type { AgentSurfaceScope } from "./agentSurfacePolicy";
 import type { AgentWorkbenchChrome, AgentWorkbenchFileTreeChrome } from "./agentWorkbenchChrome";
 
 export interface AgentSurfaceScopeTreeOptions {
-  readonly chrome: Pick<AgentWorkbenchChrome, "workspaceId" | "fileTree" | "layout">;
+  readonly chrome: Pick<
+    AgentWorkbenchChrome,
+    "workspaceId" | "fileTree" | "layout" | "workspaceActivation"
+  >;
   readonly thread: AgentThreadView | null;
   readonly threadRootPath: string | null;
   readonly scope: AgentSurfaceScope;
@@ -40,8 +44,11 @@ export function agentSurfaceTreeTarget(
   filesOpen: boolean,
 ): AgentSurfaceFileTreeTarget | null {
   if (!filesOpen) return null;
-  if (thread !== null) return threadTreeTarget(workspaceId, thread, threadRootPath);
   if (scope.kind !== "repository") return null;
+  if (thread !== null) {
+    if (thread.thread.owner.rootKey !== scope.projectRootKey) return null;
+    return threadTreeTarget(workspaceId, thread, threadRootPath, scope);
+  }
   return {
     kind: "project",
     ownerId: scope.ownerId,
@@ -54,6 +61,7 @@ function threadTreeTarget(
   workspaceId: string | null,
   thread: AgentThreadView,
   threadRootPath: string | null,
+  scope: Extract<AgentSurfaceScope, { kind: "repository" }>,
 ): AgentSurfaceFileTreeTarget | null {
   if (workspaceId === null) return null;
   if (threadRootPath === null) return null;
@@ -63,6 +71,7 @@ function threadTreeTarget(
     workspaceId,
     threadId: thread.thread.threadId,
     rootPath: threadRootPath,
+    projectOwner: { ownerId: scope.ownerId, generation: scope.generation },
   };
 }
 
@@ -71,7 +80,6 @@ export function agentSurfaceTreeUnavailable(
   scope: AgentSurfaceScope,
   action: (() => void) | null,
 ): AgentSurfaceTreeUnavailable | null {
-  if (thread !== null) return null;
   switch (scope.kind) {
     case "none":
       return NO_PROJECT;
@@ -80,6 +88,8 @@ export function agentSurfaceTreeUnavailable(
     case "untrusted":
       return { kind: "untrusted", onTrust: action };
     case "repository":
+      if (thread !== null && thread.thread.owner.rootKey !== scope.projectRootKey)
+        return NO_PROJECT;
       return null;
   }
 }
@@ -102,10 +112,34 @@ export function useAgentSurfaceScopeTree({
   threadRootPath,
 }: AgentSurfaceScopeTreeOptions): AgentSurfaceFileTreeProps | null {
   const fileTreeChrome = chrome.fileTree;
+  const activation = chrome.workspaceActivation?.state;
+  const workspaceReady =
+    activation === undefined ||
+    (activation.kind === "ready" &&
+      scope.kind === "repository" &&
+      activation.rootPath === scope.rootPath);
   const target = useMemo(
-    () => agentSurfaceTreeTarget(chrome.workspaceId, thread, threadRootPath, scope, filesOpen),
-    [chrome.workspaceId, filesOpen, scope, thread, threadRootPath],
+    () =>
+      agentSurfaceTreeTarget(
+        chrome.workspaceId,
+        thread,
+        threadRootPath,
+        scope,
+        filesOpen && workspaceReady,
+      ),
+    [chrome.workspaceId, filesOpen, scope, thread, threadRootPath, workspaceReady],
   );
+  const targetKey = agentSurfaceTreeTargetKey(target);
+  const authorityRef = useRef({ key: targetKey });
+  if (authorityRef.current.key !== targetKey) authorityRef.current = { key: targetKey };
+  const authority = authorityRef.current;
+  const mountedRef = useRef(true);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const tree = useAgentSurfaceFileTree({
     target,
     files: fileTreeChrome?.files ?? UNAVAILABLE_FILES,
@@ -141,21 +175,50 @@ export function useAgentSurfaceScopeTree({
     const guarded =
       (open: (entry: FileEntry) => void) =>
       (entry: FileEntry): void => {
+        if (!mountedRef.current || authorityRef.current !== authority) return;
         if (rootPath === null || !isInsideAgentSurfaceRoot(rootPath, entry.path)) return;
         open(entry);
         maximizeForDocument();
       };
     const unavailable = agentSurfaceTreeUnavailable(thread, scope, scopeAction);
+    const searchFiles =
+      unavailable === null && workspaceReady ? searchFilesFromChrome(fileTreeChrome) : null;
     return {
       source,
       tree,
       unavailable,
-      activePath: unavailable === null ? fileTreeChrome.activePath : null,
+      activePath:
+        unavailable === null &&
+        rootPath !== null &&
+        fileTreeChrome.activePath !== null &&
+        isInsideAgentSurfaceRoot(rootPath, fileTreeChrome.activePath)
+          ? fileTreeChrome.activePath
+          : null,
       revealActivePathSignal: fileTreeChrome.revealActivePathSignal,
       fileStatusesByPath: fileTreeChrome.fileStatusesByPath,
-      searchFiles: searchFilesFromChrome(fileTreeChrome),
+      searchFiles:
+        searchFiles === null
+          ? null
+          : {
+              shortcut: searchFiles.shortcut,
+              open: () => {
+                if (!mountedRef.current || authorityRef.current !== authority) return;
+                searchFiles.open();
+              },
+            },
       onOpenFile: guarded(fileTreeChrome.onOpenFile),
       onPreviewFile: guarded(fileTreeChrome.onPreviewFile),
     };
-  }, [fileTreeChrome, maximizeForDocument, rootPath, scope, scopeAction, source, thread, tree]);
+  }, [
+    authority,
+    fileTreeChrome,
+    maximizeForDocument,
+    rootPath,
+    scope,
+    scopeAction,
+    source,
+    thread,
+    tree,
+    workspaceReady,
+  ]);
 }

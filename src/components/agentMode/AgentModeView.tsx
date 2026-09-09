@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { PanelLeftOpen } from "lucide-react";
 import {
   useAgentThreadScripts,
@@ -9,7 +9,7 @@ import type {
   AgentProviderManagementSurface,
   AgentProviderManagementToast,
 } from "../../application/useAgentProviderManagement";
-import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
@@ -50,7 +50,7 @@ import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentShipActions } from "./useAgentShipActions";
 import { useAgentSurfaceLayout } from "./useAgentSurfaceLayout";
 import { REVEAL_FAILED_NOTICE, useAgentThreadMenuCommands } from "./useAgentThreadMenuCommands";
-import { useAgentThreadNavigation } from "./useAgentThreadNavigation";
+import { useAgentThreadNavigation, type AgentNavigationSession } from "./useAgentThreadNavigation";
 import { useAgentViewCommands } from "./useAgentViewCommands";
 import { useWorkbenchFrameResponsiveRestore } from "../useWorkbenchFrameResponsiveRestore";
 import {
@@ -61,6 +61,7 @@ import {
 } from "./useAgentThreadPresentationViews";
 
 export interface AgentModeViewProps {
+  readonly navigationSession?: AgentNavigationSession;
   readonly agents: AgentThreadsSurface & {
     readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
     readonly providerManagement: AgentProviderManagementSurface;
@@ -100,6 +101,7 @@ export function AgentModeView({
   agents,
   chrome,
   modelFavoritesPersistence = null,
+  navigationSession,
   nowTickMs = DEFAULT_NOW_TICK_MS,
   onOpenSourceControl = NOOP_OPEN_SOURCE_CONTROL,
   onCloseProject = NOOP_CLOSE_PROJECT,
@@ -129,6 +131,7 @@ export function AgentModeView({
     groups,
     presentationThreads,
     projects,
+    session: navigationSession,
   });
   const { selectedThread: sessionThread, selectedThreadId, railScope, find } = navigation;
   const selectedThread =
@@ -141,6 +144,30 @@ export function AgentModeView({
     [projects, surfaceThread],
   );
   const composerScope = navigation.composerScope;
+  const selectedProject =
+    projects.find(
+      (project) =>
+        project.rootKey === (selectedThread?.thread.owner.rootKey ?? composerScope?.projectRootKey),
+    ) ?? null;
+  const selectWorkspace = chrome.workspaceActivation?.select;
+  useEffect(() => {
+    if (selectWorkspace === undefined) return;
+    if (selectedProject === null || selectedProject.origin === "closed-tab-live-tasks") {
+      selectWorkspace(null);
+      return;
+    }
+    const owner = selectedThread?.thread.owner;
+    const valid =
+      owner === undefined
+        ? composerScope !== null &&
+          composerScope.kind !== "missing" &&
+          composerScope.ownerId === selectedProject.ownerId &&
+          composerScope.generation === selectedProject.generation
+        : (owner.ownerId === selectedProject.ownerId ||
+            selectedProject.runtimeOwnerIds?.includes(owner.ownerId) === true) &&
+          agentProjectOwnsLaunchRoot(selectedProject, owner.repositoryRoot);
+    selectWorkspace(valid ? selectedProject : null);
+  }, [composerScope, selectedProject, selectedThread, selectWorkspace, workspaceRoot]);
   const surfaceScope = useMemo(
     () => agentSurfaceScopeFor(composerScope, projects, workspaceRoot),
     [composerScope, projects, workspaceRoot],
@@ -271,7 +298,9 @@ export function AgentModeView({
     chrome.addProject?.cancelSelection?.();
     setProjectSelectionIntent((current) => current + 1);
     if (!navigation.setProjectScope(scope.projectRootKey)) return;
-    if (sessionThread !== null) return;
+    if (sessionThread !== null && sessionThread.thread.owner.rootKey !== scope.projectRootKey) {
+      navigation.clearSelectedThread();
+    }
     composer.clearSelection();
   });
   const newProjectThread = useAgentLatestCallback(() => {

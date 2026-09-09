@@ -88,7 +88,7 @@ describe("AgentWorkbenchScreen", () => {
     host.remove();
   });
 
-  it("resets the view state on a workspace A -> B -> A switch", () => {
+  it("does not restore a reused thread ID belonging to a different workspace", () => {
     render(createWorkbench(ROOT_A));
 
     click('[data-thread-id="agt-1"]');
@@ -100,6 +100,20 @@ describe("AgentWorkbenchScreen", () => {
     render(createWorkbench(ROOT_A));
     expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).toBeNull();
     expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
+  });
+
+  it("respects an external editor workspace switch without reactivating the old thread project", async () => {
+    const first = createWorkbench(ROOT_A);
+    render(first);
+    click('[data-thread-id="agt-1"]');
+    const next = createWorkbench(ROOT_B);
+    render(next);
+    await act(async () => {});
+    expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).toBeNull();
+    expect(next.openWorkspaceRootWithReceipt).not.toHaveBeenCalled();
+    expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain(
+      project(ROOT_B).label,
+    );
   });
 
   it("projects the workbench scripts and keymap onto the thread header controls", () => {

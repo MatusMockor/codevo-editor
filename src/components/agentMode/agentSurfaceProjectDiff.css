@@ -1,0 +1,20 @@
+.agent-project-diff {
+  container-name: agent-project-diff;
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.agent-project-diff .agent-surface-diff__list {
+  min-width: 0;
+}
+
+@container agent-project-diff (max-width: 600px) {
+  .agent-project-diff .agent-surface-diff__body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(80px, 35%) minmax(0, 1fr);
+  }
+
+  .agent-project-diff .agent-surface-diff__preview {
+    margin-left: var(--agent-space-3);
+  }
+}

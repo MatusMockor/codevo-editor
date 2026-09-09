@@ -16,6 +16,7 @@ export interface AgentSurfaceThreadTreeTarget {
   readonly workspaceId: string;
   readonly threadId: string;
   readonly rootPath: string;
+  readonly projectOwner?: { readonly ownerId: string; readonly generation: number };
 }
 
 export interface AgentSurfaceProjectTreeTarget {
@@ -69,7 +70,15 @@ export function agentSurfaceTreeTargetKey(target: AgentSurfaceFileTreeTarget | n
   if (target === null) return "";
   switch (target.kind) {
     case "thread":
-      return JSON.stringify([target.kind, target.workspaceId, target.threadId, target.rootPath]);
+      return JSON.stringify([
+        target.kind,
+        target.workspaceId,
+        target.threadId,
+        target.rootPath,
+        ...(target.projectOwner === undefined
+          ? []
+          : [target.projectOwner.ownerId, target.projectOwner.generation]),
+      ]);
     case "project":
       return JSON.stringify([target.kind, target.ownerId, target.generation, target.rootPath]);
   }

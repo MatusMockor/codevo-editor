@@ -10,6 +10,8 @@ import {
   SURFACE_DIFF_TRUNCATED_MESSAGE,
   type AgentSurfaceDiffProps,
 } from "./AgentSurfaceDiff";
+import { AgentSurfaceProjectDiff } from "./AgentSurfaceProjectDiff";
+import { emptyGitStatus } from "../../domain/git";
 import { surfaceChangedFile, surfaceSummary, surfaceThreadView } from "./agentSurfaceTestFixtures";
 
 const diffEditorMocks = vi.hoisted(() => ({ props: [] as Array<Record<string, unknown>> }));
@@ -41,6 +43,81 @@ describe("AgentSurfaceDiff", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+  });
+
+  it("lists project repositories without a thread and routes each diff to its repository", () => {
+    const onPreviewChange = vi.fn();
+    const onOpenChange = vi.fn();
+    const change = { ...surfaceChangedFile("src/a.ts"), path: "/workspace/app/nested/src/a.ts" };
+    const foreign = { ...change, path: "/workspace/other/secret.ts" };
+    act(() =>
+      root.render(
+        <AgentSurfaceProjectDiff
+          rootPath="/workspace/app"
+          status={emptyGitStatus("/workspace/app")}
+          repositoryStatuses={[
+            {
+              mapping: { rootRelativePath: "nested" },
+              root: "/workspace/app/nested",
+              failed: false,
+              status: {
+                ...emptyGitStatus("/workspace/app/nested"),
+                isRepository: true,
+                changes: [change, foreign],
+              },
+            },
+          ]}
+          loading={false}
+          diff={null}
+          diffLoading={false}
+          monacoTheme="calm-dark"
+          onRefresh={vi.fn()}
+          onPreviewChange={onPreviewChange}
+          onOpenChange={onOpenChange}
+          onClosePreview={vi.fn()}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("nested/src/a.ts");
+    expect(host.textContent).not.toContain("secret.ts");
+    act(() => host.querySelector<HTMLButtonElement>(".agent-files__path")?.click());
+    expect(onPreviewChange).toHaveBeenCalledWith(change, "/workspace/app/nested");
+    act(() =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Open diff document for src/a.ts"]')
+        ?.click(),
+    );
+    expect(onOpenChange).toHaveBeenCalledWith(change, "/workspace/app/nested");
+  });
+
+  it("does not report a clean project when repository status failed", () => {
+    act(() =>
+      root.render(
+        <AgentSurfaceProjectDiff
+          rootPath="/workspace/app"
+          status={emptyGitStatus("/workspace/app")}
+          repositoryStatuses={[
+            {
+              root: "/workspace/app",
+              mapping: { rootRelativePath: "" },
+              failed: true,
+              status: emptyGitStatus("/workspace/app"),
+            },
+          ]}
+          loading={false}
+          diff={null}
+          diffLoading={false}
+          monacoTheme="calm-dark"
+          onRefresh={vi.fn()}
+          onPreviewChange={vi.fn()}
+          onOpenChange={vi.fn()}
+          onClosePreview={vi.fn()}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("Some repositories could not be read.");
+    expect(host.textContent).not.toContain("No uncommitted changes");
+    expect(host.textContent).not.toContain("No Git repository");
   });
 
   it("requests the change summary once when it is missing", () => {

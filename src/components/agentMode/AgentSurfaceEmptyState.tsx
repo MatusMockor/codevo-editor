@@ -59,7 +59,7 @@ export function AgentSurfaceEmptyState({
 }: AgentSurfaceEmptyStateProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const blockedReason = (kind: AgentSurfaceKind): string | null =>
-    agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot);
+    agentSurfaceBlockedReason(kind, thread, workspaceTrusted, workspaceRoot, scope);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -96,7 +96,13 @@ export function AgentSurfaceEmptyState({
             const reason = blockedReason(kind);
             const Icon = card.icon;
             const description =
-              kind === "files" ? agentSurfaceFilesDescription(thread, scope) : card.description;
+              kind === "files"
+                ? agentSurfaceFilesDescription(thread, scope)
+                : thread === null && kind === "diff"
+                  ? "Review changes in this project."
+                  : thread === null && kind === "terminal"
+                    ? "Start a shell in this project."
+                    : card.description;
             return (
               <div className="agent-surface-card__slot" key={kind}>
                 <button

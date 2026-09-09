@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import type {
   AgentThreadSearchSurface,
   AgentThreadsSurface,
@@ -47,6 +55,7 @@ export interface AgentThreadNavigationOptions {
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly externalSessions?: Pick<ExternalSessionsSurface, "close"> | null;
+  readonly session?: AgentNavigationSession;
 }
 
 export interface AgentThreadPaletteState {
@@ -107,12 +116,20 @@ interface AgentNavigationScopeState {
   readonly order: ReadonlyArray<string>;
 }
 
-const NO_SCOPE_STATE: AgentNavigationScopeState = {
+export const NO_SCOPE_STATE: AgentNavigationScopeState = {
   intent: "automatic",
   railScope: null,
   authority: null,
   order: [],
 };
+
+export interface AgentNavigationSession {
+  current: {
+    readonly selectedThreadId: string | null;
+    readonly selectedThreadOwnerKey: string | null;
+    readonly scopeState: AgentNavigationScopeState;
+  };
+}
 
 export function useAgentThreadNavigation({
   agents,
@@ -120,11 +137,24 @@ export function useAgentThreadNavigation({
   groups,
   presentationThreads,
   projects,
+  session,
 }: AgentThreadNavigationOptions): AgentThreadNavigation {
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => {
+    const retained = session?.current;
+    if (retained === undefined || retained.selectedThreadId === null) return null;
+    const thread = agents.threads.find(
+      (view) => view.thread.threadId === retained.selectedThreadId,
+    );
+    return thread !== undefined &&
+      JSON.stringify(thread.thread.owner) === retained.selectedThreadOwnerKey
+      ? retained.selectedThreadId
+      : null;
+  });
   const currentProjectsRef = useRef(projects);
   currentProjectsRef.current = projects;
-  const [storedScopeState, setScopeState] = useState<AgentNavigationScopeState>(NO_SCOPE_STATE);
+  const [storedScopeState, setScopeState] = useState<AgentNavigationScopeState>(
+    () => session?.current.scopeState ?? NO_SCOPE_STATE,
+  );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [terminalSessionsTarget, setTerminalSessionsTarget] =
     useState<AgentTerminalSessionsTarget | null>(null);
@@ -153,6 +183,15 @@ export function useAgentThreadNavigation({
     projects,
   );
   if (scopeState !== storedScopeState) setScopeState(scopeState);
+  useLayoutEffect(() => {
+    if (session === undefined) return;
+    session.current = {
+      selectedThreadId,
+      selectedThreadOwnerKey:
+        selectedThread === null ? null : JSON.stringify(selectedThread.thread.owner),
+      scopeState,
+    };
+  }, [scopeState, selectedThreadId, selectedThread, session]);
   const railScope = scopeState.railScope;
   const composerScope = useMemo(
     () => resolveComposerScope(scopeState, projects),

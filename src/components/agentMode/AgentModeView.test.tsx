@@ -1017,7 +1017,7 @@ describe("AgentModeView", () => {
     expect(layout.actions).toEqual([{ kind: "toggleRightPanel" }, { kind: "toggleRightPanel" }]);
   });
 
-  it("renders the empty surface panel with only Files enabled while no thread is selected", () => {
+  it("enables project surfaces while no thread is selected", () => {
     const layout = recordedLayoutState({ rightPanel: "open" });
     render({
       chrome: chromeFixture({ layout }),
@@ -1030,9 +1030,9 @@ describe("AgentModeView", () => {
     const diff = host.querySelector<HTMLButtonElement>('[aria-label="Open Diff surface"]');
     const terminal = host.querySelector<HTMLButtonElement>('[aria-label="Open Terminal surface"]');
     expect(files?.disabled).toBe(false);
-    expect(diff?.disabled).toBe(true);
-    expect(terminal?.disabled).toBe(true);
-    expect(host.textContent).toContain("Select a thread first");
+    expect(diff?.disabled).toBe(false);
+    expect(terminal?.disabled).toBe(false);
+    expect(host.textContent).not.toContain("Select a thread first");
 
     click('[aria-label="Open Files surface"]');
     expect(layout.actions).toEqual([{ kind: "openSurface", surface: "files" }]);
@@ -1570,7 +1570,7 @@ describe("AgentModeView", () => {
     expect(markThreadViewed).toHaveBeenLastCalledWith("agt-1");
   });
 
-  it("seeds a follow-up launch from the selected thread's project, not the composer target", () => {
+  it("clears the old thread and uses the selected project launch when changing projects", () => {
     render({
       agents: surface({
         lastUsedLaunch: (projectRootKey: string) =>
@@ -1588,8 +1588,9 @@ describe("AgentModeView", () => {
     click('[data-thread-id="agt-b"]');
     chooseScope(ROOT);
 
-    expect(launchSelect("agent-launch-model").value).toBe("opus");
-    expect(launchSelect("agent-launch-mode").value).toBe("acceptEdits");
+    expect(host.querySelector('section[aria-label="Agent thread agt-b"]')).toBeNull();
+    expect(launchSelect("agent-launch-model").value).toBe("sonnet");
+    expect(launchSelect("agent-launch-mode").value).toBe("plan");
   });
 
   it("seeds a follow-up launch from the thread's last turn before the remembered launch", () => {
@@ -2424,7 +2425,7 @@ describe("AgentModeView", () => {
       expect(pickerTrigger("agent-rail-scope").textContent).toContain(
         manualNavigation ? "app" : "api-service",
       );
-      expect(selectedSessionId()).toBe(manualNavigation ? "agt-1" : null);
+      expect(selectedSessionId()).toBeNull();
     },
   );
 
@@ -2510,7 +2511,7 @@ describe("AgentModeView", () => {
     expect(externalSessions.open).toHaveBeenCalledWith({ rootKey: ROOT, repositoryRoot: ROOT });
   });
 
-  it("opens the terminal sessions palette for the header project, not the rail scope", () => {
+  it("opens the terminal sessions palette for the newly selected project after leaving a thread", () => {
     const externalSessions = externalSessionsSurfaceFixture({ open: vi.fn(async () => undefined) });
     render({
       agents: surface({
@@ -2527,8 +2528,8 @@ describe("AgentModeView", () => {
     act(() => terminalSessionsEntry().click());
 
     expect(externalSessions.open).toHaveBeenCalledExactlyOnceWith({
-      rootKey: OTHER_ROOT,
-      repositoryRoot: OTHER_ROOT,
+      rootKey: ROOT,
+      repositoryRoot: ROOT,
     });
   });
 

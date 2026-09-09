@@ -1,7 +1,11 @@
 import { Suspense, lazy, useMemo } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { TerminalTheme } from "../../domain/settings";
-import type { TerminalGateway } from "../../domain/terminal";
+import {
+  DEFAULT_TERMINAL_LAUNCH_TARGET,
+  terminalLaunchTargetForRepository,
+  type TerminalGateway,
+} from "../../domain/terminal";
 import { agentSurfaceTargetGone } from "./agentModePresentation";
 import {
   SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
@@ -21,7 +25,7 @@ const LazyTerminalTabsPanel = lazy(() =>
 );
 
 export interface AgentSurfaceTerminalProps {
-  readonly thread: AgentThreadView;
+  readonly thread: AgentThreadView | null;
   readonly isActive: boolean;
   readonly layoutRevision: number;
   readonly workspaceId: string;
@@ -50,23 +54,37 @@ export function AgentSurfaceTerminal({
   workspaceRoot,
   workspaceTrusted,
 }: AgentSurfaceTerminalProps) {
-  const threadId = thread.thread.threadId;
-  const isolation = thread.thread.target.isolation;
-  const gone = agentSurfaceTargetGone(thread);
-  const foreignRoot = agentSurfaceTerminalRootMismatch(thread, workspaceRoot);
-  const ownerKey = agentSurfaceTerminalOwnerKey(workspaceId, threadId);
+  const threadId = thread?.thread.threadId ?? null;
+  const repositoryRoot = thread?.thread.owner.repositoryRoot ?? workspaceRoot;
+  const isolation = thread?.thread.target.isolation ?? "in-place";
+  const gone = thread !== null && agentSurfaceTargetGone(thread);
+  const foreignRoot = thread !== null && agentSurfaceTerminalRootMismatch(thread, workspaceRoot);
+  const ownerKey =
+    threadId === null
+      ? `${workspaceId}:agent-surface:project`
+      : agentSurfaceTerminalOwnerKey(workspaceId, threadId);
   const gateway = useMemo(
     () =>
       withTerminalLaunchTarget(
         terminalGateway,
-        agentSurfaceTerminalLaunchTargetFor(threadId, isolation),
+        threadId === null || foreignRoot
+          ? DEFAULT_TERMINAL_LAUNCH_TARGET
+          : repositoryRoot !== workspaceRoot
+            ? terminalLaunchTargetForRepository(
+                repositoryRoot.slice(workspaceRoot.length + 1),
+                isolation === "worktree" ? threadId : undefined,
+              )
+            : agentSurfaceTerminalLaunchTargetFor(threadId, isolation),
       ),
-    [isolation, terminalGateway, threadId],
+    [foreignRoot, isolation, repositoryRoot, terminalGateway, threadId, workspaceRoot],
   );
 
   if (gone) {
     return (
-      <section aria-label="Thread terminal" className="agent-surface-terminal">
+      <section
+        aria-label={thread === null ? "Project terminal" : "Thread terminal"}
+        className="agent-surface-terminal"
+      >
         <p className="agent-note agent-note--warning">{SURFACE_TERMINAL_GONE_MESSAGE}</p>
       </section>
     );
@@ -74,7 +92,10 @@ export function AgentSurfaceTerminal({
 
   if (foreignRoot) {
     return (
-      <section aria-label="Thread terminal" className="agent-surface-terminal">
+      <section
+        aria-label={thread === null ? "Project terminal" : "Thread terminal"}
+        className="agent-surface-terminal"
+      >
         <p className="agent-note agent-note--warning">{SURFACE_TERMINAL_FOREIGN_ROOT_MESSAGE}</p>
       </section>
     );
@@ -82,7 +103,10 @@ export function AgentSurfaceTerminal({
 
   if (!workspaceTrusted) {
     return (
-      <section aria-label="Thread terminal" className="agent-surface-terminal">
+      <section
+        aria-label={thread === null ? "Project terminal" : "Thread terminal"}
+        className="agent-surface-terminal"
+      >
         <p className="agent-note agent-note--warning">{SURFACE_TERMINAL_UNTRUSTED_MESSAGE}</p>
       </section>
     );
@@ -90,7 +114,7 @@ export function AgentSurfaceTerminal({
 
   return (
     <section
-      aria-label="Thread terminal"
+      aria-label={thread === null ? "Project terminal" : "Thread terminal"}
       className="agent-surface-terminal"
       data-agent-surface-terminal={ownerKey}
       data-isolation={isolation}

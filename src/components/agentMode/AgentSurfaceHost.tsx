@@ -56,19 +56,40 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   threadRootPath,
   workspaceRoot,
 }: AgentSurfaceHostProps) {
+  const activation = chrome.workspaceActivation;
+  const available =
+    scope.kind === "repository" &&
+    scope.rootPath === workspaceRoot &&
+    (thread === null || thread.thread.owner.rootKey === scope.projectRootKey) &&
+    (activation === undefined ||
+      (activation.state.kind === "ready" && activation.state.rootPath === scope.rootPath));
+  const unavailable = available ? null : (
+    <div className="agent-note" role="status">
+      {activation?.state.kind === "failed"
+        ? activation.state.message
+        : activation?.state.kind === "pending"
+          ? "Opening project…"
+          : "Select an available project to use this panel."}
+      {activation?.state.kind === "failed" && (
+        <button className="agent-linkbutton" onClick={activation.retry} type="button">
+          Retry
+        </button>
+      )}
+    </div>
+  );
   const fileTree = useAgentSurfaceScopeTree({
     chrome,
     thread,
     threadRootPath,
     scope,
-    filesOpen: layout.openSurfaces.includes("files"),
+    filesOpen: available && layout.openSurfaces.includes("files"),
     onSwitchScope,
     onTrustScope,
   });
 
   const diff = useMemo<AgentSurfaceDiffPanelProps | null>(
     () =>
-      thread === null
+      !available || thread === null
         ? null
         : {
             ...chrome.diff,
@@ -81,13 +102,16 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
             onOpenChangedFileDiff: (threadId, change) =>
               void agents.openChangedFileDiff(threadId, change),
           },
-    [agents, chrome.diff, thread],
+    [agents, available, chrome.diff, thread],
   );
 
   const terminalChrome = chrome.terminal;
   const terminal = useMemo<AgentSurfaceTerminalPanelProps | null>(() => {
-    if (terminalChrome === null || chrome.workspaceId === null || thread === null) return null;
+    if (!available) return null;
+    if (terminalChrome === null || chrome.workspaceId === null) return null;
     if (workspaceRoot === null) return null;
+    if (thread === null && (scope.kind !== "repository" || scope.rootPath !== workspaceRoot))
+      return null;
     return {
       workspaceId: chrome.workspaceId,
       workspaceRoot,
@@ -101,18 +125,27 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
       onOpenLink: terminalChrome.onOpenLink,
     };
   }, [
+    available,
     chrome.onTrustWorkspace,
     chrome.workspaceId,
     chrome.workspaceTrusted,
     terminalChrome,
+    scope,
     thread,
     workspaceRoot,
   ]);
 
   const historyScope = useMemo(
     () =>
-      agentGitHistoryScope(projects, thread, scope, workspaceRoot, chrome.workspaceTrusted, null),
-    [projects, thread, scope, workspaceRoot, chrome.workspaceTrusted],
+      agentGitHistoryScope(
+        projects,
+        available ? thread : null,
+        available ? scope : { kind: "none" },
+        workspaceRoot,
+        chrome.workspaceTrusted,
+        null,
+      ),
+    [available, projects, thread, scope, workspaceRoot, chrome.workspaceTrusted],
   );
   const historyRepositories = useMemo(
     () => agentHistoryRepositories(projects, thread, scope, historyScope),
@@ -124,7 +157,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
       historyScope.kind === "available" && thread !== null
         ? (projects.find((candidate) => candidate.rootKey === thread.thread.owner.rootKey) ?? null)
         : null,
-    thread: thread?.thread ?? null,
+    thread: available ? (thread?.thread ?? null) : null,
     workspaceOwnerKey: chrome.worktreeSync?.workspaceOwnerKey ?? null,
     openWorkspaceRoots: chrome.worktreeSync?.openWorkspaceRoots ?? [],
     gateway: chrome.worktreeSync?.gateway ?? null,
@@ -164,6 +197,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
       hidden={hidden}
     >
       <AgentSurfacePanel
+        unavailable={unavailable}
         history={{
           scope: historyScope,
           repositories: historyRepositories,
@@ -174,6 +208,14 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
         }}
         chooserAutoFocus={chooserAutoFocus}
         diff={diff}
+        projectDiff={
+          thread === null &&
+          scope.kind === "repository" &&
+          scope.rootPath === workspaceRoot &&
+          chrome.projectDiff?.rootPath === workspaceRoot
+            ? { ...chrome.projectDiff, ...chrome.diff }
+            : null
+        }
         hidden={hidden}
         fileTree={fileTree}
         layout={layout}

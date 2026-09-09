@@ -33,14 +33,38 @@ export type TerminalUnsubscribeFn = () => void;
 
 export type TerminalLaunchTarget =
   | { readonly kind: "workspaceRoot" }
-  | { readonly kind: "agentWorktree"; readonly threadId: string };
+  | { readonly kind: "agentWorktree"; readonly threadId: string }
+  | { readonly kind: "repositoryRoot"; readonly repositoryRelativePath: string }
+  | {
+      readonly kind: "repositoryAgentWorktree";
+      readonly repositoryRelativePath: string;
+      readonly threadId: string;
+    };
 
-export const TERMINAL_LAUNCH_TARGET_KINDS = ["workspaceRoot", "agentWorktree"] as const;
+export const TERMINAL_LAUNCH_TARGET_KINDS = [
+  "workspaceRoot",
+  "agentWorktree",
+  "repositoryRoot",
+  "repositoryAgentWorktree",
+] as const;
 
 export const DEFAULT_TERMINAL_LAUNCH_TARGET: TerminalLaunchTarget = { kind: "workspaceRoot" };
 
 export function terminalLaunchTargetForThread(threadId: string): TerminalLaunchTarget {
   return { kind: "agentWorktree", threadId };
+}
+
+export function terminalLaunchTargetForRepository(
+  repositoryRelativePath: string,
+  threadId?: string,
+): TerminalLaunchTarget {
+  const path = terminalRepositoryRelativePath(repositoryRelativePath);
+  if (threadId === undefined) return { kind: "repositoryRoot", repositoryRelativePath: path };
+  return {
+    kind: "repositoryAgentWorktree",
+    repositoryRelativePath: path,
+    threadId: terminalTargetThreadId(threadId),
+  };
 }
 
 export function serializeTerminalLaunchTarget(
@@ -57,10 +81,41 @@ export function serializeTerminalLaunchTarget(
     exactTerminalTargetKeys(target, ["kind", "threadId"]);
     return { kind: target.kind, threadId: terminalTargetThreadId(target.threadId) };
   }
+  if (target.kind === "repositoryRoot") {
+    exactTerminalTargetKeys(target, ["kind", "repositoryRelativePath"]);
+    return {
+      kind: target.kind,
+      repositoryRelativePath: terminalRepositoryRelativePath(target.repositoryRelativePath),
+    };
+  }
+  if (target.kind === "repositoryAgentWorktree") {
+    exactTerminalTargetKeys(target, ["kind", "repositoryRelativePath", "threadId"]);
+    return {
+      kind: target.kind,
+      repositoryRelativePath: terminalRepositoryRelativePath(target.repositoryRelativePath),
+      threadId: terminalTargetThreadId(target.threadId),
+    };
+  }
   return invalidTerminalLaunchTarget(
     "target.kind",
     `one of ${TERMINAL_LAUNCH_TARGET_KINDS.join(", ")}`,
   );
+}
+
+function terminalRepositoryRelativePath(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    new TextEncoder().encode(value).length > 4096 ||
+    value.includes("\\") ||
+    value.includes("\0") ||
+    value.split("/").some((part) => part === "" || part === "." || part === "..")
+  ) {
+    invalidTerminalLaunchTarget(
+      "target.repositoryRelativePath",
+      "a bounded repository relative path",
+    );
+  }
+  return value;
 }
 
 function terminalTargetThreadId(value: unknown): string {

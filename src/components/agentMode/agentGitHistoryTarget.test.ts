@@ -94,6 +94,11 @@ describe("agentGitHistoryScope", () => {
     expect(resolve([project], pending)).toMatchObject({ kind: "unavailable" });
   });
 
+  it("does not use an ancestor workspace for a separately selected nested project", () => {
+    expect(resolve([project], null, null, "/workspace").kind).toBe("unavailable");
+    expect(resolve([project], surfaceThreadView(), null, "/workspace").kind).toBe("unavailable");
+  });
+
   it("changes history authority when a project generation or thread changes", () => {
     const thread = surfaceThreadView();
     const initial = resolve([project], thread);

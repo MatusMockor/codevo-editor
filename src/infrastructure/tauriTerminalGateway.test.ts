@@ -3,6 +3,7 @@ import { TauriTerminalGateway } from "./tauriTerminalGateway";
 import {
   DEFAULT_TERMINAL_LAUNCH_TARGET,
   terminalLaunchTargetForThread,
+  terminalLaunchTargetForRepository,
   type TerminalLaunchTarget,
   type TerminalOutputEvent,
 } from "../domain/terminal";
@@ -160,11 +161,56 @@ describe("TauriTerminalGateway", () => {
     });
   });
 
+  it("keeps the registered project owner when launching nested repository terminals", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>();
+    const gateway = new TauriTerminalGateway(invokeCommand, vi.fn<ListenToEvent>(), () => true);
+    for (const threadId of [undefined, "agt-0001"]) {
+      const target = terminalLaunchTargetForRepository("packages/backend", threadId);
+      await gateway.start("/workspace", { cols: 80, rows: 24 }, "default", false, target);
+      expect(invokeCommand).toHaveBeenLastCalledWith("start_terminal_session", {
+        profileId: "default",
+        rootPath: "/workspace",
+        size: { cols: 80, rows: 24 },
+        target:
+          threadId === undefined
+            ? { kind: "repositoryRoot", repositoryRelativePath: "packages/backend" }
+            : {
+                kind: "repositoryAgentWorktree",
+                repositoryRelativePath: "packages/backend",
+                threadId,
+              },
+        terminalShellIntegrationEnabled: false,
+      });
+    }
+  });
+
+  it("refuses malformed nested repository destinations before starting a terminal", () => {
+    for (const path of [
+      "",
+      "/tmp",
+      "../outside",
+      "pkg/../outside",
+      "pkg//repo",
+      "pkg/./repo",
+      "pkg/",
+      "pkg\\repo",
+      "pkg\0repo",
+      "é".repeat(2049),
+    ]) {
+      expect(() => terminalLaunchTargetForRepository(path)).toThrow(TypeError);
+    }
+    expect(() => terminalLaunchTargetForRepository("repo", "../escape")).toThrow(TypeError);
+  });
+
   it("rejects an unknown launch target before it reaches the backend", async () => {
     const invokeCommand = vi.fn<InvokeCommand>();
     const gateway = new TauriTerminalGateway(invokeCommand, vi.fn<ListenToEvent>(), () => true);
     const rejected: ReadonlyArray<unknown> = [
       { kind: "anywhere" },
+      { kind: "repositoryRoot", repositoryRelativePath: "../escape" },
+      { kind: "repositoryRoot", repositoryRelativePath: "repo", cwd: "/etc" },
+      { kind: "repositoryAgentWorktree", repositoryRelativePath: "repo" },
+      { kind: "repositoryAgentWorktree", repositoryRelativePath: "repo", threadId: "../escape" },
       { kind: "agentWorktree" },
       { kind: "agentWorktree", threadId: "agt-0001", cwd: "/etc" },
       { kind: "agentWorktree", threadId: "../escape" },

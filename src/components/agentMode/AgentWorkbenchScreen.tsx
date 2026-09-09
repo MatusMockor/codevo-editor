@@ -1,3 +1,14 @@
+import { useAgentWorkspaceNavigationBoundary } from "./useAgentWorkspaceNavigationBoundary";
+import {
+  useAgentWorkbenchProjectOpening,
+  type AgentPendingProjectOpen,
+} from "./useAgentWorkbenchProjectOpening";
+import { useAgentProjectDiffChrome } from "./useAgentProjectDiffChrome";
+import { NO_SCOPE_STATE, type AgentNavigationSession } from "./useAgentThreadNavigation";
+import {
+  useAgentProjectWorkspaceSync,
+  type AgentProjectWorkspaceTarget,
+} from "./useAgentProjectWorkspaceSync";
 import { useAgentCheckoutDirtyRevision } from "../../application/useAgentCheckoutDirtyRevision";
 import { getEditorDocumentDirtySnapshot } from "../../application/editorSessionDirtyProjection";
 import type { WorkspaceFileChangeGateway } from "../../domain/workspaceFileChange";
@@ -52,7 +63,6 @@ import {
   agentTerminalPanelIntent,
   initialAgentTerminalPanelIntentState,
   type AgentWorkbenchChrome,
-  type AgentAddedProjectReceipt,
 } from "./agentWorkbenchChrome";
 
 type Workbench = ReturnType<typeof useWorkbenchController>;
@@ -84,6 +94,15 @@ export type AgentWorkbenchScreenWorkbench = Pick<
     Pick<
       Workbench,
       | "openDocuments"
+      | "gitStatus"
+      | "gitRepositoryStatuses"
+      | "gitLoading"
+      | "gitDiffPreview"
+      | "gitDiffLoading"
+      | "refreshGitStatus"
+      | "previewGitChange"
+      | "openGitChange"
+      | "closeGitDiffPreview"
       | "agentWorktreeFileSync"
       | "resolveDocumentSessionDirtyProjection"
       | "documentSessionAuthorityRevision"
@@ -111,7 +130,7 @@ export interface AgentWorkbenchScreenProps {
   onResizeRightPanelStart(event: PointerEvent<HTMLDivElement>): void;
 }
 
-export const ADD_PROJECT_REFUSED_REASON = "Unable to add that project.";
+export { ADD_PROJECT_REFUSED_REASON } from "./useAgentWorkbenchProjectOpening";
 export const SEARCH_FILES_COMMAND = "file.quickOpen";
 const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGateway();
 const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
@@ -144,6 +163,12 @@ export function AgentWorkbenchScreen({
   textClipboard = DEFAULT_TEXT_CLIPBOARD,
   workbench,
 }: AgentWorkbenchScreenProps) {
+  const navigationSession = useRef<AgentNavigationSession["current"]>({
+    selectedThreadId: null,
+    selectedThreadOwnerKey: null,
+    scopeState: NO_SCOPE_STATE,
+  });
+  const addProjectPending = useRef<AgentPendingProjectOpen | null>(null);
   const workspaceTrusted = !!workbench.workspaceTrust?.trusted;
   const projects = workbench.agents.agentProjects;
   const { agentWorkbench, appSettings, nodePackageScripts, workspaceRoot } = workbench;
@@ -171,6 +196,39 @@ export function AgentWorkbenchScreen({
   );
   const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
   const { openWorkspaceRootWithReceipt, runCommand } = workbench;
+  const activateProjectWorkspace = useCallback(
+    async (rootPath: string) => {
+      const { outcome, isCurrent } = await openWorkspaceRootWithReceipt(rootPath);
+      return outcome.kind === "opened" && isCurrent();
+    },
+    [openWorkspaceRootWithReceipt],
+  );
+  const projectWorkspaceSync = useAgentProjectWorkspaceSync({
+    workspaceRoot,
+    activate: activateProjectWorkspace,
+  });
+  const navigationBoundary = useAgentWorkspaceNavigationBoundary(
+    workspaceRoot,
+    projects.projects,
+    projectWorkspaceSync.state,
+    addProjectPending.current?.rootPath ?? null,
+    navigationSession,
+  );
+  if (navigationBoundary.cancelPendingAdd) addProjectPending.current = null;
+  const pendingExternalRoot = useRef(navigationBoundary.pendingExternalRoot);
+  pendingExternalRoot.current = navigationBoundary.pendingExternalRoot;
+  const selectWorkspace = projectWorkspaceSync.select;
+  const selectProjectWorkspace = useCallback(
+    (target: AgentProjectWorkspaceTarget | null) => {
+      if (addProjectPending.current !== null || pendingExternalRoot.current !== null) return;
+      selectWorkspace(target);
+    },
+    [selectWorkspace],
+  );
+  const workspaceActivation = useMemo(
+    () => ({ ...projectWorkspaceSync, select: selectProjectWorkspace }),
+    [projectWorkspaceSync, selectProjectWorkspace],
+  );
   const searchFiles = useCallback(() => {
     runCommand(SEARCH_FILES_COMMAND);
   }, [runCommand]);
@@ -302,54 +360,12 @@ export function AgentWorkbenchScreen({
     [openProblemNotice],
   );
 
-  const [addedProjectReceipt, setAddedProjectReceipt] = useState<AgentAddedProjectReceipt | null>(
-    null,
-  );
-  const addSelectionEpoch = useRef(0);
-  const addMounted = useRef(true);
-  useLayoutEffect(() => {
-    addMounted.current = true;
-    return () => {
-      addMounted.current = false;
-      addSelectionEpoch.current += 1;
-    };
-  }, []);
-  const cancelAddSelection = useCallback(() => {
-    addSelectionEpoch.current += 1;
-  }, []);
-  const consumeAddSelection = useCallback((receipt: AgentAddedProjectReceipt) => {
-    setAddedProjectReceipt((current) => (current === receipt ? null : current));
-  }, []);
-  const addProject = useMemo(
-    () => ({
-      gateway: directoryListingGateway,
-      receipt: addedProjectReceipt,
-      cancelSelection: cancelAddSelection,
-      consumeSelection: consumeAddSelection,
-      addProject: async (path: string) => {
-        const epoch = ++addSelectionEpoch.current;
-        const { outcome, isCurrent } = await openWorkspaceRootWithReceipt(path);
-        if (outcome.kind !== "opened") throw new Error(ADD_PROJECT_REFUSED_REASON);
-        if (outcome.receipt.kind !== "registeredWorkspaceOpenReceipt") {
-          throw new Error(ADD_PROJECT_REFUSED_REASON);
-        }
-        const receipt = {
-          rootPath: outcome.receipt.selectedPath,
-          ownerId: outcome.receipt.workspaceId,
-          isCurrent: () => addMounted.current && addSelectionEpoch.current === epoch && isCurrent(),
-        };
-        if (receipt.isCurrent()) setAddedProjectReceipt(receipt);
-        return receipt;
-      },
-    }),
-    [
-      addedProjectReceipt,
-      cancelAddSelection,
-      consumeAddSelection,
-      directoryListingGateway,
-      openWorkspaceRootWithReceipt,
-    ],
-  );
+  const addProject = useAgentWorkbenchProjectOpening({
+    directoryListingGateway,
+    openWorkspaceRootWithReceipt,
+    navigationSession,
+    addProjectPending,
+  });
 
   const shortcuts = useMemo(() => layoutShortcuts(appSettings.keymap), [appSettings.keymap]);
   const checkoutDirtyRevision = useAgentCheckoutDirtyRevision(
@@ -384,8 +400,11 @@ export function AgentWorkbenchScreen({
       },
     };
   }, [checkoutDirtyRevision, gitBranchGateway, workbench]);
+  const projectDiff = useAgentProjectDiffChrome(workbench);
   const chrome = useMemo<AgentWorkbenchChrome>(
     () => ({
+      workspaceActivation,
+      projectDiff,
       layout: agentWorkbench,
       bottomPanelVisible,
       shortcuts,
@@ -441,6 +460,8 @@ export function AgentWorkbenchScreen({
     }),
     [
       activeFileRevealSignal,
+      workspaceActivation,
+      projectDiff,
       addProject,
       agentWorkbench,
       appSettings.editorFontFamily,
@@ -483,7 +504,8 @@ export function AgentWorkbenchScreen({
     <AgentModeView
       agents={agents}
       chrome={chrome}
-      key={workspaceRoot ?? ""}
+      key={navigationBoundary.key}
+      navigationSession={navigationSession}
       modelFavoritesPersistence={modelFavoritesPersistence}
       onOpenSourceControl={openSourceControl}
       onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}

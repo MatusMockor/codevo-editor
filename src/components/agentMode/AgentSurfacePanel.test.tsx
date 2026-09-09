@@ -24,7 +24,7 @@ import {
   SURFACE_FILES_THREAD_DESCRIPTION,
   SURFACE_FILES_PROJECT_DESCRIPTION,
   SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
-  SURFACE_NO_THREAD_REASON,
+  SURFACE_NO_PROJECT_REASON,
   SURFACE_UNTRUSTED_TERMINAL_REASON,
   SURFACE_WORKTREE_GONE_REASON,
 } from "./agentSurfacePolicy";
@@ -132,13 +132,13 @@ describe("AgentSurfacePanel", () => {
 
     keydown(chooser, "d");
     keydown(chooser, "t");
-    expect(onOpenSurface).toHaveBeenCalledTimes(1);
+    expect(onOpenSurface).toHaveBeenCalledTimes(3);
 
     render({ onOpenSurface });
     keydown(host.querySelector<HTMLElement>('[role="group"]'), "T");
     expect(onOpenSurface).toHaveBeenLastCalledWith("terminal");
     keydown(host.querySelector<HTMLElement>('[role="group"]'), "d", { metaKey: true });
-    expect(onOpenSurface).toHaveBeenCalledTimes(2);
+    expect(onOpenSurface).toHaveBeenCalledTimes(4);
   });
 
   it("tells the Files card what it opens with and without a thread", () => {
@@ -150,8 +150,8 @@ describe("AgentSurfacePanel", () => {
   });
 
   it("disables cards with reasons: no thread, worktree gone, untrusted terminal", () => {
-    render({ thread: null });
-    expect(reasons()).toEqual([SURFACE_NO_THREAD_REASON, SURFACE_NO_THREAD_REASON]);
+    render({ thread: null, scope: { kind: "none" } });
+    expect(reasons()).toEqual([SURFACE_NO_PROJECT_REASON, SURFACE_NO_PROJECT_REASON]);
     expect(
       host.querySelector<HTMLButtonElement>('[aria-label="Open Files surface"]')?.disabled,
     ).toBe(false);
@@ -436,9 +436,9 @@ describe("AgentSurfacePanel", () => {
       SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
     );
 
-    render({ layout: open(["diff"], "diff"), thread: null });
+    render({ layout: open(["diff"], "diff"), thread: null, scope: { kind: "none" } });
     expect(host.querySelector('[data-surface-panel="diff"] .agent-note')?.textContent).toBe(
-      SURFACE_NO_THREAD_REASON,
+      SURFACE_NO_PROJECT_REASON,
     );
   });
 
