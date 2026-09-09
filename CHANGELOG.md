@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.24] - 2026-09-09
+
+### Changed
+
+- Support up to 64 concurrent threads across projects and repositories, replacing
+  the manual 4–8 task limit. Explain that this shared capacity does not control
+  provider-managed subagents; retain exclusive access to each active checkout.
+
+### Fixed
+
+- Reduce background provider-check CPU work with hardware-accelerated SHA hashing
+  on ARM64 and removal of duplicate executable validation, preserving content and
+  ownership checks.
+
 ## [0.2.0-beta.23] - 2026-09-09
 
 ### Fixed
