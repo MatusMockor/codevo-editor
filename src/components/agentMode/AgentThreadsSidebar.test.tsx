@@ -932,7 +932,7 @@ describe("AgentThreadsSidebar", () => {
       "No threads in app yet",
     );
     expect(host.querySelector(".agent-rail__overflow")?.textContent).toBe(
-      "1 more project is not shown (limit 8)",
+      "1 more project is not shown (limit 64)",
     );
   });
 

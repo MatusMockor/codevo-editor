@@ -4,8 +4,6 @@ import {
   DEFAULT_AGENT_ISOLATION_POLICY,
   DEFAULT_MAX_CONCURRENT_AGENT_TASKS,
   MAX_AGENT_CLI_PATH_BYTES,
-  MAX_CONCURRENT_AGENT_TASKS_LIMIT,
-  MIN_CONCURRENT_AGENT_TASKS_LIMIT,
   activeAgentCliPath,
   agentCliExecutablePresentation,
   agentCliInstallCommand,
@@ -26,7 +24,7 @@ import {
 import { defaultAgentProviderPreferences } from "./agentProviderSettings";
 
 describe("defaultAgentAppSettings", () => {
-  it("defaults to no configured CLI, Claude Code, and four concurrent tasks", () => {
+  it("defaults to no configured CLI, Claude Code, and 64 parallel threads", () => {
     expect(defaultAgentAppSettings()).toEqual({
       agentCliPaths: { claudeCode: null, codex: null },
       agentCliKind: "claudeCode",
@@ -34,7 +32,7 @@ describe("defaultAgentAppSettings", () => {
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
-      maxConcurrentAgentTasks: 4,
+      maxConcurrentAgentTasks: 64,
     });
   });
 
@@ -45,9 +43,7 @@ describe("defaultAgentAppSettings", () => {
   it("exposes the pinned default constants", () => {
     expect(DEFAULT_AGENT_CLI_KIND).toBe("claudeCode");
     expect(DEFAULT_AGENT_ISOLATION_POLICY).toBe("auto");
-    expect(DEFAULT_MAX_CONCURRENT_AGENT_TASKS).toBe(4);
-    expect(MIN_CONCURRENT_AGENT_TASKS_LIMIT).toBe(1);
-    expect(MAX_CONCURRENT_AGENT_TASKS_LIMIT).toBe(8);
+    expect(DEFAULT_MAX_CONCURRENT_AGENT_TASKS).toBe(64);
   });
 });
 
@@ -263,39 +259,12 @@ describe("normalizeAgentCliKind", () => {
 });
 
 describe("normalizeMaxConcurrentAgentTasks", () => {
-  it.each([
-    [1, 1],
-    [4, 4],
-    [8, 8],
-  ])("keeps %i inside the supported range", (value, expected) => {
-    expect(normalizeMaxConcurrentAgentTasks(value)).toBe(expected);
-  });
-
-  it.each([
-    ["below the minimum", 0, 1],
-    ["negative", -7, 1],
-    ["above the maximum", 9, 8],
-    ["far above the maximum", 4_096, 8],
-  ])("clamps a value %s", (_label, value, expected) => {
-    expect(normalizeMaxConcurrentAgentTasks(value)).toBe(expected);
-  });
-
-  it("floors a fractional value before clamping", () => {
-    expect(normalizeMaxConcurrentAgentTasks(3.9)).toBe(3);
-    expect(normalizeMaxConcurrentAgentTasks(0.9)).toBe(1);
-    expect(normalizeMaxConcurrentAgentTasks(8.9)).toBe(8);
-  });
-
-  it.each([
-    ["undefined", undefined],
-    ["null", null],
-    ["a numeric string", "4"],
-    ["NaN", Number.NaN],
-    ["Infinity", Number.POSITIVE_INFINITY],
-    ["-Infinity", Number.NEGATIVE_INFINITY],
-  ])("falls back to the default for %s", (_label, value) => {
-    expect(normalizeMaxConcurrentAgentTasks(value)).toBe(4);
-  });
+  it.each([1, 4, 8, 64, 0, -7, 4_096, 3.9, undefined, null, "4", Number.NaN, Infinity])(
+    "migrates persisted value %s to the shared thread capacity",
+    (value) => {
+      expect(normalizeMaxConcurrentAgentTasks(value)).toBe(64);
+    },
+  );
 });
 
 describe("normalizeAgentIsolationPolicy", () => {

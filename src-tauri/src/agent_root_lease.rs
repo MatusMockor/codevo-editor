@@ -4,7 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use crate::workspace_registry::WorkspaceId;
 
-pub const MAX_AGENT_ROOT_LEASES: usize = 8;
+pub const MAX_AGENT_ROOT_LEASES: usize = 64;
 pub const MAX_AGENT_ROOT_LEASE_TOKEN: u64 = 9_007_199_254_740_991;
 pub const AGENT_ROOT_LEASE_LIMIT_ERROR: &str = "Too many agent project roots are leased.";
 pub const AGENT_ROOT_LEASE_TOKEN_EXHAUSTED_ERROR: &str =
@@ -292,6 +292,7 @@ mod tests {
 
     #[test]
     fn lease_count_is_capped() {
+        assert_eq!(MAX_AGENT_ROOT_LEASES, 64);
         let registry = AgentRootLeaseRegistry::new();
 
         for index in 0..MAX_AGENT_ROOT_LEASES {

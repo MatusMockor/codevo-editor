@@ -270,7 +270,7 @@ export function agentFollowUpBlockedReason(
     return "No agent CLI is configured. Set the agent CLI path in settings.";
   }
   if (context.liveTaskCount >= context.maxConcurrentAgentTasks) {
-    return "The concurrent agent limit is reached. Stop a running agent or raise the limit.";
+    return "The shared parallel thread limit is reached. Wait for a thread to finish or stop one.";
   }
   return null;
 }

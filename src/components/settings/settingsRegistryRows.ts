@@ -218,9 +218,9 @@ export const SETTINGS_ROW_TABLE = [
   row(
     "agents.maxConcurrentTasks",
     "agents",
-    "Max concurrent agent tasks",
-    "Queued tasks start when a slot frees up.",
-    ["agent", "concurrency", "tasks", "queue"],
+    "Parallel threads",
+    "Shared across all projects. Each provider manages its own subagents and limits.",
+    ["agent", "concurrency", "parallel", "threads", "subagents", "projects"],
   ),
   row(
     "agents.isolationPolicy",

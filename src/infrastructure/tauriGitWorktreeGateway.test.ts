@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { MAX_WORKTREES_PER_REPOSITORY } from "../domain/gitWorktree";
 import { TauriGitWorktreeGateway } from "./tauriGitWorktreeGateway";
 import type { InvokeGitWorktreeCommand } from "./tauriGitWorktreeIpcContract";
 
@@ -49,7 +50,7 @@ describe("TauriGitWorktreeGateway", () => {
 
   it("rejects a clipped worktree list instead of presenting it as complete", async () => {
     const invoke = vi.fn<InvokeGitWorktreeCommand>().mockResolvedValue(
-      Array.from({ length: 17 }, (_, index) => ({
+      Array.from({ length: MAX_WORKTREES_PER_REPOSITORY + 1 }, (_, index) => ({
         ...descriptor,
         worktreePath: `${descriptor.worktreePath}-${index}`,
       })),

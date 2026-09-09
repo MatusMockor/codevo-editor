@@ -171,9 +171,6 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
             agentIsolationPolicy,
           })
         }
-        onChangeMaxConcurrentTasks={(maxConcurrentAgentTasks) =>
-          writeAppSettings({ ...appSettingsRef.current, maxConcurrentAgentTasks })
-        }
         onClearFavorites={() => {
           const next = withClearedModelFavorites(appSettingsRef.current);
 

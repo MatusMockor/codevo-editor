@@ -5,8 +5,8 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-pub const AGENT_TASK_GLOBAL_LIMIT: usize = 8;
-pub const AGENT_TASK_REPOSITORY_LIMIT: usize = 4;
+pub const AGENT_TASK_GLOBAL_LIMIT: usize = 64;
+pub const AGENT_TASK_REPOSITORY_LIMIT: usize = AGENT_TASK_GLOBAL_LIMIT;
 pub const AGENT_TASK_IN_PLACE_REPOSITORY_LIMIT: usize = 1;
 
 pub const AGENT_TASK_GLOBAL_LIMIT_ERROR: &str = "Too many agent tasks are starting or running.";

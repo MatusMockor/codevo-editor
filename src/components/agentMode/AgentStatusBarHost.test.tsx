@@ -180,7 +180,7 @@ describe("AgentStatusBarHost", () => {
   it("reports the live slots of the surface it was given", () => {
     render({ agents: agents({ liveTaskCount: 2, maxConcurrentAgentTasks: 4 }) });
 
-    expect(host.textContent).toContain("2/4 agents running");
+    expect(host.textContent).toContain("2/4 threads running");
   });
 
   function render(overrides: Partial<AgentStatusBarWorkbench> = {}): void {

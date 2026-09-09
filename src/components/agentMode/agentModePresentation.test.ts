@@ -132,9 +132,9 @@ describe("agentModePresentation", () => {
     );
   });
 
-  it("blocks a follow-up once the concurrent agent limit is reached", () => {
+  it("blocks a follow-up once the shared parallel thread limit is reached", () => {
     expect(blockedReason(thread({}), { liveTaskCount: 4, maxConcurrentAgentTasks: 4 })).toBe(
-      "The concurrent agent limit is reached. Stop a running agent or raise the limit.",
+      "The shared parallel thread limit is reached. Wait for a thread to finish or stop one.",
     );
     expect(blockedReason(thread({}), { liveTaskCount: 3, maxConcurrentAgentTasks: 4 })).toBeNull();
   });
@@ -160,7 +160,7 @@ describe("agentModePresentation", () => {
         context: {},
         expected: "No agent CLI is configured",
       },
-      { cleared: {}, context: { agentCliConfigured: true }, expected: "concurrent agent limit" },
+      { cleared: {}, context: { agentCliConfigured: true }, expected: "shared parallel thread limit" },
     ];
 
     let options: ThreadOptions = {

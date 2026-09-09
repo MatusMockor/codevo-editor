@@ -458,15 +458,19 @@ describe("AgentsSettingsPage", () => {
     expect(onUpdateAppSettings).not.toHaveBeenCalled();
   });
 
-  it("persists the max concurrent tasks and the workspace isolation policy", () => {
+  it("explains shared parallel threads without an editable limit and persists workspace isolation", () => {
     const onUpdateAppSettings = vi.fn();
     const onUpdateWorkspaceSettings = vi.fn();
     const management = providerManagement();
 
     render({ management, onUpdateAppSettings, onUpdateWorkspaceSettings });
 
-    setNumber(concurrencyInput(), "6");
-    expect(lastCall(onUpdateAppSettings).maxConcurrentAgentTasks).toBe(6);
+    expect(host.textContent).toContain("Parallel threads");
+    expect(host.textContent).toContain("Up to 64");
+    expect(host.textContent).toContain("Shared across all projects");
+    expect(host.textContent).toContain("Each provider manages its own subagents and limits");
+    expect(host.querySelector('[data-settings-row="agents.maxConcurrentTasks"] input')).toBeNull();
+    expect(onUpdateAppSettings).not.toHaveBeenCalled();
     expect(management.saveWithOutcome).not.toHaveBeenCalled();
 
     setSelect(isolationPicker(), "worktree");
@@ -647,10 +651,6 @@ describe("AgentsSettingsPage", () => {
 
   function intervalInput(): HTMLInputElement {
     return numberInput("86400");
-  }
-
-  function concurrencyInput(): HTMLInputElement {
-    return numberInput("8");
   }
 
   function numberInput(max: string): HTMLInputElement {

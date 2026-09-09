@@ -1,13 +1,11 @@
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import {
-  MAX_CONCURRENT_AGENT_TASKS_LIMIT,
-  MIN_CONCURRENT_AGENT_TASKS_LIMIT,
+  DEFAULT_MAX_CONCURRENT_AGENT_TASKS,
   type AgentCliKind,
   type AgentIsolationPolicy,
 } from "../../domain/agentSettings";
 import type { AppSettings, WorkspaceSettings } from "../../domain/settings";
 import { SettingsButton } from "./primitives/SettingsButton";
-import { SettingsNumberField } from "./primitives/SettingsNumberField";
 import { SettingsRow } from "./primitives/SettingsRow";
 import { SettingsSectionHeading } from "./primitives/SettingsSectionHeading";
 import { SettingsSelect, type SettingsSelectOption } from "./primitives/SettingsSelect";
@@ -31,7 +29,6 @@ export interface AgentThreadDefaultsRowsProps {
   readonly workspaceSettings: WorkspaceSettings;
   onChangeDefaultProvider(provider: AgentCliKind): void;
   onChangeIsolationPolicy(policy: AgentIsolationPolicy): void;
-  onChangeMaxConcurrentTasks(value: number): void;
   onClearFavorites(): void;
 }
 
@@ -40,7 +37,6 @@ export function AgentThreadDefaultsRows({
   hasWorkspace,
   onChangeDefaultProvider,
   onChangeIsolationPolicy,
-  onChangeMaxConcurrentTasks,
   onClearFavorites,
   workspaceSettings,
 }: AgentThreadDefaultsRowsProps) {
@@ -98,12 +94,7 @@ export function AgentThreadDefaultsRows({
       </SettingsRow>
 
       <SettingsRow rowId="agents.maxConcurrentTasks">
-        <SettingsNumberField
-          max={MAX_CONCURRENT_AGENT_TASKS_LIMIT}
-          min={MIN_CONCURRENT_AGENT_TASKS_LIMIT}
-          onChange={onChangeMaxConcurrentTasks}
-          value={appSettings.maxConcurrentAgentTasks}
-        />
+        <span className="settings-row__meta">Up to {DEFAULT_MAX_CONCURRENT_AGENT_TASKS}</span>
       </SettingsRow>
 
       <SettingsRow rowId="agents.isolationPolicy">

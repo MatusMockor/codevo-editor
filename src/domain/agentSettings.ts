@@ -14,9 +14,7 @@ export type { AgentCliKind, AgentIsolationPolicy };
 
 export const DEFAULT_AGENT_CLI_KIND: AgentCliKind = "claudeCode";
 export const DEFAULT_AGENT_ISOLATION_POLICY: AgentIsolationPolicy = "auto";
-export const DEFAULT_MAX_CONCURRENT_AGENT_TASKS = 4;
-export const MIN_CONCURRENT_AGENT_TASKS_LIMIT = 1;
-export const MAX_CONCURRENT_AGENT_TASKS_LIMIT = 8;
+export const DEFAULT_MAX_CONCURRENT_AGENT_TASKS = 64;
 export const MAX_AGENT_CLI_PATH_BYTES = 4_096;
 export const AGENT_APPEARANCE_VARIANTS = ["current", "graphite", "paper", "studio"] as const;
 export type AgentAppearanceVariant = (typeof AGENT_APPEARANCE_VARIANTS)[number];
@@ -235,17 +233,8 @@ export function activeAgentCliPath(paths: AgentCliPaths, kind: AgentCliKind): st
   }
 }
 
-export function normalizeMaxConcurrentAgentTasks(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return DEFAULT_MAX_CONCURRENT_AGENT_TASKS;
-  }
-
-  const rounded = Math.floor(value);
-
-  return Math.min(
-    Math.max(rounded, MIN_CONCURRENT_AGENT_TASKS_LIMIT),
-    MAX_CONCURRENT_AGENT_TASKS_LIMIT,
-  );
+export function normalizeMaxConcurrentAgentTasks(_value: unknown): number {
+  return DEFAULT_MAX_CONCURRENT_AGENT_TASKS;
 }
 
 export function normalizeAgentIsolationPolicy(value: unknown): AgentIsolationPolicy {

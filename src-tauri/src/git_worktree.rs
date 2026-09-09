@@ -22,8 +22,8 @@ use git_worktree_exclude::{
 
 pub const WORKTREE_BASE_DIR_NAME: &str = ".worktrees";
 pub const AGENT_BRANCH_PREFIX: &str = "agent/";
-pub const MAX_WORKTREES_PER_REPOSITORY: usize = 16;
-pub const MAX_WORKTREE_LIST_OUTPUT_BYTES: usize = 256 * 1024;
+pub const MAX_WORKTREES_PER_REPOSITORY: usize = 128;
+pub const MAX_WORKTREE_LIST_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_AGENT_TASK_ID_BYTES: usize = 64;
 
 pub const MIN_AGENT_TASK_ID_BYTES: usize = 3;

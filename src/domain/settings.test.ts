@@ -43,7 +43,7 @@ describe("settings defaults", () => {
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
-      maxConcurrentAgentTasks: 4,
+      maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -283,6 +283,10 @@ describe("normalizeAppSettings", () => {
     expect(normalizeAppSettings({}).minimapEnabled).toBe(false);
   });
 
+  it("migrates the legacy four-task limit to shared parallel thread capacity", () => {
+    expect(normalizeAppSettings({ maxConcurrentAgentTasks: 4 }).maxConcurrentAgentTasks).toBe(64);
+  });
+
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
       appUpdaterSkippedVersion: null,
@@ -292,7 +296,7 @@ describe("normalizeAppSettings", () => {
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
-      maxConcurrentAgentTasks: 4,
+      maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -328,7 +332,7 @@ describe("normalizeAppSettings", () => {
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
-      maxConcurrentAgentTasks: 4,
+      maxConcurrentAgentTasks: 64,
       editorFontFamily: "Fira Code, monospace",
       editorFontLigatures: true,
       editorFontSize: 18,
@@ -359,7 +363,7 @@ describe("normalizeAppSettings", () => {
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
-      maxConcurrentAgentTasks: 4,
+      maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -402,7 +406,7 @@ describe("normalizeAppSettings", () => {
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
-      maxConcurrentAgentTasks: 4,
+      maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -459,7 +463,7 @@ describe("normalizeAppSettings", () => {
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
-      maxConcurrentAgentTasks: 4,
+      maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,

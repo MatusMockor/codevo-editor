@@ -17,7 +17,7 @@ const ENCODER = new TextEncoder();
 
 describe("agent project domain", () => {
   it("pins the maximum project root count", () => {
-    expect(MAX_AGENT_PROJECT_ROOTS).toBe(8);
+    expect(MAX_AGENT_PROJECT_ROOTS).toBe(64);
   });
 
   it("matches the canonical FNV-1a 64-bit vectors", () => {

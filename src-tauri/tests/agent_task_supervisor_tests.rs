@@ -18,7 +18,7 @@ mod agent_task_supervisor;
 use agent_task_admission::{
     AgentTaskAdmissionRegistry, AGENT_TASK_CWD_EXCLUSIVE_ERROR, AGENT_TASK_GLOBAL_LIMIT,
     AGENT_TASK_GLOBAL_LIMIT_ERROR, AGENT_TASK_IN_PLACE_EXCLUSIVE_ERROR,
-    AGENT_TASK_REPOSITORY_LIMIT, AGENT_TASK_REPOSITORY_LIMIT_ERROR,
+    AGENT_TASK_REPOSITORY_LIMIT,
 };
 use agent_task_spawner::agent_launch::{
     AgentLaunchOptions, ClaudeContextChoice, ClaudeEffortChoice, ClaudeModelChoice,
@@ -911,6 +911,7 @@ fn plan_agent_invocation_rejects_unsafe_inputs() {
 
 #[test]
 fn admission_enforces_global_limit() {
+    assert_eq!(AGENT_TASK_GLOBAL_LIMIT, 64);
     let registry = Arc::new(AgentTaskAdmissionRegistry::new());
     let mut held = Vec::new();
     for index in 0..AGENT_TASK_GLOBAL_LIMIT {
@@ -949,7 +950,8 @@ fn admission_enforces_global_limit() {
 }
 
 #[test]
-fn admission_enforces_repository_limit_per_workspace_and_root() {
+fn admission_allows_one_repository_to_use_all_global_slots() {
+    assert_eq!(AGENT_TASK_REPOSITORY_LIMIT, 64);
     let registry = Arc::new(AgentTaskAdmissionRegistry::new());
     let root = unique_path("repo-limit");
     let mut held = Vec::new();
@@ -973,8 +975,9 @@ fn admission_enforces_repository_limit_per_workspace_and_root() {
     );
     assert_eq!(
         rejected.err().as_deref(),
-        Some(AGENT_TASK_REPOSITORY_LIMIT_ERROR)
+        Some(AGENT_TASK_GLOBAL_LIMIT_ERROR)
     );
+    held.pop();
     let other_root = unique_path("repo-limit-other");
     assert!(registry
         .reserve(

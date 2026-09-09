@@ -22,7 +22,7 @@ const descriptor = {
 
 describe("Git worktree domain", () => {
   it("keeps the pinned worktree limits and base directory", () => {
-    expect(MAX_WORKTREES_PER_REPOSITORY).toBe(16);
+    expect(MAX_WORKTREES_PER_REPOSITORY).toBe(128);
     expect(MAX_WORKTREE_PATH_BYTES).toBe(4_096);
     expect(MAX_WORKTREE_BRANCH_BYTES).toBe(512);
     expect(WORKTREE_BASE_DIR_NAME).toBe(".worktrees");
@@ -60,6 +60,14 @@ describe("Git worktree domain", () => {
     expect(() => parseGitWorktreeDescriptor({ ...descriptor, branch: invalidBranch })).toThrow(
       TypeError,
     );
+  });
+
+  it.each([17, 65, 128])("keeps all %i worktrees without truncation", (count) => {
+    const worktrees = Array.from({ length: count }, (_, index) => ({
+      ...descriptor,
+      worktreePath: `/repository/.worktrees/agt-${index}`,
+    }));
+    expect(parseGitWorktreeDescriptors(worktrees)).toEqual({ worktrees, truncated: false });
   });
 
   it("clips oversized descriptor lists and labels the truncation", () => {

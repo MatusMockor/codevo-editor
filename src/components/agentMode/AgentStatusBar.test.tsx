@@ -28,14 +28,14 @@ describe("AgentStatusBar", () => {
   it("shows live agent slots with a live dot", () => {
     render({ liveTaskCount: 2 });
 
-    expect(host.textContent).toContain("2/3 agents running");
+    expect(host.textContent).toContain("2/3 threads running");
     expect(host.querySelector(".status-agent-dot--live")).not.toBeNull();
   });
 
   it("reports idle slots without pretending a run is live", () => {
     render({ liveTaskCount: 0 });
 
-    expect(host.textContent).toContain("Agents idle · 3 slots");
+    expect(host.textContent).toContain("Threads idle · up to 3");
     expect(host.querySelector(".status-agent-dot--live")).toBeNull();
     expect(host.querySelector(".status-agent-dot")).not.toBeNull();
   });

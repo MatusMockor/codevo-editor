@@ -44,7 +44,7 @@ export interface AgentRootLeaseGateway {
   ): Promise<AgentRootLeaseReleaseResult>;
 }
 
-export const MAX_AGENT_PROJECT_ROOTS = 8;
+export const MAX_AGENT_PROJECT_ROOTS = 64;
 
 export type AgentProjectLaunchRoots = Pick<AgentProjectDescriptor, "rootPath" | "repositories">;
 

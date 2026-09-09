@@ -631,7 +631,7 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(false);
   });
 
-  it("blocks a follow-up while the concurrent agent limit is reached", () => {
+  it("blocks a follow-up while the shared parallel thread limit is reached", () => {
     render({
       agents: surface({
         liveTaskCount: 2,
@@ -643,7 +643,7 @@ describe("AgentModeView", () => {
     clickText("Refactor the parser");
     typePrompt("Also update the tests");
 
-    expect(host.textContent).toContain("The concurrent agent limit is reached");
+    expect(host.textContent).toContain("The shared parallel thread limit is reached");
     expect(submitButton().disabled).toBe(true);
   });
 
@@ -1421,7 +1421,7 @@ describe("AgentModeView", () => {
     render({ overflowRootPaths: ["/workspace/nine"] });
 
     expect(host.querySelector(".agent-rail__overflow")?.textContent).toBe(
-      "1 more project is not shown (limit 8)",
+      "1 more project is not shown (limit 64)",
     );
   });
 

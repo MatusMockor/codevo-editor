@@ -99,6 +99,36 @@ function createDeferred<T>() {
 }
 
 describe("useAgentTurnDispatch startThread", () => {
+  it("allows parallel threads across projects beyond old settings and shares the 64-thread bound", async () => {
+    const harness = renderDispatch({ maxConcurrent: 1 });
+    for (let index = 0; index < 4; index += 1) await harness.startThread();
+
+    harness.switchToProject(ROOT_B, OWNER_B);
+    harness.environment.repositoryRoot = ROOT_B;
+    harness.rerender();
+    const request = startRequest({ projectRootKey: ROOT_B, repositoryRoot: ROOT_B });
+    for (let index = 4; index < 64; index += 1) {
+      const started = await act(() => harness.hook().startThread(request));
+      expect(started).not.toBeNull();
+    }
+
+    expect(harness.startedRequests).toHaveLength(64);
+    expect(harness.startedRequests[4]?.repositoryRoot).toBe(ROOT_B);
+    expect(harness.startedRequests[8]?.repositoryRoot).toBe(ROOT_B);
+    expect(await act(() => harness.hook().startThread(request))).toBeNull();
+    expect(harness.startedRequests).toHaveLength(64);
+    expect(harness.notice()?.message).toContain("shared parallel thread limit");
+
+    const first = harness.startedRequests[0];
+    expect(first).toBeDefined();
+    await act(async () => {
+      harness.emitStatus(first!.taskId, 1, { kind: "exited", exitCode: 0 });
+    });
+    expect(await act(() => harness.hook().startThread(request))).not.toBeNull();
+    expect(harness.startedRequests).toHaveLength(65);
+    harness.unmount();
+  });
+
   it("tracks the exact provider while a new turn is pending before publication", async () => {
     const lease = createDeferred<boolean>();
     const ensureProjectLease = vi.fn(async () => lease.promise);
@@ -1637,8 +1667,9 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
   it("blocks a follow-up when the live task limit is reached", async () => {
     const harness = renderDispatch();
     const settled = await harness.settleThreadWithSession();
-    await harness.startThread();
+    act(() => harness.dispatchAction({ kind: "pinToggled", threadId: settled }));
     harness.environment.maxConcurrent = 1;
+    for (let index = 0; index < 64; index += 1) await harness.startThread();
 
     expect(
       await act(() =>
@@ -1650,7 +1681,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       ),
     ).toBe(false);
 
-    expect(harness.notice()?.message).toContain("concurrent agent limit");
+    expect(harness.notice()?.message).toContain("shared parallel thread limit");
     harness.unmount();
   });
 

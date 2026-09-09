@@ -60,7 +60,10 @@ function createDeferred<T>() {
 describe("useAgentProjects admission and bounds", () => {
   it("admits the active root plus tabs in order and reports overflow truthfully", async () => {
     const harness = renderAgentProjects({
-      tabs: Array.from({ length: 10 }, (_unused, index) => `/ws/tab-${index}`),
+      tabs: Array.from(
+        { length: MAX_AGENT_PROJECT_ROOTS + 2 },
+        (_unused, index) => `/ws/tab-${index}`,
+      ),
     });
 
     await waitForReact(() => expect(harness.hook().projects).toHaveLength(MAX_AGENT_PROJECT_ROOTS));
@@ -69,7 +72,7 @@ describe("useAgentProjects admission and bounds", () => {
     expect(projects[0]?.rootKey).toBe(ACTIVE_ROOT);
     expect(projects[0]?.origin).toBe("active-tab");
     expect(projects.slice(1).every((project) => project.origin === "background-tab")).toBe(true);
-    expect(harness.hook().overflowRootPaths).toEqual(["/ws/tab-7", "/ws/tab-8", "/ws/tab-9"]);
+    expect(harness.hook().overflowRootPaths).toEqual(["/ws/tab-63", "/ws/tab-64", "/ws/tab-65"]);
     harness.unmount();
   });
 

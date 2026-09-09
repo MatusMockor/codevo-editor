@@ -416,13 +416,42 @@ fn add_agent_worktree_enforces_the_repository_cap() {
     let repository = TempRepository::create("add-cap");
     let gateway = CommandGitWorktreeGateway::new();
 
-    for index in 1..MAX_WORKTREES_PER_REPOSITORY {
-        let task_id = format!("agt-cap-{index}");
+    assert_eq!(MAX_WORKTREES_PER_REPOSITORY, 128);
+    let head = repository.git_output(&["rev-parse", "HEAD"]);
+    for index in 1..MAX_WORKTREES_PER_REPOSITORY - 1 {
+        let metadata = repository
+            .path()
+            .join(".git/worktrees")
+            .join(format!("retained-{index}"));
+        ok(fs::create_dir_all(&metadata), "create retained metadata");
         ok(
-            gateway.add_agent_worktree(repository.path(), &task_id),
-            "add below the cap must succeed",
+            fs::write(metadata.join("HEAD"), &head),
+            "write retained HEAD",
+        );
+        ok(
+            fs::write(metadata.join("commondir"), "../..\n"),
+            "write retained common directory",
+        );
+        ok(
+            fs::write(
+                metadata.join("gitdir"),
+                format!("{}/retained-{index}/.git\n", repository.path().display()),
+            ),
+            "write retained worktree location",
         );
     }
+    assert_eq!(
+        ok(
+            gateway.list_worktrees(repository.path()),
+            "list retained worktrees"
+        )
+        .len(),
+        MAX_WORKTREES_PER_REPOSITORY - 1
+    );
+    ok(
+        gateway.add_agent_worktree(repository.path(), "agt-cap-final"),
+        "add beyond sixteen retained worktrees must succeed below the cap",
+    );
 
     let listed = ok(
         gateway.list_worktrees(repository.path()),
@@ -554,6 +583,31 @@ fn parse_worktree_list_rejects_more_entries_than_the_cap() {
     failure(
         parse_worktree_list(&output),
         "an oversized entry count must be rejected",
+    );
+}
+
+#[test]
+fn worktree_list_byte_budget_accepts_maximum_length_bounded_entries() {
+    let path = format!("/{}", "p".repeat(git_worktree::MAX_WORKTREE_PATH_BYTES - 1));
+    let branch = "b".repeat(git_worktree::MAX_WORKTREE_BRANCH_BYTES);
+    let head = "a".repeat(git_worktree::MAX_WORKTREE_HEAD_BYTES);
+    let record = format!("worktree {path}\nHEAD {head}\nbranch {branch}\n\n");
+    let output = record.repeat(MAX_LISTED_WORKTREE_ENTRIES);
+    let read = ok(
+        read_bounded_stream(
+            Cursor::new(output.as_bytes()),
+            MAX_WORKTREE_LIST_OUTPUT_BYTES,
+        ),
+        "all bounded entries must fit the output byte budget",
+    );
+    assert_eq!(read.len(), output.len());
+    assert_eq!(
+        ok(
+            parse_worktree_list(&output),
+            "maximum length entries must parse"
+        )
+        .len(),
+        MAX_LISTED_WORKTREE_ENTRIES
     );
 }
 

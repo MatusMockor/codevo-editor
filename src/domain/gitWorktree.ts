@@ -1,4 +1,4 @@
-export const MAX_WORKTREES_PER_REPOSITORY = 16;
+export const MAX_WORKTREES_PER_REPOSITORY = 128;
 export const MAX_WORKTREE_PATH_BYTES = 4_096;
 export const MAX_WORKTREE_BRANCH_BYTES = 512;
 export const WORKTREE_BASE_DIR_NAME = ".worktrees";

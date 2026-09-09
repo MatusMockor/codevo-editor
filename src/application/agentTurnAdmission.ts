@@ -260,7 +260,9 @@ function admitCapacity(
   const limit = normalizeMaxConcurrentAgentTasks(deps.getMaxConcurrentAgentTasks());
   if (countRunningTurns(deps.store.state) >= limit) {
     deps.setNotice(
-      warning("The concurrent agent limit is reached. Stop a running agent or raise the limit."),
+      warning(
+        "The shared parallel thread limit is reached. Wait for a thread to finish or stop one.",
+      ),
     );
     return null;
   }

@@ -39,8 +39,8 @@ export function AgentStatusBar({
   const live = liveTaskCount > 0;
   const dotClassName = live ? "status-agent-dot status-agent-dot--live" : "status-agent-dot";
   const slotsLabel = live
-    ? `${liveTaskCount}/${maxConcurrentAgentTasks} agents running`
-    : `Agents idle · ${maxConcurrentAgentTasks} slots`;
+    ? `${liveTaskCount}/${maxConcurrentAgentTasks} threads running`
+    : `Threads idle · up to ${maxConcurrentAgentTasks}`;
 
   return (
     <footer
