@@ -704,7 +704,6 @@ fn revalidate_health_identity(
     lease: &ProviderHealthLease,
     identity: &crate::agent_task_spawner::agent_provider::process::ExecutableIdentity,
 ) -> Result<(), String> {
-    registry.revalidate_health(lease)?;
     if lease.cli_identity != *identity {
         return Err("Provider executable identity changed.".to_string());
     }

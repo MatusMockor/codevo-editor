@@ -448,6 +448,61 @@ fn policy_snapshots_use_the_closed_tagged_wire_shape() {
 }
 
 #[test]
+fn health_identity_revalidation_rejects_replaced_policy_and_foreign_identity() {
+    let fixture = IsolatedFixture::new("health-identity-authority");
+    let cli = fixture.executable("codex", "echo 'codex 0.153.0'");
+    let foreign = fixture.executable("other", "echo 'codex 0.153.0'");
+    let foreign_identity =
+        executable_identity(foreign.to_str().expect("foreign path")).expect("foreign identity");
+    let (registry, receipt) = registered_registry(&cli, false);
+    let lease = registry
+        .acquire_health_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation)
+        .expect("health lease");
+    let identity = lease.cli_identity.clone();
+    assert!(revalidate_health_identity(&registry, &lease, &identity).is_ok());
+    assert_eq!(
+        revalidate_health_identity(&registry, &lease, &foreign_identity),
+        Err("Provider executable identity changed.".to_string())
+    );
+    registry
+        .register_policy(
+            AgentCliInvocation::CodexExec,
+            2,
+            Some(receipt.provider_generation),
+            AgentProviderPolicy {
+                enabled: true,
+                cli_path: Some(cli.to_string_lossy().into_owned()),
+                check_for_updates: true,
+            },
+        )
+        .expect("replace policy");
+    assert!(revalidate_health_identity(&registry, &lease, &identity).is_err());
+}
+
+#[test]
+fn health_identity_revalidation_rejects_same_size_mutation_with_restored_timestamp() {
+    let fixture = IsolatedFixture::new("health-identity-content");
+    let cli = fixture.executable("codex", "echo 'codex 0.153.0'");
+    let (registry, receipt) = registered_registry(&cli, false);
+    let lease = registry
+        .acquire_health_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation)
+        .expect("health lease");
+    let identity = lease.cli_identity.clone();
+    let before = fs::metadata(&cli).expect("original metadata");
+    fs::write(&cli, "#!/bin/sh\necho 'codex 0.153.1'\n").expect("in-place mutation");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&cli)
+        .expect("mutated executable")
+        .set_times(fs::FileTimes::new().set_modified(before.modified().expect("original time")))
+        .expect("restore modification time");
+    let after = fs::metadata(&cli).expect("mutated metadata");
+    assert_eq!(before.len(), after.len());
+    assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+    assert!(revalidate_health_identity(&registry, &lease, &identity).is_err());
+}
+
+#[test]
 fn health_probe_uses_the_closed_version_and_auth_plans() {
     let executable = provider_executable(
             "if [ \"$1\" = \"--version\" ]; then echo 'claude 2.1.247'; exit 0; fi\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ] && [ \"$3\" = \"--json\" ]; then echo '{\"loggedIn\":true,\"subscriptionType\":\"Pro\"}'; exit 0; fi\nexit 9",
