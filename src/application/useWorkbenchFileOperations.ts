@@ -64,6 +64,7 @@ export interface WorkbenchFileOperationsDependencies {
   workspaceRoot: string | null;
   workspaceDescriptor: WorkspaceDescriptor | null;
   activePath: string | null;
+  agentDiffVisible?: boolean;
   sidebarView: SidebarView;
   languageServerDiagnosticsByPath: Record<string, unknown>;
   javaScriptTypeScriptDiagnosticsByPath: Record<string, unknown>;
@@ -152,6 +153,7 @@ export function useWorkbenchFileOperations(
     workspaceDescriptor,
     activePath,
     sidebarView,
+    agentDiffVisible = false,
     languageServerDiagnosticsByPath,
     javaScriptTypeScriptDiagnosticsByPath,
     phpLocalDiagnosticsByPath,
@@ -207,6 +209,19 @@ export function useWorkbenchFileOperations(
   const pendingWorkspaceDirectoryRefreshesRef = useRef<Set<string>>(new Set());
   const workspaceDirectoryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const workspaceGitStatusRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const gitDemand = sidebarView === "git" || agentDiffVisible;
+  const gitRefreshAuthority = useRef({ root: workspaceRoot, demand: gitDemand, epoch: 0 });
+  const previousGitAuthority = gitRefreshAuthority.current;
+  gitRefreshAuthority.current = {
+    root: workspaceRoot,
+    demand: gitDemand,
+    epoch:
+      previousGitAuthority.epoch +
+      Number(
+        previousGitAuthority.root !== workspaceRoot || previousGitAuthority.demand !== gitDemand,
+      ),
+  };
 
   const createFile = useCallback(async () => {
     if (!workspaceRoot) {
@@ -791,7 +806,7 @@ export function useWorkbenchFileOperations(
 
   const queueWorkspaceGitStatusRefresh = useCallback(
     (requestedRoot: string) => {
-      if (sidebarView !== "git") {
+      if (sidebarView !== "git" && !agentDiffVisible) {
         return;
       }
 
@@ -799,8 +814,11 @@ export function useWorkbenchFileOperations(
         clearTimeout(workspaceGitStatusRefreshTimerRef.current);
       }
 
+      const epoch = gitRefreshAuthority.current.epoch;
       workspaceGitStatusRefreshTimerRef.current = setTimeout(() => {
         workspaceGitStatusRefreshTimerRef.current = null;
+        if (!gitRefreshAuthority.current.demand || gitRefreshAuthority.current.epoch !== epoch)
+          return;
 
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
@@ -809,7 +827,7 @@ export function useWorkbenchFileOperations(
         void refreshGitStatus();
       }, WORKSPACE_GIT_STATUS_REFRESH_DEBOUNCE_MS);
     },
-    [currentWorkspaceRootRef, refreshGitStatus, sidebarView],
+    [agentDiffVisible, currentWorkspaceRootRef, refreshGitStatus, sidebarView],
   );
 
   const handleExternalRemovedPath = useCallback(

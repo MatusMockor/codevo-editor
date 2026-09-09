@@ -1,3 +1,4 @@
+import { agentDiffStatusDemand } from "./agentDiffStatusDemand";
 import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
 import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
 import { useActiveManifestWorkspaces } from "./useActiveManifestWorkspaces";
@@ -1080,6 +1081,7 @@ export function useWorkbenchController(
     activeDocumentGitBaseline,
     gitActiveFileBranch,
     gitLoading,
+    gitStatusLoaded,
     gitRepositoryMappings,
     gitRepositoryStatuses,
     gitStatus,
@@ -1750,6 +1752,8 @@ export function useWorkbenchController(
     persistWorkspaceSettings,
   });
 
+  const agentDiffVisible = agentDiffStatusDemand(agents.agentWorkbench);
+
   const editorFile = useWorkbenchEditorFileCoordinator({
     changeSignature: {
       currentWorkspaceRootRef,
@@ -2144,6 +2148,7 @@ export function useWorkbenchController(
       setSearchEverywhereOpen: setSearchEverywhereOpen,
       setWorkspaceSymbolsOpen: setWorkspaceSymbolsOpen,
       sidebarView,
+      agentDiffVisible,
     },
     navigation: {
       currentNavigationLocation: recentNavigation.currentNavigationLocation,
@@ -2386,6 +2391,7 @@ export function useWorkbenchController(
       settingsOpen,
     },
     taskGitServices: {
+      agentDiffVisible,
       activePackageScripts,
       commitGitChanges,
       gitDiffLoading,
@@ -2684,6 +2690,7 @@ export function useWorkbenchController(
     gitAmendEnabled: editorFile.gitChanges.gitAmendEnabled,
     includedGitChangePaths: editorFile.gitChanges.includedGitChangePaths,
     gitLoading,
+    gitStatusLoaded,
     gitOperationLoading: editorFile.gitChanges.gitOperationLoading,
     gitStatus,
     gitRepositoryStatuses,
@@ -2724,8 +2731,8 @@ export function useWorkbenchController(
     openReferenceRow,
     openGitChange,
     openReadOnlyDocument: editorFile.documentTabs.openReadOnlyDocument,
-    openFileStructure: openFileStructure,
-    refreshWorkspace: refreshWorkspace,
+    openFileStructure,
+    refreshWorkspace,
     hasArtisan: activePackageScripts?.hasArtisan ?? false,
     artisanMakePaletteOpen,
     closeArtisanMakePalette,
@@ -2763,12 +2770,12 @@ export function useWorkbenchController(
     recentFilesSwitcherEntries: presentation.recentFilesSwitcherEntries,
     recentFilesSwitcherOpen: navigationState.recentFilesSwitcherOpen,
     openRecentFilesSwitcher: recentNavigation.openRecentFilesSwitcher,
-    setRecentFilesSwitcherOpen: setRecentFilesSwitcherOpen,
+    setRecentFilesSwitcherOpen,
     recentLocations: navigationState.recentLocations,
     reorderOpenTabs,
     recentLocationsPanelOpen: navigationState.recentLocationsPanelOpen,
     openRecentLocationsPanel: recentNavigation.openRecentLocationsPanel,
-    setRecentLocationsPanelOpen: setRecentLocationsPanelOpen,
+    setRecentLocationsPanelOpen,
     bookmarks,
     sortedBookmarks: presentation.sortedBookmarks,
     isActiveDocumentGitBlameEnabled: activeDocument
@@ -2786,21 +2793,21 @@ export function useWorkbenchController(
     reportLanguageServerError: reportLanguageServerError,
     previewGitChange,
     quitApplication,
-    refreshPhpTree: refreshPhpTree,
+    refreshPhpTree,
     refreshGitStatus,
     revealDirectoryInTree: editorFile.directory.revealDirectoryInTree,
     retryDirectory: directoryExplorer.retryDirectory,
-    revertGitChanges: revertGitChanges,
+    revertGitChanges,
     saveActiveDocument,
     saveWorkbenchSettings: commandEffects.saveWorkbenchSettings,
     persistAppUpdaterSkippedVersion,
     setActivePath: editorFile.documentTabs.activateDocument,
-    setPaletteOpen: setPaletteOpen,
-    setClassOpenOpen: setClassOpenOpen,
-    setWorkspaceSymbolsOpen: setWorkspaceSymbolsOpen,
-    setWorkspaceSymbolsQuery: setWorkspaceSymbolsQuery,
-    setGitAmendEnabled: setGitAmendEnabled,
-    setGitCommitMessage: setGitCommitMessage,
+    setPaletteOpen,
+    setClassOpenOpen,
+    setWorkspaceSymbolsOpen,
+    setWorkspaceSymbolsQuery,
+    setGitAmendEnabled,
+    setGitCommitMessage,
     setClassOpenQuery: classOpen.setClassOpenQuery,
     setQuickOpenOpen: setQuickOpenOpen,
     setSidebarView,

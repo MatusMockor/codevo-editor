@@ -9,6 +9,7 @@ type ProjectDiffWorkbench = Pick<
   | "gitStatus"
   | "gitRepositoryStatuses"
   | "gitLoading"
+  | "gitStatusLoaded"
   | "gitDiffPreview"
   | "gitDiffLoading"
   | "refreshGitStatus"
@@ -54,7 +55,7 @@ export function useAgentProjectDiffChrome(
     rootPath,
     status: workbench.gitStatus,
     repositoryStatuses: workbench.gitRepositoryStatuses ?? [],
-    loading: workbench.gitLoading ?? false,
+    loading: (workbench.gitLoading ?? false) || workbench.gitStatusLoaded === false,
     diff: workbench.gitDiffPreview ?? null,
     diffLoading: workbench.gitDiffLoading ?? false,
     onRefresh: () => {

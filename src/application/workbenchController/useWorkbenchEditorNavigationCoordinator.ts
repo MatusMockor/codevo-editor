@@ -161,7 +161,7 @@ type PresentationFacet = Pick<
   Pick<TaskNavigation, "setJsTestRunRequestVersion" | "setPhpTestRunRequestVersion"> &
   Pick<
     FileOperations,
-    "setEntriesByDirectory" | "setManuallyCollapsedDirectories" | "sidebarView"
+    "setEntriesByDirectory" | "setManuallyCollapsedDirectories" | "sidebarView" | "agentDiffVisible"
   > &
   Pick<GitHistoryFlat, "setGitBlameEnabledPaths"> & {
     readonly closeBookmarksPanelRef: { current: () => void };
@@ -406,6 +406,7 @@ export function useWorkbenchEditorNavigationCoordinator({
     setSearchEverywhereOpen,
     setWorkspaceSymbolsOpen,
     sidebarView,
+    agentDiffVisible,
   } = presentation;
   const {
     currentNavigationLocation,
@@ -1130,6 +1131,7 @@ export function useWorkbenchEditorNavigationCoordinator({
     activePhpFrameworkProviders,
     activePath,
     sidebarView,
+    agentDiffVisible,
     languageServerDiagnosticsByPath,
     javaScriptTypeScriptDiagnosticsByPath,
     phpLocalDiagnosticsByPath,

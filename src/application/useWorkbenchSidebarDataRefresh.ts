@@ -4,6 +4,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 export interface WorkbenchSidebarDataRefreshOptions {
   readonly sidebarView: string;
+  readonly agentDiffVisible?: boolean;
   readonly indexProgress: IndexProgressState;
   readonly workspaceRoot: string | null;
   refreshPhpTree(): Promise<unknown> | void;
@@ -11,7 +12,14 @@ export interface WorkbenchSidebarDataRefreshOptions {
 }
 
 export function useWorkbenchSidebarDataRefresh(options: WorkbenchSidebarDataRefreshOptions): void {
-  const { indexProgress, refreshGitStatus, refreshPhpTree, sidebarView, workspaceRoot } = options;
+  const {
+    agentDiffVisible = false,
+    indexProgress,
+    refreshGitStatus,
+    refreshPhpTree,
+    sidebarView,
+    workspaceRoot,
+  } = options;
 
   useEffect(() => {
     if (sidebarView !== "php") {
@@ -33,10 +41,10 @@ export function useWorkbenchSidebarDataRefresh(options: WorkbenchSidebarDataRefr
   ]);
 
   useEffect(() => {
-    if (sidebarView !== "git") {
+    if (sidebarView !== "git" && !agentDiffVisible) {
       return;
     }
 
     void refreshGitStatus();
-  }, [refreshGitStatus, sidebarView, workspaceRoot]);
+  }, [agentDiffVisible, refreshGitStatus, sidebarView, workspaceRoot]);
 }

@@ -120,6 +120,29 @@ describe("AgentSurfaceDiff", () => {
     expect(host.textContent).not.toContain("No Git repository");
   });
 
+  it("shows loading instead of a missing repository before the first status read", () => {
+    act(() =>
+      root.render(
+        <AgentSurfaceProjectDiff
+          rootPath="/workspace/app"
+          status={emptyGitStatus("/workspace/app")}
+          repositoryStatuses={[]}
+          loading
+          diff={null}
+          diffLoading={false}
+          monacoTheme="calm-dark"
+          onRefresh={vi.fn()}
+          onPreviewChange={vi.fn()}
+          onOpenChange={vi.fn()}
+          onClosePreview={vi.fn()}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("Reading project changes");
+    expect(host.textContent).not.toContain("No Git repository");
+    expect(host.textContent).not.toContain("No uncommitted changes");
+  });
+
   it("requests the change summary once when it is missing", () => {
     const onShowChanges = vi.fn();
     render({ summary: null, onShowChanges });

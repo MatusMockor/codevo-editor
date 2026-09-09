@@ -149,13 +149,14 @@ function renderHook(dependencies: WorkbenchFileOperationsDependencies) {
     mountedRoot?.render(<Harness />);
   });
 
-  return () => {
+  const current = () => {
     if (!captured.operations) {
       throw new Error("hook not mounted");
     }
 
     return captured.operations;
   };
+  return Object.assign(current, { rerender: () => act(() => mountedRoot?.render(<Harness />)) });
 }
 
 afterEach(() => {
@@ -1127,5 +1128,58 @@ it("protects legacy-clean documents with dirty live authority before external re
   expect(dependencies.closeDocument).not.toHaveBeenCalled();
   expect(dependencies.setMessage).toHaveBeenCalledWith(
     expect.stringContaining("unsaved editor changes were kept"),
+  );
+});
+
+describe("agent Diff file-change status refresh", () => {
+  it("drops a queued refresh after Diff becomes hidden", async () => {
+    vi.useFakeTimers();
+    try {
+      const dependencies = makeDependencies("", { agentDiffVisible: true });
+      const operations = renderHook(dependencies);
+      act(() =>
+        operations().handleWorkspaceFileChange({
+          fileKind: "file",
+          kind: "modified",
+          path: `${ROOT}/file.ts`,
+          previousPath: null,
+          relativePath: "file.ts",
+          rootPath: ROOT,
+        }),
+      );
+      dependencies.agentDiffVisible = false;
+      operations.rerender();
+      await act(async () => vi.advanceTimersByTimeAsync(200));
+      expect(dependencies.refreshGitStatus).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([false, true])(
+    "refreshes only while agent Diff demands status (%s)",
+    async (agentDiffVisible) => {
+      vi.useFakeTimers();
+      try {
+        const dependencies = makeDependencies("", { agentDiffVisible });
+        const operations = renderHook(dependencies);
+        act(() => {
+          for (let count = 0; count < 3; count += 1) {
+            operations().handleWorkspaceFileChange({
+              fileKind: "file",
+              kind: "modified",
+              path: `${ROOT}/file.ts`,
+              previousPath: null,
+              relativePath: "file.ts",
+              rootPath: ROOT,
+            });
+          }
+        });
+        await act(async () => vi.advanceTimersByTimeAsync(200));
+        expect(dependencies.refreshGitStatus).toHaveBeenCalledTimes(agentDiffVisible ? 1 : 0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
   );
 });

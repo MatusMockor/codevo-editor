@@ -97,6 +97,7 @@ export type AgentWorkbenchScreenWorkbench = Pick<
       | "gitStatus"
       | "gitRepositoryStatuses"
       | "gitLoading"
+      | "gitStatusLoaded"
       | "gitDiffPreview"
       | "gitDiffLoading"
       | "refreshGitStatus"

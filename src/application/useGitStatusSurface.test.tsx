@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
+import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
+import { initialIndexProgress } from "../domain/indexProgress";
+import { emptyGitStatus } from "../domain/git";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { GitChangedFile, GitGateway, GitStatus } from "../domain/git";
@@ -83,6 +86,7 @@ function renderSurface(
   selectedGitChange: GitChangedFile | null = null,
   selectedRepositoryRoot = ROOT,
   detectedRepositories?: ReadonlyArray<string>,
+  agentDiffVisible = false,
 ): Harness {
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -125,6 +129,14 @@ function renderSurface(
     const gitOperationCurrency = useGitOperationCurrency(deps.workspaceRoot);
     capturedCurrency.currency = gitOperationCurrency;
     captured.surface = useGitStatusSurface({ ...deps, gitOperationCurrency });
+    useWorkbenchSidebarDataRefresh({
+      sidebarView: "files",
+      agentDiffVisible,
+      indexProgress: initialIndexProgress(),
+      workspaceRoot: deps.workspaceRoot,
+      refreshGitStatus: captured.surface.refreshGitStatus,
+      refreshPhpTree: () => undefined,
+    });
     return null;
   }
 
@@ -747,3 +759,94 @@ function renderBaselineSurface(
     },
   };
 }
+
+describe("Git status read readiness", () => {
+  it("stays unread until status settles and resets after discovery", async () => {
+    const pending = createDeferred<GitStatus>();
+    const harness = renderSurface(() => pending.promise);
+    try {
+      expect(harness.surface().gitStatusLoaded).toBe(false);
+      let request: Promise<void>;
+      act(() => {
+        request = harness.surface().refreshGitStatus();
+      });
+      expect(harness.surface().gitStatusLoaded).toBe(false);
+      await act(async () => {
+        pending.resolve(status("main"));
+        await request;
+      });
+      expect(harness.surface().gitStatusLoaded).toBe(true);
+      await act(async () =>
+        harness.surface().runGitRepositoryDiscovery(ROOT, defaultWorkspaceSettings()),
+      );
+      expect(harness.surface().gitStatusLoaded).toBe(false);
+    } finally {
+      harness.unmount();
+    }
+  });
+  it("settles failed repository reads as a known error state", async () => {
+    const harness = renderSurface(async () => {
+      throw new Error("unreadable");
+    });
+    try {
+      await act(async () => harness.surface().refreshGitStatus());
+      expect(harness.surface().gitStatusLoaded).toBe(true);
+      expect(harness.surface().gitRepositoryStatuses[0]?.failed).toBe(true);
+    } finally {
+      harness.unmount();
+    }
+  });
+  it("settles a confirmed empty mapping set without a status request", async () => {
+    const getStatus = vi.fn(async () => status("main"));
+    const harness = renderSurface(getStatus, null, ROOT, []);
+    try {
+      await act(async () =>
+        harness.surface().runGitRepositoryDiscovery(ROOT, {
+          ...defaultWorkspaceSettings(),
+          gitDirectoryMappingsAuto: true,
+          gitDirectoryMappings: [],
+        }),
+      );
+      await act(async () => harness.surface().refreshGitStatus());
+      expect(harness.surface().gitStatusLoaded).toBe(true);
+      expect(getStatus).not.toHaveBeenCalled();
+    } finally {
+      harness.unmount();
+    }
+  });
+});
+
+describe("visible Diff and real Git status integration", () => {
+  it("loads discovered nested repository changes with the editor Files sidebar", async () => {
+    const nested = `${ROOT}/service`;
+    const changed = { ...changedFile("file.ts"), path: `${nested}/file.ts` };
+    const getStatus = vi.fn(async (rootPath: string) =>
+      rootPath === ROOT ? emptyGitStatus(ROOT) : { ...status("main", [changed]), rootPath: nested },
+    );
+    const harness = renderSurface(getStatus, null, ROOT, ["service"], true);
+    try {
+      await act(async () => {});
+      expect(getStatus).toHaveBeenCalledWith(ROOT);
+      await act(async () =>
+        harness
+          .surface()
+          .runGitRepositoryDiscovery(ROOT, {
+            ...defaultWorkspaceSettings(),
+            gitDirectoryMappingsAuto: true,
+            gitDirectoryMappings: [],
+          }),
+      );
+      expect(getStatus).toHaveBeenCalledWith(nested);
+      expect(harness.surface().gitStatusLoaded).toBe(true);
+      expect(harness.surface().gitRepositoryStatuses).toEqual([
+        expect.objectContaining({
+          root: nested,
+          failed: false,
+          status: expect.objectContaining({ changes: [changed] }),
+        }),
+      ]);
+    } finally {
+      harness.unmount();
+    }
+  });
+});

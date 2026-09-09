@@ -7,6 +7,12 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Load Git status when the agent Diff panel opens and refresh it after workspace file changes,
+  without requiring the editor's Source Control panel. Show loading until the first status read
+  completes instead of incorrectly reporting that the project has no Git repository.
+
 ## [0.2.0-beta.26] - 2026-09-09
 
 ### Added

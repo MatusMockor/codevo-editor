@@ -129,6 +129,7 @@ export function useGitStatusSurface({
   // Whole-map status view (one entry per mapping), for the multi-repo Changes
   // panel. `gitStatus` above stays the primary (workspace-root) repo.
   const [gitRepositoryStatuses, setGitRepositoryStatuses] = useState<GitRepositoryStatus[]>([]);
+  const [gitStatusLoaded, setGitStatusLoaded] = useState(false);
   const [gitLoading, setGitLoading] = useState(false);
   const gitStatusRequestGenerationRef = useRef(0);
   const [editorGitBaselinesByPath, setEditorGitBaselinesByPath] = useCommitBailoutState<
@@ -184,6 +185,7 @@ export function useGitStatusSurface({
       invalidateEditorGitBaselineCache();
       setGitStatus(rootPath ? emptyGitStatus(rootPath) : emptyGitStatus());
       setGitRepositoryStatuses([]);
+      setGitStatusLoaded(false);
       setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
       setGitLoading(false);
       setEditorGitBaselinesByPath({});
@@ -239,6 +241,7 @@ export function useGitStatusSurface({
       gitStatusRequestGenerationRef.current += 1;
       gitOperationCurrency.reservePublication([rootPath, ...allowedRepositoryRoots]);
       setGitLoading(false);
+      setGitStatusLoaded(false);
       setGitRepositoryMappings(mappings);
       setGitRepositoryStatuses((current) =>
         current.filter((status) =>
@@ -341,8 +344,10 @@ export function useGitStatusSurface({
       );
 
       if (currentStatuses.length === 0) {
+        if (repositoryRoots.length === 0) setGitStatusLoaded(true);
         return;
       }
+      setGitStatusLoaded(true);
 
       setGitRepositoryStatuses((current) => mergeGitRepositoryStatuses(current, currentStatuses));
       // The primary (workspace-root) repo drives the existing single-status UI
@@ -378,7 +383,14 @@ export function useGitStatusSurface({
       }
 
       publishGitStatus(emptyGitStatus(requestedRoot));
-      setGitRepositoryStatuses([]);
+      const failures = gitRepositoryMappings
+        .map((mapping) => {
+          const root = repositoryRootForMapping(mapping, requestedRoot);
+          return { mapping, root, status: emptyGitStatus(root), failed: true };
+        })
+        .filter((entry) => gitOperationCurrency.isRepositoryCurrent(reservation, entry.root));
+      setGitRepositoryStatuses((current) => mergeGitRepositoryStatuses(current, failures));
+      if (failures.length > 0 || repositoryRoots.length === 0) setGitStatusLoaded(true);
       reportError("Git", error);
     } finally {
       if (isCurrentRequest()) {
@@ -532,6 +544,7 @@ export function useGitStatusSurface({
       }
 
       setGitRepositoryStatuses((current) => mergeGitRepositoryStatuses(current, statuses));
+      if (statuses.length > 0) setGitStatusLoaded(true);
 
       const selectedDiffDocument = getSelectedGitDiffDocument();
 
@@ -587,6 +600,7 @@ export function useGitStatusSurface({
     editorGitBaselinesByPath,
     gitActiveFileBranch,
     gitLoading,
+    gitStatusLoaded,
     gitRepositoryMappings,
     gitRepositoryStatuses,
     gitStatus,

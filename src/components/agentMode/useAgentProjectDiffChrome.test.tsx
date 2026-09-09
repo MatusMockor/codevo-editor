@@ -23,12 +23,14 @@ describe("project diff callback authority", () => {
   let rootPath: string;
   let ownerId: string;
   let mounted: boolean;
+  let statusLoaded: boolean;
   const preview = vi.fn(async () => undefined);
   function Harness() {
     current = useAgentProjectDiffChrome({
       workspaceRoot: rootPath,
       workspaceIdentityDescriptor: { workspaceId: ownerId },
       gitStatus: emptyGitStatus(rootPath),
+      gitStatusLoaded: statusLoaded,
       previewGitChange: preview,
     });
     return null;
@@ -42,8 +44,20 @@ describe("project diff callback authority", () => {
     rootPath = "/a";
     ownerId = "a";
     mounted = true;
+    statusLoaded = false;
     preview.mockClear();
     render();
+  });
+
+  it("keeps an unqueried project pending instead of reporting no repository", () => {
+    expect(current?.loading).toBe(true);
+    statusLoaded = true;
+    render();
+    expect(current?.loading).toBe(false);
+    rootPath = "/b";
+    statusLoaded = false;
+    render();
+    expect(current?.loading).toBe(true);
   });
   afterEach(() => {
     if (mounted) act(() => root.unmount());

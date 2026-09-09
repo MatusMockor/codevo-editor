@@ -313,7 +313,12 @@ type FlatCommandEffectsDependencies = Pick<
   > &
   Pick<
     Parameters<typeof useWorkbenchSidebarDataRefresh>[0],
-    "indexProgress" | "refreshGitStatus" | "refreshPhpTree" | "sidebarView" | "workspaceRoot"
+    | "indexProgress"
+    | "refreshGitStatus"
+    | "refreshPhpTree"
+    | "sidebarView"
+    | "workspaceRoot"
+    | "agentDiffVisible"
   > &
   Pick<
     Omit<
@@ -495,6 +500,7 @@ interface CommandEffectsCompositionDependencies {
 }
 
 type GroupedCommandEffectsDependency =
+  | "agentDiffVisible"
   | "activeDocument"
   | "activeImage"
   | "activeMarkdownPreview"
@@ -991,6 +997,7 @@ interface CommandEffectsDependencies extends Omit<
     | "settingsOpen"
   >;
   readonly taskGitServices: CommandEffectsFacet<
+    | "agentDiffVisible"
     | "activePackageScripts"
     | "commitGitChanges"
     | "gitDiffLoading"
@@ -1187,6 +1194,7 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     settingsOpen,
   } = surfaceCommandServices;
   const {
+    agentDiffVisible,
     activePackageScripts,
     commitGitChanges,
     gitDiffLoading,
@@ -1663,6 +1671,7 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
   ]);
 
   useWorkbenchSidebarDataRefresh({
+    agentDiffVisible,
     indexProgress,
     refreshGitStatus,
     refreshPhpTree: refreshPhpTree,
