@@ -92,7 +92,7 @@ export function useAppUpdater({
           publish({ kind: "dismissed" });
           return;
         }
-        if (result.kind === "available") candidateRef.current = result.candidate;
+        if (result.kind !== "upToDate") candidateRef.current = result.candidate;
         publish({ kind: "checkSettled", generation, result });
       } catch {
         if (!ownsRequest(owner, generation, authorityRef, generationRef, mountedRef)) return;
@@ -171,7 +171,7 @@ export function useAppUpdater({
     const owner = authorityRef.current;
     publish({ kind: "downloadStarted", generation });
     try {
-      await owner.gateway.download(candidate.candidateRevision);
+      const preparation = await owner.gateway.download(candidate.candidateRevision);
       if (
         !ownsCandidate(
           owner,
@@ -184,7 +184,7 @@ export function useAppUpdater({
         )
       )
         return;
-      publish({ kind: "downloadSettled", generation });
+      publish({ kind: "downloadSettled", generation, preparation });
     } catch {
       if (
         !ownsCandidate(
@@ -205,14 +205,16 @@ export function useAppUpdater({
         kind: "failed",
         generation,
         operation: "download",
-        message: "Unable to download the application update.",
+        message: "Unable to prepare the application update.",
       });
     }
   }, [publish]);
 
   const installAndRestart = useCallback(async () => {
     const candidate = candidateRef.current;
-    if (!candidate || stateRef.current.kind !== "readyToInstall") return;
+    if (!candidate) return;
+    const readiness = stateRef.current.kind;
+    if (readiness !== "readyToInstall" && readiness !== "readyToRestart") return;
     const generation = nextGeneration(generationRef);
     const owner = authorityRef.current;
     publish({ kind: "installStarted", generation });
@@ -251,7 +253,10 @@ export function useAppUpdater({
         kind: "failed",
         generation,
         operation: "installAndRestart",
-        message: "Unable to install the application update.",
+        message:
+          readiness === "readyToRestart"
+            ? "The update is installed. Quit and reopen Codevo to use it."
+            : "Unable to install the application update.",
       });
     }
   }, [publish]);

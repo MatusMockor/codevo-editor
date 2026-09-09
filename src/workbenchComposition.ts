@@ -81,6 +81,7 @@ import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway"
 import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
 import packageMetadata from "../package.json";
 
 export const CODEVO_APP_VERSION = packageMetadata.version;
@@ -98,7 +99,10 @@ export function createWorkbenchComposition() {
   const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
   const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
   const quickInputCoordinator = new QuickInputCoordinator();
-  const appUpdaterGateway = new TauriAppUpdaterGateway({ check, relaunch }, CODEVO_APP_VERSION);
+  const appUpdaterGateway = new TauriAppUpdaterGateway(
+    { check, relaunch, getInstallMode: () => invoke("app_update_install_mode") },
+    CODEVO_APP_VERSION,
+  );
   const settingsGateway = new BrowserSettingsGateway();
   const agentAccountUsageStoreGateway = new BrowserAgentAccountUsageStoreGateway();
   const agentProviderGateway = Object.assign(new TauriAgentProviderGateway(), {

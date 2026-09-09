@@ -2,6 +2,21 @@
 
 use super::*;
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) enum AppUpdateInstallMode {
+    PrepareBeforeRestart,
+    InstallOnRestart,
+}
+
+#[tauri::command]
+pub(super) fn app_update_install_mode() -> AppUpdateInstallMode {
+    if cfg!(target_os = "macos") {
+        return AppUpdateInstallMode::PrepareBeforeRestart;
+    }
+    AppUpdateInstallMode::InstallOnRestart
+}
+
 #[tauri::command]
 pub(super) fn quit_application(
     app: AppHandle,
@@ -91,4 +106,22 @@ pub(super) fn enumerate_monospace_font_families() -> Vec<String> {
     }
 
     families.into_iter().collect()
+}
+
+#[cfg(test)]
+mod updater_tests {
+    use super::*;
+
+    #[test]
+    fn deferred_restart_installation_is_enabled_only_on_macos() {
+        let expected = if cfg!(target_os = "macos") {
+            "prepareBeforeRestart"
+        } else {
+            "installOnRestart"
+        };
+        assert_eq!(
+            serde_json::to_value(app_update_install_mode()).unwrap(),
+            serde_json::json!(expected)
+        );
+    }
 }

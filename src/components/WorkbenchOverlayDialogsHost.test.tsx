@@ -125,7 +125,7 @@ function idleGateway(): AppUpdaterGateway {
   return {
     check: async () => ({ kind: "upToDate", currentVersion: "0.1.0" }),
     dispose: async () => undefined,
-    download: async () => undefined,
+    download: async () => "readyToInstall",
     installAndRestart: async () => undefined,
   };
 }

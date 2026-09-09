@@ -5,6 +5,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppUpdaterGateway } from "../domain/appUpdater";
+import { TauriAppUpdaterGateway } from "../infrastructure/tauriAppUpdaterGateway";
 import { useAppUpdater, type AppUpdaterSurface } from "./useAppUpdater";
 
 describe("useAppUpdater", () => {
@@ -42,6 +43,50 @@ describe("useAppUpdater", () => {
 
     await act(async () => surface?.installAndRestart());
     expect(gateway.installAndRestart).toHaveBeenCalledWith(7);
+  });
+
+  it("preserves a prepared Mac update after Later and restores restart without downloading again", async () => {
+    const update = {
+      currentVersion: "0.1.0",
+      version: "0.2.0",
+      download: vi.fn(async () => undefined),
+      install: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    };
+    const bridge = {
+      getInstallMode: async () => "prepareBeforeRestart",
+      check: vi.fn(async () => update),
+      relaunch: vi.fn(async () => undefined),
+    };
+    render(new TauriAppUpdaterGateway(bridge, "0.1.0"));
+    await act(async () => surface?.check());
+    await act(async () => surface?.download());
+    expect(surface?.state.kind).toBe("readyToRestart");
+    expect(update.install).toHaveBeenCalledOnce();
+    expect(bridge.relaunch).not.toHaveBeenCalled();
+    act(() => surface?.dismiss());
+    expect(surface?.state.kind).toBe("idle");
+    await act(async () => surface?.check());
+    expect(surface?.state.kind).toBe("readyToRestart");
+    expect(bridge.check).toHaveBeenCalledOnce();
+    expect(update.download).toHaveBeenCalledOnce();
+    await act(async () => surface?.installAndRestart());
+    expect(update.install).toHaveBeenCalledOnce();
+    expect(bridge.relaunch).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a completed installation truthful when relaunch fails", async () => {
+    const gateway = gatewayWithUpdate();
+    gateway.download.mockResolvedValue("readyToRestart");
+    gateway.installAndRestart.mockRejectedValue(new Error("relaunch failure"));
+    render(gateway);
+    await act(async () => surface?.check());
+    await act(async () => surface?.download());
+    await act(async () => surface?.installAndRestart());
+    expect(surface?.state).toMatchObject({
+      kind: "failed",
+      message: "The update is installed. Quit and reopen Codevo to use it.",
+    });
   });
 
   it("checks after the UI-ready scheduler and exposes an available startup release", async () => {
@@ -127,7 +172,7 @@ describe("useAppUpdater", () => {
     expect(surface?.state).toMatchObject({
       kind: "failed",
       operation: "download",
-      message: "Unable to download the application update.",
+      message: "Unable to prepare the application update.",
       release: { version: "0.2.0", notes: "Beta update" },
     });
     expect(gateway.dispose).toHaveBeenCalledOnce();
@@ -288,7 +333,7 @@ function gatewayWithUpdate() {
         notes: "Beta update",
       },
     })),
-    download: vi.fn(async () => undefined),
+    download: vi.fn<AppUpdaterGateway["download"]>(async () => "readyToInstall"),
     installAndRestart: vi.fn(async () => undefined),
     dispose: vi.fn(async () => undefined),
   };

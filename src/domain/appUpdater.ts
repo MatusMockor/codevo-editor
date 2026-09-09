@@ -11,13 +11,15 @@ export interface AppUpdateCandidate {
   readonly notes: string | null;
 }
 
+export type AppUpdatePreparation = "readyToInstall" | "readyToRestart";
+
 export type AppUpdateCheckResult =
   | { readonly kind: "upToDate"; readonly currentVersion: string }
-  | { readonly kind: "available"; readonly candidate: AppUpdateCandidate };
+  | { readonly kind: "available" | "readyToRestart"; readonly candidate: AppUpdateCandidate };
 
 export interface AppUpdaterGateway {
   check(): Promise<AppUpdateCheckResult>;
-  download(candidateRevision: number): Promise<void>;
+  download(candidateRevision: number): Promise<AppUpdatePreparation>;
   installAndRestart(candidateRevision: number): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -37,7 +39,7 @@ export type AppUpdaterState =
       readonly kind: "downloading";
       readonly generation: number;
     })
-  | (AppUpdaterReleasePresentation & { readonly kind: "readyToInstall" })
+  | (AppUpdaterReleasePresentation & { readonly kind: AppUpdatePreparation })
   | (AppUpdaterReleasePresentation & {
       readonly kind: "installing";
       readonly generation: number;
@@ -65,7 +67,11 @@ export type AppUpdaterAction =
       readonly result: AppUpdateCheckResult;
     }
   | { readonly kind: "downloadStarted"; readonly generation: number }
-  | { readonly kind: "downloadSettled"; readonly generation: number }
+  | {
+      readonly kind: "downloadSettled";
+      readonly generation: number;
+      readonly preparation: AppUpdatePreparation;
+    }
   | { readonly kind: "installStarted"; readonly generation: number }
   | { readonly kind: "dismissed" }
   | {
@@ -96,7 +102,7 @@ export function reduceAppUpdaterState(
       if (action.result.kind === "upToDate") {
         return { kind: "upToDate", currentVersion: action.result.currentVersion };
       }
-      return availableState(action.result.candidate);
+      return { ...availableState(action.result.candidate), kind: action.result.kind };
     case "downloadStarted":
       if (state.kind !== "available") return state;
       return { ...state, kind: "downloading", generation: action.generation };
@@ -104,14 +110,14 @@ export function reduceAppUpdaterState(
       if (state.kind !== "downloading") return state;
       if (state.generation !== action.generation) return state;
       return {
-        kind: "readyToInstall",
+        kind: action.preparation,
         currentVersion: state.currentVersion,
         version: state.version,
         date: state.date,
         notes: state.notes,
       };
     case "installStarted":
-      if (state.kind !== "readyToInstall") return state;
+      if (state.kind !== "readyToInstall" && state.kind !== "readyToRestart") return state;
       return { ...state, kind: "installing", generation: action.generation };
     case "dismissed":
       return initialAppUpdaterState(state.currentVersion);
@@ -140,7 +146,7 @@ export type AppUpdateToastPresentation =
       readonly date: string | null;
     }
   | { readonly kind: "downloading"; readonly version: string }
-  | { readonly kind: "readyToInstall"; readonly version: string }
+  | { readonly kind: AppUpdatePreparation; readonly version: string }
   | { readonly kind: "installing"; readonly version: string }
   | {
       readonly kind: "failed";
@@ -165,7 +171,8 @@ export function presentAppUpdateToast(state: AppUpdaterState): AppUpdateToastPre
     case "downloading":
       return { kind: "downloading", version: state.version };
     case "readyToInstall":
-      return { kind: "readyToInstall", version: state.version };
+    case "readyToRestart":
+      return { kind: state.kind, version: state.version };
     case "installing":
       return { kind: "installing", version: state.version };
     case "failed":
@@ -190,9 +197,11 @@ export function appUpdateToastTitle(presentation: AppUpdateToastPresentation): s
     case "readyToInstall":
       return `Update Available: Codevo v${presentation.version}`;
     case "downloading":
-      return "Downloading update";
+      return "Preparing update";
+    case "readyToRestart":
+      return "Update ready to restart";
     case "installing":
-      return "Installing update";
+      return "Restarting Codevo";
     case "failed":
       return "Application update failed";
   }
@@ -223,7 +232,9 @@ export function isSkippedAppUpdateVersion(
   return normalizeAppUpdaterSkippedVersion(skippedVersion) === candidate.version;
 }
 
-function availableState(candidate: AppUpdateCandidate): AppUpdaterState {
+function availableState(
+  candidate: AppUpdateCandidate,
+): AppUpdaterReleasePresentation & { readonly kind: "available" } {
   return {
     kind: "available",
     currentVersion: candidate.currentVersion,

@@ -199,7 +199,7 @@ function idleAppUpdaterGateway(): AppUpdaterGateway {
       currentVersion: "0.2.0-beta.1",
     })),
     dispose: vi.fn(async () => undefined),
-    download: vi.fn(async () => undefined),
+    download: vi.fn(async () => "readyToInstall" as const),
     installAndRestart: vi.fn(async () => undefined),
   };
 }

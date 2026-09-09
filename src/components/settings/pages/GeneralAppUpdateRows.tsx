@@ -80,7 +80,7 @@ function AppUpdateAction({
   if (presentation.action === "download") {
     return (
       <SettingsButton onClick={() => void updater.download()} variant="primary">
-        Download update
+        Update
       </SettingsButton>
     );
   }
@@ -88,7 +88,7 @@ function AppUpdateAction({
   if (presentation.action === "installAndRestart") {
     return (
       <SettingsButton onClick={() => void updater.installAndRestart()} variant="primary">
-        Install and restart
+        {updater.state.kind === "readyToRestart" ? "Restart" : "Install and restart"}
       </SettingsButton>
     );
   }
@@ -126,12 +126,20 @@ function appUpdaterPresentation(state: AppUpdaterState): AppUpdaterPresentation 
       return presentation({ action: "download" }, state.version, state.notes);
     case "downloading":
       return presentation(
-        { action: "pending", pendingLabel: "Downloading…" },
+        { action: "pending", pendingLabel: "Preparing update…" },
         state.version,
         state.notes,
       );
     case "readyToInstall":
       return presentation({ action: "installAndRestart" }, state.version, state.notes);
+    case "readyToRestart":
+      return presentation(
+        { action: "installAndRestart" },
+        state.version,
+        state.notes,
+        "Update installed. Restart now or use it next time you open Codevo.",
+        "success",
+      );
     case "installing":
       return presentation(
         { action: "pending", pendingLabel: "Installing…" },
@@ -156,6 +164,6 @@ function presentation(
     notes,
     status,
     statusTone,
-    skippable: version !== null && action.action !== "pending",
+    skippable: version !== null && action.action === "download",
   };
 }

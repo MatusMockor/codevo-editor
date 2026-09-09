@@ -337,6 +337,7 @@ pub fn run() {
             rename_git_branch,
             switch_git_branch,
             quit_application,
+            crate::application_commands::app_update_install_mode,
             set_native_close_listener_ready,
             confirm_native_shutdown,
             read_directory,

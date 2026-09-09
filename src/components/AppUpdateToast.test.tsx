@@ -41,7 +41,7 @@ describe("AppUpdateToast", () => {
     );
     expect(host.textContent).toContain("Installed v0.1.0");
     expect(host.textContent).toContain("Released 2026-08-29");
-    act(() => button("Download").click());
+    act(() => button("Update").click());
     expect(handlers.onDownload).toHaveBeenCalledOnce();
     act(() => button("Skip version").click());
     expect(handlers.onSkipVersion).toHaveBeenCalledOnce();
@@ -52,13 +52,13 @@ describe("AppUpdateToast", () => {
   it("keeps pending downloads and installs non-dismissable", () => {
     render({ kind: "downloading", version: "0.2.0" });
     expect(host.querySelector(".toast-notification--loading")?.textContent).toContain(
-      "Downloading update",
+      "Preparing update",
     );
     expect(host.querySelector('[aria-label="Dismiss notification"]')).toBeNull();
     expect(host.querySelectorAll("button")).toHaveLength(0);
 
     render({ kind: "installing", version: "0.2.0" });
-    expect(host.textContent).toContain("Installing update");
+    expect(host.textContent).toContain("Restarting Codevo");
     expect(host.querySelectorAll("button")).toHaveLength(0);
   });
 
@@ -71,6 +71,20 @@ describe("AppUpdateToast", () => {
     expect(handlers.onInstall).toHaveBeenCalledOnce();
     act(() => button("Later").click());
     expect(handlers.onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("makes Later safe after preparation and offers restart without reinstalling", () => {
+    render({ kind: "readyToRestart", version: "0.2.0" });
+    expect(host.textContent).toContain("Update ready to restart");
+    expect(host.textContent).toContain(
+      "Update 0.2.0 installed. Restart now or use it next time you open Codevo.",
+    );
+    act(() => button("Later").click());
+    expect(handlers.onDismiss).toHaveBeenCalledOnce();
+    expect(handlers.onInstall).not.toHaveBeenCalled();
+    act(() => button("Restart").click());
+    expect(handlers.onInstall).toHaveBeenCalledOnce();
+    expect(handlers.onDownload).not.toHaveBeenCalled();
   });
 
   it("keeps a failed download retryable and dismissable", () => {

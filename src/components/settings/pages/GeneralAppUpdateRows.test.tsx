@@ -52,7 +52,7 @@ describe("GeneralAppUpdateRows", () => {
     expect(host.textContent).toContain("0.2.0");
     expect(host.querySelector(".settings-update__notes")?.textContent).toBe("Beta update");
 
-    act(() => button("Download update").click());
+    act(() => button("Update").click());
 
     expect(updater.download).toHaveBeenCalledOnce();
     expect(updater.installAndRestart).not.toHaveBeenCalled();
@@ -61,6 +61,25 @@ describe("GeneralAppUpdateRows", () => {
     act(() => button("Install and restart").click());
 
     expect(updater.installAndRestart).toHaveBeenCalledOnce();
+  });
+
+  it("offers only restart after the update is already installed", () => {
+    const updater = updaterSurface({
+      kind: "readyToRestart",
+      currentVersion: "0.1.0",
+      version: "0.2.0",
+      date: null,
+      notes: null,
+    });
+    render(updater);
+    expect(host.textContent).toContain(
+      "Update installed. Restart now or use it next time you open Codevo.",
+    );
+    expect(host.textContent).not.toContain("Skip this version");
+    expect(host.textContent).not.toContain("Install and restart");
+    act(() => button("Restart").click());
+    expect(updater.installAndRestart).toHaveBeenCalledOnce();
+    expect(updater.download).not.toHaveBeenCalled();
   });
 
   it("skips the offered version without downloading it", () => {

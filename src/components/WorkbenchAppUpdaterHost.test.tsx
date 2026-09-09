@@ -122,7 +122,7 @@ describe("WorkbenchAppUpdaterHost", () => {
     });
     expect(host.querySelector('[role="dialog"]')).toBeNull();
 
-    await click("Download");
+    await click("Update");
     await waitForReact(() => {
       expect(host.textContent).toContain("Update 0.2.0 downloaded. Click to restart and install.");
     });
@@ -328,7 +328,7 @@ function hostProps(overrides: {
 function upToDateGateway(): AppUpdaterGateway {
   return {
     check: async () => ({ kind: "upToDate", currentVersion: "0.1.0" }),
-    download: async () => undefined,
+    download: async () => "readyToInstall",
     installAndRestart: async () => undefined,
     dispose: async () => undefined,
   };
@@ -346,7 +346,7 @@ function updaterGateway() {
         notes: null,
       },
     })),
-    download: vi.fn<AppUpdaterGateway["download"]>(async () => undefined),
+    download: vi.fn<AppUpdaterGateway["download"]>(async () => "readyToInstall"),
     installAndRestart: vi.fn<AppUpdaterGateway["installAndRestart"]>(async () => undefined),
     dispose: vi.fn<AppUpdaterGateway["dispose"]>(async () => undefined),
   };

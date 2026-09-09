@@ -2,6 +2,7 @@ import {
   MAX_APP_UPDATE_DATE_LENGTH,
   MAX_APP_UPDATE_NOTES_LENGTH,
   MAX_APP_UPDATE_VERSION_LENGTH,
+  type AppUpdatePreparation,
   type AppUpdateCandidate,
   type AppUpdateCheckResult,
   type AppUpdaterGateway,
@@ -19,21 +20,29 @@ export interface TauriUpdaterBridgeUpdate {
 
 export interface TauriUpdaterBridge {
   check(): Promise<unknown>;
+  getInstallMode?(): Promise<unknown>;
   relaunch(): Promise<void>;
 }
 
+type InstallMode = "prepareBeforeRestart" | "installOnRestart";
+
 interface RetainedCandidate {
+  readonly mode: InstallMode;
   readonly revision: number;
   readonly update: TauriUpdaterBridgeUpdate;
   operation: "idle" | "downloading" | "installing" | "closing";
   releaseRequested: boolean;
   closed: boolean;
+  closing: Promise<void> | null;
 }
 
 export class TauriAppUpdaterGateway implements AppUpdaterGateway {
   private revision = 0;
   private candidate: RetainedCandidate | null = null;
   private readonly currentVersion: string;
+  private installed: { snapshot: AppUpdateCandidate; resource: RetainedCandidate } | null = null;
+  private installing: Promise<void> | null = null;
+  private restarting = false;
 
   constructor(
     private readonly bridge: TauriUpdaterBridge,
@@ -47,12 +56,30 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
   }
 
   async check(): Promise<AppUpdateCheckResult> {
+    if (this.restarting) throw new Error("An application update operation is already active.");
     const requestRevision = this.nextRevision();
+    if (this.installing) {
+      await this.installing;
+      this.requireCurrentRevision(requestRevision);
+    }
+    if (this.installed) {
+      this.installed.snapshot = { ...this.installed.snapshot, candidateRevision: requestRevision };
+      return { kind: "readyToRestart", candidate: this.installed.snapshot };
+    }
     const previousCandidate = this.candidate;
     this.candidate = null;
     if (previousCandidate) {
       await this.releaseCandidate(previousCandidate);
       this.requireCurrentRevision(requestRevision);
+    }
+    let mode: InstallMode = "installOnRestart";
+    if (this.bridge.getInstallMode) {
+      const rawMode = await this.bridge.getInstallMode();
+      this.requireCurrentRevision(requestRevision);
+      if (rawMode !== "prepareBeforeRestart" && rawMode !== "installOnRestart") {
+        throw new TypeError("Invalid application update install mode.");
+      }
+      mode = rawMode;
     }
     const rawUpdate = await this.bridge.check();
     if (rawUpdate === null) {
@@ -67,11 +94,13 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
       throw new Error("The updater current version does not match the application version.");
     }
     this.candidate = {
+      mode,
       revision: requestRevision,
       update,
       operation: "idle",
       releaseRequested: false,
       closed: false,
+      closing: null,
     };
     return {
       kind: "available",
@@ -79,8 +108,8 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
     };
   }
 
-  async download(candidateRevision: number): Promise<void> {
-    const candidate = this.requireCandidate(candidateRevision);
+  async download(candidateRevision: number): Promise<AppUpdatePreparation> {
+    const candidate = this.requireIdleCandidate(candidateRevision);
     candidate.operation = "downloading";
     const settlement = await settleNativeOperation(() => candidate.update.download());
     candidate.operation = "idle";
@@ -90,25 +119,68 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
     }
     if (settlement.kind === "failed") throw settlement.error;
     this.requireCandidate(candidateRevision);
+    if (candidate.mode === "installOnRestart") return "readyToInstall";
+    await this.installCandidate(candidate);
+    return "readyToRestart";
   }
 
   async installAndRestart(candidateRevision: number): Promise<void> {
-    const candidate = this.requireCandidate(candidateRevision);
+    if (this.restarting || this.installing) {
+      throw new Error("An application update operation is already active.");
+    }
+    this.restarting = true;
+    try {
+      if (!this.installed) {
+        const candidate = this.requireIdleCandidate(candidateRevision);
+        await this.installCandidate(candidate);
+      }
+      this.requireCurrentRevision(candidateRevision);
+      const installed = this.installed;
+      if (!installed || installed.snapshot.candidateRevision !== candidateRevision) {
+        throw new Error("The application update candidate is no longer current.");
+      }
+      await this.closeCandidate(installed.resource);
+      this.requireCurrentRevision(candidateRevision);
+      await this.bridge.relaunch();
+      this.requireCurrentRevision(candidateRevision);
+    } finally {
+      this.restarting = false;
+    }
+  }
+
+  private async installCandidate(candidate: RetainedCandidate): Promise<void> {
     candidate.operation = "installing";
+    let finish!: () => void;
+    this.installing = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    try {
+      await this.performInstall(candidate);
+    } finally {
+      this.installing = null;
+      finish();
+    }
+  }
+
+  private async performInstall(candidate: RetainedCandidate): Promise<void> {
     const settlement = await settleNativeOperation(() => candidate.update.install());
     candidate.operation = "idle";
+    if (settlement.kind === "succeeded") {
+      this.installed = {
+        snapshot: candidateFromUpdate(candidate.revision, this.currentVersion, candidate.update),
+        resource: candidate,
+      };
+    }
     if (settlement.kind === "failed") {
       if (candidate.releaseRequested) await this.closeCandidate(candidate);
       throw settlement.error;
     }
-    await this.closeCandidate(candidate);
+    const cleanup = await settleNativeOperation(() => this.closeCandidate(candidate));
     if (candidate.releaseRequested) {
       throw new Error("The application update candidate is no longer current.");
     }
-    this.requireCandidate(candidateRevision);
-    this.candidate = null;
-    await this.bridge.relaunch();
-    this.requireCurrentRevision(candidateRevision);
+    this.requireCandidate(candidate.revision);
+    if (candidate.mode === "installOnRestart" && cleanup.kind === "failed") throw cleanup.error;
   }
 
   async dispose(): Promise<void> {
@@ -151,19 +223,16 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
 
   private async closeCandidate(candidate: RetainedCandidate): Promise<void> {
     if (candidate.closed) return;
-    if (candidate.operation === "closing") return;
-    const previousOperation = candidate.operation;
+    if (candidate.closing) return candidate.closing;
     candidate.operation = "closing";
+    const closing = Promise.resolve().then(() => candidate.update.close());
+    candidate.closing = closing;
     try {
-      await candidate.update.close();
-      if (candidate.operation !== "closing") {
-        throw new Error("The application update close lease was replaced.");
-      }
+      await closing;
       candidate.closed = true;
+    } finally {
       candidate.operation = "idle";
-    } catch (error) {
-      if (candidate.operation === "closing") candidate.operation = previousOperation;
-      throw error;
+      candidate.closing = null;
     }
   }
 
@@ -175,6 +244,14 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
   private requireCurrentRevision(revision: number): void {
     if (this.revision === revision) return;
     throw new Error("The application update request is stale.");
+  }
+
+  private requireIdleCandidate(revision: number): RetainedCandidate {
+    const candidate = this.requireCandidate(revision);
+    if (candidate.operation !== "idle" || candidate.closed || this.installed) {
+      throw new Error("An application update operation is already active.");
+    }
+    return candidate;
   }
 
   private requireCandidate(revision: number): RetainedCandidate {

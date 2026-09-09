@@ -32,9 +32,9 @@ export function AppUpdateToast({
               tone: "ghost",
             },
             laterAction(onDismiss),
-            { id: "download", label: "Download", onClick: onDownload, tone: "primary" },
+            { id: "download", label: "Update", onClick: onDownload, tone: "primary" },
           ]}
-          description="Download the update now or review it later in Settings."
+          description="Download and prepare the update now. You can restart later."
           icon={
             <ToastMark badge="update">
               <AppMark />
@@ -52,7 +52,7 @@ export function AppUpdateToast({
     case "downloading":
       return (
         <ToastNotification
-          description={`Downloading Codevo v${presentation.version}.`}
+          description={`Downloading and preparing Codevo v${presentation.version}.`}
           template="loading"
           title={appUpdateToastTitle(presentation)}
         />
@@ -71,6 +71,25 @@ export function AppUpdateToast({
             </ToastMark>
           }
           meta={["Any running tasks will be interrupted."]}
+          onClose={onDismiss}
+          template="success"
+          title={appUpdateToastTitle(presentation)}
+        />
+      );
+    case "readyToRestart":
+      return (
+        <ToastNotification
+          actions={[
+            laterAction(onDismiss),
+            { id: "restart", label: "Restart", onClick: onInstall, tone: "primary" },
+          ]}
+          description={`Update ${presentation.version} installed. Restart now or use it next time you open Codevo.`}
+          icon={
+            <ToastMark badge="check">
+              <AppMark />
+            </ToastMark>
+          }
+          meta={["Any running tasks will be interrupted if you restart now."]}
           onClose={onDismiss}
           template="success"
           title={appUpdateToastTitle(presentation)}

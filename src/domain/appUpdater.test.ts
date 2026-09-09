@@ -35,6 +35,7 @@ describe("app updater reducer", () => {
     });
     const ready = reduceAppUpdaterState(downloading, {
       kind: "downloadSettled",
+      preparation: "readyToInstall",
       generation: 2,
     });
     const installing = reduceAppUpdaterState(ready, {
@@ -46,6 +47,31 @@ describe("app updater reducer", () => {
     expect(downloading.kind).toBe("downloading");
     expect(ready.kind).toBe("readyToInstall");
     expect(installing.kind).toBe("installing");
+  });
+
+  it("restores an installed update and ignores stale preparation completion", () => {
+    const checking = reduceAppUpdaterState(initialAppUpdaterState("0.1.0"), {
+      kind: "checkStarted",
+      generation: 4,
+    });
+    const ready = reduceAppUpdaterState(checking, {
+      kind: "checkSettled",
+      generation: 4,
+      result: { kind: "readyToRestart", candidate },
+    });
+    expect(ready.kind).toBe("readyToRestart");
+    expect(presentAppUpdateToast(ready)).toEqual({ kind: "readyToRestart", version: "0.2.0" });
+    expect(reduceAppUpdaterState(ready, { kind: "downloadStarted", generation: 5 })).toEqual(ready);
+    expect(
+      reduceAppUpdaterState(ready, {
+        kind: "downloadSettled",
+        generation: 3,
+        preparation: "readyToRestart",
+      }),
+    ).toEqual(ready);
+    expect(reduceAppUpdaterState(ready, { kind: "installStarted", generation: 5 }).kind).toBe(
+      "installing",
+    );
   });
 
   it("drops stale settlements after a newer check owns the state", () => {

@@ -175,6 +175,12 @@ failed check stays silent. The **Check for updates** action in Settings > Genera
 the same updater surface. Choosing **Skip this version** persists the exact version in
 application settings, while **Later** dismisses only the current dialog.
 
+On macOS, **Update** downloads, verifies, and installs the bundle without restarting
+the running app. The ready notification offers **Restart** or **Later**. After
+**Later**, quitting with Cmd+Q and opening the installed app uses the new version;
+a manual update check before quitting restores the restart prompt without another
+download. Other platforms retain explicit installation at **Install and restart**.
+
 For built-app QA, run a loopback server on `127.0.0.1:41788` that serves a signed
 Tauri `latest.json`, then build with the explicit overlay:
 
