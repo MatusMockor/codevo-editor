@@ -160,7 +160,11 @@ describe("agentModePresentation", () => {
         context: {},
         expected: "No agent CLI is configured",
       },
-      { cleared: {}, context: { agentCliConfigured: true }, expected: "shared parallel thread limit" },
+      {
+        cleared: {},
+        context: { agentCliConfigured: true },
+        expected: "shared parallel thread limit",
+      },
     ];
 
     let options: ThreadOptions = {
@@ -1160,3 +1164,278 @@ function shipThread(title: string): AgentThread {
     integration: null,
   };
 }
+
+describe("agentTurnSubagentSummary telemetry", () => {
+  const PARENT = "toolu_parent";
+  const TASK = "ab3bc0126d64bc47c";
+
+  function spawnedTurn(): ReadonlyArray<AgentTurnEvent> {
+    return [
+      { kind: "toolCall", toolId: PARENT, name: "Agent", inputSummary: "Run echo alpha" },
+      {
+        kind: "subagent",
+        status: "starting",
+        toolId: PARENT,
+        taskId: TASK,
+        subagentType: "general-purpose",
+        description: "Run echo alpha",
+      },
+      {
+        kind: "toolCall",
+        toolId: "toolu_child",
+        name: "Bash",
+        inputSummary: "echo alpha",
+        parentToolId: PARENT,
+      },
+      {
+        kind: "toolResult",
+        toolId: "toolu_child",
+        outputSummary: "alpha",
+        isError: false,
+        parentToolId: PARENT,
+      },
+      { kind: "subagent", status: "completed", taskId: TASK },
+      {
+        kind: "subagent",
+        status: "completed",
+        toolId: PARENT,
+        taskId: TASK,
+        subagentType: "general-purpose",
+        durationMs: 4_288,
+        totalTokens: 23_956,
+        toolUses: 1,
+      },
+      { kind: "toolResult", toolId: PARENT, outputSummary: "alpha", isError: false },
+    ];
+  }
+
+  it("names the subagent by its real type and reports its telemetry", () => {
+    expect(agentTurnSubagentSummary(spawnedTurn())).toEqual({
+      total: 1,
+      running: 0,
+      completed: 1,
+      failed: 0,
+      entries: [
+        {
+          toolId: PARENT,
+          name: "general-purpose",
+          description: "Run echo alpha",
+          state: "completed",
+          subagentType: "general-purpose",
+          durationMs: 4_288,
+          totalTokens: 23_956,
+          steps: 1,
+        },
+      ],
+    });
+  });
+
+  it("resolves a task-only update through the task id reported earlier", () => {
+    expect(
+      agentTurnSubagentSummary([
+        { kind: "toolCall", toolId: PARENT, name: "Agent", inputSummary: "Run echo alpha" },
+        { kind: "subagent", status: "starting", toolId: PARENT, taskId: TASK },
+        { kind: "subagent", status: "failed", taskId: TASK },
+      ]),
+    ).toMatchObject({ total: 1, failed: 1, entries: [{ toolId: PARENT, state: "failed" }] });
+  });
+
+  it("keeps the first spawn label and never lets a repeat call clobber the real type", () => {
+    expect(
+      agentTurnSubagentSummary([
+        { kind: "toolCall", toolId: PARENT, name: "Agent", inputSummary: "Run echo alpha" },
+        { kind: "subagent", status: "running", toolId: PARENT, subagentType: "general-purpose" },
+        { kind: "toolCall", toolId: PARENT, name: "Task", inputSummary: "Something else" },
+      ]),
+    ).toMatchObject({
+      total: 1,
+      entries: [
+        {
+          toolId: PARENT,
+          name: "general-purpose",
+          description: "Run echo alpha",
+          state: "running",
+        },
+      ],
+    });
+  });
+
+  it("drops telemetry for a task id that was never introduced with a tool id", () => {
+    expect(
+      agentTurnSubagentSummary([{ kind: "subagent", status: "completed", taskId: TASK }]),
+    ).toBe(null);
+  });
+
+  it("builds an entry from the final result alone when the spawn call was lost", () => {
+    expect(
+      agentTurnSubagentSummary([
+        {
+          kind: "subagent",
+          status: "completed",
+          toolId: PARENT,
+          taskId: TASK,
+          subagentType: "general-purpose",
+          durationMs: 4_288,
+          totalTokens: 23_956,
+          toolUses: 1,
+        },
+      ]),
+    ).toEqual({
+      total: 1,
+      running: 0,
+      completed: 1,
+      failed: 0,
+      entries: [
+        {
+          toolId: PARENT,
+          name: "general-purpose",
+          description: "",
+          state: "completed",
+          subagentType: "general-purpose",
+          durationMs: 4_288,
+          totalTokens: 23_956,
+          steps: 1,
+        },
+      ],
+    });
+  });
+
+  it("keeps a running subagent running while it reports progress", () => {
+    expect(
+      agentTurnSubagentSummary([
+        { kind: "toolCall", toolId: PARENT, name: "Task", inputSummary: "Review UI" },
+        {
+          kind: "subagent",
+          status: "running",
+          toolId: PARENT,
+          taskId: TASK,
+          subagentType: "code-reviewer",
+          description: "Running Review UI",
+          durationMs: 2_450,
+          totalTokens: 23_111,
+          toolUses: 1,
+          lastToolName: "Bash",
+        },
+      ]),
+    ).toEqual({
+      total: 1,
+      running: 1,
+      completed: 0,
+      failed: 0,
+      entries: [
+        {
+          toolId: PARENT,
+          name: "code-reviewer",
+          description: "Review UI",
+          state: "running",
+          subagentType: "code-reviewer",
+          durationMs: 2_450,
+          totalTokens: 23_111,
+          steps: 1,
+          lastToolName: "Bash",
+        },
+      ],
+    });
+  });
+});
+
+describe("agentWorkSummary subagent double counting", () => {
+  it("counts the spawn once and never counts the subagent's own steps", () => {
+    const fold = agentTurnWorkFold(
+      agentTurnProjection([
+        { kind: "toolCall", toolId: "toolu_parent", name: "Agent", inputSummary: "Run tests" },
+        {
+          kind: "toolCall",
+          toolId: "toolu_child",
+          name: "Bash",
+          inputSummary: "npm test",
+          parentToolId: "toolu_parent",
+        },
+        {
+          kind: "toolResult",
+          toolId: "toolu_child",
+          outputSummary: "ok",
+          isError: false,
+          parentToolId: "toolu_parent",
+        },
+        {
+          kind: "toolCall",
+          toolId: "toolu_child2",
+          name: "Read",
+          inputSummary: "a.ts",
+          parentToolId: "toolu_parent",
+        },
+        { kind: "toolCall", toolId: "grep-1", name: "Grep", inputSummary: "needle" },
+        { kind: "toolResult", toolId: "toolu_parent", outputSummary: "done", isError: false },
+        { kind: "assistantText", text: "All done." },
+      ]).items,
+      false,
+    );
+
+    expect(fold?.summary).toBe("1 other tool · 1 subagent");
+  });
+
+  it("keeps a lost subagent step out of the parent counts when only its result survives", () => {
+    const fold = agentTurnWorkFold(
+      agentTurnProjection([
+        { kind: "toolCall", toolId: "toolu_parent", name: "Agent", inputSummary: "Run tests" },
+        {
+          kind: "toolResult",
+          toolId: "toolu_orphan",
+          outputSummary: "ok",
+          isError: false,
+          parentToolId: "toolu_parent",
+        },
+        { kind: "assistantText", text: "All done." },
+      ]).items,
+      false,
+    );
+
+    expect(fold?.summary).toBe("1 subagent");
+  });
+
+  it("never renders a subagent telemetry event as an item or a raw line", () => {
+    const projection = agentTurnProjection([
+      { kind: "subagent", status: "running", toolId: "toolu_parent" },
+      { kind: "assistantText", text: "Done." },
+    ]);
+
+    expect(projection.items).toEqual([
+      { kind: "assistantText", key: "e1", text: "Done.", paragraphs: ["Done."] },
+    ]);
+    expect(projection.rawLines).toEqual([]);
+  });
+});
+
+describe("subagent presentation review regressions", () => {
+  it("keeps a reported failure even when the spawn tool result was not an error", () => {
+    expect(
+      agentTurnSubagentSummary([
+        { kind: "toolCall", toolId: "toolu_parent", name: "Agent", inputSummary: "Run tests" },
+        { kind: "toolResult", toolId: "toolu_parent", outputSummary: "done", isError: false },
+        { kind: "subagent", status: "failed", toolId: "toolu_parent" },
+      ]),
+    ).toMatchObject({
+      total: 1,
+      running: 0,
+      completed: 0,
+      failed: 1,
+      entries: [{ toolId: "toolu_parent", state: "failed" }],
+    });
+  });
+
+  it("never counts telemetry against the rendered event window", () => {
+    const chatter: AgentTurnEvent[] = [];
+    for (let index = 0; index < 200; index += 1) {
+      chatter.push({ kind: "assistantText", text: `step ${index}` });
+      chatter.push({ kind: "subagent", status: "running", toolId: "toolu_parent" });
+    }
+
+    const projection = agentTurnProjection(chatter);
+
+    expect(projection.hiddenCount).toBe(0);
+    expect(projection.items).toHaveLength(200);
+    expect(projection.items[0]).toMatchObject({ text: "step 0" });
+    expect(new Set(projection.items.map((item) => item.key)).size).toBe(200);
+  });
+});

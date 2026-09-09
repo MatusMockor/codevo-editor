@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_TOOL_SUMMARY_BYTES } from "../agentThread";
+import {
+  MAX_AGENT_EVENT_TEXT_BYTES,
+  MAX_AGENT_TOOL_SUMMARY_BYTES,
+  type AgentTurnEvent,
+} from "../agentThread";
 import { parseClaudeStreamJsonLine } from "./claudeStreamJson";
 import { utf8ByteLength } from "./utf8Text";
 
@@ -328,5 +334,284 @@ describe("parseClaudeStreamJsonLine bounds and fail-closed handling", () => {
     const summary = event !== null && event.kind === "toolCall" ? event.inputSummary : "";
     expect(utf8ByteLength(summary)).toBeLessThanOrEqual(MAX_AGENT_TOOL_SUMMARY_BYTES);
     expect(summary).toBe("€".repeat(Math.floor(MAX_AGENT_TOOL_SUMMARY_BYTES / 3)));
+  });
+});
+
+const PARENT_TOOL_ID = "toolu_0178BjWfKajSpcXTHr9LFppE";
+const TASK_ID = "ab3bc0126d64bc47c";
+
+function fixtureEvents(): ReadonlyArray<AgentTurnEvent> {
+  const path = join(process.cwd(), "src", "domain", "agentOutput", "fixtures");
+  return readFileSync(join(path, "claude-subagent-turn.jsonl"), "utf8")
+    .split("\n")
+    .filter((raw) => raw.trim() !== "")
+    .flatMap((raw) => {
+      const parsed = parseClaudeStreamJsonLine(raw);
+      return parsed.kind === "events" ? parsed.events : [];
+    });
+}
+
+describe("parseClaudeStreamJsonLine subagent telemetry", () => {
+  it("parses the captured subagent turn into spawn, telemetry and parented steps", () => {
+    const events = fixtureEvents();
+
+    expect(events.slice(0, 7)).toEqual([
+      {
+        kind: "toolCall",
+        toolId: PARENT_TOOL_ID,
+        name: "Agent",
+        inputSummary: "Spustiť echo alpha",
+      },
+      {
+        kind: "subagent",
+        status: "starting",
+        toolId: PARENT_TOOL_ID,
+        taskId: TASK_ID,
+        subagentType: "general-purpose",
+        description: "Spustiť echo alpha",
+      },
+      {
+        kind: "subagent",
+        status: "running",
+        toolId: PARENT_TOOL_ID,
+        taskId: TASK_ID,
+        subagentType: "general-purpose",
+        description: "Running Echo the string alpha",
+        durationMs: 2_450,
+        totalTokens: 23_111,
+        toolUses: 1,
+        lastToolName: "Bash",
+      },
+      {
+        kind: "toolCall",
+        toolId: "toolu_01XEYBXi9WLdjWVeAnfpx1QT",
+        name: "Bash",
+        inputSummary: "echo alpha",
+        parentToolId: PARENT_TOOL_ID,
+      },
+      {
+        kind: "toolResult",
+        toolId: "toolu_01XEYBXi9WLdjWVeAnfpx1QT",
+        outputSummary: "alpha",
+        isError: false,
+        parentToolId: PARENT_TOOL_ID,
+      },
+      { kind: "subagent", status: "completed", taskId: TASK_ID },
+      {
+        kind: "subagent",
+        status: "completed",
+        toolId: PARENT_TOOL_ID,
+        taskId: TASK_ID,
+        durationMs: 4_286,
+        totalTokens: 23_949,
+        toolUses: 1,
+      },
+    ]);
+    expect(events[7]).toMatchObject({
+      kind: "toolResult",
+      toolId: PARENT_TOOL_ID,
+      isError: false,
+    });
+    expect(events[8]).toEqual({
+      kind: "subagent",
+      status: "completed",
+      toolId: PARENT_TOOL_ID,
+      taskId: TASK_ID,
+      subagentType: "general-purpose",
+      durationMs: 4_288,
+      totalTokens: 23_956,
+      toolUses: 1,
+    });
+    expect(events).toHaveLength(9);
+  });
+
+  it("summarises the spawn tool by its description instead of the whole prompt", () => {
+    for (const name of ["Agent", "Task"]) {
+      const parsed = parseClaudeStreamJsonLine(
+        assistant([
+          {
+            type: "tool_use",
+            id: "toolu_spawn",
+            name,
+            input: { description: "Review UI", prompt: "a".repeat(4_096), subagent_type: "x" },
+          },
+        ]),
+      );
+
+      const event = parsed.kind === "events" ? parsed.events[0] : null;
+      expect(event).toEqual({
+        kind: "toolCall",
+        toolId: "toolu_spawn",
+        name,
+        inputSummary: "Review UI",
+      });
+    }
+  });
+
+  it("drops task telemetry without an identity, with an unknown status or malformed metrics", () => {
+    const dropped = [
+      { type: "system", subtype: "task_started", description: "no ids" },
+      { type: "system", subtype: "task_updated", task_id: TASK_ID, patch: { status: "queued" } },
+      { type: "system", subtype: "task_updated", task_id: TASK_ID, patch: "completed" },
+      { type: "system", subtype: "task_notification", task_id: TASK_ID },
+      { type: "system", subtype: "task_notification", task_id: TASK_ID, status: 7 },
+      { type: "system", subtype: "task_finished", task_id: TASK_ID, status: "completed" },
+    ];
+    for (const value of dropped) {
+      expect(parseClaudeStreamJsonLine(line(value))).toEqual({ kind: "ignored" });
+    }
+
+    const parsed = parseClaudeStreamJsonLine(
+      line({
+        type: "system",
+        subtype: "task_progress",
+        task_id: TASK_ID,
+        subagent_type: "x".repeat(300),
+        last_tool_name: "Bash",
+        usage: { total_tokens: -1, tool_uses: 1.5, duration_ms: "2450" },
+      }),
+    );
+
+    expect(parsed).toEqual({
+      kind: "events",
+      events: [{ kind: "subagent", status: "running", taskId: TASK_ID }],
+      sessionId: null,
+    });
+  });
+
+  it("drops a description the thread wire would refuse to load back", () => {
+    const parsed = parseClaudeStreamJsonLine(
+      line({
+        type: "system",
+        subtype: "task_started",
+        task_id: TASK_ID,
+        tool_use_id: PARENT_TOOL_ID,
+        description: "before\u0000after",
+      }),
+    );
+
+    expect(parsed).toEqual({
+      kind: "events",
+      events: [{ kind: "subagent", status: "starting", toolId: PARENT_TOOL_ID, taskId: TASK_ID }],
+      sessionId: null,
+    });
+  });
+
+  it("drops a final subagent result that is missing its agent identity or status", () => {
+    const incomplete = [
+      { agentId: TASK_ID, totalTokens: 10 },
+      { agentType: "general-purpose", status: "completed" },
+      { agentId: TASK_ID, agentType: "general-purpose", status: "unknown" },
+    ];
+    for (const toolUseResult of incomplete) {
+      const parsed = parseClaudeStreamJsonLine(
+        line({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }],
+          },
+          tool_use_result: toolUseResult,
+        }),
+      );
+
+      expect(parsed).toEqual({
+        kind: "events",
+        events: [{ kind: "toolResult", toolId: "toolu_1", outputSummary: "ok", isError: false }],
+        sessionId: null,
+      });
+    }
+  });
+
+  it("keeps a final subagent result that has no matching tool result block", () => {
+    const parsed = parseClaudeStreamJsonLine(
+      line({
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: "done" }] },
+        tool_use_result: {
+          status: "completed",
+          agentId: TASK_ID,
+          agentType: "general-purpose",
+          totalDurationMs: 4_288,
+          totalTokens: 23_956,
+          totalToolUseCount: 1,
+        },
+      }),
+    );
+
+    expect(parsed).toEqual({
+      kind: "events",
+      events: [
+        {
+          kind: "subagent",
+          status: "completed",
+          taskId: TASK_ID,
+          subagentType: "general-purpose",
+          durationMs: 4_288,
+          totalTokens: 23_956,
+          toolUses: 1,
+        },
+      ],
+      sessionId: null,
+    });
+  });
+});
+
+describe("subagent telemetry review regressions", () => {
+  it("never binds a completion to a tool result it cannot identify", () => {
+    const parsed = parseClaudeStreamJsonLine(
+      line({
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "toolu_bash", content: "ok" },
+            { type: "tool_result", tool_use_id: "toolu_agent", content: "done" },
+          ],
+        },
+        tool_use_result: {
+          status: "completed",
+          agentId: TASK_ID,
+          agentType: "general-purpose",
+        },
+      }),
+    );
+    const events = parsed.kind === "events" ? parsed.events : [];
+
+    expect(events[2]).toEqual({
+      kind: "subagent",
+      status: "completed",
+      taskId: TASK_ID,
+      subagentType: "general-purpose",
+    });
+  });
+
+  it("drops task telemetry for a task type the editor does not support", () => {
+    expect(
+      parseClaudeStreamJsonLine(
+        line({
+          type: "system",
+          subtype: "task_started",
+          task_id: TASK_ID,
+          tool_use_id: PARENT_TOOL_ID,
+          task_type: "remote_agent",
+        }),
+      ),
+    ).toEqual({ kind: "ignored" });
+    expect(
+      parseClaudeStreamJsonLine(
+        line({
+          type: "system",
+          subtype: "task_started",
+          task_id: TASK_ID,
+          tool_use_id: PARENT_TOOL_ID,
+          task_type: "local_agent",
+        }),
+      ),
+    ).toEqual({
+      kind: "events",
+      events: [{ kind: "subagent", status: "starting", toolId: PARENT_TOOL_ID, taskId: TASK_ID }],
+      sessionId: null,
+    });
   });
 });

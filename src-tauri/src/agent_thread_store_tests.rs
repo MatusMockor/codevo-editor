@@ -413,6 +413,7 @@ fn out_of_bounds_turn_and_event_payloads_are_rejected() {
         tool_id: "t1".to_string(),
         name: "Bash".to_string(),
         input_summary: "a".repeat(MAX_AGENT_TOOL_SUMMARY_BYTES + 1),
+        parent_tool_id: None,
     }];
     let mut flag_like_session = thread_document(ROOT_KEY, "agt-thread-0004", 10);
     flag_like_session.thread.provider.session_id = Some("--resume-me".to_string());
@@ -1037,6 +1038,200 @@ fn a_populated_integration_receipt_round_trips_and_is_bounds_checked() {
     unknown_field["thread"]["integration"]["extra"] = json!(1);
 
     assert!(serde_json::from_value::<AgentThreadDocument>(unknown_field).is_err());
+}
+
+#[test]
+fn a_subagent_telemetry_document_round_trips_the_typescript_wire_shape() {
+    let mut source = document_json();
+    source["thread"]["owner"]["ownerId"] = json!(agent_root_owner_id("/workspace"));
+    source["thread"]["turns"][0]["events"] = json!([
+        {
+            "kind": "toolCall",
+            "toolId": "toolu_parent",
+            "name": "Agent",
+            "inputSummary": "Run echo alpha"
+        },
+        {
+            "kind": "subagent",
+            "status": "starting",
+            "toolId": "toolu_parent",
+            "taskId": "ab3bc0126d64bc47c",
+            "subagentType": "general-purpose",
+            "description": "Run echo alpha"
+        },
+        {
+            "kind": "toolCall",
+            "toolId": "toolu_child",
+            "name": "Bash",
+            "inputSummary": "echo alpha",
+            "parentToolId": "toolu_parent"
+        },
+        {
+            "kind": "toolResult",
+            "toolId": "toolu_child",
+            "outputSummary": "alpha",
+            "isError": false,
+            "parentToolId": "toolu_parent"
+        },
+        {
+            "kind": "subagent",
+            "status": "running",
+            "toolId": "toolu_parent",
+            "taskId": "ab3bc0126d64bc47c",
+            "subagentType": "general-purpose",
+            "description": "Running Echo the string alpha",
+            "durationMs": 2450,
+            "totalTokens": 23_111,
+            "toolUses": 1,
+            "lastToolName": "Bash"
+        },
+        { "kind": "subagent", "status": "completed", "taskId": "ab3bc0126d64bc47c" },
+        {
+            "kind": "subagent",
+            "status": "completed",
+            "toolId": "toolu_parent",
+            "taskId": "ab3bc0126d64bc47c",
+            "subagentType": "general-purpose",
+            "durationMs": 4288,
+            "totalTokens": 23_956,
+            "toolUses": 1
+        },
+        { "kind": "subagent", "status": "failed", "taskId": "ab3bc0126d64bc47c" }
+    ]);
+
+    let document: AgentThreadDocument =
+        serde_json::from_value(source.clone()).expect("subagent telemetry document loads");
+
+    assert_eq!(
+        document.thread.turns[0].events[1],
+        AgentTurnEvent::Subagent {
+            status: AgentSubagentStatus::Starting,
+            tool_id: Some("toolu_parent".to_string()),
+            task_id: Some("ab3bc0126d64bc47c".to_string()),
+            subagent_type: Some("general-purpose".to_string()),
+            description: Some("Run echo alpha".to_string()),
+            duration_ms: None,
+            total_tokens: None,
+            tool_uses: None,
+            last_tool_name: None,
+        }
+    );
+    assert_eq!(
+        document.thread.turns[0].events[2],
+        AgentTurnEvent::ToolCall {
+            tool_id: "toolu_child".to_string(),
+            name: "Bash".to_string(),
+            input_summary: "echo alpha".to_string(),
+            parent_tool_id: Some("toolu_parent".to_string()),
+        }
+    );
+    assert_eq!(
+        document.thread.turns[0].events[3],
+        AgentTurnEvent::ToolResult {
+            tool_id: "toolu_child".to_string(),
+            output_summary: "alpha".to_string(),
+            is_error: false,
+            parent_tool_id: Some("toolu_parent".to_string()),
+        }
+    );
+    assert!(matches!(
+        document.thread.turns[0].events[7],
+        AgentTurnEvent::Subagent {
+            status: AgentSubagentStatus::Failed,
+            tool_id: None,
+            ..
+        }
+    ));
+    assert_eq!(
+        serde_json::to_value(&document).expect("serialize document"),
+        source
+    );
+    validate_agent_thread_document("/workspace", &document)
+        .expect("subagent telemetry is within bounds");
+}
+
+#[test]
+fn a_legacy_tool_event_document_round_trips_byte_identically() {
+    let mut source = document_json();
+    source["thread"]["owner"]["ownerId"] = json!(agent_root_owner_id("/workspace"));
+    source["thread"]["turns"][0]["events"] = json!([
+        { "kind": "toolCall", "toolId": "t1", "name": "Bash", "inputSummary": "npm test" },
+        { "kind": "toolResult", "toolId": "t1", "outputSummary": "ok", "isError": false }
+    ]);
+    let document: AgentThreadDocument =
+        serde_json::from_value(source.clone()).expect("legacy document loads");
+
+    assert_eq!(
+        document.thread.turns[0].events[0],
+        AgentTurnEvent::ToolCall {
+            tool_id: "t1".to_string(),
+            name: "Bash".to_string(),
+            input_summary: "npm test".to_string(),
+            parent_tool_id: None,
+        }
+    );
+    let reencoded = serde_json::to_string(&document).expect("re-encode legacy document");
+    assert!(!reencoded.contains("parentToolId"));
+    assert!(!reencoded.contains("subagent"));
+    assert_eq!(
+        serde_json::to_value(&document).expect("serialize legacy document"),
+        source
+    );
+}
+
+#[test]
+fn agent_subagent_events_reject_unknown_status_and_out_of_bounds_telemetry() {
+    let mut unknown_status = document_json();
+    unknown_status["thread"]["turns"][0]["events"] =
+        json!([{ "kind": "subagent", "status": "queued" }]);
+    assert!(serde_json::from_value::<AgentThreadDocument>(unknown_status).is_err());
+
+    let mut unknown_field = document_json();
+    unknown_field["thread"]["turns"][0]["events"] =
+        json!([{ "kind": "subagent", "status": "running", "agentId": "x" }]);
+    assert!(serde_json::from_value::<AgentThreadDocument>(unknown_field).is_err());
+
+    let mut too_many_tokens = thread_document(ROOT_KEY, "agt-thread-0009", 10);
+    too_many_tokens.thread.turns[0].events = vec![AgentTurnEvent::Subagent {
+        status: AgentSubagentStatus::Completed,
+        tool_id: Some("toolu_parent".to_string()),
+        task_id: None,
+        subagent_type: None,
+        description: None,
+        duration_ms: None,
+        total_tokens: Some(MAX_AGENT_SAFE_INTEGER + 1),
+        tool_uses: None,
+        last_tool_name: None,
+    }];
+    assert!(validate_agent_thread_document(ROOT_KEY, &too_many_tokens).is_err());
+
+    let mut unidentified = thread_document(ROOT_KEY, "agt-thread-0011", 10);
+    unidentified.thread.turns[0].events = vec![AgentTurnEvent::Subagent {
+        status: AgentSubagentStatus::Completed,
+        tool_id: None,
+        task_id: None,
+        subagent_type: None,
+        description: None,
+        duration_ms: None,
+        total_tokens: None,
+        tool_uses: None,
+        last_tool_name: None,
+    }];
+    assert!(validate_agent_thread_document(ROOT_KEY, &unidentified).is_err());
+
+    let mut long_description = thread_document(ROOT_KEY, "agt-thread-0010", 10);
+    long_description.thread.turns[0].events = vec![AgentTurnEvent::Subagent {
+        status: AgentSubagentStatus::Running,
+        tool_id: None,
+        task_id: Some("ab3bc0126d64bc47c".to_string()),
+        subagent_type: None,
+        description: Some("a".repeat(MAX_AGENT_TOOL_SUMMARY_BYTES + 1)),
+        duration_ms: None,
+        total_tokens: None,
+        tool_uses: None,
+        last_tool_name: None,
+    }];
+    assert!(validate_agent_thread_document(ROOT_KEY, &long_description).is_err());
 }
 
 #[test]

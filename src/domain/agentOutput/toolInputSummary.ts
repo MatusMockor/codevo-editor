@@ -9,6 +9,10 @@ const SUMMARY_FIELDS: ReadonlyMap<string, string> = new Map([
   ["Bash", "command"],
   ["Grep", "pattern"],
   ["Glob", "pattern"],
+  ["Agent", "description"],
+  ["Task", "description"],
+  ["SpawnAgent", "description"],
+  ["spawn_agent", "description"],
 ]);
 
 export function summarizeToolInput(name: string, input: unknown): string {

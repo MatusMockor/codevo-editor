@@ -65,6 +65,8 @@ export interface AgentTurnStreamMetrics {
   readonly complete: boolean;
 }
 
+export type AgentSubagentEventStatus = "starting" | "running" | "completed" | "failed";
+
 export type AgentTurnEvent =
   | { readonly kind: "assistantText"; readonly text: string }
   | { readonly kind: "reasoning"; readonly text: string }
@@ -73,12 +75,26 @@ export type AgentTurnEvent =
       readonly toolId: string;
       readonly name: string;
       readonly inputSummary: string;
+      readonly parentToolId?: string;
     }
   | {
       readonly kind: "toolResult";
       readonly toolId: string;
       readonly outputSummary: string;
       readonly isError: boolean;
+      readonly parentToolId?: string;
+    }
+  | {
+      readonly kind: "subagent";
+      readonly status: AgentSubagentEventStatus;
+      readonly toolId?: string;
+      readonly taskId?: string;
+      readonly subagentType?: string;
+      readonly description?: string;
+      readonly durationMs?: number;
+      readonly totalTokens?: number;
+      readonly toolUses?: number;
+      readonly lastToolName?: string;
     }
   | {
       readonly kind: "result";
@@ -674,9 +690,17 @@ function agentTurnEventsUtf8Bytes(events: ReadonlyArray<AgentTurnEvent>): number
 function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
   switch (event.kind) {
     case "toolCall":
-      return [event.toolId, event.name, event.inputSummary];
+      return definedStrings([event.toolId, event.name, event.inputSummary, event.parentToolId]);
     case "toolResult":
-      return [event.toolId, event.outputSummary];
+      return definedStrings([event.toolId, event.outputSummary, event.parentToolId]);
+    case "subagent":
+      return definedStrings([
+        event.toolId,
+        event.taskId,
+        event.subagentType,
+        event.description,
+        event.lastToolName,
+      ]);
     case "error":
       return [event.message];
     case "unknownLine":
@@ -690,6 +714,10 @@ function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
     default:
       return unsupportedTurnEvent(event);
   }
+}
+
+function definedStrings(values: ReadonlyArray<string | undefined>): ReadonlyArray<string> {
+  return values.filter((value): value is string => value !== undefined);
 }
 
 function sameStrings(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {

@@ -1539,3 +1539,129 @@ describe("agent thread wire module", () => {
     }
   });
 });
+
+describe("subagent turn events", () => {
+  const SUBAGENT_EVENT: AgentTurnEvent = {
+    kind: "subagent",
+    status: "completed",
+    toolId: "toolu_parent",
+    taskId: "ab3bc0126d64bc47c",
+    subagentType: "general-purpose",
+    description: "Run echo alpha",
+    durationMs: 4_288,
+    totalTokens: 23_956,
+    toolUses: 1,
+    lastToolName: "Bash",
+  };
+
+  it("round trips the subagent and parented tool events through the wire", () => {
+    const events: ReadonlyArray<AgentTurnEvent> = [
+      { kind: "toolCall", toolId: "toolu_parent", name: "Agent", inputSummary: "Run echo alpha" },
+      { kind: "subagent", status: "starting", toolId: "toolu_parent" },
+      {
+        kind: "toolCall",
+        toolId: "toolu_child",
+        name: "Bash",
+        inputSummary: "echo alpha",
+        parentToolId: "toolu_parent",
+      },
+      {
+        kind: "toolResult",
+        toolId: "toolu_child",
+        outputSummary: "alpha",
+        isError: false,
+        parentToolId: "toolu_parent",
+      },
+      { kind: "subagent", status: "failed", taskId: "ab3bc0126d64bc47c" },
+      SUBAGENT_EVENT,
+    ];
+    const stored = settledThread({ turns: [turn({ events })] });
+
+    expect(parseAgentThread(serializeAgentThread(stored))).toEqual(stored);
+  });
+
+  it("omits absent optional fields so documents written before the fields load unchanged", () => {
+    const legacy = settledThread({
+      turns: [
+        turn({
+          events: [
+            { kind: "toolCall", toolId: "t1", name: "Bash", inputSummary: "npm test" },
+            { kind: "toolResult", toolId: "t1", outputSummary: "ok", isError: false },
+          ],
+        }),
+      ],
+    });
+    const wire = serializeAgentThread(legacy) as { readonly turns: ReadonlyArray<unknown> };
+
+    expect(JSON.stringify(wire).includes("parentToolId")).toBe(false);
+    expect(parseAgentThread(wire)).toEqual(legacy);
+    expect(
+      serializeAgentThread(
+        settledThread({
+          turns: [turn({ events: [{ kind: "subagent", status: "running", toolId: "t1" }] })],
+        }),
+      ),
+    ).toMatchObject({
+      turns: [{ events: [{ kind: "subagent", status: "running", toolId: "t1" }] }],
+    });
+  });
+
+  it("rejects a stored subagent event with an unknown status or an unbounded field", () => {
+    const document = serializeAgentThread(
+      settledThread({ turns: [turn({ events: [] })] }),
+    ) as Record<string, unknown>;
+    const storedTurn = (document.turns as ReadonlyArray<Record<string, unknown>>)[0];
+    const withEvent = (event: unknown) => ({
+      ...document,
+      turns: [{ ...storedTurn, events: [event] }],
+    });
+
+    expect(() => parseAgentThread(withEvent({ kind: "subagent", status: "queued" }))).toThrow(
+      TypeError,
+    );
+    expect(() => parseAgentThread(withEvent({ kind: "subagent" }))).toThrow(TypeError);
+    expect(() =>
+      parseAgentThread(
+        withEvent({ kind: "subagent", status: "running", toolId: "t1", agentId: "x" }),
+      ),
+    ).toThrow(TypeError);
+    expect(() => parseAgentThread(withEvent({ kind: "subagent", status: "running" }))).toThrow(
+      TypeError,
+    );
+    expect(() =>
+      parseAgentThread(
+        withEvent({ kind: "subagent", status: "running", toolId: "t1", durationMs: -1 }),
+      ),
+    ).toThrow(TypeError);
+    expect(() =>
+      parseAgentThread(withEvent({ kind: "subagent", status: "running", toolId: "a".repeat(300) })),
+    ).toThrow(TypeError);
+    expect(() =>
+      parseAgentThread(
+        withEvent({
+          kind: "toolCall",
+          toolId: "t1",
+          name: "Bash",
+          inputSummary: "x",
+          parentToolId: "",
+        }),
+      ),
+    ).toThrow(TypeError);
+  });
+
+  it("counts every bounded string of a subagent event against the turn byte budget", () => {
+    expect(agentTurnEventUtf8Bytes(SUBAGENT_EVENT)).toBe(
+      ENCODER.encode("toolu_parentab3bc0126d64bc47cgeneral-purposeRun echo alphaBash").byteLength,
+    );
+    expect(agentTurnEventUtf8Bytes({ kind: "subagent", status: "running" })).toBe(0);
+    expect(
+      agentTurnEventUtf8Bytes({
+        kind: "toolCall",
+        toolId: "t1",
+        name: "Bash",
+        inputSummary: "x",
+        parentToolId: "toolu_parent",
+      }),
+    ).toBe(ENCODER.encode("t1Bashxtoolu_parent").byteLength);
+  });
+});

@@ -240,6 +240,15 @@ pub enum AgentOutputStream {
     Stderr,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentSubagentStatus {
+    Starting,
+    Running,
+    Completed,
+    Failed,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum AgentTurnEvent {
@@ -254,12 +263,36 @@ pub enum AgentTurnEvent {
         tool_id: String,
         name: String,
         input_summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_tool_id: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     ToolResult {
         tool_id: String,
         output_summary: String,
         is_error: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_tool_id: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Subagent {
+        status: AgentSubagentStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subagent_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_uses: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_tool_name: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Result {
@@ -670,6 +703,25 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
             return Err("Agent context compaction exceeds the supported token count.".to_string());
         }
     }
+    if let AgentTurnEvent::Subagent {
+        tool_id,
+        task_id,
+        duration_ms,
+        total_tokens,
+        tool_uses,
+        ..
+    } = event
+    {
+        if tool_id.is_none() && task_id.is_none() {
+            return Err("Agent subagent event must carry a tool id or a task id.".to_string());
+        }
+        if [duration_ms, total_tokens, tool_uses]
+            .iter()
+            .any(|metric| metric.is_some_and(|value| value > MAX_AGENT_SAFE_INTEGER))
+        {
+            return Err("Agent subagent telemetry exceeds the supported count.".to_string());
+        }
+    }
     let (text_bytes, summary_bytes) = match event {
         AgentTurnEvent::AssistantText { text } | AgentTurnEvent::Reasoning { text } => {
             (text.len(), 0)
@@ -678,12 +730,42 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
             tool_id,
             name,
             input_summary,
-        } => (0, tool_id.len().max(name.len()).max(input_summary.len())),
+            parent_tool_id,
+        } => (
+            0,
+            tool_id
+                .len()
+                .max(name.len())
+                .max(input_summary.len())
+                .max(optional_len(parent_tool_id)),
+        ),
         AgentTurnEvent::ToolResult {
             tool_id,
             output_summary,
+            parent_tool_id,
             ..
-        } => (0, tool_id.len().max(output_summary.len())),
+        } => (
+            0,
+            tool_id
+                .len()
+                .max(output_summary.len())
+                .max(optional_len(parent_tool_id)),
+        ),
+        AgentTurnEvent::Subagent {
+            tool_id,
+            task_id,
+            subagent_type,
+            description,
+            last_tool_name,
+            ..
+        } => (
+            0,
+            [tool_id, task_id, subagent_type, description, last_tool_name]
+                .iter()
+                .map(|field| optional_len(field))
+                .max()
+                .unwrap_or(0),
+        ),
         AgentTurnEvent::Result { text, .. } => (text.len(), 0),
         AgentTurnEvent::ContextCompaction { .. } => (0, 0),
         AgentTurnEvent::Error { message } => (message.len(), 0),
@@ -696,6 +778,10 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
         return Err("Agent tool summary exceeds the supported length.".to_string());
     }
     Ok(())
+}
+
+fn optional_len(value: &Option<String>) -> usize {
+    value.as_ref().map_or(0, String::len)
 }
 
 fn ensure_root_key_bounds(root_key: &str) -> Result<(), String> {

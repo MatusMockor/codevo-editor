@@ -27,6 +27,7 @@ import {
   MAX_AGENT_TURNS_PER_THREAD,
   isTerminalAgentTurnStatus,
   type AgentProviderSession,
+  type AgentSubagentEventStatus,
   type AgentThread,
   type AgentThreadExternalOrigin,
   type AgentThreadIntegration,
@@ -156,6 +157,7 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
         toolId: event.toolId,
         name: event.name,
         inputSummary: event.inputSummary,
+        ...optionalField("parentToolId", event.parentToolId),
       };
     case "toolResult":
       return {
@@ -163,6 +165,20 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
         toolId: event.toolId,
         outputSummary: event.outputSummary,
         isError: event.isError,
+        ...optionalField("parentToolId", event.parentToolId),
+      };
+    case "subagent":
+      return {
+        kind: event.kind,
+        status: event.status,
+        ...optionalField("toolId", event.toolId),
+        ...optionalField("taskId", event.taskId),
+        ...optionalField("subagentType", event.subagentType),
+        ...optionalField("description", event.description),
+        ...optionalField("durationMs", event.durationMs),
+        ...optionalField("totalTokens", event.totalTokens),
+        ...optionalField("toolUses", event.toolUses),
+        ...optionalField("lastToolName", event.lastToolName),
       };
     case "result":
       return {
@@ -192,6 +208,10 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
     default:
       return unsupportedTurnEvent(event);
   }
+}
+
+function optionalField<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
+  return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 }
 
 export function parseAgentThread(value: unknown): AgentThread {
@@ -488,21 +508,31 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
       exactKeys(event, ["kind", "text"], path);
       return { kind, text: eventText(event.text, `${path}.text`) };
     case "toolCall":
-      exactKeys(event, ["kind", "toolId", "name", "inputSummary"], path);
+      boundedKeys(event, ["kind", "toolId", "name", "inputSummary"], ["parentToolId"], path);
       return {
         kind,
         toolId: boundedText(event.toolId, `${path}.toolId`, MAX_AGENT_TOOL_ID_BYTES, false, true),
         name: boundedText(event.name, `${path}.name`, MAX_AGENT_TOOL_NAME_BYTES, false, true),
         inputSummary: toolSummary(event.inputSummary, `${path}.inputSummary`),
+        ...optionalField(
+          "parentToolId",
+          optionalToolId(event.parentToolId, `${path}.parentToolId`),
+        ),
       };
     case "toolResult":
-      exactKeys(event, ["kind", "toolId", "outputSummary", "isError"], path);
+      boundedKeys(event, ["kind", "toolId", "outputSummary", "isError"], ["parentToolId"], path);
       return {
         kind,
         toolId: boundedText(event.toolId, `${path}.toolId`, MAX_AGENT_TOOL_ID_BYTES, false, true),
         outputSummary: toolSummary(event.outputSummary, `${path}.outputSummary`),
         isError: booleanFlag(event.isError, `${path}.isError`),
+        ...optionalField(
+          "parentToolId",
+          optionalToolId(event.parentToolId, `${path}.parentToolId`),
+        ),
       };
+    case "subagent":
+      return parseSubagentEvent(event, path);
     case "result":
       exactKeys(event, ["kind", "text", "isError", "usage"], path);
       return {
@@ -532,6 +562,69 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
     default:
       return unsupportedTurnEventKind(kind);
   }
+}
+
+function parseSubagentEvent(
+  event: Record<string, unknown>,
+  path: string,
+): Extract<AgentTurnEvent, { kind: "subagent" }> {
+  boundedKeys(
+    event,
+    ["kind", "status"],
+    [
+      "toolId",
+      "taskId",
+      "subagentType",
+      "description",
+      "durationMs",
+      "totalTokens",
+      "toolUses",
+      "lastToolName",
+    ],
+    path,
+  );
+  const toolId = optionalToolId(event.toolId, `${path}.toolId`);
+  const taskId = optionalToolId(event.taskId, `${path}.taskId`);
+  if (toolId === undefined && taskId === undefined) invalid(path, "a toolId or a taskId");
+  return {
+    kind: "subagent",
+    status: subagentEventStatus(event.status, `${path}.status`),
+    ...optionalField("toolId", toolId),
+    ...optionalField("taskId", taskId),
+    ...optionalField("subagentType", optionalToolName(event.subagentType, `${path}.subagentType`)),
+    ...optionalField(
+      "description",
+      event.description === undefined
+        ? undefined
+        : toolSummary(event.description, `${path}.description`),
+    ),
+    ...optionalField("durationMs", optionalMetric(event.durationMs, `${path}.durationMs`)),
+    ...optionalField("totalTokens", optionalMetric(event.totalTokens, `${path}.totalTokens`)),
+    ...optionalField("toolUses", optionalMetric(event.toolUses, `${path}.toolUses`)),
+    ...optionalField("lastToolName", optionalToolName(event.lastToolName, `${path}.lastToolName`)),
+  };
+}
+
+function subagentEventStatus(value: unknown, path: string): AgentSubagentEventStatus {
+  if (value !== "starting" && value !== "running" && value !== "completed" && value !== "failed") {
+    invalid(path, "starting, running, completed, or failed");
+  }
+  return value;
+}
+
+function optionalToolId(value: unknown, path: string): string | undefined {
+  if (value === undefined) return undefined;
+  return boundedText(value, path, MAX_AGENT_TOOL_ID_BYTES, false, true);
+}
+
+function optionalToolName(value: unknown, path: string): string | undefined {
+  if (value === undefined) return undefined;
+  return boundedText(value, path, MAX_AGENT_TOOL_NAME_BYTES, false, true);
+}
+
+function optionalMetric(value: unknown, path: string): number | undefined {
+  if (value === undefined) return undefined;
+  return unsignedSafeInteger(value, path);
 }
 
 function parseUsage(value: unknown, path: string): AgentTurnUsage | null {
@@ -579,6 +672,7 @@ function turnEventKind(value: unknown, path: string): AgentTurnEvent["kind"] {
     value !== "reasoning" &&
     value !== "toolCall" &&
     value !== "toolResult" &&
+    value !== "subagent" &&
     value !== "result" &&
     value !== "contextCompaction" &&
     value !== "error" &&

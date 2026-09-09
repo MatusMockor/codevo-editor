@@ -18,6 +18,18 @@ describe("summarizeToolInput", () => {
     expect(summarizeToolInput("Glob", { pattern: "**/*.ts" })).toBe("**/*.ts");
   });
 
+  it("uses the description for subagent spawn tools instead of the whole prompt", () => {
+    for (const name of ["Agent", "Task"]) {
+      expect(
+        summarizeToolInput(name, {
+          description: "Review UI",
+          prompt: "a".repeat(MAX_AGENT_TOOL_SUMMARY_BYTES * 4),
+          subagent_type: "general-purpose",
+        }),
+      ).toBe("Review UI");
+    }
+  });
+
   it("falls back to JSON for unknown tools and unusable fields", () => {
     expect(summarizeToolInput("Task", { prompt: "go" })).toBe('{"prompt":"go"}');
     expect(summarizeToolInput("Bash", { command: 7 })).toBe('{"command":7}');

@@ -3,6 +3,8 @@ import {
   MAX_AGENT_EVENT_TEXT_BYTES,
   MAX_AGENT_TOOL_ID_BYTES,
   MAX_AGENT_TOOL_NAME_BYTES,
+  MAX_AGENT_TOOL_SUMMARY_BYTES,
+  type AgentSubagentEventStatus,
   type AgentTurnEvent,
   type AgentTurnUsage,
 } from "../agentThread";
@@ -14,6 +16,7 @@ import { boundedUtf8Text, utf8ByteLength } from "./utf8Text";
 const IGNORED: ParsedAgentLine = { kind: "ignored" };
 const NO_EVENTS: ParsedAgentLine = { kind: "events", events: [], sessionId: null };
 const CONTROL_CHARACTER_PATTERN = /\p{Cc}/u;
+const LOCAL_AGENT_TASK_TYPE = "local_agent";
 
 export function parseClaudeStreamJsonLine(line: string): ParsedAgentLine {
   const value = jsonObject(line);
@@ -89,7 +92,13 @@ function parseSystemLine(value: Record<string, unknown>): ParsedAgentLine {
     if (!isAgentSessionId(value.session_id)) return IGNORED;
     return { kind: "events", events: [], sessionId: value.session_id };
   }
-  if (value.subtype !== "compact_boundary") return IGNORED;
+  if (value.subtype === "compact_boundary") return parseCompactBoundaryLine(value);
+  const event = subagentTelemetryEvent(value);
+  if (event === null) return IGNORED;
+  return { kind: "events", events: [event], sessionId: null };
+}
+
+function parseCompactBoundaryLine(value: Record<string, unknown>): ParsedAgentLine {
   const metadata = objectValue(value.compact_metadata ?? value.compactMetadata);
   return {
     kind: "events",
@@ -104,10 +113,47 @@ function parseSystemLine(value: Record<string, unknown>): ParsedAgentLine {
   };
 }
 
+function subagentTelemetryEvent(value: Record<string, unknown>): AgentTurnEvent | null {
+  const status = telemetryStatus(value);
+  if (status === null) return null;
+  const toolId = optionalIdentifier(value.tool_use_id, MAX_AGENT_TOOL_ID_BYTES);
+  const taskId = optionalIdentifier(value.task_id, MAX_AGENT_TOOL_ID_BYTES);
+  if (toolId === undefined && taskId === undefined) return null;
+  const usage = objectValue(value.usage);
+  return {
+    kind: "subagent",
+    status,
+    ...present("toolId", toolId),
+    ...present("taskId", taskId),
+    ...present("subagentType", optionalIdentifier(value.subagent_type, MAX_AGENT_TOOL_NAME_BYTES)),
+    ...present("description", optionalSummary(value.description)),
+    ...present("durationMs", optionalMetric(usage?.duration_ms)),
+    ...present("totalTokens", optionalMetric(usage?.total_tokens)),
+    ...present("toolUses", optionalMetric(usage?.tool_uses)),
+    ...present("lastToolName", optionalIdentifier(value.last_tool_name, MAX_AGENT_TOOL_NAME_BYTES)),
+  };
+}
+
+function telemetryStatus(value: Record<string, unknown>): AgentSubagentEventStatus | null {
+  if (value.task_type !== undefined && value.task_type !== LOCAL_AGENT_TASK_TYPE) return null;
+  if (value.subtype === "task_started") return "starting";
+  if (value.subtype === "task_progress") return "running";
+  if (value.subtype === "task_notification") return subagentStatus(value.status);
+  if (value.subtype !== "task_updated") return null;
+  return subagentStatus(objectValue(value.patch)?.status);
+}
+
+function subagentStatus(value: unknown): AgentSubagentEventStatus | null {
+  if (value === "starting" || value === "running") return value;
+  if (value === "completed" || value === "failed") return value;
+  return null;
+}
+
 function parseAssistantLine(value: Record<string, unknown>): ParsedAgentLine {
   const content = messageContent(value);
   if (content === null) return IGNORED;
-  const events = content.flatMap(assistantBlockEvents);
+  const parentToolId = optionalIdentifier(value.parent_tool_use_id, MAX_AGENT_TOOL_ID_BYTES);
+  const events = content.flatMap((block) => assistantBlockEvents(block, parentToolId));
   if (events.length === 0) return NO_EVENTS;
   return { kind: "events", events, sessionId: null };
 }
@@ -115,9 +161,55 @@ function parseAssistantLine(value: Record<string, unknown>): ParsedAgentLine {
 function parseUserLine(value: Record<string, unknown>): ParsedAgentLine {
   const content = messageContent(value);
   if (content === null) return IGNORED;
-  const events = content.flatMap(toolResultEvents);
+  const parentToolId = optionalIdentifier(value.parent_tool_use_id, MAX_AGENT_TOOL_ID_BYTES);
+  const results = content.flatMap((block) => toolResultEvents(block, parentToolId));
+  const completion = subagentCompletionEvent(value.tool_use_result, results);
+  const events = completion === null ? results : [...results, completion];
   if (events.length === 0) return NO_EVENTS;
   return { kind: "events", events, sessionId: null };
+}
+
+function subagentCompletionEvent(
+  value: unknown,
+  results: ReadonlyArray<AgentTurnEvent>,
+): AgentTurnEvent | null {
+  const result = objectValue(value);
+  if (result === null) return null;
+  const taskId = optionalIdentifier(result.agentId, MAX_AGENT_TOOL_ID_BYTES);
+  const subagentType = optionalIdentifier(result.agentType, MAX_AGENT_TOOL_NAME_BYTES);
+  if (taskId === undefined || subagentType === undefined) return null;
+  const status = subagentStatus(result.status);
+  if (status === null) return null;
+  const owner = results.length === 1 ? results[0] : undefined;
+  return {
+    kind: "subagent",
+    status,
+    ...present("toolId", owner?.kind === "toolResult" ? owner.toolId : undefined),
+    taskId,
+    subagentType,
+    ...present("durationMs", optionalMetric(result.totalDurationMs)),
+    ...present("totalTokens", optionalMetric(result.totalTokens)),
+    ...present("toolUses", optionalMetric(result.totalToolUseCount)),
+  };
+}
+
+function present<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
+  return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
+}
+
+function optionalIdentifier(value: unknown, maxBytes: number): string | undefined {
+  return safeIdentifier(value, maxBytes) ?? undefined;
+}
+
+function optionalSummary(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  if (value.includes("\u0000")) return undefined;
+  const summary = boundedUtf8Text(value, MAX_AGENT_TOOL_SUMMARY_BYTES);
+  return summary === "" ? undefined : summary;
+}
+
+function optionalMetric(value: unknown): number | undefined {
+  return tokenCount(value) ?? undefined;
 }
 
 function parseResultLine(value: Record<string, unknown>): ParsedAgentLine {
@@ -132,7 +224,10 @@ function parseResultLine(value: Record<string, unknown>): ParsedAgentLine {
   return { kind: "events", events: [event], sessionId };
 }
 
-function assistantBlockEvents(value: unknown): ReadonlyArray<AgentTurnEvent> {
+function assistantBlockEvents(
+  value: unknown,
+  parentToolId: string | undefined,
+): ReadonlyArray<AgentTurnEvent> {
   const block = objectValue(value);
   if (block === null) return [];
   if (block.type === "text") return textEvents("assistantText", block.text);
@@ -141,10 +236,21 @@ function assistantBlockEvents(value: unknown): ReadonlyArray<AgentTurnEvent> {
   const toolId = safeIdentifier(block.id, MAX_AGENT_TOOL_ID_BYTES);
   const name = safeIdentifier(block.name, MAX_AGENT_TOOL_NAME_BYTES);
   if (toolId === null || name === null) return [];
-  return [{ kind: "toolCall", toolId, name, inputSummary: summarizeToolInput(name, block.input) }];
+  return [
+    {
+      kind: "toolCall",
+      toolId,
+      name,
+      inputSummary: summarizeToolInput(name, block.input),
+      ...present("parentToolId", parentToolId),
+    },
+  ];
 }
 
-function toolResultEvents(value: unknown): ReadonlyArray<AgentTurnEvent> {
+function toolResultEvents(
+  value: unknown,
+  parentToolId: string | undefined,
+): ReadonlyArray<AgentTurnEvent> {
   const block = objectValue(value);
   if (block === null) return [];
   if (block.type !== "tool_result") return [];
@@ -156,6 +262,7 @@ function toolResultEvents(value: unknown): ReadonlyArray<AgentTurnEvent> {
       toolId,
       outputSummary: summarizeToolOutput(block.content),
       isError: block.is_error === true,
+      ...present("parentToolId", parentToolId),
     },
   ];
 }

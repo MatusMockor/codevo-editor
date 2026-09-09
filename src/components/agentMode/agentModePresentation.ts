@@ -83,6 +83,11 @@ export interface AgentSubagentEntry {
   readonly name: string;
   readonly description: string;
   readonly state: AgentSubagentState;
+  readonly subagentType?: string;
+  readonly durationMs?: number;
+  readonly totalTokens?: number;
+  readonly steps?: number;
+  readonly lastToolName?: string;
 }
 
 export interface AgentSubagentSummary {
@@ -107,6 +112,7 @@ export type AgentTurnItem =
       readonly name: string;
       readonly inputSummary: string;
       readonly outcome: AgentToolOutcome | null;
+      readonly parentToolId?: string;
     }
   | {
       readonly kind: "result";
@@ -276,24 +282,27 @@ export function agentFollowUpBlockedReason(
 }
 
 export function agentTurnProjection(events: ReadonlyArray<AgentTurnEvent>): AgentTurnProjection {
-  const hiddenCount = Math.max(0, events.length - MAX_RENDERED_EVENTS_PER_TURN);
+  const renderable = events
+    .map((event, offset) => ({ event, offset }))
+    .filter(({ event }) => event.kind !== "subagent");
+  const hiddenCount = Math.max(0, renderable.length - MAX_RENDERED_EVENTS_PER_TURN);
+  const visible = renderable.slice(hiddenCount);
   const calls = toolCallIndex(events);
   const visibleAssistantText = new Set(
-    events
-      .slice(hiddenCount)
+    visible
       .filter(
-        (event): event is Extract<AgentTurnEvent, { kind: "assistantText" }> =>
-          event.kind === "assistantText",
+        (
+          entry,
+        ): entry is { event: Extract<AgentTurnEvent, { kind: "assistantText" }>; offset: number } =>
+          entry.event.kind === "assistantText",
       )
-      .map((event) => normalizedAgentResponse(event.text)),
+      .map((entry) => normalizedAgentResponse(entry.event.text)),
   );
   const items: AgentTurnItem[] = [];
   const rawLines: AgentRawLine[] = [];
   const toolItemByToolId = new Map<string, number>();
 
-  for (let offset = hiddenCount; offset < events.length; offset += 1) {
-    const event = events[offset];
-    if (event === undefined) continue;
+  for (const { event, offset } of visible) {
     if (
       event.kind === "result" &&
       !event.isError &&
@@ -301,8 +310,7 @@ export function agentTurnProjection(events: ReadonlyArray<AgentTurnEvent>): Agen
     ) {
       continue;
     }
-    const key = `e${offset}`;
-    appendTurnItem({ calls, event, items, key, rawLines, toolItemByToolId });
+    appendTurnItem({ calls, event, items, key: `e${offset}`, rawLines, toolItemByToolId });
   }
 
   return { items, rawLines, hiddenCount };
@@ -355,6 +363,7 @@ function agentWorkSummary(items: ReadonlyArray<AgentTurnItem>): string {
   for (const item of items) {
     if (item.kind === "assistantText") updates += 1;
     if (item.kind !== "tool") continue;
+    if (item.parentToolId !== undefined) continue;
     if (isAgentSubagentToolItem(item)) {
       subagents += 1;
       continue;
@@ -384,51 +393,174 @@ function normalizedAgentResponse(text: string): string {
   return text.replace(/\r\n?/g, "\n").trim();
 }
 
+interface SubagentDraft {
+  readonly toolId: string;
+  name: string;
+  description: string;
+  telemetryState: AgentSubagentState | null;
+  resultState: AgentSubagentState | null;
+  subagentType: string | undefined;
+  durationMs: number | undefined;
+  totalTokens: number | undefined;
+  toolUses: number | undefined;
+  lastToolName: string | undefined;
+  steps: number;
+  spawned: boolean;
+}
+
 export function agentTurnSubagentSummary(
   events: ReadonlyArray<AgentTurnEvent>,
 ): AgentSubagentSummary | null {
-  const results = new Map<string, boolean>();
+  const drafts = new Map<string, SubagentDraft>();
+  const toolIdByTaskId = new Map<string, string>();
   for (const event of events) {
-    if (event.kind === "toolResult" && !results.has(event.toolId)) {
-      results.set(event.toolId, event.isError);
-    }
-  }
-
-  const seen = new Set<string>();
-  const entries: AgentSubagentEntry[] = [];
-  let running = 0;
-  let completed = 0;
-  let failed = 0;
-  for (const event of events) {
-    if (event.kind !== "toolCall" || !isSubagentSpawnTool(event.name) || seen.has(event.toolId)) {
+    if (event.kind === "toolCall") {
+      applyToolCall(drafts, event);
       continue;
     }
-    seen.add(event.toolId);
-    const result = results.get(event.toolId);
-    const state = subagentState(result);
-    if (state === "running") running += 1;
-    else if (state === "failed") failed += 1;
-    else completed += 1;
-    entries.push({
-      toolId: event.toolId,
-      name: event.name,
-      description: event.inputSummary,
-      state,
-    });
+    if (event.kind === "toolResult") {
+      applyToolResult(drafts, event);
+      continue;
+    }
+    if (event.kind !== "subagent") continue;
+    applySubagentEvent(drafts, toolIdByTaskId, event);
   }
-
-  const total = entries.length;
-  return total === 0 ? null : { total, running, completed, failed, entries };
+  return summarizeSubagentDrafts([...drafts.values()]);
 }
 
-function subagentState(result: boolean | undefined): AgentSubagentState {
-  if (result === undefined) return "running";
-  return result ? "failed" : "completed";
+function applyToolCall(
+  drafts: Map<string, SubagentDraft>,
+  event: Extract<AgentTurnEvent, { kind: "toolCall" }>,
+): void {
+  if (event.parentToolId !== undefined) {
+    const parent = drafts.get(event.parentToolId);
+    if (parent !== undefined) parent.steps += 1;
+    return;
+  }
+  if (!isSubagentSpawnTool(event.name)) return;
+  const draft = subagentDraft(drafts, event.toolId);
+  if (draft.spawned) return;
+  draft.spawned = true;
+  draft.name = draft.subagentType ?? event.name;
+  draft.description = event.inputSummary;
+}
+
+function applyToolResult(
+  drafts: Map<string, SubagentDraft>,
+  event: Extract<AgentTurnEvent, { kind: "toolResult" }>,
+): void {
+  if (event.parentToolId !== undefined) return;
+  const draft = drafts.get(event.toolId);
+  if (draft === undefined || draft.resultState !== null) return;
+  draft.resultState = event.isError ? "failed" : "completed";
+}
+
+function applySubagentEvent(
+  drafts: Map<string, SubagentDraft>,
+  toolIdByTaskId: Map<string, string>,
+  event: Extract<AgentTurnEvent, { kind: "subagent" }>,
+): void {
+  const toolId = subagentEventToolId(toolIdByTaskId, event);
+  if (toolId === null) return;
+  const draft = subagentDraft(drafts, toolId);
+  if (event.subagentType !== undefined) {
+    draft.subagentType = event.subagentType;
+    draft.name = event.subagentType;
+  }
+  if (draft.description === "" && event.description !== undefined) {
+    draft.description = event.description;
+  }
+  if (event.durationMs !== undefined) draft.durationMs = event.durationMs;
+  if (event.totalTokens !== undefined) draft.totalTokens = event.totalTokens;
+  if (event.toolUses !== undefined) draft.toolUses = event.toolUses;
+  if (event.lastToolName !== undefined) draft.lastToolName = event.lastToolName;
+  if (event.status === "completed" || event.status === "failed") {
+    draft.telemetryState = event.status;
+    return;
+  }
+  if (draft.telemetryState === null) draft.telemetryState = "running";
+}
+
+function subagentEventToolId(
+  toolIdByTaskId: Map<string, string>,
+  event: Extract<AgentTurnEvent, { kind: "subagent" }>,
+): string | null {
+  if (event.toolId !== undefined) {
+    if (event.taskId !== undefined) toolIdByTaskId.set(event.taskId, event.toolId);
+    return event.toolId;
+  }
+  if (event.taskId === undefined) return null;
+  return toolIdByTaskId.get(event.taskId) ?? null;
+}
+
+function subagentDraft(drafts: Map<string, SubagentDraft>, toolId: string): SubagentDraft {
+  const existing = drafts.get(toolId);
+  if (existing !== undefined) return existing;
+  const draft: SubagentDraft = {
+    toolId,
+    name: SUBAGENT_FALLBACK_NAME,
+    description: "",
+    telemetryState: null,
+    resultState: null,
+    subagentType: undefined,
+    durationMs: undefined,
+    totalTokens: undefined,
+    toolUses: undefined,
+    lastToolName: undefined,
+    steps: 0,
+    spawned: false,
+  };
+  drafts.set(toolId, draft);
+  return draft;
+}
+
+function summarizeSubagentDrafts(
+  drafts: ReadonlyArray<SubagentDraft>,
+): AgentSubagentSummary | null {
+  const entries = drafts.map(subagentEntry);
+  const total = entries.length;
+  if (total === 0) return null;
+  return {
+    total,
+    running: countSubagentState(entries, "running"),
+    completed: countSubagentState(entries, "completed"),
+    failed: countSubagentState(entries, "failed"),
+    entries,
+  };
+}
+
+function subagentEntry(draft: SubagentDraft): AgentSubagentEntry {
+  const steps = draft.steps > 0 ? draft.steps : draft.toolUses;
+  return {
+    toolId: draft.toolId,
+    name: draft.name,
+    description: draft.description,
+    state: subagentDraftState(draft),
+    ...presentField("subagentType", draft.subagentType),
+    ...presentField("durationMs", draft.durationMs),
+    ...presentField("totalTokens", draft.totalTokens),
+    ...presentField("steps", steps),
+    ...presentField("lastToolName", draft.lastToolName),
+  };
+}
+
+function subagentDraftState(draft: SubagentDraft): AgentSubagentState {
+  if (draft.resultState === "failed" || draft.telemetryState === "failed") return "failed";
+  return draft.resultState ?? draft.telemetryState ?? "running";
+}
+
+function countSubagentState(
+  entries: ReadonlyArray<AgentSubagentEntry>,
+  state: AgentSubagentState,
+): number {
+  return entries.filter((entry) => entry.state === state).length;
 }
 
 export function isAgentSubagentToolItem(item: AgentTurnItem): boolean {
   return item.kind === "tool" && isSubagentSpawnTool(item.name);
 }
+
+const SUBAGENT_FALLBACK_NAME = "subagent";
 
 function isSubagentSpawnTool(name: string): boolean {
   return name === "Task" || name === "Agent" || name === "SpawnAgent" || name === "spawn_agent";
@@ -472,9 +604,11 @@ function appendTurnItem({
       name: event.name,
       inputSummary: event.inputSummary,
       outcome: null,
+      ...presentField("parentToolId", event.parentToolId),
     });
     return;
   }
+  if (event.kind === "subagent") return;
   if (event.kind === "toolResult") {
     attachToolResult({ calls, event, items, key, toolItemByToolId });
     return;
@@ -526,12 +660,18 @@ function attachToolResult({ calls, event, items, key, toolItemByToolId }: ToolRe
     name: call?.name ?? "tool",
     inputSummary: call?.inputSummary ?? "",
     outcome,
+    ...presentField("parentToolId", call?.parentToolId ?? event.parentToolId),
   });
 }
 
 interface AgentToolCallSummary {
   readonly name: string;
   readonly inputSummary: string;
+  readonly parentToolId?: string;
+}
+
+function presentField<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
+  return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 }
 
 function toolCallIndex(
@@ -541,7 +681,11 @@ function toolCallIndex(
   for (const event of events) {
     if (event.kind !== "toolCall") continue;
     if (calls.has(event.toolId)) continue;
-    calls.set(event.toolId, { name: event.name, inputSummary: event.inputSummary });
+    calls.set(event.toolId, {
+      name: event.name,
+      inputSummary: event.inputSummary,
+      ...presentField("parentToolId", event.parentToolId),
+    });
   }
   return calls;
 }
