@@ -1,10 +1,12 @@
-import { lazy, Suspense, useState, type ComponentType } from "react";
+import { lazy, Suspense, useState, type ComponentType, type ReactNode } from "react";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { SurfacePlaceholder } from "./SurfacePlaceholder";
 
 export function retryableLazy<Props extends object>(
   load: () => Promise<{ default: ComponentType<Props> }>,
   label: string,
   errorTitle = `Could not load ${label}`,
+  fallback: ReactNode = <SurfacePlaceholder label={label} />,
 ) {
   const InitialComponent = lazy(load);
   return function RetryableLazyComponent(props: Props) {
@@ -16,7 +18,7 @@ export function retryableLazy<Props extends object>(
         resetKeys={[Component]}
         title={errorTitle}
       >
-        <Suspense fallback={<div role="status">Loading {label}…</div>}>
+        <Suspense fallback={fallback}>
           <Component {...props} />
         </Suspense>
       </ErrorBoundary>

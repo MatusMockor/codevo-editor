@@ -3,6 +3,7 @@ import {
   DEFAULT_AGENT_APPEARANCE_VARIANT,
   type AgentAppearanceVariant,
 } from "../domain/agentSettings";
+import { WorkbenchFrameBootContext, useWorkbenchFrameBooted } from "./workbenchFrameBootContext";
 import { WorkbenchFramePortalContext } from "./workbenchFramePortal";
 import { WorkbenchFrameTreeContext } from "./workbenchFrameTreeReport";
 import {
@@ -52,6 +53,7 @@ export function WorkbenchShellFrame({
   surface = "workbench",
 }: WorkbenchShellFrameProps) {
   const settingsSurface = surface === "settings";
+  const frameBooted = useWorkbenchFrameBooted();
   const [workbenchElement, setWorkbenchElement] = useState<HTMLElement | null>(null);
   const viewportWidth = useViewportWidth(workbenchElement);
   const responsivePlacement = responsiveWorkbenchShellPlacement(placement, viewportWidth);
@@ -99,35 +101,37 @@ export function WorkbenchShellFrame({
         ref={setFrameElement}
       >
         <WorkbenchEditorTabsPortalProvider>
-          <WorkbenchFrameEditorContext.Provider value={reportEditor}>
-            <WorkbenchFramePortalContext.Provider value={frameElement}>
-              <WorkbenchFrameTreeContext.Provider value={setTreeReportedVisible}>
-                <WorkbenchFrameEditorStateContext.Provider value={editorState}>
-                  <WorkbenchFrameResponsiveContext.Provider
-                    value={responsivePlacement.responsiveRestore}
-                  >
-                    {agent}
-                  </WorkbenchFrameResponsiveContext.Provider>
-                </WorkbenchFrameEditorStateContext.Provider>
-              </WorkbenchFrameTreeContext.Provider>
-            </WorkbenchFramePortalContext.Provider>
-            {settingsSurface ? (
-              <div className="workbench-frame__settings" data-slot="settings" ref={settingsRef}>
-                {settings}
+          <WorkbenchFrameBootContext.Provider value={frameBooted}>
+            <WorkbenchFrameEditorContext.Provider value={reportEditor}>
+              <WorkbenchFramePortalContext.Provider value={frameElement}>
+                <WorkbenchFrameTreeContext.Provider value={setTreeReportedVisible}>
+                  <WorkbenchFrameEditorStateContext.Provider value={editorState}>
+                    <WorkbenchFrameResponsiveContext.Provider
+                      value={responsivePlacement.responsiveRestore}
+                    >
+                      {agent}
+                    </WorkbenchFrameResponsiveContext.Provider>
+                  </WorkbenchFrameEditorStateContext.Provider>
+                </WorkbenchFrameTreeContext.Provider>
+              </WorkbenchFramePortalContext.Provider>
+              {settingsSurface ? (
+                <div className="workbench-frame__settings" data-slot="settings" ref={settingsRef}>
+                  {settings}
+                </div>
+              ) : null}
+              <div
+                aria-hidden={editorHidden || undefined}
+                className="editor-mode-surface"
+                data-slot="editor"
+                hidden={editorHidden}
+              >
+                {editor}
               </div>
-            ) : null}
-            <div
-              aria-hidden={editorHidden || undefined}
-              className="editor-mode-surface"
-              data-slot="editor"
-              hidden={editorHidden}
-            >
-              {editor}
-            </div>
-            <div className="workbench-frame__bottom" data-slot="bottom" hidden={settingsSurface}>
-              {bottom}
-            </div>
-          </WorkbenchFrameEditorContext.Provider>
+              <div className="workbench-frame__bottom" data-slot="bottom" hidden={settingsSurface}>
+                {bottom}
+              </div>
+            </WorkbenchFrameEditorContext.Provider>
+          </WorkbenchFrameBootContext.Provider>
         </WorkbenchEditorTabsPortalProvider>
       </div>
     </section>

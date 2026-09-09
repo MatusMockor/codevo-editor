@@ -15,7 +15,7 @@ export interface KeyValueStorage {
   setItem(key: string, value: string): void;
 }
 
-const APP_SETTINGS_KEY = "editor.settings.app";
+export const APP_SETTINGS_KEY = "editor.settings.app";
 const CANONICAL_WORKSPACE_SETTINGS_PREFIX = "editor.settings.workspace:canonical:";
 const LEGACY_WORKSPACE_SETTINGS_PREFIX = "editor.settings.workspace:";
 

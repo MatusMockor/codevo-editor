@@ -5,6 +5,10 @@
   flex-direction: column;
   min-height: 0;
   background: var(--agent-ambient), var(--agent-canvas);
+}
+
+.agent-mode.workbench-surface--enter,
+.agent-surface-host.workbench-surface--enter {
   animation: agent-mode-enter var(--agent-motion-enter) var(--ease-standard) backwards;
 }
 

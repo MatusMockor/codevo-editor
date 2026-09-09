@@ -741,6 +741,24 @@ button {
   display: none !important;
 }
 
+.surface-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: transparent;
+}
+
+.surface-placeholder__label {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .app-shell {
   --window-chrome-height: 36px;
   --window-native-controls-inset: 0px;

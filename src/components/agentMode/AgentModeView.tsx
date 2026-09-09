@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import { PanelLeftOpen } from "lucide-react";
 import {
   useAgentThreadScripts,
@@ -114,6 +115,7 @@ export function AgentModeView({
   viewCommands = null,
   workspaceRoot,
 }: AgentModeViewProps) {
+  const surfaceEnterClass = useSurfaceEnterClass();
   const [localNotice, setLocalNotice] = useState<AgentTasksNotice | null>(null);
   const [commitMenuOpenSignal, setCommitMenuOpenSignal] = useState(0);
   const [projectSelectionIntent, setProjectSelectionIntent] = useState(0);
@@ -459,7 +461,11 @@ export function AgentModeView({
   );
   return (
     <>
-      <section aria-label="Agent mode" className="agent-mode" data-slot="agent">
+      <section
+        aria-label="Agent mode"
+        className={["agent-mode", surfaceEnterClass].filter(Boolean).join(" ")}
+        data-slot="agent"
+      >
         {notice && (
           <AgentNoticeBar
             notice={notice}

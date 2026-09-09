@@ -14,6 +14,7 @@
       {
         "label": "main",
         "title": "Codevo Editor",
+        "backgroundColor": "#0c0d10",
         "width": 1280,
         "height": 820,
         "minWidth": 900,

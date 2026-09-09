@@ -1,4 +1,5 @@
 import { useAgentWorktreeFileChanges } from "../../application/useAgentWorktreeFileChanges";
+import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { agentGitHistoryScope } from "./agentGitHistoryTarget";
 import { agentHistoryRepositories } from "./agentHistoryRepositories";
@@ -56,6 +57,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   threadRootPath,
   workspaceRoot,
 }: AgentSurfaceHostProps) {
+  const surfaceEnterClass = useSurfaceEnterClass();
   const activation = chrome.workspaceActivation;
   const available =
     scope.kind === "repository" &&
@@ -192,7 +194,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
   return (
     <div
       aria-hidden={hidden || undefined}
-      className="agent-surface-host"
+      className={["agent-surface-host", surfaceEnterClass].filter(Boolean).join(" ")}
       data-slot="surface"
       hidden={hidden}
     >

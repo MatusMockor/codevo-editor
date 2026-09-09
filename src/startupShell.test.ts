@@ -1,29 +1,54 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from "vitest";
 import {
-  createStartupShell,
+  FIRST_CONTENTFUL_PAINT_ENTRY,
+  FIRST_PAINT_ENTRY,
+  measureStartupShellPaint,
   STARTUP_SHELL_PAINT_TIMEOUT_MS,
   startupShellPaintWasObserved,
   waitForStartupShellPaint,
 } from "./startupShell";
 
-describe("createStartupShell", () => {
-  it("renders a centered branded loader without a fake application rail", () => {
-    const shell = createStartupShell();
+describe("measureStartupShellPaint", () => {
+  it("prefers the browser-reported first contentful paint over the observed frame", () => {
+    const measurement = measureStartupShellPaint(48.5, [
+      { name: FIRST_PAINT_ENTRY, startTime: 9 },
+      { name: FIRST_CONTENTFUL_PAINT_ENTRY, startTime: 11.25 },
+    ]);
 
-    expect(shell.querySelector('[role="status"]')?.getAttribute("aria-label")).toBe(
-      "Loading Codevo",
-    );
-    expect(shell.querySelector("[data-startup-loader]")).not.toBeNull();
-    expect(shell.querySelector("[data-startup-spinner]")).not.toBeNull();
-    expect(shell.querySelector("nav")).toBeNull();
-    expect(shell.querySelector("strong")?.textContent).toBe("CODEVO");
-    expect(shell.textContent).not.toContain("Agent");
-    expect(shell.textContent).not.toContain("AI");
-    expect(shell.querySelector('[aria-current="page"]')).toBeNull();
+    expect(measurement).toEqual({ rendererElapsedMs: 11.25, source: "paint-timing" });
   });
 
+  it("accepts first-paint when no contentful paint was reported", () => {
+    const measurement = measureStartupShellPaint(48.5, [{ name: FIRST_PAINT_ENTRY, startTime: 9 }]);
+
+    expect(measurement).toEqual({ rendererElapsedMs: 9, source: "paint-timing" });
+  });
+
+  it("falls back to the observed frame when paint timing is unavailable", () => {
+    expect(measureStartupShellPaint(48.5, [])).toEqual({
+      rendererElapsedMs: 48.5,
+      source: "frame",
+    });
+  });
+
+  it("ignores unusable paint entries", () => {
+    const measurement = measureStartupShellPaint(48.5, [
+      { name: FIRST_CONTENTFUL_PAINT_ENTRY, startTime: Number.NaN },
+      { name: FIRST_PAINT_ENTRY, startTime: -3 },
+      { name: "largest-contentful-paint", startTime: 4 },
+    ]);
+
+    expect(measurement).toEqual({ rendererElapsedMs: 48.5, source: "frame" });
+  });
+
+  it("reports nothing measurable rather than logging a bogus mark", () => {
+    expect(measureStartupShellPaint(Number.NaN, [])).toBeNull();
+    expect(measureStartupShellPaint(-1, [])).toBeNull();
+    expect(measureStartupShellPaint(Number.POSITIVE_INFINITY, [])).toBeNull();
+  });
+});
+
+describe("waitForStartupShellPaint", () => {
   it("prefers the real two-frame paint path and cancels the fallback", async () => {
     const frames: FrameRequestCallback[] = [];
     let timeoutMs = 0;

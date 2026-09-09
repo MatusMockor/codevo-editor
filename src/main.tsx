@@ -1,8 +1,12 @@
 import {
-  createStartupShell,
+  measureStartupShellPaint,
   startupShellPaintWasObserved,
   waitForStartupShellPaint,
 } from "./startupShell";
+import { createStartupErrorScreen } from "./startupErrorScreen";
+import { applyBrowserStartupTheme } from "./startupTheme";
+
+applyBrowserStartupTheme();
 
 const rootElement = document.getElementById("root");
 
@@ -13,50 +17,8 @@ if (!rootElement) {
 const appRoot = rootElement;
 let startupComplete = false;
 
-function startupErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.stack || error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  try {
-    return JSON.stringify(error, null, 2);
-  } catch {
-    return String(error);
-  }
-}
-
 function showStartupError(error: unknown): void {
-  appRoot.replaceChildren();
-  const container = document.createElement("main");
-  container.style.background = "#111418";
-  container.style.boxSizing = "border-box";
-  container.style.color = "#d5d9e2";
-  container.style.font = "13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-  container.style.minHeight = "100vh";
-  container.style.padding = "28px";
-
-  const title = document.createElement("h1");
-  title.textContent = "Codevo Editor failed to start";
-  title.style.fontSize = "18px";
-  title.style.margin = "0 0 14px";
-
-  const details = document.createElement("pre");
-  details.textContent = startupErrorMessage(error);
-  details.style.background = "#0b0d10";
-  details.style.border = "1px solid #2a303a";
-  details.style.borderRadius = "6px";
-  details.style.color = "#f3b4b4";
-  details.style.margin = "0";
-  details.style.overflow = "auto";
-  details.style.padding = "16px";
-  details.style.whiteSpace = "pre-wrap";
-
-  container.append(title, details);
-  appRoot.append(container);
+  appRoot.replaceChildren(createStartupErrorScreen(error));
 }
 
 // Before startup completes a failure means the app never mounted, so show the
@@ -79,23 +41,34 @@ window.addEventListener("unhandledrejection", (event) => {
   showStartupError(event.reason);
 });
 
+function reportStartupShellPaint(): void {
+  performance.mark("codevo-startup-shell-painted");
+  const measurement = measureStartupShellPaint(
+    performance.now(),
+    performance.getEntriesByType("paint"),
+  );
+  if (measurement === null) {
+    return;
+  }
+
+  const paintEpochMs = performance.timeOrigin + measurement.rendererElapsedMs;
+  if (!Number.isFinite(paintEpochMs)) {
+    return;
+  }
+
+  void import("./startupTelemetry")
+    .then(({ logStartupShellPaint }) => {
+      logStartupShellPaint(measurement.rendererElapsedMs, paintEpochMs);
+    })
+    .catch(() => {
+      // Telemetry is evidence-only and cannot own startup success.
+    });
+}
+
 async function bootstrap(): Promise<void> {
-  appRoot.replaceChildren(createStartupShell());
   const startupShellPaintOutcome = await waitForStartupShellPaint();
   if (startupShellPaintWasObserved(startupShellPaintOutcome)) {
-    performance.mark("codevo-startup-shell-painted");
-    const paintEntries = performance.getEntriesByName("codevo-startup-shell-painted", "mark");
-    const rendererElapsedMs = paintEntries[paintEntries.length - 1]?.startTime;
-    const paintEpochMs = performance.timeOrigin + (rendererElapsedMs ?? Number.NaN);
-    if (rendererElapsedMs !== undefined && Number.isFinite(paintEpochMs)) {
-      void import("./startupTelemetry")
-        .then(({ logStartupShellPaint }) => {
-          logStartupShellPaint(rendererElapsedMs, paintEpochMs);
-        })
-        .catch(() => {
-          // Telemetry is evidence-only and cannot own startup success.
-        });
-    }
+    reportStartupShellPaint();
   }
 
   const [
@@ -114,7 +87,6 @@ async function bootstrap(): Promise<void> {
     import("./perfLaneRenderMode"),
   ]);
 
-  appRoot.replaceChildren();
   // Root-level boundary: ANY render/lifecycle crash anywhere in the app
   // (not just inside the git diff view) now renders a recoverable fallback
   // instead of unmounting the whole tree to a blank screen.

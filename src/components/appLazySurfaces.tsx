@@ -1,21 +1,25 @@
 import { Suspense, type ComponentProps, type ReactNode } from "react";
+import { AgentFrameFallback } from "./AgentFrameFallback";
 import { DeferredSurfaceHost } from "./DeferredSurfaceHost";
+import { SurfacePlaceholder } from "./SurfacePlaceholder";
 import { initializeMonacoRuntime } from "./monacoRuntimeLoader";
 import { retryableLazy } from "./retryableLazy";
 
 export function StickyLazySurfaceHost({
   active,
   children,
+  fallback = null,
   label,
 }: {
   readonly active: boolean;
   readonly children: ReactNode;
+  readonly fallback?: ReactNode;
   readonly label: string;
 }) {
-  const fallback = <div role="status">Loading {label}…</div>;
+  const surface = fallback ?? <SurfacePlaceholder label={label} />;
   return (
-    <DeferredSurfaceHost active={active} fallback={fallback}>
-      <Suspense fallback={fallback}>{children}</Suspense>
+    <DeferredSurfaceHost active={active} fallback={surface}>
+      <Suspense fallback={surface}>{children}</Suspense>
     </DeferredSurfaceHost>
   );
 }
@@ -30,7 +34,7 @@ export function LazySurfaceHost({
   readonly label: string;
 }) {
   if (!active) return null;
-  return <Suspense fallback={<div role="status">Loading {label}…</div>}>{children}</Suspense>;
+  return <Suspense fallback={<SurfacePlaceholder label={label} />}>{children}</Suspense>;
 }
 
 export const LazyScopedEditorSurface = retryableLazy<
@@ -79,6 +83,7 @@ export const LazyExternalFileCompareDialog = retryableLazy<
   const module = await import("./ExternalFileCompareDialog");
   return { default: module.ExternalFileCompareDialog };
 }, "file comparison");
+export const AGENT_WORKSPACE_LABEL = "agent workspace";
 export const LazyAgentWorkbenchScreen = retryableLazy<
   ComponentProps<typeof import("./agentMode/AgentWorkbenchScreen").AgentWorkbenchScreen>
 >(
@@ -86,7 +91,9 @@ export const LazyAgentWorkbenchScreen = retryableLazy<
     import("./agentMode/AgentWorkbenchScreen").then((module) => ({
       default: module.AgentWorkbenchScreen,
     })),
-  "agent workspace",
+  AGENT_WORKSPACE_LABEL,
+  `Could not load ${AGENT_WORKSPACE_LABEL}`,
+  <AgentFrameFallback label={AGENT_WORKSPACE_LABEL} />,
 );
 export const LazyCommandPalette = retryableLazy<
   ComponentProps<typeof import("./CommandPalette").CommandPalette>
@@ -125,7 +132,11 @@ export function LazyAgentWorkbenchHost({
   ...props
 }: ComponentProps<typeof LazyAgentWorkbenchScreen> & { readonly active: boolean }) {
   return (
-    <StickyLazySurfaceHost active={active} label="agent workspace">
+    <StickyLazySurfaceHost
+      active={active}
+      fallback={<AgentFrameFallback label={AGENT_WORKSPACE_LABEL} />}
+      label={AGENT_WORKSPACE_LABEL}
+    >
       <LazyAgentWorkbenchScreen {...props} />
     </StickyLazySurfaceHost>
   );

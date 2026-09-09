@@ -5,22 +5,280 @@
     <link rel="icon" type="image/svg+xml" href="/app-icon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Codevo Editor</title>
+    <style>
+      :root {
+        --startup-chrome-height: 36px;
+        --startup-rail-width: 256px;
+        --startup-status-height: 28px;
+        --startup-hairline-height: 2px;
+        --startup-hairline-length: 260px;
+        --startup-side: #0c0d10;
+        --startup-canvas: #13151a;
+        --startup-accent: #4fcdb3;
+        --startup-text: #f1f3f7;
+        --startup-text-muted: #9aa0ab;
+        --startup-danger: #ef6f6f;
+        --startup-well: #0f1014;
+        --startup-font:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --startup-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+        color-scheme: dark;
+      }
+
+      :root[data-startup-theme="light"] {
+        --startup-side: #fbfcfd;
+        --startup-canvas: #f0f2f5;
+        --startup-accent: #13836f;
+        --startup-text: #171a1f;
+        --startup-text-muted: #656d7b;
+        --startup-danger: #d64545;
+        --startup-well: #eaedf1;
+        color-scheme: light;
+      }
+
+      :root[data-startup-theme="ayuMirage"] {
+        --startup-side: #1f2430;
+        --startup-canvas: #1f2430;
+        --startup-accent: #ffcc66;
+        --startup-text: #ffffff;
+        --startup-text-muted: #9aa3b4;
+        --startup-danger: #f28779;
+        --startup-well: #1b2029;
+        color-scheme: dark;
+      }
+
+      :root[data-startup-theme="materialDeepOcean"] {
+        --startup-side: #0f111a;
+        --startup-canvas: #0f111a;
+        --startup-accent: #84ffff;
+        --startup-text: #ffffff;
+        --startup-text-muted: #8a90b5;
+        --startup-danger: #f07178;
+        --startup-well: #0c0e16;
+        color-scheme: dark;
+      }
+
+      :root[data-startup-theme="oneDarkPro"] {
+        --startup-side: #282c34;
+        --startup-canvas: #282c34;
+        --startup-accent: #61afef;
+        --startup-text: #ffffff;
+        --startup-text-muted: #9aa2b1;
+        --startup-danger: #e06c75;
+        --startup-well: #23272e;
+        color-scheme: dark;
+      }
+
+      :root[data-startup-theme="dracula"] {
+        --startup-side: #282a36;
+        --startup-canvas: #282a36;
+        --startup-accent: #bd93f9;
+        --startup-text: #ffffff;
+        --startup-text-muted: #b3bbe0;
+        --startup-danger: #ff5555;
+        --startup-well: #23242f;
+        color-scheme: dark;
+      }
+
+      :root[data-startup-theme="catppuccinMocha"] {
+        --startup-side: #1e1e2e;
+        --startup-canvas: #1e1e2e;
+        --startup-accent: #cba6f7;
+        --startup-text: #ffffff;
+        --startup-text-muted: #a6adc8;
+        --startup-danger: #f38ba8;
+        --startup-well: #1a1a28;
+        color-scheme: dark;
+      }
+
+      :root[data-startup-theme="catppuccinLatte"] {
+        --startup-side: #eff1f5;
+        --startup-canvas: #eff1f5;
+        --startup-accent: #8839ef;
+        --startup-text: #1e2030;
+        --startup-text-muted: #6c6f85;
+        --startup-danger: #d20f39;
+        --startup-well: #e6e9ef;
+        color-scheme: light;
+      }
+
+      :root[data-startup-theme="oneLight"] {
+        --startup-side: #fafafa;
+        --startup-canvas: #fafafa;
+        --startup-accent: #4078f2;
+        --startup-text: #1c1d22;
+        --startup-text-muted: #696c77;
+        --startup-danger: #e45649;
+        --startup-well: #eaeaeb;
+        color-scheme: light;
+      }
+
+      :root[data-startup-theme="darkPlus"] {
+        --startup-side: #252526;
+        --startup-canvas: #1e1e1e;
+        --startup-accent: #007acc;
+        --startup-text: #ffffff;
+        --startup-text-muted: #9d9d9d;
+        --startup-danger: #f48771;
+        --startup-well: #181818;
+        color-scheme: dark;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: var(--startup-side);
+      }
+
+      #root {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .startup-skeleton {
+        position: relative;
+        display: grid;
+        width: 100%;
+        height: 100%;
+        grid-template-columns: var(--startup-rail-width) minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) var(--startup-status-height);
+        background: var(--startup-side);
+      }
+
+      .startup-skeleton__rail {
+        grid-column: 1;
+        grid-row: 1;
+        background: var(--startup-side);
+      }
+
+      .startup-skeleton__centre {
+        grid-column: 2;
+        grid-row: 1;
+        background: var(--startup-canvas);
+      }
+
+      .startup-skeleton__status {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        background: var(--startup-side);
+      }
+
+      .startup-skeleton__hairline {
+        position: absolute;
+        top: var(--startup-chrome-height);
+        right: 0;
+        left: 0;
+        overflow: hidden;
+        height: var(--startup-hairline-height);
+      }
+
+      .startup-skeleton__hairline::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: var(--startup-hairline-length);
+        height: var(--startup-hairline-height);
+        opacity: 0.75;
+        background: linear-gradient(90deg, transparent, var(--startup-accent), transparent);
+        animation: startup-hairline 1.7s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+      }
+
+      @keyframes startup-hairline {
+        from {
+          transform: translateX(calc(-1 * var(--startup-hairline-length)));
+        }
+        to {
+          transform: translateX(100vw);
+        }
+      }
+
+      .startup-error {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        flex-direction: column;
+        gap: 14px;
+        overflow: hidden;
+        padding: 28px;
+        background: var(--startup-canvas);
+        color: var(--startup-text-muted);
+        font-family: var(--startup-font);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .startup-error__title {
+        margin: 0;
+        color: var(--startup-danger);
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .startup-error__details {
+        min-height: 0;
+        flex: 1;
+        overflow: auto;
+        margin: 0;
+        padding: 16px;
+        border-radius: 12px;
+        background: var(--startup-well);
+        color: var(--startup-text);
+        font-family: var(--startup-mono);
+        font-size: 12px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 1180px) {
+        :root {
+          --startup-rail-width: 248px;
+        }
+      }
+
+      @media (max-width: 720px) {
+        :root {
+          --startup-rail-width: 0px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .startup-skeleton__hairline::before {
+          width: 100%;
+          opacity: 0.28;
+          background: var(--startup-accent);
+          animation: none;
+        }
+      }
+    </style>
   </head>
 
   <body>
-    <div
-      id="root"
-      style="
-        align-items: center;
-        background: #111418;
-        color: #7f8794;
-        display: flex;
-        font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        justify-content: center;
-        min-height: 100vh;
-      "
-    >
-      Starting Codevo Editor...
+    <div id="root">
+      <div
+        class="startup-skeleton"
+        data-startup-skeleton
+        role="status"
+        aria-label="Starting Codevo Editor"
+      >
+        <div class="startup-skeleton__rail"></div>
+        <div class="startup-skeleton__centre"></div>
+        <div class="startup-skeleton__status"></div>
+        <span class="startup-skeleton__hairline"></span>
+      </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

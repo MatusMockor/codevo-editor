@@ -224,6 +224,24 @@
   display: none;
 }
 
+.agent-frame-fallback {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: var(--agent-rail-track, 0px) minmax(0, 1fr);
+  background: var(--codevo-canvas);
+}
+
+.agent-frame-fallback__rail {
+  min-width: 0;
+  background: var(--codevo-side);
+}
+
+.agent-frame-fallback__center {
+  min-width: 0;
+  background: var(--codevo-canvas);
+}
+
 /*
   Responsive order is deliberate: narrow the rail track before changing primary navigation.
 */
