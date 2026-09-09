@@ -111,3 +111,43 @@ fn final_health_validation_rejects_same_size_mutation_during_resolution() {
     );
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn observed_health_version_revalidates_after_reading_cached_version() {
+    struct VersionMutator(FakeResolver);
+    impl AgentProviderExecutableResolver for VersionMutator {
+        fn resolve_provider(
+            &self,
+            provider: AgentCliInvocation,
+            manual: Option<&str>,
+            refresh: bool,
+        ) -> Result<ResolvedProviderExecutable, String> {
+            self.0.resolve_provider(provider, manual, refresh)
+        }
+        fn observed_version(
+            &self,
+            _provider: AgentCliInvocation,
+            expected: &ExecutableIdentity,
+            _generation: u64,
+        ) -> Option<String> {
+            fs::write(&expected.canonical_path, "changed while reading version").unwrap();
+            Some("2.1.0".to_string())
+        }
+    }
+    let identity = executable_identity_fixture();
+    let path = identity.canonical_path.clone();
+    let registry = Arc::new(AgentProviderRuntimeRegistry::with_discovery(Arc::new(
+        VersionMutator(FakeResolver::new(identity, "/usr/bin:/bin")),
+    )));
+    let receipt = registry
+        .register_policy(AgentCliInvocation::CodexExec, 1, None, auto_policy())
+        .unwrap();
+    let lease = registry
+        .acquire_health_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation)
+        .unwrap();
+    assert_eq!(
+        registry.observed_health_version(&lease),
+        Err(AGENT_PROVIDER_STALE_ERROR.to_string())
+    );
+    fs::remove_file(path).unwrap();
+}

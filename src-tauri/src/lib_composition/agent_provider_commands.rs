@@ -1,10 +1,12 @@
+#[path = "../agent_provider_registry.rs"]
+mod registry_metadata;
 use crate::agent_task_spawner::agent_provider::agent_cli_version::{
     now_epoch_ms, parse_agent_cli_version,
 };
 #[cfg(test)]
 use crate::agent_task_spawner::agent_provider::process::executable_identity;
 use crate::agent_task_spawner::agent_provider::process::{
-    execute_agent_provider_plan_cancellable,
+    execute_agent_provider_maintenance_plan_cancellable, execute_agent_provider_plan_cancellable,
     execute_agent_provider_update_plan_cancellable_with_output_sink,
     resolve_package_manager_on_path, AgentProviderProcessFailure, AgentProviderProcessIntent,
     AgentProviderProcessOutput, AgentProviderProcessOutputSink, AgentProviderProcessOutputStream,
@@ -28,6 +30,9 @@ use crate::agent_task_spawner::agent_provider::{
 };
 use crate::agent_task_spawner::AgentCliInvocation;
 use crate::run_blocking_command;
+use registry_metadata::{
+    AgentProviderReleaseMetadataSource, PublicRegistryMetadataSource, RegistryVersionError,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
@@ -482,31 +487,39 @@ fn probe_health(
     cancelled: &AtomicBool,
 ) -> Result<AgentProviderHealthProbeResult, String> {
     let effective_path = lease.effective_path.clone();
-    probe_health_with_locator(
+    probe_health_with_sources(
         provider_registry,
         lease,
         cancelled,
         &EffectivePathAgentProviderPackageManagerLocator(&effective_path),
+        &PublicRegistryMetadataSource,
     )
 }
 
-fn probe_health_with_locator(
+fn probe_health_with_sources(
     provider_registry: &AgentProviderRuntimeRegistry,
     lease: ProviderHealthLease,
     cancelled: &AtomicBool,
     package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+    metadata_source: &dyn AgentProviderReleaseMetadataSource,
 ) -> Result<AgentProviderHealthProbeResult, String> {
     let identity = lease.cli_identity.clone();
     provider_registry.revalidate_health(&lease)?;
-    let version_plan = AgentProviderProcessPlan::provider_owned_with_effective_path(
-        identity.clone(),
-        AgentProviderProcessIntent::InstalledVersion(lease.provider),
-        &lease.effective_path,
-    )?;
-    provider_registry.revalidate_health(&lease)?;
-    let installed_output = execute_owned(provider_registry, cancelled, &version_plan)
-        .map_err(|_| "Provider version probe failed.".to_string())?;
-    let installed = parse_version_output(&installed_output);
+    let installed = match provider_registry.observed_health_version(&lease)? {
+        Some(version) => Some(version),
+        None => {
+            let version_plan = AgentProviderProcessPlan::provider_owned_with_effective_path(
+                identity.clone(),
+                AgentProviderProcessIntent::InstalledVersion(lease.provider),
+                &lease.effective_path,
+            )?;
+            provider_registry.revalidate_health(&lease)?;
+            let installed_output =
+                execute_health_owned(provider_registry, cancelled, &version_plan)
+                    .map_err(|_| "Provider version probe failed.".to_string())?;
+            parse_version_output(&installed_output)
+        }
+    };
     revalidate_health_identity(provider_registry, &lease, &identity)?;
     let auth = probe_auth(provider_registry, &lease, &identity, cancelled);
     revalidate_health_identity(provider_registry, &lease, &identity)?;
@@ -517,6 +530,7 @@ fn probe_health_with_locator(
         installed.as_deref(),
         cancelled,
         package_manager_locator,
+        metadata_source,
     );
     revalidate_health_identity(provider_registry, &lease, &identity)?;
     provider_registry.cache_candidate(&lease, candidate)?;
@@ -549,7 +563,7 @@ fn probe_auth(
     if registry.revalidate_health(lease).is_err() {
         return AgentProviderAuthState::Unknown;
     }
-    match execute_owned(registry, cancelled, &plan) {
+    match execute_health_owned(registry, cancelled, &plan) {
         Ok(output) => parse_auth_state(lease.provider, &output.stdout, &output.stderr),
         Err(_) => AgentProviderAuthState::Unknown,
     }
@@ -575,7 +589,7 @@ fn probe_claude_auth(
     if registry.revalidate_health(lease).is_err() {
         return AgentProviderAuthState::Unknown;
     }
-    match execute_owned(registry, cancelled, &plan) {
+    match execute_health_owned(registry, cancelled, &plan) {
         Ok(output) => {
             observed_claude_auth_state(registry, lease, identity, &output.stdout, &output.stderr)
         }
@@ -693,7 +707,7 @@ fn probe_claude_text_auth(
     if registry.revalidate_health(lease).is_err() {
         return AgentProviderAuthState::Unknown;
     }
-    let Ok(output) = execute_owned(registry, cancelled, &plan) else {
+    let Ok(output) = execute_health_owned(registry, cancelled, &plan) else {
         return AgentProviderAuthState::Unknown;
     };
     parse_claude_text_auth_state(&output.stdout, &output.stderr)
@@ -717,6 +731,7 @@ fn probe_update(
     installed_version: Option<&str>,
     cancelled: &AtomicBool,
     package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+    metadata_source: &dyn AgentProviderReleaseMetadataSource,
 ) -> (
     AgentProviderUpdateAvailability,
     Option<AgentProviderUpdateCandidate>,
@@ -740,6 +755,7 @@ fn probe_update(
             installed_version,
             cancelled,
             package_manager_locator,
+            metadata_source,
         ) {
             InstallerProbeOutcome::Resolved {
                 installer,
@@ -768,26 +784,21 @@ fn probe_update(
             );
         }
     }
-    let update =
-        match probe_manual_available_version(registry, lease, cancelled, package_manager_locator) {
-            Ok(available_version) => {
-                match compare_versions(installed_version, &available_version) {
-                    Some(Ordering::Less) => {
-                        AgentProviderUpdateAvailability::ManualUpdateAvailable {
-                            installed_version: installed_version.to_string(),
-                            available_version,
-                        }
-                    }
-                    Some(_) => AgentProviderUpdateAvailability::Current {
-                        installed_version: installed_version.to_string(),
-                    },
-                    None => AgentProviderUpdateAvailability::Unavailable {
-                        reason: AgentProviderUpdateUnavailableReason::InvalidVersion,
-                    },
-                }
-            }
-            Err(reason) => AgentProviderUpdateAvailability::Unavailable { reason },
-        };
+    let update = match probe_manual_available_version(registry, lease, cancelled, metadata_source) {
+        Ok(available_version) => match compare_versions(installed_version, &available_version) {
+            Some(Ordering::Less) => AgentProviderUpdateAvailability::ManualUpdateAvailable {
+                installed_version: installed_version.to_string(),
+                available_version,
+            },
+            Some(_) => AgentProviderUpdateAvailability::Current {
+                installed_version: installed_version.to_string(),
+            },
+            None => AgentProviderUpdateAvailability::Unavailable {
+                reason: AgentProviderUpdateUnavailableReason::InvalidVersion,
+            },
+        },
+        Err(reason) => AgentProviderUpdateAvailability::Unavailable { reason },
+    };
     (update, None)
 }
 
@@ -795,30 +806,28 @@ fn probe_manual_available_version(
     registry: &AgentProviderRuntimeRegistry,
     lease: &ProviderHealthLease,
     cancelled: &AtomicBool,
-    package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+    metadata_source: &dyn AgentProviderReleaseMetadataSource,
 ) -> Result<String, AgentProviderUpdateUnavailableReason> {
     registry
         .revalidate_health(lease)
         .map_err(|_| AgentProviderUpdateUnavailableReason::ProbeFailed)?;
-    let npm = package_manager_locator
-        .resolve("npm")
-        .ok_or(AgentProviderUpdateUnavailableReason::UnknownInstaller)?;
-    let plan = AgentProviderProcessPlan::package_manager_with_effective_path(
-        npm,
-        AgentProviderProcessIntent::NpmAvailableVersion(lease.provider),
-        &lease.effective_path,
-    )
-    .map_err(|_| AgentProviderUpdateUnavailableReason::ProbeFailed)?;
+    let result = metadata_source.latest(lease.provider, &|| {
+        registry.operations_closed()
+            || cancelled.load(AtomicOrdering::Acquire)
+            || registry.revalidate_health(lease).is_err()
+    });
     registry
         .revalidate_health(lease)
         .map_err(|_| AgentProviderUpdateUnavailableReason::ProbeFailed)?;
-    let output = execute_owned(registry, cancelled, &plan)
-        .map_err(|failure| probe_failure_reason(&failure))?;
-    registry
-        .revalidate_health(lease)
-        .map_err(|_| AgentProviderUpdateUnavailableReason::ProbeFailed)?;
-    parse_npm_available_version(&output.stdout)
-        .ok_or(AgentProviderUpdateUnavailableReason::ProbeFailed)
+    result.map_err(|failure| match failure {
+        RegistryVersionError::Timeout
+        | RegistryVersionError::Cancelled
+        | RegistryVersionError::Unavailable
+        | RegistryVersionError::InvalidResponse
+        | RegistryVersionError::ResponseTooLarge => {
+            AgentProviderUpdateUnavailableReason::ProbeFailed
+        }
+    })
 }
 
 enum InstallerProbeOutcome {
@@ -837,6 +846,7 @@ type InstallerOwnershipProbe = fn(
     &str,
     &AtomicBool,
     &dyn AgentProviderPackageManagerLocator,
+    &dyn AgentProviderReleaseMetadataSource,
 ) -> InstallerProbeOutcome;
 
 const INSTALLER_OWNERSHIP_PROBES: [InstallerOwnershipProbe; 3] =
@@ -848,7 +858,8 @@ fn probe_host_native(
     cli_identity: &ExecutableIdentity,
     _installed_version: &str,
     cancelled: &AtomicBool,
-    package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+    _package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+    metadata_source: &dyn AgentProviderReleaseMetadataSource,
 ) -> InstallerProbeOutcome {
     let Some(home) = bounded_home_directory() else {
         return InstallerProbeOutcome::NotOwned;
@@ -859,7 +870,7 @@ fn probe_host_native(
         cli_identity,
         &home,
         cancelled,
-        package_manager_locator,
+        metadata_source,
     )
 }
 
@@ -869,7 +880,7 @@ fn probe_native(
     cli_identity: &ExecutableIdentity,
     home: &Path,
     cancelled: &AtomicBool,
-    package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+    metadata_source: &dyn AgentProviderReleaseMetadataSource,
 ) -> InstallerProbeOutcome {
     if !native_cli_artifact_matches(home, &cli_identity.canonical_path, lease.provider) {
         return InstallerProbeOutcome::NotOwned;
@@ -879,7 +890,7 @@ fn probe_native(
             AgentProviderUpdateUnavailableReason::ProbeFailed,
         );
     }
-    match probe_manual_available_version(registry, lease, cancelled, package_manager_locator) {
+    match probe_manual_available_version(registry, lease, cancelled, metadata_source) {
         Ok(available_version) => InstallerProbeOutcome::Resolved {
             installer: ResolvedAgentProviderInstaller::SelfUpdate {
                 program: cli_identity.clone(),
@@ -911,7 +922,15 @@ fn probe_npm(
     installed_version: &str,
     cancelled: &AtomicBool,
     package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+    _metadata_source: &dyn AgentProviderReleaseMetadataSource,
 ) -> InstallerProbeOutcome {
+    let artifact = match lease.provider {
+        AgentCliInvocation::ClaudeCode => Path::new("cli.js"),
+        AgentCliInvocation::CodexExec => Path::new("bin/codex.js"),
+    };
+    if !cli_identity.canonical_path.ends_with(artifact) {
+        return InstallerProbeOutcome::NotOwned;
+    }
     let Some(npm) = package_manager_locator.resolve("npm") else {
         return InstallerProbeOutcome::NotOwned;
     };
@@ -933,7 +952,7 @@ fn probe_npm(
             AgentProviderUpdateUnavailableReason::ProbeFailed,
         );
     }
-    let Ok(root) = execute_owned(registry, cancelled, &root_plan) else {
+    let Ok(root) = execute_health_owned(registry, cancelled, &root_plan) else {
         return InstallerProbeOutcome::NotOwned;
     };
     if registry.revalidate_health(lease).is_err() {
@@ -970,7 +989,7 @@ fn probe_npm(
             AgentProviderUpdateUnavailableReason::ProbeFailed,
         );
     }
-    let inventory = match execute_owned(registry, cancelled, &inventory_plan) {
+    let inventory = match execute_health_owned(registry, cancelled, &inventory_plan) {
         Ok(output) => output,
         Err(failure) => return InstallerProbeOutcome::Unavailable(probe_failure_reason(&failure)),
     };
@@ -1001,7 +1020,7 @@ fn probe_npm(
             AgentProviderUpdateUnavailableReason::ProbeFailed,
         );
     }
-    let available = match execute_owned(registry, cancelled, &available_plan) {
+    let available = match execute_health_owned(registry, cancelled, &available_plan) {
         Ok(output) => output,
         Err(failure) => return InstallerProbeOutcome::Unavailable(probe_failure_reason(&failure)),
     };
@@ -1031,7 +1050,15 @@ fn probe_brew(
     installed_version: &str,
     cancelled: &AtomicBool,
     package_manager_locator: &dyn AgentProviderPackageManagerLocator,
+    _metadata_source: &dyn AgentProviderReleaseMetadataSource,
 ) -> InstallerProbeOutcome {
+    let artifact = match lease.provider {
+        AgentCliInvocation::ClaudeCode => Path::new(installed_version).join("claude"),
+        AgentCliInvocation::CodexExec => Path::new(installed_version).join("bin/codex"),
+    };
+    if !cli_identity.canonical_path.ends_with(artifact) {
+        return InstallerProbeOutcome::NotOwned;
+    }
     let Some(brew) = package_manager_locator.resolve("brew") else {
         return InstallerProbeOutcome::NotOwned;
     };
@@ -1053,7 +1080,7 @@ fn probe_brew(
             AgentProviderUpdateUnavailableReason::ProbeFailed,
         );
     }
-    let Ok(caskroom) = execute_owned(registry, cancelled, &caskroom_plan) else {
+    let Ok(caskroom) = execute_health_owned(registry, cancelled, &caskroom_plan) else {
         return InstallerProbeOutcome::NotOwned;
     };
     if registry.revalidate_health(lease).is_err() {
@@ -1095,7 +1122,7 @@ fn probe_brew(
             AgentProviderUpdateUnavailableReason::ProbeFailed,
         );
     }
-    let outdated = match execute_owned(registry, cancelled, &outdated_plan) {
+    let outdated = match execute_health_owned(registry, cancelled, &outdated_plan) {
         Ok(output) => output,
         Err(failure) => return InstallerProbeOutcome::Unavailable(probe_failure_reason(&failure)),
     };
@@ -1250,6 +1277,16 @@ fn availability(
             None,
         ),
     }
+}
+
+fn execute_health_owned(
+    registry: &AgentProviderRuntimeRegistry,
+    cancelled: &AtomicBool,
+    plan: &AgentProviderProcessPlan,
+) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
+    execute_agent_provider_maintenance_plan_cancellable(plan, || {
+        registry.operations_closed() || cancelled.load(AtomicOrdering::Acquire)
+    })
 }
 
 fn execute_owned(

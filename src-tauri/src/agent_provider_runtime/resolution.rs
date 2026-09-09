@@ -10,6 +10,15 @@ pub struct ResolvedProviderExecutable {
 }
 
 pub trait AgentProviderExecutableResolver: Send + Sync {
+    fn observed_version(
+        &self,
+        _provider: AgentCliInvocation,
+        _expected: &ExecutableIdentity,
+        _discovery_generation: u64,
+    ) -> Option<String> {
+        None
+    }
+
     fn resolve_provider(
         &self,
         provider: AgentCliInvocation,

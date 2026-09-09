@@ -343,7 +343,7 @@ fn registered_registry(
 fn health_with_locator(
     registry: &Arc<AgentProviderRuntimeRegistry>,
     receipt: AgentProviderPolicyReceipt,
-    locator: &dyn AgentProviderPackageManagerLocator,
+    locator: &FixedPackageManagerLocator,
 ) -> AgentProviderHealthProbeResult {
     let lease = registry
         .acquire_health_for_generation(AgentCliInvocation::CodexExec, receipt.provider_generation)
@@ -1293,10 +1293,10 @@ fn local_fake_unknown_installer_is_truthfully_unavailable() {
     assert_eq!(
         health.update,
         AgentProviderUpdateAvailability::Unavailable {
-            reason: AgentProviderUpdateUnavailableReason::UnknownInstaller,
+            reason: AgentProviderUpdateUnavailableReason::ProbeFailed,
         }
     );
-    assert_eq!(locator.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(locator.calls.load(Ordering::SeqCst), 1);
 }
 
 fn native_provider_fixture(
@@ -1740,3 +1740,39 @@ mod native_update;
 
 #[path = "agent_provider_update_authority_tests.rs"]
 mod update_authority;
+
+#[path = "agent_provider_installer_eligibility_tests.rs"]
+mod installer_eligibility;
+
+fn probe_health_with_locator(
+    registry: &AgentProviderRuntimeRegistry,
+    lease: ProviderHealthLease,
+    cancelled: &AtomicBool,
+    locator: &FixedPackageManagerLocator,
+) -> Result<AgentProviderHealthProbeResult, String> {
+    probe_health_with_sources(registry, lease, cancelled, locator, locator)
+}
+
+impl AgentProviderReleaseMetadataSource for FixedPackageManagerLocator {
+    fn latest(
+        &self,
+        provider: AgentCliInvocation,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<String, RegistryVersionError> {
+        if cancelled() {
+            return Err(RegistryVersionError::Cancelled);
+        }
+        let npm = self
+            .resolve("npm")
+            .ok_or(RegistryVersionError::Unavailable)?;
+        let plan = AgentProviderProcessPlan::package_manager_with_effective_path(
+            npm,
+            AgentProviderProcessIntent::NpmAvailableVersion(provider),
+            "/usr/bin:/bin",
+        )
+        .map_err(|_| RegistryVersionError::Unavailable)?;
+        let output = execute_agent_provider_plan_cancellable(&plan, cancelled)
+            .map_err(|_| RegistryVersionError::Unavailable)?;
+        parse_npm_available_version(&output.stdout).ok_or(RegistryVersionError::InvalidResponse)
+    }
+}

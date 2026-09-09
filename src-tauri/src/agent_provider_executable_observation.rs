@@ -85,14 +85,30 @@ impl ExecutableIdentity {
     }
 
     pub(super) fn exact_shallow_is_current_with(&self, cancelled: impl Fn() -> bool) -> bool {
+        self.exact_shallow_is_current_with_budget(
+            cancelled,
+            &mut ExecutableDigestBudget::new(ExecutableValidationEffort::Interactive),
+        )
+    }
+
+    pub(super) fn exact_shallow_is_current_with_budget<C: digest_budget::DigestClock>(
+        &self,
+        cancelled: impl Fn() -> bool,
+        budget: &mut ExecutableDigestBudget<C>,
+    ) -> bool {
         #[cfg(unix)]
         {
             let Some(path_descriptor) = self.open_observed_path() else {
                 return false;
             };
-            if executable_digest_cancellable(&self.descriptor, self.size_bytes, &cancelled)
-                .ok()
-                .as_ref()
+            if digest_budget::digest_with_budget(
+                &self.descriptor,
+                self.size_bytes,
+                &cancelled,
+                budget,
+            )
+            .ok()
+            .as_ref()
                 != Some(&self.digest)
             {
                 return false;
@@ -105,8 +121,8 @@ impl ExecutableIdentity {
         }
         #[cfg(not(unix))]
         {
-            self.retained_shallow_is_current_with(&cancelled)
-                && self.path_is_current_shallow_with(cancelled)
+            self.retained_shallow_is_current_with_budget(&cancelled, budget)
+                && self.path_is_current_shallow_with(cancelled, budget)
         }
     }
 }

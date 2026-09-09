@@ -44,6 +44,9 @@ sha2 = "0.10"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "=2.3.1"
 tauri-plugin-updater = "=2.10.1"
+reqwest = { version = "=0.13.4", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+tokio = { version = "1", features = ["macros", "time"] }
 rusqlite = { version = "0.40.1", features = ["bundled", "functions"] }
 ignore = "0.4.26"
 json5 = "0.4"

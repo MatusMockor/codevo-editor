@@ -155,3 +155,90 @@ fn scripts_are_recaptured_when_interpreter_selection_changes() {
             .identity()
     );
 }
+
+#[test]
+fn observed_version_requires_current_native_identity_and_generation() {
+    let fixture = TestDirectory::new("observed-version");
+    let bin = fixture.path.join("bin");
+    let cli = bin.join("claude");
+    executable(&cli, "original");
+    let versions = Arc::new(TestVersions::with_version(
+        fs::canonicalize(&cli).unwrap(),
+        "2.1.0",
+    ));
+    let service = AgentCliDiscovery::with_collaborators(
+        Arc::new(MutableContext(Mutex::new(Some(joined_path(&[&bin]))))),
+        versions.clone(),
+        Duration::ZERO,
+    );
+    let environment = service.effective_environment().unwrap();
+    let identity = environment
+        .provider(AgentCliInvocation::ClaudeCode)
+        .unwrap()
+        .identity();
+    assert_eq!(
+        service.observed_version(
+            AgentCliInvocation::ClaudeCode,
+            identity,
+            environment.authority_generation()
+        ),
+        Some("2.1.0".into())
+    );
+    assert_eq!(
+        service.observed_version(
+            AgentCliInvocation::CodexExec,
+            identity,
+            environment.authority_generation()
+        ),
+        None
+    );
+    assert_eq!(versions.probes.load(Ordering::Relaxed), 1);
+    service.refresh().unwrap();
+    assert_eq!(
+        service.observed_version(
+            AgentCliInvocation::ClaudeCode,
+            identity,
+            environment.authority_generation()
+        ),
+        None
+    );
+    let generation = service
+        .effective_environment()
+        .unwrap()
+        .authority_generation();
+    fs::write(&cli, "changed-binary").unwrap();
+    assert_eq!(
+        service.observed_version(AgentCliInvocation::ClaudeCode, identity, generation),
+        None
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn observed_version_does_not_reuse_script_launcher_version() {
+    let fixture = TestDirectory::new("observed-script-version");
+    let bin = fixture.path.join("bin");
+    let cli = bin.join("claude");
+    executable(&cli, "#!/bin/sh\nexit 0\n");
+    let service = AgentCliDiscovery::with_collaborators(
+        Arc::new(MutableContext(Mutex::new(Some(joined_path(&[&bin]))))),
+        Arc::new(TestVersions::with_version(
+            fs::canonicalize(&cli).unwrap(),
+            "2.1.0",
+        )),
+        Duration::ZERO,
+    );
+    let environment = service.effective_environment().unwrap();
+    let identity = environment
+        .provider(AgentCliInvocation::ClaudeCode)
+        .unwrap()
+        .identity();
+    assert_eq!(
+        service.observed_version(
+            AgentCliInvocation::ClaudeCode,
+            identity,
+            environment.authority_generation()
+        ),
+        None
+    );
+}

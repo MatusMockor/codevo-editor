@@ -322,6 +322,20 @@ impl AgentProviderRuntimeRegistry {
         self.acquire_health_resolved(provider, generation, true)
     }
 
+    pub fn observed_health_version(
+        &self,
+        lease: &ProviderHealthLease,
+    ) -> Result<Option<String>, String> {
+        self.revalidate_health(lease)?;
+        let version = self.discovery.observed_version(
+            lease.provider,
+            &lease.cli_identity,
+            lease.discovery_generation,
+        );
+        self.revalidate_health(lease)?;
+        Ok(version)
+    }
+
     pub fn revalidate_health(&self, lease: &ProviderHealthLease) -> Result<(), String> {
         self.revalidate_health_state(lease)?;
         self.revalidate_resolution_with(

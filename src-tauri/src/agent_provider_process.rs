@@ -21,6 +21,9 @@ use std::{
 #[path = "agent_provider_executable_observation.rs"]
 mod executable_observation;
 use executable_observation::ExecutableObservation;
+#[path = "agent_provider_digest_budget.rs"]
+mod digest_budget;
+use digest_budget::{ExecutableDigestBudget, ExecutableValidationEffort};
 
 pub const AGENT_PROVIDER_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const AGENT_PROVIDER_UPDATE_TIMEOUT: Duration = Duration::from_secs(600);
@@ -82,13 +85,24 @@ impl ExecutableIdentity {
     }
 
     fn retained_shallow_is_current_with(&self, cancelled: impl Fn() -> bool) -> bool {
+        self.retained_shallow_is_current_with_budget(
+            cancelled,
+            &mut ExecutableDigestBudget::new(ExecutableValidationEffort::Interactive),
+        )
+    }
+
+    fn retained_shallow_is_current_with_budget<C: digest_budget::DigestClock>(
+        &self,
+        cancelled: impl Fn() -> bool,
+        budget: &mut ExecutableDigestBudget<C>,
+    ) -> bool {
         let Ok(metadata) = self.descriptor.metadata() else {
             return false;
         };
         if metadata.len() != self.size_bytes {
             return false;
         }
-        if executable_digest_cancellable(&self.descriptor, metadata.len(), cancelled)
+        if digest_budget::digest_with_budget(&self.descriptor, metadata.len(), cancelled, budget)
             .ok()
             .as_ref()
             != Some(&self.digest)
@@ -102,7 +116,11 @@ impl ExecutableIdentity {
     }
 
     #[cfg(not(unix))]
-    fn path_is_current_shallow_with(&self, cancelled: impl Fn() -> bool) -> bool {
+    fn path_is_current_shallow_with<C: digest_budget::DigestClock>(
+        &self,
+        cancelled: impl Fn() -> bool,
+        budget: &mut ExecutableDigestBudget<C>,
+    ) -> bool {
         let Ok(canonical_path) = fs::canonicalize(&self.canonical_path) else {
             return false;
         };
@@ -130,7 +148,7 @@ impl ExecutableIdentity {
         if modified_epoch_ms != Some(self.modified_epoch_ms) {
             return false;
         }
-        executable_digest_cancellable(&descriptor, metadata.len(), cancelled)
+        digest_budget::digest_with_budget(&descriptor, metadata.len(), cancelled, budget)
             .ok()
             .as_ref()
             == Some(&self.digest)
@@ -193,13 +211,26 @@ impl BoundExecutableCommand {
         cancelled: impl Fn() -> bool,
         before_spawn: Option<impl FnOnce() -> bool>,
     ) -> Result<Child, BoundExecutableSpawnFailure> {
+        self.spawn_cancellable_with_budget(
+            cancelled,
+            before_spawn,
+            &mut ExecutableDigestBudget::new(ExecutableValidationEffort::Interactive),
+        )
+    }
+
+    fn spawn_cancellable_with_budget(
+        &mut self,
+        cancelled: impl Fn() -> bool,
+        before_spawn: Option<impl FnOnce() -> bool>,
+        budget: &mut ExecutableDigestBudget,
+    ) -> Result<Child, BoundExecutableSpawnFailure> {
         if let Some(authorize) = before_spawn {
-            self.validate_for_spawn(&cancelled)?;
+            self.validate_for_spawn(&cancelled, budget)?;
             if !authorize() {
                 return Err(BoundExecutableSpawnFailure::IdentityChanged);
             }
         }
-        self.validate_for_spawn(cancelled)?;
+        self.validate_for_spawn(cancelled, budget)?;
         self.command
             .spawn()
             .map_err(BoundExecutableSpawnFailure::Spawn)
@@ -208,12 +239,13 @@ impl BoundExecutableCommand {
     fn validate_for_spawn(
         &mut self,
         cancelled: impl Fn() -> bool,
+        budget: &mut ExecutableDigestBudget,
     ) -> Result<(), BoundExecutableSpawnFailure> {
         if cancelled() {
             return Err(BoundExecutableSpawnFailure::IdentityChanged);
         }
         for dependency in &self.dependencies {
-            if !dependency.exact_shallow_is_current_with(&cancelled) {
+            if !dependency.exact_shallow_is_current_with_budget(&cancelled, budget) {
                 return Err(BoundExecutableSpawnFailure::IdentityChanged);
             }
         }
@@ -221,7 +253,11 @@ impl BoundExecutableCommand {
         if let Some(barrier) = self.before_artifact_validation.take() {
             barrier();
         }
-        if !self.artifact.exact_shallow_is_current_with(&cancelled) || cancelled() {
+        if !self
+            .artifact
+            .exact_shallow_is_current_with_budget(&cancelled, budget)
+            || cancelled()
+        {
             return Err(BoundExecutableSpawnFailure::IdentityChanged);
         }
         Ok(())
@@ -841,35 +877,12 @@ fn executable_digest_cancellable(
     size: u64,
     cancelled: impl Fn() -> bool,
 ) -> Result<[u8; 32], String> {
-    #[cfg(test)]
-    DIGEST_WORK.with(|work| {
-        let (calls, bytes) = work.get();
-        work.set((calls + 1, bytes));
-    });
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    let limit = size.saturating_add(1);
-    let mut offset = 0_u64;
-    while offset < limit {
-        if cancelled() {
-            return Err("Provider executable validation was cancelled.".to_string());
-        }
-        let remaining = usize::try_from((limit - offset).min(buffer.len() as u64))
-            .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
-        let count = read_executable_at(descriptor, &mut buffer[..remaining], offset)
-            .map_err(|_| "Provider executable identity is unavailable.".to_string())?;
-        if count == 0 {
-            break;
-        }
-        #[cfg(test)]
-        DIGEST_WORK.with(|work| {
-            let (calls, bytes) = work.get();
-            work.set((calls, bytes + count as u64));
-        });
-        hasher.update(&buffer[..count]);
-        offset = offset.saturating_add(count as u64);
-    }
-    Ok(hasher.finalize().into())
+    digest_budget::digest_with_budget(
+        descriptor,
+        size,
+        cancelled,
+        &mut ExecutableDigestBudget::new(ExecutableValidationEffort::Interactive),
+    )
 }
 
 #[cfg(unix)]
@@ -987,6 +1000,29 @@ pub fn execute_agent_provider_plan_cancellable(
     plan: &AgentProviderProcessPlan,
     cancelled: impl Fn() -> bool,
 ) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
+    execute_agent_provider_probe_with_effort(
+        plan,
+        cancelled,
+        ExecutableValidationEffort::Interactive,
+    )
+}
+
+pub fn execute_agent_provider_maintenance_plan_cancellable(
+    plan: &AgentProviderProcessPlan,
+    cancelled: impl Fn() -> bool,
+) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
+    execute_agent_provider_probe_with_effort(
+        plan,
+        cancelled,
+        ExecutableValidationEffort::Maintenance,
+    )
+}
+
+fn execute_agent_provider_probe_with_effort(
+    plan: &AgentProviderProcessPlan,
+    cancelled: impl Fn() -> bool,
+    effort: ExecutableValidationEffort,
+) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
     if plan.requires_update_authorization {
         return Err(AgentProviderProcessFailure::Uncertain(
             "Provider update plan requires spawn authorization.".to_string(),
@@ -997,6 +1033,7 @@ pub fn execute_agent_provider_plan_cancellable(
         cancelled,
         None::<fn() -> bool>,
         Arc::new(NoopAgentProviderProcessOutputSink),
+        effort,
     )
 }
 
@@ -1030,7 +1067,13 @@ pub fn execute_agent_provider_update_plan_cancellable_with_output_sink(
             "Provider probe plan cannot use update spawn authorization.".to_string(),
         ));
     }
-    execute_agent_provider_plan_cancellable_inner(plan, cancelled, Some(before_spawn), output_sink)
+    execute_agent_provider_plan_cancellable_inner(
+        plan,
+        cancelled,
+        Some(before_spawn),
+        output_sink,
+        ExecutableValidationEffort::Interactive,
+    )
 }
 
 fn execute_agent_provider_plan_cancellable_inner(
@@ -1038,6 +1081,7 @@ fn execute_agent_provider_plan_cancellable_inner(
     cancelled: impl Fn() -> bool,
     before_spawn: Option<impl FnOnce() -> bool>,
     output_sink: Arc<dyn AgentProviderProcessOutputSink>,
+    effort: ExecutableValidationEffort,
 ) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
     let deadline = Instant::now() + plan.timeout;
     if cancelled() {
@@ -1065,27 +1109,30 @@ fn execute_agent_provider_plan_cancellable_inner(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let child =
-        match bound.spawn_cancellable(|| cancelled() || Instant::now() >= deadline, before_spawn) {
-            Ok(child) => child,
-            Err(BoundExecutableSpawnFailure::IdentityChanged) => {
-                if cancelled() {
-                    return Err(AgentProviderProcessFailure::Uncertain(
-                        "Provider operation was cancelled.".to_string(),
-                    ));
-                }
-                if Instant::now() >= deadline {
-                    return Err(AgentProviderProcessFailure::TimedOut {
-                        stdout: Vec::new(),
-                        stderr: Vec::new(),
-                    });
-                }
-                return Err(AgentProviderProcessFailure::IdentityChanged);
+    let child = match bound.spawn_cancellable_with_budget(
+        || cancelled() || Instant::now() >= deadline,
+        before_spawn,
+        &mut ExecutableDigestBudget::new(effort),
+    ) {
+        Ok(child) => child,
+        Err(BoundExecutableSpawnFailure::IdentityChanged) => {
+            if cancelled() {
+                return Err(AgentProviderProcessFailure::Uncertain(
+                    "Provider operation was cancelled.".to_string(),
+                ));
             }
-            Err(BoundExecutableSpawnFailure::Spawn(error)) => {
-                return Err(AgentProviderProcessFailure::Spawn(error.to_string()));
+            if Instant::now() >= deadline {
+                return Err(AgentProviderProcessFailure::TimedOut {
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                });
             }
-        };
+            return Err(AgentProviderProcessFailure::IdentityChanged);
+        }
+        Err(BoundExecutableSpawnFailure::Spawn(error)) => {
+            return Err(AgentProviderProcessFailure::Spawn(error.to_string()));
+        }
+    };
     let mut child = child;
     let mut retained_stdin = None;
     if let Some(payload) = plan.stdin_payload.as_deref() {

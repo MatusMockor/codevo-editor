@@ -1,6 +1,23 @@
 use super::*;
 
 impl AgentProviderExecutableResolver for AgentCliDiscovery {
+    fn observed_version(
+        &self,
+        provider: AgentCliInvocation,
+        expected: &ExecutableIdentity,
+        discovery_generation: u64,
+    ) -> Option<String> {
+        let environment = self.effective_environment().ok()?;
+        if environment.authority_generation() != discovery_generation {
+            return None;
+        }
+        let executable = environment.provider(provider)?;
+        if executable.identity != *expected || !expected.is_reusable_for_discovery() {
+            return None;
+        }
+        executable.version.clone()
+    }
+
     fn resolve_provider(
         &self,
         provider: AgentCliInvocation,
