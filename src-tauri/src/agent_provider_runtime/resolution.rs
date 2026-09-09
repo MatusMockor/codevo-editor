@@ -16,6 +16,15 @@ pub trait AgentProviderExecutableResolver: Send + Sync {
         manual_override: Option<&str>,
         refresh: bool,
     ) -> Result<ResolvedProviderExecutable, String>;
+
+    fn observe_provider(
+        &self,
+        provider: AgentCliInvocation,
+        manual_override: Option<&str>,
+        _expected: &ExecutableIdentity,
+    ) -> Result<ResolvedProviderExecutable, String> {
+        self.resolve_provider(provider, manual_override, false)
+    }
 }
 
 #[derive(Clone, Copy)]

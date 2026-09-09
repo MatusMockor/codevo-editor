@@ -274,6 +274,7 @@ struct DiscoveryCache {
     generation: u64,
     building_generation: Option<u64>,
     snapshot: Option<Arc<EffectiveExecutableEnvironment>>,
+    previous: Option<Arc<EffectiveExecutableEnvironment>>,
 }
 
 enum DiscoveryBuildAdmission<'a> {
@@ -285,6 +286,7 @@ struct DiscoveryBuildGuard<'a> {
     discovery: &'a AgentCliDiscovery,
     generation: u64,
     settled: bool,
+    previous: Option<Arc<EffectiveExecutableEnvironment>>,
 }
 
 impl DiscoveryBuildGuard<'_> {
@@ -365,6 +367,7 @@ impl AgentCliDiscovery {
                 generation: 0,
                 building_generation: None,
                 snapshot: None,
+                previous: None,
             }),
             cache_settled: Condvar::new(),
         }
@@ -378,7 +381,8 @@ impl AgentCliDiscovery {
                 DiscoveryBuildAdmission::Cached(snapshot) => return Ok(snapshot),
                 DiscoveryBuildAdmission::Build(build_guard) => build_guard,
             };
-            let result = self.build_environment(build_guard.generation);
+            let result =
+                self.build_environment(build_guard.generation, build_guard.previous.as_deref());
             if let Some(settled) = build_guard.settle(result)? {
                 return settled;
             }
@@ -388,9 +392,11 @@ impl AgentCliDiscovery {
     fn build_environment(
         &self,
         authority_generation: u64,
+        previous: Option<&EffectiveExecutableEnvironment>,
     ) -> Result<Arc<EffectiveExecutableEnvironment>, AgentCliDiscoveryError> {
         let effective_path = self.build_effective_path()?;
         let fingerprint = path_fingerprint(&effective_path);
+        let previous = previous.filter(|snapshot| snapshot.path() == effective_path);
         let home = self
             .context
             .home_directory()
@@ -400,8 +406,14 @@ impl AgentCliDiscovery {
                 AgentCliInvocation::ClaudeCode,
                 "claude",
                 &effective_path,
+                previous.and_then(|snapshot| snapshot.provider(AgentCliInvocation::ClaudeCode)),
             ),
-            codex: self.discover_provider(AgentCliInvocation::CodexExec, "codex", &effective_path),
+            codex: self.discover_provider(
+                AgentCliInvocation::CodexExec,
+                "codex",
+                &effective_path,
+                previous.and_then(|snapshot| snapshot.provider(AgentCliInvocation::CodexExec)),
+            ),
             claude_configured_model: home.as_deref().and_then(read_claude_configured_model),
             codex_configured_model: home.as_deref().and_then(read_codex_configured_model),
             path: effective_path,
@@ -458,7 +470,9 @@ impl AgentCliDiscovery {
             .generation
             .checked_add(1)
             .ok_or(AgentCliDiscoveryError::GenerationExhausted)?;
-        cache.snapshot = None;
+        if let Some(snapshot) = cache.snapshot.take() {
+            cache.previous = Some(snapshot);
+        }
         self.cache_settled.notify_all();
         Ok(())
     }
@@ -479,6 +493,7 @@ impl AgentCliDiscovery {
                     discovery: self,
                     generation,
                     settled: false,
+                    previous: cache.previous.clone(),
                 }));
             }
             cache = self
@@ -518,12 +533,18 @@ impl AgentCliDiscovery {
         provider: AgentCliInvocation,
         executable_name: &str,
         effective_path: &str,
+        previous: Option<&DiscoveredAgentCli>,
     ) -> Option<DiscoveredAgentCli> {
         for directory in split_path(effective_path) {
             let candidate = directory.join(executable_name);
             let Some(canonical_path) = bounded_executable_path(&candidate) else {
                 continue;
             };
+            if let Some(previous) = previous.filter(|previous| {
+                previous.path == canonical_path && previous.identity.is_reusable_for_discovery()
+            }) {
+                return Some(previous.clone());
+            }
             let Ok(identity) =
                 executable_identity_path_with_effective_path(&canonical_path, effective_path)
             else {
@@ -589,31 +610,8 @@ fn bounded_model_id(value: &str) -> Option<String> {
     Some(value.to_string())
 }
 
-impl AgentProviderExecutableResolver for AgentCliDiscovery {
-    fn resolve_provider(
-        &self,
-        provider: AgentCliInvocation,
-        manual_override: Option<&str>,
-        refresh: bool,
-    ) -> Result<ResolvedProviderExecutable, String> {
-        if refresh {
-            self.refresh().map_err(|error| error.to_string())?;
-        }
-        let resolution = AgentCliDiscovery::resolve_provider(self, provider, manual_override)
-            .map_err(|error| error.to_string())?;
-        let environment = resolution.environment();
-        let executable = resolution
-            .executable()
-            .ok_or_else(|| agent_cli_binary_unavailable_error(provider))?;
-        Ok(ResolvedProviderExecutable {
-            cli_path: executable.path().to_string_lossy().into_owned(),
-            cli_identity: executable.identity().clone(),
-            effective_path: environment.path().to_string(),
-            path_fingerprint: environment.path_fingerprint().to_string(),
-            discovery_generation: environment.authority_generation(),
-        })
-    }
-}
+#[path = "agent_cli_discovery/provider_resolution.rs"]
+mod provider_resolution;
 
 fn bounded_manual_path(path: &str) -> Option<PathBuf> {
     if path.is_empty() || path.len() > MAX_AGENT_CLI_PATH_BYTES {

@@ -53,7 +53,7 @@ fn health_validation_digest_work_is_bounded() {
             let elapsed_micros = started.elapsed().as_micros();
             let cpu_micros = cpu_micros() - cpu;
             let (hashes, bytes) = take_executable_digest_work();
-            assert_eq!(hashes, 2);
+            assert_eq!(hashes, 0);
             assert_eq!(bytes, size * hashes);
             eprintln!("health_validation index={index} round={round} size={size} hashes={hashes} bytes={bytes} elapsed_us={elapsed_micros} cpu_us={cpu_micros}");
         }

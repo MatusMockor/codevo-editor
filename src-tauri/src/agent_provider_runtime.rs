@@ -324,7 +324,14 @@ impl AgentProviderRuntimeRegistry {
 
     pub fn revalidate_health(&self, lease: &ProviderHealthLease) -> Result<(), String> {
         self.revalidate_health_state(lease)?;
-        self.revalidate_resolution(lease.provider, &lease.policy, lease.resolved())?;
+        self.revalidate_resolution_with(
+            lease.provider,
+            &lease.policy,
+            lease.resolved(),
+            ResolutionEpoch::Exact,
+            ResolutionValidation::Observation,
+        )
+        .map_err(ProviderResolutionMismatch::stale_error)?;
         self.revalidate_health_state(lease)
     }
 
@@ -558,8 +565,14 @@ impl AgentProviderRuntimeRegistry {
         policy: &AgentProviderPolicy,
         expected: ResolvedProviderExecutableRef<'_>,
     ) -> Result<(), String> {
-        self.revalidate_resolution_with(provider, policy, expected, ResolutionEpoch::Exact)
-            .map_err(ProviderResolutionMismatch::stale_error)
+        self.revalidate_resolution_with(
+            provider,
+            policy,
+            expected,
+            ResolutionEpoch::Exact,
+            ResolutionValidation::Exact,
+        )
+        .map_err(ProviderResolutionMismatch::stale_error)
     }
 
     fn revalidate_update_resolution(
@@ -568,7 +581,13 @@ impl AgentProviderRuntimeRegistry {
         policy: &AgentProviderPolicy,
         expected: ResolvedProviderExecutableRef<'_>,
     ) -> Result<(), ProviderResolutionMismatch> {
-        self.revalidate_resolution_with(provider, policy, expected, ResolutionEpoch::NotRegressed)
+        self.revalidate_resolution_with(
+            provider,
+            policy,
+            expected,
+            ResolutionEpoch::NotRegressed,
+            ResolutionValidation::Exact,
+        )
     }
 
     fn revalidate_resolution_with(
@@ -577,10 +596,17 @@ impl AgentProviderRuntimeRegistry {
         policy: &AgentProviderPolicy,
         expected: ResolvedProviderExecutableRef<'_>,
         epoch: ResolutionEpoch,
+        validation: ResolutionValidation,
     ) -> Result<(), ProviderResolutionMismatch> {
-        let observed = self
-            .resolve_provider(provider, policy, false)
-            .map_err(|_| ProviderResolutionMismatch::Executable)?;
+        let observed = match validation {
+            ResolutionValidation::Exact => self.resolve_provider(provider, policy, false),
+            ResolutionValidation::Observation => self.discovery.observe_provider(
+                provider,
+                policy.cli_path.as_deref(),
+                expected.cli_identity,
+            ),
+        }
+        .map_err(|_| ProviderResolutionMismatch::Executable)?;
         if observed.cli_path != expected.cli_path || observed.cli_identity != *expected.cli_identity
         {
             return Err(ProviderResolutionMismatch::Executable);
@@ -591,7 +617,11 @@ impl AgentProviderRuntimeRegistry {
         {
             return Err(ProviderResolutionMismatch::Environment);
         }
-        if !expected.cli_identity.is_current_for_spawn() {
+        let current = match validation {
+            ResolutionValidation::Exact => expected.cli_identity.is_current_for_spawn(),
+            ResolutionValidation::Observation => expected.cli_identity.is_current_for_observation(),
+        };
+        if !current {
             return Err(ProviderResolutionMismatch::Executable);
         }
         Ok(())
@@ -921,6 +951,11 @@ fn configuration_slot_mut(
 }
 
 #[derive(Clone, Copy)]
+enum ResolutionValidation {
+    Exact,
+    Observation,
+}
+
 enum ResolutionEpoch {
     Exact,
     NotRegressed,

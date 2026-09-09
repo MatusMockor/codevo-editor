@@ -561,7 +561,7 @@ fn cache_uses_effective_path_fingerprint_and_refresh_invalidates_it() {
     let refreshed = service.refresh().expect("refreshed snapshot");
     assert!(!Arc::ptr_eq(&first, &refreshed));
     assert_eq!(first.path_fingerprint(), refreshed.path_fingerprint());
-    assert_eq!(versions.probes.load(Ordering::Relaxed), 2);
+    assert_eq!(versions.probes.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -845,3 +845,91 @@ fn presentation_reports_only_bounded_configured_model_identifiers() {
     assert_eq!(value["codex"]["configuredModel"], "gpt-5.6-sol");
     assert!(value.to_string().find("not projected").is_none());
 }
+
+#[cfg(unix)]
+#[test]
+fn manual_observation_reuses_identity_without_hashing_or_probing_version() {
+    use crate::agent_task_spawner::agent_provider::process::take_executable_digest_work;
+
+    let fixture = TestDirectory::new("manual-observation");
+    let bin = fixture.path.join("bin");
+    let cli = bin.join("custom-provider");
+    executable(&cli, "provider");
+    let versions = Arc::new(TestVersions::default());
+    let service = discovery(
+        &fixture.path,
+        None,
+        Some(joined_path(&[&bin])),
+        versions.clone(),
+        Duration::from_secs(1),
+    );
+    let resolved = AgentProviderExecutableResolver::resolve_provider(
+        &service,
+        AgentCliInvocation::CodexExec,
+        cli.to_str(),
+        false,
+    )
+    .unwrap();
+    let probes = versions.probes.load(Ordering::Relaxed);
+    take_executable_digest_work();
+    for _ in 0..5 {
+        let observed = AgentProviderExecutableResolver::observe_provider(
+            &service,
+            AgentCliInvocation::CodexExec,
+            cli.to_str(),
+            &resolved.cli_identity,
+        )
+        .unwrap();
+        assert_eq!(observed.cli_identity, resolved.cli_identity);
+        assert_eq!(observed.discovery_generation, resolved.discovery_generation);
+    }
+    assert_eq!(versions.probes.load(Ordering::Relaxed), probes);
+    assert_eq!(take_executable_digest_work(), (0, 0));
+    AgentProviderExecutableResolver::resolve_provider(
+        &service,
+        AgentCliInvocation::CodexExec,
+        cli.to_str(),
+        false,
+    )
+    .unwrap();
+    assert_eq!(versions.probes.load(Ordering::Relaxed), probes + 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn manual_observation_rejects_retargeted_alias() {
+    let fixture = TestDirectory::new("manual-observation-alias");
+    let bin = fixture.path.join("bin");
+    let cli = bin.join("custom-provider");
+    let replacement = bin.join("replacement");
+    let alias = bin.join("alias");
+    executable(&cli, "provider");
+    executable(&replacement, "provider");
+    std::os::unix::fs::symlink(&cli, &alias).unwrap();
+    let service = discovery(
+        &fixture.path,
+        None,
+        Some(joined_path(&[&bin])),
+        Arc::new(TestVersions::default()),
+        Duration::from_secs(1),
+    );
+    let resolved = AgentProviderExecutableResolver::resolve_provider(
+        &service,
+        AgentCliInvocation::CodexExec,
+        alias.to_str(),
+        false,
+    )
+    .unwrap();
+    fs::remove_file(&alias).unwrap();
+    std::os::unix::fs::symlink(&replacement, &alias).unwrap();
+    assert!(AgentProviderExecutableResolver::observe_provider(
+        &service,
+        AgentCliInvocation::CodexExec,
+        alias.to_str(),
+        &resolved.cli_identity,
+    )
+    .is_err());
+}
+
+#[path = "reuse_tests.rs"]
+mod reuse_tests;

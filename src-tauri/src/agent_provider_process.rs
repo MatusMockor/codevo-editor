@@ -18,6 +18,10 @@ use std::{
     time::{Duration, Instant, UNIX_EPOCH},
 };
 
+#[path = "agent_provider_executable_observation.rs"]
+mod executable_observation;
+use executable_observation::ExecutableObservation;
+
 pub const AGENT_PROVIDER_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const AGENT_PROVIDER_UPDATE_TIMEOUT: Duration = Duration::from_secs(600);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -36,6 +40,7 @@ pub struct ExecutableIdentity {
     #[cfg(unix)]
     pub inode: u64,
     digest: [u8; 32],
+    observation: Arc<ExecutableObservation>,
     descriptor: Arc<fs::File>,
     launch: ExecutableLaunch,
 }
@@ -96,6 +101,7 @@ impl ExecutableIdentity {
         true
     }
 
+    #[cfg(not(unix))]
     fn path_is_current_shallow_with(&self, cancelled: impl Fn() -> bool) -> bool {
         let Ok(canonical_path) = fs::canonicalize(&self.canonical_path) else {
             return false;
@@ -138,7 +144,7 @@ impl ExecutableIdentity {
     }
 
     pub fn is_current_for_spawn(&self) -> bool {
-        if !self.retained_shallow_is_current() || !self.path_is_current_shallow_with(|| false) {
+        if !self.exact_shallow_is_current_with(|| false) {
             return false;
         }
         match &self.launch {
@@ -179,21 +185,35 @@ impl BoundExecutableCommand {
     }
 
     pub fn spawn(&mut self) -> Result<Child, BoundExecutableSpawnFailure> {
-        self.spawn_cancellable(|| false, || true)
+        self.spawn_cancellable(|| false, None::<fn() -> bool>)
     }
 
     fn spawn_cancellable(
         &mut self,
         cancelled: impl Fn() -> bool,
-        before_spawn: impl FnOnce() -> bool,
+        before_spawn: Option<impl FnOnce() -> bool>,
     ) -> Result<Child, BoundExecutableSpawnFailure> {
+        if let Some(authorize) = before_spawn {
+            self.validate_for_spawn(&cancelled)?;
+            if !authorize() {
+                return Err(BoundExecutableSpawnFailure::IdentityChanged);
+            }
+        }
+        self.validate_for_spawn(cancelled)?;
+        self.command
+            .spawn()
+            .map_err(BoundExecutableSpawnFailure::Spawn)
+    }
+
+    fn validate_for_spawn(
+        &mut self,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<(), BoundExecutableSpawnFailure> {
         if cancelled() {
             return Err(BoundExecutableSpawnFailure::IdentityChanged);
         }
         for dependency in &self.dependencies {
-            if !dependency.retained_shallow_is_current_with(&cancelled)
-                || !dependency.path_is_current_shallow_with(&cancelled)
-            {
+            if !dependency.exact_shallow_is_current_with(&cancelled) {
                 return Err(BoundExecutableSpawnFailure::IdentityChanged);
             }
         }
@@ -201,38 +221,10 @@ impl BoundExecutableCommand {
         if let Some(barrier) = self.before_artifact_validation.take() {
             barrier();
         }
-        if !self.artifact.retained_shallow_is_current_with(&cancelled)
-            || !self.artifact.path_is_current_shallow_with(&cancelled)
-        {
+        if !self.artifact.exact_shallow_is_current_with(&cancelled) || cancelled() {
             return Err(BoundExecutableSpawnFailure::IdentityChanged);
         }
-        if cancelled() {
-            return Err(BoundExecutableSpawnFailure::IdentityChanged);
-        }
-        if !before_spawn() {
-            return Err(BoundExecutableSpawnFailure::IdentityChanged);
-        }
-        if cancelled() {
-            return Err(BoundExecutableSpawnFailure::IdentityChanged);
-        }
-        for dependency in &self.dependencies {
-            if !dependency.retained_shallow_is_current_with(&cancelled)
-                || !dependency.path_is_current_shallow_with(&cancelled)
-            {
-                return Err(BoundExecutableSpawnFailure::IdentityChanged);
-            }
-        }
-        if !self.artifact.retained_shallow_is_current_with(&cancelled)
-            || !self.artifact.path_is_current_shallow_with(&cancelled)
-        {
-            return Err(BoundExecutableSpawnFailure::IdentityChanged);
-        }
-        if cancelled() {
-            return Err(BoundExecutableSpawnFailure::IdentityChanged);
-        }
-        self.command
-            .spawn()
-            .map_err(BoundExecutableSpawnFailure::Spawn)
+        Ok(())
     }
 }
 
@@ -669,8 +661,15 @@ fn executable_identity_path_with_depth(
     if metadata.len() > MAX_PROVIDER_EXECUTABLE_BYTES {
         return Err("Provider executable is too large.".to_string());
     }
+    let observation = Arc::new(ExecutableObservation::capture(&metadata));
     let digest = executable_digest(&descriptor, metadata.len())?;
     let launch = executable_launch(&descriptor, interpreter_depth, effective_path)?;
+    if !descriptor
+        .metadata()
+        .is_ok_and(|current| observation.matches(&current))
+    {
+        return Err("Provider executable changed during identity capture.".to_string());
+    }
     let modified_epoch_ms = metadata
         .modified()
         .ok()
@@ -686,6 +685,7 @@ fn executable_identity_path_with_depth(
         #[cfg(unix)]
         inode: std::os::unix::fs::MetadataExt::ino(&metadata),
         digest,
+        observation,
         descriptor: Arc::new(descriptor),
         launch,
     })
@@ -995,7 +995,7 @@ pub fn execute_agent_provider_plan_cancellable(
     execute_agent_provider_plan_cancellable_inner(
         plan,
         cancelled,
-        || true,
+        None::<fn() -> bool>,
         Arc::new(NoopAgentProviderProcessOutputSink),
     )
 }
@@ -1030,13 +1030,13 @@ pub fn execute_agent_provider_update_plan_cancellable_with_output_sink(
             "Provider probe plan cannot use update spawn authorization.".to_string(),
         ));
     }
-    execute_agent_provider_plan_cancellable_inner(plan, cancelled, before_spawn, output_sink)
+    execute_agent_provider_plan_cancellable_inner(plan, cancelled, Some(before_spawn), output_sink)
 }
 
 fn execute_agent_provider_plan_cancellable_inner(
     plan: &AgentProviderProcessPlan,
     cancelled: impl Fn() -> bool,
-    before_spawn: impl FnOnce() -> bool,
+    before_spawn: Option<impl FnOnce() -> bool>,
     output_sink: Arc<dyn AgentProviderProcessOutputSink>,
 ) -> Result<AgentProviderProcessOutput, AgentProviderProcessFailure> {
     let deadline = Instant::now() + plan.timeout;
