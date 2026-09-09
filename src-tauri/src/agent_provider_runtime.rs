@@ -578,9 +578,6 @@ impl AgentProviderRuntimeRegistry {
         expected: ResolvedProviderExecutableRef<'_>,
         epoch: ResolutionEpoch,
     ) -> Result<(), ProviderResolutionMismatch> {
-        if !expected.cli_identity.is_current_for_spawn() {
-            return Err(ProviderResolutionMismatch::Executable);
-        }
         let observed = self
             .resolve_provider(provider, policy, false)
             .map_err(|_| ProviderResolutionMismatch::Executable)?;
@@ -594,9 +591,7 @@ impl AgentProviderRuntimeRegistry {
         {
             return Err(ProviderResolutionMismatch::Environment);
         }
-        if !expected.cli_identity.is_current_for_spawn()
-            || !observed.cli_identity.is_current_for_spawn()
-        {
+        if !expected.cli_identity.is_current_for_spawn() {
             return Err(ProviderResolutionMismatch::Executable);
         }
         Ok(())
@@ -1094,6 +1089,10 @@ mod tests {
         fs,
         sync::atomic::{AtomicU64, Ordering},
     };
+
+    mod validation_performance {
+        include!("agent_provider_runtime/validation_performance_tests.rs");
+    }
 
     static NONCE: AtomicU64 = AtomicU64::new(0);
 

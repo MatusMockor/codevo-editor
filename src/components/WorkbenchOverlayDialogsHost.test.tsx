@@ -160,6 +160,7 @@ function providerManagement(): AgentProviderManagementSurface {
     dismissToast: vi.fn(),
     dismissUpdate: async () => false,
     refresh: async () => undefined,
+    refreshAll: async () => undefined,
     retryRegistration: async () => undefined,
     save: async () => false,
     saveWithOutcome: async () => ({ kind: "rejected", reason: "notHydrated" }),

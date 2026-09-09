@@ -65,6 +65,8 @@ import {
 } from "./agentProviderUpdateRun";
 import { useAgentCliDiscovery, type AgentCliDiscoveryPublication } from "./useAgentCliDiscovery";
 
+import { refreshAgentProviderBatch } from "./agentProviderRefresh";
+
 const PROVIDERS: readonly AgentCliKind[] = ["claudeCode", "codex"];
 
 export type AgentProviderManagementToast =
@@ -131,6 +133,7 @@ export interface AgentProviderManagementSurface {
   dismissToast(): void;
   dismissUpdate(provider: AgentCliKind, version: string): Promise<boolean>;
   refresh(provider: AgentCliKind): Promise<void>;
+  refreshAll(): Promise<void>;
   refreshWithOutcome?(provider: AgentCliKind): Promise<AgentProviderRefreshOutcome>;
   retryRegistration(provider: AgentCliKind): Promise<void>;
   save(intent: AgentProviderSettingsIntent): Promise<boolean>;
@@ -1349,54 +1352,42 @@ export function useAgentProviderManagement(
     [],
   );
   const dismissToast = useCallback(() => setToast(null), []);
-  const refreshProvider = useCallback(
-    async (provider: AgentCliKind): Promise<AgentProviderRefreshOutcome> => {
+  const refreshProviders = useCallback(
+    async (
+      requested: ReadonlyArray<AgentCliKind>,
+    ): Promise<ReadonlyArray<AgentProviderRefreshOutcome>> => {
       const lifecycleGeneration = hydrationGenerationRef.current;
       const workspaceGeneration = dependenciesRef.current.workspaceGeneration;
       const discoveryGateway = dependenciesRef.current.discoveryGateway;
-      const before = runtimeRef.current[provider].configurationRevision;
-      const discoveryPromise = cliDiscovery.refresh();
-      const discoveryGeneration = cliDiscovery.currentGeneration();
-      applyDiscoveryGeneration("discovering", discoveryGeneration);
-      const refreshRevision = runtimeRef.current[provider].configurationRevision;
-      if (refreshRevision < before) return { kind: "stale" };
-      const publication = await discoveryPromise;
-      if (!mountedRef.current) return { kind: "stale" };
-      if (hydrationGenerationRef.current !== lifecycleGeneration) return { kind: "stale" };
-      if (dependenciesRef.current.workspaceGeneration !== workspaceGeneration) {
-        return { kind: "stale" };
-      }
-      if (dependenciesRef.current.discoveryGateway !== discoveryGateway) return { kind: "stale" };
-      if (runtimeRef.current[provider].configurationRevision !== refreshRevision) {
-        return { kind: "stale" };
-      }
-      if (cliDiscovery.currentGeneration() !== discoveryGeneration) return { kind: "stale" };
-      if (publication === null) {
-        applyDiscoveryGeneration("failed", discoveryGeneration);
-        return { kind: "failed" };
-      }
-      if (publication.generation !== discoveryGeneration) return { kind: "stale" };
-      applyDiscoveryGeneration("ready", discoveryGeneration);
-      const healthOwner = currentOwner(provider);
-      if (healthOwner === null) return { kind: "failed" };
-      const health = await refreshHealth(provider);
-      if (!mountedRef.current) return { kind: "stale" };
-      if (hydrationGenerationRef.current !== lifecycleGeneration) return { kind: "stale" };
-      if (dependenciesRef.current.workspaceGeneration !== workspaceGeneration) {
-        return { kind: "stale" };
-      }
-      if (dependenciesRef.current.discoveryGateway !== discoveryGateway) return { kind: "stale" };
-      if (cliDiscovery.currentGeneration() !== discoveryGeneration) return { kind: "stale" };
-      if (!ownerIsCurrent(healthOwner)) return { kind: "stale" };
-      if (health === null) return { kind: "failed" };
-      const refreshedAuthority = admissionAuthorityFor(
-        provider,
-        authorityRef,
-        runtimeRef,
-        readCliDiscovery(),
-      );
-      if (!isReadyAdmissionAuthority(refreshedAuthority)) return { kind: "failed" };
-      return { kind: "complete", authority: refreshedAuthority };
+      const isCurrent = (generation: number): boolean =>
+        mountedRef.current &&
+        hydrationGenerationRef.current === lifecycleGeneration &&
+        dependenciesRef.current.workspaceGeneration === workspaceGeneration &&
+        dependenciesRef.current.discoveryGateway === discoveryGateway &&
+        cliDiscovery.currentGeneration() === generation;
+      return refreshAgentProviderBatch({
+        providers: requested,
+        refreshDiscovery: cliDiscovery.refresh,
+        discoveryGeneration: cliDiscovery.currentGeneration,
+        configurationRevision: (provider) => runtimeRef.current[provider].configurationRevision,
+        applyDiscovery: applyDiscoveryGeneration,
+        isCurrent,
+        refreshHealth: async (provider, generation) => {
+          const owner = currentOwner(provider);
+          if (owner === null) return { kind: "failed" };
+          const health = await refreshHealth(provider);
+          if (!isCurrent(generation) || !ownerIsCurrent(owner)) return { kind: "stale" };
+          if (health === null) return { kind: "failed" };
+          const authority = admissionAuthorityFor(
+            provider,
+            authorityRef,
+            runtimeRef,
+            readCliDiscovery(),
+          );
+          if (!isReadyAdmissionAuthority(authority)) return { kind: "failed" };
+          return { kind: "complete", authority };
+        },
+      });
     },
     [
       applyDiscoveryGeneration,
@@ -1407,6 +1398,46 @@ export function useAgentProviderManagement(
       refreshHealth,
     ],
   );
+  const refreshProvider = useCallback(
+    async (provider: AgentCliKind): Promise<AgentProviderRefreshOutcome> => {
+      const results = await refreshProviders([provider]);
+      return results[0] ?? { kind: "failed" };
+    },
+    [refreshProviders],
+  );
+  const batchRef = useRef<{
+    readonly current: () => boolean;
+    readonly promise: Promise<void>;
+  } | null>(null);
+  const refreshAll = useCallback((): Promise<void> => {
+    const existing = batchRef.current;
+    if (existing !== null && existing.current()) return existing.promise;
+    if (!mountedRef.current || !dependenciesRef.current.settingsHydrated) return Promise.resolve();
+    const requested = PROVIDERS.filter(
+      (provider) => persistedSliceRef.current.fields[provider].preference.enabled,
+    );
+    if (requested.length === 0) return Promise.resolve();
+    const lifecycle = hydrationGenerationRef.current;
+    const workspace = dependenciesRef.current.workspaceGeneration;
+    const gateway = dependenciesRef.current.discoveryGateway;
+    const revision = settingsRevisionRef.current;
+    const pending = refreshProviders(requested);
+    const generation = cliDiscovery.currentGeneration();
+    const current = () =>
+      mountedRef.current &&
+      hydrationGenerationRef.current === lifecycle &&
+      dependenciesRef.current.workspaceGeneration === workspace &&
+      dependenciesRef.current.discoveryGateway === gateway &&
+      settingsRevisionRef.current === revision &&
+      cliDiscovery.currentGeneration() === generation;
+    const promise = pending
+      .then(() => undefined)
+      .finally(() => {
+        if (batchRef.current?.promise === promise) batchRef.current = null;
+      });
+    batchRef.current = { current, promise };
+    return promise;
+  }, [cliDiscovery, refreshProviders]);
   const refresh = useCallback(
     async (provider: AgentCliKind): Promise<void> => {
       await refreshProvider(provider);
@@ -1426,6 +1457,7 @@ export function useAgentProviderManagement(
       dismissToast,
       dismissUpdate,
       refresh,
+      refreshAll,
       refreshWithOutcome,
       retryRegistration,
       save,
@@ -1441,6 +1473,7 @@ export function useAgentProviderManagement(
       selectedProviderAuthority,
       readAuthority,
       refresh,
+      refreshAll,
       refreshWithOutcome,
       retryRegistration,
       save,

@@ -117,6 +117,8 @@ The card includes a copy action for that fixed install command. An absolute CLI 
 available as an optional manual override. Clear the override to return to **Auto**. **Refresh**
 re-runs discovery across the current login-shell path and the bounded well-known directories,
 then reads the resolved CLI's version, authentication state, and update availability.
+The footer refreshes all enabled providers in one batch with a shared discovery request;
+repeated clicks while that batch is running do not start another check.
 
 Codevo applies the same effective path to agent turns, agent sign-in terminals, regular terminals,
 and package-script runs. This lets those processes find the same Node and provider executables when

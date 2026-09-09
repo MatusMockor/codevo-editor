@@ -392,6 +392,7 @@ function providerManagement(
     dismissToast: vi.fn(),
     dismissUpdate: vi.fn(async () => true),
     refresh: async () => undefined,
+    refreshAll: async () => undefined,
     retryRegistration: async () => undefined,
     save: async () => true,
     saveWithOutcome: async () => ({ kind: "persisted", policyRegistered: false }),

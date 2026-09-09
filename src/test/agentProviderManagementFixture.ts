@@ -22,6 +22,7 @@ export function unconfiguredAgentProviderManagement(): AgentProviderManagementSu
     dismissToast: () => undefined,
     dismissUpdate: async () => false,
     refresh: async () => undefined,
+    refreshAll: async () => undefined,
     retryRegistration: async () => undefined,
     save: async () => false,
     saveWithOutcome: async () => ({ kind: "rejected", reason: "notHydrated" }),

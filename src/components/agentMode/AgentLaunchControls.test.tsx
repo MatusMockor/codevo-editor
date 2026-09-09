@@ -512,6 +512,7 @@ function disabledClaudeManagement(): AgentProviderManagementSurface {
     dismissToast: vi.fn(),
     dismissUpdate: vi.fn(async () => true),
     refresh: vi.fn(async () => undefined),
+    refreshAll: vi.fn(async () => undefined),
     retryRegistration: vi.fn(async () => undefined),
     save: vi.fn(async () => true),
     saveWithOutcome: vi.fn(async () => ({ kind: "persisted" as const, policyRegistered: true })),

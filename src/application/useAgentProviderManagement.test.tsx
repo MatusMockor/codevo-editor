@@ -67,6 +67,122 @@ afterEach(() => {
 });
 
 describe("useAgentProviderManagement", () => {
+  it.each([false, true])(
+    "batches enabled providers behind one discovery automatic=%s",
+    async (automatic) => {
+      const settings = configuredSettings();
+      if (automatic) settings.agentCliPaths = { claudeCode: null, codex: null };
+      const discovered: AgentCliDiscoveryResult = {
+        claudeCode: { kind: "detected", path: PATH_A, version: "1.0.0" },
+        codex: { kind: "detected", path: "/usr/local/bin/codex", version: "1.0.0" },
+      };
+      const discoverAgentClis = vi.fn(async () => discovered);
+      const harness = renderManagement(
+        settings,
+        () => 0,
+        true,
+        () => ({ kind: "unregistered" }),
+        {
+          discoveryGateway: { discoverAgentClis },
+        },
+      );
+      await act(async () => undefined);
+      await act(async () => {
+        for (const call of harness.healthCalls) call.resolve(currentHealth("1.0.0"));
+      });
+      const initialHealth = harness.healthCalls.length;
+      const pending = deferred<AgentCliDiscoveryResult>();
+      discoverAgentClis.mockClear();
+      discoverAgentClis.mockImplementation(() => pending.promise);
+      let first!: Promise<void>;
+      let second!: Promise<void>;
+      act(() => {
+        first = harness.hook().refreshAll();
+        second = harness.hook().refreshAll();
+      });
+      expect(first).toBe(second);
+      expect(discoverAgentClis).toHaveBeenCalledOnce();
+      await act(async () => pending.resolve(discovered));
+      expect(
+        harness.healthRequests.slice(initialHealth).map((request) => request.provider),
+      ).toEqual(["claudeCode", "codex"]);
+      await act(async () => {
+        for (const call of harness.healthCalls.slice(initialHealth))
+          call.resolve(currentHealth("1.0.0"));
+        await first;
+      });
+      expect(harness.hook().providers.claudeCode.health.kind).toBe("ready");
+      expect(harness.hook().providers.codex.health.kind).toBe("ready");
+      harness.unmount();
+    },
+  );
+
+  it("does not batch health checks for disabled providers", async () => {
+    const settings = configuredSettings();
+    settings.agentProviderPreferences = {
+      ...settings.agentProviderPreferences,
+      codex: { ...settings.agentProviderPreferences.codex, enabled: false },
+    };
+    const harness = renderManagement(settings);
+    await act(async () => undefined);
+    await settleHealth(harness, 0, currentHealth("1.0.0"));
+    let pending!: Promise<void>;
+    act(() => {
+      pending = harness.hook().refreshAll();
+    });
+    await act(async () => undefined);
+    expect(harness.healthRequests.map((request) => request.provider)).toEqual([
+      "claudeCode",
+      "claudeCode",
+    ]);
+    await settleHealth(harness, 1, currentHealth("1.0.0"));
+    await pending;
+    harness.unmount();
+    settings.agentProviderPreferences = {
+      ...settings.agentProviderPreferences,
+      claudeCode: { ...settings.agentProviderPreferences.claudeCode, enabled: false },
+    };
+    const disabled = renderManagement(settings);
+    await act(async () => {
+      await disabled.hook().refreshAll();
+    });
+    expect(disabled.dependencies.discoveryGateway.discoverAgentClis).not.toHaveBeenCalled();
+    expect(disabled.healthCalls).toHaveLength(0);
+    disabled.unmount();
+  });
+
+  it.each(["unmount", "failure"] as const)("retires pending batch work on %s", async (outcome) => {
+    const pending = deferred<AgentCliDiscoveryResult>();
+    const harness = renderManagement(
+      configuredSettings(),
+      () => 0,
+      true,
+      () => ({ kind: "unregistered" }),
+      {
+        discoveryGateway: { discoverAgentClis: vi.fn(() => pending.promise) },
+      },
+    );
+    await act(async () => undefined);
+    await act(async () => {
+      for (const call of harness.healthCalls) call.resolve(currentHealth("1.0.0"));
+    });
+    const initialHealth = harness.healthCalls.length;
+    let batch!: Promise<void>;
+    act(() => {
+      batch = harness.hook().refreshAll();
+    });
+    if (outcome === "unmount") harness.unmount();
+    await act(async () => {
+      if (outcome === "failure") pending.reject(new Error("Discovery failed"));
+      if (outcome === "unmount")
+        pending.resolve({ claudeCode: { kind: "notFound" }, codex: { kind: "notFound" } });
+      await batch;
+    });
+    expect(harness.healthCalls).toHaveLength(initialHealth);
+    expect(harness.errors).toHaveLength(outcome === "failure" ? 1 : 0);
+    if (outcome !== "unmount") harness.unmount();
+  });
+
   it("keeps a null persisted override while admitting the exact detected executable", async () => {
     const discovery = deferred<AgentCliDiscoveryResult>();
     const refreshDiscovery = deferred<AgentCliDiscoveryResult>();

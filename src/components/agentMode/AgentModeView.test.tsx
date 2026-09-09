@@ -3249,6 +3249,7 @@ function providerManagement(): AgentProviderManagementSurface {
     dismissToast: () => undefined,
     dismissUpdate: async () => true,
     refresh: async () => undefined,
+    refreshAll: async () => undefined,
     retryRegistration: async () => undefined,
     save: async () => true,
     saveWithOutcome: async () => ({ kind: "persisted", policyRegistered: true }),

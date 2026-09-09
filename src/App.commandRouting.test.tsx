@@ -1439,6 +1439,7 @@ function providerManagement(): AgentProviderManagementSurface {
     authority: () => null,
     dismissToast: () => undefined,
     dismissUpdate: async () => false,
+    refreshAll: async () => undefined,
     refresh: async () => undefined,
     retryRegistration: async () => undefined,
     save: async () => false,

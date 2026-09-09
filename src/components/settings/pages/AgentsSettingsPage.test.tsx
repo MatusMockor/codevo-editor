@@ -816,6 +816,7 @@ function providerManagement(options: ManagementOptions = {}): AgentProviderManag
     dismissToast: vi.fn(),
     dismissUpdate: vi.fn(async () => true),
     refresh: vi.fn(async () => undefined),
+    refreshAll: vi.fn(async () => undefined),
     retryRegistration: vi.fn(async () => undefined),
     save: vi.fn(async () => options.persisted !== false),
     saveWithOutcome: vi.fn(async () =>

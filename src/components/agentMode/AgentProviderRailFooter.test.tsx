@@ -156,8 +156,8 @@ describe("AgentProviderRailFooter", () => {
     expect(host.textContent).not.toContain("Check failed");
 
     act(() => button("Refresh provider status").click());
-    expect(surface.refresh).toHaveBeenCalledWith("claudeCode");
-    expect(surface.refresh).toHaveBeenCalledWith("codex");
+    expect(surface.refreshAll).toHaveBeenCalledOnce();
+    expect(surface.refresh).not.toHaveBeenCalled();
   });
 
   it("renders every recovery state as a full-width pill with a glyph and a readable label", () => {
@@ -351,15 +351,18 @@ describe("AgentProviderRailFooter", () => {
       release = () => resolve(undefined);
     });
     const refresh = vi.fn(async () => pending);
-    render({ ...management(), refresh });
+    render({ ...management(), refreshAll: refresh });
 
-    act(() => button("Refresh provider status").click());
-    expect(refresh).toHaveBeenCalledTimes(2);
+    act(() => {
+      button("Refresh provider status").click();
+      button("Refresh provider status").click();
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
     expect(button("Refresh provider status").disabled).toBe(true);
     expect(button("Refresh provider status").getAttribute("aria-busy")).toBe("true");
 
     act(() => button("Refresh provider status").click());
-    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(refresh).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       release();
@@ -369,7 +372,18 @@ describe("AgentProviderRailFooter", () => {
     expect(button("Refresh provider status").disabled).toBe(false);
     expect(button("Refresh provider status").getAttribute("aria-busy")).toBe("false");
     act(() => button("Refresh provider status").click());
-    expect(refresh).toHaveBeenCalledTimes(4);
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases the refresh button after a failed batch", async () => {
+    const refreshAll = vi.fn(async () => {
+      throw new Error("Refresh failed");
+    });
+    render({ ...management(), refreshAll });
+    await act(async () => button("Refresh provider status").click());
+    expect(button("Refresh provider status").disabled).toBe(false);
+    await act(async () => button("Refresh provider status").click());
+    expect(refreshAll).toHaveBeenCalledTimes(2);
   });
 
   it("orders the navigation settings, source control, usage, refresh", () => {
@@ -482,8 +496,8 @@ describe("AgentProviderRailFooter", () => {
     expect(button("Register Codex policy — retry registration")).not.toBeNull();
 
     act(() => button("Refresh provider status").click());
-    expect(surface.refresh).toHaveBeenCalledWith("claudeCode");
-    expect(surface.refresh).toHaveBeenCalledWith("codex");
+    expect(surface.refreshAll).toHaveBeenCalledOnce();
+    expect(surface.refresh).not.toHaveBeenCalled();
   });
 
   function render(
@@ -774,6 +788,7 @@ function management(
     dismissToast: vi.fn(),
     dismissUpdate: vi.fn(async () => true),
     refresh: vi.fn(async () => undefined),
+    refreshAll: vi.fn(async () => undefined),
     retryRegistration: vi.fn(async () => undefined),
     save: vi.fn(async () => true),
     saveWithOutcome: vi.fn(async () => ({ kind: "persisted" as const, policyRegistered: true })),

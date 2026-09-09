@@ -53,6 +53,7 @@ export function AgentProviderRailFooter({
   const enabled = PROVIDERS.filter((provider) => providerEnabled[provider]);
   const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(true);
+  const refreshPending = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -62,9 +63,11 @@ export function AgentProviderRailFooter({
   }, []);
 
   const refreshAll = (): void => {
-    if (refreshing || enabled.length === 0) return;
+    if (refreshPending.current || enabled.length === 0) return;
+    refreshPending.current = true;
     setRefreshing(true);
-    void Promise.allSettled(enabled.map((provider) => management.refresh(provider))).then(() => {
+    void Promise.allSettled([management.refreshAll()]).then(() => {
+      refreshPending.current = false;
       if (!mounted.current) return;
       setRefreshing(false);
     });

@@ -822,6 +822,16 @@ fn bound_command(identity: &ExecutableIdentity) -> Result<BoundExecutableCommand
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static DIGEST_WORK: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_executable_digest_work() -> (u64, u64) {
+    DIGEST_WORK.with(|work| work.replace((0, 0)))
+}
+
 fn executable_digest(descriptor: &fs::File, size: u64) -> Result<[u8; 32], String> {
     executable_digest_cancellable(descriptor, size, || false)
 }
@@ -831,6 +841,11 @@ fn executable_digest_cancellable(
     size: u64,
     cancelled: impl Fn() -> bool,
 ) -> Result<[u8; 32], String> {
+    #[cfg(test)]
+    DIGEST_WORK.with(|work| {
+        let (calls, bytes) = work.get();
+        work.set((calls + 1, bytes));
+    });
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     let limit = size.saturating_add(1);
@@ -846,6 +861,11 @@ fn executable_digest_cancellable(
         if count == 0 {
             break;
         }
+        #[cfg(test)]
+        DIGEST_WORK.with(|work| {
+            let (calls, bytes) = work.get();
+            work.set((calls, bytes + count as u64));
+        });
         hasher.update(&buffer[..count]);
         offset = offset.saturating_add(count as u64);
     }

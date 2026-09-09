@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Refresh enabled CLI providers through one shared discovery request, avoiding competing refresh
+  generations and repeated clicks starting duplicate checks.
+- Remove redundant full executable scans during provider validation while retaining content,
+  path and launch checks. The measured validation stage now reads each executable twice instead
+  of six times.
+
 ## [0.2.0-beta.27] - 2026-09-09
 
 ### Fixed
