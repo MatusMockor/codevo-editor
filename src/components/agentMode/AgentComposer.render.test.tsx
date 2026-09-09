@@ -87,7 +87,8 @@ describe("AgentComposer render boundaries", () => {
     expect(host.querySelector<HTMLButtonElement>("#agent-checkout")?.disabled).toBe(true);
     render({ ...updated, providerEnabled: { claudeCode: false, codex: false } });
     expect(vi.mocked(AgentLaunchControls).mock.lastCall?.[0].disabled).toBe(true);
-    expect(host.querySelector<HTMLTextAreaElement>("textarea")?.disabled).toBe(true);
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")?.disabled).toBe(false);
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
   });
 
   it("rebinds checkout selection to the latest target and isolation callbacks", () => {

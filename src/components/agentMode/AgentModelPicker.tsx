@@ -1,3 +1,4 @@
+import { useAgentControlOpenRequest } from "./useAgentControlOpenRequest";
 import {
   Fragment,
   useCallback,
@@ -36,6 +37,8 @@ export interface AgentModelPickerProps {
   readonly label: string;
   readonly launch: AgentLaunchOptions;
   readonly disabled: boolean;
+  readonly openRequest?: object | null;
+  onOpenRequestHandled?(): void;
   readonly describedBy: string | null;
   readonly favorites: AgentModelFavorites;
   readonly providerEnabled?: Readonly<Record<AgentCliKind, boolean>> | null;
@@ -50,6 +53,8 @@ const MAX_SHORTCUT_ROWS = 9;
 export function AgentModelPicker({
   describedBy,
   disabled,
+  openRequest = null,
+  onOpenRequestHandled,
   favorites,
   id,
   label,
@@ -132,6 +137,8 @@ export function AgentModelPicker({
     );
     show();
   }, [launch.provider, pickerDisabled, rows, selectedModel, show]);
+
+  useAgentControlOpenRequest(openRequest, () => openPicker(), onOpenRequestHandled);
 
   const choose = useCallback(
     (row: AgentModelRow) => {

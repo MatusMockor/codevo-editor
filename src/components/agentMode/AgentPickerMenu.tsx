@@ -1,3 +1,4 @@
+import { useAgentControlOpenRequest } from "./useAgentControlOpenRequest";
 import {
   useCallback,
   useEffect,
@@ -27,6 +28,8 @@ export interface AgentPickerMenuProps {
   readonly options: ReadonlyArray<AgentPickerOption>;
   readonly value: string;
   readonly disabled: boolean;
+  readonly openRequest?: object | null;
+  onOpenRequestHandled?(): void;
   readonly tone: AgentPickerTone;
   readonly prefix: string | null;
   readonly describedBy: string | null;
@@ -59,6 +62,8 @@ export function AgentPickerMenu({
   confirmation = null,
   describedBy,
   disabled,
+  openRequest = null,
+  onOpenRequestHandled,
   icon = null,
   id,
   label,
@@ -107,6 +112,8 @@ export function AgentPickerMenu({
     },
     [disabled, onOpen, open, options.length, visibleOptions.length],
   );
+
+  useAgentControlOpenRequest(openRequest, () => openMenu(selectedIndex), onOpenRequestHandled);
 
   const choose = useCallback(
     (option: AgentPickerOption) => {

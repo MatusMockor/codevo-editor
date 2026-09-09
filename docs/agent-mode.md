@@ -37,6 +37,24 @@ project root retains at most 64 threads and 16 MiB of thread data; older eligibl
 evicted before the count limit is reached, and a save can fail when the store is full and no record
 is eligible for eviction.
 
+## Composer commands
+
+Type `/` at the start of the prompt to browse Codevo commands. Keep typing to filter by name,
+use the arrow keys to select a command, and press Enter or Tab to choose it. Escape closes the
+suggestions without deleting your text.
+
+- `/model` opens the model picker.
+- `/permissions` opens the permission picker.
+- `/new` starts a fresh conversation in the selected project.
+- `/settings` opens provider settings.
+- With Claude Code, `/reasoning` opens model capabilities and `/plan` selects plan mode.
+- In an existing Claude Code thread, `/compact` prepares context compaction; submit it with
+  Cmd+Enter or the send button.
+
+The menu lists commands implemented by Codevo. It does not discover provider-installed skills
+or implement Claude Code's temporary `/btw` side conversation. Unknown slash text and commands
+with arguments keep the normal prompt behavior.
+
 ## Review and work with a thread
 
 The thread header's **Open** menu can reveal the checkout in Finder, open its terminal or Files

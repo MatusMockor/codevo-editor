@@ -188,7 +188,7 @@ describe("AgentComposer", () => {
     expect(trigger("agent-launch-effort").disabled).toBe(true);
     expect(trigger("agent-launch-mode").disabled).toBe(true);
     expect(trigger(CHECKOUT_ID).disabled).toBe(true);
-    expect(host.querySelector<HTMLTextAreaElement>("#agent-prompt")?.disabled).toBe(true);
+    expect(host.querySelector<HTMLTextAreaElement>("#agent-prompt")?.disabled).toBe(false);
     const settings = [...host.querySelectorAll("button")].find(
       (button) => button.textContent === "Open provider settings",
     );

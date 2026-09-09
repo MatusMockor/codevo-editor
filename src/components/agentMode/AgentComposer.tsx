@@ -15,7 +15,10 @@ import {
 } from "../../domain/agentTask";
 import { agentComposerNestedTargetLabel, type AgentComposerTarget } from "./agentComposerCheckout";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
-import { AgentLaunchControls } from "./AgentLaunchControls";
+import { AgentComposerCommands } from "./AgentComposerCommands";
+import { useAgentComposerCommands } from "./useAgentComposerCommands";
+import type { AgentComposerCommandId } from "../../domain/agentComposerCommand";
+import { AgentLaunchControls, type AgentLaunchControlRequest } from "./AgentLaunchControls";
 import { agentLaunchForDispatch } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 import { AgentComposerCheckout, AgentComposerLockedCheckout } from "./AgentComposerControls";
@@ -98,6 +101,15 @@ export function AgentComposer({
   worktreeOnly,
   worktreeOnlyReason,
 }: AgentComposerProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [controlRequest, setControlRequest] = useState<
+    | (AgentLaunchControlRequest & {
+        readonly ownerMode: AgentComposerMode;
+        readonly ownerTarget: AgentComposerTarget | null;
+        readonly ownerProvider: AgentCliKind;
+      })
+    | null
+  >(null);
   const composerRef = useRef<HTMLFormElement>(null);
   const compact = useCompactComposerControls(composerRef);
   const favorites = useAgentModelFavorites(modelFavoritesPersistence);
@@ -180,6 +192,14 @@ export function AgentComposer({
     () => (
       <AgentLaunchControls
         disabled={dispatching || allProvidersDisabled}
+        openRequest={
+          controlRequest?.ownerMode === mode &&
+          controlRequest.ownerTarget === target &&
+          controlRequest.ownerProvider === effectiveLaunch.provider
+            ? controlRequest
+            : null
+        }
+        onOpenRequestHandled={() => setControlRequest(null)}
         favorites={favorites}
         launch={effectiveLaunch}
         onLaunchChange={onLaunchChange}
@@ -192,6 +212,9 @@ export function AgentComposer({
     [
       dispatching,
       allProvidersDisabled,
+      controlRequest,
+      mode,
+      target,
       favorites,
       effectiveLaunch,
       onLaunchChange,
@@ -205,20 +228,75 @@ export function AgentComposer({
 
   const footer = followUp ? <AgentComposerLockedCheckout isolation={isolation} /> : targetControls;
 
+  const chooseCommand = (command: AgentComposerCommandId, submitCommand: boolean): void => {
+    if (command === "compact") {
+      if (!submitCommand) {
+        onPromptChange("/compact ");
+        return;
+      }
+      if (blocked || dispatching || onCompactContext === undefined) return;
+      onCompactContext({ launch: effectiveLaunch, dangerousLaunchConfirmed: dangerousLaunch });
+      onPromptChange("");
+      return;
+    }
+    if (command === "settings") {
+      onPromptChange("");
+      onOpenProviderSettings();
+      return;
+    }
+    if (dispatching) return;
+    if (command === "new") {
+      onPromptChange("");
+      onNewThread();
+      return;
+    }
+    if (allProvidersDisabled) return;
+    onPromptChange("");
+    if (command === "plan") {
+      if (effectiveLaunch.provider === "claudeCode") {
+        onLaunchChange({ ...effectiveLaunch, mode: "plan" });
+      }
+      return;
+    }
+    setControlRequest({
+      kind: command,
+      ownerMode: mode,
+      ownerTarget: target,
+      ownerProvider: effectiveLaunch.provider,
+    });
+  };
+  const commands = useAgentComposerCommands({
+    prompt,
+    provider: effectiveLaunch.provider,
+    followUp,
+    onChoose: chooseCommand,
+  });
+
+  const localCommandAvailable =
+    commands.exactCommand === "settings" ||
+    (!dispatching &&
+      commands.exactCommand !== null &&
+      commands.exactCommand !== "compact" &&
+      (commands.exactCommand === "new" || !allProvidersDisabled));
+
   const dispatch = (): void => {
     onSubmit({ launch: effectiveLaunch, dangerousLaunchConfirmed: dangerousLaunch });
   };
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
+    if (commands.interceptSubmit()) return;
     if (blocked) return;
     dispatch();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (commands.onKeyDown(event)) return;
     if (event.key !== "Enter") return;
     if (!event.metaKey && !event.ctrlKey) return;
     event.preventDefault();
+    if (commands.interceptSubmit()) return;
     if (blocked) return;
     dispatch();
   };
@@ -282,9 +360,23 @@ export function AgentComposer({
         </label>
         <textarea
           className="agent-composer__textarea"
-          disabled={allProvidersDisabled}
           id="agent-prompt"
-          onChange={(event) => onPromptChange(event.target.value)}
+          ref={textareaRef}
+          aria-autocomplete="list"
+          aria-controls={commands.open ? "agent-composer-commands" : undefined}
+          aria-expanded={commands.open}
+          aria-activedescendant={
+            commands.open
+              ? `agent-composer-command-${commands.rows[commands.activeIndex]?.id}`
+              : undefined
+          }
+          onFocus={commands.onFocus}
+          onBlur={commands.onBlur}
+          onSelect={(event) => commands.onSelect(event.currentTarget)}
+          onChange={(event) => {
+            commands.onEdit();
+            onPromptChange(event.target.value);
+          }}
           onKeyDown={onKeyDown}
           placeholder={
             followUp
@@ -293,6 +385,16 @@ export function AgentComposer({
           }
           value={prompt}
         />
+
+        {commands.open && (
+          <AgentComposerCommands
+            anchor={textareaRef}
+            rows={commands.rows}
+            activeIndex={commands.activeIndex}
+            onChoose={commands.choose}
+            onClose={commands.close}
+          />
+        )}
 
         <div className="agent-composer__row" data-presentation={compact ? "compact" : "inline"}>
           {launchControls}
@@ -310,7 +412,7 @@ export function AgentComposer({
                 ? "agent-composer__send agent-composer__send--busy"
                 : "agent-composer__send"
             }
-            disabled={blocked}
+            disabled={blocked && !localCommandAvailable}
             title={agentControlTooltip(submitName, shortcut.keys)}
             type="submit"
           >

@@ -7,6 +7,12 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Browse and filter composer commands with `/`, with keyboard navigation and direct access to
+  model, permission, thread, and provider controls. Show Claude-specific actions only for Claude
+  and context compaction only in an existing Claude thread.
+
 ## [0.2.0-beta.25] - 2026-09-09
 
 ### Fixed

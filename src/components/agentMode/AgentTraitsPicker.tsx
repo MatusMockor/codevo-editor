@@ -1,5 +1,7 @@
+import { useAgentControlOpenRequest } from "./useAgentControlOpenRequest";
 import { ChevronDown } from "lucide-react";
-import type { ReactNode } from "react";
+import { useLayoutEffect, type ReactNode } from "react";
+import { focusFirstInPopover, trapPopoverTab } from "./agentPopoverFocus";
 import type {
   AgentLaunchOptions,
   ClaudeContextChoice,
@@ -19,6 +21,8 @@ import { useAgentPopover } from "./agentPopover";
 interface AgentTraitsPickerProps {
   readonly launch: AgentLaunchOptions & { readonly provider: "claudeCode" };
   readonly disabled: boolean;
+  readonly openRequest?: object | null;
+  onOpenRequestHandled?(): void;
   readonly configuredModel: string | null;
   onChange(next: AgentLaunchOptions): void;
 }
@@ -41,10 +45,18 @@ const CONTEXT_LABELS: Readonly<Record<ClaudeContextChoice, string>> = {
 export function AgentTraitsPicker({
   configuredModel,
   disabled,
+  openRequest = null,
+  onOpenRequestHandled,
   launch,
   onChange,
 }: AgentTraitsPickerProps) {
   const popover = useAgentPopover("start", disabled);
+  useAgentControlOpenRequest(openRequest, () => popover.show(), onOpenRequestHandled);
+
+  const { open, popoverRef } = popover;
+  useLayoutEffect(() => {
+    if (open) focusFirstInPopover(popoverRef.current);
+  }, [open, popoverRef]);
   const traits = agentClaudeLaunchTraits(launch, configuredModel);
   const effort =
     launch.effort !== "default" && traits.efforts.includes(launch.effort)
@@ -88,6 +100,7 @@ export function AgentTraitsPicker({
           aria-label="Model capabilities"
           className="agent-picker__menu agent-traits-picker__menu"
           onKeyDown={(event) => {
+            trapPopoverTab(event);
             if (event.key !== "Escape") return;
             event.preventDefault();
             popover.hide(true);

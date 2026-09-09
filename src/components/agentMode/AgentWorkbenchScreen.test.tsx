@@ -233,7 +233,10 @@ describe("AgentWorkbenchScreen", () => {
     expect(providerFooter("codex")).toBeNull();
     expect(modelPicker().textContent).toContain("GPT-5.6 Sol");
     expect(modelPicker().disabled).toBe(true);
-    expect(prompt().disabled).toBe(true);
+    expect(prompt().disabled).toBe(false);
+    expect(
+      host.querySelector<HTMLButtonElement>('.agent-composer button[type="submit"]')?.disabled,
+    ).toBe(true);
 
     selectedProviderAuthority = null;
     authorities = {};

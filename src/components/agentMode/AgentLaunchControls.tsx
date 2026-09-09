@@ -25,7 +25,13 @@ import { agentPickerOption, type AgentPickerOption } from "./agentPickerOption";
 const MODEL_ID = "agent-launch-model";
 const MODE_ID = "agent-launch-mode";
 
+export interface AgentLaunchControlRequest {
+  readonly kind: "model" | "reasoning" | "permissions";
+}
+
 export interface AgentLaunchControlsProps {
+  readonly openRequest?: AgentLaunchControlRequest | null;
+  onOpenRequestHandled?(): void;
   readonly presentation?:
     { readonly kind: "inline" } | { readonly kind: "compact"; readonly checkout: ReactNode };
   readonly launch: AgentLaunchOptions;
@@ -39,6 +45,8 @@ export interface AgentLaunchControlsProps {
 
 export function AgentLaunchControls({
   disabled,
+  openRequest = null,
+  onOpenRequestHandled,
   presentation = { kind: "inline" },
   favorites,
   launch,
@@ -60,6 +68,8 @@ export function AgentLaunchControls({
         <>
           <AgentLaunchDivider />
           <AgentTraitsPicker
+            onOpenRequestHandled={onOpenRequestHandled}
+            openRequest={openRequest?.kind === "reasoning" ? openRequest : null}
             configuredModel={configuredModel}
             disabled={disabled}
             launch={effectiveLaunch}
@@ -70,6 +80,8 @@ export function AgentLaunchControls({
 
       <AgentLaunchDivider />
       <AgentPickerMenu
+        onOpenRequestHandled={onOpenRequestHandled}
+        openRequest={openRequest?.kind === "permissions" ? openRequest : null}
         align="start"
         confirmation={null}
         describedBy={`${MODE_ID}-hint`}
@@ -92,6 +104,8 @@ export function AgentLaunchControls({
   return (
     <div className="agent-composer__launch" data-presentation={presentation.kind}>
       <AgentModelPicker
+        onOpenRequestHandled={onOpenRequestHandled}
+        openRequest={openRequest?.kind === "model" ? openRequest : null}
         describedBy={`${MODEL_ID}-hint`}
         disabled={disabled}
         favorites={favorites}
@@ -118,7 +132,10 @@ export function AgentLaunchControls({
       </span>
 
       {presentation.kind === "compact" ? (
-        <AgentComposerCompactMenu disabled={disabled}>
+        <AgentComposerCompactMenu
+          disabled={disabled}
+          openRequest={openRequest?.kind !== "model" ? openRequest : null}
+        >
           {secondaryControls}
           {presentation.checkout}
         </AgentComposerCompactMenu>
