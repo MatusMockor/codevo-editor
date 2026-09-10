@@ -45,7 +45,9 @@ export const AgentTurnBand = memo(function AgentTurnBand({
     <>
       <span aria-hidden="true" className="agent-turn__sentinel" ref={sentinel} />
       <header className={bandClassName(pin, expanded)}>
-        {ordinal !== null && (
+        {ordinal === null ? (
+          <span aria-hidden="true" className="agent-band__mark" />
+        ) : (
           <span aria-hidden="true" className="agent-band__number agent-num">
             {ordinal}.
           </span>
@@ -53,35 +55,33 @@ export const AgentTurnBand = memo(function AgentTurnBand({
         <p className="agent-band__text">
           <HighlightRun current={current} query={query} text={prompt} />
         </p>
-        <button
-          aria-expanded={expanded}
-          aria-label={expanded ? "Collapse this prompt" : "Show the full prompt"}
-          className="agent-band__expand"
-          onClick={() => setOpened(!opened)}
-          type="button"
-        >
-          <ExpandIcon aria-hidden="true" size={12} />
-        </button>
-        <button
-          className="agent-band__jump"
-          onClick={onJumpToAnswerEnd}
-          title="Jump to the end of this answer"
-          type="button"
-        >
-          <ChevronDown aria-hidden="true" className="agent-band__jump-icon" size={12} />
-          end of answer
-        </button>
-        <span
-          className="agent-band__meta agent-num"
-          aria-label={startedAtEpochMs === null ? undefined : "Message time"}
-        >
-          {startedAtEpochMs !== null && (
-            <span>
-              <AgentRelativeTime epochMs={startedAtEpochMs} />
-            </span>
-          )}
+        <div className="agent-band__tools">
+          <span
+            className="agent-band__meta agent-num"
+            aria-label={startedAtEpochMs === null ? undefined : "Message time"}
+          >
+            {startedAtEpochMs !== null && <AgentRelativeTime epochMs={startedAtEpochMs} />}
+          </span>
           <AgentMessageCopyButton clipboard={textClipboard} label="your message" text={prompt} />
-        </span>
+          <button
+            aria-expanded={expanded}
+            aria-label={expanded ? "Collapse this prompt" : "Show the full prompt"}
+            className="agent-band__expand"
+            onClick={() => setOpened(!opened)}
+            type="button"
+          >
+            <ExpandIcon aria-hidden="true" size={12} />
+          </button>
+          <button
+            className="agent-band__jump"
+            onClick={onJumpToAnswerEnd}
+            title="Jump to the end of this answer"
+            type="button"
+          >
+            <ChevronDown aria-hidden="true" className="agent-band__jump-icon" size={12} />
+            end of answer
+          </button>
+        </div>
       </header>
     </>
   );

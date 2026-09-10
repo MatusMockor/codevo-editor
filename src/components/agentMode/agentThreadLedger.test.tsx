@@ -254,6 +254,83 @@ describe("agent thread ledger", () => {
     expect(bandTexts()).toEqual(["First question", "Second question", "Third question"]);
   });
 
+  it("arranges the band as ordinal, prompt and one tool group", () => {
+    render({
+      thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])]),
+      textClipboard: { canWriteText: () => true, writeText: async () => undefined },
+    });
+
+    const band = host.querySelector<HTMLElement>("header.agent-band");
+    expect([...(band?.children ?? [])].map((child) => child.className)).toEqual([
+      "agent-band__number agent-num",
+      "agent-band__text",
+      "agent-band__tools",
+    ]);
+    expect(band?.querySelector(".agent-band__mark")).toBeNull();
+    expect(
+      [...(band?.querySelector(".agent-band__tools")?.children ?? [])].map(
+        (child) => `${child.tagName.toLowerCase()}.${child.className.split(" ")[0]}`,
+      ),
+    ).toEqual([
+      "span.agent-band__meta",
+      "button.agent-message-copy",
+      "button.agent-band__expand",
+      "button.agent-band__jump",
+    ]);
+  });
+
+  it("marks the gutter instead of leaving it empty when the ordinal is withheld", () => {
+    render({
+      thread: threadView([turn("t8", "Eighth question", SETTLED, [text("alpha")])], {
+        turnsTruncated: true,
+      }),
+    });
+
+    const band = host.querySelector<HTMLElement>("header.agent-band");
+    expect([...(band?.children ?? [])].map((child) => child.className)).toEqual([
+      "agent-band__mark",
+      "agent-band__text",
+      "agent-band__tools",
+    ]);
+    expect(band?.querySelector(".agent-band__mark")?.getAttribute("aria-hidden")).toBe("true");
+    expect(band?.querySelector(".agent-band__mark")?.textContent).toBe("");
+    expect(numbers()).toEqual([]);
+  });
+
+  it("keeps the table wrapper as the only overflow ancestor of a wide table", () => {
+    const viewport = viewportPort(true);
+    render({
+      thread: threadView([turn("t1", "First question", SETTLED, [text(wideTable())])]),
+      markdownViewport: viewport.port,
+    });
+
+    const table = host.querySelector<HTMLElement>("table.agent-md__table");
+    const scroll = host.querySelector<HTMLElement>(".agent-session__scroll");
+    expect(table).not.toBeNull();
+    expect(scroll?.contains(table as Node)).toBe(true);
+
+    const chain: HTMLElement[] = [];
+    for (
+      let ancestor = table?.parentElement ?? null;
+      ancestor !== null && ancestor !== scroll;
+      ancestor = ancestor.parentElement
+    ) {
+      chain.push(ancestor);
+    }
+
+    const overflowing = chain.flatMap((element) =>
+      containingBlockDeclarations(element).filter((entry) => entry.includes("overflow")),
+    );
+    expect(overflowing).toEqual([
+      "components/agentMode/agentThread.css .agent-md__table-scroll overflow-x",
+    ]);
+    expect(declaration(".agent-md__table", "width")).toBeNull();
+    expect(declaration(".agent-md__table", "max-width")).toBe("100%");
+    expect(declaration(".agent-md__th", "white-space")).toBeNull();
+    expect(declaration(".agent-md__td", "overflow-wrap")).toBe("break-word");
+    expect(declaration(".agent-md__td .agent-md__inline-code", "overflow-wrap")).toBe("anywhere");
+  });
+
   it("clamps and shadows only the band whose turn is pinned", () => {
     const pin = pinPort();
     render({
@@ -673,6 +750,15 @@ function tableAndCode(): string {
     "```ts",
     "const answer = 42;",
     "```",
+  ].join("\n");
+}
+
+function wideTable(): string {
+  return [
+    "| command | result |",
+    "| --- | --- |",
+    "| `npm run lint -- --max-warnings 0 && npm run check && npm test -- --run` | passes on src/components/agentMode/AgentThreadSession.markdown.test.tsx |",
+    "| `cargo clippy --all-targets -- -D warnings` | passes |",
   ].join("\n");
 }
 

@@ -153,11 +153,64 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-band", "top")).toBe("0");
     expect(winningDeclaration(".agent-band", "z-index")).toBe("1");
     expect(winningDeclaration(".agent-band", "margin")).toBe(
-      "0 calc(var(--agent-band-bleed) * -1) 12px",
+      "0 calc(var(--agent-band-bleed) * -1) var(--agent-space-4)",
     );
-    expect(winningDeclaration(".agent-band", "padding")).toBe("12px var(--agent-band-bleed)");
+    expect(winningDeclaration(".agent-band", "padding")).toBe(
+      "var(--agent-space-4) var(--agent-band-bleed)",
+    );
     expect(winningDeclaration(".agent-session", "padding")).toBe("12px 24px 8px");
     expect(bandBleed()).toBe("24px");
+  });
+
+  it("lays the band out as gutter, prompt and one tool track from the ladder", () => {
+    expect(winningDeclaration(".agent-band", "grid-template-columns")).toBe(
+      "calc(var(--agent-band-indent) - var(--agent-space-3)) minmax(0, 1fr) auto",
+    );
+    expect(winningDeclaration(".agent-band", "column-gap")).toBe("var(--agent-space-3)");
+    expect(declarations(".agent-band", "row-gap")).toEqual([]);
+    expect(winningDeclaration(".agent-band", "align-items")).toBe("baseline");
+    expect(winningDeclaration(".agent-band__tools", "grid-column")).toBe("3");
+    expect(winningDeclaration(".agent-band__tools", "display")).toBe("inline-flex");
+    expect(winningDeclaration(".agent-band__tools", "gap")).toBe("var(--agent-space-2)");
+    for (const selector of [".agent-band__expand", ".agent-band__jump", ".agent-band__meta"]) {
+      expect(declarations(selector, "grid-column"), selector).toEqual([]);
+    }
+  });
+
+  it("sets the prompt and the ordinal from the type ladder", () => {
+    expect(winningDeclaration(".agent-band__text", "font-size")).toBe("var(--agent-fs-lg)");
+    expect(winningDeclaration(".agent-band__text", "font-weight")).toBe("500");
+    expect(winningDeclaration(".agent-band__text", "line-height")).toBe("1.45");
+    expect(winningDeclaration(".agent-band__number", "font-family")).toBe("var(--agent-mono)");
+    expect(winningDeclaration(".agent-band__number", "font-size")).toBe("var(--agent-fs-2xs)");
+    expect(winningDeclaration(".agent-band__number", "font-weight")).toBe("600");
+    expect(winningDeclaration(".agent-band__number", "letter-spacing")).toBe(
+      "var(--agent-tracking-label)",
+    );
+    expect(winningDeclaration(".agent-band__number", "color")).toBe("var(--agent-text-subtle)");
+    expect(
+      winningDeclaration(".agent-turn-list > .agent-turn:last-child .agent-band__number", "color"),
+    ).toBe("var(--agent-accent)");
+  });
+
+  it("marks the gutter with a dot when the ordinal is withheld", () => {
+    expect(winningDeclaration(".agent-band__mark", "width")).toBe("6px");
+    expect(winningDeclaration(".agent-band__mark", "height")).toBe("6px");
+    expect(winningDeclaration(".agent-band__mark", "border-radius")).toBe(
+      "var(--agent-radius-pill)",
+    );
+    expect(winningDeclaration(".agent-band__mark", "background")).toBe("var(--agent-text-subtle)");
+    expect(winningDeclaration(".agent-band__mark", "align-self")).toBe("start");
+    expect(winningDeclaration(".agent-band__mark", "margin-top")).toBe("var(--agent-space-3)");
+  });
+
+  it("reveals the band tools on hover or focus like the other rows", () => {
+    expect(winningDeclaration(".agent-band__expand", "opacity")).toBe("0");
+    expect(winningDeclaration(".agent-band__meta", "opacity")).toBe("0");
+    expect(winningDeclaration(".agent-band:hover .agent-band__expand", "opacity")).toBe("1");
+    expect(winningDeclaration(".agent-band:focus-within .agent-band__jump", "opacity")).toBe("1");
+    expect(winningDeclaration(".agent-band:hover .agent-message-copy", "opacity")).toBe("1");
+    expect(winningDeclaration(".agent-band:focus-within .agent-message-copy", "opacity")).toBe("1");
   });
 
   it("clamps the band to two lines at all times and only an explicit expand undoes it", () => {
@@ -341,6 +394,27 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-text", "min-width")).toBe("0");
     expect(winningDeclaration(".agent-md__code-body", "overflow-x")).toBe("auto");
     expect(winningDeclaration(".agent-md__table-scroll", "overflow-x")).toBe("auto");
+  });
+
+  it("fits a markdown table to the reading column and wraps every cell", () => {
+    expect(declarations(".agent-md__table", "width")).toEqual([]);
+    expect(declarations(".agent-md__table", "min-width")).toEqual([]);
+    expect(winningDeclaration(".agent-md__table", "max-width")).toBe("100%");
+    expect(declarations(".agent-md__th", "white-space")).toEqual([]);
+    expect(declarations(".agent-md__td", "white-space")).toEqual([]);
+    expect(winningDeclaration(".agent-md__th", "overflow-wrap")).toBe("break-word");
+    expect(winningDeclaration(".agent-md__td", "overflow-wrap")).toBe("break-word");
+    expect(winningDeclaration(".agent-md__td .agent-md__inline-code", "overflow-wrap")).toBe(
+      "anywhere",
+    );
+    expect(winningDeclaration(".agent-md__td .agent-md__link", "overflow-wrap")).toBe("anywhere");
+    expect(winningDeclaration(".agent-md__th", "vertical-align")).toBe("bottom");
+    expect(winningDeclaration(".agent-md__td", "vertical-align")).toBe("top");
+    for (const rule of RULES.filter((entry) =>
+      entry.selectors.some((selector) => selector.includes(".agent-md__t")),
+    )) {
+      expect(rule.body, rule.selectors.join(",")).not.toMatch(/max-content|nowrap|table-layout/);
+    }
   });
 
   it("keeps markdown chrome on the well and raised tones without side tone or z-index", () => {

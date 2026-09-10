@@ -141,7 +141,7 @@ describe("agent mode responsive layout contract", () => {
     const narrowCenter = block(appCss, "@container agent-center (max-width: 600px)");
     expect(rule(".agent-answer", narrowCenter)).toContain("padding-left: 0");
     expect(rule(".agent-band", narrowCenter)).toContain(
-      "grid-template-columns: auto minmax(0, 1fr) auto auto",
+      "grid-template-columns: auto minmax(0, 1fr) auto;",
     );
     expect(rule(".agent-band__meta")).toContain("opacity: 0");
     expect(rule(".agent-band__meta")).toContain("justify-content: flex-end");
