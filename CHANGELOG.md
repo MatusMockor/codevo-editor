@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.29] - 2026-09-10
+
+### Added
+
+- Capture Claude subagent status, duration, token usage, tool counts and parent links in
+  saved threads. Show the agent type and task description and avoid counting child tools
+  again in the parent summary. Existing saved threads remain compatible.
+
+### Fixed
+
+- Show a themed application frame during startup and preserve the selected appearance
+  while loading workspaces and surfaces, reducing blank screens and theme flashes.
+- Launch the current unbundled debug binary on macOS instead of an older app bundle.
+
 ## [0.2.0-beta.28] - 2026-09-09
 
 ### Fixed
