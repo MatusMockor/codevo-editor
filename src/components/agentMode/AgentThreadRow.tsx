@@ -1,6 +1,7 @@
 import { memo, useCallback, useState, type MouseEvent } from "react";
 import { Check, Folder, FolderGit2, Pin } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { ListSelectionModifiers } from "../../domain/listSelection";
 import { AgentCompactRelativeTime } from "./agentClock";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
 import { AgentThreadRowMenu } from "./AgentThreadRowMenu";
@@ -17,9 +18,10 @@ export interface AgentThreadRowProps {
   readonly view: AgentThreadView;
   readonly projectLabel: string;
   readonly on: boolean;
+  readonly selected: boolean;
   readonly focused: boolean;
   readonly jumpLabel: string | null;
-  onSelect(threadId: string): void;
+  onSelect(threadId: string, modifiers: ListSelectionModifiers): void;
   onTogglePin(threadId: string): void;
   onMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
 }
@@ -30,8 +32,17 @@ interface MenuAnchor {
 }
 
 export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRowProps) {
-  const { focused, jumpLabel, on, onMenuCommand, onSelect, onTogglePin, projectLabel, view } =
-    props;
+  const {
+    focused,
+    jumpLabel,
+    on,
+    onMenuCommand,
+    onSelect,
+    onTogglePin,
+    projectLabel,
+    selected,
+    view,
+  } = props;
   const thread = view.thread;
   const threadId = thread.threadId;
   const model = agentThreadRowModel(view, on, projectLabel);
@@ -58,7 +69,21 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   };
 
   const Icon = thread.target.isolation === "worktree" ? FolderGit2 : Folder;
-  const rowClass = agentRowClassName(model.variant, on, model.recede, status, view.unread);
+  const rowClass = agentRowClassName({
+    variant: model.variant,
+    on,
+    marked: selected,
+    recede: model.recede,
+    status,
+    unread: view.unread,
+  });
+  const selectRow = (event: MouseEvent<HTMLDivElement>): void => {
+    onSelect(threadId, {
+      shiftKey: event.shiftKey,
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+    });
+  };
   const menuNode = menu !== null && (
     <AgentThreadRowMenu
       archived={thread.archived}
@@ -75,14 +100,15 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
 
   if (model.variant === "slim") {
     return (
-      <li className="agent-slim-slot">
+      <li className="agent-slim-slot" role="none">
         <div
           aria-current={on ? "true" : undefined}
+          aria-selected={selected}
           className={rowClass}
           data-thread-id={threadId}
-          onClick={() => onSelect(threadId)}
+          onClick={selectRow}
           onContextMenu={openMenu}
-          role="button"
+          role="option"
           tabIndex={focused ? 0 : -1}
         >
           <Icon aria-hidden="true" className="agent-row__icon" size={16} />
@@ -106,14 +132,15 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
   }
 
   return (
-    <li className="agent-card-slot">
+    <li className="agent-card-slot" role="none">
       <div
         aria-current={on ? "true" : undefined}
+        aria-selected={selected}
         className={rowClass}
         data-thread-id={threadId}
-        onClick={() => onSelect(threadId)}
+        onClick={selectRow}
         onContextMenu={openMenu}
-        role="button"
+        role="option"
         tabIndex={focused ? 0 : -1}
       >
         <div className="agent-row__line1">

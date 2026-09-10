@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentTasksNotice } from "../../application/agentThreadPorts";
+import type { AgentTasksNotice, AgentThreadView } from "../../application/agentThreadPorts";
 import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
 import type { AgentProjectMenuTarget } from "./agentSidebarPresentation";
@@ -12,6 +12,7 @@ import {
   CLIPBOARD_UNAVAILABLE_NOTICE,
   NOTHING_TO_COPY_NOTICE,
   REVEAL_FAILED_NOTICE,
+  staleSelectionNotice,
   useAgentThreadMenuCommands,
   type AgentMenuCommandSurface,
   type AgentThreadMenuCommandOptions,
@@ -169,6 +170,133 @@ describe("useAgentThreadMenuCommands", () => {
       CLIPBOARD_UNAVAILABLE_NOTICE,
     ]);
   });
+
+  it("archives only the threads a bulk selection may legitimately archive", () => {
+    const agents = threadsSurfaceFixture({
+      threads: [
+        surfaceThreadView(),
+        runningView("agt-run"),
+        archivedView("agt-old"),
+        foreignView("agt-foreign"),
+      ],
+      archive: vi.fn(),
+      remove: vi.fn(),
+    });
+    render({ agents });
+
+    act(() =>
+      current().handleThreadBulkCommand({
+        kind: "apply",
+        request: {
+          action: "archive",
+          ownerKey: SURFACE_FIXTURE_ROOT,
+          threadIds: ["agt-1", "agt-run", "agt-old", "agt-foreign"],
+          missingIds: ["agt-gone"],
+        },
+      }),
+    );
+
+    expect(agents.archive).toHaveBeenCalledTimes(1);
+    expect(agents.archive).toHaveBeenCalledWith("agt-1");
+    expect(agents.remove).not.toHaveBeenCalled();
+    expect(notices).toEqual([
+      {
+        kind: "info",
+        message:
+          "Archived 1 thread. Skipped 4: 1 still running, 1 already archived, 1 no longer in this list, 1 owned by another project.",
+        action: null,
+      },
+    ]);
+  });
+
+  it("never routes a running thread into a bulk delete the surface would refuse", () => {
+    const agents = threadsSurfaceFixture({
+      threads: [surfaceThreadView(), runningView("agt-run"), foreignView("agt-foreign")],
+      archive: vi.fn(),
+      remove: vi.fn(),
+    });
+    render({ agents });
+
+    act(() =>
+      current().handleThreadBulkCommand({
+        kind: "apply",
+        request: {
+          action: "delete",
+          ownerKey: SURFACE_FIXTURE_ROOT,
+          threadIds: ["agt-1", "agt-run", "agt-foreign"],
+          missingIds: [],
+        },
+      }),
+    );
+
+    expect(agents.remove).toHaveBeenCalledTimes(1);
+    expect(removed).toEqual(["agt-1"]);
+    expect(notices).toEqual([
+      {
+        kind: "info",
+        message: "Deleted 1 thread. Skipped 2: 1 still running, 1 owned by another project.",
+        action: null,
+      },
+    ]);
+  });
+
+  it("touches nothing when the selection was captured under another workspace generation", () => {
+    const agents = threadsSurfaceFixture({
+      threads: [surfaceThreadView()],
+      archive: vi.fn(),
+      remove: vi.fn(),
+    });
+    render({ agents });
+
+    act(() => current().handleThreadBulkCommand({ kind: "stale", action: "delete" }));
+
+    expect(agents.archive).not.toHaveBeenCalled();
+    expect(agents.remove).not.toHaveBeenCalled();
+    expect(notices).toEqual([staleSelectionNotice("delete")]);
+  });
+
+  function runningView(threadId: string): AgentThreadView {
+    const base = surfaceThreadView();
+    return {
+      ...base,
+      thread: {
+        ...base.thread,
+        threadId,
+        turns: [
+          {
+            turnId: `${threadId}-t1`,
+            prompt: "work",
+            status: { kind: "running" },
+            startedAtEpochMs: 1_700_000_000_000,
+            endedAtEpochMs: null,
+            events: [],
+            eventsTruncated: false,
+            lastStatusSequence: 0,
+            lastOutputSequence: 0,
+            launch: null,
+            cliVersion: null,
+          },
+        ],
+      },
+    };
+  }
+
+  function archivedView(threadId: string): AgentThreadView {
+    const base = surfaceThreadView();
+    return { ...base, thread: { ...base.thread, threadId, archived: true } };
+  }
+
+  function foreignView(threadId: string): AgentThreadView {
+    const base = surfaceThreadView();
+    return {
+      ...base,
+      thread: {
+        ...base.thread,
+        threadId,
+        owner: { ...base.thread.owner, rootKey: "/workspace/other" },
+      },
+    };
+  }
 
   function installClipboard(writeText: (text: string) => Promise<void>) {
     const spy = vi.fn(writeText);

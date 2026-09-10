@@ -4,6 +4,14 @@ import type {
   AgentThreadsSurface,
   AgentThreadView,
 } from "../../application/agentThreadPorts";
+import {
+  agentThreadBulkPlan,
+  agentThreadBulkReport,
+  type AgentThreadBulkAction,
+  type AgentThreadBulkCandidate,
+  type AgentThreadBulkCommand,
+} from "../../domain/agentThreadBulkAction";
+import { runningTurn } from "../../domain/agentThread";
 import type { AgentProjectGroup } from "./agentModePresentation";
 import type {
   AgentProjectMenuCommand,
@@ -27,6 +35,14 @@ export const REVEAL_FAILED_NOTICE: AgentTasksNotice = {
   message: "Unable to reveal that path in the file manager.",
   action: null,
 };
+
+export function staleSelectionNotice(action: AgentThreadBulkAction): AgentTasksNotice {
+  return {
+    kind: "warning",
+    message: `The thread selection no longer belongs to this project, nothing was ${action === "archive" ? "archived" : "deleted"}.`,
+    action: null,
+  };
+}
 
 export type AgentMenuCommandSurface = Pick<
   AgentThreadsSurface,
@@ -56,6 +72,7 @@ export interface AgentThreadMenuCommandOptions {
 export interface AgentThreadMenuCommands {
   handleProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
   handleThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
+  handleThreadBulkCommand(command: AgentThreadBulkCommand): void;
 }
 
 export function useAgentThreadMenuCommands({
@@ -181,7 +198,37 @@ export function useAgentThreadMenuCommands({
     [agents, copyThreadDetail, groups, remove, startNewThread, threadViews],
   );
 
-  return { handleProjectCommand, handleThreadMenuCommand };
+  const handleThreadBulkCommand = useCallback(
+    (command: AgentThreadBulkCommand) => {
+      if (command.kind === "stale") {
+        reportNotice(staleSelectionNotice(command.action));
+        return;
+      }
+      const plan = agentThreadBulkPlan(command.request, bulkCandidates(threadViews));
+      for (const threadId of plan.applyIds) {
+        if (plan.action === "archive") {
+          agents.archive(threadId);
+          continue;
+        }
+        remove(threadId);
+      }
+      reportNotice({ kind: "info", message: agentThreadBulkReport(plan), action: null });
+    },
+    [agents, remove, reportNotice, threadViews],
+  );
+
+  return { handleProjectCommand, handleThreadBulkCommand, handleThreadMenuCommand };
+}
+
+function bulkCandidates(
+  views: ReadonlyArray<AgentThreadView>,
+): ReadonlyArray<AgentThreadBulkCandidate> {
+  return views.map((view) => ({
+    threadId: view.thread.threadId,
+    ownerKey: view.thread.owner.rootKey,
+    running: runningTurn(view.thread) !== null,
+    archived: view.thread.archived,
+  }));
 }
 
 function clipboardWriter(): ((text: string) => Promise<void>) | null {

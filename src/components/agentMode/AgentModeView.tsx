@@ -294,6 +294,7 @@ export function AgentModeView({
   const renameThread = useAgentLatestCallback(agents.renameThread);
   const togglePin = useAgentLatestCallback(agents.togglePin);
   const threadMenuCommand = useAgentLatestCallback(menu.handleThreadMenuCommand);
+  const threadBulkCommand = useAgentLatestCallback(menu.handleThreadBulkCommand);
   const projectMenuCommand = useAgentLatestCallback(menu.handleProjectCommand);
   const newThread = useAgentLatestCallback(startNewThread);
   const changeProjectScope = useAgentLatestCallback((scope: AgentRailScope) => {
@@ -502,6 +503,7 @@ export function AgentModeView({
                 onProjectCommand={projectMenuCommand}
                 onReleaseProject={releaseProject}
                 onSelectThread={navigation.selectThread}
+                onThreadBulkCommand={threadBulkCommand}
                 onThreadMenuCommand={threadMenuCommand}
                 onTogglePin={togglePin}
                 onTrustProject={trustProject}

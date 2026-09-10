@@ -53,6 +53,7 @@ function defaults(): AgentThreadListProps {
     sections: { pinned: [], active: [], archived: [], hiddenArchivedCount: 0 },
     projectLabels: new Map(),
     selectedThreadId: null,
+    markedThreadIds: new Set<string>(),
     focusedThreadId: null,
     jumpLabels: new Map(),
     archivedExpanded: false,

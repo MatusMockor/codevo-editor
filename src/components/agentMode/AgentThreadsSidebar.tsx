@@ -13,11 +13,23 @@ import type { AgentThreadSearchSurface } from "../../application/agentThreadPort
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentThreadSearchMatch } from "../../domain/agentThreadSearch";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
+import type {
+  AgentThreadBulkAction,
+  AgentThreadBulkCommand,
+} from "../../domain/agentThreadBulkAction";
+import { detectKeymapPlatform } from "../../domain/keymap";
+import {
+  listSelectionGesture,
+  type ListSelectionModifiers,
+  type ListSelectionOwner,
+} from "../../domain/listSelection";
 import { AgentRailHeader } from "./AgentRailHeader";
 import { AgentProviderRailFooter } from "./AgentProviderRailFooter";
 import { AgentUsagePanel } from "./AgentUsagePanel";
 import { useJumpHints, useStableCallback } from "./agentRailHooks";
 import { AgentThreadList } from "./AgentThreadList";
+import { AgentThreadSelectionBar } from "./AgentThreadSelectionBar";
+import { useAgentThreadSelection } from "./useAgentThreadSelection";
 import { AgentThreadSearchResults } from "./AgentThreadSearchResults";
 import { agentThreadDisplayTitle, type AgentProjectGroup } from "./agentModePresentation";
 import {
@@ -42,6 +54,7 @@ export const SEARCH_OPTION_PREFIX = "agent-rail-search-result-";
 const EMPTY_JUMP_LABELS: ReadonlyMap<string, string> = new Map();
 const EMPTY_MATCHES: ReadonlyArray<AgentThreadSearchMatch> = [];
 const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
+const NO_BULK_COMMAND: (command: AgentThreadBulkCommand) => void = () => undefined;
 export interface AgentThreadsSidebarProps {
   readonly addProjectAvailable: boolean;
   readonly accountUsage: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
@@ -60,6 +73,7 @@ export interface AgentThreadsSidebarProps {
   onTogglePin(threadId: string): void;
   onChangeScope(scope: AgentRailScope): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
+  onThreadBulkCommand?(command: AgentThreadBulkCommand): void;
   onNewThread(projectRootKey: string, repositoryRoot: string): void;
   onAddProject(): void;
   onTrustProject(projectRootKey: string): void;
@@ -82,6 +96,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   onOpenSourceControl,
   onReleaseProject,
   onSelectThread,
+  onThreadBulkCommand,
   onThreadMenuCommand,
   onTogglePin,
   onTrustProject,
@@ -170,11 +185,43 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   );
   const focusedThreadId = rovingThreadId(focusRequest, selectedThreadId, visibleThreadIds);
 
+  const platform = useMemo(() => detectKeymapPlatform(), []);
+  const selection = useAgentThreadSelection(scope?.projectRootKey ?? null, visibleThreadIds);
+  const bulkCommand = useStableCallback(onThreadBulkCommand ?? NO_BULK_COMMAND);
+
   const moveFocus = useCallback((threadId: string | undefined) => {
     if (threadId === undefined) return;
     setFocusRequest(threadId);
     focusRow(listRef.current, threadId);
   }, []);
+
+  const rowSelect = useStableCallback((threadId: string, modifiers: ListSelectionModifiers) => {
+    const gesture = listSelectionGesture(modifiers, platform);
+    selection.apply(threadId, gesture);
+    if (gesture !== "open") return;
+    selectThread(threadId);
+  });
+
+  const runBulkAction = useCallback(
+    (action: AgentThreadBulkAction, capturedOwner: ListSelectionOwner) => {
+      const commit = selection.commit(capturedOwner);
+      selection.clear();
+      if (commit.kind === "ownerChanged") {
+        bulkCommand({ kind: "stale", action });
+        return;
+      }
+      bulkCommand({
+        kind: "apply",
+        request: {
+          action,
+          ownerKey: commit.owner.key,
+          threadIds: commit.ids,
+          missingIds: commit.missingIds,
+        },
+      });
+    },
+    [bulkCommand, selection],
+  );
 
   const toggleArchived = useCallback(() => {
     setArchivedExpanded((current) => !current);
@@ -189,22 +236,35 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     (event: KeyboardEvent<HTMLDivElement>) => {
       if (event.target instanceof HTMLInputElement) return;
       if (visibleThreadIds.length === 0) return;
+      const fromRow = focusedThreadId !== null && isThreadRow(event.target, focusedThreadId);
       const index = focusedThreadId === null ? -1 : visibleThreadIds.indexOf(focusedThreadId);
       const target = nextThreadIndex(event.key, index, visibleThreadIds.length);
       if (target !== null) {
         event.preventDefault();
-        moveFocus(visibleThreadIds[target]);
+        const nextThreadId = visibleThreadIds[target];
+        moveFocus(nextThreadId);
+        if (!fromRow || nextThreadId === undefined) return;
+        selection.apply(nextThreadId, event.shiftKey ? "extend" : "open");
         return;
       }
       if (event.key === "Escape") {
         event.preventDefault();
+        if (selection.hasMarkBeyond(selectedThreadId)) {
+          selection.clear();
+          return;
+        }
         searchRef.current?.focus();
         return;
       }
-      if (focusedThreadId === null) return;
-      if (!isThreadRow(event.target, focusedThreadId)) return;
-      if (event.key === "Enter" || event.key === " ") {
+      if (focusedThreadId === null || !fromRow) return;
+      if (event.key === " ") {
         event.preventDefault();
+        selection.apply(focusedThreadId, "toggle");
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        selection.apply(focusedThreadId, "open");
         selectThread(focusedThreadId);
         return;
       }
@@ -212,7 +272,15 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
       event.preventDefault();
       togglePin(focusedThreadId);
     },
-    [focusedThreadId, moveFocus, selectThread, togglePin, visibleThreadIds],
+    [
+      focusedThreadId,
+      moveFocus,
+      selectThread,
+      selectedThreadId,
+      selection,
+      togglePin,
+      visibleThreadIds,
+    ],
   );
 
   const matches = search.result?.matches ?? EMPTY_MATCHES;
@@ -286,6 +354,14 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         }
         searchRef={searchRef}
       />
+      {!search.active && selection.count > 1 && (
+        <AgentThreadSelectionBar
+          onAction={runBulkAction}
+          onClear={selection.clear}
+          owner={selection.owner}
+          selectedIds={selection.orderedIds}
+        />
+      )}
       <div className="agent-rail__scroll" onKeyDown={handleListKeyDown} ref={listRef}>
         {search.active ? (
           <AgentThreadSearchResults
@@ -307,7 +383,8 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
             empty={empty}
             focusedThreadId={focusedThreadId}
             jumpLabels={jumpLabels}
-            onSelectThread={selectThread}
+            markedThreadIds={selection.selectedIds}
+            onSelectThread={rowSelect}
             onShowMoreArchived={showMoreArchived}
             onThreadMenuCommand={menuCommand}
             onToggleArchived={toggleArchived}

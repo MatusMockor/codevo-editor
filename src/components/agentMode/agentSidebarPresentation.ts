@@ -621,18 +621,22 @@ function agentRowFilesLabel(view: AgentThreadView): string | null {
   return count === 1 ? "1 file" : `${count} files`;
 }
 
-export function agentRowClassName(
-  variant: AgentRowVariant,
-  on: boolean,
-  recede: boolean,
-  status: AgentRowStatus,
-  unread: boolean,
-): string {
-  const classes = ["agent-row", `agent-row--${variant}`];
-  if (on) classes.push("agent-row--on");
-  if (recede) classes.push("agent-row--recede");
-  if (status.kind === "working") classes.push("agent-row--inflight");
-  if (unread) classes.push("agent-row--unread");
+export interface AgentRowClassNameModel {
+  readonly variant: AgentRowVariant;
+  readonly on: boolean;
+  readonly marked: boolean;
+  readonly recede: boolean;
+  readonly status: AgentRowStatus;
+  readonly unread: boolean;
+}
+
+export function agentRowClassName(model: AgentRowClassNameModel): string {
+  const classes = ["agent-row", `agent-row--${model.variant}`];
+  if (model.on) classes.push("agent-row--on");
+  if (model.marked) classes.push("agent-row--marked");
+  if (model.recede) classes.push("agent-row--recede");
+  if (model.status.kind === "working") classes.push("agent-row--inflight");
+  if (model.unread) classes.push("agent-row--unread");
   return classes.join(" ");
 }
 

@@ -12,6 +12,8 @@ import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import type { AgentThread, AgentTurnStatus } from "../../domain/agentThread";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import type { AgentThreadSearchResult } from "../../domain/agentThreadSearch";
+import { AGENT_THREAD_BULK_CONFIRM_DELAY_MS } from "../../domain/agentThreadBulkAction";
+import { __resetKeymapPlatformCacheForTests } from "../../domain/keymap";
 import { AgentClockProvider } from "./agentClock";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import type { AgentProjectGroup } from "./agentModePresentation";
@@ -40,6 +42,7 @@ describe("AgentThreadsSidebar", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
+    __resetKeymapPlatformCacheForTests();
   });
 
   afterEach(() => {
@@ -47,6 +50,7 @@ describe("AgentThreadsSidebar", () => {
     host.remove();
     vi.useRealTimers();
     restoreNavigator();
+    __resetKeymapPlatformCacheForTests();
   });
 
   it("renders the chrome, search row and scope row without headings or filters", () => {
@@ -716,16 +720,13 @@ describe("AgentThreadsSidebar", () => {
   it("moves focus with the arrow keys, selects with Enter and pins with p", () => {
     const onSelectThread = vi.fn();
     const onTogglePin = vi.fn();
-    render({
-      groups: [
-        group(ROOT, "app", [
-          settled("agt-1", "One", { updatedAtEpochMs: NOW - 1000 }),
-          settled("agt-2", "Two", { updatedAtEpochMs: NOW - 2000 }),
-        ]),
-      ],
-      onSelectThread,
-      onTogglePin,
-    });
+    const groups = [
+      group(ROOT, "app", [
+        settled("agt-1", "One", { updatedAtEpochMs: NOW - 1000 }),
+        settled("agt-2", "Two", { updatedAtEpochMs: NOW - 2000 }),
+      ]),
+    ];
+    render({ groups, onSelectThread, onTogglePin });
 
     expect(row("agt-1").tabIndex).toBe(0);
     expect(row("agt-2").tabIndex).toBe(-1);
@@ -741,6 +742,9 @@ describe("AgentThreadsSidebar", () => {
 
     key(row("agt-2"), "p");
     expect(onTogglePin).toHaveBeenCalledWith("agt-2");
+
+    render({ groups, onSelectThread, onTogglePin, selectedThreadId: "agt-2" });
+    expect(markedIds()).toEqual(["agt-2"]);
 
     key(row("agt-2"), "Escape");
     expect(document.activeElement).toBe(host.querySelector('[aria-label="Search threads"]'));
@@ -1003,6 +1007,308 @@ describe("AgentThreadsSidebar", () => {
     expect(search.clear).toHaveBeenCalled();
   });
 
+  it("toggles rows with the platform modifier click without opening a thread", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    const onSelectThread = vi.fn();
+    render({ groups: [group(ROOT, "app", threeThreads())], onSelectThread });
+
+    clickRow("agt-1", { metaKey: true });
+    clickRow("agt-3", { metaKey: true });
+
+    expect(onSelectThread).not.toHaveBeenCalled();
+    expect(markedIds()).toEqual(["agt-1", "agt-3"]);
+    expect(row("agt-2").getAttribute("aria-selected")).toBe("false");
+    expect(row("agt-1").classList.contains("agent-row--marked")).toBe(true);
+    expect(selectionBar()?.textContent).toContain("2 threads selected");
+
+    clickRow("agt-3", { metaKey: true });
+    expect(markedIds()).toEqual(["agt-1"]);
+    expect(selectionBar()).toBeNull();
+  });
+
+  it("uses control instead of command as the toggle modifier off mac", () => {
+    withUserAgent("Mozilla/5.0 (X11; Linux x86_64)");
+    const onSelectThread = vi.fn();
+    render({ groups: [group(ROOT, "app", threeThreads())], onSelectThread });
+
+    clickRow("agt-1", { ctrlKey: true });
+    expect(markedIds()).toEqual(["agt-1"]);
+    expect(onSelectThread).not.toHaveBeenCalled();
+
+    clickRow("agt-2", { metaKey: true });
+    expect(markedIds()).toEqual(["agt-2"]);
+    expect(onSelectThread).toHaveBeenCalledWith("agt-2");
+  });
+
+  it("extends a shift-click range across the pinned and active sections", () => {
+    render({
+      groups: [
+        group(ROOT, "app", [
+          settled("agt-p", "Pinned", { pinned: true, updatedAtEpochMs: NOW - 500 }),
+          ...threeThreads(),
+        ]),
+      ],
+    });
+
+    clickRow("agt-p");
+    clickRow("agt-2", { shiftKey: true });
+
+    expect(markedIds()).toEqual(["agt-p", "agt-1", "agt-2"]);
+  });
+
+  it("keeps a shift range inside the rows the archived shelf actually renders", () => {
+    render({
+      groups: [
+        group(ROOT, "app", [
+          ...threeThreads(),
+          settled("agt-old", "Archived", { archived: true, updatedAtEpochMs: NOW - 9000 }),
+        ]),
+      ],
+    });
+
+    expect(host.querySelector('[data-thread-id="agt-old"]')).toBeNull();
+    clickRow("agt-1");
+    clickRow("agt-3", { shiftKey: true });
+    expect(markedIds()).toEqual(["agt-1", "agt-2", "agt-3"]);
+
+    click(".agent-shelf");
+    clickRow("agt-old", { shiftKey: true });
+    expect(markedIds()).toEqual(["agt-1", "agt-2", "agt-3", "agt-old"]);
+  });
+
+  it("clears the selection on Escape before handing focus back to the search box", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    render({ groups: [group(ROOT, "app", threeThreads())] });
+
+    clickRow("agt-1");
+    clickRow("agt-2", { metaKey: true });
+    expect(markedIds()).toEqual(["agt-1", "agt-2"]);
+
+    act(() => row("agt-2").focus());
+    key(row("agt-2"), "Escape");
+    expect(markedIds()).toEqual([]);
+    expect(document.activeElement).toBe(row("agt-2"));
+
+    key(row("agt-2"), "Escape");
+    expect(document.activeElement).toBe(host.querySelector('[aria-label="Search threads"]'));
+  });
+
+  it("toggles with Space and extends with Shift and the arrow keys", () => {
+    const onSelectThread = vi.fn();
+    render({ groups: [group(ROOT, "app", threeThreads())], onSelectThread });
+
+    act(() => row("agt-1").focus());
+    keyWith(row("agt-1"), " ");
+    expect(markedIds()).toEqual(["agt-1"]);
+    expect(onSelectThread).not.toHaveBeenCalled();
+
+    keyWith(row("agt-1"), "ArrowDown", { shiftKey: true });
+    expect(markedIds()).toEqual(["agt-1", "agt-2"]);
+
+    keyWith(row("agt-2"), "ArrowDown", { shiftKey: true });
+    expect(markedIds()).toEqual(["agt-1", "agt-2", "agt-3"]);
+
+    keyWith(row("agt-3"), " ");
+    expect(markedIds()).toEqual(["agt-1", "agt-2"]);
+  });
+
+  it("arms the bulk delete once and then reports the exact selection to the workspace", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    const onThreadBulkCommand = vi.fn();
+    render({ groups: [group(ROOT, "app", threeThreads())], onThreadBulkCommand });
+
+    clickRow("agt-1");
+    clickRow("agt-2", { metaKey: true });
+
+    const remove = barButton("Delete");
+    act(() => remove.click());
+    expect(onThreadBulkCommand).not.toHaveBeenCalled();
+    expect(barButton("Confirm delete of 2 threads")).toBeInstanceOf(HTMLButtonElement);
+
+    act(() => barButton("Confirm delete of 2 threads").click());
+    expect(onThreadBulkCommand).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_BULK_CONFIRM_DELAY_MS));
+    act(() => barButton("Confirm delete of 2 threads").click());
+    expect(onThreadBulkCommand).toHaveBeenCalledWith({
+      kind: "apply",
+      request: {
+        action: "delete",
+        ownerKey: ROOT,
+        threadIds: ["agt-1", "agt-2"],
+        missingIds: [],
+      },
+    });
+    expect(markedIds()).toEqual([]);
+    expect(selectionBar()).toBeNull();
+  });
+
+  it("archives the whole selection in one command without arming", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    const onThreadBulkCommand = vi.fn();
+    render({ groups: [group(ROOT, "app", threeThreads())], onThreadBulkCommand });
+
+    clickRow("agt-1");
+    clickRow("agt-3", { metaKey: true });
+    act(() => barButton("Archive").click());
+
+    expect(onThreadBulkCommand).toHaveBeenCalledWith({
+      kind: "apply",
+      request: {
+        action: "archive",
+        ownerKey: ROOT,
+        threadIds: ["agt-1", "agt-3"],
+        missingIds: [],
+      },
+    });
+    expect(selectionBar()).toBeNull();
+  });
+
+  it("disarms a primed delete once the selection is no longer the one that was armed", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    const onThreadBulkCommand = vi.fn();
+    render({ groups: [group(ROOT, "app", threeThreads())], onThreadBulkCommand });
+
+    clickRow("agt-1");
+    clickRow("agt-2", { metaKey: true });
+    act(() => barButton("Delete").click());
+    expect(barButton("Confirm delete of 2 threads")).toBeInstanceOf(HTMLButtonElement);
+
+    clickRow("agt-3", { metaKey: true });
+    clickRow("agt-1", { metaKey: true });
+    expect(markedIds()).toEqual(["agt-2", "agt-3"]);
+    expect(barButton("Delete").dataset.armed).toBeUndefined();
+
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_BULK_CONFIRM_DELAY_MS));
+    act(() => barButton("Delete").click());
+    expect(onThreadBulkCommand).not.toHaveBeenCalled();
+    expect(barButton("Confirm delete of 2 threads")).toBeInstanceOf(HTMLButtonElement);
+  });
+
+  it("clears the selection when Escape is pressed inside the selection bar", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    render({ groups: [group(ROOT, "app", threeThreads())] });
+
+    clickRow("agt-1");
+    clickRow("agt-2", { metaKey: true });
+    act(() => barButton("Archive").focus());
+
+    keyWith(barButton("Archive"), "Escape");
+    expect(markedIds()).toEqual([]);
+    expect(selectionBar()).toBeNull();
+  });
+
+  it("re-anchors on a plain arrow so a later Shift arrow cannot reach back", () => {
+    render({
+      groups: [
+        group(ROOT, "app", [
+          ...threeThreads(),
+          settled("agt-4", "Four", { updatedAtEpochMs: NOW - 4000 }),
+          settled("agt-5", "Five", { updatedAtEpochMs: NOW - 5000 }),
+        ]),
+      ],
+    });
+
+    clickRow("agt-1");
+    act(() => row("agt-1").focus());
+    keyWith(row("agt-1"), "ArrowDown");
+    keyWith(row("agt-2"), "ArrowDown");
+    keyWith(row("agt-3"), "ArrowDown");
+    expect(markedIds()).toEqual(["agt-4"]);
+
+    keyWith(row("agt-4"), "ArrowDown", { shiftKey: true });
+    expect(markedIds()).toEqual(["agt-4", "agt-5"]);
+  });
+
+  it("leaves the selection alone when an arrow starts from the archived shelf", () => {
+    render({
+      groups: [
+        group(ROOT, "app", [
+          ...threeThreads(),
+          settled("agt-old", "Archived", { archived: true, updatedAtEpochMs: NOW - 9000 }),
+        ]),
+      ],
+    });
+
+    clickRow("agt-2");
+    clickRow("agt-3", { shiftKey: true });
+    expect(markedIds()).toEqual(["agt-2", "agt-3"]);
+
+    const shelf = host.querySelector<HTMLElement>(".agent-shelf");
+    expect(shelf).not.toBeNull();
+    act(() => shelf?.focus());
+    keyWith(shelf as HTMLElement, "ArrowDown", { shiftKey: true });
+
+    expect(markedIds()).toEqual(["agt-2", "agt-3"]);
+  });
+
+  it("drops the selection when the rail changes project scope", () => {
+    withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    const groups = [
+      group(ROOT, "app", threeThreads()),
+      group(OTHER, "api", [settled("agt-x", "X")]),
+    ];
+    render({ groups });
+
+    clickRow("agt-1");
+    clickRow("agt-2", { metaKey: true });
+    expect(markedIds()).toEqual(["agt-1", "agt-2"]);
+
+    render({ groups, scope: { projectRootKey: OTHER, repositoryRoot: OTHER } });
+    expect(markedIds()).toEqual([]);
+
+    render({ groups, scope: { projectRootKey: ROOT, repositoryRoot: ROOT } });
+    expect(markedIds()).toEqual([]);
+    expect(selectionBar()).toBeNull();
+  });
+
+  it("announces the thread list as a multi-selectable listbox of options", () => {
+    render({ groups: [group(ROOT, "app", threeThreads())] });
+
+    const list = host.querySelector<HTMLElement>('[aria-label="Thread list"]');
+    expect(list?.getAttribute("role")).toBe("listbox");
+    expect(list?.getAttribute("aria-multiselectable")).toBe("true");
+    expect(row("agt-1").getAttribute("role")).toBe("option");
+    expect(row("agt-1").getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("tints every marked row, the open one included, without borders or outlines", () => {
+    const marked = cssRule("\n.agent-row--marked {");
+    expect(marked).toContain("color-mix(in srgb, var(--codevo-primary) 18%, var(--codevo-raised))");
+    expect(marked).not.toContain("border");
+    expect(marked).not.toContain("outline");
+    expect(marked).not.toContain("opacity");
+    expect(cssRule(".agent-row--marked:hover {")).toContain(
+      "color-mix(in srgb, var(--codevo-primary) 26%, var(--codevo-raised))",
+    );
+    expect(AGENT_MODE_CSS).not.toContain(".agent-row--marked:not(.agent-row--on)");
+    expect(AGENT_MODE_CSS.indexOf("\n.agent-row--marked {")).toBeGreaterThan(
+      AGENT_MODE_CSS.indexOf(".agent-row--selected,\n.agent-row--on,"),
+    );
+    expect(cssRule(".agent-selection-bar {")).toContain("border-radius: var(--codevo-r-md)");
+  });
+
+  it("keeps the in-flight dimming and the strong title on a marked row", () => {
+    expect(cssRule(".agent-row--inflight:not(.agent-row--on) {")).toContain("opacity: 0.7");
+    expect(AGENT_MODE_CSS).toContain(".agent-row--marked .agent-row__title,");
+    expect(AGENT_MODE_CSS).toContain(".agent-row--slim.agent-row--marked .agent-row__title,");
+  });
+
+  it("tints the open thread too, so a range anchored on it cannot hide what will be deleted", () => {
+    render({
+      groups: [group(ROOT, "app", threeThreads())],
+      selectedThreadId: "agt-1",
+    });
+
+    clickRow("agt-1");
+    clickRow("agt-3", { shiftKey: true });
+
+    expect(markedIds()).toEqual(["agt-1", "agt-2", "agt-3"]);
+    expect(row("agt-1").classList.contains("agent-row--on")).toBe(true);
+    expect(row("agt-1").classList.contains("agent-row--marked")).toBe(true);
+    expect(selectionBar()?.textContent).toContain("3 threads selected");
+  });
+
   it("does not rerender untouched rows when one thread of two hundred updates", () => {
     const counters = new Map<string, { count: number }>();
     const views = Array.from({ length: 200 }, (_, index) => {
@@ -1089,6 +1395,40 @@ describe("AgentThreadsSidebar", () => {
     const element = host.querySelector<HTMLElement>(selector);
     expect(element).not.toBeNull();
     act(() => element?.click());
+  }
+
+  function clickRow(threadId: string, modifiers: MouseEventInit = {}): void {
+    const element = row(threadId);
+    act(() => {
+      element.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, ...modifiers }),
+      );
+    });
+  }
+
+  function markedIds(): ReadonlyArray<string> {
+    return [...host.querySelectorAll<HTMLElement>('[data-thread-id][aria-selected="true"]')].map(
+      (element) => element.dataset.threadId ?? "",
+    );
+  }
+
+  function selectionBar(): HTMLElement | null {
+    return host.querySelector<HTMLElement>('[aria-label="Thread selection actions"]');
+  }
+
+  function barButton(label: string): HTMLButtonElement {
+    const buttons = [...(selectionBar()?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    const element = buttons.find((button) => button.textContent?.includes(label) === true);
+    expect(element).toBeInstanceOf(HTMLButtonElement);
+    return element as HTMLButtonElement;
+  }
+
+  function keyWith(element: HTMLElement, keyName: string, init: KeyboardEventInit = {}): void {
+    act(() => {
+      element.dispatchEvent(
+        new KeyboardEvent("keydown", { key: keyName, bubbles: true, cancelable: true, ...init }),
+      );
+    });
   }
 
   function cssRule(selector: string): string {
@@ -1199,6 +1539,14 @@ function scopedTo(projectRootKey: string, view: AgentThreadView): AgentThreadVie
     ...view,
     thread: { ...view.thread, owner: { ...view.thread.owner, rootKey: projectRootKey } },
   };
+}
+
+function threeThreads(): ReadonlyArray<AgentThreadView> {
+  return [
+    settled("agt-1", "One", { updatedAtEpochMs: NOW - 1000 }),
+    settled("agt-2", "Two", { updatedAtEpochMs: NOW - 2000 }),
+    settled("agt-3", "Three", { updatedAtEpochMs: NOW - 3000 }),
+  ];
 }
 
 function group(

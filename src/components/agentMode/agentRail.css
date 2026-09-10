@@ -556,6 +556,74 @@
   opacity: 1;
 }
 
+.agent-row--marked {
+  background: color-mix(in srgb, var(--codevo-primary) 18%, var(--codevo-raised));
+  color: var(--codevo-fg-strong);
+}
+
+.agent-row--marked:hover {
+  background: color-mix(in srgb, var(--codevo-primary) 26%, var(--codevo-raised));
+}
+
+.agent-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 4px 6px;
+  padding: 6px 8px;
+  border-radius: var(--codevo-r-md);
+  background: color-mix(in srgb, var(--codevo-primary) 14%, var(--codevo-raised));
+  color: var(--codevo-fg-strong);
+  font-size: var(--codevo-fs-meta);
+}
+
+.agent-selection-bar__count {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--codevo-fg);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-selection-bar__action,
+.agent-selection-bar__clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--codevo-r-sm);
+  padding: 4px 8px;
+  background: var(--codevo-raised);
+  color: var(--codevo-fg-strong);
+  cursor: pointer;
+  font: inherit;
+  outline: none;
+}
+
+.agent-selection-bar__action:hover,
+.agent-selection-bar__clear:hover {
+  background: var(--codevo-hover);
+}
+
+.agent-selection-bar__action:focus-visible,
+.agent-selection-bar__clear:focus-visible {
+  box-shadow: var(--codevo-focus-ring);
+}
+
+.agent-selection-bar__action--danger {
+  color: var(--codevo-danger);
+}
+
+.agent-selection-bar__action--armed,
+.agent-selection-bar__action--armed:hover {
+  background: var(--codevo-danger-soft);
+  color: var(--codevo-danger);
+  font-weight: 600;
+}
+
 .agent-card-slot {
   padding: 2px 0;
   content-visibility: auto;
@@ -751,6 +819,7 @@
 
 .agent-row--recede:hover .agent-row__title,
 .agent-row--unread .agent-row__title,
+.agent-row--marked .agent-row__title,
 .agent-row--on .agent-row__title {
   color: var(--codevo-fg-strong);
 }
@@ -860,6 +929,7 @@
 }
 
 .agent-row--slim:hover .agent-row__title,
+.agent-row--slim.agent-row--marked .agent-row__title,
 .agent-row--slim.agent-row--on .agent-row__title {
   color: var(--codevo-fg-strong);
 }
@@ -1254,8 +1324,11 @@ button.agent-provider-footer__pill:disabled {
     .agent-row--recede:hover,
     .agent-row--recede:hover .agent-row__title,
     .agent-row--slim:hover .agent-row__title,
+    .agent-row--slim.agent-row--marked .agent-row__title,
     .agent-row--slim.agent-row--on .agent-row__title,
     .agent-row--unread .agent-row__title,
+    .agent-row--marked,
+    .agent-row--marked .agent-row__title,
     .agent-row--on .agent-row__title
   ) {
   color: var(--codevo-fg-strong);
@@ -1290,8 +1363,11 @@ button.agent-provider-footer__pill:disabled {
       .agent-row--recede:hover,
       .agent-row--recede:hover .agent-row__title,
       .agent-row--slim:hover .agent-row__title,
+      .agent-row--slim.agent-row--marked .agent-row__title,
       .agent-row--slim.agent-row--on .agent-row__title,
       .agent-row--unread .agent-row__title,
+      .agent-row--marked,
+      .agent-row--marked .agent-row__title,
       .agent-row--on .agent-row__title
     ) {
     color: var(--codevo-fg-strong);

@@ -116,11 +116,51 @@ describe("agent row status", () => {
 
   it("builds the row class list from the variant and states", () => {
     expect(
-      agentRowClassName("card", true, false, { kind: "working", startedAtEpochMs: 0 }, true),
+      agentRowClassName({
+        variant: "card",
+        on: true,
+        marked: false,
+        recede: false,
+        status: { kind: "working", startedAtEpochMs: 0 },
+        unread: true,
+      }),
     ).toBe("agent-row agent-row--card agent-row--on agent-row--inflight agent-row--unread");
-    expect(agentRowClassName("slim", false, true, { kind: "none" }, false)).toBe(
-      "agent-row agent-row--slim agent-row--recede",
-    );
+    expect(
+      agentRowClassName({
+        variant: "slim",
+        on: false,
+        marked: false,
+        recede: true,
+        status: { kind: "none" },
+        unread: false,
+      }),
+    ).toBe("agent-row agent-row--slim agent-row--recede");
+  });
+
+  it("keeps the open row marked when it is part of the selection", () => {
+    expect(
+      agentRowClassName({
+        variant: "card",
+        on: true,
+        marked: true,
+        recede: false,
+        status: { kind: "none" },
+        unread: false,
+      }),
+    ).toBe("agent-row agent-row--card agent-row--on agent-row--marked");
+  });
+
+  it("marks a multi-selected row after the open state", () => {
+    expect(
+      agentRowClassName({
+        variant: "card",
+        on: false,
+        marked: true,
+        recede: false,
+        status: { kind: "none" },
+        unread: false,
+      }),
+    ).toBe("agent-row agent-row--card agent-row--marked");
   });
 });
 

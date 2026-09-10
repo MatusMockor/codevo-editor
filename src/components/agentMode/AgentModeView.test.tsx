@@ -3006,9 +3006,11 @@ describe("AgentModeView", () => {
   }
 
   function clickText(text: string): void {
-    const element = [...host.querySelectorAll<HTMLElement>('button, [role="button"]')].find(
-      (candidate) => (candidate.textContent ?? "").includes(text),
-    );
+    const element = [
+      ...host.querySelectorAll<HTMLElement>(
+        'button, [role="button"], [data-thread-id][role="option"]',
+      ),
+    ].find((candidate) => (candidate.textContent ?? "").includes(text));
     expect(element).toBeDefined();
     act(() => element?.click());
   }

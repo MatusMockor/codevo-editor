@@ -47,6 +47,7 @@ describe("AgentThreadRow", () => {
               onSelect={() => undefined}
               onTogglePin={() => undefined}
               projectLabel="app"
+              selected={false}
               view={view}
             />
           </ul>

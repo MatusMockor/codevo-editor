@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { ChevronDown, Plus } from "lucide-react";
+import type { ListSelectionModifiers } from "../../domain/listSelection";
 import { AgentThreadRow } from "./AgentThreadRow";
 import {
   agentRowProjectLabel,
@@ -12,13 +13,14 @@ export interface AgentThreadListProps {
   readonly sections: AgentRailSections;
   readonly projectLabels: ReadonlyMap<string, string>;
   readonly selectedThreadId: string | null;
+  readonly markedThreadIds: ReadonlySet<string>;
   readonly focusedThreadId: string | null;
   readonly jumpLabels: ReadonlyMap<string, string>;
   readonly archivedExpanded: boolean;
   readonly empty: AgentRailEmptyState;
   onToggleArchived(): void;
   onShowMoreArchived(): void;
-  onSelectThread(threadId: string): void;
+  onSelectThread(threadId: string, modifiers: ListSelectionModifiers): void;
   onTogglePin(threadId: string): void;
   onThreadMenuCommand(threadId: string, command: AgentThreadMenuCommand): void;
 }
@@ -28,6 +30,7 @@ export const AgentThreadList = memo(function AgentThreadList({
   empty,
   focusedThreadId,
   jumpLabels,
+  markedThreadIds,
   onSelectThread,
   onShowMoreArchived,
   onThreadMenuCommand,
@@ -50,6 +53,7 @@ export const AgentThreadList = memo(function AgentThreadList({
         onSelect={onSelectThread}
         onTogglePin={onTogglePin}
         projectLabel={agentRowProjectLabel(projectLabels, view)}
+        selected={markedThreadIds.has(threadId)}
         view={view}
       />
     );
@@ -58,12 +62,14 @@ export const AgentThreadList = memo(function AgentThreadList({
   if (empty !== null) return <EmptyState state={empty} />;
 
   return (
-    <ul aria-label="Thread list" className="agent-list" role="list">
+    <ul aria-label="Thread list" aria-multiselectable="true" className="agent-list" role="listbox">
       {sections.pinned.map(renderRow)}
-      {sections.pinned.length > 0 && <li aria-hidden="true" className="agent-list__divider" />}
+      {sections.pinned.length > 0 && (
+        <li aria-hidden="true" className="agent-list__divider" role="none" />
+      )}
       {sections.active.map(renderRow)}
       {archivedTotal > 0 && (
-        <li className="agent-shelf-slot">
+        <li className="agent-shelf-slot" role="none">
           <button
             aria-controls={archivedExpanded ? "agent-rail-archived" : undefined}
             aria-expanded={archivedExpanded}
@@ -78,11 +84,11 @@ export const AgentThreadList = memo(function AgentThreadList({
         </li>
       )}
       {archivedExpanded && (
-        <li className="agent-shelf-body" id="agent-rail-archived">
-          <ul aria-label="Archived threads" className="agent-list" role="list">
+        <li className="agent-shelf-body" id="agent-rail-archived" role="none">
+          <ul aria-label="Archived threads" className="agent-list" role="group">
             {sections.archived.map(renderRow)}
             {sections.hiddenArchivedCount > 0 && (
-              <li>
+              <li role="none">
                 <button
                   className="agent-row agent-row--slim agent-row--more"
                   onClick={onShowMoreArchived}
