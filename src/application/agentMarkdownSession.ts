@@ -9,11 +9,17 @@ import {
 import {
   MAX_AGENT_MARKDOWN_BLOCKS,
   MAX_AGENT_MARKDOWN_CHARS,
+  appendAgentMarkdownBlock,
   type AgentMarkdownBlock,
   type AgentMarkdownNode,
   type AgentMarkdownPlainReason,
   type AgentMarkdownView,
 } from "../domain/agentMarkdown/agentMarkdownTree";
+import { normalizeAgentMarkdownText } from "./agentMarkdownDocument";
+import {
+  sharedAgentMarkdownDocumentCache,
+  type AgentMarkdownDocumentCache,
+} from "./agentMarkdownDocumentCache";
 
 export interface AgentMarkdownSession {
   update(text: string, live: boolean): AgentMarkdownView;
@@ -44,7 +50,6 @@ const CACHE_KEY_SEPARATOR = " ";
 const CACHE_CAPACITY_CHARS = MAX_AGENT_MARKDOWN_CHARS * 4;
 const PARAGRAPH_TOKEN_TYPE = "paragraph";
 const DEFINITION_TOKEN_TYPE = "def";
-const LINE_BREAKS = /\r\n?/g;
 
 class CommittedBlockCache {
   private readonly entries = new Map<string, ReadonlyArray<AgentMarkdownNode>>();
@@ -67,7 +72,10 @@ class CommittedBlockCache {
   }
 }
 
-export function createAgentMarkdownSession(renderer: AgentMarkdownRenderer): AgentMarkdownSession {
+export function createAgentMarkdownSession(
+  renderer: AgentMarkdownRenderer,
+  documents: AgentMarkdownDocumentCache = sharedAgentMarkdownDocumentCache(),
+): AgentMarkdownSession {
   const cache = new CommittedBlockCache();
   let committed: Committed = NO_COMMIT;
   let degraded: Degraded | null = null;
@@ -95,12 +103,10 @@ export function createAgentMarkdownSession(renderer: AgentMarkdownRenderer): Age
   };
 
   const renderSettled = (text: string): AgentMarkdownView => {
-    const rendered = renderer.renderDocument(text);
-    if (rendered.kind === "unsupported") return plain(text, rendered.reason);
-    const blocks: AgentMarkdownBlock[] = [];
-    for (const node of rendered.nodes) appendBlock(blocks, [node]);
-    committed = { blocks, raw: text };
-    return { kind: "rendered", blocks };
+    const view = documents.read(renderer, text);
+    if (view.kind === "plain") return plain(text, view.reason);
+    committed = { blocks: view.blocks, raw: text };
+    return view;
   };
 
   const renderLiveTokens = (
@@ -111,7 +117,7 @@ export function createAgentMarkdownSession(renderer: AgentMarkdownRenderer): Age
     for (const token of stabilizedLiveTokens(renderer, live)) {
       const outcome = renderFresh(token);
       if (outcome.kind === "plain") return plain(text, outcome.reason);
-      appendBlock(blocks, outcome.nodes);
+      appendAgentMarkdownBlock(blocks, outcome.nodes);
     }
     return { kind: "rendered", blocks };
   };
@@ -137,7 +143,7 @@ export function createAgentMarkdownSession(renderer: AgentMarkdownRenderer): Age
       if (token === undefined) break;
       const outcome = renderCommitted(token);
       if (outcome.kind === "plain") return plain(text, outcome.reason);
-      appendBlock(blocks, outcome.nodes);
+      appendAgentMarkdownBlock(blocks, outcome.nodes);
       consumed += token.raw.length;
     }
     committed = { blocks: blocks.slice(), raw: committed.raw + tail.slice(0, consumed) };
@@ -160,7 +166,7 @@ export function createAgentMarkdownSession(renderer: AgentMarkdownRenderer): Age
   return {
     update(text, live) {
       if (last !== null && last.text === text && last.live === live) return last.view;
-      const view = compute(text.replace(LINE_BREAKS, "\n"), live);
+      const view = compute(normalizeAgentMarkdownText(text), live);
       last = { text, live, view };
       return view;
     },
@@ -177,9 +183,4 @@ function stabilizedLiveTokens(
   const stabilized = stabilizeStreamingMarkdownTail(paragraph.raw);
   if (stabilized === paragraph.raw) return live;
   return [...live.slice(0, last), ...renderer.lexBlocks(stabilized)];
-}
-
-function appendBlock(blocks: AgentMarkdownBlock[], nodes: ReadonlyArray<AgentMarkdownNode>): void {
-  if (nodes.length === 0) return;
-  blocks.push({ key: `b${blocks.length}`, nodes });
 }

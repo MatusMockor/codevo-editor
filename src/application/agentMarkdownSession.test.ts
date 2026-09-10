@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentMarkdownRenderer,
   AgentMarkdownSourceBlock,
@@ -12,6 +12,7 @@ import {
   type AgentMarkdownView,
 } from "../domain/agentMarkdown/agentMarkdownTree";
 import { loadAgentMarkdownRenderer } from "../infrastructure/markdown/agentMarkdownRendererAdapter";
+import { sharedAgentMarkdownDocumentCache } from "./agentMarkdownDocumentCache";
 import { createAgentMarkdownSession } from "./agentMarkdownSession";
 
 interface SpyRenderer extends AgentMarkdownRenderer {
@@ -92,6 +93,10 @@ function chunks(text: string, size: number): ReadonlyArray<string> {
 }
 
 describe("createAgentMarkdownSession", () => {
+  beforeEach(() => {
+    sharedAgentMarkdownDocumentCache().clear();
+  });
+
   it("renders a settled message in one shot through the document path", () => {
     const renderer = spyRenderer();
     const view = createAgentMarkdownSession(renderer).update(DOCUMENT, false);

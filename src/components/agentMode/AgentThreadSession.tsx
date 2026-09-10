@@ -1,14 +1,17 @@
 import {
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type MouseEvent,
   type ReactNode,
 } from "react";
 import { ChevronDown } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
@@ -22,7 +25,10 @@ import type { TextClipboardGateway } from "../../domain/textClipboard";
 import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import { highlightOccurrences } from "../../domain/agentThreadHighlight";
 import type { AgentMarkdownRenderer } from "../../domain/agentMarkdown/agentMarkdownRenderer";
-import { agentMarkdownPlainReasonLabel } from "../../domain/agentMarkdown/agentMarkdownTree";
+import {
+  agentMarkdownPlainReasonLabel,
+  type AgentMarkdownPresentation,
+} from "../../domain/agentMarkdown/agentMarkdownTree";
 import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import { AgentRelativeTime, AgentWorkingDuration } from "./agentClock";
 import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
@@ -35,7 +41,13 @@ import {
   type AgentExternalLinkOpener,
 } from "./agentMarkdownLinks";
 import { HighlightRun } from "./agentThreadHighlight";
-import { useAgentMarkdown, useAgentMarkdownRenderer } from "./useAgentMarkdown";
+import {
+  useAgentMarkdown,
+  useAgentMarkdownGate,
+  useAgentMarkdownRenderer,
+  type AgentMarkdownRendererState,
+} from "./useAgentMarkdown";
+import { createIntersectionAgentMarkdownViewport } from "../../infrastructure/viewport/intersectionAgentMarkdownViewport";
 import {
   agentWorktreeRemovalLabel,
   agentTurnDurationLabel,
@@ -51,6 +63,7 @@ import {
 } from "./agentModePresentation";
 
 const NO_FIND_HITS: ReadonlyArray<AgentThreadFindHit> = [];
+const NO_PARAGRAPHS: ReadonlyArray<string> = [];
 
 type AgentTurnHighlightCursor =
   | { readonly kind: "prompt"; readonly occurrence: number }
@@ -76,9 +89,13 @@ interface AgentParagraphRun {
   readonly current: number | null;
 }
 
+type AgentProseStream = "streaming" | "streamed" | "settled";
+
 interface AgentProseContext {
-  readonly markdown: AgentMarkdownRenderer | null;
+  readonly markdown: AgentMarkdownRendererState;
   readonly openExternalLink: AgentExternalLinkOpener;
+  readonly viewport: AgentMarkdownViewport | null;
+  readonly onParsed: () => void;
 }
 
 export interface AgentThreadSessionProps {
@@ -91,6 +108,7 @@ export interface AgentThreadSessionProps {
   readonly reveal?: AgentThreadRevealRequest | null;
   readonly textClipboard?: TextClipboardGateway | null;
   readonly markdownRenderer?: AgentMarkdownRenderer | null;
+  readonly markdownViewport?: AgentMarkdownViewport | null;
   readonly openExternalLink?: AgentExternalLinkOpener;
   readonly externalHistoryState?: AgentExternalHistoryState;
   readonly onRetryExternalHistory?: () => void;
@@ -118,6 +136,7 @@ function AgentThreadSessionBody({
   reveal = null,
   textClipboard = null,
   markdownRenderer,
+  markdownViewport,
   openExternalLink = openAgentMarkdownLink,
   externalHistoryState,
   onRetryExternalHistory,
@@ -138,10 +157,27 @@ function AgentThreadSessionBody({
   const worktreeRemovalLabel = agentWorktreeRemovalLabel(thread);
   const provenanceNote = agentExternalOriginNote(record.externalOrigin);
   const markdown = useAgentMarkdownRenderer(markdownRenderer);
+  const viewport = useMemo(() => {
+    if (markdownViewport !== undefined) return markdownViewport;
+    return createIntersectionAgentMarkdownViewport(() => scrollRef.current);
+  }, [markdownViewport]);
+  const followLatest = useCallback(() => {
+    const container = scrollRef.current;
+    if (container === null) return;
+    if (!pinnedToLatestRef.current) return;
+    container.scrollTop = container.scrollHeight;
+  }, []);
   const prose = useMemo<AgentProseContext>(
-    () => ({ markdown, openExternalLink }),
-    [markdown, openExternalLink],
+    () => ({ markdown, openExternalLink, viewport, onParsed: followLatest }),
+    [followLatest, markdown, openExternalLink, viewport],
   );
+
+  const ownsViewport = markdownViewport === undefined;
+  useEffect(() => {
+    if (!ownsViewport) return;
+    if (viewport === null) return;
+    return () => viewport.dispose();
+  }, [ownsViewport, viewport]);
 
   const hitTurnIds = useMemo(() => new Set(hits.map((hit) => hit.turnId)), [hits]);
   const baseHighlight = useMemo<AgentTurnHighlight>(() => ({ query, current: null }), [query]);
@@ -273,6 +309,15 @@ const AgentTurnView = memo(function AgentTurnView({
   const projection = agentTurnProjection(turn.events);
   const subagents = agentTurnSubagentSummary(turn.events);
   const running = turn.status.kind === "pending" || turn.status.kind === "running";
+  const [streamed, setStreamed] = useState(running);
+
+  useEffect(() => {
+    if (!running) return;
+    if (streamed) return;
+    setStreamed(true);
+  }, [running, streamed]);
+
+  const stream = proseStream(running, streamed);
   const errorContext: AgentTurnErrorContext = { provider, installedVersion: turn.cliVersion };
   const rawLines = projection.rawLines.filter(
     (line) => !isAgentRawOutputNoise(provider, line.stream, line.raw),
@@ -325,6 +370,7 @@ const AgentTurnView = memo(function AgentTurnView({
             key={running ? "running-work" : "settled-work"}
             prose={prose}
             running={running}
+            stream={stream}
             subagents={subagents}
             summary={workFold.summary}
             textClipboard={textClipboard}
@@ -339,8 +385,8 @@ const AgentTurnView = memo(function AgentTurnView({
               highlight={itemHighlight(highlight, item.key)}
               item={item}
               key={item.key}
-              live={running}
               prose={prose}
+              stream={stream}
               textClipboard={textClipboard}
             />
           ))}
@@ -390,6 +436,7 @@ function AgentTurnWork({
   items,
   prose,
   running,
+  stream,
   subagents,
   summary,
   textClipboard,
@@ -400,6 +447,7 @@ function AgentTurnWork({
   readonly items: ReadonlyArray<AgentTurnItem>;
   readonly prose: AgentProseContext;
   readonly running: boolean;
+  readonly stream: AgentProseStream;
   readonly subagents: AgentSubagentSummary | null;
   readonly summary: string;
   readonly textClipboard: TextClipboardGateway | null;
@@ -434,8 +482,8 @@ function AgentTurnWork({
               highlight={itemHighlight(highlight, item.key)}
               item={item}
               key={item.key}
-              live={running}
               prose={prose}
+              stream={stream}
               textClipboard={textClipboard}
             />
           ))}
@@ -490,8 +538,8 @@ interface AgentTurnItemViewProps {
   readonly errorContext: AgentTurnErrorContext;
   readonly highlight: AgentItemHighlight | null;
   readonly item: AgentTurnItem;
-  readonly live: boolean;
   readonly prose: AgentProseContext;
+  readonly stream: AgentProseStream;
   readonly textClipboard: TextClipboardGateway | null;
 }
 
@@ -499,8 +547,8 @@ function AgentTurnItemView({
   errorContext,
   highlight,
   item,
-  live,
   prose,
+  stream,
   textClipboard,
 }: AgentTurnItemViewProps) {
   if (item.kind === "assistantText") {
@@ -508,9 +556,9 @@ function AgentTurnItemView({
       <AgentAssistantText
         eventKey={item.key}
         current={highlight?.current ?? null}
-        live={live}
         prose={prose}
         query={highlight?.query ?? ""}
+        stream={stream}
         text={item.text}
         textClipboard={textClipboard}
       />
@@ -602,21 +650,34 @@ function AgentTurnItemView({
 const AgentAssistantText = memo(function AgentAssistantText({
   eventKey,
   current,
-  live,
   prose,
   query,
+  stream,
   text,
   textClipboard,
 }: {
   readonly eventKey: string;
   readonly current: number | null;
-  readonly live: boolean;
   readonly prose: AgentProseContext;
   readonly query: string;
+  readonly stream: AgentProseStream;
   readonly text: string;
   readonly textClipboard: TextClipboardGateway | null;
 }) {
-  const presentation = useAgentMarkdown(prose.markdown, text, live, query);
+  const host = useRef<HTMLDivElement | null>(null);
+  const live = stream === "streaming";
+  const required = stream === "streamed" || current !== null;
+  const gate = useAgentMarkdownGate(prose.viewport, host, live, required);
+  const presentation = useAgentMarkdown(prose.markdown, text, live, query, gate);
+  const parsed = presentation.kind === "rendered";
+  const onParsed = prose.onParsed;
+
+  useLayoutEffect(() => {
+    if (!parsed) return;
+    if (query !== "") return;
+    onParsed();
+  }, [onParsed, parsed, query]);
+
   const actions = (
     <div className="agent-message-actions">
       <AgentMessageCopyButton clipboard={textClipboard} label="AI response" text={text} />
@@ -625,20 +686,23 @@ const AgentAssistantText = memo(function AgentAssistantText({
 
   if (presentation.kind !== "rendered") {
     const highlight = query === "" ? null : { query, current };
+    const note = agentMarkdownNote(presentation);
+    const paragraphs = presentation.kind === "pending" ? NO_PARAGRAPHS : agentTextParagraphs(text);
     return (
       <div
         className="agent-text"
         data-agent-event={eventKey}
         data-agent-markdown={presentation.kind}
+        ref={host}
       >
-        {paragraphRuns(agentTextParagraphs(text), highlight).map((run, index) => (
+        {paragraphRuns(paragraphs, highlight).map((run, index) => (
           <p className="agent-text__paragraph" key={`${eventKey}p${index}`}>
             <HighlightRun current={run.current} query={query} text={run.text} />
           </p>
         ))}
-        {presentation.kind === "plain" && (
+        {note !== null && (
           <p className="agent-note agent-md__note" role="note">
-            {agentMarkdownPlainReasonLabel(presentation.reason)}
+            {note}
           </p>
         )}
         {actions}
@@ -655,6 +719,7 @@ const AgentAssistantText = memo(function AgentAssistantText({
       data-agent-markdown="rendered"
       onAuxClick={openLink}
       onClick={openLink}
+      ref={host}
     >
       {presentation.blocks.map((block, index) => (
         <AgentMarkdownBlockView
@@ -670,6 +735,29 @@ const AgentAssistantText = memo(function AgentAssistantText({
     </div>
   );
 });
+
+function proseStream(running: boolean, streamed: boolean): AgentProseStream {
+  if (running) return "streaming";
+  if (streamed) return "streamed";
+  return "settled";
+}
+
+function agentMarkdownNote(presentation: AgentMarkdownPresentation): string | null {
+  switch (presentation.kind) {
+    case "plain":
+      return agentMarkdownPlainReasonLabel(presentation.reason);
+    case "rendered":
+    case "pending":
+    case "deferred":
+      return null;
+    default:
+      return unsupportedPresentation(presentation);
+  }
+}
+
+function unsupportedPresentation(presentation: never): never {
+  throw new Error(`Unsupported markdown presentation: ${String(presentation)}`);
+}
 
 function AgentProviderErrorHint({ error }: { readonly error: AgentProviderError }): ReactNode {
   if (error.detail.kind !== "unsupportedModelForCliVersion") return null;

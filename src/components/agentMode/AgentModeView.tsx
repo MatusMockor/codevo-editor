@@ -36,6 +36,7 @@ import { AgentThreadHeader } from "./AgentThreadHeader";
 import { AgentTerminalSessionsPalette } from "./AgentTerminalSessionsPalette";
 import { AgentThreadSearchPalette } from "./AgentThreadSearchPalette";
 import { AgentThreadSession } from "./AgentThreadSession";
+import { usePreloadAgentMarkdownRenderer } from "./useAgentMarkdown";
 import { AgentThreadsSidebar } from "./AgentThreadsSidebar";
 import { agentThreadHeaderProject, type AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 import { AgentClockProvider } from "./agentClock";
@@ -116,6 +117,7 @@ export function AgentModeView({
   workspaceRoot,
 }: AgentModeViewProps) {
   const surfaceEnterClass = useSurfaceEnterClass();
+  usePreloadAgentMarkdownRenderer();
   const [localNotice, setLocalNotice] = useState<AgentTasksNotice | null>(null);
   const [commitMenuOpenSignal, setCommitMenuOpenSignal] = useState(0);
   const [projectSelectionIntent, setProjectSelectionIntent] = useState(0);

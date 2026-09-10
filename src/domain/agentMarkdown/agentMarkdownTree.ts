@@ -64,7 +64,12 @@ export interface AgentMarkdownBlock {
 }
 
 export type AgentMarkdownPlainReason =
-  "too-long" | "too-complex" | "unsupported" | "parse-failed" | "find-syntax";
+  | "too-long"
+  | "too-complex"
+  | "unsupported"
+  | "parse-failed"
+  | "find-syntax"
+  | "renderer-unavailable";
 
 export type AgentMarkdownView =
   | { readonly kind: "rendered"; readonly blocks: ReadonlyArray<AgentMarkdownBlock> }
@@ -78,7 +83,16 @@ export type AgentMarkdownPresentation =
       readonly hitCount: number;
     }
   | { readonly kind: "plain"; readonly reason: AgentMarkdownPlainReason }
-  | { readonly kind: "pending" };
+  | { readonly kind: "pending" }
+  | { readonly kind: "deferred" };
+
+export function appendAgentMarkdownBlock(
+  blocks: AgentMarkdownBlock[],
+  nodes: ReadonlyArray<AgentMarkdownNode>,
+): void {
+  if (nodes.length === 0) return;
+  blocks.push({ key: `b${blocks.length}`, nodes });
+}
 
 export function agentMarkdownPlainReasonLabel(reason: AgentMarkdownPlainReason): string {
   switch (reason) {
@@ -92,6 +106,8 @@ export function agentMarkdownPlainReasonLabel(reason: AgentMarkdownPlainReason):
       return "Shown as plain text: the response could not be formatted.";
     case "find-syntax":
       return "Shown as plain text while searching: some matches sit inside Markdown formatting.";
+    case "renderer-unavailable":
+      return "Shown as plain text: formatting could not be loaded.";
     default:
       return unsupportedReason(reason);
   }
