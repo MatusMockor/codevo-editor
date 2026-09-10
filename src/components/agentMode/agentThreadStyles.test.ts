@@ -168,6 +168,7 @@ describe("agent thread Airy style contract", () => {
   });
 
   it("clamps the band to two lines at all times and only an explicit expand undoes it", () => {
+    expect(winningDeclaration(".agent-band__text", "grid-column")).toBe("2");
     expect(winningDeclaration(".agent-band__text", "-webkit-line-clamp")).toBe("2");
     expect(winningDeclaration(".agent-band__text", "overflow")).toBe("hidden");
     expect(winningDeclaration(".agent-band__text", "white-space")).toBe("pre-wrap");

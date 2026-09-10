@@ -132,6 +132,7 @@
 }
 
 .agent-band__text {
+  grid-column: 2;
   display: -webkit-box;
   overflow: hidden;
   min-width: 0;
