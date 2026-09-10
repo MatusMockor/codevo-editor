@@ -7,6 +7,22 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.31] - 2026-09-10
+
+### Added
+
+- Separate conversation turns with numbered prompt bands that stay visible while reading
+  each answer. Expand long prompts on demand and distinguish prompts across all themes.
+- Show release notes for the versions included in an update, with a clear notice when
+  only part of a longer release history is available.
+
+### Fixed
+
+- Detect newer releases even when a downloaded update is waiting for restart. Keep the
+  prepared update available to restart if the newer-version check fails or times out.
+- Compare prerelease versions numerically and validate release-note text before publishing
+  update metadata.
+
 ## [0.2.0-beta.30] - 2026-09-10
 
 ### Added
