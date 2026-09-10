@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.30] - 2026-09-10
+
+### Added
+
+- Select multiple threads with Shift-click, Cmd/Ctrl-click or the keyboard and archive
+  or delete the selection together. Report skipped threads and preserve running threads.
+- Display agent responses as Markdown, including tables, code blocks, lists and headings,
+  while retaining streaming output and find-in-thread support.
+
+### Changed
+
+- Parse settled responses near the visible area and reuse cached documents to reduce work
+  when opening long threads. Continue processing streaming responses and active search hits.
+
 ## [0.2.0-beta.29] - 2026-09-10
 
 ### Added
