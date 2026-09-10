@@ -1,4 +1,12 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { ChevronDown } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
@@ -11,16 +19,23 @@ import {
 } from "../../domain/agentOutput/agentProviderError";
 import { isAgentRawOutputNoise } from "../../domain/agentOutput/agentRawOutput";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
-import {
-  MIN_THREAD_SEARCH_QUERY_CHARS,
-  type AgentThreadFindHit,
-  type AgentThreadSearchRange,
-} from "../../domain/agentThreadSearch";
+import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
+import { highlightOccurrences } from "../../domain/agentThreadHighlight";
+import type { AgentMarkdownRenderer } from "../../domain/agentMarkdown/agentMarkdownRenderer";
+import { agentMarkdownPlainReasonLabel } from "../../domain/agentMarkdown/agentMarkdownTree";
 import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import { AgentRelativeTime, AgentWorkingDuration } from "./agentClock";
 import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { AgentImportedHistory, type AgentExternalHistoryState } from "./AgentImportedHistory";
+import { AgentMarkdownBlockView } from "./AgentMarkdown";
+import {
+  handleAgentMarkdownLinkClick,
+  openAgentMarkdownLink,
+  type AgentExternalLinkOpener,
+} from "./agentMarkdownLinks";
+import { HighlightRun } from "./agentThreadHighlight";
+import { useAgentMarkdown, useAgentMarkdownRenderer } from "./useAgentMarkdown";
 import {
   agentWorktreeRemovalLabel,
   agentTurnDurationLabel,
@@ -61,6 +76,11 @@ interface AgentParagraphRun {
   readonly current: number | null;
 }
 
+interface AgentProseContext {
+  readonly markdown: AgentMarkdownRenderer | null;
+  readonly openExternalLink: AgentExternalLinkOpener;
+}
+
 export interface AgentThreadSessionProps {
   readonly thread: AgentThreadView | null;
   readonly composerRepositoryLabel: string | null;
@@ -70,6 +90,8 @@ export interface AgentThreadSessionProps {
   readonly findHitIndex?: number;
   readonly reveal?: AgentThreadRevealRequest | null;
   readonly textClipboard?: TextClipboardGateway | null;
+  readonly markdownRenderer?: AgentMarkdownRenderer | null;
+  readonly openExternalLink?: AgentExternalLinkOpener;
   readonly externalHistoryState?: AgentExternalHistoryState;
   readonly onRetryExternalHistory?: () => void;
   onReviewInDiff(threadId: string): void;
@@ -95,6 +117,8 @@ function AgentThreadSessionBody({
   onReviewInDiff,
   reveal = null,
   textClipboard = null,
+  markdownRenderer,
+  openExternalLink = openAgentMarkdownLink,
   externalHistoryState,
   onRetryExternalHistory,
   thread,
@@ -113,6 +137,11 @@ function AgentThreadSessionBody({
   const activeHit = findHitIndex === undefined ? null : (hits[findHitIndex] ?? null);
   const worktreeRemovalLabel = agentWorktreeRemovalLabel(thread);
   const provenanceNote = agentExternalOriginNote(record.externalOrigin);
+  const markdown = useAgentMarkdownRenderer(markdownRenderer);
+  const prose = useMemo<AgentProseContext>(
+    () => ({ markdown, openExternalLink }),
+    [markdown, openExternalLink],
+  );
 
   const hitTurnIds = useMemo(() => new Set(hits.map((hit) => hit.turnId)), [hits]);
   const baseHighlight = useMemo<AgentTurnHighlight>(() => ({ query, current: null }), [query]);
@@ -196,6 +225,7 @@ function AgentThreadSessionBody({
             <AgentTurnView
               highlight={highlightFor(turn.turnId)}
               key={turn.turnId}
+              prose={prose}
               provider={record.provider.kind}
               renderProbe={turnRenderProbe}
               textClipboard={textClipboard}
@@ -226,12 +256,14 @@ function AgentThreadSessionBody({
 
 const AgentTurnView = memo(function AgentTurnView({
   highlight = null,
+  prose,
   provider,
   renderProbe,
   textClipboard,
   turn,
 }: {
   readonly highlight?: AgentTurnHighlight | null;
+  readonly prose: AgentProseContext;
   readonly provider: AgentCliKind;
   readonly renderProbe?: (turnId: string) => void;
   readonly textClipboard: TextClipboardGateway | null;
@@ -291,6 +323,7 @@ const AgentTurnView = memo(function AgentTurnView({
             highlight={highlight}
             items={workFold.workItems}
             key={running ? "running-work" : "settled-work"}
+            prose={prose}
             running={running}
             subagents={subagents}
             summary={workFold.summary}
@@ -306,6 +339,8 @@ const AgentTurnView = memo(function AgentTurnView({
               highlight={itemHighlight(highlight, item.key)}
               item={item}
               key={item.key}
+              live={running}
+              prose={prose}
               textClipboard={textClipboard}
             />
           ))}
@@ -353,6 +388,7 @@ function AgentTurnWork({
   errorContext,
   highlight,
   items,
+  prose,
   running,
   subagents,
   summary,
@@ -362,6 +398,7 @@ function AgentTurnWork({
   readonly errorContext: AgentTurnErrorContext;
   readonly highlight: AgentTurnHighlight | null;
   readonly items: ReadonlyArray<AgentTurnItem>;
+  readonly prose: AgentProseContext;
   readonly running: boolean;
   readonly subagents: AgentSubagentSummary | null;
   readonly summary: string;
@@ -397,6 +434,8 @@ function AgentTurnWork({
               highlight={itemHighlight(highlight, item.key)}
               item={item}
               key={item.key}
+              live={running}
+              prose={prose}
               textClipboard={textClipboard}
             />
           ))}
@@ -451,6 +490,8 @@ interface AgentTurnItemViewProps {
   readonly errorContext: AgentTurnErrorContext;
   readonly highlight: AgentItemHighlight | null;
   readonly item: AgentTurnItem;
+  readonly live: boolean;
+  readonly prose: AgentProseContext;
   readonly textClipboard: TextClipboardGateway | null;
 }
 
@@ -458,6 +499,8 @@ function AgentTurnItemView({
   errorContext,
   highlight,
   item,
+  live,
+  prose,
   textClipboard,
 }: AgentTurnItemViewProps) {
   if (item.kind === "assistantText") {
@@ -465,6 +508,8 @@ function AgentTurnItemView({
       <AgentAssistantText
         eventKey={item.key}
         current={highlight?.current ?? null}
+        live={live}
+        prose={prose}
         query={highlight?.query ?? ""}
         text={item.text}
         textClipboard={textClipboard}
@@ -557,27 +602,71 @@ function AgentTurnItemView({
 const AgentAssistantText = memo(function AgentAssistantText({
   eventKey,
   current,
+  live,
+  prose,
   query,
   text,
   textClipboard,
 }: {
   readonly eventKey: string;
   readonly current: number | null;
+  readonly live: boolean;
+  readonly prose: AgentProseContext;
   readonly query: string;
   readonly text: string;
   readonly textClipboard: TextClipboardGateway | null;
 }) {
-  const highlight = query === "" ? null : { query, current };
-  return (
-    <div className="agent-text" data-agent-event={eventKey}>
-      {paragraphRuns(agentTextParagraphs(text), highlight).map((run, index) => (
-        <p className="agent-text__paragraph" key={`${eventKey}p${index}`}>
-          <HighlightRun current={run.current} query={query} text={run.text} />
-        </p>
-      ))}
-      <div className="agent-message-actions">
-        <AgentMessageCopyButton clipboard={textClipboard} label="AI response" text={text} />
+  const presentation = useAgentMarkdown(prose.markdown, text, live, query);
+  const actions = (
+    <div className="agent-message-actions">
+      <AgentMessageCopyButton clipboard={textClipboard} label="AI response" text={text} />
+    </div>
+  );
+
+  if (presentation.kind !== "rendered") {
+    const highlight = query === "" ? null : { query, current };
+    return (
+      <div
+        className="agent-text"
+        data-agent-event={eventKey}
+        data-agent-markdown={presentation.kind}
+      >
+        {paragraphRuns(agentTextParagraphs(text), highlight).map((run, index) => (
+          <p className="agent-text__paragraph" key={`${eventKey}p${index}`}>
+            <HighlightRun current={run.current} query={query} text={run.text} />
+          </p>
+        ))}
+        {presentation.kind === "plain" && (
+          <p className="agent-note agent-md__note" role="note">
+            {agentMarkdownPlainReasonLabel(presentation.reason)}
+          </p>
+        )}
+        {actions}
       </div>
+    );
+  }
+
+  const openLink = (event: MouseEvent<HTMLElement>): void =>
+    handleAgentMarkdownLinkClick(event, prose.openExternalLink);
+  return (
+    <div
+      className="agent-text"
+      data-agent-event={eventKey}
+      data-agent-markdown="rendered"
+      onAuxClick={openLink}
+      onClick={openLink}
+    >
+      {presentation.blocks.map((block, index) => (
+        <AgentMarkdownBlockView
+          block={block}
+          current={current}
+          hitOffset={presentation.hitOffsets[index] ?? 0}
+          key={block.key}
+          query={query}
+          textClipboard={textClipboard}
+        />
+      ))}
+      {actions}
     </div>
   );
 });
@@ -694,58 +783,6 @@ function AgentEmptyTitle({ repositoryLabel }: { readonly repositoryLabel: string
   );
 }
 
-function HighlightRun({
-  current,
-  query,
-  text,
-}: {
-  readonly current: number | null;
-  readonly query: string;
-  readonly text: string;
-}): ReactNode {
-  const ranges = queryRanges(text, query);
-  if (ranges.length === 0) return <>{text}</>;
-
-  const nodes: ReactNode[] = [];
-  let cursor = 0;
-  ranges.forEach((range, index) => {
-    if (range.start > cursor) nodes.push(text.slice(cursor, range.start));
-    nodes.push(
-      <mark
-        className={
-          index === current ? "agent-find__hit agent-find__hit--current" : "agent-find__hit"
-        }
-        data-hit-index={index}
-        key={`h${index}`}
-      >
-        {text.slice(range.start, range.end)}
-      </mark>,
-    );
-    cursor = range.end;
-  });
-  if (cursor < text.length) nodes.push(text.slice(cursor));
-
-  return <>{nodes}</>;
-}
-
-function queryRanges(text: string, query: string): ReadonlyArray<AgentThreadSearchRange> {
-  const needle = query.trim().toLowerCase();
-  if (needle.length < MIN_THREAD_SEARCH_QUERY_CHARS) return [];
-
-  const haystack = text.toLowerCase();
-  const ranges: AgentThreadSearchRange[] = [];
-  let index = haystack.indexOf(needle);
-  while (index !== -1) {
-    ranges.push({ start: index, end: index + needle.length });
-    index = haystack.indexOf(needle, index + needle.length);
-  }
-  return ranges;
-}
-
-function occurrenceCount(text: string, query: string): number {
-  return queryRanges(text, query).length;
-}
-
 function itemHighlight(
   highlight: AgentTurnHighlight | null,
   key: string,
@@ -769,7 +806,7 @@ function paragraphRuns(
   let consumed = 0;
   for (const text of paragraphs) {
     const start = consumed;
-    consumed += occurrenceCount(text, highlight.query);
+    consumed += highlightOccurrences(text, highlight.query);
     const current = highlight.current;
     const local =
       current !== null && current >= start && current < consumed ? current - start : null;

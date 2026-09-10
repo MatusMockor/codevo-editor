@@ -246,6 +246,39 @@ describe("agent thread Airy style contract", () => {
     );
   });
 
+  it("scopes markdown horizontal scrolling to the code body and table wrapper only", () => {
+    const scrollers = RULES.filter((rule) => /overflow(-x)?\s*:/.test(rule.body)).flatMap(
+      (rule) => rule.selectors,
+    );
+    const markdownScrollers = scrollers.filter((selector) => selector.includes(".agent-md__"));
+    expect(markdownScrollers.sort()).toEqual([".agent-md__code-body", ".agent-md__table-scroll"]);
+    expect(scrollers).not.toContain(".agent-text");
+    expect(winningDeclaration(".agent-text", "min-width")).toBe("0");
+    expect(winningDeclaration(".agent-md__code-body", "overflow-x")).toBe("auto");
+    expect(winningDeclaration(".agent-md__table-scroll", "overflow-x")).toBe("auto");
+  });
+
+  it("keeps markdown chrome on the well and raised tones without side tone or z-index", () => {
+    const markdownRules = RULES.filter((rule) =>
+      rule.selectors.some((selector) => selector.includes(".agent-md__")),
+    );
+    for (const rule of markdownRules) {
+      expect(rule.body, rule.selectors.join(",")).not.toMatch(/z-index/);
+      expect(rule.body, rule.selectors.join(",")).not.toMatch(
+        /--agent-rail|--agent-shade|--codevo-side|--agent-hairline/,
+      );
+    }
+    expect(winningDeclaration(".agent-md__code-bar", "background")).toBe("var(--agent-raised)");
+    expect(winningDeclaration(".agent-md__code-body", "background")).toBe(
+      "var(--agent-code-background)",
+    );
+    expect(winningDeclaration(".agent-md__th", "background")).toBe("var(--agent-raised)");
+    expect(winningDeclaration(".agent-md__quote", "background")).toBe("var(--agent-well)");
+    expect(winningDeclaration(".agent-md__inline-code", "background")).toBe("var(--agent-well)");
+    expect(winningDeclaration(".agent-md__heading--h1", "font-size")).toBe("var(--agent-fs-xl)");
+    expect(winningDeclaration(".agent-md__heading--h2", "font-size")).toBe("var(--agent-fs-lg)");
+  });
+
   it("floats menus and popovers on the float shadow without a hairline ring", () => {
     expect(winningDeclaration(".agent-menu", "box-shadow")).toBe("var(--codevo-shadow-float)");
     expect(winningDeclaration(".agent-menu", "border-radius")).toBe("var(--agent-radius-lg)");

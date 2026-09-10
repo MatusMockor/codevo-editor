@@ -3,7 +3,7 @@
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type {
@@ -20,6 +20,7 @@ import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
 import { AgentClockProvider } from "./agentClock";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
+import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 
 const ROOT = "/workspace/app";
 const WORKTREE = `${ROOT}/.worktrees/agt-1`;
@@ -39,6 +40,10 @@ vi.mock("./AgentMessageCopyButton", async (importOriginal) => {
 describe("AgentThreadSession", () => {
   let host: HTMLDivElement;
   let root: Root;
+
+  beforeAll(async () => {
+    await loadAgentMarkdownRenderer();
+  });
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });

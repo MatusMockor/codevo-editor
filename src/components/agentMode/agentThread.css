@@ -299,6 +299,7 @@
   display: grid;
   gap: 8px;
   max-width: none;
+  min-width: 0;
 }
 
 .agent-text__paragraph {
@@ -308,6 +309,202 @@
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.agent-md__note {
+  font-style: italic;
+}
+
+.agent-md__heading {
+  color: var(--agent-text-strong);
+  font-size: var(--agent-fs-md);
+  font-weight: 600;
+  line-height: var(--agent-lh-prose);
+  margin: 6px 0 0;
+  word-break: break-word;
+}
+
+.agent-md__heading--h1 {
+  font-size: var(--agent-fs-xl);
+}
+
+.agent-md__heading--h2 {
+  font-size: var(--agent-fs-lg);
+}
+
+.agent-md__heading--h4,
+.agent-md__heading--h5,
+.agent-md__heading--h6 {
+  color: var(--agent-text-muted);
+}
+
+.agent-md__list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-inline-start: 22px;
+  color: var(--agent-text);
+  font-size: var(--agent-fs-md);
+  line-height: var(--agent-lh-prose);
+}
+
+.agent-md__item {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-md__item::marker {
+  color: var(--agent-text-subtle);
+}
+
+.agent-md__item > .agent-md__list {
+  margin-top: 4px;
+}
+
+.agent-md__checkbox {
+  accent-color: var(--agent-accent);
+  margin: 0 6px 0 0;
+  vertical-align: -1px;
+}
+
+.agent-md__quote {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--agent-radius-md);
+  background: var(--agent-well);
+  color: var(--agent-text-muted);
+}
+
+.agent-md__inline-code {
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-well);
+  color: var(--agent-text-strong);
+  font-family: var(--agent-mono);
+  font-size: 0.92em;
+  padding: 1px 5px;
+  word-break: break-word;
+}
+
+.agent-md__code {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agent-md__code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  padding: 2px 4px 2px 10px;
+  border-radius: var(--agent-radius-md) var(--agent-radius-md) 0 0;
+  background: var(--agent-raised);
+  color: var(--agent-text-subtle);
+}
+
+.agent-md__code-lang {
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+  letter-spacing: 0.02em;
+}
+
+.agent-md__code-body {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 0 0 var(--agent-radius-md) var(--agent-radius-md);
+  background: var(--agent-code-background);
+  color: var(--agent-text);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-xs);
+  line-height: var(--agent-lh-prose);
+  overflow-x: auto;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.agent-md__code-body code {
+  font: inherit;
+}
+
+.agent-md__table-scroll {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: var(--agent-radius-md);
+}
+
+.agent-md__table {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 100%;
+  width: max-content;
+  color: var(--agent-text);
+  font-size: var(--agent-fs-sm);
+  line-height: var(--agent-lh-prose);
+}
+
+.agent-md__th {
+  padding: 6px 10px;
+  background: var(--agent-raised);
+  color: var(--agent-text-strong);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.agent-md__td {
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.agent-md__table tbody tr:nth-child(even) > .agent-md__td {
+  background: var(--agent-well);
+}
+
+.agent-md__th[data-align="center"],
+.agent-md__td[data-align="center"] {
+  text-align: center;
+}
+
+.agent-md__th[data-align="right"],
+.agent-md__td[data-align="right"] {
+  text-align: right;
+}
+
+.agent-md__link {
+  color: var(--agent-accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--agent-accent) 45%, transparent);
+  text-underline-offset: 2px;
+  word-break: break-word;
+}
+
+.agent-md__link:hover {
+  text-decoration-color: var(--agent-accent);
+}
+
+.agent-md__link:focus-visible {
+  border-radius: var(--agent-radius-sm);
+  box-shadow: var(--agent-focus-ring);
+  outline: none;
+}
+
+.agent-md__image {
+  font-style: italic;
+}
+
+.agent-md__rule {
+  width: 48px;
+  height: 4px;
+  margin: 4px 0;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-well);
 }
 
 .agent-message-actions {

@@ -1,3 +1,4 @@
+import type { Token } from "marked";
 import { buildMarkdownPreviewDocumentPath } from "./editorDocumentSchemes";
 import type { EditorDocument } from "./workspace";
 
@@ -28,48 +29,94 @@ export function isSafeExternalMarkdownUrl(value: string): boolean {
   }
 }
 
+type MarkedModule = typeof import("marked");
+type DomPurifyInstance = (typeof import("dompurify"))["default"];
+
+export interface HardenedMarkdown {
+  lexBlocks(markdown: string): ReadonlyArray<Token>;
+  renderTokens(tokens: ReadonlyArray<Token>): string;
+  sanitizeToFragment(html: string): DocumentFragment;
+  renderDocument(markdown: string): string;
+}
+
+const FORBIDDEN_ATTRIBUTES = ["style"] as const;
+const FORBIDDEN_TAGS = ["embed", "iframe", "math", "object", "script", "svg"] as const;
+
+let loading: Promise<HardenedMarkdown> | null = null;
+
+export function loadHardenedMarkdown(): Promise<HardenedMarkdown> {
+  if (loading !== null) return loading;
+  loading = Promise.all([import("marked"), import("dompurify")]).then(
+    ([markedModule, purifyModule]) => createHardenedMarkdown(markedModule, purifyModule.default),
+  );
+  loading.catch(() => {
+    loading = null;
+  });
+  return loading;
+}
+
 export async function renderMarkdownPreview(markdown: string): Promise<string> {
-  const [{ marked }, { default: DOMPurify }] = await Promise.all([
-    import("marked"),
-    import("dompurify"),
-  ]);
+  const pipeline = await loadHardenedMarkdown();
+  return pipeline.renderDocument(markdown);
+}
+
+export function createHardenedMarkdown(
+  markedModule: MarkedModule,
+  DOMPurify: DomPurifyInstance,
+): HardenedMarkdown {
+  const { marked } = markedModule;
   const renderer = new marked.Renderer();
   renderer.html = ({ text }) => escapeHtml(text);
-  const rendered = await marked.parse(markdown, {
-    gfm: true,
-    renderer,
-  });
-  const sanitized = DOMPurify.sanitize(rendered, {
-    FORBID_ATTR: ["style"],
-    FORBID_TAGS: ["embed", "iframe", "math", "object", "script", "svg"],
-    USE_PROFILES: { html: true },
-  });
-  const template = document.createElement("template");
-  template.innerHTML = sanitized;
+  const options = { async: false, gfm: true, renderer } as const;
 
-  template.content.querySelectorAll("img").forEach((image) => {
+  const lexBlocks = (markdown: string): ReadonlyArray<Token> => marked.lexer(markdown, options);
+
+  const renderTokens = (tokens: ReadonlyArray<Token>): string =>
+    marked.parser([...tokens], options);
+
+  const sanitizeToFragment = (html: string): DocumentFragment => {
+    const sanitized = DOMPurify.sanitize(html, {
+      FORBID_ATTR: [...FORBIDDEN_ATTRIBUTES],
+      FORBID_TAGS: [...FORBIDDEN_TAGS],
+      USE_PROFILES: { html: true },
+    });
+    const template = document.createElement("template");
+    template.innerHTML = sanitized;
+    stripUnsafeImages(template.content);
+    hardenLinks(template.content);
+    return template.content;
+  };
+
+  const renderDocument = (markdown: string): string => {
+    const fragment = sanitizeToFragment(renderTokens(lexBlocks(markdown)));
+    const template = document.createElement("template");
+    template.content.append(fragment);
+    return template.innerHTML;
+  };
+
+  return { lexBlocks, renderTokens, sanitizeToFragment, renderDocument };
+}
+
+function stripUnsafeImages(root: ParentNode): void {
+  root.querySelectorAll("img").forEach((image) => {
     const source = image.getAttribute("src");
-
-    if (!source || !isSafeExternalMarkdownUrl(source)) {
-      image.removeAttribute("src");
-    }
+    if (source !== null && isSafeExternalMarkdownUrl(source)) return;
+    image.removeAttribute("src");
   });
+}
 
-  template.content.querySelectorAll("a").forEach((link) => {
+function hardenLinks(root: ParentNode): void {
+  root.querySelectorAll("a").forEach((link) => {
     const href = link.getAttribute("href");
-
-    if (!href || !isSafeExternalMarkdownUrl(href)) {
+    if (href === null || !isSafeExternalMarkdownUrl(href)) {
       link.removeAttribute("href");
       link.removeAttribute("target");
       link.removeAttribute("rel");
       return;
     }
-
     link.setAttribute("rel", "noopener");
     link.removeAttribute("target");
   });
-
-  return template.innerHTML;
 }
 
 function escapeHtml(value: string): string {
