@@ -131,14 +131,19 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-session__scroll")).toContain("overflow-x: hidden");
     expect(rule(".agent-session__body")).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(rule(".agent-session__body")).toContain("min-width: 0");
-    expect(rule(".agent-turn")).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(rule(".agent-turn")).toContain("min-width: 0");
+    expect(rule(".agent-answer")).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(rule(".agent-answer")).toContain("min-width: 0");
     expect(rule(".agent-turn__events")).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(rule(".agent-turn__events")).toContain("min-width: 0");
     expect(rule(".agent-raw__lines")).toContain("overflow: auto");
 
     const narrowCenter = block(appCss, "@container agent-center (max-width: 600px)");
     expect(rule(".agent-prompt", narrowCenter)).toContain("max-width: 100%");
+    expect(rule(".agent-answer", narrowCenter)).toContain("padding-left: 0");
+    expect(rule(".agent-band", narrowCenter)).toContain(
+      "grid-template-columns: auto minmax(0, 1fr) auto auto",
+    );
     expect(rule(".agent-prompt__meta")).toContain("opacity: 0");
     expect(rule(".agent-prompt__meta")).toContain("justify-content: flex-end");
     expect(rule(".agent-prompt:hover .agent-prompt__meta")).toContain("opacity: 1");

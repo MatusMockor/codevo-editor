@@ -39,6 +39,7 @@ const CODEVO_LADDER = [
   "--codevo-canvas",
   "--codevo-raised",
   "--codevo-well",
+  "--codevo-recessed",
   "--codevo-hover",
   "--codevo-active",
   "--codevo-selected",
@@ -116,6 +117,8 @@ const LIGHT_LADDER = [
   "--codevo-shadow-float",
   "--codevo-shadow-window",
 ] as const;
+const LEDGER_BAND_TONE = "--agent-band-surface";
+const LEDGER_COLUMN_TONE = "--agent-canvas";
 const PENDING_T3_SHEETS: readonly string[] = [];
 const PENDING_LITERAL_REMAP_SHEETS: readonly string[] = [];
 const SCHEME_SCALARS = new Set(["--agent-shadow-alpha"]);
@@ -189,6 +192,29 @@ function literalProblem(name: string, value: string): string | null {
   if (FONT_SIZE_TOKEN.test(name) && !isSingleVar(value)) return "font-size literal";
   if (FONT_FAMILY_TOKEN.test(name) && !isSingleVar(value)) return "font-family literal";
   return null;
+}
+
+const LEDGER_BAND_MIN_STEP = 3;
+
+function channelLuminance(channel: number): number {
+  const value = channel / 255;
+  return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+}
+
+function lightness(hex: string): number {
+  const parsed = /^#([0-9a-f]{6})$/i.exec(hex.trim());
+  expect(parsed, `expected a six digit hex colour, received "${hex}"`).not.toBeNull();
+  const digits = parsed?.[1] ?? "000000";
+  const channels = [0, 2, 4].map((offset) =>
+    channelLuminance(Number.parseInt(digits.slice(offset, offset + 2), 16)),
+  );
+  const luminance =
+    0.2126 * (channels[0] ?? 0) + 0.7152 * (channels[1] ?? 0) + 0.0722 * (channels[2] ?? 0);
+  return luminance <= 0.008856 ? 903.3 * luminance : 116 * Math.cbrt(luminance) - 16;
+}
+
+function lightnessStep(band: string, column: string): number {
+  return lightness(column) - lightness(band);
 }
 
 describe("codevo token contract", () => {
@@ -308,6 +334,53 @@ describe("codevo token contract", () => {
         expect(toneValue, `${selector} ${tone}`).toBeDefined();
         expect(toneValue, `${selector} ${tone} vs ${raised}`).not.toBe(raisedValue);
       }
+    }
+  });
+
+  it("keeps the ledger band tone distinct from the thread column tone in every theme", () => {
+    const bandRule = parsed.rules.find(
+      (rule) => rule.context.length === 0 && selectorParts(rule.selector).includes(".agent-band"),
+    );
+    const bandBackground = lastOf(
+      bandRule?.declarations.filter((entry) => entry.property === "background"),
+    );
+    expect(bandBackground?.value).toBe(`var(${LEDGER_BAND_TONE})`);
+
+    const agentTable = buildTokenTable(tokenRules);
+    const bandRoots = resolveVarRoots(LEDGER_BAND_TONE, agentTable);
+    const columnRoots = resolveVarRoots(LEDGER_COLUMN_TONE, agentTable);
+    expect(bandRoots).toEqual(["--color-recessed"]);
+    expect(columnRoots).toEqual(["--color-app"]);
+
+    const blocks: ReadonlyArray<readonly [string, readonly CssRule[]]> = [
+      ...APP_THEME_SELECTORS.map(
+        (selector) => [selector, appThemeBlock(selector)] as readonly [string, readonly CssRule[]],
+      ),
+      [
+        "system light",
+        parsed.rules.filter(
+          (rule) =>
+            rule.sheet === APP_SHEET &&
+            rule.context[0] === SYSTEM_LIGHT_CONTEXT &&
+            rule.selector === SYSTEM_THEME_SELECTOR,
+        ),
+      ] as readonly [string, readonly CssRule[]],
+    ];
+
+    for (const [selector, block] of blocks) {
+      const table = buildTokenTable(block, "--color-");
+      const band = lastOf(table.get("--color-recessed"));
+      const column = lastOf(table.get("--color-app"));
+      expect(band, `${selector} band tone`).toBeDefined();
+      expect(column, `${selector} column tone`).toBeDefined();
+      expect(band, `${selector} band vs column`).not.toBe(column);
+      const step = lightnessStep(band ?? "", column ?? "");
+      expect(step, `${selector} band vs column lightness step`).toBeGreaterThanOrEqual(
+        LEDGER_BAND_MIN_STEP,
+      );
+      expect(lightness(band ?? ""), `${selector} band is recessed`).toBeLessThan(
+        lightness(column ?? ""),
+      );
     }
   });
 

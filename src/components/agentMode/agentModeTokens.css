@@ -3,6 +3,7 @@
   --codevo-canvas: var(--color-app);
   --codevo-raised: var(--color-surface);
   --codevo-well: var(--color-control);
+  --codevo-recessed: var(--color-recessed);
   --codevo-hover: var(--color-hover);
   --codevo-active: var(--color-active);
   --codevo-selected: var(--color-hover-strong);
@@ -120,6 +121,7 @@
   --agent-rail: var(--codevo-side);
   --agent-raised: var(--codevo-raised);
   --agent-well: var(--codevo-well);
+  --agent-band-surface: var(--codevo-recessed);
   --agent-fill: var(--codevo-active);
   --agent-hover: var(--codevo-hover);
   --agent-hairline: var(--codevo-hover);
@@ -198,6 +200,9 @@
   --agent-rail-row-px: 30px;
   --agent-session-gutter: 24px;
   --agent-turn-gap: 28px;
+  --agent-band-bleed: 24px;
+  --agent-band-indent: 36px;
+  --agent-band-reveal-inset: 68px;
   --agent-motion-hover: 120ms;
   --agent-motion-select: 180ms;
   --agent-motion-enter: 200ms;

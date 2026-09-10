@@ -216,7 +216,7 @@ describe("AgentThreadSession", () => {
     });
 
     expect(host.querySelectorAll("article.agent-turn")).toHaveLength(2);
-    expect(host.querySelectorAll(".agent-prompt__body")[1]?.textContent).toBe(
+    expect(host.querySelectorAll(".agent-band__text")[1]?.textContent).toBe(
       "Also update the tests",
     );
     expect(
@@ -756,7 +756,7 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    const meta = host.querySelector(".agent-prompt__meta");
+    const meta = host.querySelector(".agent-band__meta");
 
     expect(meta?.textContent).toBe("5 minutes ago");
     expect(meta?.getAttribute("aria-label")).toBe("Message time");
@@ -792,7 +792,7 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.querySelectorAll(".agent-prompt__meta")).toHaveLength(3);
+    expect(host.querySelectorAll(".agent-band__meta")).toHaveLength(3);
     expect(host.querySelector(".agent-prompt__launch")).toBeNull();
     expect(host.textContent).not.toContain("sonnet");
     expect(host.textContent).not.toContain("gpt-5.5");
@@ -1106,7 +1106,7 @@ describe("AgentThreadSession", () => {
     render(withFind({ findQuery: "p", findHitIndex: 0 }));
 
     expect(host.querySelectorAll("mark.agent-find__hit")).toHaveLength(0);
-    expect(host.querySelector(".agent-prompt__body")?.textContent).toBe("parser and parser");
+    expect(host.querySelector(".agent-band__text")?.textContent).toBe("parser and parser");
   });
 
   it("reveals a turn whose events were dropped from the rendered projection", () => {

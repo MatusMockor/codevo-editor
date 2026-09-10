@@ -23,6 +23,7 @@
   --color-border: #20232a;
   --color-border-strong: #292d35;
   --color-control: #0f1014;
+  --color-recessed: #08090d;
   --color-disabled: #4a505c;
   --color-error: #ef6f6f;
   --color-hover: #20232a;
@@ -106,6 +107,7 @@
   --color-border: #e5e8ed;
   --color-border-strong: #dbdfe6;
   --color-control: #eaedf1;
+  --color-recessed: #e4e6e9;
   --color-disabled: #c2c7cf;
   --color-error: #d64545;
   --color-hover: #e5e8ed;
@@ -162,6 +164,7 @@
   --color-border: #2a3140;
   --color-border-strong: #3a4357;
   --color-control: #1b2029;
+  --color-recessed: #171b25;
   --color-disabled: #707a8c;
   --color-error: #f28779;
   --color-hover: #303748;
@@ -218,6 +221,7 @@
   --color-border: #1c2133;
   --color-border-strong: #2a3350;
   --color-control: #0c0e16;
+  --color-recessed: #030407;
   --color-disabled: #4b5572;
   --color-error: #f07178;
   --color-hover: #212739;
@@ -274,6 +278,7 @@
   --color-border: #31363f;
   --color-border-strong: #3e4451;
   --color-control: #23272e;
+  --color-recessed: #20232a;
   --color-disabled: #5c6370;
   --color-error: #e06c75;
   --color-hover: #3a404b;
@@ -330,6 +335,7 @@
   --color-border: #343746;
   --color-border-strong: #44475a;
   --color-control: #23242f;
+  --color-recessed: #1f212b;
   --color-disabled: #6272a4;
   --color-error: #ff5555;
   --color-hover: #3b3d50;
@@ -386,6 +392,7 @@
   --color-border: #2a2b3c;
   --color-border-strong: #45475a;
   --color-control: #1a1a28;
+  --color-recessed: #161623;
   --color-disabled: #6c7086;
   --color-error: #f38ba8;
   --color-hover: #313244;
@@ -442,6 +449,7 @@
   --color-border: #2d2d2d;
   --color-border-strong: #3c3c3c;
   --color-control: #181818;
+  --color-recessed: #151515;
   --color-disabled: #6b6b6b;
   --color-error: #f48771;
   --color-hover: #383838;
@@ -498,6 +506,7 @@
   --color-border: #dce0e8;
   --color-border-strong: #ccd0da;
   --color-control: #e6e9ef;
+  --color-recessed: #e3e5e8;
   --color-disabled: #9ca0b0;
   --color-error: #d20f39;
   --color-hover: #e2e5ed;
@@ -554,6 +563,7 @@
   --color-border: #ececec;
   --color-border-strong: #dcdcdc;
   --color-control: #eaeaeb;
+  --color-recessed: #e6e6e6;
   --color-disabled: #a0a1a7;
   --color-error: #e45649;
   --color-hover: #e8e8e9;
@@ -663,6 +673,7 @@
     --color-border: #e5e8ed;
     --color-border-strong: #dbdfe6;
     --color-control: #eaedf1;
+    --color-recessed: #e4e6e9;
     --color-disabled: #c2c7cf;
     --color-error: #d64545;
     --color-hover: #e5e8ed;

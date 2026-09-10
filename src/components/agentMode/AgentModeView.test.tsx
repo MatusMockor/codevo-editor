@@ -1715,7 +1715,7 @@ describe("AgentModeView", () => {
       });
       click('[data-thread-id="agt-1"]');
 
-      expect(host.querySelector(".agent-prompt__meta")?.textContent).toContain("10 minutes ago");
+      expect(host.querySelector(".agent-band__meta")?.textContent).toContain("10 minutes ago");
       const sessionRenders = columnRenders.session;
       expect(sessionRenders).toBeGreaterThan(0);
 
@@ -1726,7 +1726,7 @@ describe("AgentModeView", () => {
         });
       }
 
-      expect(host.querySelector(".agent-prompt__meta")?.textContent).toContain("3 hours ago");
+      expect(host.querySelector(".agent-band__meta")?.textContent).toContain("3 hours ago");
       expect(columnRenders.session).toBe(sessionRenders);
     } finally {
       vi.useRealTimers();

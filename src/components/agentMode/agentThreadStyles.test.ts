@@ -68,6 +68,21 @@ function winningDeclaration(selector: string, property: string): string | null {
   return values[values.length - 1] ?? null;
 }
 
+function token(name: string): string {
+  const values = RULES.filter((entry) => entry.selectors.includes(".workbench-frame")).flatMap(
+    (entry) => [...entry.body.matchAll(new RegExp(`(?:^|;)\\s*${name}\\s*:([^;]*)`, "g"))],
+  );
+  return (values[values.length - 1]?.[1] ?? "").trim();
+}
+
+function bandBleed(): string {
+  return token("--agent-band-bleed");
+}
+
+function revealInset(): number {
+  return Number.parseInt(token("--agent-band-reveal-inset"), 10);
+}
+
 describe("agent thread Airy style contract", () => {
   it("drops the rule under the thread header and gives it the 48px bar height", () => {
     expect(winningDeclaration(".agent-thread-head", "border-bottom")).toBeNull();
@@ -101,7 +116,7 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-session", "padding")).toBe("12px 24px 8px");
   });
 
-  it("renders the user message as a raised bubble", () => {
+  it("keeps the imported user message on a raised bubble", () => {
     expect(winningDeclaration(".agent-prompt", "max-width")).toBe("85%");
     expect(winningDeclaration(".agent-prompt__body", "background")).toBe("var(--agent-raised)");
     expect(winningDeclaration(".agent-prompt__body", "box-shadow")).toBe(
@@ -113,6 +128,78 @@ describe("agent thread Airy style contract", () => {
     );
     expect(winningDeclaration(".agent-prompt__body", "font-size")).toBe("var(--agent-fs-md)");
     expect(winningDeclaration(".agent-prompt__body", "line-height")).toBe("1.5");
+  });
+
+  it("paints the ledger band on its own recessed tone, never on the side or well tone", () => {
+    expect(winningDeclaration(".agent-band", "background")).toBe("var(--agent-band-surface)");
+    expect(winningDeclaration(".agent-band", "color")).toBe("var(--agent-text-strong)");
+    expect(declarations(".agent-band", "background").join(" ")).not.toMatch(
+      /--agent-rail|--agent-shade|--codevo-side|--agent-well|--agent-code-background/,
+    );
+    expect(winningDeclaration(".agent-band--pinned", "box-shadow")).toBe(
+      "var(--agent-shadow-raised)",
+    );
+    expect(declarations(".agent-band", "box-shadow")).toEqual([]);
+  });
+
+  it("never lets the pinned state change anything that affects the band height", () => {
+    const pinnedProperties = RULES.filter((entry) =>
+      entry.selectors.some((selector) => selector.includes(".agent-band--pinned")),
+    ).flatMap((entry) => [...entry.body.matchAll(/(?:^|;)\s*([-a-z]+)\s*:/g)].map((m) => m[1]));
+
+    expect([...new Set(pinnedProperties)].sort()).toEqual([
+      "box-shadow",
+      "opacity",
+      "pointer-events",
+    ]);
+    expect(winningDeclaration(".agent-session__scroll", "overflow-anchor")).toBe("none");
+  });
+
+  it("sticks the band to the top of its own turn and runs it past the reading column", () => {
+    expect(winningDeclaration(".agent-band", "position")).toBe("sticky");
+    expect(winningDeclaration(".agent-band", "top")).toBe("0");
+    expect(winningDeclaration(".agent-band", "z-index")).toBe("1");
+    expect(winningDeclaration(".agent-band", "margin")).toBe(
+      "0 calc(var(--agent-band-bleed) * -1) 12px",
+    );
+    expect(winningDeclaration(".agent-band", "padding")).toBe("12px var(--agent-band-bleed)");
+    expect(winningDeclaration(".agent-session", "padding")).toBe("12px 24px 8px");
+    expect(bandBleed()).toBe("24px");
+  });
+
+  it("clamps the band to two lines at all times and only an explicit expand undoes it", () => {
+    expect(winningDeclaration(".agent-band__text", "-webkit-line-clamp")).toBe("2");
+    expect(winningDeclaration(".agent-band__text", "overflow")).toBe("hidden");
+    expect(winningDeclaration(".agent-band__text", "white-space")).toBe("pre-wrap");
+    expect(declarations(".agent-band--pinned .agent-band__text", "-webkit-line-clamp")).toEqual([]);
+    expect(
+      winningDeclaration(".agent-band--expanded .agent-band__text", "-webkit-line-clamp"),
+    ).toBe("none");
+    expect(winningDeclaration(".agent-band--expanded .agent-band__text", "overflow")).toBe(
+      "visible",
+    );
+    expect(winningDeclaration(".agent-band__jump", "opacity")).toBe("0");
+    expect(winningDeclaration(".agent-band__jump", "pointer-events")).toBe("none");
+    expect(winningDeclaration(".agent-band--pinned .agent-band__jump", "opacity")).toBe("1");
+    expect(winningDeclaration(".agent-band--pinned .agent-band__jump", "pointer-events")).toBe(
+      "auto",
+    );
+  });
+
+  it("clears the pinned band when a find hit or an event is revealed", () => {
+    expect(winningDeclaration(".agent-find__hit", "scroll-margin-top")).toBe(
+      "var(--agent-band-reveal-inset)",
+    );
+    expect(winningDeclaration(".agent-answer [data-agent-event]", "scroll-margin-top")).toBe(
+      "var(--agent-band-reveal-inset)",
+    );
+    expect(revealInset()).toBeGreaterThanOrEqual(68);
+    expect(winningDeclaration(".agent-session__reveal-slack", "height")).toBe(
+      "var(--agent-band-reveal-inset)",
+    );
+    expect(winningDeclaration(".agent-session__reveal-slack", "margin-top")).toBe(
+      "calc(var(--agent-turn-gap) * -1)",
+    );
   });
 
   it("keeps tool rows, subagent rows and the work fold boxless with a hover-only radius", () => {
@@ -156,6 +243,11 @@ describe("agent thread Airy style contract", () => {
   it("declares every thread-body selector once, in the thread stylesheet", () => {
     for (const selector of [
       ".agent-turn",
+      ".agent-turn-list",
+      ".agent-band",
+      ".agent-band__text",
+      ".agent-session__reveal-slack",
+      ".agent-answer",
       ".agent-turn__events",
       ".agent-work",
       ".agent-work__summary",
@@ -172,7 +264,7 @@ describe("agent thread Airy style contract", () => {
     ]) {
       expect(RULES.filter((entry) => entry.selectors.includes(selector))).toHaveLength(1);
     }
-    expect(winningDeclaration(".agent-turn", "gap")).toBe("16px");
+    expect(winningDeclaration(".agent-answer", "gap")).toBe("16px");
     expect(winningDeclaration(".agent-turn__events", "gap")).toBe("12px");
   });
 

@@ -30,11 +30,12 @@ import {
   type AgentMarkdownPresentation,
 } from "../../domain/agentMarkdown/agentMarkdownTree";
 import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentSidebarPresentation";
-import { AgentRelativeTime, AgentWorkingDuration } from "./agentClock";
+import { AgentWorkingDuration } from "./agentClock";
 import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { AgentImportedHistory, type AgentExternalHistoryState } from "./AgentImportedHistory";
 import { AgentMarkdownBlockView } from "./AgentMarkdown";
+import { AgentTurnBand } from "./AgentTurnBand";
 import {
   handleAgentMarkdownLinkClick,
   openAgentMarkdownLink,
@@ -48,6 +49,8 @@ import {
   type AgentMarkdownRendererState,
 } from "./useAgentMarkdown";
 import { createIntersectionAgentMarkdownViewport } from "../../infrastructure/viewport/intersectionAgentMarkdownViewport";
+import { createIntersectionAgentBandPin } from "../../infrastructure/viewport/intersectionAgentBandPin";
+import type { AgentBandPinObserver } from "../../application/agentBandPin";
 import {
   agentWorktreeRemovalLabel,
   agentTurnDurationLabel,
@@ -109,6 +112,7 @@ export interface AgentThreadSessionProps {
   readonly textClipboard?: TextClipboardGateway | null;
   readonly markdownRenderer?: AgentMarkdownRenderer | null;
   readonly markdownViewport?: AgentMarkdownViewport | null;
+  readonly bandPin?: AgentBandPinObserver | null;
   readonly openExternalLink?: AgentExternalLinkOpener;
   readonly externalHistoryState?: AgentExternalHistoryState;
   readonly onRetryExternalHistory?: () => void;
@@ -129,6 +133,7 @@ type AgentThreadSessionBodyProps = AgentThreadSessionProps & {
 };
 
 function AgentThreadSessionBody({
+  bandPin: injectedBandPin,
   findHitIndex,
   findHits,
   findQuery,
@@ -179,6 +184,19 @@ function AgentThreadSessionBody({
     return () => viewport.dispose();
   }, [ownsViewport, viewport]);
 
+  const bandPin = useMemo(() => {
+    if (injectedBandPin !== undefined) return injectedBandPin;
+    return createIntersectionAgentBandPin(() => scrollRef.current);
+  }, [injectedBandPin]);
+
+  const ownsBandPin = injectedBandPin === undefined;
+  useEffect(() => {
+    if (!ownsBandPin) return;
+    if (bandPin === null) return;
+    return () => bandPin.dispose();
+  }, [bandPin, ownsBandPin]);
+
+  const revealSlack = query !== "" && hits.length > 0;
   const hitTurnIds = useMemo(() => new Set(hits.map((hit) => hit.turnId)), [hits]);
   const baseHighlight = useMemo<AgentTurnHighlight>(() => ({ query, current: null }), [query]);
   const activeHighlight = useMemo<AgentTurnHighlight | null>(() => {
@@ -192,7 +210,7 @@ function AgentThreadSessionBody({
     const container = scrollRef.current;
     if (container === null) return;
     const target = revealTarget(container, reveal, activeHit);
-    target?.scrollIntoView?.({ block: "center" });
+    target?.scrollIntoView?.({ block: "start" });
   }, [activeHit, reveal]);
 
   useEffect(() => {
@@ -223,6 +241,7 @@ function AgentThreadSessionBody({
     lastTurn?.turnId,
     record.updatedAtEpochMs,
     record.externalOrigin?.history,
+    revealSlack,
     threadId,
   ]);
 
@@ -257,17 +276,21 @@ function AgentThreadSessionBody({
             />
           )}
 
-          {record.turns.map((turn) => (
-            <AgentTurnView
-              highlight={highlightFor(turn.turnId)}
-              key={turn.turnId}
-              prose={prose}
-              provider={record.provider.kind}
-              renderProbe={turnRenderProbe}
-              textClipboard={textClipboard}
-              turn={turn}
-            />
-          ))}
+          <div className="agent-turn-list">
+            {record.turns.map((turn, index) => (
+              <AgentTurnView
+                bandPin={bandPin}
+                highlight={highlightFor(turn.turnId)}
+                key={turn.turnId}
+                ordinal={record.turnsTruncated ? null : index + 1}
+                prose={prose}
+                provider={record.provider.kind}
+                renderProbe={turnRenderProbe}
+                textClipboard={textClipboard}
+                turn={turn}
+              />
+            ))}
+          </div>
 
           {thread.worktreeMissing && (
             <p className="agent-note agent-note--warning">
@@ -284,6 +307,8 @@ function AgentThreadSessionBody({
               threadId={threadId}
             />
           )}
+
+          {revealSlack && <div aria-hidden="true" className="agent-session__reveal-slack" />}
         </div>
       </div>
     </section>
@@ -291,14 +316,18 @@ function AgentThreadSessionBody({
 }
 
 const AgentTurnView = memo(function AgentTurnView({
+  bandPin,
   highlight = null,
+  ordinal,
   prose,
   provider,
   renderProbe,
   textClipboard,
   turn,
 }: {
+  readonly bandPin: AgentBandPinObserver | null;
   readonly highlight?: AgentTurnHighlight | null;
+  readonly ordinal: number | null;
   readonly prose: AgentProseContext;
   readonly provider: AgentCliKind;
   readonly renderProbe?: (turnId: string) => void;
@@ -306,6 +335,10 @@ const AgentTurnView = memo(function AgentTurnView({
   readonly turn: AgentTurn;
 }) {
   renderProbe?.(turn.turnId);
+  const answerEnd = useRef<HTMLDivElement | null>(null);
+  const jumpToAnswerEnd = useCallback(() => {
+    answerEnd.current?.scrollIntoView?.({ block: "end" });
+  }, []);
   const projection = agentTurnProjection(turn.events);
   const subagents = agentTurnSubagentSummary(turn.events);
   const running = turn.status.kind === "pending" || turn.status.kind === "running";
@@ -337,86 +370,87 @@ const AgentTurnView = memo(function AgentTurnView({
       className="agent-turn"
       data-agent-turn={turn.turnId}
     >
-      <article className="agent-prompt">
-        <div className="agent-prompt__body">
-          <HighlightRun current={promptCurrent} query={highlight?.query ?? ""} text={turn.prompt} />
-        </div>
-        <div className="agent-prompt__meta agent-num" aria-label="Message time">
-          <span>
-            <AgentRelativeTime epochMs={turn.startedAtEpochMs} />
-          </span>
-          <AgentMessageCopyButton
-            clipboard={textClipboard}
-            label="your message"
-            text={turn.prompt}
-          />
-        </div>
-      </article>
+      <AgentTurnBand
+        bandPin={bandPin}
+        current={promptCurrent}
+        onJumpToAnswerEnd={jumpToAnswerEnd}
+        ordinal={ordinal}
+        prompt={turn.prompt}
+        query={highlight?.query ?? ""}
+        startedAtEpochMs={turn.startedAtEpochMs}
+        textClipboard={textClipboard}
+      />
 
-      {projection.hiddenCount > 0 && (
-        <p className="agent-note">{projection.hiddenCount} earlier events hidden</p>
-      )}
+      <div className="agent-answer">
+        {projection.hiddenCount > 0 && (
+          <p className="agent-note">{projection.hiddenCount} earlier events hidden</p>
+        )}
 
-      <div className="agent-turn__events">
-        {subagents !== null && <AgentSubagentBanner summary={subagents} />}
-        {workFold === null && subagents !== null && (
-          <AgentSubagentList entries={subagents.entries} />
-        )}
-        {workFold !== null && (
-          <AgentTurnWork
-            errorContext={errorContext}
-            highlight={highlight}
-            items={workFold.workItems}
-            key={running ? "running-work" : "settled-work"}
-            prose={prose}
-            running={running}
-            stream={stream}
-            subagents={subagents}
-            summary={workFold.summary}
-            textClipboard={textClipboard}
-            turn={turn}
-          />
-        )}
-        {(workFold?.visibleItems ?? projection.items)
-          .filter((item) => !isAgentSubagentToolItem(item))
-          .map((item) => (
-            <AgentTurnItemView
+        <div className="agent-turn__events">
+          {subagents !== null && <AgentSubagentBanner summary={subagents} />}
+          {workFold === null && subagents !== null && (
+            <AgentSubagentList entries={subagents.entries} />
+          )}
+          {workFold !== null && (
+            <AgentTurnWork
               errorContext={errorContext}
-              highlight={itemHighlight(highlight, item.key)}
-              item={item}
-              key={item.key}
+              highlight={highlight}
+              items={workFold.workItems}
+              key={running ? "running-work" : "settled-work"}
               prose={prose}
+              running={running}
               stream={stream}
+              subagents={subagents}
+              summary={workFold.summary}
               textClipboard={textClipboard}
+              turn={turn}
             />
-          ))}
-        {empty && running && (
-          <p className="agent-note">
-            Waiting for output…
-            <span aria-hidden="true" className="agent-well__caret" />
+          )}
+          {(workFold?.visibleItems ?? projection.items)
+            .filter((item) => !isAgentSubagentToolItem(item))
+            .map((item) => (
+              <AgentTurnItemView
+                errorContext={errorContext}
+                highlight={itemHighlight(highlight, item.key)}
+                item={item}
+                key={item.key}
+                prose={prose}
+                stream={stream}
+                textClipboard={textClipboard}
+              />
+            ))}
+          {empty && running && (
+            <p className="agent-note">
+              Waiting for output…
+              <span aria-hidden="true" className="agent-well__caret" />
+            </p>
+          )}
+        </div>
+
+        {rawOutput !== null && <div className="agent-message-actions">{rawOutput}</div>}
+
+        {turn.eventsTruncated && (
+          <p className="agent-note agent-note--warning">
+            Later output was dropped to bound memory.
           </p>
         )}
+
+        {turn.status.kind === "interrupted" && (
+          <p className="agent-note agent-note--warning">Interrupted by app restart</p>
+        )}
+
+        {failure !== null && !repeatsLastError(failure, projection.items, errorContext) && (
+          <section className="agent-finale agent-finale--bad">
+            <span className="agent-microlabel agent-microlabel--bad">run failed</span>
+            <p className="agent-finale__body">
+              {agentProviderErrorHeadline(failure, errorContext.installedVersion)}
+            </p>
+            <AgentProviderErrorHint error={failure} />
+          </section>
+        )}
+
+        <div aria-hidden="true" className="agent-answer__end" ref={answerEnd} />
       </div>
-
-      {rawOutput !== null && <div className="agent-message-actions">{rawOutput}</div>}
-
-      {turn.eventsTruncated && (
-        <p className="agent-note agent-note--warning">Later output was dropped to bound memory.</p>
-      )}
-
-      {turn.status.kind === "interrupted" && (
-        <p className="agent-note agent-note--warning">Interrupted by app restart</p>
-      )}
-
-      {failure !== null && !repeatsLastError(failure, projection.items, errorContext) && (
-        <section className="agent-finale agent-finale--bad">
-          <span className="agent-microlabel agent-microlabel--bad">run failed</span>
-          <p className="agent-finale__body">
-            {agentProviderErrorHeadline(failure, errorContext.installedVersion)}
-          </p>
-          <AgentProviderErrorHint error={failure} />
-        </section>
-      )}
     </article>
   );
 });
