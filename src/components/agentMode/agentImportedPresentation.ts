@@ -1,9 +1,5 @@
-import type { AgentThread } from "../../domain/agentThread";
 import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { ExternalSessionExchange } from "../../domain/externalAgentSession";
-
-export type AgentLedgerOrdinals =
-  { readonly kind: "hidden" } | { readonly kind: "shown"; readonly importedPrompts: number };
 
 export interface AgentImportedResponse {
   readonly exchangeIndex: number;
@@ -12,7 +8,6 @@ export interface AgentImportedResponse {
 
 export interface AgentImportedPrompt {
   readonly exchangeIndex: number;
-  readonly promptIndex: number;
   readonly text: string;
 }
 
@@ -27,43 +22,7 @@ export interface AgentImportedHighlight {
   readonly current: number | null;
 }
 
-const HIDDEN: AgentLedgerOrdinals = { kind: "hidden" };
 const NO_HIGHLIGHTS: ReadonlyMap<number, AgentImportedHighlight> = new Map();
-
-export function agentLedgerOrdinals(thread: AgentThread): AgentLedgerOrdinals {
-  if (thread.turnsTruncated) return HIDDEN;
-
-  const origin = thread.externalOrigin;
-  if (origin === null) return { kind: "shown", importedPrompts: 0 };
-
-  const history = origin.history;
-  if (history === undefined) return HIDDEN;
-  if (history.exchangesTruncated) return HIDDEN;
-
-  return {
-    kind: "shown",
-    importedPrompts: history.exchanges.filter((exchange) => exchange.role === "user").length,
-  };
-}
-
-export function agentLedgerTurnOrdinal(
-  ordinals: AgentLedgerOrdinals,
-  turnIndex: number,
-): number | null {
-  if (ordinals.kind === "hidden") return null;
-
-  return ordinals.importedPrompts + turnIndex + 1;
-}
-
-export function agentLedgerImportedOrdinal(
-  ordinals: AgentLedgerOrdinals,
-  promptIndex: number,
-): number | null {
-  if (ordinals.kind === "hidden") return null;
-  if (promptIndex >= ordinals.importedPrompts) return null;
-
-  return promptIndex + 1;
-}
 
 export function agentImportedTurns(
   exchanges: ReadonlyArray<ExternalSessionExchange>,
@@ -72,7 +31,6 @@ export function agentImportedTurns(
   let responses: AgentImportedResponse[] = [];
   let prompt: AgentImportedPrompt | null = null;
   let started = false;
-  let promptIndex = 0;
 
   const flush = (): void => {
     if (!started) return;
@@ -87,8 +45,7 @@ export function agentImportedTurns(
     }
     flush();
     responses = [];
-    prompt = { exchangeIndex, promptIndex, text: exchange.text };
-    promptIndex += 1;
+    prompt = { exchangeIndex, text: exchange.text };
     started = true;
   });
   flush();

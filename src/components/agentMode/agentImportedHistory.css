@@ -1,16 +1,8 @@
 .agent-imported-history {
   display: grid;
-  gap: 0;
+  gap: var(--agent-turn-gap);
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
-}
-
-.agent-imported-history > .agent-note {
-  margin-bottom: var(--agent-turn-gap);
-}
-
-.agent-imported-history > .agent-turn:last-of-type .agent-answer {
-  padding-bottom: 0;
 }
 
 .agent-imported-history__status {

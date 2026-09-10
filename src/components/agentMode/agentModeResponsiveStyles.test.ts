@@ -138,14 +138,12 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-turn__events")).toContain("min-width: 0");
     expect(rule(".agent-raw__lines")).toContain("overflow: auto");
 
-    const narrowCenter = block(appCss, "@container agent-center (max-width: 600px)");
-    expect(rule(".agent-answer", narrowCenter)).toContain("padding-left: 0");
-    expect(rule(".agent-band", narrowCenter)).toContain(
-      "grid-template-columns: auto minmax(0, 1fr) auto;",
-    );
-    expect(rule(".agent-band__meta")).toContain("opacity: 0");
-    expect(rule(".agent-band__meta")).toContain("justify-content: flex-end");
-    expect(rule(".agent-band:hover .agent-band__meta")).toContain("opacity: 1");
+    expect(rule(".agent-prompt")).toContain("min-width: 0");
+    expect(rule(".agent-prompt__body")).toContain("min-width: 0");
+    expect(rule(".agent-prompt__body")).toContain("max-width: 85%");
+    expect(rule(".agent-prompt__body")).toContain("word-break: break-word");
+    expect(rule(".agent-turn__head")).toContain("min-width: 0");
+    expect(rule(".agent-turn__agent")).toContain("text-overflow: ellipsis");
   });
 
   it("keeps the frame bounded and gives the thread column a real minimum track", () => {

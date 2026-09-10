@@ -75,12 +75,12 @@ function token(name: string): string {
   return (values[values.length - 1]?.[1] ?? "").trim();
 }
 
-function bandBleed(): string {
-  return token("--agent-band-bleed");
+function turnGap(): string {
+  return token("--agent-turn-gap");
 }
 
-function revealInset(): number {
-  return Number.parseInt(token("--agent-band-reveal-inset"), 10);
+function space(step: number): string {
+  return token(`--agent-space-${step}`);
 }
 
 describe("agent thread Airy style contract", () => {
@@ -116,137 +116,89 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-session", "padding")).toBe("12px 24px 8px");
   });
 
-  it("retires the raised bubble now that imported prompts are ledger bands", () => {
-    for (const selector of [".agent-prompt", ".agent-prompt__body", ".agent-prompt__meta"]) {
-      expect(RULES.filter((entry) => entry.selectors.includes(selector))).toEqual([]);
-    }
-    expect(css).not.toContain(".agent-prompt");
-  });
-
-  it("paints the ledger band on its own recessed tone, never on the side or well tone", () => {
-    expect(winningDeclaration(".agent-band", "background")).toBe("var(--agent-band-surface)");
-    expect(winningDeclaration(".agent-band", "color")).toBe("var(--agent-text-strong)");
-    expect(declarations(".agent-band", "background").join(" ")).not.toMatch(
-      /--agent-rail|--agent-shade|--codevo-side|--agent-well|--agent-code-background/,
-    );
-    expect(winningDeclaration(".agent-band--pinned", "box-shadow")).toBe(
+  it("puts the prompt back in a right-aligned raised bubble capped at 85% of the column", () => {
+    expect(winningDeclaration(".agent-prompt", "justify-content")).toBe("flex-end");
+    expect(winningDeclaration(".agent-prompt__body", "max-width")).toBe("85%");
+    expect(declarations(".agent-prompt", "max-width")).toEqual([]);
+    expect(winningDeclaration(".agent-prompt__body", "background")).toBe("var(--agent-raised)");
+    expect(winningDeclaration(".agent-prompt__body", "box-shadow")).toBe(
       "var(--agent-shadow-raised)",
     );
-    expect(declarations(".agent-band", "box-shadow")).toEqual([]);
+    expect(winningDeclaration(".agent-prompt__body", "color")).toBe("var(--agent-text-strong)");
+    expect(winningDeclaration(".agent-prompt__body", "border-radius")).toBe(
+      "var(--agent-radius-xl)",
+    );
+    expect(token("--agent-radius-xl")).toBe("var(--codevo-r-xl)");
+    expect(winningDeclaration(".agent-prompt__body", "padding")).toBe(
+      "var(--agent-space-4) var(--agent-space-5)",
+    );
+    expect(declarations(".agent-prompt__body", "background").join(" ")).not.toMatch(
+      /--agent-rail|--agent-shade|--codevo-side|--agent-well|--agent-code-background/,
+    );
   });
 
-  it("never lets the pinned state change anything that affects the band height", () => {
-    const pinnedProperties = RULES.filter((entry) =>
-      entry.selectors.some((selector) => selector.includes(".agent-band--pinned")),
-    ).flatMap((entry) => [...entry.body.matchAll(/(?:^|;)\s*([-a-z]+)\s*:/g)].map((m) => m[1]));
+  it("lets the prompt run to its full length instead of clamping it", () => {
+    expect(winningDeclaration(".agent-prompt__body", "white-space")).toBe("pre-wrap");
+    expect(winningDeclaration(".agent-prompt__body", "word-break")).toBe("break-word");
+    expect(declarations(".agent-prompt__body", "-webkit-line-clamp")).toEqual([]);
+    expect(declarations(".agent-prompt__body", "overflow")).toEqual([]);
+    expect(css).not.toContain("agent-band");
+    expect(css).not.toContain("agent-turn__sentinel");
+  });
 
-    expect([...new Set(pinnedProperties)].sort()).toEqual([
-      "box-shadow",
-      "opacity",
-      "pointer-events",
-    ]);
+  it("gives every prompt and answer block 30px and every block inside an answer 12px", () => {
+    expect(winningDeclaration(".agent-session__body", "gap")).toBe("var(--agent-turn-gap)");
+    expect(winningDeclaration(".agent-turn-list", "gap")).toBe("var(--agent-turn-gap)");
+    expect(winningDeclaration(".agent-turn", "gap")).toBe("var(--agent-turn-gap)");
+    expect(turnGap()).toBe("30px");
+    expect(winningDeclaration(".agent-answer", "gap")).toBe("var(--agent-space-4)");
+    expect(winningDeclaration(".agent-turn__events", "gap")).toBe("var(--agent-space-4)");
+    expect(space(4)).toBe("12px");
+    expect(declarations(".agent-answer", "padding-bottom")).toEqual([]);
+    expect(declarations(".agent-answer", "padding-left")).toEqual([]);
     expect(winningDeclaration(".agent-session__scroll", "overflow-anchor")).toBe("none");
   });
 
-  it("sticks the band to the top of its own turn and runs it past the reading column", () => {
-    expect(winningDeclaration(".agent-band", "position")).toBe("sticky");
-    expect(winningDeclaration(".agent-band", "top")).toBe("0");
-    expect(winningDeclaration(".agent-band", "z-index")).toBe("1");
-    expect(winningDeclaration(".agent-band", "margin")).toBe(
-      "0 calc(var(--agent-band-bleed) * -1) var(--agent-space-4)",
-    );
-    expect(winningDeclaration(".agent-band", "padding")).toBe(
-      "var(--agent-space-4) var(--agent-band-bleed)",
-    );
-    expect(winningDeclaration(".agent-session", "padding")).toBe("12px 24px 8px");
-    expect(bandBleed()).toBe("24px");
-  });
-
-  it("lays the band out as gutter, prompt and one tool track from the ladder", () => {
-    expect(winningDeclaration(".agent-band", "grid-template-columns")).toBe(
-      "calc(var(--agent-band-indent) - var(--agent-space-3)) minmax(0, 1fr) auto",
-    );
-    expect(winningDeclaration(".agent-band", "column-gap")).toBe("var(--agent-space-3)");
-    expect(declarations(".agent-band", "row-gap")).toEqual([]);
-    expect(winningDeclaration(".agent-band", "align-items")).toBe("baseline");
-    expect(winningDeclaration(".agent-band__tools", "grid-column")).toBe("3");
-    expect(winningDeclaration(".agent-band__tools", "display")).toBe("inline-flex");
-    expect(winningDeclaration(".agent-band__tools", "gap")).toBe("var(--agent-space-2)");
-    for (const selector of [".agent-band__expand", ".agent-band__jump", ".agent-band__meta"]) {
-      expect(declarations(selector, "grid-column"), selector).toEqual([]);
+  it("sets the prompt and the turn head from the type ladder", () => {
+    expect(winningDeclaration(".agent-prompt__body", "font-size")).toBe("var(--agent-fs-md)");
+    expect(winningDeclaration(".agent-prompt__body", "line-height")).toBe("1.5");
+    expect(winningDeclaration(".agent-turn__head", "font-size")).toBe("var(--agent-fs-xs)");
+    expect(winningDeclaration(".agent-turn__head", "font-weight")).toBe("500");
+    expect(winningDeclaration(".agent-turn__head", "color")).toBe("var(--agent-text-muted)");
+    expect(winningDeclaration(".agent-turn__head", "gap")).toBe("var(--agent-space-3)");
+    for (const selector of [".agent-turn__time", ".agent-turn__duration"]) {
+      expect(winningDeclaration(selector, "font-family"), selector).toBe("var(--agent-mono)");
+      expect(winningDeclaration(selector, "font-size"), selector).toBe("var(--agent-fs-2xs)");
+      expect(winningDeclaration(selector, "color"), selector).toBe("var(--agent-text-subtle)");
     }
   });
 
-  it("sets the prompt and the ordinal from the type ladder", () => {
-    expect(winningDeclaration(".agent-band__text", "font-size")).toBe("var(--agent-fs-lg)");
-    expect(winningDeclaration(".agent-band__text", "font-weight")).toBe("500");
-    expect(winningDeclaration(".agent-band__text", "line-height")).toBe("1.45");
-    expect(winningDeclaration(".agent-band__number", "font-family")).toBe("var(--agent-mono)");
-    expect(winningDeclaration(".agent-band__number", "font-size")).toBe("var(--agent-fs-2xs)");
-    expect(winningDeclaration(".agent-band__number", "font-weight")).toBe("600");
-    expect(winningDeclaration(".agent-band__number", "letter-spacing")).toBe(
-      "var(--agent-tracking-label)",
-    );
-    expect(winningDeclaration(".agent-band__number", "color")).toBe("var(--agent-text-subtle)");
-    expect(
-      winningDeclaration(".agent-turn-list > .agent-turn:last-child .agent-band__number", "color"),
-    ).toBe("var(--agent-accent)");
-  });
-
-  it("marks the gutter with a dot when the ordinal is withheld", () => {
-    expect(winningDeclaration(".agent-band__mark", "width")).toBe("6px");
-    expect(winningDeclaration(".agent-band__mark", "height")).toBe("6px");
-    expect(winningDeclaration(".agent-band__mark", "border-radius")).toBe(
+  it("marks the turn head with an accent dot and pushes the duration to the far end", () => {
+    expect(winningDeclaration(".agent-turn__spark", "width")).toBe("7px");
+    expect(winningDeclaration(".agent-turn__spark", "height")).toBe("7px");
+    expect(winningDeclaration(".agent-turn__spark", "border-radius")).toBe(
       "var(--agent-radius-pill)",
     );
-    expect(winningDeclaration(".agent-band__mark", "background")).toBe("var(--agent-text-subtle)");
-    expect(winningDeclaration(".agent-band__mark", "align-self")).toBe("start");
-    expect(winningDeclaration(".agent-band__mark", "margin-top")).toBe("var(--agent-space-3)");
+    expect(winningDeclaration(".agent-turn__spark", "background")).toBe("var(--agent-accent)");
+    expect(winningDeclaration(".agent-turn__duration", "margin-left")).toBe("auto");
   });
 
-  it("reveals the band tools on hover or focus like the other rows", () => {
-    expect(winningDeclaration(".agent-band__expand", "opacity")).toBe("0");
-    expect(winningDeclaration(".agent-band__meta", "opacity")).toBe("0");
-    expect(winningDeclaration(".agent-band:hover .agent-band__expand", "opacity")).toBe("1");
-    expect(winningDeclaration(".agent-band:focus-within .agent-band__jump", "opacity")).toBe("1");
-    expect(winningDeclaration(".agent-band:hover .agent-message-copy", "opacity")).toBe("1");
-    expect(winningDeclaration(".agent-band:focus-within .agent-message-copy", "opacity")).toBe("1");
+  it("reveals the prompt copy control on hover or focus like the other messages", () => {
+    expect(winningDeclaration(".agent-message-copy", "opacity")).toBe("0");
+    expect(winningDeclaration(".agent-prompt:hover .agent-message-copy", "opacity")).toBe("1");
+    expect(winningDeclaration(".agent-prompt:focus-within .agent-message-copy", "opacity")).toBe(
+      "1",
+    );
   });
 
-  it("clamps the band to two lines at all times and only an explicit expand undoes it", () => {
-    expect(winningDeclaration(".agent-band__text", "grid-column")).toBe("2");
-    expect(winningDeclaration(".agent-band__text", "-webkit-line-clamp")).toBe("2");
-    expect(winningDeclaration(".agent-band__text", "overflow")).toBe("hidden");
-    expect(winningDeclaration(".agent-band__text", "white-space")).toBe("pre-wrap");
-    expect(declarations(".agent-band--pinned .agent-band__text", "-webkit-line-clamp")).toEqual([]);
+  it("reveals a find hit with a plain centred scroll and no pinned-band inset", () => {
+    expect(declarations(".agent-find__hit", "scroll-margin-top")).toEqual([]);
+    expect(declarations(".agent-answer [data-agent-event]", "scroll-margin-top")).toEqual([]);
     expect(
-      winningDeclaration(".agent-band--expanded .agent-band__text", "-webkit-line-clamp"),
-    ).toBe("none");
-    expect(winningDeclaration(".agent-band--expanded .agent-band__text", "overflow")).toBe(
-      "visible",
-    );
-    expect(winningDeclaration(".agent-band__jump", "opacity")).toBe("0");
-    expect(winningDeclaration(".agent-band__jump", "pointer-events")).toBe("none");
-    expect(winningDeclaration(".agent-band--pinned .agent-band__jump", "opacity")).toBe("1");
-    expect(winningDeclaration(".agent-band--pinned .agent-band__jump", "pointer-events")).toBe(
-      "auto",
-    );
-  });
-
-  it("clears the pinned band when a find hit or an event is revealed", () => {
-    expect(winningDeclaration(".agent-find__hit", "scroll-margin-top")).toBe(
-      "var(--agent-band-reveal-inset)",
-    );
-    expect(winningDeclaration(".agent-answer [data-agent-event]", "scroll-margin-top")).toBe(
-      "var(--agent-band-reveal-inset)",
-    );
-    expect(revealInset()).toBeGreaterThanOrEqual(68);
-    expect(winningDeclaration(".agent-session__reveal-slack", "height")).toBe(
-      "var(--agent-band-reveal-inset)",
-    );
-    expect(winningDeclaration(".agent-session__reveal-slack", "margin-top")).toBe(
-      "calc(var(--agent-turn-gap) * -1)",
-    );
+      RULES.filter((entry) => entry.selectors.includes(".agent-session__reveal-slack")),
+    ).toEqual([]);
+    expect(css).not.toContain("--agent-band-reveal-inset");
+    expect(css).not.toContain("reveal-slack");
   });
 
   it("keeps tool rows, subagent rows and the work fold boxless with a hover-only radius", () => {
@@ -291,9 +243,9 @@ describe("agent thread Airy style contract", () => {
     for (const selector of [
       ".agent-turn",
       ".agent-turn-list",
-      ".agent-band",
-      ".agent-band__text",
-      ".agent-session__reveal-slack",
+      ".agent-prompt",
+      ".agent-prompt__body",
+      ".agent-turn__head",
       ".agent-answer",
       ".agent-turn__events",
       ".agent-work",
@@ -310,8 +262,8 @@ describe("agent thread Airy style contract", () => {
     ]) {
       expect(RULES.filter((entry) => entry.selectors.includes(selector))).toHaveLength(1);
     }
-    expect(winningDeclaration(".agent-answer", "gap")).toBe("16px");
-    expect(winningDeclaration(".agent-turn__events", "gap")).toBe("12px");
+    expect(winningDeclaration(".agent-answer", "gap")).toBe("var(--agent-space-4)");
+    expect(winningDeclaration(".agent-turn__events", "gap")).toBe("var(--agent-space-4)");
   });
 
   it("hides the result microlabel and keeps no styling for unrendered blocks", () => {

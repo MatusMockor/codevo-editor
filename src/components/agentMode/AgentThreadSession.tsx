@@ -28,7 +28,8 @@ import { AgentWorkingDuration } from "./agentClock";
 import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { AgentImportedHistory, type AgentExternalHistoryState } from "./AgentImportedHistory";
-import { AgentTurnBand } from "./AgentTurnBand";
+import { AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
+import { agentTurnTiming } from "./agentTurnHeadPresentation";
 import {
   AgentAssistantText,
   type AgentItemHighlight,
@@ -36,16 +37,10 @@ import {
   type AgentProseStream,
 } from "./AgentAssistantText";
 import { openAgentMarkdownLink, type AgentExternalLinkOpener } from "./agentMarkdownLinks";
-import {
-  agentImportedHighlights,
-  agentLedgerOrdinals,
-  agentLedgerTurnOrdinal,
-} from "./agentLedgerPresentation";
+import { agentImportedHighlights } from "./agentImportedPresentation";
 import { HighlightRun } from "./agentThreadHighlight";
 import { useAgentMarkdownRenderer } from "./useAgentMarkdown";
 import { createIntersectionAgentMarkdownViewport } from "../../infrastructure/viewport/intersectionAgentMarkdownViewport";
-import { createIntersectionAgentBandPin } from "../../infrastructure/viewport/intersectionAgentBandPin";
-import type { AgentBandPinObserver } from "../../application/agentBandPin";
 import {
   agentWorktreeRemovalLabel,
   agentTurnDurationLabel,
@@ -70,6 +65,11 @@ interface AgentTurnHighlight {
   readonly current: AgentTurnHighlightCursor | null;
 }
 
+interface AgentRevealTarget {
+  readonly element: HTMLElement;
+  readonly block: "start" | "center";
+}
+
 interface AgentTurnErrorContext {
   readonly provider: AgentCliKind;
   readonly installedVersion: string | null;
@@ -86,7 +86,6 @@ export interface AgentThreadSessionProps {
   readonly textClipboard?: TextClipboardGateway | null;
   readonly markdownRenderer?: AgentMarkdownRenderer | null;
   readonly markdownViewport?: AgentMarkdownViewport | null;
-  readonly bandPin?: AgentBandPinObserver | null;
   readonly openExternalLink?: AgentExternalLinkOpener;
   readonly externalHistoryState?: AgentExternalHistoryState;
   readonly onRetryExternalHistory?: () => void;
@@ -107,7 +106,6 @@ type AgentThreadSessionBodyProps = AgentThreadSessionProps & {
 };
 
 function AgentThreadSessionBody({
-  bandPin: injectedBandPin,
   findHitIndex,
   findHits,
   findQuery,
@@ -158,19 +156,6 @@ function AgentThreadSessionBody({
     return () => viewport.dispose();
   }, [ownsViewport, viewport]);
 
-  const bandPin = useMemo(() => {
-    if (injectedBandPin !== undefined) return injectedBandPin;
-    return createIntersectionAgentBandPin(() => scrollRef.current);
-  }, [injectedBandPin]);
-
-  const ownsBandPin = injectedBandPin === undefined;
-  useEffect(() => {
-    if (!ownsBandPin) return;
-    if (bandPin === null) return;
-    return () => bandPin.dispose();
-  }, [bandPin, ownsBandPin]);
-
-  const revealSlack = query !== "" && hits.length > 0;
   const hitTurnIds = useMemo(
     () => new Set(hits.filter((hit) => hit.scope === "turn").map((hit) => hit.turnId)),
     [hits],
@@ -179,7 +164,6 @@ function AgentThreadSessionBody({
     () => agentImportedHighlights(hits, findHitIndex, query),
     [findHitIndex, hits, query],
   );
-  const ordinals = useMemo(() => agentLedgerOrdinals(record), [record]);
   const baseHighlight = useMemo<AgentTurnHighlight>(() => ({ query, current: null }), [query]);
   const activeHighlight = useMemo<AgentTurnHighlight | null>(() => {
     if (findHitIndex === undefined) return null;
@@ -192,7 +176,8 @@ function AgentThreadSessionBody({
     const container = scrollRef.current;
     if (container === null) return;
     const target = revealTarget(container, reveal, activeHit);
-    target?.scrollIntoView?.({ block: "start" });
+    if (target === null) return;
+    target.element.scrollIntoView?.({ block: target.block });
   }, [activeHit, reveal]);
 
   useEffect(() => {
@@ -226,7 +211,6 @@ function AgentThreadSessionBody({
     lastTurn?.turnId,
     record.updatedAtEpochMs,
     record.externalOrigin?.history,
-    revealSlack,
     threadId,
     viewport,
   ]);
@@ -254,12 +238,10 @@ function AgentThreadSessionBody({
 
           {record.externalOrigin != null && (
             <AgentImportedHistory
-              bandPin={bandPin}
               highlights={importedHighlights}
               history={record.externalOrigin.history}
               key={`${threadId}:${record.externalOrigin.sessionId}`}
               onRetry={onRetryExternalHistory}
-              ordinals={ordinals}
               prose={prose}
               state={externalHistoryState}
               textClipboard={textClipboard}
@@ -267,12 +249,10 @@ function AgentThreadSessionBody({
           )}
 
           <div className="agent-turn-list">
-            {record.turns.map((turn, index) => (
+            {record.turns.map((turn) => (
               <AgentTurnView
-                bandPin={bandPin}
                 highlight={highlightFor(turn.turnId)}
                 key={turn.turnId}
-                ordinal={agentLedgerTurnOrdinal(ordinals, index)}
                 prose={prose}
                 provider={record.provider.kind}
                 renderProbe={turnRenderProbe}
@@ -297,8 +277,6 @@ function AgentThreadSessionBody({
               threadId={threadId}
             />
           )}
-
-          {revealSlack && <div aria-hidden="true" className="agent-session__reveal-slack" />}
         </div>
       </div>
     </section>
@@ -306,18 +284,14 @@ function AgentThreadSessionBody({
 }
 
 const AgentTurnView = memo(function AgentTurnView({
-  bandPin,
   highlight = null,
-  ordinal,
   prose,
   provider,
   renderProbe,
   textClipboard,
   turn,
 }: {
-  readonly bandPin: AgentBandPinObserver | null;
   readonly highlight?: AgentTurnHighlight | null;
-  readonly ordinal: number | null;
   readonly prose: AgentProseContext;
   readonly provider: AgentCliKind;
   readonly renderProbe?: (turnId: string) => void;
@@ -325,10 +299,6 @@ const AgentTurnView = memo(function AgentTurnView({
   readonly turn: AgentTurn;
 }) {
   renderProbe?.(turn.turnId);
-  const answerEnd = useRef<HTMLDivElement | null>(null);
-  const jumpToAnswerEnd = useCallback(() => {
-    answerEnd.current?.scrollIntoView?.({ block: "end" });
-  }, []);
   const projection = agentTurnProjection(turn.events);
   const subagents = agentTurnSubagentSummary(turn.events);
   const running = turn.status.kind === "pending" || turn.status.kind === "running";
@@ -360,18 +330,20 @@ const AgentTurnView = memo(function AgentTurnView({
       className="agent-turn"
       data-agent-turn={turn.turnId}
     >
-      <AgentTurnBand
-        bandPin={bandPin}
+      <AgentTurnPrompt
         current={promptCurrent}
-        onJumpToAnswerEnd={jumpToAnswerEnd}
-        ordinal={ordinal}
         prompt={turn.prompt}
         query={highlight?.query ?? ""}
-        startedAtEpochMs={turn.startedAtEpochMs}
         textClipboard={textClipboard}
       />
 
       <div className="agent-answer">
+        <AgentTurnHead
+          provider={provider}
+          startedAtEpochMs={turn.startedAtEpochMs}
+          timing={agentTurnTiming(turn)}
+        />
+
         {projection.hiddenCount > 0 && (
           <p className="agent-note">{projection.hiddenCount} earlier events hidden</p>
         )}
@@ -438,8 +410,6 @@ const AgentTurnView = memo(function AgentTurnView({
             <AgentProviderErrorHint error={failure} />
           </section>
         )}
-
-        <div aria-hidden="true" className="agent-answer__end" ref={answerEnd} />
       </div>
     </article>
   );
@@ -829,20 +799,27 @@ function revealTarget(
   container: HTMLElement,
   reveal: AgentThreadRevealRequest | null,
   activeHit: AgentThreadFindHit | null,
-): HTMLElement | null {
+): AgentRevealTarget | null {
   const current = container.querySelector<HTMLElement>(".agent-find__hit--current");
-  if (current !== null) return current;
+  if (current !== null) return { element: current, block: "center" };
 
   const turnHit = activeHit === null || activeHit.scope !== "turn" ? null : activeHit;
   const turnId = reveal?.turnId ?? turnHit?.turnId ?? null;
-  if (turnId === null) return importedElement(container, activeHit);
+  if (turnId === null) {
+    const imported = importedElement(container, activeHit);
+    return imported === null ? null : { element: imported, block: "start" };
+  }
 
   const turn = turnElement(container, turnId);
   if (turn === null) return null;
 
   const eventIndex = reveal?.eventIndex ?? turnHit?.eventIndex ?? null;
-  if (eventIndex === null) return turn;
-  return eventElement(turn, eventIndex) ?? turn;
+  if (eventIndex === null) return { element: turn, block: "start" };
+
+  const event = eventElement(turn, eventIndex);
+  if (event === null) return { element: turn, block: "start" };
+
+  return { element: event, block: "start" };
 }
 
 function importedElement(

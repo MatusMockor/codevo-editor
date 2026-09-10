@@ -39,7 +39,6 @@ const CODEVO_LADDER = [
   "--codevo-canvas",
   "--codevo-raised",
   "--codevo-well",
-  "--codevo-recessed",
   "--codevo-hover",
   "--codevo-active",
   "--codevo-selected",
@@ -117,8 +116,8 @@ const LIGHT_LADDER = [
   "--codevo-shadow-float",
   "--codevo-shadow-window",
 ] as const;
-const LEDGER_BAND_TONE = "--agent-band-surface";
-const LEDGER_COLUMN_TONE = "--agent-canvas";
+const PROMPT_BUBBLE_TONE = "--agent-raised";
+const THREAD_COLUMN_TONE = "--agent-canvas";
 const PENDING_T3_SHEETS: readonly string[] = [];
 const PENDING_LITERAL_REMAP_SHEETS: readonly string[] = [];
 const SCHEME_SCALARS = new Set(["--agent-shadow-alpha"]);
@@ -194,7 +193,7 @@ function literalProblem(name: string, value: string): string | null {
   return null;
 }
 
-const LEDGER_BAND_MIN_STEP = 3;
+const PROMPT_BUBBLE_MIN_STEP = 3;
 
 function channelLuminance(channel: number): number {
   const value = channel / 255;
@@ -337,49 +336,65 @@ describe("codevo token contract", () => {
     }
   });
 
-  it("keeps the ledger band tone distinct from the thread column tone in every theme", () => {
-    const bandRule = parsed.rules.find(
-      (rule) => rule.context.length === 0 && selectorParts(rule.selector).includes(".agent-band"),
+  it("lifts the prompt bubble off the thread column by tone wherever it has no card shadow", () => {
+    const bubbleRule = parsed.rules.find(
+      (rule) =>
+        rule.context.length === 0 && selectorParts(rule.selector).includes(".agent-prompt__body"),
     );
-    const bandBackground = lastOf(
-      bandRule?.declarations.filter((entry) => entry.property === "background"),
+    const bubbleBackground = lastOf(
+      bubbleRule?.declarations.filter((entry) => entry.property === "background"),
     );
-    expect(bandBackground?.value).toBe(`var(${LEDGER_BAND_TONE})`);
+    expect(bubbleBackground?.value).toBe(`var(${PROMPT_BUBBLE_TONE})`);
 
     const agentTable = buildTokenTable(tokenRules);
-    const bandRoots = resolveVarRoots(LEDGER_BAND_TONE, agentTable);
-    const columnRoots = resolveVarRoots(LEDGER_COLUMN_TONE, agentTable);
-    expect(bandRoots).toEqual(["--color-recessed"]);
-    expect(columnRoots).toEqual(["--color-app"]);
+    expect(resolveVarRoots(PROMPT_BUBBLE_TONE, agentTable)).toEqual(["--color-surface"]);
+    expect(resolveVarRoots(THREAD_COLUMN_TONE, agentTable)).toEqual(["--color-app"]);
 
-    const blocks: ReadonlyArray<readonly [string, readonly CssRule[]]> = [
+    const blocks: ReadonlyArray<readonly [string, readonly CssRule[], readonly CssRule[]]> = [
       ...APP_THEME_SELECTORS.map(
-        (selector) => [selector, appThemeBlock(selector)] as readonly [string, readonly CssRule[]],
+        (selector) =>
+          [selector, appThemeBlock(selector), lightRules(selector)] as readonly [
+            string,
+            readonly CssRule[],
+            readonly CssRule[],
+          ],
       ),
       [
-        "system light",
+        SYSTEM_LIGHT_CONTEXT,
         parsed.rules.filter(
           (rule) =>
             rule.sheet === APP_SHEET &&
             rule.context[0] === SYSTEM_LIGHT_CONTEXT &&
             rule.selector === SYSTEM_THEME_SELECTOR,
         ),
-      ] as readonly [string, readonly CssRule[]],
+        systemLightRules(),
+      ] as readonly [string, readonly CssRule[], readonly CssRule[]],
     ];
 
-    for (const [selector, block] of blocks) {
+    for (const [selector, block, shadowBlock] of blocks) {
       const table = buildTokenTable(block, "--color-");
-      const band = lastOf(table.get("--color-recessed"));
+      const bubble = lastOf(table.get("--color-surface"));
       const column = lastOf(table.get("--color-app"));
-      expect(band, `${selector} band tone`).toBeDefined();
+      expect(bubble, `${selector} bubble tone`).toBeDefined();
       expect(column, `${selector} column tone`).toBeDefined();
-      expect(band, `${selector} band vs column`).not.toBe(column);
-      const step = lightnessStep(band ?? "", column ?? "");
-      expect(step, `${selector} band vs column lightness step`).toBeGreaterThanOrEqual(
-        LEDGER_BAND_MIN_STEP,
-      );
-      expect(lightness(band ?? ""), `${selector} band is recessed`).toBeLessThan(
+      expect(bubble, `${selector} bubble vs column`).not.toBe(column);
+      expect(lightness(bubble ?? ""), `${selector} bubble is raised`).toBeGreaterThan(
         lightness(column ?? ""),
+      );
+
+      const light =
+        selector === SYSTEM_LIGHT_CONTEXT ||
+        (LIGHT_THEME_SELECTORS as readonly string[]).includes(selector);
+      if (light) {
+        const card = customPropertyDeclarations(shadowBlock, "--codevo-shadow-card");
+        expect(lastOf(card)?.value, `${selector} bubble shadow`).not.toBe("none");
+        continue;
+      }
+
+      expect(codevoValue("--codevo-shadow-card")).toBe("none");
+      const step = lightnessStep(column ?? "", bubble ?? "");
+      expect(step, `${selector} bubble vs column lightness step`).toBeGreaterThanOrEqual(
+        PROMPT_BUBBLE_MIN_STEP,
       );
     }
   });

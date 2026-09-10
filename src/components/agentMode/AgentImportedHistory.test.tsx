@@ -3,7 +3,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentBandPin, AgentBandPinObserver } from "../../application/agentBandPin";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import { sharedAgentMarkdownDocumentCache } from "../../application/agentMarkdownDocumentCache";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
@@ -24,30 +23,6 @@ const NOW = 1_700_000_600_000;
 const SESSION_ID = "987b95ad-c9bc-4d08-ae49-9b431efc8f87";
 const SETTLED: AgentTurnStatus = { kind: "exited", exitCode: 0 };
 const STYLES = parseAllStyleSheets();
-const HEIGHT_PROPERTIES = [
-  "height",
-  "min-height",
-  "max-height",
-  "padding",
-  "padding-top",
-  "padding-bottom",
-  "padding-block",
-  "padding-block-start",
-  "padding-block-end",
-  "margin",
-  "margin-top",
-  "margin-bottom",
-  "margin-block",
-  "margin-block-start",
-  "margin-block-end",
-  "font-size",
-  "line-height",
-  "-webkit-line-clamp",
-  "display",
-  "overflow",
-  "row-gap",
-  "gap",
-] as const;
 
 const OWNER_TABLE = [
   "Výsledky kontroly:",
@@ -72,35 +47,6 @@ const RICH = [
   "const parser = createParser();",
   "```",
 ].join("\n");
-
-interface PinPort {
-  readonly port: AgentBandPinObserver;
-  sentinels(): ReadonlyArray<Element>;
-  set(sentinel: Element, pin: AgentBandPin): void;
-}
-
-function pinPort(): PinPort {
-  const listeners = new Map<Element, (pin: AgentBandPin) => void>();
-  return {
-    port: {
-      observe(sentinel, onChange) {
-        listeners.set(sentinel, onChange);
-        return () => {
-          listeners.delete(sentinel);
-        };
-      },
-      dispose() {
-        listeners.clear();
-      },
-    },
-    sentinels: () => [...listeners.keys()],
-    set(sentinel, pin) {
-      const onChange = listeners.get(sentinel);
-      expect(onChange).toBeDefined();
-      act(() => onChange?.(pin));
-    },
-  };
-}
 
 interface ViewportPort {
   readonly port: AgentMarkdownViewport;
@@ -399,7 +345,7 @@ describe("imported conversation history", () => {
     expect(viewport.observed()).toContain(offScreen);
   });
 
-  it("finds a match inside an imported answer and reveals it clear of a pinned band", () => {
+  it("finds a match inside an imported answer and reveals it with a centred scroll", () => {
     const options: unknown[] = [];
     Object.defineProperty(Element.prototype, "scrollIntoView", {
       configurable: true,
@@ -408,14 +354,12 @@ describe("imported conversation history", () => {
       },
       writable: true,
     });
-    const pin = pinPort();
     const thread = imported([user("Kde je parser?"), assistant("The parser lives in src.")]);
     const hits = hitsFor(thread, "parser");
     expect(hits.map((hit) => hit.scope)).toEqual(["imported", "imported"]);
 
     render({
       thread,
-      bandPin: pin.port,
       findQuery: "parser",
       findHits: hits,
       findHitIndex: 1,
@@ -426,27 +370,20 @@ describe("imported conversation history", () => {
     expect(current).toHaveLength(1);
     expect(current[0]?.closest('[data-agent-event="x1"]')).not.toBeNull();
     expect(importedMessage(1).getAttribute("data-agent-markdown")).toBe("rendered");
-    expect(options).toEqual([{ block: "start" }]);
-    expect(declaration(".agent-find__hit", "scroll-margin-top")).toBe(
-      "var(--agent-band-reveal-inset)",
-    );
-    expect(host.querySelector(".agent-session__reveal-slack")).not.toBeNull();
-
-    pin.set(pin.sentinels()[0] as Element, "pinned");
-    expect(host.querySelector("header.agent-band")?.className).toBe(
-      "agent-band agent-band--pinned",
-    );
+    expect(options).toEqual([{ block: "center" }]);
+    expect(declaration(".agent-find__hit", "scroll-margin-top")).toBeNull();
+    expect(host.querySelector(".agent-session__reveal-slack")).toBeNull();
   });
 
-  it("highlights a match inside an imported prompt band and un-clamps only that band", () => {
+  it("highlights a match inside an imported prompt bubble", () => {
     const thread = imported([user("Where does the parser live"), assistant("It lives in src.")]);
     const hits = hitsFor(thread, "parser");
 
     render({ thread, findQuery: "parser", findHits: hits, findHitIndex: 0 });
 
-    const band = host.querySelector<HTMLElement>("header.agent-band");
-    expect(band?.querySelector("mark.agent-find__hit--current")).not.toBeNull();
-    expect(band?.className).toContain("agent-band--expanded");
+    const prompt = host.querySelector<HTMLElement>(".agent-prompt__body");
+    expect(prompt?.querySelector("mark.agent-find__hit--current")).not.toBeNull();
+    expect(prompt?.textContent).toBe("Where does the parser live");
   });
 
   it("degrades an imported answer to plain text when a match sits inside markdown syntax", () => {
@@ -466,7 +403,7 @@ describe("imported conversation history", () => {
     expect(body.querySelector("table")).toBeNull();
   });
 
-  it("pushes each imported band out with the next one instead of stacking them", () => {
+  it("gives each imported exchange its own turn with a bubble and a head", () => {
     render({
       thread: imported([
         user("First imported"),
@@ -479,82 +416,14 @@ describe("imported conversation history", () => {
     const turns = [...host.querySelectorAll<HTMLElement>(".agent-imported-history > .agent-turn")];
     expect(turns).toHaveLength(2);
     for (const section of turns) {
-      expect(section.querySelectorAll("header.agent-band")).toHaveLength(1);
-      expect(section.querySelector("header.agent-band")?.parentElement).toBe(section);
+      expect([...section.children].map((child) => child.className)).toEqual([
+        "agent-prompt",
+        "agent-answer",
+      ]);
+      expect(section.querySelectorAll("header.agent-turn__head")).toHaveLength(1);
     }
     expect(turns[0]?.nextElementSibling).toBe(turns[1]);
-  });
-
-  it("never lets the pinned rule change the height of an imported band", () => {
-    const pin = pinPort();
-    render({
-      thread: imported([user("A prompt\nover\nmany\nseparate lines"), assistant("alpha")]),
-      bandPin: pin.port,
-    });
-
-    const band = host.querySelector<HTMLElement>(".agent-imported-history header.agent-band");
-    expect(band?.className).toBe("agent-band");
-
-    pin.set(pin.sentinels()[0] as Element, "pinned");
-    expect(band?.className).toBe("agent-band agent-band--pinned");
-
-    const heightAffecting = STYLES.rules
-      .filter((rule) => selectorParts(rule.selector).includes(".agent-band--pinned"))
-      .flatMap((rule) =>
-        rule.declarations
-          .filter((entry) => (HEIGHT_PROPERTIES as readonly string[]).includes(entry.property))
-          .map((entry) => `${rule.selector} ${entry.property}`),
-      );
-    expect(heightAffecting).toEqual([]);
-
-    pin.set(pin.sentinels()[0] as Element, "released");
-    expect(band?.className).toBe("agent-band");
-  });
-
-  it("expands an imported band only when the reader asks for it", () => {
-    const pin = pinPort();
-    render({
-      thread: imported([user("A long imported prompt"), assistant("alpha")]),
-      bandPin: pin.port,
-    });
-
-    const band = host.querySelector<HTMLElement>("header.agent-band");
-    const expand = host.querySelector<HTMLButtonElement>("button.agent-band__expand");
-    expect(expand?.getAttribute("aria-expanded")).toBe("false");
-
-    act(() => expand?.click());
-    expect(band?.className).toContain("agent-band--expanded");
-
-    pin.set(pin.sentinels()[0] as Element, "pinned");
-    expect(band?.className).toBe("agent-band agent-band--pinned agent-band--expanded");
-  });
-
-  it("jumps to the end of the imported answer the band belongs to", () => {
-    const scrolled: Element[] = [];
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: function scrollIntoView(this: Element): void {
-        scrolled.push(this);
-      },
-      writable: true,
-    });
-    render({
-      thread: imported([
-        user("First imported"),
-        assistant("alpha"),
-        user("Second imported"),
-        assistant("beta"),
-      ]),
-    });
-
-    const jump = host.querySelectorAll<HTMLButtonElement>("button.agent-band__jump");
-    act(() => jump[0]?.click());
-
-    const ends = [...host.querySelectorAll<HTMLElement>(".agent-answer__end")];
-    expect(scrolled).toEqual([ends[0]]);
-    expect(ends[0]?.closest(".agent-turn")).toBe(
-      host.querySelector(".agent-imported-history > .agent-turn"),
-    );
+    expect(promptTexts()).toEqual(["First imported", "Second imported"]);
   });
 
   it("labels an imported answer on an element that honours aria-label", () => {
@@ -574,21 +443,14 @@ describe("imported conversation history", () => {
     expect(body?.getAttribute("aria-label")).toBeNull();
   });
 
-  it("keeps one turn-gap rhythm at the seam and below the truncation warning", () => {
+  it("keeps one turn-gap rhythm at the seam and inside the imported history", () => {
     expect(declaration(".agent-session__body", "gap")).toBe("var(--agent-turn-gap)");
-    expect(declaration(".agent-answer", "padding-bottom")).toBe("var(--agent-turn-gap)");
-    expect(
-      declaration(
-        ".agent-imported-history > .agent-turn:last-of-type .agent-answer",
-        "padding-bottom",
-      ),
-    ).toBe("0");
-    expect(declaration(".agent-imported-history > .agent-note", "margin-bottom")).toBe(
-      "var(--agent-turn-gap)",
-    );
+    expect(declaration(".agent-imported-history", "gap")).toBe("var(--agent-turn-gap)");
+    expect(declaration(".agent-turn-list", "gap")).toBe("var(--agent-turn-gap)");
+    expect(declaration(".agent-answer", "padding-bottom")).toBeNull();
   });
 
-  it("numbers imported prompts and continues the same sequence into the live turns", () => {
+  it("renders imported and live turns with the same bubble and head structure", () => {
     render({
       thread: imported(
         [user("First imported"), assistant("alpha"), user("Second imported"), assistant("beta")],
@@ -596,11 +458,28 @@ describe("imported conversation history", () => {
       ),
     });
 
-    expect(numbers()).toEqual(["1.", "2.", "3.", "4."]);
-    expect(bandTexts()).toEqual(["First imported", "Second imported", "First live", "Second live"]);
+    expect(promptTexts()).toEqual([
+      "First imported",
+      "Second imported",
+      "First live",
+      "Second live",
+    ]);
+    expect(
+      [...host.querySelectorAll<HTMLElement>("article.agent-turn")].map((section) =>
+        [...section.children].map((child) => child.className),
+      ),
+    ).toEqual([
+      ["agent-prompt", "agent-answer"],
+      ["agent-prompt", "agent-answer"],
+      ["agent-prompt", "agent-answer"],
+      ["agent-prompt", "agent-answer"],
+    ]);
+    expect(
+      [...host.querySelectorAll(".agent-turn__agent")].map((element) => element.textContent),
+    ).toEqual(["Claude Code", "Claude Code", "Claude Code", "Claude Code"]);
   });
 
-  it("shows no ordinal anywhere once the imported history is truncated", () => {
+  it("keeps both truncation notices while every prompt still renders", () => {
     render({
       thread: imported(
         [user("First imported"), assistant("alpha")],
@@ -609,12 +488,9 @@ describe("imported conversation history", () => {
       ),
     });
 
-    expect(numbers()).toEqual([]);
-    expect(host.querySelectorAll("header.agent-band")).toHaveLength(2);
+    expect(promptTexts()).toEqual(["First imported", "First live"]);
     expect(host.textContent).toContain("Only part of the original conversation is available.");
-  });
 
-  it("shows no ordinal anywhere once the live turns are truncated", () => {
     render({
       thread: imported(
         [user("First imported"), assistant("alpha")],
@@ -623,25 +499,18 @@ describe("imported conversation history", () => {
       ),
     });
 
-    expect(numbers()).toEqual([]);
-    expect(host.querySelectorAll("header.agent-band")).toHaveLength(2);
+    expect(promptTexts()).toEqual(["First imported", "First live"]);
     expect(host.textContent).toContain("Earlier turns were dropped to bound memory.");
   });
 
-  it("shows no ordinal while the imported history has not loaded yet", () => {
+  it("states while the imported history has not loaded yet", () => {
     render({
       thread: imported(null, [liveTurn("t1", "First live")]),
       externalHistoryState: "loading",
     });
 
-    expect(numbers()).toEqual([]);
     expect(host.textContent).toContain("Loading original conversation…");
-  });
-
-  it("keeps numbering a native thread from one", () => {
-    render({ thread: native([liveTurn("t1", "First live"), liveTurn("t2", "Second live")]) });
-
-    expect(numbers()).toEqual(["1.", "2."]);
+    expect(promptTexts()).toEqual(["First live"]);
   });
 
   it("states when the imported session held no messages at all", () => {
@@ -651,14 +520,8 @@ describe("imported conversation history", () => {
     expect(host.querySelectorAll(".agent-imported-history > .agent-turn")).toHaveLength(0);
   });
 
-  function numbers(): ReadonlyArray<string> {
-    return [...host.querySelectorAll(".agent-band__number")].map(
-      (element) => element.textContent ?? "",
-    );
-  }
-
-  function bandTexts(): ReadonlyArray<string> {
-    return [...host.querySelectorAll(".agent-band__text")].map(
+  function promptTexts(): ReadonlyArray<string> {
+    return [...host.querySelectorAll(".agent-prompt__body")].map(
       (element) => element.textContent ?? "",
     );
   }

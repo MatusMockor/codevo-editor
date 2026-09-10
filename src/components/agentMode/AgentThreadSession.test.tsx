@@ -124,13 +124,15 @@ describe("AgentThreadSession", () => {
 
     const history = host.querySelector('section[aria-label="Original conversation"]');
     expect(history?.querySelectorAll("article.agent-turn")).toHaveLength(1);
-    expect(history?.querySelector(".agent-band__text")?.textContent).toBe("Original question");
+    expect(history?.querySelector(".agent-prompt__body")?.textContent).toBe("Original question");
     expect(history?.querySelector(".agent-text__paragraph")?.textContent).toBe("Original answer");
     expect(host.querySelectorAll("article.agent-turn")).toHaveLength(2);
     expect(host.textContent?.indexOf("Original answer")).toBeLessThan(
       host.textContent?.indexOf("Refactor the parser") ?? 0,
     );
-    expect(history?.querySelector(".agent-band__meta")?.textContent).toBe("");
+    expect(history?.querySelector("header.agent-turn__head time")).toBeNull();
+    expect(history?.querySelector(".agent-turn__duration")).toBeNull();
+    expect(history?.querySelector(".agent-turn__agent")?.textContent).toBe("Claude Code");
     expect(history?.querySelector(".agent-work")).toBeNull();
   });
 
@@ -216,7 +218,7 @@ describe("AgentThreadSession", () => {
     });
 
     expect(host.querySelectorAll("article.agent-turn")).toHaveLength(2);
-    expect(host.querySelectorAll(".agent-band__text")[1]?.textContent).toBe(
+    expect(host.querySelectorAll(".agent-prompt__body")[1]?.textContent).toBe(
       "Also update the tests",
     );
     expect(
@@ -739,7 +741,7 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("Agent CLI exited with code 1.");
   });
 
-  it("shows only the message time below a user bubble", () => {
+  it("shows only the provider and the turn time in the turn head", () => {
     render({
       thread: threadView({
         turns: [
@@ -756,10 +758,10 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    const meta = host.querySelector(".agent-band__meta");
+    const time = host.querySelector("header.agent-turn__head time");
 
-    expect(meta?.textContent).toBe("5 minutes ago");
-    expect(meta?.getAttribute("aria-label")).toBe("Message time");
+    expect(time?.textContent).toBe("5 minutes ago");
+    expect(host.querySelector(".agent-turn__agent")?.textContent).toBe("Claude Code");
     expect(host.textContent).not.toContain("worktree");
     expect(host.textContent).not.toContain("finished");
     expect(host.textContent).not.toContain("opus");
@@ -767,7 +769,7 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).not.toContain("claude 2.1.245");
   });
 
-  it("does not add launch choices to historical user messages", () => {
+  it("does not add launch choices to historical turn heads", () => {
     render({
       thread: threadView({
         turns: [
@@ -792,7 +794,7 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.querySelectorAll(".agent-band__meta")).toHaveLength(3);
+    expect(host.querySelectorAll("header.agent-turn__head time")).toHaveLength(3);
     expect(host.querySelector(".agent-prompt__launch")).toBeNull();
     expect(host.textContent).not.toContain("sonnet");
     expect(host.textContent).not.toContain("gpt-5.5");
@@ -1106,7 +1108,7 @@ describe("AgentThreadSession", () => {
     render(withFind({ findQuery: "p", findHitIndex: 0 }));
 
     expect(host.querySelectorAll("mark.agent-find__hit")).toHaveLength(0);
-    expect(host.querySelector(".agent-band__text")?.textContent).toBe("parser and parser");
+    expect(host.querySelector(".agent-prompt__body")?.textContent).toBe("parser and parser");
   });
 
   it("reveals a turn whose events were dropped from the rendered projection", () => {

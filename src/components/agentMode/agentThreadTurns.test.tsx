@@ -3,7 +3,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { AgentBandPin, AgentBandPinObserver } from "../../application/agentBandPin";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import { sharedAgentMarkdownDocumentCache } from "../../application/agentMarkdownDocumentCache";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
@@ -45,38 +44,6 @@ const CONTAINING_BLOCK_PROPERTIES = [
 ] as const;
 
 const STYLES = parseAllStyleSheets();
-const REVEAL_INSET = 68;
-const CONTENT_HEIGHT = 900;
-const VIEWPORT_HEIGHT = 300;
-
-interface PinPort {
-  readonly port: AgentBandPinObserver;
-  sentinels(): ReadonlyArray<Element>;
-  set(sentinel: Element, pin: AgentBandPin): void;
-}
-
-function pinPort(): PinPort {
-  const listeners = new Map<Element, (pin: AgentBandPin) => void>();
-  return {
-    port: {
-      observe(sentinel, onChange) {
-        listeners.set(sentinel, onChange);
-        return () => {
-          listeners.delete(sentinel);
-        };
-      },
-      dispose() {
-        listeners.clear();
-      },
-    },
-    sentinels: () => [...listeners.keys()],
-    set(sentinel, pin) {
-      const onChange = listeners.get(sentinel);
-      expect(onChange).toBeDefined();
-      act(() => onChange?.(pin));
-    },
-  };
-}
 
 interface ViewportPort {
   readonly port: AgentMarkdownViewport;
@@ -129,7 +96,7 @@ function containingBlockDeclarations(element: Element): ReadonlyArray<string> {
     );
 }
 
-describe("agent thread ledger", () => {
+describe("agent thread turns", () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -150,72 +117,7 @@ describe("agent thread ledger", () => {
     host.remove();
   });
 
-  it("sticks the question band to a scroll chain that creates no containing block", () => {
-    render({ thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])]) });
-
-    const band = host.querySelector<HTMLElement>("header.agent-band");
-    const scroll = host.querySelector<HTMLElement>(".agent-session__scroll");
-    expect(band).not.toBeNull();
-    expect(scroll).not.toBeNull();
-
-    const chain: HTMLElement[] = [];
-    for (
-      let ancestor = band?.parentElement ?? null;
-      ancestor !== null && ancestor !== scroll;
-      ancestor = ancestor.parentElement
-    ) {
-      chain.push(ancestor);
-    }
-
-    expect(chain.map((element) => element.className)).toEqual([
-      "agent-turn",
-      "agent-turn-list",
-      "agent-session__body",
-    ]);
-    expect(scroll?.contains(band as Node)).toBe(true);
-
-    const offenders = chain.flatMap((element) => containingBlockDeclarations(element));
-    expect(offenders).toEqual([]);
-    expect(containingBlockDeclarations(scroll as Element)).toEqual([
-      "components/agentMode/agentThread.css .agent-session__scroll overflow-x",
-      "components/agentMode/agentThread.css .agent-session__scroll overflow-y",
-    ]);
-  });
-
-  it("sticks an imported question band to the same containing-block-free chain", () => {
-    render({
-      thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])], {
-        exchanges: [
-          { role: "user", text: "Original question" },
-          { role: "assistant", text: "Original answer" },
-        ],
-      }),
-    });
-
-    const band = host.querySelector<HTMLElement>(".agent-imported-history header.agent-band");
-    const scroll = host.querySelector<HTMLElement>(".agent-session__scroll");
-    expect(band).not.toBeNull();
-    expect(scroll?.contains(band as Node)).toBe(true);
-
-    const chain: HTMLElement[] = [];
-    for (
-      let ancestor = band?.parentElement ?? null;
-      ancestor !== null && ancestor !== scroll;
-      ancestor = ancestor.parentElement
-    ) {
-      chain.push(ancestor);
-    }
-
-    expect(chain.map((element) => element.className)).toEqual([
-      "agent-turn",
-      "agent-imported-history",
-      "agent-session__body",
-    ]);
-    expect(chain.flatMap((element) => containingBlockDeclarations(element))).toEqual([]);
-    expect(host.querySelectorAll("header.agent-band")).toHaveLength(2);
-  });
-
-  it("gives every turn its own band so the next band pushes the previous one out", () => {
+  it("gives every turn a right-aligned prompt bubble and an answer under its own head", () => {
     render({
       thread: threadView([
         turn("t1", "First question", SETTLED, [text("alpha")]),
@@ -226,75 +128,154 @@ describe("agent thread ledger", () => {
     const turns = [...host.querySelectorAll<HTMLElement>(".agent-turn")];
     expect(turns).toHaveLength(2);
     for (const section of turns) {
-      expect(section.querySelectorAll("header.agent-band")).toHaveLength(1);
-      const band = section.querySelector("header.agent-band");
-      expect(band?.parentElement).toBe(section);
+      expect([...section.children].map((child) => child.className)).toEqual([
+        "agent-prompt",
+        "agent-answer",
+      ]);
+      expect(section.querySelectorAll("header.agent-turn__head")).toHaveLength(1);
+      expect(section.querySelector("header.agent-turn__head")?.parentElement?.className).toBe(
+        "agent-answer",
+      );
     }
     expect(turns[0]?.nextElementSibling).toBe(turns[1]);
     expect(turns[0]?.parentElement?.className).toBe("agent-turn-list");
-
-    expect(declaration(".agent-turn-list", "gap")).toBe("0");
-    expect(declaration(".agent-turn", "margin")).toBeNull();
-    expect(declaration(".agent-turn", "padding")).toBeNull();
-    expect(declaration(".agent-turn", "padding-bottom")).toBeNull();
-    expect(declaration(".agent-answer", "padding-bottom")).toBe("var(--agent-turn-gap)");
+    expect(promptTexts()).toEqual(["First question", "Second question"]);
+    expect(declaration(".agent-turn-list", "gap")).toBe("var(--agent-turn-gap)");
+    expect(declaration(".agent-turn", "gap")).toBe("var(--agent-turn-gap)");
+    expect(declaration(".agent-answer", "gap")).toBe("var(--agent-space-4)");
   });
 
-  it("numbers the bands per turn and keeps the numbering stable when a turn is added", () => {
-    const first = turn("t1", "First question", SETTLED, [text("alpha")]);
-    const second = turn("t2", "Second question", SETTLED, [text("beta")]);
-    render({ thread: threadView([first, second]) });
-    expect(numbers()).toEqual(["1.", "2."]);
+  it("caps the prompt bubble at 85% of the column and pins it to the right edge", () => {
+    render({ thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])]) });
 
-    render({
-      thread: threadView([first, second, turn("t3", "Third question", RUNNING, [text("gamma")])]),
-    });
-
-    expect(numbers()).toEqual(["1.", "2.", "3."]);
-    expect(bandTexts()).toEqual(["First question", "Second question", "Third question"]);
+    const prompt = host.querySelector<HTMLElement>(".agent-prompt");
+    expect(prompt?.querySelector("p.agent-prompt__body")?.textContent).toBe("First question");
+    expect(declaration(".agent-prompt__body", "max-width")).toBe("85%");
+    expect(declaration(".agent-prompt", "justify-content")).toBe("flex-end");
+    expect(declaration(".agent-prompt__body", "border-radius")).toBe("var(--agent-radius-xl)");
+    expect(declaration(".agent-prompt__body", "background")).toBe("var(--agent-raised)");
+    expect(declaration(".agent-prompt__body", "box-shadow")).toBe("var(--agent-shadow-raised)");
   });
 
-  it("arranges the band as ordinal, prompt and one tool group", () => {
+  it("renders an imported prompt through the same bubble and head as a live turn", () => {
     render({
-      thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])]),
-      textClipboard: { canWriteText: () => true, writeText: async () => undefined },
-    });
-
-    const band = host.querySelector<HTMLElement>("header.agent-band");
-    expect([...(band?.children ?? [])].map((child) => child.className)).toEqual([
-      "agent-band__number agent-num",
-      "agent-band__text",
-      "agent-band__tools",
-    ]);
-    expect(band?.querySelector(".agent-band__mark")).toBeNull();
-    expect(
-      [...(band?.querySelector(".agent-band__tools")?.children ?? [])].map(
-        (child) => `${child.tagName.toLowerCase()}.${child.className.split(" ")[0]}`,
-      ),
-    ).toEqual([
-      "span.agent-band__meta",
-      "button.agent-message-copy",
-      "button.agent-band__expand",
-      "button.agent-band__jump",
-    ]);
-  });
-
-  it("marks the gutter instead of leaving it empty when the ordinal is withheld", () => {
-    render({
-      thread: threadView([turn("t8", "Eighth question", SETTLED, [text("alpha")])], {
-        turnsTruncated: true,
+      thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])], {
+        exchanges: [
+          { role: "user", text: "Original question" },
+          { role: "assistant", text: "Original answer" },
+        ],
       }),
     });
 
-    const band = host.querySelector<HTMLElement>("header.agent-band");
-    expect([...(band?.children ?? [])].map((child) => child.className)).toEqual([
-      "agent-band__mark",
-      "agent-band__text",
-      "agent-band__tools",
+    const sections = [...host.querySelectorAll<HTMLElement>("article.agent-turn")];
+    expect(sections).toHaveLength(2);
+    expect(
+      sections.map((section) => [...section.children].map((child) => child.className)),
+    ).toEqual([
+      ["agent-prompt", "agent-answer"],
+      ["agent-prompt", "agent-answer"],
     ]);
-    expect(band?.querySelector(".agent-band__mark")?.getAttribute("aria-hidden")).toBe("true");
-    expect(band?.querySelector(".agent-band__mark")?.textContent).toBe("");
-    expect(numbers()).toEqual([]);
+    expect(promptTexts()).toEqual(["Original question", "First question"]);
+    expect(headNames()).toEqual(["Claude Code", "Claude Code"]);
+    expect(sections[0]?.parentElement?.className).toBe("agent-imported-history");
+    expect(sections[1]?.parentElement?.className).toBe("agent-turn-list");
+  });
+
+  it("shows the accent dot, the provider and the settled duration in the turn head", () => {
+    render({ thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])]) });
+
+    const head = host.querySelector<HTMLElement>("header.agent-turn__head");
+    expect([...(head?.children ?? [])].map((child) => child.className)).toEqual([
+      "agent-turn__spark",
+      "agent-turn__agent",
+      "agent-turn__time agent-num",
+      "agent-turn__duration agent-num",
+    ]);
+    expect(head?.querySelector(".agent-turn__spark")?.getAttribute("aria-hidden")).toBe("true");
+    expect(head?.querySelector(".agent-turn__agent")?.textContent).toBe("Claude Code");
+    expect(head?.querySelector("time")?.textContent).toContain("ago");
+    expect(head?.querySelector("time")?.getAttribute("datetime")).toBe(
+      new Date(NOW - 300_000).toISOString(),
+    );
+    expect(head?.querySelector(".agent-turn__duration")?.textContent).toBe("4m 30s");
+  });
+
+  it("drops the machine-readable time rather than throwing on an unusable timestamp", () => {
+    render({
+      thread: threadView([
+        {
+          ...turn("t1", "First question", SETTLED, [text("alpha")]),
+          startedAtEpochMs: Number.NaN,
+          endedAtEpochMs: null,
+        },
+      ]),
+    });
+
+    const time = host.querySelector("header.agent-turn__head time");
+    expect(time).not.toBeNull();
+    expect(time?.getAttribute("datetime")).toBeNull();
+    expect(host.querySelector(".agent-turn__agent")?.textContent).toBe("Claude Code");
+  });
+
+  it("keeps a running head counting and drops the duration when the end is unknown", () => {
+    render({ thread: threadView([turn("t1", "First question", RUNNING, [text("alpha")])]) });
+    expect(host.querySelector(".agent-turn__duration")).not.toBeNull();
+
+    render({
+      thread: threadView([
+        { ...turn("t1", "First question", SETTLED, [text("alpha")]), endedAtEpochMs: null },
+      ]),
+    });
+
+    expect(host.querySelector(".agent-turn__duration")).toBeNull();
+    expect(host.querySelector(".agent-turn__agent")?.textContent).toBe("Claude Code");
+    expect(host.querySelector("header.agent-turn__head time")).not.toBeNull();
+  });
+
+  it("leaves an imported head without a time or a duration rather than an empty slot", () => {
+    render({
+      thread: threadView([], {
+        exchanges: [
+          { role: "user", text: "Original question" },
+          { role: "assistant", text: "Original answer" },
+        ],
+      }),
+    });
+
+    const head = host.querySelector<HTMLElement>(".agent-imported-history header.agent-turn__head");
+    expect([...(head?.children ?? [])].map((child) => child.className)).toEqual([
+      "agent-turn__spark",
+      "agent-turn__agent",
+    ]);
+    expect(head?.textContent).toBe("Claude Code");
+  });
+
+  it("keeps every prompt whole with no expand or jump control to chase", () => {
+    render({
+      thread: threadView([
+        turn("t1", "A prompt\nthat runs\nacross\nmany separate lines", SETTLED, [text("alpha")]),
+      ]),
+    });
+
+    expect(host.querySelector(".agent-prompt__body")?.textContent).toBe(
+      "A prompt\nthat runs\nacross\nmany separate lines",
+    );
+    expect(host.querySelector("button.agent-band__expand")).toBeNull();
+    expect(host.querySelector("button.agent-band__jump")).toBeNull();
+    expect(host.querySelector(".agent-answer__end")).toBeNull();
+    expect(declaration(".agent-prompt__body", "-webkit-line-clamp")).toBeNull();
+  });
+
+  it("still warns and still shows every prompt when earlier turns were dropped", () => {
+    const turns = [
+      turn("t8", "Eighth question", SETTLED, [text("alpha")]),
+      turn("t9", "Ninth question", SETTLED, [text("beta")]),
+    ];
+
+    render({ thread: threadView(turns, { turnsTruncated: true }) });
+
+    expect(promptTexts()).toEqual(["Eighth question", "Ninth question"]);
+    expect(host.textContent).toContain("Earlier turns were dropped to bound memory.");
   });
 
   it("keeps the table wrapper as the only overflow ancestor of a wide table", () => {
@@ -331,86 +312,7 @@ describe("agent thread ledger", () => {
     expect(declaration(".agent-md__td .agent-md__inline-code", "overflow-wrap")).toBe("anywhere");
   });
 
-  it("clamps and shadows only the band whose turn is pinned", () => {
-    const pin = pinPort();
-    render({
-      thread: threadView([
-        turn("t1", "First question", SETTLED, [text("alpha")]),
-        turn("t2", "Second question", SETTLED, [text("beta")]),
-      ]),
-      bandPin: pin.port,
-    });
-
-    const sentinels = pin.sentinels();
-    expect(sentinels).toHaveLength(2);
-    expect(bandClasses()).toEqual(["agent-band", "agent-band"]);
-
-    pin.set(sentinels[0] as Element, "pinned");
-    expect(bandClasses()).toEqual(["agent-band agent-band--pinned", "agent-band"]);
-
-    pin.set(sentinels[0] as Element, "released");
-    pin.set(sentinels[1] as Element, "pinned");
-    expect(bandClasses()).toEqual(["agent-band", "agent-band agent-band--pinned"]);
-  });
-
-  it("shows no ordinal at all when earlier turns were dropped", () => {
-    const turns = [
-      turn("t8", "Eighth question", SETTLED, [text("alpha")]),
-      turn("t9", "Ninth question", SETTLED, [text("beta")]),
-    ];
-    render({ thread: threadView(turns) });
-    expect(numbers()).toEqual(["1.", "2."]);
-
-    render({ thread: threadView(turns, { turnsTruncated: true }) });
-
-    expect(numbers()).toEqual([]);
-    expect(host.querySelectorAll(".agent-band")).toHaveLength(2);
-    expect(host.textContent).toContain("Earlier turns were dropped to bound memory.");
-  });
-
-  it("never changes what the band clamps when the pin state changes", () => {
-    const pin = pinPort();
-    render({
-      thread: threadView([
-        turn("t1", "A prompt\nthat runs\nacross\nmany separate lines", SETTLED, [text("alpha")]),
-      ]),
-      bandPin: pin.port,
-    });
-
-    const band = host.querySelector<HTMLElement>("header.agent-band");
-    expect(band?.className).toBe("agent-band");
-
-    pin.set(pin.sentinels()[0] as Element, "pinned");
-    expect(band?.className).toBe("agent-band agent-band--pinned");
-
-    pin.set(pin.sentinels()[0] as Element, "released");
-    expect(band?.className).toBe("agent-band");
-  });
-
-  it("expands the prompt only when the reader asks for it", () => {
-    const pin = pinPort();
-    render({
-      thread: threadView([turn("t1", "A very long prompt", SETTLED, [text("alpha")])]),
-      bandPin: pin.port,
-    });
-
-    const band = host.querySelector<HTMLElement>("header.agent-band");
-    const expand = host.querySelector<HTMLButtonElement>("button.agent-band__expand");
-    expect(expand?.getAttribute("aria-expanded")).toBe("false");
-
-    act(() => expand?.click());
-    expect(band?.className).toContain("agent-band--expanded");
-    expect(expand?.getAttribute("aria-expanded")).toBe("true");
-
-    pin.set(pin.sentinels()[0] as Element, "pinned");
-    expect(band?.className).toBe("agent-band agent-band--pinned agent-band--expanded");
-
-    act(() => expand?.click());
-    expect(band?.className).toBe("agent-band agent-band--pinned");
-  });
-
-  it("un-clamps the band while it hosts the current find hit", () => {
-    const pin = pinPort();
+  it("highlights the current find hit inside the prompt bubble", () => {
     const view = threadView([
       turn("t1", "Where does the parser live and why", SETTLED, [text("alpha")]),
     ]);
@@ -421,51 +323,17 @@ describe("agent thread ledger", () => {
     expect(first?.scope).toBe("turn");
     expect(first?.scope === "turn" ? first.eventIndex : undefined).toBeNull();
 
-    render({ thread: view, bandPin: pin.port, findQuery: "parser", findHits: hits });
-    expect(host.querySelector("header.agent-band")?.className).toBe("agent-band");
+    render({ thread: view, findQuery: "parser", findHits: hits });
+    expect(host.querySelector("mark.agent-find__hit--current")).toBeNull();
 
-    render({
-      thread: view,
-      bandPin: pin.port,
-      findQuery: "parser",
-      findHits: hits,
-      findHitIndex: 0,
-    });
+    render({ thread: view, findQuery: "parser", findHits: hits, findHitIndex: 0 });
 
-    const band = host.querySelector<HTMLElement>("header.agent-band");
-    expect(band?.className).toContain("agent-band--expanded");
-    expect(band?.querySelector("mark.agent-find__hit--current")).not.toBeNull();
-
-    pin.set(pin.sentinels()[0] as Element, "pinned");
-    expect(band?.className).toBe("agent-band agent-band--pinned agent-band--expanded");
+    const prompt = host.querySelector<HTMLElement>(".agent-prompt__body");
+    expect(prompt?.querySelector("mark.agent-find__hit--current")).not.toBeNull();
+    expect(prompt?.textContent).toBe("Where does the parser live and why");
   });
 
-  it("jumps to the end of the answer that the pinned band belongs to", () => {
-    const scrolled: Element[] = [];
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: function scrollIntoView(this: Element): void {
-        scrolled.push(this);
-      },
-      writable: true,
-    });
-    render({
-      thread: threadView([
-        turn("t1", "First question", SETTLED, [text("alpha")]),
-        turn("t2", "Second question", SETTLED, [text("beta")]),
-      ]),
-    });
-
-    const jump = host.querySelectorAll<HTMLButtonElement>("button.agent-band__jump");
-    expect(jump).toHaveLength(2);
-    act(() => jump[0]?.click());
-
-    const ends = [...host.querySelectorAll<HTMLElement>(".agent-answer__end")];
-    expect(scrolled).toEqual([ends[0]]);
-    expect(ends[0]?.closest(".agent-turn")).toBe(host.querySelector(".agent-turn"));
-  });
-
-  it("reveals a find hit below the pinned band instead of underneath it", () => {
+  it("reveals a find hit with a centred scroll and no band inset to clear", () => {
     const options: unknown[] = [];
     Object.defineProperty(Element.prototype, "scrollIntoView", {
       configurable: true,
@@ -482,72 +350,43 @@ describe("agent thread ledger", () => {
 
     render({ thread: view, findQuery: "beta", findHits: hits, findHitIndex: 0 });
 
-    expect(options).toEqual([{ block: "start" }]);
+    expect(options).toEqual([{ block: "center" }]);
     expect(host.querySelector("mark.agent-find__hit--current")).not.toBeNull();
-    expect(declaration(".agent-find__hit", "scroll-margin-top")).toBe(
-      "var(--agent-band-reveal-inset)",
-    );
-    expect(declaration(".agent-answer [data-agent-event]", "scroll-margin-top")).toBe(
-      "var(--agent-band-reveal-inset)",
-    );
-    expect(host.querySelector(".agent-session__reveal-slack")).not.toBeNull();
-    expect(declaration(".agent-session__reveal-slack", "height")).toBe(
-      "var(--agent-band-reveal-inset)",
-    );
-    expect(declaration(".agent-session__reveal-slack", "margin-top")).toBe(
-      "calc(var(--agent-turn-gap) * -1)",
-    );
+    expect(declaration(".agent-find__hit", "scroll-margin-top")).toBeNull();
+    expect(declaration(".agent-answer [data-agent-event]", "scroll-margin-top")).toBeNull();
+    expect(host.querySelector(".agent-session__reveal-slack")).toBeNull();
   });
 
-  it("carries the reveal slack only while a live query has something to reveal", () => {
-    const view = threadView([turn("t1", "First question", SETTLED, [text("alpha beta")])]);
-    const hits = findInThread(view.thread, "beta", {
-      maxEventsPerTurn: MAX_RENDERED_EVENTS_PER_TURN,
-    });
-    const slack = (): Element | null => host.querySelector(".agent-session__reveal-slack");
-
-    render({ thread: view });
-    expect(slack()).toBeNull();
-
-    render({ thread: view, findQuery: "nothingmatchesthis", findHits: [] });
-    expect(slack()).toBeNull();
-
-    render({ thread: view, findQuery: "beta", findHits: hits });
-    expect(slack()).not.toBeNull();
-
-    render({ thread: view });
-    expect(slack()).toBeNull();
-  });
-
-  it("keeps the reader pinned to the bottom when the query clears the slack away", () => {
-    const view = threadView([turn("t1", "First question", SETTLED, [text("alpha beta")])]);
-    const hits = findInThread(view.thread, "beta", {
-      maxEventsPerTurn: MAX_RENDERED_EVENTS_PER_TURN,
+  it("reveals a whole turn from its top rather than from its middle", () => {
+    const revealed: Array<{ readonly element: Element; readonly options: unknown }> = [];
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: function scrollIntoView(this: Element, argument: unknown): void {
+        revealed.push({ element: this, options: argument });
+      },
+      writable: true,
     });
 
-    const deferred = viewportPort(false).port;
+    render({
+      thread: threadView([
+        turn("t1", "First question", SETTLED, [text("alpha")]),
+        turn("t2", "Second question", SETTLED, [text("beta")]),
+      ]),
+      reveal: { query: "", turnId: "agt-1-t2", eventIndex: null, start: 0, end: 0 },
+    });
 
-    render({ thread: view, findQuery: "beta", findHits: hits, markdownViewport: deferred });
-    const scroll = elasticScrollContainer(CONTENT_HEIGHT, VIEWPORT_HEIGHT);
-    expect(scroll.scrollHeight).toBe(CONTENT_HEIGHT + REVEAL_INSET);
-    scroll.scrollTop = scroll.scrollHeight;
-    act(() => scroll.dispatchEvent(new Event("scroll")));
-    expect(scroll.scrollTop).toBe(CONTENT_HEIGHT + REVEAL_INSET - VIEWPORT_HEIGHT);
-
-    render({ thread: view, markdownViewport: deferred });
-
-    expect(scroll.scrollHeight).toBe(CONTENT_HEIGHT);
-    expect(scroll.scrollTop).toBe(CONTENT_HEIGHT - VIEWPORT_HEIGHT);
+    const turns = [...host.querySelectorAll<HTMLElement>("[data-agent-turn]")];
+    expect(revealed).toEqual([{ element: turns[1], options: { block: "start" } }]);
   });
 
-  it("leaves a reader who scrolled away alone when the slack appears or disappears", () => {
+  it("leaves a reader who scrolled away alone when a find query arrives", () => {
     const view = threadView([turn("t1", "First question", SETTLED, [text("alpha beta")])]);
     const hits = findInThread(view.thread, "beta", {
       maxEventsPerTurn: MAX_RENDERED_EVENTS_PER_TURN,
     });
 
     render({ thread: view });
-    const scroll = elasticScrollContainer(CONTENT_HEIGHT, VIEWPORT_HEIGHT);
+    const scroll = scrollContainer({ scrollHeight: 1_400, clientHeight: 300, scrollTop: 0 });
     scroll.scrollTop = 120;
     act(() => scroll.dispatchEvent(new Event("scroll")));
 
@@ -556,7 +395,7 @@ describe("agent thread ledger", () => {
     expect(scroll.scrollTop).toBe(120);
   });
 
-  it("still parses an on-screen answer in the first commit inside the ledger structure", () => {
+  it("still parses an on-screen answer in the first commit inside the turn structure", () => {
     const viewport = viewportPort(true);
     render({
       thread: threadView([turn("t1", "First question", SETTLED, [text(markdown("alpha"))])]),
@@ -582,7 +421,7 @@ describe("agent thread ledger", () => {
     expect(host.querySelector(".agent-session__scroll")?.contains(body as Node)).toBe(true);
   });
 
-  it("holds the bottom while a banded turn streams and after it settles", () => {
+  it("holds the bottom while a turn streams and after it settles", () => {
     const streaming = threadView([
       turn("t1", "First question", SETTLED, [text("alpha")]),
       turn("t2", "Second question", RUNNING, [text(markdown("live"))]),
@@ -645,53 +484,24 @@ describe("agent thread ledger", () => {
       ".agent-compaction-event",
       ".agent-finale",
       ".agent-note--warning",
-      ".agent-answer__end",
     ]) {
       const element = answer?.querySelector(selector);
       expect(element, selector).not.toBeNull();
     }
-    expect(host.querySelector(".agent-band__text")?.textContent).toBe("First question");
-    expect(host.querySelector(".agent-band__meta")?.textContent).toContain("ago");
+    expect(host.querySelector(".agent-prompt__body")?.textContent).toBe("First question");
+    expect(host.querySelector("header.agent-turn__head time")?.textContent).toContain("ago");
   });
 
-  function numbers(): ReadonlyArray<string> {
-    return [...host.querySelectorAll(".agent-band__number")].map(
+  function promptTexts(): ReadonlyArray<string> {
+    return [...host.querySelectorAll(".agent-prompt__body")].map(
       (element) => element.textContent ?? "",
     );
   }
 
-  function bandTexts(): ReadonlyArray<string> {
-    return [...host.querySelectorAll(".agent-band__text")].map(
+  function headNames(): ReadonlyArray<string> {
+    return [...host.querySelectorAll(".agent-turn__agent")].map(
       (element) => element.textContent ?? "",
     );
-  }
-
-  function bandClasses(): ReadonlyArray<string> {
-    return [...host.querySelectorAll("header.agent-band")].map((element) => element.className);
-  }
-
-  function elasticScrollContainer(content: number, viewport: number): HTMLDivElement {
-    const scroll = host.querySelector<HTMLDivElement>(".agent-session__scroll");
-    expect(scroll).not.toBeNull();
-    let top = 0;
-    Object.defineProperties(scroll, {
-      scrollHeight: {
-        configurable: true,
-        get: () =>
-          content +
-          (host.querySelector(".agent-session__reveal-slack") === null ? 0 : REVEAL_INSET),
-      },
-      clientHeight: { configurable: true, value: viewport },
-      scrollTop: {
-        configurable: true,
-        get: () => top,
-        set: (value: number) => {
-          const element = scroll as HTMLDivElement;
-          top = Math.max(0, Math.min(value, element.scrollHeight - viewport));
-        },
-      },
-    });
-    return scroll as HTMLDivElement;
   }
 
   function scrollContainer(dimensions: {

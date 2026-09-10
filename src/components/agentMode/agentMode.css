@@ -669,7 +669,6 @@
 
 .agent-find__hit {
   border-radius: 2px;
-  scroll-margin-top: var(--agent-band-reveal-inset);
   background: color-mix(in srgb, var(--agent-warm) 32%, transparent);
   color: inherit;
 }

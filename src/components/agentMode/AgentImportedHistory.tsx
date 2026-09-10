@@ -1,19 +1,18 @@
-import { memo, useCallback, useMemo, useRef } from "react";
-import type { AgentBandPinObserver } from "../../application/agentBandPin";
+import { memo, useMemo } from "react";
+import type { AgentCliKind } from "../../domain/agentTask";
 import type {
   ExternalAgentSessionHistory,
   ExternalSessionExchange,
 } from "../../domain/externalAgentSession";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentAssistantText, type AgentProseContext } from "./AgentAssistantText";
-import { AgentTurnBand } from "./AgentTurnBand";
+import { AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
+import { AGENT_TURN_UNTIMED } from "./agentTurnHeadPresentation";
 import {
   agentImportedTurns,
-  agentLedgerImportedOrdinal,
   type AgentImportedHighlight,
   type AgentImportedTurn,
-  type AgentLedgerOrdinals,
-} from "./agentLedgerPresentation";
+} from "./agentImportedPresentation";
 import "./agentImportedHistory.css";
 
 export type AgentExternalHistoryState = "loading" | "failed" | "unavailable" | "ready";
@@ -22,20 +21,16 @@ const NO_HIGHLIGHTS: ReadonlyMap<number, AgentImportedHighlight> = new Map();
 const NO_EXCHANGES: ReadonlyArray<ExternalSessionExchange> = [];
 
 export const AgentImportedHistory = memo(function AgentImportedHistory({
-  bandPin = null,
   highlights = NO_HIGHLIGHTS,
   history,
   onRetry,
-  ordinals,
   prose,
   state,
   textClipboard,
 }: {
-  readonly bandPin?: AgentBandPinObserver | null;
   readonly highlights?: ReadonlyMap<number, AgentImportedHighlight>;
   readonly history: ExternalAgentSessionHistory | undefined;
   readonly onRetry?: () => void;
-  readonly ordinals: AgentLedgerOrdinals;
   readonly prose: AgentProseContext;
   readonly state?: AgentExternalHistoryState;
   readonly textClipboard: TextClipboardGateway | null;
@@ -75,11 +70,10 @@ export const AgentImportedHistory = memo(function AgentImportedHistory({
       )}
       {turns.map((turn) => (
         <AgentImportedTurnView
-          bandPin={bandPin}
           highlights={highlights}
           key={turn.key}
-          ordinals={ordinals}
           prose={prose}
+          provider={history.provider}
           textClipboard={textClipboard}
           turn={turn}
         />
@@ -89,42 +83,33 @@ export const AgentImportedHistory = memo(function AgentImportedHistory({
 });
 
 const AgentImportedTurnView = memo(function AgentImportedTurnView({
-  bandPin,
   highlights,
-  ordinals,
   prose,
+  provider,
   textClipboard,
   turn,
 }: {
-  readonly bandPin: AgentBandPinObserver | null;
   readonly highlights: ReadonlyMap<number, AgentImportedHighlight>;
-  readonly ordinals: AgentLedgerOrdinals;
   readonly prose: AgentProseContext;
+  readonly provider: AgentCliKind;
   readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentImportedTurn;
 }) {
-  const answerEnd = useRef<HTMLDivElement | null>(null);
-  const jumpToAnswerEnd = useCallback(() => {
-    answerEnd.current?.scrollIntoView?.({ block: "end" });
-  }, []);
   const prompt = turn.prompt;
   const promptHighlight = prompt === null ? undefined : highlights.get(prompt.exchangeIndex);
 
   return (
     <article aria-label="Imported exchange" className="agent-turn">
       {prompt !== null && (
-        <AgentTurnBand
-          bandPin={bandPin}
+        <AgentTurnPrompt
           current={promptHighlight?.current ?? null}
-          onJumpToAnswerEnd={jumpToAnswerEnd}
-          ordinal={agentLedgerImportedOrdinal(ordinals, prompt.promptIndex)}
           prompt={prompt.text}
           query={promptHighlight?.query ?? ""}
-          startedAtEpochMs={null}
           textClipboard={textClipboard}
         />
       )}
       <div className="agent-answer">
+        <AgentTurnHead provider={provider} startedAtEpochMs={null} timing={AGENT_TURN_UNTIMED} />
         <div className="agent-turn__events">
           {turn.responses.map((response) => {
             const highlight = highlights.get(response.exchangeIndex);
@@ -143,7 +128,6 @@ const AgentImportedTurnView = memo(function AgentImportedTurnView({
             );
           })}
         </div>
-        <div aria-hidden="true" className="agent-answer__end" ref={answerEnd} />
       </div>
     </article>
   );
