@@ -18,9 +18,9 @@ const macosBundleExecutable = path.join(
 );
 
 describe("debugAppLaunchExecutable", () => {
-  it("launches the bundled app executable on macOS", () => {
+  it("launches the plain unbundled binary on macOS, matching `debug:build --no-bundle` output", () => {
     expect(debugAppLaunchExecutable(repoRoot, "darwin")).toBe(
-      macosBundleExecutable,
+      path.join(debugRoot, "codevo-editor"),
     );
   });
 
@@ -54,6 +54,10 @@ describe("debugAppExecutables", () => {
         "mockor-editor",
       ),
     ]);
+  });
+
+  it("still matches the macOS app bundle so `npm run debug:bundle` launches can be found and cleaned up", () => {
+    expect(debugAppExecutables(repoRoot)).toContain(macosBundleExecutable);
   });
 
   it("includes every launch target it must be able to clean up", () => {

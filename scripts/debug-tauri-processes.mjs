@@ -20,10 +20,6 @@ export function debugAppLaunchExecutable(
   repoRoot,
   platform = process.platform,
 ) {
-  if (platform === "darwin") {
-    return macosBundleExecutable(repoRoot, "Codevo Editor", "codevo-editor");
-  }
-
   const binaryName =
     platform === "win32" ? "codevo-editor.exe" : "codevo-editor";
 
