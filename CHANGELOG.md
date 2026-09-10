@@ -7,6 +7,24 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.32] - 2026-09-10
+
+### Added
+
+- Render imported conversations with the same Markdown formatting and message layout as
+  live threads. Search imported text with find-in-thread and navigate directly to matches.
+
+### Changed
+
+- Show prompts as right-aligned bubbles and answers beneath compact agent headers, replacing
+  the numbered sticky bands. Omit timestamps and durations when imported history lacks them.
+
+### Fixed
+
+- Fit Markdown tables to the reading column and wrap long cell contents where possible.
+- Recheck visible Markdown after jumping to the newest message so the visible response is
+  formatted immediately, and reveal whole turns from their start.
+
 ## [0.2.0-beta.31] - 2026-09-10
 
 ### Added
