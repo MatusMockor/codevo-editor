@@ -370,6 +370,22 @@ describe("AgentThreadSession markdown", () => {
     expect(openExternalLink).toHaveBeenCalledTimes(1);
   });
 
+  it.each([0, 1, 2])("opens links only for primary and middle buttons (%i)", (button) => {
+    const openExternalLink = vi.fn(async () => undefined);
+    render({ thread: view(SETTLED, "[docs](https://example.com/docs)"), openExternalLink });
+    const link = host.querySelector<HTMLAnchorElement>("a.agent-md__link");
+    const event = new MouseEvent(button === 0 ? "click" : "auxclick", {
+      bubbles: true,
+      cancelable: true,
+      button,
+    });
+    act(() => {
+      link?.dispatchEvent(event);
+    });
+    expect(openExternalLink).toHaveBeenCalledTimes(button === 2 ? 0 : 1);
+    expect(event.defaultPrevented).toBe(button !== 2);
+  });
+
   it("re-renders only the streaming message when a chunk arrives", () => {
     const first = "Settled **answer**.";
     const stream = (text: string): void =>

@@ -7,6 +7,7 @@ export function handleAgentMarkdownLinkClick(
   event: MouseEvent<HTMLElement>,
   openExternal: AgentExternalLinkOpener,
 ): void {
+  if (event.button !== 0 && event.button !== 1) return;
   const target = event.target;
   if (!(target instanceof Element)) return;
   const link = target.closest<HTMLAnchorElement>("a[href]");
