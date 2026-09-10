@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appUpdateToastGroupKey,
+  appUpdateToastTitle,
   isSkippedAppUpdateVersion,
   initialAppUpdaterState,
   normalizeAppUpdaterSkippedVersion,
@@ -15,7 +16,7 @@ const candidate: AppUpdateCandidate = {
   currentVersion: "0.1.0",
   version: "0.2.0",
   date: "2026-08-29T12:00:00Z",
-  notes: "Beta update",
+  notesSpan: { kind: "single", notes: "Beta update" },
 };
 
 describe("app updater reducer", () => {
@@ -121,7 +122,7 @@ describe("app update toast presentation", () => {
     currentVersion: "0.1.0",
     version: "0.2.0",
     date: "2026-08-29",
-    notes: "Beta update",
+    notesSpan: { kind: "single", notes: "Beta update" },
   } as const;
 
   it("stays silent while idle, checking, up to date, or after a failed check", () => {
@@ -156,6 +157,7 @@ describe("app update toast presentation", () => {
       version: "0.2.0",
       currentVersion: "0.1.0",
       date: "2026-08-29",
+      notesSpan: { kind: "single", notes: "Beta update" },
     });
     expect(presentAppUpdateToast({ ...release, kind: "downloading", generation: 2 })).toEqual({
       kind: "downloading",
@@ -185,12 +187,57 @@ describe("app update toast presentation", () => {
     });
   });
 
+  it("keeps a prepared update restartable while naming the newer release", () => {
+    const outdated = reduceAppUpdaterState(
+      reduceAppUpdaterState(initialAppUpdaterState("0.1.0"), {
+        kind: "checkStarted",
+        generation: 9,
+      }),
+      {
+        kind: "checkSettled",
+        generation: 9,
+        result: {
+          kind: "readyToRestartOutdated",
+          candidate,
+          supersededBy: { version: "0.3.0", date: "2026-09-01" },
+        },
+      },
+    );
+
+    expect(outdated).toEqual({
+      kind: "readyToRestartOutdated",
+      currentVersion: "0.1.0",
+      version: "0.2.0",
+      date: "2026-08-29T12:00:00Z",
+      notesSpan: { kind: "single", notes: "Beta update" },
+      supersededBy: { version: "0.3.0", date: "2026-09-01" },
+    });
+    const presentation = presentAppUpdateToast(outdated);
+    expect(presentation).toEqual({
+      kind: "readyToRestartOutdated",
+      version: "0.2.0",
+      supersededBy: { version: "0.3.0", date: "2026-09-01" },
+    });
+    expect(presentation === null ? null : appUpdateToastTitle(presentation)).toBe(
+      "Newer update available after restart",
+    );
+    expect(reduceAppUpdaterState(outdated, { kind: "installStarted", generation: 10 })).toEqual({
+      kind: "installing",
+      generation: 10,
+      currentVersion: "0.1.0",
+      version: "0.2.0",
+      date: "2026-08-29T12:00:00Z",
+      notesSpan: { kind: "single", notes: "Beta update" },
+    });
+  });
+
   it("keeps one toast identity across the download lifecycle of a release", () => {
     const available = appUpdateToastGroupKey({
       kind: "available",
       version: "0.2.0",
       currentVersion: "0.1.0",
       date: null,
+      notesSpan: { kind: "single", notes: null },
     });
     expect(appUpdateToastGroupKey({ kind: "readyToInstall", version: "0.2.0" })).toBe(available);
     expect(appUpdateToastGroupKey({ kind: "readyToInstall", version: "0.3.0" })).not.toBe(

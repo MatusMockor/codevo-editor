@@ -214,7 +214,13 @@ export function useAppUpdater({
     const candidate = candidateRef.current;
     if (!candidate) return;
     const readiness = stateRef.current.kind;
-    if (readiness !== "readyToInstall" && readiness !== "readyToRestart") return;
+    if (
+      readiness !== "readyToInstall" &&
+      readiness !== "readyToRestart" &&
+      readiness !== "readyToRestartOutdated"
+    ) {
+      return;
+    }
     const generation = nextGeneration(generationRef);
     const owner = authorityRef.current;
     publish({ kind: "installStarted", generation });
@@ -254,9 +260,9 @@ export function useAppUpdater({
         generation,
         operation: "installAndRestart",
         message:
-          readiness === "readyToRestart"
-            ? "The update is installed. Quit and reopen Codevo to use it."
-            : "Unable to install the application update.",
+          readiness === "readyToInstall"
+            ? "Unable to install the application update."
+            : "The update is installed. Quit and reopen Codevo to use it.",
       });
     }
   }, [publish]);

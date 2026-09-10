@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { appUpdateNotesSpanSummary } from "../domain/appUpdateNotes";
 import { appUpdateToastTitle, type AppUpdateToastPresentation } from "../domain/appUpdater";
 import { ToastMark, ToastNotification, type ToastNotificationAction } from "./ToastNotification";
 
@@ -43,6 +44,7 @@ export function AppUpdateToast({
           meta={[
             `Installed v${presentation.currentVersion}`,
             presentation.date ? `Released ${presentation.date}` : null,
+            appUpdateNotesSpanSummary(presentation.notesSpan),
           ]}
           onClose={onDismiss}
           template="info"
@@ -92,6 +94,28 @@ export function AppUpdateToast({
           meta={["Any running tasks will be interrupted if you restart now."]}
           onClose={onDismiss}
           template="success"
+          title={appUpdateToastTitle(presentation)}
+        />
+      );
+    case "readyToRestartOutdated":
+      return (
+        <ToastNotification
+          actions={[
+            laterAction(onDismiss),
+            { id: "restart", label: "Restart", onClick: onInstall, tone: "primary" },
+          ]}
+          description={`Update ${presentation.version} is installed and applies on restart. Codevo v${presentation.supersededBy.version} is newer and is offered once you have restarted.`}
+          icon={
+            <ToastMark badge="update">
+              <AppMark />
+            </ToastMark>
+          }
+          meta={[
+            `Codevo v${presentation.supersededBy.version} is the newest release`,
+            presentation.supersededBy.date ? `Released ${presentation.supersededBy.date}` : null,
+          ]}
+          onClose={onDismiss}
+          template="info"
           title={appUpdateToastTitle(presentation)}
         />
       );

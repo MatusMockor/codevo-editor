@@ -10,15 +10,23 @@ function deferred() {
 }
 
 function fixture() {
-  const update = {
+  const download = vi.fn(async (): Promise<void> => undefined);
+  const install = vi.fn(async (): Promise<void> => undefined);
+  const nativeUpdate = () => ({
     currentVersion: "1.0.0",
     version: "2.0.0",
-    download: vi.fn(async (): Promise<void> => undefined),
-    install: vi.fn(async (): Promise<void> => undefined),
+    download,
+    install,
     close: vi.fn(async (): Promise<void> => undefined),
-  };
+  });
+  const update = nativeUpdate();
+  let servedFirst = false;
   const bridge = {
-    check: vi.fn(async (): Promise<unknown> => update),
+    check: vi.fn(async (): Promise<unknown> => {
+      if (servedFirst) return nativeUpdate();
+      servedFirst = true;
+      return update;
+    }),
     getInstallMode: vi.fn(async (): Promise<unknown> => "prepareBeforeRestart"),
     relaunch: vi.fn(async (): Promise<void> => undefined),
   };
@@ -42,7 +50,7 @@ describe("prepared application updates", () => {
     await gateway.dispose();
     const next = await gateway.check();
     expect(next.kind).toBe("readyToRestart");
-    expect(bridge.check).toHaveBeenCalledOnce();
+    expect(bridge.check).toHaveBeenCalledTimes(2);
     if (next.kind !== "readyToRestart") throw new Error("No prepared update");
     await gateway.installAndRestart(next.candidate.candidateRevision);
     expect(update.download).toHaveBeenCalledOnce();
@@ -129,7 +137,7 @@ describe("prepared application updates", () => {
     await expect(download).rejects.toThrow("no longer current");
     await expect(check).rejects.toThrow("stale");
     expect((await gateway.check()).kind).toBe("readyToRestart");
-    expect(bridge.check).toHaveBeenCalledOnce();
+    expect(bridge.check).toHaveBeenCalledTimes(2);
     expect(bridge.relaunch).not.toHaveBeenCalled();
   });
 
@@ -143,7 +151,7 @@ describe("prepared application updates", () => {
     pending.resolve();
     await expect(download).rejects.toThrow("no longer current");
     expect((await check).kind).toBe("readyToRestart");
-    expect(bridge.check).toHaveBeenCalledOnce();
+    expect(bridge.check).toHaveBeenCalledTimes(2);
   });
 
   it("gives the newest concurrent check authority while an installation settles", async () => {
@@ -158,7 +166,7 @@ describe("prepared application updates", () => {
     await expect(download).rejects.toThrow("no longer current");
     await expect(firstCheck).rejects.toThrow("stale");
     await expect(latestCheck).resolves.toMatchObject({ kind: "readyToRestart" });
-    expect(bridge.check).toHaveBeenCalledOnce();
+    expect(bridge.check).toHaveBeenCalledTimes(2);
   });
 
   it("does not claim restart readiness after a failed install", async () => {

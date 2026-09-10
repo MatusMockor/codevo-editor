@@ -343,7 +343,7 @@ function updaterGateway() {
         currentVersion: "0.1.0",
         version: "0.2.0",
         date: null,
-        notes: null,
+        notesSpan: { kind: "single" as const, notes: null },
       },
     })),
     download: vi.fn<AppUpdaterGateway["download"]>(async () => "readyToInstall"),

@@ -1346,6 +1346,32 @@ code.settings-readout,
   font-size: 13px;
 }
 
+.settings-update__notes-span {
+  display: flex;
+  max-width: 36rem;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-update__notes-summary {
+  margin: 0;
+  color: var(--settings-muted-fg);
+  font-size: 12px;
+}
+
+.settings-update__release {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-update__release-version {
+  margin: 0;
+  color: var(--settings-fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .settings-update__status {
   margin: 0;
   color: var(--settings-muted-fg);

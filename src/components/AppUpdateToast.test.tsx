@@ -34,7 +34,13 @@ describe("AppUpdateToast", () => {
   };
 
   it("offers download, later, and skip for an available release", () => {
-    render({ kind: "available", version: "0.2.0", currentVersion: "0.1.0", date: "2026-08-29" });
+    render({
+      kind: "available",
+      version: "0.2.0",
+      currentVersion: "0.1.0",
+      date: "2026-08-29",
+      notesSpan: { kind: "single", notes: "Beta update" },
+    });
 
     expect(host.querySelector('[role="status"]')?.textContent).toContain(
       "Update Available: Codevo v0.2.0",
@@ -47,6 +53,43 @@ describe("AppUpdateToast", () => {
     expect(handlers.onSkipVersion).toHaveBeenCalledOnce();
     act(() => button("Later").click());
     expect(handlers.onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("summarises a multi-release span without spelling out every note", () => {
+    render({
+      kind: "available",
+      version: "0.2.0-beta.29",
+      currentVersion: "0.2.0-beta.24",
+      date: null,
+      notesSpan: {
+        kind: "complete",
+        entries: [
+          { version: "0.2.0-beta.29", notes: "Twenty nine" },
+          { version: "0.2.0-beta.28", notes: "Twenty eight" },
+          { version: "0.2.0-beta.27", notes: "Twenty seven" },
+        ],
+      },
+    });
+
+    expect(host.textContent).toContain("Includes notes for 3 releases.");
+    expect(host.textContent).not.toContain("Twenty eight");
+  });
+
+  it("names the newer release when one arrives over a prepared update", () => {
+    render({
+      kind: "readyToRestartOutdated",
+      version: "0.2.0-beta.28",
+      supersededBy: { version: "0.2.0-beta.29", date: "2026-09-01" },
+    });
+
+    expect(host.querySelector('[role="status"]')?.textContent).toContain(
+      "Newer update available after restart",
+    );
+    expect(host.textContent).toContain("0.2.0-beta.28 is installed and applies on restart");
+    expect(host.textContent).toContain("Codevo v0.2.0-beta.29 is the newest release");
+    expect(host.textContent).not.toContain("up to date");
+    act(() => button("Restart").click());
+    expect(handlers.onInstall).toHaveBeenCalledOnce();
   });
 
   it("keeps pending downloads and installs non-dismissable", () => {

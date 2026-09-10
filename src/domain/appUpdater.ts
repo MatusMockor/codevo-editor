@@ -1,3 +1,5 @@
+import type { AppUpdateNotesSpan } from "./appUpdateNotes";
+
 export const MAX_APP_UPDATE_VERSION_LENGTH = 64;
 export const MAX_APP_UPDATE_DATE_LENGTH = 128;
 export const MAX_APP_UPDATE_NOTES_LENGTH = 4_096;
@@ -8,14 +10,24 @@ export interface AppUpdateCandidate {
   readonly currentVersion: string;
   readonly version: string;
   readonly date: string | null;
-  readonly notes: string | null;
+  readonly notesSpan: AppUpdateNotesSpan;
+}
+
+export interface AppUpdateSupersedingRelease {
+  readonly version: string;
+  readonly date: string | null;
 }
 
 export type AppUpdatePreparation = "readyToInstall" | "readyToRestart";
 
 export type AppUpdateCheckResult =
   | { readonly kind: "upToDate"; readonly currentVersion: string }
-  | { readonly kind: "available" | "readyToRestart"; readonly candidate: AppUpdateCandidate };
+  | { readonly kind: "available" | "readyToRestart"; readonly candidate: AppUpdateCandidate }
+  | {
+      readonly kind: "readyToRestartOutdated";
+      readonly candidate: AppUpdateCandidate;
+      readonly supersededBy: AppUpdateSupersedingRelease;
+    };
 
 export interface AppUpdaterGateway {
   check(): Promise<AppUpdateCheckResult>;
@@ -41,6 +53,10 @@ export type AppUpdaterState =
     })
   | (AppUpdaterReleasePresentation & { readonly kind: AppUpdatePreparation })
   | (AppUpdaterReleasePresentation & {
+      readonly kind: "readyToRestartOutdated";
+      readonly supersededBy: AppUpdateSupersedingRelease;
+    })
+  | (AppUpdaterReleasePresentation & {
       readonly kind: "installing";
       readonly generation: number;
     })
@@ -56,7 +72,7 @@ interface AppUpdaterReleasePresentation {
   readonly currentVersion: string;
   readonly version: string;
   readonly date: string | null;
-  readonly notes: string | null;
+  readonly notesSpan: AppUpdateNotesSpan;
 }
 
 export type AppUpdaterAction =
@@ -102,6 +118,13 @@ export function reduceAppUpdaterState(
       if (action.result.kind === "upToDate") {
         return { kind: "upToDate", currentVersion: action.result.currentVersion };
       }
+      if (action.result.kind === "readyToRestartOutdated") {
+        return {
+          ...availableState(action.result.candidate),
+          kind: "readyToRestartOutdated",
+          supersededBy: action.result.supersededBy,
+        };
+      }
       return { ...availableState(action.result.candidate), kind: action.result.kind };
     case "downloadStarted":
       if (state.kind !== "available") return state;
@@ -109,16 +132,10 @@ export function reduceAppUpdaterState(
     case "downloadSettled":
       if (state.kind !== "downloading") return state;
       if (state.generation !== action.generation) return state;
-      return {
-        kind: action.preparation,
-        currentVersion: state.currentVersion,
-        version: state.version,
-        date: state.date,
-        notes: state.notes,
-      };
+      return { ...releasePresentation(state), kind: action.preparation };
     case "installStarted":
-      if (state.kind !== "readyToInstall" && state.kind !== "readyToRestart") return state;
-      return { ...state, kind: "installing", generation: action.generation };
+      if (!isPreparedAppUpdaterState(state)) return state;
+      return { ...releasePresentation(state), kind: "installing", generation: action.generation };
     case "dismissed":
       return initialAppUpdaterState(state.currentVersion);
     case "failed":
@@ -144,9 +161,15 @@ export type AppUpdateToastPresentation =
       readonly version: string;
       readonly currentVersion: string;
       readonly date: string | null;
+      readonly notesSpan: AppUpdateNotesSpan;
     }
   | { readonly kind: "downloading"; readonly version: string }
   | { readonly kind: AppUpdatePreparation; readonly version: string }
+  | {
+      readonly kind: "readyToRestartOutdated";
+      readonly version: string;
+      readonly supersededBy: AppUpdateSupersedingRelease;
+    }
   | { readonly kind: "installing"; readonly version: string }
   | {
       readonly kind: "failed";
@@ -167,12 +190,19 @@ export function presentAppUpdateToast(state: AppUpdaterState): AppUpdateToastPre
         version: state.version,
         currentVersion: state.currentVersion,
         date: state.date,
+        notesSpan: state.notesSpan,
       };
     case "downloading":
       return { kind: "downloading", version: state.version };
     case "readyToInstall":
     case "readyToRestart":
       return { kind: state.kind, version: state.version };
+    case "readyToRestartOutdated":
+      return {
+        kind: "readyToRestartOutdated",
+        version: state.version,
+        supersededBy: state.supersededBy,
+      };
     case "installing":
       return { kind: "installing", version: state.version };
     case "failed":
@@ -200,6 +230,8 @@ export function appUpdateToastTitle(presentation: AppUpdateToastPresentation): s
       return "Preparing update";
     case "readyToRestart":
       return "Update ready to restart";
+    case "readyToRestartOutdated":
+      return "Newer update available after restart";
     case "installing":
       return "Restarting Codevo";
     case "failed":
@@ -212,8 +244,16 @@ function releasePresentation(state: AppUpdaterReleasePresentation): AppUpdaterRe
     currentVersion: state.currentVersion,
     version: state.version,
     date: state.date,
-    notes: state.notes,
+    notesSpan: state.notesSpan,
   };
+}
+
+function isPreparedAppUpdaterState(
+  state: AppUpdaterState,
+): state is AppUpdaterState & AppUpdaterReleasePresentation {
+  if (state.kind === "readyToInstall") return true;
+  if (state.kind === "readyToRestart") return true;
+  return state.kind === "readyToRestartOutdated";
 }
 
 export function normalizeAppUpdaterSkippedVersion(value: unknown): string | null {
@@ -240,7 +280,7 @@ function availableState(
     currentVersion: candidate.currentVersion,
     version: candidate.version,
     date: candidate.date,
-    notes: candidate.notes,
+    notesSpan: candidate.notesSpan,
   };
 }
 

@@ -43,7 +43,7 @@ describe("GeneralAppUpdateRows", () => {
       currentVersion: "0.1.0",
       version: "0.2.0",
       date: null,
-      notes: "Beta update",
+      notesSpan: { kind: "single", notes: "Beta update" },
     } as const;
     const updater = updaterSurface(available);
     render(updater);
@@ -69,7 +69,7 @@ describe("GeneralAppUpdateRows", () => {
       currentVersion: "0.1.0",
       version: "0.2.0",
       date: null,
-      notes: null,
+      notesSpan: { kind: "single", notes: null },
     });
     render(updater);
     expect(host.textContent).toContain(
@@ -82,13 +82,57 @@ describe("GeneralAppUpdateRows", () => {
     expect(updater.download).not.toHaveBeenCalled();
   });
 
+  it("lists every release in a multi-version span with a truthful bounded state", () => {
+    const updater = updaterSurface({
+      kind: "available",
+      currentVersion: "0.2.0-beta.24",
+      version: "0.2.0-beta.29",
+      date: null,
+      notesSpan: {
+        kind: "bounded",
+        entries: [
+          { version: "0.2.0-beta.29", notes: "Twenty nine" },
+          { version: "0.2.0-beta.28", notes: "Twenty eight" },
+        ],
+      },
+    });
+    render(updater);
+
+    expect(host.textContent).toContain("Showing the last 2 releases of a longer span.");
+    const versions = [...host.querySelectorAll(".settings-update__release-version")].map(
+      (node) => node.textContent,
+    );
+    expect(versions).toEqual(["v0.2.0-beta.29", "v0.2.0-beta.28"]);
+    expect(host.textContent).toContain("Twenty nine");
+    expect(host.textContent).toContain("Twenty eight");
+  });
+
+  it("explains a newer release without claiming the prepared update is the newest", () => {
+    const updater = updaterSurface({
+      kind: "readyToRestartOutdated",
+      currentVersion: "0.2.0-beta.20",
+      version: "0.2.0-beta.28",
+      date: null,
+      notesSpan: { kind: "single", notes: null },
+      supersededBy: { version: "0.2.0-beta.29", date: null },
+    });
+    render(updater);
+
+    expect(host.textContent).toContain(
+      "Codevo v0.2.0-beta.29 is already available and is offered after this restart.",
+    );
+    expect(host.textContent).not.toContain("up to date");
+    act(() => button("Restart").click());
+    expect(updater.installAndRestart).toHaveBeenCalledOnce();
+  });
+
   it("skips the offered version without downloading it", () => {
     const updater = updaterSurface({
       kind: "available",
       currentVersion: "0.1.0",
       version: "0.2.0",
       date: null,
-      notes: null,
+      notesSpan: { kind: "single", notes: null },
     });
     render(updater);
 

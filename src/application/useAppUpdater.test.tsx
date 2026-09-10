@@ -53,9 +53,16 @@ describe("useAppUpdater", () => {
       install: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
     };
+    const sameVersionProbe = {
+      currentVersion: "0.1.0",
+      version: "0.2.0",
+      download: vi.fn(async () => undefined),
+      install: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    };
     const bridge = {
       getInstallMode: async () => "prepareBeforeRestart",
-      check: vi.fn(async () => update),
+      check: vi.fn().mockResolvedValueOnce(update).mockResolvedValue(sameVersionProbe),
       relaunch: vi.fn(async () => undefined),
     };
     render(new TauriAppUpdaterGateway(bridge, "0.1.0"));
@@ -68,7 +75,9 @@ describe("useAppUpdater", () => {
     expect(surface?.state.kind).toBe("idle");
     await act(async () => surface?.check());
     expect(surface?.state.kind).toBe("readyToRestart");
-    expect(bridge.check).toHaveBeenCalledOnce();
+    expect(bridge.check).toHaveBeenCalledTimes(2);
+    expect(sameVersionProbe.close).toHaveBeenCalledOnce();
+    expect(sameVersionProbe.download).not.toHaveBeenCalled();
     expect(update.download).toHaveBeenCalledOnce();
     await act(async () => surface?.installAndRestart());
     expect(update.install).toHaveBeenCalledOnce();
@@ -173,7 +182,7 @@ describe("useAppUpdater", () => {
       kind: "failed",
       operation: "download",
       message: "Unable to prepare the application update.",
-      release: { version: "0.2.0", notes: "Beta update" },
+      release: { version: "0.2.0", notesSpan: { kind: "single", notes: "Beta update" } },
     });
     expect(gateway.dispose).toHaveBeenCalledOnce();
   });
@@ -330,7 +339,7 @@ function gatewayWithUpdate() {
         currentVersion: "0.1.0",
         version: "0.2.0",
         date: "2026-08-29T12:00:00Z",
-        notes: "Beta update",
+        notesSpan: { kind: "single" as const, notes: "Beta update" },
       },
     })),
     download: vi.fn<AppUpdaterGateway["download"]>(async () => "readyToInstall"),

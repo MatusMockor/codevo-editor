@@ -1,4 +1,9 @@
 import type { AppUpdaterSurface } from "../../../application/useAppUpdater";
+import {
+  appUpdateNotesSpanSummary,
+  singleAppUpdateNotesSpan,
+  type AppUpdateNotesSpan,
+} from "../../../domain/appUpdateNotes";
 import type { AppUpdaterState } from "../../../domain/appUpdater";
 import { SettingsButton } from "../primitives/SettingsButton";
 import { SettingsRow } from "../primitives/SettingsRow";
@@ -39,9 +44,7 @@ function AppUpdateControl({ updater }: { readonly updater: AppUpdaterSurface }) 
           </div>
         )}
       </dl>
-      {presentation.notes === null ? null : (
-        <p className="settings-update__notes">{presentation.notes}</p>
-      )}
+      <AppUpdateNotes span={presentation.notesSpan} />
       {presentation.status === null ? null : (
         <p
           aria-live="polite"
@@ -88,7 +91,7 @@ function AppUpdateAction({
   if (presentation.action === "installAndRestart") {
     return (
       <SettingsButton onClick={() => void updater.installAndRestart()} variant="primary">
-        {updater.state.kind === "readyToRestart" ? "Restart" : "Install and restart"}
+        {updater.state.kind === "readyToInstall" ? "Install and restart" : "Restart"}
       </SettingsButton>
     );
   }
@@ -108,7 +111,7 @@ type AppUpdaterActionPresentation =
 
 type AppUpdaterPresentation = AppUpdaterActionPresentation & {
   readonly version: string | null;
-  readonly notes: string | null;
+  readonly notesSpan: AppUpdateNotesSpan;
   readonly status: string | null;
   readonly statusTone: "neutral" | "success" | "danger";
   readonly skippable: boolean;
@@ -121,49 +124,88 @@ function appUpdaterPresentation(state: AppUpdaterState): AppUpdaterPresentation 
     case "checking":
       return presentation({ action: "pending", pendingLabel: "Checking…" });
     case "upToDate":
-      return presentation({ action: "check" }, null, null, "Codevo is up to date.", "success");
+      return presentation(
+        { action: "check" },
+        null,
+        singleAppUpdateNotesSpan(null),
+        "Codevo is up to date.",
+        "success",
+      );
     case "available":
-      return presentation({ action: "download" }, state.version, state.notes);
+      return presentation({ action: "download" }, state.version, state.notesSpan);
     case "downloading":
       return presentation(
         { action: "pending", pendingLabel: "Preparing update…" },
         state.version,
-        state.notes,
+        state.notesSpan,
       );
     case "readyToInstall":
-      return presentation({ action: "installAndRestart" }, state.version, state.notes);
+      return presentation({ action: "installAndRestart" }, state.version, state.notesSpan);
     case "readyToRestart":
       return presentation(
         { action: "installAndRestart" },
         state.version,
-        state.notes,
+        state.notesSpan,
         "Update installed. Restart now or use it next time you open Codevo.",
         "success",
+      );
+    case "readyToRestartOutdated":
+      return presentation(
+        { action: "installAndRestart" },
+        state.version,
+        state.notesSpan,
+        `Update installed. Codevo v${state.supersededBy.version} is already available and is offered after this restart.`,
+        "neutral",
       );
     case "installing":
       return presentation(
         { action: "pending", pendingLabel: "Installing…" },
         state.version,
-        state.notes,
+        state.notesSpan,
       );
     case "failed":
-      return presentation({ action: "check" }, null, null, state.message, "danger");
+      return presentation(
+        { action: "check" },
+        null,
+        singleAppUpdateNotesSpan(null),
+        state.message,
+        "danger",
+      );
   }
 }
 
 function presentation(
   action: AppUpdaterActionPresentation,
   version: string | null = null,
-  notes: string | null = null,
+  notesSpan: AppUpdateNotesSpan = singleAppUpdateNotesSpan(null),
   status: string | null = null,
   statusTone: AppUpdaterPresentation["statusTone"] = "neutral",
 ): AppUpdaterPresentation {
   return {
     ...action,
     version,
-    notes,
+    notesSpan,
     status,
     statusTone,
     skippable: version !== null && action.action === "download",
   };
+}
+
+function AppUpdateNotes({ span }: { readonly span: AppUpdateNotesSpan }) {
+  if (span.kind === "single") {
+    if (span.notes === null) return null;
+    return <p className="settings-update__notes">{span.notes}</p>;
+  }
+  const summary = appUpdateNotesSpanSummary(span);
+  return (
+    <div className="settings-update__notes-span">
+      {summary === null ? null : <p className="settings-update__notes-summary">{summary}</p>}
+      {span.entries.map((entry) => (
+        <section className="settings-update__release" key={entry.version}>
+          <h4 className="settings-update__release-version">{`v${entry.version}`}</h4>
+          <p className="settings-update__notes">{entry.notes}</p>
+        </section>
+      ))}
+    </div>
+  );
 }

@@ -1,3 +1,4 @@
+import { parseAppUpdateNotesSpan, type AppUpdateNotesSpan } from "../domain/appUpdateNotes";
 import {
   MAX_APP_UPDATE_DATE_LENGTH,
   MAX_APP_UPDATE_NOTES_LENGTH,
@@ -6,13 +7,16 @@ import {
   type AppUpdateCandidate,
   type AppUpdateCheckResult,
   type AppUpdaterGateway,
+  type AppUpdateSupersedingRelease,
 } from "../domain/appUpdater";
+import { compareAppUpdateVersions } from "../domain/appVersionOrder";
 
 export interface TauriUpdaterBridgeUpdate {
   readonly currentVersion: string;
   readonly version: string;
   readonly date?: string;
   readonly body?: string;
+  readonly notesSpan: AppUpdateNotesSpan;
   download(): Promise<void>;
   install(): Promise<void>;
   close(): Promise<void>;
@@ -23,6 +27,8 @@ export interface TauriUpdaterBridge {
   getInstallMode?(): Promise<unknown>;
   relaunch(): Promise<void>;
 }
+
+export const APP_UPDATE_SUPERSEDING_PROBE_TIMEOUT_MS = 8_000;
 
 type InstallMode = "prepareBeforeRestart" | "installOnRestart";
 
@@ -62,9 +68,17 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
       await this.installing;
       this.requireCurrentRevision(requestRevision);
     }
-    if (this.installed) {
-      this.installed.snapshot = { ...this.installed.snapshot, candidateRevision: requestRevision };
-      return { kind: "readyToRestart", candidate: this.installed.snapshot };
+    const installed = this.installed;
+    if (installed) {
+      const supersededBy = await this.probeSupersedingRelease(installed.snapshot.version);
+      this.requireCurrentRevision(requestRevision);
+      if (this.restarting || this.installed !== installed) {
+        throw new Error("The application update candidate is no longer current.");
+      }
+      const snapshot = { ...installed.snapshot, candidateRevision: requestRevision };
+      installed.snapshot = snapshot;
+      if (supersededBy === null) return { kind: "readyToRestart", candidate: snapshot };
+      return { kind: "readyToRestartOutdated", candidate: snapshot, supersededBy };
     }
     const previousCandidate = this.candidate;
     this.candidate = null;
@@ -146,6 +160,25 @@ export class TauriAppUpdaterGateway implements AppUpdaterGateway {
     } finally {
       this.restarting = false;
     }
+  }
+
+  private async probeSupersedingRelease(
+    installedVersion: string,
+  ): Promise<AppUpdateSupersedingRelease | null> {
+    const probe = await settleBoundedProbe(
+      () => this.bridge.check(),
+      APP_UPDATE_SUPERSEDING_PROBE_TIMEOUT_MS,
+    );
+    if (probe.kind !== "succeeded") return null;
+    if (probe.value === null) return null;
+    const parsed = tryParseTauriUpdaterBridgeUpdate(probe.value);
+    await closeProbeResource(probe.value);
+    if (parsed === null) return null;
+    if (parsed.currentVersion !== this.currentVersion) return null;
+    const order = compareAppUpdateVersions(installedVersion, parsed.version);
+    if (order === null) return null;
+    if (order >= 0) return null;
+    return { version: parsed.version, date: parsed.date ?? null };
   }
 
   private async installCandidate(candidate: RetainedCandidate): Promise<void> {
@@ -274,11 +307,18 @@ export function parseTauriUpdaterBridgeUpdate(value: unknown): TauriUpdaterBridg
   if (typeof value.download !== "function") throw invalidField("download");
   if (typeof value.install !== "function") throw invalidField("install");
   if (typeof value.close !== "function") throw invalidField("close");
+  const notesSpan = parseAppUpdateNotesSpan({
+    currentVersion,
+    version,
+    notes: body ?? null,
+    manifest: value.rawJson,
+  });
   return {
     currentVersion,
     version,
     date,
     body,
+    notesSpan,
     download: value.download.bind(value) as () => Promise<void>,
     install: value.install.bind(value) as () => Promise<void>,
     close: value.close.bind(value) as () => Promise<void>,
@@ -295,8 +335,16 @@ function candidateFromUpdate(
     currentVersion,
     version: update.version,
     date: update.date ?? null,
-    notes: update.body ?? null,
+    notesSpan: update.notesSpan,
   };
+}
+
+function tryParseTauriUpdaterBridgeUpdate(value: unknown): TauriUpdaterBridgeUpdate | null {
+  try {
+    return parseTauriUpdaterBridgeUpdate(value);
+  } catch {
+    return null;
+  }
 }
 
 function boundedString(value: unknown, field: string, maximumLength: number): string {
@@ -327,6 +375,51 @@ async function closeMalformedUpdaterResource(value: unknown): Promise<void> {
   if (!isRecord(value)) return;
   if (typeof value.close !== "function") return;
   await Promise.resolve(Reflect.apply(value.close, value, []));
+}
+
+async function closeProbeResource(value: unknown): Promise<void> {
+  try {
+    await closeMalformedUpdaterResource(value);
+  } catch {
+    return;
+  }
+}
+
+type ProbeSettlement =
+  | { readonly kind: "succeeded"; readonly value: unknown }
+  | { readonly kind: "failed" }
+  | { readonly kind: "timedOut" };
+
+function settleBoundedProbe(
+  probe: () => Promise<unknown>,
+  timeoutMs: number,
+): Promise<ProbeSettlement> {
+  return new Promise<ProbeSettlement>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ kind: "timedOut" });
+    }, timeoutMs);
+    const settle = (settlement: ProbeSettlement): boolean => {
+      clearTimeout(timer);
+      if (settled) return false;
+      settled = true;
+      resolve(settlement);
+      return true;
+    };
+    void Promise.resolve()
+      .then(probe)
+      .then(
+        (value) => {
+          if (settle({ kind: "succeeded", value })) return;
+          void closeProbeResource(value);
+        },
+        () => {
+          settle({ kind: "failed" });
+        },
+      );
+  });
 }
 
 type NativeOperationSettlement =

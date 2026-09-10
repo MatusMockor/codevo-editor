@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { parseAppUpdateNotesSpan } from "../domain/appUpdateNotes";
 import {
+  APP_UPDATE_SUPERSEDING_PROBE_TIMEOUT_MS,
   parseTauriUpdaterBridgeUpdate,
   TauriAppUpdaterGateway,
   type TauriUpdaterBridgeUpdate,
@@ -38,7 +40,7 @@ describe("TauriAppUpdaterGateway", () => {
         currentVersion: "0.1.0",
         version: "0.2.0",
         date: latestManifest.pub_date,
-        notes: latestManifest.notes,
+        notesSpan: { kind: "single", notes: latestManifest.notes },
       },
     });
     expect(check).toHaveBeenCalledOnce();
@@ -279,6 +281,244 @@ describe("TauriAppUpdaterGateway", () => {
     expect(relaunch).not.toHaveBeenCalled();
   });
 
+  it("offers the newest release in one step to a client several versions behind", async () => {
+    const update = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.29", {
+      version: "0.2.0-beta.29",
+      notes: "Notes for 0.2.0-beta.29",
+      releaseNotes: [
+        { version: "0.2.0-beta.29", notes: "Twenty nine" },
+        { version: "0.2.0-beta.25", notes: "Twenty five" },
+        { version: "0.2.0-beta.21", notes: "Twenty one" },
+        { version: "0.2.0-beta.19", notes: "Nineteen" },
+      ],
+    });
+    const check = vi.fn(async () => update);
+    const gateway = new TauriAppUpdaterGateway(
+      { check, relaunch: vi.fn(async () => undefined) },
+      "0.2.0-beta.20",
+    );
+
+    const result = await gateway.check();
+
+    expect(check).toHaveBeenCalledOnce();
+    expect(result).toEqual({
+      kind: "available",
+      candidate: {
+        candidateRevision: 1,
+        currentVersion: "0.2.0-beta.20",
+        version: "0.2.0-beta.29",
+        date: "2026-09-01T00:00:00Z",
+        notesSpan: {
+          kind: "complete",
+          entries: [
+            { version: "0.2.0-beta.29", notes: "Twenty nine" },
+            { version: "0.2.0-beta.25", notes: "Twenty five" },
+            { version: "0.2.0-beta.21", notes: "Twenty one" },
+          ],
+        },
+      },
+    });
+  });
+
+  it("surfaces a newer release over a prepared update instead of hiding it", async () => {
+    const prepared = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.28", null);
+    const newer = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.29", null);
+    const check = vi.fn().mockResolvedValueOnce(prepared).mockResolvedValue(newer);
+    const gateway = new TauriAppUpdaterGateway(
+      {
+        check,
+        getInstallMode: async () => "prepareBeforeRestart",
+        relaunch: vi.fn(async () => undefined),
+      },
+      "0.2.0-beta.20",
+    );
+    const first = await gateway.check();
+    expect(first.kind).toBe("available");
+    expect(first.kind === "upToDate" ? null : first.candidate.candidateRevision).toBe(1);
+    await expect(gateway.download(1)).resolves.toBe("readyToRestart");
+
+    const second = await gateway.check();
+
+    expect(second.kind).toBe("readyToRestartOutdated");
+    expect(second.kind === "upToDate" ? null : second.candidate.version).toBe("0.2.0-beta.28");
+    expect(second.kind === "readyToRestartOutdated" ? second.supersededBy : null).toEqual({
+      version: "0.2.0-beta.29",
+      date: "2026-09-01T00:00:00Z",
+    });
+    expect(newer.close).toHaveBeenCalledOnce();
+    expect(newer.download).not.toHaveBeenCalled();
+    expect(newer.install).not.toHaveBeenCalled();
+    await expect(gateway.download(2)).rejects.toThrow("no longer current");
+  });
+
+  it("keeps a prepared update truthful when the newer-release probe finds nothing", async () => {
+    const prepared = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.28", null);
+    const older = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.27", null);
+    const probes: readonly unknown[] = [null, older, { malformed: true }];
+    for (const probe of probes) {
+      const check = vi.fn().mockResolvedValueOnce(prepared).mockResolvedValue(probe);
+      const gateway = new TauriAppUpdaterGateway(
+        {
+          check,
+          getInstallMode: async () => "prepareBeforeRestart",
+          relaunch: vi.fn(async () => undefined),
+        },
+        "0.2.0-beta.20",
+      );
+      await gateway.check();
+      await gateway.download(1);
+
+      const settled = await gateway.check();
+
+      expect(settled.kind).toBe("readyToRestart");
+      expect(settled.kind === "upToDate" ? null : settled.candidate.version).toBe("0.2.0-beta.28");
+    }
+  });
+
+  it("keeps a prepared update when the newer-release probe itself fails", async () => {
+    const prepared = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.28", null);
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(prepared)
+      .mockRejectedValue(new Error("network unreachable"));
+    const gateway = new TauriAppUpdaterGateway(
+      {
+        check,
+        getInstallMode: async () => "prepareBeforeRestart",
+        relaunch: vi.fn(async () => undefined),
+      },
+      "0.2.0-beta.20",
+    );
+    await gateway.check();
+    await gateway.download(1);
+
+    await expect(gateway.check()).resolves.toEqual({
+      kind: "readyToRestart",
+      candidate: {
+        candidateRevision: 2,
+        currentVersion: "0.2.0-beta.20",
+        version: "0.2.0-beta.28",
+        date: "2026-09-01T00:00:00Z",
+        notesSpan: { kind: "single", notes: "Notes for 0.2.0-beta.28" },
+      },
+    });
+  });
+
+  it("bounds a hanging newer-release probe and still closes its late resource", async () => {
+    vi.useFakeTimers();
+    try {
+      const prepared = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.28", null);
+      const late = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.29", null);
+      let releaseProbe!: (value: unknown) => void;
+      const check = vi
+        .fn()
+        .mockResolvedValueOnce(prepared)
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              releaseProbe = resolve;
+            }),
+        );
+      const gateway = new TauriAppUpdaterGateway(
+        {
+          check,
+          getInstallMode: async () => "prepareBeforeRestart",
+          relaunch: vi.fn(async () => undefined),
+        },
+        "0.2.0-beta.20",
+      );
+      await gateway.check();
+      await gateway.download(1);
+
+      const settling = gateway.check();
+      await vi.advanceTimersByTimeAsync(APP_UPDATE_SUPERSEDING_PROBE_TIMEOUT_MS);
+
+      await expect(settling).resolves.toMatchObject({
+        kind: "readyToRestart",
+        candidate: { version: "0.2.0-beta.28" },
+      });
+      const closed = new Promise<void>((resolve) => {
+        late.close.mockImplementation(async () => {
+          resolve();
+        });
+      });
+      releaseProbe(late);
+      await closed;
+      expect(late.close).toHaveBeenCalledOnce();
+      expect(late.download).not.toHaveBeenCalled();
+      expect(late.install).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes every probe resource when a concurrent check takes authority", async () => {
+    const prepared = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.28", null);
+    const staleProbe = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.29", null);
+    const latestProbe = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.29", null);
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(prepared)
+      .mockResolvedValueOnce(staleProbe)
+      .mockResolvedValueOnce(latestProbe);
+    const gateway = new TauriAppUpdaterGateway(
+      {
+        check,
+        getInstallMode: async () => "prepareBeforeRestart",
+        relaunch: vi.fn(async () => undefined),
+      },
+      "0.2.0-beta.20",
+    );
+    await gateway.check();
+    await gateway.download(1);
+    expect(prepared.close).toHaveBeenCalledOnce();
+
+    const stale = gateway.check();
+    const latest = gateway.check();
+
+    await expect(stale).rejects.toThrow("stale");
+    await expect(latest).resolves.toMatchObject({ kind: "readyToRestartOutdated" });
+    expect(staleProbe.close).toHaveBeenCalledOnce();
+    expect(latestProbe.close).toHaveBeenCalledOnce();
+    expect(prepared.close).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a restart that races an in-flight probe and stays restartable after it", async () => {
+    const prepared = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.28", null);
+    const probe = bridgeUpdate("0.2.0-beta.20", "0.2.0-beta.28", null);
+    let releaseProbe!: (value: unknown) => void;
+    const relaunch = vi.fn(async () => undefined);
+    const check = vi
+      .fn()
+      .mockResolvedValueOnce(prepared)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseProbe = resolve;
+          }),
+      );
+    const gateway = new TauriAppUpdaterGateway(
+      { check, getInstallMode: async () => "prepareBeforeRestart", relaunch },
+      "0.2.0-beta.20",
+    );
+    await gateway.check();
+    await gateway.download(1);
+
+    const settling = gateway.check();
+    await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(2));
+    await expect(gateway.installAndRestart(1)).rejects.toThrow("stale");
+    expect(relaunch).not.toHaveBeenCalled();
+
+    releaseProbe(probe);
+    const settled = await settling;
+
+    expect(settled.kind).toBe("readyToRestart");
+    expect(probe.close).toHaveBeenCalledOnce();
+    expect(settled.kind === "upToDate" ? null : settled.candidate.candidateRevision).toBe(2);
+    await gateway.installAndRestart(2);
+    expect(relaunch).toHaveBeenCalledOnce();
+  });
+
   it("normalizes package version authority before comparison and projection", async () => {
     const update = updateFromManifest(
       latestManifest,
@@ -293,6 +533,19 @@ describe("TauriAppUpdaterGateway", () => {
     expect(result.kind === "available" ? result.candidate.currentVersion : null).toBe("0.1.0");
   });
 });
+
+function bridgeUpdate(currentVersion: string, version: string, rawJson: unknown) {
+  return {
+    currentVersion,
+    version,
+    date: "2026-09-01T00:00:00Z",
+    body: `Notes for ${version}`,
+    rawJson,
+    download: vi.fn(async () => undefined),
+    install: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+  };
+}
 
 function updateFromManifest(
   manifest: typeof latestManifest | (Omit<typeof latestManifest, "version"> & { version: string }),
@@ -311,6 +564,12 @@ function updateFromManifest(
     version: manifest.version,
     date: manifest.pub_date,
     body: manifest.notes,
+    notesSpan: parseAppUpdateNotesSpan({
+      currentVersion: "0.1.0",
+      version: manifest.version,
+      notes: manifest.notes,
+      manifest,
+    }),
     download,
     install,
     close: vi.fn(async () => undefined),
