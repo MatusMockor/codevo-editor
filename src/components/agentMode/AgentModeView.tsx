@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import { PanelLeftOpen } from "lucide-react";
 import {
@@ -89,7 +89,6 @@ const IDLE_ACCOUNT_USAGE = {
   claudeCode: { kind: "idle" },
   codex: { kind: "idle" },
 } as const;
-const FIND_BAR_ROWS: CSSProperties = { gridTemplateRows: "auto auto minmax(0, 1fr) auto" };
 const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
 const NOOP_CLOSE_PROJECT = () => undefined;
 
@@ -120,6 +119,7 @@ export function AgentModeView({
   usePreloadAgentMarkdownRenderer();
   const [localNotice, setLocalNotice] = useState<AgentTasksNotice | null>(null);
   const [commitMenuOpenSignal, setCommitMenuOpenSignal] = useState(0);
+  const [goToTurnSignal, setGoToTurnSignal] = useState(0);
   const [projectSelectionIntent, setProjectSelectionIntent] = useState(0);
 
   const presentationThreads = useAgentThreadPresentationViews(agents.threads);
@@ -334,6 +334,10 @@ export function AgentModeView({
         if (selectedThreadId === null) return;
         setCommitMenuOpenSignal((current) => current + 1);
       },
+      goToTurn: () => {
+        if (selectedThreadId === null) return;
+        setGoToTurnSignal((current) => current + 1);
+      },
       surfaceBlocked,
     }),
     [navigationCommands, scripts, selectedThreadId, newProjectThread, surfaceBlocked],
@@ -526,11 +530,7 @@ export function AgentModeView({
               />
             )}
 
-            <div
-              className="agent-mode__center"
-              ref={navigation.centerRef}
-              style={find.open ? FIND_BAR_ROWS : undefined}
-            >
+            <div className="agent-mode__center" ref={navigation.centerRef}>
               <AgentThreadHeader
                 bottomPanelOpen={chrome.bottomPanelVisible}
                 commitMenuOpenSignal={commitMenuOpenSignal}
@@ -551,18 +551,22 @@ export function AgentModeView({
                 shortcuts={chrome.shortcuts}
                 thread={selectedThread}
               />
-              {find.open && (
-                <AgentThreadFindBar
-                  currentIndex={find.hitIndex}
-                  hitCount={find.hits.length}
-                  onChangeQuery={find.setQuery}
-                  onClose={navigation.closeFindBar}
-                  onNavigate={find.navigate}
-                  query={find.query}
-                  truncated={find.truncated}
-                />
-              )}
               <AgentThreadSession
+                findBar={
+                  find.open ? (
+                    <AgentThreadFindBar
+                      currentIndex={find.hitIndex}
+                      hitCount={find.hits.length}
+                      onChangeQuery={find.setQuery}
+                      onClose={navigation.closeFindBar}
+                      onNavigate={find.navigate}
+                      query={find.query}
+                      truncated={find.truncated}
+                    />
+                  ) : null
+                }
+                findOpen={find.open}
+                goToTurnSignal={goToTurnSignal}
                 externalHistoryState={
                   sessionThread === null
                     ? undefined

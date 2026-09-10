@@ -563,29 +563,62 @@
   cursor: not-allowed;
 }
 
+/* Find pill: a raised overlay at the reading column's top-right corner. */
 .agent-find {
+  position: absolute;
+  z-index: 4;
+  top: var(--agent-find-pill-top);
+  right: max(var(--agent-session-gutter), calc((100% - var(--agent-thread-column)) / 2));
   display: flex;
+  height: var(--agent-find-pill-height);
+  max-width: calc(100% - var(--agent-session-gutter) * 2);
   align-items: center;
-  padding: var(--agent-space-2) var(--agent-space-3);
-  background: var(--codevo-raised);
-  gap: var(--agent-space-2);
+  padding: 0 var(--agent-space-2) 0 var(--agent-space-4);
+  border-radius: var(--agent-radius-lg);
+  background: var(--agent-raised);
+  box-shadow: var(--codevo-shadow-float);
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  gap: var(--agent-space-3);
+  transition: box-shadow var(--agent-motion-hover);
+}
+
+.agent-find:focus-within {
+  box-shadow: var(--codevo-shadow-window);
+}
+
+.agent-find__glyph {
+  flex: none;
+  color: var(--agent-text-subtle);
+  transition: color var(--agent-motion-hover);
+}
+
+.agent-find:focus-within .agent-find__glyph {
+  color: var(--agent-accent);
 }
 
 .agent-find__input {
-  min-width: 0;
-  flex: 1;
-  height: calc(26px * var(--codevo-fs-scale));
-  padding: 0 8px;
+  min-width: 72px;
+  flex: 0 1 calc(176px * var(--codevo-fs-scale));
+  padding: 0;
   border: 0;
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-well);
-  color: var(--codevo-fg);
-  font-size: var(--codevo-fs-meta);
+  background: transparent;
+  caret-color: var(--agent-accent);
+  color: var(--agent-text-strong);
+  font-family: inherit;
+  font-size: var(--agent-fs-md);
+  outline: none;
 }
 
-.agent-find__input:focus-visible {
-  box-shadow: var(--codevo-focus-ring);
-  outline: none;
+.agent-find__input::placeholder {
+  color: var(--agent-text-subtle);
+}
+
+.agent-find__meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--agent-space-3);
+  white-space: nowrap;
 }
 
 .agent-find__count {
@@ -595,8 +628,17 @@
   white-space: nowrap;
 }
 
+.agent-find__count--empty {
+  color: var(--agent-text-subtle);
+}
+
+.agent-find__plus {
+  color: var(--agent-attention);
+  font-weight: 600;
+}
+
 .agent-find__note {
-  color: color-mix(in srgb, var(--agent-text-muted) 70%, transparent);
+  color: var(--agent-text-muted);
   font-size: var(--agent-fs-2xs);
   white-space: nowrap;
 }

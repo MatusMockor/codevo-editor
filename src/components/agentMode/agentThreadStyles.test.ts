@@ -94,6 +94,83 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-thread-head", "padding")).toBe("0 12px 0 18px");
   });
 
+  it("makes find focus a tone step instead of a ring on the input", () => {
+    expect(declarations(".agent-find__input", "box-shadow")).toEqual([]);
+    expect(declarations(".agent-find__input:focus-visible", "box-shadow")).toEqual([]);
+    expect(winningDeclaration(".agent-find__input", "outline")).toBe("none");
+    expect(winningDeclaration(".agent-find__input", "background")).toBe("transparent");
+    expect(winningDeclaration(".agent-find__input", "caret-color")).toBe("var(--agent-accent)");
+    expect(winningDeclaration(".agent-find", "box-shadow")).toBe("var(--codevo-shadow-float)");
+    expect(winningDeclaration(".agent-find:focus-within", "box-shadow")).toBe(
+      "var(--codevo-shadow-window)",
+    );
+    expect(winningDeclaration(".agent-find:focus-within .agent-find__glyph", "color")).toBe(
+      "var(--agent-accent)",
+    );
+  });
+
+  it("leaves the focus ring intact on every other control it touched", () => {
+    for (const selector of [
+      ".agent-find__step:focus-visible",
+      ".agent-find__close:focus-visible",
+      ".agent-minimap__dash:focus-visible",
+      ".agent-minimap__toggle:focus-visible",
+    ]) {
+      expect(winningDeclaration(selector, "box-shadow"), selector).toMatch(/-focus-ring\)$/);
+    }
+  });
+
+  it("floats the find pill on the column corner without taking a layout row", () => {
+    expect(winningDeclaration(".agent-find", "position")).toBe("absolute");
+    expect(winningDeclaration(".agent-find", "top")).toBe("var(--agent-find-pill-top)");
+    expect(winningDeclaration(".agent-find", "right")).toBe(
+      "max(var(--agent-session-gutter), calc((100% - var(--agent-thread-column)) / 2))",
+    );
+    expect(winningDeclaration(".agent-find", "height")).toBe("var(--agent-find-pill-height)");
+    expect(winningDeclaration(".agent-find", "border-radius")).toBe("var(--agent-radius-lg)");
+    expect(winningDeclaration(".agent-find", "background")).toBe("var(--agent-raised)");
+    expect(winningDeclaration(".agent-find", "box-shadow")).toBe("var(--codevo-shadow-float)");
+  });
+
+  it("wears the cap as a readable note with a warm mark, never as an error", () => {
+    expect(winningDeclaration(".agent-find__note", "color")).toBe("var(--agent-text-muted)");
+    expect(winningDeclaration(".agent-find__plus", "color")).toBe("var(--agent-attention)");
+    expect(winningDeclaration(".agent-find__count--empty", "color")).toBe(
+      "var(--agent-text-subtle)",
+    );
+    expect(winningDeclaration(".agent-find__note", "font-size")).toBe("var(--agent-fs-2xs)");
+  });
+
+  it("steps the minimap dash width down to a floor of 8px and accents only the current one", () => {
+    expect(winningDeclaration(".agent-minimap__dash--rail::before", "width")).toBe(
+      "calc(24px - min(var(--minimap-distance, 4), 4) * 4px)",
+    );
+    expect(
+      winningDeclaration(".agent-minimap--dense .agent-minimap__dash--rail::before", "width"),
+    ).toBe("calc(16px - min(var(--minimap-distance, 4), 4) * 2px)");
+    expect(winningDeclaration(".agent-minimap__dash--rail::before", "background")).toBe(
+      "var(--agent-text-muted)",
+    );
+    expect(declarations(".agent-minimap__dash--rail::before", "opacity")).toEqual([]);
+    expect(
+      winningDeclaration('.agent-minimap__dash[aria-current="true"]::before', "background"),
+    ).toBe("var(--agent-accent)");
+    expect(
+      winningDeclaration(
+        '.agent-minimap__item:hover .agent-minimap__dash--rail:not([aria-current="true"])::before',
+        "background",
+      ),
+    ).toBe("var(--agent-text-strong)");
+    expect(winningDeclaration(".agent-minimap__dash--live::after", "background")).toBe(
+      "var(--agent-accent)",
+    );
+    expect(winningDeclaration(".agent-minimap__preview", "transition")).toBe(
+      "opacity var(--agent-motion-hover)",
+    );
+    expect(declarations(".agent-minimap--rail", "transform")).toEqual([]);
+    expect(declarations(".agent-minimap--rail", "contain")).toEqual([]);
+  });
+
   it("keeps the thread, composer and usage sheets free of t3 tokens, borders and hairline rings", () => {
     for (const sheet of ["agentThread.css", "agentComposer.css", "agentUsage.css"] as const) {
       const source = readStyleSheet(agentModeSheetPath(sheet)).source.replace(

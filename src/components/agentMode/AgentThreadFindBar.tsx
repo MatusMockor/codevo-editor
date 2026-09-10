@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { MAX_THREAD_SEARCH_QUERY_CHARS } from "../../domain/agentThreadSearch";
 
 export interface AgentThreadFindBarProps {
@@ -10,6 +10,14 @@ export interface AgentThreadFindBarProps {
   onChangeQuery(query: string): void;
   onNavigate(index: number): void;
   onClose(): void;
+}
+
+interface AgentFindCount {
+  readonly head: string;
+  readonly tail: string;
+  readonly spoken: string;
+  readonly capped: boolean;
+  readonly empty: boolean;
 }
 
 export function AgentThreadFindBar({
@@ -26,11 +34,15 @@ export function AgentThreadFindBar({
     if (hitCount === 0) return;
     onNavigate(wrapIndex(currentIndex, delta, hitCount));
   };
+  const count = countLabel(pending, hitCount, currentIndex, truncated);
 
   return (
     <div className="agent-find" role="search">
+      <Search aria-hidden="true" className="agent-find__glyph" size={14} />
+
       <input
         aria-label="Find in thread"
+        autoComplete="off"
         autoFocus
         className="agent-find__input"
         maxLength={MAX_THREAD_SEARCH_QUERY_CHARS}
@@ -46,14 +58,26 @@ export function AgentThreadFindBar({
           step(event.shiftKey ? -1 : 1);
         }}
         placeholder="Find in thread"
+        spellCheck={false}
         value={query}
       />
 
-      <span aria-live="polite" className="agent-find__count" role="status">
-        {countLabel(pending, hitCount, currentIndex)}
+      <span className="agent-find__meta">
+        <span
+          aria-hidden="true"
+          className={
+            count.empty ? "agent-find__count agent-find__count--empty" : "agent-find__count"
+          }
+        >
+          {count.head}
+          {count.capped && <span className="agent-find__plus">+</span>}
+          {count.tail}
+        </span>
+        <span aria-live="polite" className="agent-visually-hidden" role="status">
+          {count.spoken}
+        </span>
+        {truncated && <span className="agent-find__note">capped at {hitCount}</span>}
       </span>
-
-      {truncated && <span className="agent-find__note">first {hitCount}</span>}
 
       <button
         aria-label="Previous match"
@@ -92,9 +116,37 @@ function wrapIndex(currentIndex: number, delta: number, count: number): number {
   return (((base + delta) % count) + count) % count;
 }
 
-function countLabel(pending: boolean, hitCount: number, currentIndex: number): string {
-  if (pending) return "Searching…";
-  if (hitCount === 0) return "No results";
-  if (currentIndex < 0) return `${hitCount} results`;
-  return `${currentIndex + 1} of ${hitCount}`;
+function countLabel(
+  pending: boolean,
+  hitCount: number,
+  currentIndex: number,
+  truncated: boolean,
+): AgentFindCount {
+  if (pending) {
+    return { head: "Searching…", tail: "", spoken: "Searching…", capped: false, empty: false };
+  }
+
+  if (hitCount === 0) {
+    return { head: "No matches", tail: "", spoken: "No matches", capped: false, empty: true };
+  }
+
+  const more = truncated ? " or more" : "";
+
+  if (currentIndex < 0) {
+    return {
+      head: `${hitCount}`,
+      tail: " matches",
+      spoken: `${hitCount}${more} matches`,
+      capped: truncated,
+      empty: false,
+    };
+  }
+
+  return {
+    head: `${currentIndex + 1} of ${hitCount}`,
+    tail: "",
+    spoken: `${currentIndex + 1} of ${hitCount}${more}`,
+    capped: truncated,
+    empty: false,
+  };
 }

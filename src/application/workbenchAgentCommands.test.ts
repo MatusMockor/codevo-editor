@@ -43,6 +43,7 @@ const VIEW_COMMAND_IDS = [
   "agent.jumpToThread.9",
   "agent.searchThreads",
   "agent.findInThread",
+  "agent.goToTurn",
   "agent.runPreferredScript",
   "agent.openCommitMenu",
 ] as const;
@@ -145,7 +146,12 @@ describe("workbenchAgentCommands", () => {
     const bridge = createAgentViewCommandBridge();
     bridge.bind(handlers(false));
     const commands = workbenchAgentCommands({ viewCommands: bridge });
-    const threadScoped = ["agent.findInThread", "agent.runPreferredScript", "agent.openCommitMenu"];
+    const threadScoped = [
+      "agent.findInThread",
+      "agent.goToTurn",
+      "agent.runPreferredScript",
+      "agent.openCommitMenu",
+    ];
     const enabledFor = (id: string) =>
       commands.find((command) => command.id === id)?.isEnabled(enabledContext);
 

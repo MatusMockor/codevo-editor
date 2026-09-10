@@ -1,5 +1,6 @@
 /* Center: the selected thread as a session. */
 .agent-session {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -29,6 +30,16 @@
   min-width: 0;
   max-width: 768px;
   margin: 0 auto;
+}
+
+.agent-session[data-find="open"] .agent-session__body {
+  padding-block-start: var(--agent-find-inset);
+}
+
+.agent-session[data-find="open"] [data-agent-turn],
+.agent-session[data-find="open"] [data-agent-event],
+.agent-session[data-find="open"] .agent-find__hit--current {
+  scroll-margin-top: var(--agent-find-inset);
 }
 
 .agent-session__body--empty {
@@ -98,6 +109,11 @@
   padding: var(--agent-space-4) var(--agent-space-5);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.agent-prompt__body:focus-visible {
+  box-shadow: var(--agent-focus-ring);
+  outline: none;
 }
 
 .agent-prompt .agent-message-actions {
@@ -1532,5 +1548,250 @@
 @media (max-width: 720px) {
   .agent-thread-head {
     padding-left: 8px;
+  }
+}
+
+/* Thread minimap: one dash per user turn, an absolutely positioned sibling of
+   the scroller so no ancestor of `.agent-session__scroll` gains a new
+   containing block, overflow or contain. */
+.agent-minimap--rail {
+  position: absolute;
+  z-index: 3;
+  top: calc(var(--agent-find-pill-top) + var(--agent-find-pill-height) + var(--agent-space-3));
+  bottom: var(--agent-space-4);
+  left: max(
+    var(--agent-space-3),
+    calc((100% - var(--agent-thread-column)) / 2 - var(--agent-minimap-gutter))
+  );
+  display: flex;
+  width: var(--agent-minimap-rail);
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.agent-minimap__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-minimap__list--rail {
+  display: flex;
+  overflow-y: auto;
+  max-height: 100%;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--minimap-pitch, 8px);
+  pointer-events: auto;
+  scrollbar-width: none;
+}
+
+.agent-minimap--dense .agent-minimap__list--rail {
+  --minimap-pitch: 2px;
+}
+
+.agent-minimap__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.agent-minimap__dash {
+  display: flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--agent-text);
+  cursor: pointer;
+  font: inherit;
+  outline: none;
+  pointer-events: auto;
+}
+
+.agent-minimap__dash:focus-visible {
+  border-radius: var(--agent-radius-sm);
+  box-shadow: var(--agent-focus-ring);
+  outline: none;
+}
+
+.agent-minimap__dash--rail {
+  width: var(--agent-minimap-rail);
+  height: 12px;
+  padding: 0;
+  gap: var(--agent-space-2);
+}
+
+.agent-minimap__dash--rail::before {
+  width: calc(24px - min(var(--minimap-distance, 4), 4) * 4px);
+  height: 3px;
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-text-muted);
+  content: "";
+  transition:
+    width var(--agent-motion-select),
+    opacity var(--agent-motion-hover),
+    background var(--agent-motion-hover);
+}
+
+.agent-minimap--dense .agent-minimap__dash--rail {
+  height: 6px;
+}
+
+.agent-minimap--dense .agent-minimap__dash--rail::before {
+  width: calc(16px - min(var(--minimap-distance, 4), 4) * 2px);
+  height: 2px;
+}
+
+.agent-minimap__item:hover .agent-minimap__dash--rail:not([aria-current="true"])::before,
+.agent-minimap__dash--rail:not([aria-current="true"]):focus-visible::before {
+  background: var(--agent-text-strong);
+}
+
+.agent-minimap__dash[aria-current="true"]::before {
+  background: var(--agent-accent);
+}
+
+.agent-minimap__dash--group::before {
+  background: linear-gradient(
+    90deg,
+    var(--agent-text-muted) 0 40%,
+    transparent 40% 52%,
+    var(--agent-text-muted) 52%
+  );
+}
+
+.agent-minimap__dash--live::after {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: var(--agent-radius-sm);
+  animation: agent-minimap-breathe 1.6s ease-in-out infinite;
+  background: var(--agent-accent);
+  content: "";
+}
+
+@keyframes agent-minimap-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.agent-minimap__preview {
+  position: absolute;
+  z-index: 5;
+  top: -6px;
+  left: calc(var(--agent-minimap-rail) + var(--agent-space-3));
+  display: grid;
+  width: 260px;
+  padding: 8px 12px;
+  border-radius: var(--agent-radius-md);
+  background: var(--agent-raised);
+  box-shadow: var(--codevo-shadow-float);
+  color: var(--agent-text);
+  font-size: var(--agent-fs-xs);
+  gap: 2px;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--agent-motion-hover);
+}
+
+.agent-minimap__item:hover .agent-minimap__preview,
+.agent-minimap__dash--rail:focus-visible + .agent-minimap__preview {
+  opacity: 1;
+}
+
+.agent-minimap__preview-body {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.agent-minimap__caption {
+  color: var(--agent-text-subtle);
+  font-family: var(--agent-mono);
+  font-size: var(--agent-fs-2xs);
+}
+
+.agent-minimap--compact {
+  align-self: flex-start;
+  margin-block-end: var(--agent-space-2);
+}
+
+.agent-minimap__toggle {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-raised);
+  box-shadow: var(--agent-shadow-raised);
+  color: var(--agent-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--agent-fs-2xs);
+  outline: none;
+}
+
+.agent-minimap__toggle:hover {
+  background: var(--agent-hover);
+  color: var(--agent-text-strong);
+}
+
+.agent-minimap__toggle:focus-visible {
+  box-shadow: var(--agent-focus-ring);
+  outline: none;
+}
+
+.agent-minimap__popover {
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  padding: 6px;
+}
+
+.agent-minimap__list--list {
+  display: grid;
+  gap: 2px;
+}
+
+.agent-minimap__dash--list {
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: var(--agent-radius-sm);
+  gap: var(--agent-space-3);
+  text-align: left;
+}
+
+.agent-minimap__dash--list::before {
+  width: calc(14px - min(var(--minimap-distance, 4), 4) * 2px);
+  height: 3px;
+  flex: none;
+  border-radius: var(--agent-radius-sm);
+  background: var(--agent-text-muted);
+  content: "";
+}
+
+.agent-minimap__dash--list:hover {
+  background: var(--agent-hover);
+}
+
+.agent-minimap__label {
+  display: grid;
+  min-width: 0;
+  font-size: var(--agent-fs-xs);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-minimap__dash--live::after {
+    animation: none;
   }
 }

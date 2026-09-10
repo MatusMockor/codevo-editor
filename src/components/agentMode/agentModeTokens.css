@@ -197,6 +197,12 @@
   --agent-rail-row-py: 8px;
   --agent-rail-row-px: 30px;
   --agent-session-gutter: 24px;
+  --agent-thread-column: 768px;
+  --agent-find-pill-top: 6px;
+  --agent-find-pill-height: 34px;
+  --agent-find-inset: 34px;
+  --agent-minimap-rail: 40px;
+  --agent-minimap-gutter: 48px;
   --agent-turn-gap: 30px;
   --agent-motion-hover: 120ms;
   --agent-motion-select: 180ms;

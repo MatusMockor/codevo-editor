@@ -64,6 +64,7 @@ const themeTokenAliases = [
 const runtimeStyleTokens = new Set([
   "--bottom-panel-height",
   "--git-history-file-depth",
+  "--minimap-distance",
   "--sidebar-width",
   "--structure-indent",
   "--tree-level",

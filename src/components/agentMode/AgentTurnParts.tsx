@@ -27,7 +27,7 @@ export const AgentTurnPrompt = memo(function AgentTurnPrompt({
       <div className="agent-message-actions">
         <AgentMessageCopyButton clipboard={textClipboard} label="your message" text={prompt} />
       </div>
-      <p className="agent-prompt__body">
+      <p className="agent-prompt__body" tabIndex={-1}>
         <HighlightRun current={current} query={query} text={prompt} />
       </p>
     </div>

@@ -27,11 +27,21 @@ describe("AgentThreadFindBar", () => {
     const count = host.querySelector('[role="status"]');
     expect(count?.textContent).toBe("3 of 12");
     expect(count?.getAttribute("aria-live")).toBe("polite");
+    expect(host.querySelector(".agent-find__count")?.textContent).toBe("3 of 12");
+    expect(host.querySelector(".agent-find__note")).toBeNull();
+  });
+
+  it("renders empty with nothing to count and no note", () => {
+    render({ hitCount: 0, currentIndex: -1, query: "" });
+
+    expect(host.querySelector(".agent-find__count")?.textContent).toBe("No matches");
+    expect(host.querySelector(".agent-find__count--empty")).not.toBeNull();
+    expect(host.querySelector(".agent-find__note")).toBeNull();
   });
 
   it("states the empty and pending searches truthfully", () => {
     render({ hitCount: 0, currentIndex: -1 });
-    expect(host.querySelector('[role="status"]')?.textContent).toBe("No results");
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("No matches");
 
     render({ hitCount: 0, currentIndex: -1, pending: true });
     expect(host.querySelector('[role="status"]')?.textContent).toBe("Searching…");
@@ -40,7 +50,18 @@ describe("AgentThreadFindBar", () => {
   it("exposes the capped hit count instead of pretending it is complete", () => {
     render({ hitCount: 500, currentIndex: 0, truncated: true });
 
-    expect(host.querySelector(".agent-find__note")?.textContent).toBe("first 500");
+    expect(host.querySelector(".agent-find__count")?.textContent).toBe("1 of 500+");
+    expect(host.querySelector(".agent-find__plus")?.textContent).toBe("+");
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("1 of 500 or more");
+    expect(host.querySelector(".agent-find__note")?.textContent).toBe("capped at 500");
+  });
+
+  it("keeps the truncation note warm rather than an error", () => {
+    render({ hitCount: 500, currentIndex: 0, truncated: true });
+
+    const note = host.querySelector(".agent-find__note");
+    expect(note?.className).toBe("agent-find__note");
+    expect(note?.className).not.toContain("danger");
   });
 
   it("steps forward and backward with the chevron buttons", () => {

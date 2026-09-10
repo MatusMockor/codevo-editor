@@ -37,6 +37,14 @@ import {
   type AgentProseStream,
 } from "./AgentAssistantText";
 import { openAgentMarkdownLink, type AgentExternalLinkOpener } from "./agentMarkdownLinks";
+import { useViewportWidth } from "../useViewportWidth";
+import {
+  AGENT_MINIMAP_RAIL_WIDTH,
+  AgentThreadMinimap,
+  MIN_AGENT_MINIMAP_ENTRIES,
+} from "./AgentThreadMinimap";
+import { agentMinimapEntryIndex, agentThreadMinimapModel } from "./agentThreadMinimapPresentation";
+import { useAgentThreadTurnInView } from "./useAgentThreadTurnInView";
 import { agentImportedHighlights } from "./agentImportedPresentation";
 import { HighlightRun } from "./agentThreadHighlight";
 import { useAgentMarkdownRenderer } from "./useAgentMarkdown";
@@ -55,6 +63,8 @@ import {
 } from "./agentModePresentation";
 
 const NO_FIND_HITS: ReadonlyArray<AgentThreadFindHit> = [];
+
+export const AGENT_FIND_REVEAL_INSET = 34;
 
 type AgentTurnHighlightCursor =
   | { readonly kind: "prompt"; readonly occurrence: number }
@@ -82,6 +92,9 @@ export interface AgentThreadSessionProps {
   readonly findQuery?: string;
   readonly findHits?: ReadonlyArray<AgentThreadFindHit>;
   readonly findHitIndex?: number;
+  readonly findOpen?: boolean;
+  readonly findBar?: ReactNode;
+  readonly goToTurnSignal?: number;
   readonly reveal?: AgentThreadRevealRequest | null;
   readonly textClipboard?: TextClipboardGateway | null;
   readonly markdownRenderer?: AgentMarkdownRenderer | null;
@@ -106,9 +119,12 @@ type AgentThreadSessionBodyProps = AgentThreadSessionProps & {
 };
 
 function AgentThreadSessionBody({
+  findBar = null,
   findHitIndex,
   findHits,
+  findOpen = false,
   findQuery,
+  goToTurnSignal = 0,
   onReviewInDiff,
   reveal = null,
   textClipboard = null,
@@ -177,8 +193,13 @@ function AgentThreadSessionBody({
     if (container === null) return;
     const target = revealTarget(container, reveal, activeHit);
     if (target === null) return;
+    const inset = findOpen ? `${AGENT_FIND_REVEAL_INSET}px` : "";
+    target.element.style.scrollMarginTop = inset;
     target.element.scrollIntoView?.({ block: target.block });
-  }, [activeHit, reveal]);
+    return () => {
+      target.element.style.removeProperty("scroll-margin-top");
+    };
+  }, [activeHit, findOpen, reveal]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -193,6 +214,21 @@ function AgentThreadSessionBody({
   }, [threadId]);
 
   const lastTurn = record.turns[record.turns.length - 1] ?? null;
+  const findInsetRef = useRef(0);
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    if (container === null) return;
+    const next = findOpen ? AGENT_FIND_REVEAL_INSET : 0;
+    const previous = findInsetRef.current;
+    if (next === previous) return;
+    findInsetRef.current = next;
+    if (pinnedToLatestRef.current) {
+      container.scrollTop = container.scrollHeight;
+      return;
+    }
+    container.scrollTop = Math.max(0, container.scrollTop + next - previous);
+  }, [findOpen]);
+
   useLayoutEffect(() => {
     const container = scrollRef.current;
     if (container === null) return;
@@ -215,6 +251,30 @@ function AgentThreadSessionBody({
     viewport,
   ]);
 
+  const [sessionElement, setSessionElement] = useState<HTMLElement | null>(null);
+  const [turnListOpen, setTurnListOpen] = useState(false);
+  const sessionWidth = useViewportWidth(sessionElement);
+  const minimapSurface = sessionWidth >= AGENT_MINIMAP_RAIL_WIDTH ? "rail" : "list";
+  const minimap = useMemo(() => agentThreadMinimapModel(record.turns), [record.turns]);
+  const measured = sessionElement !== null;
+  const mapped = measured && minimap.entries.length >= MIN_AGENT_MINIMAP_ENTRIES;
+  const inViewTurnId = useAgentThreadTurnInView({
+    enabled: mapped && (minimapSurface === "rail" || turnListOpen),
+    scrollRef,
+    threadId,
+    turnSignature: `${record.turns.length}:${lastTurn?.turnId ?? ""}`,
+  });
+  const currentTurnIndex = agentMinimapEntryIndex(minimap, inViewTurnId);
+  const jumpToTurn = useCallback((turnId: string): void => {
+    const container = scrollRef.current;
+    if (container === null) return;
+    const turn = turnElement(container, turnId);
+    if (turn === null) return;
+    pinnedToLatestRef.current = false;
+    turn.scrollIntoView?.({ block: "start" });
+    turn.querySelector<HTMLElement>(".agent-prompt__body")?.focus({ preventScroll: true });
+  }, []);
+
   const highlightFor = (turnIdentity: string): AgentTurnHighlight | null => {
     if (query === "") return null;
     if (activeHit?.scope === "turn" && activeHit.turnId === turnIdentity) return activeHighlight;
@@ -223,7 +283,25 @@ function AgentThreadSessionBody({
   };
 
   return (
-    <section aria-label={`Agent thread ${threadId}`} className="agent-session">
+    <section
+      aria-label={`Agent thread ${threadId}`}
+      className="agent-session"
+      data-find={findOpen ? "open" : undefined}
+      ref={setSessionElement}
+    >
+      {findBar}
+
+      {measured && (
+        <AgentThreadMinimap
+          currentIndex={currentTurnIndex}
+          model={minimap}
+          onJump={jumpToTurn}
+          onOpenChange={setTurnListOpen}
+          openSignal={goToTurnSignal}
+          surface={minimapSurface}
+        />
+      )}
+
       <div className="agent-session__scroll" ref={scrollRef} tabIndex={-1}>
         <div className="agent-session__body">
           {record.turnsTruncated && (

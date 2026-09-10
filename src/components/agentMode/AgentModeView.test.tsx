@@ -2069,7 +2069,7 @@ describe("AgentModeView", () => {
     expect(bridge.threadSelected()).toBe(true);
     act(() => bridge.run("agent.findInThread"));
     typeInto(findField(), "token");
-    expect(host.querySelector(".agent-find__count")?.textContent).toBe("No results");
+    expect(host.querySelector(".agent-find__count")?.textContent).toBe("No matches");
     settleFind();
 
     expect(host.querySelector(".agent-find__count")?.textContent).toBe("1 of 3");
@@ -2089,6 +2089,50 @@ describe("AgentModeView", () => {
     expect(host.querySelector(".agent-find")).toBeNull();
     expect(host.querySelectorAll(".agent-find__hit")).toHaveLength(0);
     vi.useRealTimers();
+  });
+
+  it("hangs the find pill inside the session so opening it takes no layout row", () => {
+    const bridge = createAgentViewCommandBridge();
+    render({
+      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
+      viewCommands: bridge,
+    });
+
+    click('[data-thread-id="agt-1"]');
+    const centre = host.querySelector<HTMLElement>(".agent-mode__center");
+    const rowsBefore = centre?.style.gridTemplateRows ?? "";
+
+    act(() => bridge.run("agent.findInThread"));
+
+    const pill = host.querySelector(".agent-find");
+    expect(pill).not.toBeNull();
+    expect(pill?.parentElement?.className).toBe("agent-session");
+    expect(centre?.style.gridTemplateRows ?? "").toBe(rowsBefore);
+  });
+
+  it("takes Go to Turn to the thread minimap", () => {
+    const bridge = createAgentViewCommandBridge();
+    render({
+      agents: surface({ threads: [withSecondTurn(threadView({ threadId: "agt-1" }))] }),
+      viewCommands: bridge,
+    });
+
+    act(() => bridge.run("agent.goToTurn"));
+    expect(host.querySelector('nav[aria-label="Your turns"]')).toBeNull();
+
+    click('[data-thread-id="agt-1"]');
+    const dashes = [...host.querySelectorAll<HTMLButtonElement>(".agent-minimap__dash")];
+    expect(dashes.map((dash) => dash.getAttribute("aria-label"))).toEqual([
+      "Turn 1 of 2: Refactor the parser",
+      "Turn 2 of 2: Where does the parser live",
+    ]);
+
+    act(() => bridge.run("agent.goToTurn"));
+
+    expect(document.activeElement).toBe(host.querySelector(".agent-minimap__dash"));
+    expect((document.activeElement as HTMLElement).getAttribute("aria-label")).toBe(
+      "Turn 1 of 2: Refactor the parser",
+    );
   });
 
   it("closes the find bar when another thread is selected", () => {
@@ -3293,6 +3337,13 @@ interface ThreadViewOptions {
   readonly worktreeMissing?: boolean;
   readonly ship?: AgentShipState;
   readonly isolation?: AgentTaskIsolation;
+}
+
+function withSecondTurn(view: AgentThreadView): AgentThreadView {
+  const first = view.thread.turns[0];
+  if (first === undefined) return view;
+  const second = { ...first, turnId: `${first.turnId}-2`, prompt: "Where does the parser live" };
+  return { ...view, thread: { ...view.thread, turns: [first, second] } };
 }
 
 function threadView({

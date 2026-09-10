@@ -957,6 +957,12 @@ export const keymapCommands = [
   },
   {
     category: "Agent",
+    defaultShortcut: "Cmd+Shift+O",
+    id: "agent.goToTurn",
+    label: "Go to Turn",
+  },
+  {
+    category: "Agent",
     defaultShortcut: "Cmd+Alt+R",
     id: "agent.toggleRightPanel",
     label: "Toggle Right Panel",

@@ -84,6 +84,7 @@ export function workbenchAgentCommands({
     ),
     viewCommand("agent.searchThreads", "Search Threads"),
     findCommand,
+    viewCommand("agent.goToTurn", "Go to Turn", withThread),
     viewCommand("agent.runPreferredScript", "Run Thread Script", withThread),
     viewCommand("agent.openCommitMenu", "Commit Thread Changes", withThread),
     layoutCommand("agent.toggleRightPanel", "Toggle Right Panel", { kind: "toggleRightPanel" }),
