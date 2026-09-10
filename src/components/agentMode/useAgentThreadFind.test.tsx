@@ -4,7 +4,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThread, AgentTurnEvent } from "../../domain/agentThread";
-import { MAX_THREAD_SEARCH_SNIPPET_CHARS } from "../../domain/agentThreadSearch";
+import {
+  MAX_THREAD_FIND_HITS,
+  MAX_THREAD_SEARCH_SNIPPET_CHARS,
+} from "../../domain/agentThreadSearch";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
 import { AGENT_THREAD_FIND_DEBOUNCE_MS, useAgentThreadFind } from "./useAgentThreadFind";
 import type { AgentThreadFindState } from "./useAgentThreadFind";
@@ -81,7 +84,31 @@ describe("useAgentThreadFind", () => {
     act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
 
     expect(current().hits).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN);
-    expect(current().hits[0]?.eventIndex).toBe(3);
+    const first = current().hits[0];
+    expect(first?.scope).toBe("turn");
+    expect(first?.scope === "turn" ? first.eventIndex : null).toBe(3);
+  });
+
+  it("reports the result as truncated once the hit cap is reached", () => {
+    render(threadWith([{ kind: "assistantText", text: "ab".repeat(MAX_THREAD_FIND_HITS + 100) }]));
+
+    act(() => current().openBar());
+    act(() => current().setQuery("ab"));
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+
+    expect(current().hits).toHaveLength(MAX_THREAD_FIND_HITS);
+    expect(current().truncated).toBe(true);
+  });
+
+  it("reports a complete result as not truncated", () => {
+    render(threadWith([{ kind: "assistantText", text: "token one token two" }]));
+
+    act(() => current().openBar());
+    act(() => current().setQuery("token"));
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+
+    expect(current().hits).toHaveLength(2);
+    expect(current().truncated).toBe(false);
   });
 
   function current(): AgentThreadFindState {

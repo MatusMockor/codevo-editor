@@ -501,11 +501,11 @@ describe("findInThread", () => {
     );
 
     expect(hits).toEqual([
-      { turnId: "t1", eventIndex: null, start: 0, end: 6 },
-      { turnId: "t1", eventIndex: null, start: 11, end: 17 },
-      { turnId: "t1", eventIndex: 1, start: 4, end: 10 },
-      { turnId: "t1", eventIndex: 2, start: 0, end: 6 },
-      { turnId: "t2", eventIndex: null, start: 7, end: 13 },
+      { scope: "turn", turnId: "t1", eventIndex: null, start: 0, end: 6 },
+      { scope: "turn", turnId: "t1", eventIndex: null, start: 11, end: 17 },
+      { scope: "turn", turnId: "t1", eventIndex: 1, start: 4, end: 10 },
+      { scope: "turn", turnId: "t1", eventIndex: 2, start: 0, end: 6 },
+      { scope: "turn", turnId: "t2", eventIndex: null, start: 7, end: 13 },
     ]);
   });
 
@@ -517,8 +517,8 @@ describe("findInThread", () => {
     const subject = thread({ turns: [turn({ turnId: "t1", prompt: "none", events })] });
 
     expect(findInThread(subject, "router", { maxEventsPerTurn: 2 })).toEqual([
-      { turnId: "t1", eventIndex: 3, start: 0, end: 6 },
-      { turnId: "t1", eventIndex: 4, start: 0, end: 6 },
+      { scope: "turn", turnId: "t1", eventIndex: 3, start: 0, end: 6 },
+      { scope: "turn", turnId: "t1", eventIndex: 4, start: 0, end: 6 },
     ]);
     expect(findInThread(subject, "router", { maxEventsPerTurn: 0 })).toEqual([]);
     expect(findInThread(subject, "router", { maxEventsPerTurn: -1 })).toHaveLength(5);
@@ -540,15 +540,15 @@ describe("findInThread", () => {
     );
 
     expect(hits).toHaveLength(MAX_THREAD_FIND_HITS);
-    expect(hits[0]).toEqual({ turnId: "t0", eventIndex: null, start: 0, end: 2 });
+    expect(hits[0]).toEqual({ scope: "turn", turnId: "t0", eventIndex: null, start: 0, end: 2 });
   });
 
   it("does not report overlapping hits for repeating queries", () => {
     const hits = findInThread(thread({ turns: [turn({ turnId: "t1", prompt: "aaaa" })] }), "aa");
 
     expect(hits).toEqual([
-      { turnId: "t1", eventIndex: null, start: 0, end: 2 },
-      { turnId: "t1", eventIndex: null, start: 2, end: 4 },
+      { scope: "turn", turnId: "t1", eventIndex: null, start: 0, end: 2 },
+      { scope: "turn", turnId: "t1", eventIndex: null, start: 2, end: 4 },
     ]);
   });
 });
@@ -629,5 +629,89 @@ describe("agent thread search performance", () => {
     expect(buildMs).toBeLessThan(BUILD_BUDGET_MS);
     expect(medianMs(rebuildSamples)).toBeLessThan(REBUILD_BUDGET_MS);
     expect(medianMs(searchSamples)).toBeLessThan(SEARCH_BUDGET_MS);
+  });
+});
+
+describe("findInThread over imported history", () => {
+  const importedThread = (
+    exchanges: ReadonlyArray<{ readonly role: "user" | "assistant"; readonly text: string }>,
+    turns = [turn({ turnId: "t1", prompt: "live router" })],
+  ): AgentThread =>
+    thread({
+      turns,
+      externalOrigin: {
+        provider: "claudeCode",
+        sessionId: "987b95ad-c9bc-4d08-ae49-9b431efc8f87",
+        importedAtEpochMs: 500,
+        history: {
+          provider: "claudeCode",
+          sessionId: "987b95ad-c9bc-4d08-ae49-9b431efc8f87",
+          exchanges,
+          exchangesTruncated: false,
+          totalPreviewBytes: 64,
+        },
+      },
+    });
+
+  it("addresses each imported hit by its exchange index and reports them before live hits", () => {
+    const hits = findInThread(
+      importedThread([
+        { role: "user", text: "where is the router" },
+        { role: "assistant", text: "the Router lives in src" },
+      ]),
+      "router",
+    );
+
+    expect(hits).toEqual([
+      { scope: "imported", exchangeIndex: 0, start: 13, end: 19 },
+      { scope: "imported", exchangeIndex: 1, start: 4, end: 10 },
+      { scope: "turn", turnId: "t1", eventIndex: null, start: 5, end: 11 },
+    ]);
+  });
+
+  it("reports every occurrence inside one imported exchange without overlapping", () => {
+    const hits = findInThread(importedThread([{ role: "user", text: "abab" }], []), "ab");
+
+    expect(hits).toEqual([
+      { scope: "imported", exchangeIndex: 0, start: 0, end: 2 },
+      { scope: "imported", exchangeIndex: 0, start: 2, end: 4 },
+    ]);
+  });
+
+  it("stops mid-history at the hit cap and never walks into the live turns", () => {
+    const exchanges = Array.from({ length: 40 }, () => ({
+      role: "user" as const,
+      text: "router ".repeat(40),
+    }));
+    const hits = findInThread(importedThread(exchanges), "router");
+
+    expect(hits).toHaveLength(MAX_THREAD_FIND_HITS);
+    expect(hits.every((hit) => hit.scope === "imported")).toBe(true);
+    const last = hits[hits.length - 1];
+    expect(last?.scope === "imported" ? last.exchangeIndex : null).toBeLessThan(exchanges.length);
+  });
+
+  it("finds only live hits when the imported history has not loaded", () => {
+    const hits = findInThread(
+      thread({
+        turns: [turn({ turnId: "t1", prompt: "live router" })],
+        externalOrigin: {
+          provider: "claudeCode",
+          sessionId: "987b95ad-c9bc-4d08-ae49-9b431efc8f87",
+          importedAtEpochMs: 500,
+        },
+      }),
+      "router",
+    );
+
+    expect(hits).toEqual([{ scope: "turn", turnId: "t1", eventIndex: null, start: 5, end: 11 }]);
+  });
+
+  it("keeps the thread-list document free of imported text", () => {
+    const doc = buildAgentThreadSearchDocument(
+      importedThread([{ role: "user", text: "imported only phrase" }], []),
+    );
+
+    expect(doc.segments.some((segment) => segment.text.includes("imported only"))).toBe(false);
   });
 });

@@ -152,4 +152,49 @@ describe("intersection agent markdown viewport", () => {
     expect(onSecond).not.toHaveBeenCalled();
     expect(observer?.disconnects).toBe(1);
   });
+
+  it("remeasures the waiting set and enters only what the band now covers", () => {
+    install();
+    const root = document.createElement("div");
+    const near = document.createElement("p");
+    const far = document.createElement("p");
+    const onNear = vi.fn();
+    const onFar = vi.fn();
+    stubRect(root, { top: 0, bottom: 100 });
+    stubRect(near, { top: 4_000, bottom: 4_100 });
+    stubRect(far, { top: 9_000, bottom: 9_100 });
+    const viewport = createIntersectionAgentMarkdownViewport(() => root);
+    viewport?.observe(near, onNear);
+    viewport?.observe(far, onFar);
+    const observer = created[0];
+
+    viewport?.remeasure();
+    expect(onNear).not.toHaveBeenCalled();
+    expect(onFar).not.toHaveBeenCalled();
+
+    stubRect(near, { top: 50, bottom: 150 });
+    viewport?.remeasure();
+
+    expect(onNear).toHaveBeenCalledTimes(1);
+    expect(onFar).not.toHaveBeenCalled();
+    expect(observer?.targets.has(near)).toBe(false);
+    expect(observer?.targets.has(far)).toBe(true);
+
+    viewport?.remeasure();
+    expect(onNear).toHaveBeenCalledTimes(1);
+  });
+
+  it("remeasures nothing once every element has entered", () => {
+    install();
+    const element = document.createElement("p");
+    const onEnter = vi.fn();
+    stubRect(element, { top: 0, bottom: 10 });
+    const viewport = createIntersectionAgentMarkdownViewport(() => null);
+    const stop = viewport?.observe(element, onEnter);
+    stop?.();
+
+    viewport?.remeasure();
+
+    expect(onEnter).not.toHaveBeenCalled();
+  });
 });

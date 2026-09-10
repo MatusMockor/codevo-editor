@@ -1,4 +1,5 @@
 import type { AgentThread, AgentTurn } from "./agentThread";
+import type { ExternalSessionExchange } from "./externalAgentSession";
 import {
   CONTENT_INCLUDES_SCORE,
   insertRankedSearchResult,
@@ -66,12 +67,20 @@ export interface AgentThreadSearchSnippet {
   readonly ranges: ReadonlyArray<AgentThreadSearchRange>;
 }
 
-export interface AgentThreadFindHit {
-  readonly turnId: string;
-  readonly eventIndex: number | null;
-  readonly start: number;
-  readonly end: number;
-}
+export type AgentThreadFindHit =
+  | {
+      readonly scope: "turn";
+      readonly turnId: string;
+      readonly eventIndex: number | null;
+      readonly start: number;
+      readonly end: number;
+    }
+  | {
+      readonly scope: "imported";
+      readonly exchangeIndex: number;
+      readonly start: number;
+      readonly end: number;
+    };
 
 interface RankedMatch extends RankedSearchEntry {
   readonly match: AgentThreadSearchMatch;
@@ -88,6 +97,7 @@ const LOW_SURROGATE_START = 0xdc00;
 const LOW_SURROGATE_END = 0xdfff;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 const UTF8_ENCODER = new TextEncoder();
+const NO_EXCHANGES: ReadonlyArray<ExternalSessionExchange> = [];
 const EMPTY_RESULT: AgentThreadSearchResult = {
   query: "",
   matches: [],
@@ -200,6 +210,13 @@ export function findInThread(
 
   const maxEventsPerTurn = boundedEventCap(options.maxEventsPerTurn);
   const hits: AgentThreadFindHit[] = [];
+  const exchanges = thread.externalOrigin?.history?.exchanges ?? NO_EXCHANGES;
+  for (let index = 0; index < exchanges.length; index += 1) {
+    const exchange = exchanges[index];
+    if (exchange === undefined) continue;
+    collectImportedFindHits(exchange.text.toLowerCase(), index, normalized, hits);
+    if (hits.length >= MAX_THREAD_FIND_HITS) return hits;
+  }
   for (const turn of thread.turns) {
     for (const candidate of turnSegments(turn, maxEventsPerTurn)) {
       collectFindHits(candidate, normalized, hits);
@@ -235,12 +252,26 @@ function collectFindHits(
   let index = candidate.lower.indexOf(query);
   while (index !== -1 && hits.length < MAX_THREAD_FIND_HITS) {
     hits.push({
+      scope: "turn",
       turnId,
       eventIndex: candidate.eventIndex,
       start: index,
       end: index + query.length,
     });
     index = candidate.lower.indexOf(query, index + query.length);
+  }
+}
+
+function collectImportedFindHits(
+  lower: string,
+  exchangeIndex: number,
+  query: string,
+  hits: AgentThreadFindHit[],
+): void {
+  let index = lower.indexOf(query);
+  while (index !== -1 && hits.length < MAX_THREAD_FIND_HITS) {
+    hits.push({ scope: "imported", exchangeIndex, start: index, end: index + query.length });
+    index = lower.indexOf(query, index + query.length);
   }
 }
 

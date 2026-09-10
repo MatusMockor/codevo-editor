@@ -14,6 +14,7 @@ import type {
   AgentTurnEvent,
   AgentTurnStatus,
 } from "../../domain/agentThread";
+import type { ExternalSessionExchange } from "../../domain/externalAgentSession";
 import { findInThread } from "../../domain/agentThreadSearch";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 import { parseAllStyleSheets, selectorParts } from "../cssContractTestSupport";
@@ -92,6 +93,13 @@ function viewportPort(near: boolean): ViewportPort {
         return () => {
           waiting.delete(element);
         };
+      },
+      remeasure() {
+        if (!near) return;
+        for (const [element, onEnter] of [...waiting]) {
+          waiting.delete(element);
+          onEnter();
+        }
       },
       dispose() {
         waiting.clear();
@@ -172,6 +180,39 @@ describe("agent thread ledger", () => {
       "components/agentMode/agentThread.css .agent-session__scroll overflow-x",
       "components/agentMode/agentThread.css .agent-session__scroll overflow-y",
     ]);
+  });
+
+  it("sticks an imported question band to the same containing-block-free chain", () => {
+    render({
+      thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])], {
+        exchanges: [
+          { role: "user", text: "Original question" },
+          { role: "assistant", text: "Original answer" },
+        ],
+      }),
+    });
+
+    const band = host.querySelector<HTMLElement>(".agent-imported-history header.agent-band");
+    const scroll = host.querySelector<HTMLElement>(".agent-session__scroll");
+    expect(band).not.toBeNull();
+    expect(scroll?.contains(band as Node)).toBe(true);
+
+    const chain: HTMLElement[] = [];
+    for (
+      let ancestor = band?.parentElement ?? null;
+      ancestor !== null && ancestor !== scroll;
+      ancestor = ancestor.parentElement
+    ) {
+      chain.push(ancestor);
+    }
+
+    expect(chain.map((element) => element.className)).toEqual([
+      "agent-turn",
+      "agent-imported-history",
+      "agent-session__body",
+    ]);
+    expect(chain.flatMap((element) => containingBlockDeclarations(element))).toEqual([]);
+    expect(host.querySelectorAll("header.agent-band")).toHaveLength(2);
   });
 
   it("gives every turn its own band so the next band pushes the previous one out", () => {
@@ -299,7 +340,9 @@ describe("agent thread ledger", () => {
     const hits = findInThread(view.thread, "parser", {
       maxEventsPerTurn: MAX_RENDERED_EVENTS_PER_TURN,
     });
-    expect(hits[0]?.eventIndex).toBeNull();
+    const first = hits[0];
+    expect(first?.scope).toBe("turn");
+    expect(first?.scope === "turn" ? first.eventIndex : undefined).toBeNull();
 
     render({ thread: view, bandPin: pin.port, findQuery: "parser", findHits: hits });
     expect(host.querySelector("header.agent-band")?.className).toBe("agent-band");
@@ -660,8 +703,27 @@ function turn(
 
 function threadView(
   turns: ReadonlyArray<AgentTurn>,
-  overrides: { readonly turnsTruncated?: boolean } = {},
+  overrides: {
+    readonly turnsTruncated?: boolean;
+    readonly exchanges?: ReadonlyArray<ExternalSessionExchange>;
+  } = {},
 ): AgentThreadView {
+  const exchanges = overrides.exchanges;
+  const externalOrigin: AgentThread["externalOrigin"] =
+    exchanges === undefined
+      ? null
+      : {
+          provider: "claudeCode",
+          sessionId: "987b95ad-c9bc-4d08-ae49-9b431efc8f87",
+          importedAtEpochMs: NOW - 60_000,
+          history: {
+            provider: "claudeCode",
+            sessionId: "987b95ad-c9bc-4d08-ae49-9b431efc8f87",
+            exchanges,
+            exchangesTruncated: false,
+            totalPreviewBytes: 32,
+          },
+        };
   const record: AgentThread = {
     threadId: "agt-1",
     owner: { rootKey: ROOT, ownerId: "agent-root:app", repositoryRoot: ROOT },
@@ -675,7 +737,7 @@ function threadView(
     turns,
     turnsTruncated: overrides.turnsTruncated ?? false,
     viewedAtEpochMs: null,
-    externalOrigin: null,
+    externalOrigin,
     integration: null,
   };
   return {

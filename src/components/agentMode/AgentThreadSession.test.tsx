@@ -123,14 +123,14 @@ describe("AgentThreadSession", () => {
     render(props);
 
     const history = host.querySelector('section[aria-label="Original conversation"]');
-    expect(history?.querySelectorAll("article")).toHaveLength(2);
-    expect(history?.querySelector(".agent-prompt__body")?.textContent).toBe("Original question");
+    expect(history?.querySelectorAll("article.agent-turn")).toHaveLength(1);
+    expect(history?.querySelector(".agent-band__text")?.textContent).toBe("Original question");
     expect(history?.querySelector(".agent-text__paragraph")?.textContent).toBe("Original answer");
-    expect(host.querySelectorAll("article.agent-turn")).toHaveLength(1);
+    expect(host.querySelectorAll("article.agent-turn")).toHaveLength(2);
     expect(host.textContent?.indexOf("Original answer")).toBeLessThan(
       host.textContent?.indexOf("Refactor the parser") ?? 0,
     );
-    expect(history?.querySelector(".agent-prompt__meta")?.textContent).toBe("");
+    expect(history?.querySelector(".agent-band__meta")?.textContent).toBe("");
     expect(history?.querySelector(".agent-work")).toBeNull();
   });
 
@@ -1406,10 +1406,10 @@ function changedFile(relativePath: string): GitChangedFile {
 const FIND_QUERY = "parser";
 
 const FIND_HITS: ReadonlyArray<AgentThreadFindHit> = [
-  { turnId: "agt-1-t1", eventIndex: null, start: 0, end: 6 },
-  { turnId: "agt-1-t1", eventIndex: null, start: 11, end: 17 },
-  { turnId: "agt-1-t1", eventIndex: 0, start: 4, end: 10 },
-  { turnId: "agt-1-t2", eventIndex: null, start: 0, end: 6 },
+  { scope: "turn", turnId: "agt-1-t1", eventIndex: null, start: 0, end: 6 },
+  { scope: "turn", turnId: "agt-1-t1", eventIndex: null, start: 11, end: 17 },
+  { scope: "turn", turnId: "agt-1-t1", eventIndex: 0, start: 4, end: 10 },
+  { scope: "turn", turnId: "agt-1-t2", eventIndex: null, start: 0, end: 6 },
 ];
 
 const FIND_TURNS: ReadonlyArray<AgentTurn> = [

@@ -51,6 +51,13 @@ function testViewport(near: (element: Element) => boolean = () => false): TestVi
           waiting.delete(element);
         };
       },
+      remeasure() {
+        for (const [element, onEnter] of [...waiting]) {
+          if (!near(element)) continue;
+          waiting.delete(element);
+          onEnter();
+        }
+      },
       dispose() {
         disposed += 1;
         waiting.clear();

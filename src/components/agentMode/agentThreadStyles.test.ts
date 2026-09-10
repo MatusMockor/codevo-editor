@@ -116,18 +116,11 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-session", "padding")).toBe("12px 24px 8px");
   });
 
-  it("keeps the imported user message on a raised bubble", () => {
-    expect(winningDeclaration(".agent-prompt", "max-width")).toBe("85%");
-    expect(winningDeclaration(".agent-prompt__body", "background")).toBe("var(--agent-raised)");
-    expect(winningDeclaration(".agent-prompt__body", "box-shadow")).toBe(
-      "var(--agent-shadow-raised)",
-    );
-    expect(winningDeclaration(".agent-prompt__body", "color")).toBe("var(--agent-text-strong)");
-    expect(winningDeclaration(".agent-prompt__body", "border-radius")).toBe(
-      "var(--agent-radius-lg)",
-    );
-    expect(winningDeclaration(".agent-prompt__body", "font-size")).toBe("var(--agent-fs-md)");
-    expect(winningDeclaration(".agent-prompt__body", "line-height")).toBe("1.5");
+  it("retires the raised bubble now that imported prompts are ledger bands", () => {
+    for (const selector of [".agent-prompt", ".agent-prompt__body", ".agent-prompt__meta"]) {
+      expect(RULES.filter((entry) => entry.selectors.includes(selector))).toEqual([]);
+    }
+    expect(css).not.toContain(".agent-prompt");
   });
 
   it("paints the ledger band on its own recessed tone, never on the side or well tone", () => {
@@ -260,7 +253,6 @@ describe("agent thread Airy style contract", () => {
       ".agent-reasoning",
       ".agent-raw",
       ".agent-subagents",
-      ".agent-prompt__body",
       ".agent-session__body",
     ]) {
       expect(RULES.filter((entry) => entry.selectors.includes(selector))).toHaveLength(1);

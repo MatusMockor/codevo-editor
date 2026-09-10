@@ -10,6 +10,7 @@ export interface AgentMarkdownViewportBand {
 export interface AgentMarkdownViewport {
   contains(element: Element): boolean;
   observe(element: Element, onEnter: () => void): () => void;
+  remeasure(): void;
   dispose(): void;
 }
 

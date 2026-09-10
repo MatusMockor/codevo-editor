@@ -46,6 +46,16 @@ export function createIntersectionAgentMarkdownViewport(
         target.unobserve(element);
       };
     },
+    remeasure() {
+      if (waiting.size === 0) return;
+      const root = rootBand(resolveRoot());
+      for (const [element, onEnter] of [...waiting]) {
+        if (!isWithinAgentMarkdownViewport(band(element), root)) continue;
+        waiting.delete(element);
+        observer?.unobserve(element);
+        onEnter();
+      }
+    },
     dispose() {
       waiting.clear();
       observer?.disconnect();

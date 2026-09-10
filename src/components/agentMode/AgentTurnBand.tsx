@@ -12,7 +12,7 @@ export interface AgentTurnBandProps {
   readonly ordinal: number | null;
   readonly prompt: string;
   readonly query: string;
-  readonly startedAtEpochMs: number;
+  readonly startedAtEpochMs: number | null;
   readonly textClipboard: TextClipboardGateway | null;
   onJumpToAnswerEnd(): void;
 }
@@ -71,10 +71,15 @@ export const AgentTurnBand = memo(function AgentTurnBand({
           <ChevronDown aria-hidden="true" className="agent-band__jump-icon" size={12} />
           end of answer
         </button>
-        <span className="agent-band__meta agent-num" aria-label="Message time">
-          <span>
-            <AgentRelativeTime epochMs={startedAtEpochMs} />
-          </span>
+        <span
+          className="agent-band__meta agent-num"
+          aria-label={startedAtEpochMs === null ? undefined : "Message time"}
+        >
+          {startedAtEpochMs !== null && (
+            <span>
+              <AgentRelativeTime epochMs={startedAtEpochMs} />
+            </span>
+          )}
           <AgentMessageCopyButton clipboard={textClipboard} label="your message" text={prompt} />
         </span>
       </header>

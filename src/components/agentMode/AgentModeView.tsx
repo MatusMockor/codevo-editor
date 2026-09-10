@@ -559,6 +559,7 @@ export function AgentModeView({
                   onClose={navigation.closeFindBar}
                   onNavigate={find.navigate}
                   query={find.query}
+                  truncated={find.truncated}
                 />
               )}
               <AgentThreadSession

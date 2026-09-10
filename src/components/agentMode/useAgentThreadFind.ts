@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentThread } from "../../domain/agentThread";
 import {
+  MAX_THREAD_FIND_HITS,
   MAX_THREAD_SEARCH_QUERY_CHARS,
   findInThread,
   type AgentThreadFindHit,
@@ -15,6 +16,7 @@ export interface AgentThreadFindState {
   readonly query: string;
   readonly hits: ReadonlyArray<AgentThreadFindHit>;
   readonly hitIndex: number;
+  readonly truncated: boolean;
   readonly reveal: AgentThreadRevealRequest | null;
   openBar(): void;
   close(): void;
@@ -58,6 +60,7 @@ export function useAgentThreadFind(thread: AgentThread | null): AgentThreadFindS
   const current = open && published.thread === thread && published.query === query;
   const hits = current ? published.hits : NO_HITS;
   const hitIndex = hits.length === 0 ? -1 : Math.min(index, hits.length - 1);
+  const truncated = hits.length >= MAX_THREAD_FIND_HITS;
   const publishedReveal = current ? reveal : null;
 
   useEffect(() => {
@@ -104,6 +107,7 @@ export function useAgentThreadFind(thread: AgentThread | null): AgentThreadFindS
       query,
       hits,
       hitIndex,
+      truncated,
       reveal: publishedReveal,
       openBar,
       close,
@@ -122,11 +126,14 @@ export function useAgentThreadFind(thread: AgentThread | null): AgentThreadFindS
       query,
       requestReveal,
       setQuery,
+      truncated,
     ],
   );
 }
 
 function sameHit(hit: AgentThreadFindHit, reveal: AgentThreadRevealRequest): boolean {
+  if (hit.scope !== "turn") return false;
+
   return (
     hit.turnId === reveal.turnId &&
     hit.eventIndex === reveal.eventIndex &&
