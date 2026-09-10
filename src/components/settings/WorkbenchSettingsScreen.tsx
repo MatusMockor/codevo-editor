@@ -103,6 +103,7 @@ export function WorkbenchSettingsScreen({
     <div className="settings-screen" ref={surfaceRef}>
       <SettingsSectionSidebar
         activeSection={section}
+        onExit={onClose}
         onSelectSection={selectSection}
         panelId={SETTINGS_PANEL_ID}
         results={

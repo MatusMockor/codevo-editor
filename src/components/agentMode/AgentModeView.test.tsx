@@ -647,11 +647,20 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(true);
   });
 
-  it("escapes back to a new thread from the composer", () => {
+  it("escapes back to a new thread from the composer with the new command", () => {
     render({ agents: surface({ threads: [threadView({ threadId: "agt-1" })] }) });
 
     clickText("Refactor the parser");
-    click(".agent-composer__new");
+
+    expect(host.querySelector(".agent-composer__context")).toBeNull();
+    expect(host.querySelector(".agent-composer__new")).toBeNull();
+
+    typePrompt("/new");
+    act(() => {
+      promptField().dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter", metaKey: true }),
+      );
+    });
 
     expect(host.querySelector('form[aria-label="New agent thread"]')).not.toBeNull();
     expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();

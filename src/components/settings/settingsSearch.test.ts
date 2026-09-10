@@ -71,4 +71,13 @@ describe("searchSettingsRows", () => {
     expect(ids).toContain("index.eslintFixOnSave");
     expect(ids).toContain("php.phpstanAnalyseOnSave");
   });
+
+  it("finds the agent thread text size by title, keyword and description", () => {
+    const ids = (query: string): ReadonlyArray<string> =>
+      searchSettingsRows(query, SETTINGS_ROWS, true).map((hit) => hit.row.id);
+
+    expect(ids("agent thread text size")).toContain("appearance.agentThreadFontSize");
+    expect(ids("font size")).toContain("appearance.agentThreadFontSize");
+    expect(ids("zoom")).toContain("appearance.agentThreadFontSize");
+  });
 });

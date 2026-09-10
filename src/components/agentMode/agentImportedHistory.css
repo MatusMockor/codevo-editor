@@ -14,7 +14,7 @@
 .agent-imported-history__retry {
   display: inline-flex;
   align-items: center;
-  height: 28px;
+  height: calc(28px * var(--codevo-fs-scale));
   border: 0;
   border-radius: var(--codevo-r-sm);
   background: var(--codevo-raised);

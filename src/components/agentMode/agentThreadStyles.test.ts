@@ -84,11 +84,13 @@ function space(step: number): string {
 }
 
 describe("agent thread Airy style contract", () => {
-  it("drops the rule under the thread header and gives it the 48px bar height", () => {
+  it("drops the rule under the thread header and scales it from the 48px bar height", () => {
     expect(winningDeclaration(".agent-thread-head", "border-bottom")).toBeNull();
     expect(winningDeclaration(".agent-thread-head", "border")).toBeNull();
     expect(winningDeclaration(".agent-thread-head", "box-shadow")).toBeNull();
-    expect(winningDeclaration(".agent-thread-head", "min-height")).toBe("48px");
+    expect(winningDeclaration(".agent-thread-head", "min-height")).toBe(
+      "calc(48px * var(--codevo-fs-scale))",
+    );
     expect(winningDeclaration(".agent-thread-head", "padding")).toBe("0 12px 0 18px");
   });
 
@@ -300,7 +302,7 @@ describe("agent thread Airy style contract", () => {
   });
 
   it("underlines the project in the empty-state question", () => {
-    expect(winningDeclaration(".agent-empty__title", "font-size")).toBe("28px");
+    expect(winningDeclaration(".agent-empty__title", "font-size")).toBe("var(--codevo-fs-hero)");
     expect(winningDeclaration(".agent-empty__title", "font-weight")).toBe("400");
     expect(winningDeclaration(".agent-empty__title", "line-height")).toBe("1.2");
     expect(winningDeclaration(".agent-empty__project", "text-underline-offset")).toBe("6px");
@@ -314,7 +316,9 @@ describe("agent thread Airy style contract", () => {
   });
 
   it("raises the header split controls with a tone divider instead of a border", () => {
-    expect(winningDeclaration(".agent-split", "height")).toBe("28px");
+    expect(winningDeclaration(".agent-split", "height")).toBe(
+      "calc(28px * var(--codevo-fs-scale))",
+    );
     expect(winningDeclaration(".agent-split", "background")).toBe("var(--agent-outline-button-bg)");
     expect(winningDeclaration(".agent-split", "border-radius")).toBe("var(--agent-radius-sm)");
     expect(winningDeclaration(".agent-split", "box-shadow")).toBe("var(--agent-shadow-raised)");
@@ -393,7 +397,9 @@ describe("agent thread Airy style contract", () => {
   it("floats menus and popovers on the float shadow without a hairline ring", () => {
     expect(winningDeclaration(".agent-menu", "box-shadow")).toBe("var(--codevo-shadow-float)");
     expect(winningDeclaration(".agent-menu", "border-radius")).toBe("var(--agent-radius-lg)");
-    expect(winningDeclaration(".agent-menu__item", "min-height")).toBe("30px");
+    expect(winningDeclaration(".agent-menu__item", "min-height")).toBe(
+      "calc(30px * var(--codevo-fs-scale))",
+    );
     expect(winningDeclaration(".agent-menu__item", "border-radius")).toBe("7px");
     expect(winningDeclaration(".agent-menu__item:hover:not(:disabled)", "background")).toBe(
       "var(--codevo-active)",

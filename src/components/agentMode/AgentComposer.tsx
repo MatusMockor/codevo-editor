@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ArrowUp, Loader2, Plus, X } from "lucide-react";
+import { ArrowUp, Loader2, X } from "lucide-react";
 import {
   useAgentModelFavorites,
   type AgentModelFavoritesPersistence,
@@ -34,7 +34,6 @@ export type AgentComposerMode =
   | { readonly kind: "new" }
   | {
       readonly kind: "followUp";
-      readonly threadTitle: string;
       readonly blockedReason: string | null;
     };
 
@@ -342,19 +341,6 @@ export function AgentComposer({
           </div>
         )}
       <div className="agent-composer__box">
-        {followUp && (
-          <div className="agent-composer__context">
-            <span className="agent-composer__context-label">Replying in</span>
-            <span className="agent-composer__chip agent-composer__chip--thread">
-              {mode.threadTitle}
-            </span>
-            <span className="agent-composer__spacer" />
-            <button className="agent-composer__new" onClick={onNewThread} type="button">
-              <Plus aria-hidden="true" size={12} /> New thread
-            </button>
-          </div>
-        )}
-
         <label className="agent-visually-hidden" htmlFor="agent-prompt">
           Prompt
         </label>

@@ -4,7 +4,7 @@
   align-content: start;
   gap: var(--agent-space-2);
   overflow-y: auto;
-  max-height: min(44vh, 320px);
+  max-height: min(44vh, calc(320px * var(--codevo-fs-scale)));
   padding: 8px 24px 16px;
   border-top: 0;
   background: transparent;
@@ -99,8 +99,8 @@
   font: inherit;
   font-size: var(--codevo-fs-body);
   line-height: 1.5;
-  max-height: 180px;
-  min-height: 64px;
+  max-height: calc(180px * var(--codevo-fs-scale));
+  min-height: calc(64px * var(--codevo-fs-scale));
   outline: none;
   padding: 14px 16px 8px;
   resize: none;
@@ -112,22 +112,6 @@
 
 .agent-composer__textarea:focus-visible {
   box-shadow: none;
-}
-
-/* Context line: which thread the reply continues, above the text. */
-.agent-composer__context {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--agent-space-2) var(--agent-space-3);
-  min-height: 36px;
-  padding: 6px 12px 0 16px;
-}
-
-.agent-composer__context-label {
-  flex: none;
-  color: var(--agent-text-subtle);
-  font-size: var(--agent-fs-xs);
 }
 
 .agent-composer__row {
@@ -158,7 +142,7 @@
 
 .agent-composer__footer .agent-picker__trigger--ghost,
 .agent-composer__lock {
-  height: 28px;
+  height: calc(28px * var(--codevo-fs-scale));
   border-radius: var(--agent-radius-sm);
   background: transparent;
   color: var(--agent-text-muted);
@@ -213,23 +197,6 @@
   color: var(--agent-text-subtle);
   font-size: var(--agent-fs-sm);
   text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-composer__chip {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 5px;
-  overflow: hidden;
-  max-width: 240px;
-  height: 20px;
-  border-radius: var(--agent-radius-pill);
-  background: var(--agent-well);
-  color: var(--agent-text);
-  font-family: var(--agent-mono);
-  font-size: var(--agent-fs-2xs);
-  padding: 0 9px;
   white-space: nowrap;
 }
 
@@ -455,7 +422,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
+  height: calc(28px * var(--codevo-fs-scale));
   max-width: 180px;
   border-radius: var(--agent-radius-sm);
   background: var(--agent-well);
@@ -499,7 +466,7 @@
 /* Ghost variant: plain text with an optional leading icon; no border or fill at rest. */
 .agent-picker__trigger--ghost {
   gap: 6px;
-  height: 28px;
+  height: calc(28px * var(--codevo-fs-scale));
   max-width: 240px;
   border: none;
   border-radius: var(--agent-radius-sm);
@@ -576,7 +543,7 @@
   gap: 1px;
   width: max-content;
   max-width: min(320px, calc(100vw - 16px));
-  max-height: min(320px, calc(100vh - 16px));
+  max-height: min(calc(320px * var(--codevo-fs-scale)), calc(100vh - 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
   border-radius: var(--agent-radius-lg);
@@ -588,7 +555,7 @@
 .agent-picker__menu--checkout {
   box-sizing: border-box;
   width: 320px;
-  max-height: min(520px, calc(100vh - 16px));
+  max-height: min(calc(520px * var(--codevo-fs-scale)), calc(100vh - 16px));
   gap: 2px;
   border-radius: var(--agent-radius-xl);
   padding: 6px 0;
@@ -597,7 +564,7 @@
 }
 
 .agent-picker__menu--checkout .agent-picker__option {
-  min-height: 36px;
+  min-height: calc(36px * var(--codevo-fs-scale));
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
@@ -678,7 +645,7 @@
   display: inline-flex;
   flex: none;
   width: 14px;
-  height: 18px;
+  height: calc(18px * var(--codevo-fs-scale));
   align-items: center;
   justify-content: center;
   color: var(--agent-live);
@@ -699,7 +666,7 @@
   align-items: center;
   gap: 6px;
   font-size: var(--agent-fs-sm);
-  line-height: 18px;
+  line-height: calc(18px * var(--codevo-fs-scale));
   white-space: nowrap;
 }
 
@@ -794,7 +761,7 @@
   background: color-mix(in srgb, var(--agent-text-muted) 20%, transparent);
   color: var(--agent-text-muted);
   font-size: var(--agent-fs-2xs);
-  line-height: 16px;
+  line-height: calc(16px * var(--codevo-fs-scale));
   padding: 0 5px;
 }
 
@@ -848,8 +815,8 @@
   display: flex;
   width: 380px;
   max-width: calc(100vw - 16px);
-  height: min(300px, calc(100vh - 16px));
-  max-height: min(320px, calc(100vh - 16px));
+  height: min(calc(300px * var(--codevo-fs-scale)), calc(100vh - 16px));
+  max-height: min(calc(320px * var(--codevo-fs-scale)), calc(100vh - 16px));
   overflow: hidden;
   border-radius: var(--agent-radius-xl);
   background: var(--agent-raised);
@@ -924,7 +891,7 @@
   flex: none;
   align-items: center;
   gap: 7px;
-  height: 30px;
+  height: calc(30px * var(--codevo-fs-scale));
   border-radius: var(--agent-radius-sm);
   background: var(--agent-well);
   color: var(--agent-text-subtle);
@@ -1085,7 +1052,7 @@
   overflow: hidden;
   color: var(--agent-text-muted);
   font-size: var(--agent-fs-sm);
-  line-height: 16px;
+  line-height: calc(16px * var(--codevo-fs-scale));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1098,7 +1065,7 @@
   font-family: var(--agent-sans);
   font-size: var(--agent-fs-2xs);
   font-weight: 500;
-  line-height: 18px;
+  line-height: calc(18px * var(--codevo-fs-scale));
   padding: 0 5px;
 }
 

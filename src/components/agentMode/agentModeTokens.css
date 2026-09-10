@@ -44,14 +44,15 @@
   --codevo-r-lg: 12px;
   --codevo-r-xl: 14px;
   --codevo-r-pill: 999px;
-  --codevo-fs-hero: 26px;
-  --codevo-fs-title: 20px;
-  --codevo-fs-heading: 15px;
-  --codevo-fs-body: 13.5px;
-  --codevo-fs-ui: 13px;
-  --codevo-fs-meta: 12px;
-  --codevo-fs-small: 11px;
-  --codevo-fs-label: 10px;
+  --codevo-fs-scale: 1;
+  --codevo-fs-hero: calc(28px * var(--codevo-fs-scale));
+  --codevo-fs-title: calc(22px * var(--codevo-fs-scale));
+  --codevo-fs-heading: calc(17px * var(--codevo-fs-scale));
+  --codevo-fs-body: calc(15px * var(--codevo-fs-scale));
+  --codevo-fs-ui: calc(14px * var(--codevo-fs-scale));
+  --codevo-fs-meta: calc(13px * var(--codevo-fs-scale));
+  --codevo-fs-small: calc(12px * var(--codevo-fs-scale));
+  --codevo-fs-label: calc(11px * var(--codevo-fs-scale));
   --codevo-sans:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --codevo-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;

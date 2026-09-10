@@ -321,8 +321,8 @@
   top: 12px;
   right: 12px;
   display: inline-flex;
-  min-width: 18px;
-  height: 18px;
+  min-width: calc(18px * var(--codevo-fs-scale));
+  height: calc(18px * var(--codevo-fs-scale));
   align-items: center;
   justify-content: center;
   padding: 0 5px;
@@ -450,7 +450,7 @@
 
 .agent-surface-tree__search {
   display: flex;
-  height: 28px;
+  height: calc(28px * var(--codevo-fs-scale));
   min-width: 0;
   flex: 1 1 auto;
   align-items: center;
@@ -545,7 +545,7 @@
 }
 
 .agent-surface-diff__list .agent-files__row {
-  min-height: 28px;
+  min-height: calc(28px * var(--codevo-fs-scale));
   align-items: center;
   gap: var(--agent-space-3);
   padding: 0 var(--agent-space-3);
@@ -575,8 +575,8 @@
 /* Add and delete read as soft tints, the only colour the change list carries. */
 .agent-surface-diff__list .agent-files__status {
   display: inline-flex;
-  width: 16px;
-  height: 16px;
+  width: calc(16px * var(--codevo-fs-scale));
+  height: calc(16px * var(--codevo-fs-scale));
   align-items: center;
   justify-content: center;
   border-radius: 6px;

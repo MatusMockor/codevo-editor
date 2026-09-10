@@ -92,7 +92,7 @@ function sameComposerMode(
 ): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "new" || right.kind === "new") return true;
-  return left.threadTitle === right.threadTitle && left.blockedReason === right.blockedReason;
+  return left.blockedReason === right.blockedReason;
 }
 
 function sameComposerTarget(

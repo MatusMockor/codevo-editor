@@ -128,6 +128,67 @@ describe("WorkbenchSettingsScreen", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("closes on Escape when the search query is already empty", () => {
+    render();
+
+    escape(searchInput());
+
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("offers an exit control that never takes the mount focus from the heading", () => {
+    render();
+
+    const exit = exitButton();
+
+    expect(exit.tagName).toBe("BUTTON");
+    expect(exit.type).toBe("button");
+    expect(exit.disabled).toBe(false);
+    expect(exit.tabIndex).toBe(0);
+    expect(accessibleName(exit)).toBe("Back");
+    expect(document.activeElement).toBe(host.querySelector(".settings-screen__title"));
+    expect(document.activeElement).not.toBe(exit);
+    expect(tabbables()[0]).toBe(exit);
+    expect(tabbables()[1]).toBe(searchInput());
+  });
+
+  it("closes the surface when the exit control is clicked", () => {
+    render();
+
+    click(exitButton());
+
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("closes the surface when the exit control is activated from the keyboard", () => {
+    render();
+    const exit = exitButton();
+
+    act(() => exit.focus());
+    expect(document.activeElement).toBe(exit);
+
+    activateWithKey(exit, "Enter");
+    expect(onClose).toHaveBeenCalledOnce();
+
+    activateWithKey(exit, " ");
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the Escape ladder intact while the exit control holds focus", () => {
+    render();
+    const exit = exitButton();
+
+    type("format");
+    act(() => exit.focus());
+    escape(exit);
+
+    expect(searchInput().value).toBe("");
+    expect(onClose).not.toHaveBeenCalled();
+
+    escape(exit);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("focuses the search with / only when the active element is not editable", () => {
     render();
 
@@ -185,6 +246,28 @@ describe("WorkbenchSettingsScreen", () => {
     return input as HTMLInputElement;
   }
 
+  function exitButton(): HTMLButtonElement {
+    const button = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => accessibleName(candidate) === "Back",
+    );
+    expect(button).toBeDefined();
+    return button as HTMLButtonElement;
+  }
+
+  function tabbables(): HTMLElement[] {
+    const candidates = [
+      ...host.querySelectorAll<HTMLElement>("a[href], button, input, select, textarea, [tabindex]"),
+    ];
+
+    return candidates.filter((candidate) => {
+      if (candidate.tabIndex < 0) return false;
+      if (candidate.closest("[hidden]") !== null) return false;
+      if (candidate instanceof HTMLButtonElement && candidate.disabled) return false;
+
+      return true;
+    });
+  }
+
   function results(): HTMLElement | null {
     return host.querySelector('[role="listbox"]');
   }
@@ -227,6 +310,27 @@ function keyDown(element: HTMLElement | undefined, key: string): void {
   expect(element).toBeDefined();
   act(() => {
     element?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key }));
+  });
+}
+
+function accessibleName(element: HTMLElement): string {
+  const label = element.getAttribute("aria-label");
+
+  if (label !== null) return label.trim();
+
+  return (element.textContent ?? "").trim();
+}
+
+function activateWithKey(element: HTMLElement, key: string): void {
+  act(() => {
+    const proceed = element.dispatchEvent(
+      new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key }),
+    );
+    element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key }));
+
+    if (!proceed) return;
+
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 0 }));
   });
 }
 

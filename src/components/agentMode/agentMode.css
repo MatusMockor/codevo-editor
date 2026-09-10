@@ -317,11 +317,6 @@
     width: 100%;
     max-width: none;
   }
-
-  .agent-composer__context {
-    min-height: 0;
-    padding-block: 6px;
-  }
 }
 
 @media (max-width: 460px) {
@@ -342,12 +337,12 @@
   }
 
   .agent-composer {
-    max-height: min(48vh, 260px);
+    max-height: min(48vh, calc(260px * var(--codevo-fs-scale)));
     padding-block: 10px 12px;
   }
 
   .agent-composer__textarea {
-    min-height: 48px;
+    min-height: calc(48px * var(--codevo-fs-scale));
   }
 
   .smart-mode-switch > span:first-child {
@@ -361,8 +356,7 @@
   mask: radial-gradient(circle, transparent 46%, #000 52%);
 }
 
-.agent-session__status--archived,
-.agent-composer__chip--thread {
+.agent-session__status--archived {
   display: block;
   flex: 0 1 auto;
   overflow: hidden;
@@ -372,34 +366,6 @@
   font-size: var(--agent-fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.agent-composer__new {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  border: none;
-  border-radius: 7px;
-  background: none;
-  color: var(--codevo-fg-muted);
-  cursor: pointer;
-  font-size: var(--agent-fs-xs);
-  padding: 0 8px;
-  transition:
-    background-color var(--agent-motion-hover) var(--ease-standard),
-    color var(--agent-motion-hover) var(--ease-standard);
-}
-
-.agent-composer__new:hover {
-  background: var(--agent-hover);
-  color: var(--agent-text-strong);
-}
-
-.agent-composer__new:focus-visible {
-  outline: none;
-  box-shadow: var(--codevo-focus-ring);
 }
 
 .agent-add-project {
@@ -414,7 +380,7 @@
   flex: none;
   align-items: center;
   gap: var(--agent-space-3);
-  height: 48px;
+  height: calc(48px * var(--codevo-fs-scale));
   padding: 0 12px 0 10px;
   color: var(--codevo-fg-muted);
 }
@@ -570,7 +536,7 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  height: 24px;
+  height: calc(24px * var(--codevo-fs-scale));
   border: none;
   border-radius: 7px;
   background: var(--codevo-primary);
@@ -608,7 +574,7 @@
 .agent-find__input {
   min-width: 0;
   flex: 1;
-  height: 26px;
+  height: calc(26px * var(--codevo-fs-scale));
   padding: 0 8px;
   border: 0;
   border-radius: var(--codevo-r-sm);

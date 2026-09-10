@@ -9,6 +9,11 @@ import {
   type AppSettings,
   type WorkspaceSettings,
 } from "../../../domain/settings";
+import {
+  DEFAULT_AGENT_THREAD_FONT_SIZE,
+  MAX_AGENT_THREAD_FONT_SIZE,
+  MIN_AGENT_THREAD_FONT_SIZE,
+} from "../../../domain/agentSettings";
 import type { SystemFontGateway } from "../../../domain/systemFonts";
 import type {
   SettingsDraftActions,
@@ -230,6 +235,32 @@ describe("AppearanceSettingsPage", () => {
     press("Home");
 
     expect(savedTheme()).toBe("dark");
+  });
+
+  it("persists the agent thread text size and clamps it to the supported range", async () => {
+    const onSave = await render({});
+    const field = () => queryIn<HTMLInputElement>("appearance.agentThreadFontSize", "input");
+
+    expect(field().type).toBe("number");
+    expect(field().value).toBe(`${DEFAULT_AGENT_THREAD_FONT_SIZE}`);
+    expect(field().min).toBe(`${MIN_AGENT_THREAD_FONT_SIZE}`);
+    expect(field().max).toBe(`${MAX_AGENT_THREAD_FONT_SIZE}`);
+
+    act(() => changeInputValue(field(), "18"));
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: { ...defaultAppSettings(), agentThreadFontSize: 18 },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+
+    act(() => changeInputValue(field(), "400"));
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: { ...defaultAppSettings(), agentThreadFontSize: MAX_AGENT_THREAD_FONT_SIZE },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
   });
 
   it("persists the agent appearance variant from the segmented control", async () => {

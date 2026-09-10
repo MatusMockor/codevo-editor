@@ -20,6 +20,11 @@ export const AGENT_APPEARANCE_VARIANTS = ["current", "graphite", "paper", "studi
 export type AgentAppearanceVariant = (typeof AGENT_APPEARANCE_VARIANTS)[number];
 export const DEFAULT_AGENT_APPEARANCE_VARIANT: AgentAppearanceVariant = "current";
 export const MAX_AGENT_MODEL_FAVORITES = 32;
+export const DEFAULT_AGENT_THREAD_FONT_SIZE = 15;
+export const MIN_AGENT_THREAD_FONT_SIZE = 12;
+export const MAX_AGENT_THREAD_FONT_SIZE = 20;
+
+const AGENT_THREAD_TYPE_SCALE_PRECISION = 1_000;
 
 export interface AgentCliPaths {
   readonly claudeCode: string | null;
@@ -65,6 +70,7 @@ export interface AgentAppSettings {
   readonly agentCliPaths: AgentCliPaths;
   readonly agentCliKind: AgentCliKind;
   readonly agentAppearanceVariant: AgentAppearanceVariant;
+  readonly agentThreadFontSize: number;
   readonly agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
   readonly agentModelFavoritesRevision: number;
   readonly agentProviderPreferences: AgentProviderPreferences;
@@ -83,6 +89,7 @@ export function defaultAgentAppSettings(): AgentAppSettings {
     agentCliPaths: { claudeCode: null, codex: null },
     agentCliKind: DEFAULT_AGENT_CLI_KIND,
     agentAppearanceVariant: DEFAULT_AGENT_APPEARANCE_VARIANT,
+    agentThreadFontSize: DEFAULT_AGENT_THREAD_FONT_SIZE,
     agentModelFavoriteKeys: [],
     agentModelFavoritesRevision: 0,
     agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -146,6 +153,23 @@ export function normalizeAgentAppearanceVariant(value: unknown): AgentAppearance
     return value as AgentAppearanceVariant;
   }
   return DEFAULT_AGENT_APPEARANCE_VARIANT;
+}
+
+export function normalizeAgentThreadFontSize(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_AGENT_THREAD_FONT_SIZE;
+  }
+
+  const rounded = Math.floor(value);
+
+  return Math.min(Math.max(rounded, MIN_AGENT_THREAD_FONT_SIZE), MAX_AGENT_THREAD_FONT_SIZE);
+}
+
+export function agentThreadTypeScale(value: unknown): number {
+  const size = normalizeAgentThreadFontSize(value);
+  const ratio = size / DEFAULT_AGENT_THREAD_FONT_SIZE;
+
+  return Math.round(ratio * AGENT_THREAD_TYPE_SCALE_PRECISION) / AGENT_THREAD_TYPE_SCALE_PRECISION;
 }
 
 export function normalizeAgentCliPaths(

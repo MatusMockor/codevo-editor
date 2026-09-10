@@ -53,7 +53,7 @@
       "rawLines": 2145,
       "structuralTokens": 14163
     },
-    "src/App.tsx": { "rawLines": 1470, "structuralTokens": 7291 },
+    "src/App.tsx": { "rawLines": 1464, "structuralTokens": 7264 },
     "src/application/useDocumentSync.ts": {
       "rawLines": 1526,
       "structuralTokens": 5300

@@ -23,6 +23,11 @@ import {
   WORKSPACE_SESSION_VERSION,
 } from "./settings";
 import { initialAgentWorkbenchLayout, serializeAgentWorkbenchLayout } from "./agentWorkbenchLayout";
+import {
+  DEFAULT_AGENT_THREAD_FONT_SIZE,
+  MAX_AGENT_THREAD_FONT_SIZE,
+  MIN_AGENT_THREAD_FONT_SIZE,
+} from "./agentSettings";
 import { defaultAgentProviderPreferences } from "./agentProviderSettings";
 import { defaultKeymapSettings } from "./keymap";
 import {
@@ -40,6 +45,7 @@ describe("settings defaults", () => {
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
+      agentThreadFontSize: 15,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -293,6 +299,7 @@ describe("normalizeAppSettings", () => {
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
+      agentThreadFontSize: 15,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -329,6 +336,7 @@ describe("normalizeAppSettings", () => {
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
+      agentThreadFontSize: 15,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -360,6 +368,7 @@ describe("normalizeAppSettings", () => {
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
+      agentThreadFontSize: 15,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -392,6 +401,24 @@ describe("normalizeAppSettings", () => {
     );
   });
 
+  it("clamps and falls back the persisted agent thread font size", () => {
+    expect(normalizeAppSettings({ agentThreadFontSize: 18 }).agentThreadFontSize).toBe(18);
+    expect(normalizeAppSettings({ agentThreadFontSize: 100 }).agentThreadFontSize).toBe(
+      MAX_AGENT_THREAD_FONT_SIZE,
+    );
+    expect(normalizeAppSettings({ agentThreadFontSize: 2 }).agentThreadFontSize).toBe(
+      MIN_AGENT_THREAD_FONT_SIZE,
+    );
+    expect(normalizeAppSettings({ agentThreadFontSize: 16.7 }).agentThreadFontSize).toBe(16);
+    expect(normalizeAppSettings({ agentThreadFontSize: "18" }).agentThreadFontSize).toBe(
+      DEFAULT_AGENT_THREAD_FONT_SIZE,
+    );
+    expect(normalizeAppSettings({ agentThreadFontSize: Number.NaN }).agentThreadFontSize).toBe(
+      DEFAULT_AGENT_THREAD_FONT_SIZE,
+    );
+    expect(normalizeAppSettings({}).agentThreadFontSize).toBe(DEFAULT_AGENT_THREAD_FONT_SIZE);
+  });
+
   it("falls back persisted editor font family and ligatures when invalid", () => {
     expect(
       normalizeAppSettings({
@@ -403,6 +430,7 @@ describe("normalizeAppSettings", () => {
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
+      agentThreadFontSize: 15,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -460,6 +488,7 @@ describe("normalizeAppSettings", () => {
       agentCliKind: "claudeCode",
       agentCliPaths: { claudeCode: null, codex: null },
       agentAppearanceVariant: "current",
+      agentThreadFontSize: 15,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),

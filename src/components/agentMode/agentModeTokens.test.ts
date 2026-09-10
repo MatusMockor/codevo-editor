@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildTokenTable,
   customPropertyDeclarations,
+  isSingleVar,
   lastOf,
   parseCssRules,
   readStyleSheet,
@@ -39,6 +40,20 @@ function frameBase(): readonly CssRule[] {
     (rule) => rule.selector === ".workbench-frame" && rule.context.length === 0,
   );
 }
+
+function shellBase(): readonly CssRule[] {
+  return tokenRules.filter((rule) => rule.selector === ".app-shell" && rule.context.length === 0);
+}
+
+const TYPE_STEPS = ["hero", "title", "heading", "body", "ui", "meta", "small", "label"] as const;
+const AGENT_TYPE_STEPS = [
+  "--agent-fs-2xs",
+  "--agent-fs-xs",
+  "--agent-fs-sm",
+  "--agent-fs-md",
+  "--agent-fs-lg",
+  "--agent-fs-xl",
+] as const;
 
 describe("agent mode token contract", () => {
   it("never declares a token in terms of itself", () => {
@@ -140,6 +155,39 @@ describe("agent mode token contract", () => {
     for (const [name, value] of expectation) {
       expect(lastOf(base.get(name)), name).toBe(value);
     }
+  });
+
+  it("drives every type step from the one user scale", () => {
+    const shell = buildTokenTable(shellBase(), "--codevo-fs-");
+
+    expect(lastOf(shell.get("--codevo-fs-scale"))).toBe("1");
+
+    for (const step of TYPE_STEPS) {
+      const value = lastOf(shell.get(`--codevo-fs-${step}`)) ?? "";
+
+      expect(value, step).toMatch(/^calc\(\d+px \* var\(--codevo-fs-scale\)\)$/);
+      expect(varReferences(value), step).toEqual(["--codevo-fs-scale"]);
+    }
+  });
+
+  it("keeps every agent type step tied to a scaled codevo step", () => {
+    const base = buildTokenTable(frameBase(), "--agent-fs-");
+    const shell = buildTokenTable(shellBase(), "--codevo-fs-");
+
+    for (const name of AGENT_TYPE_STEPS) {
+      const reference = varReferences(lastOf(base.get(name)) ?? "")[0] ?? "";
+
+      expect(reference, name).toMatch(/^--codevo-fs-/);
+      expect(lastOf(shell.get(reference)), name).toContain("var(--codevo-fs-scale)");
+    }
+  });
+
+  it("never pins an agent type step to a raw pixel literal", () => {
+    const literals = customPropertyDeclarations(agentRules, "--agent-fs-")
+      .filter((entry) => !isSingleVar(entry.value))
+      .map((entry) => `${entry.rule.sheet} ${entry.property}: ${entry.value}`);
+
+    expect(literals).toEqual([]);
   });
 
   it("keeps the light frame overrides down to the shadow alpha scalar", () => {

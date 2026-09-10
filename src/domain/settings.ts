@@ -16,6 +16,7 @@ import {
   normalizeAgentCliPaths,
   normalizeAgentModelFavoritesSnapshot,
   normalizeAgentIsolationPolicy,
+  normalizeAgentThreadFontSize,
   normalizeMaxConcurrentAgentTasks,
   DEFAULT_AGENT_ISOLATION_POLICY,
   type AgentCliKind,
@@ -138,6 +139,7 @@ export interface AppSettings {
   agentCliPaths: AgentCliPaths;
   agentCliKind: AgentCliKind;
   agentAppearanceVariant: AgentAppearanceVariant;
+  agentThreadFontSize: number;
   agentModelFavoriteKeys: ReadonlyArray<AgentModelFavoriteKey>;
   agentModelFavoritesRevision: number;
   agentProviderPreferences: AgentProviderPreferences;
@@ -497,6 +499,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     agentCliPaths,
     agentCliKind,
     agentAppearanceVariant: normalizeAgentAppearanceVariant(value.agentAppearanceVariant),
+    agentThreadFontSize:
+      value.agentThreadFontSize === undefined
+        ? defaults.agentThreadFontSize
+        : normalizeAgentThreadFontSize(value.agentThreadFontSize),
     agentModelFavoriteKeys: agentModelFavorites.keys,
     agentModelFavoritesRevision: agentModelFavorites.revision,
     agentProviderPreferences: normalizeAgentProviderPreferences(value.agentProviderPreferences),

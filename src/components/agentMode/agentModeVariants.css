@@ -136,7 +136,7 @@
   --agent-rail-row-py: 6px;
   --agent-rail-row-px: 26px;
   --agent-turn-gap: 24px;
-  --agent-fs-2xs: 10px;
+  --agent-fs-2xs: var(--codevo-fs-label);
   --agent-lh-row: 1.3;
 }
 

@@ -38,7 +38,6 @@ import {
   agentProjectWorktreeOnly,
   agentProjectWorktreeOnlyReason,
   agentPromptByteLength,
-  agentThreadDisplayTitle,
   type AgentProjectGroup,
 } from "./agentModePresentation";
 
@@ -617,7 +616,6 @@ function useComposerMode(
     if (selectedThread === null) return { kind: "new" };
     return {
       kind: "followUp",
-      threadTitle: agentThreadDisplayTitle(selectedThread.thread),
       blockedReason: agentFollowUpBlockedReason(selectedThread, {
         agentCliConfigured,
         agentCliKind,

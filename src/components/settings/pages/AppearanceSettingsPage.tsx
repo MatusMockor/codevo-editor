@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AGENT_APPEARANCE_VARIANTS,
+  MAX_AGENT_THREAD_FONT_SIZE,
+  MIN_AGENT_THREAD_FONT_SIZE,
+  normalizeAgentThreadFontSize,
   type AgentAppearanceVariant,
 } from "../../../domain/agentSettings";
 import {
@@ -71,6 +74,21 @@ export function AppearanceSettingsPage({ actions, draft, env }: SettingsPageProp
             }}
             options={AGENT_APPEARANCE_OPTIONS}
             value={appSettings.agentAppearanceVariant}
+          />
+        </SettingsRow>
+
+        <SettingsRow rowId="appearance.agentThreadFontSize">
+          <SettingsNumberField
+            max={MAX_AGENT_THREAD_FONT_SIZE}
+            min={MIN_AGENT_THREAD_FONT_SIZE}
+            onChange={(value) =>
+              actions.updateAppSettings({
+                ...appSettings,
+                agentThreadFontSize: normalizeAgentThreadFontSize(value),
+              })
+            }
+            unit="px"
+            value={appSettings.agentThreadFontSize}
           />
         </SettingsRow>
       </SettingsSectionHeading>

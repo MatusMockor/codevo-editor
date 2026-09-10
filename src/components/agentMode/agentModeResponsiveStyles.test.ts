@@ -89,7 +89,9 @@ describe("agent mode responsive layout contract", () => {
   it("keeps the composer in a real non-overlapping center layout row", () => {
     expect(rule(".agent-mode__center")).toContain("grid-template-rows: auto minmax(0, 1fr) auto");
     expect(rule(".agent-composer")).not.toMatch(/position:\s*absolute/);
-    expect(rule(".agent-composer")).toContain("max-height: min(44vh, 320px)");
+    expect(rule(".agent-composer")).toContain(
+      "max-height: min(44vh, calc(320px * var(--codevo-fs-scale)))",
+    );
     expect(rule(".agent-session__body")).not.toMatch(/padding:[^;]*148px/);
   });
 
@@ -415,7 +417,9 @@ describe("agent mode responsive layout contract", () => {
   it("keeps the ship panel bounded inside the session column", () => {
     expect(rule(".agent-popover--ship")).toContain("max-width: calc(100% - 16px)");
     expect(rule(".agent-popover--ship")).not.toContain("100vw");
-    expect(rule(".agent-ship__message")).toContain("max-height: 120px");
+    expect(rule(".agent-ship__message")).toContain(
+      "max-height: calc(120px * var(--codevo-fs-scale))",
+    );
     expect(rule(".agent-ship__conflicts")).toContain("overflow-y: auto");
     expect(rule(".agent-files__row")).toContain("flex-wrap: wrap");
   });

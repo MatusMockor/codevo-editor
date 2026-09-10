@@ -633,7 +633,7 @@ describe("agent surface styles", () => {
 
     expect(cssRule(agentModeCss, ".agent-surface-tree__tools {")).toContain("padding: 4px 8px");
     const search = cssRule(agentModeCss, ".agent-surface-tree__search {");
-    expect(search).toContain("height: 28px");
+    expect(search).toContain("height: calc(28px * var(--codevo-fs-scale))");
     expect(search).toContain("background: transparent");
     expect(search).toContain("border-radius: var(--agent-radius-sm)");
     expect(search).toContain("color: var(--agent-text-subtle)");
@@ -650,7 +650,7 @@ describe("agent surface styles", () => {
       "background: var(--codevo-side)",
     );
     const row = cssRule(agentModeCss, ".agent-surface-diff__list .agent-files__row {");
-    expect(row).toContain("min-height: 28px");
+    expect(row).toContain("min-height: calc(28px * var(--codevo-fs-scale))");
     expect(row).toContain("border-radius: 7px");
     const selected = cssRule(
       agentModeCss,

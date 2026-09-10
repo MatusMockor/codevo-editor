@@ -28,7 +28,9 @@ import { WorkbenchBottomPanelHost } from "./components/WorkbenchBottomPanelHost"
 import { WorkbenchOverlayDialogsHost } from "./components/WorkbenchOverlayDialogsHost";
 import { WorkbenchShellFrame } from "./components/WorkbenchShellFrame";
 import { appShellClassName } from "./components/appShellClassName";
+import { appShellTypeScaleStyle } from "./components/appShellTypeScale";
 import { workbenchShellPlacement } from "./components/workbenchShellPlacement";
+import { useAgentPanelResizeCommit } from "./application/useAgentPanelResizeCommit";
 import { useWorkbenchResizeHandles } from "./application/useWorkbenchResizeHandles";
 import { commandPaletteProps } from "./components/commandPaletteProps";
 import { editorChangeHunksStatus } from "./components/editorChangeHunksStatus";
@@ -647,25 +649,13 @@ function App() {
     prefersLightTheme,
   );
   const agentLayout = workbench.agentWorkbench;
-  const resizeAgentRightPanel = useCallback(
-    (width: number) => agentLayout.dispatch({ kind: "resizeRightPanel", width }),
-    [agentLayout],
-  );
-  const resizeAgentBottomPanel = useCallback(
-    (height: number) => agentLayout.dispatch({ kind: "resizeBottomPanel", height }),
-    [agentLayout],
-  );
   const {
     shellStyle,
     startAgentBottomPanelResize,
     startAgentRightPanelResize,
     startBottomPanelResize,
     startSidebarResize,
-  } = useWorkbenchResizeHandles({
-    layout: agentLayout.layout,
-    onResizeRightPanel: resizeAgentRightPanel,
-    onResizeBottomPanel: resizeAgentBottomPanel,
-  });
+  } = useWorkbenchResizeHandles(useAgentPanelResizeCommit(agentLayout));
   const collapseEditor = useAgentEditorCollapse(agentLayout);
   const shellPlacement = workbenchShellPlacement({
     bottomPanelVisible: workbench.bottomPanelVisible,
@@ -1049,12 +1039,16 @@ function App() {
     transientWidgetDismissKey: transientEditorWidgetDismissKey,
     workspaceTrusted,
   });
+  const appShellStyle = useMemo(
+    () => appShellTypeScaleStyle(workbench.appSettings.agentThreadFontSize, shellStyle),
+    [shellStyle, workbench.appSettings.agentThreadFontSize],
+  );
 
   return (
     <main
       className={appShellClassName(workbench.agentModeActive, workbench.settingsOpen)}
       data-theme={workbench.appSettings.theme}
-      style={shellStyle}
+      style={appShellStyle}
     >
       <WindowChrome
         appTitle={windowTitle}

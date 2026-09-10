@@ -97,7 +97,7 @@ describe("AgentThreadsSidebar", () => {
     expect(AGENT_MODE_CSS).toContain("@media (max-width: 560px)");
   });
 
-  it("pins the Airy rail metrics: 44px chrome, two-column head and 78px cards", () => {
+  it("pins the Airy rail metrics: 44px chrome, two-column head and scaled 78px cards", () => {
     expect(cssRule("\n.agent-rail {")).toContain("background: var(--codevo-side)");
     expect(cssRule("\n.agent-rail {")).toContain("padding: 0 6px 8px");
     expect(cssRule("\n.agent-rail {")).not.toContain("border");
@@ -110,17 +110,19 @@ describe("AgentThreadsSidebar", () => {
     expect(cssRule("\n.agent-rail__scroll {")).toContain("padding: 6px 4px 4px");
     expect(cssRule(".agent-iconbutton {")).toContain("width: 32px");
     expect(cssRule(".agent-iconbutton {")).toContain("border-radius: var(--codevo-r-sm)");
-    expect(cssRule(".agent-search {")).toContain("height: 30px");
+    expect(cssRule(".agent-search {")).toContain("height: calc(30px * var(--codevo-fs-scale))");
     expect(cssRule(".agent-search {")).toContain("border-radius: var(--codevo-r-sm)");
     expect(cssRule(".agent-search {")).toContain("background: var(--codevo-raised)");
-    expect(cssRule(".agent-scope .agent-picker__trigger {")).toContain("height: 30px");
+    expect(cssRule(".agent-scope .agent-picker__trigger {")).toContain(
+      "height: calc(30px * var(--codevo-fs-scale))",
+    );
     expect(cssRule(".agent-scope .agent-picker__trigger {")).toContain("background: transparent");
     expect(cssRule(".agent-row {")).toContain("border-radius: var(--codevo-r-md)");
     expect(cssRule(".agent-row:hover {")).toContain("background: var(--codevo-hover)");
     const on = cssRule(".agent-row--selected,\n.agent-row--on,\n.agent-row--on:hover {");
     expect(on).toContain("background: var(--codevo-raised)");
     expect(on).toContain("box-shadow: var(--codevo-shadow-card)");
-    expect(cssRule(".agent-row--card {")).toContain("height: 78px");
+    expect(cssRule(".agent-row--card {")).toContain("height: calc(78px * var(--codevo-fs-scale))");
     expect(cssRule(".agent-row--card {")).toContain("border-radius: var(--codevo-r-md)");
     expect(cssRule(".agent-row--card {")).toContain("padding: var(--agent-row-pad)");
     expect(cssRule(".agent-row__project {")).toContain("color: var(--codevo-fg-muted)");
@@ -143,7 +145,7 @@ describe("AgentThreadsSidebar", () => {
     }
   });
 
-  it("floats the rail menus as raised 12px sheets with 30px rows and tone separators", () => {
+  it("floats the rail menus as raised 12px sheets with scaled 30px rows and tone separators", () => {
     const menu = cssRule(".agent-menu.agent-scope-menu__menu,\n.agent-menu.agent-row-menu {");
     expect(menu).toContain("border-radius: var(--codevo-r-lg)");
     expect(menu).toContain("background: var(--codevo-raised)");
@@ -151,7 +153,7 @@ describe("AgentThreadsSidebar", () => {
     const item = cssRule(
       ".agent-scope-menu__menu .agent-menu__item,\n.agent-row-menu .agent-menu__item {",
     );
-    expect(item).toContain("min-height: 30px");
+    expect(item).toContain("min-height: calc(30px * var(--codevo-fs-scale))");
     expect(item).toContain("border-radius: 7px");
     const highlight = cssRule(
       ".agent-scope-menu__menu .agent-menu__item:hover:not(:disabled),\n.agent-scope-menu__menu .agent-menu__item:focus-visible,\n.agent-row-menu .agent-menu__item:hover:not(:disabled),\n.agent-row-menu .agent-menu__item:focus-visible {",
@@ -182,7 +184,9 @@ describe("AgentThreadsSidebar", () => {
     expect(palette).toContain("box-shadow: var(--codevo-shadow-float)");
     expect(cssRule(".agent-thread-palette .palette-search {")).toContain("border-bottom: 0");
     expect(cssRule(".agent-thread-palette .palette-search input {")).toContain("height: 46px");
-    expect(cssRule(".agent-search-row {")).toContain("min-height: 32px");
+    expect(cssRule(".agent-search-row {")).toContain(
+      "min-height: calc(32px * var(--codevo-fs-scale))",
+    );
     expect(cssRule(".agent-search-row--active {")).toContain("background: var(--codevo-hover)");
     expect(cssRule(".agent-search-row--active {")).not.toContain("box-shadow");
     const mark = cssRule(".agent-search-row__title mark,\n.agent-search-row__snippet mark {");
@@ -190,8 +194,10 @@ describe("AgentThreadsSidebar", () => {
     expect(mark).toContain("background: transparent");
   });
 
-  it("keeps the footer icon-only, 44px and without a top rule", () => {
-    expect(cssRule("\n.agent-provider-footer {")).toContain("min-height: 44px");
+  it("keeps the footer icon-only, scaled from 44px and without a top rule", () => {
+    expect(cssRule("\n.agent-provider-footer {")).toContain(
+      "min-height: calc(44px * var(--codevo-fs-scale))",
+    );
     expect(cssRule("\n.agent-provider-footer {")).not.toContain("border");
     expect(cssRule(".agent-provider-footer__navigation .agent-iconbutton {")).toContain(
       "width: 28px",
@@ -210,7 +216,7 @@ describe("AgentThreadsSidebar", () => {
     expect(cssRule(".agent-provider-footer__providers {")).toContain("align-items: stretch");
     const pill = cssRule("\n.agent-provider-footer__pill {");
     expect(pill).toContain("width: 100%");
-    expect(pill).toContain("min-height: 30px");
+    expect(pill).toContain("min-height: calc(30px * var(--codevo-fs-scale))");
     expect(pill).toContain("border: none");
     expect(pill).toContain("border-radius: var(--codevo-r-sm)");
     expect(pill).toContain("font-size: var(--codevo-fs-meta)");

@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_AGENT_CLI_KIND,
   DEFAULT_AGENT_ISOLATION_POLICY,
+  DEFAULT_AGENT_THREAD_FONT_SIZE,
   DEFAULT_MAX_CONCURRENT_AGENT_TASKS,
   MAX_AGENT_CLI_PATH_BYTES,
+  MAX_AGENT_THREAD_FONT_SIZE,
+  MIN_AGENT_THREAD_FONT_SIZE,
   activeAgentCliPath,
+  agentThreadTypeScale,
   agentCliExecutablePresentation,
   agentCliInstallCommand,
   agentCliPathValidation,
@@ -18,6 +22,7 @@ import {
   normalizeAgentModelFavoritesRevision,
   normalizeAgentModelFavoritesSnapshot,
   normalizeAgentIsolationPolicy,
+  normalizeAgentThreadFontSize,
   normalizeMaxConcurrentAgentTasks,
   nextAgentModelFavoritesRevision,
 } from "./agentSettings";
@@ -29,6 +34,7 @@ describe("defaultAgentAppSettings", () => {
       agentCliPaths: { claudeCode: null, codex: null },
       agentCliKind: "claudeCode",
       agentAppearanceVariant: "current",
+      agentThreadFontSize: 15,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
       agentProviderPreferences: defaultAgentProviderPreferences(),
@@ -44,6 +50,61 @@ describe("defaultAgentAppSettings", () => {
     expect(DEFAULT_AGENT_CLI_KIND).toBe("claudeCode");
     expect(DEFAULT_AGENT_ISOLATION_POLICY).toBe("auto");
     expect(DEFAULT_MAX_CONCURRENT_AGENT_TASKS).toBe(64);
+    expect(DEFAULT_AGENT_THREAD_FONT_SIZE).toBe(15);
+    expect(MIN_AGENT_THREAD_FONT_SIZE).toBe(12);
+    expect(MAX_AGENT_THREAD_FONT_SIZE).toBe(20);
+  });
+});
+
+describe("normalizeAgentThreadFontSize", () => {
+  it("keeps every size inside the supported range", () => {
+    expect(normalizeAgentThreadFontSize(12)).toBe(12);
+    expect(normalizeAgentThreadFontSize(15)).toBe(15);
+    expect(normalizeAgentThreadFontSize(20)).toBe(20);
+  });
+
+  it("clamps a size that falls outside the range instead of failing", () => {
+    expect(normalizeAgentThreadFontSize(11)).toBe(12);
+    expect(normalizeAgentThreadFontSize(-40)).toBe(12);
+    expect(normalizeAgentThreadFontSize(21)).toBe(20);
+    expect(normalizeAgentThreadFontSize(4_096)).toBe(20);
+  });
+
+  it("floors a fractional size onto the integer ladder", () => {
+    expect(normalizeAgentThreadFontSize(16.9)).toBe(16);
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["a string", "16"],
+    ["a boolean", true],
+    ["an object", { size: 16 }],
+    ["an array", [16]],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["negative Infinity", Number.NEGATIVE_INFINITY],
+  ])("falls back to the default for %s", (_label, value) => {
+    expect(normalizeAgentThreadFontSize(value)).toBe(15);
+  });
+});
+
+describe("agentThreadTypeScale", () => {
+  it("leaves the shipped default unscaled", () => {
+    expect(agentThreadTypeScale(15)).toBe(1);
+  });
+
+  it("stays inside the bounded multiplier range", () => {
+    expect(agentThreadTypeScale(12)).toBe(0.8);
+    expect(agentThreadTypeScale(20)).toBe(1.333);
+    expect(agentThreadTypeScale(4_096)).toBe(1.333);
+    expect(agentThreadTypeScale(-1)).toBe(0.8);
+  });
+
+  it("falls back to the unscaled ladder for malformed input", () => {
+    expect(agentThreadTypeScale(undefined)).toBe(1);
+    expect(agentThreadTypeScale("18")).toBe(1);
+    expect(agentThreadTypeScale(Number.NaN)).toBe(1);
   });
 });
 

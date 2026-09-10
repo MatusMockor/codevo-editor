@@ -1,4 +1,5 @@
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import { SettingsExitButton } from "./SettingsExitButton";
 import { SETTINGS_SECTIONS, type SettingsSectionId } from "./settingsRegistry";
 import { settingsSectionTabId } from "./settingsScreenIds";
 
@@ -8,11 +9,13 @@ export interface SettingsSectionSidebarProps {
   readonly results: ReactNode;
   readonly search: ReactNode;
   readonly searching: boolean;
+  onExit(): void;
   onSelectSection(section: SettingsSectionId): void;
 }
 
 export function SettingsSectionSidebar({
   activeSection,
+  onExit,
   onSelectSection,
   panelId,
   results,
@@ -41,6 +44,7 @@ export function SettingsSectionSidebar({
 
   return (
     <div className="settings-screen__sidebar">
+      <SettingsExitButton onExit={onExit} />
       {search}
       {results}
       <div

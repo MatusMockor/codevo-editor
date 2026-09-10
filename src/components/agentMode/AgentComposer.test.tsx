@@ -306,7 +306,7 @@ describe("AgentComposer", () => {
   it("shows the thread's checkout as a locked chip in follow-up mode", () => {
     render({
       isolation: "worktree",
-      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+      mode: { kind: "followUp", blockedReason: null },
     });
 
     expect(host.querySelector(`#${CHECKOUT_ID}`)).toBeNull();
@@ -319,26 +319,19 @@ describe("AgentComposer", () => {
     expect(host.querySelector(".agent-composer__box")?.lastElementChild).toBe(footer);
   });
 
-  it("keeps the reply context line and the escape to a new thread", () => {
-    const onNewThread = vi.fn();
+  it("never repeats the thread title or a new-thread button above the prompt in follow-up mode", () => {
     render({
-      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
-      onNewThread,
+      mode: { kind: "followUp", blockedReason: null },
     });
 
-    const context = host.querySelector(".agent-composer__context");
     expect(host.querySelector('form[aria-label="Follow up on agent thread"]')).not.toBeNull();
-    expect(context?.textContent).toContain("Replying in");
-    expect(context?.querySelector(".agent-composer__chip--thread")?.textContent).toBe(
-      "Refactor the parser",
-    );
+    expect(host.textContent).not.toContain("Replying in");
+    expect(host.textContent).not.toContain("New thread");
+    expect(host.querySelector(".agent-composer__context")).toBeNull();
+    expect(host.querySelector(".agent-composer__chip--thread")).toBeNull();
+    expect(host.querySelector(".agent-composer__new")).toBeNull();
     expect(submitButton().getAttribute("aria-label")).toBe("Send follow-up");
-
-    const escape = context?.querySelector<HTMLButtonElement>(".agent-composer__new");
-    expect(escape).not.toBeNull();
-    act(() => escape?.click());
-
-    expect(onNewThread).toHaveBeenCalledTimes(1);
+    expect(host.querySelector(".agent-composer__box")?.firstElementChild?.tagName).toBe("LABEL");
   });
 
   it("keeps the model picker inline and moves secondary controls into overflow below 560px", () => {
@@ -424,7 +417,7 @@ describe("AgentComposer", () => {
     stubMatchMedia(true);
     render({
       isolation: "worktree",
-      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+      mode: { kind: "followUp", blockedReason: null },
     });
 
     expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Isolated worktree");
@@ -494,7 +487,7 @@ describe("AgentComposer", () => {
     render({
       guard: { kind: "unsafe", reasons: ["dirty-tree"] },
       isolation: "in-place",
-      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+      mode: { kind: "followUp", blockedReason: null },
     });
 
     expect(host.textContent).not.toContain("Running in place can overwrite your work");
@@ -528,7 +521,7 @@ describe("AgentComposer", () => {
 
     render({
       dispatching: true,
-      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+      mode: { kind: "followUp", blockedReason: null },
       submitBlocked: true,
     });
 
@@ -541,7 +534,6 @@ describe("AgentComposer", () => {
     render({
       mode: {
         kind: "followUp",
-        threadTitle: "Refactor the parser",
         blockedReason: "This thread has no resumable session; start a new thread.",
       },
       onSubmit,
@@ -575,7 +567,7 @@ describe("AgentComposer", () => {
     render({
       launch: { provider: "codex", model: "gpt-5.5", mode: "readOnly" },
       launchProvider: "codex",
-      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+      mode: { kind: "followUp", blockedReason: null },
     });
 
     expect(pickerValue("agent-launch-model")).toBe("gpt-5.5");
@@ -676,7 +668,7 @@ describe("AgentComposer", () => {
     const onSubmit = vi.fn();
     render({
       launch: { provider: "claudeCode", model: "sonnet", mode: "acceptEdits", effort: "max" },
-      mode: { kind: "followUp", threadTitle: "Refactor the parser", blockedReason: null },
+      mode: { kind: "followUp", blockedReason: null },
       onSubmit,
       prompt: "Also update the tests",
     });
@@ -699,7 +691,7 @@ describe("AgentComposer", () => {
     const onCompactContext = vi.fn();
     render({
       compactionOffer: { key: "agt-1:1:120000", contextTokens: 120_000 },
-      mode: { kind: "followUp", threadTitle: "Long task", blockedReason: null },
+      mode: { kind: "followUp", blockedReason: null },
       onCompactContext,
     });
 
@@ -829,7 +821,9 @@ describe("AgentComposer Airy styling contract", () => {
     expect(cssRule(css, "\n.agent-composer__textarea {")).toContain(
       "font-size: var(--codevo-fs-body)",
     );
-    expect(cssRule(css, "\n.agent-composer__context {")).not.toContain("border-bottom");
+    expect(css).not.toContain(".agent-composer__context");
+    expect(css).not.toContain(".agent-composer__chip");
+    expect(css).not.toContain(".agent-composer__new");
     expect(cssRule(css, "\n.agent-composer__reason {")).not.toContain("border-top");
   });
 
@@ -853,9 +847,9 @@ describe("AgentComposer Airy styling contract", () => {
     expect(css).not.toContain(".agent-composer__kbd");
   });
 
-  it("keeps ghost pickers at 28px on radius 8 with the hover tone and a tone divider", () => {
+  it("scales ghost pickers from the 28px step on radius 8 with the hover tone and a tone divider", () => {
     const ghost = cssRule(css, "\n.agent-picker__trigger--ghost {");
-    expect(ghost).toContain("height: 28px");
+    expect(ghost).toContain("height: calc(28px * var(--codevo-fs-scale))");
     expect(ghost).toContain("font-size: 13px");
     expect(ghost).toContain("border-radius: var(--agent-radius-sm)");
     expect(cssRule(css, "\n.agent-picker__trigger--ghost:hover:not(:disabled) {")).toContain(
@@ -865,11 +859,10 @@ describe("AgentComposer Airy styling contract", () => {
       css,
       "\n.agent-composer__footer .agent-picker__trigger--ghost,\n.agent-composer__lock {",
     );
-    expect(footerGhost).toContain("height: 28px");
+    expect(footerGhost).toContain("height: calc(28px * var(--codevo-fs-scale))");
     expect(footerGhost).toContain("border-radius: var(--agent-radius-sm)");
     expect(footerGhost).not.toContain("border:");
     expect(css).toMatch(/\n\.agent-composer__lock \{[^}]*background: var\(--agent-well\)/);
-    expect(cssRule(css, "\n.agent-composer__chip {")).toContain("background: var(--agent-well)");
     const divider = cssRule(css, "\n.agent-composer__divider {");
     expect(divider).toContain("height: 16px");
     expect(divider).toContain("background: var(--agent-hover)");

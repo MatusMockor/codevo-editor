@@ -300,7 +300,7 @@
 }
 
 .agent-usage-panel__periods button {
-  height: 28px;
+  height: calc(28px * var(--codevo-fs-scale));
   border: 0;
   border-radius: var(--agent-radius-sm);
   background: transparent;

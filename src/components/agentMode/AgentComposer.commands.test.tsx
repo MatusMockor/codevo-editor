@@ -136,7 +136,7 @@ describe("composer command integration", () => {
   });
 
   it("prepares compaction then explicitly submits it exactly once", () => {
-    props = { ...props, mode: { kind: "followUp", threadTitle: "Existing", blockedReason: null } };
+    props = { ...props, mode: { kind: "followUp", blockedReason: null } };
     mount("/compact");
     key("Enter");
     expect(textarea().value).toBe("/compact ");
@@ -178,7 +178,7 @@ describe("composer command integration", () => {
       ...props,
       launchProvider: "codex",
       launch: { provider: "codex", model: "default", mode: "default" },
-      mode: { kind: "followUp", threadTitle: "Existing", blockedReason: null },
+      mode: { kind: "followUp", blockedReason: null },
     };
     mount("/");
     const list = document.querySelector('[role="listbox"][aria-label="Composer commands"]');
@@ -192,7 +192,7 @@ describe("composer command integration", () => {
   it("never starts compaction while the selected thread blocks new turns", () => {
     props = {
       ...props,
-      mode: { kind: "followUp", threadTitle: "Working", blockedReason: "A turn is running." },
+      mode: { kind: "followUp", blockedReason: "A turn is running." },
     };
     mount("/compact");
     key("Enter", { metaKey: true });

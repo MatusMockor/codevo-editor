@@ -144,6 +144,13 @@ export const SETTINGS_ROW_TABLE = [
     ["agent", "variant", "graphite", "paper", "studio"],
   ),
   row(
+    "appearance.agentThreadFontSize",
+    "appearance",
+    "Agent thread text size",
+    "Thread body text size in pixels. The whole agent workbench type scale follows it.",
+    ["agent", "thread", "text size", "font size", "scale", "zoom"],
+  ),
+  row(
     "appearance.editorFontFamily",
     "appearance",
     "Editor font family",
