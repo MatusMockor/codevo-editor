@@ -95,7 +95,7 @@ function lightboxEntry(
     items: ordered.map((view) => lightboxRequest(owner, view)),
     index: position === -1 ? 0 : position,
     origin,
-    host: origin.closest(".app-shell") ?? document.body,
+    host: origin.closest(".workbench-frame") ?? document.body,
   };
 }
 

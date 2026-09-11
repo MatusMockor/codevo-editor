@@ -77,7 +77,7 @@ describe("agent attachment lightbox", () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     host = document.createElement("div");
     shell = document.createElement("div");
-    shell.className = "app-shell";
+    shell.className = "workbench-frame";
     host.append(shell);
     document.body.append(host);
     root = createRoot(shell);
@@ -88,7 +88,7 @@ describe("agent attachment lightbox", () => {
     host.remove();
   });
 
-  it("opens the clicked image over the app shell from the same object URL, outside the transcript", () => {
+  it("opens the clicked image inside the workbench frame token scope from the same object URL, outside the transcript", () => {
     const onRevealAttachment = vi.fn();
     render({ attachmentImages: readySurface(), onRevealAttachment });
     const chainBefore = scrollerChain();
