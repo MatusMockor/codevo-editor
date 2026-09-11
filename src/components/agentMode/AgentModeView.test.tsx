@@ -31,7 +31,11 @@ import {
 } from "./agentWorkbenchChromeTestFixtures";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { agentCompactTimeLabel, agentRailScopeValue } from "./agentSidebarPresentation";
-import { externalSessionsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
+import {
+  attachmentImagesSurfaceFixture,
+  composerAttachmentsSurfaceFixture,
+  externalSessionsSurfaceFixture,
+} from "./agentThreadsSurfaceTestFixtures";
 import type { ExternalAgentSessionView } from "../../domain/externalAgentSession";
 import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
@@ -3205,6 +3209,9 @@ function externalSessionView(
 
 function surface(overrides: Partial<AgentModeViewProps["agents"]>): AgentModeViewProps["agents"] {
   return {
+    attachments: composerAttachmentsSurfaceFixture(),
+    attachmentImages: attachmentImagesSurfaceFixture(),
+    revealAttachment: async () => undefined,
     threads: [],
     repositories: [repository(ROOT, ""), repository(NESTED, "packages/api")],
     orphanedWorktrees: [],

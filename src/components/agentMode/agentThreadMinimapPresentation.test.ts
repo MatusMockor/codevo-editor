@@ -5,6 +5,7 @@ import { agentImportedTurns } from "./agentImportedPresentation";
 import { agentThreadColumnKey } from "./agentThreadColumn";
 import {
   AGENT_MINIMAP_DENSE_TURNS,
+  AGENT_MINIMAP_IMAGE_ONLY_LABEL,
   AGENT_MINIMAP_SOURCE_CHARS,
   AGENT_MINIMAP_NAME_CHARS,
   AGENT_MINIMAP_PREVIEW_CHARS,
@@ -33,6 +34,29 @@ describe("agent thread minimap presentation", () => {
     expect(model.entries[1]?.name).toBe("Turn 2 of 2: Add a Vitest case for wrapIndex");
     expect(model.entries[0]?.caption).toBe("turn 1");
     expect(model.entries[0]?.anchor).toEqual({ scope: "turn", turnId: "t1" });
+  });
+
+  it("names a turn by its displayed prompt, never by a hidden image store line", () => {
+    const line = '[Attached image "shot.png" is saved at: /store/threads/agt-1/aa.png]';
+    const model = agentThreadMinimapModel(
+      imported([user(`imported ask\n\n${line}`), assistant("ok"), user(line)]),
+      thread([
+        `napis ahoj\n\n${line}`,
+        line,
+        `see\n\n[Attached file "n.txt" is saved at: /s/n.txt]`,
+      ]),
+    );
+
+    expect(model.entries.map((entry) => entry.name)).toEqual([
+      "Turn 1 of 5: imported ask",
+      `Turn 2 of 5: ${AGENT_MINIMAP_IMAGE_ONLY_LABEL}`,
+      "Turn 3 of 5: napis ahoj",
+      `Turn 4 of 5: ${AGENT_MINIMAP_IMAGE_ONLY_LABEL}`,
+      'Turn 5 of 5: see [Attached file "n.txt" is saved at: /s/n.txt]',
+    ]);
+    expect(model.entries.map((entry) => entry.preview)).not.toContain(
+      expect.stringContaining("aa.png"),
+    );
   });
 
   it("returns the shared empty model for a thread with no turns", () => {

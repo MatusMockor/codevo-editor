@@ -319,6 +319,13 @@ export function AgentModeView({
   const openSurfaceCommand = useAgentLatestCallback(openSurface);
   const toggleRightPanelCommand = useAgentLatestCallback(toggleRightPanel);
   const revealFailed = useCallback(() => setLocalNotice(REVEAL_FAILED_NOTICE), []);
+  const revealAgentAttachment = agents.revealAttachment;
+  const revealAttachment = useCallback(
+    (threadId: string, attachmentId: string): void => {
+      void revealAgentAttachment(threadId, attachmentId);
+    },
+    [revealAgentAttachment],
+  );
 
   const navigationCommands = navigation.commands;
   const surfaceBlocked = surface.surfaceBlocked;
@@ -552,6 +559,8 @@ export function AgentModeView({
                 thread={selectedThread}
               />
               <AgentThreadSession
+                attachmentImages={agents.attachmentImages}
+                onRevealAttachment={revealAttachment}
                 findBar={
                   find.open ? (
                     <AgentThreadFindBar

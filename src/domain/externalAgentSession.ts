@@ -1,3 +1,12 @@
+import {
+  MAX_AGENT_ATTACHMENT_NAME_BYTES,
+  MAX_AGENT_ATTACHMENT_PATH_BYTES,
+  MAX_AGENT_TURN_ATTACHMENTS,
+  isAgentAttachmentName,
+  isAgentAttachmentPath,
+  isAgentImageMime,
+  type AgentImageMime,
+} from "./agentAttachment";
 import { MAX_AGENT_TASK_PATH_BYTES, type AgentCliKind } from "./agentTask";
 import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 
@@ -15,7 +24,20 @@ export const MAX_EXTERNAL_SESSION_FILE_BYTES = 64 * 1_024 * 1_024 * 1_024;
 export const EXTERNAL_AGENT_SESSION_ID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
+export const MAX_EXTERNAL_SESSION_EXCHANGE_ATTACHMENTS = MAX_AGENT_TURN_ATTACHMENTS;
+export const MAX_EXTERNAL_SESSION_ATTACHMENT_NAME_BYTES = MAX_AGENT_ATTACHMENT_NAME_BYTES;
+export const MAX_EXTERNAL_SESSION_ATTACHMENT_PATH_BYTES = MAX_AGENT_ATTACHMENT_PATH_BYTES;
+
 export type ExternalSessionExchangeRole = "user" | "assistant";
+
+export type ExternalSessionAttachment =
+  | {
+      readonly kind: "image";
+      readonly mime: AgentImageMime;
+      readonly name?: string;
+      readonly path?: string;
+    }
+  | { readonly kind: "file"; readonly name: string; readonly path?: string };
 
 export interface ExternalAgentSessionSummary {
   readonly provider: AgentCliKind;
@@ -43,6 +65,7 @@ export interface ExternalSessionListSnapshot {
 export interface ExternalSessionExchange {
   readonly role: ExternalSessionExchangeRole;
   readonly text: string;
+  readonly attachments?: ReadonlyArray<ExternalSessionAttachment>;
 }
 
 export interface ExternalAgentSessionPreview {
@@ -209,19 +232,16 @@ function parseSessionTranscript(
     path,
   );
   const exchanges = parseExchanges(preview.exchanges, `${path}.exchanges`, maximumExchanges);
-  const actualBytes = exchanges.reduce(
-    (total, exchange) => total + UTF8_ENCODER.encode(exchange.text).byteLength,
-    0,
-  );
+  const actualBytes = exchanges.reduce((total, exchange) => total + exchangeBytes(exchange), 0);
   if (actualBytes > maximumBytes)
-    invalid(`${path}.exchanges`, `at most ${maximumBytes} total text bytes`);
+    invalid(`${path}.exchanges`, `at most ${maximumBytes} total text and attachment bytes`);
   const totalPreviewBytes = boundedCount(
     preview.totalPreviewBytes,
     `${path}.totalPreviewBytes`,
     maximumBytes,
   );
   if (maximumExchanges === MAX_HISTORY_EXCHANGES && totalPreviewBytes !== actualBytes) {
-    invalid(`${path}.totalPreviewBytes`, "the actual total UTF-8 text bytes");
+    invalid(`${path}.totalPreviewBytes`, "the actual total UTF-8 text and attachment bytes");
   }
   return {
     provider: validateExternalSessionProvider(preview.provider, `${path}.provider`),
@@ -254,16 +274,107 @@ function parseExchanges(
   if (!Array.isArray(value) || value.length > maximum) {
     invalid(path, `an array of at most ${maximum} exchanges`);
   }
-  return value.map((candidate, index) => parseExchange(candidate, `${path}[${index}]`));
+  return value.map((candidate, index) =>
+    parseExternalSessionExchange(candidate, `${path}[${index}]`),
+  );
 }
 
-function parseExchange(value: unknown, path: string): ExternalSessionExchange {
+export function parseExternalSessionExchange(
+  value: unknown,
+  path = "externalSessionExchange",
+): ExternalSessionExchange {
   const exchange = record(value, path);
-  exactKeys(exchange, ["role", "text"], path);
+  boundedKeys(exchange, ["role", "text"], ["attachments"], path);
+  const attachments = parseExchangeAttachments(exchange.attachments);
   return {
     role: exchangeRole(exchange.role, `${path}.role`),
     text: boundedMultilineText(exchange.text, `${path}.text`, MAX_EXTERNAL_SESSION_TEXT_BYTES),
+    ...(attachments === undefined ? {} : { attachments }),
   };
+}
+
+function parseExchangeAttachments(
+  value: unknown,
+): ReadonlyArray<ExternalSessionAttachment> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const attachments = value
+    .flatMap((candidate) => {
+      const attachment = parseExchangeAttachment(candidate);
+      return attachment === null ? [] : [attachment];
+    })
+    .slice(0, MAX_EXTERNAL_SESSION_EXCHANGE_ATTACHMENTS);
+  return attachments.length === 0 ? undefined : attachments;
+}
+
+function parseExchangeAttachment(value: unknown): ExternalSessionAttachment | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === "image") return imageAttachment(value);
+  if (value.kind === "file") return fileAttachment(value);
+  return null;
+}
+
+function imageAttachment(value: Record<string, unknown>): ExternalSessionAttachment | null {
+  if (!hasBoundedKeys(value, ["kind", "mime"], ["name", "path"])) return null;
+  if (!isAgentImageMime(value.mime)) return null;
+  if (value.name !== undefined && !isAttachmentName(value.name)) return null;
+  const path = attachmentPath(value.path);
+  if (path === null) return null;
+  return {
+    kind: "image",
+    mime: value.mime,
+    ...(value.name === undefined ? {} : { name: value.name }),
+    ...(path === undefined ? {} : { path }),
+  };
+}
+
+function exchangeBytes(exchange: ExternalSessionExchange): number {
+  return (
+    utf8Bytes(exchange.text) +
+    (exchange.attachments ?? []).reduce(
+      (total, attachment) => total + attachmentBytes(attachment),
+      0,
+    )
+  );
+}
+
+function attachmentBytes(attachment: ExternalSessionAttachment): number {
+  return utf8Bytes(attachment.name ?? "") + utf8Bytes(attachment.path ?? "");
+}
+
+function utf8Bytes(value: string): number {
+  return UTF8_ENCODER.encode(value).byteLength;
+}
+
+function fileAttachment(value: Record<string, unknown>): ExternalSessionAttachment | null {
+  if (!hasBoundedKeys(value, ["kind", "name"], ["path"])) return null;
+  if (!isAttachmentName(value.name)) return null;
+  const path = attachmentPath(value.path);
+  if (path === null) return null;
+  if (path === undefined) return { kind: "file", name: value.name };
+  return { kind: "file", name: value.name, path };
+}
+
+function isAttachmentName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value !== "" &&
+    !CONTROL_CHARACTERS.test(value) &&
+    isAgentAttachmentName(value) &&
+    UTF8_ENCODER.encode(value).byteLength <= MAX_EXTERNAL_SESSION_ATTACHMENT_NAME_BYTES
+  );
+}
+
+function attachmentPath(value: unknown): string | undefined | null {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" ||
+    CONTROL_CHARACTERS.test(value) ||
+    !isAgentAttachmentPath(value) ||
+    UTF8_ENCODER.encode(value).byteLength > MAX_EXTERNAL_SESSION_ATTACHMENT_PATH_BYTES
+  ) {
+    return null;
+  }
+  return value;
 }
 
 function exchangeRole(value: unknown, path: string): ExternalSessionExchangeRole {
@@ -312,6 +423,28 @@ function boundedMultilineText(value: unknown, path: string, maxBytes: number): s
   return value;
 }
 
+function boundedKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  path: string,
+): void {
+  if (hasBoundedKeys(value, required, optional)) return;
+  invalid(path, `the fields ${required.join(", ")} and optionally ${optional.join(", ")}`);
+}
+
+function hasBoundedKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+): boolean {
+  const actual = Object.keys(value);
+  return (
+    required.every((key) => actual.includes(key)) &&
+    actual.every((key) => required.includes(key) || optional.includes(key))
+  );
+}
+
 function exactKeys(
   value: Record<string, unknown>,
   expected: readonly string[],
@@ -324,10 +457,12 @@ function exactKeys(
 }
 
 function record(value: unknown, path: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    invalid(path, "an object");
-  }
-  return value as Record<string, unknown>;
+  if (!isRecord(value)) invalid(path, "an object");
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function invalid(path: string, expectation: string): never {

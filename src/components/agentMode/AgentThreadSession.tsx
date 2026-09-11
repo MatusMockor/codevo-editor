@@ -10,6 +10,7 @@ import {
 } from "react";
 import { ChevronDown } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { AgentAttachmentImagesSurface } from "../../application/useAgentAttachmentImages";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
@@ -30,6 +31,9 @@ import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { AgentImportedHistory, type AgentExternalHistoryState } from "./AgentImportedHistory";
 import { AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
+import type { AgentTurnAttachmentImagePort } from "./AgentTurnAttachments";
+import { agentTurnAttachmentViews } from "./agentTurnAttachmentPresentation";
+import { useAgentTurnAttachmentImagePort } from "./useAgentTurnAttachmentImages";
 import { agentTurnTiming } from "./agentTurnHeadPresentation";
 import {
   AgentAssistantText,
@@ -104,6 +108,8 @@ export interface AgentThreadSessionProps {
   readonly markdownViewport?: AgentMarkdownViewport | null;
   readonly openExternalLink?: AgentExternalLinkOpener;
   readonly externalHistoryState?: AgentExternalHistoryState;
+  readonly attachmentImages?: AgentAttachmentImagesSurface | null;
+  readonly onRevealAttachment?: (threadId: string, attachmentId: string) => void;
   readonly onRetryExternalHistory?: () => void;
   onReviewInDiff(threadId: string): void;
 }
@@ -122,6 +128,8 @@ type AgentThreadSessionBodyProps = AgentThreadSessionProps & {
 };
 
 function AgentThreadSessionBody({
+  attachmentImages = null,
+  onRevealAttachment,
   findBar = null,
   findHitIndex,
   findHits,
@@ -141,6 +149,15 @@ function AgentThreadSessionBody({
 }: AgentThreadSessionBodyProps) {
   const record = thread.thread;
   const threadId = record.threadId;
+  const attachmentOwner = useMemo(
+    () => ({ workspaceId: record.owner.ownerId, threadId }),
+    [record.owner.ownerId, threadId],
+  );
+  const attachmentImagePort = useAgentTurnAttachmentImagePort(
+    attachmentImages,
+    onRevealAttachment ?? null,
+    attachmentOwner,
+  );
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pinnedToLatestRef = useRef(true);
   const renderedTurnRef = useRef<{ readonly threadId: string; readonly turnId: string | null }>({
@@ -261,6 +278,10 @@ function AgentThreadSessionBody({
   const minimapStripWidth = agentMinimapHitStripWidth(sessionWidth);
   const importedExchanges = record.externalOrigin?.history?.exchanges ?? NO_EXCHANGES;
   const importedTurns = useMemo(() => agentImportedTurns(importedExchanges), [importedExchanges]);
+  const importedCarriesAttachments = useMemo(
+    () => importedTurns.some((turn) => (turn.prompt?.attachments.length ?? 0) > 0),
+    [importedTurns],
+  );
   const minimap = useMemo(
     () => agentThreadMinimapModel(importedTurns, record.turns),
     [importedTurns, record.turns],
@@ -281,7 +302,7 @@ function AgentThreadSessionBody({
     if (entry === null) return;
     pinnedToLatestRef.current = false;
     entry.scrollIntoView?.({ block: "start" });
-    entry.querySelector<HTMLElement>(".agent-prompt__body")?.focus({ preventScroll: true });
+    entry.querySelector<HTMLElement>(".agent-prompt__bubble")?.focus({ preventScroll: true });
   }, []);
 
   const highlightFor = (turnIdentity: string): AgentTurnHighlight | null => {
@@ -326,6 +347,7 @@ function AgentThreadSessionBody({
 
           {record.externalOrigin != null && (
             <AgentImportedHistory
+              attachmentImages={importedCarriesAttachments ? attachmentImagePort : null}
               highlights={importedHighlights}
               history={record.externalOrigin.history}
               key={`${threadId}:${record.externalOrigin.sessionId}`}
@@ -339,6 +361,9 @@ function AgentThreadSessionBody({
           <div className="agent-turn-list">
             {record.turns.map((turn) => (
               <AgentTurnView
+                attachmentImages={
+                  (turn.attachments?.length ?? 0) === 0 ? null : attachmentImagePort
+                }
                 highlight={highlightFor(turn.turnId)}
                 key={turn.turnId}
                 prose={prose}
@@ -372,6 +397,7 @@ function AgentThreadSessionBody({
 }
 
 const AgentTurnView = memo(function AgentTurnView({
+  attachmentImages = null,
   highlight = null,
   prose,
   provider,
@@ -379,6 +405,7 @@ const AgentTurnView = memo(function AgentTurnView({
   textClipboard,
   turn,
 }: {
+  readonly attachmentImages?: AgentTurnAttachmentImagePort | null;
   readonly highlight?: AgentTurnHighlight | null;
   readonly prose: AgentProseContext;
   readonly provider: AgentCliKind;
@@ -387,6 +414,7 @@ const AgentTurnView = memo(function AgentTurnView({
   readonly turn: AgentTurn;
 }) {
   renderProbe?.(turn.turnId);
+  const attachments = useMemo(() => agentTurnAttachmentViews(turn.attachments), [turn.attachments]);
   const projection = agentTurnProjection(turn.events);
   const subagents = agentTurnSubagentSummary(turn.events);
   const running = turn.status.kind === "pending" || turn.status.kind === "running";
@@ -420,6 +448,8 @@ const AgentTurnView = memo(function AgentTurnView({
       data-agent-turn={turn.turnId}
     >
       <AgentTurnPrompt
+        attachmentImages={attachmentImages}
+        attachments={attachments}
         current={promptCurrent}
         prompt={turn.prompt}
         query={highlight?.query ?? ""}

@@ -288,3 +288,117 @@ fn symlinked_history_file_is_refused() {
     std::os::unix::fs::symlink(target, path).unwrap();
     assert!(fixture.read().is_err());
 }
+
+#[test]
+fn history_exchanges_carry_user_attachments_from_both_providers() {
+    let stored = "/data/agent-attachments/threads/agt-1/bb.txt";
+    let text = format!("Look at this\n[Attached file \"notes.txt\" is saved at: {stored}]");
+    let claude = Fixture::new(AgentCliInvocation::ClaudeCode);
+    claude.write(&[
+        json!({
+            "type": "user", "sessionId": SESSION_ID, "cwd": claude.request.repository_root,
+            "promptSource": "typed", "timestamp": BEFORE, "message": {"content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
+                {"type": "text", "text": text},
+            ]},
+        }),
+        claude.message("assistant", "A red square.", Some(BEFORE)),
+    ]);
+    let codex = Fixture::new(AgentCliInvocation::CodexExec);
+    codex.write(&[
+        json!({
+            "type": "response_item", "timestamp": BEFORE,
+            "payload": {"type": "message", "role": "user", "content": [
+                {"type": "input_text", "text": text},
+                {"type": "input_image", "image_url": "data:image/png;base64,iVBORw0KGgo=", "detail": "high"},
+                {"type": "local_image", "path": "/var/folders/T/codex-clipboard-1.png"},
+            ]},
+        }),
+        codex.message("assistant", "A red square.", Some(BEFORE)),
+    ]);
+    let file = ExternalSessionAttachment::File {
+        name: "notes.txt".to_string(),
+        path: Some(stored.to_string()),
+    };
+    let inline_png = ExternalSessionAttachment::Image {
+        mime: ExternalSessionImageMime::Png,
+        name: None,
+        path: None,
+    };
+
+    let claude_history = claude.read().unwrap();
+    let codex_history = codex.read().unwrap();
+
+    assert_eq!(claude_history.exchanges[0].text, text);
+    assert_eq!(
+        claude_history.exchanges[0].attachments,
+        vec![inline_png.clone(), file.clone()]
+    );
+    assert_eq!(
+        codex_history.exchanges[0].attachments,
+        vec![
+            inline_png,
+            ExternalSessionAttachment::Image {
+                mime: ExternalSessionImageMime::Png,
+                name: None,
+                path: Some("/var/folders/T/codex-clipboard-1.png".to_string()),
+            },
+            file
+        ]
+    );
+    for history in [&claude_history, &codex_history] {
+        assert_eq!(history.exchanges.len(), 2);
+        assert!(history.exchanges[1].attachments.is_empty());
+        assert!(!history.exchanges_truncated);
+        let wire = serde_json::to_value(history).unwrap();
+        assert_eq!(
+            wire["exchanges"][0]["attachments"][0]["kind"],
+            json!("image")
+        );
+        assert!(wire["exchanges"][1].get("attachments").is_none());
+    }
+}
+
+#[test]
+fn fat_attachment_paths_count_against_the_history_byte_budget() {
+    let fixture = Fixture::new(AgentCliInvocation::CodexExec);
+    let fat_path =
+        |exchange: usize, index: usize| format!("/{exchange:03}/{index}/{}.png", "p".repeat(1_000));
+    let exchange_count = HISTORY_TOTAL_BYTES / (8 * fat_path(0, 0).len()) + 1;
+    fixture.write(
+        &(0..exchange_count)
+            .map(|exchange| {
+                let mut content =
+                    vec![json!({"type": "input_text", "text": format!("{exchange}")})];
+                content.extend((0..8).map(
+                    |index| json!({"type": "local_image", "path": fat_path(exchange, index)}),
+                ));
+                json!({
+                    "type": "response_item", "timestamp": BEFORE,
+                    "payload": {"type": "message", "role": "user", "content": content},
+                })
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    let history = fixture.read().unwrap();
+
+    assert!(history.exchanges_truncated);
+    assert!(history.exchanges.len() < exchange_count);
+    assert!(history.total_preview_bytes <= HISTORY_TOTAL_BYTES as u64);
+    assert_eq!(
+        history.total_preview_bytes,
+        history
+            .exchanges
+            .iter()
+            .map(|exchange| exchange.budget_bytes() as u64)
+            .sum::<u64>()
+    );
+    let last = history.exchanges.last().unwrap();
+    assert_eq!(last.text, format!("{}", exchange_count - 1));
+    assert_eq!(last.attachments.len(), 8);
+    assert!(history
+        .exchanges
+        .iter()
+        .all(|exchange| exchange.text.len() < 8 && exchange.attachments.len() == 8));
+}

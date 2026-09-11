@@ -95,6 +95,20 @@ impl AgentRootLeaseRegistry {
         })
     }
 
+    pub fn registered_leases(&self) -> Vec<RegisteredAgentRootLease> {
+        let state = self.state();
+        state
+            .leases
+            .values()
+            .filter_map(|lease| {
+                Some(RegisteredAgentRootLease {
+                    lease_token: lease.token,
+                    registration: lease.registration.clone()?,
+                })
+            })
+            .collect()
+    }
+
     pub fn acquire_registered(
         &self,
         canonical_root: &Path,
@@ -346,6 +360,20 @@ mod tests {
         registry
             .acquire(Path::new("/workspace/overflow"))
             .expect("freed slot is reusable");
+    }
+
+    #[test]
+    fn a_lease_without_a_workspace_registration_is_never_listed() {
+        let registry = AgentRootLeaseRegistry::new();
+        let root = Path::new("/workspace/unregistered");
+        let token = registry.acquire(root).expect("acquire");
+
+        assert!(registry.registered_leases().is_empty());
+        assert_eq!(
+            registry.release(root, token),
+            AgentRootLeaseReleaseDisposition::Released
+        );
+        assert!(registry.registered_leases().is_empty());
     }
 
     #[test]

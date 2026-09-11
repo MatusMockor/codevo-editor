@@ -195,7 +195,7 @@ describe("agent thread session minimap and find pill", () => {
     const third = host.querySelector<HTMLElement>('[data-agent-turn="agt-1-t3"]');
     expect(lastScroll()?.element).toBe(third);
     expect(lastScroll()?.block).toEqual({ block: "start" });
-    expect(document.activeElement).toBe(third?.querySelector(".agent-prompt__body"));
+    expect(document.activeElement).toBe(third?.querySelector(".agent-prompt__bubble"));
   });
 
   it("lists imported exchanges and live turns as one column in document order", () => {
@@ -240,7 +240,7 @@ describe("agent thread session minimap and find pill", () => {
     expect(article).not.toBeNull();
     expect(lastScroll()?.element).toBe(article);
     expect(lastScroll()?.block).toEqual({ block: "start" });
-    expect(document.activeElement).toBe(article?.querySelector(".agent-prompt__body"));
+    expect(document.activeElement).toBe(article?.querySelector(".agent-prompt__bubble"));
   });
 
   it("draws a populated rail for a thread that has only imported exchanges", () => {

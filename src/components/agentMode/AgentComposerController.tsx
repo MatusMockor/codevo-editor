@@ -67,6 +67,8 @@ function agentComposerControllerPropsEqual(
     left.providerEnabled === right.providerEnabled &&
     left.submissionBlocked === right.submissionBlocked &&
     left.submit === right.submit &&
+    leftProps.attachmentTargetKey === rightProps.attachmentTargetKey &&
+    sameComposerAttachments(leftProps.attachments, rightProps.attachments) &&
     leftProps.dispatching === rightProps.dispatching &&
     sameGuard(leftProps.guard, rightProps.guard) &&
     leftProps.isolation === rightProps.isolation &&
@@ -84,6 +86,16 @@ function agentComposerControllerPropsEqual(
     sameComposerTarget(leftProps.target, rightProps.target) &&
     agentLaunchOptionsEqual(leftProps.launch, rightProps.launch)
   );
+}
+
+function sameComposerAttachments(
+  left: AgentComposerPresentation["attachments"],
+  right: AgentComposerPresentation["attachments"],
+): boolean {
+  const current = left ?? null;
+  const next = right ?? null;
+  if (current === null || next === null) return current === next;
+  return current.drafts === next.drafts && current.refusal === next.refusal;
 }
 
 function sameComposerMode(

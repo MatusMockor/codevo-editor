@@ -41,7 +41,11 @@ import {
   recordedLayoutState,
   type RecordedAgentWorkbenchLayout,
 } from "./agentWorkbenchChromeTestFixtures";
-import { externalSessionsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
+import {
+  attachmentImagesSurfaceFixture,
+  composerAttachmentsSurfaceFixture,
+  externalSessionsSurfaceFixture,
+} from "./agentThreadsSurfaceTestFixtures";
 import { ariaKeyShortcuts } from "./agentWorkbenchChrome";
 import {
   ADD_PROJECT_REFUSED_REASON,
@@ -885,6 +889,9 @@ function project(root: string): AgentProjectDescriptor {
 
 function threadsSurface(root: string, worktreePath: string | null): AgentThreadsSurface {
   return {
+    attachments: composerAttachmentsSurfaceFixture(),
+    attachmentImages: attachmentImagesSurfaceFixture(),
+    revealAttachment: async () => undefined,
     threads: [threadView(root, worktreePath)],
     repositories: [
       { mapping: { rootRelativePath: "" }, repositoryRoot: root, repositoryRelativePath: "" },

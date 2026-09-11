@@ -12,9 +12,11 @@ import {
 } from "../domain/agentAttachmentIntake";
 import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
+import { AGENT_ATTACHMENTS_DISCARDED_NOTICE } from "./agentTurnAttachments";
 import {
   AGENT_ATTACHMENT_MISSING_SOURCE_NOTICE,
   AGENT_ATTACHMENT_STAGE_FAILURE_PREFIX,
+  agentAttachmentDuplicateRefusal,
   useAgentComposerAttachments,
   type AgentAttachmentOwner,
   type AgentComposerAttachmentsSurface,
@@ -23,6 +25,12 @@ import {
 const ROOT_A = "/workspace/app";
 const ROOT_B = "/workspace/other";
 const IMAGE_ID = "0123456789abcdef0123456789abcdef";
+
+interface PreviewBlob {
+  readonly url: string;
+  readonly bytes: number;
+  readonly mime: string;
+}
 
 interface Environment {
   owners: Map<string, AgentAttachmentOwner>;
@@ -99,6 +107,8 @@ function renderAttachments(environment: Environment) {
     revealAgentAttachment: vi.fn(),
   };
   const errors: unknown[] = [];
+  const issued: PreviewBlob[] = [];
+  const revoked: string[] = [];
   let surface: AgentComposerAttachmentsSurface | null = null;
 
   function Probe() {
@@ -108,6 +118,12 @@ function renderAttachments(environment: Environment) {
       resolveOwner: (projectRootKey) => environment.owners.get(projectRootKey) ?? null,
       reportError: (_source, error) => errors.push(error),
       createDraftId: () => `draft-${(draftSequence += 1)}`,
+      createObjectUrl: (blob) => {
+        const url = `blob:preview-${issued.length + 1}`;
+        issued.push({ url, bytes: blob.size, mime: blob.type });
+        return url;
+      },
+      revokeObjectUrl: (url) => revoked.push(url),
     });
     return null;
   }
@@ -119,7 +135,9 @@ function renderAttachments(environment: Environment) {
   return {
     errors,
     gateway,
+    issued,
     released,
+    revoked,
     hook: (): AgentComposerAttachmentsSurface => {
       if (surface === null) throw new Error("The attachment surface is not mounted.");
       return surface;
@@ -184,8 +202,42 @@ describe("useAgentComposerAttachments staging", () => {
       mime: "image/png",
       path: "/Users/dev/shot.png",
     });
-    expect(harness.gateway.readAgentAttachmentCandidate).not.toHaveBeenCalled();
-    expect(harness.hook().drafts[0]).toMatchObject({ kind: "image", state: "ready" });
+    expect(harness.gateway.readAgentAttachmentCandidate).toHaveBeenCalledWith({
+      workspaceId: "ws-a",
+      path: "/Users/dev/shot.png",
+    });
+    expect(harness.hook().drafts[0]).toMatchObject({
+      kind: "image",
+      state: "ready",
+      path: "/Users/dev/shot.png",
+      previewUrl: "blob:preview-1",
+    });
+    expect(harness.issued).toEqual([{ url: "blob:preview-1", bytes: 4_096, mime: "image/png" }]);
+    harness.unmount();
+  });
+
+  it("keeps the glyph when the preview bytes of a staged path image cannot be read", async () => {
+    const harness = renderAttachments(environment());
+    harness.gateway.readAgentAttachmentCandidate = vi.fn(async () => {
+      throw new Error("moved");
+    });
+
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
+
+    expect(harness.hook().drafts[0]).toMatchObject({ state: "ready", previewUrl: null });
+    expect(harness.issued).toEqual([]);
+    harness.unmount();
+  });
+
+  it("refuses a path that is already attached without inspecting it again", async () => {
+    const harness = renderAttachments(environment({ extensionMime: null }));
+
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/clip.mp4" }]));
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/clip.mp4" }]));
+
+    expect(harness.hook().drafts).toHaveLength(1);
+    expect(harness.hook().refusal).toBe(agentAttachmentDuplicateRefusal("clip.mp4"));
+    expect(harness.gateway.inspectAgentAttachmentCandidate).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 
@@ -295,6 +347,22 @@ describe("useAgentComposerAttachments staging", () => {
 
     expect(harness.hook().drafts).toHaveLength(8);
     expect(harness.hook().refusal).toBe(AGENT_ATTACHMENT_COUNT_REFUSAL);
+    expect(harness.gateway.inspectAgentAttachmentCandidate).toHaveBeenCalledTimes(8);
+    harness.unmount();
+  });
+
+  it("refuses a hundred-file drop after the cap without inspecting the rest", async () => {
+    const harness = renderAttachments(environment({ extensionMime: null }));
+    const sources = Array.from({ length: 100 }, (_unused, index) => ({
+      kind: "path" as const,
+      path: `/Users/dev/clip-${index}.mp4`,
+    }));
+
+    await act(() => harness.hook().add(ROOT_A, sources));
+
+    expect(harness.hook().drafts).toHaveLength(8);
+    expect(harness.hook().refusal).toBe(AGENT_ATTACHMENT_COUNT_REFUSAL);
+    expect(harness.gateway.inspectAgentAttachmentCandidate).toHaveBeenCalledTimes(8);
     harness.unmount();
   });
 });
@@ -383,11 +451,76 @@ describe("useAgentComposerAttachments ownership", () => {
     const harness = renderAttachments(environment());
 
     await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
-    await act(async () => harness.hook().markSent());
+    const draftId = harness.hook().drafts[0]?.draftId ?? "";
+    await act(async () => harness.hook().markSent([draftId]));
 
     expect(harness.hook().drafts).toHaveLength(0);
     expect(harness.hook().projectRootKey).toBeNull();
     expect(harness.released).toEqual([]);
+    harness.unmount();
+  });
+
+  it("marks only the drafts that were part of the request as sent", async () => {
+    const harness = renderAttachments(environment({ extensionMime: null }));
+
+    await act(() =>
+      harness.hook().add(ROOT_A, [
+        { kind: "path", path: "/Users/dev/a.mp4" },
+        { kind: "path", path: "/Users/dev/b.mp4" },
+      ]),
+    );
+    const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
+    expect(prepared?.draftIds).toHaveLength(2);
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/c.mp4" }]));
+
+    await act(async () => harness.hook().markSent(prepared?.draftIds ?? []));
+
+    expect(harness.hook().drafts.map((draft) => draft.name)).toEqual(["c.mp4"]);
+    expect(harness.hook().projectRootKey).toBe(ROOT_A);
+    harness.unmount();
+  });
+
+  it("discards drafts whose owner generation changed before send and says so", async () => {
+    const env = environment();
+    const harness = renderAttachments(env);
+
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/shot.png" }]));
+    expect(harness.hook().drafts[0]?.state).toBe("ready");
+
+    env.owners.set(ROOT_A, ownerA(2));
+    expect(await act(() => harness.hook().prepareTurn(ROOT_A))).toBeNull();
+
+    expect(harness.hook().drafts).toHaveLength(0);
+    expect(harness.released).toEqual([IMAGE_ID]);
+    expect(harness.hook().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    harness.unmount();
+  });
+
+  it("discards drafts when the workspace is replaced while a reference is inspected", async () => {
+    const env = environment({ extensionMime: null });
+    const harness = renderAttachments(env);
+
+    await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: "/Users/dev/clip.mp4" }]));
+    harness.gateway.inspectAgentAttachmentCandidate = vi.fn(async () => {
+      env.owners.set(ROOT_A, ownerA(2));
+      return { bytes: 4_096, isRegularFile: true, extensionMime: null };
+    });
+
+    expect(await act(() => harness.hook().prepareTurn(ROOT_A))).toBeNull();
+
+    expect(harness.hook().drafts).toHaveLength(0);
+    expect(harness.hook().refusal).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    harness.unmount();
+  });
+
+  it("surfaces a refusal handed in by the composer", () => {
+    const harness = renderAttachments(environment());
+
+    act(() => harness.hook().refuse("The file picker could not be opened."));
+    expect(harness.hook().refusal).toBe("The file picker could not be opened.");
+
+    act(() => harness.hook().dismissRefusal());
+    expect(harness.hook().refusal).toBeNull();
     harness.unmount();
   });
 
@@ -400,5 +533,104 @@ describe("useAgentComposerAttachments ownership", () => {
     expect(harness.hook().claimPaste([text], 5)).toBe("pass-through");
     expect(harness.hook().claimPaste([text], 0)).toBe("claim");
     harness.unmount();
+  });
+});
+
+describe("useAgentComposerAttachments previews", () => {
+  const PASTED_IMAGE = {
+    kind: "bytes" as const,
+    name: "shot.png",
+    mime: "image/png",
+    bytes: new ArrayBuffer(MAX_AGENT_IMAGE_BYTES + 1),
+  };
+
+  it("previews a staged image from the bytes the shrink pipeline produced", async () => {
+    const harness = renderAttachments(environment());
+
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE]));
+
+    expect(harness.issued).toEqual([{ url: "blob:preview-1", bytes: 512, mime: "image/webp" }]);
+    expect(harness.hook().drafts[0]).toMatchObject({
+      kind: "image",
+      state: "ready",
+      previewUrl: "blob:preview-1",
+    });
+    harness.unmount();
+  });
+
+  it("leaves a staged file and a reference draft without a preview", async () => {
+    const harness = renderAttachments(environment({ extensionMime: null }));
+
+    await act(() =>
+      harness.hook().add(ROOT_A, [
+        { kind: "bytes", name: "notes.txt", mime: "text/plain", bytes: new ArrayBuffer(8) },
+        { kind: "path", path: "/Users/dev/clip.mp4" },
+      ]),
+    );
+
+    expect(harness.hook().drafts.map((entry) => entry.previewUrl)).toEqual([null, null]);
+    expect(harness.issued).toEqual([]);
+    harness.unmount();
+  });
+
+  it("revokes the preview exactly once when the draft is removed", async () => {
+    const harness = renderAttachments(environment());
+
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE]));
+    const draftId = harness.hook().drafts[0]?.draftId ?? "";
+    await act(async () => harness.hook().remove(draftId));
+
+    expect(harness.revoked).toEqual(["blob:preview-1"]);
+    harness.unmount();
+    expect(harness.revoked).toEqual(["blob:preview-1"]);
+  });
+
+  it("revokes the preview exactly once when the composer is cleared", async () => {
+    const harness = renderAttachments(environment());
+
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE]));
+    await act(async () => harness.hook().clear());
+
+    expect(harness.revoked).toEqual(["blob:preview-1"]);
+    harness.unmount();
+    expect(harness.revoked).toEqual(["blob:preview-1"]);
+  });
+
+  it("revokes the preview exactly once when the turn is sent", async () => {
+    const harness = renderAttachments(environment());
+
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE]));
+    const draftId = harness.hook().drafts[0]?.draftId ?? "";
+    await act(async () => harness.hook().markSent([draftId]));
+
+    expect(harness.released).toEqual([]);
+    expect(harness.revoked).toEqual(["blob:preview-1"]);
+    harness.unmount();
+    expect(harness.revoked).toEqual(["blob:preview-1"]);
+  });
+
+  it("revokes the preview exactly once when a stale owner discards the draft", async () => {
+    const env = environment();
+    env.onStage = () => env.owners.set(ROOT_A, ownerA(2));
+    const harness = renderAttachments(env);
+
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE]));
+
+    expect(harness.hook().drafts).toHaveLength(0);
+    expect(harness.released).toEqual([IMAGE_ID]);
+    expect(harness.revoked).toEqual(["blob:preview-1"]);
+    harness.unmount();
+    expect(harness.revoked).toEqual(["blob:preview-1"]);
+  });
+
+  it("revokes every outstanding preview when the composer unmounts", async () => {
+    const harness = renderAttachments(environment());
+
+    await act(() => harness.hook().add(ROOT_A, [PASTED_IMAGE, PASTED_IMAGE]));
+    expect(harness.revoked).toEqual([]);
+
+    harness.unmount();
+
+    expect(harness.revoked).toEqual(["blob:preview-1", "blob:preview-2"]);
   });
 });

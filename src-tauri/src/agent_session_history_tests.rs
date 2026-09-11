@@ -270,6 +270,7 @@ fn responses_serialize_the_typescript_wire_shape() {
         exchanges: vec![ExternalSessionExchange {
             role: ExternalSessionExchangeRole::Assistant,
             text: "done".to_string(),
+            attachments: Vec::new(),
         }],
         exchanges_truncated: false,
         total_preview_bytes: 4,

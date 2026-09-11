@@ -1321,6 +1321,7 @@ fn document_with_external_history() -> AgentThreadDocument {
             exchanges: vec![AgentThreadExternalExchange {
                 role: AgentThreadExternalExchangeRole::Assistant,
                 text: "Ahoj 👋".to_string(),
+                attachments: Vec::new(),
             }],
             exchanges_truncated: true,
             total_preview_bytes: 9,
@@ -1373,7 +1374,8 @@ fn external_history_rejects_invalid_identity_and_utf8_bounds() {
     oversized_total.exchanges = vec![
         AgentThreadExternalExchange {
             role: AgentThreadExternalExchangeRole::User,
-            text: "x".repeat(MAX_AGENT_EVENT_TEXT_BYTES)
+            text: "x".repeat(MAX_AGENT_EVENT_TEXT_BYTES),
+            attachments: Vec::new(),
         };
         9
     ];
@@ -1433,3 +1435,6 @@ fn external_origin_rejects_unknown_fields_and_invalid_provenance() {
     });
     assert!(validate_agent_thread_document(ROOT_KEY, &malformed).is_err());
 }
+
+#[path = "agent_thread_store_external_history_tests.rs"]
+mod external_history_tests;

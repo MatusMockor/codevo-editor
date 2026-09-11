@@ -551,6 +551,30 @@ describe("findInThread", () => {
       { scope: "turn", turnId: "t1", eventIndex: null, start: 2, end: 4 },
     ]);
   });
+
+  it("searches only the displayed prompt so a hidden image line never yields an unreachable hit", () => {
+    const prompt = [
+      "look at router",
+      "",
+      '[Attached image "router.png" is saved at: /store/threads/agt-1/aa.png]',
+      '[Attached file "router.md" is saved at: /store/threads/agt-1/bb.md]',
+    ].join("\n");
+
+    expect(findInThread(thread({ turns: [turn({ turnId: "t1", prompt })] }), "router")).toEqual([
+      { scope: "turn", turnId: "t1", eventIndex: null, start: 8, end: 14 },
+      { scope: "turn", turnId: "t1", eventIndex: null, start: 32, end: 38 },
+    ]);
+    expect(findInThread(thread({ turns: [turn({ turnId: "t1", prompt })] }), "aa.png")).toEqual([]);
+    expect(
+      buildAgentThreadSearchDocument(thread({ turns: [turn({ turnId: "t1", prompt })] }))
+        .segments[1]?.text,
+    ).toBe(
+      prompt
+        .split("\n")
+        .filter((line) => !line.startsWith("[Attached image"))
+        .join("\n"),
+    );
+  });
 });
 
 describe("insertRankedSearchResult", () => {
@@ -652,6 +676,22 @@ describe("findInThread over imported history", () => {
         },
       },
     });
+
+  it("hides an imported prompt's image line from find but keeps an answer that quotes it", () => {
+    const line = '[Attached image "shot.png" is saved at: /store/threads/agt-1/cc.png]';
+    const hits = findInThread(
+      importedThread(
+        [
+          { role: "user", text: `see router\n\n${line}` },
+          { role: "assistant", text: `the router: ${line}` },
+        ],
+        [],
+      ),
+      "cc.png",
+    );
+
+    expect(hits).toEqual([{ scope: "imported", exchangeIndex: 1, start: 73, end: 79 }]);
+  });
 
   it("addresses each imported hit by its exchange index and reports them before live hits", () => {
     const hits = findInThread(

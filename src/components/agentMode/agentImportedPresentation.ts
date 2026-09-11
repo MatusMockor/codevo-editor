@@ -1,5 +1,9 @@
 import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { ExternalSessionExchange } from "../../domain/externalAgentSession";
+import {
+  agentImportedAttachmentViews,
+  type AgentTurnAttachmentView,
+} from "./agentTurnAttachmentPresentation";
 
 export interface AgentImportedResponse {
   readonly exchangeIndex: number;
@@ -9,6 +13,7 @@ export interface AgentImportedResponse {
 export interface AgentImportedPrompt {
   readonly exchangeIndex: number;
   readonly text: string;
+  readonly attachments: ReadonlyArray<AgentTurnAttachmentView>;
 }
 
 export interface AgentImportedTurn {
@@ -46,7 +51,11 @@ export function agentImportedTurns(
     }
     flush();
     responses = [];
-    prompt = { exchangeIndex, text: exchange.text };
+    prompt = {
+      exchangeIndex,
+      text: exchange.text,
+      attachments: agentImportedAttachmentViews(exchange),
+    };
     headExchangeIndex = exchangeIndex;
   });
   flush();

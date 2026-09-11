@@ -1,4 +1,5 @@
 import type { AgentThread, AgentTurn } from "./agentThread";
+import { agentPromptDisplayText } from "./agentPromptDisplay";
 import type { ExternalSessionExchange } from "./externalAgentSession";
 import {
   CONTENT_INCLUDES_SCORE,
@@ -214,7 +215,7 @@ export function findInThread(
   for (let index = 0; index < exchanges.length; index += 1) {
     const exchange = exchanges[index];
     if (exchange === undefined) continue;
-    collectImportedFindHits(exchange.text.toLowerCase(), index, normalized, hits);
+    collectImportedFindHits(importedExchangeText(exchange).toLowerCase(), index, normalized, hits);
     if (hits.length >= MAX_THREAD_FIND_HITS) return hits;
   }
   for (const turn of thread.turns) {
@@ -260,6 +261,11 @@ function collectFindHits(
     });
     index = candidate.lower.indexOf(query, index + query.length);
   }
+}
+
+function importedExchangeText(exchange: ExternalSessionExchange): string {
+  if (exchange.role !== "user") return exchange.text;
+  return agentPromptDisplayText(exchange.text);
 }
 
 function collectImportedFindHits(
@@ -323,7 +329,9 @@ function turnSegments(
   turn: AgentTurn,
   maxEventsPerTurn: number = Number.POSITIVE_INFINITY,
 ): ReadonlyArray<AgentThreadSearchSegment> {
-  const segments: AgentThreadSearchSegment[] = [segment("user", turn.turnId, null, turn.prompt)];
+  const segments: AgentThreadSearchSegment[] = [
+    segment("user", turn.turnId, null, agentPromptDisplayText(turn.prompt)),
+  ];
   const firstVisible = Math.max(0, turn.events.length - maxEventsPerTurn);
   turn.events.forEach((event, index) => {
     if (index < firstVisible) return;

@@ -10,7 +10,15 @@ import {
   type AgentCliKind,
   type AgentTaskIsolation,
 } from "../../domain/agentTask";
-import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
+import type {
+  AgentThreadsSurface,
+  AgentThreadView,
+  AgentTurnAttachmentRequest,
+} from "../../application/agentThreadPorts";
+import type {
+  AgentComposerAttachmentDraft,
+  AgentComposerAttachmentsSurface,
+} from "../../application/useAgentComposerAttachments";
 import type {
   AgentComposerMode,
   AgentComposerProps,
@@ -49,6 +57,7 @@ export const NOT_REPOSITORY_WORKTREE_ONLY_CAPTION =
 
 export type AgentComposerSurface = Pick<
   AgentThreadsSurface,
+  | "attachments"
   | "agentCliConfigured"
   | "agentCliKind"
   | "dispatching"
@@ -294,6 +303,15 @@ export function useAgentComposerControllerState({
     setSelection(null);
   }, [onClearSelectedThread]);
 
+  const attachmentTargetKey =
+    selectedThread !== null
+      ? selectedThread.thread.owner.rootKey
+      : (target?.projectRootKey ?? null);
+  const attachmentsSurface = agents.attachments;
+  const attachments = useMemo(
+    () => composerAttachmentsForTarget(attachmentsSurface, attachmentTargetKey),
+    [attachmentsSurface, attachmentTargetKey],
+  );
   const sendFollowUp = agents.sendFollowUp;
   const startThread = agents.startThread;
   const submissionAuthority = composerSubmissionAuthority(selectedThread, target, composerProject);
@@ -305,18 +323,32 @@ export function useAgentComposerControllerState({
       if (submissionBlocked) return false;
       const authority = submissionAuthority;
       if (authority === null) return false;
+      const pendingAttachments = composerHasAttachments(attachments);
+      const prepared = pendingAttachments
+        ? await prepareComposerAttachments(attachments, attachmentTargetKey)
+        : NO_PREPARED_ATTACHMENTS;
+      if (prepared === null) return false;
+      if (
+        pendingAttachments &&
+        !composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority)
+      ) {
+        return false;
+      }
       switch (authority.kind) {
         case "followUp": {
           const sent = await sendFollowUp({
+            ...prepared.request,
             threadId: authority.threadId,
             prompt,
             launch: submission.launch,
             dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
           });
+          if (sent) attachments?.markSent(prepared.draftIds);
           return sent;
         }
         case "new": {
           const started = await startThread({
+            ...prepared.request,
             projectRootKey: authority.projectRootKey,
             repositoryRoot: authority.repositoryRoot,
             prompt,
@@ -326,6 +358,7 @@ export function useAgentComposerControllerState({
             dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
           });
           if (started === null) return false;
+          attachments?.markSent(prepared.draftIds);
           if (!composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority)) {
             return false;
           }
@@ -335,6 +368,8 @@ export function useAgentComposerControllerState({
       }
     },
     [
+      attachments,
+      attachmentTargetKey,
       unsafeInPlaceConfirmationKey,
       isolation,
       onThreadStarted,
@@ -394,6 +429,8 @@ export function useAgentComposerControllerState({
   );
 
   const composerProps: AgentComposerControllerProps = {
+    attachments,
+    attachmentTargetKey,
     dispatching: agents.dispatching,
     guard,
     isolation,
@@ -471,6 +508,63 @@ function composerProviderKind(
   return selectedProvider;
 }
 
+const NO_COMPOSER_DRAFTS: ReadonlyArray<AgentComposerAttachmentDraft> = [];
+
+export function composerAttachmentsForTarget(
+  surface: AgentComposerAttachmentsSurface,
+  targetKey: string | null,
+): AgentComposerAttachmentsSurface | null {
+  if (targetKey === null) return null;
+  if (surface.projectRootKey === null || surface.projectRootKey === targetKey) return surface;
+  return {
+    ...surface,
+    drafts: NO_COMPOSER_DRAFTS,
+    staging: false,
+    blocked: false,
+    refusal: null,
+    promptLineBytes: 0,
+  };
+}
+
+function composerHasAttachments(attachments: AgentComposerAttachmentsSurface | null): boolean {
+  if (attachments === null) return false;
+  return attachments.drafts.some((draft) => draft.state === "ready");
+}
+
+interface PreparedComposerAttachments {
+  readonly request: AgentTurnAttachmentRequest;
+  readonly draftIds: ReadonlyArray<string>;
+}
+
+async function prepareComposerAttachments(
+  attachments: AgentComposerAttachmentsSurface | null,
+  projectRootKey: string | null,
+): Promise<PreparedComposerAttachments | null> {
+  if (attachments === null || projectRootKey === null) return null;
+  const prepared = await attachments.prepareTurn(projectRootKey);
+  if (prepared === null) return null;
+  if (prepared.intents.length === 0) return NO_PREPARED_ATTACHMENTS;
+  return {
+    request: { attachments: prepared.intents, attachmentOwner: prepared.owner },
+    draftIds: prepared.draftIds,
+  };
+}
+
+const NO_PREPARED_ATTACHMENTS: PreparedComposerAttachments = { request: {}, draftIds: [] };
+
+const PROMPT_ATTACHMENT_SEPARATOR_BYTES = 2;
+
+export function agentComposerPromptBytes(
+  prompt: string,
+  attachments: AgentComposerAttachmentsSurface | null,
+): number {
+  const textBytes = agentPromptByteLength(prompt);
+  const lineBytes = attachments?.promptLineBytes ?? 0;
+  if (lineBytes === 0) return textBytes;
+  if (prompt === "") return lineBytes;
+  return textBytes + PROMPT_ATTACHMENT_SEPARATOR_BYTES + lineBytes;
+}
+
 export function useAgentComposerPromptState(
   controller: AgentComposerPromptController,
 ): AgentComposerPromptProps {
@@ -480,8 +574,17 @@ export function useAgentComposerPromptState(
     promptRevisionRef.current += 1;
     setPrompt(next);
   }, []);
+  const attachments = controller.composerProps.attachments ?? null;
+  const readyAttachments =
+    attachments?.drafts.filter((draft) => draft.state === "ready").length ?? 0;
+  const promptBytes = agentComposerPromptBytes(prompt, attachments);
+  const promptInvalid =
+    (prompt.trim() === "" && readyAttachments === 0) || promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
+  const submitBlocked =
+    controller.submissionBlocked || promptInvalid || (attachments?.blocked ?? false);
   const submit = useCallback(
     (submission: AgentComposerSubmission) => {
+      if (submitBlocked) return;
       const submittedPrompt = prompt;
       const clearedRevision = promptRevisionRef.current + 1;
       promptRevisionRef.current = clearedRevision;
@@ -493,17 +596,15 @@ export function useAgentComposerPromptState(
         setPrompt(submittedPrompt);
       });
     },
-    [controller, prompt],
+    [controller, prompt, submitBlocked],
   );
-  const promptBytes = agentPromptByteLength(prompt);
-  const promptInvalid = prompt.trim() === "" || promptBytes > MAX_AGENT_TASK_PROMPT_BYTES;
   return {
     ...controller.composerProps,
     onPromptChange: changePrompt,
     onSubmit: submit,
     prompt,
     promptBytes,
-    submitBlocked: controller.submissionBlocked || promptInvalid,
+    submitBlocked,
   };
 }
 

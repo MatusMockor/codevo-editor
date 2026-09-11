@@ -1,5 +1,17 @@
-import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ArrowUp, Loader2, X } from "lucide-react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
+import { ArrowUp, Loader2, Paperclip, X } from "lucide-react";
+import type {
+  AgentAttachmentSource,
+  AgentComposerAttachmentsSurface,
+} from "../../application/useAgentComposerAttachments";
 import {
   useAgentModelFavorites,
   type AgentModelFavoritesPersistence,
@@ -14,6 +26,19 @@ import {
   type InPlaceDispatchGuard,
 } from "../../domain/agentTask";
 import { agentComposerNestedTargetLabel, type AgentComposerTarget } from "./agentComposerCheckout";
+import { AgentComposerAttachments } from "./AgentComposerAttachments";
+import {
+  AGENT_ATTACHMENT_DROP_UNAVAILABLE,
+  AGENT_ATTACHMENT_PASTE_READ_FAILURE,
+  AGENT_ATTACHMENT_PICKER_FAILURE,
+  agentAttachmentSourcesFromFiles,
+  agentAttachmentSourcesFromPaths,
+  openAgentAttachmentPicker,
+  subscribeAgentAttachmentDragDrop,
+  type AgentComposerDragDropSubscribe,
+  type AgentComposerFilePicker,
+} from "./agentComposerAttachmentPorts";
+import { useAgentComposerDragDrop } from "./useAgentComposerDragDrop";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentComposerCommands } from "./AgentComposerCommands";
 import { useAgentComposerCommands } from "./useAgentComposerCommands";
@@ -43,6 +68,10 @@ export interface AgentComposerSubmission {
 }
 
 export interface AgentComposerProps {
+  readonly attachments?: AgentComposerAttachmentsSurface | null;
+  readonly attachmentTargetKey?: string | null;
+  readonly attachmentPicker?: AgentComposerFilePicker;
+  readonly attachmentDragDrop?: AgentComposerDragDropSubscribe;
   readonly compactionOffer?: AgentContextCompactionOffer | null;
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
   readonly mode: AgentComposerMode;
@@ -73,6 +102,10 @@ export interface AgentComposerProps {
 }
 
 export function AgentComposer({
+  attachments = null,
+  attachmentTargetKey = null,
+  attachmentPicker = openAgentAttachmentPicker,
+  attachmentDragDrop = subscribeAgentAttachmentDragDrop,
   compactionOffer = null,
   dispatching,
   isolation,
@@ -148,6 +181,65 @@ export function AgentComposer({
     worktreeOnly,
     worktreeOnlyReason,
   });
+
+  const attachmentsEnabled = attachments !== null && attachmentTargetKey !== null;
+  const addAttachments = useCallback(
+    (sources: ReadonlyArray<AgentAttachmentSource>): void => {
+      if (attachments === null || attachmentTargetKey === null) return;
+      if (sources.length === 0) return;
+      void attachments.add(attachmentTargetKey, sources);
+    },
+    [attachments, attachmentTargetKey],
+  );
+  const dropPaths = useCallback(
+    (paths: ReadonlyArray<string>): void => {
+      addAttachments(agentAttachmentSourcesFromPaths(paths));
+    },
+    [addAttachments],
+  );
+  const refuseAttachments = useCallback(
+    (reason: string): void => {
+      attachments?.refuse(reason);
+    },
+    [attachments],
+  );
+  const dropUnavailable = useCallback(
+    (): void => refuseAttachments(AGENT_ATTACHMENT_DROP_UNAVAILABLE),
+    [refuseAttachments],
+  );
+  const dropActive = useAgentComposerDragDrop({
+    enabled: attachmentsEnabled && !dispatching,
+    onDropPaths: dropPaths,
+    onUnavailable: dropUnavailable,
+    subscribe: attachmentDragDrop,
+    targetRef: composerRef,
+  });
+  const pasteAttachments = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
+    if (attachments === null || attachmentTargetKey === null) return;
+    if (dispatching) return;
+    const data = event.clipboardData;
+    if (data === null || data === undefined) return;
+    const files = [...data.files];
+    const claim = attachments.claimPaste(
+      files.map((file) => ({
+        name: file.name,
+        mime: file.type,
+        hasPath: false,
+        bytes: file.size,
+      })),
+      data.getData("text/plain").length,
+    );
+    if (claim !== "claim") return;
+    event.preventDefault();
+    agentAttachmentSourcesFromFiles(files)
+      .then(addAttachments)
+      .catch(() => refuseAttachments(AGENT_ATTACHMENT_PASTE_READ_FAILURE));
+  };
+  const pickAttachments = (): void => {
+    attachmentPicker()
+      .then(dropPaths)
+      .catch(() => refuseAttachments(AGENT_ATTACHMENT_PICKER_FAILURE));
+  };
 
   const nestedTargetLabel = agentComposerNestedTargetLabel(target);
   const targetControls = useMemo(
@@ -340,7 +432,21 @@ export function AgentComposer({
             </button>
           </div>
         )}
-      <div className="agent-composer__box">
+      <div
+        className={
+          dropActive ? "agent-composer__box agent-composer__box--drop" : "agent-composer__box"
+        }
+        data-agent-composer-drop={dropActive ? "active" : undefined}
+      >
+        {attachments !== null && (
+          <AgentComposerAttachments
+            drafts={attachments.drafts}
+            onDismissRefusal={attachments.dismissRefusal}
+            onRemove={attachments.remove}
+            refusal={attachments.refusal}
+          />
+        )}
+
         <label className="agent-visually-hidden" htmlFor="agent-prompt">
           Prompt
         </label>
@@ -364,6 +470,7 @@ export function AgentComposer({
             onPromptChange(event.target.value);
           }}
           onKeyDown={onKeyDown}
+          onPaste={pasteAttachments}
           placeholder={
             followUp
               ? "Reply to the agent in this thread"
@@ -383,6 +490,19 @@ export function AgentComposer({
         )}
 
         <div className="agent-composer__row" data-presentation={compact ? "compact" : "inline"}>
+          {attachmentsEnabled && (
+            <button
+              aria-label="Attach files"
+              className="agent-composer__attach"
+              disabled={dispatching}
+              onClick={pickAttachments}
+              title="Attach files"
+              type="button"
+            >
+              <Paperclip aria-hidden="true" size={15} strokeWidth={2} />
+            </button>
+          )}
+
           {launchControls}
 
           <span className="agent-composer__spacer" />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   MAX_AGENT_IMAGE_BYTES,
   isAgentImageMime,
@@ -23,10 +23,15 @@ import { shrinkAgentImageToFit, type AgentImageSurfacePort } from "../domain/age
 import type { AgentAttachmentGateway, StagedAgentAttachment } from "./agentAttachmentPorts";
 import { AGENT_TASKS_SOURCE, attempt, errorMessageOf } from "./agentProjectAuthority";
 import type { AgentTurnAttachmentIntent } from "./agentThreadPorts";
+import { AGENT_ATTACHMENTS_DISCARDED_NOTICE } from "./agentTurnAttachments";
 
 export const AGENT_ATTACHMENT_UNREADABLE_REFUSAL = "The image could not be read.";
 export const AGENT_ATTACHMENT_STAGE_FAILURE_PREFIX = "Unable to save the attachment: ";
 export const AGENT_ATTACHMENT_MISSING_SOURCE_NOTICE = "This file is no longer at that path";
+
+export function agentAttachmentDuplicateRefusal(name: string): string {
+  return `${name} is already attached.`;
+}
 
 export interface AgentAttachmentOwner {
   readonly projectRootKey: string;
@@ -57,6 +62,7 @@ export interface AgentComposerAttachmentDraft {
   readonly height: number | null;
   readonly attachmentId: string | null;
   readonly path: string | null;
+  readonly previewUrl: string | null;
   readonly failure: string | null;
   readonly notice: string | null;
   readonly missing: boolean;
@@ -65,6 +71,7 @@ export interface AgentComposerAttachmentDraft {
 
 export interface AgentComposerTurnAttachments {
   readonly owner: AgentAttachmentOwner;
+  readonly draftIds: ReadonlyArray<string>;
   readonly intents: ReadonlyArray<AgentTurnAttachmentIntent>;
 }
 
@@ -82,7 +89,8 @@ export interface AgentComposerAttachmentsSurface {
   ): AgentPasteClaim;
   remove(draftId: string): void;
   clear(): void;
-  markSent(): void;
+  markSent(draftIds: ReadonlyArray<string>): void;
+  refuse(reason: string): void;
   dismissRefusal(): void;
   prepareTurn(projectRootKey: string): Promise<AgentComposerTurnAttachments | null>;
 }
@@ -93,6 +101,14 @@ export interface AgentComposerAttachmentsDependencies {
   readonly resolveOwner: (projectRootKey: string) => AgentAttachmentOwner | null;
   readonly reportError: (source: string, error: unknown) => void;
   readonly createDraftId?: () => string;
+  readonly createObjectUrl?: (blob: Blob) => string;
+  readonly revokeObjectUrl?: (url: string) => void;
+}
+
+export interface AgentAttachmentPreviewUrls {
+  readonly issue: (bytes: ArrayBuffer, mime: AgentImageMime) => string;
+  readonly revoke: (url: string | null) => void;
+  readonly revokeAll: () => void;
 }
 
 interface AttachmentDraft extends AgentComposerAttachmentDraft {
@@ -108,6 +124,7 @@ interface DraftCoordinator {
   readonly deps: () => AgentComposerAttachmentsDependencies;
   readonly gateway: AgentAttachmentGateway;
   readonly store: DraftStore;
+  readonly previews: AgentAttachmentPreviewUrls;
   readonly publish: () => void;
   readonly setRefusal: (reason: string | null) => void;
   readonly ownerIsCurrent: (owner: AgentAttachmentOwner) => boolean;
@@ -124,6 +141,10 @@ export function useAgentComposerAttachments(
   const storeRef = useRef<DraftStore>({ projectRootKey: null, drafts: new Map() });
   const dependenciesRef = useRef(dependencies);
   const mountedRef = useRef(true);
+  const previews = useMemo(
+    () => createAgentAttachmentPreviewUrls(() => dependenciesRef.current),
+    [],
+  );
 
   useLayoutEffect(() => {
     dependenciesRef.current = dependencies;
@@ -133,8 +154,9 @@ export function useAgentComposerAttachments(
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      previews.revokeAll();
     };
-  }, []);
+  }, [previews]);
 
   const publish = useCallback((): void => {
     if (!mountedRef.current) return;
@@ -150,6 +172,7 @@ export function useAgentComposerAttachments(
       deps: () => dependenciesRef.current,
       gateway: deps.gateway,
       store: storeRef.current,
+      previews,
       publish,
       setRefusal,
       ownerIsCurrent: (owner) => {
@@ -158,7 +181,7 @@ export function useAgentComposerAttachments(
         return current !== null && sameOwner(current, owner);
       },
     };
-  }, [publish]);
+  }, [previews, publish]);
 
   const add = useCallback(
     async (target: string, sources: ReadonlyArray<AgentAttachmentSource>): Promise<void> => {
@@ -169,7 +192,8 @@ export function useAgentComposerAttachments(
       retarget(context, target);
       for (const source of sources) {
         if (!context.ownerIsCurrent(owner)) return;
-        await intakeAgentAttachmentSource(context, owner, source);
+        const admitted = await intakeAgentAttachmentSource(context, owner, source);
+        if (admitted === "refused-count") return;
       }
     },
     [coordinator],
@@ -196,14 +220,24 @@ export function useAgentComposerAttachments(
     context.publish();
   }, [coordinator]);
 
-  const markSent = useCallback((): void => {
-    const context = coordinator();
-    setRefusal(null);
-    if (context === null) return;
-    context.store.drafts.clear();
-    context.store.projectRootKey = null;
-    context.publish();
-  }, [coordinator]);
+  const markSent = useCallback(
+    (draftIds: ReadonlyArray<string>): void => {
+      const context = coordinator();
+      setRefusal(null);
+      if (context === null) return;
+      for (const draftId of draftIds) {
+        const draft = context.store.drafts.get(draftId);
+        if (draft === undefined) continue;
+        context.previews.revoke(draft.previewUrl);
+        context.store.drafts.delete(draftId);
+      }
+      if (context.store.drafts.size === 0) context.store.projectRootKey = null;
+      context.publish();
+    },
+    [coordinator],
+  );
+
+  const refuse = useCallback((reason: string): void => setRefusal(reason), []);
 
   const prepareTurn = useCallback(
     async (target: string): Promise<AgentComposerTurnAttachments | null> => {
@@ -234,39 +268,45 @@ export function useAgentComposerAttachments(
     remove,
     clear,
     markSent,
+    refuse,
     dismissRefusal,
     prepareTurn,
   };
 }
 
+type IntakeOutcome = "settled" | "refused-count";
+
 async function intakeAgentAttachmentSource(
   context: DraftCoordinator,
   owner: AgentAttachmentOwner,
   source: AgentAttachmentSource,
-): Promise<void> {
+): Promise<IntakeOutcome> {
+  const admission = admitAgentAttachmentCount(countedDrafts(context));
+  if (admission.kind === "refused") {
+    context.setRefusal(admission.reason);
+    return "refused-count";
+  }
+  const duplicate = duplicatePathDraft(context, source);
+  if (duplicate !== null) {
+    context.setRefusal(agentAttachmentDuplicateRefusal(duplicate.name));
+    return "settled";
+  }
   const draftId = (context.deps().createDraftId ?? defaultDraftId)();
   const candidate = await describeCandidate(context, owner, source);
-  if (!context.ownerIsCurrent(owner)) return;
+  if (!context.ownerIsCurrent(owner)) return "settled";
   if (candidate === null) {
     appendDraft(context, failedDraft(draftId, owner, AGENT_ATTACHMENT_PATH_REFUSAL));
-    return;
+    return "settled";
   }
   const plan = planAgentAttachmentIntake(candidate);
   if (plan.kind === "refused") {
     context.setRefusal(plan.reason);
-    return;
-  }
-  const admission = admitAgentAttachmentCount(
-    [...context.store.drafts.values()].filter((draft) => draft.state !== "failed"),
-  );
-  if (admission.kind === "refused") {
-    context.setRefusal(admission.reason);
-    return;
+    return "settled";
   }
   if (plan.kind === "reference") {
     if (source.kind !== "path") {
       appendDraft(context, failedDraft(draftId, owner, AGENT_ATTACHMENT_PATH_REFUSAL));
-      return;
+      return "settled";
     }
     appendDraft(
       context,
@@ -277,15 +317,31 @@ async function intakeAgentAttachmentSource(
         plan.notice,
       ),
     );
-    return;
+    return "settled";
   }
-  const pending = blankDraft(draftId, owner, plan.kind, candidate.name);
+  const pending = {
+    ...blankDraft(draftId, owner, plan.kind, candidate.name),
+    path: source.kind === "path" ? source.path : null,
+  };
   appendDraft(context, pending);
   if (plan.kind === "file") {
     await stageFileDraft(context, pending, candidate, source);
-    return;
+    return "settled";
   }
   await stageImageDraft(context, pending, candidate, source);
+  return "settled";
+}
+
+function countedDrafts(context: DraftCoordinator): ReadonlyArray<AttachmentDraft> {
+  return [...context.store.drafts.values()].filter((draft) => draft.state !== "failed");
+}
+
+function duplicatePathDraft(
+  context: DraftCoordinator,
+  source: AgentAttachmentSource,
+): AttachmentDraft | null {
+  if (source.kind !== "path") return null;
+  return countedDrafts(context).find((draft) => draft.path === source.path) ?? null;
 }
 
 async function stageFileDraft(
@@ -334,6 +390,8 @@ async function stageImageDraft(
       }),
     );
     settleStaged(context, pending, staged, "image");
+    if (!staged.ok) return;
+    await previewStagedPathImage(context, pending, candidate.mime as AgentImageMime, source);
     return;
   }
   const bytes = await readImageBytes(context, owner, source);
@@ -369,7 +427,31 @@ async function stageImageDraft(
       bytes: shrunk.bytes,
     }),
   );
-  settleStaged(context, { ...pending, name: shrunk.name }, staged, "image");
+  if (!staged.ok) {
+    settleStaged(context, { ...pending, name: shrunk.name }, staged, "image");
+    return;
+  }
+  const previewUrl = context.previews.issue(shrunk.bytes, shrunk.mime);
+  settleStaged(context, { ...pending, name: shrunk.name, previewUrl }, staged, "image");
+}
+
+async function previewStagedPathImage(
+  context: DraftCoordinator,
+  pending: AttachmentDraft,
+  mime: AgentImageMime,
+  source: AgentAttachmentSource,
+): Promise<void> {
+  const current = context.store.drafts.get(pending.draftId);
+  if (current === undefined || current.state !== "ready") return;
+  const bytes = await readImageBytes(context, pending.owner, source);
+  if (bytes === null) return;
+  const latest = context.store.drafts.get(pending.draftId);
+  if (!context.ownerIsCurrent(pending.owner) || latest === undefined || latest.state !== "ready") {
+    return;
+  }
+  const previewUrl = context.previews.issue(bytes, mime);
+  if (replaceDraft(context, { ...latest, previewUrl })) return;
+  context.previews.revoke(previewUrl);
 }
 
 async function prepareAgentTurnAttachments(
@@ -378,10 +460,10 @@ async function prepareAgentTurnAttachments(
 ): Promise<AgentComposerTurnAttachments | null> {
   if (context.store.projectRootKey !== projectRootKey) return null;
   const owner = context.deps().resolveOwner(projectRootKey);
-  if (owner === null) return null;
+  if (owner === null) return discardStaleDrafts(context);
   const drafts = [...context.store.drafts.values()].filter((draft) => draft.state === "ready");
-  if (drafts.length === 0) return { owner, intents: [] };
-  if (drafts.some((draft) => !sameOwner(draft.owner, owner))) return null;
+  if (drafts.length === 0) return { owner, draftIds: [], intents: [] };
+  if (drafts.some((draft) => !sameOwner(draft.owner, owner))) return discardStaleDrafts(context);
   for (const draft of drafts) {
     if (draft.kind !== "reference" || draft.path === null) continue;
     const inspected = await attempt(() =>
@@ -390,11 +472,23 @@ async function prepareAgentTurnAttachments(
         path: draft.path as string,
       }),
     );
-    if (!context.ownerIsCurrent(owner)) return null;
+    if (!context.ownerIsCurrent(owner)) return discardStaleDrafts(context);
     markReferenceMissing(context, draft.draftId, !inspected.ok || !inspected.value.isRegularFile);
   }
-  if (!context.ownerIsCurrent(owner)) return null;
-  return { owner, intents: drafts.map(turnAttachmentIntent) };
+  if (!context.ownerIsCurrent(owner)) return discardStaleDrafts(context);
+  return {
+    owner,
+    draftIds: drafts.map((draft) => draft.draftId),
+    intents: drafts.map(turnAttachmentIntent),
+  };
+}
+
+function discardStaleDrafts(context: DraftCoordinator): null {
+  releaseAll(context);
+  context.store.projectRootKey = null;
+  context.setRefusal(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+  context.publish();
+  return null;
 }
 
 async function describeCandidate(
@@ -448,6 +542,7 @@ async function readImageBytes(
 }
 
 async function releaseDraft(context: DraftCoordinator, draft: AttachmentDraft): Promise<void> {
+  context.previews.revoke(draft.previewUrl);
   const attachmentId = draft.attachmentId;
   if (attachmentId === null) return;
   const released = await attempt(() =>
@@ -576,6 +671,7 @@ function referenceDraft(
     state: "ready",
     bytes,
     path,
+    previewUrl: null,
     attachmentId: null,
     mime: null,
     width: null,
@@ -641,6 +737,7 @@ function blankDraft(
     height: null,
     attachmentId: null,
     path: null,
+    previewUrl: null,
     failure: null,
     notice: null,
     missing: false,
@@ -686,6 +783,39 @@ function sameOwner(left: AgentAttachmentOwner, right: AgentAttachmentOwner): boo
     left.generation === right.generation &&
     left.workspaceId === right.workspaceId
   );
+}
+
+function createAgentAttachmentPreviewUrls(
+  deps: () => AgentComposerAttachmentsDependencies,
+): AgentAttachmentPreviewUrls {
+  const issued = new Set<string>();
+
+  function revoke(url: string | null): void {
+    if (url === null) return;
+    if (!issued.delete(url)) return;
+    (deps().revokeObjectUrl ?? defaultRevokeObjectUrl)(url);
+  }
+
+  return {
+    issue: (bytes, mime) => {
+      const createObjectUrl = deps().createObjectUrl ?? defaultCreateObjectUrl;
+      const url = createObjectUrl(new Blob([bytes], { type: mime }));
+      issued.add(url);
+      return url;
+    },
+    revoke,
+    revokeAll: () => {
+      for (const url of [...issued]) revoke(url);
+    },
+  };
+}
+
+function defaultCreateObjectUrl(blob: Blob): string {
+  return URL.createObjectURL(blob);
+}
+
+function defaultRevokeObjectUrl(url: string): void {
+  URL.revokeObjectURL(url);
 }
 
 function defaultDraftId(): string {

@@ -271,9 +271,9 @@ export interface AgentFollowUpRequest extends AgentTurnAttachmentRequest {
 }
 
 export interface AgentThreadsSurface {
-  readonly attachments?: AgentComposerAttachmentsSurface;
-  readonly attachmentImages?: AgentAttachmentImagesSurface;
-  revealAttachment?(threadId: string, attachmentId: string): Promise<void>;
+  readonly attachments: AgentComposerAttachmentsSurface;
+  readonly attachmentImages: AgentAttachmentImagesSurface;
+  revealAttachment(threadId: string, attachmentId: string): Promise<void>;
   readonly externalHistory?: {
     readonly states: ReadonlyMap<string, "loading" | "failed" | "unavailable" | "ready">;
     load(threadId: string): Promise<void>;

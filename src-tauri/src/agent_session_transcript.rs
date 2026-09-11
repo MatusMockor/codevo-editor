@@ -125,7 +125,7 @@ fn read_history_at(
                     .message
                     .as_ref()
                     .and_then(|message| message.content.as_ref())
-                    .and_then(Value::as_array)
+                    .and_then(RawClaudeContent::blocks)
                     .is_some_and(|blocks| blocks.len() > 64);
                 (timestamp, history_claude_exchange(&parsed))
             }
@@ -152,7 +152,7 @@ fn read_history_at(
                 (timestamp, history_codex_exchange(&parsed))
             }
         };
-        let Some((role, text)) = exchange else {
+        let Some(draft) = exchange else {
             continue;
         };
         let Some(timestamp) = timestamp else {
@@ -161,7 +161,7 @@ fn read_history_at(
             continue;
         };
         if timestamp <= request.before_epoch_ms {
-            collector.push(role, text);
+            collector.push(draft);
         }
     }
     Ok(ExternalAgentSessionHistory {
@@ -173,7 +173,7 @@ fn read_history_at(
     })
 }
 
-fn history_claude_exchange(line: &RawClaudeLine) -> Option<(ExternalSessionExchangeRole, String)> {
+fn history_claude_exchange(line: &RawClaudeLine) -> Option<SessionExchangeDraft> {
     if line.line_type.as_deref() != Some("user") {
         return claude_exchange(line);
     }
@@ -182,9 +182,9 @@ fn history_claude_exchange(line: &RawClaudeLine) -> Option<(ExternalSessionExcha
     }
     let content = line.message.as_ref()?.content.as_ref()?;
     let text = match content {
-        Value::String(text) => text.clone(),
-        Value::Array(blocks) => joined_text_blocks(blocks, "text")?,
-        _ => return None,
+        RawClaudeContent::Text(text) => text.clone(),
+        RawClaudeContent::Blocks(blocks) => joined_text_blocks(blocks, "text")?,
+        RawClaudeContent::Unsupported => return None,
     };
     let text = text.trim();
     if text.is_empty()
@@ -192,10 +192,10 @@ fn history_claude_exchange(line: &RawClaudeLine) -> Option<(ExternalSessionExcha
     {
         return None;
     }
-    Some((ExternalSessionExchangeRole::User, text.to_string()))
+    Some(SessionExchangeDraft::claude_user(line, text.to_string()))
 }
 
-fn history_codex_exchange(line: &RawCodexLine) -> Option<(ExternalSessionExchangeRole, String)> {
+fn history_codex_exchange(line: &RawCodexLine) -> Option<SessionExchangeDraft> {
     let payload = line.payload.as_ref()?;
     if payload.role.as_deref() != Some("user") {
         return codex_exchange(line);
@@ -205,11 +205,12 @@ fn history_codex_exchange(line: &RawCodexLine) -> Option<(ExternalSessionExchang
     {
         return None;
     }
-    let text = joined_codex_blocks(payload.content.as_deref()?, "input_text", false)?;
+    let blocks = payload.content.as_deref()?;
+    let text = joined_codex_blocks(blocks, "input_text", false)?;
     if is_injected_history_text(&text) {
         return None;
     }
-    Some((ExternalSessionExchangeRole::User, text))
+    Some(SessionExchangeDraft::codex_user(blocks, text))
 }
 
 fn is_injected_history_text(text: &str) -> bool {
@@ -244,20 +245,24 @@ impl HistoryCollector {
         }
     }
 
-    fn push(&mut self, role: ExternalSessionExchangeRole, text: String) {
-        self.truncated |= text.len() >= MAX_EXTERNAL_SESSION_TEXT_BYTES;
-        let original = clip_utf8(&text, MAX_EXTERNAL_SESSION_TEXT_BYTES);
+    fn push(&mut self, draft: SessionExchangeDraft) {
+        self.truncated |= draft.text.len() >= MAX_EXTERNAL_SESSION_TEXT_BYTES;
+        let original = clip_utf8(&draft.text, MAX_EXTERNAL_SESSION_TEXT_BYTES);
         let text: String = original
             .chars()
             .filter(|character| !character.is_control() || *character == '\n' || *character == '\t')
             .collect();
         self.truncated |= text.len() != original.len();
-        self.bytes += text.len();
-        self.exchanges
-            .push_back(ExternalSessionExchange { role, text });
+        let exchange = ExternalSessionExchange {
+            role: draft.role,
+            text,
+            attachments: draft.attachments,
+        };
+        self.bytes += exchange.budget_bytes();
+        self.exchanges.push_back(exchange);
         while self.exchanges.len() > MAX_HISTORY_EXCHANGES || self.bytes > HISTORY_TOTAL_BYTES {
             if let Some(removed) = self.exchanges.pop_front() {
-                self.bytes -= removed.text.len();
+                self.bytes -= removed.budget_bytes();
                 self.truncated = true;
             }
         }

@@ -2,6 +2,8 @@ import type {
   AgentThreadsSurface,
   ExternalSessionsSurface,
 } from "../../application/agentThreadPorts";
+import type { AgentAttachmentImagesSurface } from "../../application/useAgentAttachmentImages";
+import type { AgentComposerAttachmentsSurface } from "../../application/useAgentComposerAttachments";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import { SURFACE_FIXTURE_ROOT } from "./agentSurfaceTestFixtures";
@@ -56,10 +58,47 @@ export function externalSessionsSurfaceFixture(
   };
 }
 
+export function composerAttachmentsSurfaceFixture(
+  overrides: Partial<AgentComposerAttachmentsSurface> = {},
+): AgentComposerAttachmentsSurface {
+  return {
+    drafts: [],
+    projectRootKey: null,
+    staging: false,
+    blocked: false,
+    refusal: null,
+    promptLineBytes: 0,
+    add: async () => undefined,
+    claimPaste: () => "pass-through",
+    remove: () => undefined,
+    clear: () => undefined,
+    markSent: () => undefined,
+    refuse: () => undefined,
+    dismissRefusal: () => undefined,
+    prepareTurn: async () => null,
+    ...overrides,
+  };
+}
+
+export function attachmentImagesSurfaceFixture(
+  overrides: Partial<AgentAttachmentImagesSurface> = {},
+): AgentAttachmentImagesSurface {
+  return {
+    images: new Map(),
+    ensure: () => undefined,
+    holdThread: () => () => undefined,
+    releaseWorkspace: () => undefined,
+    ...overrides,
+  };
+}
+
 export function threadsSurfaceFixture(
   overrides: Partial<AgentThreadsSurface> = {},
 ): AgentThreadsSurface {
   return {
+    attachments: composerAttachmentsSurfaceFixture(),
+    attachmentImages: attachmentImagesSurfaceFixture(),
+    revealAttachment: async () => undefined,
     threads: [],
     repositories: [
       fixtureRepository(SURFACE_FIXTURE_ROOT, ""),

@@ -7,6 +7,7 @@ import type {
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentAssistantText, type AgentProseContext } from "./AgentAssistantText";
 import { AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
+import type { AgentTurnAttachmentImagePort } from "./AgentTurnAttachments";
 import { agentThreadColumnKey } from "./agentThreadColumn";
 import { AGENT_TURN_UNTIMED } from "./agentTurnHeadPresentation";
 import {
@@ -22,6 +23,7 @@ const NO_HIGHLIGHTS: ReadonlyMap<number, AgentImportedHighlight> = new Map();
 const NO_EXCHANGES: ReadonlyArray<ExternalSessionExchange> = [];
 
 export const AgentImportedHistory = memo(function AgentImportedHistory({
+  attachmentImages = null,
   highlights = NO_HIGHLIGHTS,
   history,
   onRetry,
@@ -29,6 +31,7 @@ export const AgentImportedHistory = memo(function AgentImportedHistory({
   state,
   textClipboard,
 }: {
+  readonly attachmentImages?: AgentTurnAttachmentImagePort | null;
   readonly highlights?: ReadonlyMap<number, AgentImportedHighlight>;
   readonly history: ExternalAgentSessionHistory | undefined;
   readonly onRetry?: () => void;
@@ -71,6 +74,7 @@ export const AgentImportedHistory = memo(function AgentImportedHistory({
       )}
       {turns.map((turn) => (
         <AgentImportedTurnView
+          attachmentImages={attachmentImages}
           highlights={highlights}
           key={turn.key}
           prose={prose}
@@ -84,12 +88,14 @@ export const AgentImportedHistory = memo(function AgentImportedHistory({
 });
 
 const AgentImportedTurnView = memo(function AgentImportedTurnView({
+  attachmentImages,
   highlights,
   prose,
   provider,
   textClipboard,
   turn,
 }: {
+  readonly attachmentImages: AgentTurnAttachmentImagePort | null;
   readonly highlights: ReadonlyMap<number, AgentImportedHighlight>;
   readonly prose: AgentProseContext;
   readonly provider: AgentCliKind;
@@ -110,6 +116,8 @@ const AgentImportedTurnView = memo(function AgentImportedTurnView({
     >
       {prompt !== null && (
         <AgentTurnPrompt
+          attachmentImages={attachmentImages}
+          attachments={prompt.attachments}
           current={promptHighlight?.current ?? null}
           prompt={prompt.text}
           query={promptHighlight?.query ?? ""}

@@ -150,11 +150,12 @@ describe("agent thread turns", () => {
 
     const prompt = host.querySelector<HTMLElement>(".agent-prompt");
     expect(prompt?.querySelector("p.agent-prompt__body")?.textContent).toBe("First question");
-    expect(declaration(".agent-prompt__body", "max-width")).toBe("85%");
+    expect(prompt?.querySelector(".agent-prompt__bubble p.agent-prompt__body")).not.toBeNull();
+    expect(declaration(".agent-prompt__bubble", "max-width")).toBe("85%");
     expect(declaration(".agent-prompt", "justify-content")).toBe("flex-end");
-    expect(declaration(".agent-prompt__body", "border-radius")).toBe("var(--agent-radius-xl)");
-    expect(declaration(".agent-prompt__body", "background")).toBe("var(--agent-raised)");
-    expect(declaration(".agent-prompt__body", "box-shadow")).toBe("var(--agent-shadow-raised)");
+    expect(declaration(".agent-prompt__bubble", "border-radius")).toBe("var(--agent-radius-xl)");
+    expect(declaration(".agent-prompt__bubble", "background")).toBe("var(--agent-raised)");
+    expect(declaration(".agent-prompt__bubble", "box-shadow")).toBe("var(--agent-shadow-raised)");
   });
 
   it("renders an imported prompt through the same bubble and head as a live turn", () => {

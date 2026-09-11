@@ -214,22 +214,85 @@ describe("agent thread Airy style contract", () => {
 
   it("puts the prompt back in a right-aligned raised bubble capped at 85% of the column", () => {
     expect(winningDeclaration(".agent-prompt", "justify-content")).toBe("flex-end");
-    expect(winningDeclaration(".agent-prompt__body", "max-width")).toBe("85%");
+    expect(winningDeclaration(".agent-prompt__bubble", "max-width")).toBe("85%");
     expect(declarations(".agent-prompt", "max-width")).toEqual([]);
-    expect(winningDeclaration(".agent-prompt__body", "background")).toBe("var(--agent-raised)");
-    expect(winningDeclaration(".agent-prompt__body", "box-shadow")).toBe(
+    expect(declarations(".agent-prompt__body", "max-width")).toEqual([]);
+    expect(winningDeclaration(".agent-prompt__bubble", "background")).toBe("var(--agent-raised)");
+    expect(winningDeclaration(".agent-prompt__bubble", "box-shadow")).toBe(
       "var(--agent-shadow-raised)",
     );
+    expect(winningDeclaration(".agent-prompt__bubble:focus-visible", "box-shadow")).toBe(
+      "var(--agent-shadow-raised), var(--agent-focus-ring)",
+    );
     expect(winningDeclaration(".agent-prompt__body", "color")).toBe("var(--agent-text-strong)");
-    expect(winningDeclaration(".agent-prompt__body", "border-radius")).toBe(
+    expect(winningDeclaration(".agent-prompt__bubble", "border-radius")).toBe(
       "var(--agent-radius-xl)",
     );
     expect(token("--agent-radius-xl")).toBe("var(--codevo-r-xl)");
-    expect(winningDeclaration(".agent-prompt__body", "padding")).toBe(
+    expect(winningDeclaration(".agent-prompt__bubble", "padding")).toBe(
       "var(--agent-space-4) var(--agent-space-5)",
     );
-    expect(declarations(".agent-prompt__body", "background").join(" ")).not.toMatch(
+    expect(declarations(".agent-prompt__body", "background")).toEqual([]);
+    expect(declarations(".agent-prompt__body", "padding")).toEqual([]);
+    expect(declarations(".agent-prompt__bubble", "background").join(" ")).not.toMatch(
       /--agent-rail|--agent-shade|--codevo-side|--agent-well|--agent-code-background/,
+    );
+  });
+
+  it("keeps sent attachments inside the bubble under the text and its chips on the agent ladder", () => {
+    expect(winningDeclaration(".agent-prompt__bubble", "display")).toBe("grid");
+    expect(winningDeclaration(".agent-prompt__bubble", "gap")).toBe("var(--agent-space-3)");
+    expect(declarations(".agent-prompt", "flex-wrap")).toEqual([]);
+    expect(declarations(".agent-attachments", "flex-basis")).toEqual([]);
+    expect(declarations(".agent-attachments", "justify-content")).toEqual([]);
+    expect(winningDeclaration(".agent-attachments", "flex-wrap")).toBe("wrap");
+    expect(winningDeclaration(".agent-attachments", "gap")).toBe("var(--agent-space-3)");
+    expect(winningDeclaration(".agent-attachments__image", "max-width")).toBe("min(320px, 100%)");
+    expect(winningDeclaration(".agent-attachments__open", "max-width")).toBe("100%");
+    expect(winningDeclaration(".agent-attachments__image", "max-height")).toBe("240px");
+    expect(winningDeclaration(".agent-attachments__image", "object-fit")).toBe("contain");
+    expect(winningDeclaration(".agent-attachments__image", "border-radius")).toBe(
+      "var(--agent-radius-lg)",
+    );
+    expect(winningDeclaration(".agent-attachments__open", "border-radius")).toBe(
+      "var(--agent-radius-lg)",
+    );
+    expect(winningDeclaration(".agent-attachments__open:focus-visible", "box-shadow")).toBe(
+      "var(--agent-focus-ring)",
+    );
+    expect(winningDeclaration(".agent-attachments__chip", "background")).toBe("var(--agent-well)");
+    expect(winningDeclaration(".agent-attachments__chip", "border-radius")).toBe(
+      "var(--agent-radius-md)",
+    );
+    expect(winningDeclaration(".agent-attachments__chip", "font-size")).toBe("var(--agent-fs-xs)");
+    expect(
+      winningDeclaration('.agent-attachments__chip[data-agent-attachment="unavailable"]', "color"),
+    ).toBe("var(--agent-attention)");
+    expect(winningDeclaration(".agent-attachments__pending", "background")).toBe(
+      "var(--agent-well)",
+    );
+  });
+
+  it("keeps the composer attachment strip at 56px thumbnails on the agent ladder", () => {
+    expect(winningDeclaration(".agent-composer-attachment__thumb", "width")).toBe("56px");
+    expect(winningDeclaration(".agent-composer-attachment__thumb", "height")).toBe("56px");
+    expect(winningDeclaration(".agent-composer-attachment__thumb", "border-radius")).toBe(
+      "var(--agent-radius-md)",
+    );
+    expect(winningDeclaration(".agent-composer-attachment", "border-radius")).toBe(
+      "var(--agent-radius-md)",
+    );
+    expect(winningDeclaration(".agent-composer-attachment__failure", "font-size")).toBe(
+      "var(--agent-fs-2xs)",
+    );
+    expect(winningDeclaration(".agent-composer__box--drop", "box-shadow")).toBe(
+      "var(--agent-shadow-raised), var(--agent-focus-ring)",
+    );
+    expect(winningDeclaration(".agent-composer__box--drop", "background")).toBe(
+      "var(--agent-hover)",
+    );
+    expect(winningDeclaration(".agent-composer__attach", "border-radius")).toBe(
+      "var(--agent-radius-sm)",
     );
   });
 

@@ -1,15 +1,21 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
+import { agentPromptDisplayText } from "../../domain/agentPromptDisplay";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentRelativeTime, AgentWorkingDuration } from "./agentClock";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { agentCliKindLabel, agentTurnDurationLabel } from "./agentModePresentation";
 import { HighlightRun } from "./agentThreadHighlight";
+import { AgentTurnAttachments, type AgentTurnAttachmentImagePort } from "./AgentTurnAttachments";
+import type { AgentTurnAttachmentView } from "./agentTurnAttachmentPresentation";
 import type { AgentTurnTiming } from "./agentTurnHeadPresentation";
 
 const MAX_TIME_VALUE = 8_640_000_000_000_000;
+const NO_ATTACHMENTS: ReadonlyArray<AgentTurnAttachmentView> = [];
 
 export interface AgentTurnPromptProps {
+  readonly attachmentImages?: AgentTurnAttachmentImagePort | null;
+  readonly attachments?: ReadonlyArray<AgentTurnAttachmentView>;
   readonly current: number | null;
   readonly prompt: string;
   readonly query: string;
@@ -17,19 +23,28 @@ export interface AgentTurnPromptProps {
 }
 
 export const AgentTurnPrompt = memo(function AgentTurnPrompt({
+  attachmentImages = null,
+  attachments = NO_ATTACHMENTS,
   current,
   prompt,
   query,
   textClipboard,
 }: AgentTurnPromptProps) {
+  const displayText = useMemo(() => agentPromptDisplayText(prompt), [prompt]);
+
   return (
     <div className="agent-prompt">
       <div className="agent-message-actions">
         <AgentMessageCopyButton clipboard={textClipboard} label="your message" text={prompt} />
       </div>
-      <p className="agent-prompt__body" tabIndex={-1}>
-        <HighlightRun current={current} query={query} text={prompt} />
-      </p>
+      <div className="agent-prompt__bubble" tabIndex={-1}>
+        {displayText !== "" && (
+          <p className="agent-prompt__body">
+            <HighlightRun current={current} query={query} text={displayText} />
+          </p>
+        )}
+        <AgentTurnAttachments attachments={attachments} images={attachmentImages} />
+      </div>
     </div>
   );
 });

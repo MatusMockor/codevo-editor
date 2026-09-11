@@ -138,6 +138,38 @@ pub struct AgentThreadExternalHistory {
 pub struct AgentThreadExternalExchange {
     pub role: AgentThreadExternalExchangeRole,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AgentThreadExternalAttachment>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum AgentThreadExternalAttachment {
+    #[serde(rename_all = "camelCase")]
+    Image {
+        mime: AgentImageMime,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    File {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
+}
+
+impl AgentThreadExternalAttachment {
+    fn budget_bytes(&self) -> usize {
+        match self {
+            Self::Image { name, path, .. } => {
+                name.as_deref().map_or(0, str::len) + path.as_deref().map_or(0, str::len)
+            }
+            Self::File { name, path } => name.len() + path.as_deref().map_or(0, str::len),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -673,12 +705,46 @@ fn validate_agent_thread_external_origin(
             {
                 return Err("Agent thread external history text is out of bounds.".to_string());
             }
-            total_bytes += exchange.text.len();
+            validate_agent_thread_external_attachments(&exchange.attachments)?;
+            total_bytes += exchange.text.len()
+                + exchange
+                    .attachments
+                    .iter()
+                    .map(AgentThreadExternalAttachment::budget_bytes)
+                    .sum::<usize>();
         }
         if total_bytes > MAX_AGENT_EXTERNAL_HISTORY_BYTES
             || history.total_preview_bytes != total_bytes as u64
         {
             return Err("Agent thread external history byte count is out of bounds.".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn validate_agent_thread_external_attachments(
+    attachments: &[AgentThreadExternalAttachment],
+) -> Result<(), String> {
+    if attachments.len() > MAX_AGENT_TURN_ATTACHMENTS {
+        return Err(format!(
+            "Agent thread external history exceeds the maximum of {MAX_AGENT_TURN_ATTACHMENTS} attachments."
+        ));
+    }
+    for attachment in attachments {
+        let path = match attachment {
+            AgentThreadExternalAttachment::Image { name, path, .. } => {
+                if let Some(name) = name.as_deref() {
+                    ensure_agent_attachment_name(name)?;
+                }
+                path.as_deref()
+            }
+            AgentThreadExternalAttachment::File { name, path } => {
+                ensure_agent_attachment_name(name)?;
+                path.as_deref()
+            }
+        };
+        if let Some(path) = path {
+            ensure_agent_attachment_path(path)?;
         }
     }
     Ok(())

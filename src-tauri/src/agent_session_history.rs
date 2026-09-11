@@ -32,6 +32,13 @@ const CLAUDE_SESSION_FILE_SUFFIX: &str = ".jsonl";
 const CODEX_ROLLOUT_FILE_PREFIX: &str = "rollout-";
 const EPOCH_MS_PER_DAY: u64 = 86_400_000;
 
+#[path = "agent_session_attachments.rs"]
+mod attachments;
+use attachments::{
+    claude_exchange_attachments, codex_exchange_attachments, RawClaudeBlock, RawClaudeContent,
+    RawCodexBlock,
+};
+
 #[path = "agent_session_transcript.rs"]
 mod transcript;
 pub use transcript::{
@@ -80,22 +87,103 @@ pub struct ExternalAgentSessionListing {
     pub truncated: bool,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ExternalSessionExchangeRole {
     User,
     Assistant,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub enum ExternalSessionImageMime {
+    #[serde(rename = "image/png")]
+    Png,
+    #[serde(rename = "image/jpeg")]
+    Jpeg,
+    #[serde(rename = "image/gif")]
+    Gif,
+    #[serde(rename = "image/webp")]
+    Webp,
+}
+
+impl ExternalSessionImageMime {
+    pub fn from_media_type(value: &str) -> Option<Self> {
+        match value.trim() {
+            "image/png" => Some(Self::Png),
+            "image/jpeg" | "image/jpg" => Some(Self::Jpeg),
+            "image/gif" => Some(Self::Gif),
+            "image/webp" => Some(Self::Webp),
+            _ => None,
+        }
+    }
+
+    fn from_path_extension(path: &str) -> Option<Self> {
+        let (_, extension) = path.rsplit_once('.')?;
+        if extension.contains('/') || extension.len() > 8 {
+            return None;
+        }
+        match extension.to_ascii_lowercase().as_str() {
+            "png" => Some(Self::Png),
+            "jpg" | "jpeg" => Some(Self::Jpeg),
+            "gif" => Some(Self::Gif),
+            "webp" => Some(Self::Webp),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ExternalSessionAttachment {
+    #[serde(rename_all = "camelCase")]
+    Image {
+        mime: ExternalSessionImageMime,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    File {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
+}
+
+impl ExternalSessionAttachment {
+    pub fn budget_bytes(&self) -> usize {
+        match self {
+            Self::Image { name, path, .. } => {
+                name.as_deref().map_or(0, str::len) + path.as_deref().map_or(0, str::len)
+            }
+            Self::File { name, path } => name.len() + path.as_deref().map_or(0, str::len),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExternalSessionExchange {
     pub role: ExternalSessionExchangeRole,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<ExternalSessionAttachment>,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+impl ExternalSessionExchange {
+    pub fn budget_bytes(&self) -> usize {
+        self.text.len()
+            + self
+                .attachments
+                .iter()
+                .map(ExternalSessionAttachment::budget_bytes)
+                .sum::<usize>()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExternalAgentSessionPreview {
     pub provider: ExternalSessionProvider,
     pub session_id: String,
@@ -619,14 +707,14 @@ fn summarize_codex_session(
         let Ok(parsed) = serde_json::from_str::<RawCodexLine>(line) else {
             continue;
         };
-        let Some((role, text)) = codex_exchange(&parsed) else {
+        let Some(draft) = codex_exchange(&parsed) else {
             continue;
         };
-        if role != ExternalSessionExchangeRole::User {
+        if draft.role != ExternalSessionExchangeRole::User {
             continue;
         }
         if first_prompt.is_none() {
-            first_prompt = Some(text);
+            first_prompt = Some(draft.text);
         }
         turn_count = turn_count.saturating_add(1);
     }
@@ -866,7 +954,7 @@ fn window_lines(
 
 #[derive(Deserialize)]
 struct RawClaudeMessage {
-    content: Option<Value>,
+    content: Option<RawClaudeContent>,
 }
 
 #[derive(Deserialize)]
@@ -888,13 +976,6 @@ struct RawClaudeLine {
     ai_title: Option<String>,
     #[serde(rename = "agentName")]
     agent_name: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct RawCodexBlock {
-    #[serde(rename = "type")]
-    block_type: Option<String>,
-    text: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -977,9 +1058,9 @@ fn claude_user_text(line: &RawClaudeLine) -> Option<(String, bool)> {
     }
     let content = line.message.as_ref()?.content.as_ref()?;
     let (text, plain_string) = match content {
-        Value::String(text) => (text.clone(), true),
-        Value::Array(blocks) => (joined_text_blocks(blocks, "text")?, false),
-        _ => return None,
+        RawClaudeContent::Text(text) => (text.clone(), true),
+        RawClaudeContent::Blocks(blocks) => (joined_text_blocks(blocks, "text")?, false),
+        RawClaudeContent::Unsupported => return None,
     };
     let trimmed = text.trim();
     if trimmed.is_empty() || trimmed.starts_with('<') {
@@ -991,9 +1072,9 @@ fn claude_user_text(line: &RawClaudeLine) -> Option<(String, bool)> {
 fn claude_assistant_text(line: &RawClaudeLine) -> Option<String> {
     let content = line.message.as_ref()?.content.as_ref()?;
     let text = match content {
-        Value::String(text) => text.clone(),
-        Value::Array(blocks) => joined_text_blocks(blocks, "text")?,
-        _ => return None,
+        RawClaudeContent::Text(text) => text.clone(),
+        RawClaudeContent::Blocks(blocks) => joined_text_blocks(blocks, "text")?,
+        RawClaudeContent::Unsupported => return None,
     };
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -1002,13 +1083,13 @@ fn claude_assistant_text(line: &RawClaudeLine) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-fn joined_text_blocks(blocks: &[Value], block_type: &str) -> Option<String> {
+fn joined_text_blocks(blocks: &[RawClaudeBlock], block_type: &str) -> Option<String> {
     let mut joined = String::new();
     for block in blocks.iter().take(64) {
-        if block.get("type").and_then(Value::as_str) != Some(block_type) {
+        if block.block_type.as_deref() != Some(block_type) {
             continue;
         }
-        let Some(text) = block.get("text").and_then(Value::as_str) else {
+        let Some(text) = block.text.as_deref() else {
             continue;
         };
         if !joined.is_empty() {
@@ -1025,12 +1106,52 @@ fn joined_text_blocks(blocks: &[Value], block_type: &str) -> Option<String> {
     Some(joined)
 }
 
-fn claude_exchange(line: &RawClaudeLine) -> Option<(ExternalSessionExchangeRole, String)> {
-    match line.line_type.as_deref()? {
-        "user" => claude_user_text(line).map(|(text, _)| (ExternalSessionExchangeRole::User, text)),
-        "assistant" => {
-            claude_assistant_text(line).map(|text| (ExternalSessionExchangeRole::Assistant, text))
+struct SessionExchangeDraft {
+    role: ExternalSessionExchangeRole,
+    text: String,
+    attachments: Vec<ExternalSessionAttachment>,
+}
+
+impl SessionExchangeDraft {
+    fn assistant(text: String) -> Self {
+        Self {
+            role: ExternalSessionExchangeRole::Assistant,
+            text,
+            attachments: Vec::new(),
         }
+    }
+
+    fn claude_user(line: &RawClaudeLine, text: String) -> Self {
+        let attachments = line
+            .message
+            .as_ref()
+            .and_then(|message| message.content.as_ref())
+            .and_then(RawClaudeContent::blocks)
+            .map(|blocks| claude_exchange_attachments(blocks, &text))
+            .unwrap_or_default();
+        Self {
+            role: ExternalSessionExchangeRole::User,
+            text,
+            attachments,
+        }
+    }
+
+    fn codex_user(blocks: &[RawCodexBlock], text: String) -> Self {
+        let attachments = codex_exchange_attachments(blocks, &text);
+        Self {
+            role: ExternalSessionExchangeRole::User,
+            text,
+            attachments,
+        }
+    }
+}
+
+fn claude_exchange(line: &RawClaudeLine) -> Option<SessionExchangeDraft> {
+    match line.line_type.as_deref()? {
+        "user" => {
+            claude_user_text(line).map(|(text, _)| SessionExchangeDraft::claude_user(line, text))
+        }
+        "assistant" => claude_assistant_text(line).map(SessionExchangeDraft::assistant),
         _ => None,
     }
 }
@@ -1040,13 +1161,13 @@ fn collect_claude_exchanges(lines: &[&str], collector: &mut PreviewCollector) {
         let Ok(parsed) = serde_json::from_str::<RawClaudeLine>(line) else {
             continue;
         };
-        if let Some((role, text)) = claude_exchange(&parsed) {
-            collector.push(role, text);
+        if let Some(draft) = claude_exchange(&parsed) {
+            collector.push(draft);
         }
     }
 }
 
-fn codex_exchange(line: &RawCodexLine) -> Option<(ExternalSessionExchangeRole, String)> {
+fn codex_exchange(line: &RawCodexLine) -> Option<SessionExchangeDraft> {
     if line.line_type.as_deref() != Some("response_item") {
         return None;
     }
@@ -1058,11 +1179,11 @@ fn codex_exchange(line: &RawCodexLine) -> Option<(ExternalSessionExchangeRole, S
     match payload.role.as_deref()? {
         "user" => {
             let text = joined_codex_blocks(blocks, "input_text", true)?;
-            Some((ExternalSessionExchangeRole::User, text))
+            Some(SessionExchangeDraft::codex_user(blocks, text))
         }
         "assistant" => {
             let text = joined_codex_blocks(blocks, "output_text", false)?;
-            Some((ExternalSessionExchangeRole::Assistant, text))
+            Some(SessionExchangeDraft::assistant(text))
         }
         _ => None,
     }
@@ -1107,8 +1228,8 @@ fn collect_codex_exchanges(lines: &[&str], collector: &mut PreviewCollector) {
         let Ok(parsed) = serde_json::from_str::<RawCodexLine>(line) else {
             continue;
         };
-        if let Some((role, text)) = codex_exchange(&parsed) {
-            collector.push(role, text);
+        if let Some(draft) = codex_exchange(&parsed) {
+            collector.push(draft);
         }
     }
 }
@@ -1130,10 +1251,11 @@ impl PreviewCollector {
         }
     }
 
-    fn push(&mut self, role: ExternalSessionExchangeRole, text: String) {
+    fn push(&mut self, draft: SessionExchangeDraft) {
         let exchange = ExternalSessionExchange {
-            role,
-            text: clip_utf8(&text, MAX_EXTERNAL_SESSION_TEXT_BYTES).to_string(),
+            role: draft.role,
+            text: clip_utf8(&draft.text, MAX_EXTERNAL_SESSION_TEXT_BYTES).to_string(),
+            attachments: draft.attachments,
         };
         if self.first.len() < PREVIEW_HEAD_EXCHANGES {
             self.first.push(exchange.clone());
@@ -1165,15 +1287,18 @@ fn enforce_preview_budget(
     let mut budget = PREVIEW_TOTAL_BYTES;
     let mut keep_from = exchanges.len();
     for (index, exchange) in exchanges.iter().enumerate().rev() {
-        if exchange.text.len() > budget {
+        if exchange.budget_bytes() > budget {
             break;
         }
-        budget -= exchange.text.len();
+        budget -= exchange.budget_bytes();
         keep_from = index;
     }
     let dropped = keep_from > 0;
     let kept: Vec<ExternalSessionExchange> = exchanges.into_iter().skip(keep_from).collect();
-    let total: u64 = kept.iter().map(|exchange| exchange.text.len() as u64).sum();
+    let total: u64 = kept
+        .iter()
+        .map(|exchange| exchange.budget_bytes() as u64)
+        .sum();
     (kept, total, dropped)
 }
 

@@ -339,7 +339,7 @@ describe("codevo token contract", () => {
   it("lifts the prompt bubble off the thread column by tone wherever it has no card shadow", () => {
     const bubbleRule = parsed.rules.find(
       (rule) =>
-        rule.context.length === 0 && selectorParts(rule.selector).includes(".agent-prompt__body"),
+        rule.context.length === 0 && selectorParts(rule.selector).includes(".agent-prompt__bubble"),
     );
     const bubbleBackground = lastOf(
       bubbleRule?.declarations.filter((entry) => entry.property === "background"),

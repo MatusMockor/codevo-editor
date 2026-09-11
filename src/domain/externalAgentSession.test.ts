@@ -1,14 +1,17 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AGENT_SESSION_ID_PATTERN, isAgentSessionId } from "./agentTask";
 import {
   EXTERNAL_AGENT_SESSION_ID_PATTERN,
   MAX_EXTERNAL_SESSION_ENTRIES,
+  MAX_EXTERNAL_SESSION_EXCHANGE_ATTACHMENTS,
   MAX_PREVIEW_EXCHANGES,
   MAX_HISTORY_EXCHANGES,
   HISTORY_TOTAL_BYTES,
   parseExternalAgentSessionHistory,
   parseExternalAgentSessionPreview,
   parseExternalAgentSessionSummary,
+  parseExternalSessionExchange,
   parseExternalSessionListSnapshot,
   validateExternalSessionId,
   validateExternalSessionProvider,
@@ -255,5 +258,150 @@ describe("parseExternalAgentSessionPreview", () => {
     expect(() => parseExternalAgentSessionPreview(null)).toThrow(TypeError);
     expect(() => parseExternalAgentSessionPreview([])).toThrow(TypeError);
     expect(() => parseExternalAgentSessionPreview(missing)).toThrow(TypeError);
+  });
+});
+
+describe("external session exchange attachments", () => {
+  const STORED = "/data/agent-attachments/threads/agt-t1-0001/112233445566778899001122334455aa.txt";
+  const STORED_PNG =
+    "/data/agent-attachments/threads/agt-t1-0001/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png";
+
+  function readFixture(name: string): string {
+    return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
+  }
+
+  it("parses the closed image and file shapes with an optional absolute path", () => {
+    expect(
+      parseExternalSessionExchange({
+        role: "user",
+        text: "Look",
+        attachments: [
+          { kind: "image", mime: "image/png" },
+          { kind: "image", mime: "image/jpeg", path: "/Users/dev/Pictures/probe.jpg" },
+          { kind: "image", mime: "image/png", name: "square.png", path: STORED_PNG },
+          { kind: "file", name: "notes.txt", path: STORED },
+          { kind: "file", name: "clip.mp4" },
+        ],
+      }),
+    ).toEqual({
+      role: "user",
+      text: "Look",
+      attachments: [
+        { kind: "image", mime: "image/png" },
+        { kind: "image", mime: "image/jpeg", path: "/Users/dev/Pictures/probe.jpg" },
+        { kind: "image", mime: "image/png", name: "square.png", path: STORED_PNG },
+        { kind: "file", name: "notes.txt", path: STORED },
+        { kind: "file", name: "clip.mp4" },
+      ],
+    });
+  });
+
+  it("drops a malformed attachment but never the exchange that carries it", () => {
+    const malformed: ReadonlyArray<unknown> = [
+      { kind: "archive", name: "x.zip" },
+      { kind: "image", mime: "image/bmp" },
+      { kind: "image", mime: "image/png", path: "Pictures/relative.png" },
+      { kind: "image", mime: "image/png", bytes: 12 },
+      { kind: "image", mime: "image/png", name: "dir/probe.png" },
+      { kind: "image", mime: "image/png", name: "" },
+      { kind: "image", mime: "image/png", name: 5 },
+      { kind: "file", name: "dir/notes.txt" },
+      { kind: "file", name: "" },
+      { kind: "file", name: "tab\tname" },
+      { kind: "file", name: "x".repeat(256) },
+      { kind: "file" },
+      { kind: "image" },
+      null,
+      "file",
+      42,
+    ];
+
+    for (const entry of malformed) {
+      expect(
+        parseExternalSessionExchange({ role: "user", text: "Look", attachments: [entry] }),
+      ).toEqual({ role: "user", text: "Look" });
+    }
+    expect(
+      parseExternalSessionExchange({
+        role: "user",
+        text: "Look",
+        attachments: [malformed[0], { kind: "file", name: "kept.txt" }, malformed[1]],
+      }),
+    ).toEqual({ role: "user", text: "Look", attachments: [{ kind: "file", name: "kept.txt" }] });
+    expect(
+      parseExternalSessionExchange({ role: "user", text: "Look", attachments: "nope" }),
+    ).toEqual({ role: "user", text: "Look" });
+    expect(parseExternalSessionExchange({ role: "user", text: "Look", attachments: [] })).toEqual({
+      role: "user",
+      text: "Look",
+    });
+  });
+
+  it("keeps at most eight attachments per exchange, counted after dropping malformed ones", () => {
+    const many = [
+      { kind: "archive" },
+      ...Array.from({ length: 12 }, (_, index) => ({ kind: "file", name: `f${index}.txt` })),
+    ];
+
+    const parsed = parseExternalSessionExchange({ role: "user", text: "Look", attachments: many });
+
+    expect(parsed.attachments).toHaveLength(MAX_EXTERNAL_SESSION_EXCHANGE_ATTACHMENTS);
+    expect(parsed.attachments?.[0]).toEqual({ kind: "file", name: "f0.txt" });
+  });
+
+  it("still rejects an exchange whose own fields are wrong", () => {
+    expect(() => parseExternalSessionExchange({ role: "user", text: "Look", extra: true })).toThrow(
+      /expected the fields role, text and optionally attachments/,
+    );
+    expect(() => parseExternalSessionExchange({ role: "tool", text: "Look" })).toThrow(/role/);
+  });
+
+  it("counts attachment name and path bytes in totalPreviewBytes", () => {
+    const exchanges = [
+      {
+        role: "user",
+        text: "Look",
+        attachments: [
+          { kind: "image", mime: "image/png" },
+          { kind: "image", mime: "image/png", name: "square.png", path: STORED_PNG },
+          { kind: "file", name: "notes.txt", path: STORED },
+        ],
+      },
+    ];
+    const attachmentBytes =
+      "square.png".length + STORED_PNG.length + "notes.txt".length + STORED.length;
+
+    expect(() =>
+      parseExternalAgentSessionHistory(storedPreview({ exchanges, totalPreviewBytes: 4 })),
+    ).toThrow(/text and attachment bytes/);
+    expect(
+      parseExternalAgentSessionHistory(
+        storedPreview({ exchanges, totalPreviewBytes: 4 + attachmentBytes }),
+      ).totalPreviewBytes,
+    ).toBe(4 + attachmentBytes);
+  });
+
+  it("re-serialises the shared history fixture byte-for-byte", () => {
+    const raw = readFixture("external-session-history-with-attachments.json");
+
+    const parsed = parseExternalAgentSessionHistory(JSON.parse(raw));
+
+    expect(parsed.exchanges[0]?.attachments).toEqual([
+      { kind: "image", mime: "image/png" },
+      { kind: "image", mime: "image/jpeg", path: "/Users/dev/Pictures/probe.jpg" },
+      { kind: "file", name: "notes.txt", path: STORED },
+    ]);
+    expect(parsed.exchanges[1]?.attachments).toBeUndefined();
+    expect(`${JSON.stringify(parsed, null, 2)}\n`).toBe(raw);
+  });
+
+  it("re-serialises the legacy history fixture byte-for-byte and adds no attachment key", () => {
+    const raw = readFixture("external-session-history-legacy-no-attachments.json");
+    expect(raw).not.toContain("attachments");
+
+    const parsed = parseExternalAgentSessionHistory(JSON.parse(raw));
+
+    expect(parsed.exchanges.every((exchange) => !("attachments" in exchange))).toBe(true);
+    expect(`${JSON.stringify(parsed, null, 2)}\n`).toBe(raw);
   });
 });

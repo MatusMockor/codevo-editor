@@ -1,0 +1,16 @@
+{
+  "provider": "claudeCode",
+  "sessionId": "987b95ad-c9bc-4d08-ae49-9b431efc8f87",
+  "exchanges": [
+    {
+      "role": "user",
+      "text": "Look at this"
+    },
+    {
+      "role": "assistant",
+      "text": "A red square."
+    }
+  ],
+  "exchangesTruncated": false,
+  "totalPreviewBytes": 25
+}

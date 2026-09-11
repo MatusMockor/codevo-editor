@@ -302,12 +302,36 @@ chip, never a broken image. Copy of the prompt copies the effective prompt only.
 
 Imported turns: `agentImportedTurns` and `AgentImportedHistory` render the same
 `AgentTurnAttachments` component from `ExternalSessionExchange.attachments`
-(new optional `ReadonlyArray<{ kind: "image"; mime } | { kind: "file"; name }>`), which
-the Rust readers derive from Claude `image` content blocks and from section 0.3 lines
-in Codex/Claude user text (`agent_session_history.rs` `claude_exchange` /
-`codex_exchange`, bounded 8 per exchange). Imported images render as an "Image (from
-session file)" chip in this slice; the bytes stay in the session file. Both readers and
+(new optional `ReadonlyArray<{ kind: "image"; mime; name?; path? } | { kind: "file"; name; path? }>`),
+which the Rust readers derive from Claude `image` content blocks, Codex `input_image` /
+`local_image` blocks and from section 0.3 lines in Codex/Claude user text
+(`agent_session_attachments.rs`, bounded 8 per exchange). A Codex `local_image` whose
+`path` equals the path of an `[Attached image "<name>" is saved at: <path>]` line carries
+that `<name>`; the image line itself never produces a second chip. Wrong scalar types in a
+block (`{"type":5}`, `{"text":5}`, `{"media_type":5}`, `{"path":5}`, `{"image_url":5}`)
+drop that attachment, never the exchange. Attachment name and path bytes count against
+the 128 KiB history budget, the 64 KiB preview budget and the store's `totalPreviewBytes`
+check; the readers accept paths up to 1 KiB (the wire limit stays 4096). Claude
+`source.data` is read as `IgnoredAny` and a Codex `image_url` through a prefix-only
+visitor, so the base64 payload is not copied when it contains no escape sequences (a
+payload holding a JSON escape is copied by serde_json; real CLIs never escape base64).
+Imported images render as a chip; the bytes stay in the session file. Both readers and
 `AgentThreadExternalExchange` (store) get the field with the same omit-when-empty rule.
+
+Known gaps (independent review, 2026-09-11):
+
+- The history reader reads only the first 256 KiB and last 64 KiB of a session file and
+  drops partial lines, so a Claude user record carrying a real screenshot (133 KB-4 MB
+  base64) rarely falls inside a window; that exchange, prompt text included, is dropped
+  with only the global `exchangesTruncated` set. This is pre-existing; the fix is a
+  per-record streaming read in a separate slice.
+- A thread saved by this build with non-empty `attachments` is unreadable by the previous
+  build (`deny_unknown_fields`), the same class as `AgentTurn.attachments` from `78a0737c`.
+- Imported images are chips only: no click-to-reveal, and no reveal-by-path command
+  exists.
+- The reader carries `name` on an imported image; `importedImageName` in
+  `agentTurnAttachmentPresentation.ts` still labels the chip by the path basename and
+  must prefer `name` (S5-owned file, pending).
 
 CSS: tokens only, no `border`/`border-color`, radii through `--agent-radius-*` (8/10/12/14);
 `agentThreadStyles.test.ts` and `agentModeTokens.test.ts` gain the new selectors.
@@ -403,7 +427,7 @@ Manual QA checklist for the owner:
 ## Resolved open questions (2026-09-11, from T3 Code source and cmux behaviour)
 
 1. Draft persistence: pending attachments live in the store and survive a restart; a draft whose bytes never finished staging is dropped on hydration, as T3 does with unfinished uploads. Unclaimed pending files expire after 24 h.
-2. Imported sessions: chips with the file name only. Inline pixels are shown only when the exchange carries a path that resolves inside the attachments store; nothing is fetched or copied to make that true.
+2. Imported sessions: chips with the file name only. Inline pixels are shown only when the exchange carries a path that resolves inside the attachments store; nothing is fetched or copied to make that true. Known gaps (review, 2026-09-11): the history reader reads only the first 256 KiB and last 64 KiB of a session file and drops partial lines, so a Claude user record carrying a real screenshot (133 KB-4 MB base64) rarely falls inside a window and that exchange, prompt text included, is dropped with only the global `exchangesTruncated` set (pre-existing; a per-record streaming read is a separate slice); a thread saved by this build with non-empty `attachments` is unreadable by the previous build (`deny_unknown_fields`), the same class as `AgentTurn.attachments` from `78a0737c`; imported images are chips only, no click-to-reveal, and no reveal-by-path command exists.
 3. Stale reference path: the composer checks existence at send time and shows a visible "missing" state on the chip, but still sends the path line - the agent reports what it finds, which matches cmux.
 4. Attach hotkey: none. Paste, drop and the picker button are the three entry points, as in T3.
 

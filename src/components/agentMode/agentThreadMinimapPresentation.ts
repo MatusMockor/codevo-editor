@@ -1,9 +1,11 @@
+import { agentPromptDisplayText } from "../../domain/agentPromptDisplay";
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import { agentThreadColumnKey, type AgentThreadColumnAnchor } from "./agentThreadColumn";
 import type { AgentImportedTurn } from "./agentImportedPresentation";
 
 export const MAX_AGENT_MINIMAP_ENTRIES = 55;
 export const AGENT_MINIMAP_DENSE_TURNS = 44;
+export const AGENT_MINIMAP_IMAGE_ONLY_LABEL = "Image";
 export const AGENT_MINIMAP_NAME_CHARS = 60;
 export const AGENT_MINIMAP_PREVIEW_CHARS = 180;
 export const AGENT_MINIMAP_SOURCE_CHARS = 8 * AGENT_MINIMAP_PREVIEW_CHARS;
@@ -121,7 +123,7 @@ function columnSources(
   for (const turn of turns) {
     sources.push({
       anchor: { scope: "turn", turnId: turn.turnId },
-      text: turn.prompt,
+      text: minimapPromptText(turn.prompt),
       streaming: isStreaming(turn.status),
     });
   }
@@ -130,9 +132,17 @@ function columnSources(
 }
 
 function importedHeadText(entry: AgentImportedTurn): string {
-  if (entry.prompt !== null) return entry.prompt.text;
+  if (entry.prompt !== null) return minimapPromptText(entry.prompt.text);
 
   return entry.responses[0]?.text ?? "";
+}
+
+function minimapPromptText(prompt: string): string {
+  const displayed = agentPromptDisplayText(prompt);
+  if (displayed === prompt) return prompt;
+  if (displayed.trim() !== "") return displayed;
+
+  return AGENT_MINIMAP_IMAGE_ONLY_LABEL;
 }
 
 function minimapEntry(

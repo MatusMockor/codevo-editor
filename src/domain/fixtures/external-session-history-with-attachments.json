@@ -1,0 +1,32 @@
+{
+  "provider": "codex",
+  "sessionId": "01a038a1-c2ee-7642-98e4-c94d7a479e0c",
+  "exchanges": [
+    {
+      "role": "user",
+      "text": "Look at this\n\n[Attached file \"notes.txt\" is saved at: /data/agent-attachments/threads/agt-t1-0001/112233445566778899001122334455aa.txt]",
+      "attachments": [
+        {
+          "kind": "image",
+          "mime": "image/png"
+        },
+        {
+          "kind": "image",
+          "mime": "image/jpeg",
+          "path": "/Users/dev/Pictures/probe.jpg"
+        },
+        {
+          "kind": "file",
+          "name": "notes.txt",
+          "path": "/data/agent-attachments/threads/agt-t1-0001/112233445566778899001122334455aa.txt"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "A red square."
+    }
+  ],
+  "exchangesTruncated": false,
+  "totalPreviewBytes": 266
+}

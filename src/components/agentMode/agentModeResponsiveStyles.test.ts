@@ -142,7 +142,8 @@ describe("agent mode responsive layout contract", () => {
 
     expect(rule(".agent-prompt")).toContain("min-width: 0");
     expect(rule(".agent-prompt__body")).toContain("min-width: 0");
-    expect(rule(".agent-prompt__body")).toContain("max-width: 85%");
+    expect(rule(".agent-prompt__bubble")).toContain("min-width: 0");
+    expect(rule(".agent-prompt__bubble")).toContain("max-width: 85%");
     expect(rule(".agent-prompt__body")).toContain("word-break: break-word");
     expect(rule(".agent-turn__head")).toContain("min-width: 0");
     expect(rule(".agent-turn__agent")).toContain("text-overflow: ellipsis");
