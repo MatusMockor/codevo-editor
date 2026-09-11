@@ -7,6 +7,7 @@ import type {
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentAssistantText, type AgentProseContext } from "./AgentAssistantText";
 import { AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
+import { agentThreadColumnKey } from "./agentThreadColumn";
 import { AGENT_TURN_UNTIMED } from "./agentTurnHeadPresentation";
 import {
   agentImportedTurns,
@@ -99,7 +100,14 @@ const AgentImportedTurnView = memo(function AgentImportedTurnView({
   const promptHighlight = prompt === null ? undefined : highlights.get(prompt.exchangeIndex);
 
   return (
-    <article aria-label="Imported exchange" className="agent-turn">
+    <article
+      aria-label="Imported exchange"
+      className="agent-turn"
+      data-agent-column={agentThreadColumnKey({
+        scope: "imported",
+        exchangeIndex: turn.headExchangeIndex,
+      })}
+    >
       {prompt !== null && (
         <AgentTurnPrompt
           current={promptHighlight?.current ?? null}

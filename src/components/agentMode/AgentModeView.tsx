@@ -610,6 +610,7 @@ export function AgentModeView({
             onAdd={addProject.addProject}
             onClose={addProject.closeDialog}
             onNotice={addProject.reportNotice}
+            onOpenExisting={addProject.addProject}
             projectRootPaths={addProject.projectRootPaths}
           />
         )}

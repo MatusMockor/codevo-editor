@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readStyleSheet } from "../cssContractTestSupport";
+import { parseAllStyleSheets, readStyleSheet, selectorParts } from "../cssContractTestSupport";
 import { agentModeSheetPath, readAgentModeStyles } from "./agentModeCssTestSupport";
 
 const css = readAgentModeStyles();
@@ -96,7 +96,7 @@ describe("agent thread Airy style contract", () => {
 
   it("makes find focus a tone step instead of a ring on the input", () => {
     expect(declarations(".agent-find__input", "box-shadow")).toEqual([]);
-    expect(declarations(".agent-find__input:focus-visible", "box-shadow")).toEqual([]);
+    expect(winningDeclaration(".agent-find__input:focus-visible", "box-shadow")).toBe("none");
     expect(winningDeclaration(".agent-find__input", "outline")).toBe("none");
     expect(winningDeclaration(".agent-find__input", "background")).toBe("transparent");
     expect(winningDeclaration(".agent-find__input", "caret-color")).toBe("var(--agent-accent)");
@@ -107,6 +107,23 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-find:focus-within .agent-find__glyph", "color")).toBe(
       "var(--agent-accent)",
     );
+  });
+
+  it("keeps the shell-wide focus ring off the autofocused find input", () => {
+    const shellRing = parseAllStyleSheets()
+      .rules.filter(
+        (rule) =>
+          rule.context.length === 0 && selectorParts(rule.selector).includes(":focus-visible"),
+      )
+      .flatMap((rule) =>
+        rule.declarations
+          .filter((entry) => entry.property === "box-shadow")
+          .map((entry) => entry.value),
+      );
+
+    expect(shellRing).toEqual(["var(--focus-ring)"]);
+    expect(winningDeclaration(".agent-find__input:focus-visible", "box-shadow")).toBe("none");
+    expect(winningDeclaration(".agent-find__input", "outline")).toBe("none");
   });
 
   it("leaves the focus ring intact on every other control it touched", () => {

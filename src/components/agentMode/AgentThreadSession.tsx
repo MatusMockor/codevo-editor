@@ -21,6 +21,7 @@ import {
 } from "../../domain/agentOutput/agentProviderError";
 import { isAgentRawOutputNoise } from "../../domain/agentOutput/agentRawOutput";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
+import type { ExternalSessionExchange } from "../../domain/externalAgentSession";
 import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { AgentMarkdownRenderer } from "../../domain/agentMarkdown/agentMarkdownRenderer";
 import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentSidebarPresentation";
@@ -44,8 +45,9 @@ import {
   MIN_AGENT_MINIMAP_ENTRIES,
 } from "./AgentThreadMinimap";
 import { agentMinimapEntryIndex, agentThreadMinimapModel } from "./agentThreadMinimapPresentation";
+import { agentThreadColumnKey, type AgentThreadColumnAnchor } from "./agentThreadColumn";
 import { useAgentThreadTurnInView } from "./useAgentThreadTurnInView";
-import { agentImportedHighlights } from "./agentImportedPresentation";
+import { agentImportedHighlights, agentImportedTurns } from "./agentImportedPresentation";
 import { HighlightRun } from "./agentThreadHighlight";
 import { useAgentMarkdownRenderer } from "./useAgentMarkdown";
 import { createIntersectionAgentMarkdownViewport } from "../../infrastructure/viewport/intersectionAgentMarkdownViewport";
@@ -63,6 +65,7 @@ import {
 } from "./agentModePresentation";
 
 const NO_FIND_HITS: ReadonlyArray<AgentThreadFindHit> = [];
+const NO_EXCHANGES: ReadonlyArray<ExternalSessionExchange> = [];
 
 export const AGENT_FIND_REVEAL_INSET = 34;
 
@@ -255,24 +258,29 @@ function AgentThreadSessionBody({
   const [turnListOpen, setTurnListOpen] = useState(false);
   const sessionWidth = useViewportWidth(sessionElement);
   const minimapSurface = sessionWidth >= AGENT_MINIMAP_RAIL_WIDTH ? "rail" : "list";
-  const minimap = useMemo(() => agentThreadMinimapModel(record.turns), [record.turns]);
+  const importedExchanges = record.externalOrigin?.history?.exchanges ?? NO_EXCHANGES;
+  const importedTurns = useMemo(() => agentImportedTurns(importedExchanges), [importedExchanges]);
+  const minimap = useMemo(
+    () => agentThreadMinimapModel(importedTurns, record.turns),
+    [importedTurns, record.turns],
+  );
   const measured = sessionElement !== null;
   const mapped = measured && minimap.entries.length >= MIN_AGENT_MINIMAP_ENTRIES;
-  const inViewTurnId = useAgentThreadTurnInView({
+  const inViewColumnKey = useAgentThreadTurnInView({
+    columnSignature: `${importedTurns.length}:${record.turns.length}:${lastTurn?.turnId ?? ""}`,
     enabled: mapped && (minimapSurface === "rail" || turnListOpen),
     scrollRef,
     threadId,
-    turnSignature: `${record.turns.length}:${lastTurn?.turnId ?? ""}`,
   });
-  const currentTurnIndex = agentMinimapEntryIndex(minimap, inViewTurnId);
-  const jumpToTurn = useCallback((turnId: string): void => {
+  const currentColumnIndex = agentMinimapEntryIndex(minimap, inViewColumnKey);
+  const jumpToColumnEntry = useCallback((anchor: AgentThreadColumnAnchor): void => {
     const container = scrollRef.current;
     if (container === null) return;
-    const turn = turnElement(container, turnId);
-    if (turn === null) return;
+    const entry = columnElement(container, anchor);
+    if (entry === null) return;
     pinnedToLatestRef.current = false;
-    turn.scrollIntoView?.({ block: "start" });
-    turn.querySelector<HTMLElement>(".agent-prompt__body")?.focus({ preventScroll: true });
+    entry.scrollIntoView?.({ block: "start" });
+    entry.querySelector<HTMLElement>(".agent-prompt__body")?.focus({ preventScroll: true });
   }, []);
 
   const highlightFor = (turnIdentity: string): AgentTurnHighlight | null => {
@@ -293,9 +301,9 @@ function AgentThreadSessionBody({
 
       {measured && (
         <AgentThreadMinimap
-          currentIndex={currentTurnIndex}
+          currentIndex={currentColumnIndex}
           model={minimap}
-          onJump={jumpToTurn}
+          onJump={jumpToColumnEntry}
           onOpenChange={setTurnListOpen}
           openSignal={goToTurnSignal}
           surface={minimapSurface}
@@ -406,6 +414,7 @@ const AgentTurnView = memo(function AgentTurnView({
     <article
       aria-label={`Agent turn ${turn.turnId}`}
       className="agent-turn"
+      data-agent-column={agentThreadColumnKey({ scope: "turn", turnId: turn.turnId })}
       data-agent-turn={turn.turnId}
     >
       <AgentTurnPrompt
@@ -908,6 +917,15 @@ function importedElement(
   if (activeHit.scope !== "imported") return null;
 
   return container.querySelector<HTMLElement>(`[data-agent-event="x${activeHit.exchangeIndex}"]`);
+}
+
+function columnElement(
+  container: HTMLElement,
+  anchor: AgentThreadColumnAnchor,
+): HTMLElement | null {
+  const key = agentThreadColumnKey(anchor);
+  const candidates = Array.from(container.querySelectorAll<HTMLElement>("[data-agent-column]"));
+  return candidates.find((candidate) => candidate.dataset.agentColumn === key) ?? null;
 }
 
 function turnElement(container: HTMLElement, turnId: string): HTMLElement | null {

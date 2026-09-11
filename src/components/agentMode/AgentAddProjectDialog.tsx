@@ -7,7 +7,11 @@ import {
   type DirectoryEntry,
   type DirectoryListingGateway,
 } from "../../domain/directoryListing";
-import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
+import {
+  agentAddProjectActionLabel,
+  agentAddProjectIntent,
+  agentAddProjectIntentReason,
+} from "./agentAddProjectIntent";
 
 const LISTBOX_ID = "agent-add-project-listbox";
 const OPTION_PREFIX = "agent-add-project-option-";
@@ -15,15 +19,12 @@ const REASON_ID = "agent-add-project-reason";
 const MAX_NOTICE_CHARS = 200;
 export const MAX_RENDERED_DIRECTORY_ROWS = 200;
 
-const LOADING_REASON = "Reading this directory…";
-const UNREADABLE_REASON = "This directory could not be read.";
-const ALREADY_PROJECT_REASON = "This directory is already a project.";
-
 export interface AgentAddProjectDialogProps {
   readonly gateway: DirectoryListingGateway;
   readonly projectRootPaths: ReadonlyArray<string>;
   onClose(): void;
   onAdd(path: string): void;
+  onOpenExisting(rootPath: string): void;
   onNotice?(message: string): void;
 }
 
@@ -32,6 +33,7 @@ export function AgentAddProjectDialog({
   onAdd,
   onClose,
   onNotice,
+  onOpenExisting,
   projectRootPaths,
 }: AgentAddProjectDialogProps) {
   const browser = useDirectoryBrowser(gateway);
@@ -54,7 +56,14 @@ export function AgentAddProjectDialog({
   const boundedIndex =
     visibleEntries.length === 0 ? -1 : Math.min(activeIndex, visibleEntries.length - 1);
   const currentPath = listing?.path ?? null;
-  const disabledReason = addDisabledReason(status, listing !== null, currentPath, projectRootPaths);
+  const intent = agentAddProjectIntent({
+    currentPath,
+    hasListing: listing !== null,
+    projectRootPaths,
+    status,
+  });
+  const intentReason = agentAddProjectIntentReason(intent);
+  const actionLabel = agentAddProjectActionLabel(intent);
 
   const openInFinder = useCallback(() => {
     if (currentPath === null) return;
@@ -63,11 +72,16 @@ export function AgentAddProjectDialog({
     });
   }, [currentPath, gateway, onNotice]);
 
-  const add = useCallback(() => {
-    if (disabledReason !== null) return;
-    if (currentPath === null) return;
-    onAdd(currentPath);
-  }, [currentPath, disabledReason, onAdd]);
+  const commitKind = intent.kind;
+  const commitRootPath = intent.kind === "blocked" ? null : intent.rootPath;
+  const commit = useCallback(() => {
+    if (commitRootPath === null) return;
+    if (commitKind === "openExisting") {
+      onOpenExisting(commitRootPath);
+      return;
+    }
+    onAdd(commitRootPath);
+  }, [commitKind, commitRootPath, onAdd, onOpenExisting]);
 
   const openHighlighted = useCallback(() => {
     const entry = visibleEntries[boundedIndex];
@@ -85,7 +99,7 @@ export function AgentAddProjectDialog({
       if (event.key === "Enter") {
         event.preventDefault();
         if (event.metaKey || event.ctrlKey) {
-          add();
+          commit();
           return;
         }
         openHighlighted();
@@ -107,7 +121,7 @@ export function AgentAddProjectDialog({
       event.preventDefault();
       setActiveIndex((current) => (current - 1 + visibleEntries.length) % visibleEntries.length);
     },
-    [add, ascend, onClose, openHighlighted, query, visibleEntries.length],
+    [ascend, commit, onClose, openHighlighted, query, visibleEntries.length],
   );
 
   return (
@@ -211,9 +225,9 @@ export function AgentAddProjectDialog({
             />
             Show hidden
           </label>
-          {disabledReason !== null && (
+          {intentReason !== null && (
             <span className="agent-add-project__reason" id={REASON_ID}>
-              {disabledReason}
+              {intentReason}
             </span>
           )}
         </div>
@@ -230,7 +244,7 @@ export function AgentAddProjectDialog({
             <kbd>⌫</kbd> up
           </span>
           <span>
-            <kbd>⌘↵</kbd> add
+            <kbd>⌘↵</kbd> {intent.kind === "openExisting" ? "open project" : "add"}
           </span>
           <span>
             <kbd>esc</kbd> close
@@ -246,13 +260,13 @@ export function AgentAddProjectDialog({
             Open in Finder
           </button>
           <button
-            aria-describedby={disabledReason === null ? undefined : REASON_ID}
+            aria-describedby={intentReason === null ? undefined : REASON_ID}
             className="agent-add-project__add"
-            disabled={disabledReason !== null}
-            onClick={add}
+            disabled={intent.kind === "blocked"}
+            onClick={commit}
             type="button"
           >
-            Add
+            {actionLabel}
           </button>
         </div>
       </section>
@@ -268,20 +282,6 @@ function EntryGlyph({ entry }: { readonly entry: DirectoryEntry }) {
 function rowClassName(active: boolean): string {
   const base = "quick-open-result agent-add-project__row";
   return active ? `${base} active` : base;
-}
-
-function addDisabledReason(
-  status: "loading" | "loaded" | "error",
-  hasListing: boolean,
-  currentPath: string | null,
-  projectRootPaths: ReadonlyArray<string>,
-): string | null {
-  if (status === "loading") return LOADING_REASON;
-  if (status === "error" || !hasListing || currentPath === null) return UNREADABLE_REASON;
-  if (projectRootPaths.some((root) => workspaceRootKeysEqual(root, currentPath))) {
-    return ALREADY_PROJECT_REASON;
-  }
-  return null;
 }
 
 function boundedNotice(error: unknown): string {

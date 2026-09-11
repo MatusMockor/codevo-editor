@@ -26,6 +26,7 @@ describe("agentImportedTurns", () => {
     expect(turns[0]?.responses.map((response) => response.text)).toEqual(["alpha", "beta"]);
     expect(turns[1]?.prompt).toEqual({ exchangeIndex: 3, text: "second" });
     expect(turns[1]?.responses.map((response) => response.exchangeIndex)).toEqual([4]);
+    expect(turns.map((entry) => entry.headExchangeIndex)).toEqual([0, 3]);
   });
 
   it("keeps a leading answer that has no prompt of its own", () => {
@@ -33,6 +34,7 @@ describe("agentImportedTurns", () => {
 
     expect(turns.map((entry) => entry.prompt?.text ?? null)).toEqual([null, "first"]);
     expect(turns[0]?.responses.map((response) => response.text)).toEqual(["orphan"]);
+    expect(turns.map((entry) => entry.headExchangeIndex)).toEqual([0, 1]);
   });
 
   it("gives consecutive prompts a turn each", () => {

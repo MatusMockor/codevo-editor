@@ -127,7 +127,7 @@ describe("AgentThreadMinimap", () => {
 
     act(() => buttonList()[2]?.click());
 
-    expect(onJump).toHaveBeenLastCalledWith("t3");
+    expect(onJump).toHaveBeenLastCalledWith({ scope: "turn", turnId: "t3" });
     expect(onJump).toHaveBeenCalledTimes(1);
   });
 
@@ -140,7 +140,7 @@ describe("AgentThreadMinimap", () => {
     expect(dispatch("Enter").defaultPrevented).toBe(false);
 
     act(() => (document.activeElement as HTMLButtonElement).click());
-    expect(onJump).toHaveBeenLastCalledWith("t3");
+    expect(onJump).toHaveBeenLastCalledWith({ scope: "turn", turnId: "t3" });
   });
 
   it("takes the Go to Turn signal to the dash of the turn in view", () => {
@@ -181,7 +181,7 @@ describe("AgentThreadMinimap", () => {
     expect(buttons[1]?.textContent).toContain("Second");
 
     act(() => (buttons[2] as HTMLButtonElement).click());
-    expect(onJump).toHaveBeenLastCalledWith("t3");
+    expect(onJump).toHaveBeenLastCalledWith({ scope: "turn", turnId: "t3" });
   });
 
   it("closes the turn list when focus leaves it", () => {
@@ -278,7 +278,7 @@ function model(promptTexts: ReadonlyArray<string>) {
 }
 
 function modelOf(turns: ReadonlyArray<AgentTurn>) {
-  return agentThreadMinimapModel(turns);
+  return agentThreadMinimapModel([], turns);
 }
 
 function turn(turnId: string, prompt: string, status: AgentTurnStatus): AgentTurn {

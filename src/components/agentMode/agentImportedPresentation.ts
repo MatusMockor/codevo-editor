@@ -13,6 +13,7 @@ export interface AgentImportedPrompt {
 
 export interface AgentImportedTurn {
   readonly key: string;
+  readonly headExchangeIndex: number;
   readonly prompt: AgentImportedPrompt | null;
   readonly responses: ReadonlyArray<AgentImportedResponse>;
 }
@@ -30,23 +31,23 @@ export function agentImportedTurns(
   const turns: AgentImportedTurn[] = [];
   let responses: AgentImportedResponse[] = [];
   let prompt: AgentImportedPrompt | null = null;
-  let started = false;
+  let headExchangeIndex = -1;
 
   const flush = (): void => {
-    if (!started) return;
-    turns.push({ key: `x${turns.length}`, prompt, responses });
+    if (headExchangeIndex < 0) return;
+    turns.push({ key: `x${turns.length}`, headExchangeIndex, prompt, responses });
   };
 
   exchanges.forEach((exchange, exchangeIndex) => {
     if (exchange.role === "assistant") {
-      started = true;
+      if (headExchangeIndex < 0) headExchangeIndex = exchangeIndex;
       responses.push({ exchangeIndex, text: exchange.text });
       return;
     }
     flush();
     responses = [];
     prompt = { exchangeIndex, text: exchange.text };
-    started = true;
+    headExchangeIndex = exchangeIndex;
   });
   flush();
 

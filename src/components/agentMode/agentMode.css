@@ -610,6 +610,10 @@
   outline: none;
 }
 
+.agent-find__input:focus-visible {
+  box-shadow: none;
+}
+
 .agent-find__input::placeholder {
   color: var(--agent-text-subtle);
 }

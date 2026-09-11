@@ -1,24 +1,43 @@
 import { useEffect, useState, type RefObject } from "react";
 
-export const MAX_OBSERVED_AGENT_TURNS = 256;
+export const MAX_OBSERVED_AGENT_COLUMN_ENTRIES = 256;
+
+export function sampledColumnTargets<T>(
+  entries: ReadonlyArray<T>,
+  limit: number = MAX_OBSERVED_AGENT_COLUMN_ENTRIES,
+): ReadonlyArray<T> {
+  if (limit < 1) return [];
+  if (entries.length <= limit) return entries;
+  if (limit === 1) return entries.slice(0, 1);
+
+  const step = (entries.length - 1) / (limit - 1);
+  const picked: T[] = [];
+  for (let slot = 0; slot < limit; slot += 1) {
+    const entry = entries[Math.floor(slot * step)];
+    if (entry === undefined) continue;
+    picked.push(entry);
+  }
+
+  return picked;
+}
 
 export interface AgentTurnInViewOptions {
   readonly scrollRef: RefObject<HTMLElement | null>;
   readonly threadId: string;
-  readonly turnSignature: string;
+  readonly columnSignature: string;
   readonly enabled: boolean;
 }
 
 export function useAgentThreadTurnInView({
+  columnSignature,
   enabled,
   scrollRef,
   threadId,
-  turnSignature,
 }: AgentTurnInViewOptions): string | null {
-  const [turnId, setTurnId] = useState<string | null>(null);
+  const [columnKey, setColumnKey] = useState<string | null>(null);
 
   useEffect(() => {
-    setTurnId(null);
+    setColumnKey(null);
   }, [enabled, threadId]);
 
   useEffect(() => {
@@ -36,13 +55,12 @@ export function useAgentThreadTurnInView({
     let generation = 0;
     let observedHeight = -1;
 
-    const targets = Array.from(container.querySelectorAll<HTMLElement>("[data-agent-turn]")).slice(
-      0,
-      MAX_OBSERVED_AGENT_TURNS,
+    const targets = sampledColumnTargets(
+      Array.from(container.querySelectorAll<HTMLElement>("[data-agent-column]")),
     );
 
     for (const target of targets) {
-      const id = target.dataset.agentTurn;
+      const id = target.dataset.agentColumn;
       if (id === undefined) continue;
       order.set(target, ids.length);
       ids.push(id);
@@ -70,7 +88,7 @@ export function useAgentThreadTurnInView({
           const first = lowest(visible);
           if (first === null) return;
           const found = ids[first];
-          if (found !== undefined) setTurnId(found);
+          if (found !== undefined) setColumnKey(found);
         },
         { root: container, rootMargin: `${-height * 0.15}px 0px ${-height * 0.7}px 0px` },
       );
@@ -90,9 +108,9 @@ export function useAgentThreadTurnInView({
       order.clear();
       visible.clear();
     };
-  }, [enabled, scrollRef, threadId, turnSignature]);
+  }, [columnSignature, enabled, scrollRef, threadId]);
 
-  return turnId;
+  return columnKey;
 }
 
 function lowest(positions: ReadonlySet<number>): number | null {

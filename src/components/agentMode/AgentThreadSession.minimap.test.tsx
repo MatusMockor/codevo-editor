@@ -8,9 +8,11 @@ import {
   agentThreadAttention,
   agentThreadUnread,
   type AgentThread,
+  type AgentThreadExternalOrigin,
   type AgentTurn,
   type AgentTurnStatus,
 } from "../../domain/agentThread";
+import type { ExternalSessionExchange } from "../../domain/externalAgentSession";
 import { findInThread } from "../../domain/agentThreadSearch";
 import { parseAllStyleSheets, selectorParts } from "../cssContractTestSupport";
 import { AgentClockProvider } from "./agentClock";
@@ -188,6 +190,90 @@ describe("agent thread session minimap and find pill", () => {
     expect(lastScroll()?.element).toBe(third);
     expect(lastScroll()?.block).toEqual({ block: "start" });
     expect(document.activeElement).toBe(third?.querySelector(".agent-prompt__body"));
+  });
+
+  it("lists imported exchanges and live turns as one column in document order", () => {
+    render({
+      thread: threadView(
+        turns(2),
+        "agt-1",
+        imported([user("why does it hang"), assistant("it waits"), user("and now")]),
+      ),
+    });
+
+    const dashes = [...host.querySelectorAll<HTMLElement>(".agent-minimap__dash")];
+    expect(dashes.map((dash) => dash.getAttribute("aria-label"))).toEqual([
+      "Turn 1 of 4: why does it hang",
+      "Turn 2 of 4: and now",
+      "Turn 3 of 4: prompt 1",
+      "Turn 4 of 4: prompt 2",
+    ]);
+
+    const articles = [...host.querySelectorAll<HTMLElement>("[data-agent-column]")];
+    expect(articles.map((article) => article.dataset.agentColumn)).toEqual([
+      "imported:0",
+      "imported:2",
+      "turn:agt-1-t1",
+      "turn:agt-1-t2",
+    ]);
+  });
+
+  it("jumps to an imported prompt and moves focus to it", () => {
+    render({
+      thread: threadView(
+        turns(2),
+        "agt-1",
+        imported([user("why does it hang"), assistant("it waits"), user("and now")]),
+      ),
+    });
+
+    const second = host.querySelectorAll<HTMLButtonElement>(".agent-minimap__dash")[1];
+    act(() => second?.click());
+
+    const article = host.querySelector<HTMLElement>('[data-agent-column="imported:2"]');
+    expect(article).not.toBeNull();
+    expect(lastScroll()?.element).toBe(article);
+    expect(lastScroll()?.block).toEqual({ block: "start" });
+    expect(document.activeElement).toBe(article?.querySelector(".agent-prompt__body"));
+  });
+
+  it("draws a populated rail for a thread that has only imported exchanges", () => {
+    render({
+      thread: threadView(
+        [],
+        "agt-1",
+        imported([user("first"), assistant("alpha"), user("second")]),
+      ),
+    });
+
+    const rail = host.querySelector('nav[aria-label="Your turns"]');
+    expect(rail?.className).toContain("agent-minimap--rail");
+    expect(host.querySelectorAll(".agent-minimap__dash")).toHaveLength(2);
+    expect(host.querySelector(".agent-session__scroll")?.contains(rail as Node)).toBe(false);
+  });
+
+  it("watches the whole column with the one observer rooted on the scroller", () => {
+    const originalHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      value: 400,
+    });
+    try {
+      render({
+        thread: threadView(turns(2), "agt-1", imported([user("first"), user("second")])),
+      });
+    } finally {
+      restore(HTMLElement.prototype, "clientHeight", originalHeight);
+    }
+
+    expect(observers).toHaveLength(1);
+    const observer = observers[0];
+    expect(observer?.root).toBe(host.querySelector(".agent-session__scroll"));
+    expect(observer?.targets).toHaveLength(4);
+
+    const targets = observer?.targets ?? [];
+    act(() => observer?.enter(targets[1] as Element));
+    expect(currentDashLabel()).toBe("Turn 2 of 4: second");
   });
 
   it("stops observing and swaps to the turn list when the column is narrow", () => {
@@ -522,7 +608,34 @@ function turn(turnId: string, prompt: string, status: AgentTurnStatus): AgentTur
   };
 }
 
-function threadView(turnList: ReadonlyArray<AgentTurn>, threadId = "agt-1"): AgentThreadView {
+function user(text: string): ExternalSessionExchange {
+  return { role: "user", text };
+}
+
+function assistant(text: string): ExternalSessionExchange {
+  return { role: "assistant", text };
+}
+
+function imported(exchanges: ReadonlyArray<ExternalSessionExchange>): AgentThreadExternalOrigin {
+  return {
+    provider: "claudeCode",
+    sessionId: "session-abcdefgh",
+    importedAtEpochMs: NOW - 900_000,
+    history: {
+      provider: "claudeCode",
+      sessionId: "session-abcdefgh",
+      exchanges,
+      exchangesTruncated: false,
+      totalPreviewBytes: 0,
+    },
+  };
+}
+
+function threadView(
+  turnList: ReadonlyArray<AgentTurn>,
+  threadId = "agt-1",
+  externalOrigin: AgentThreadExternalOrigin | null = null,
+): AgentThreadView {
   const record: AgentThread = {
     threadId,
     owner: { rootKey: ROOT, ownerId: "agent-root:app", repositoryRoot: ROOT },
@@ -536,7 +649,7 @@ function threadView(turnList: ReadonlyArray<AgentTurn>, threadId = "agt-1"): Age
     turns: turnList,
     turnsTruncated: false,
     viewedAtEpochMs: null,
-    externalOrigin: null,
+    externalOrigin,
     integration: null,
   };
   return {

@@ -127,33 +127,82 @@ describe("AgentAddProjectDialog", () => {
 
   it("adds the current directory on Cmd+Enter", async () => {
     const onAdd = vi.fn();
-    await render({ onAdd });
+    const onOpenExisting = vi.fn();
+    await render({ onAdd, onOpenExisting });
+
+    expect(addButton().textContent).toBe("Add");
+    expect(addButton().getAttribute("aria-describedby")).toBeNull();
 
     await press({ key: "Enter", metaKey: true });
 
     expect(onAdd).toHaveBeenCalledWith(HOME);
+    expect(onOpenExisting).not.toHaveBeenCalled();
   });
 
-  it("disables Add with a reason when the directory is already a project", async () => {
+  it("offers the existing project instead of a dead Add when the directory is one", async () => {
     const onAdd = vi.fn();
-    await render({ onAdd, projectRootPaths: [HOME] });
+    const onOpenExisting = vi.fn();
+    await render({ onAdd, onOpenExisting, projectRootPaths: [HOME] });
 
-    expect(addButton().disabled).toBe(true);
-    expect(host.textContent).toContain("This directory is already a project.");
+    const button = addButton();
+    expect(button.disabled).toBe(false);
+    expect(button.textContent).toBe("Open project");
+    expect(button.getAttribute("aria-describedby")).toBe("agent-add-project-reason");
+    expect(query<HTMLElement>(".agent-add-project__reason").textContent).toBe(
+      "This directory is already a project.",
+    );
+    expect(host.textContent).toContain("open project");
 
-    await press({ key: "Enter", metaKey: true });
+    await act(async () => button.click());
+
+    expect(onOpenExisting).toHaveBeenCalledWith(HOME);
     expect(onAdd).not.toHaveBeenCalled();
   });
 
-  it("disables Add when a project root differs only by a trailing separator", async () => {
+  it("sends Cmd+Enter to the same action the button performs", async () => {
     const onAdd = vi.fn();
-    await render({ onAdd, projectRootPaths: [`${HOME}/`] });
+    const onOpenExisting = vi.fn();
+    await render({ onAdd, onOpenExisting, projectRootPaths: [HOME] });
+
+    await press({ key: "Enter", metaKey: true });
+
+    expect(onOpenExisting).toHaveBeenCalledWith(HOME);
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it("opens the registered root, not the browsed spelling of the same directory", async () => {
+    const onAdd = vi.fn();
+    const onOpenExisting = vi.fn();
+    await render({ onAdd, onOpenExisting, projectRootPaths: [`${HOME}/`] });
+
+    expect(addButton().textContent).toBe("Open project");
+    expect(host.textContent).toContain("This directory is already a project.");
+
+    await act(async () => addButton().click());
+
+    expect(onOpenExisting).toHaveBeenCalledWith(`${HOME}/`);
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it("keeps every other reason disabled and explaining itself", async () => {
+    const onAdd = vi.fn();
+    const onOpenExisting = vi.fn();
+    gateway.listRejection = new Error("Permission denied");
+    await render({ onAdd, onOpenExisting });
+
+    await waitForReact(() => {
+      expect(host.textContent).toContain("Permission denied");
+    });
 
     expect(addButton().disabled).toBe(true);
-    expect(host.textContent).toContain("This directory is already a project.");
+    expect(addButton().textContent).toBe("Add");
+    expect(query<HTMLElement>(".agent-add-project__reason").textContent).toBe(
+      "This directory could not be read.",
+    );
 
     await press({ key: "Enter", metaKey: true });
     expect(onAdd).not.toHaveBeenCalled();
+    expect(onOpenExisting).not.toHaveBeenCalled();
   });
 
   it("returns focus to the filter input after a mouse descend", async () => {
@@ -261,6 +310,7 @@ describe("AgentAddProjectDialog", () => {
       onAdd: vi.fn(),
       onClose: vi.fn(),
       onNotice: vi.fn(),
+      onOpenExisting: vi.fn(),
       ...overrides,
     };
     await act(async () => {

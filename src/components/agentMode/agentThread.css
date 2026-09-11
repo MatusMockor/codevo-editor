@@ -36,7 +36,7 @@
   padding-block-start: var(--agent-find-inset);
 }
 
-.agent-session[data-find="open"] [data-agent-turn],
+.agent-session[data-find="open"] [data-agent-column],
 .agent-session[data-find="open"] [data-agent-event],
 .agent-session[data-find="open"] .agent-find__hit--current {
   scroll-margin-top: var(--agent-find-inset);

@@ -3,7 +3,11 @@
 import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useAgentThreadTurnInView } from "./useAgentThreadTurnInView";
+import {
+  MAX_OBSERVED_AGENT_COLUMN_ENTRIES,
+  sampledColumnTargets,
+  useAgentThreadTurnInView,
+} from "./useAgentThreadTurnInView";
 
 class IntersectionFake {
   static instances: IntersectionFake[] = [];
@@ -44,7 +48,7 @@ function Harness({ threadId, enabled = true }: { threadId: string; enabled?: boo
     scrollRef,
     threadId,
     enabled,
-    turnSignature: "first,second",
+    columnSignature: "first,second",
   });
   return (
     <div>
@@ -60,8 +64,8 @@ function Harness({ threadId, enabled = true }: { threadId: string; enabled?: boo
           }
         }}
       >
-        <article data-agent-turn={`${threadId}-first`} />
-        <article data-agent-turn={`${threadId}-second`} />
+        <article data-agent-column={`${threadId}-first`} />
+        <article data-agent-column={`${threadId}-second`} />
       </div>
     </div>
   );
@@ -154,5 +158,43 @@ describe("turn in view scrollport ownership", () => {
     height = 600;
     act(() => window.dispatchEvent(new Event("resize")));
     expect(observer().options.rootMargin).toBe("-90px 0px -420px 0px");
+  });
+});
+
+describe("column observation budget", () => {
+  it("observes every entry while the column fits the budget", () => {
+    const entries = Array.from({ length: MAX_OBSERVED_AGENT_COLUMN_ENTRIES }, (_u, i) => i);
+
+    expect(sampledColumnTargets(entries)).toBe(entries);
+  });
+
+  it("spreads the budget across the whole column instead of dropping the tail", () => {
+    const total = MAX_OBSERVED_AGENT_COLUMN_ENTRIES * 3;
+    const entries = Array.from({ length: total }, (_unused, index) => index);
+    const picked = sampledColumnTargets(entries);
+
+    expect(picked).toHaveLength(MAX_OBSERVED_AGENT_COLUMN_ENTRIES);
+    expect(picked[0]).toBe(0);
+    expect(picked[picked.length - 1]).toBe(total - 1);
+    expect(new Set(picked).size).toBe(picked.length);
+    expect([...picked]).toEqual([...picked].sort((left, right) => left - right));
+  });
+
+  it("reaches the live half of a column whose imported half alone fills the budget", () => {
+    const imported = Array.from(
+      { length: MAX_OBSERVED_AGENT_COLUMN_ENTRIES },
+      (_unused, index) => `imported:${index}`,
+    );
+    const live = Array.from({ length: 40 }, (_unused, index) => `turn:t${index}`);
+    const picked = sampledColumnTargets([...imported, ...live]);
+
+    expect(picked.some((key) => key.startsWith("turn:"))).toBe(true);
+    expect(picked[picked.length - 1]).toBe("turn:t39");
+  });
+
+  it("stays bounded for degenerate limits", () => {
+    expect(sampledColumnTargets([1, 2, 3], 0)).toEqual([]);
+    expect(sampledColumnTargets([1, 2, 3], 1)).toEqual([1]);
+    expect(sampledColumnTargets([], 8)).toEqual([]);
   });
 });

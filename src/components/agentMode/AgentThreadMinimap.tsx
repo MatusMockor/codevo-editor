@@ -13,6 +13,7 @@ import {
   type AgentMinimapEntry,
   type AgentThreadMinimapModel,
 } from "./agentThreadMinimapPresentation";
+import type { AgentThreadColumnAnchor } from "./agentThreadColumn";
 import { useAgentPopover } from "./agentPopover";
 import { useAgentMinimapPreview } from "./agentMinimapPreview";
 
@@ -26,7 +27,7 @@ export interface AgentThreadMinimapProps {
   readonly currentIndex: number;
   readonly surface: AgentMinimapSurface;
   readonly openSignal?: number;
-  onJump(turnId: string): void;
+  onJump(anchor: AgentThreadColumnAnchor): void;
   onOpenChange?(open: boolean): void;
 }
 
@@ -71,7 +72,7 @@ function AgentMinimapRail({
   readonly currentIndex: number;
   readonly model: AgentThreadMinimapModel;
   readonly openSignal: number;
-  onJump(turnId: string): void;
+  onJump(anchor: AgentThreadColumnAnchor): void;
 }) {
   return (
     <nav
@@ -99,7 +100,7 @@ function AgentMinimapDisclosure({
   readonly currentIndex: number;
   readonly model: AgentThreadMinimapModel;
   readonly openSignal: number;
-  onJump(turnId: string): void;
+  onJump(anchor: AgentThreadColumnAnchor): void;
   onOpenChange?(open: boolean): void;
 }) {
   const popover = useAgentPopover("start");
@@ -128,9 +129,9 @@ function AgentMinimapDisclosure({
   );
 
   const jump = useCallback(
-    (turnId: string) => {
+    (anchor: AgentThreadColumnAnchor) => {
       hide(false);
-      onJump(turnId);
+      onJump(anchor);
     },
     [hide, onJump],
   );
@@ -173,7 +174,7 @@ interface AgentTurnJumpListProps {
   readonly entries: ReadonlyArray<AgentMinimapEntry>;
   readonly focusSignal: number;
   readonly surface: AgentMinimapSurface;
-  onJump(turnId: string): void;
+  onJump(anchor: AgentThreadColumnAnchor): void;
 }
 
 export function AgentTurnJumpList({
@@ -245,7 +246,7 @@ const AgentTurnJumpRow = memo(function AgentTurnJumpRow({
   readonly entry: AgentMinimapEntry;
   readonly surface: AgentMinimapSurface;
   readonly tabbable: boolean;
-  onJump(turnId: string): void;
+  onJump(anchor: AgentThreadColumnAnchor): void;
 }) {
   const className = [
     "agent-minimap__dash",
@@ -263,7 +264,7 @@ const AgentTurnJumpRow = memo(function AgentTurnJumpRow({
         aria-current={current || undefined}
         aria-label={entry.name}
         className={className}
-        onClick={() => onJump(entry.turnId)}
+        onClick={() => onJump(entry.anchor)}
         style={{ "--minimap-distance": distance } as CSSProperties}
         tabIndex={tabbable ? 0 : -1}
         type="button"
