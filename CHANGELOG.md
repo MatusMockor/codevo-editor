@@ -7,6 +7,17 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.34] - 2026-09-11
+
+### Fixed
+
+- Include imported history and live follow-ups in one minimap sequence, with navigation
+  and current-turn tracking across the whole conversation.
+- Offer to open an existing project when its registered directory is selected in the
+  add-project dialog, while preserving other validation errors.
+- Remove the unintended focus ring inside the thread search field while retaining
+  keyboard focus indicators on its buttons.
+
 ## [0.2.0-beta.33] - 2026-09-11
 
 ### Added
