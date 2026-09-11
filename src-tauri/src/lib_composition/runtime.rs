@@ -147,6 +147,16 @@ pub fn run() {
                     app.path().app_data_dir()?,
                 ),
             ));
+            let agent_attachment_store = Arc::new(
+                agent_attachment_commands::agent_attachment_store::AgentAttachmentStore::new(
+                    app.path().app_data_dir()?,
+                ),
+            );
+            let agent_attachment_store_for_sweep = Arc::clone(&agent_attachment_store);
+            app.manage(agent_attachment_store);
+            tauri::async_runtime::spawn_blocking(move || {
+                agent_attachment_store_for_sweep.sweep_all();
+            });
             let agent_cli_versions = Arc::new(
                 agent_task_spawner::agent_provider::agent_cli_version::AgentCliVersionRegistry::new(),
             );
@@ -494,6 +504,14 @@ pub fn run() {
             workspace_symbols,
             terminal_commands::write_terminal_input,
             agent_task_commands::start_agent_task,
+            agent_attachment_commands::stage_agent_attachment_bytes,
+            agent_attachment_commands::stage_agent_attachment_from_path,
+            agent_attachment_commands::inspect_agent_attachment_candidate,
+            agent_attachment_commands::read_agent_attachment_candidate,
+            agent_attachment_commands::claim_agent_attachments,
+            agent_attachment_commands::release_agent_attachment,
+            agent_attachment_commands::read_agent_attachment,
+            agent_attachment_commands::reveal_agent_attachment,
             agent_task_commands::acknowledge_agent_task_start,
             agent_task_commands::stop_agent_task,
             agent_task_commands::stop_agent_tasks_for_root,

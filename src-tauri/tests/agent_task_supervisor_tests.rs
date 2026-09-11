@@ -25,8 +25,9 @@ use agent_task_spawner::agent_launch::{
     ClaudePermissionMode, CodexExecutionMode, CodexModelChoice,
 };
 use agent_task_spawner::{
-    plan_agent_invocation, AgentChild, AgentCliInvocation, AgentProcessSpawner, AgentTaskSpawnPlan,
-    StdAgentProcessSpawner, AGENT_TASK_INHERITED_ENV, MAX_AGENT_PROMPT_BYTES,
+    claude_user_frame, plan_agent_invocation, AgentChild, AgentCliInvocation, AgentProcessSpawner,
+    AgentPromptTransport, AgentTaskSpawnPlan, StdAgentProcessSpawner, AGENT_TASK_INHERITED_ENV,
+    MAX_AGENT_PROMPT_BYTES,
 };
 use agent_task_supervisor::{
     AgentProcessGroupSignalSender, AgentTaskEventSink, AgentTaskIsolation, AgentTaskOutputEvent,
@@ -705,9 +706,14 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--verbose".to_string(),
-            "--".to_string(),
-            "do the task".to_string()
+            "--input-format".to_string(),
+            "stream-json".to_string(),
         ]
+    );
+    assert_eq!(
+        claude.prompt(),
+        &AgentPromptTransport::Stdin(claude_user_frame("do the task", &[]).into()),
+        "the claude prompt travels on stdin, never in argv or ps output"
     );
     assert_eq!(claude.cwd(), directory.as_path());
     for (key, _) in claude.env() {
@@ -755,11 +761,15 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--verbose".to_string(),
+            "--input-format".to_string(),
+            "stream-json".to_string(),
             "--resume".to_string(),
             "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string(),
-            "--".to_string(),
-            "do the task".to_string()
         ]
+    );
+    assert_eq!(
+        resumed_claude.prompt(),
+        &AgentPromptTransport::Stdin(claude_user_frame("do the task", &[]).into())
     );
     let resumed_codex = plan_agent_invocation(
         &cli_path,
