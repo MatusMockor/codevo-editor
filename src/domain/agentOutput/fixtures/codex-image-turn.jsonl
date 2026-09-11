@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"01a09025-ae97-7441-9a78-b38c7db3681c"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation."}}
+{"type":"item.completed","item":{"id":"item_1","type":"error","message":"`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"OK\n\nMagenta square crossed by diagonal."}}
+{"type":"turn.completed","usage":{"input_tokens":16386,"cached_input_tokens":11904,"cache_write_input_tokens":0,"output_tokens":67,"reasoning_output_tokens":52}}

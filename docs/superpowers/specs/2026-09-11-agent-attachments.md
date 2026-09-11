@@ -420,3 +420,12 @@ Every stream brief must carry these two lines verbatim and every review must che
   directory is success; a failed removal after the thread file is gone is a bounded,
   visible error. Rejected starts and abandoned drafts are swept after 24 h. No path in
   this flow is ever taken from the client.
+
+## Probe results (2026-09-11) - both transports confirmed, no amendment needed
+
+Fixtures: `src/domain/agentOutput/fixtures/{codex-image-turn,codex-image-resume-turn,claude-image-turn,claude-image-resume-turn}.jsonl` and `claude-image-turn.input.jsonl` (base64 truncated after the real run; tests compare non-data bytes and the data prefix).
+
+- Codex 0.154.0: `exec -i <path>` and `exec resume -i <path> <session>` both exit 0 and the model describes the new image, not the history. `-m` must precede `-i` and the session id. `--skip-git-repo-check` is accepted on resume. Stdin must be closed (`< /dev/null`) or codex blocks. The JSON shape is unchanged by images: no new item types, the image is never echoed.
+- Codex emits two `item.type == "error"` lines from the local hook config before `turn.started` on every run (also present in the pre-existing fixture). The reader must not treat an `error` item as turn failure on its own.
+- Claude Code 2.1.268: `-p --input-format stream-json --output-format stream-json --verbose --model <m> --permission-mode plan` with a single user frame on stdin (image block first, text last) exits 0 at stdin EOF; `--resume <id>` with a second image frame also works and the session id does not rotate. The Ultrathink text prefix works alongside an image block.
+- Claude output never echoes the base64; image cost lands in `cache_creation_input_tokens` / `cache_read_input_tokens`, not `input_tokens`. The stream starts with hook and rate-limit lines before `system:init`, and the first assistant content block may be a `thinking` block - readers must not assume block 0 is text.
