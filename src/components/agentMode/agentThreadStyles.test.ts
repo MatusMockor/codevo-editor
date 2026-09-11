@@ -575,6 +575,11 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-lightbox__stage", "max-width")).toBe("92vw");
     expect(winningDeclaration(".agent-lightbox__stage", "max-height")).toBe("92vh");
     expect(winningDeclaration(".agent-lightbox__frame", "position")).toBe("relative");
+    expect(winningDeclaration(".agent-lightbox__frame", "display")).toBe("inline-block");
+    expect(winningDeclaration(".agent-lightbox__frame", "min-height")).toBe("0");
+    expect(winningDeclaration(".agent-lightbox__frame", "min-width")).toBe("0");
+    expect(winningDeclaration(".agent-lightbox__stage", "min-height")).toBe("0");
+    expect(winningDeclaration(".agent-lightbox__stage", "min-width")).toBe("0");
     expect(winningDeclaration(".agent-lightbox__image", "max-width")).toBe("92vw");
     expect(winningDeclaration(".agent-lightbox__image", "max-height")).toBe("86vh");
     expect(winningDeclaration(".agent-lightbox__image", "width")).toBe("auto");

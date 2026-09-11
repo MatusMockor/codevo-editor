@@ -1910,14 +1910,20 @@
   flex-direction: column;
   align-items: center;
   gap: var(--agent-space-3);
+  min-width: 0;
+  min-height: 0;
   max-width: 92vw;
   max-height: 92vh;
 }
 
 .agent-lightbox__frame {
   position: relative;
-  display: flex;
+  display: inline-block;
+  min-width: 0;
+  min-height: 0;
   max-width: 100%;
+  flex: none;
+  line-height: 0;
 }
 
 .agent-lightbox__image {
