@@ -1,3 +1,20 @@
+import {
+  MAX_AGENT_ATTACHMENT_NAME_BYTES,
+  MAX_AGENT_ATTACHMENT_PATH_BYTES,
+  MAX_AGENT_TURN_ATTACHMENTS,
+  MAX_AGENT_TURN_IMAGE_BYTES,
+  agentTurnImageBytes,
+  isAgentAttachmentId,
+  isAgentAttachmentKind,
+  isAgentAttachmentName,
+  isAgentAttachmentPath,
+  isAgentImageDimension,
+  isAgentImageMime,
+  maxAgentAttachmentBytes,
+  type AgentAttachment,
+  type AgentAttachmentKind,
+  type AgentImageMime,
+} from "./agentAttachment";
 import { parseAgentCliVersion } from "./agentCliVersion";
 import { parseExternalAgentSessionHistory } from "./externalAgentSession";
 import {
@@ -127,7 +144,48 @@ function serializeTurn(turn: AgentTurn): Record<string, unknown> {
     streamMetrics: turn.streamMetrics ?? null,
     launch: turn.launch === null ? null : serializeAgentLaunchOptions(turn.launch),
     cliVersion: turn.cliVersion,
+    ...optionalField("attachments", serializeAttachments(turn.attachments)),
   };
+}
+
+function serializeAttachments(
+  attachments: ReadonlyArray<AgentAttachment> | undefined,
+): ReadonlyArray<Record<string, unknown>> | undefined {
+  if (attachments === undefined || attachments.length === 0) return undefined;
+  return attachments.map(serializeAttachment);
+}
+
+function serializeAttachment(attachment: AgentAttachment): Record<string, unknown> {
+  switch (attachment.kind) {
+    case "image":
+      return {
+        kind: attachment.kind,
+        attachmentId: attachment.attachmentId,
+        name: attachment.name,
+        mime: attachment.mime,
+        bytes: attachment.bytes,
+        width: attachment.width,
+        height: attachment.height,
+        storedPath: attachment.storedPath,
+      };
+    case "file":
+      return {
+        kind: attachment.kind,
+        attachmentId: attachment.attachmentId,
+        name: attachment.name,
+        bytes: attachment.bytes,
+        storedPath: attachment.storedPath,
+      };
+    case "reference":
+      return {
+        kind: attachment.kind,
+        name: attachment.name,
+        path: attachment.path,
+        bytes: attachment.bytes,
+      };
+    default:
+      return unsupportedAttachment(attachment);
+  }
 }
 
 function serializeTurnStatus(status: AgentTurnStatus): Record<string, unknown> {
@@ -432,7 +490,7 @@ function parseTurn(value: unknown, path: string): AgentTurn {
       "lastStatusSequence",
       "lastOutputSequence",
     ],
-    ["launch", "cliVersion", "streamMetrics"],
+    ["launch", "cliVersion", "streamMetrics", "attachments"],
     path,
   );
   return {
@@ -450,7 +508,113 @@ function parseTurn(value: unknown, path: string): AgentTurn {
     streamMetrics: parseStreamMetrics(turn.streamMetrics, `${path}.streamMetrics`),
     launch: parseLaunch(turn.launch, `${path}.launch`),
     cliVersion: parseCliVersion(turn.cliVersion, `${path}.cliVersion`),
+    ...optionalField("attachments", parseAttachments(turn.attachments, `${path}.attachments`)),
   };
+}
+
+function parseAttachments(
+  value: unknown,
+  path: string,
+): ReadonlyArray<AgentAttachment> | undefined {
+  if (value === undefined) return undefined;
+  const entries = boundedArray(value, path, MAX_AGENT_TURN_ATTACHMENTS);
+  if (entries.length === 0) invalid(path, `1 to ${MAX_AGENT_TURN_ATTACHMENTS} attachments`);
+  const attachments = entries.map((entry, index) =>
+    parseAgentAttachment(entry, `${path}[${index}]`),
+  );
+  const seen = new Set<string>();
+  for (const attachment of attachments) {
+    if (attachment.kind === "reference") continue;
+    if (seen.has(attachment.attachmentId)) invalid(path, "unique attachment ids");
+    seen.add(attachment.attachmentId);
+  }
+  if (agentTurnImageBytes(attachments) > MAX_AGENT_TURN_IMAGE_BYTES) {
+    invalid(path, `at most ${MAX_AGENT_TURN_IMAGE_BYTES} image bytes in one turn`);
+  }
+  return attachments;
+}
+
+export function parseAgentAttachment(value: unknown, path: string): AgentAttachment {
+  const attachment = record(value, path);
+  const kind = attachmentKind(attachment.kind, `${path}.kind`);
+  switch (kind) {
+    case "image":
+      exactKeys(
+        attachment,
+        ["kind", "attachmentId", "name", "mime", "bytes", "width", "height", "storedPath"],
+        path,
+      );
+      return {
+        kind,
+        attachmentId: attachmentId(attachment.attachmentId, `${path}.attachmentId`),
+        name: attachmentName(attachment.name, `${path}.name`),
+        mime: imageMime(attachment.mime, `${path}.mime`),
+        bytes: attachmentBytes(attachment.bytes, kind, `${path}.bytes`),
+        width: imageDimension(attachment.width, `${path}.width`),
+        height: imageDimension(attachment.height, `${path}.height`),
+        storedPath: attachmentPath(attachment.storedPath, `${path}.storedPath`),
+      };
+    case "file":
+      exactKeys(attachment, ["kind", "attachmentId", "name", "bytes", "storedPath"], path);
+      return {
+        kind,
+        attachmentId: attachmentId(attachment.attachmentId, `${path}.attachmentId`),
+        name: attachmentName(attachment.name, `${path}.name`),
+        bytes: attachmentBytes(attachment.bytes, kind, `${path}.bytes`),
+        storedPath: attachmentPath(attachment.storedPath, `${path}.storedPath`),
+      };
+    case "reference":
+      exactKeys(attachment, ["kind", "name", "path", "bytes"], path);
+      return {
+        kind,
+        name: attachmentName(attachment.name, `${path}.name`),
+        path: attachmentPath(attachment.path, `${path}.path`),
+        bytes: attachmentBytes(attachment.bytes, kind, `${path}.bytes`),
+      };
+    default:
+      return unsupportedAttachmentKind(kind);
+  }
+}
+
+function attachmentKind(value: unknown, path: string): AgentAttachmentKind {
+  if (!isAgentAttachmentKind(value)) invalid(path, "image, file, or reference");
+  return value;
+}
+
+function attachmentId(value: unknown, path: string): string {
+  if (!isAgentAttachmentId(value)) invalid(path, "32 lowercase hexadecimal characters");
+  return value;
+}
+
+function imageMime(value: unknown, path: string): AgentImageMime {
+  if (!isAgentImageMime(value)) invalid(path, "image/png, image/jpeg, image/gif, or image/webp");
+  return value;
+}
+
+function attachmentName(value: unknown, path: string): string {
+  const name = boundedText(value, path, MAX_AGENT_ATTACHMENT_NAME_BYTES, false, true);
+  if (!isAgentAttachmentName(name)) invalid(path, 'a name without /, \\, or "');
+  return name;
+}
+
+function attachmentPath(value: unknown, path: string): string {
+  const candidate = boundedText(value, path, MAX_AGENT_ATTACHMENT_PATH_BYTES, false, true);
+  if (!isAgentAttachmentPath(candidate)) invalid(path, "an absolute path");
+  return candidate;
+}
+
+function attachmentBytes(value: unknown, kind: AgentAttachmentKind, path: string): number {
+  const bytes = unsignedSafeInteger(value, path);
+  const limit = maxAgentAttachmentBytes(kind);
+  if (bytes > limit) invalid(path, `at most ${limit} bytes`);
+  return bytes;
+}
+
+function imageDimension(value: unknown, path: string): number {
+  if (typeof value !== "number" || !isAgentImageDimension(value)) {
+    invalid(path, "a pixel count between 1 and 16384");
+  }
+  return value;
 }
 
 function parseStreamMetrics(value: unknown, path: string): AgentTurnStreamMetrics | null {
@@ -821,6 +985,14 @@ function record(value: unknown, path: string): Record<string, unknown> {
     invalid(path, "an object");
   }
   return value as Record<string, unknown>;
+}
+
+function unsupportedAttachment(attachment: never): never {
+  throw new TypeError(`Unsupported agent attachment: ${JSON.stringify(attachment)}.`);
+}
+
+function unsupportedAttachmentKind(kind: never): never {
+  throw new TypeError(`Unsupported agent attachment kind: ${String(kind)}.`);
 }
 
 function unsupportedTurnStatus(status: never): never {

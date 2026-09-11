@@ -63,6 +63,7 @@ fn settled_turn(turn_id: &str) -> AgentTurn {
         stream_metrics: None,
         launch: None,
         cli_version: None,
+        attachments: Vec::new(),
     }
 }
 

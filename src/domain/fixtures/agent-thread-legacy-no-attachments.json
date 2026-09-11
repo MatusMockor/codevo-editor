@@ -1,0 +1,62 @@
+{
+  "threadId": "agt-t1-0001",
+  "owner": {
+    "rootKey": "/workspace",
+    "ownerId": "agent-root:990e10b3394addcf",
+    "repositoryRoot": "/repo"
+  },
+  "target": {
+    "isolation": "worktree",
+    "worktreePath": "/repo/.worktrees/agt-t1-0001"
+  },
+  "provider": {
+    "kind": "claudeCode",
+    "sessionId": null
+  },
+  "title": "Legacy thread",
+  "pinned": false,
+  "archived": false,
+  "createdAtEpochMs": 1000,
+  "updatedAtEpochMs": 2000,
+  "turns": [
+    {
+      "turnId": "agt-1-0a1b",
+      "prompt": "Look at this",
+      "status": {
+        "kind": "exited",
+        "exitCode": 0
+      },
+      "startedAtEpochMs": 1000,
+      "endedAtEpochMs": 2000,
+      "events": [
+        {
+          "kind": "assistantText",
+          "text": "The square is red."
+        },
+        {
+          "kind": "result",
+          "text": "The square is red.",
+          "isError": false,
+          "usage": {
+            "inputTokens": 1200,
+            "outputTokens": 34,
+            "contextTokens": 1234
+          }
+        }
+      ],
+      "eventsTruncated": false,
+      "lastStatusSequence": 3,
+      "lastOutputSequence": 7,
+      "streamMetrics": {
+        "receivedUtf8Bytes": 512,
+        "complete": true
+      },
+      "launch": null,
+      "cliVersion": "2.1.245"
+    }
+  ],
+  "turnsTruncated": false,
+  "integration": null,
+  "viewedAtEpochMs": null,
+  "externalOrigin": null
+}

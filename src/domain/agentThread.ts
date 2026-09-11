@@ -1,3 +1,4 @@
+import type { AgentAttachment } from "./agentAttachment";
 import type { AgentLaunchOptions } from "./agentLaunch";
 import {
   isAgentSessionId,
@@ -12,6 +13,21 @@ import type { GitIntegrationMode } from "./gitIntegration";
 import type { ExternalAgentSessionHistory } from "./externalAgentSession";
 import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 
+export {
+  AGENT_ATTACHMENT_ID_PATTERN,
+  AGENT_IMAGE_MIMES,
+  MAX_AGENT_ATTACHMENT_NAME_BYTES,
+  MAX_AGENT_ATTACHMENT_PATH_BYTES,
+  MAX_AGENT_FILE_BYTES,
+  MAX_AGENT_IMAGE_BYTES,
+  MAX_AGENT_IMAGE_DIMENSION,
+  MAX_AGENT_TURN_ATTACHMENTS,
+  MAX_AGENT_TURN_IMAGE_BYTES,
+  MIN_AGENT_IMAGE_DIMENSION,
+  type AgentAttachment,
+  type AgentAttachmentKind,
+  type AgentImageMime,
+} from "./agentAttachment";
 export { AGENT_SESSION_ID_PATTERN, MAX_AGENT_SESSION_ID_BYTES } from "./agentTask";
 export { parseAgentThread, serializeAgentThread } from "./agentThreadWire";
 export { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
@@ -128,6 +144,7 @@ export interface AgentTurn {
   readonly streamMetrics?: AgentTurnStreamMetrics | null;
   readonly launch: AgentLaunchOptions | null;
   readonly cliVersion: string | null;
+  readonly attachments?: ReadonlyArray<AgentAttachment>;
 }
 
 export interface AgentThreadPushReceipt {

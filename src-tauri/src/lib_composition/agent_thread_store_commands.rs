@@ -269,6 +269,7 @@ mod tests {
                     stream_metrics: None,
                     launch: None,
                     cli_version: None,
+                    attachments: Vec::new(),
                 }],
                 turns_truncated: false,
                 viewed_at_epoch_ms: None,

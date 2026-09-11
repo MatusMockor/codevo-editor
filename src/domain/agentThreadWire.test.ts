@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CLAUDE_EFFORT_CHOICES } from "./agentLaunch";
 import { parseAgentThread, serializeAgentThread } from "./agentThreadWire";
@@ -352,5 +353,173 @@ describe("agentThreadWire external origin", () => {
         /thread\.externalOrigin/,
       );
     }
+  });
+});
+
+describe("agentThreadWire attachments", () => {
+  const IMAGE = {
+    kind: "image",
+    attachmentId: "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+    name: "square.png",
+    mime: "image/png",
+    bytes: 204_800,
+    width: 1_280,
+    height: 720,
+    storedPath: "/data/agent-attachments/threads/agt-t1-0001/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png",
+  } as const;
+
+  function storedWithAttachments(attachments: unknown): Record<string, unknown> {
+    return storedThreadWithTurn({ ...STORED_TURN, launch: null, attachments });
+  }
+
+  function readFixture(name: string): string {
+    return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
+  }
+
+  it("re-serialises the shared attachment fixture byte-for-byte", () => {
+    const raw = readFixture("agent-thread-with-attachments.json");
+    const parsed = parseAgentThread(JSON.parse(raw));
+
+    expect(parsed.turns[0].attachments).toEqual([
+      IMAGE,
+      {
+        kind: "file",
+        attachmentId: "112233445566778899001122334455aa",
+        name: "notes.txt",
+        bytes: 4_096,
+        storedPath:
+          "/data/agent-attachments/threads/agt-t1-0001/112233445566778899001122334455aa.txt",
+      },
+      {
+        kind: "reference",
+        name: "clip.mp4",
+        path: "/Users/dev/Movies/clip.mp4",
+        bytes: 73_400_320,
+      },
+    ]);
+    expect(`${JSON.stringify(serializeAgentThread(parsed), null, 2)}\n`).toBe(raw);
+  });
+
+  it("re-serialises the legacy fixture byte-for-byte and adds no attachment key", () => {
+    const raw = readFixture("agent-thread-legacy-no-attachments.json");
+    expect(raw).not.toContain("attachments");
+
+    const parsed = parseAgentThread(JSON.parse(raw));
+
+    expect(parsed.turns[0].attachments).toBeUndefined();
+    expect(`${JSON.stringify(serializeAgentThread(parsed), null, 2)}\n`).toBe(raw);
+  });
+
+  it("omits an absent list and refuses an empty one", () => {
+    const stored = storedThreadWithTurn({ ...STORED_TURN, launch: null });
+    const turn = serializeAgentThread(parseAgentThread(stored)).turns as ReadonlyArray<
+      Record<string, unknown>
+    >;
+
+    expect("attachments" in turn[0]).toBe(false);
+    expect(() => parseAgentThread(storedWithAttachments([]))).toThrow(
+      /thread\.turns\[0\]\.attachments/,
+    );
+  });
+
+  it("round-trips every attachment kind through the store", () => {
+    for (const attachment of [
+      IMAGE,
+      { ...IMAGE, mime: "image/jpeg", bytes: 10 * 1_024 * 1_024, width: 1, height: 16_384 },
+      {
+        kind: "file",
+        attachmentId: "ffffffffffffffffffffffffffffffff",
+        name: "notes.txt",
+        bytes: 50 * 1_024 * 1_024,
+        storedPath: "/data/notes.txt",
+      },
+      { kind: "reference", name: "clip.mp4", path: "/Movies/clip.mp4", bytes: 0 },
+    ]) {
+      const stored = storedWithAttachments([attachment]);
+
+      expect(parseAgentThread(stored).turns[0].attachments).toEqual([attachment]);
+      expect(serializeAgentThread(parseAgentThread(stored))).toEqual(stored);
+    }
+  });
+
+  it("rejects every malformed attachment instead of dropping it", () => {
+    const { attachmentId: _attachmentId, ...withoutId } = IMAGE;
+    const rejected: readonly unknown[] = [
+      { ...IMAGE, kind: "video" },
+      { ...IMAGE, extra: 1 },
+      withoutId,
+      { ...IMAGE, attachmentId: "0A1B2C3D4E5F60718293A4B5C6D7E8F9" },
+      { ...IMAGE, attachmentId: "0a1b" },
+      { ...IMAGE, name: "" },
+      { ...IMAGE, name: `${"a".repeat(256)}.png` },
+      { ...IMAGE, name: "dir/square.png" },
+      { ...IMAGE, name: "dir\\square.png" },
+      { ...IMAGE, name: 'sq"uare.png' },
+      { ...IMAGE, name: "square\u0000.png" },
+      { ...IMAGE, name: "square\u001b.png" },
+      { ...IMAGE, mime: "image/svg+xml" },
+      { ...IMAGE, bytes: -1 },
+      { ...IMAGE, bytes: 1.5 },
+      { ...IMAGE, bytes: 10 * 1_024 * 1_024 + 1 },
+      { ...IMAGE, width: 0 },
+      { ...IMAGE, height: 16_385 },
+      { ...IMAGE, width: 1.5 },
+      { ...IMAGE, storedPath: "relative/square.png" },
+      { ...IMAGE, storedPath: `/${"a".repeat(4_096)}` },
+      { ...IMAGE, storedPath: "/square\u0000.png" },
+      {
+        kind: "file",
+        attachmentId: IMAGE.attachmentId,
+        name: "n",
+        bytes: 1,
+        storedPath: "/n",
+        mime: "image/png",
+      },
+      {
+        kind: "file",
+        attachmentId: IMAGE.attachmentId,
+        name: "n",
+        bytes: 50 * 1_024 * 1_024 + 1,
+        storedPath: "/n",
+      },
+      { kind: "reference", name: "n", path: "/n", bytes: Number.MAX_SAFE_INTEGER + 1 },
+      { kind: "reference", attachmentId: IMAGE.attachmentId, name: "n", path: "/n", bytes: 1 },
+    ];
+
+    for (const attachment of rejected) {
+      expect(() => parseAgentThread(storedWithAttachments([attachment]))).toThrow(
+        /thread\.turns\[0\]\.attachments/,
+      );
+    }
+  });
+
+  it("bounds the attachment count, duplicate ids, and the aggregate image bytes", () => {
+    const nine = Array.from({ length: 9 }, (_unused, index) => ({
+      kind: "reference",
+      name: `clip-${index}.mp4`,
+      path: `/Movies/clip-${index}.mp4`,
+      bytes: 1,
+    }));
+    expect(() => parseAgentThread(storedWithAttachments(nine))).toThrow(
+      /thread\.turns\[0\]\.attachments/,
+    );
+    expect(() => parseAgentThread(storedWithAttachments([IMAGE, { ...IMAGE }]))).toThrow(
+      /unique attachment ids/,
+    );
+
+    const fiveMegabytes = 5 * 1_024 * 1_024;
+    const eightImages = Array.from({ length: 8 }, (_unused, index) => ({
+      ...IMAGE,
+      attachmentId: `${index}`.repeat(32),
+      bytes: fiveMegabytes,
+    }));
+    expect(parseAgentThread(storedWithAttachments(eightImages)).turns[0].attachments).toHaveLength(
+      8,
+    );
+
+    const overBudget = eightImages.map((image) => ({ ...image, bytes: fiveMegabytes + 1 }));
+    expect(() => parseAgentThread(storedWithAttachments(overBudget))).toThrow(
+      /image bytes in one turn/,
+    );
   });
 });

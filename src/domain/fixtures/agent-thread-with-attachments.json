@@ -1,0 +1,87 @@
+{
+  "threadId": "agt-t1-0001",
+  "owner": {
+    "rootKey": "/workspace",
+    "ownerId": "agent-root:990e10b3394addcf",
+    "repositoryRoot": "/repo"
+  },
+  "target": {
+    "isolation": "worktree",
+    "worktreePath": "/repo/.worktrees/agt-t1-0001"
+  },
+  "provider": {
+    "kind": "claudeCode",
+    "sessionId": null
+  },
+  "title": "Look at this screenshot",
+  "pinned": false,
+  "archived": false,
+  "createdAtEpochMs": 1000,
+  "updatedAtEpochMs": 2000,
+  "turns": [
+    {
+      "turnId": "agt-1-0a1b",
+      "prompt": "Look at this\n\n[Attached image \"square.png\" is saved at: /data/agent-attachments/threads/agt-t1-0001/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png]\n[Attached file \"notes.txt\" is saved at: /data/agent-attachments/threads/agt-t1-0001/112233445566778899001122334455aa.txt]\n[Attached file \"clip.mp4\" is at: /Users/dev/Movies/clip.mp4]",
+      "status": {
+        "kind": "exited",
+        "exitCode": 0
+      },
+      "startedAtEpochMs": 1000,
+      "endedAtEpochMs": 2000,
+      "events": [
+        {
+          "kind": "assistantText",
+          "text": "The square is red."
+        },
+        {
+          "kind": "result",
+          "text": "The square is red.",
+          "isError": false,
+          "usage": {
+            "inputTokens": 1200,
+            "outputTokens": 34,
+            "contextTokens": 1234
+          }
+        }
+      ],
+      "eventsTruncated": false,
+      "lastStatusSequence": 3,
+      "lastOutputSequence": 7,
+      "streamMetrics": {
+        "receivedUtf8Bytes": 512,
+        "complete": true
+      },
+      "launch": null,
+      "cliVersion": "2.1.245",
+      "attachments": [
+        {
+          "kind": "image",
+          "attachmentId": "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+          "name": "square.png",
+          "mime": "image/png",
+          "bytes": 204800,
+          "width": 1280,
+          "height": 720,
+          "storedPath": "/data/agent-attachments/threads/agt-t1-0001/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png"
+        },
+        {
+          "kind": "file",
+          "attachmentId": "112233445566778899001122334455aa",
+          "name": "notes.txt",
+          "bytes": 4096,
+          "storedPath": "/data/agent-attachments/threads/agt-t1-0001/112233445566778899001122334455aa.txt"
+        },
+        {
+          "kind": "reference",
+          "name": "clip.mp4",
+          "path": "/Users/dev/Movies/clip.mp4",
+          "bytes": 73400320
+        }
+      ]
+    }
+  ],
+  "turnsTruncated": false,
+  "integration": null,
+  "viewedAtEpochMs": null,
+  "externalOrigin": null
+}

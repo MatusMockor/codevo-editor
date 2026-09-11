@@ -5,9 +5,14 @@ use crate::agent_task_spawner::{
 };
 use crate::agent_task_supervisor::AgentTaskIsolation;
 use crate::git_worktree::safe_agent_task_id;
+use agent_attachment_paths::agent_attachment_thread_directory;
+
+#[path = "agent_attachment_paths.rs"]
+pub mod agent_attachment_paths;
+
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
@@ -33,6 +38,16 @@ pub const MAX_UNREADABLE_REPORTS: usize = 16;
 pub const MAX_AGENT_INTEGRATION_REF_BYTES: usize = 512;
 pub const MAX_AGENT_EXTERNAL_HISTORY_EXCHANGES: usize = 256;
 pub const MAX_AGENT_EXTERNAL_HISTORY_BYTES: usize = 128 * 1024;
+pub const MAX_AGENT_TURN_ATTACHMENTS: usize = 8;
+pub const MAX_AGENT_ATTACHMENT_NAME_BYTES: usize = 255;
+pub const MAX_AGENT_ATTACHMENT_PATH_BYTES: usize = 4096;
+pub const MAX_AGENT_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+pub const MAX_AGENT_FILE_BYTES: u64 = 50 * 1024 * 1024;
+pub const MAX_AGENT_TURN_IMAGE_BYTES: u64 = 40 * 1024 * 1024;
+pub const MAX_AGENT_REFERENCE_BYTES: u64 = MAX_AGENT_SAFE_INTEGER;
+pub const MIN_AGENT_IMAGE_DIMENSION: u32 = 1;
+pub const MAX_AGENT_IMAGE_DIMENSION: u32 = 16_384;
+pub const AGENT_ATTACHMENT_ID_LENGTH: usize = 32;
 
 pub const AGENT_THREAD_INTEGRATION_OBJECT_ID_ERROR: &str =
     "Agent thread integration object ids must be 40 lowercase hexadecimal characters.";
@@ -40,6 +55,18 @@ pub const AGENT_THREAD_INTEGRATION_REF_ERROR: &str =
     "Agent thread integration remote or branch name is out of bounds.";
 pub const AGENT_THREAD_EXTERNAL_ORIGIN_PROVIDER_ERROR: &str =
     "Agent thread external origin provider must match the thread provider.";
+pub const AGENT_ATTACHMENT_ID_ERROR: &str =
+    "Agent attachment ids must be 32 lowercase hexadecimal characters.";
+pub const AGENT_ATTACHMENT_NAME_ERROR: &str =
+    "Agent attachment names must be 1 to 255 bytes without a slash, backslash, quote, or control character.";
+pub const AGENT_ATTACHMENT_PATH_ERROR: &str =
+    "Agent attachment paths must be absolute, at most 4096 bytes, and free of control characters.";
+pub const AGENT_ATTACHMENT_BYTES_ERROR: &str =
+    "Agent attachment byte count exceeds the supported size for its kind.";
+pub const AGENT_ATTACHMENT_DIMENSION_ERROR: &str =
+    "Agent attachment image dimensions must be between 1 and 16384 pixels.";
+pub const AGENT_ATTACHMENT_DUPLICATE_ID_ERROR: &str =
+    "Agent turn attachments must have unique attachment ids.";
 
 const FNV1A_64_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A_64_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -191,6 +218,66 @@ pub struct AgentTurn {
     pub launch: Option<AgentLaunchOptions>,
     #[serde(default)]
     pub cli_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AgentAttachment>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub enum AgentImageMime {
+    #[serde(rename = "image/png")]
+    Png,
+    #[serde(rename = "image/jpeg")]
+    Jpeg,
+    #[serde(rename = "image/gif")]
+    Gif,
+    #[serde(rename = "image/webp")]
+    Webp,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum AgentAttachment {
+    #[serde(rename_all = "camelCase")]
+    Image {
+        attachment_id: String,
+        name: String,
+        mime: AgentImageMime,
+        bytes: u64,
+        width: u32,
+        height: u32,
+        stored_path: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    File {
+        attachment_id: String,
+        name: String,
+        bytes: u64,
+        stored_path: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Reference {
+        name: String,
+        path: String,
+        bytes: u64,
+    },
+}
+
+impl AgentAttachment {
+    pub fn attachment_id(&self) -> Option<&str> {
+        match self {
+            Self::Image { attachment_id, .. } | Self::File { attachment_id, .. } => {
+                Some(attachment_id)
+            }
+            Self::Reference { .. } => None,
+        }
+    }
+
+    pub fn image_bytes(&self) -> u64 {
+        match self {
+            Self::Image { bytes, .. } => *bytes,
+            Self::File { .. } | Self::Reference { .. } => 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -472,13 +559,15 @@ impl AgentThreadStore {
     pub fn delete(&self, root_key: &str, thread_id: &str) -> Result<(), String> {
         let thread_id = safe_agent_task_id(thread_id)?;
         let directory = self.root_directory(root_key)?;
+        let attachments = agent_attachment_thread_directory(&self.base_dir, &thread_id)?;
         let lock = self.root_lock(root_key);
         let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
         match fs::remove_file(directory.join(format!("{thread_id}.json"))) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(format!("Unable to delete the saved thread: {error}")),
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Unable to delete the saved thread: {error}")),
         }
+        remove_agent_attachment_directory(&attachments)
     }
 
     fn root_directory(&self, root_key: &str) -> Result<PathBuf, String> {
@@ -654,6 +743,116 @@ fn validate_agent_turn(turn: &AgentTurn) -> Result<(), String> {
         return Err("Agent turn stream metrics exceed the supported byte count.".to_string());
     }
     validate_agent_turn_cli_version(turn.cli_version.as_deref())?;
+    validate_agent_turn_attachments(&turn.attachments)?;
+    Ok(())
+}
+
+fn validate_agent_turn_attachments(attachments: &[AgentAttachment]) -> Result<(), String> {
+    if attachments.len() > MAX_AGENT_TURN_ATTACHMENTS {
+        return Err(format!(
+            "Agent turn exceeds the maximum of {MAX_AGENT_TURN_ATTACHMENTS} attachments."
+        ));
+    }
+    let mut ids: HashSet<&str> = HashSet::new();
+    let mut image_bytes: u64 = 0;
+    for attachment in attachments {
+        validate_agent_attachment(attachment)?;
+        if let Some(id) = attachment.attachment_id() {
+            if !ids.insert(id) {
+                return Err(AGENT_ATTACHMENT_DUPLICATE_ID_ERROR.to_string());
+            }
+        }
+        image_bytes = image_bytes.saturating_add(attachment.image_bytes());
+    }
+    if image_bytes > MAX_AGENT_TURN_IMAGE_BYTES {
+        return Err(format!(
+            "Agent turn images exceed the maximum of {MAX_AGENT_TURN_IMAGE_BYTES} bytes."
+        ));
+    }
+    Ok(())
+}
+
+fn validate_agent_attachment(attachment: &AgentAttachment) -> Result<(), String> {
+    match attachment {
+        AgentAttachment::Image {
+            attachment_id,
+            name,
+            bytes,
+            width,
+            height,
+            stored_path,
+            ..
+        } => {
+            ensure_agent_attachment_id(attachment_id)?;
+            ensure_agent_attachment_name(name)?;
+            ensure_agent_attachment_bytes(*bytes, MAX_AGENT_IMAGE_BYTES)?;
+            ensure_agent_image_dimension(*width)?;
+            ensure_agent_image_dimension(*height)?;
+            ensure_agent_attachment_path(stored_path)
+        }
+        AgentAttachment::File {
+            attachment_id,
+            name,
+            bytes,
+            stored_path,
+        } => {
+            ensure_agent_attachment_id(attachment_id)?;
+            ensure_agent_attachment_name(name)?;
+            ensure_agent_attachment_bytes(*bytes, MAX_AGENT_FILE_BYTES)?;
+            ensure_agent_attachment_path(stored_path)
+        }
+        AgentAttachment::Reference { name, path, bytes } => {
+            ensure_agent_attachment_name(name)?;
+            ensure_agent_attachment_bytes(*bytes, MAX_AGENT_REFERENCE_BYTES)?;
+            ensure_agent_attachment_path(path)
+        }
+    }
+}
+
+fn ensure_agent_attachment_id(candidate: &str) -> Result<(), String> {
+    if candidate.len() != AGENT_ATTACHMENT_ID_LENGTH
+        || !candidate
+            .chars()
+            .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character))
+    {
+        return Err(AGENT_ATTACHMENT_ID_ERROR.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_agent_attachment_name(candidate: &str) -> Result<(), String> {
+    if candidate.is_empty()
+        || candidate.len() > MAX_AGENT_ATTACHMENT_NAME_BYTES
+        || candidate
+            .chars()
+            .any(|character| matches!(character, '/' | '\\' | '"') || character.is_control())
+    {
+        return Err(AGENT_ATTACHMENT_NAME_ERROR.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_agent_attachment_path(candidate: &str) -> Result<(), String> {
+    if !candidate.starts_with('/')
+        || candidate.len() > MAX_AGENT_ATTACHMENT_PATH_BYTES
+        || candidate.chars().any(char::is_control)
+    {
+        return Err(AGENT_ATTACHMENT_PATH_ERROR.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_agent_attachment_bytes(bytes: u64, limit: u64) -> Result<(), String> {
+    if bytes > limit {
+        return Err(AGENT_ATTACHMENT_BYTES_ERROR.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_agent_image_dimension(dimension: u32) -> Result<(), String> {
+    if !(MIN_AGENT_IMAGE_DIMENSION..=MAX_AGENT_IMAGE_DIMENSION).contains(&dimension) {
+        return Err(AGENT_ATTACHMENT_DIMENSION_ERROR.to_string());
+    }
     Ok(())
 }
 
@@ -778,6 +977,19 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
         return Err("Agent tool summary exceeds the supported length.".to_string());
     }
     Ok(())
+}
+
+fn remove_agent_attachment_directory(directory: &Path) -> Result<(), String> {
+    match fs::remove_dir_all(directory) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(format!(
+            "The saved thread was deleted but its attachments at {} could not be removed: {error}",
+            clip_utf8(&directory.to_string_lossy(), MAX_AGENT_ATTACHMENT_PATH_BYTES)
+        ))
+        }
+    }
 }
 
 fn optional_len(value: &Option<String>) -> usize {
@@ -1027,6 +1239,10 @@ fn clip_utf8(value: &str, limit: usize) -> String {
     }
     value[..end].to_string()
 }
+
+#[cfg(test)]
+#[path = "agent_thread_store_attachment_tests.rs"]
+mod attachment_tests;
 
 #[cfg(test)]
 #[path = "agent_thread_store_tests.rs"]
