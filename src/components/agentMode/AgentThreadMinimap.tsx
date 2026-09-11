@@ -13,12 +13,12 @@ import {
   type AgentMinimapEntry,
   type AgentThreadMinimapModel,
 } from "./agentThreadMinimapPresentation";
+import { AGENT_MINIMAP_HIT_STRIP_MAX } from "./agentMinimapPlacement";
 import type { AgentThreadColumnAnchor } from "./agentThreadColumn";
 import { useAgentPopover } from "./agentPopover";
 import { useAgentMinimapPreview } from "./agentMinimapPreview";
 
 export const MIN_AGENT_MINIMAP_ENTRIES = 2;
-export const AGENT_MINIMAP_RAIL_WIDTH = 904;
 
 export type AgentMinimapSurface = "rail" | "list";
 
@@ -26,6 +26,7 @@ export interface AgentThreadMinimapProps {
   readonly model: AgentThreadMinimapModel;
   readonly currentIndex: number;
   readonly surface: AgentMinimapSurface;
+  readonly stripWidth?: number;
   readonly openSignal?: number;
   onJump(anchor: AgentThreadColumnAnchor): void;
   onOpenChange?(open: boolean): void;
@@ -37,6 +38,7 @@ export function AgentThreadMinimap({
   onJump,
   onOpenChange,
   openSignal = 0,
+  stripWidth = AGENT_MINIMAP_HIT_STRIP_MAX,
   surface,
 }: AgentThreadMinimapProps) {
   if (model.entries.length < MIN_AGENT_MINIMAP_ENTRIES) return null;
@@ -48,6 +50,7 @@ export function AgentThreadMinimap({
         model={model}
         onJump={onJump}
         openSignal={openSignal}
+        stripWidth={stripWidth}
       />
     );
   }
@@ -68,16 +71,29 @@ function AgentMinimapRail({
   model,
   onJump,
   openSignal,
+  stripWidth,
 }: {
   readonly currentIndex: number;
   readonly model: AgentThreadMinimapModel;
   readonly openSignal: number;
+  readonly stripWidth: number;
   onJump(anchor: AgentThreadColumnAnchor): void;
 }) {
+  const strip = Math.max(0, stripWidth);
+  const className = [
+    "agent-minimap",
+    "agent-minimap--rail",
+    `agent-minimap--${model.density}`,
+    strip === 0 ? "agent-minimap--inert" : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" ");
+
   return (
     <nav
       aria-label="Your turns"
-      className={`agent-minimap agent-minimap--rail agent-minimap--${model.density}`}
+      className={className}
+      style={{ "--minimap-strip": `${strip}px` } as CSSProperties}
     >
       <AgentTurnJumpList
         currentIndex={currentIndex}

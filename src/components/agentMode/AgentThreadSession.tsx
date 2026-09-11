@@ -39,11 +39,11 @@ import {
 } from "./AgentAssistantText";
 import { openAgentMarkdownLink, type AgentExternalLinkOpener } from "./agentMarkdownLinks";
 import { useViewportWidth } from "../useViewportWidth";
+import { AgentThreadMinimap, MIN_AGENT_MINIMAP_ENTRIES } from "./AgentThreadMinimap";
 import {
-  AGENT_MINIMAP_RAIL_WIDTH,
-  AgentThreadMinimap,
-  MIN_AGENT_MINIMAP_ENTRIES,
-} from "./AgentThreadMinimap";
+  agentMinimapHasPersistentGutter,
+  agentMinimapHitStripWidth,
+} from "./agentMinimapPlacement";
 import { agentMinimapEntryIndex, agentThreadMinimapModel } from "./agentThreadMinimapPresentation";
 import { agentThreadColumnKey, type AgentThreadColumnAnchor } from "./agentThreadColumn";
 import { useAgentThreadTurnInView } from "./useAgentThreadTurnInView";
@@ -257,7 +257,8 @@ function AgentThreadSessionBody({
   const [sessionElement, setSessionElement] = useState<HTMLElement | null>(null);
   const [turnListOpen, setTurnListOpen] = useState(false);
   const sessionWidth = useViewportWidth(sessionElement);
-  const minimapSurface = sessionWidth >= AGENT_MINIMAP_RAIL_WIDTH ? "rail" : "list";
+  const minimapSurface = agentMinimapHasPersistentGutter(sessionWidth) ? "rail" : "list";
+  const minimapStripWidth = agentMinimapHitStripWidth(sessionWidth);
   const importedExchanges = record.externalOrigin?.history?.exchanges ?? NO_EXCHANGES;
   const importedTurns = useMemo(() => agentImportedTurns(importedExchanges), [importedExchanges]);
   const minimap = useMemo(
@@ -306,6 +307,7 @@ function AgentThreadSessionBody({
           onJump={jumpToColumnEntry}
           onOpenChange={setTurnListOpen}
           openSignal={goToTurnSignal}
+          stripWidth={minimapStripWidth}
           surface={minimapSurface}
         />
       )}

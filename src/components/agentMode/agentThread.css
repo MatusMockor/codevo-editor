@@ -1553,21 +1553,29 @@
 
 /* Thread minimap: one dash per user turn, an absolutely positioned sibling of
    the scroller so no ancestor of `.agent-session__scroll` gains a new
-   containing block, overflow or contain. */
+   containing block, overflow or contain. The rail hangs off the left edge of
+   the session, never off the centred reading column, and its width is the hit
+   strip the session measured from the side gutter so it can never reach under
+   the text. */
 .agent-minimap--rail {
   position: absolute;
   z-index: 3;
   top: calc(var(--agent-find-pill-top) + var(--agent-find-pill-height) + var(--agent-space-3));
   bottom: var(--agent-space-4);
-  left: max(
-    var(--agent-space-3),
-    calc((100% - var(--agent-thread-column)) / 2 - var(--agent-minimap-gutter))
-  );
+  left: var(--agent-minimap-inset);
   display: flex;
-  width: var(--agent-minimap-rail);
+  width: var(--minimap-strip, var(--agent-minimap-rail));
   flex-direction: column;
   justify-content: center;
   pointer-events: none;
+}
+
+/* A hover-driven strip means nothing without a hovering pointer; a coarse
+   pointer keeps the `Turns · N` popover instead. */
+@media (pointer: coarse) {
+  .agent-minimap--rail {
+    display: none;
+  }
 }
 
 .agent-minimap__list {
@@ -1584,6 +1592,10 @@
   gap: var(--minimap-pitch, 8px);
   pointer-events: auto;
   scrollbar-width: none;
+}
+
+.agent-minimap--inert .agent-minimap__list--rail {
+  pointer-events: none;
 }
 
 .agent-minimap--dense .agent-minimap__list--rail {
@@ -1616,7 +1628,7 @@
 }
 
 .agent-minimap__dash--rail {
-  width: var(--agent-minimap-rail);
+  width: 100%;
   height: 12px;
   padding: 0;
   gap: var(--agent-space-2);

@@ -150,6 +150,20 @@ describe("AgentThreadMinimap", () => {
     expect(document.activeElement).toBe(buttonList()[2]);
   });
 
+  it("wears the measured hit strip and goes inert when the gutter cannot hold one", () => {
+    render({ model: model(["First", "Second"]), stripWidth: 36 });
+
+    const rail = host.querySelector<HTMLElement>(".agent-minimap--rail");
+    expect(rail?.style.getPropertyValue("--minimap-strip")).toBe("36px");
+    expect(rail?.className).not.toContain("agent-minimap--inert");
+
+    render({ model: model(["First", "Second"]), stripWidth: 0 });
+
+    const inert = host.querySelector<HTMLElement>(".agent-minimap--rail");
+    expect(inert?.style.getPropertyValue("--minimap-strip")).toBe("0px");
+    expect(inert?.className).toContain("agent-minimap--inert");
+  });
+
   it("falls back to the same list in a popover at narrow widths", () => {
     const onJump = vi.fn();
     render({

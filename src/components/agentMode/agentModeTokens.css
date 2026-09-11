@@ -202,7 +202,8 @@
   --agent-find-pill-height: 34px;
   --agent-find-inset: 34px;
   --agent-minimap-rail: 40px;
-  --agent-minimap-gutter: 48px;
+  --agent-minimap-inset: 12px;
+  --agent-minimap-persistent-gutter: 48px;
   --agent-turn-gap: 30px;
   --agent-motion-hover: 120ms;
   --agent-motion-select: 180ms;

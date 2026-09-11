@@ -14,14 +14,20 @@ import {
 } from "../../domain/agentThread";
 import type { ExternalSessionExchange } from "../../domain/externalAgentSession";
 import { findInThread } from "../../domain/agentThreadSearch";
-import { parseAllStyleSheets, selectorParts } from "../cssContractTestSupport";
+import { parseAllStyleSheets, readStyleSheet, selectorParts } from "../cssContractTestSupport";
 import { AgentClockProvider } from "./agentClock";
 import {
   AGENT_FIND_REVEAL_INSET,
   AgentThreadSession,
   type AgentThreadSessionProps,
 } from "./AgentThreadSession";
-import { AGENT_MINIMAP_RAIL_WIDTH } from "./AgentThreadMinimap";
+import {
+  AGENT_MINIMAP_COLUMN_WIDTH,
+  AGENT_MINIMAP_HIT_STRIP_MAX,
+  AGENT_MINIMAP_PERSISTENT_GUTTER,
+  AGENT_MINIMAP_RAIL_INSET,
+  agentMinimapHitStripWidth,
+} from "./agentMinimapPlacement";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
 
 const ROOT = "/workspace/app";
@@ -375,12 +381,62 @@ describe("agent thread session minimap and find pill", () => {
     expect(tokenValue("--agent-thread-column")).toBe(
       declaration(".agent-session__body", "max-width"),
     );
-    expect(AGENT_MINIMAP_RAIL_WIDTH).toBe(
-      pixels(tokenValue("--agent-thread-column")) +
-        2 * pixels(tokenValue("--agent-session-gutter")) +
-        pixels(tokenValue("--agent-minimap-gutter")) +
-        pixels(tokenValue("--agent-minimap-rail")),
+    expect(AGENT_MINIMAP_COLUMN_WIDTH).toBe(pixels(tokenValue("--agent-thread-column")));
+    expect(AGENT_MINIMAP_PERSISTENT_GUTTER).toBe(
+      pixels(tokenValue("--agent-minimap-persistent-gutter")),
     );
+    expect(AGENT_MINIMAP_RAIL_INSET).toBe(pixels(tokenValue("--agent-minimap-inset")));
+    expect(AGENT_MINIMAP_HIT_STRIP_MAX).toBe(pixels(tokenValue("--agent-minimap-rail")));
+  });
+
+  it("hangs the rail off the session edge instead of the reading column", () => {
+    const left = declaration(".agent-minimap--rail", "left");
+    expect(left).toBe("var(--agent-minimap-inset)");
+    expect(left).not.toContain("--agent-thread-column");
+    expect(declaration(".agent-minimap--rail", "width")).toBe(
+      "var(--minimap-strip, var(--agent-minimap-rail))",
+    );
+    expect(declaration(".agent-minimap--rail", "pointer-events")).toBe("none");
+    expect(declaration(".agent-minimap--inert .agent-minimap__list--rail", "pointer-events")).toBe(
+      "none",
+    );
+    expect(sheetSource("components/agentMode/agentThread.css")).not.toContain(
+      "--agent-minimap-gutter",
+    );
+  });
+
+  it("keeps the hover strip off touch, where the popover already answers", () => {
+    expect(contextDeclaration("@media (pointer: coarse)", ".agent-minimap--rail", "display")).toBe(
+      "none",
+    );
+  });
+
+  it("swaps the rail for the popover at the one gutter-derived threshold", () => {
+    const threshold = AGENT_MINIMAP_COLUMN_WIDTH + 2 * AGENT_MINIMAP_PERSISTENT_GUTTER;
+    expect(threshold).toBe(864);
+
+    const widths = [640, 800, threshold - 1, threshold, threshold + 1, 1024, 1440];
+    expect(widths.map((width) => surfaceAt(width))).toEqual([
+      "list",
+      "list",
+      "list",
+      "rail",
+      "rail",
+      "rail",
+      "rail",
+    ]);
+  });
+
+  it("caps the rail's hover strip to the gutter it measured", () => {
+    for (const width of [864, 880, 904, 1280, 2560]) {
+      expect(surfaceAt(width)).toBe("rail");
+      const rail = host.querySelector<HTMLElement>(".agent-minimap--rail");
+      const strip = pixels(rail?.style.getPropertyValue("--minimap-strip") ?? "");
+      const gutter = (width - AGENT_MINIMAP_COLUMN_WIDTH) / 2;
+      expect(strip, `${width}px`).toBe(agentMinimapHitStripWidth(width));
+      expect(strip, `${width}px`).toBeLessThanOrEqual(AGENT_MINIMAP_HIT_STRIP_MAX);
+      expect(strip + AGENT_MINIMAP_RAIL_INSET, `${width}px`).toBeLessThanOrEqual(gutter);
+    }
   });
 
   it("adds nothing to the scroller's ancestor chain but a positioned session", () => {
@@ -416,6 +472,15 @@ describe("agent thread session minimap and find pill", () => {
 
   function lastScroll(): { readonly element: Element; readonly block: unknown } | undefined {
     return scrolled[scrolled.length - 1];
+  }
+
+  function surfaceAt(width: number): "rail" | "list" {
+    window.innerWidth = width;
+    render({ thread: threadView(turns(3), `agt-${width}`) });
+    const rail = host.querySelector(".agent-minimap--rail");
+    const toggle = host.querySelector(".agent-minimap__toggle");
+    expect(rail === null, `${width}px`).not.toBe(toggle === null);
+    return rail === null ? "list" : "rail";
   }
 
   function currentDashLabel(): string | null {
@@ -482,6 +547,21 @@ function declaration(selector: string, property: string): string | null {
       rule.declarations.filter((entry) => entry.property === property).map((entry) => entry.value),
     );
   return values[values.length - 1] ?? null;
+}
+
+function contextDeclaration(context: string, selector: string, property: string): string | null {
+  const values = STYLES.rules
+    .filter(
+      (rule) => rule.context.includes(context) && selectorParts(rule.selector).includes(selector),
+    )
+    .flatMap((rule) =>
+      rule.declarations.filter((entry) => entry.property === property).map((entry) => entry.value),
+    );
+  return values[values.length - 1] ?? null;
+}
+
+function sheetSource(sheet: string): string {
+  return readStyleSheet(sheet).source;
 }
 
 function sessionPaddingTop(): string {

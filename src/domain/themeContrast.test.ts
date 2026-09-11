@@ -65,6 +65,7 @@ const runtimeStyleTokens = new Set([
   "--bottom-panel-height",
   "--git-history-file-depth",
   "--minimap-distance",
+  "--minimap-strip",
   "--sidebar-width",
   "--structure-indent",
   "--tree-level",
