@@ -1,3 +1,6 @@
+import type { AgentImageMime } from "../domain/agentAttachment";
+import type { AgentAttachmentImagesSurface } from "./useAgentAttachmentImages";
+import type { AgentComposerAttachmentsSurface } from "./useAgentComposerAttachments";
 import type { AgentProjectOrigin } from "../domain/agentProject";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import type {
@@ -217,7 +220,36 @@ export interface AgentThreadSearchSurface {
   clear(): void;
 }
 
-export interface AgentThreadStartRequest {
+export type AgentTurnAttachmentIntent =
+  | {
+      readonly kind: "staged";
+      readonly attachmentId: string;
+      readonly name: string;
+      readonly bytes: number;
+      readonly mime: AgentImageMime | null;
+      readonly width: number | null;
+      readonly height: number | null;
+    }
+  | {
+      readonly kind: "reference";
+      readonly name: string;
+      readonly path: string;
+      readonly bytes: number;
+    };
+
+export interface AgentTurnAttachmentRequest {
+  readonly attachments?: ReadonlyArray<AgentTurnAttachmentIntent>;
+  readonly attachmentOwner?: AgentAttachmentIntentOwner;
+}
+
+export interface AgentAttachmentIntentOwner {
+  readonly projectRootKey: string;
+  readonly ownerId: string;
+  readonly generation: number;
+  readonly workspaceId: string;
+}
+
+export interface AgentThreadStartRequest extends AgentTurnAttachmentRequest {
   readonly projectRootKey: string;
   readonly repositoryRoot: string;
   readonly prompt: string;
@@ -231,7 +263,7 @@ export interface AgentThreadStartResult {
   readonly threadId: string;
 }
 
-export interface AgentFollowUpRequest {
+export interface AgentFollowUpRequest extends AgentTurnAttachmentRequest {
   readonly threadId: string;
   readonly prompt: string;
   readonly launch: AgentLaunchOptions;
@@ -239,6 +271,9 @@ export interface AgentFollowUpRequest {
 }
 
 export interface AgentThreadsSurface {
+  readonly attachments?: AgentComposerAttachmentsSurface;
+  readonly attachmentImages?: AgentAttachmentImagesSurface;
+  revealAttachment?(threadId: string, attachmentId: string): Promise<void>;
   readonly externalHistory?: {
     readonly states: ReadonlyMap<string, "loading" | "failed" | "unavailable" | "ready">;
     load(threadId: string): Promise<void>;

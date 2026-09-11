@@ -39,7 +39,14 @@ import type {
   ExternalSessionImportResult,
   ExternalSessionsSurface,
 } from "./agentThreadPorts";
-import { info, projectByOwnerId, projectByRootKey, warning } from "./agentProjectAuthority";
+import {
+  AGENT_TASKS_SOURCE,
+  attempt,
+  info,
+  projectByOwnerId,
+  projectByRootKey,
+  warning,
+} from "./agentProjectAuthority";
 import {
   countRunningTurns,
   countRunningTurnsInRepository,
@@ -47,6 +54,13 @@ import {
   usedTurnIds,
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
+import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
+import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
+import {
+  useAgentComposerAttachments,
+  type AgentAttachmentOwner,
+} from "./useAgentComposerAttachments";
+import { useAgentAttachmentImages } from "./useAgentAttachmentImages";
 import { useExternalSessions } from "./useExternalSessions";
 import { useImportedThreadHistory } from "./useImportedThreadHistory";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
@@ -70,6 +84,8 @@ export type AgentThreadsGitGateway = Pick<
 
 export interface AgentThreadsDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
+  readonly agentAttachmentGateway?: AgentAttachmentGateway;
+  readonly agentImageSurface?: AgentImageSurfacePort;
   readonly agentThreadStoreGateway: AgentThreadStoreGateway;
   readonly externalSessionGateway?: ExternalSessionGateway;
   readonly gitWorktreeGateway: GitWorktreeGateway;
@@ -250,8 +266,57 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const agentCliConfigured =
     dependencies.getAgentProviderAdmissionAuthority(agentCliKind).disposition.kind === "ready";
 
+  const attachmentGateway = dependencies.agentAttachmentGateway ?? null;
+  const resolveLaunchIdentity = dependencies.launchIdentityForProject;
+  const resolveAttachmentOwner = useCallback(
+    (projectRootKey: string): AgentAttachmentOwner | null => {
+      const project = projectByRootKey(projects, projectRootKey);
+      if (project === undefined || project.origin === "closed-tab-live-tasks") return null;
+      const identity = resolveLaunchIdentity(projectRootKey);
+      if (identity === null) return null;
+      return {
+        projectRootKey,
+        ownerId: project.ownerId,
+        generation: project.generation,
+        workspaceId: identity.workspaceId,
+      };
+    },
+    [projects, resolveLaunchIdentity],
+  );
+
+  const attachments = useAgentComposerAttachments({
+    gateway: attachmentGateway,
+    imageSurface: dependencies.agentImageSurface ?? null,
+    resolveOwner: resolveAttachmentOwner,
+    reportError,
+  });
+
+  const attachmentImages = useAgentAttachmentImages({
+    gateway: attachmentGateway,
+    reportError,
+  });
+
+  const revealAttachment = useCallback(
+    async (threadId: string, attachmentId: string): Promise<void> => {
+      const thread = store.currentState().threads.get(threadId);
+      if (thread === undefined || attachmentGateway === null) return;
+      if (!ownsThread(projects, thread)) return;
+      const revealed = await attempt(() =>
+        attachmentGateway.revealAgentAttachment({
+          workspaceId: thread.owner.ownerId,
+          threadId,
+          attachmentId,
+        }),
+      );
+      if (revealed.ok) return;
+      reportError(AGENT_TASKS_SOURCE, revealed.error);
+    },
+    [attachmentGateway, projects, reportError, store],
+  );
+
   const dispatch = useAgentTurnDispatch({
     agentTaskGateway: dependencies.agentTaskGateway,
+    agentAttachmentGateway: dependencies.agentAttachmentGateway,
     gitWorktreeGateway: dependencies.gitWorktreeGateway,
     projects,
     store,
@@ -504,6 +569,9 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   );
   return {
     threads: threadViews,
+    attachments,
+    attachmentImages,
+    revealAttachment,
     repositories,
     orphanedWorktrees: worktrees.orphanedWorktrees,
     notice,

@@ -29,6 +29,7 @@ describe("domain dependency direction", () => {
       "useWorkbenchNativeMenuCommands.ts -> ../infrastructure/safeUnsubscribe",
       "useWorkbenchPintCommand.ts -> ../infrastructure/tauriPintGateway",
       "useWorkspaceStateCache.ts -> ../infrastructure/tauriWorkspaceIdentityGateway",
+      "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentAttachmentGateway",
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentTaskGateway",
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriAgentThreadStoreGateway",
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriDebugGateway",
@@ -40,6 +41,7 @@ describe("domain dependency direction", () => {
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriPhpstanDiagnosticsGateway",
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriPintGateway",
       "workbenchDefaultGateways.ts -> ../infrastructure/tauriPrettierGateway",
+      "workbenchDefaultGateways.ts -> ../infrastructure/webviewAgentImageSurface",
       "workbenchOwnerDocumentSaveAdapters.ts -> ../infrastructure/tauriWorkspaceIdentityGateway",
     ]);
     const outerLayerDependencies = productionTypeScriptFiles(applicationDirectory).flatMap(

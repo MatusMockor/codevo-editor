@@ -44,6 +44,7 @@ function wireStatusEvent(overrides: Record<string, unknown> = {}): Record<string
 function startRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     taskId: "agt-1-0a1b",
+    threadId: "agt-1-0a1c",
     workspaceId: "ws-1",
     projectRoot: "/repo",
     repositoryRoot: "/repo",
@@ -54,6 +55,7 @@ function startRequest(overrides: Record<string, unknown> = {}): Record<string, u
     resumeSessionId: null,
     launch: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
     providerGeneration: 1,
+    attachments: [],
     ...overrides,
   };
 }

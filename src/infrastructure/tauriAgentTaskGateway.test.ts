@@ -10,6 +10,7 @@ import type { InvokeAgentTaskCommand } from "./tauriAgentTaskIpcContract";
 
 const START_REQUEST: StartAgentTaskRequest = {
   taskId: "agt-1-0a1b",
+  threadId: "agt-1-0a1c",
   workspaceId: "ws-1",
   projectRoot: "/repo",
   repositoryRoot: "/repo",
@@ -20,6 +21,7 @@ const START_REQUEST: StartAgentTaskRequest = {
   resumeSessionId: null,
   launch: defaultAgentLaunchOptions("claudeCode"),
   providerGeneration: 1,
+  attachments: [],
 };
 
 const available: AgentTaskRuntimeDetector = () => true;

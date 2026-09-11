@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { AgentAttachment } from "../domain/agentAttachment";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import type { AgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import {
@@ -10,6 +11,7 @@ import {
   type AgentTaskOutputEvent,
   type AgentTaskStatus,
   type AgentTaskStatusEvent,
+  type StartAgentTaskAttachment,
 } from "../domain/agentTask";
 import {
   agentTaskStatusActionAccepted,
@@ -66,6 +68,8 @@ import {
   type AgentOutputParserPort,
   type AgentTurnOutputStream,
 } from "./agentTurnOutputStream";
+import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
+import { prepareTurnAttachments, type AgentTurnAttachmentAuthority } from "./agentTurnAttachments";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
 
 export {
@@ -76,6 +80,7 @@ export {
 
 export interface AgentTurnDispatchDependencies extends AgentTurnAdmissionDependencies {
   readonly agentTaskGateway: AgentTaskGateway;
+  readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly gitWorktreeGateway: GitWorktreeGateway;
   readonly preflightInPlace: (
     repositoryRoot: string,
@@ -120,6 +125,8 @@ interface TurnStart {
   readonly isolation: AgentTaskIsolation;
   readonly worktreePath: string | null;
   readonly prompt: string;
+  readonly attachments: ReadonlyArray<AgentAttachment>;
+  readonly attachmentReferences: ReadonlyArray<StartAgentTaskAttachment>;
   readonly turnId: string;
   readonly agentCliKind: AgentCliKind;
   readonly providerAuthority: ReadyAgentProviderAdmissionAuthority;
@@ -402,7 +409,14 @@ export function useAgentTurnDispatch(
       let turnRegistered = false;
       if (!turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return false;
       const cliVersion = deps.currentCliVersion?.(start.agentCliKind) ?? null;
-      const turn = pendingTurn(turnId, start.prompt, now(), start.launch, cliVersion);
+      const turn = pendingTurn(
+        turnId,
+        start.prompt,
+        now(),
+        start.launch,
+        cliVersion,
+        start.attachments,
+      );
       if (start.registration === "before-start") {
         start.register(turn);
         turnRegistered = true;
@@ -414,6 +428,7 @@ export function useAgentTurnDispatch(
       const started = await attempt(() =>
         gateway.startAgentTask({
           taskId: turnId,
+          threadId: start.threadId,
           workspaceId,
           projectRoot: start.projectRoot,
           repositoryRoot,
@@ -424,6 +439,7 @@ export function useAgentTurnDispatch(
           providerGeneration: start.providerAuthority.providerGeneration,
           resumeSessionId: start.resumeSessionId,
           launch: start.launch,
+          attachments: start.attachmentReferences,
         }),
       );
       if (!started.ok) {
@@ -590,6 +606,28 @@ export function useAgentTurnDispatch(
           }
           return null;
         }
+        const prepared = await prepareTurnAttachments(
+          dependenciesRef.current,
+          request,
+          turnAttachmentAuthority(authority),
+          threadId,
+          prompt,
+        );
+        if (
+          prepared === null ||
+          !isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) ||
+          !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
+        ) {
+          if (createdWorktree !== null) {
+            await compensateCreatedWorktree(
+              dependenciesRef,
+              mountedRef,
+              authority,
+              createdWorktree,
+            );
+          }
+          return null;
+        }
         const now = deps.now ?? Date.now;
         const started = await runTurnStart({
           authority,
@@ -600,7 +638,9 @@ export function useAgentTurnDispatch(
           cwd: worktreePath ?? repositoryRoot,
           isolation: request.isolation,
           worktreePath,
-          prompt,
+          prompt: prepared.prompt,
+          attachments: prepared.attachments,
+          attachmentReferences: prepared.references,
           turnId,
           agentCliKind,
           providerAuthority,
@@ -615,7 +655,7 @@ export function useAgentTurnDispatch(
               owner: { rootKey: authority.rootKey, ownerId: authority.workspaceId, repositoryRoot },
               target: { isolation: request.isolation, worktreePath },
               provider: { kind: agentCliKind, sessionId: null },
-              title: agentThreadTitle(prompt),
+              title: agentThreadTitle(prompt === "" ? prepared.prompt : prompt),
               pinned: false,
               archived: false,
               createdAtEpochMs: createdAt,
@@ -630,6 +670,9 @@ export function useAgentTurnDispatch(
             dependenciesRef.current.store.dispatchAction({ kind: "threadCreated", thread });
           },
         });
+        if (started && prepared.notice !== null) {
+          dependenciesRef.current.setNotice(prepared.notice);
+        }
         if (
           !started &&
           request.isolation === "worktree" &&
@@ -704,7 +747,21 @@ export function useAgentTurnDispatch(
       beginPendingTurn(reboundThread.provider.kind);
       setDispatching(true);
       try {
-        return await runTurnStart({
+        const prepared = await prepareTurnAttachments(
+          dependenciesRef.current,
+          request,
+          turnAttachmentAuthority(authority),
+          reboundThread.threadId,
+          prompt,
+        );
+        if (
+          prepared === null ||
+          !isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) ||
+          !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
+        ) {
+          return false;
+        }
+        const followedUp = await runTurnStart({
           authority,
           authorityScope: "thread",
           projectRoot,
@@ -713,7 +770,9 @@ export function useAgentTurnDispatch(
           cwd: reboundThread.target.worktreePath ?? repositoryRoot,
           isolation: reboundThread.target.isolation,
           worktreePath: reboundThread.target.worktreePath,
-          prompt,
+          prompt: prepared.prompt,
+          attachments: prepared.attachments,
+          attachmentReferences: prepared.references,
           turnId,
           agentCliKind: reboundThread.provider.kind,
           providerAuthority,
@@ -730,6 +789,10 @@ export function useAgentTurnDispatch(
             });
           },
         });
+        if (followedUp && prepared.notice !== null) {
+          dependenciesRef.current.setNotice(prepared.notice);
+        }
+        return followedUp;
       } finally {
         endPendingTurn(reboundThread.provider.kind);
         inFlightThreadsRef.current.delete(reboundThread.threadId);
@@ -828,6 +891,17 @@ function unsupportedPendingTurnProvider(provider: never): never {
   throw new TypeError(`Unsupported pending turn provider: ${String(provider)}.`);
 }
 
+function turnAttachmentAuthority(
+  authority: AgentTaskLaunchAuthority,
+): AgentTurnAttachmentAuthority {
+  return {
+    rootKey: authority.rootKey,
+    ownerId: authority.ownerId,
+    generation: authority.generation,
+    workspaceId: authority.workspaceId,
+  };
+}
+
 function statusEventMatchesStream(
   stream: AgentTurnOutputStream,
   event: AgentTaskStatusEvent,
@@ -875,6 +949,20 @@ function noteSessionChange(
 }
 
 function pendingTurn(
+  turnId: string,
+  prompt: string,
+  startedAtEpochMs: number,
+  launch: AgentLaunchOptions,
+  cliVersion: string | null,
+  attachments: ReadonlyArray<AgentAttachment>,
+): AgentTurn {
+  if (attachments.length === 0) {
+    return turnRecord(turnId, prompt, startedAtEpochMs, launch, cliVersion);
+  }
+  return { ...turnRecord(turnId, prompt, startedAtEpochMs, launch, cliVersion), attachments };
+}
+
+function turnRecord(
   turnId: string,
   prompt: string,
   startedAtEpochMs: number,

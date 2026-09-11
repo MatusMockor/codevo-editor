@@ -9,6 +9,8 @@ import type {
 import { mergeAgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
+import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
+import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
 import type { AgentProviderSignInGateway } from "../domain/agentProviderSignIn";
 import type { TerminalGateway } from "../domain/terminal";
 import type {
@@ -58,6 +60,8 @@ import type { AgentProviderSignInRefreshOutcome } from "./useAgentProviderSignIn
 import type { ReadyAgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import {
+  defaultAgentAttachmentGateway,
+  defaultAgentImageSurface,
   defaultAgentTaskGateway,
   defaultAgentThreadStoreGateway,
   defaultCompareUrlOpener,
@@ -77,6 +81,8 @@ export interface WorkbenchAgentProjectGateways {
 
 export interface WorkbenchAgentsOptions {
   readonly agentTaskGateway?: AgentTaskGateway;
+  readonly agentAttachmentGateway?: AgentAttachmentGateway;
+  readonly agentImageSurface?: AgentImageSurfacePort;
   readonly agentProviderGateway: AgentProviderPolicyGateway &
     AgentProviderHealthGateway &
     AgentProviderUpdateGateway &
@@ -425,6 +431,8 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
 
   const threads = useAgentThreads({
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
+    agentAttachmentGateway: options.agentAttachmentGateway ?? defaultAgentAttachmentGateway,
+    agentImageSurface: options.agentImageSurface ?? defaultAgentImageSurface,
     agentThreadStoreGateway: options.agentThreadStoreGateway ?? defaultAgentThreadStoreGateway,
     externalSessionGateway: defaultExternalSessionGateway,
     gitWorktreeGateway: options.gitWorktreeGateway ?? defaultGitWorktreeGateway,

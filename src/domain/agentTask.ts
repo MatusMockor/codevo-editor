@@ -1,4 +1,12 @@
 import {
+  MAX_AGENT_ATTACHMENT_NAME_BYTES,
+  MAX_AGENT_ATTACHMENT_PATH_BYTES,
+  MAX_AGENT_TURN_ATTACHMENTS,
+  isAgentAttachmentId,
+  isAgentAttachmentName,
+  isAgentAttachmentPath,
+} from "./agentAttachment";
+import {
   agentLaunchMatchesProvider,
   parseAgentLaunchOptions,
   type AgentLaunchOptions,
@@ -47,8 +55,13 @@ export interface AgentTaskOutputEvent {
   readonly truncated: boolean;
 }
 
+export type StartAgentTaskAttachment =
+  | { readonly kind: "staged"; readonly attachmentId: string }
+  | { readonly kind: "reference"; readonly name: string; readonly path: string };
+
 export interface StartAgentTaskRequest {
   readonly taskId: string;
+  readonly threadId: string;
   readonly workspaceId: string;
   readonly projectRoot: string;
   readonly repositoryRoot: string;
@@ -59,6 +72,7 @@ export interface StartAgentTaskRequest {
   readonly resumeSessionId: string | null;
   readonly launch: AgentLaunchOptions;
   readonly providerGeneration: number;
+  readonly attachments: ReadonlyArray<StartAgentTaskAttachment>;
 }
 
 export interface StartAgentTaskResult {
@@ -222,6 +236,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
     request,
     [
       "taskId",
+      "threadId",
       "workspaceId",
       "projectRoot",
       "repositoryRoot",
@@ -232,6 +247,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
       "resumeSessionId",
       "launch",
       "providerGeneration",
+      "attachments",
     ],
     "request",
   );
@@ -248,6 +264,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
   }
   return {
     taskId: agentTaskId(request.taskId, "request.taskId"),
+    threadId: agentTaskId(request.threadId, "request.threadId"),
     workspaceId: agentWorkspaceId(request.workspaceId, "request.workspaceId"),
     projectRoot: agentPath(request.projectRoot, "request.projectRoot"),
     repositoryRoot,
@@ -261,7 +278,51 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
       request.providerGeneration,
       "request.providerGeneration",
     ),
+    attachments: startAgentTaskAttachments(request.attachments, "request.attachments"),
   };
+}
+
+function startAgentTaskAttachments(
+  value: unknown,
+  path: string,
+): ReadonlyArray<StartAgentTaskAttachment> {
+  if (!Array.isArray(value)) invalid(path, "an array of attachment references");
+  if (value.length > MAX_AGENT_TURN_ATTACHMENTS) {
+    invalid(path, `at most ${MAX_AGENT_TURN_ATTACHMENTS} attachment references`);
+  }
+  return value.map((entry, index) => startAgentTaskAttachment(entry, `${path}[${index}]`));
+}
+
+function startAgentTaskAttachment(value: unknown, path: string): StartAgentTaskAttachment {
+  const attachment = record(value, path);
+  if (attachment.kind === "staged") {
+    exactKeys(attachment, ["kind", "attachmentId"], path);
+    if (!isAgentAttachmentId(attachment.attachmentId)) {
+      invalid(`${path}.attachmentId`, "32 lowercase hexadecimal characters");
+    }
+    return { kind: "staged", attachmentId: attachment.attachmentId };
+  }
+  if (attachment.kind === "reference") {
+    exactKeys(attachment, ["kind", "name", "path"], path);
+    return {
+      kind: "reference",
+      name: agentAttachmentDisplayName(attachment.name, `${path}.name`),
+      path: agentAttachmentAbsolutePath(attachment.path, `${path}.path`),
+    };
+  }
+  return invalid(`${path}.kind`, "staged or reference");
+}
+
+function agentAttachmentDisplayName(value: unknown, path: string): string {
+  const candidate = boundedText(value, path, MAX_AGENT_ATTACHMENT_NAME_BYTES, false, true);
+  if (!isAgentAttachmentName(candidate)) invalid(path, "a sanitised attachment name");
+  return candidate;
+}
+
+function agentAttachmentAbsolutePath(value: unknown, path: string): string {
+  const candidate = boundedText(value, path, MAX_AGENT_ATTACHMENT_PATH_BYTES, false, true);
+  if (!isAgentAttachmentPath(candidate)) invalid(path, "an absolute attachment path");
+  return candidate;
 }
 
 export function isAgentSessionId(value: unknown): value is string {

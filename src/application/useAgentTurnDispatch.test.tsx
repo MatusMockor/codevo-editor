@@ -38,6 +38,8 @@ import type {
   AgentThreadStoreSurface,
 } from "./agentThreadPorts";
 import { AGENT_TASKS_SOURCE } from "./agentProjectAuthority";
+import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
+import { AGENT_ATTACHMENTS_DISCARDED_NOTICE } from "./agentTurnAttachments";
 import type { AgentOutputParserPort } from "./agentTurnOutputStream";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
 import {
@@ -97,6 +99,121 @@ function createDeferred<T>() {
   });
   return { promise, resolve, reject };
 }
+
+const ATTACHMENT_ID = "0123456789abcdef0123456789abcdef";
+
+const IMAGE_INTENT = {
+  kind: "staged",
+  attachmentId: ATTACHMENT_ID,
+  name: "shot.png",
+  bytes: 2_048,
+  mime: "image/png",
+  width: 800,
+  height: 600,
+} as const;
+
+describe("useAgentTurnDispatch attachments", () => {
+  it("claims the staged attachment under the new thread and sends the effective prompt", async () => {
+    const harness = renderDispatch();
+
+    const started = await act(() =>
+      harness.hook().startThread(
+        startRequest({
+          prompt: "look at this",
+          attachments: [IMAGE_INTENT],
+          attachmentOwner: {
+            projectRootKey: ROOT_A,
+            ownerId: OWNER_A,
+            generation: 1,
+            workspaceId: OWNER_A,
+          },
+        }),
+      ),
+    );
+
+    expect(started).not.toBeNull();
+    const threadId = started?.threadId ?? "";
+    const storedPath = `/data/agent-attachments/threads/${threadId}/${ATTACHMENT_ID}.png`;
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledWith({
+      workspaceId: OWNER_A,
+      threadId,
+      attachmentIds: [ATTACHMENT_ID],
+    });
+    const sent = harness.startedRequests[0];
+    expect(sent?.threadId).toBe(threadId);
+    expect(sent?.attachments).toEqual([{ kind: "staged", attachmentId: ATTACHMENT_ID }]);
+    expect(sent?.prompt).toBe(
+      `look at this\n\n[Attached image "shot.png" is saved at: ${storedPath}]`,
+    );
+    expect(harness.turn(threadId, 0).prompt).toBe(sent?.prompt);
+    expect(harness.turn(threadId, 0).attachments).toEqual([
+      {
+        kind: "image",
+        attachmentId: ATTACHMENT_ID,
+        name: "shot.png",
+        mime: "image/png",
+        bytes: 2_048,
+        width: 800,
+        height: 600,
+        storedPath,
+      },
+    ]);
+    harness.unmount();
+  });
+
+  it("drops and releases attachments captured in a previous workspace generation", async () => {
+    const harness = renderDispatch();
+
+    const started = await act(() =>
+      harness.hook().startThread(
+        startRequest({
+          prompt: "look at this",
+          attachments: [IMAGE_INTENT],
+          attachmentOwner: {
+            projectRootKey: ROOT_A,
+            ownerId: OWNER_A,
+            generation: 0,
+            workspaceId: OWNER_A,
+          },
+        }),
+      ),
+    );
+
+    expect(started).not.toBeNull();
+    expect(harness.attachmentGateway.claimAgentAttachments).not.toHaveBeenCalled();
+    expect(harness.releasedAttachments).toEqual([ATTACHMENT_ID]);
+    expect(harness.startedRequests[0]?.prompt).toBe("look at this");
+    expect(harness.startedRequests[0]?.attachments).toEqual([]);
+    expect(harness.notice()?.message).toBe(AGENT_ATTACHMENTS_DISCARDED_NOTICE);
+    harness.unmount();
+  });
+
+  it("sends a turn with no text when only an attachment is staged", async () => {
+    const harness = renderDispatch();
+
+    const started = await act(() =>
+      harness.hook().startThread(
+        startRequest({
+          prompt: "   ",
+          attachments: [IMAGE_INTENT],
+          attachmentOwner: {
+            projectRootKey: ROOT_A,
+            ownerId: OWNER_A,
+            generation: 1,
+            workspaceId: OWNER_A,
+          },
+        }),
+      ),
+    );
+
+    expect(started).not.toBeNull();
+    const threadId = started?.threadId ?? "";
+    expect(harness.startedRequests[0]?.prompt).toBe(
+      `[Attached image "shot.png" is saved at: /data/agent-attachments/threads/${threadId}/${ATTACHMENT_ID}.png]`,
+    );
+    harness.unmount();
+  });
+});
 
 describe("useAgentTurnDispatch startThread", () => {
   it("allows parallel threads across projects beyond old settings and shares the 64-thread bound", async () => {
@@ -477,6 +594,7 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(Object.keys(started ?? {}).sort()).toEqual(
       [
         "taskId",
+        "threadId",
         "workspaceId",
         "projectRoot",
         "repositoryRoot",
@@ -487,6 +605,7 @@ describe("useAgentTurnDispatch startThread", () => {
         "providerGeneration",
         "resumeSessionId",
         "launch",
+        "attachments",
       ].sort(),
     );
     expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledWith({
@@ -1957,6 +2076,26 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       return () => undefined;
     }),
   };
+  const releasedAttachments: string[] = [];
+  const attachmentGateway = {
+    stageAgentAttachmentBytes: vi.fn(),
+    stageAgentAttachmentFromPath: vi.fn(),
+    inspectAgentAttachmentCandidate: vi.fn(),
+    readAgentAttachmentCandidate: vi.fn(),
+    claimAgentAttachments: vi.fn(
+      async ({ threadId, attachmentIds }: { threadId: string; attachmentIds: string[] }) =>
+        attachmentIds.map((attachmentId) => ({
+          attachmentId,
+          storedPath: `/data/agent-attachments/threads/${threadId}/${attachmentId}.png`,
+          promptLine: "[Attached]",
+        })),
+    ),
+    releaseAgentAttachment: vi.fn(async ({ attachmentId }: { attachmentId: string }) => {
+      releasedAttachments.push(attachmentId);
+    }),
+    readAgentAttachment: vi.fn(),
+    revealAgentAttachment: vi.fn(),
+  };
   const worktree = {
     listWorktrees: vi.fn(async () => []),
     addAgentWorktree: vi.fn(async (repositoryRoot: string, threadId: string) => ({
@@ -2036,6 +2175,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     };
     const dependencies: AgentTurnDispatchDependencies = {
       agentTaskGateway: agent as unknown as AgentTaskGateway,
+      agentAttachmentGateway: attachmentGateway as unknown as AgentAttachmentGateway,
       gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
       get projects() {
         return [project()];
@@ -2083,6 +2223,8 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
 
   const harness = {
     agent,
+    attachmentGateway,
+    releasedAttachments,
     worktree,
     parser,
     preflightInPlace,

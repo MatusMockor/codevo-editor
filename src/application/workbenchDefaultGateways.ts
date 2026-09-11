@@ -1,3 +1,4 @@
+import { TauriAgentAttachmentGateway } from "../infrastructure/tauriAgentAttachmentGateway";
 import { TauriAgentTaskGateway } from "../infrastructure/tauriAgentTaskGateway";
 import { TauriAgentThreadStoreGateway } from "../infrastructure/tauriAgentThreadStoreGateway";
 import { TauriDebugGateway } from "../infrastructure/tauriDebugGateway";
@@ -12,7 +13,9 @@ import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDi
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import { TauriPintGateway } from "../infrastructure/tauriPintGateway";
 import { TauriPrettierGateway } from "../infrastructure/tauriPrettierGateway";
+import { WebviewAgentImageSurface } from "../infrastructure/webviewAgentImageSurface";
 
+export const defaultAgentAttachmentGateway = new TauriAgentAttachmentGateway();
 export const defaultAgentTaskGateway = new TauriAgentTaskGateway();
 export const defaultAgentThreadStoreGateway = new TauriAgentThreadStoreGateway();
 export const defaultDebugGateway = new TauriDebugGateway();
@@ -25,3 +28,4 @@ export const eslintDiagnosticsGateway = new TauriEslintDiagnosticsGateway();
 export const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 export const phpstanDiagnosticsGateway = new TauriPhpstanDiagnosticsGateway();
 export const pintGateway = new TauriPintGateway();
+export const defaultAgentImageSurface = new WebviewAgentImageSurface();

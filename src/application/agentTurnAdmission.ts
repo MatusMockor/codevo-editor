@@ -28,6 +28,7 @@ import type {
   AgentTasksNotice,
   AgentThreadStartRequest,
   AgentThreadStoreSurface,
+  AgentTurnAttachmentRequest,
 } from "./agentThreadPorts";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
 import {
@@ -120,7 +121,7 @@ export function admitStart(
     deps.setNotice(warning("In-place agents can run only in the active project. Use a worktree."));
     return null;
   }
-  const prompt = admitPrompt(deps, request.prompt);
+  const prompt = admitPrompt(deps, request.prompt, hasAttachments(request));
   if (prompt === null) return null;
   const agentCliKind = normalizeAgentCliKind(request.launch.provider);
   const launch = admitLaunch(deps, request, agentCliKind);
@@ -185,7 +186,7 @@ export function admitFollowUp(
     deps.setNotice(warning("This thread's project is no longer open, so it cannot continue."));
     return null;
   }
-  const prompt = admitPrompt(deps, request.prompt);
+  const prompt = admitPrompt(deps, request.prompt, hasAttachments(request));
   if (prompt === null) return null;
   const launch = admitLaunch(deps, request, thread.provider.kind);
   if (launch === null) return null;
@@ -240,9 +241,13 @@ function admitLaunch(
   return launch;
 }
 
-function admitPrompt(deps: AdmissionDependencies, raw: string): string | null {
+function hasAttachments(request: AgentTurnAttachmentRequest): boolean {
+  return (request.attachments ?? []).length > 0;
+}
+
+function admitPrompt(deps: AdmissionDependencies, raw: string, allowEmpty: boolean): string | null {
   const prompt = raw.trim();
-  if (prompt === "") {
+  if (prompt === "" && !allowEmpty) {
     deps.setNotice(warning("Write a prompt before starting an agent."));
     return null;
   }
