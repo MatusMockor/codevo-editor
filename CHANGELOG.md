@@ -7,6 +7,23 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.35] - 2026-09-11
+
+### Added
+
+- Attach up to eight images or files through paste, drag-and-drop or the file picker.
+  Send supported images natively to the selected provider and other files as path references.
+- Preview attached images in the composer and conversation, enlarge them in an in-app
+  lightbox or open them in the system viewer, and show attachment details in imported sessions.
+
+### Fixed
+
+- Preserve attachment ownership across project changes and reject stale attachment drafts.
+  Store claimed files with their thread and clean up abandoned attachments.
+- Allow attachment image previews to render in the native webview.
+- Anchor the turn minimap to the session edge and use the compact menu when the side gutter
+  is too narrow or the pointer does not support hover.
+
 ## [0.2.0-beta.34] - 2026-09-11
 
 ### Fixed
