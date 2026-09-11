@@ -7,6 +7,22 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.33] - 2026-09-11
+
+### Added
+
+- Adjust text size for the agent workspace in Appearance settings, with controls and
+  layout dimensions scaling alongside the text. Add a visible Back button in settings.
+- Navigate long conversations with a turn minimap, prompt previews, current-turn markers
+  and keyboard controls. Group markers in long conversations.
+
+### Changed
+
+- Increase default agent text sizes and simplify the composer by removing its repeated
+  thread context line.
+- Present find-in-thread as a compact overlay while keeping highlighted results clear of
+  it. Show when the search result count reaches its limit.
+
 ## [0.2.0-beta.32] - 2026-09-10
 
 ### Added
