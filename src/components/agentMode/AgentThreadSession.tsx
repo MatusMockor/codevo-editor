@@ -31,8 +31,10 @@ import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { AgentImportedHistory, type AgentExternalHistoryState } from "./AgentImportedHistory";
 import { AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
-import type { AgentTurnAttachmentImagePort } from "./AgentTurnAttachments";
+import type { AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";
+import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
 import { agentTurnAttachmentViews } from "./agentTurnAttachmentPresentation";
+import { useAgentAttachmentLightbox } from "./useAgentAttachmentLightbox";
 import { useAgentTurnAttachmentImagePort } from "./useAgentTurnAttachmentImages";
 import { agentTurnTiming } from "./agentTurnHeadPresentation";
 import {
@@ -158,6 +160,8 @@ function AgentThreadSessionBody({
     onRevealAttachment ?? null,
     attachmentOwner,
   );
+  const lightbox = useAgentAttachmentLightbox(attachmentImagePort, attachmentOwner);
+  const attachmentImageViewer = lightbox.images;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pinnedToLatestRef = useRef(true);
   const renderedTurnRef = useRef<{ readonly threadId: string; readonly turnId: string | null }>({
@@ -347,7 +351,7 @@ function AgentThreadSessionBody({
 
           {record.externalOrigin != null && (
             <AgentImportedHistory
-              attachmentImages={importedCarriesAttachments ? attachmentImagePort : null}
+              attachmentImages={importedCarriesAttachments ? attachmentImageViewer : null}
               highlights={importedHighlights}
               history={record.externalOrigin.history}
               key={`${threadId}:${record.externalOrigin.sessionId}`}
@@ -362,7 +366,7 @@ function AgentThreadSessionBody({
             {record.turns.map((turn) => (
               <AgentTurnView
                 attachmentImages={
-                  (turn.attachments?.length ?? 0) === 0 ? null : attachmentImagePort
+                  (turn.attachments?.length ?? 0) === 0 ? null : attachmentImageViewer
                 }
                 highlight={highlightFor(turn.turnId)}
                 key={turn.turnId}
@@ -392,6 +396,12 @@ function AgentThreadSessionBody({
           )}
         </div>
       </div>
+
+      <AgentAttachmentLightbox
+        entry={lightbox.entry}
+        images={attachmentImageViewer}
+        onClose={lightbox.close}
+      />
     </section>
   );
 }
@@ -405,7 +415,7 @@ const AgentTurnView = memo(function AgentTurnView({
   textClipboard,
   turn,
 }: {
-  readonly attachmentImages?: AgentTurnAttachmentImagePort | null;
+  readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly highlight?: AgentTurnHighlight | null;
   readonly prose: AgentProseContext;
   readonly provider: AgentCliKind;

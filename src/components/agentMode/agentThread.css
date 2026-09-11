@@ -1879,3 +1879,79 @@
     animation: none;
   }
 }
+
+.palette-backdrop.agent-lightbox {
+  z-index: 40;
+  align-items: center;
+  padding: 0;
+  background: color-mix(in srgb, var(--agent-shade) 78%, transparent);
+  animation: agent-lightbox-in var(--agent-motion-enter) var(--ease-standard);
+}
+
+.agent-lightbox:focus-visible {
+  outline: none;
+}
+
+.agent-lightbox__image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: var(--agent-radius-md);
+  object-fit: contain;
+  box-shadow: var(--codevo-shadow-window);
+}
+
+.agent-lightbox__controls {
+  position: absolute;
+  top: var(--agent-space-4);
+  right: var(--agent-space-4);
+  display: flex;
+  gap: var(--agent-space-3);
+}
+
+.agent-lightbox__control {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--agent-radius-md);
+  background: var(--agent-raised);
+  box-shadow: var(--codevo-shadow-float);
+  color: var(--agent-text-strong);
+  cursor: pointer;
+  padding: 0;
+}
+
+.agent-lightbox__control--secondary {
+  color: var(--agent-text-muted);
+}
+
+.agent-lightbox__control:hover {
+  background: var(--agent-hover);
+  color: var(--agent-text-strong);
+}
+
+.agent-lightbox__control:focus-visible {
+  outline: none;
+  box-shadow: var(--agent-focus-ring);
+}
+
+@keyframes agent-lightbox-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .palette-backdrop.agent-lightbox {
+    animation: none;
+  }
+}

@@ -11,6 +11,7 @@ import {
   agentAttachmentImageIsResolvable,
   agentAttachmentPlaceholderSize,
   type AgentTurnAttachmentGlyph,
+  type AgentTurnAttachmentImageView,
   type AgentTurnAttachmentView,
 } from "./agentTurnAttachmentPresentation";
 
@@ -20,9 +21,13 @@ export interface AgentTurnAttachmentImagePort {
   reveal(attachmentId: string): void;
 }
 
+export interface AgentTurnAttachmentImageViewer extends AgentTurnAttachmentImagePort {
+  open(attachment: AgentTurnAttachmentImageView, origin: HTMLElement): void;
+}
+
 export interface AgentTurnAttachmentsProps {
   readonly attachments: ReadonlyArray<AgentTurnAttachmentView>;
-  readonly images: AgentTurnAttachmentImagePort | null;
+  readonly images: AgentTurnAttachmentImageViewer | null;
 }
 
 export const AgentTurnAttachments = memo(function AgentTurnAttachments({
@@ -79,9 +84,9 @@ function AgentAttachmentImage({
   images,
   onBroken,
 }: {
-  readonly attachment: Extract<AgentTurnAttachmentView, { readonly kind: "image" }>;
+  readonly attachment: AgentTurnAttachmentImageView;
   readonly brokenUrl: string | null;
-  readonly images: AgentTurnAttachmentImagePort | null;
+  readonly images: AgentTurnAttachmentImageViewer | null;
   onBroken(attachmentId: string, url: string): void;
 }) {
   const state = images === null ? undefined : images.stateOf(attachment.attachmentId);
@@ -111,7 +116,7 @@ function AgentAttachmentImage({
   return (
     <button
       className="agent-attachments__open"
-      onClick={() => images.reveal(attachment.attachmentId)}
+      onClick={(event) => images.open(attachment, event.currentTarget)}
       title={attachment.name}
       type="button"
     >
@@ -128,7 +133,7 @@ function AgentAttachmentImage({
 }
 
 function unavailableReason(
-  attachment: Extract<AgentTurnAttachmentView, { readonly kind: "image" }>,
+  attachment: AgentTurnAttachmentImageView,
   images: AgentTurnAttachmentImagePort | null,
   brokenUrl: string | null,
   state: AgentAttachmentImageState | undefined,
@@ -142,9 +147,7 @@ function unavailableReason(
   return null;
 }
 
-function placeholderStyle(
-  attachment: Extract<AgentTurnAttachmentView, { readonly kind: "image" }>,
-): CSSProperties | undefined {
+function placeholderStyle(attachment: AgentTurnAttachmentImageView): CSSProperties | undefined {
   const size = agentAttachmentPlaceholderSize(attachment);
   if (size === null) return undefined;
   return { width: `${size.width}px`, height: `${size.height}px` };

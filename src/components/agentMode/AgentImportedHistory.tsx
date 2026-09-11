@@ -7,7 +7,7 @@ import type {
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentAssistantText, type AgentProseContext } from "./AgentAssistantText";
 import { AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
-import type { AgentTurnAttachmentImagePort } from "./AgentTurnAttachments";
+import type { AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";
 import { agentThreadColumnKey } from "./agentThreadColumn";
 import { AGENT_TURN_UNTIMED } from "./agentTurnHeadPresentation";
 import {
@@ -31,7 +31,7 @@ export const AgentImportedHistory = memo(function AgentImportedHistory({
   state,
   textClipboard,
 }: {
-  readonly attachmentImages?: AgentTurnAttachmentImagePort | null;
+  readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly highlights?: ReadonlyMap<number, AgentImportedHighlight>;
   readonly history: ExternalAgentSessionHistory | undefined;
   readonly onRetry?: () => void;
@@ -95,7 +95,7 @@ const AgentImportedTurnView = memo(function AgentImportedTurnView({
   textClipboard,
   turn,
 }: {
-  readonly attachmentImages: AgentTurnAttachmentImagePort | null;
+  readonly attachmentImages: AgentTurnAttachmentImageViewer | null;
   readonly highlights: ReadonlyMap<number, AgentImportedHighlight>;
   readonly prose: AgentProseContext;
   readonly provider: AgentCliKind;

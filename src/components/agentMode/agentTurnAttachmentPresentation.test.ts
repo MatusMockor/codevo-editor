@@ -4,6 +4,7 @@ import { parseExternalSessionExchange } from "../../domain/externalAgentSession"
 import {
   AGENT_IMPORTED_IMAGE_LABEL,
   agentAttachmentImageIsResolvable,
+  agentAttachmentLightboxFit,
   agentAttachmentPlaceholderSize,
   agentImportedAttachmentViews,
   agentTurnAttachmentViews,
@@ -184,6 +185,27 @@ describe("agentAttachmentPlaceholderSize", () => {
 
     expect(imported?.kind).toBe("chip");
     expect(imported).not.toHaveProperty("width");
+  });
+});
+
+describe("agentAttachmentLightboxFit", () => {
+  it("caps the lightbox image at the viewport fraction and at its natural size", () => {
+    expect(agentAttachmentLightboxFit({ width: 800, height: 600 })).toEqual({
+      maxWidth: "min(90vw, 800px)",
+      maxHeight: "min(90vh, 600px)",
+    });
+    expect(agentAttachmentLightboxFit({ width: 120.4, height: 33.6 })).toEqual({
+      maxWidth: "min(90vw, 120px)",
+      maxHeight: "min(90vh, 34px)",
+    });
+  });
+
+  it("leaves the viewport cap alone when the natural size is unknown or unusable", () => {
+    expect(agentAttachmentLightboxFit({})).toBeNull();
+    expect(agentAttachmentLightboxFit({ width: 800 })).toBeNull();
+    expect(agentAttachmentLightboxFit({ width: 0, height: 600 })).toBeNull();
+    expect(agentAttachmentLightboxFit({ width: 800, height: Number.POSITIVE_INFINITY })).toBeNull();
+    expect(agentAttachmentLightboxFit({ width: -5, height: 600 })).toBeNull();
   });
 });
 

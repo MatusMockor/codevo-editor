@@ -6,7 +6,7 @@ import { AgentRelativeTime, AgentWorkingDuration } from "./agentClock";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { agentCliKindLabel, agentTurnDurationLabel } from "./agentModePresentation";
 import { HighlightRun } from "./agentThreadHighlight";
-import { AgentTurnAttachments, type AgentTurnAttachmentImagePort } from "./AgentTurnAttachments";
+import { AgentTurnAttachments, type AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";
 import type { AgentTurnAttachmentView } from "./agentTurnAttachmentPresentation";
 import type { AgentTurnTiming } from "./agentTurnHeadPresentation";
 
@@ -14,7 +14,7 @@ const MAX_TIME_VALUE = 8_640_000_000_000_000;
 const NO_ATTACHMENTS: ReadonlyArray<AgentTurnAttachmentView> = [];
 
 export interface AgentTurnPromptProps {
-  readonly attachmentImages?: AgentTurnAttachmentImagePort | null;
+  readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly attachments?: ReadonlyArray<AgentTurnAttachmentView>;
   readonly current: number | null;
   readonly prompt: string;

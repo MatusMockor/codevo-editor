@@ -18,6 +18,7 @@ export const AGENT_ATTACHMENT_NO_IMAGES_REASON = "Images cannot be shown here.";
 export const AGENT_ATTACHMENT_DECODE_FAILED_REASON = "The image bytes could not be decoded.";
 export const AGENT_ATTACHMENT_IMAGE_MAX_WIDTH = 320;
 export const AGENT_ATTACHMENT_IMAGE_MAX_HEIGHT = 240;
+export const AGENT_LIGHTBOX_VIEWPORT_FRACTION = 90;
 
 export type AgentTurnAttachmentGlyph = "image" | "file" | "reference";
 
@@ -37,6 +38,11 @@ export type AgentTurnAttachmentView =
       readonly name: string;
       readonly glyph: AgentTurnAttachmentGlyph;
     };
+
+export type AgentTurnAttachmentImageView = Extract<
+  AgentTurnAttachmentView,
+  { readonly kind: "image" }
+>;
 
 export function agentTurnAttachmentViews(
   attachments: ReadonlyArray<AgentAttachment> | undefined,
@@ -70,7 +76,7 @@ export interface AgentAttachmentPlaceholderSize {
 }
 
 export function agentAttachmentPlaceholderSize(
-  view: Extract<AgentTurnAttachmentView, { readonly kind: "image" }>,
+  view: AgentTurnAttachmentImageView,
 ): AgentAttachmentPlaceholderSize | null {
   const { width, height } = view;
   if (width === undefined || height === undefined) return null;
@@ -83,6 +89,23 @@ export function agentAttachmentPlaceholderSize(
   return {
     width: Math.max(1, Math.round(width * scale)),
     height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+export interface AgentAttachmentLightboxFit {
+  readonly maxWidth: string;
+  readonly maxHeight: string;
+}
+
+export function agentAttachmentLightboxFit(
+  view: Pick<AgentTurnAttachmentImageView, "width" | "height">,
+): AgentAttachmentLightboxFit | null {
+  const { width, height } = view;
+  if (width === undefined || height === undefined) return null;
+  if (!isPositiveDimension(width) || !isPositiveDimension(height)) return null;
+  return {
+    maxWidth: `min(${AGENT_LIGHTBOX_VIEWPORT_FRACTION}vw, ${Math.round(width)}px)`,
+    maxHeight: `min(${AGENT_LIGHTBOX_VIEWPORT_FRACTION}vh, ${Math.round(height)}px)`,
   };
 }
 

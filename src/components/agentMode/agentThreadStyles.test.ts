@@ -551,6 +551,50 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-md__heading--h2", "font-size")).toBe("var(--agent-fs-lg)");
   });
 
+  it("floats the attachment lightbox on the shade scrim, fitted to the viewport without upscaling", () => {
+    const backdrop = ".palette-backdrop.agent-lightbox";
+    expect(winningDeclaration(backdrop, "background")).toBe(
+      "color-mix(in srgb, var(--agent-shade) 78%, transparent)",
+    );
+    expect(winningDeclaration(backdrop, "align-items")).toBe("center");
+    expect(winningDeclaration(backdrop, "padding")).toBe("0");
+    expect(winningDeclaration(backdrop, "animation")).toBe(
+      "agent-lightbox-in var(--agent-motion-enter) var(--ease-standard)",
+    );
+    expect(css).toMatch(
+      /@keyframes agent-lightbox-in\s*\{\s*from\s*\{\s*opacity: 0;\s*\}\s*to\s*\{\s*opacity: 1;\s*\}\s*\}/,
+    );
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.palette-backdrop\.agent-lightbox\s*\{\s*animation: none;/,
+    );
+    expect(winningDeclaration(".agent-lightbox__image", "max-width")).toBe("90vw");
+    expect(winningDeclaration(".agent-lightbox__image", "max-height")).toBe("90vh");
+    expect(winningDeclaration(".agent-lightbox__image", "width")).toBe("auto");
+    expect(winningDeclaration(".agent-lightbox__image", "height")).toBe("auto");
+    expect(winningDeclaration(".agent-lightbox__image", "object-fit")).toBe("contain");
+    expect(winningDeclaration(".agent-lightbox__image", "box-shadow")).toBe(
+      "var(--codevo-shadow-window)",
+    );
+    expect(winningDeclaration(".agent-lightbox__image", "border-radius")).toBe(
+      "var(--agent-radius-md)",
+    );
+    expect(winningDeclaration(".agent-lightbox__controls", "position")).toBe("absolute");
+    expect(winningDeclaration(".agent-lightbox__controls", "top")).toBe("var(--agent-space-4)");
+    expect(winningDeclaration(".agent-lightbox__controls", "right")).toBe("var(--agent-space-4)");
+    expect(winningDeclaration(".agent-lightbox__control", "width")).toBe("36px");
+    expect(winningDeclaration(".agent-lightbox__control", "height")).toBe("36px");
+    expect(winningDeclaration(".agent-lightbox__control", "background")).toBe(
+      "var(--agent-raised)",
+    );
+    expect(winningDeclaration(".agent-lightbox__control", "box-shadow")).toBe(
+      "var(--codevo-shadow-float)",
+    );
+    expect(winningDeclaration(".agent-lightbox__control:focus-visible", "box-shadow")).toBe(
+      "var(--agent-focus-ring)",
+    );
+    expect(declarations(".agent-lightbox__control", "outline")).toEqual([]);
+  });
+
   it("floats menus and popovers on the float shadow without a hairline ring", () => {
     expect(winningDeclaration(".agent-menu", "box-shadow")).toBe("var(--codevo-shadow-float)");
     expect(winningDeclaration(".agent-menu", "border-radius")).toBe("var(--agent-radius-lg)");

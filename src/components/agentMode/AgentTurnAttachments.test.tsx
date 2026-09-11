@@ -86,7 +86,7 @@ describe("agent turn attachments", () => {
     host.remove();
   });
 
-  it("renders a sent image inline under its prompt and opens it on click", () => {
+  it("renders a sent image inline under its prompt and opens the in-app lightbox on click", () => {
     const ensure = vi.fn();
     const onRevealAttachment = vi.fn();
     render({
@@ -108,12 +108,18 @@ describe("agent turn attachments", () => {
     expect(image?.alt).toBe("shot.png");
     expect(image?.getAttribute("width")).toBe("800");
     expect(image?.getAttribute("height")).toBe("600");
+    expect(document.querySelector(".agent-lightbox")).toBeNull();
 
     act(() => {
       prompt?.querySelector<HTMLButtonElement>(".agent-attachments__open")?.click();
     });
 
-    expect(onRevealAttachment).toHaveBeenCalledWith(THREAD_ID, IMAGE_ID);
+    const lightbox = document.querySelector<HTMLElement>(".agent-lightbox");
+    expect(lightbox?.getAttribute("role")).toBe("dialog");
+    expect(lightbox?.querySelector<HTMLImageElement>(".agent-lightbox__image")?.src).toBe(
+      "blob:shot",
+    );
+    expect(onRevealAttachment).not.toHaveBeenCalled();
   });
 
   it("reserves the image's display box while it loads so the column does not shift", () => {
@@ -146,6 +152,7 @@ describe("agent turn attachments", () => {
             stateOf: () => ({ kind: "loading" }),
             ensure: () => undefined,
             reveal: () => undefined,
+            open: () => undefined,
           }}
         />,
       );
