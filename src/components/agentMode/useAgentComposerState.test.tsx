@@ -15,7 +15,6 @@ import {
   threadsSurfaceFixture,
 } from "./agentThreadsSurfaceTestFixtures";
 import {
-  IMPORTED_THREAD_COMPOSER_CAPTION,
   NOT_REPOSITORY_COMPOSER_CAPTION,
   NOT_REPOSITORY_WORKTREE_ONLY_CAPTION,
   useAgentComposerState,
@@ -541,8 +540,12 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.submitBlocked).toBe(false);
   });
 
-  it("captions the follow-up composer with the imported provenance line", () => {
+  it("captions an imported follow-up exactly like a native one", () => {
     const original = surfaceThreadView();
+    render(threadsSurfaceFixture({ threads: [original] }));
+    act(() => current().navigation.selectThread("agt-1"));
+    const nativeCaption = current().composer.composerProps.isolationReason;
+
     const imported = {
       ...original,
       thread: {
@@ -557,11 +560,14 @@ describe("useAgentComposerState", () => {
     render(threadsSurfaceFixture({ threads: [imported] }));
 
     act(() => current().navigation.selectThread("agt-1"));
-    expect(current().composer.composerProps.isolationReason).toBe(IMPORTED_THREAD_COMPOSER_CAPTION);
+    expect(current().composer.composerProps.isolationReason).toBe(nativeCaption);
+    expect(current().composer.composerProps.isolationReason ?? "").not.toMatch(
+      /imported sessions/u,
+    );
 
     act(() => current().navigation.clearSelectedThread());
-    expect(current().composer.composerProps.isolationReason).not.toBe(
-      IMPORTED_THREAD_COMPOSER_CAPTION,
+    expect(current().composer.composerProps.isolationReason ?? "").not.toMatch(
+      /imported sessions/u,
     );
   });
 

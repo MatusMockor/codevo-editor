@@ -49,8 +49,6 @@ import {
   type AgentProjectGroup,
 } from "./agentModePresentation";
 
-export const IMPORTED_THREAD_COMPOSER_CAPTION =
-  "Runs in the project checkout - imported sessions continue where the terminal session ran.";
 export const NOT_REPOSITORY_COMPOSER_CAPTION = "Not a Git repository · runs in place";
 export const NOT_REPOSITORY_WORKTREE_ONLY_CAPTION =
   "This folder is not a Git repository, so it cannot run in an isolated worktree. Choose a repository from the checkout menu.";
@@ -434,9 +432,7 @@ export function useAgentComposerControllerState({
     dispatching: agents.dispatching,
     guard,
     isolation,
-    isolationReason:
-      importedThreadCaption(selectedThread) ??
-      isolationStatusCaption(preview, isolation, worktreeOnly),
+    isolationReason: isolationStatusCaption(preview, isolation, worktreeOnly),
     launch: composerLaunch,
     launchProvider: agentCliKind,
     mode: composerMode,
@@ -488,12 +484,6 @@ function isolationStatusCaption(
         ? agentIsolationReasonLabel(preview.recommended)
         : null;
   }
-}
-
-function importedThreadCaption(selectedThread: AgentThreadView | null): string | null {
-  if (selectedThread === null) return null;
-  if (selectedThread.thread.externalOrigin === null) return null;
-  return IMPORTED_THREAD_COMPOSER_CAPTION;
 }
 
 function composerProviderKind(
