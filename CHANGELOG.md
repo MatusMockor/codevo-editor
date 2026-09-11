@@ -7,6 +7,18 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.36] - 2026-09-11
+
+### Improved
+
+- Refine the image lightbox with an image-aligned close button, filename caption,
+  and previous/next navigation using buttons or arrow keys.
+
+### Fixed
+
+- Keep enlarged images visible at their intended size in the macOS webview.
+- Apply the agent theme consistently to the image lightbox and its controls.
+
 ## [0.2.0-beta.35] - 2026-09-11
 
 ### Added
