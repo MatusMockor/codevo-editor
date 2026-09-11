@@ -164,9 +164,9 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-minimap__dash--live::after", "background")).toBe(
       "var(--agent-accent)",
     );
-    expect(winningDeclaration(".agent-minimap__preview", "transition")).toBe(
-      "opacity var(--agent-motion-hover)",
-    );
+    expect(winningDeclaration(".agent-minimap__list--rail", "overflow-y")).toBe("auto");
+    expect(declarations(".agent-minimap__list--rail", "justify-content")).toEqual([]);
+    expect(winningDeclaration(".agent-minimap__item", "flex-shrink")).toBe("0");
     expect(declarations(".agent-minimap--rail", "transform")).toEqual([]);
     expect(declarations(".agent-minimap--rail", "contain")).toEqual([]);
   });

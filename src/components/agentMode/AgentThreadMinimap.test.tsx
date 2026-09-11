@@ -204,6 +204,43 @@ describe("AgentThreadMinimap", () => {
     outside.remove();
   });
 
+  it("keeps hover and keyboard previews outside the scrolling rail and within its bounds", () => {
+    render({ model: model(["First question", "Second question"]) });
+    const nav = host.querySelector("nav")!;
+    const list = host.querySelector("ol")!;
+    const button = buttonList()[1]!;
+    vi.spyOn(nav, "getBoundingClientRect").mockReturnValue({
+      left: 10,
+      top: 100,
+      bottom: 200,
+    } as DOMRect);
+    const bounds = vi
+      .spyOn(button, "getBoundingClientRect")
+      .mockReturnValue({ right: 42, top: 190, bottom: 200 } as DOMRect);
+    act(() => button.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
+    let preview = host.querySelector<HTMLElement>(".agent-minimap__preview")!;
+    expect(preview.parentElement).toBe(nav);
+    expect(list.contains(preview)).toBe(false);
+    expect(preview.textContent).toContain("Second question");
+    vi.spyOn(preview, "getBoundingClientRect").mockReturnValue({ height: 80 } as DOMRect);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(preview.style.top).toBe("20px");
+    expect(preview.style.maxHeight).toBe("100px");
+    act(() => button.focus());
+    act(() =>
+      list.dispatchEvent(
+        new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }),
+      ),
+    );
+    preview = host.querySelector<HTMLElement>(".agent-minimap__preview")!;
+    expect(preview.textContent).toContain("Second question");
+    bounds.mockReturnValue({ right: 42, top: 80, bottom: 90 } as DOMRect);
+    act(() => list.dispatchEvent(new Event("scroll")));
+    expect(preview.style.visibility).toBe("hidden");
+    act(() => button.blur());
+    expect(host.querySelector(".agent-minimap__preview")).toBeNull();
+  });
+
   function buttonList(): ReadonlyArray<HTMLButtonElement> {
     return [...host.querySelectorAll<HTMLButtonElement>("ol > li > button")];
   }

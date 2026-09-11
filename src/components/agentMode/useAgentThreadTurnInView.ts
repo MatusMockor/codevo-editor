@@ -1,7 +1,6 @@
 import { useEffect, useState, type RefObject } from "react";
 
 export const MAX_OBSERVED_AGENT_TURNS = 256;
-export const AGENT_TURN_IN_VIEW_MARGIN = "-15% 0px -70% 0px";
 
 export interface AgentTurnInViewOptions {
   readonly scrollRef: RefObject<HTMLElement | null>;
@@ -33,26 +32,9 @@ export function useAgentThreadTurnInView({
     const visible = new Set<number>();
     let active = true;
 
-    const observer = new IntersectionObserver(
-      (records) => {
-        if (!active) return;
-        for (const record of records) {
-          const position = order.get(record.target);
-          if (position === undefined) continue;
-          if (record.isIntersecting) {
-            visible.add(position);
-            continue;
-          }
-          visible.delete(position);
-        }
-        const first = lowest(visible);
-        if (first === null) return;
-        const found = ids[first];
-        if (found === undefined) return;
-        setTurnId(found);
-      },
-      { root: container, rootMargin: AGENT_TURN_IN_VIEW_MARGIN },
-    );
+    let observer: IntersectionObserver | null = null;
+    let generation = 0;
+    let observedHeight = -1;
 
     const targets = Array.from(container.querySelectorAll<HTMLElement>("[data-agent-turn]")).slice(
       0,
@@ -64,12 +46,47 @@ export function useAgentThreadTurnInView({
       if (id === undefined) continue;
       order.set(target, ids.length);
       ids.push(id);
-      observer.observe(target);
     }
+
+    const refresh = () => {
+      if (!active) return;
+      const height = container.clientHeight;
+      if (height === observedHeight) return;
+      observedHeight = height;
+      const lease = ++generation;
+      observer?.disconnect();
+      visible.clear();
+      // Percentage root margins resolve against width, even for top and bottom.
+      // Use the scrollport height to retain the 15–30% reading band at any aspect ratio.
+      observer = new IntersectionObserver(
+        (records) => {
+          if (!active || lease !== generation) return;
+          for (const record of records) {
+            const position = order.get(record.target);
+            if (position === undefined) continue;
+            if (record.isIntersecting) visible.add(position);
+            else visible.delete(position);
+          }
+          const first = lowest(visible);
+          if (first === null) return;
+          const found = ids[first];
+          if (found !== undefined) setTurnId(found);
+        },
+        { root: container, rootMargin: `${-height * 0.15}px 0px ${-height * 0.7}px 0px` },
+      );
+      for (const target of order.keys()) observer.observe(target);
+    };
+    refresh();
+    const resizeObserver =
+      typeof ResizeObserver === "function" ? new ResizeObserver(refresh) : null;
+    resizeObserver?.observe(container);
+    window.addEventListener("resize", refresh);
 
     return () => {
       active = false;
-      observer.disconnect();
+      observer?.disconnect();
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", refresh);
       order.clear();
       visible.clear();
     };

@@ -101,13 +101,22 @@ describe("agent thread session minimap and find pill", () => {
   });
 
   it("watches every turn with one observer rooted on the scroller", () => {
-    render({ thread: threadView(turns(4)) });
+    const originalHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      value: 400,
+    });
+    try {
+      render({ thread: threadView(turns(4)) });
+    } finally {
+      restore(HTMLElement.prototype, "clientHeight", originalHeight);
+    }
 
     expect(observers).toHaveLength(1);
     const observer = observers[0];
     expect(observer?.root).toBe(host.querySelector(".agent-session__scroll"));
     expect(observer?.targets).toHaveLength(4);
-    expect(observer?.rootMargin).toBe("-15% 0px -70% 0px");
+    expect(observer?.rootMargin).toBe("-60px 0px -280px 0px");
   });
 
   it("marks the turn in view without re-rendering the transcript on scroll or repeat reports", () => {

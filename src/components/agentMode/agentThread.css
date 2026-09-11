@@ -1581,7 +1581,6 @@
   overflow-y: auto;
   max-height: 100%;
   flex-direction: column;
-  justify-content: center;
   gap: var(--minimap-pitch, 8px);
   pointer-events: auto;
   scrollbar-width: none;
@@ -1592,6 +1591,7 @@
 }
 
 .agent-minimap__item {
+  flex-shrink: 0;
   position: relative;
   display: flex;
   align-items: center;
@@ -1685,9 +1685,9 @@
 .agent-minimap__preview {
   position: absolute;
   z-index: 5;
-  top: -6px;
-  left: calc(var(--agent-minimap-rail) + var(--agent-space-3));
   display: grid;
+  box-sizing: border-box;
+  overflow: hidden;
   width: 260px;
   padding: 8px 12px;
   border-radius: var(--agent-radius-md);
@@ -1697,14 +1697,7 @@
   font-size: var(--agent-fs-xs);
   gap: 2px;
   line-height: 1.45;
-  opacity: 0;
   pointer-events: none;
-  transition: opacity var(--agent-motion-hover);
-}
-
-.agent-minimap__item:hover .agent-minimap__preview,
-.agent-minimap__dash--rail:focus-visible + .agent-minimap__preview {
-  opacity: 1;
 }
 
 .agent-minimap__preview-body {

@@ -14,6 +14,7 @@ import {
   type AgentThreadMinimapModel,
 } from "./agentThreadMinimapPresentation";
 import { useAgentPopover } from "./agentPopover";
+import { useAgentMinimapPreview } from "./agentMinimapPreview";
 
 export const MIN_AGENT_MINIMAP_ENTRIES = 2;
 export const AGENT_MINIMAP_RAIL_WIDTH = 904;
@@ -183,6 +184,7 @@ export function AgentTurnJumpList({
   surface,
 }: AgentTurnJumpListProps) {
   const listRef = useRef<HTMLOListElement | null>(null);
+  const { handlers, preview } = useAgentMinimapPreview(entries, surface === "rail");
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const handledSignal = useRef(focusSignal);
   const roving = boundedIndex(focusIndex ?? currentIndex, entries.length);
@@ -206,23 +208,27 @@ export function AgentTurnJumpList({
   };
 
   return (
-    <ol
-      className={`agent-minimap__list agent-minimap__list--${surface}`}
-      onKeyDown={onKeyDown}
-      ref={listRef}
-    >
-      {entries.map((entry, index) => (
-        <AgentTurnJumpRow
-          current={index === currentIndex}
-          distance={agentMinimapDistance(index, currentIndex)}
-          entry={entry}
-          key={entry.key}
-          onJump={onJump}
-          surface={surface}
-          tabbable={index === roving}
-        />
-      ))}
-    </ol>
+    <>
+      <ol
+        {...handlers}
+        className={`agent-minimap__list agent-minimap__list--${surface}`}
+        onKeyDown={onKeyDown}
+        ref={listRef}
+      >
+        {entries.map((entry, index) => (
+          <AgentTurnJumpRow
+            current={index === currentIndex}
+            distance={agentMinimapDistance(index, currentIndex)}
+            entry={entry}
+            key={entry.key}
+            onJump={onJump}
+            surface={surface}
+            tabbable={index === roving}
+          />
+        ))}
+      </ol>
+      {preview}
+    </>
   );
 }
 
@@ -269,12 +275,6 @@ const AgentTurnJumpRow = memo(function AgentTurnJumpRow({
           </span>
         )}
       </button>
-      {surface === "rail" && (
-        <span aria-hidden="true" className="agent-minimap__preview">
-          <small className="agent-minimap__caption">{entry.caption}</small>
-          <span className="agent-minimap__preview-body">{entry.preview}</span>
-        </span>
-      )}
     </li>
   );
 });
