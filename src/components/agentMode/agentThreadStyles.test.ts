@@ -557,7 +557,7 @@ describe("agent thread Airy style contract", () => {
       "color-mix(in srgb, var(--agent-shade) 78%, transparent)",
     );
     expect(winningDeclaration(backdrop, "align-items")).toBe("center");
-    expect(winningDeclaration(backdrop, "padding")).toBe("0");
+    expect(winningDeclaration(backdrop, "padding")).toBe("var(--agent-space-6)");
     expect(winningDeclaration(backdrop, "animation")).toBe(
       "agent-lightbox-in var(--agent-motion-enter) var(--ease-standard)",
     );
@@ -567,8 +567,16 @@ describe("agent thread Airy style contract", () => {
     expect(css).toMatch(
       /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.palette-backdrop\.agent-lightbox\s*\{\s*animation: none;/,
     );
-    expect(winningDeclaration(".agent-lightbox__image", "max-width")).toBe("90vw");
-    expect(winningDeclaration(".agent-lightbox__image", "max-height")).toBe("90vh");
+    expect(winningDeclaration(".agent-lightbox__scrim", "position")).toBe("absolute");
+    expect(winningDeclaration(".agent-lightbox__scrim", "inset")).toBe("0");
+    expect(winningDeclaration(".agent-lightbox__scrim", "cursor")).toBe("zoom-out");
+    expect(winningDeclaration(".agent-lightbox__scrim", "background")).toBe("transparent");
+    expect(winningDeclaration(".agent-lightbox__stage", "position")).toBe("relative");
+    expect(winningDeclaration(".agent-lightbox__stage", "max-width")).toBe("92vw");
+    expect(winningDeclaration(".agent-lightbox__stage", "max-height")).toBe("92vh");
+    expect(winningDeclaration(".agent-lightbox__frame", "position")).toBe("relative");
+    expect(winningDeclaration(".agent-lightbox__image", "max-width")).toBe("92vw");
+    expect(winningDeclaration(".agent-lightbox__image", "max-height")).toBe("86vh");
     expect(winningDeclaration(".agent-lightbox__image", "width")).toBe("auto");
     expect(winningDeclaration(".agent-lightbox__image", "height")).toBe("auto");
     expect(winningDeclaration(".agent-lightbox__image", "object-fit")).toBe("contain");
@@ -578,21 +586,47 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-lightbox__image", "border-radius")).toBe(
       "var(--agent-radius-md)",
     );
-    expect(winningDeclaration(".agent-lightbox__controls", "position")).toBe("absolute");
-    expect(winningDeclaration(".agent-lightbox__controls", "top")).toBe("var(--agent-space-4)");
-    expect(winningDeclaration(".agent-lightbox__controls", "right")).toBe("var(--agent-space-4)");
-    expect(winningDeclaration(".agent-lightbox__control", "width")).toBe("36px");
-    expect(winningDeclaration(".agent-lightbox__control", "height")).toBe("36px");
-    expect(winningDeclaration(".agent-lightbox__control", "background")).toBe(
-      "var(--agent-raised)",
+  });
+
+  it("pins the lightbox close chip to the image corner and the chevrons to the viewport edges", () => {
+    expect(winningDeclaration(".agent-lightbox__close", "position")).toBe("absolute");
+    expect(winningDeclaration(".agent-lightbox__close", "top")).toBe("var(--agent-space-3)");
+    expect(winningDeclaration(".agent-lightbox__close", "right")).toBe("var(--agent-space-3)");
+    expect(winningDeclaration(".agent-lightbox__scrim", "z-index")).toBe("0");
+    expect(winningDeclaration(".agent-lightbox__stage", "z-index")).toBe("1");
+    expect(winningDeclaration(".agent-lightbox__nav", "z-index")).toBe("1");
+    expect(winningDeclaration(".agent-lightbox__chip", "width")).toBe("32px");
+    expect(winningDeclaration(".agent-lightbox__chip", "height")).toBe("32px");
+    expect(winningDeclaration(".agent-lightbox__chip", "background")).toBe("var(--agent-raised)");
+    expect(winningDeclaration(".agent-lightbox__chip", "color")).toBe("var(--agent-text-strong)");
+    expect(winningDeclaration(".agent-lightbox__chip", "border-radius")).toBe(
+      "var(--agent-radius-md)",
     );
-    expect(winningDeclaration(".agent-lightbox__control", "box-shadow")).toBe(
+    expect(winningDeclaration(".agent-lightbox__chip", "box-shadow")).toBe(
       "var(--codevo-shadow-float)",
     );
-    expect(winningDeclaration(".agent-lightbox__control:focus-visible", "box-shadow")).toBe(
+    expect(winningDeclaration(".agent-lightbox__chip:focus-visible", "box-shadow")).toBe(
       "var(--agent-focus-ring)",
     );
-    expect(declarations(".agent-lightbox__control", "outline")).toEqual([]);
+    expect(declarations(".agent-lightbox__chip", "outline")).toEqual([]);
+    expect(winningDeclaration(".agent-lightbox__nav", "position")).toBe("absolute");
+    expect(winningDeclaration(".agent-lightbox__nav", "top")).toBe("50%");
+    expect(winningDeclaration(".agent-lightbox__nav--previous", "left")).toBe(
+      "var(--agent-space-5)",
+    );
+    expect(winningDeclaration(".agent-lightbox__nav--next", "right")).toBe("var(--agent-space-5)");
+    expect(winningDeclaration('.agent-lightbox__nav[aria-disabled="true"]', "cursor")).toBe(
+      "default",
+    );
+    expect(winningDeclaration(".agent-lightbox__caption", "justify-content")).toBe("center");
+    expect(winningDeclaration(".agent-lightbox__caption", "max-width")).toBe("100%");
+    expect(winningDeclaration(".agent-lightbox__name", "text-overflow")).toBe("ellipsis");
+    expect(winningDeclaration(".agent-lightbox__name", "white-space")).toBe("nowrap");
+    expect(winningDeclaration(".agent-lightbox__reveal", "background")).toBe("transparent");
+    expect(winningDeclaration(".agent-lightbox__reveal:focus-visible", "box-shadow")).toBe(
+      "var(--agent-focus-ring)",
+    );
+    expect(declarations(".agent-lightbox__reveal", "outline")).toEqual([]);
   });
 
   it("floats menus and popovers on the float shadow without a hairline ring", () => {

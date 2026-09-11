@@ -6,6 +6,7 @@ import {
   agentAttachmentImageIsResolvable,
   agentAttachmentLightboxFit,
   agentAttachmentPlaceholderSize,
+  agentLightboxNeighborIndex,
   agentImportedAttachmentViews,
   agentTurnAttachmentViews,
   formatAgentAttachmentBytes,
@@ -191,12 +192,12 @@ describe("agentAttachmentPlaceholderSize", () => {
 describe("agentAttachmentLightboxFit", () => {
   it("caps the lightbox image at the viewport fraction and at its natural size", () => {
     expect(agentAttachmentLightboxFit({ width: 800, height: 600 })).toEqual({
-      maxWidth: "min(90vw, 800px)",
-      maxHeight: "min(90vh, 600px)",
+      maxWidth: "min(92vw, 800px)",
+      maxHeight: "min(86vh, 600px)",
     });
     expect(agentAttachmentLightboxFit({ width: 120.4, height: 33.6 })).toEqual({
-      maxWidth: "min(90vw, 120px)",
-      maxHeight: "min(90vh, 34px)",
+      maxWidth: "min(92vw, 120px)",
+      maxHeight: "min(86vh, 34px)",
     });
   });
 
@@ -206,6 +207,32 @@ describe("agentAttachmentLightboxFit", () => {
     expect(agentAttachmentLightboxFit({ width: 0, height: 600 })).toBeNull();
     expect(agentAttachmentLightboxFit({ width: 800, height: Number.POSITIVE_INFINITY })).toBeNull();
     expect(agentAttachmentLightboxFit({ width: -5, height: 600 })).toBeNull();
+  });
+});
+
+describe("agentLightboxNeighborIndex", () => {
+  const items = ["a", "b", "c", "d"].map((attachmentId) => ({ attachmentId }));
+
+  it("steps to the nearest ready sibling and skips the ones that are not ready", () => {
+    const ready = (attachmentId: string) => attachmentId !== "b";
+    expect(agentLightboxNeighborIndex(items, 0, 1, ready)).toBe(2);
+    expect(agentLightboxNeighborIndex(items, 2, -1, ready)).toBe(0);
+    expect(agentLightboxNeighborIndex(items, 2, 1, ready)).toBe(3);
+  });
+
+  it("clamps at the ends and when no sibling in that direction is ready", () => {
+    const ready = (attachmentId: string) => attachmentId !== "d";
+    expect(agentLightboxNeighborIndex(items, 0, -1, ready)).toBeNull();
+    expect(agentLightboxNeighborIndex(items, 2, 1, ready)).toBeNull();
+    expect(agentLightboxNeighborIndex(items, 3, 1, ready)).toBeNull();
+  });
+
+  it("refuses an index outside the list", () => {
+    const ready = () => true;
+    expect(agentLightboxNeighborIndex(items, -1, 1, ready)).toBeNull();
+    expect(agentLightboxNeighborIndex(items, 4, -1, ready)).toBeNull();
+    expect(agentLightboxNeighborIndex(items, 1.5, 1, ready)).toBeNull();
+    expect(agentLightboxNeighborIndex([], 0, 1, ready)).toBeNull();
   });
 });
 

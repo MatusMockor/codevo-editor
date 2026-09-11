@@ -20,7 +20,13 @@ import {
   parseExternalSessionExchange,
   type ExternalSessionExchange,
 } from "../../domain/externalAgentSession";
-import { AGENT_LIGHTBOX_CLOSE_LABEL, AGENT_LIGHTBOX_REVEAL_LABEL } from "./AgentAttachmentLightbox";
+import {
+  AGENT_LIGHTBOX_CLOSE_LABEL,
+  AGENT_LIGHTBOX_NEXT_LABEL,
+  AGENT_LIGHTBOX_PREVIOUS_LABEL,
+  AGENT_LIGHTBOX_REVEAL_LABEL,
+  AGENT_LIGHTBOX_SCRIM_LABEL,
+} from "./AgentAttachmentLightbox";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
 import { AgentClockProvider } from "./agentClock";
 
@@ -31,7 +37,11 @@ const NOW = 1_700_000_600_000;
 const THREAD_ID = "agt-1";
 const OTHER_THREAD_ID = "agt-2";
 const IMAGE_ID = "a".repeat(32);
+const SECOND_ID = "b".repeat(32);
+const THIRD_ID = "c".repeat(32);
 const IMAGE_URL = "blob:shot";
+const SECOND_URL = "blob:second";
+const THIRD_URL = "blob:third";
 
 const IMAGE_ATTACHMENT: AgentAttachment = {
   kind: "image",
@@ -42,6 +52,20 @@ const IMAGE_ATTACHMENT: AgentAttachment = {
   width: 800,
   height: 600,
   storedPath: `/data/agent-attachments/threads/${THREAD_ID}/${IMAGE_ID}.png`,
+};
+const SECOND_ATTACHMENT: AgentAttachment = {
+  ...IMAGE_ATTACHMENT,
+  attachmentId: SECOND_ID,
+  name: "second.png",
+  width: 400,
+  height: 300,
+  storedPath: `/data/agent-attachments/threads/${THREAD_ID}/${SECOND_ID}.png`,
+};
+const THIRD_ATTACHMENT: AgentAttachment = {
+  ...IMAGE_ATTACHMENT,
+  attachmentId: THIRD_ID,
+  name: "third.png",
+  storedPath: `/data/agent-attachments/threads/${THREAD_ID}/${THIRD_ID}.png`,
 };
 
 describe("agent attachment lightbox", () => {
@@ -83,8 +107,13 @@ describe("agent attachment lightbox", () => {
     expect(image?.alt).toBe("shot.png");
     expect(image?.getAttribute("width")).toBe("800");
     expect(image?.getAttribute("height")).toBe("600");
-    expect(image?.style.maxWidth).toBe("min(90vw, 800px)");
-    expect(image?.style.maxHeight).toBe("min(90vh, 600px)");
+    expect(image?.style.maxWidth).toBe("min(92vw, 800px)");
+    expect(image?.style.maxHeight).toBe("min(86vh, 600px)");
+    expect(
+      image
+        ?.closest(".agent-lightbox__frame")
+        ?.parentElement?.classList.contains("agent-lightbox__stage"),
+    ).toBe(true);
     expect(document.querySelectorAll(".agent-lightbox")).toHaveLength(1);
     expect(scrollerChain()).toEqual(chainBefore);
     expect(document.body.className).toBe("");
@@ -96,14 +125,35 @@ describe("agent attachment lightbox", () => {
 
     openLightbox();
 
-    const buttons = [...lightbox().querySelectorAll<HTMLButtonElement>("button")];
-    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
+    const buttons = tabbableControls();
+    expect(buttons.map(accessibleName)).toEqual([
       AGENT_LIGHTBOX_CLOSE_LABEL,
       AGENT_LIGHTBOX_REVEAL_LABEL,
     ]);
     expect(buttons[0]?.hidden).toBe(false);
     expect(buttons[0]?.querySelector("svg")).not.toBeNull();
     expect(document.activeElement).toBe(buttons[0]);
+    expect(lightbox().querySelector("button")).toBe(buttons[0]);
+    expect(lightbox().lastElementChild).toBe(scrimControl());
+  });
+
+  it("keeps the close control inside the image frame, over the image, and focused on open", () => {
+    render({ attachmentImages: readySurface() });
+
+    openLightbox();
+
+    const frame = lightbox().querySelector<HTMLElement>(".agent-lightbox__frame");
+    expect(frame).not.toBeNull();
+    const image = frame?.querySelector(".agent-lightbox__image");
+    expect(image).not.toBeNull();
+    const close = closeControl();
+    expect(frame?.contains(close)).toBe(true);
+    expect(
+      close.compareDocumentPosition(image as Node) & Node.DOCUMENT_POSITION_PRECEDING,
+    ).not.toBe(0);
+    expect(close.classList.contains("agent-lightbox__close")).toBe(true);
+    expect(document.activeElement).toBe(close);
+    expect(lightbox().querySelector(".agent-lightbox__controls")).toBeNull();
   });
 
   it("closes from the close control by click, Enter and Space and returns focus to the thumbnail", () => {
@@ -135,16 +185,25 @@ describe("agent attachment lightbox", () => {
     expect(document.activeElement).toBe(thumbnail());
   });
 
-  it("closes on a backdrop press but not on a press on the image or the controls", () => {
+  it("closes from the scrim button but not from a click on the image or the caption", () => {
     render({ attachmentImages: readySurface() });
 
     openLightbox();
-    pressMouse(lightbox().querySelector(".agent-lightbox__image"));
+    click(lightbox().querySelector(".agent-lightbox__image"));
     expect(document.querySelector(".agent-lightbox")).not.toBeNull();
-    pressMouse(lightbox().querySelector(".agent-lightbox__controls"));
+    click(lightbox().querySelector(".agent-lightbox__name"));
+    expect(document.querySelector(".agent-lightbox")).not.toBeNull();
+    click(lightbox().querySelector(".agent-lightbox__frame"));
     expect(document.querySelector(".agent-lightbox")).not.toBeNull();
 
-    pressMouse(lightbox());
+    const scrim = scrimControl();
+    expect(scrim.tagName).toBe("BUTTON");
+    expect(scrim.getAttribute("type")).toBe("button");
+    expect(scrim.tabIndex).toBe(-1);
+    expect(scrim.parentElement).toBe(lightbox());
+    expect(scrim.previousElementSibling?.classList.contains("agent-lightbox__stage")).toBe(true);
+    expect(scrim.childElementCount).toBe(0);
+    click(scrim);
 
     expect(document.querySelector(".agent-lightbox")).toBeNull();
     expect(document.activeElement).toBe(thumbnail());
@@ -154,33 +213,214 @@ describe("agent attachment lightbox", () => {
     render({ attachmentImages: readySurface() });
 
     openLightbox();
-    const [close, reveal] = [...lightbox().querySelectorAll<HTMLButtonElement>("button")];
+    const [close, reveal] = tabbableControls();
     expect(close).toBeDefined();
     expect(reveal).toBeDefined();
 
+    focus(reveal ?? null);
     press(reveal ?? null, "Tab");
     expect(document.activeElement).toBe(close);
 
     press(close ?? null, "Tab", { shiftKey: true });
     expect(document.activeElement).toBe(reveal);
 
+    focus(lightbox());
+    press(lightbox(), "Tab", { shiftKey: true });
+    expect(document.activeElement).toBe(reveal);
+
+    focus(lightbox());
+    press(lightbox(), "Tab");
+    expect(document.activeElement).toBe(close);
+
     expect(document.querySelector(".agent-lightbox")).not.toBeNull();
   });
 
-  it("opens the system viewer from the secondary control with ids only and stays open", () => {
+  it("cycles Tab through close, open-in-viewer, previous and next when the turn has several images", () => {
+    render({
+      attachmentImages: surfaceOf({ [IMAGE_ID]: ready(IMAGE_URL), [SECOND_ID]: ready(SECOND_URL) }),
+      thread: liveThread([turn([IMAGE_ATTACHMENT, SECOND_ATTACHMENT])]),
+    });
+
+    openLightbox();
+    const controls = tabbableControls();
+    expect(controls.map(accessibleName)).toEqual([
+      AGENT_LIGHTBOX_CLOSE_LABEL,
+      AGENT_LIGHTBOX_REVEAL_LABEL,
+      AGENT_LIGHTBOX_PREVIOUS_LABEL,
+      AGENT_LIGHTBOX_NEXT_LABEL,
+    ]);
+    const [close, reveal, previous, next] = controls;
+
+    focus(next ?? null);
+    press(next ?? null, "Tab");
+    expect(document.activeElement).toBe(close);
+
+    press(close ?? null, "Tab", { shiftKey: true });
+    expect(document.activeElement).toBe(next);
+
+    focus(reveal ?? null);
+    press(reveal ?? null, "Tab");
+    expect(document.activeElement).toBe(reveal);
+
+    focus(previous ?? null);
+    press(previous ?? null, "Tab", { shiftKey: true });
+    expect(document.activeElement).toBe(previous);
+  });
+
+  it("names the image in the caption and opens the system viewer from there with ids only", () => {
     const onRevealAttachment = vi.fn();
     render({ attachmentImages: readySurface(), onRevealAttachment });
 
     openLightbox();
-    act(() => {
-      lightbox()
-        .querySelector<HTMLButtonElement>(`button[aria-label="${AGENT_LIGHTBOX_REVEAL_LABEL}"]`)
-        ?.click();
-    });
+    const caption = lightbox().querySelector<HTMLElement>(".agent-lightbox__caption");
+    expect(caption).not.toBeNull();
+    expect(caption?.closest(".agent-lightbox__stage")).not.toBeNull();
+    expect(caption?.querySelector(".agent-lightbox__name")?.textContent).toBe("shot.png");
+    const reveal = caption?.querySelector<HTMLButtonElement>(".agent-lightbox__reveal");
+    expect(reveal).not.toBeNull();
+    expect(reveal?.textContent).toBe(AGENT_LIGHTBOX_REVEAL_LABEL);
+    expect(reveal?.hasAttribute("aria-label")).toBe(false);
+    click(reveal ?? null);
 
     expect(onRevealAttachment).toHaveBeenCalledTimes(1);
     expect(onRevealAttachment).toHaveBeenCalledWith(THREAD_ID, IMAGE_ID);
     expect(document.querySelector(".agent-lightbox")).not.toBeNull();
+  });
+
+  it("renders no chevrons for a turn with a single image", () => {
+    render({ attachmentImages: readySurface() });
+
+    openLightbox();
+
+    expect(previousControl()).toBeNull();
+    expect(nextControl()).toBeNull();
+    press(closeControl(), "ArrowRight");
+    expect(lightbox().getAttribute("aria-label")).toBe("shot.png");
+  });
+
+  it("steps between two ready images with the chevrons and arrow keys, clamped at the ends", () => {
+    render({
+      attachmentImages: surfaceOf({ [IMAGE_ID]: ready(IMAGE_URL), [SECOND_ID]: ready(SECOND_URL) }),
+      thread: liveThread([turn([IMAGE_ATTACHMENT, SECOND_ATTACHMENT])]),
+    });
+
+    openLightbox();
+    expectShown("shot.png", IMAGE_URL, "800", "600");
+    expect(previousControl()?.getAttribute("aria-disabled")).toBe("true");
+    expect(nextControl()?.getAttribute("aria-disabled")).toBe("false");
+
+    press(closeControl(), "ArrowLeft");
+    expectShown("shot.png", IMAGE_URL, "800", "600");
+
+    press(closeControl(), "ArrowRight");
+    expectShown("second.png", SECOND_URL, "400", "300");
+    expect(previousControl()?.getAttribute("aria-disabled")).toBe("false");
+    expect(nextControl()?.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      lightbox().querySelector<HTMLImageElement>(".agent-lightbox__image")?.style.maxWidth,
+    ).toBe("min(92vw, 400px)");
+
+    press(closeControl(), "ArrowRight");
+    expectShown("second.png", SECOND_URL, "400", "300");
+
+    focus(nextControl());
+    click(nextControl());
+    expectShown("second.png", SECOND_URL, "400", "300");
+    expect(document.activeElement).toBe(nextControl());
+
+    click(previousControl());
+    expectShown("shot.png", IMAGE_URL, "800", "600");
+
+    click(previousControl());
+    expectShown("shot.png", IMAGE_URL, "800", "600");
+
+    press(closeControl(), "Escape");
+    expect(document.querySelector(".agent-lightbox")).toBeNull();
+    expect(document.activeElement).toBe(thumbnail());
+  });
+
+  it("skips a sibling whose cache entry is not ready", () => {
+    render({
+      attachmentImages: surfaceOf({
+        [IMAGE_ID]: ready(IMAGE_URL),
+        [SECOND_ID]: { kind: "loading" },
+        [THIRD_ID]: ready(THIRD_URL),
+      }),
+      thread: liveThread([turn([IMAGE_ATTACHMENT, SECOND_ATTACHMENT, THIRD_ATTACHMENT])]),
+    });
+
+    openLightbox();
+    expectShown("shot.png", IMAGE_URL, "800", "600");
+
+    press(closeControl(), "ArrowRight");
+    expectShown("third.png", THIRD_URL, "800", "600");
+    expect(nextControl()?.getAttribute("aria-disabled")).toBe("true");
+
+    press(closeControl(), "ArrowLeft");
+    expectShown("shot.png", IMAGE_URL, "800", "600");
+  });
+
+  it("skips a sibling whose bytes failed to decode in the transcript", () => {
+    render({
+      attachmentImages: surfaceOf({
+        [IMAGE_ID]: ready(IMAGE_URL),
+        [SECOND_ID]: ready(SECOND_URL),
+        [THIRD_ID]: ready(THIRD_URL),
+      }),
+      thread: liveThread([turn([IMAGE_ATTACHMENT, SECOND_ATTACHMENT, THIRD_ATTACHMENT])]),
+    });
+    const secondThumbnail = thumbnails()[1]?.querySelector("img") ?? null;
+    expect(secondThumbnail?.getAttribute("src")).toBe(SECOND_URL);
+    act(() => {
+      secondThumbnail?.dispatchEvent(new Event("error"));
+    });
+    expect(thumbnails()).toHaveLength(2);
+    expect(shell.querySelector("[data-agent-attachment='unavailable']")).not.toBeNull();
+
+    openLightbox();
+    expectShown("shot.png", IMAGE_URL, "800", "600");
+
+    press(closeControl(), "ArrowRight");
+    expectShown("third.png", THIRD_URL, "800", "600");
+    expect(nextControl()?.getAttribute("aria-disabled")).toBe("true");
+
+    press(closeControl(), "ArrowLeft");
+    expectShown("shot.png", IMAGE_URL, "800", "600");
+    expect(previousControl()?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("closes instead of showing an empty frame when the lightbox image fails to decode", () => {
+    render({ attachmentImages: readySurface() });
+
+    openLightbox();
+    act(() => {
+      lightbox().querySelector(".agent-lightbox__image")?.dispatchEvent(new Event("error"));
+    });
+
+    expect(document.querySelector(".agent-lightbox")).toBeNull();
+    expect(document.activeElement).toBe(thumbnail());
+  });
+
+  it("shows only the previous chevron as available when every later sibling is still loading", () => {
+    render({
+      attachmentImages: surfaceOf({
+        [IMAGE_ID]: ready(IMAGE_URL),
+        [SECOND_ID]: ready(SECOND_URL),
+        [THIRD_ID]: { kind: "loading" },
+      }),
+      thread: liveThread([turn([IMAGE_ATTACHMENT, SECOND_ATTACHMENT, THIRD_ATTACHMENT])]),
+    });
+
+    act(() => thumbnails()[1]?.click());
+    expectShown("second.png", SECOND_URL, "400", "300");
+    expect(previousControl()?.getAttribute("aria-disabled")).toBe("false");
+    expect(nextControl()?.getAttribute("aria-disabled")).toBe("true");
+
+    press(closeControl(), "ArrowRight");
+    expectShown("second.png", SECOND_URL, "400", "300");
+
+    press(closeControl(), "Escape");
+    expect(document.activeElement).toBe(thumbnails()[1]);
   });
 
   it("offers no lightbox while the image is still loading", () => {
@@ -240,6 +480,59 @@ describe("agent attachment lightbox", () => {
     return button as HTMLButtonElement;
   }
 
+  function thumbnails(): ReadonlyArray<HTMLButtonElement> {
+    return [...shell.querySelectorAll<HTMLButtonElement>(".agent-attachments__open")];
+  }
+
+  function tabbableControls(): ReadonlyArray<HTMLButtonElement> {
+    return [...lightbox().querySelectorAll<HTMLButtonElement>("button")].filter(
+      (button) => button.tabIndex !== -1,
+    );
+  }
+
+  function accessibleName(button: HTMLButtonElement): string {
+    return button.getAttribute("aria-label") ?? button.textContent ?? "";
+  }
+
+  function focus(target: Element | null): void {
+    expect(target).not.toBeNull();
+    act(() => {
+      (target as HTMLElement).focus();
+    });
+    expect(document.activeElement).toBe(target);
+  }
+
+  function scrimControl(): HTMLButtonElement {
+    const button = lightbox().querySelector<HTMLButtonElement>(
+      `button[aria-label="${AGENT_LIGHTBOX_SCRIM_LABEL}"]`,
+    );
+    expect(button).not.toBeNull();
+    return button as HTMLButtonElement;
+  }
+
+  function previousControl(): HTMLButtonElement | null {
+    return lightbox().querySelector<HTMLButtonElement>(
+      `button[aria-label="${AGENT_LIGHTBOX_PREVIOUS_LABEL}"]`,
+    );
+  }
+
+  function nextControl(): HTMLButtonElement | null {
+    return lightbox().querySelector<HTMLButtonElement>(
+      `button[aria-label="${AGENT_LIGHTBOX_NEXT_LABEL}"]`,
+    );
+  }
+
+  function expectShown(name: string, url: string, width: string, height: string): void {
+    const dialog = lightbox();
+    expect(dialog.getAttribute("aria-label")).toBe(name);
+    const image = dialog.querySelector<HTMLImageElement>(".agent-lightbox__image");
+    expect(image?.getAttribute("src")).toBe(url);
+    expect(image?.alt).toBe(name);
+    expect(image?.getAttribute("width")).toBe(width);
+    expect(image?.getAttribute("height")).toBe(height);
+    expect(dialog.querySelector(".agent-lightbox__name")?.textContent).toBe(name);
+  }
+
   function lightbox(): HTMLElement {
     const dialog = document.querySelector<HTMLElement>(".agent-lightbox");
     expect(dialog).not.toBeNull();
@@ -271,10 +564,10 @@ describe("agent attachment lightbox", () => {
     });
   }
 
-  function pressMouse(target: Element | null): void {
+  function click(target: Element | null): void {
     expect(target).not.toBeNull();
     act(() => {
-      target?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      target?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
   }
 
@@ -296,13 +589,25 @@ describe("agent attachment lightbox", () => {
 });
 
 function readySurface(): AgentAttachmentImagesSurface {
-  return surface({ kind: "ready", url: IMAGE_URL });
+  return surface(ready(IMAGE_URL));
+}
+
+function ready(url: string): AgentAttachmentImageState {
+  return { kind: "ready", url };
 }
 
 function surface(state: AgentAttachmentImageState): AgentAttachmentImagesSurface {
+  return surfaceOf({ [IMAGE_ID]: state });
+}
+
+function surfaceOf(
+  states: Readonly<Record<string, AgentAttachmentImageState>>,
+): AgentAttachmentImagesSurface {
   const images = new Map<string, AgentAttachmentImageState>();
-  images.set(agentAttachmentImageKey(OWNER_ID, THREAD_ID, IMAGE_ID), state);
-  images.set(agentAttachmentImageKey(OTHER_OWNER_ID, OTHER_THREAD_ID, IMAGE_ID), state);
+  for (const [attachmentId, state] of Object.entries(states)) {
+    images.set(agentAttachmentImageKey(OWNER_ID, THREAD_ID, attachmentId), state);
+    images.set(agentAttachmentImageKey(OTHER_OWNER_ID, OTHER_THREAD_ID, attachmentId), state);
+  }
   return {
     images,
     ensure: () => undefined,

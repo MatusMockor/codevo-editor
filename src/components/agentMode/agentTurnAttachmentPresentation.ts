@@ -18,7 +18,8 @@ export const AGENT_ATTACHMENT_NO_IMAGES_REASON = "Images cannot be shown here.";
 export const AGENT_ATTACHMENT_DECODE_FAILED_REASON = "The image bytes could not be decoded.";
 export const AGENT_ATTACHMENT_IMAGE_MAX_WIDTH = 320;
 export const AGENT_ATTACHMENT_IMAGE_MAX_HEIGHT = 240;
-export const AGENT_LIGHTBOX_VIEWPORT_FRACTION = 90;
+export const AGENT_LIGHTBOX_VIEWPORT_WIDTH_FRACTION = 92;
+export const AGENT_LIGHTBOX_VIEWPORT_HEIGHT_FRACTION = 86;
 
 export type AgentTurnAttachmentGlyph = "image" | "file" | "reference";
 
@@ -104,9 +105,30 @@ export function agentAttachmentLightboxFit(
   if (width === undefined || height === undefined) return null;
   if (!isPositiveDimension(width) || !isPositiveDimension(height)) return null;
   return {
-    maxWidth: `min(${AGENT_LIGHTBOX_VIEWPORT_FRACTION}vw, ${Math.round(width)}px)`,
-    maxHeight: `min(${AGENT_LIGHTBOX_VIEWPORT_FRACTION}vh, ${Math.round(height)}px)`,
+    maxWidth: `min(${AGENT_LIGHTBOX_VIEWPORT_WIDTH_FRACTION}vw, ${Math.round(width)}px)`,
+    maxHeight: `min(${AGENT_LIGHTBOX_VIEWPORT_HEIGHT_FRACTION}vh, ${Math.round(height)}px)`,
   };
+}
+
+export type AgentLightboxStep = -1 | 1;
+
+export function agentLightboxNeighborIndex(
+  items: ReadonlyArray<Pick<AgentTurnAttachmentImageView, "attachmentId">>,
+  index: number,
+  step: AgentLightboxStep,
+  ready: (attachmentId: string) => boolean,
+): number | null {
+  if (!Number.isInteger(index) || index < 0 || index >= items.length) return null;
+  for (
+    let candidate = index + step;
+    candidate >= 0 && candidate < items.length;
+    candidate += step
+  ) {
+    const item = items[candidate];
+    if (item === undefined) return null;
+    if (ready(item.attachmentId)) return candidate;
+  }
+  return null;
 }
 
 function isPositiveDimension(value: number): boolean {

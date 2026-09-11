@@ -3,7 +3,10 @@ import type {
   AgentTurnAttachmentImagePort,
   AgentTurnAttachmentImageViewer,
 } from "./AgentTurnAttachments";
-import type { AgentTurnAttachmentImageView } from "./agentTurnAttachmentPresentation";
+import {
+  agentAttachmentImageIsResolvable,
+  type AgentTurnAttachmentImageView,
+} from "./agentTurnAttachmentPresentation";
 import type { AgentTurnAttachmentImageOwner } from "./useAgentTurnAttachmentImages";
 
 export interface AgentAttachmentLightboxRequest {
@@ -16,7 +19,8 @@ export interface AgentAttachmentLightboxRequest {
 }
 
 export interface AgentAttachmentLightboxEntry {
-  readonly request: AgentAttachmentLightboxRequest;
+  readonly items: ReadonlyArray<AgentAttachmentLightboxRequest>;
+  readonly index: number;
   readonly origin: HTMLElement;
   readonly host: Element;
 }
@@ -25,6 +29,7 @@ export interface AgentAttachmentLightboxSurface {
   readonly images: AgentTurnAttachmentImageViewer | null;
   readonly entry: AgentAttachmentLightboxEntry | null;
   close(): void;
+  select(index: number): void;
 }
 
 interface LightboxState {
@@ -42,38 +47,68 @@ export function useAgentAttachmentLightbox(
 
   const close = useCallback((): void => setState(null), []);
 
+  const select = useCallback(
+    (index: number): void => {
+      if (port === null) return;
+      setState((current) => {
+        if (current === null || current.owner !== owner) return current;
+        const item = current.entry.items[index];
+        if (item === undefined || !Number.isInteger(index)) return current;
+        if (port.stateOf(item.attachmentId)?.kind !== "ready") return current;
+        return { owner, entry: { ...current.entry, index } };
+      });
+    },
+    [owner, port],
+  );
+
   const images = useMemo<AgentTurnAttachmentImageViewer | null>(() => {
     if (port === null) return null;
     return {
       stateOf: port.stateOf,
       ensure: port.ensure,
       reveal: port.reveal,
-      open: (attachment: AgentTurnAttachmentImageView, origin: HTMLElement): void => {
+      open: (
+        attachment: AgentTurnAttachmentImageView,
+        origin: HTMLElement,
+        siblings: ReadonlyArray<AgentTurnAttachmentImageView>,
+      ): void => {
         if (port.stateOf(attachment.attachmentId)?.kind !== "ready") return;
-        setState({ owner, entry: lightboxEntry(owner, attachment, origin) });
+        setState({ owner, entry: lightboxEntry(owner, attachment, origin, siblings) });
       },
     };
   }, [owner, port]);
 
   const entry = state !== null && state.owner === owner ? state.entry : null;
-  return { images, entry, close };
+  return { images, entry, close, select };
 }
 
 function lightboxEntry(
   owner: AgentTurnAttachmentImageOwner,
   attachment: AgentTurnAttachmentImageView,
   origin: HTMLElement,
+  siblings: ReadonlyArray<AgentTurnAttachmentImageView>,
 ): AgentAttachmentLightboxEntry {
+  const views = siblings.filter(agentAttachmentImageIsResolvable);
+  const position = views.findIndex((view) => view.attachmentId === attachment.attachmentId);
+  const ordered = position === -1 ? [attachment] : views;
   return {
-    request: {
-      workspaceId: owner.workspaceId,
-      threadId: owner.threadId,
-      attachmentId: attachment.attachmentId,
-      name: attachment.name,
-      width: attachment.width,
-      height: attachment.height,
-    },
+    items: ordered.map((view) => lightboxRequest(owner, view)),
+    index: position === -1 ? 0 : position,
     origin,
     host: origin.closest(".app-shell") ?? document.body,
+  };
+}
+
+function lightboxRequest(
+  owner: AgentTurnAttachmentImageOwner,
+  view: AgentTurnAttachmentImageView,
+): AgentAttachmentLightboxRequest {
+  return {
+    workspaceId: owner.workspaceId,
+    threadId: owner.threadId,
+    attachmentId: view.attachmentId,
+    name: view.name,
+    width: view.width,
+    height: view.height,
   };
 }

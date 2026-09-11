@@ -401,6 +401,7 @@ function AgentThreadSessionBody({
         entry={lightbox.entry}
         images={attachmentImageViewer}
         onClose={lightbox.close}
+        onSelect={lightbox.select}
       />
     </section>
   );

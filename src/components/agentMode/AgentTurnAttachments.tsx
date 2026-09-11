@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { FileText, ImageIcon, ImageOff, Link2 } from "lucide-react";
 import type { AgentAttachmentImageState } from "../../application/useAgentAttachmentImages";
 import type { AgentImageMime } from "../../domain/agentAttachment";
@@ -22,7 +22,11 @@ export interface AgentTurnAttachmentImagePort {
 }
 
 export interface AgentTurnAttachmentImageViewer extends AgentTurnAttachmentImagePort {
-  open(attachment: AgentTurnAttachmentImageView, origin: HTMLElement): void;
+  open(
+    attachment: AgentTurnAttachmentImageView,
+    origin: HTMLElement,
+    siblings: ReadonlyArray<AgentTurnAttachmentImageView>,
+  ): void;
 }
 
 export interface AgentTurnAttachmentsProps {
@@ -54,6 +58,14 @@ export const AgentTurnAttachments = memo(function AgentTurnAttachments({
     }
   }, [attachments, ensure]);
 
+  const siblings = useMemo(
+    () =>
+      attachments
+        .filter(isImageView)
+        .filter((view) => !isBroken(view.attachmentId, broken, images)),
+    [attachments, broken, images],
+  );
+
   if (attachments.length === 0) return null;
 
   return (
@@ -68,6 +80,7 @@ export const AgentTurnAttachments = memo(function AgentTurnAttachments({
               brokenUrl={broken.get(attachment.attachmentId) ?? null}
               images={images}
               onBroken={markBroken}
+              siblings={siblings}
             />
           )}
         </li>
@@ -78,15 +91,31 @@ export const AgentTurnAttachments = memo(function AgentTurnAttachments({
 
 const EMPTY_BROKEN: ReadonlyMap<string, string> = new Map();
 
+function isImageView(view: AgentTurnAttachmentView): view is AgentTurnAttachmentImageView {
+  return view.kind === "image";
+}
+
+function isBroken(
+  attachmentId: string,
+  broken: ReadonlyMap<string, string>,
+  images: AgentTurnAttachmentImagePort | null,
+): boolean {
+  const state = images?.stateOf(attachmentId);
+  if (state?.kind !== "ready") return false;
+  return state.url === broken.get(attachmentId);
+}
+
 function AgentAttachmentImage({
   attachment,
   brokenUrl,
   images,
   onBroken,
+  siblings,
 }: {
   readonly attachment: AgentTurnAttachmentImageView;
   readonly brokenUrl: string | null;
   readonly images: AgentTurnAttachmentImageViewer | null;
+  readonly siblings: ReadonlyArray<AgentTurnAttachmentImageView>;
   onBroken(attachmentId: string, url: string): void;
 }) {
   const state = images === null ? undefined : images.stateOf(attachment.attachmentId);
@@ -116,7 +145,7 @@ function AgentAttachmentImage({
   return (
     <button
       className="agent-attachments__open"
-      onClick={(event) => images.open(attachment, event.currentTarget)}
+      onClick={(event) => images.open(attachment, event.currentTarget, siblings)}
       title={attachment.name}
       type="button"
     >
