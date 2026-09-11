@@ -406,3 +406,17 @@ Manual QA checklist for the owner:
 2. Imported sessions: chips with the file name only. Inline pixels are shown only when the exchange carries a path that resolves inside the attachments store; nothing is fetched or copied to make that true.
 3. Stale reference path: the composer checks existence at send time and shows a visible "missing" state on the chip, but still sends the path line - the agent reports what it finds, which matches cmux.
 4. Attach hotkey: none. Paste, drop and the picker button are the three entry points, as in T3.
+
+## Non-negotiable invariants (owner, 2026-09-11)
+
+Every stream brief must carry these two lines verbatim and every review must check them.
+
+- INV-VIEW: a sent image is rendered inline in the transcript, under the prompt it was
+  sent with, for live and imported turns alike, and clicking it opens the file. A turn
+  whose image cannot be resolved shows a truthful "Image unavailable" state, never a
+  blank or a broken icon.
+- INV-DELETE: deleting a thread deletes its attachment directory, resolved from the
+  store's own thread id inside the attachments root, after the thread file. A missing
+  directory is success; a failed removal after the thread file is gone is a bounded,
+  visible error. Rejected starts and abandoned drafts are swept after 24 h. No path in
+  this flow is ever taken from the client.
