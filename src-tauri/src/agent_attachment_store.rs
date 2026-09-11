@@ -16,7 +16,8 @@ use agent_attachment_image::{
 use agent_thread_store::{
     fnv1a64hex, AgentImageMime, AGENT_ATTACHMENT_NAME_ERROR, AGENT_ATTACHMENT_PATH_ERROR,
     AGENT_THREAD_STORE_DIR_NAME, MAX_AGENT_ATTACHMENT_NAME_BYTES, MAX_AGENT_ATTACHMENT_PATH_BYTES,
-    MAX_AGENT_FILE_BYTES, MAX_AGENT_IMAGE_BYTES, MAX_AGENT_TURN_ATTACHMENTS,
+    MAX_AGENT_EXTERNAL_HISTORY_EXCHANGES, MAX_AGENT_FILE_BYTES, MAX_AGENT_IMAGE_BYTES,
+    MAX_AGENT_TURNS_PER_THREAD, MAX_AGENT_TURN_ATTACHMENTS,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -38,11 +39,17 @@ pub const MAX_PENDING_AGENT_ATTACHMENTS: usize = 64;
 pub const MAX_PENDING_AGENT_ATTACHMENTS_PER_WORKSPACE: usize = 32;
 pub const MAX_CLAIMED_AGENT_ATTACHMENTS: usize = 512;
 pub const MAX_AGENT_ATTACHMENT_SWEEP_ENTRIES: usize = 512;
-pub const MAX_AGENT_ATTACHMENT_DIRECTORY_ENTRIES: usize = 64;
+// Cover every attachment in a supported persisted thread, including imported history.
+pub const MAX_AGENT_ATTACHMENT_DIRECTORY_ENTRIES: usize = (MAX_AGENT_TURNS_PER_THREAD
+    + MAX_AGENT_EXTERNAL_HISTORY_EXCHANGES)
+    * MAX_AGENT_TURN_ATTACHMENTS;
 pub const MAX_AGENT_ATTACHMENT_THREAD_ROOTS: usize = 64;
 pub const MAX_AGENT_ATTACHMENT_CANDIDATE_BYTES: u64 = MAX_AGENT_FILE_BYTES;
 pub const AGENT_ATTACHMENT_PENDING_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 pub const AGENT_ATTACHMENT_PART_LIFETIME: Duration = Duration::from_secs(60 * 60);
+
+pub const AGENT_ATTACHMENT_DIRECTORY_LIMIT_ERROR: &str =
+    "The attachment directory exceeds the supported lookup limit. Its contents could not be fully checked.";
 
 pub const AGENT_ATTACHMENT_UNAVAILABLE_ERROR: &str =
     "Attachment is no longer available. Remove it and try again.";
@@ -555,6 +562,7 @@ impl AgentAttachmentStore {
             .is_file()
     }
 
+    #[cfg(test)]
     pub fn forget_claimed(&self, attachment_ids: &[String]) {
         let mut registry = self.registry.lock().unwrap_or_else(PoisonError::into_inner);
         for attachment_id in attachment_ids {
@@ -626,10 +634,14 @@ impl AgentAttachmentStore {
         let directory = agent_attachment_thread_directory(&self.base_dir, thread_id)?;
         let reader =
             fs::read_dir(&directory).map_err(|_| AGENT_ATTACHMENT_UNAVAILABLE_ERROR.to_string())?;
-        for entry in reader.take(MAX_AGENT_ATTACHMENT_DIRECTORY_ENTRIES) {
-            let Ok(entry) = entry else {
-                continue;
-            };
+        for (index, entry) in reader
+            .take(MAX_AGENT_ATTACHMENT_DIRECTORY_ENTRIES + 1)
+            .enumerate()
+        {
+            if index == MAX_AGENT_ATTACHMENT_DIRECTORY_ENTRIES {
+                return Err(AGENT_ATTACHMENT_DIRECTORY_LIMIT_ERROR.to_string());
+            }
+            let entry = entry.map_err(|_| AGENT_ATTACHMENT_UNAVAILABLE_ERROR.to_string())?;
             let file_name = entry.file_name();
             let Some(file_name) = file_name.to_str() else {
                 continue;

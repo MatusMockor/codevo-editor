@@ -92,11 +92,7 @@ function AgentComposerAttachment({
   );
 }
 
-function AgentComposerAttachmentThumb({
-  draft,
-}: {
-  readonly draft: AgentComposerAttachmentDraft;
-}) {
+function AgentComposerAttachmentThumb({ draft }: { readonly draft: AgentComposerAttachmentDraft }) {
   const [broken, setBroken] = useState(false);
   const previewUrl = draft.previewUrl;
 
@@ -143,11 +139,7 @@ function AgentComposerAttachmentDetail({
   );
 }
 
-function AgentComposerAttachmentGlyph({
-  draft,
-}: {
-  readonly draft: AgentComposerAttachmentDraft;
-}) {
+function AgentComposerAttachmentGlyph({ draft }: { readonly draft: AgentComposerAttachmentDraft }) {
   const size = 14;
   if (draft.state === "staging") {
     return (

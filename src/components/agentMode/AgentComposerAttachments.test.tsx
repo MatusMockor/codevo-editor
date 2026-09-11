@@ -8,7 +8,11 @@ import type {
   AgentComposerAttachmentDraft,
   AgentComposerAttachmentsSurface,
 } from "../../application/useAgentComposerAttachments";
-import { AGENT_ATTACHMENT_COUNT_REFUSAL } from "../../domain/agentAttachmentIntake";
+import { MAX_AGENT_FILE_BYTES } from "../../domain/agentAttachment";
+import {
+  AGENT_ATTACHMENT_COUNT_REFUSAL,
+  AGENT_ATTACHMENT_IMAGE_SOURCE_BYTES_REFUSAL,
+} from "../../domain/agentAttachmentIntake";
 import { AgentComposer, type AgentComposerProps, type AgentComposerTarget } from "./AgentComposer";
 import {
   AGENT_ATTACHMENT_DROP_UNAVAILABLE,
@@ -94,6 +98,26 @@ describe("AgentComposer attachments", () => {
     expect(refuse).toHaveBeenCalledWith(AGENT_ATTACHMENT_PASTE_READ_FAILURE);
   });
 
+  it("explains oversized clipboard refusal without reading or staging it", async () => {
+    const add = vi.fn<AgentComposerAttachmentsSurface["add"]>(async () => undefined);
+    const refuse = vi.fn();
+    render({ attachments: surface({ add, refuse, claimPaste: () => "claim" }) });
+    const oversized = new File([], "large.png", { type: "image/png" });
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0));
+    Object.defineProperties(oversized, {
+      size: { value: MAX_AGENT_FILE_BYTES + 1 },
+      arrayBuffer: { value: arrayBuffer },
+    });
+
+    await act(async () => {
+      textarea().dispatchEvent(pasteEvent([oversized], ""));
+    });
+
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(add).not.toHaveBeenCalled();
+    expect(refuse).toHaveBeenCalledWith(AGENT_ATTACHMENT_IMAGE_SOURCE_BYTES_REFUSAL);
+  });
+
   it("surfaces a refusal when the picker cannot be opened", async () => {
     const add = vi.fn<AgentComposerAttachmentsSurface["add"]>(async () => undefined);
     const refuse = vi.fn();
@@ -156,9 +180,7 @@ describe("AgentComposer attachments", () => {
     expect(host.querySelector("[data-agent-composer-drop='active']")).not.toBeNull();
 
     act(() => listener({ kind: "drop", x: 50, y: 50, paths: [ABSOLUTE_VIDEO] }));
-    expect(add).toHaveBeenCalledWith("/workspace/app", [
-      { kind: "path", path: ABSOLUTE_VIDEO },
-    ]);
+    expect(add).toHaveBeenCalledWith("/workspace/app", [{ kind: "path", path: ABSOLUTE_VIDEO }]);
     expect(host.querySelector("[data-agent-composer-drop='active']")).toBeNull();
   });
 
@@ -213,9 +235,7 @@ describe("AgentComposer attachments", () => {
     render({ attachments: surface({ drafts: [referenceDraft()], remove }) });
 
     act(() => {
-      const button = host.querySelector<HTMLButtonElement>(
-        "button[aria-label='Remove clip.mp4']",
-      );
+      const button = host.querySelector<HTMLButtonElement>("button[aria-label='Remove clip.mp4']");
       expect(button).not.toBeNull();
       button?.click();
     });
@@ -330,9 +350,7 @@ describe("AgentComposer attachments", () => {
   });
 
   function render(overrides: Partial<AgentComposerProps> = {}): void {
-    act(() =>
-      root.render(<AgentComposer {...defaultProps()} {...overrides} />),
-    );
+    act(() => root.render(<AgentComposer {...defaultProps()} {...overrides} />));
   }
 
   function textarea(): HTMLTextAreaElement {

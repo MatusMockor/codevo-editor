@@ -127,57 +127,38 @@ describe("useAgentAttachmentImages", () => {
     harness.unmount();
   });
 
-  it("never evicts an entry that is still loading", async () => {
+  it("bounds pending reads and preserves admitted loads", async () => {
     const pending: Array<() => void> = [];
-    const harness = renderImages(
-      vi.fn(
-        () =>
-          new Promise<ArrayBuffer>((resolve) => {
-            pending.push(() => resolve(new Uint8Array([1]).buffer));
-          }),
-      ),
+    const read = vi.fn(
+      () => new Promise<ArrayBuffer>((resolve) => pending.push(() => resolve(new ArrayBuffer(1)))),
     );
-    const total = MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES + 2;
-
-    for (let index = 0; index < total; index += 1) {
-      await act(async () =>
+    const harness = renderImages(read);
+    await act(async () => {
+      harness.hook().holdThread({ workspaceId: "ws-1", threadId: THREAD_ID });
+      for (let index = 0; index < 100; index++)
         harness.hook().ensure({
           workspaceId: "ws-1",
           threadId: THREAD_ID,
           attachmentId: attachmentId(index),
           mime: "image/png",
-        }),
-      );
-    }
-    expect(harness.hook().images.size).toBe(total);
-
-    await act(async () => pending[total - 1]?.());
-    await waitForReact(() =>
-      expect(
-        harness
-          .hook()
-          .images.get(agentAttachmentImageKey("ws-1", THREAD_ID, attachmentId(total - 1)))?.kind,
-      ).toBe("ready"),
-    );
-
-    expect(harness.hook().images.size).toBe(total);
-    expect(harness.revoked).toEqual([]);
-    for (const settle of pending) await act(async () => settle());
-    await waitForReact(() =>
-      expect(harness.hook().images.size).toBe(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES),
-    );
+        });
+    });
+    expect(read).toHaveBeenCalledTimes(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES);
+    expect(harness.hook().images.size).toBe(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES);
+    expect(harness.hook().capacityReached).toBe(true);
+    await act(async () => pending.forEach((settle) => settle()));
+    expect(harness.created).toHaveLength(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES);
+    expect(harness.revoked).toHaveLength(0);
     harness.unmount();
   });
 
-  it("keeps every image of a held thread while the hold lasts", async () => {
-    const harness = renderImages(vi.fn(async () => new Uint8Array([1]).buffer));
-    const total = MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES + 4;
-    let release: () => void = () => undefined;
-    await act(async () => {
+  it("bounds held bytes and releases previews immediately on final hold release", async () => {
+    const harness = renderImages(vi.fn(async () => new ArrayBuffer(20 * 1024 * 1024)));
+    let release = () => {};
+    act(() => {
       release = harness.hook().holdThread({ workspaceId: "ws-1", threadId: THREAD_ID });
     });
-
-    for (let index = 0; index < total; index += 1) {
+    for (let index = 0; index < 8; index++) {
       await act(async () =>
         harness.hook().ensure({
           workspaceId: "ws-1",
@@ -186,30 +167,35 @@ describe("useAgentAttachmentImages", () => {
           mime: "image/png",
         }),
       );
-      await waitForReact(() =>
-        expect(
-          harness.hook().images.get(agentAttachmentImageKey("ws-1", THREAD_ID, attachmentId(index)))
-            ?.kind,
-        ).toBe("ready"),
-      );
     }
+    expect(harness.created).toHaveLength(3);
+    expect(
+      [...harness.hook().images.values()].filter((state) => state.kind === "unavailable"),
+    ).toHaveLength(5);
+    act(() => release());
+    expect(harness.hook().images.size).toBe(0);
+    expect(harness.revoked).toHaveLength(3);
+    harness.unmount();
+  });
 
-    expect(harness.hook().images.size).toBe(total);
-    expect(harness.revoked).toEqual([]);
-
-    await act(async () => release());
-    await act(async () =>
-      harness.hook().ensure({
-        workspaceId: "ws-1",
-        threadId: "agt-other",
-        attachmentId: attachmentId(total),
-        mime: "image/png",
-      }),
+  it("does not publish a stale read into a replacement workspace load", async () => {
+    const pending: Array<(value: ArrayBuffer) => void> = [];
+    const harness = renderImages(
+      vi.fn(() => new Promise<ArrayBuffer>((resolve) => pending.push(resolve))),
     );
-    await waitForReact(() =>
-      expect(harness.hook().images.size).toBe(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES),
-    );
-    expect(harness.revoked).toHaveLength(total + 1 - MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES);
+    const request = {
+      workspaceId: "ws-1",
+      threadId: THREAD_ID,
+      attachmentId: attachmentId(1),
+      mime: "image/png",
+    } as const;
+    act(() => harness.hook().ensure(request));
+    act(() => harness.hook().releaseWorkspace("ws-1"));
+    act(() => harness.hook().ensure(request));
+    await act(async () => pending[0]?.(new ArrayBuffer(1)));
+    expect(harness.created).toHaveLength(0);
+    await act(async () => pending[1]?.(new ArrayBuffer(1)));
+    expect(harness.created).toHaveLength(1);
     harness.unmount();
   });
 

@@ -43,7 +43,7 @@ describe("attachment image cache under a rendered thread", () => {
     host.remove();
   });
 
-  it("reads every image exactly once when the thread shows more images than the cache holds", async () => {
+  it("bounds previews and shows an unavailable reason without a reload loop when the thread exceeds capacity", async () => {
     const read = vi.fn(async () => new ArrayBuffer(16));
     const gateway = { readAgentAttachment: read } as unknown as AgentAttachmentGateway;
     const turns = Array.from({ length: TURNS_OVER_CAP }, (_, turnIndex) =>
@@ -58,7 +58,9 @@ describe("attachment image cache under a rendered thread", () => {
     act(() => root.render(<Harness gateway={gateway} thread={threadView(turns)} />));
 
     await waitForReact(() =>
-      expect(host.querySelectorAll(".agent-attachments__image")).toHaveLength(imageCount),
+      expect(host.querySelectorAll(".agent-attachments__image")).toHaveLength(
+        MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES,
+      ),
     );
     for (let round = 0; round < 6; round += 1) {
       await act(async () => {
@@ -66,15 +68,79 @@ describe("attachment image cache under a rendered thread", () => {
       });
     }
 
-    expect(read).toHaveBeenCalledTimes(imageCount);
+    expect(read).toHaveBeenCalledTimes(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES);
+    expect(host.querySelectorAll('[data-agent-attachment="unavailable"]')).toHaveLength(
+      imageCount - MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES,
+    );
+    const other = threadView([turn("other-turn", [image(100)])]);
+    const next = { ...other, thread: { ...other.thread, threadId: "agt-other" } };
+    act(() => root.render(<Harness gateway={gateway} thread={next} />));
+    await waitForReact(() =>
+      expect(host.querySelectorAll(".agent-attachments__image")).toHaveLength(1),
+    );
+    expect(read).toHaveBeenCalledTimes(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES + 1);
+    act(() => root.render(<Harness gateway={gateway} thread={threadView(turns)} />));
+    await waitForReact(() =>
+      expect(host.querySelectorAll(".agent-attachments__image")).toHaveLength(
+        MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES,
+      ),
+    );
+    expect(read).toHaveBeenCalledTimes(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES * 2 + 1);
     expect(host.querySelectorAll(".agent-attachments__pending")).toHaveLength(0);
-    expect(host.querySelectorAll(".agent-attachments__image")).toHaveLength(imageCount);
+    expect(host.querySelectorAll(".agent-attachments__image")).toHaveLength(
+      MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES,
+    );
+  });
+
+  it("loads the selected thread after the previous thread's full pending batch settles", async () => {
+    const pending: Array<() => void> = [];
+    let active = 0;
+    let peak = 0;
+    const read = vi.fn(
+      () =>
+        new Promise<ArrayBuffer>((resolve) => {
+          active++;
+          peak = Math.max(peak, active);
+          pending.push(() => {
+            active--;
+            resolve(new ArrayBuffer(16));
+          });
+        }),
+    );
+    const gateway = { readAgentAttachment: read } as unknown as AgentAttachmentGateway;
+    const turns = Array.from({ length: 3 }, (_, index) =>
+      turn(
+        `pending-${index}`,
+        Array.from({ length: 8 }, (_, i) => image(index * 8 + i)),
+      ),
+    );
+    act(() => root.render(<Harness gateway={gateway} thread={threadView(turns)} />));
+    expect(read).toHaveBeenCalledTimes(24);
+    const other = threadView([turn("other-turn", [image(100)])]);
+    const next = { ...other, thread: { ...other.thread, threadId: "agt-other" } };
+    act(() => root.render(<Harness gateway={gateway} thread={next} />));
+    expect(read).toHaveBeenCalledTimes(24);
+    const oldBatch = pending.splice(0);
+    await act(async () => oldBatch.forEach((settle) => settle()));
+    expect(read).toHaveBeenCalledTimes(25);
+    await act(async () => pending.splice(0).forEach((settle) => settle()));
+    await waitForReact(() =>
+      expect(host.querySelectorAll(".agent-attachments__image")).toHaveLength(1),
+    );
+    expect(host.querySelectorAll(".agent-attachments__pending")).toHaveLength(0);
+    expect(host.querySelectorAll('[data-agent-attachment="unavailable"]')).toHaveLength(0);
+    expect(peak).toBeLessThanOrEqual(MAX_AGENT_ATTACHMENT_IMAGE_ENTRIES);
   });
 
   it("reads every image once when the visible set fits in the cache", async () => {
     const read = vi.fn(async () => new ArrayBuffer(16));
     const gateway = { readAgentAttachment: read } as unknown as AgentAttachmentGateway;
-    const turns = [turn("t0", Array.from({ length: IMAGES_PER_TURN }, (_, i) => image(i)))];
+    const turns = [
+      turn(
+        "t0",
+        Array.from({ length: IMAGES_PER_TURN }, (_, i) => image(i)),
+      ),
+    ];
 
     act(() => root.render(<Harness gateway={gateway} thread={threadView(turns)} />));
 

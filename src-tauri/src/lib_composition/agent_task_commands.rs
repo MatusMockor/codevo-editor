@@ -209,7 +209,6 @@ struct PreparedAgentTaskStart {
     request: AgentTaskRegistryStartRequest,
     plan: AgentTaskSpawnPlan,
     authority: AgentTaskProjectAuthority,
-    claimed_attachment_ids: Vec<String>,
 }
 
 fn acquire_agent_task_provider_authority(
@@ -249,25 +248,18 @@ fn resolve_agent_task_attachments(
         thread_id: &request.thread_id,
         root_keys: &root_keys,
     };
+    // Keep bounded, exact-owner claims on refusal: the composer retries with
+    // this thread ID, even before there is a saved thread document. Eviction
+    // and application shutdown still release the in-memory claim records.
     let resolved = store.claim_for_turn(&owner, &staged)?;
     let images = ensure_prompt_carries_attachment_lines(&request.prompt, &resolved)
         .and_then(|()| agent_image_attachments(request.agent_cli_kind, store, &resolved));
-    match images {
-        Ok(images) => Ok(ClaimedAgentTaskAttachments {
-            images,
-            claimed_attachment_ids: staged,
-        }),
-        Err(error) => {
-            store.forget_claimed(&staged);
-            Err(error)
-        }
-    }
+    images.map(|images| ClaimedAgentTaskAttachments { images })
 }
 
 #[derive(Debug, Default)]
 struct ClaimedAgentTaskAttachments {
     images: Vec<AgentImageAttachment>,
-    claimed_attachment_ids: Vec<String>,
 }
 
 fn agent_task_root_keys(authority: &AgentTaskProjectAuthority) -> Vec<String> {
@@ -370,22 +362,15 @@ fn prepare_agent_task_start(
     safe_agent_task_id(&request.task_id)?;
     safe_agent_task_id(&request.thread_id)?;
     ensure_workspace_id_bounds(&request.workspace_id)?;
-    let ClaimedAgentTaskAttachments {
-        images,
-        claimed_attachment_ids,
-    } = resolve_agent_task_attachments(request, &authority, store)?;
-    let prepared = prepare_claimed_agent_task_start(
+    let ClaimedAgentTaskAttachments { images } =
+        resolve_agent_task_attachments(request, &authority, store)?;
+    prepare_claimed_agent_task_start(
         request,
         authority,
         executable_identity,
         effective_path,
         images,
-        claimed_attachment_ids.clone(),
-    );
-    if prepared.is_err() {
-        store.forget_claimed(&claimed_attachment_ids);
-    }
-    prepared
+    )
 }
 
 fn prepare_claimed_agent_task_start(
@@ -394,7 +379,6 @@ fn prepare_claimed_agent_task_start(
     executable_identity: ExecutableIdentity,
     effective_path: EffectiveExecutablePath<'_>,
     attachments: Vec<AgentImageAttachment>,
-    claimed_attachment_ids: Vec<String>,
 ) -> Result<PreparedAgentTaskStart, String> {
     let task_id = safe_agent_task_id(&request.task_id)?;
     let repository_root = authority.repository_root.clone();
@@ -438,7 +422,6 @@ fn prepare_claimed_agent_task_start(
         },
         plan,
         authority,
-        claimed_attachment_ids,
     })
 }
 
@@ -483,33 +466,18 @@ pub(crate) async fn start_agent_task(
             request: registry_request,
             plan,
             authority,
-            claimed_attachment_ids,
         } = prepared;
-        let attachment_store = Arc::clone(&app.state::<Arc<AgentAttachmentStore>>());
         let workspace_registry = app.state::<WorkspaceRegistry>();
         let trust_state = app.state::<Mutex<WorkspaceTrustService>>();
-        if let Err(error) =
-            revalidate_agent_task_filesystem_authority(&workspace_registry, &request, &authority)
-        {
-            attachment_store.forget_claimed(&claimed_attachment_ids);
-            return Err(error);
-        }
+        revalidate_agent_task_filesystem_authority(&workspace_registry, &request, &authority)?;
         let workspace_lease = match workspace_registry.reserve_runtime_start(&request.workspace_id)
         {
             Ok(workspace_lease) => workspace_lease,
             Err(_) => {
-                attachment_store.forget_claimed(&claimed_attachment_ids);
                 return Err(AGENT_WORKSPACE_START_BUSY_ERROR.to_string());
             }
         };
-        let trust_leases =
-            match reserve_agent_task_trust(&trust_state, &authority, request.isolation) {
-                Ok(trust_leases) => trust_leases,
-                Err(error) => {
-                    attachment_store.forget_claimed(&claimed_attachment_ids);
-                    return Err(error);
-                }
-            };
+        let trust_leases = reserve_agent_task_trust(&trust_state, &authority, request.isolation)?;
         if !retained_root_matches_path(&authority.project_authority, &authority.project_root)
             || !retained_root_matches_path(
                 &authority.repository_authority,
@@ -517,28 +485,16 @@ pub(crate) async fn start_agent_task(
             )
             || !retained_root_matches_path(&authority.cwd_authority, &authority.cwd)
         {
-            attachment_store.forget_claimed(&claimed_attachment_ids);
             return Err(UNKNOWN_AGENT_WORKSPACE_ERROR.to_string());
         }
-        let admission = match admission_registry.reserve(
+        let admission = admission_registry.reserve(
             &request.workspace_id,
             &registry_request.repository_root,
             plan.cwd(),
             request.isolation,
-        ) {
-            Ok(admission) => admission,
-            Err(error) => {
-                attachment_store.forget_claimed(&claimed_attachment_ids);
-                return Err(error);
-            }
-        };
-        if let Err(error) = app
-            .state::<Arc<AgentProviderRuntimeRegistry>>()
-            .revalidate_turn_authority(&provider_turn)
-        {
-            attachment_store.forget_claimed(&claimed_attachment_ids);
-            return Err(error);
-        }
+        )?;
+        app.state::<Arc<AgentProviderRuntimeRegistry>>()
+            .revalidate_turn_authority(&provider_turn)?;
         let admission = admission.with_runtime_lease(provider_turn);
         let result = app
             .state::<AgentTaskRegistry>()
@@ -551,9 +507,6 @@ pub(crate) async fn start_agent_task(
             });
         drop(trust_leases);
         drop(workspace_lease);
-        if result.is_err() {
-            attachment_store.forget_claimed(&claimed_attachment_ids);
-        }
         result
     })
     .await

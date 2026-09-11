@@ -29,7 +29,7 @@ import { agentComposerNestedTargetLabel, type AgentComposerTarget } from "./agen
 import { AgentComposerAttachments } from "./AgentComposerAttachments";
 import {
   AGENT_ATTACHMENT_DROP_UNAVAILABLE,
-  AGENT_ATTACHMENT_PASTE_READ_FAILURE,
+  agentAttachmentPasteFailureMessage,
   AGENT_ATTACHMENT_PICKER_FAILURE,
   agentAttachmentSourcesFromFiles,
   agentAttachmentSourcesFromPaths,
@@ -233,7 +233,7 @@ export function AgentComposer({
     event.preventDefault();
     agentAttachmentSourcesFromFiles(files)
       .then(addAttachments)
-      .catch(() => refuseAttachments(AGENT_ATTACHMENT_PASTE_READ_FAILURE));
+      .catch((error: unknown) => refuseAttachments(agentAttachmentPasteFailureMessage(error)));
   };
   const pickAttachments = (): void => {
     attachmentPicker()

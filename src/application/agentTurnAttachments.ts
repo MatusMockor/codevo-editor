@@ -5,7 +5,13 @@ import {
 } from "../domain/agentAttachmentIntake";
 import type { StartAgentTaskAttachment } from "../domain/agentTask";
 import type { AgentAttachmentGateway, ClaimedAgentAttachment } from "./agentAttachmentPorts";
-import { AGENT_TASKS_SOURCE, attempt, failure, warning } from "./agentProjectAuthority";
+import {
+  AGENT_TASKS_SOURCE,
+  attempt,
+  failure,
+  warning,
+  type AgentTaskLaunchAuthority,
+} from "./agentProjectAuthority";
 import type {
   AgentAttachmentIntentOwner,
   AgentTasksNotice,
@@ -198,4 +204,26 @@ function ownerMatchesAuthority(
     owner.generation === authority.generation &&
     owner.workspaceId === authority.workspaceId
   );
+}
+
+/** A failed new-thread send keeps the exact unpublished attachment owner for retry. */
+export interface AttachmentThreadReservation {
+  readonly authority: AgentTaskLaunchAuthority;
+  readonly threadId: string;
+}
+
+export function retryAttachmentThreadId(
+  reservation: AttachmentThreadReservation | null,
+  authority: AgentTaskLaunchAuthority,
+  usedIds: ReadonlySet<string>,
+): string | null {
+  if (reservation === null || usedIds.has(reservation.threadId)) return null;
+  const previous = reservation.authority;
+  return previous.rootKey === authority.rootKey &&
+    previous.ownerId === authority.ownerId &&
+    previous.generation === authority.generation &&
+    previous.workspaceId === authority.workspaceId &&
+    previous.workspaceGeneration === authority.workspaceGeneration
+    ? reservation.threadId
+    : null;
 }

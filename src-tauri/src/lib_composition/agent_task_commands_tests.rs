@@ -1095,7 +1095,7 @@ fn an_attachment_line_is_accepted_by_its_store_resolved_path_when_the_claim_reco
 }
 
 #[test]
-fn a_refused_start_forgets_its_claim_so_the_thread_directory_can_be_swept() {
+fn a_refused_start_can_retry_attachments_only_with_the_same_thread_owner() {
     let workspace = TempWorkspace::create("forget-claim");
     let worktree = workspace.worktree("agt-test-0001");
     let store = test_attachment_store(&workspace);
@@ -1114,7 +1114,7 @@ fn a_refused_start_forgets_its_claim_so_the_thread_directory_can_be_swept() {
     let refused =
         prepare_test_request_with_store(&request, &store).expect_err("a forged line is refused");
     let owner_keys: Vec<String> = Vec::new();
-    let still_claimed = store
+    let claimed_path = store
         .resolve_claimed_path(
             &super::super::agent_attachment_commands::agent_attachment_store::AgentAttachmentOwner {
                 workspace_id: request.workspace_id.as_str(),
@@ -1123,11 +1123,19 @@ fn a_refused_start_forgets_its_claim_so_the_thread_directory_can_be_swept() {
             },
             &attachment_id,
         )
-        .expect_err("the refused claim is no longer owned by this process");
+        .expect("the refused claim remains owned for a same-thread retry");
 
     assert_eq!(refused, AGENT_PROMPT_ATTACHMENT_MISMATCH_ERROR);
+    request.prompt = format!(
+        "look\n\n[Attached image \"shot.png\" is saved at: {}]",
+        claimed_path.display()
+    );
+    request.task_id = "agt-test-0002".to_string();
+    prepare_test_request_with_store(&request, &store)
+        .expect("same thread retries a new task without restaging");
+    request.thread_id = "agt-thread-foreign".to_string();
     assert_eq!(
-        still_claimed,
+        prepare_test_request_with_store(&request, &store).expect_err("another thread cannot reclaim the file"),
         super::super::agent_attachment_commands::agent_attachment_store::AGENT_ATTACHMENT_WORKSPACE_MISMATCH_ERROR
     );
 }

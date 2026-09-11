@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo } from "react";
 import {
+  AGENT_ATTACHMENT_CACHE_LIMIT_REASON,
   agentAttachmentImageKey,
   type AgentAttachmentImageRequest,
   type AgentAttachmentImagesSurface,
@@ -18,6 +19,7 @@ export function useAgentTurnAttachmentImagePort(
   owner: AgentTurnAttachmentImageOwner,
 ): AgentTurnAttachmentImagePort | null {
   const { threadId, workspaceId } = owner;
+  const capacityReached = images?.capacityReached ?? false;
   const states = images?.images ?? null;
   const ensureImage = images?.ensure ?? null;
   const holdThread = images?.holdThread ?? null;
@@ -46,9 +48,12 @@ export function useAgentTurnAttachmentImagePort(
     if (states === null || ensureImage === null) return null;
     return {
       stateOf: (attachmentId) =>
-        states.get(agentAttachmentImageKey(workspaceId, threadId, attachmentId)),
+        states.get(agentAttachmentImageKey(workspaceId, threadId, attachmentId)) ??
+        (capacityReached
+          ? { kind: "unavailable", reason: AGENT_ATTACHMENT_CACHE_LIMIT_REASON }
+          : undefined),
       ensure,
       reveal: revealAttachment,
     };
-  }, [ensure, ensureImage, revealAttachment, states, threadId, workspaceId]);
+  }, [capacityReached, ensure, ensureImage, revealAttachment, states, threadId, workspaceId]);
 }

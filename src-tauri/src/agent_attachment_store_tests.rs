@@ -1030,3 +1030,58 @@ fn candidate_inspection_reports_size_regularity_and_the_extension_mime() {
     assert_eq!(candidate.extension_mime, Some(AgentImageMime::Jpeg));
     assert!(fixture.store.inspect_candidate("relative/path").is_err());
 }
+
+#[test]
+fn lookup_reaches_the_full_supported_thread_capacity_after_restart() {
+    let fixture = TemporaryStore::create("restart-full-thread");
+    let directory = agent_attachment_thread_directory(&fixture.root, THREAD).expect("directory");
+    fs::create_dir_all(&directory).expect("create directory");
+    // Use more than 64 attachments and fill the complete supported persisted-thread budget.
+    // Direct fixtures avoid testing staging/sweeping thousands of times here.
+    let ids: Vec<String> = (0..MAX_AGENT_ATTACHMENT_DIRECTORY_ENTRIES)
+        .map(|index| format!("{index:032x}"))
+        .collect();
+    for id in &ids {
+        fs::write(fixture.stored(id, "txt"), b"attachment").expect("persist attachment");
+    }
+    fixture.persist_thread_file(ROOT_KEY, THREAD);
+    let restarted = AgentAttachmentStore::new(fixture.root.clone());
+    // Directory order is unspecified: choose the final on-disk entry so the old
+    // first-64 lookup deterministically fails on every supported filesystem.
+    let final_entry = fs::read_dir(&directory)
+        .expect("entries")
+        .last()
+        .unwrap()
+        .unwrap();
+    let id = final_entry
+        .path()
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        restarted.resolve_claimed_path(&fixture.owner(), &id),
+        Ok(fixture.stored(&id, "txt"))
+    );
+    let resolved = restarted
+        .claim_for_turn(&fixture.owner(), &[id])
+        .expect("resolve turn");
+    assert_eq!(resolved[0].kind, AgentAttachmentKind::File);
+}
+
+#[test]
+fn oversized_attachment_lookup_reports_incomplete_scan_instead_of_missing_file() {
+    let fixture = TemporaryStore::create("restart-over-limit");
+    let directory = agent_attachment_thread_directory(&fixture.root, THREAD).expect("directory");
+    fs::create_dir_all(&directory).expect("create directory");
+    for index in 0..=MAX_AGENT_ATTACHMENT_DIRECTORY_ENTRIES {
+        fs::write(directory.join(format!("{index:032x}.txt")), b"x").expect("write entry");
+    }
+    fixture.persist_thread_file(ROOT_KEY, THREAD);
+    let restarted = AgentAttachmentStore::new(fixture.root.clone());
+    assert_eq!(
+        restarted.resolve_claimed_path(&fixture.owner(), &"f".repeat(32)),
+        Err(AGENT_ATTACHMENT_DIRECTORY_LIMIT_ERROR.to_string())
+    );
+}

@@ -63,13 +63,11 @@ describe("composer attachment submission", () => {
       threadId: "agt-new",
     }));
     const markSent = vi.fn();
-    const prepareTurn = vi.fn(
-      async (): Promise<AgentComposerTurnAttachments> => ({
-        owner: OWNER,
-        draftIds: ["draft-image"],
-        intents: [STAGED_INTENT],
-      }),
-    );
+    const prepareTurn = vi.fn(async (): Promise<AgentComposerTurnAttachments> => ({
+      owner: OWNER,
+      draftIds: ["draft-image"],
+      intents: [STAGED_INTENT],
+    }));
     render(
       threadsSurfaceFixture({
         startThread,

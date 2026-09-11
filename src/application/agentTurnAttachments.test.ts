@@ -10,6 +10,7 @@ import {
   admitTurnAttachments,
   claimTurnAttachments,
   prepareTurnAttachments,
+  retryAttachmentThreadId,
   type AgentTurnAttachmentAuthority,
 } from "./agentTurnAttachments";
 
@@ -283,5 +284,25 @@ describe("prepareTurnAttachments", () => {
       ),
     ).toBeNull();
     expect(lastMessage(sink.notices)).toBe(AGENT_ATTACHMENT_UNAVAILABLE_NOTICE);
+  });
+});
+
+describe("attachment retry thread ownership", () => {
+  const authority = { ...AUTHORITY, workspaceGeneration: 8 };
+  const reservation = { authority, threadId: THREAD_ID };
+  it("retains the unpublished thread for the exact authority", () => {
+    expect(retryAttachmentThreadId(reservation, authority, new Set())).toBe(THREAD_ID);
+    expect(retryAttachmentThreadId(reservation, authority, new Set([THREAD_ID]))).toBeNull();
+  });
+  it.each([
+    { rootKey: "/other" },
+    { ownerId: "other" },
+    { generation: 4 },
+    { workspaceId: "other" },
+    { workspaceGeneration: 9 },
+  ])("rejects replacement authority %j", (replacement) => {
+    expect(
+      retryAttachmentThreadId(reservation, { ...authority, ...replacement }, new Set()),
+    ).toBeNull();
   });
 });

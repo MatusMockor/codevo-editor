@@ -113,6 +113,44 @@ const IMAGE_INTENT = {
 } as const;
 
 describe("useAgentTurnDispatch attachments", () => {
+  it("retries a refused start with the same exact attachment thread owner", async () => {
+    const harness = renderDispatch();
+    let claimedThread: string | null = null;
+    harness.attachmentGateway.claimAgentAttachments.mockImplementation(
+      async ({ threadId, attachmentIds }) => {
+        if (claimedThread !== null && claimedThread !== threadId) throw new Error("Foreign thread");
+        claimedThread = threadId;
+        return attachmentIds.map((attachmentId) => ({
+          attachmentId,
+          storedPath: `/data/${threadId}/${attachmentId}.png`,
+          promptLine: "[Attached]",
+        }));
+      },
+    );
+    harness.agent.startAgentTask.mockRejectedValueOnce(
+      new AgentTaskStartRejectedError("Task limit"),
+    );
+    const request = startRequest({
+      attachments: [IMAGE_INTENT],
+      attachmentOwner: {
+        projectRootKey: ROOT_A,
+        ownerId: OWNER_A,
+        generation: 1,
+        workspaceId: OWNER_A,
+      },
+    });
+    expect(await act(() => harness.hook().startThread(request))).toBeNull();
+    expect(harness.state().threads.size).toBe(0);
+    const firstThreadId = claimedThread;
+    const result = await act(() => harness.hook().startThread(request));
+    expect(result?.threadId).toBe(firstThreadId);
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(2);
+    expect(harness.turn(result?.threadId ?? "", 0).attachments?.[0]).toMatchObject({
+      attachmentId: ATTACHMENT_ID,
+    });
+    harness.unmount();
+  });
+
   it("claims the staged attachment under the new thread and sends the effective prompt", async () => {
     const harness = renderDispatch();
 

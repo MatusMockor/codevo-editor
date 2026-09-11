@@ -1,5 +1,6 @@
 import type { AgentAttachmentSource } from "../../application/useAgentComposerAttachments";
 import { MAX_AGENT_TURN_ATTACHMENTS } from "../../domain/agentAttachment";
+import { planAgentAttachmentIntake } from "../../domain/agentAttachmentIntake";
 
 export const AGENT_ATTACHMENT_PASTE_READ_FAILURE = "The pasted files could not be read.";
 export const AGENT_ATTACHMENT_PICKER_FAILURE = "The file picker could not be opened.";
@@ -22,6 +23,14 @@ export type AgentComposerFilePicker = () => Promise<ReadonlyArray<string>>;
 
 export const MAX_AGENT_COMPOSER_PASTED_FILES = MAX_AGENT_TURN_ATTACHMENTS + 1;
 
+class AgentAttachmentPasteRefusal extends Error {}
+
+export function agentAttachmentPasteFailureMessage(error: unknown): string {
+  return error instanceof AgentAttachmentPasteRefusal
+    ? error.message
+    : AGENT_ATTACHMENT_PASTE_READ_FAILURE;
+}
+
 export function agentAttachmentSourcesFromPaths(
   paths: ReadonlyArray<string>,
 ): ReadonlyArray<AgentAttachmentSource> {
@@ -31,8 +40,18 @@ export function agentAttachmentSourcesFromPaths(
 export async function agentAttachmentSourcesFromFiles(
   files: ReadonlyArray<File>,
 ): Promise<ReadonlyArray<AgentAttachmentSource>> {
+  const admittedFiles = files.slice(0, MAX_AGENT_COMPOSER_PASTED_FILES);
+  for (const file of admittedFiles) {
+    const plan = planAgentAttachmentIntake({
+      name: file.name,
+      mime: file.type,
+      hasPath: false,
+      bytes: file.size,
+    });
+    if (plan.kind === "refused") throw new AgentAttachmentPasteRefusal(plan.reason);
+  }
   const sources: AgentAttachmentSource[] = [];
-  for (const file of files.slice(0, MAX_AGENT_COMPOSER_PASTED_FILES)) {
+  for (const file of admittedFiles) {
     sources.push({
       kind: "bytes",
       name: file.name,

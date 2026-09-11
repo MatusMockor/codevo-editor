@@ -270,6 +270,120 @@ fn deleting_a_thread_removes_its_attachment_directory() {
 }
 
 #[test]
+fn deleting_a_missing_thread_in_another_root_preserves_its_attachments() {
+    let workspace = TempStore::create("attachment-delete-other-root");
+    let store = workspace.store();
+    let document = fixture_document(ATTACHMENT_FIXTURE);
+    let thread_id = &document.thread.thread_id;
+    store.save(ROOT_KEY, &document).expect("save owning thread");
+    let original = fs::read(workspace.thread_path(thread_id)).expect("read saved thread");
+    let attachments =
+        agent_attachment_thread_directory(&workspace.base, thread_id).expect("thread dir");
+    fs::create_dir_all(&attachments).expect("create attachment directory");
+    let file = attachments.join("0a1b2c3d4e5f60718293a4b5c6d7e8f9.png");
+    fs::write(&file, b"owned image").expect("write attachment");
+
+    store
+        .delete("/another-workspace", thread_id)
+        .expect("missing root-local thread deletion is idempotent");
+
+    assert_eq!(
+        fs::read(&file).expect("attachment survives"),
+        b"owned image"
+    );
+    assert_eq!(
+        fs::read(workspace.thread_path(thread_id)).expect("owning thread survives"),
+        original
+    );
+}
+
+#[test]
+fn deleting_a_thread_with_foreign_document_ownership_is_refused() {
+    let workspace = TempStore::create("attachment-delete-foreign-document");
+    let store = workspace.store();
+    let document = fixture_document(ATTACHMENT_FIXTURE);
+    let thread_id = &document.thread.thread_id;
+    store.save(ROOT_KEY, &document).expect("save owning thread");
+    let original = fs::read(workspace.thread_path(thread_id)).expect("read saved thread");
+    let foreign_directory = store.root_directory("/another-workspace").unwrap();
+    fs::create_dir_all(&foreign_directory).unwrap();
+    let foreign_file = foreign_directory.join(format!("{thread_id}.json"));
+    fs::write(&foreign_file, &original).unwrap();
+    let attachments =
+        agent_attachment_thread_directory(&workspace.base, thread_id).expect("thread dir");
+    fs::create_dir_all(&attachments).unwrap();
+    let file = attachments.join("0a1b2c3d4e5f60718293a4b5c6d7e8f9.png");
+    fs::write(&file, b"owned image").unwrap();
+
+    assert_eq!(
+        store.delete("/another-workspace", thread_id),
+        Err(AGENT_THREAD_OWNER_MISMATCH_ERROR.to_string())
+    );
+    assert_eq!(fs::read(&file).unwrap(), b"owned image");
+    assert_eq!(fs::read(&foreign_file).unwrap(), original);
+    assert_eq!(
+        fs::read(workspace.thread_path(thread_id)).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn unreadable_thread_deletion_preserves_unproven_attachments() {
+    let mut invalid_version = fixture_document(ATTACHMENT_FIXTURE);
+    invalid_version.schema_version = AGENT_THREAD_SCHEMA_VERSION + 1;
+    for (label, content) in [
+        ("corrupt", b"{broken json".to_vec()),
+        ("oversized", vec![b' '; MAX_AGENT_THREAD_FILE_BYTES + 1]),
+        (
+            "invalid-version",
+            serde_json::to_vec(&invalid_version).unwrap(),
+        ),
+    ] {
+        let workspace = TempStore::create(label);
+        let store = workspace.store();
+        let thread_id = &invalid_version.thread.thread_id;
+        let path = workspace.thread_path(thread_id);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, content).unwrap();
+        let attachments = agent_attachment_thread_directory(&workspace.base, thread_id).unwrap();
+        fs::create_dir_all(&attachments).unwrap();
+        let file = attachments.join("0a1b2c3d4e5f60718293a4b5c6d7e8f9.png");
+        fs::write(&file, b"unproven owner").unwrap();
+
+        store
+            .delete(ROOT_KEY, thread_id)
+            .expect("delete unreadable");
+
+        assert!(!path.exists(), "{label}");
+        assert_eq!(fs::read(&file).unwrap(), b"unproven owner", "{label}");
+        store
+            .delete(ROOT_KEY, thread_id)
+            .expect("idempotent delete");
+        assert!(file.exists(), "{label}");
+    }
+}
+
+#[test]
+fn thread_deletion_reports_attachment_cleanup_failure() {
+    let workspace = TempStore::create("attachment-delete-cleanup-failure");
+    let store = workspace.store();
+    let document = fixture_document(ATTACHMENT_FIXTURE);
+    let thread_id = &document.thread.thread_id;
+    store.save(ROOT_KEY, &document).expect("save thread");
+    let attachments =
+        agent_attachment_thread_directory(&workspace.base, thread_id).expect("thread dir");
+    fs::create_dir_all(attachments.parent().unwrap()).unwrap();
+    fs::write(&attachments, b"not a directory").unwrap();
+
+    let error = store
+        .delete(ROOT_KEY, thread_id)
+        .expect_err("cleanup fails");
+    assert!(error.contains("saved thread was deleted but its attachments"));
+    assert!(!workspace.thread_path(thread_id).exists());
+    assert!(attachments.exists());
+}
+
+#[test]
 fn an_attachment_path_outside_the_store_root_is_refused() {
     let workspace = TempStore::create("attachment-containment");
     let root = agent_attachment_root(&workspace.base);

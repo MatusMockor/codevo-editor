@@ -594,12 +594,43 @@ impl AgentThreadStore {
         let attachments = agent_attachment_thread_directory(&self.base_dir, &thread_id)?;
         let lock = self.root_lock(root_key);
         let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
-        match fs::remove_file(directory.join(format!("{thread_id}.json"))) {
+        let path = directory.join(format!("{thread_id}.json"));
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(format!("Unable to inspect the saved thread: {error}")),
+        };
+        if !metadata.is_file() {
+            return Err("The saved thread must be a regular file.".to_string());
+        }
+        // Attachment directories are keyed globally by thread id, so the root-local
+        // document must prove ownership before deleting any associated attachments.
+        // Unreadable documents may still be removed from their root-local slot,
+        // but must never authorize cleanup of the globally keyed directory.
+        let document = (metadata.len() <= MAX_AGENT_THREAD_FILE_BYTES as u64)
+            .then(|| fs::read_to_string(&path).ok())
+            .flatten()
+            .and_then(|content| serde_json::from_str::<AgentThreadDocument>(&content).ok());
+        let owns_attachments = if let Some(document) = document {
+            if document.thread.thread_id != thread_id
+                || document.thread.owner.root_key != root_key
+                || document.thread.owner.owner_id != agent_root_owner_id(root_key)
+            {
+                return Err(AGENT_THREAD_OWNER_MISMATCH_ERROR.to_string());
+            }
+            validate_agent_thread_document(root_key, &document).is_ok()
+        } else {
+            false
+        };
+        match fs::remove_file(path) {
             Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(format!("Unable to delete the saved thread: {error}")),
         }
-        remove_agent_attachment_directory(&attachments)
+        if owns_attachments {
+            remove_agent_attachment_directory(&attachments)?;
+        }
+        Ok(())
     }
 
     fn root_directory(&self, root_key: &str) -> Result<PathBuf, String> {

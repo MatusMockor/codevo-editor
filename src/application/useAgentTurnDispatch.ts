@@ -69,7 +69,12 @@ import {
   type AgentTurnOutputStream,
 } from "./agentTurnOutputStream";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
-import { prepareTurnAttachments, type AgentTurnAttachmentAuthority } from "./agentTurnAttachments";
+import {
+  prepareTurnAttachments,
+  retryAttachmentThreadId,
+  type AttachmentThreadReservation,
+  type AgentTurnAttachmentAuthority,
+} from "./agentTurnAttachments";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
 
 export {
@@ -135,6 +140,7 @@ interface TurnStart {
   readonly createdWorktree: CreatedAgentWorktree | null;
   readonly registration: TurnRegistration;
   readonly register: (turn: AgentTurn) => void;
+  readonly onDefiniteStartRejection?: () => void;
 }
 
 export function useAgentTurnDispatch(
@@ -145,6 +151,7 @@ export function useAgentTurnDispatch(
   const dependenciesRef = useRef(dependencies);
   const mountedRef = useRef(true);
   const dispatchingRef = useRef(false);
+  const attachmentThreadRef = useRef<AttachmentThreadReservation | null>(null);
   const inFlightThreadsRef = useRef<Set<string>>(new Set());
   const preparingThreadsRef = useRef<Set<string>>(new Set());
   const streamsRef = useRef<Map<string, AgentTurnOutputStream>>(new Map());
@@ -444,6 +451,7 @@ export function useAgentTurnDispatch(
       );
       if (!started.ok) {
         await reportStartFailure(start, started.error, retainUncertain);
+        if (isDefiniteAgentTaskStartRejection(started.error)) start.onDefiniteStartRejection?.();
         return false;
       }
       if (started.value.taskId !== turnId) {
@@ -517,7 +525,9 @@ export function useAgentTurnDispatch(
         ...deps.store.state.threads.keys(),
         ...usedTurnIds(deps.store.state),
       ]);
-      const threadId = mintUnusedId(deps, usedIds);
+      const threadId =
+        retryAttachmentThreadId(attachmentThreadRef.current, authority, usedIds) ??
+        mintUnusedId(deps, usedIds);
       const turnId = threadId === null ? null : mintUnusedId(deps, usedIds.add(threadId));
       if (threadId === null || turnId === null) {
         deps.setNotice(warning("A thread id could not be minted. Try again."));
@@ -606,6 +616,10 @@ export function useAgentTurnDispatch(
           }
           return null;
         }
+        const reservation = { authority, threadId };
+        if (request.attachments?.some((attachment) => attachment.kind === "staged")) {
+          attachmentThreadRef.current = reservation;
+        }
         const prepared = await prepareTurnAttachments(
           dependenciesRef.current,
           request,
@@ -629,6 +643,7 @@ export function useAgentTurnDispatch(
           return null;
         }
         const now = deps.now ?? Date.now;
+        attachmentThreadRef.current = null;
         const started = await runTurnStart({
           authority,
           authorityScope: "project",
@@ -648,6 +663,13 @@ export function useAgentTurnDispatch(
           launch,
           createdWorktree,
           registration: "after-start",
+          onDefiniteStartRejection: () => {
+            if (
+              isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)
+            ) {
+              attachmentThreadRef.current = reservation;
+            }
+          },
           register: (turn) => {
             const createdAt = now();
             const thread: AgentThread = {
