@@ -103,7 +103,7 @@ export function AgentProviderUpdatesToast({
     case "updated":
       return (
         <ToastNotification
-          description="New sessions will use the updated provider."
+          description="Your next message will use the updated CLI, including in existing conversations."
           icon={
             <ToastMark badge="check">
               <AgentProviderGlyph decorative kind={presentation.provider} />

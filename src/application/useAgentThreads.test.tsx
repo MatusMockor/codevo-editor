@@ -633,6 +633,52 @@ describe("useAgentThreads views and viewed marks", () => {
     harness.unmount();
   });
 
+  it.each(["claudeCode", "codex"] as const)(
+    "resumes the same %s session after a CLI update and preserves the previous turn version",
+    async (cliKind) => {
+      const harness = renderThreads({ cliKind });
+      await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+      const launch = defaultAgentLaunchOptions(cliKind);
+      const result = await act(() => harness.hook().startThread(startRequest({ launch })));
+      expect(result).not.toBeNull();
+      const threadId = result!.threadId;
+      harness.set({ worktrees: [worktreeOf(threadId)] });
+      const sessionId = "e49e4ab6-b1c3-4d26-9c2c-601ac23714f7";
+      const sessionEvent =
+        cliKind === "claudeCode"
+          ? { type: "system", subtype: "init", session_id: sessionId }
+          : { type: "thread.started", thread_id: sessionId };
+      await act(async () => {
+        harness.emitOutput(harness.turnIdOf(threadId), 1, `${JSON.stringify(sessionEvent)}\n`);
+        harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 0 });
+      });
+      const originalTurn = harness.hook().threads[0]?.thread.turns[0];
+      expect(originalTurn?.cliVersion).toBe(CLI_VERSION);
+      expect(harness.hook().threads[0]?.thread.provider.sessionId).toBe(sessionId);
+
+      harness.set({ cliVersion: "1.5.0" });
+      const sent = await act(() =>
+        harness.hook().sendFollowUp({ threadId, prompt: "Continue after the CLI update", launch }),
+      );
+
+      expect(harness.hook().notice).toBeNull();
+      expect(sent).toBe(true);
+      expect(harness.startedRequests).toHaveLength(2);
+      expect(harness.startedRequests[1]).toMatchObject({
+        resumeSessionId: sessionId,
+        agentCliKind: cliKind,
+      });
+      expect(harness.hook().threads).toHaveLength(1);
+      const thread = harness.hook().threads[0]?.thread;
+      expect(thread?.threadId).toBe(threadId);
+      expect(thread?.turns).toHaveLength(2);
+      expect(thread?.turns[0]).toEqual(originalTurn);
+      expect(thread?.turns[1]?.cliVersion).toBe("1.5.0");
+      expect(harness.hook().notice).toBeNull();
+      harness.unmount();
+    },
+  );
+
   it("reports the last used launch of the root after a turn", async () => {
     const harness = renderThreads();
     await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());

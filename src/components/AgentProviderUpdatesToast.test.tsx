@@ -88,6 +88,9 @@ describe("AgentProviderUpdatesToast", () => {
     expect(host.querySelector(".toast-notification--success")?.textContent).toContain(
       "Codex updated: v0.153.4",
     );
+    expect(host.textContent).toContain(
+      "Your next message will use the updated CLI, including in existing conversations.",
+    );
     act(() => {
       vi.advanceTimersByTime(AGENT_PROVIDER_UPDATED_TOAST_VISIBLE_MS - 1);
     });
