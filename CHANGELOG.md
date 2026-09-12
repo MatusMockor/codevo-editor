@@ -7,6 +7,13 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.38] - 2026-09-12
+
+### Fixed
+
+- Clarify that an updated provider CLI is used by the next message, including in
+  existing conversations; no new session is required.
+
 ## [0.2.0-beta.37] - 2026-09-12
 
 ### Added
