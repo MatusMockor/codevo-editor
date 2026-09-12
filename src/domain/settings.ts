@@ -88,7 +88,15 @@ export type WorkspaceSessionBottomPanelView =
   "index" | "problems" | "history" | "terminal" | "runtime" | "search";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php" | "scripts";
 export type SettingsSection =
-  "general" | "keymap" | "php" | "git" | "index" | "snippets" | "appearance" | "agents";
+  | "general"
+  | "keymap"
+  | "php"
+  | "git"
+  | "index"
+  | "snippets"
+  | "appearance"
+  | "agents"
+  | "environments";
 
 export const defaultEditorFontFamily =
   "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace";

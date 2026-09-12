@@ -94,6 +94,7 @@ export type AgentWorkbenchScreenWorkbench = Pick<
     Pick<
       Workbench,
       | "openDocuments"
+      | "openSettingsSection"
       | "gitStatus"
       | "gitRepositoryStatuses"
       | "gitLoading"
@@ -197,6 +198,10 @@ export function AgentWorkbenchScreen({
   );
   const { openPinnedFile, openProblemNotice, previewFile, setSidebarView } = workbench;
   const { openWorkspaceRootWithReceipt, runCommand } = workbench;
+  const { openSettingsSection } = workbench;
+  const openEnvironmentSettings = useCallback(() => {
+    openSettingsSection?.("environments");
+  }, [openSettingsSection]);
   const activateProjectWorkspace = useCallback(
     async (rootPath: string) => {
       const { outcome, isCurrent } = await openWorkspaceRootWithReceipt(rootPath);
@@ -509,6 +514,9 @@ export function AgentWorkbenchScreen({
       navigationSession={navigationSession}
       modelFavoritesPersistence={modelFavoritesPersistence}
       onOpenSourceControl={openSourceControl}
+      onOpenEnvironmentSettings={
+        openSettingsSection === undefined ? undefined : openEnvironmentSettings
+      }
       onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
       onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
       onTrustProject={(projectRootKey) => void projects.trustProject(projectRootKey)}

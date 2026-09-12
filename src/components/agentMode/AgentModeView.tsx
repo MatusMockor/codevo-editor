@@ -79,6 +79,7 @@ export interface AgentModeViewProps {
   readonly chrome: AgentWorkbenchChrome;
   readonly textClipboard?: TextClipboardGateway | null;
   onOpenSourceControl?(): void;
+  onOpenEnvironmentSettings?(): void;
   onTrustProject(projectRootKey: string): void;
   onCloseProject?(rootPath: string): void;
   onReleaseProject(projectRootKey: string): void;
@@ -105,6 +106,7 @@ export function AgentModeView({
   navigationSession,
   nowTickMs = DEFAULT_NOW_TICK_MS,
   onOpenSourceControl = NOOP_OPEN_SOURCE_CONTROL,
+  onOpenEnvironmentSettings,
   onCloseProject = NOOP_CLOSE_PROJECT,
   onReleaseProject,
   onTrustProject,
@@ -604,6 +606,7 @@ export function AgentModeView({
                 )}
                 composerProps={composerProps}
                 modelFavoritesPersistence={modelFavoritesPersistence}
+                onOpenEnvironmentSettings={onOpenEnvironmentSettings}
                 onOpenProviderSettings={agents.configureAgentCli}
                 providerManagement={agents.providerManagement}
                 providerEnabled={providerEnabled}

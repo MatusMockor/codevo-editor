@@ -5,6 +5,7 @@ import {
   Keyboard,
   Layers,
   Palette,
+  Monitor,
   SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
@@ -12,7 +13,7 @@ import type { SettingsSection } from "../../domain/settings";
 import { SETTINGS_ROW_TABLE } from "./settingsRegistryRows";
 
 export type SettingsSectionId =
-  "general" | "appearance" | "agents" | "keymap" | "index" | "php" | "snippets";
+  "general" | "appearance" | "agents" | "environments" | "keymap" | "index" | "php" | "snippets";
 
 export type SettingsRowAvailability = "always" | "workspace";
 
@@ -59,6 +60,12 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDescriptor> = [
     label: "Agents",
     icon: Bot,
     description: "Provider CLIs and the defaults used by new agent threads.",
+  },
+  {
+    id: "environments",
+    label: "Environments",
+    icon: Monitor,
+    description: "Where your agent threads run.",
   },
   {
     id: "keymap",
@@ -125,6 +132,8 @@ export function resolveSettingsRoute(section: SettingsSection): SettingsRoute {
       return { section: "appearance", row: null };
     case "agents":
       return { section: "agents", row: null };
+    case "environments":
+      return { section: "environments", row: null };
     case "keymap":
       return { section: "keymap", row: null };
     case "index":

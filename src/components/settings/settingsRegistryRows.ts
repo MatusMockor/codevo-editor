@@ -238,6 +238,20 @@ export const SETTINGS_ROW_TABLE = [
     "workspace",
   ),
   row(
+    "environments.local",
+    "environments",
+    "This computer",
+    "New threads run on the computer where Codevo is installed. Existing threads keep their environment.",
+    ["local", "default", "computer", "machine", "run on", "agent"],
+  ),
+  row(
+    "environments.servers",
+    "environments",
+    "Remote servers",
+    "Remote task execution is not available in this editor yet.",
+    ["remote", "server", "linux", "runner", "ssh", "connection", "environment"],
+  ),
+  row(
     "keymap.bindings",
     "keymap",
     "Keyboard shortcuts",

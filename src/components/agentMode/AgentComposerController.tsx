@@ -20,6 +20,7 @@ export interface AgentComposerControllerProps {
   readonly submissionBlocked: boolean;
   readonly submit: AgentComposerPromptController["submit"];
   onOpenProviderSettings(): void;
+  onOpenEnvironmentSettings?(): void;
 }
 
 export const AgentComposerController = memo(function AgentComposerController({
@@ -27,6 +28,7 @@ export const AgentComposerController = memo(function AgentComposerController({
   composerProps,
   modelFavoritesPersistence = null,
   onOpenProviderSettings,
+  onOpenEnvironmentSettings,
   providerManagement,
   providerEnabled,
   submissionBlocked,
@@ -46,6 +48,7 @@ export const AgentComposerController = memo(function AgentComposerController({
       compactionOffer={compactionOffer}
       modelFavoritesPersistence={modelFavoritesPersistence}
       onOpenProviderSettings={onOpenProviderSettings}
+      onOpenEnvironmentSettings={onOpenEnvironmentSettings}
       onCompactContext={compactContext}
       providerEnabled={providerEnabled}
       providerManagement={providerManagement}
@@ -63,6 +66,7 @@ function agentComposerControllerPropsEqual(
     left.compactionOffer?.key === right.compactionOffer?.key &&
     left.modelFavoritesPersistence === right.modelFavoritesPersistence &&
     left.onOpenProviderSettings === right.onOpenProviderSettings &&
+    left.onOpenEnvironmentSettings === right.onOpenEnvironmentSettings &&
     left.providerManagement === right.providerManagement &&
     left.providerEnabled === right.providerEnabled &&
     left.submissionBlocked === right.submissionBlocked &&

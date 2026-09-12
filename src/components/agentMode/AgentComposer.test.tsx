@@ -243,14 +243,14 @@ describe("AgentComposer", () => {
     expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Local checkout"]);
   });
 
-  it("picks the checkout in the footer strip attached to the box", () => {
+  it("picks the checkout in the context strip below the prompt box", () => {
     const onIsolationChange = vi.fn();
     render({ onIsolationChange });
 
     const box = host.querySelector(".agent-composer__box");
     const footer = host.querySelector(".agent-composer__footer");
     expect(footer?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
-    expect(box?.lastElementChild).toBe(footer);
+    expect(box?.nextElementSibling).toBe(footer);
     expect(footer?.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
     expect(pickerValue(CHECKOUT_ID)).toBe("in-place");
     expect(trigger(CHECKOUT_ID).textContent).toContain("Local checkout");
@@ -264,6 +264,38 @@ describe("AgentComposer", () => {
     expect(onIsolationChange).toHaveBeenCalledWith("worktree");
   });
 
+  it("keeps the local environment before checkout in compact mode and opens its settings", () => {
+    stubMatchMedia(true);
+    const onOpenEnvironmentSettings = vi.fn();
+    const onSubmit = vi.fn();
+    render({ onOpenEnvironmentSettings, onSubmit, prompt: "Keep my draft" });
+
+    const footer = host.querySelector(".agent-composer__footer");
+    const environment = footer?.querySelector<HTMLButtonElement>(
+      '[aria-label="Run on: This computer"]',
+    );
+    expect(footer?.firstElementChild?.contains(environment ?? null)).toBe(true);
+    expect(footer?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
+    act(() => environment?.click());
+    const remote = host.querySelector<HTMLButtonElement>('[role="menuitemradio"]:disabled');
+    expect(remote?.textContent).toContain("Remote server");
+    act(() => remote?.click());
+    expect(environment?.textContent).toContain("This computer");
+    expect(onSubmit).not.toHaveBeenCalled();
+    act(() => host.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click());
+    expect(onOpenEnvironmentSettings).toHaveBeenCalledTimes(1);
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Keep my draft");
+  });
+
+  it("keeps an existing local task's environment locked", () => {
+    render({
+      mode: { kind: "followUp", blockedReason: null },
+      onOpenEnvironmentSettings: vi.fn(),
+    });
+    expect(host.querySelector(".agent-environment__locked")?.textContent).toBe("This computer");
+    expect(host.querySelector('[aria-label="Run on: This computer"]')).toBeNull();
+  });
+
   it("pre-sets the checkout and shows the reason behind the default", () => {
     render({
       isolation: "worktree",
@@ -274,7 +306,9 @@ describe("AgentComposer", () => {
     expect(trigger(CHECKOUT_ID).textContent).toContain("Isolated worktree");
     const reason = host.querySelector(".agent-composer__reason");
     expect(reason?.textContent).toBe("The working tree has uncommitted changes.");
-    expect(reason?.nextElementSibling).toBe(host.querySelector(".agent-composer__footer"));
+    expect(reason?.parentElement?.nextElementSibling).toBe(
+      host.querySelector(".agent-composer__footer"),
+    );
   });
 
   it("locks a background project to an isolated worktree and says why", () => {
@@ -316,7 +350,7 @@ describe("AgentComposer", () => {
     expect(lock?.querySelector("button")).toBeNull();
     const footer = host.querySelector(".agent-composer__footer");
     expect(footer?.contains(lock)).toBe(true);
-    expect(host.querySelector(".agent-composer__box")?.lastElementChild).toBe(footer);
+    expect(host.querySelector(".agent-composer__box")?.nextElementSibling).toBe(footer);
   });
 
   it("never repeats the thread title or a new-thread button above the prompt in follow-up mode", () => {
@@ -338,8 +372,8 @@ describe("AgentComposer", () => {
     stubMatchMedia(true);
     render();
 
-    expect(host.querySelector(".agent-composer__footer")).toBeNull();
-    expect(host.querySelector(`#${CHECKOUT_ID}`)).toBeNull();
+    expect(host.querySelector(".agent-composer__footer")).not.toBeNull();
+    expect(host.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
     expect(host.querySelector("#agent-launch-model")).not.toBeNull();
 
     const menu = host.querySelector<HTMLButtonElement>(
@@ -353,7 +387,7 @@ describe("AgentComposer", () => {
     const panel = host.querySelector(".agent-composer__compact-panel");
     expect(panel?.querySelector("#agent-launch-model")).toBeNull();
     expect(panel?.querySelector("#agent-launch-effort")).not.toBeNull();
-    expect(panel?.querySelector(`#${CHECKOUT_ID}`)).not.toBeNull();
+    expect(panel?.querySelector(`#${CHECKOUT_ID}`)).toBeNull();
     expect(panel?.querySelector(`#${REPOSITORY_ID}`)).toBeNull();
     expect(submitButton()).not.toBeNull();
   });

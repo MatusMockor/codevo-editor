@@ -140,6 +140,20 @@ describe("AgentWorkbenchScreen", () => {
     expect(workbench.setSidebarView).toHaveBeenCalledWith("git");
   });
 
+  it("opens Environments settings from the execution picker", () => {
+    const openSettingsSection = vi.fn();
+    render(createWorkbench(ROOT_A, { openSettingsSection }));
+
+    click('button[aria-label="Run on: This computer"]');
+    const manage = [...host.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].find(
+      (button) => button.textContent === "Manage environments",
+    );
+    expect(manage).toBeDefined();
+    act(() => manage?.click());
+
+    expect(openSettingsSection).toHaveBeenCalledWith("environments");
+  });
+
   it("keeps provider runtime UI on persisted authority until registration succeeds", () => {
     const preferences = defaultAgentProviderPreferences();
     const initialPreferences = {

@@ -91,6 +91,7 @@ export interface AgentComposerState {
 export type AgentComposerControllerProps = Omit<
   AgentComposerProps,
   | "onOpenProviderSettings"
+  | "onOpenEnvironmentSettings"
   | "onPromptChange"
   | "onSubmit"
   | "prompt"
@@ -101,7 +102,7 @@ export type AgentComposerControllerProps = Omit<
 
 export type AgentComposerPromptProps = Omit<
   AgentComposerProps,
-  "onOpenProviderSettings" | "providerEnabled"
+  "onOpenProviderSettings" | "onOpenEnvironmentSettings" | "providerEnabled"
 >;
 
 export interface AgentComposerControllerState {

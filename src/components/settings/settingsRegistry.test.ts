@@ -20,6 +20,7 @@ describe("settings registry", () => {
       "general",
       "appearance",
       "agents",
+      "environments",
       "keymap",
       "index",
       "php",
@@ -52,6 +53,7 @@ describe("settings registry", () => {
     expect(resolveSettingsRoute("general")).toEqual({ section: "general", row: null });
     expect(resolveSettingsRoute("keymap")).toEqual({ section: "keymap", row: null });
     expect(resolveSettingsRoute("snippets")).toEqual({ section: "snippets", row: null });
+    expect(resolveSettingsRoute("environments")).toEqual({ section: "environments", row: null });
     expect(resolveSettingsRoute("git")).toEqual({
       section: "index",
       row: "index.gitDirectoryMappings",

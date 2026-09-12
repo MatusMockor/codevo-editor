@@ -1412,6 +1412,7 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
   });
 
   const {
+    openSettingsSection,
     openSettingsPanel,
     openAppearanceSettingsPanel,
     closeFloatingSurface,
@@ -1876,7 +1877,9 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     installManagedTypeScriptLanguageServer,
     mergedLanguageServerDiagnosticsByPath,
     openSearchEverywhere,
+    openSettingsSection,
     openSettingsPanel,
+    settingsNavigation: { openSettingsPanel, openSettingsSection },
     openWorkspaceSymbols,
     runCommand,
     saveWorkbenchSettings,

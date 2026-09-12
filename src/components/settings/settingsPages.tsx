@@ -1,4 +1,5 @@
 import { AgentsSettingsPage } from "./pages/AgentsSettingsPage";
+import { EnvironmentsSettingsPage } from "./pages/EnvironmentsSettingsPage";
 import { AppearanceSettingsPage } from "./pages/AppearanceSettingsPage";
 import { GeneralSettingsPage } from "./pages/GeneralSettingsPage";
 import { IndexLanguagesSettingsPage } from "./pages/IndexLanguagesSettingsPage";
@@ -20,6 +21,8 @@ export function SettingsPageHost({ section, ...props }: SettingsPageHostProps) {
       return <AppearanceSettingsPage {...props} />;
     case "agents":
       return <AgentsSettingsPage {...props} />;
+    case "environments":
+      return <EnvironmentsSettingsPage />;
     case "keymap":
       return <KeybindingsSettingsPage {...props} />;
     case "index":

@@ -50,6 +50,7 @@ import { AgentComposerCheckout, AgentComposerLockedCheckout } from "./AgentCompo
 import { agentSubmitShortcut } from "./agentSubmitShortcut";
 import { agentControlTooltip } from "./agentThreadHeaderPresentation";
 import { useCompactComposerControls } from "./useCompactComposerControls";
+import { AgentExecutionEnvironmentPicker } from "./AgentExecutionEnvironmentPicker";
 
 const NO_TARGET_REASON = "Choose a project in the rail to start a thread.";
 
@@ -97,6 +98,7 @@ export interface AgentComposerProps {
   onLaunchChange(launch: AgentLaunchOptions): void;
   onNewThread(): void;
   onOpenProviderSettings(): void;
+  onOpenEnvironmentSettings?(): void;
   onSubmit(submission: AgentComposerSubmission): void;
   onCompactContext?(submission: AgentComposerSubmission): void;
 }
@@ -119,6 +121,7 @@ export function AgentComposer({
   onLaunchChange,
   onNewThread,
   onOpenProviderSettings,
+  onOpenEnvironmentSettings,
   onPromptChange,
   onSelectRepository,
   onSubmit,
@@ -294,7 +297,7 @@ export function AgentComposer({
         favorites={favorites}
         launch={effectiveLaunch}
         onLaunchChange={onLaunchChange}
-        presentation={compact ? { kind: "compact", checkout: targetControls } : { kind: "inline" }}
+        presentation={compact ? { kind: "compact", checkout: null } : { kind: "inline" }}
         providerEnabled={providerEnabled}
         providerManagement={providerManagement}
         providerSwitchable={!followUp}
@@ -310,7 +313,6 @@ export function AgentComposer({
       effectiveLaunch,
       onLaunchChange,
       compact,
-      targetControls,
       providerEnabled,
       providerManagement,
       followUp,
@@ -545,8 +547,19 @@ export function AgentComposer({
             )}
           </p>
         )}
-
-        {(followUp || !compact) && <div className="agent-composer__footer">{footer}</div>}
+      </div>
+      <div className="agent-composer__footer">
+        {onOpenEnvironmentSettings !== undefined && (
+          <>
+            <AgentExecutionEnvironmentPicker
+              disabled={dispatching}
+              locked={followUp}
+              onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+            />
+            <span aria-hidden="true" className="agent-composer__divider" />
+          </>
+        )}
+        {footer}
       </div>
     </form>
   );

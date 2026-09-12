@@ -121,9 +121,10 @@
   padding: 4px 12px 12px;
 }
 
-/* Footer strip attached to the box: where the run lands, never what it is asked to do. */
+/* Run context stays visible below the prompt, including compact composer layouts. */
 .agent-composer__footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -131,13 +132,10 @@
   border-top: 0;
   color: var(--agent-text-muted);
   font-size: var(--agent-fs-sm);
-  margin-top: -4px;
-  padding: 0 12px 10px;
-}
-
-.agent-composer__reason + .agent-composer__footer {
-  margin-top: 0;
-  padding-top: 8px;
+  width: 100%;
+  max-width: 768px;
+  margin: 0 auto;
+  padding: 0 4px;
 }
 
 .agent-composer__footer .agent-picker__trigger--ghost,

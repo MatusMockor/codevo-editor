@@ -66,6 +66,7 @@ export interface FloatingSurfacesDependencies {
 }
 
 export interface FloatingSurfaces {
+  openSettingsSection: (section: SettingsSection) => void;
   openSettingsPanel: () => void;
   openAppearanceSettingsPanel: () => void;
   openWorkspaceSymbols: () => void;
@@ -338,6 +339,7 @@ export function useFloatingSurfaces(dependencies: FloatingSurfacesDependencies):
   ]);
 
   return {
+    openSettingsSection,
     openSettingsPanel,
     openAppearanceSettingsPanel,
     openWorkspaceSymbols,

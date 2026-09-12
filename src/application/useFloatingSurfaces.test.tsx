@@ -70,9 +70,7 @@ interface Harness {
   unmount: () => void;
 }
 
-function renderFloatingSurfaces(
-  deps: FloatingSurfacesDependencies,
-): Harness {
+function renderFloatingSurfaces(deps: FloatingSurfacesDependencies): Harness {
   const container = document.createElement("div");
   const root = createRoot(container);
   const captured: { surfaces: FloatingSurfaces | null } = { surfaces: null };
@@ -107,6 +105,21 @@ function renderFloatingSurfaces(
 }
 
 describe("useFloatingSurfaces", () => {
+  it("opens Environments directly and closes competing floating surfaces", () => {
+    const deps = createDependencies({ paletteOpen: true, quickOpenOpen: true });
+    const harness = renderFloatingSurfaces(deps);
+
+    act(() => harness.surfaces().openSettingsSection("environments"));
+
+    expect(deps.setSettingsInitialSection).toHaveBeenCalledWith("environments");
+    expect(deps.setSettingsOpen).toHaveBeenCalledWith(true);
+    expect(deps.setPaletteOpen).toHaveBeenCalledWith(false);
+    expect(deps.setQuickOpenOpen).toHaveBeenCalledWith(false);
+    expect(deps.setWorkspaceSymbolsOpen).toHaveBeenCalledWith(false);
+    expect(deps.setReferencesView).toHaveBeenCalledWith(null);
+    harness.unmount();
+  });
+
   it("openSettingsPanel closes every other floating surface and opens Settings on General", () => {
     const deps = createDependencies();
     const harness = renderFloatingSurfaces(deps);

@@ -1,0 +1,48 @@
+.agent-environment__menu {
+  width: 260px;
+}
+
+.agent-environment__row {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+.agent-environment__row > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--agent-text-muted);
+}
+
+.agent-environment__row[aria-checked="true"] {
+  background: color-mix(in srgb, var(--agent-text-strong) 8%, transparent);
+}
+
+.agent-environment__row:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  background: transparent;
+}
+
+.agent-environment__row .agent-environment__check {
+  margin-left: auto;
+  color: var(--agent-live);
+}
+
+.agent-environment__separator {
+  height: 1px;
+  margin: 4px 10px;
+  background: var(--agent-hairline);
+}
+
+.agent-environment__locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+  white-space: nowrap;
+}

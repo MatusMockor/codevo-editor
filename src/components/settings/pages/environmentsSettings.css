@@ -1,0 +1,43 @@
+.settings-environments__default {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--settings-muted-fg);
+  font-size: 12px;
+}
+
+.settings-environments__empty {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  width: 100%;
+  padding: 20px;
+  border: 0;
+  background: var(--settings-well);
+  border-radius: var(--settings-r-md);
+}
+
+.settings-environments__icon {
+  flex-shrink: 0;
+  color: var(--settings-muted-fg);
+}
+
+.settings-environments__copy {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.settings-environments__title {
+  margin: 0 0 6px;
+  color: var(--settings-fg);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-environments__description {
+  margin: 0;
+  color: var(--settings-muted-fg);
+  font-size: 12px;
+  line-height: 1.6;
+}
