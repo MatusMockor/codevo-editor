@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.37] - 2026-09-12
+
+### Added
+
+- Show the execution environment below the prompt, with This computer as the default
+  and a locked indicator for existing threads.
+- Add Settings > Environments with local execution details and a placeholder for
+  remote servers. Server connections and remote execution are not available yet.
+
+### Improved
+
+- Keep the execution environment and checkout controls visible below the prompt in
+  both compact and wide layouts.
+
 ## [0.2.0-beta.36] - 2026-09-11
 
 ### Improved
