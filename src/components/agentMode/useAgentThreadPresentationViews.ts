@@ -72,6 +72,7 @@ function samePresentationView(left: AgentThreadView, right: AgentThreadView): bo
   const leftThread = left.thread;
   const rightThread = right.thread;
   return (
+    sameExecution(left.execution, right.execution) &&
     left.lifecycle === right.lifecycle &&
     left.repositoryLabel === right.repositoryLabel &&
     left.projectOrigin === right.projectOrigin &&
@@ -102,6 +103,7 @@ function samePresentationView(left: AgentThreadView, right: AgentThreadView): bo
 
 function sameSurfaceView(left: AgentThreadView, right: AgentThreadView): boolean {
   return (
+    sameExecution(left.execution, right.execution) &&
     left.thread.threadId === right.thread.threadId &&
     left.thread.owner.rootKey === right.thread.owner.rootKey &&
     left.thread.owner.ownerId === right.thread.owner.ownerId &&
@@ -140,4 +142,20 @@ function sameTurnStatus(left: AgentTurnStatus, right: AgentTurnStatus): boolean 
     case "failed":
       return right.kind === "failed" && left.message === right.message;
   }
+}
+
+function sameExecution(
+  left: AgentThreadView["execution"],
+  right: AgentThreadView["execution"],
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return (
+    left.serverId === right.serverId &&
+    left.runnerId === right.runnerId &&
+    left.projectId === right.projectId &&
+    left.conversationId === right.conversationId &&
+    left.latestTaskId === right.latestTaskId &&
+    left.resume?.available === right.resume?.available &&
+    left.resume?.reason === right.resume?.reason
+  );
 }

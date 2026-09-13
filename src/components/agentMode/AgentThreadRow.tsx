@@ -5,7 +5,7 @@ import type { ListSelectionModifiers } from "../../domain/listSelection";
 import { AgentCompactRelativeTime } from "./agentClock";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
 import { AgentThreadRowMenu } from "./AgentThreadRowMenu";
-import { RenameInput, StatusSlot } from "./AgentThreadRowParts";
+import { RemoteThreadIndicator, RenameInput, StatusSlot } from "./AgentThreadRowParts";
 import { agentShipBranchLabel } from "./agentModePresentation";
 import {
   agentRowClassName,
@@ -121,6 +121,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
           ) : (
             <span className="agent-row__title">{model.title}</span>
           )}
+          {view.execution?.kind === "remote" && <RemoteThreadIndicator />}
           {importedLabel !== null && <ImportedBadge label={importedLabel} />}
           <span className="agent-row__time agent-num">
             <AgentCompactRelativeTime epochMs={thread.updatedAtEpochMs} />
@@ -183,6 +184,7 @@ export const AgentThreadRow = memo(function AgentThreadRow(props: AgentThreadRow
           </span>
         </div>
         <div className="agent-row__line2">
+          {view.execution?.kind === "remote" && <RemoteThreadIndicator />}
           {renaming ? (
             <RenameInput
               initial={thread.title}

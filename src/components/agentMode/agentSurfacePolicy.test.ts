@@ -8,6 +8,8 @@ import { TauriTerminalGateway } from "../../infrastructure/tauriTerminalGateway"
 import type { ComposerScope } from "./agentComposerTarget";
 import {
   NO_AGENT_SURFACE_SCOPE,
+  SURFACE_REMOTE_UNAVAILABLE_REASON,
+  agentSurfaceTerminalLaunchTarget,
   SURFACE_FILES_FOREIGN_ROOT_DESCRIPTION,
   SURFACE_FILES_NO_PROJECT_DESCRIPTION,
   SURFACE_FILES_PROJECT_DESCRIPTION,
@@ -358,5 +360,43 @@ describe("agentSurfaceBlockedReason", () => {
     expect(agentSurfaceTerminalLaunchTargetFor("agt-1", "in-place")).toEqual({
       kind: "workspaceRoot",
     });
+  });
+});
+
+describe("remote surface boundary", () => {
+  it("recognizes remote execution even when display identifiers resemble local threads", () => {
+    const remote = {
+      ...surfaceThreadView(),
+      execution: {
+        kind: "remote",
+        serverId: "server",
+        runnerId: "runner",
+        projectId: "project",
+        conversationId: "conversation",
+        latestTaskId: "task",
+        resume: null,
+      } as const,
+    };
+    expect(agentSurfaceBlockedReason("diff", remote, true, SURFACE_FIXTURE_ROOT)).toBeNull();
+    expect(agentThreadCheckoutRoot(remote, [])).toBeNull();
+    expect(agentSurfaceBlockedReason("terminal", remote, true, SURFACE_FIXTURE_ROOT)).toBe(
+      SURFACE_REMOTE_UNAVAILABLE_REASON,
+    );
+  });
+  it("never interprets a server checkout as local filesystem or terminal authority", () => {
+    const local = surfaceThreadView();
+    const remote = { ...local, thread: { ...local.thread, threadId: "remote:server:task" } };
+    expect(agentThreadCheckoutRoot(remote, [])).toBeNull();
+    for (const kind of ["files", "history", "terminal"] as const) {
+      expect(agentSurfaceBlockedReason(kind, remote, true, SURFACE_FIXTURE_ROOT)).toBe(
+        SURFACE_REMOTE_UNAVAILABLE_REASON,
+      );
+    }
+    expect(() => agentSurfaceTerminalLaunchTarget(remote)).toThrow(
+      SURFACE_REMOTE_UNAVAILABLE_REASON,
+    );
+    expect(() => agentSurfaceTerminalLaunchTargetFor(remote.thread.threadId, "worktree")).toThrow(
+      SURFACE_REMOTE_UNAVAILABLE_REASON,
+    );
   });
 });

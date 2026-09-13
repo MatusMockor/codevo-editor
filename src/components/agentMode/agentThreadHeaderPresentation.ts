@@ -19,10 +19,13 @@ export interface AgentPanelLayoutShortcuts {
 export interface AgentOpenTarget {
   readonly path: string;
   readonly missing: boolean;
+  readonly blockedReason?: string | null;
 }
 
 export const AGENT_SHIP_NOTHING_LABEL = "Nothing to commit";
 export const AGENT_SHIP_NOTHING_REASON = "There are no changes to commit, push or integrate.";
+export const AGENT_OPEN_REMOTE_REASON =
+  "Opening server files and terminals in the editor is not available yet";
 export const AGENT_OPEN_MISSING_REASON = "The worktree no longer exists";
 export const AGENT_OPEN_NO_TARGET_REASON = "Select a thread first";
 export const AGENT_TERMINAL_SESSIONS_LABEL = "Terminal sessions";
@@ -75,6 +78,7 @@ export function agentShipQuickAction(view: AgentThreadView): AgentShipQuickActio
 
 export function agentOpenBlockedReason(target: AgentOpenTarget | null): string | null {
   if (target === null) return AGENT_OPEN_NO_TARGET_REASON;
+  if (target.blockedReason) return target.blockedReason;
   if (target.missing) return AGENT_OPEN_MISSING_REASON;
   return null;
 }

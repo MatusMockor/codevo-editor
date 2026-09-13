@@ -90,6 +90,7 @@ mod process_task_runtime;
 mod project;
 mod project_commands;
 mod quality_commands;
+mod remote_runner;
 mod runtime_commands;
 mod runtime_observability;
 mod runtime_task_lifecycle;
@@ -187,8 +188,10 @@ use crate::workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use crate::workspace_registry::WorkspaceRegistry;
 use std::{
     collections::BTreeSet,
-    sync::atomic::{AtomicBool, Ordering},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
 };
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 mod lib_composition;

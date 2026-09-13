@@ -133,6 +133,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
+            app.manage(crate::remote_runner::RemoteRunnerState::new(app.path().app_data_dir()?)?);
             let trust_path = app.path().app_config_dir()?.join("workspace-trust.json");
             let trust_service = WorkspaceTrustService::load(trust_path)?;
             app.manage(Mutex::new(trust_service));
@@ -199,6 +200,29 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crate::remote_runner::remote_runner_list_servers,
+            crate::remote_runner::remote_runner_connect_server,
+            crate::remote_runner::remote_runner_disconnect_server,
+            crate::remote_runner::remote_runner_remove_server,
+            crate::remote_runner::remote_runner_get_runner,
+            crate::remote_runner::remote_runner_list_projects,
+            crate::remote_runner::remote_runner_clone_project,
+            crate::remote_runner::remote_runner_get_project_clone,
+            crate::remote_runner::remote_runner_cancel_project_clone,
+            crate::remote_runner::remote_runner_list_tasks,
+            crate::remote_runner::remote_runner_create_task,
+            crate::remote_runner::remote_runner_start_task,
+            crate::remote_runner::remote_runner_get_task,
+            crate::remote_runner::remote_runner_get_task_resume,
+            crate::remote_runner::remote_runner_continue_task,
+            crate::remote_runner::remote_runner_cancel_task,
+            crate::remote_runner::remote_runner_list_events,
+            crate::remote_runner::remote_runner_get_diff,
+            crate::remote_runner::remote_runner_upload_attachment,
+            crate::remote_runner::remote_runner_get_attachment,
+            crate::remote_runner::remote_runner_read_attachment,
+            crate::remote_runner::remote_runner_list_task_files,
+            crate::remote_runner::remote_runner_get_task_file_diff,
             #[cfg(feature = "perf-capture")]
             perf_capture::perf_capture_activate_window,
             #[cfg(feature = "perf-capture")]

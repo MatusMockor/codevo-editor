@@ -105,6 +105,37 @@ describe("agentModePresentation", () => {
     expect(blockedReason(thread({ sessionId: null }))).toContain("no resumable session");
   });
 
+  it("resumes remote threads from server metadata without a local CLI session", () => {
+    const remote: AgentThreadView = {
+      ...thread({ sessionId: null }),
+      execution: {
+        kind: "remote",
+        serverId: "server",
+        runnerId: "runner",
+        projectId: "project",
+        conversationId: "conversation",
+        latestTaskId: "task",
+        resume: { available: true, reason: null },
+      },
+    };
+    expect(blockedReason(remote, { agentCliConfigured: false })).toBeNull();
+    expect(blockedReason(remote, { liveTaskCount: 4, maxConcurrentAgentTasks: 4 })).toContain(
+      "parallel thread limit",
+    );
+    expect(blockedReason({ ...remote, worktreeMissing: true })).toContain("no longer exists");
+    expect(blockedReason({ ...remote, lifecycle: "running" })).toContain("still running");
+    for (const [resume, message] of [
+      [null, "Checking"],
+      [{ available: false, reason: "task_not_finished" }, "still running"],
+      [{ available: false, reason: "session_unavailable" }, "cannot resume"],
+      [{ available: false, reason: "newer_turn_exists" }, "newer turn"],
+    ] as const) {
+      expect(blockedReason({ ...remote, execution: { ...remote.execution!, resume } })).toContain(
+        message,
+      );
+    }
+  });
+
   it("labels every agent CLI kind", () => {
     expect(agentCliKindLabel("claudeCode")).toBe("Claude Code");
     expect(agentCliKindLabel("codex")).toBe("Codex");

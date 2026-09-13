@@ -1,9 +1,11 @@
 import { useId, useLayoutEffect, type KeyboardEvent } from "react";
 import { Check, ChevronDown, Monitor, Server, Settings2 } from "lucide-react";
 import { useAgentPopover } from "./agentPopover";
+import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import "./agentExecutionEnvironmentPicker.css";
 
 export interface AgentExecutionEnvironmentPickerProps {
+  readonly executionServerId?: string | null;
   readonly disabled: boolean;
   readonly locked: boolean;
   onOpenEnvironmentSettings(): void;
@@ -12,8 +14,12 @@ export interface AgentExecutionEnvironmentPickerProps {
 export function AgentExecutionEnvironmentPicker({
   disabled,
   locked,
+  executionServerId = null,
   onOpenEnvironmentSettings,
 }: AgentExecutionEnvironmentPickerProps) {
+  const remote = useRemoteRunnerContext();
+  const selectedServer = remote?.servers.find((server) => server.id === remote.selectedServerId);
+  const selectedName = selectedServer?.name ?? "This computer";
   const id = useId();
   const popover = useAgentPopover("start", disabled || locked);
   const { open, popoverRef } = popover;
@@ -24,10 +30,18 @@ export function AgentExecutionEnvironmentPicker({
   }, [open, popoverRef]);
 
   if (locked) {
+    const name =
+      executionServerId === null
+        ? "This computer"
+        : (remote?.servers.find((server) => server.id === executionServerId)?.name ?? "Server");
     return (
-      <span className="agent-environment__locked" title="This task runs on this computer">
-        <Monitor aria-hidden="true" size={14} />
-        <span>This computer</span>
+      <span className="agent-environment__locked" title={`This task runs on ${name}`}>
+        {executionServerId === null ? (
+          <Monitor aria-hidden="true" size={14} />
+        ) : (
+          <Server aria-hidden="true" size={14} />
+        )}
+        <span>{name}</span>
       </span>
     );
   }
@@ -66,7 +80,7 @@ export function AgentExecutionEnvironmentPicker({
       <button
         type="button"
         className="agent-picker__trigger agent-picker__trigger--ghost"
-        aria-label="Run on: This computer"
+        aria-label={`Run on: ${selectedName}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
@@ -80,8 +94,12 @@ export function AgentExecutionEnvironmentPicker({
           popover.show();
         }}
       >
-        <Monitor aria-hidden="true" className="agent-picker__icon" size={14} />
-        <span className="agent-picker__value">This computer</span>
+        {selectedServer ? (
+          <Server aria-hidden="true" className="agent-picker__icon" size={14} />
+        ) : (
+          <Monitor aria-hidden="true" className="agent-picker__icon" size={14} />
+        )}
+        <span className="agent-picker__value">{selectedName}</span>
         <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={14} />
       </button>
       {open && (
@@ -98,30 +116,62 @@ export function AgentExecutionEnvironmentPicker({
           <button
             type="button"
             role="menuitemradio"
-            aria-checked="true"
+            aria-checked={!selectedServer}
             className="agent-picker__option agent-environment__row"
-            onClick={() => popover.hide(true)}
+            onClick={() => {
+              remote?.selectServer(null);
+              popover.hide(true);
+            }}
           >
             <Monitor aria-hidden="true" size={14} />
             <span className="agent-picker__text">
               <span className="agent-picker__label">This computer</span>
               <span className="agent-picker__description">Default for new tasks</span>
             </span>
-            <Check aria-hidden="true" className="agent-environment__check" size={14} />
+            {!selectedServer && (
+              <Check aria-hidden="true" className="agent-environment__check" size={14} />
+            )}
           </button>
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked="false"
-            disabled
-            className="agent-picker__option agent-environment__row"
-          >
-            <Server aria-hidden="true" size={14} />
-            <span className="agent-picker__text">
-              <span className="agent-picker__label">Remote server</span>
-              <span className="agent-picker__description">Coming soon</span>
-            </span>
-          </button>
+          {remote?.servers.map((server) => (
+            <button
+              key={server.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={selectedServer?.id === server.id}
+              disabled={!server.connected}
+              className="agent-picker__option agent-environment__row"
+              onClick={() => {
+                remote.selectServer(server.id);
+                popover.hide(true);
+              }}
+            >
+              <Server aria-hidden="true" size={14} />
+              <span className="agent-picker__text">
+                <span className="agent-picker__label">{server.name}</span>
+                <span className="agent-picker__description">
+                  {server.connected ? "Run on server" : "Connect in settings"}
+                </span>
+              </span>
+              {selectedServer?.id === server.id && (
+                <Check aria-hidden="true" className="agent-environment__check" size={14} />
+              )}
+            </button>
+          ))}
+          {!remote && (
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked="false"
+              disabled
+              className="agent-picker__option agent-environment__row"
+            >
+              <Server aria-hidden="true" size={14} />
+              <span className="agent-picker__text">
+                <span className="agent-picker__label">Remote server</span>
+                <span className="agent-picker__description">Coming soon</span>
+              </span>
+            </button>
+          )}
           <div role="separator" className="agent-environment__separator" />
           <button
             type="button"

@@ -15,9 +15,10 @@ import {
   type AgentThreadMenuCommand,
 } from "./agentSidebarPresentation";
 import { AgentThreadRowMenu } from "./AgentThreadRowMenu";
-import { RenameInput } from "./AgentThreadRowParts";
+import { RemoteThreadIndicator, RenameInput } from "./AgentThreadRowParts";
 import {
   AGENT_TERMINAL_SESSIONS_LABEL,
+  AGENT_OPEN_REMOTE_REASON,
   type AgentPanelLayoutShortcuts,
 } from "./agentThreadHeaderPresentation";
 
@@ -58,6 +59,7 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
   const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
   const [renaming, setRenaming] = useState(false);
   const titleRef = useRef<HTMLButtonElement | null>(null);
+  const remote = thread?.execution?.kind === "remote";
   const threadId = thread?.thread.threadId ?? null;
   const title = thread === null ? "New thread" : agentThreadDisplayTitle(thread.thread);
   const projectLabel = project?.label ?? thread?.repositoryLabel ?? null;
@@ -133,6 +135,7 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
             <ChevronDown aria-hidden="true" className="agent-crumbs__chevron" size={14} />
           </button>
         )}
+        {remote && <RemoteThreadIndicator />}
         {importedLabel !== null && (
           <span className="agent-microlabel" title="Imported terminal session">
             {importedLabel}
@@ -157,6 +160,7 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
               target={{
                 path: thread.thread.target.worktreePath ?? thread.thread.owner.repositoryRoot,
                 missing: thread.worktreeMissing,
+                blockedReason: remote ? AGENT_OPEN_REMOTE_REASON : null,
               }}
             />
             <AgentCommitMenu
@@ -167,7 +171,10 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
           </>
         )}
         <div className="agent-thread-head__tools">
-          <TerminalSessionsButton onOpen={props.onOpenTerminalSessions} />
+          <TerminalSessionsButton
+            onOpen={remote ? null : props.onOpenTerminalSessions}
+            remote={remote}
+          />
           {layout.rightPanel === "closed" && (
             <>
               <span aria-hidden="true" className="agent-thread-head__divider" />
@@ -200,14 +207,24 @@ export const AgentThreadHeader = memo(function AgentThreadHeader(props: AgentThr
   );
 });
 
-function TerminalSessionsButton({ onOpen }: { readonly onOpen: (() => void) | null }) {
+function TerminalSessionsButton({
+  onOpen,
+  remote,
+}: {
+  readonly onOpen: (() => void) | null;
+  readonly remote: boolean;
+}) {
   return (
     <button
       aria-label={AGENT_TERMINAL_SESSIONS_LABEL}
       className="agent-icon-toggle"
       disabled={onOpen === null}
       onClick={onOpen ?? undefined}
-      title={AGENT_TERMINAL_SESSIONS_LABEL}
+      title={
+        remote
+          ? "Importing terminal sessions from this server is not available yet"
+          : AGENT_TERMINAL_SESSIONS_LABEL
+      }
       type="button"
     >
       <History aria-hidden="true" size={14} />

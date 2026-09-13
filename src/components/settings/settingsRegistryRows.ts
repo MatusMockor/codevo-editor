@@ -248,7 +248,7 @@ export const SETTINGS_ROW_TABLE = [
     "environments.servers",
     "environments",
     "Remote servers",
-    "Remote task execution is not available in this editor yet.",
+    "Connect to Codevo Runner on a Linux server over SSH.",
     ["remote", "server", "linux", "runner", "ssh", "connection", "environment"],
   ),
   row(

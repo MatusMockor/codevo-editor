@@ -158,6 +158,8 @@ function serializeAttachments(
 function serializeAttachment(attachment: AgentAttachment): Record<string, unknown> {
   switch (attachment.kind) {
     case "image":
+      if (attachment.remote !== undefined)
+        throw new TypeError("Remote images cannot be saved in the local thread store.");
       return {
         kind: attachment.kind,
         attachmentId: attachment.attachmentId,

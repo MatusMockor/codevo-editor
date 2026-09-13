@@ -18,7 +18,12 @@ import {
   threadsSurfaceFixture,
 } from "./agentThreadsSurfaceTestFixtures";
 import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
-import { useAgentThreadNavigation, type AgentThreadNavigation } from "./useAgentThreadNavigation";
+import {
+  useAgentThreadNavigation,
+  NO_SCOPE_STATE,
+  type AgentNavigationSession,
+  type AgentThreadNavigation,
+} from "./useAgentThreadNavigation";
 
 const OTHER_ROOT = "/workspace/api";
 const THIRD_ROOT = "/workspace/web";
@@ -428,6 +433,40 @@ describe("useAgentThreadNavigation", () => {
     expect(current().find.open).toBe(true);
   });
 
+  it.each([true, false])(
+    "restores asynchronously loaded remote selection only for its retained owner (%s)",
+    (sameOwner) => {
+      const remote = viewInProject(
+        "remote-thread:server:runner:conversation",
+        "remote:server:runner:project",
+      );
+      const session: AgentNavigationSession = {
+        current: {
+          selectedThreadId: remote.thread.threadId,
+          selectedThreadOwnerKey: JSON.stringify(remote.thread.owner),
+          scopeState: NO_SCOPE_STATE,
+        },
+      };
+      render(threadsSurfaceFixture(), [projectFixture()], null, session);
+      expect(current().selectedThreadId).toBe(remote.thread.threadId);
+      const markThreadViewed = vi.fn();
+      const loaded = sameOwner
+        ? remote
+        : {
+            ...remote,
+            thread: { ...remote.thread, owner: { ...remote.thread.owner, ownerId: "replacement" } },
+          };
+      render(
+        threadsSurfaceFixture({ threads: [loaded], markThreadViewed }),
+        [projectFixture()],
+        null,
+        session,
+      );
+      if (!sameOwner) expect(markThreadViewed).not.toHaveBeenCalled();
+      expect(current().selectedThreadId).toBe(sameOwner ? remote.thread.threadId : null);
+    },
+  );
+
   function view(threadId: string, repositoryRoot: string = SURFACE_FIXTURE_ROOT): AgentThreadView {
     const base = surfaceThreadView().thread;
     return surfaceThreadView({
@@ -474,10 +513,16 @@ describe("useAgentThreadNavigation", () => {
     agents: AgentThreadsSurface,
     projects: ReadonlyArray<AgentProjectDescriptor> = [projectFixture()],
     externalSessions: Pick<ExternalSessionsSurface, "close"> | null = null,
+    session?: AgentNavigationSession,
   ): void {
     act(() => {
       root.render(
-        <Harness agents={agents} externalSessions={externalSessions} projects={projects} />,
+        <Harness
+          agents={agents}
+          externalSessions={externalSessions}
+          projects={projects}
+          session={session}
+        />,
       );
     });
   }
@@ -491,8 +536,10 @@ describe("useAgentThreadNavigation", () => {
     agents,
     externalSessions,
     projects,
+    session,
   }: {
     readonly agents: AgentThreadsSurface;
+    readonly session?: AgentNavigationSession;
     readonly externalSessions: Pick<ExternalSessionsSurface, "close"> | null;
     readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   }) {
@@ -506,6 +553,7 @@ describe("useAgentThreadNavigation", () => {
       groups,
       presentationThreads: agents.threads,
       projects,
+      session,
     });
     return (
       <>

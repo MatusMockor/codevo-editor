@@ -11,7 +11,11 @@ import {
   type AgentSurfaceDiffPanelProps,
   type AgentSurfaceTerminalPanelProps,
 } from "./AgentSurfacePanel";
-import type { AgentSurfaceScope } from "./agentSurfacePolicy";
+import {
+  isRemoteAgentSurfaceThread,
+  SURFACE_REMOTE_UNAVAILABLE_REASON,
+  type AgentSurfaceScope,
+} from "./agentSurfacePolicy";
 import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 import { useAgentSurfaceScopeTree } from "./useAgentSurfaceScopeTree";
 
@@ -59,31 +63,39 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
 }: AgentSurfaceHostProps) {
   const surfaceEnterClass = useSurfaceEnterClass();
   const activation = chrome.workspaceActivation;
+  const remote =
+    isRemoteAgentSurfaceThread(thread) ||
+    (scope.kind !== "none" && scope.projectRootKey.startsWith("remote:"));
   const available =
+    !remote &&
     scope.kind === "repository" &&
     scope.rootPath === workspaceRoot &&
     (thread === null || thread.thread.owner.rootKey === scope.projectRootKey) &&
     (activation === undefined ||
       (activation.state.kind === "ready" && activation.state.rootPath === scope.rootPath));
-  const unavailable = available ? null : (
-    <div className="agent-note" role="status">
-      {activation?.state.kind === "failed"
-        ? activation.state.message
-        : activation?.state.kind === "pending"
-          ? "Opening project…"
-          : "Select an available project to use this panel."}
-      {activation?.state.kind === "failed" && (
-        <button className="agent-linkbutton" onClick={activation.retry} type="button">
-          Retry
-        </button>
-      )}
-    </div>
-  );
+  const unavailable =
+    available ||
+    (remote && (layout.activeSurface === "diff" || layout.activeSurface === null)) ? null : (
+      <div className="agent-note" role="status">
+        {remote
+          ? SURFACE_REMOTE_UNAVAILABLE_REASON
+          : activation?.state.kind === "failed"
+            ? activation.state.message
+            : activation?.state.kind === "pending"
+              ? "Opening project…"
+              : "Select an available project to use this panel."}
+        {!remote && activation?.state.kind === "failed" && (
+          <button className="agent-linkbutton" onClick={activation.retry} type="button">
+            Retry
+          </button>
+        )}
+      </div>
+    );
   const fileTree = useAgentSurfaceScopeTree({
     chrome,
-    thread,
-    threadRootPath,
-    scope,
+    thread: remote ? null : thread,
+    threadRootPath: remote ? null : threadRootPath,
+    scope: remote ? { kind: "none" } : scope,
     filesOpen: available && layout.openSurfaces.includes("files"),
     onSwitchScope,
     onTrustScope,
@@ -91,7 +103,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
 
   const diff = useMemo<AgentSurfaceDiffPanelProps | null>(
     () =>
-      !available || thread === null
+      (!available && !remote) || thread === null
         ? null
         : {
             ...chrome.diff,
@@ -104,7 +116,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
             onOpenChangedFileDiff: (threadId, change) =>
               void agents.openChangedFileDiff(threadId, change),
           },
-    [agents, available, chrome.diff, thread],
+    [agents, available, chrome.diff, remote, thread],
   );
 
   const terminalChrome = chrome.terminal;

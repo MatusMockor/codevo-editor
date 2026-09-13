@@ -143,6 +143,8 @@ export function sanitizeAgentAttachmentName(raw: string): string {
 export function agentAttachmentPromptLine(attachment: AgentAttachment): string {
   switch (attachment.kind) {
     case "image":
+      if (attachment.remote !== undefined)
+        throw new TypeError("Remote images cannot be serialized as local file references.");
       return `[Attached image "${attachment.name}" is saved at: ${attachment.storedPath}]`;
     case "file":
       return `[Attached file "${attachment.name}" is saved at: ${attachment.storedPath}]`;

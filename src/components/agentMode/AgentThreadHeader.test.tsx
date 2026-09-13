@@ -76,6 +76,37 @@ describe("AgentThreadHeader", () => {
     },
   );
 
+  it("keeps the original header with a server icon and blocks local filesystem actions", () => {
+    const onOpenSurface = vi.fn();
+    const onRevealPath = vi.fn(() => Promise.resolve());
+    const onOpenTerminalSessions = vi.fn();
+    render({
+      thread: { ...threadView({}), execution: remoteExecution() },
+      onOpenSurface,
+      onRevealPath,
+      onOpenTerminalSessions,
+    });
+
+    expect(host.querySelector('[role="img"][aria-label="Runs on server"]')).not.toBeNull();
+    expect(host.querySelector("h2.agent-crumbs__heading")?.textContent).toBe("Refactor the parser");
+    expect(button("Commit")).toBeDefined();
+    expect(button("Open in Editor").disabled).toBe(true);
+    expect(button("Open in Editor").title).toContain("server files");
+    expect(button("Open options").disabled).toBe(true);
+    expect(button("Terminal sessions").disabled).toBe(true);
+    act(() => {
+      button("Open in Editor").click();
+      button("Open options").click();
+      button("Terminal sessions").click();
+    });
+    expect(onOpenSurface).not.toHaveBeenCalled();
+    expect(onRevealPath).not.toHaveBeenCalled();
+    expect(onOpenTerminalSessions).not.toHaveBeenCalled();
+    render({ thread: threadView({}) });
+    expect(host.querySelector('[aria-label="Runs on server"]')).toBeNull();
+    expect(button("Open in Editor").disabled).toBe(false);
+  });
+
   it("leaves thread status to the rail row and the status bar", () => {
     render({ thread: threadView({}) });
 
@@ -428,5 +459,17 @@ function threadView(overrides: {
     worktreeRemoved: false,
     worktreeMissing: false,
     changeSummary: null,
+  };
+}
+
+function remoteExecution(): NonNullable<AgentThreadView["execution"]> {
+  return {
+    kind: "remote",
+    serverId: "server-1",
+    runnerId: "runner-1",
+    projectId: "project-1",
+    conversationId: "conversation-1",
+    latestTaskId: "task-1",
+    resume: null,
   };
 }

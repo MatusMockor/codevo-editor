@@ -16,7 +16,7 @@ export const AGENT_IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image
 export type AgentImageMime = (typeof AGENT_IMAGE_MIMES)[number];
 
 export type AgentAttachment =
-  | {
+  | ({
       readonly kind: "image";
       readonly attachmentId: string;
       readonly name: string;
@@ -24,8 +24,13 @@ export type AgentAttachment =
       readonly bytes: number;
       readonly width: number;
       readonly height: number;
-      readonly storedPath: string;
-    }
+    } & (
+      | { readonly storedPath: string; readonly remote?: never }
+      | {
+          readonly storedPath?: never;
+          readonly remote: { readonly serverId: string; readonly attachmentId: string };
+        }
+    ))
   | {
       readonly kind: "file";
       readonly attachmentId: string;

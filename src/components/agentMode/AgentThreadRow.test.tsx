@@ -62,6 +62,28 @@ describe("AgentThreadRow", () => {
     return element as HTMLElement;
   };
 
+  it("adds only a server indicator to the existing thread row", () => {
+    const local = pinnedDone();
+    render(local);
+    const title = host.querySelector(".agent-row__title")?.textContent;
+    expect(host.querySelector('[aria-label="Runs on server"]')).toBeNull();
+    render({
+      ...local,
+      execution: {
+        kind: "remote",
+        serverId: "server-1",
+        runnerId: "runner-1",
+        projectId: "project-1",
+        conversationId: "conversation-1",
+        latestTaskId: "task-1",
+        resume: null,
+      },
+    });
+    expect(host.querySelector('[role="img"][aria-label="Runs on server"]')).not.toBeNull();
+    expect(host.querySelector(".agent-row__title")?.textContent).toBe(title);
+    expect(line1().querySelector(".agent-row__status--done")).not.toBeNull();
+  });
+
   it("puts the pin glyph before the Done status on a pinned unread thread", () => {
     render(pinnedDone());
 

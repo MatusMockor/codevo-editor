@@ -7,6 +7,33 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.39] - 2026-09-13
+
+### Added
+
+- Connect Linux runners over SSH in Settings > Environments and choose a server
+  below the prompt. This computer remains the default execution environment.
+- Submit remote tasks with image attachments, reconnect to saved task history,
+  and inspect output and code changes while execution continues on the server.
+- Keep server conversations in the existing sidebar, chat and composer, with a
+  server icon identifying their execution environment.
+- Continue remote conversations using the same provider session and worktree,
+  preserving earlier changes and supporting images in follow-up messages.
+
+### Improved
+
+- Keep uncertain follow-up submissions safe to retry without duplicating execution,
+  and explain when a server or older conversation cannot support continuation.
+- Preserve the selected model and execution options when sending work to a server.
+- Restore full historical messages and prevent the macOS entrance animation from
+  leaving the agent screen invisible.
+
+### Limitations
+
+- Server projects must already be registered. Automatically cloning a local project
+  onto the server is not included in this release.
+- Opening server files for editing and server terminals is not supported yet.
+
 ## [0.2.0-beta.38] - 2026-09-12
 
 ### Fixed

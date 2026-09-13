@@ -123,6 +123,14 @@ export function useAgentThreadMenuCommands({
 
   const handleProjectCommand = useCallback(
     (target: AgentProjectMenuTarget, command: AgentProjectMenuCommand) => {
+      if (target.projectRootKey.startsWith("remote:") && command !== "copyPath") {
+        reportNotice({
+          kind: "info",
+          message: "This project action is not available on the server yet.",
+          action: null,
+        });
+        return;
+      }
       switch (command) {
         case "trust":
           onTrustProject(target.projectRootKey);

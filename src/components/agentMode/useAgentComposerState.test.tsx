@@ -506,6 +506,77 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.prompt).toBe("");
   });
 
+  it("continues a server thread through the original composer without a local session", async () => {
+    const original = surfaceThreadView();
+    const sendFollowUp = vi.fn(async () => true);
+    render(
+      threadsSurfaceFixture({
+        agentCliConfigured: false,
+        threads: [
+          {
+            ...original,
+            thread: {
+              ...original.thread,
+              provider: { ...original.thread.provider, sessionId: null },
+            },
+            execution: {
+              kind: "remote",
+              serverId: "server",
+              runnerId: "runner",
+              projectId: "project",
+              conversationId: "conversation",
+              latestTaskId: "task",
+              resume: { available: true, reason: null },
+            },
+          },
+        ],
+        sendFollowUp,
+      }),
+    );
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("Continue on the server"));
+    expect(current().composer.composerProps.mode).toEqual({
+      kind: "followUp",
+      blockedReason: null,
+    });
+    expect(current().composer.composerProps.worktreeOnly).toBe(true);
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
+    const launch = defaultAgentLaunchOptions("claudeCode");
+    await act(async () =>
+      current().composer.composerProps.onSubmit({ launch, dangerousLaunchConfirmed: false }),
+    );
+    expect(sendFollowUp).toHaveBeenCalledWith({
+      threadId: "agt-1",
+      prompt: "Continue on the server",
+      launch,
+      dangerousLaunchConfirmed: false,
+    });
+  });
+
+  it("keeps new server conversations in worktrees even when their project is the active tab", async () => {
+    const remoteRoot = "remote:server:runner:project";
+    const remoteProject = projectFixture({ rootKey: remoteRoot, isolationPolicy: "worktree" });
+    const startThread = vi.fn(async () => ({ threadId: "remote-thread" }));
+    render(threadsSurfaceFixture({ startThread }), [remoteProject]);
+    act(() => current().composer.startNewThread(remoteRoot, remoteProject.rootPath));
+    expect(current().composer.composerProps.worktreeOnly).toBe(true);
+    expect(current().composer.composerProps.worktreeOnlyReason).toBe(
+      "Server threads run in an isolated worktree.",
+    );
+    act(() => current().composer.composerProps.onIsolationChange("in-place"));
+    expect(current().composer.composerProps.isolation).toBe("worktree");
+    act(() => current().composer.composerProps.onPromptChange("Run remotely"));
+    await act(async () =>
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      }),
+    );
+    expect(startThread).toHaveBeenCalledWith(
+      expect.objectContaining({ isolation: "worktree", projectRootKey: remoteRoot }),
+    );
+  });
+
   it("keeps a selected follow-up blocked until its provider is ready", async () => {
     const sendFollowUp = vi.fn(async () => true);
     const unavailable = threadsSurfaceFixture({

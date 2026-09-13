@@ -33,11 +33,12 @@ export function AgentOpenMenu({
   const popover = useAgentPopover("end", blockedReason !== null);
 
   const reveal = (): void => {
-    if (target === null) return;
+    if (target === null || blockedReason !== null) return;
     void onRevealPath(target.path).catch(onRevealFailed);
   };
 
   const choose = (action: () => void): void => {
+    if (blockedReason !== null) return;
     popover.hide(true);
     action();
   };
@@ -69,7 +70,9 @@ export function AgentOpenMenu({
         aria-label="Open in Editor"
         className="agent-split__main"
         disabled={blockedReason !== null}
-        onClick={() => onOpenSurface("files")}
+        onClick={() => {
+          if (blockedReason === null) onOpenSurface("files");
+        }}
         title={blockedReason ?? "Open the checkout in the editor"}
         type="button"
       >

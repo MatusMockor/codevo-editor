@@ -78,6 +78,9 @@ async function bootstrap(): Promise<void> {
     { ErrorBoundary },
     { installGlobalErrorSafetyNet },
     { strictModeEnabled },
+    { RemoteRunnerProvider },
+    { TauriRemoteRunnerGateway },
+    { BrowserRemoteAgentMetadataRepository },
   ] = await Promise.all([
     import("react"),
     import("react-dom/client"),
@@ -85,6 +88,9 @@ async function bootstrap(): Promise<void> {
     import("./components/ErrorBoundary"),
     import("./infrastructure/globalErrorSafetyNet"),
     import("./perfLaneRenderMode"),
+    import("./components/remoteRunner/RemoteRunnerProvider"),
+    import("./infrastructure/tauriRemoteRunnerGateway"),
+    import("./infrastructure/browserRemoteAgentMetadataRepository"),
   ]);
 
   // Root-level boundary: ANY render/lifecycle crash anywhere in the app
@@ -92,7 +98,11 @@ async function bootstrap(): Promise<void> {
   // instead of unmounting the whole tree to a blank screen.
   const appTree = React.createElement(ErrorBoundary, {
     title: "Codevo Editor hit an unexpected error",
-    children: React.createElement(App),
+    children: React.createElement(RemoteRunnerProvider, {
+      gateway: new TauriRemoteRunnerGateway(),
+      metadataRepository: new BrowserRemoteAgentMetadataRepository(() => window.localStorage),
+      children: React.createElement(App),
+    }),
   });
 
   const rootTree = () => {

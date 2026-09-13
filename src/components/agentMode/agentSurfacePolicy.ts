@@ -12,6 +12,18 @@ import {
 import type { ComposerScope } from "./agentComposerTarget";
 import { agentSurfaceTargetGone } from "./agentModePresentation";
 
+export const SURFACE_REMOTE_UNAVAILABLE_REASON =
+  "This panel is not available for server threads yet.";
+
+export function isRemoteAgentSurfaceThread(thread: AgentThreadView | null): boolean {
+  return (
+    thread !== null &&
+    (thread.execution?.kind === "remote" ||
+      thread.thread.threadId.startsWith("remote:") ||
+      thread.thread.owner.rootKey.startsWith("remote:"))
+  );
+}
+
 export const SURFACE_NO_PROJECT_REASON = "Select an available project first";
 export const SURFACE_WORKTREE_GONE_REASON = "The worktree no longer exists";
 export const SURFACE_UNTRUSTED_TERMINAL_REASON =
@@ -61,6 +73,7 @@ export function agentSurfaceScopeFor(
   workspaceRoot: string | null,
 ): AgentSurfaceScope {
   if (scope === null || scope.kind === "missing") return NO_AGENT_SURFACE_SCOPE;
+  if (scope.projectRootKey.startsWith("remote:")) return NO_AGENT_SURFACE_SCOPE;
   const project = projects.find((candidate) => candidate.rootKey === scope.projectRootKey) ?? null;
   if (project === null) return NO_AGENT_SURFACE_SCOPE;
   if (project.ownerId !== scope.ownerId || project.generation !== scope.generation) {
@@ -97,7 +110,8 @@ export function agentSurfaceScopeFor(
 export function agentThreadCheckoutRoot(
   thread: AgentThreadView,
   projects: ReadonlyArray<AgentProjectDescriptor>,
-): string {
+): string | null {
+  if (isRemoteAgentSurfaceThread(thread)) return null;
   const worktreePath = thread.thread.target.worktreePath;
   if (worktreePath !== null) return worktreePath;
   const owner = thread.thread.owner;
@@ -116,6 +130,7 @@ export function agentSurfaceFilesDescription(
   thread: AgentThreadView | null,
   scope: AgentSurfaceScope,
 ): string {
+  if (isRemoteAgentSurfaceThread(thread)) return SURFACE_REMOTE_UNAVAILABLE_REASON;
   if (thread !== null) return SURFACE_FILES_THREAD_DESCRIPTION;
   switch (scope.kind) {
     case "none":
@@ -151,6 +166,8 @@ export function agentSurfaceBlockedReason(
   workspaceRoot: string | null,
   scope: AgentSurfaceScope = NO_AGENT_SURFACE_SCOPE,
 ): string | null {
+  if (isRemoteAgentSurfaceThread(thread))
+    return kind === "diff" ? null : SURFACE_REMOTE_UNAVAILABLE_REASON;
   if (kind === "files" || kind === "history") return filesSurfaceBlockedReason(thread);
   if (thread === null) {
     if (scope.kind !== "repository" || scope.rootPath !== workspaceRoot) {
@@ -182,6 +199,7 @@ export function agentSurfaceTerminalLaunchTargetFor(
   threadId: string,
   isolation: AgentThreadTarget["isolation"],
 ): TerminalLaunchTarget {
+  if (threadId.startsWith("remote:")) throw new Error(SURFACE_REMOTE_UNAVAILABLE_REASON);
   if (isolation !== "worktree") return DEFAULT_TERMINAL_LAUNCH_TARGET;
   return terminalLaunchTargetForThread(threadId);
 }
@@ -190,6 +208,7 @@ export function agentSurfaceTerminalLaunchTarget(
   thread: AgentThreadView,
   workspaceRoot?: string,
 ): TerminalLaunchTarget {
+  if (isRemoteAgentSurfaceThread(thread)) throw new Error(SURFACE_REMOTE_UNAVAILABLE_REASON);
   if (workspaceRoot !== undefined && thread.thread.owner.repositoryRoot !== workspaceRoot) {
     return terminalLaunchTargetForRepository(
       thread.thread.owner.repositoryRoot.slice(workspaceRoot.length + 1),

@@ -47,6 +47,7 @@ import { shortcutForCommand, type KeymapSettings } from "../../domain/keymap";
 import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
 import type { TerminalGateway } from "../../domain/terminal";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
+import { WebviewAgentImageSurface } from "../../infrastructure/webviewAgentImageSurface";
 import { BrowserTextClipboardGateway } from "../../infrastructure/browserTextClipboardGateway";
 import { TauriDirectoryListingGateway } from "../../infrastructure/tauriDirectoryListingGateway";
 import {
@@ -138,6 +139,7 @@ const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGatewa
 const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
   new TauriDirectoryListingGateway();
 const DEFAULT_TEXT_CLIPBOARD = new BrowserTextClipboardGateway();
+const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
 interface PersistedProviderProjection {
   readonly authorities: Readonly<
     Partial<Record<AgentCliKind, PersistedAgentProviderSettingsAuthority>>
@@ -508,6 +510,7 @@ export function AgentWorkbenchScreen({
 
   return (
     <AgentModeView
+      imageSurface={DEFAULT_IMAGE_SURFACE}
       agents={agents}
       chrome={chrome}
       key={navigationBoundary.key}

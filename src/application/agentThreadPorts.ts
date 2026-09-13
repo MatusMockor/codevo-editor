@@ -33,6 +33,7 @@ import type {
 } from "../domain/agentShip";
 import type { GitChangedFile } from "../domain/git";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
+import type { RemoteRunnerTaskResume } from "../domain/remoteRunner";
 
 export type AgentTasksNoticeAction = "configure-agent-cli" | null;
 
@@ -197,7 +198,19 @@ export interface ExternalSessionsSurface {
 
 export type AgentThreadCopyDetail = "path" | "branch" | "threadId";
 
+/** Display identity only; remote dispatch retains its own exact connection authority. */
+export interface RemoteAgentThreadExecution {
+  readonly kind: "remote";
+  readonly serverId: string;
+  readonly runnerId: string;
+  readonly projectId: string;
+  readonly conversationId: string;
+  readonly latestTaskId: string;
+  readonly resume: RemoteRunnerTaskResume | null;
+}
+
 export interface AgentThreadView {
+  readonly execution?: RemoteAgentThreadExecution;
   readonly thread: AgentThread;
   readonly lifecycle: AgentThreadLifecycle;
   readonly repositoryLabel: string;

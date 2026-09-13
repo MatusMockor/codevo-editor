@@ -54,6 +54,37 @@ describe("AgentSurfaceHost", () => {
     host.remove();
   });
 
+  it("uses the original changes surface with remote facade callbacks", async () => {
+    const local = surfaceThreadView();
+    const thread = {
+      ...local,
+      changeSummary: null,
+      thread: { ...local.thread, threadId: "remote:server:task" },
+    };
+    const showChanges = vi.fn(async () => undefined);
+    render({
+      thread,
+      agents: { ...defaultProps().agents, showChanges },
+      layout: { openSurfaces: ["diff"], activeSurface: "diff" },
+    });
+    await waitForReact(() => expect(showChanges).toHaveBeenCalledWith(thread.thread.threadId));
+    expect(host.textContent).not.toContain("This panel is not available for server threads yet.");
+  });
+
+  it("blocks remote threads even when their projected roots match the local workspace", async () => {
+    const gateway = fakeTerminalGateway();
+    const local = surfaceThreadView();
+    const thread = { ...local, thread: { ...local.thread, threadId: "remote:server:task" } };
+    render({
+      chrome: chrome(gateway),
+      thread,
+      layout: { openSurfaces: ["terminal"], activeSurface: "terminal" },
+    });
+    await act(async () => Promise.resolve());
+    expect(gateway.start).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("This panel is not available for server threads yet.");
+  });
+
   it("starts the thread terminal on the registered workspace root, not the thread checkout", async () => {
     const gateway = fakeTerminalGateway();
     render({

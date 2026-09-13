@@ -198,9 +198,17 @@ export function useAgentComposerControllerState({
     groups.flatMap((group) => group.repos).find((repo) => repo.repositoryRoot === composerRoot)
       ?.label ??
     null;
-  const worktreeOnly = composerProject !== null && agentProjectWorktreeOnly(composerProject.origin);
-  const worktreeOnlyReason =
-    composerProject === null ? null : agentProjectWorktreeOnlyReason(composerProject.origin);
+  const remoteExecution =
+    selectedThread?.execution?.kind === "remote" ||
+    composerProject?.rootKey.startsWith("remote:") === true;
+  const worktreeOnly =
+    remoteExecution ||
+    (composerProject !== null && agentProjectWorktreeOnly(composerProject.origin));
+  const worktreeOnlyReason = remoteExecution
+    ? "Server threads run in an isolated worktree."
+    : composerProject === null
+      ? null
+      : agentProjectWorktreeOnlyReason(composerProject.origin);
 
   const preview =
     composerRoot === null || composerProjectRootKey === null

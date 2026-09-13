@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import { PanelLeftOpen } from "lucide-react";
+import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
+import { useUnifiedAgentThreads } from "../../application/useUnifiedAgentThreads";
 import {
   useAgentThreadScripts,
   type AgentThreadScriptTarget,
@@ -11,6 +13,7 @@ import type {
   AgentProviderManagementToast,
 } from "../../application/useAgentProviderManagement";
 import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../../domain/agentProject";
+import type { AgentImageSurfacePort } from "../../domain/agentImageShrink";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
@@ -63,6 +66,7 @@ import {
 } from "./useAgentThreadPresentationViews";
 
 export interface AgentModeViewProps {
+  readonly imageSurface?: AgentImageSurfacePort | null;
   readonly navigationSession?: AgentNavigationSession;
   readonly agents: AgentThreadsSurface & {
     readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
@@ -92,6 +96,8 @@ const IDLE_ACCOUNT_USAGE = {
 } as const;
 const NOOP_OPEN_SOURCE_CONTROL = () => undefined;
 const NOOP_CLOSE_PROJECT = () => undefined;
+const NO_REMOTE_SERVERS: readonly import("../../domain/remoteRunner").RemoteRunnerServer[] = [];
+const REMOTE_PROVIDERS_ENABLED = { claudeCode: true, codex: true } as const;
 
 const TERMINAL_SESSIONS_UNAVAILABLE_NOTICE: AgentTasksNotice = {
   kind: "warning",
@@ -99,7 +105,34 @@ const TERMINAL_SESSIONS_UNAVAILABLE_NOTICE: AgentTasksNotice = {
   action: null,
 };
 
-export function AgentModeView({
+export function AgentModeView(props: AgentModeViewProps) {
+  const remote = useRemoteRunnerContext();
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
+    props.navigationSession?.current.selectedThreadId ?? null,
+  );
+  const unified = useUnifiedAgentThreads({
+    local: props.agents,
+    gateway: remote?.gateway ?? null,
+    servers: remote?.servers ?? NO_REMOTE_SERVERS,
+    selectedServerId: remote?.selectedServerId ?? null,
+    workspaceOwner: props.workspaceRoot,
+    selectedThreadId,
+    localProjects: props.projects,
+    metadataRepository: remote?.metadataRepository,
+    imageSurface: props.imageSurface ?? null,
+  });
+  return (
+    <LocalAgentModeView
+      {...props}
+      agents={remote === null ? props.agents : { ...props.agents, ...unified.agents }}
+      projects={remote === null ? props.projects : unified.projects}
+      onSelectedThreadChange={setSelectedThreadId}
+      selectedServerId={remote?.selectedServerId ?? null}
+    />
+  );
+}
+
+function LocalAgentModeView({
   agents,
   chrome,
   modelFavoritesPersistence = null,
@@ -116,7 +149,12 @@ export function AgentModeView({
   textClipboard = null,
   viewCommands = null,
   workspaceRoot,
-}: AgentModeViewProps) {
+  onSelectedThreadChange,
+  selectedServerId,
+}: AgentModeViewProps & {
+  onSelectedThreadChange(threadId: string | null): void;
+  selectedServerId: string | null;
+}) {
   const surfaceEnterClass = useSurfaceEnterClass();
   usePreloadAgentMarkdownRenderer();
   const [localNotice, setLocalNotice] = useState<AgentTasksNotice | null>(null);
@@ -140,10 +178,37 @@ export function AgentModeView({
     session: navigationSession,
   });
   const { selectedThread: sessionThread, selectedThreadId, railScope, find } = navigation;
+  useLayoutEffect(
+    () => onSelectedThreadChange(selectedThreadId),
+    [onSelectedThreadChange, selectedThreadId],
+  );
   const selectedThread =
     selectedThreadId === null
       ? null
       : (presentationThreads.find((view) => view.thread.threadId === selectedThreadId) ?? null);
+  const effectiveProviderEnabled =
+    selectedThread?.execution?.kind === "remote" ||
+    (selectedThread === null && selectedServerId !== null)
+      ? REMOTE_PROVIDERS_ENABLED
+      : providerEnabled;
+  const setProjectScope = navigation.setProjectScope;
+  const composerScopeRoot = navigation.composerScope?.projectRootKey ?? null;
+  useEffect(() => {
+    if (selectedThreadId !== null) return;
+    const prefix =
+      selectedServerId === null ? null : `remote:${encodeURIComponent(selectedServerId)}:`;
+    if (
+      composerScopeRoot !== null &&
+      (prefix === null
+        ? !composerScopeRoot.startsWith("remote:")
+        : composerScopeRoot.startsWith(prefix))
+    )
+      return;
+    const project = projects.find((entry) =>
+      prefix === null ? !entry.rootKey.startsWith("remote:") : entry.rootKey.startsWith(prefix),
+    );
+    if (project !== undefined) setProjectScope(project.rootKey);
+  }, [composerScopeRoot, projects, selectedServerId, selectedThreadId, setProjectScope]);
   const surfaceThread = useAgentSurfacePresentationView(selectedThread);
   const surfaceThreadRootPath = useMemo(
     () => (surfaceThread === null ? null : agentThreadCheckoutRoot(surfaceThread, projects)),
@@ -158,7 +223,11 @@ export function AgentModeView({
   const selectWorkspace = chrome.workspaceActivation?.select;
   useEffect(() => {
     if (selectWorkspace === undefined) return;
-    if (selectedProject === null || selectedProject.origin === "closed-tab-live-tasks") {
+    if (
+      selectedProject === null ||
+      selectedProject.rootKey.startsWith("remote:") ||
+      selectedProject.origin === "closed-tab-live-tasks"
+    ) {
       selectWorkspace(null);
       return;
     }
@@ -179,11 +248,19 @@ export function AgentModeView({
     [composerScope, projects, workspaceRoot],
   );
 
+  const composerProjects = useMemo(() => {
+    if (selectedThread !== null) return projects;
+    const prefix =
+      selectedServerId === null ? null : `remote:${encodeURIComponent(selectedServerId)}:`;
+    return projects.filter((project) =>
+      prefix === null ? !project.rootKey.startsWith("remote:") : project.rootKey.startsWith(prefix),
+    );
+  }, [projects, selectedServerId, selectedThread]);
   const composer = useAgentComposerControllerState({
     agents,
     groups,
-    projects,
-    providerEnabled,
+    projects: composerProjects,
+    providerEnabled: effectiveProviderEnabled,
     railScope: navigation.composerScope,
     selectedThread,
     onClearSelectedThread: navigation.clearSelectedThread,
@@ -212,7 +289,10 @@ export function AgentModeView({
   const { layout, openSurface, toggleMaximized, toggleRail, toggleRightPanel } = surface;
   const onShowTerminalPanel = chrome.onShowTerminalPanel;
   const scriptsTarget = useMemo(
-    () => (selectedThread === null ? null : scriptTarget(selectedThread)),
+    () =>
+      selectedThread === null || selectedThread.execution?.kind === "remote"
+        ? null
+        : scriptTarget(selectedThread),
     [selectedThread],
   );
   const scripts = useAgentThreadScripts({
@@ -255,6 +335,10 @@ export function AgentModeView({
   const cancelSessionImport = sessionImport.cancel;
   const openTerminalSessions = useCallback(
     (projectRootKey: string, repositoryRoot: string) => {
+      if (projectRootKey.startsWith("remote:") || repositoryRoot.startsWith("remote:")) {
+        setLocalNotice(TERMINAL_SESSIONS_UNAVAILABLE_NOTICE);
+        return;
+      }
       if (externalSessions === null) {
         setLocalNotice(TERMINAL_SESSIONS_UNAVAILABLE_NOTICE);
         return;
@@ -408,7 +492,7 @@ export function AgentModeView({
   }, [headerProject, railTerminalSessionsTarget, scopeEntries]);
   const openHeaderTerminalSessions = useMemo(() => {
     const target = headerTerminalSessionsTarget;
-    if (target === null) return null;
+    if (target === null || target.projectRootKey.startsWith("remote:")) return null;
     return () => openTerminalSessions(target.projectRootKey, target.repositoryRoot);
   }, [headerTerminalSessionsTarget, openTerminalSessions]);
   const responsivePanelRestore = useWorkbenchFrameResponsiveRestore();
@@ -523,7 +607,7 @@ export function AgentModeView({
                 onTogglePin={togglePin}
                 onTrustProject={trustProject}
                 overflowRootPaths={overflowRootPaths}
-                providerEnabled={providerEnabled}
+                providerEnabled={effectiveProviderEnabled}
                 providerManagement={agents.providerManagement}
                 scope={railScope}
                 scopeEntries={navigation.scopeEntries}
@@ -600,16 +684,21 @@ export function AgentModeView({
                 thread={sessionThread}
               />
               <AgentComposerController
-                compactionOffer={agentContextCompactionOffer(
-                  sessionThread?.thread ?? null,
-                  Date.now(),
-                )}
+                executionServerId={
+                  selectedThread?.execution?.serverId ??
+                  (selectedThread === null ? selectedServerId : null)
+                }
+                compactionOffer={
+                  selectedThread?.execution?.kind === "remote"
+                    ? null
+                    : agentContextCompactionOffer(sessionThread?.thread ?? null, Date.now())
+                }
                 composerProps={composerProps}
                 modelFavoritesPersistence={modelFavoritesPersistence}
                 onOpenEnvironmentSettings={onOpenEnvironmentSettings}
                 onOpenProviderSettings={agents.configureAgentCli}
                 providerManagement={agents.providerManagement}
-                providerEnabled={providerEnabled}
+                providerEnabled={effectiveProviderEnabled}
                 submissionBlocked={composer.submissionBlocked}
                 submit={submitComposer}
               />

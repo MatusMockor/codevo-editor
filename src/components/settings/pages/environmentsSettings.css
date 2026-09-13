@@ -41,3 +41,47 @@
   font-size: 12px;
   line-height: 1.6;
 }
+
+.settings-environments__servers {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+}
+
+.settings-environments__form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  padding: 20px;
+  background: var(--settings-well);
+  border-radius: var(--settings-r-md);
+}
+
+.settings-environments__form label {
+  display: grid;
+  gap: 7px;
+  color: var(--settings-fg);
+  font-size: 12px;
+}
+
+.settings-environments__form input {
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-environments__wide {
+  grid-column: 1 / -1;
+}
+
+.settings-environments__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-environments__error {
+  margin: 0;
+  color: var(--settings-fg);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

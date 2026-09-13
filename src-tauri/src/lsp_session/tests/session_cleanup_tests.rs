@@ -328,7 +328,9 @@ fn drop_hands_blocking_termination_to_a_durable_reaper() {
     entered.wait();
     release.wait();
     let deadline = Instant::now() + Duration::from_secs(1);
-    while terminate_count.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+    // The fake increments its call count before releasing the retained writer.
+    // Observe the cleanup effect instead of treating entry into terminate as completion.
+    while held_writer.lock().expect("held writer").is_some() && Instant::now() < deadline {
         std::thread::yield_now();
     }
     assert_eq!(terminate_count.load(Ordering::SeqCst), 1);

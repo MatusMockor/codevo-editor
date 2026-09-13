@@ -269,11 +269,35 @@ export function agentFollowUpBlockedReason(
   if (view.thread.provider.kind !== context.agentCliKind) {
     return `This thread was started with ${agentCliKindLabel(view.thread.provider.kind)}; start a new thread.`;
   }
+  if (view.execution?.kind === "remote") {
+    return remoteFollowUpBlockedReason(view.execution.resume, context);
+  }
   if (view.thread.provider.sessionId === null) {
     return "This thread has no resumable session; start a new thread.";
   }
   if (!context.agentCliConfigured) {
     return "No agent CLI is configured. Set the agent CLI path in settings.";
+  }
+  if (context.liveTaskCount >= context.maxConcurrentAgentTasks) {
+    return "The shared parallel thread limit is reached. Wait for a thread to finish or stop one.";
+  }
+  return null;
+}
+
+function remoteFollowUpBlockedReason(
+  resume: NonNullable<AgentThreadView["execution"]>["resume"],
+  context: AgentFollowUpContext,
+): string | null {
+  if (resume === null) return "Checking whether this server conversation can continue…";
+  if (!resume.available) {
+    switch (resume.reason) {
+      case "task_not_finished":
+        return "This thread is still running. Wait for the turn to finish.";
+      case "session_unavailable":
+        return "The server cannot resume this conversation. Start a new thread.";
+      case "newer_turn_exists":
+        return "A newer turn exists on the server. Refresh this thread before continuing.";
+    }
   }
   if (context.liveTaskCount >= context.maxConcurrentAgentTasks) {
     return "The shared parallel thread limit is reached. Wait for a thread to finish or stop one.";

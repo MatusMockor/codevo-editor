@@ -58,6 +58,24 @@ describe("useAgentThreadMenuCommands", () => {
     Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
   });
 
+  it("does not forward server project actions to local project controls", () => {
+    const revealPath = vi.fn(async () => undefined);
+    const onTrustProject = vi.fn();
+    const onCloseProject = vi.fn();
+    const onReleaseProject = vi.fn();
+    render({ revealPath, onTrustProject, onCloseProject, onReleaseProject });
+    const remote = { ...PROJECT_TARGET, projectRootKey: "remote:server:project" };
+    for (const command of ["trust", "close", "release", "reveal", "terminalSessions"] as const) {
+      act(() => current().handleProjectCommand(remote, command));
+    }
+    expect(revealPath).not.toHaveBeenCalled();
+    expect(onTrustProject).not.toHaveBeenCalled();
+    expect(onCloseProject).not.toHaveBeenCalled();
+    expect(onReleaseProject).not.toHaveBeenCalled();
+    expect(terminalSessions).toEqual([]);
+    expect(notices).toHaveLength(5);
+  });
+
   it("routes project commands to trust, close, release, reveal, and copy", async () => {
     const writeText = installClipboard(async () => undefined);
     const onTrustProject = vi.fn();

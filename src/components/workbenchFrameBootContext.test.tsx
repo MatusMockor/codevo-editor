@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { act, useState } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   WORKBENCH_SURFACE_ENTER_CLASS,
+  WORKBENCH_SURFACE_ENTER_TIMEOUT_MS,
   WorkbenchFrameBootContext,
   useSurfaceEnterClass,
   useWorkbenchFrameBooted,
@@ -31,8 +32,16 @@ function agentDeclaration(selector: string, property: string): string | undefine
 }
 
 let host: HTMLElement | null = null;
+let root: Root | null = null;
+beforeEach(() => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  vi.useFakeTimers();
+});
 
 afterEach(() => {
+  act(() => root?.unmount());
+  root = null;
+  vi.useRealTimers();
   host?.remove();
   host = null;
 });
@@ -59,7 +68,8 @@ function render(mountLate: boolean): HTMLElement {
   document.body.append(container);
   host = container;
   act(() => {
-    createRoot(container).render(<Frame mountLate={mountLate} />);
+    root = createRoot(container);
+    root.render(<Frame mountLate={mountLate} />);
   });
   return container;
 }
@@ -92,6 +102,27 @@ describe("workbench frame boot phase", () => {
     });
 
     expect(container.querySelector(".surface")?.className).toBe("surface");
+  });
+
+  it("clears a stalled entrance without waiting for animationend and never retriggers it", () => {
+    const container = render(true);
+    act(() => container.querySelector("button")?.click());
+    expect(
+      container.querySelector(".surface")?.classList.contains(WORKBENCH_SURFACE_ENTER_CLASS),
+    ).toBe(true);
+    act(() => vi.advanceTimersByTime(WORKBENCH_SURFACE_ENTER_TIMEOUT_MS));
+    expect(container.querySelector(".surface")?.className).toBe("surface");
+    act(() => container.querySelector("button")?.click());
+    expect(container.querySelector(".surface")?.className).toBe("surface");
+  });
+
+  it("releases the entrance deadline when the surface unmounts", () => {
+    const container = render(true);
+    act(() => container.querySelector("button")?.click());
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => root?.unmount());
+    root = null;
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("gates the agent enter animation on the enter class only", () => {

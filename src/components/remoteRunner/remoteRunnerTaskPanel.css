@@ -1,0 +1,177 @@
+.remote-task {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  color: var(--color-text);
+}
+.remote-task__history {
+  width: 230px;
+  flex-shrink: 0;
+  overflow: auto;
+  background: var(--color-panel);
+  padding: 16px;
+}
+.remote-task__history p,
+.remote-task small,
+.remote-task__diff p {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.remote-task__heading,
+.remote-task__controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.remote-task__heading {
+  justify-content: space-between;
+}
+.remote-task button {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: var(--color-control);
+  color: inherit;
+  padding: 7px 10px;
+  border-radius: 6px;
+}
+.remote-task button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.remote-task button:focus-visible,
+.remote-task textarea:focus-visible,
+.remote-task select:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.remote-task .remote-task__history-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  width: 100%;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+.remote-task__history-item[aria-pressed="true"] {
+  background: var(--color-accent-soft);
+}
+.remote-task__main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.remote-task__conversation {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+}
+.remote-task__empty {
+  max-width: 600px;
+  margin: 12vh auto;
+}
+.remote-task__prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 8px 14px;
+  margin: 16px 0;
+  border-radius: 8px;
+  background: var(--color-control);
+}
+.remote-task__output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.6;
+}
+.remote-task__diff {
+  margin-top: 20px;
+  padding-top: 16px;
+}
+.remote-task__diff pre {
+  overflow: auto;
+  max-height: 320px;
+  font-size: 12px;
+}
+.remote-task__composer {
+  background: var(--color-panel);
+  margin: 12px 24px 24px;
+  padding: 14px;
+  border: 0;
+  border-radius: 12px;
+}
+.remote-task__composer textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 90px;
+  max-height: 240px;
+  margin: 12px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.remote-task__controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+}
+.remote-task__controls select {
+  max-width: 260px;
+  background: var(--color-control);
+  color: inherit;
+  border: 0;
+  padding: 6px;
+  border-radius: 5px;
+}
+.remote-task__composer > small {
+  display: block;
+  margin-top: 10px;
+}
+.remote-task__images {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+.remote-task__images > div {
+  position: relative;
+}
+.remote-task__images img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.remote-task__images button {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  padding: 2px;
+}
+@media (max-width: 700px) {
+  .remote-task {
+    flex-direction: column;
+  }
+  .remote-task__history {
+    width: auto;
+    max-height: 140px;
+    border-right: none;
+  }
+  .remote-task__conversation {
+    padding: 16px;
+  }
+  .remote-task__composer {
+    background: var(--color-panel);
+    margin: 8px 12px 12px;
+  }
+}

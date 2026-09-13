@@ -2,6 +2,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TauriRemoteRunnerGateway } from "../../infrastructure/tauriRemoteRunnerGateway";
+import { RemoteRunnerProvider } from "../remoteRunner/RemoteRunnerProvider";
 import {
   AgentExecutionEnvironmentPicker,
   type AgentExecutionEnvironmentPickerProps,
@@ -37,6 +39,59 @@ describe("AgentExecutionEnvironmentPicker", () => {
     expect(host.querySelector('[role="menu"]')).not.toBeNull();
     expect(onOpenEnvironmentSettings).not.toHaveBeenCalled();
     expect(trigger().textContent).toBe("This computer");
+  });
+
+  it("selects a connected server through shared context and returns to the local default", async () => {
+    const gateway = new TauriRemoteRunnerGateway(
+      vi.fn().mockResolvedValue([
+        {
+          id: "linux",
+          name: "Linux server",
+          host: "192.168.1.110",
+          username: "codex",
+          port: 22,
+          connected: true,
+        },
+        {
+          id: "offline",
+          name: "Offline server",
+          host: "192.168.1.111",
+          username: "codex",
+          port: 22,
+          connected: false,
+        },
+      ]),
+    );
+    await act(async () =>
+      root.render(
+        <RemoteRunnerProvider gateway={gateway}>
+          <AgentExecutionEnvironmentPicker
+            disabled={false}
+            locked={false}
+            onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+          />
+        </RemoteRunnerProvider>,
+      ),
+    );
+    expect(trigger().textContent).toBe("This computer");
+    click(trigger());
+    const options = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+    const offline = options.find((option) => option.textContent?.includes("Offline server"));
+    expect(offline?.disabled).toBe(true);
+    click(offline!);
+    expect(trigger().textContent).toBe("This computer");
+    click(options.find((option) => option.textContent?.includes("Linux server"))!);
+    expect(trigger().textContent).toBe("Linux server");
+    expect(host.querySelector('[role="menu"]')).toBeNull();
+    click(trigger());
+    expect(host.querySelector('[aria-checked="true"]')?.textContent).toContain("Linux server");
+    click(
+      Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find(
+        (option) => option.textContent?.includes("This computer"),
+      )!,
+    );
+    expect(trigger().textContent).toBe("This computer");
+    expect(onOpenEnvironmentSettings).not.toHaveBeenCalled();
   });
 
   it("focuses the local option, skips unavailable server, and restores focus on Escape", () => {
@@ -84,6 +139,15 @@ describe("AgentExecutionEnvironmentPicker", () => {
     expect(trigger().disabled).toBe(true);
     render({ locked: true });
     expect(host.querySelector("button")).toBeNull();
+    expect(host.textContent).toBe("This computer");
+  });
+
+  it("keeps an existing server task locked to its execution environment", () => {
+    render({ locked: true, executionServerId: "linux" });
+    expect(host.querySelector("button")).toBeNull();
+    expect(host.textContent).toBe("Server");
+    expect(host.querySelector('[title="This task runs on Server"]')).not.toBeNull();
+    render({ locked: true, executionServerId: null });
     expect(host.textContent).toBe("This computer");
   });
 

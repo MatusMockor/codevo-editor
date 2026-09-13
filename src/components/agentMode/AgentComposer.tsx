@@ -69,6 +69,7 @@ export interface AgentComposerSubmission {
 }
 
 export interface AgentComposerProps {
+  readonly executionServerId?: string | null;
   readonly attachments?: AgentComposerAttachmentsSurface | null;
   readonly attachmentTargetKey?: string | null;
   readonly attachmentPicker?: AgentComposerFilePicker;
@@ -104,6 +105,7 @@ export interface AgentComposerProps {
 }
 
 export function AgentComposer({
+  executionServerId = null,
   attachments = null,
   attachmentTargetKey = null,
   attachmentPicker = openAgentAttachmentPicker,
@@ -159,7 +161,10 @@ export function AgentComposer({
       ),
     [launch, launchProvider],
   );
-  const discovery = providerManagement?.cliDiscovery[normalizedLaunch.provider];
+  const discovery =
+    executionServerId === null
+      ? providerManagement?.cliDiscovery[normalizedLaunch.provider]
+      : undefined;
   const configuredModel =
     discovery?.kind === "detected" ? (discovery.configuredModel ?? null) : null;
   const effectiveLaunch = useMemo(
@@ -299,7 +304,7 @@ export function AgentComposer({
         onLaunchChange={onLaunchChange}
         presentation={compact ? { kind: "compact", checkout: null } : { kind: "inline" }}
         providerEnabled={providerEnabled}
-        providerManagement={providerManagement}
+        providerManagement={executionServerId === null ? providerManagement : null}
         providerSwitchable={!followUp}
       />
     ),
@@ -315,6 +320,7 @@ export function AgentComposer({
       compact,
       providerEnabled,
       providerManagement,
+      executionServerId,
       followUp,
     ],
   );
@@ -554,6 +560,7 @@ export function AgentComposer({
             <AgentExecutionEnvironmentPicker
               disabled={dispatching}
               locked={followUp}
+              executionServerId={executionServerId}
               onOpenEnvironmentSettings={onOpenEnvironmentSettings}
             />
             <span aria-hidden="true" className="agent-composer__divider" />

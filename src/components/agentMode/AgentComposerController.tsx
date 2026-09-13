@@ -12,6 +12,7 @@ import {
 } from "./useAgentComposerState";
 
 export interface AgentComposerControllerProps {
+  readonly executionServerId?: string | null;
   readonly compactionOffer?: AgentContextCompactionOffer | null;
   readonly composerProps: AgentComposerPresentation;
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
@@ -24,6 +25,7 @@ export interface AgentComposerControllerProps {
 }
 
 export const AgentComposerController = memo(function AgentComposerController({
+  executionServerId = null,
   compactionOffer = null,
   composerProps,
   modelFavoritesPersistence = null,
@@ -45,6 +47,7 @@ export const AgentComposerController = memo(function AgentComposerController({
   return (
     <AgentComposer
       {...controlledProps}
+      executionServerId={executionServerId}
       compactionOffer={compactionOffer}
       modelFavoritesPersistence={modelFavoritesPersistence}
       onOpenProviderSettings={onOpenProviderSettings}
@@ -63,6 +66,7 @@ function agentComposerControllerPropsEqual(
   const leftProps = left.composerProps;
   const rightProps = right.composerProps;
   return (
+    left.executionServerId === right.executionServerId &&
     left.compactionOffer?.key === right.compactionOffer?.key &&
     left.modelFavoritesPersistence === right.modelFavoritesPersistence &&
     left.onOpenProviderSettings === right.onOpenProviderSettings &&

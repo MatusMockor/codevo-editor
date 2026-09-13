@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from "vite";
+import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 // @ts-expect-error the perf autorun relay is a plain .mjs script module
 import { createPerfAutorunVitePlugin } from "./scripts/perf/perfAutorunVitePlugin.mjs";
@@ -68,6 +69,8 @@ export default defineConfig(async ({ mode }) => {
     },
 
     test: {
+      // Native integration tests create temporary JS projects below Cargo's target directory.
+      exclude: [...configDefaults.exclude, "src-tauri/target/**"],
       execArgv: [
         "--max-old-space-size=6144",
         ...(process.allowedNodeEnvironmentFlags.has("--no-experimental-webstorage")

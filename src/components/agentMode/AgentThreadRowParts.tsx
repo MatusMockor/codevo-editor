@@ -1,5 +1,12 @@
 import { useState, type ComponentType, type KeyboardEvent } from "react";
-import { CircleCheck, CircleDashed, CircleStop, CircleX, type LucideProps } from "lucide-react";
+import {
+  CircleCheck,
+  CircleDashed,
+  CircleStop,
+  CircleX,
+  Server,
+  type LucideProps,
+} from "lucide-react";
 import { AgentCompactRelativeTime, AgentWorkingDuration } from "./agentClock";
 import { agentRowStatusLabel, type AgentRowStatus } from "./agentSidebarPresentation";
 
@@ -83,5 +90,19 @@ export function RenameInput({
       type="text"
       value={value}
     />
+  );
+}
+
+export function RemoteThreadIndicator() {
+  return (
+    <span
+      aria-label="Runs on server"
+      className="agent-row__icon"
+      role="img"
+      style={{ display: "inline-flex", alignSelf: "center", marginInlineEnd: 4 }}
+      title="Runs on server"
+    >
+      <Server aria-hidden="true" size={13} />
+    </span>
   );
 }
