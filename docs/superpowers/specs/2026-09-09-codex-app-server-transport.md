@@ -321,3 +321,34 @@ Full gates before completion: `npm run check`, `npm run lint -- --max-warnings 0
 11. Idle six minutes: the host exits and the next turn restarts it transparently.
 12. Kill the host mid-turn: the turn settles failed with a truthful message and a
     working retry.
+
+## 12. Steering and queued turns (added 2026-09-14)
+
+Companion: `2026-09-14-agent-turn-steering-design.md`. Measured against
+codex-cli 0.154 (`codex app-server generate-json-schema`).
+
+- The method enum gains `turn/steer` (`TurnSteerParams { threadId, expectedTurnId,
+  input, clientUserMessageId }`, response `{ turnId }`) and the notification
+  `thread/queue/changed { threadId }`.
+- `CodexTurnChild` implements the steering `AgentTaskInput` seam: `write_frame`
+  carries a `UserInput[]` payload instead of raw bytes, so `AgentTaskInput` is
+  generic over a closed `AgentTaskInputFrame::{Bytes(Arc<[u8]>), CodexInput(Vec<UserInput>)}`.
+  The host sends `turn/steer` with `expectedTurnId` = the id from the root
+  `turn/started`; `clientUserMessageId` is the steer event id minted by the
+  frontend, so the projection can dedupe the echoed user item.
+- On `activeTurnNotSteerable` (`/review`, `/compact`) the host sends `turn/start`
+  for the same input; app-server queues it and reports `thread/queue/changed`.
+  The projection emits `queued{clientUserMessageId}` and the frontend marks the
+  bubble "Queued". The queued turn starts as a new `turn/started` on the same
+  thread: the host adopts it as the next `AgentTurn` only after the current one
+  completes, using the existing follow-up path with the thread id; no second
+  process.
+- Other JSON-RPC errors on `turn/steer` map to `writeFailed` with the message
+  bounded.
+- `turn/interrupt` still targets the active turn id only; queued submissions are
+  left to app-server and reported once as a bounded notice when the host
+  observes them at interrupt time.
+- Line references in sections 1 to 4 predate the attachment work
+  (`agent_task_spawner.rs` now carries `attachment_args`, the Claude stdin frame
+  builder and the retained input from the steering spec); implementers must
+  re-derive them from `main`.
