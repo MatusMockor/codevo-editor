@@ -7,10 +7,37 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.40] - 2026-09-14
+
 ### Added
 
+- Send a message to a running local agent without starting a separate conversation,
+  with ordered follow-ups and a Stop control in the composer.
+- Use the Codex app-server transport for local conversations, including resumed
+  sessions, structured progress, subagent activity and usage details. The previous
+  command-line transport remains selectable in Settings > Agents.
 - Give Claude threads on this computer the Claude in Chrome browser tools, on by
   default and switchable per thread under Browser in the model capabilities menu.
+
+### Fixed
+
+- Keep the final Codex response visible below collapsed work details when its
+  completion event contains no text.
+- Send selected remote image attachments as image data instead of local paths,
+  and discard stale selections when the destination conversation changes.
+- Stop local task-owned processes reliably and retire idle app-server hosts.
+- Persist the replacement local session when provider history is unavailable,
+  so subsequent messages continue the recovered conversation.
+- Apply updated provider executables after the existing host is safely retired.
+
+### Limitations
+
+- Messages to an already running agent are supported for local threads. Server
+  threads still require the current turn to finish before a follow-up.
+- Remote image drag-and-drop remains unsupported; use the paperclip or paste.
+  Native file-picker verification remains incomplete because the macOS dialog
+  did not allow the selected test file to be opened during automated testing.
+- Opening server files for editing and server terminals is not supported yet.
 
 ## [0.2.0-beta.39] - 2026-09-13
 
