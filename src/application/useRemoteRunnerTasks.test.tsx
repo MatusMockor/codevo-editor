@@ -381,6 +381,50 @@ describe("remote session continuation", () => {
     }));
     return gw;
   }
+  it("keeps the replay cursor across status updates and checks resume only at completion", async () => {
+    vi.useFakeTimers();
+    const gw = continuableGateway();
+    gw.listTasks.mockResolvedValue({ items: [{ ...task(), status: "queued" }], nextCursor: null });
+    gw.getTask.mockResolvedValueOnce({ ...task(), status: "running" });
+    gw.listEvents.mockImplementation(
+      async ({ taskId, after }: { taskId: string; after: number }) => ({
+        items: [
+          {
+            sequence: after + 1,
+            taskId,
+            type: "task.output",
+            text: `chunk ${after + 1}`,
+            createdAt: "2026-09-13T00:00:00Z",
+          },
+        ],
+        nextCursor: null,
+      }),
+    );
+    const hook = await render(gw);
+    expect(hook.current().selectedTask?.status).toBe("running");
+    expect(gw.getTask).toHaveBeenCalledTimes(1);
+    expect(gw.getTaskResume).not.toHaveBeenCalled();
+    await hook.workspace("A");
+    expect(gw.getTask).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(hook.current().selectedTask?.status).toBe("succeeded");
+    expect(hook.current().events.map((event) => event.text)).toEqual(["chunk 1", "chunk 2"]);
+    expect(gw.listEvents).toHaveBeenNthCalledWith(2, {
+      serverId: "server-1",
+      taskId: "task-1",
+      after: 1,
+    });
+    expect(gw.getTaskResume).toHaveBeenCalledTimes(1);
+    expect(hook.current().resume?.available).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+    expect(gw.getTask).toHaveBeenCalledTimes(2);
+    expect(gw.getTaskResume).toHaveBeenCalledTimes(1);
+  });
+
   it("continues the original provider and project without creating a fresh draft", async () => {
     const gw = continuableGateway();
     const hook = await render(gw);

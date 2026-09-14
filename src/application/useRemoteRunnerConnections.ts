@@ -29,11 +29,12 @@ export function useRemoteRunnerConnections({
   const renderOwner = owner.current;
   const mounted = useRef(false);
   const operation = useRef(0);
+  const nextOperation = useCallback(() => ++operation.current, []);
   const busy = useRef(false);
   const refresh = useCallback(async () => {
     if (busy.current || owner.current !== renderOwner || !mounted.current) return;
     const captured = renderOwner;
-    const sequence = ++operation.current;
+    const sequence = nextOperation();
     const current = () =>
       mounted.current && owner.current === captured && operation.current === sequence;
     setStatus("loading");
@@ -48,7 +49,7 @@ export function useRemoteRunnerConnections({
       setError(message(failure));
       setStatus("error");
     }
-  }, [gateway, renderOwner]);
+  }, [gateway, renderOwner, nextOperation]);
   useEffect(() => {
     mounted.current = true;
     busy.current = false;
@@ -56,15 +57,15 @@ export function useRemoteRunnerConnections({
     void refresh();
     return () => {
       mounted.current = false;
-      operation.current++;
+      nextOperation();
     };
-  }, [refresh]);
+  }, [refresh, nextOperation]);
 
   const mutate = useCallback(
     async (action: () => Promise<readonly RemoteRunnerServer[] | RemoteRunnerServer | null>) => {
       if (busy.current || !mounted.current || owner.current !== renderOwner) return null;
       const captured = renderOwner;
-      const sequence = ++operation.current;
+      const sequence = nextOperation();
       const current = () =>
         mounted.current && owner.current === captured && operation.current === sequence;
       busy.current = true;
@@ -88,14 +89,14 @@ export function useRemoteRunnerConnections({
         if (current()) busy.current = false;
       }
     },
-    [renderOwner],
+    [renderOwner, nextOperation],
   );
   const connect = useCallback(
     async (input: RemoteRunnerServerInput) => {
       const result = await mutate(() => gateway.connectServer(input));
       return result !== null && !Array.isArray(result) ? (result as RemoteRunnerServer) : null;
     },
-    [gateway, mutate, renderOwner],
+    [gateway, mutate],
   );
   const disconnect = useCallback(
     async (serverId: string) => {

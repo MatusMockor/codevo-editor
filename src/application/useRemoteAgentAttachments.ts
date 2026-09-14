@@ -55,11 +55,12 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
     [ownerIsCurrent],
   );
   useEffect(() => {
+    const ownedRegistry = registry.current;
     mounted.current = true;
     return () => {
       mounted.current = false;
       store.clear();
-      registry.current.clear();
+      ownedRegistry.clear();
     };
   }, [store]);
   const imagesGateway = useMemo<AgentAttachmentGateway>(

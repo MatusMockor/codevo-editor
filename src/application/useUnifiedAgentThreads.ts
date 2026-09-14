@@ -223,6 +223,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     attachmentValues,
   ]);
   const projections = useRef(new Map<string, RemoteAgentProjection>());
+  const projectMetadata = metadata.project;
   const projected = useMemo(() => {
     const views: AgentThreadView[] = [];
     const nextProjections = new Map<string, RemoteAgentProjection>();
@@ -243,7 +244,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
           runnerId: snapshot.descriptor.runnerId,
           attachmentsByTask,
         })) {
-          const presented = metadata.project(view);
+          const presented = projectMetadata(view);
           if (presented) views.push(presented);
         }
       } catch (failure) {
@@ -254,7 +255,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       }
     }
     return { views, error, nextProjections };
-  }, [inventory.snapshots, metadata.project, attachmentValues]);
+  }, [inventory.snapshots, projectMetadata, attachmentValues]);
   useLayoutEffect(() => {
     projections.current = projected.nextProjections;
   }, [projected]);

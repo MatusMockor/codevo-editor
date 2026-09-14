@@ -33,12 +33,10 @@ async function setup() {
   const gateway = {
     getRunner: vi.fn().mockResolvedValue(descriptor),
     listProjects: vi.fn().mockResolvedValue({ items: [] }),
-    listTasks: vi
-      .fn()
-      .mockImplementation(async ({ after }: { after: number }) => ({
-        items: after === 0 ? [task] : [],
-        nextCursor: null,
-      })),
+    listTasks: vi.fn().mockImplementation(async ({ after }: { after: number }) => ({
+      items: after === 0 ? [task] : [],
+      nextCursor: null,
+    })),
   };
   let surface: RemoteAgentInventorySurface;
   const root = createRoot(document.createElement("div"));

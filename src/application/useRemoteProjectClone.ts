@@ -24,6 +24,9 @@ export function useRemoteProjectClone({ gateway, serverId, workspaceOwner }: Opt
   const captured = owner.current;
   const mounted = useRef(false);
   const sequence = useRef(0);
+  const invalidatePending = useCallback(() => {
+    sequence.current++;
+  }, []);
   const lock = useRef(false);
   const request = useRef<{ input: Input; key: string } | null>(null);
   const [job, setJob] = useState<RemoteRunnerCloneJob | null>(null);
@@ -41,9 +44,9 @@ export function useRemoteProjectClone({ gateway, serverId, workspaceOwner }: Opt
     setPending(false);
     return () => {
       mounted.current = false;
-      sequence.current++;
+      invalidatePending();
     };
-  }, [captured]);
+  }, [captured, invalidatePending]);
 
   useEffect(() => {
     if (!cloneId || !polling || pending) return;
@@ -75,7 +78,7 @@ export function useRemoteProjectClone({ gateway, serverId, workspaceOwner }: Opt
   async function start(input: Input) {
     if (!valid() || lock.current || active(job)) return;
     lock.current = true;
-    sequence.current++;
+    invalidatePending();
     setPending(true);
     setError(null);
     if (!request.current || JSON.stringify(request.current.input) !== JSON.stringify(input) || job)
@@ -102,7 +105,7 @@ export function useRemoteProjectClone({ gateway, serverId, workspaceOwner }: Opt
   async function cancel() {
     if (!valid() || lock.current || !job || !active(job)) return;
     lock.current = true;
-    sequence.current++;
+    invalidatePending();
     setPending(true);
     setError(null);
     try {

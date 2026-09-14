@@ -30,9 +30,10 @@ function RemoteTaskSession({
   const flow = useRemoteRunnerTasks({ gateway, serverId, workspaceOwner });
   const [projectId, setProjectId] = useState("");
   const [clonedProjectId, setClonedProjectId] = useState<string | null>(null);
+  const { busy: taskBusy, refresh } = flow;
   useEffect(() => {
-    if (clonedProjectId && !flow.busy) void flow.refresh();
-  }, [clonedProjectId, flow.busy, flow.refresh]);
+    if (clonedProjectId && !taskBusy) void refresh();
+  }, [clonedProjectId, taskBusy, refresh]);
   useEffect(() => {
     if (clonedProjectId && flow.projects.some((project) => project.id === clonedProjectId)) {
       setProjectId(clonedProjectId);

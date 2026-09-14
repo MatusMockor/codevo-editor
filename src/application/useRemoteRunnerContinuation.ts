@@ -54,17 +54,16 @@ export function useRemoteRunnerContinuation(options: Options) {
   const [resume, setResume] = useState<RemoteRunnerTaskResume | null>(null);
   const [uncertain, setUncertain] = useState(false);
   const [revision, setRevision] = useState(0);
-  const status = selectedTask?.status;
+  const terminal = selectedTask !== null && isRemoteTaskTerminal(selectedTask);
   const taskId = selectedTask?.id;
   useEffect(() => {
     setResume(null);
     setUncertain(pending.current !== null);
-    if (!supported || !selectedTask || !isRemoteTaskTerminal(selectedTask) || serverId === null)
-      return;
+    if (!supported || taskId === undefined || !terminal || serverId === null) return;
     let disposed = false;
     const selected = selection.current;
     const current = () => !disposed && valid(owner) && selection.current === selected;
-    void gateway.getTaskResume({ serverId, taskId: selectedTask.id }).then(
+    void gateway.getTaskResume({ serverId, taskId }).then(
       (result) => {
         if (current()) setResume(result);
       },
@@ -78,7 +77,7 @@ export function useRemoteRunnerContinuation(options: Options) {
     return () => {
       disposed = true;
     };
-  }, [gateway, serverId, owner, supported, taskId, status, revision, selection, valid, setError]);
+  }, [gateway, serverId, owner, supported, taskId, terminal, revision, selection, valid, setError]);
 
   const continueTask = useCallback(
     async (input?: RemoteRunnerSubmission): Promise<RemoteRunnerTask | null> => {

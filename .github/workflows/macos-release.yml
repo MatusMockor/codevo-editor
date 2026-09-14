@@ -46,6 +46,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v6
@@ -55,6 +57,23 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Check release TypeScript formatting
+        run: |
+          format_base="$(git describe --tags --match 'v[0-9]*' --abbrev=0 HEAD^)"
+          npm run format:check:changed -- "$format_base"
+
+      - name: Lint TypeScript and React
+        run: npm run lint -- --max-warnings 0
+
+      - name: Check React hook dependency debt
+        run: npm run lint:exhaustive-deps
+
+      - name: Check source hotspot sizes
+        run: npm run size:hotspots
 
       - name: TypeScript check
         run: npm run check

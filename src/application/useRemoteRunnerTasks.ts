@@ -178,6 +178,11 @@ export function useRemoteRunnerTasks({
     }
   }, [gateway, serverId, isCurrent, choose, renderOwner]);
 
+  const invalidatePending = useCallback(() => {
+    selection.current++;
+    refreshSequence.current++;
+  }, []);
+
   useEffect(() => {
     mounted.current = true;
     mutation.current = false;
@@ -197,16 +202,17 @@ export function useRemoteRunnerTasks({
     void refresh();
     return () => {
       mounted.current = false;
-      selection.current++;
-      refreshSequence.current++;
+      invalidatePending();
     };
-  }, [refresh, workspaceOwner]);
+  }, [refresh, workspaceOwner, invalidatePending]);
 
+  const selectedTaskId = selectedTask?.id;
+  const selectedRunnerId = selectedTask?.runnerId;
   useEffect(() => {
-    if (serverId === null || selectedTask === null || active.current?.id !== selectedTask.id)
+    if (serverId === null || selectedTaskId === undefined || active.current?.id !== selectedTaskId)
       return;
     const captured = renderOwner;
-    const taskId = selectedTask.id;
+    const taskId = selectedTaskId;
     const selected = selection.current;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -219,7 +225,7 @@ export function useRemoteRunnerTasks({
       try {
         const task = await gateway.getTask({ serverId, taskId });
         if (!valid()) return;
-        if (task.id !== taskId || task.runnerId !== selectedTask.runnerId)
+        if (task.id !== taskId || task.runnerId !== selectedRunnerId)
           throw new Error("The runner returned a different task.");
         publishTask(task);
         try {
@@ -278,7 +284,16 @@ export function useRemoteRunnerTasks({
       if (timer !== undefined) clearTimeout(timer);
     };
     // A status update must not restart event replay; only a selection/reconnect does.
-  }, [gateway, serverId, workspaceOwner, selectedTask?.id, pollRevision, isCurrent, publishTask]);
+  }, [
+    gateway,
+    serverId,
+    renderOwner,
+    selectedTaskId,
+    selectedRunnerId,
+    pollRevision,
+    isCurrent,
+    publishTask,
+  ]);
 
   const loadMore = useCallback(async () => {
     if (!isCurrent(renderOwner) || serverId === null || cursor.current === null || loading) return;

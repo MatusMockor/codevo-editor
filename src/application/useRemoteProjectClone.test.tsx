@@ -179,3 +179,18 @@ it("does not start another poll while cancellation is pending", async () => {
     await pending;
   });
 });
+
+it("preserves an active clone and its polling schedule across same-owner renders", async () => {
+  const view = setup();
+  await act(async () => {
+    await view.result.start(input);
+    await vi.advanceTimersByTimeAsync(500);
+  });
+  view.render("a");
+  expect(view.result.job).toEqual(job);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(view.cloneProject).toHaveBeenCalledTimes(1);
+  expect(view.getProjectClone).toHaveBeenCalledTimes(1);
+});

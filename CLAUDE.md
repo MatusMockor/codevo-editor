@@ -322,6 +322,7 @@ Before declaring a slice complete, run all applicable gates:
 ```bash
 npm run check
 npm run lint -- --max-warnings 0
+npm run lint:exhaustive-deps
 npm run build
 npm run size:hotspots
 npm run format:check

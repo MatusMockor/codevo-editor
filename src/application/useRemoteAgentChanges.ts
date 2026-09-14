@@ -85,10 +85,11 @@ export function useRemoteAgentChanges(input: RemoteAgentChangesInput) {
     if (changed) publish();
   });
   useLayoutEffect(() => {
+    const ownedEntries = entries.current;
     mounted.current = true;
     return () => {
       mounted.current = false;
-      entries.current.clear();
+      ownedEntries.clear();
     };
   }, []);
 

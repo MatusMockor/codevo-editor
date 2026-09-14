@@ -544,14 +544,12 @@ describe("remote per-file changes wire", () => {
   });
   it("rejects a valid diff for a different requested file", async () => {
     const gateway = new TauriRemoteRunnerGateway(
-      vi
-        .fn()
-        .mockResolvedValue({
-          path: "other.ts",
-          original: { text: "", truncated: false },
-          modified: { text: "", truncated: false },
-          unavailableReason: null,
-        }),
+      vi.fn().mockResolvedValue({
+        path: "other.ts",
+        original: { text: "", truncated: false },
+        modified: { text: "", truncated: false },
+        unavailableReason: null,
+      }),
     );
     await expect(
       gateway.getTaskFileDiff({ serverId: "linux", taskId: id, path: "expected.ts" }),

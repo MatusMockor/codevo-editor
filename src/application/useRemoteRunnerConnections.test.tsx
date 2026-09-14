@@ -222,6 +222,29 @@ describe("useRemoteRunnerConnections", () => {
     expect(api.listServers).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps callbacks stable on same-owner renders and rejects them after A to B to A", async () => {
+    const first = gateway();
+    const h = await render(first);
+    const connect = h.current().connect;
+    const refresh = h.current().refresh;
+    await h.replace(first);
+    expect(h.current().connect).toBe(connect);
+    expect(h.current().refresh).toBe(refresh);
+    expect(first.listServers).toHaveBeenCalledTimes(1);
+    await h.replace(gateway());
+    await h.replace(first);
+    await act(async () => {
+      expect(await connect(saved)).toBeNull();
+      await refresh();
+    });
+    expect(first.connectServer).not.toHaveBeenCalled();
+    expect(first.listServers).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      expect(await h.current().connect(saved)).toEqual(connected);
+    });
+    expect(first.connectServer).toHaveBeenCalledTimes(1);
+  });
+
   it("reports a failed mutation and allows retry", async () => {
     const api = gateway();
     api.connectServer.mockRejectedValueOnce(new Error("SSH unavailable"));
