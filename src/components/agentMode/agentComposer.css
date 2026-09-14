@@ -261,6 +261,31 @@
   box-shadow: var(--agent-focus-ring);
 }
 
+.agent-composer__stop {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--agent-well);
+  color: var(--agent-text-strong);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-composer__stop:hover {
+  background: var(--agent-hover);
+}
+
+.agent-composer__stop:focus-visible {
+  outline: none;
+  box-shadow: var(--agent-focus-ring);
+}
+
 .agent-composer__send-spinner {
   animation: agent-composer-spin 900ms linear infinite;
 }

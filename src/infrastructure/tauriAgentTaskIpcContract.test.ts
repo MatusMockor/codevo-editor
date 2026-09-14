@@ -4,10 +4,14 @@ import { agentCliBinaryUnavailableMessage } from "../domain/agentCliVersion";
 import {
   AgentTaskStartRejectedError,
   isDefiniteAgentTaskStartRejection,
+  MAX_AGENT_TASK_PROMPT_BYTES,
+  type AgentTaskSteerRejectionReason,
   type StartAgentTaskRequest,
+  type SteerAgentTaskRequest,
 } from "../domain/agentTask";
 import {
   ACKNOWLEDGE_AGENT_TASK_START_IPC_COMMAND,
+  CLOSE_AGENT_TASK_INPUT_IPC_COMMAND,
   AGENT_LAUNCH_PROVIDER_MISMATCH_REJECTION,
   DEFINITE_AGENT_TASK_START_REJECTIONS,
   AGENT_TASK_OUTPUT_EVENT,
@@ -15,10 +19,13 @@ import {
   decodeAgentTaskOutputEvent,
   decodeAgentTaskStatusEvent,
   invokeAcknowledgeAgentTaskStartIpc,
+  invokeCloseAgentTaskInputIpc,
   invokeStartAgentTaskIpc,
+  invokeSteerAgentTaskIpc,
   invokeStopAgentTaskIpc,
   invokeStopAgentTasksForRootIpc,
   START_AGENT_TASK_IPC_COMMAND,
+  STEER_AGENT_TASK_IPC_COMMAND,
   STOP_AGENT_TASK_IPC_COMMAND,
   STOP_AGENT_TASKS_FOR_ROOT_IPC_COMMAND,
   type InvokeAgentTaskCommand,
@@ -46,6 +53,8 @@ describe("agent task IPC command names", () => {
     expect(ACKNOWLEDGE_AGENT_TASK_START_IPC_COMMAND).toBe("acknowledge_agent_task_start");
     expect(STOP_AGENT_TASK_IPC_COMMAND).toBe("stop_agent_task");
     expect(STOP_AGENT_TASKS_FOR_ROOT_IPC_COMMAND).toBe("stop_agent_tasks_for_root");
+    expect(STEER_AGENT_TASK_IPC_COMMAND).toBe("steer_agent_task");
+    expect(CLOSE_AGENT_TASK_INPUT_IPC_COMMAND).toBe("close_agent_task_input");
     expect(AGENT_TASK_STATUS_EVENT).toBe("agent-task://status");
     expect(AGENT_TASK_OUTPUT_EVENT).toBe("agent-task://output");
   });
@@ -360,5 +369,142 @@ describe("agent task event decoders", () => {
   it("rejects unknown wire fields", () => {
     expect(() => decodeAgentTaskStatusEvent({ status: "running" })).toThrow(TypeError);
     expect(() => decodeAgentTaskOutputEvent({ taskId: "agt-1-0a1b" })).toThrow(TypeError);
+  });
+});
+
+const STEER_REJECTION_REASONS: ReadonlyArray<AgentTaskSteerRejectionReason> = [
+  "notRegistered",
+  "notRunning",
+  "stopping",
+  "inputClosed",
+  "inputUnavailable",
+  "notSteerable",
+  "limitExceeded",
+  "writeTimedOut",
+  "writeFailed",
+];
+
+const STEER_REQUEST: SteerAgentTaskRequest = {
+  taskId: "agt-1-0a1b",
+  workspaceId: "ws-1",
+  threadId: "agt-1-0a1c",
+  prompt: "also fix the lint",
+};
+
+describe("invokeSteerAgentTaskIpc", () => {
+  it("sends the validated request and accepts a null acknowledgement", async () => {
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockResolvedValue(null);
+
+    await expect(invokeSteerAgentTaskIpc(invokeCommand, STEER_REQUEST)).resolves.toEqual({
+      kind: "accepted",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith(STEER_AGENT_TASK_IPC_COMMAND, {
+      request: STEER_REQUEST,
+    });
+  });
+
+  it("decodes every rejection reason into a typed steer result", async () => {
+    for (const reason of STEER_REJECTION_REASONS) {
+      const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue({ reason });
+
+      await expect(invokeSteerAgentTaskIpc(invokeCommand, STEER_REQUEST)).resolves.toEqual({
+        kind: "rejected",
+        rejection: { reason },
+      });
+    }
+  });
+
+  it("rethrows a transport failure that is not a rejection object", async () => {
+    const transportFailure = new Error("the webview lost the backend");
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue(transportFailure);
+
+    await expect(invokeSteerAgentTaskIpc(invokeCommand, STEER_REQUEST)).rejects.toBe(
+      transportFailure,
+    );
+
+    const unknownReason = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue({ reason: "wedged" });
+    await expect(invokeSteerAgentTaskIpc(unknownReason, STEER_REQUEST)).rejects.toEqual({
+      reason: "wedged",
+    });
+  });
+
+  it("refuses an invalid steer before reaching the transport", async () => {
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>();
+
+    await expect(
+      invokeSteerAgentTaskIpc(invokeCommand, { ...STEER_REQUEST, taskId: "../escape" }),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      invokeSteerAgentTaskIpc(invokeCommand, {
+        ...STEER_REQUEST,
+        prompt: "p".repeat(MAX_AGENT_TASK_PROMPT_BYTES + 1),
+      }),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      invokeSteerAgentTaskIpc(invokeCommand, {
+        ...STEER_REQUEST,
+        turnId: "agt-1-0a1b",
+      } as unknown as SteerAgentTaskRequest),
+    ).rejects.toThrow(TypeError);
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-null acknowledgement", async () => {
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockResolvedValue({ ok: true });
+
+    await expect(invokeSteerAgentTaskIpc(invokeCommand, STEER_REQUEST)).rejects.toThrow(TypeError);
+  });
+});
+
+describe("invokeCloseAgentTaskInputIpc", () => {
+  it("swallows the rejections that mean the input is already closed", async () => {
+    for (const reason of ["inputClosed", "notRunning", "notRegistered"] as const) {
+      const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue({ reason });
+
+      await expect(
+        invokeCloseAgentTaskInputIpc(invokeCommand, {
+          taskId: "agt-1-0a1b",
+          workspaceId: "ws-1",
+        }),
+      ).resolves.toBeUndefined();
+      expect(invokeCommand).toHaveBeenCalledWith(CLOSE_AGENT_TASK_INPUT_IPC_COMMAND, {
+        request: { taskId: "agt-1-0a1b", workspaceId: "ws-1" },
+      });
+    }
+  });
+
+  it("rethrows every other rejection and transport failure", async () => {
+    for (const reason of [
+      "stopping",
+      "inputUnavailable",
+      "notSteerable",
+      "limitExceeded",
+      "writeTimedOut",
+      "writeFailed",
+    ] as const) {
+      const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue({ reason });
+
+      await expect(
+        invokeCloseAgentTaskInputIpc(invokeCommand, {
+          taskId: "agt-1-0a1b",
+          workspaceId: "ws-1",
+        }),
+      ).rejects.toEqual({ reason });
+    }
+
+    const transportFailure = new Error("the webview lost the backend");
+    const failing = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue(transportFailure);
+    await expect(
+      invokeCloseAgentTaskInputIpc(failing, { taskId: "agt-1-0a1b", workspaceId: "ws-1" }),
+    ).rejects.toBe(transportFailure);
+  });
+
+  it("refuses an invalid reference before reaching the transport", async () => {
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>();
+
+    await expect(
+      invokeCloseAgentTaskInputIpc(invokeCommand, { taskId: "../escape", workspaceId: "ws-1" }),
+    ).rejects.toThrow(TypeError);
+    expect(invokeCommand).not.toHaveBeenCalled();
   });
 });

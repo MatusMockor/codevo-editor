@@ -22,6 +22,11 @@ export function remoteRunnerOutput(
       case "result":
         line = event.text;
         break;
+      case "queued":
+      case "subagentActivity":
+      case "subagentEvent":
+      case "subagentUsage":
+      case "subagentTurnDone":
       case "reasoning":
         break;
       case "toolCall":
@@ -43,6 +48,11 @@ export function remoteRunnerOutput(
       case "subagent":
         line = event.description ?? "";
         break;
+      case "userMessage":
+        line = event.text;
+        break;
+      default:
+        return unsupportedRemoteRunnerTurnEvent(event);
     }
     if (line) text += `${line}\n\n`;
     if (text.length > MAX_OUTPUT) {
@@ -59,4 +69,8 @@ export function remoteRunnerOutput(
   }
   finishAgentOutput(parser).events.forEach(append);
   return { text: text.trim(), truncated };
+}
+
+function unsupportedRemoteRunnerTurnEvent(event: never): never {
+  throw new TypeError(`Unsupported agent turn event: ${JSON.stringify(event)}.`);
 }

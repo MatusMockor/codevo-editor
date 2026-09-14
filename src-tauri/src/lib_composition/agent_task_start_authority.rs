@@ -14,7 +14,7 @@ use crate::workspace_registry::{
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct AgentTaskProjectAuthority {
     pub(super) descriptor: ManagedWorkspaceDescriptor,
     pub(super) project_root: PathBuf,

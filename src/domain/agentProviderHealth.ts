@@ -1,3 +1,4 @@
+import { parseCodexTransportSettings, type CodexTransportSettings } from "./agentProviderSettings";
 import { parseAgentCliVersion } from "./agentCliVersion";
 import { normalizeAgentCliPath } from "./agentSettings";
 import type { AgentCliKind } from "./agentTask";
@@ -106,7 +107,7 @@ export type AgentProviderAdmissionAuthority =
       };
     };
 
-export interface AgentProviderPolicyRegistrationRequest {
+export interface AgentProviderPolicyRegistrationRequest extends CodexTransportSettings {
   readonly provider: AgentCliKind;
   readonly settingsRevision: number;
   readonly expectedProviderGeneration: number | null;
@@ -123,6 +124,8 @@ export type AgentProviderCurrentPolicyResult =
   | { readonly kind: "unregistered" }
   | {
       readonly kind: "registered";
+      readonly codexTransport?: CodexTransportSettings["codexTransport"];
+      readonly codexAppServerArgs?: readonly string[];
       readonly receipt: AgentProviderPolicyRegistrationReceipt;
       readonly enabled: boolean;
       readonly cliPath: string | null;
@@ -266,10 +269,12 @@ export function validateAgentProviderPolicyRegistrationRequest(
       "enabled",
       "cliPath",
       "checkForUpdates",
+      ...transportKeys(request),
     ],
     "request",
   );
   return {
+    ...validatedTransport(request),
     provider: provider(request.provider, "request.provider"),
     settingsRevision: positiveInteger(request.settingsRevision, "request.settingsRevision"),
     expectedProviderGeneration: optionalPositiveInteger(
@@ -299,9 +304,14 @@ export function parseAgentProviderCurrentPolicyResult(
     return { kind: "unregistered" };
   }
   if (result.kind === "registered") {
-    exactKeys(result, ["kind", "receipt", "enabled", "cliPath", "checkForUpdates"], "result");
+    exactKeys(
+      result,
+      ["kind", "receipt", "enabled", "cliPath", "checkForUpdates", ...transportKeys(result)],
+      "result",
+    );
     return {
       kind: "registered",
+      ...validatedTransport(result),
       receipt: parseAgentProviderPolicyRegistrationReceipt(result.receipt),
       enabled: bool(result.enabled, "result.enabled"),
       cliPath: optionalPath(result.cliPath, "result.cliPath"),
@@ -777,4 +787,14 @@ function object(value: unknown, path: string): Record<string, unknown> {
 
 function invalid(path: string, expectation: string): never {
   throw new TypeError(`Invalid agent provider value at ${path}: ${expectation}.`);
+}
+
+function transportKeys(value: Record<string, unknown>): string[] {
+  return ["codexTransport", "codexAppServerArgs"].filter((key) =>
+    Object.prototype.hasOwnProperty.call(value, key),
+  );
+}
+function validatedTransport(value: Record<string, unknown>): CodexTransportSettings {
+  if (transportKeys(value).length === 0) return {};
+  return parseCodexTransportSettings(value);
 }

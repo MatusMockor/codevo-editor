@@ -239,6 +239,46 @@ describe("agent thread Airy style contract", () => {
     );
   });
 
+  it("dresses the steered and queued bubbles from the prompt ladder without a second bubble rule", () => {
+    expect(RULES.filter((entry) => entry.selectors.includes(".agent-prompt__bubble"))).toHaveLength(
+      1,
+    );
+    expect(winningDeclaration(".agent-queued-list", "gap")).toBe("var(--agent-turn-gap)");
+    expect(winningDeclaration(".agent-prompt__queue", "gap")).toBe("var(--agent-space-3)");
+    expect(winningDeclaration(".agent-prompt__chip", "border-radius")).toBe(
+      "var(--agent-radius-md)",
+    );
+    expect(winningDeclaration(".agent-prompt__chip", "font-size")).toBe("var(--agent-fs-xs)");
+    expect(winningDeclaration(".agent-prompt__chip--queued", "background")).toBe(
+      "var(--agent-well)",
+    );
+    expect(winningDeclaration(".agent-prompt__chip--queued", "color")).toBe(
+      "var(--agent-text-muted)",
+    );
+    expect(winningDeclaration(".agent-prompt__remove", "border-radius")).toBe(
+      "var(--agent-radius-sm)",
+    );
+    expect(winningDeclaration(".agent-prompt__remove:focus-visible", "box-shadow")).toBe(
+      "var(--agent-focus-ring)",
+    );
+    expect(declarations(".agent-prompt__remove", "outline")).toEqual([]);
+  });
+
+  it("gives the composer Stop control the send geometry on the well tone", () => {
+    expect(winningDeclaration(".agent-composer__stop", "width")).toBe("30px");
+    expect(winningDeclaration(".agent-composer__stop", "height")).toBe("30px");
+    expect(winningDeclaration(".agent-composer__stop", "border-radius")).toBe("999px");
+    expect(winningDeclaration(".agent-composer__stop", "background")).toBe("var(--agent-well)");
+    expect(winningDeclaration(".agent-composer__stop", "color")).toBe("var(--agent-text-strong)");
+    expect(winningDeclaration(".agent-composer__stop:hover", "background")).toBe(
+      "var(--agent-hover)",
+    );
+    expect(winningDeclaration(".agent-composer__stop:focus-visible", "box-shadow")).toBe(
+      "var(--agent-focus-ring)",
+    );
+    expect(winningDeclaration(".agent-composer__stop:focus-visible", "outline")).toBe("none");
+  });
+
   it("keeps sent attachments inside the bubble under the text and its chips on the agent ladder", () => {
     expect(winningDeclaration(".agent-prompt__bubble", "display")).toBe("grid");
     expect(winningDeclaration(".agent-prompt__bubble", "gap")).toBe("var(--agent-space-3)");

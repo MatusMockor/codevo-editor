@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import { sharedAgentMarkdownDocumentCache } from "../../application/agentMarkdownDocumentCache";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
@@ -180,6 +180,179 @@ describe("agent thread turns", () => {
     expect(headNames()).toEqual(["Claude Code", "Claude Code"]);
     expect(sections[0]?.parentElement?.className).toBe("agent-imported-history");
     expect(sections[1]?.parentElement?.className).toBe("agent-turn-list");
+  });
+
+  it("renders a steered user message in its own prompt bubble between the answers", () => {
+    render({
+      thread: threadView([
+        turn("t1", "First question", SETTLED, [
+          text("alpha"),
+          { kind: "userMessage", text: "also run the tests" },
+          text("beta"),
+        ]),
+      ]),
+    });
+
+    expect(promptTexts()).toEqual(["First question", "also run the tests"]);
+    const events = [...(host.querySelector(".agent-turn__events")?.children ?? [])];
+    expect(events.map((child) => child.className)).toEqual([
+      "agent-text",
+      "agent-prompt agent-prompt--steered",
+      "agent-text",
+    ]);
+    expect(events[1]?.querySelector(".agent-prompt__body")?.textContent).toBe("also run the tests");
+    expect(events[1]?.getAttribute("data-agent-event")).toBe("e1");
+  });
+
+  it("keeps app-server subagent output in a collapsible group with latest thread usage", () => {
+    render({
+      thread: threadView([
+        turn("t1", "Delegate", RUNNING, [
+          {
+            kind: "subagentActivity",
+            agentThreadId: "child",
+            agentPath: "tests",
+            activity: "started",
+          },
+          {
+            kind: "subagentEvent",
+            agentThreadId: "child",
+            event: { kind: "assistantText", text: "Child-only response" },
+          },
+          {
+            kind: "subagentUsage",
+            agentThreadId: "child",
+            usage: { inputTokens: 10, outputTokens: 5, contextTokens: null },
+          },
+          {
+            kind: "subagentUsage",
+            agentThreadId: "child",
+            usage: {
+              inputTokens: 20,
+              outputTokens: 8,
+              cachedInputTokens: 3,
+              reasoningOutputTokens: 2,
+              contextTokens: null,
+            },
+          },
+          { kind: "subagentTurnDone", agentThreadId: "child", durationMs: 4200, isError: false },
+          text("Parent response"),
+        ]),
+      ]),
+    });
+    const group = Array.from(host.querySelectorAll("details")).find((entry) =>
+      entry.querySelector("summary")?.textContent?.includes("tests"),
+    );
+    expect(group?.open).toBe(false);
+    expect(group?.textContent).toContain("Child-only response");
+    expect(group?.textContent).not.toContain("Parent response");
+    expect(group?.textContent).toContain("20 input");
+    expect(group?.textContent).toContain("3 cached input");
+    expect(group?.textContent).toContain("4s");
+  });
+
+  it("labels root cumulative usage as thread usage", () => {
+    render({
+      thread: threadView([
+        turn("t1", "Prompt", RUNNING, [
+          {
+            kind: "result",
+            text: "Done",
+            isError: false,
+            usage: {
+              scope: "thread",
+              inputTokens: 120,
+              outputTokens: 35,
+              cachedInputTokens: 40,
+              reasoningOutputTokens: 8,
+              contextTokens: null,
+            },
+          },
+        ]),
+      ]),
+    });
+    expect(host.textContent).toContain("Thread usage: 120 input");
+    expect(host.textContent).toContain("40 cached input");
+  });
+
+  it("shows a queue notice only when the provider reports accepted queueing", () => {
+    render({
+      thread: threadView([
+        turn("t1", "Prompt", RUNNING, [
+          { kind: "queued", threadId: "root", clientUserMessageId: null },
+        ]),
+      ]),
+    });
+    expect(host.querySelector(".agent-prompt__chip--queued")?.textContent).toBe("Queued");
+  });
+
+  it("shows the screenshot name for an attachment-only deferred follow-up", () => {
+    render({
+      thread: threadView([turn("t1", "First question", RUNNING, [])]),
+      deferredFollowUps: [
+        {
+          id: "deferred-image",
+          queuedAtEpochMs: NOW,
+          request: {
+            threadId: "agt-1",
+            prompt: "",
+            launch: {
+              provider: "claudeCode",
+              model: "default",
+              mode: "default",
+              effort: "default",
+            },
+            attachments: [
+              {
+                kind: "staged",
+                attachmentId: "image-1",
+                name: "screenshot.png",
+                bytes: 42,
+                mime: "image/png",
+                width: 1,
+                height: 1,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(host.querySelector(".agent-prompt--queued")?.textContent).toContain("screenshot.png");
+  });
+
+  it("queues deferred follow-ups under the last turn with a chip and a remove control", () => {
+    const onRemoveDeferredFollowUp = vi.fn();
+    render({
+      thread: threadView([turn("t1", "First question", RUNNING, [text("alpha")])]),
+      deferredFollowUps: [
+        {
+          id: "deferred-1",
+          request: {
+            threadId: "agt-1",
+            prompt: "and then ship it",
+            launch: {
+              provider: "claudeCode",
+              model: "default",
+              mode: "default",
+              effort: "default",
+            },
+          },
+          queuedAtEpochMs: NOW,
+        },
+      ],
+      onRemoveDeferredFollowUp,
+    });
+
+    const queued = host.querySelector<HTMLElement>(".agent-prompt--queued");
+    expect(queued?.querySelector(".agent-prompt__body")?.textContent).toBe("and then ship it");
+    expect(queued?.querySelector(".agent-prompt__chip--queued")?.textContent).toBe("Queued");
+    expect(host.querySelector(".agent-turn-list")?.nextElementSibling).toBe(queued?.parentElement);
+
+    const remove = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove queued message"]',
+    );
+    act(() => remove?.click());
+    expect(onRemoveDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
   });
 
   it("shows the accent dot, the provider and the settled duration in the turn head", () => {

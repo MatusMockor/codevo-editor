@@ -457,6 +457,8 @@ function fakeAgentTaskGateway(): {
     },
     stopAgentTask: async () => undefined,
     stopAgentTasksForRoot: async () => undefined,
+    steerAgentTask: async () => ({ kind: "accepted" }) as const,
+    closeAgentTaskInput: async () => undefined,
     subscribeAgentTaskStatus: async (_handler: (event: AgentTaskStatusEvent) => void) => () =>
       undefined,
     subscribeAgentTaskOutput: async (_handler: (event: AgentTaskOutputEvent) => void) => () =>

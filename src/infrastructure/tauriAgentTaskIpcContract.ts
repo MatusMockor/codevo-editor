@@ -3,15 +3,20 @@ import {
   AgentTaskStartRejectedError,
   parseAgentTaskOutputEvent,
   parseAgentTaskStatusEvent,
+  parseAgentTaskSteerRejection,
   parseStartAgentTaskResult,
   validateAgentTaskReferenceRequest,
   validateStartAgentTaskRequest,
+  validateSteerAgentTaskRequest,
   validateStopAgentTasksForRootRequest,
   type AgentTaskOutputEvent,
   type AgentTaskReferenceRequest,
   type AgentTaskStatusEvent,
+  type AgentTaskSteerRejectionReason,
+  type AgentTaskSteerResult,
   type StartAgentTaskRequest,
   type StartAgentTaskResult,
+  type SteerAgentTaskRequest,
   type StopAgentTasksForRootRequest,
 } from "../domain/agentTask";
 
@@ -19,6 +24,11 @@ export const START_AGENT_TASK_IPC_COMMAND = "start_agent_task" as const;
 export const ACKNOWLEDGE_AGENT_TASK_START_IPC_COMMAND = "acknowledge_agent_task_start" as const;
 export const STOP_AGENT_TASK_IPC_COMMAND = "stop_agent_task" as const;
 export const STOP_AGENT_TASKS_FOR_ROOT_IPC_COMMAND = "stop_agent_tasks_for_root" as const;
+export const STEER_AGENT_TASK_IPC_COMMAND = "steer_agent_task" as const;
+export const CLOSE_AGENT_TASK_INPUT_IPC_COMMAND = "close_agent_task_input" as const;
+
+export const IDEMPOTENT_AGENT_TASK_INPUT_CLOSE_REJECTIONS: ReadonlySet<AgentTaskSteerRejectionReason> =
+  new Set<AgentTaskSteerRejectionReason>(["inputClosed", "notRunning", "notRegistered"]);
 
 export const AGENT_TASK_STATUS_EVENT = "agent-task://status" as const;
 export const AGENT_TASK_OUTPUT_EVENT = "agent-task://output" as const;
@@ -108,6 +118,44 @@ export async function invokeStopAgentTasksForRootIpc(
     STOP_AGENT_TASKS_FOR_ROOT_IPC_COMMAND,
     validateStopAgentTasksForRootRequest(request),
   );
+}
+
+export async function invokeSteerAgentTaskIpc(
+  invokeCommand: InvokeAgentTaskCommand,
+  request: SteerAgentTaskRequest,
+): Promise<AgentTaskSteerResult> {
+  const validated = validateSteerAgentTaskRequest(request);
+  let value: unknown;
+  try {
+    value = await invokeCommand(STEER_AGENT_TASK_IPC_COMMAND, { request: validated });
+  } catch (error) {
+    const rejection = parseAgentTaskSteerRejection(error);
+    if (rejection === null) throw error;
+    return { kind: "rejected", rejection };
+  }
+  if (value !== null) {
+    throw new TypeError("Invalid agent task value at result: expected null.");
+  }
+  return { kind: "accepted" };
+}
+
+export async function invokeCloseAgentTaskInputIpc(
+  invokeCommand: InvokeAgentTaskCommand,
+  request: AgentTaskReferenceRequest,
+): Promise<void> {
+  const validated = validateAgentTaskReferenceRequest(request);
+  let value: unknown;
+  try {
+    value = await invokeCommand(CLOSE_AGENT_TASK_INPUT_IPC_COMMAND, { request: validated });
+  } catch (error) {
+    const rejection = parseAgentTaskSteerRejection(error);
+    if (rejection === null) throw error;
+    if (!IDEMPOTENT_AGENT_TASK_INPUT_CLOSE_REJECTIONS.has(rejection.reason)) throw error;
+    return;
+  }
+  if (value !== null) {
+    throw new TypeError("Invalid agent task value at result: expected null.");
+  }
 }
 
 export function decodeAgentTaskStatusEvent(value: unknown): AgentTaskStatusEvent {

@@ -81,6 +81,9 @@ pub(crate) fn shutdown_runtime_processes(
     if let Some(agent_tasks) = app.try_state::<AgentTaskRegistry>() {
         agent_tasks.shutdown_all();
     }
+    if let Some(hosts) = app.try_state::<Arc<crate::agent_task_spawner::codex_app_server_host::CodexAppServerHostRegistry>>() {
+        hosts.drain_for_dispose();
+    }
     app.request_stop_all_tasks(js_test_batches);
     if let Some(authorizer) = app.try_state::<LegacyLocalHistoryWorkspaceAuthorizer>() {
         authorizer.clear();

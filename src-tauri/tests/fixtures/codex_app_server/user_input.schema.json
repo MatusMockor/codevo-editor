@@ -1,0 +1,12 @@
+{
+  "tags": [
+    "text",
+    "image",
+    "localImage",
+    "audio",
+    "localAudio",
+    "skill",
+    "mention"
+  ],
+  "title": "UserInput"
+}

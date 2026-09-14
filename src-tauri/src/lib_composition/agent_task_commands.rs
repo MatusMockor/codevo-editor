@@ -14,22 +14,25 @@ use crate::agent_task_spawner::agent_provider::process::ExecutableIdentity;
 use crate::agent_task_spawner::agent_provider::runtime::{
     AgentProviderRuntimeRegistry, ProviderTurnLease,
 };
+use crate::agent_task_spawner::agent_task_input::{
+    AgentTaskSteerRejection, MAX_AGENT_STEER_FRAME_BYTES,
+};
 use crate::agent_task_spawner::{
-    plan_agent_invocation_with_authority, AgentCliInvocation, AgentImageAttachment,
-    AgentInvocationRequest, AgentTaskSpawnPlan, AGENT_TURN_IMAGE_BUDGET_ERROR,
-    MAX_AGENT_TURN_IMAGE_BYTES,
+    claude_user_frame, plan_agent_invocation_with_authority, AgentCliInvocation,
+    AgentImageAttachment, AgentInvocationRequest, AgentTaskSpawnPlan,
+    AGENT_TURN_IMAGE_BUDGET_ERROR, MAX_AGENT_PROMPT_BYTES, MAX_AGENT_TURN_IMAGE_BYTES,
 };
 use crate::agent_task_supervisor::{
-    AgentTaskEventSink, AgentTaskIsolation, AgentTaskOutputEvent, AgentTaskRegistry,
-    AgentTaskStartRequest as AgentTaskRegistryStartRequest, AgentTaskStartResult,
-    AgentTaskStatusEvent, AGENT_TASK_OUTPUT_EVENT_CHANNEL, AGENT_TASK_STARTS_CLOSED_ERROR,
-    AGENT_TASK_STATUS_EVENT_CHANNEL,
+    AgentTaskEventSink, AgentTaskIsolation, AgentTaskMetadata, AgentTaskOutputEvent,
+    AgentTaskRegistry, AgentTaskStartRequest as AgentTaskRegistryStartRequest,
+    AgentTaskStartResult, AgentTaskStatusEvent, AGENT_TASK_OUTPUT_EVENT_CHANNEL,
+    AGENT_TASK_STARTS_CLOSED_ERROR, AGENT_TASK_STATUS_EVENT_CHANNEL,
 };
 use crate::effective_executable_environment::EffectiveExecutablePath;
 use crate::git_worktree::{ensure_worktree_path_in_base, safe_agent_task_id};
 use crate::run_blocking_command;
 use crate::trust::WorkspaceTrustService;
-use crate::workspace_registry::{WorkspaceId, WorkspaceRegistry};
+use crate::workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
 use agent_root_lease::{
     AgentRootLeaseRegistry, AgentRootLeaseReleaseDisposition, RegisteredAgentRootLease,
     MAX_AGENT_ROOT_LEASE_TOKEN,
@@ -54,6 +57,11 @@ pub(crate) mod agent_root_lease;
 mod agent_root_workspace_registration;
 #[path = "agent_task_start_authority.rs"]
 mod agent_task_start_authority;
+pub(crate) use crate::agent_task_spawner::{
+    codex_app_server_host, codex_app_server_protocol, codex_app_server_turn,
+};
+#[path = "codex_task_composition.rs"]
+pub(crate) mod codex_task_composition;
 
 pub(crate) const MAX_AGENT_TASK_WORKSPACE_ID_BYTES: usize = 1024;
 pub(crate) const MAX_AGENT_TASK_PATH_BYTES: usize = 4096;
@@ -113,6 +121,17 @@ pub(crate) enum StartAgentTaskAttachment {
 pub(crate) struct AgentTaskReferenceRequest {
     task_id: String,
     workspace_id: WorkspaceId,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SteerAgentTaskRequest {
+    task_id: String,
+    workspace_id: WorkspaceId,
+    thread_id: String,
+    prompt: String,
+    #[serde(default)]
+    attachments: Vec<StartAgentTaskAttachment>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -218,18 +237,66 @@ fn acquire_agent_task_provider_authority(
     registry.acquire_turn_for_generation(request.agent_cli_kind, request.provider_generation)
 }
 
+struct AgentTurnAttachmentClaim<'a> {
+    workspace_id: &'a str,
+    thread_id: &'a str,
+    prompt: &'a str,
+    invocation: AgentCliInvocation,
+    attachments: &'a [StartAgentTaskAttachment],
+    root_keys: &'a [String],
+}
+
 fn resolve_agent_task_attachments(
     request: &StartAgentTaskRequest,
     authority: &AgentTaskProjectAuthority,
     store: &AgentAttachmentStore,
 ) -> Result<ClaimedAgentTaskAttachments, String> {
-    if request.attachments.len() > MAX_AGENT_TURN_ATTACHMENTS {
+    let root_keys = agent_task_root_keys(authority);
+    claim_agent_turn_attachments(
+        &AgentTurnAttachmentClaim {
+            workspace_id: request.workspace_id.as_str(),
+            thread_id: &request.thread_id,
+            prompt: &request.prompt,
+            invocation: request.agent_cli_kind,
+            attachments: &request.attachments,
+            root_keys: &root_keys,
+        },
+        store,
+    )
+}
+
+fn claim_agent_turn_attachments(
+    claim: &AgentTurnAttachmentClaim<'_>,
+    store: &AgentAttachmentStore,
+) -> Result<ClaimedAgentTaskAttachments, String> {
+    let staged = staged_agent_turn_attachment_ids(claim.attachments)?;
+    if staged.is_empty() {
+        return Ok(ClaimedAgentTaskAttachments::default());
+    }
+    let owner = AgentAttachmentOwner {
+        workspace_id: claim.workspace_id,
+        thread_id: claim.thread_id,
+        root_keys: claim.root_keys,
+    };
+    // Keep bounded, exact-owner claims on refusal: the composer retries with
+    // this thread ID, even before there is a saved thread document. Eviction
+    // and application shutdown still release the in-memory claim records.
+    let resolved = store.claim_for_turn(&owner, &staged)?;
+    let images = ensure_prompt_carries_attachment_lines(claim.prompt, &resolved)
+        .and_then(|()| agent_image_attachments(claim.invocation, store, &resolved));
+    images.map(|images| ClaimedAgentTaskAttachments { images })
+}
+
+fn staged_agent_turn_attachment_ids(
+    attachments: &[StartAgentTaskAttachment],
+) -> Result<Vec<String>, String> {
+    if attachments.len() > MAX_AGENT_TURN_ATTACHMENTS {
         return Err(format!(
             "Agent turn exceeds the maximum of {MAX_AGENT_TURN_ATTACHMENTS} attachments."
         ));
     }
-    let mut staged = Vec::with_capacity(request.attachments.len());
-    for attachment in &request.attachments {
+    let mut staged = Vec::with_capacity(attachments.len());
+    for attachment in attachments {
         match attachment {
             StartAgentTaskAttachment::Staged { attachment_id } => {
                 staged.push(attachment_id.clone())
@@ -239,22 +306,7 @@ fn resolve_agent_task_attachments(
             }
         }
     }
-    if staged.is_empty() {
-        return Ok(ClaimedAgentTaskAttachments::default());
-    }
-    let root_keys = agent_task_root_keys(authority);
-    let owner = AgentAttachmentOwner {
-        workspace_id: request.workspace_id.as_str(),
-        thread_id: &request.thread_id,
-        root_keys: &root_keys,
-    };
-    // Keep bounded, exact-owner claims on refusal: the composer retries with
-    // this thread ID, even before there is a saved thread document. Eviction
-    // and application shutdown still release the in-memory claim records.
-    let resolved = store.claim_for_turn(&owner, &staged)?;
-    let images = ensure_prompt_carries_attachment_lines(&request.prompt, &resolved)
-        .and_then(|()| agent_image_attachments(request.agent_cli_kind, store, &resolved));
-    images.map(|images| ClaimedAgentTaskAttachments { images })
+    Ok(staged)
 }
 
 #[derive(Debug, Default)]
@@ -415,6 +467,7 @@ fn prepare_claimed_agent_task_start(
     Ok(PreparedAgentTaskStart {
         request: AgentTaskRegistryStartRequest {
             task_id,
+            thread_id: request.thread_id.clone(),
             workspace_id: request.workspace_id.as_str().to_string(),
             repository_root,
             isolation: request.isolation,
@@ -495,6 +548,42 @@ pub(crate) async fn start_agent_task(
         )?;
         app.state::<Arc<AgentProviderRuntimeRegistry>>()
             .revalidate_turn_authority(&provider_turn)?;
+        let start_app = app.clone();
+        let start_request = request.clone();
+        let start_authority = authority.clone();
+        let start_identity = plan.executable_identity().clone();
+        let validate_authority = Arc::new(move || {
+            revalidate_agent_task_filesystem_authority(
+                &start_app.state::<WorkspaceRegistry>(),
+                &start_request,
+                &start_authority,
+            )?;
+            if !start_identity.retained_is_current() {
+                return Err(AGENT_WORKSPACE_START_BUSY_ERROR.to_string());
+            }
+            let provider_registry = start_app.state::<Arc<AgentProviderRuntimeRegistry>>();
+            let Some((_, receipt)) =
+                provider_registry.policy_snapshot(start_request.agent_cli_kind)
+            else {
+                return Err(AGENT_WORKSPACE_START_BUSY_ERROR.to_string());
+            };
+            if receipt.provider_generation != start_request.provider_generation {
+                return Err(AGENT_WORKSPACE_START_BUSY_ERROR.to_string());
+            }
+            Ok(())
+        });
+        let plan = codex_task_composition::prepare_transport(
+            plan,
+            &request,
+            &authority,
+            &provider_turn,
+            app.state::<Arc<codex_app_server_host::CodexAppServerHostRegistry>>()
+                .inner(),
+            validate_authority,
+        )?;
+        revalidate_agent_task_filesystem_authority(&workspace_registry, &request, &authority)?;
+        app.state::<Arc<AgentProviderRuntimeRegistry>>()
+            .revalidate_turn_authority(&provider_turn)?;
         let admission = admission.with_runtime_lease(provider_turn);
         let result = app
             .state::<AgentTaskRegistry>()
@@ -534,6 +623,229 @@ pub(crate) fn stop_agent_task(
     state
         .registry
         .stop_for_workspace(&task_id, request.workspace_id.as_str())
+}
+
+struct AgentTaskSteerTarget {
+    metadata: AgentTaskMetadata,
+    descriptor: ManagedWorkspaceDescriptor,
+    input_kind: crate::agent_task_spawner::agent_task_input::AgentTaskInputKind,
+}
+
+#[derive(Debug)]
+struct PreparedAgentTaskSteer {
+    task_id: String,
+    thread_id: String,
+    workspace_id: String,
+    descriptor: ManagedWorkspaceDescriptor,
+    frame: crate::agent_task_spawner::agent_task_input::AgentTaskInputFrame,
+}
+
+fn ensure_agent_steer_prompt_bounds(prompt: &str) -> Result<(), AgentTaskSteerRejection> {
+    if prompt.is_empty() || prompt.len() > MAX_AGENT_PROMPT_BYTES {
+        return Err(AgentTaskSteerRejection::LimitExceeded);
+    }
+
+    Ok(())
+}
+
+fn agent_steer_frame(
+    prompt: &str,
+    images: Vec<AgentImageAttachment>,
+) -> Result<Arc<[u8]>, AgentTaskSteerRejection> {
+    let mut inline = Vec::with_capacity(images.len());
+    for image in images {
+        let AgentImageAttachment::Inline { media_type, data } = image else {
+            return Err(AgentTaskSteerRejection::LimitExceeded);
+        };
+        inline.push((media_type, data));
+    }
+    let frame = claude_user_frame(prompt, &inline);
+    if frame.len() > MAX_AGENT_STEER_FRAME_BYTES {
+        return Err(AgentTaskSteerRejection::LimitExceeded);
+    }
+
+    Ok(Arc::from(frame))
+}
+
+fn prepare_agent_task_steer<Lookup>(
+    request: &SteerAgentTaskRequest,
+    store: &AgentAttachmentStore,
+    lookup: Lookup,
+) -> Result<PreparedAgentTaskSteer, AgentTaskSteerRejection>
+where
+    Lookup: FnOnce(&str) -> Option<AgentTaskSteerTarget>,
+{
+    let task_id =
+        safe_agent_task_id(&request.task_id).map_err(|_| AgentTaskSteerRejection::NotRegistered)?;
+    safe_agent_task_id(&request.thread_id).map_err(|_| AgentTaskSteerRejection::NotRegistered)?;
+    ensure_workspace_id_bounds(&request.workspace_id)
+        .map_err(|_| AgentTaskSteerRejection::NotRegistered)?;
+    ensure_agent_steer_prompt_bounds(&request.prompt)?;
+    let Some(target) = lookup(&task_id) else {
+        return Err(AgentTaskSteerRejection::NotRegistered);
+    };
+    if target.metadata.workspace_id != request.workspace_id.as_str()
+        || target.metadata.thread_id != request.thread_id
+    {
+        return Err(AgentTaskSteerRejection::NotRegistered);
+    }
+    staged_agent_turn_attachment_ids(&request.attachments)
+        .map_err(|_| AgentTaskSteerRejection::LimitExceeded)?;
+    let root_keys = super::agent_attachment_commands::workspace_root_keys(&target.descriptor);
+    let frame = claim_agent_turn_attachments(
+        &AgentTurnAttachmentClaim {
+            workspace_id: request.workspace_id.as_str(),
+            thread_id: &request.thread_id,
+            prompt: &request.prompt,
+            invocation: match target.input_kind {
+                crate::agent_task_spawner::agent_task_input::AgentTaskInputKind::Bytes => {
+                    AgentCliInvocation::ClaudeCode
+                }
+                crate::agent_task_spawner::agent_task_input::AgentTaskInputKind::CodexInput => {
+                    AgentCliInvocation::CodexExec
+                }
+            },
+            attachments: &request.attachments,
+            root_keys: &root_keys,
+        },
+        store,
+    )
+    .map_err(|_| AgentTaskSteerRejection::LimitExceeded)
+    .and_then(|claimed| {
+        use crate::agent_task_spawner::agent_task_input::{
+            AgentTaskInputFrame, AgentTaskInputKind,
+        };
+        match target.input_kind {
+            AgentTaskInputKind::Bytes => {
+                agent_steer_frame(&request.prompt, claimed.images).map(AgentTaskInputFrame::Bytes)
+            }
+            AgentTaskInputKind::CodexInput => {
+                let mut images = Vec::new();
+                for image in claimed.images {
+                    let AgentImageAttachment::Path(path) = image else {
+                        return Err(AgentTaskSteerRejection::InputUnavailable);
+                    };
+                    images.push(path);
+                }
+                let input = codex_task_composition::codex_input(&request.prompt, &images)
+                    .map_err(|_| AgentTaskSteerRejection::LimitExceeded)?;
+                Ok(AgentTaskInputFrame::CodexInput {
+                    input,
+                    client_user_message_id: None,
+                })
+            }
+        }
+    })?;
+
+    Ok(PreparedAgentTaskSteer {
+        task_id,
+        thread_id: request.thread_id.clone(),
+        workspace_id: request.workspace_id.as_str().to_string(),
+        descriptor: target.descriptor,
+        frame,
+    })
+}
+
+fn agent_task_steer_target(
+    app: &AppHandle,
+    task_id: &str,
+    workspace_id: &WorkspaceId,
+) -> Option<AgentTaskSteerTarget> {
+    let metadata = app
+        .state::<AgentTaskRegistry>()
+        .metadata_for_workspace(task_id, workspace_id.as_str())?;
+    let descriptor = app
+        .state::<WorkspaceRegistry>()
+        .descriptor(workspace_id)
+        .ok()?;
+    let input_kind = app
+        .state::<AgentTaskRegistry>()
+        .input_kind_for_thread(task_id, workspace_id.as_str(), &metadata.thread_id)
+        .ok()?;
+
+    Some(AgentTaskSteerTarget {
+        metadata,
+        descriptor,
+        input_kind,
+    })
+}
+
+fn revalidate_agent_steer_workspace(
+    registry: &WorkspaceRegistry,
+    expected: &ManagedWorkspaceDescriptor,
+) -> Result<(), AgentTaskSteerRejection> {
+    let current = registry
+        .descriptor(&expected.workspace_id)
+        .map_err(|_| AgentTaskSteerRejection::NotRegistered)?;
+    if current != *expected {
+        return Err(AgentTaskSteerRejection::NotRegistered);
+    }
+    let retained_root = registry
+        .clone_root(&expected.workspace_id)
+        .map_err(|_| AgentTaskSteerRejection::NotRegistered)?;
+    if !retained_root_matches_path(&retained_root, &expected.canonical_root_path) {
+        return Err(AgentTaskSteerRejection::NotRegistered);
+    }
+    Ok(())
+}
+
+fn steer_prepared_agent_task(
+    app: &AppHandle,
+    prepared: PreparedAgentTaskSteer,
+) -> Result<(), AgentTaskSteerRejection> {
+    revalidate_agent_steer_workspace(&app.state::<WorkspaceRegistry>(), &prepared.descriptor)?;
+    app.state::<AgentTaskRegistry>().steer_input_for_thread(
+        &prepared.task_id,
+        &prepared.workspace_id,
+        &prepared.thread_id,
+        prepared.frame,
+    )
+}
+
+#[tauri::command]
+pub(crate) async fn steer_agent_task(
+    app: AppHandle,
+    request: SteerAgentTaskRequest,
+) -> Result<(), AgentTaskSteerRejection> {
+    let preparation_app = app.clone();
+    let prepared = run_blocking_command(move || {
+        Ok(prepare_agent_task_steer(
+            &request,
+            preparation_app
+                .state::<Arc<AgentAttachmentStore>>()
+                .inner()
+                .as_ref(),
+            |task_id| agent_task_steer_target(&preparation_app, task_id, &request.workspace_id),
+        ))
+    })
+    .await
+    .map_err(|_| AgentTaskSteerRejection::WriteFailed)??;
+
+    run_blocking_command(move || Ok(steer_prepared_agent_task(&app, prepared)))
+        .await
+        .map_err(|_| AgentTaskSteerRejection::WriteFailed)?
+}
+
+fn agent_task_input_reference(
+    request: &AgentTaskReferenceRequest,
+) -> Result<String, AgentTaskSteerRejection> {
+    let task_id =
+        safe_agent_task_id(&request.task_id).map_err(|_| AgentTaskSteerRejection::NotRegistered)?;
+    ensure_workspace_id_bounds(&request.workspace_id)
+        .map_err(|_| AgentTaskSteerRejection::NotRegistered)?;
+
+    Ok(task_id)
+}
+
+#[tauri::command]
+pub(crate) fn close_agent_task_input(
+    request: AgentTaskReferenceRequest,
+    state: AgentTaskRuntimeState<'_>,
+) -> Result<(), AgentTaskSteerRejection> {
+    let task_id = agent_task_input_reference(&request)?;
+    state
+        .registry
+        .close_input_for_workspace(&task_id, request.workspace_id.as_str())
 }
 
 #[tauri::command]
@@ -694,6 +1006,9 @@ pub(crate) fn stop_agent_tasks_on_dispose(app: &AppHandle, root: &Path) {
     };
 
     agent_tasks.stop_for_root(root);
+    if let Some(hosts) = app.try_state::<Arc<codex_app_server_host::CodexAppServerHostRegistry>>() {
+        hosts.retire_for_repository(root);
+    }
 }
 
 #[cfg(test)]

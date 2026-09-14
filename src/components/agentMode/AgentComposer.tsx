@@ -7,7 +7,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { ArrowUp, Loader2, Paperclip, X } from "lucide-react";
+import { ArrowUp, Loader2, Paperclip, Square, X } from "lucide-react";
 import type {
   AgentAttachmentSource,
   AgentComposerAttachmentsSurface,
@@ -43,6 +43,7 @@ import {
   type AgentComposerDragDropSubscribe,
   type AgentComposerFilePicker,
 } from "./agentComposerAttachmentPorts";
+import { useAgentRemoteAttachmentPicker } from "./useAgentRemoteAttachmentPicker";
 import { useAgentComposerDragDrop } from "./useAgentComposerDragDrop";
 import { defaultAgentComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
 import { AgentComposerCommands } from "./AgentComposerCommands";
@@ -55,6 +56,7 @@ import { AgentComposerCheckout, AgentComposerLockedCheckout } from "./AgentCompo
 import { agentSubmitShortcut } from "./agentSubmitShortcut";
 import { agentControlTooltip } from "./agentThreadHeaderPresentation";
 import { useCompactComposerControls } from "./useCompactComposerControls";
+import { useTouchComposerLayout } from "./useTouchComposerLayout";
 import { AgentExecutionEnvironmentPicker } from "./AgentExecutionEnvironmentPicker";
 
 const NO_TARGET_REASON = "Choose a project in the rail to start a thread.";
@@ -66,7 +68,8 @@ export type AgentComposerMode =
   | {
       readonly kind: "followUp";
       readonly blockedReason: string | null;
-    };
+    }
+  | { readonly kind: "steer"; readonly threadId: string };
 
 export interface AgentComposerSubmission {
   readonly launch: AgentLaunchOptions;
@@ -83,6 +86,7 @@ export interface AgentComposerProps {
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
   readonly mode: AgentComposerMode;
   readonly target: AgentComposerTarget | null;
+  readonly promptOwnerKey?: string;
   readonly prompt: string;
   readonly promptBytes: number;
   readonly isolation: AgentTaskIsolation;
@@ -94,6 +98,7 @@ export interface AgentComposerProps {
   readonly launch: AgentLaunchOptions;
   readonly launchProvider: AgentCliKind;
   readonly dispatching: boolean;
+  readonly running?: boolean;
   readonly submitBlocked: boolean;
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly providerManagement?: AgentProviderManagementSurface | null;
@@ -105,6 +110,7 @@ export interface AgentComposerProps {
   onNewThread(): void;
   onOpenProviderSettings(): void;
   onOpenEnvironmentSettings?(): void;
+  onStop?(): void;
   onSubmit(submission: AgentComposerSubmission): void;
   onCompactContext?(submission: AgentComposerSubmission): void;
 }
@@ -131,12 +137,15 @@ export function AgentComposer({
   onOpenEnvironmentSettings,
   onPromptChange,
   onSelectRepository,
+  onStop,
   onSubmit,
   onCompactContext,
   prompt,
+  promptOwnerKey,
   promptBytes,
   providerEnabled,
   providerManagement = null,
+  running = false,
   submitBlocked,
   target,
   worktreeAvailable,
@@ -156,7 +165,9 @@ export function AgentComposer({
   const compact = useCompactComposerControls(composerRef);
   const favorites = useAgentModelFavorites(modelFavoritesPersistence);
   const [dismissedCompactionKey, setDismissedCompactionKey] = useState<string | null>(null);
-  const followUp = mode.kind === "followUp";
+  const followUp = mode.kind !== "new";
+  const steering = mode.kind === "steer";
+  const touch = useTouchComposerLayout();
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
   const targetReason = composerTargetReason(followUp, target);
   const normalizedLaunch = useMemo(
@@ -187,7 +198,7 @@ export function AgentComposer({
   const blocked =
     submitBlocked || providerReason !== null || blockedReason !== null || targetReason !== null;
   const shortcut = agentSubmitShortcut();
-  const submitName = submitAccessibleName(dispatching, followUp);
+  const submitName = submitAccessibleName(dispatching, mode);
   const caption = composerCaption({
     blockedReason,
     isolationReason,
@@ -197,6 +208,13 @@ export function AgentComposer({
     worktreeOnlyReason,
   });
 
+  const remotePicker = useAgentRemoteAttachmentPicker({
+    attachments,
+    target: attachmentTargetKey,
+    serverId: executionServerId,
+    promptOwnerKey,
+    dispatching,
+  });
   const attachmentsEnabled = attachments !== null && attachmentTargetKey !== null;
   const addAttachments = useCallback(
     (sources: ReadonlyArray<AgentAttachmentSource>): void => {
@@ -208,9 +226,15 @@ export function AgentComposer({
   );
   const dropPaths = useCallback(
     (paths: ReadonlyArray<string>): void => {
+      if (executionServerId !== null) {
+        attachments?.refuse(
+          "For server conversations, attach images with the paperclip or paste a screenshot. Drag and drop is not supported yet.",
+        );
+        return;
+      }
       addAttachments(agentAttachmentSourcesFromPaths(paths));
     },
-    [addAttachments],
+    [addAttachments, attachments, executionServerId],
   );
   const refuseAttachments = useCallback(
     (reason: string): void => {
@@ -251,6 +275,10 @@ export function AgentComposer({
       .catch((error: unknown) => refuseAttachments(agentAttachmentPasteFailureMessage(error)));
   };
   const pickAttachments = (): void => {
+    if (executionServerId !== null) {
+      remotePicker.open();
+      return;
+    }
     attachmentPicker()
       .then(dropPaths)
       .catch(() => refuseAttachments(AGENT_ATTACHMENT_PICKER_FAILURE));
@@ -297,7 +325,7 @@ export function AgentComposer({
   const launchControls = useMemo(
     () => (
       <AgentLaunchControls
-        disabled={dispatching || allProvidersDisabled}
+        disabled={dispatching || allProvidersDisabled || steering}
         openRequest={
           controlRequest?.ownerMode === mode &&
           controlRequest.ownerTarget === target &&
@@ -319,6 +347,7 @@ export function AgentComposer({
     [
       dispatching,
       allProvidersDisabled,
+      steering,
       controlRequest,
       mode,
       target,
@@ -401,8 +430,15 @@ export function AgentComposer({
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (commands.onKeyDown(event)) return;
+    if (event.key === "Escape") {
+      if (!running) return;
+      event.preventDefault();
+      onStop?.();
+      return;
+    }
     if (event.key !== "Enter") return;
-    if (!event.metaKey && !event.ctrlKey) return;
+    if (steering && event.shiftKey) return;
+    if (!steering && !event.metaKey && !event.ctrlKey) return;
     event.preventDefault();
     if (commands.interceptSubmit()) return;
     if (blocked) return;
@@ -416,6 +452,17 @@ export function AgentComposer({
       onSubmit={submit}
       ref={composerRef}
     >
+      {executionServerId !== null && (
+        <input
+          type="file"
+          hidden
+          accept="image/png,image/jpeg"
+          multiple
+          ref={remotePicker.inputRef}
+          onChange={(event) => void remotePicker.change(event)}
+          aria-label="Choose server attachments"
+        />
+      )}
       {compactionOffer !== null &&
         compactionOffer.key !== dismissedCompactionKey &&
         onCompactContext !== undefined && (
@@ -488,11 +535,7 @@ export function AgentComposer({
           }}
           onKeyDown={onKeyDown}
           onPaste={pasteAttachments}
-          placeholder={
-            followUp
-              ? "Reply to the agent in this thread"
-              : "Ask anything or describe the change you want"
-          }
+          placeholder={composerPlaceholder(mode)}
           value={prompt}
         />
 
@@ -526,30 +569,56 @@ export function AgentComposer({
 
           <AgentComposerBytes promptBytes={promptBytes} />
 
-          <button
-            aria-busy={dispatching || undefined}
-            aria-keyshortcuts={shortcut.keys}
-            aria-label={submitName}
-            className={
-              dispatching
-                ? "agent-composer__send agent-composer__send--busy"
-                : "agent-composer__send"
-            }
-            disabled={blocked && !localCommandAvailable}
-            title={agentControlTooltip(submitName, shortcut.keys)}
-            type="submit"
-          >
-            {dispatching ? (
-              <Loader2
-                aria-hidden="true"
-                className="agent-composer__send-spinner"
-                size={16}
-                strokeWidth={2.5}
-              />
-            ) : (
-              <ArrowUp aria-hidden="true" size={16} strokeWidth={2.5} />
-            )}
-          </button>
+          {running && (
+            <button
+              aria-label="Stop agent"
+              className="agent-composer__stop"
+              onClick={onStop}
+              title={
+                steering ? `Stop (Esc). Send message: Enter or ${shortcut.keys}` : "Stop (Esc)"
+              }
+              aria-busy={dispatching || undefined}
+              type="button"
+            >
+              {dispatching ? (
+                <Loader2
+                  aria-hidden="true"
+                  className="agent-composer__send-spinner"
+                  size={14}
+                  strokeWidth={2.5}
+                />
+              ) : (
+                <Square aria-hidden="true" size={14} strokeWidth={2.5} />
+              )}
+            </button>
+          )}
+
+          {(!running || touch) && (
+            <button
+              aria-busy={dispatching || undefined}
+              aria-keyshortcuts={shortcut.keys}
+              aria-label={submitName}
+              className={
+                dispatching
+                  ? "agent-composer__send agent-composer__send--busy"
+                  : "agent-composer__send"
+              }
+              disabled={blocked && !localCommandAvailable}
+              title={agentControlTooltip(submitName, shortcut.keys)}
+              type="submit"
+            >
+              {dispatching ? (
+                <Loader2
+                  aria-hidden="true"
+                  className="agent-composer__send-spinner"
+                  size={16}
+                  strokeWidth={2.5}
+                />
+              ) : (
+                <ArrowUp aria-hidden="true" size={16} strokeWidth={2.5} />
+              )}
+            </button>
+          )}
         </div>
 
         {caption && (
@@ -604,10 +673,17 @@ function AgentComposerBytes({ promptBytes }: { readonly promptBytes: number }) {
   );
 }
 
-function submitAccessibleName(dispatching: boolean, followUp: boolean): string {
+function submitAccessibleName(dispatching: boolean, mode: AgentComposerMode): string {
+  if (mode.kind === "steer") return "Send to running agent";
   if (dispatching) return "Starting…";
-  if (followUp) return "Send follow-up";
+  if (mode.kind === "followUp") return "Send follow-up";
   return "Start agent";
+}
+
+function composerPlaceholder(mode: AgentComposerMode): string {
+  if (mode.kind === "steer") return "Message the running agent";
+  if (mode.kind === "followUp") return "Reply to the agent in this thread";
+  return "Ask anything or describe the change you want";
 }
 
 function composerTargetReason(

@@ -1,3 +1,4 @@
+import type { CodexTransport } from "../domain/agentProviderSettings";
 import type { AgentCliKind } from "../domain/agentTask";
 
 export type AgentProviderAdmissionDisposition =
@@ -15,6 +16,7 @@ export type AgentProviderAdmissionAuthority =
       readonly provider: AgentCliKind;
       readonly revision: number;
       readonly disposition: { readonly kind: "ready" };
+      readonly codexTransport?: CodexTransport;
       readonly providerGeneration: number;
     }
   | {
@@ -122,7 +124,10 @@ export function isCurrentAgentProviderAdmissionAuthority(
   if (current.provider !== captured.provider) return false;
   if (current.revision !== captured.revision) return false;
   if (!isReadyAuthority(current)) return false;
-  return current.providerGeneration === captured.providerGeneration;
+  return (
+    current.providerGeneration === captured.providerGeneration &&
+    current.codexTransport === captured.codexTransport
+  );
 }
 
 function isReadyAuthority(

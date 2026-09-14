@@ -1,4 +1,6 @@
 import { memo, useMemo } from "react";
+import type { AgentTurnAttachmentIntent } from "../../application/agentThreadPorts";
+import { MAX_AGENT_TURN_ATTACHMENTS } from "../../domain/agentAttachment";
 import { agentPromptDisplayText } from "../../domain/agentPromptDisplay";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
@@ -13,12 +15,16 @@ import type { AgentTurnTiming } from "./agentTurnHeadPresentation";
 const MAX_TIME_VALUE = 8_640_000_000_000_000;
 const NO_ATTACHMENTS: ReadonlyArray<AgentTurnAttachmentView> = [];
 
+export type AgentPromptRole = "turn" | "steer";
+
 export interface AgentTurnPromptProps {
   readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly attachments?: ReadonlyArray<AgentTurnAttachmentView>;
   readonly current: number | null;
+  readonly eventKey?: string;
   readonly prompt: string;
   readonly query: string;
+  readonly role?: AgentPromptRole;
   readonly textClipboard: TextClipboardGateway | null;
 }
 
@@ -26,14 +32,19 @@ export const AgentTurnPrompt = memo(function AgentTurnPrompt({
   attachmentImages = null,
   attachments = NO_ATTACHMENTS,
   current,
+  eventKey,
   prompt,
   query,
+  role = "turn",
   textClipboard,
 }: AgentTurnPromptProps) {
   const displayText = useMemo(() => agentPromptDisplayText(prompt), [prompt]);
 
   return (
-    <div className="agent-prompt">
+    <div
+      className={role === "steer" ? "agent-prompt agent-prompt--steered" : "agent-prompt"}
+      data-agent-event={eventKey}
+    >
       <div className="agent-message-actions">
         <AgentMessageCopyButton clipboard={textClipboard} label="your message" text={prompt} />
       </div>
@@ -93,4 +104,50 @@ function isoTime(epochMs: number): string | undefined {
   if (Math.abs(epochMs) > MAX_TIME_VALUE) return undefined;
 
   return new Date(epochMs).toISOString();
+}
+
+export interface AgentQueuedPromptProps {
+  readonly attachments?: ReadonlyArray<AgentTurnAttachmentIntent>;
+  readonly id: string;
+  readonly prompt: string;
+  onRemove(id: string): void;
+}
+
+export function AgentQueuedPrompt({ id, prompt, attachments, onRemove }: AgentQueuedPromptProps) {
+  const views = useMemo<ReadonlyArray<AgentTurnAttachmentView>>(
+    () =>
+      (attachments ?? []).slice(0, MAX_AGENT_TURN_ATTACHMENTS).map((attachment, index) => ({
+        kind: "chip",
+        key: String(index),
+        name: attachment.name,
+        glyph:
+          attachment.kind === "reference"
+            ? "reference"
+            : attachment.mime === null
+              ? "file"
+              : "image",
+      })),
+    [attachments],
+  );
+  const displayText = agentPromptDisplayText(prompt);
+
+  return (
+    <div className="agent-prompt agent-prompt--queued" data-agent-queued={id}>
+      <div className="agent-prompt__bubble" tabIndex={-1}>
+        {displayText !== "" && <p className="agent-prompt__body">{displayText}</p>}
+        <AgentTurnAttachments attachments={views} images={null} />
+        <div className="agent-prompt__queue">
+          <span className="agent-prompt__chip agent-prompt__chip--queued">Queued</span>
+          <button
+            aria-label="Remove queued message"
+            className="agent-prompt__remove"
+            onClick={() => onRemove(id)}
+            type="button"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

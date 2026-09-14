@@ -161,6 +161,63 @@ function environment(overrides: Partial<Environment> = {}): Environment {
 }
 
 describe("useAgentComposerAttachments staging", () => {
+  it("refuses captured intake after the same project owner generation is replaced", async () => {
+    const env = environment();
+    const harness = renderAttachments(env);
+    const intake = harness.hook().captureIntake?.(ROOT_A);
+    expect(intake).toBeTypeOf("function");
+    env.owners.set(ROOT_A, ownerA(2));
+    await act(async () =>
+      intake?.([
+        { kind: "bytes", name: "image.png", mime: "image/png", bytes: new ArrayBuffer(12) },
+      ]),
+    );
+    expect(harness.gateway.stageAgentAttachmentBytes).not.toHaveBeenCalled();
+    expect(harness.hook().drafts).toEqual([]);
+    harness.unmount();
+  });
+
+  it("releases a staged image when its picker is cancelled during staging", async () => {
+    let current = true;
+    const env = environment({
+      onStage: () => {
+        current = false;
+      },
+    });
+    const harness = renderAttachments(env);
+    const intake = harness.hook().captureIntake?.(ROOT_A, () => current);
+    await act(async () =>
+      intake?.([
+        { kind: "bytes", name: "image.png", mime: "image/png", bytes: new ArrayBuffer(12) },
+      ]),
+    );
+    expect(harness.gateway.stageAgentAttachmentBytes).toHaveBeenCalledOnce();
+    expect(harness.released).toContain(IMAGE_ID);
+    expect(harness.hook().drafts).toEqual([]);
+    harness.unmount();
+  });
+
+  it("does not report a stale staging failure into the replacement composer", async () => {
+    let current = true;
+    const env = environment({
+      onStage: () => {
+        current = false;
+      },
+      stageError: new Error("old stage failed"),
+    });
+    const harness = renderAttachments(env);
+    const intake = harness.hook().captureIntake?.(ROOT_A, () => current);
+    await act(async () =>
+      intake?.([
+        { kind: "bytes", name: "image.png", mime: "image/png", bytes: new ArrayBuffer(12) },
+      ]),
+    );
+    expect(harness.errors).toEqual([]);
+    expect(harness.hook().refusal).toBeNull();
+    expect(harness.hook().drafts).toEqual([]);
+    harness.unmount();
+  });
+
   it("stages a pasted image through the shrink pipeline and reports it ready", async () => {
     const env = environment();
     const harness = renderAttachments(env);

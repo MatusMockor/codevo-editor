@@ -105,6 +105,32 @@ describe("agentModePresentation", () => {
     expect(blockedReason(thread({ sessionId: null }))).toContain("no resumable session");
   });
 
+  it("keeps the composer open for a running Claude turn that can be steered", () => {
+    const launch: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "default",
+      mode: "default",
+      effort: "default",
+    };
+    const steerable = thread({ status: { kind: "running" }, launch });
+    expect(blockedReason(steerable)).toBeNull();
+    expect(blockedReason({ ...steerable, worktreeMissing: true })).toContain("no longer exists");
+    expect(
+      blockedReason({ ...steerable, thread: { ...steerable.thread, archived: true } }),
+    ).toContain("archived");
+    expect(blockedReason(thread({ status: { kind: "running" } }))).toContain("still running");
+    expect(
+      blockedReason(
+        thread({
+          status: { kind: "running" },
+          providerKind: "codex",
+          launch: { provider: "codex", model: "default", mode: "default" },
+        }),
+        { agentCliKind: "codex" },
+      ),
+    ).toContain("still running");
+  });
+
   it("resumes remote threads from server metadata without a local CLI session", () => {
     const remote: AgentThreadView = {
       ...thread({ sessionId: null }),
@@ -134,6 +160,71 @@ describe("agentModePresentation", () => {
         message,
       );
     }
+  });
+
+  it("projects a steered user message in order and never folds it into the work", () => {
+    const projection = agentTurnProjection([
+      { kind: "assistantText", text: "Looking." },
+      { kind: "toolCall", toolId: "t-1", name: "Read", inputSummary: "a.ts" },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "12 lines", isError: false },
+      { kind: "userMessage", text: "also run the tests" },
+      { kind: "assistantText", text: "Done." },
+    ]);
+
+    expect(projection.items.map((item) => item.kind)).toEqual([
+      "assistantText",
+      "tool",
+      "userMessage",
+      "assistantText",
+    ]);
+    expect(projection.items[2]).toMatchObject({
+      kind: "userMessage",
+      text: "also run the tests",
+    });
+    expect(projection.rawLines).toEqual([]);
+    expect(agentTurnWorkFold(projection.items, false)).toBeNull();
+    expect(agentTurnWorkFold(projection.items, true)).toBeNull();
+  });
+
+  it("carries the attachments of a steered user message into its item", () => {
+    const projection = agentTurnProjection([
+      {
+        kind: "userMessage",
+        text: "look at this",
+        attachments: [
+          {
+            kind: "image",
+            attachmentId: "att-0000000000000001",
+            name: "shot.png",
+            bytes: 12,
+            mime: "image/png",
+            width: 10,
+            height: 10,
+            storedPath: "/tmp/shot.png",
+          },
+        ],
+      },
+    ]);
+
+    expect(projection.items).toEqual([
+      {
+        kind: "userMessage",
+        key: "e0",
+        text: "look at this",
+        attachments: [
+          {
+            kind: "image",
+            attachmentId: "att-0000000000000001",
+            name: "shot.png",
+            bytes: 12,
+            mime: "image/png",
+            width: 10,
+            height: 10,
+            storedPath: "/tmp/shot.png",
+          },
+        ],
+      },
+    ]);
   });
 
   it("labels every agent CLI kind", () => {

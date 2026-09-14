@@ -122,6 +122,60 @@
   word-break: break-word;
 }
 
+.agent-prompt--steered {
+  margin-top: var(--agent-space-2);
+}
+
+.agent-queued-list {
+  display: grid;
+  gap: var(--agent-turn-gap);
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+.agent-prompt__queue {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--agent-space-3);
+  min-width: 0;
+}
+
+.agent-prompt__chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  border-radius: var(--agent-radius-md);
+  font-size: var(--agent-fs-xs);
+  padding: 2px 8px;
+}
+
+.agent-prompt__chip--queued {
+  background: var(--agent-well);
+  color: var(--agent-text-muted);
+}
+
+.agent-prompt__remove {
+  flex: none;
+  border: 0;
+  border-radius: var(--agent-radius-sm);
+  background: transparent;
+  color: var(--agent-text-muted);
+  cursor: pointer;
+  font-size: var(--agent-fs-xs);
+  padding: 2px 6px;
+}
+
+.agent-prompt__remove:hover {
+  background: var(--agent-hover);
+  color: var(--agent-text-strong);
+}
+
+.agent-prompt__remove:focus-visible {
+  outline: none;
+  box-shadow: var(--agent-focus-ring);
+}
+
 .agent-prompt .agent-message-actions {
   flex: none;
 }

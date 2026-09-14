@@ -28,6 +28,8 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
       refreshIsolationStatus: (...args) => current.current.refreshIsolationStatus(...args),
       startThread: (...args) => current.current.startThread(...args),
       sendFollowUp: (...args) => current.current.sendFollowUp(...args),
+      steer: (...args) => current.current.steer(...args),
+      removeDeferredFollowUp: (...args) => current.current.removeDeferredFollowUp(...args),
       importExternalSession: (...args) => current.current.importExternalSession(...args),
       stop: (...args) => current.current.stop(...args),
       togglePin: (...args) => current.current.togglePin(...args),

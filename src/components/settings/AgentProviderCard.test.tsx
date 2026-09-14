@@ -28,6 +28,18 @@ describe("AgentProviderCard", () => {
     vi.useRealTimers();
   });
 
+  it("offers connection settings only inside expanded Codex details", () => {
+    render(management());
+    expand();
+    expect(host.querySelector('[aria-label="Codex connection"]')).toBeNull();
+    render(management(), {
+      provider: "codex",
+      rowId: rowIdFor("codex"),
+      preference: defaultAgentProviderPreferences().codex,
+    });
+    expect(host.querySelector('[aria-label="Codex connection"]')).not.toBeNull();
+  });
+
   it("shows the resolved version, auth label and fresh health timestamp", () => {
     render(management());
     expand();

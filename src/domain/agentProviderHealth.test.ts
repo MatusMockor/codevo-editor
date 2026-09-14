@@ -15,6 +15,40 @@ import {
 } from "./agentProviderHealth";
 
 describe("provider policy contracts", () => {
+  it("validates Codex transport fields in registration and current policy", () => {
+    const base = {
+      provider: "codex",
+      settingsRevision: 7,
+      expectedProviderGeneration: null,
+      enabled: true,
+      cliPath: null,
+      checkForUpdates: true,
+    };
+    const transport = { codexTransport: "exec", codexAppServerArgs: ["--enable", "feature"] };
+    expect(validateAgentProviderPolicyRegistrationRequest({ ...base, ...transport })).toEqual({
+      ...base,
+      ...transport,
+    });
+    expect(
+      parseAgentProviderCurrentPolicyResult({
+        kind: "registered",
+        receipt: { provider: "codex", settingsRevision: 7, providerGeneration: 1 },
+        enabled: true,
+        cliPath: null,
+        checkForUpdates: true,
+        ...transport,
+      }),
+    ).toMatchObject(transport);
+    expect(() =>
+      validateAgentProviderPolicyRegistrationRequest({ ...base, codexTransport: "unknown" }),
+    ).toThrow();
+    expect(() =>
+      validateAgentProviderPolicyRegistrationRequest({
+        ...base,
+        codexAppServerArgs: ["--listen=socket"],
+      }),
+    ).toThrow();
+  });
   it("validates registration and exact generation receipt", () => {
     expect(
       validateAgentProviderPolicyRegistrationRequest({

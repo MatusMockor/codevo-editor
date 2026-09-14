@@ -358,6 +358,7 @@ fn dispatch(
     fixture.registry.start(
         AgentTaskStartRequest {
             task_id: task_id.to_string(),
+            thread_id: task_id.to_string(),
             workspace_id: "ws-agent-root-lease".to_string(),
             repository_root: repository_root.to_path_buf(),
             isolation: AgentTaskIsolation::Worktree,

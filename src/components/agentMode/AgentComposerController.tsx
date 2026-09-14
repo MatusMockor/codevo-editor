@@ -78,6 +78,9 @@ function agentComposerControllerPropsEqual(
     leftProps.attachmentTargetKey === rightProps.attachmentTargetKey &&
     sameComposerAttachments(leftProps.attachments, rightProps.attachments) &&
     leftProps.dispatching === rightProps.dispatching &&
+    leftProps.running === rightProps.running &&
+    leftProps.promptOwnerKey === rightProps.promptOwnerKey &&
+    leftProps.onStop === rightProps.onStop &&
     sameGuard(leftProps.guard, rightProps.guard) &&
     leftProps.isolation === rightProps.isolation &&
     leftProps.isolationReason === rightProps.isolationReason &&
@@ -111,7 +114,8 @@ function sameComposerMode(
   right: AgentComposerPresentation["mode"],
 ): boolean {
   if (left.kind !== right.kind) return false;
-  if (left.kind === "new" || right.kind === "new") return true;
+  if (left.kind === "steer" && right.kind === "steer") return left.threadId === right.threadId;
+  if (left.kind !== "followUp" || right.kind !== "followUp") return true;
   return left.blockedReason === right.blockedReason;
 }
 

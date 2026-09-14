@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { CodexTransport } from "../domain/agentProviderSettings";
 import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import { act, createElement, useMemo, useReducer } from "react";
 import { createRoot } from "react-dom/client";
@@ -16,6 +17,9 @@ import {
   type AgentTaskOutputEvent,
   type AgentTaskStatus,
   type AgentTaskStatusEvent,
+  type AgentTaskSteerRejectionReason,
+  type AgentTaskSteerResult,
+  type SteerAgentTaskRequest,
   type StartAgentTaskRequest,
 } from "../domain/agentTask";
 import {
@@ -24,6 +28,7 @@ import {
 } from "../domain/agentOutput/agentOutputParser";
 import {
   agentThreadsReducer,
+  MAX_AGENT_EVENTS_PER_TURN,
   emptyAgentThreadsState,
   type AgentThread,
   type AgentThreadsAction,
@@ -33,6 +38,8 @@ import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type {
+  AgentSteerOutcome,
+  AgentSteerRequest,
   AgentTasksNotice,
   AgentThreadStartResult,
   AgentThreadStoreSurface,
@@ -52,9 +59,22 @@ import {
   type AgentProviderAdmissionDisposition,
 } from "./agentProviderAdmissionAuthority";
 import {
+  AGENT_THREAD_STARTING_NOTICE,
+  AGENT_THREAD_STEER_LIMIT_NOTICE,
   DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE,
   LAUNCH_PROVIDER_MISMATCH_NOTICE,
 } from "./agentTurnAdmission";
+import { MAX_DEFERRED_FOLLOW_UPS_PER_THREAD } from "./agentDeferredFollowUps";
+import {
+  DEFERRED_CLEARED_NOTICE,
+  DEFERRED_FULL_NOTICE,
+  DEFERRED_SEND_FAILED_NOTICE,
+  STEER_DROPPED_NOTICE,
+  STEER_UNREGISTERED_NOTICE,
+  STEER_STOPPING_NOTICE,
+  STEER_UNAVAILABLE_NOTICE,
+  STEER_WRITE_FAILED_NOTICE,
+} from "./useAgentTurnSteer";
 import {
   useAgentTurnDispatch,
   type AgentTurnDispatchDependencies,
@@ -68,6 +88,7 @@ const OWNER_B = "workspace-b";
 const SESSION_ID = "sess-0001-abcd";
 
 interface Environment {
+  codexTransport?: CodexTransport;
   activeRoot: string;
   repositoryRoot: string;
   firstRepositoryRoot: string | null;
@@ -2018,10 +2039,13 @@ function repository(repositoryRoot: string): ResolvedGitRepository {
 }
 
 function fakeParser(): AgentOutputParserPort & {
+  readonly create: ReturnType<typeof vi.fn>;
   readonly feed: ReturnType<typeof vi.fn>;
   readonly finish: ReturnType<typeof vi.fn>;
 } {
-  const create = (kind: AgentCliKind): AgentOutputParserState => createAgentOutputParserState(kind);
+  const create = vi.fn((kind: AgentCliKind, _transport?: CodexTransport): AgentOutputParserState =>
+    createAgentOutputParserState(kind),
+  );
   const feed = vi.fn(
     (state: AgentOutputParserState, _stream: "stdout" | "stderr", chunk: string) =>
       chunk === "usage"
@@ -2045,14 +2069,21 @@ function fakeParser(): AgentOutputParserPort & {
               },
             ],
           }
-        : chunk.startsWith("session:")
-          ? { state, events: [], sessionId: chunk.slice("session:".length), accountUsage: [] }
-          : {
+        : chunk === "result"
+          ? {
               state,
-              events: [{ kind: "assistantText" as const, text: chunk }],
+              events: [{ kind: "result" as const, text: "done", isError: false, usage: null }],
               sessionId: null,
               accountUsage: [],
-            },
+            }
+          : chunk.startsWith("session:")
+            ? { state, events: [], sessionId: chunk.slice("session:".length), accountUsage: [] }
+            : {
+                state,
+                events: [{ kind: "assistantText" as const, text: chunk }],
+                sessionId: null,
+                accountUsage: [],
+              },
   );
   const finish = vi.fn((state: AgentOutputParserState) => ({
     state,
@@ -2102,6 +2133,12 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     acknowledgeAgentTaskStart: vi.fn(async () => undefined),
     stopAgentTask: vi.fn(async () => undefined),
     stopAgentTasksForRoot: vi.fn(async () => undefined),
+    steerAgentTask: vi.fn(
+      async (_request: SteerAgentTaskRequest): Promise<AgentTaskSteerResult> => ({
+        kind: "accepted",
+      }),
+    ),
+    closeAgentTaskInput: vi.fn(async () => undefined),
     subscribeAgentTaskStatus: vi.fn(async (handler: (event: AgentTaskStatusEvent) => void) => {
       statusHandler = handler;
       return () => undefined;
@@ -2296,6 +2333,9 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     turnIdOf(threadId: string, index: number): string {
       return harness.turn(threadId, index).turnId;
     },
+    setNotice(notice: AgentTasksNotice): void {
+      notices.push(notice);
+    },
     notice(): AgentTasksNotice | null {
       return notices[notices.length - 1] ?? null;
     },
@@ -2348,6 +2388,16 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       const result = await act(() => harness.hook().startThread(startRequest()));
       expect(result).not.toBeNull();
       return result?.threadId ?? "";
+    },
+    async startRunningThread(): Promise<string> {
+      const threadId = await harness.startThread();
+      await act(async () => {
+        harness.emitStatus(harness.turnIdOf(threadId, 0), 1, { kind: "running" });
+      });
+      await waitForReact(() =>
+        expect(harness.turn(threadId, 0).status).toEqual({ kind: "running" }),
+      );
+      return threadId;
     },
     async settleThreadWithSession(): Promise<string> {
       const threadId = await harness.startThread();
@@ -2407,6 +2457,7 @@ function providerAuthority(
         revision,
         disposition,
         providerGeneration: environment.providerGeneration[provider],
+        ...(provider === "codex" ? { codexTransport: environment.codexTransport } : {}),
       };
     case "updating":
       return {
@@ -2429,3 +2480,683 @@ function providerAuthority(
 function unsupportedProviderDisposition(disposition: never): never {
   throw new TypeError(`Unsupported provider disposition: ${JSON.stringify(disposition)}.`);
 }
+
+describe("useAgentTurnDispatch steering", () => {
+  const OWNER_INTENT = {
+    projectRootKey: ROOT_A,
+    ownerId: OWNER_A,
+    generation: 1,
+    workspaceId: OWNER_A,
+  } as const;
+
+  function rejection(reason: AgentTaskSteerRejectionReason) {
+    return { kind: "rejected" as const, rejection: { reason } };
+  }
+
+  async function steerOnce(
+    harness: ReturnType<typeof renderDispatch>,
+    request: AgentSteerRequest,
+  ): Promise<AgentSteerOutcome> {
+    const outcomes: AgentSteerOutcome[] = [];
+    await act(async () => {
+      outcomes.push(await harness.hook().steer(request));
+    });
+    expect(outcomes).toHaveLength(1);
+    return outcomes[0];
+  }
+
+  it.each(["appServer", "exec"] as const)(
+    "keeps the running Codex %s transport snapshot after settings change",
+    async (transport) => {
+      const harness = renderDispatch({ cliKind: "codex", codexTransport: transport });
+      const started = await act(() =>
+        harness.hook().startThread(
+          startRequest({
+            launch: defaultAgentLaunchOptions("codex"),
+          }),
+        ),
+      );
+      expect(started).not.toBeNull();
+      const threadId = started!.threadId;
+      const turnId = harness.turnIdOf(threadId, 0);
+      await act(async () => {
+        harness.emitStatus(turnId, 1, { kind: "running" });
+      });
+      expect(harness.turn(threadId, 0).codexTransport).toBe(transport);
+      expect(harness.parser.create).toHaveBeenCalledWith("codex", transport);
+      const parserCreations = harness.parser.create.mock.calls.length;
+      harness.environment.codexTransport = transport === "appServer" ? "exec" : "appServer";
+      harness.rerender();
+      await act(async () => {
+        harness.emitOutput(turnId, 1, "existing stream output");
+      });
+      expect(harness.parser.create).toHaveBeenCalledTimes(parserCreations);
+      expect(harness.turn(threadId, 0).codexTransport).toBe(transport);
+      const outcome = await steerOnce(harness, {
+        threadId,
+        prompt: "continue on captured transport",
+      });
+      expect(outcome).toBe(transport === "appServer" ? "sent" : "kept");
+      if (transport === "appServer") {
+        expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+        expect(harness.actionsOf("turnSteered")).toHaveLength(1);
+      } else {
+        expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+        expect(harness.actionsOf("turnSteered")).toHaveLength(0);
+      }
+      harness.unmount();
+    },
+  );
+
+  it("sends the steer to the running task and records the user message in order", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await act(async () => {
+      harness.emitOutput(turnId, 1, "working");
+    });
+
+    const outcome = await steerOnce(harness, { threadId, prompt: "  also run the tests  " });
+
+    expect(outcome).toBe("sent");
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledWith({
+      taskId: turnId,
+      workspaceId: OWNER_A,
+      threadId,
+      prompt: "also run the tests",
+    });
+    await waitForReact(() =>
+      expect(harness.turn(threadId, 0).events).toEqual([
+        { kind: "assistantText", text: "working" },
+        { kind: "userMessage", text: "also run the tests" },
+      ]),
+    );
+    expect(harness.actionsOf("turnSteered")).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("refuses a steer while the turn is still pending in the spawn window", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startThread();
+
+    const outcome = await steerOnce(harness, { threadId, prompt: "too early" });
+
+    expect(outcome).toBe("kept");
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()?.message).toBe(AGENT_THREAD_STARTING_NOTICE);
+    harness.unmount();
+  });
+
+  it("claims attachments, records them on the message, and replays them when deferred", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    const request: AgentSteerRequest = {
+      threadId,
+      prompt: "look at this",
+      attachments: [IMAGE_INTENT],
+      attachmentOwner: OWNER_INTENT,
+    };
+
+    expect(await steerOnce(harness, request)).toBe("sent");
+
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledWith({
+      workspaceId: OWNER_A,
+      threadId,
+      attachmentIds: [ATTACHMENT_ID],
+    });
+    const payload = harness.agent.steerAgentTask.mock.calls[0][0];
+    expect(payload.taskId).toBe(turnId);
+    expect(payload.attachments).toEqual([{ kind: "staged", attachmentId: ATTACHMENT_ID }]);
+    await waitForReact(() => {
+      const event = harness.turn(threadId, 0).events[0];
+      expect(event.kind).toBe("userMessage");
+      expect(event.kind === "userMessage" ? event.attachments : null).toEqual([
+        {
+          kind: "image",
+          attachmentId: ATTACHMENT_ID,
+          name: "shot.png",
+          mime: "image/png",
+          bytes: 2_048,
+          width: 800,
+          height: 600,
+          storedPath: `/data/agent-attachments/threads/${threadId}/${ATTACHMENT_ID}.png`,
+        },
+      ]);
+    });
+
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    expect(await steerOnce(harness, request)).toBe("deferred");
+    await act(async () => {
+      harness.emitOutput(turnId, 2, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+
+    expect(harness.startedRequests[1].attachments).toEqual([
+      { kind: "staged", attachmentId: ATTACHMENT_ID },
+    ]);
+    harness.unmount();
+  });
+
+  it("drops the steer when the turn settles while the gateway call is in flight", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    const gate = createDeferred<AgentTaskSteerResult>();
+    harness.agent.steerAgentTask.mockReturnValueOnce(gate.promise);
+
+    const outcomes: AgentSteerOutcome[] = [];
+    let pending: Promise<void> | null = null;
+    await act(async () => {
+      pending = harness
+        .hook()
+        .steer({ threadId, prompt: "too late" })
+        .then((outcome) => {
+          outcomes.push(outcome);
+        });
+    });
+    await act(async () => {
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    await act(async () => {
+      gate.resolve({ kind: "accepted" });
+      await pending;
+    });
+
+    expect(outcomes).toEqual(["sent"]);
+    expect(harness.actionsOf("turnSteered")).toHaveLength(0);
+    expect(harness.notice()?.message).toBe(STEER_DROPPED_NOTICE);
+    harness.unmount();
+  });
+
+  it("defers a closed-input message and sends each queued one as its predecessor settles", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    harness.agent.steerAgentTask
+      .mockResolvedValueOnce(rejection("inputClosed"))
+      .mockResolvedValueOnce(rejection("notRunning"));
+
+    expect(await steerOnce(harness, { threadId, prompt: "first queued" })).toBe("deferred");
+    expect(await steerOnce(harness, { threadId, prompt: "second queued" })).toBe("deferred");
+
+    expect(harness.hook().deferredFollowUps.get(threadId)).toHaveLength(2);
+    expect(harness.actionsOf("turnSteered")).toHaveLength(0);
+
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+    expect(harness.startedRequests[1].prompt).toBe("first queued");
+    expect(harness.hook().deferredFollowUps.get(threadId)).toHaveLength(1);
+
+    await act(async () => {
+      harness.emitStatus(harness.turnIdOf(threadId, 1), 1, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(3));
+    expect(harness.startedRequests[2].prompt).toBe("second queued");
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it.each(["inputClosed", "notSteerable"] as const)(
+    "drains a %s message deferred after the terminal status was already processed",
+    async (reason) => {
+      const harness = renderDispatch();
+      const threadId = await harness.startRunningThread();
+      const turnId = harness.turnIdOf(threadId, 0);
+      const gate = createDeferred<AgentTaskSteerResult>();
+      harness.agent.steerAgentTask.mockReturnValueOnce(gate.promise);
+
+      let pending: Promise<AgentSteerOutcome> | null = null;
+      await act(async () => {
+        pending = harness.hook().steer({ threadId, prompt: "late arrival" });
+      });
+      await act(async () => {
+        harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+        harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+      });
+      await act(async () => {
+        gate.resolve(rejection(reason));
+        expect(await pending).toBe("deferred");
+      });
+
+      await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+      expect(harness.startedRequests[1].prompt).toBe("late arrival");
+      expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+      harness.unmount();
+    },
+  );
+
+  it("discards a queued message when its thread disappears or is archived", async () => {
+    for (const removal of ["dropped", "archived"] as const) {
+      const harness = renderDispatch();
+      const threadId = await harness.startRunningThread();
+      const turnId = harness.turnIdOf(threadId, 0);
+      const gate = createDeferred<AgentTaskSteerResult>();
+      harness.agent.steerAgentTask.mockReturnValueOnce(gate.promise);
+
+      let pending: Promise<AgentSteerOutcome> | null = null;
+      await act(async () => {
+        pending = harness.hook().steer({ threadId, prompt: "orphan" });
+      });
+      await act(async () => {
+        harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+        harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+      });
+      await act(async () => {
+        if (removal === "dropped") harness.dropThread(threadId);
+        if (removal === "archived") harness.dispatchAction({ kind: "archived", threadId });
+      });
+      await act(async () => {
+        gate.resolve(rejection("inputClosed"));
+        await pending;
+      });
+
+      await waitForReact(() => expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false));
+      expect(harness.startedRequests).toHaveLength(1);
+      harness.unmount();
+    }
+  });
+
+  it("reports a queued message discarded after its launch authority is revoked", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    await steerOnce(harness, { threadId, prompt: "queued" });
+
+    harness.environment.launchIdentityAvailable = false;
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+
+    await waitForReact(() => expect(harness.notice()?.message).toBe(DEFERRED_SEND_FAILED_NOTICE));
+    expect(harness.ensureProjectLaunchIdentity).not.toHaveBeenCalled();
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.startedRequests).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it.each(["attachment", "ipc"] as const)(
+    "does not overwrite the current notice after a stale pending %s failure",
+    async (stage) => {
+      const harness = renderDispatch();
+      const threadId = await harness.startRunningThread();
+      const claimGate =
+        createDeferred<
+          Awaited<ReturnType<typeof harness.attachmentGateway.claimAgentAttachments>>
+        >();
+      const ipcGate = createDeferred<AgentTaskSteerResult>();
+      if (stage === "attachment")
+        harness.attachmentGateway.claimAgentAttachments.mockReturnValueOnce(claimGate.promise);
+      else harness.agent.steerAgentTask.mockReturnValueOnce(ipcGate.promise);
+      let pending: Promise<AgentSteerOutcome> | null = null;
+      await act(async () => {
+        pending = harness.hook().steer({
+          threadId,
+          prompt: "stale operation",
+          ...(stage === "attachment"
+            ? { attachments: [IMAGE_INTENT], attachmentOwner: OWNER_INTENT }
+            : {}),
+        });
+      });
+      if (stage === "attachment")
+        expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(1);
+      else expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+      harness.switchToProject(ROOT_B, OWNER_B);
+      harness.rerender();
+      harness.switchToProject(ROOT_A, OWNER_A);
+      harness.rerender();
+      const currentNotice = {
+        kind: "info",
+        message: "Current workspace notice",
+        action: null,
+      } as const;
+      harness.setNotice(currentNotice);
+      await act(async () => {
+        if (stage === "attachment") claimGate.reject(new Error("stale claim failure"));
+        else ipcGate.reject(new Error("stale IPC failure"));
+        expect(await pending).toBe("kept");
+      });
+      expect(harness.notice()).toBe(currentNotice);
+      if (stage === "attachment") expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+      expect(harness.actionsOf("turnSteered")).toHaveLength(0);
+      expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+      harness.unmount();
+    },
+  );
+
+  it.each(["resolve", "reject"] as const)(
+    "cancels a deferred follow-up stopped before its pending attachment claim can %s",
+    async (settlement) => {
+      const harness = renderDispatch();
+      const threadId = await harness.startRunningThread();
+      const turnId = harness.turnIdOf(threadId, 0);
+      harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+      expect(
+        await steerOnce(harness, {
+          threadId,
+          prompt: "queued image",
+          attachments: [IMAGE_INTENT],
+          attachmentOwner: OWNER_INTENT,
+        }),
+      ).toBe("deferred");
+      const gate =
+        createDeferred<
+          Awaited<ReturnType<typeof harness.attachmentGateway.claimAgentAttachments>>
+        >();
+      harness.attachmentGateway.claimAgentAttachments.mockReturnValueOnce(gate.promise);
+      await act(async () => {
+        harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+        harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+      });
+      await waitForReact(() =>
+        expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(2),
+      );
+      await act(() => harness.hook().stop(threadId));
+      const noticeAfterStop = harness.notice();
+      await act(async () => {
+        if (settlement === "reject") gate.reject(new Error("late claim failure"));
+        else
+          gate.resolve([
+            {
+              attachmentId: ATTACHMENT_ID,
+              storedPath: `/data/${threadId}/${ATTACHMENT_ID}.png`,
+              promptLine: "[Attached]",
+            },
+          ]);
+      });
+      expect(harness.notice()).toBe(noticeAfterStop);
+      expect(harness.startedRequests).toHaveLength(1);
+      expect(harness.thread(threadId).turns).toHaveLength(1);
+      expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+      harness.unmount();
+    },
+  );
+
+  it("clears the remaining queue when its first follow-up attachment claim fails", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    harness.agent.steerAgentTask.mockResolvedValue(rejection("inputClosed"));
+    expect(
+      await steerOnce(harness, {
+        threadId,
+        prompt: "first queued image",
+        attachments: [IMAGE_INTENT],
+        attachmentOwner: OWNER_INTENT,
+      }),
+    ).toBe("deferred");
+    expect(await steerOnce(harness, { threadId, prompt: "must not be stranded" })).toBe("deferred");
+    expect(harness.hook().deferredFollowUps.get(threadId)).toHaveLength(2);
+    harness.attachmentGateway.claimAgentAttachments.mockRejectedValueOnce(
+      new Error("claim failed"),
+    );
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(harness.notice()?.message).toBe(DEFERRED_SEND_FAILED_NOTICE));
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(2);
+    expect(harness.reportError).toHaveBeenCalledWith(
+      AGENT_TASKS_SOURCE,
+      expect.objectContaining({ message: "claim failed" }),
+    );
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    expect(harness.startedRequests).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("reports a delivered steer when output fills history while IPC is pending", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    const gate = createDeferred<AgentTaskSteerResult>();
+    harness.agent.steerAgentTask.mockReturnValueOnce(gate.promise);
+    let pending: Promise<AgentSteerOutcome> | null = null;
+    await act(async () => {
+      pending = harness.hook().steer({ threadId, prompt: "already sent" });
+    });
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      const thread = harness.thread(threadId);
+      harness.dispatchAction({
+        kind: "turnEventsAppended",
+        threadId,
+        turnId,
+        workspaceId: OWNER_A,
+        repositoryRoot: ROOT_A,
+        isolation: thread.target.isolation,
+        worktreePath: thread.target.worktreePath,
+        outputSequence: 1,
+        events: Array.from({ length: MAX_AGENT_EVENTS_PER_TURN }, (_, index) => ({
+          kind: "userMessage" as const,
+          text: `message ${index}`,
+        })),
+        sessionId: SESSION_ID,
+        supervisorTruncated: false,
+      });
+    });
+    expect(harness.turn(threadId, 0).events).toHaveLength(MAX_AGENT_EVENTS_PER_TURN);
+    await act(async () => {
+      gate.resolve({ kind: "accepted" });
+      expect(await pending).toBe("sent");
+    });
+    expect(harness.notice()?.message).toBe(
+      "Your message was delivered, but the turn reached its history limit before it could be recorded.",
+    );
+    expect(harness.actionsOf("turnSteered")).toHaveLength(0);
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it("does not resurrect a stopped thread from a pending closed-input rejection", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    const gate = createDeferred<AgentTaskSteerResult>();
+    harness.agent.steerAgentTask.mockReturnValueOnce(gate.promise);
+    let pending: Promise<AgentSteerOutcome> | null = null;
+    await act(async () => {
+      pending = harness.hook().steer({ threadId, prompt: "do not restart" });
+    });
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+    await act(() => harness.hook().stop(threadId));
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    await act(async () => {
+      gate.resolve(rejection("inputClosed"));
+      expect(await pending).toBe("kept");
+    });
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    expect(harness.startedRequests).toHaveLength(1);
+    expect(harness.actionsOf("turnSteered")).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("does not defer a stale rejection after workspace A to B to A", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const gate = createDeferred<AgentTaskSteerResult>();
+    harness.agent.steerAgentTask.mockReturnValueOnce(gate.promise);
+    let pending: Promise<AgentSteerOutcome> | null = null;
+    await act(async () => {
+      pending = harness.hook().steer({ threadId, prompt: "old authority" });
+    });
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+    harness.switchToProject(ROOT_B, OWNER_B);
+    harness.rerender();
+    harness.switchToProject(ROOT_A, OWNER_A);
+    harness.rerender();
+    await act(async () => {
+      gate.resolve(rejection("inputClosed"));
+      expect(await pending).toBe("kept");
+    });
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    expect(harness.startedRequests).toHaveLength(1);
+    expect(harness.actionsOf("turnSteered")).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("revalidates workspace generation after claiming steer attachments", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const gate =
+      createDeferred<Awaited<ReturnType<typeof harness.attachmentGateway.claimAgentAttachments>>>();
+    harness.attachmentGateway.claimAgentAttachments.mockReturnValueOnce(gate.promise);
+    let pending: Promise<AgentSteerOutcome> | null = null;
+    await act(async () => {
+      pending = harness.hook().steer({
+        threadId,
+        prompt: "old attachment authority",
+        attachments: [IMAGE_INTENT],
+        attachmentOwner: OWNER_INTENT,
+      });
+    });
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(1);
+    harness.switchToProject(ROOT_B, OWNER_B);
+    harness.rerender();
+    harness.switchToProject(ROOT_A, OWNER_A);
+    harness.rerender();
+    await act(async () => {
+      gate.resolve([
+        {
+          attachmentId: ATTACHMENT_ID,
+          storedPath: `/data/${threadId}/${ATTACHMENT_ID}.png`,
+          promptLine: "[Attached]",
+        },
+      ]);
+      expect(await pending).toBe("kept");
+    });
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    expect(harness.actionsOf("turnSteered")).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("reports failure when a queued follow-up returns false without throwing", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    await steerOnce(harness, { threadId, prompt: "queued" });
+    harness.environment.providerDisposition.claudeCode = { kind: "disabled" };
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(harness.notice()?.message).toBe(DEFERRED_SEND_FAILED_NOTICE));
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.startedRequests).toHaveLength(1);
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it("bounds the deferred queue per thread and refuses the overflow with a notice", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    harness.agent.steerAgentTask.mockResolvedValue(rejection("inputClosed"));
+
+    for (let index = 0; index < MAX_DEFERRED_FOLLOW_UPS_PER_THREAD; index += 1) {
+      expect(await steerOnce(harness, { threadId, prompt: `queued ${index}` })).toBe("deferred");
+    }
+    const overflow = await steerOnce(harness, { threadId, prompt: "overflow" });
+
+    expect(overflow).toBe("kept");
+    expect(harness.hook().deferredFollowUps.get(threadId)).toHaveLength(
+      MAX_DEFERRED_FOLLOW_UPS_PER_THREAD,
+    );
+    expect(harness.notice()?.message).toBe(DEFERRED_FULL_NOTICE);
+    harness.unmount();
+  });
+
+  it("clears the deferred slot with a notice when the thread is stopped", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    await steerOnce(harness, { threadId, prompt: "queued" });
+
+    await act(() => harness.hook().stop(threadId));
+
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    expect(harness.notice()?.message).toBe(DEFERRED_CLEARED_NOTICE);
+    harness.unmount();
+  });
+
+  it("clears every deferred slot of an owner when its project tasks are drained", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    await steerOnce(harness, { threadId, prompt: "queued" });
+
+    await act(() => harness.hook().stopProjectTasks(OWNER_A, []));
+
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it("removes one queued message on request", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    harness.agent.steerAgentTask.mockResolvedValue(rejection("inputClosed"));
+    await steerOnce(harness, { threadId, prompt: "queued one" });
+    await steerOnce(harness, { threadId, prompt: "queued two" });
+    const queued = harness.hook().deferredFollowUps.get(threadId) ?? [];
+
+    await act(async () => {
+      harness.hook().removeDeferredFollowUp(threadId, queued[0].id);
+    });
+
+    expect(
+      (harness.hook().deferredFollowUps.get(threadId) ?? []).map((entry) => entry.request.prompt),
+    ).toEqual(["queued two"]);
+    harness.unmount();
+  });
+
+  it("keeps the message in the composer for every non-deferrable rejection", async () => {
+    for (const [reason, message] of [
+      ["stopping", STEER_STOPPING_NOTICE],
+      ["inputUnavailable", STEER_UNAVAILABLE_NOTICE],
+      ["limitExceeded", AGENT_THREAD_STEER_LIMIT_NOTICE],
+      ["writeFailed", STEER_WRITE_FAILED_NOTICE],
+      ["writeTimedOut", STEER_WRITE_FAILED_NOTICE],
+      ["notRegistered", STEER_UNREGISTERED_NOTICE],
+    ] as ReadonlyArray<readonly [AgentTaskSteerRejectionReason, string]>) {
+      const harness = renderDispatch();
+      const threadId = await harness.startRunningThread();
+      harness.agent.steerAgentTask.mockResolvedValueOnce(rejection(reason));
+
+      const outcome = await steerOnce(harness, { threadId, prompt: "stay put" });
+
+      expect(outcome).toBe("kept");
+      expect(harness.notice()?.message).toBe(message);
+      expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+      expect(harness.actionsOf("turnSteered")).toHaveLength(0);
+      harness.unmount();
+    }
+  });
+
+  it("closes the task input exactly once when the stream sees the result line", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+
+    await act(async () => {
+      harness.emitOutput(turnId, 1, "result");
+      harness.emitOutput(turnId, 2, "result");
+    });
+
+    expect(harness.agent.closeAgentTaskInput).toHaveBeenCalledTimes(1);
+    expect(harness.agent.closeAgentTaskInput).toHaveBeenCalledWith({
+      taskId: turnId,
+      workspaceId: OWNER_A,
+    });
+    harness.unmount();
+  });
+});

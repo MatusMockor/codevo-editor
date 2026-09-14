@@ -100,3 +100,18 @@ describe("agent provider admission authority", () => {
     expect(isCurrentAgentProviderAdmissionAuthority(read, READY)).toBe(false);
   });
 });
+
+it("rejects a changed Codex transport even when an upstream generation is unchanged", () => {
+  const captured: ReadyAgentProviderAdmissionAuthority = {
+    ...READY,
+    provider: "codex",
+    codexTransport: "appServer",
+  };
+  expect(
+    isCurrentAgentProviderAdmissionAuthority(
+      () => ({ ...captured, codexTransport: "exec" }),
+      captured,
+    ),
+  ).toBe(false);
+  expect(isCurrentAgentProviderAdmissionAuthority(() => captured, captured)).toBe(true);
+});

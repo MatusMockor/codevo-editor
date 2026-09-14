@@ -5,7 +5,39 @@ export const DEFAULT_AGENT_PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS = 300;
 export const MIN_AGENT_PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS = 0;
 export const MAX_AGENT_PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS = 86_400;
 
-export interface AgentProviderPreference {
+export type CodexTransport = "appServer" | "exec";
+
+export interface CodexTransportSettings {
+  readonly codexTransport?: CodexTransport;
+  readonly codexAppServerArgs?: readonly string[];
+}
+
+export function parseCodexTransportSettings(value: {
+  readonly codexTransport?: unknown;
+  readonly codexAppServerArgs?: unknown;
+}): { readonly codexTransport: CodexTransport; readonly codexAppServerArgs: readonly string[] } {
+  const transport = value.codexTransport === undefined ? "appServer" : value.codexTransport;
+  if (transport !== "appServer" && transport !== "exec")
+    throw new TypeError("Invalid Codex transport.");
+  const args = value.codexAppServerArgs === undefined ? [] : value.codexAppServerArgs;
+  if (
+    !Array.isArray(args) ||
+    args.length > 16 ||
+    Array.from(args).some(
+      (arg) =>
+        typeof arg !== "string" ||
+        arg.length === 0 ||
+        arg.length > 256 ||
+        !/^[\x20-\x7e]+$/.test(arg) ||
+        /^(--listen|--code-mode-host|--strict-config)(=|$)/.test(arg),
+    )
+  ) {
+    throw new TypeError("Invalid Codex app-server arguments.");
+  }
+  return { codexTransport: transport, codexAppServerArgs: [...args] };
+}
+
+export interface AgentProviderPreference extends CodexTransportSettings {
   readonly enabled: boolean;
   readonly healthCheckIntervalSeconds: number;
   readonly checkForUpdates: boolean;
@@ -27,7 +59,7 @@ export interface PersistedAgentProviderSettingsAuthority {
 export function defaultAgentProviderPreferences(): AgentProviderPreferences {
   return {
     claudeCode: defaultAgentProviderPreference(),
-    codex: defaultAgentProviderPreference(),
+    codex: { ...defaultAgentProviderPreference(), ...parseCodexTransportSettings({}) },
   };
 }
 
@@ -45,7 +77,7 @@ export function normalizeAgentProviderPreferences(value: unknown): AgentProvider
   const defaults = defaultAgentProviderPreferences();
   if (!exactRecord(value, ["claudeCode", "codex"])) return defaults;
   const claudeCode = normalizePreference(value.claudeCode);
-  const codex = normalizePreference(value.codex);
+  const codex = normalizePreference(value.codex, true);
   if (claudeCode === null || codex === null) return defaults;
   return { claudeCode, codex };
 }
@@ -59,13 +91,20 @@ function defaultAgentProviderPreference(): AgentProviderPreference {
   };
 }
 
-function normalizePreference(value: unknown): AgentProviderPreference | null {
+function normalizePreference(value: unknown, codex = false): AgentProviderPreference | null {
+  const extraKeys =
+    codex && typeof value === "object" && value !== null
+      ? ["codexTransport", "codexAppServerArgs"].filter((key) =>
+          Object.prototype.hasOwnProperty.call(value, key),
+        )
+      : [];
   if (
     !exactRecord(value, [
       "enabled",
       "healthCheckIntervalSeconds",
       "checkForUpdates",
       "dismissedUpdateVersion",
+      ...extraKeys,
     ])
   ) {
     return null;
@@ -76,7 +115,16 @@ function normalizePreference(value: unknown): AgentProviderPreference | null {
   if (typeof value.checkForUpdates !== "boolean") return null;
   const dismissed = dismissedVersion(value.dismissedUpdateVersion);
   if (!dismissed.valid) return null;
+  let transport: CodexTransportSettings = {};
+  if (codex) {
+    try {
+      transport = parseCodexTransportSettings(value);
+    } catch {
+      return null;
+    }
+  }
   return {
+    ...transport,
     enabled: value.enabled,
     healthCheckIntervalSeconds: normalizeAgentProviderHealthCheckIntervalSeconds(
       value.healthCheckIntervalSeconds,

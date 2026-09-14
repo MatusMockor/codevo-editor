@@ -1,0 +1,8 @@
+{"v":1,"t":"session","threadId":"01a0a00e-5c49-7bd0-afbd-71f072731dd2"}
+{"v":1,"t":"text","role":"assistant","text":"I’ll run the requested command.","clipped":false}
+{"v":1,"t":"toolCall","toolId":"exec-f7ad879e-a27e-49c6-a62c-9f70bf06bb2a","name":"shell","inputSummary":"/bin/zsh -lc 'echo hello-codevo'","clipped":false}
+{"v":1,"t":"toolResult","toolId":"exec-f7ad879e-a27e-49c6-a62c-9f70bf06bb2a","outputSummary":"hello-codevo\n","isError":false,"clipped":false}
+{"v":1,"t":"usage","scope":"thread","threadId":"01a0a00e-5c49-7bd0-afbd-71f072731dd2","usage":{"last":{"inputTokens":16222,"cachedInputTokens":12032,"cacheWriteInputTokens":0,"outputTokens":106,"reasoningOutputTokens":0,"totalTokens":16328},"total":{"inputTokens":16222,"cachedInputTokens":12032,"cacheWriteInputTokens":0,"outputTokens":106,"reasoningOutputTokens":0,"totalTokens":16328},"contextWindow":258400}}
+{"v":1,"t":"text","role":"assistant","text":"OK","clipped":false}
+{"v":1,"t":"usage","scope":"thread","threadId":"01a0a00e-5c49-7bd0-afbd-71f072731dd2","usage":{"last":{"inputTokens":16355,"cachedInputTokens":12032,"cacheWriteInputTokens":0,"outputTokens":5,"reasoningOutputTokens":0,"totalTokens":16360},"total":{"inputTokens":32577,"cachedInputTokens":24064,"cacheWriteInputTokens":0,"outputTokens":111,"reasoningOutputTokens":0,"totalTokens":32688},"contextWindow":258400}}
+{"v":1,"t":"result","isError":false,"durationMs":7576,"text":"","clipped":false,"usage":{"last":{"inputTokens":16355,"cachedInputTokens":12032,"cacheWriteInputTokens":0,"outputTokens":5,"reasoningOutputTokens":0,"totalTokens":16360},"total":{"inputTokens":32577,"cachedInputTokens":24064,"cacheWriteInputTokens":0,"outputTokens":111,"reasoningOutputTokens":0,"totalTokens":32688},"contextWindow":258400}}

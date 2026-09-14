@@ -785,6 +785,130 @@ describe("AgentComposer", () => {
     expect(host.textContent).not.toContain("Resume with less context");
   });
 
+  it("replaces the arrow with Stop while a steerable turn runs", () => {
+    const onStop = vi.fn();
+    const onSubmit = vi.fn();
+    render({ mode: STEER_MODE, running: true, onStop, onSubmit });
+
+    const stop = stopButton();
+    expect(stop.getAttribute("aria-label")).toBe("Stop agent");
+    expect(stop.getAttribute("title")).toContain("Send message: Enter");
+    expect(stop.type).toBe("button");
+    expect(stop.disabled).toBe(false);
+    expect(host.querySelector(".agent-composer__send")).toBeNull();
+    expect(promptField().placeholder).toBe("Message the running agent");
+    expect(host.querySelector("form")?.getAttribute("aria-label")).toBe(
+      "Follow up on agent thread",
+    );
+    expect(trigger("agent-launch-effort").disabled).toBe(true);
+    expect(trigger("agent-launch-model").disabled).toBe(true);
+
+    act(() => stop.click());
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("submits steering on Enter but preserves Shift+Enter and composing input", () => {
+    const onSubmit = vi.fn();
+    render({ mode: STEER_MODE, running: true, onSubmit });
+    const press = (options: KeyboardEventInit = {}): KeyboardEvent => {
+      const event = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        ...options,
+      });
+      act(() => {
+        promptField().dispatchEvent(event);
+      });
+      return event;
+    };
+    expect(press({ shiftKey: true }).defaultPrevented).toBe(false);
+    expect(press({ isComposing: true }).defaultPrevented).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(press().defaultPrevented).toBe(true);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows pending steering on desktop while keeping Stop usable", () => {
+    const onSubmit = vi.fn();
+    const onStop = vi.fn();
+    render({
+      mode: STEER_MODE,
+      running: true,
+      dispatching: true,
+      submitBlocked: true,
+      onSubmit,
+      onStop,
+    });
+    expect(stopButton().getAttribute("aria-busy")).toBe("true");
+    expect(stopButton().querySelector(".agent-composer__send-spinner")).not.toBeNull();
+    expect(stopButton().disabled).toBe(false);
+    pressAccelerator();
+    expect(onSubmit).not.toHaveBeenCalled();
+    act(() => stopButton().click());
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the run from an empty composer and from Escape in the prompt", () => {
+    const onStop = vi.fn();
+    render({ mode: STEER_MODE, prompt: "", running: true, submitBlocked: true, onStop });
+
+    expect(stopButton().disabled).toBe(false);
+    act(() => stopButton().click());
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    pressEscape();
+    expect(onStop).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves Escape alone once the turn is no longer running", () => {
+    const onStop = vi.fn();
+    render({ mode: { kind: "followUp", blockedReason: null }, prompt: "Reply", onStop });
+
+    pressEscape();
+    expect(onStop).not.toHaveBeenCalled();
+    expect(host.querySelector(".agent-composer__stop")).toBeNull();
+    expect(submitButton().getAttribute("aria-label")).toBe("Send follow-up");
+  });
+
+  it("keeps both Stop and Send on a touch-width layout", () => {
+    stubMatchMedia(true);
+    const onStop = vi.fn();
+    const onSubmit = vi.fn();
+    render({ mode: STEER_MODE, prompt: "also run the tests", running: true, onStop, onSubmit });
+
+    expect(host.querySelector(".agent-composer__stop")).not.toBeNull();
+    const send = submitButton();
+    expect(send.getAttribute("aria-label")).toBe("Send to running agent");
+    expect(send.disabled).toBe(false);
+
+    submitForm();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
+  function stopButton(): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>("button.agent-composer__stop");
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("button");
+  }
+
+  function promptField(): HTMLTextAreaElement {
+    const element = host.querySelector<HTMLTextAreaElement>("textarea#agent-prompt");
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("textarea");
+  }
+
+  function pressEscape(): void {
+    const field = promptField();
+    act(() => {
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" }),
+      );
+    });
+  }
+
   function render(overrides: Partial<AgentComposerProps> = {}): void {
     act(() => root.render(<AgentComposer {...defaultProps()} {...overrides} />));
   }
@@ -955,6 +1079,7 @@ describe("AgentComposer Airy styling contract", () => {
   });
 });
 
+const STEER_MODE = { kind: "steer", threadId: "agt-1" } as const;
 const CHECKOUT_ID = "agent-checkout";
 const REPOSITORY_ID = "agent-repository";
 

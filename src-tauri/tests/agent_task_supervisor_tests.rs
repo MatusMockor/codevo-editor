@@ -24,6 +24,9 @@ use agent_task_spawner::agent_launch::{
     AgentLaunchOptions, ClaudeContextChoice, ClaudeEffortChoice, ClaudeModelChoice,
     ClaudePermissionMode, CodexExecutionMode, CodexModelChoice,
 };
+use agent_task_spawner::agent_task_input::{
+    AgentTaskInput, AgentTaskSteerRejection, MAX_AGENT_STEERS_PER_TURN,
+};
 use agent_task_spawner::{
     claude_user_frame, plan_agent_invocation, AgentChild, AgentCliInvocation, AgentProcessSpawner,
     AgentPromptTransport, AgentTaskSpawnPlan, StdAgentProcessSpawner, AGENT_TASK_INHERITED_ENV,
@@ -194,6 +197,88 @@ impl Read for FakeReader {
     }
 }
 
+#[derive(Default)]
+struct RecordingInput {
+    frames: Mutex<Vec<Vec<u8>>>,
+    closed: Mutex<bool>,
+    journal: Arc<Mutex<Vec<String>>>,
+    failure: Option<io::ErrorKind>,
+    write_release: Option<Arc<(Mutex<bool>, Condvar)>>,
+    writing: AtomicU64,
+}
+
+impl RecordingInput {
+    fn build(
+        journal: &Arc<Mutex<Vec<String>>>,
+        failure: Option<io::ErrorKind>,
+        write_release: Option<Arc<(Mutex<bool>, Condvar)>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            journal: Arc::clone(journal),
+            failure,
+            write_release,
+            ..Self::default()
+        })
+    }
+
+    fn frames(&self) -> Vec<Vec<u8>> {
+        self.frames.lock().expect("frames lock").clone()
+    }
+
+    fn is_closed(&self) -> bool {
+        *self.closed.lock().expect("closed lock")
+    }
+
+    fn writes_in_flight(&self) -> u64 {
+        self.writing.load(Ordering::SeqCst)
+    }
+}
+
+struct RecordingInputHandle {
+    input: Arc<RecordingInput>,
+}
+
+impl AgentTaskInput for RecordingInputHandle {
+    fn write_frame(&mut self, frame: &[u8], _deadline: Instant) -> io::Result<()> {
+        if let Some(kind) = self.input.failure {
+            return Err(io::Error::from(kind));
+        }
+        if let Some(release) = &self.input.write_release {
+            self.input.writing.fetch_add(1, Ordering::SeqCst);
+            let released = release.0.lock().expect("release lock");
+            let (_released, timeout) = release
+                .1
+                .wait_timeout_while(released, EVENT_DEADLINE, |released| !*released)
+                .expect("release wait");
+            self.input.writing.fetch_sub(1, Ordering::SeqCst);
+            assert!(
+                !timeout.timed_out(),
+                "test did not release the blocked writer"
+            );
+        }
+        self.input
+            .frames
+            .lock()
+            .expect("frames lock")
+            .push(frame.to_vec());
+        self.input
+            .journal
+            .lock()
+            .expect("journal lock")
+            .push("frame".to_string());
+        Ok(())
+    }
+
+    fn close(&mut self) {
+        *self.input.closed.lock().expect("closed lock") = true;
+        self.input
+            .journal
+            .lock()
+            .expect("journal lock")
+            .push("close".to_string());
+    }
+}
+
 struct FakeChild {
     process: Arc<FakeProcess>,
     process_group_id: i32,
@@ -203,6 +288,7 @@ struct FakeChild {
     panic_stdout_reader: bool,
     panic_try_wait: bool,
     fail_try_wait: bool,
+    input: Option<Arc<RecordingInput>>,
 }
 
 impl AgentChild for FakeChild {
@@ -250,6 +336,11 @@ impl AgentChild for FakeChild {
         self.process.set_exited(137);
         Ok(())
     }
+
+    fn take_input(&mut self) -> Option<Box<dyn AgentTaskInput>> {
+        let input = self.input.take()?;
+        Some(Box::new(RecordingInputHandle { input }))
+    }
 }
 
 struct FakeChildSpec {
@@ -263,6 +354,7 @@ struct FakeChildSpec {
     panic_stdout_reader: bool,
     panic_try_wait: bool,
     fail_try_wait: bool,
+    input: Option<Arc<RecordingInput>>,
 }
 
 impl FakeChildSpec {
@@ -278,7 +370,13 @@ impl FakeChildSpec {
             panic_stdout_reader: false,
             panic_try_wait: false,
             fail_try_wait: false,
+            input: None,
         }
+    }
+
+    fn with_input(mut self, input: &Arc<RecordingInput>) -> Self {
+        self.input = Some(Arc::clone(input));
+        self
     }
 
     fn with_stdout_segments(mut self, segments: Vec<Vec<u8>>) -> Self {
@@ -343,6 +441,7 @@ impl FakeChildSpec {
             panic_stdout_reader: self.panic_stdout_reader,
             panic_try_wait: self.panic_try_wait,
             fail_try_wait: self.fail_try_wait,
+            input: self.input,
         }
     }
 }
@@ -392,6 +491,7 @@ impl AgentProcessSpawner for FakeSpawner {
 struct RecordingSignalSender {
     signals: Mutex<Vec<(i32, i32)>>,
     processes: Mutex<HashMap<i32, Arc<FakeProcess>>>,
+    journal: Arc<Mutex<Vec<String>>>,
 }
 
 impl RecordingSignalSender {
@@ -400,6 +500,14 @@ impl RecordingSignalSender {
             .lock()
             .expect("processes lock")
             .insert(process_group_id, Arc::clone(process));
+    }
+
+    fn journal(&self) -> Arc<Mutex<Vec<String>>> {
+        Arc::clone(&self.journal)
+    }
+
+    fn journal_entries(&self) -> Vec<String> {
+        self.journal.lock().expect("journal lock").clone()
     }
 
     fn signals(&self) -> Vec<(i32, i32)> {
@@ -421,6 +529,10 @@ impl AgentProcessGroupSignalSender for RecordingSignalSender {
             .lock()
             .expect("signals lock")
             .push((process_group_id, signal));
+        self.journal
+            .lock()
+            .expect("journal lock")
+            .push("signal".to_string());
         let process = self
             .processes
             .lock()
@@ -493,6 +605,7 @@ fn fixture(max_runtime: Duration) -> Fixture {
 fn start_request(task_id: &str, repository_root: &Path) -> AgentTaskStartRequest {
     AgentTaskStartRequest {
         task_id: task_id.to_string(),
+        thread_id: "thread-a".into(),
         workspace_id: "ws-agent-tests".to_string(),
         repository_root: repository_root.to_path_buf(),
         isolation: AgentTaskIsolation::Worktree,
@@ -2429,8 +2542,10 @@ fn reader_fault_kills_group_and_releases_admission() {
     let root = unique_path("reader-fault");
     let process = FakeProcess::new(None, None);
     fixture.signals.track(9111, &process);
+    let input = RecordingInput::build(&fixture.signals.journal(), None, None);
     fixture.spawner.script(FakeSpawnOutcome::Child(
         FakeChildSpec::new(&process, 9111)
+            .with_input(&input)
             .with_stdout_reader_fault()
             .build(),
     ));
@@ -2457,6 +2572,16 @@ fn reader_fault_kills_group_and_releases_admission() {
         fixture.signals.signals_for(9111),
         vec![KILL_PROCESS_GROUP_SIGNAL],
         "faulted start must kill the spawned process group"
+    );
+    assert!(input.is_closed());
+    assert_eq!(
+        fixture
+            .signals
+            .journal_entries()
+            .first()
+            .map(String::as_str),
+        Some("close"),
+        "startup failure must close stdin before signalling the child"
     );
     assert!(fixture.registry.acknowledge("agt-reader").is_err());
     assert!(
@@ -2794,3 +2919,605 @@ fn real_process_group_kill_reaps_the_whole_child_tree() {
 }
 #[path = "../src/effective_executable_environment.rs"]
 mod effective_executable_environment;
+
+const STEER_WORKSPACE: &str = "ws-agent-tests";
+
+struct SteerHarness {
+    fixture: Fixture,
+    process: Arc<FakeProcess>,
+    input: Option<Arc<RecordingInput>>,
+    stdout: Option<mpsc::Sender<Vec<u8>>>,
+    root: PathBuf,
+    task_id: String,
+}
+
+impl SteerHarness {
+    fn steer(&self, frame: &[u8]) -> Result<(), AgentTaskSteerRejection> {
+        steer_frame(&self.fixture.registry, &self.task_id, frame)
+    }
+
+    fn recorded_input(&self) -> &Arc<RecordingInput> {
+        self.input.as_ref().expect("the harness retains its input")
+    }
+
+    fn emit_stdout(&self, bytes: &[u8]) {
+        self.stdout
+            .as_ref()
+            .expect("the harness retains its stdout sender")
+            .send(bytes.to_vec())
+            .expect("send stdout");
+    }
+
+    fn journal(&self) -> Vec<String> {
+        self.fixture.signals.journal_entries()
+    }
+
+    fn wait_for_signal(&self) {
+        assert!(
+            wait_until(EVENT_DEADLINE, || self
+                .journal()
+                .contains(&"signal".to_string())),
+            "the process group was never signalled"
+        );
+    }
+}
+
+fn steer_frame(
+    registry: &AgentTaskRegistry,
+    task_id: &str,
+    frame: &[u8],
+) -> Result<(), AgentTaskSteerRejection> {
+    registry.steer_for_workspace(
+        task_id,
+        STEER_WORKSPACE,
+        Arc::from(frame.to_vec().into_boxed_slice()),
+    )
+}
+
+struct SteerSetup {
+    label: String,
+    process_group_id: i32,
+    failure: Option<io::ErrorKind>,
+    with_input: bool,
+    acknowledge: bool,
+    max_runtime: Duration,
+    write_release: Option<Arc<(Mutex<bool>, Condvar)>>,
+}
+
+impl SteerSetup {
+    fn new(label: &str, process_group_id: i32) -> Self {
+        Self {
+            label: label.to_string(),
+            process_group_id,
+            failure: None,
+            with_input: true,
+            acknowledge: true,
+            max_runtime: Duration::from_secs(60),
+            write_release: None,
+        }
+    }
+
+    fn without_input(mut self) -> Self {
+        self.with_input = false;
+        self
+    }
+
+    fn unacknowledged(mut self) -> Self {
+        self.acknowledge = false;
+        self
+    }
+
+    fn failing_writes(mut self, kind: io::ErrorKind) -> Self {
+        self.failure = Some(kind);
+        self
+    }
+
+    fn blocked_writes(mut self) -> Self {
+        self.write_release = Some(Arc::new((Mutex::new(false), Condvar::new())));
+        self
+    }
+
+    fn max_runtime(mut self, max_runtime: Duration) -> Self {
+        self.max_runtime = max_runtime;
+        self
+    }
+
+    fn start(self) -> SteerHarness {
+        let fixture = fixture(self.max_runtime);
+        let root = unique_path(&self.label);
+        let cwd = root.join(".worktrees").join(&self.label);
+        let process = FakeProcess::new(None, Some(0));
+        fixture.signals.track(self.process_group_id, &process);
+        let journal = fixture.signals.journal();
+        let input = self
+            .with_input
+            .then(|| RecordingInput::build(&journal, self.failure, self.write_release));
+        let (sender, receiver) = mpsc::channel::<Vec<u8>>();
+        let mut spec =
+            FakeChildSpec::new(&process, self.process_group_id).with_stdout_receiver(receiver);
+        if let Some(input) = input.as_ref() {
+            spec = spec.with_input(input);
+        }
+        fixture
+            .spawner
+            .script(FakeSpawnOutcome::Child(spec.build()));
+        dispatch(&fixture, &self.label, &root, &cwd).expect("start task");
+        if self.acknowledge {
+            fixture
+                .registry
+                .acknowledge_for_workspace(&self.label, STEER_WORKSPACE)
+                .expect("acknowledge");
+        }
+        SteerHarness {
+            fixture,
+            process,
+            input,
+            stdout: Some(sender),
+            root,
+            task_id: self.label,
+        }
+    }
+}
+
+#[test]
+fn steer_writes_the_frame_to_the_running_child() {
+    let harness = SteerSetup::new("agt-steer-writes", 9301).start();
+
+    harness.steer(b"first\n").expect("first steer");
+    harness.steer(b"second\n").expect("second steer");
+
+    assert_eq!(
+        harness.recorded_input().frames(),
+        vec![b"first\n".to_vec(), b"second\n".to_vec()],
+        "frames reach the child in the order the steers were accepted"
+    );
+    assert!(!harness.recorded_input().is_closed());
+}
+
+#[test]
+fn steer_before_acknowledge_is_not_running() {
+    let harness = SteerSetup::new("agt-steer-pending", 9302)
+        .unacknowledged()
+        .start();
+
+    assert_eq!(
+        harness.steer(b"early\n"),
+        Err(AgentTaskSteerRejection::NotRunning)
+    );
+    assert!(harness.recorded_input().frames().is_empty());
+}
+
+#[test]
+fn steer_on_an_unknown_task_is_not_registered() {
+    let harness = SteerSetup::new("agt-steer-unknown", 9303).start();
+
+    assert_eq!(
+        steer_frame(&harness.fixture.registry, "agt-nobody", b"frame\n"),
+        Err(AgentTaskSteerRejection::NotRegistered)
+    );
+}
+
+#[test]
+fn steer_with_foreign_workspace_is_not_registered() {
+    let harness = SteerSetup::new("agt-steer-foreign", 9304).start();
+
+    assert_eq!(
+        harness.fixture.registry.steer_for_workspace(
+            &harness.task_id,
+            "ws-someone-else",
+            Arc::from(b"frame\n".to_vec().into_boxed_slice()),
+        ),
+        Err(AgentTaskSteerRejection::NotRegistered)
+    );
+    assert!(harness.recorded_input().frames().is_empty());
+}
+
+#[test]
+fn steer_on_child_without_input_is_input_unavailable() {
+    let harness = SteerSetup::new("agt-steer-codex", 9305)
+        .without_input()
+        .start();
+
+    assert_eq!(
+        harness.steer(b"frame\n"),
+        Err(AgentTaskSteerRejection::InputUnavailable)
+    );
+}
+
+#[test]
+fn steer_after_result_line_is_input_closed() {
+    let harness = SteerSetup::new("agt-steer-result", 9306).start();
+
+    harness.steer(b"before\n").expect("steer before the result");
+    harness.emit_stdout(b"{\"type\":\"assistant\"}\n{\"type\":\"result\",");
+    assert!(
+        wait_until(EVENT_DEADLINE, || harness.recorded_input().is_closed()),
+        "the result line did not close the input"
+    );
+
+    assert_eq!(
+        harness.steer(b"after\n"),
+        Err(AgentTaskSteerRejection::InputClosed)
+    );
+    assert_eq!(
+        harness.recorded_input().frames(),
+        vec![b"before\n".to_vec()]
+    );
+}
+
+#[test]
+fn a_result_line_split_across_chunks_still_closes_the_input() {
+    let harness = SteerSetup::new("agt-steer-split", 9307).start();
+
+    harness.emit_stdout(b"{\"type\":\"resu");
+    harness.emit_stdout(b"lt\",\"is_error\":false}\n");
+
+    assert!(
+        wait_until(EVENT_DEADLINE, || harness.recorded_input().is_closed()),
+        "a split result line did not close the input"
+    );
+}
+
+#[test]
+fn stop_closes_the_input_before_the_signal_and_later_steers_are_stopping() {
+    let harness = SteerSetup::new("agt-steer-stop", 9308).start();
+
+    harness
+        .fixture
+        .registry
+        .stop_for_workspace(&harness.task_id, STEER_WORKSPACE)
+        .expect("stop the task");
+
+    harness.wait_for_signal();
+    let journal = harness.journal();
+    assert_eq!(
+        journal.first().map(String::as_str),
+        Some("close"),
+        "the input closes before the process group is signalled: {journal:?}"
+    );
+    assert!(harness.recorded_input().is_closed());
+    assert_eq!(
+        harness.steer(b"late\n"),
+        Err(AgentTaskSteerRejection::Stopping)
+    );
+}
+
+#[test]
+fn stop_for_root_closes_the_input_before_the_signal() {
+    let harness = SteerSetup::new("agt-steer-root", 9316).start();
+
+    harness.fixture.registry.stop_for_root(&harness.root);
+
+    harness.wait_for_signal();
+    let journal = harness.journal();
+    assert_eq!(
+        journal.first().map(String::as_str),
+        Some("close"),
+        "a root stop closes the input before signalling: {journal:?}"
+    );
+    assert!(harness.recorded_input().is_closed());
+    assert_eq!(
+        harness.steer(b"late\n"),
+        Err(AgentTaskSteerRejection::Stopping)
+    );
+}
+
+#[test]
+fn stop_for_workspace_root_closes_the_input_before_the_signal() {
+    let harness = SteerSetup::new("agt-steer-ws-root", 9318).start();
+
+    harness
+        .fixture
+        .registry
+        .stop_for_workspace_root(STEER_WORKSPACE, &harness.root);
+
+    harness.wait_for_signal();
+    let journal = harness.journal();
+    assert_eq!(
+        journal.first().map(String::as_str),
+        Some("close"),
+        "a workspace root stop closes the input before signalling: {journal:?}"
+    );
+    assert_eq!(
+        harness.steer(b"late\n"),
+        Err(AgentTaskSteerRejection::Stopping)
+    );
+}
+
+#[test]
+fn stop_for_root_and_reap_closes_the_input_before_the_signal() {
+    let mut harness = SteerSetup::new("agt-steer-root-reap", 9319).start();
+    harness.stdout.take();
+
+    assert!(harness
+        .fixture
+        .registry
+        .stop_for_root_and_reap(&harness.root));
+
+    let journal = harness.journal();
+    assert_eq!(
+        journal.first().map(String::as_str),
+        Some("close"),
+        "a root stop and reap closes the input before signalling: {journal:?}"
+    );
+    assert!(journal.iter().any(|entry| entry == "signal"));
+    assert!(harness.recorded_input().is_closed());
+    assert!(harness.process.exit_code().is_some());
+    assert_eq!(
+        harness.steer(b"late\n"),
+        Err(AgentTaskSteerRejection::Stopping)
+    );
+}
+
+#[test]
+fn shutdown_all_closes_the_input_before_the_signal() {
+    let mut harness = SteerSetup::new("agt-steer-shutdown", 9320).start();
+    harness.stdout.take();
+
+    harness.fixture.registry.shutdown_all();
+
+    let journal = harness.journal();
+    assert_eq!(
+        journal.first().map(String::as_str),
+        Some("close"),
+        "shutdown closes the input before signalling: {journal:?}"
+    );
+    assert!(journal.iter().any(|entry| entry == "signal"));
+    assert!(harness.recorded_input().is_closed());
+    assert!(harness.process.exit_code().is_some());
+    assert_eq!(
+        harness.steer(b"late\n"),
+        Err(AgentTaskSteerRejection::Stopping)
+    );
+}
+
+#[test]
+fn the_watchdog_closes_the_input_before_the_signal() {
+    let harness = SteerSetup::new("agt-steer-watchdog", 9317)
+        .max_runtime(Duration::from_millis(50))
+        .start();
+
+    harness.wait_for_signal();
+    let journal = harness.journal();
+    assert_eq!(
+        journal.first().map(String::as_str),
+        Some("close"),
+        "the watchdog closes the input before signalling: {journal:?}"
+    );
+    assert_eq!(
+        harness.steer(b"late\n"),
+        Err(AgentTaskSteerRejection::Stopping)
+    );
+}
+
+#[test]
+fn stop_never_waits_for_an_in_flight_steer_write() {
+    let harness = SteerSetup::new("agt-steer-blocking", 9315)
+        .blocked_writes()
+        .start();
+    let registry = &harness.fixture.registry;
+    let task_id = harness.task_id.clone();
+    let input = Arc::clone(harness.recorded_input());
+
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            steer_frame(registry, &task_id, b"slow\n").expect("the slow steer still lands");
+        });
+        assert!(
+            wait_until(EVENT_DEADLINE, || input.writes_in_flight() > 0),
+            "the slow write never started"
+        );
+
+        let started = Instant::now();
+        registry
+            .stop_for_workspace(&task_id, STEER_WORKSPACE)
+            .expect("stop the task");
+        let elapsed = started.elapsed();
+        let release = input
+            .write_release
+            .as_ref()
+            .expect("blocked writer release");
+        *release.0.lock().expect("release lock") = true;
+        release.1.notify_all();
+
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "stop waited for the in-flight stdin write: {elapsed:?}"
+        );
+        assert_eq!(
+            steer_frame(registry, &task_id, b"racing\n"),
+            Err(AgentTaskSteerRejection::Stopping),
+            "a steer racing the stop is rejected as soon as the state flips"
+        );
+    });
+
+    harness.wait_for_signal();
+    assert!(
+        wait_until(EVENT_DEADLINE, || harness.recorded_input().is_closed()),
+        "the in-flight writer never released the handle after the stop"
+    );
+    assert_eq!(harness.recorded_input().frames().len(), 1);
+}
+
+#[test]
+fn write_failure_detaches_and_stops_the_task() {
+    let harness = SteerSetup::new("agt-steer-failure", 9309)
+        .failing_writes(io::ErrorKind::BrokenPipe)
+        .start();
+
+    assert_eq!(
+        harness.steer(b"frame\n"),
+        Err(AgentTaskSteerRejection::WriteFailed)
+    );
+    assert_eq!(
+        harness.steer(b"frame\n"),
+        Err(AgentTaskSteerRejection::Stopping),
+        "the detached task is already stopping"
+    );
+    assert!(
+        wait_until(EVENT_DEADLINE, || harness
+            .fixture
+            .sink
+            .has_terminal_status(&harness.task_id)),
+        "the failed write did not settle the task"
+    );
+    let statuses = statuses_for(&harness.fixture.sink, &harness.task_id);
+    assert!(
+        matches!(
+            statuses.last().map(|event| &event.status),
+            Some(AgentTaskStatusPayload::Stopped)
+        ),
+        "the task settles as stopped: {:?}",
+        statuses.last().map(|event| &event.status)
+    );
+}
+
+#[test]
+fn a_timed_out_write_is_reported_as_write_timed_out() {
+    let harness = SteerSetup::new("agt-steer-timeout", 9310)
+        .failing_writes(io::ErrorKind::TimedOut)
+        .start();
+
+    assert_eq!(
+        harness.steer(b"frame\n"),
+        Err(AgentTaskSteerRejection::WriteTimedOut)
+    );
+}
+
+#[test]
+fn steering_stops_at_the_per_turn_limit() {
+    let harness = SteerSetup::new("agt-steer-limit", 9311).start();
+
+    for index in 0..MAX_AGENT_STEERS_PER_TURN {
+        harness
+            .steer(format!("frame-{index}\n").as_bytes())
+            .expect("frame within the limit");
+    }
+
+    assert_eq!(
+        harness.steer(b"over\n"),
+        Err(AgentTaskSteerRejection::LimitExceeded)
+    );
+    assert_eq!(
+        harness.recorded_input().frames().len(),
+        MAX_AGENT_STEERS_PER_TURN as usize
+    );
+}
+
+#[test]
+fn close_input_for_workspace_is_idempotent() {
+    let harness = SteerSetup::new("agt-steer-close", 9312).start();
+
+    harness
+        .fixture
+        .registry
+        .close_input_for_workspace(&harness.task_id, STEER_WORKSPACE)
+        .expect("first close");
+    harness
+        .fixture
+        .registry
+        .close_input_for_workspace(&harness.task_id, STEER_WORKSPACE)
+        .expect("second close");
+
+    assert!(harness.recorded_input().is_closed());
+    assert_eq!(
+        harness.steer(b"late\n"),
+        Err(AgentTaskSteerRejection::InputClosed)
+    );
+    assert_eq!(
+        harness
+            .fixture
+            .registry
+            .close_input_for_workspace(&harness.task_id, "ws-someone-else"),
+        Err(AgentTaskSteerRejection::NotRegistered)
+    );
+    assert_eq!(
+        harness
+            .fixture
+            .registry
+            .close_input_for_workspace("agt-nobody", STEER_WORKSPACE),
+        Err(AgentTaskSteerRejection::NotRegistered)
+    );
+}
+
+#[test]
+fn metadata_for_workspace_reads_the_owner_checked_entry() {
+    let harness = SteerSetup::new("agt-steer-metadata", 9313).start();
+
+    let metadata = harness
+        .fixture
+        .registry
+        .metadata_for_workspace(&harness.task_id, STEER_WORKSPACE)
+        .expect("metadata for the owning workspace");
+
+    assert_eq!(metadata.task_id, harness.task_id);
+    assert_eq!(metadata.workspace_id, STEER_WORKSPACE);
+    assert!(metadata
+        .cwd
+        .ends_with(Path::new(".worktrees").join(&harness.task_id)));
+    assert_eq!(metadata.isolation, AgentTaskIsolation::Worktree);
+    assert!(harness
+        .fixture
+        .registry
+        .metadata_for_workspace(&harness.task_id, "ws-someone-else")
+        .is_none());
+    assert!(harness
+        .fixture
+        .registry
+        .metadata_for_workspace("agt-nobody", STEER_WORKSPACE)
+        .is_none());
+}
+
+#[test]
+fn a_terminal_task_drops_its_input_and_refuses_steering() {
+    let mut harness = SteerSetup::new("agt-steer-terminal", 9314).start();
+
+    harness.stdout.take();
+    harness.process.set_exited(0);
+    assert!(
+        wait_until(EVENT_DEADLINE, || harness
+            .fixture
+            .sink
+            .has_terminal_status(&harness.task_id)),
+        "the task did not settle"
+    );
+
+    assert!(harness.recorded_input().is_closed());
+    assert_eq!(
+        harness.steer(b"late\n"),
+        Err(AgentTaskSteerRejection::NotRunning)
+    );
+}
+
+#[test]
+fn waiter_failure_closes_the_input_before_signalling() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("waiter-close-input");
+    let process = FakeProcess::new(None, Some(0));
+    fixture.signals.track(9321, &process);
+    let input = RecordingInput::build(&fixture.signals.journal(), None, None);
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9321)
+            .with_input(&input)
+            .with_try_wait_failure()
+            .build(),
+    ));
+    dispatch(&fixture, "agt-waiter-close", &root, &root.join("worktree"))
+        .expect("start waiter failure task");
+    fixture
+        .registry
+        .acknowledge("agt-waiter-close")
+        .expect("acknowledge");
+    assert!(wait_until(EVENT_DEADLINE, || fixture
+        .sink
+        .has_terminal_status("agt-waiter-close")));
+    assert!(input.is_closed());
+    let journal = fixture.signals.journal_entries();
+    assert_eq!(
+        journal.first().map(String::as_str),
+        Some("close"),
+        "waiter failure must close stdin before signalling: {journal:?}"
+    );
+    assert!(journal.iter().any(|entry| entry == "signal"));
+    assert!(input.frames().is_empty());
+}

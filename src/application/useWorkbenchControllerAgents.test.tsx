@@ -332,6 +332,8 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     acknowledgeAgentTaskStart: vi.fn(async () => undefined),
     stopAgentTask: vi.fn(async () => undefined),
     stopAgentTasksForRoot: vi.fn(async () => undefined),
+    steerAgentTask: vi.fn(async () => ({ kind: "accepted" })),
+    closeAgentTaskInput: vi.fn(async () => undefined),
     subscribeAgentTaskStatus: vi.fn(async () => () => undefined),
     subscribeAgentTaskOutput: vi.fn(async () => () => undefined),
   } as unknown as AgentTaskGateway;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { agentThreadIsSteerable } from "../../application/agentTurnAdmission";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { useAgentComposerRepositoryInteraction } from "./useAgentComposerRepositoryInteraction";
 import {
@@ -11,6 +12,7 @@ import {
   type AgentTaskIsolation,
 } from "../../domain/agentTask";
 import type {
+  AgentSteerOutcome,
   AgentThreadsSurface,
   AgentThreadView,
   AgentTurnAttachmentRequest,
@@ -66,6 +68,8 @@ export type AgentComposerSurface = Pick<
   | "refreshIsolationStatus"
   | "sendFollowUp"
   | "startThread"
+  | "steer"
+  | "stop"
 >;
 
 export interface AgentComposerStateOptions {
@@ -270,14 +274,38 @@ export function useAgentComposerControllerState({
     providerEnabled,
   );
   const composerMode = useComposerMode(selectedThread, agents, agentCliKind);
+  const steerThreadId = composerMode.kind === "steer" ? composerMode.threadId : null;
+  const steerThreadIdRef = useRef(steerThreadId);
+  steerThreadIdRef.current = steerThreadId;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const [steering, setSteering] = useState(false);
+  const dispatching = agents.dispatching || steering;
+  const stopThread = agents.stop;
+  const requestStop = useCallback((): void => {
+    const threadId = steerThreadIdRef.current;
+    if (threadId === null) return;
+    void stopThread(threadId);
+  }, [stopThread]);
   const lastUsedLaunch = agents.lastUsedLaunch;
   const composerLaunch = useMemo(
-    () => resolveComposerLaunch(launchChoice, launchScope, agentCliKind, lastUsedLaunch),
-    [agentCliKind, lastUsedLaunch, launchChoice, launchScope],
+    () =>
+      resolveComposerLaunch(
+        steerThreadId === null ? launchChoice : null,
+        launchScope,
+        agentCliKind,
+        lastUsedLaunch,
+      ),
+    [agentCliKind, lastUsedLaunch, launchChoice, launchScope, steerThreadId],
   );
 
   const submissionBlocked =
-    agents.dispatching ||
+    dispatching ||
     (composerMode.kind === "followUp" && composerMode.blockedReason !== null) ||
     (selectedThread === null &&
       (target === null ||
@@ -321,7 +349,13 @@ export function useAgentComposerControllerState({
   );
   const sendFollowUp = agents.sendFollowUp;
   const startThread = agents.startThread;
-  const submissionAuthority = composerSubmissionAuthority(selectedThread, target, composerProject);
+  const steerThread = agents.steer;
+  const submissionAuthority = composerSubmissionAuthority(
+    selectedThread,
+    target,
+    composerProject,
+    steerThreadId !== null,
+  );
   const submissionAuthorityRef = useRef(submissionAuthority);
   submissionAuthorityRef.current = submissionAuthority;
 
@@ -343,6 +377,21 @@ export function useAgentComposerControllerState({
       }
       switch (authority.kind) {
         case "followUp": {
+          if (authority.steer) {
+            setSteering(true);
+            try {
+              const outcome = await steerThread({
+                ...prepared.request,
+                threadId: authority.threadId,
+                prompt,
+              });
+              if (steerKeptThePrompt(outcome)) return false;
+              attachments?.markSent(prepared.draftIds);
+              return true;
+            } finally {
+              if (mountedRef.current) setSteering(false);
+            }
+          }
           const sent = await sendFollowUp({
             ...prepared.request,
             threadId: authority.threadId,
@@ -382,6 +431,7 @@ export function useAgentComposerControllerState({
       onThreadStarted,
       sendFollowUp,
       startThread,
+      steerThread,
       submissionBlocked,
       submissionAuthority,
     ],
@@ -438,7 +488,11 @@ export function useAgentComposerControllerState({
   const composerProps: AgentComposerControllerProps = {
     attachments,
     attachmentTargetKey,
-    dispatching: agents.dispatching,
+    promptOwnerKey: JSON.stringify([
+      selectedThread?.thread.threadId ?? null,
+      selectedThread?.thread.owner ?? target,
+    ]),
+    dispatching,
     guard,
     isolation,
     isolationReason: isolationStatusCaption(preview, isolation, worktreeOnly),
@@ -450,6 +504,8 @@ export function useAgentComposerControllerState({
     onLaunchChange: changeLaunch,
     onNewThread: clearSelection,
     onSelectRepository: selectRepository,
+    onStop: requestStop,
+    running: steerThreadId !== null,
     target: composerTargetView(composerProjects, target),
     worktreeAvailable,
     worktreeOnly,
@@ -468,6 +524,10 @@ export function useAgentComposerControllerState({
 }
 
 const SAFE_GUARD = { kind: "safe" } as const;
+
+function steerKeptThePrompt(outcome: AgentSteerOutcome): boolean {
+  return outcome === "kept";
+}
 
 function isolationStatusCaption(
   preview: ReturnType<AgentComposerSurface["isolationPreview"]> | null,
@@ -568,6 +628,11 @@ export function useAgentComposerPromptState(
   controller: AgentComposerPromptController,
 ): AgentComposerPromptProps {
   const [prompt, setPrompt] = useState("");
+  const ownerKey = controller.composerProps.promptOwnerKey;
+  const promptOwnerRef = useRef({ key: ownerKey, generation: 0 });
+  if (promptOwnerRef.current.key !== ownerKey) {
+    promptOwnerRef.current = { key: ownerKey, generation: promptOwnerRef.current.generation + 1 };
+  }
   const promptRevisionRef = useRef(0);
   const changePrompt = useCallback((next: string) => {
     promptRevisionRef.current += 1;
@@ -585,11 +650,13 @@ export function useAgentComposerPromptState(
     (submission: AgentComposerSubmission) => {
       if (submitBlocked) return;
       const submittedPrompt = prompt;
+      const submittedOwner = promptOwnerRef.current;
       const clearedRevision = promptRevisionRef.current + 1;
       promptRevisionRef.current = clearedRevision;
       setPrompt("");
       void controller.submit(submittedPrompt, submission).then((submitted) => {
         if (submitted) return;
+        if (promptOwnerRef.current !== submittedOwner) return;
         if (promptRevisionRef.current !== clearedRevision) return;
         promptRevisionRef.current += 1;
         setPrompt(submittedPrompt);
@@ -610,6 +677,7 @@ export function useAgentComposerPromptState(
 type ComposerSubmissionAuthority =
   | {
       readonly kind: "followUp";
+      readonly steer: boolean;
       readonly threadId: string;
       readonly rootKey: string;
       readonly ownerId: string;
@@ -627,10 +695,12 @@ function composerSubmissionAuthority(
   selectedThread: AgentThreadView | null,
   target: ComposerTarget | null,
   project: AgentProjectDescriptor | null,
+  steer: boolean,
 ): ComposerSubmissionAuthority | null {
   if (selectedThread !== null) {
     return {
       kind: "followUp",
+      steer,
       threadId: selectedThread.thread.threadId,
       rootKey: selectedThread.thread.owner.rootKey,
       ownerId: selectedThread.thread.owner.ownerId,
@@ -656,6 +726,7 @@ function composerSubmissionAuthorityEqual(
     case "followUp":
       if (current.kind !== "followUp") return false;
       return (
+        current.steer === captured.steer &&
         current.threadId === captured.threadId &&
         current.rootKey === captured.rootKey &&
         current.ownerId === captured.ownerId &&
@@ -714,6 +785,9 @@ function useComposerMode(
   const { agentCliConfigured, liveTaskCount, maxConcurrentAgentTasks } = agents;
   return useMemo<AgentComposerMode>(() => {
     if (selectedThread === null) return { kind: "new" };
+    if (agentThreadIsSteerable(selectedThread.thread)) {
+      return { kind: "steer", threadId: selectedThread.thread.threadId };
+    }
     return {
       kind: "followUp",
       blockedReason: agentFollowUpBlockedReason(selectedThread, {

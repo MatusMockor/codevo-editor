@@ -158,6 +158,46 @@ fn poll_test_child_exit(
     }
 }
 
+fn read_to_end(reader: &mut dyn Read) -> Vec<u8> {
+    let mut collected = Vec::new();
+    let mut buffer = vec![0_u8; 8 * 1024];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => return collected,
+            Ok(count) => collected.extend_from_slice(&buffer[..count]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            Err(_) => return collected,
+        }
+    }
+}
+
+fn read_exactly(
+    reader: &mut dyn Read,
+    buffer: &mut [u8],
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut filled = 0;
+    while filled < buffer.len() {
+        if std::time::Instant::now() >= deadline {
+            return Err("Timed out reading agent output.".to_string());
+        }
+        match reader.read(&mut buffer[filled..]) {
+            Ok(0) => return Err("Agent output ended early.".to_string()),
+            Ok(count) => filled += count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(error) => return Err(format!("Agent output read failed: {error}")),
+        }
+    }
+    Ok(())
+}
+
 fn wait_for_test_child_exit(
     child: &mut dyn AgentChild,
     timeout: std::time::Duration,
@@ -896,7 +936,7 @@ fn each_provider_refuses_the_other_providers_image_transport() {
 
 #[cfg(unix)]
 #[test]
-fn a_claude_plan_pipes_its_frame_and_closes_stdin_so_the_child_exits() {
+fn a_claude_plan_pipes_its_frame_and_keeps_stdin_open_until_the_input_closes() {
     use std::os::unix::fs::PermissionsExt;
 
     let nonce = CWD_AUTHORITY_NONCE.fetch_add(1, Ordering::SeqCst);
@@ -920,24 +960,142 @@ fn a_claude_plan_pipes_its_frame_and_closes_stdin_so_the_child_exits() {
     .expect("plan");
 
     let mut child = StdAgentProcessSpawner.spawn(&plan).expect("spawn");
+    let mut input = child
+        .take_input()
+        .expect("a claude child retains its input");
+    assert!(
+        child.take_input().is_none(),
+        "the retained input is handed out exactly once"
+    );
+    let first_frame = claude_user_frame(
+        "describe it",
+        &[("image/png".to_string(), vec![0x89, 0x50, 0x4e, 0x47])],
+    );
+    let mut stdout = child.stdout_reader().expect("stdout");
+    let mut echoed = vec![0_u8; first_frame.len()];
+    read_exactly(
+        stdout.as_mut(),
+        &mut echoed,
+        std::time::Duration::from_secs(5),
+    )
+    .expect("the first frame is echoed back");
+    assert_eq!(echoed, first_frame);
+    assert_eq!(
+        poll_test_child_exit(child.as_mut(), std::time::Instant::now()),
+        Ok(None),
+        "the child is still alive after the first frame"
+    );
+
+    let steer = claude_user_frame("and again", &[]);
+    input
+        .write_frame(
+            &steer,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
+        .expect("steer frame");
+    let mut steered = vec![0_u8; steer.len()];
+    read_exactly(
+        stdout.as_mut(),
+        &mut steered,
+        std::time::Duration::from_secs(5),
+    )
+    .expect("the steer frame is echoed back");
+    assert_eq!(steered, steer);
+
+    input.close();
     let exit_code = wait_for_test_child_exit(child.as_mut(), std::time::Duration::from_secs(5))
-        .expect("the child exits at stdin EOF");
-    let mut stdout = String::new();
-    child
-        .stdout_reader()
-        .expect("stdout")
-        .read_to_string(&mut stdout)
-        .expect("read stdout");
+        .expect("the child exits once the input closes");
 
     assert_eq!(exit_code, 0);
-    assert_eq!(
-        stdout.into_bytes(),
-        claude_user_frame(
-            "describe it",
-            &[("image/png".to_string(), vec![0x89, 0x50, 0x4e, 0x47])]
-        )
-    );
     assert!(plan.attachment_paths().is_empty());
+    fs::remove_dir_all(fixture).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_steer_written_during_the_initial_frame_is_serialized_after_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let nonce = CWD_AUTHORITY_NONCE.fetch_add(1, Ordering::SeqCst);
+    let fixture = std::env::temp_dir().join(format!(
+        "agent-task-stdin-order-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&fixture).expect("fixture");
+    let cli = fixture.join("claude");
+    fs::write(&cli, "#!/bin/sh\nsleep 0.3\ncat\n").expect("cli");
+    fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).expect("permissions");
+    let image = vec![0xa5_u8; 256 * 1024];
+    let plan = plan_agent_invocation_with_attachments(
+        cli.to_str().expect("path"),
+        AgentCliInvocation::ClaudeCode,
+        "describe it",
+        &fixture,
+        None,
+        claude_default(),
+        vec![inline_image(&image)],
+    )
+    .expect("plan");
+
+    let mut child = StdAgentProcessSpawner.spawn(&plan).expect("spawn");
+    let mut input = child
+        .take_input()
+        .expect("a claude child retains its input");
+    let mut stdout = child.stdout_reader().expect("stdout");
+    let collector = std::thread::spawn(move || read_to_end(stdout.as_mut()));
+
+    let steer = claude_user_frame("and again", &[]);
+    input
+        .write_frame(
+            &steer,
+            std::time::Instant::now() + std::time::Duration::from_secs(10),
+        )
+        .expect("steer frame");
+    input.close();
+    let exit_code = wait_for_test_child_exit(child.as_mut(), std::time::Duration::from_secs(10))
+        .expect("the child exits once the input closes");
+    let echoed = collector.join().expect("collector");
+
+    let mut expected = claude_user_frame("describe it", &[("image/png".to_string(), image)]);
+    expected.extend_from_slice(&steer);
+    assert_eq!(exit_code, 0);
+    assert_eq!(
+        echoed, expected,
+        "the steer frame is serialized after the initial frame"
+    );
+    fs::remove_dir_all(fixture).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_codex_plan_has_no_input() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let nonce = CWD_AUTHORITY_NONCE.fetch_add(1, Ordering::SeqCst);
+    let fixture = std::env::temp_dir().join(format!(
+        "agent-task-codex-no-input-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&fixture).expect("fixture");
+    let cli = fixture.join("codex");
+    fs::write(&cli, "#!/bin/sh\nexit 0\n").expect("cli");
+    fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).expect("permissions");
+    let plan = plan_agent_invocation(
+        cli.to_str().expect("path"),
+        AgentCliInvocation::CodexExec,
+        "describe it",
+        &fixture,
+        None,
+        codex_default(),
+    )
+    .expect("plan");
+
+    let mut child = StdAgentProcessSpawner.spawn(&plan).expect("spawn");
+    assert!(
+        child.take_input().is_none(),
+        "a codex exec child has no steering input"
+    );
+    let _ = wait_for_test_child_exit(child.as_mut(), std::time::Duration::from_secs(5));
     fs::remove_dir_all(fixture).expect("cleanup");
 }
 

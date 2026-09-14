@@ -154,6 +154,90 @@ describe("buildAgentThreadSearchDocument", () => {
     expect(doc.titleLower).toBe("fix the router");
   });
 
+  it("indexes steering and subagent answers with their outer event positions", () => {
+    const subject = thread({
+      title: "other",
+      turns: [
+        turn({
+          prompt: "initial",
+          events: [
+            {
+              kind: "userMessage",
+              text: 'find needle\n\n[Attached image "secret.png" is saved at: /store/secret.png]',
+            },
+            {
+              kind: "subagentEvent",
+              agentThreadId: "child",
+              event: { kind: "assistantText", text: "child needle" },
+            },
+            {
+              kind: "subagentEvent",
+              agentThreadId: "child",
+              event: { kind: "reasoning", text: "private needle" },
+            },
+            {
+              kind: "subagentEvent",
+              agentThreadId: "child",
+              event: {
+                kind: "toolCall",
+                toolId: "tool",
+                name: "Read",
+                inputSummary: "private needle",
+              },
+            },
+            {
+              kind: "subagentEvent",
+              agentThreadId: "child",
+              event: {
+                kind: "toolResult",
+                toolId: "tool",
+                outputSummary: "private needle",
+                isError: false,
+              },
+            },
+            { kind: "queued", threadId: "needle", clientUserMessageId: "needle" },
+            {
+              kind: "subagentActivity",
+              agentThreadId: "needle",
+              agentPath: "needle",
+              activity: "started",
+            },
+            {
+              kind: "subagentUsage",
+              agentThreadId: "needle",
+              usage: { inputTokens: 1, outputTokens: 1, contextTokens: null },
+            },
+            { kind: "subagentTurnDone", agentThreadId: "needle", durationMs: 1, isError: false },
+          ],
+        }),
+      ],
+    });
+    const doc = buildAgentThreadSearchDocument(subject);
+    expect(
+      doc.segments.map(({ source, eventIndex, text }) => ({ source, eventIndex, text })),
+    ).toEqual([
+      { source: "title", eventIndex: null, text: "other" },
+      { source: "user", eventIndex: null, text: "initial" },
+      { source: "user", eventIndex: 0, text: "find needle" },
+      { source: "assistant", eventIndex: 1, text: "child needle" },
+    ]);
+    expect(searchAgentThreadDocuments([doc], "needle").matches[0]).toMatchObject({
+      source: "user",
+      eventIndex: 0,
+    });
+    expect(searchAgentThreadDocuments([doc], "child").matches[0]).toMatchObject({
+      source: "assistant",
+      eventIndex: 1,
+    });
+    expect(findInThread(subject, "needle")).toEqual([
+      { scope: "turn", turnId: "agt-1-0001", eventIndex: 0, start: 5, end: 11 },
+      { scope: "turn", turnId: "agt-1-0001", eventIndex: 1, start: 6, end: 12 },
+    ]);
+    expect(findInThread(subject, "needle", { maxEventsPerTurn: 7 })).toEqual([]);
+    expect(findInThread(subject, "secret")).toEqual([]);
+    expect(searchAgentThreadDocuments([doc], "secret").matches).toEqual([]);
+  });
+
   it("orders turns newest first after the title", () => {
     const doc = documentOf({
       turns: [

@@ -282,6 +282,8 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     acknowledgeAgentTaskStart: vi.fn(async () => undefined),
     stopAgentTask: vi.fn(async () => undefined),
     stopAgentTasksForRoot: vi.fn(async () => undefined),
+    steerAgentTask: vi.fn(async () => ({ kind: "accepted" }) as const),
+    closeAgentTaskInput: vi.fn(async () => undefined),
     subscribeAgentTaskStatus: vi.fn(async (handler: (event: AgentTaskStatusEvent) => void) => {
       statusHandler = handler;
       return () => undefined;

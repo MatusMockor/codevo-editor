@@ -1,0 +1,9 @@
+{
+  "tags": [
+    "notLoaded",
+    "idle",
+    "systemError",
+    "active"
+  ],
+  "title": "ThreadStatus"
+}

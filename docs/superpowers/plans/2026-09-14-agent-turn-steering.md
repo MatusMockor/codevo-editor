@@ -50,13 +50,13 @@
   }
   #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]
   #[serde(tag = "reason", rename_all = "camelCase", deny_unknown_fields)]
-  pub enum AgentTaskSteerRejection { NotRegistered, NotRunning, Stopping, InputClosed, InputUnavailable, LimitExceeded, WriteTimedOut, WriteFailed }
+  pub enum AgentTaskSteerRejection { NotRegistered, NotRunning, NotSteerable, Stopping, InputClosed, InputUnavailable, LimitExceeded, WriteTimedOut, WriteFailed }
   pub const MAX_AGENT_STEERS_PER_TURN: u32 = 32;
   ```
   and on `AgentChild`: `fn take_input(&mut self) -> Option<Box<dyn AgentTaskInput>> { None }` (default), implemented by `StdAgentChild` to hand out the retained stdin once.
 - The initial frame thread (`write_prompt_frame_on_a_dedicated_thread`) writes the first frame, then stores the `ChildStdin` back into a shared `Arc<Mutex<Option<ChildStdin>>>` owned by `StdAgentChild` instead of dropping it. `take_input()` wraps that shared slot so a steer that arrives before the first frame finished waits on the same mutex (INV-ORDER).
 
-- [ ] **Step 1: Failing tests** in `agent_task_input_tests.rs`: `slot_writes_frames_in_order_and_counts_them` (fake writer records bytes), `slot_rejects_after_close_after_result` (`InputClosed`), `slot_rejects_after_close_by_stop` (`Stopping`), `slot_enforces_the_steer_limit` (33rd write → `LimitExceeded`), `slot_marks_detached_on_write_failure` (writer returns `Err` → `WriteFailed`, state `Detached`, later write `InputClosed`), `timed_out_write_is_write_timed_out` (writer returns `ErrorKind::TimedOut`).
+- [ ] **Step 1: Failing tests** in `agent_task_input_tests.rs`: `slot_writes_frames_in_order_and_counts_them` (fake writer records bytes), `slot_rejects_after_close_after_result` (`InputClosed`), `slot_rejects_after_close_by_stop` (`Stopping`), `slot_enforces_the_steer_limit` (33rd write → `LimitExceeded`), `slot_marks_detached_on_write_failure` (writer returns `Err` → `WriteFailed`, state `Detached`, later write `InputUnavailable`), `timed_out_write_is_write_timed_out` (writer returns `ErrorKind::TimedOut`).
 - [ ] **Step 2: Run** `cargo test --lib agent_task_input` → compile failure.
 - [ ] **Step 3: Implement** the module; move `write_prompt_frame_before` and its `poll` helper from the spawner into `StdAgentTaskInput::write_frame`.
 - [ ] **Step 4:** In the spawner test file, change `a_claude_plan_pipes_its_frame_and_closes_stdin_so_the_child_exits` into `a_claude_plan_pipes_its_frame_and_keeps_stdin_open_until_the_input_closes`: after spawn, `take_input()` is `Some`, the child is still alive after the frame, and exits after `close()`. Add `a_codex_plan_has_no_input` asserting `take_input()` is `None`.
@@ -113,9 +113,9 @@
   #[tauri::command] pub(crate) fn close_agent_task_input(request: AgentTaskReferenceRequest, state: AgentTaskRuntimeState<'_>) -> Result<(), AgentTaskSteerRejection>;
   ```
   Command names on the wire: `steer_agent_task`, `close_agent_task_input`. Errors are the serialized `AgentTaskSteerRejection` object (`{ "reason": "inputClosed" }`), never a string.
-- Phase 1 (`run_blocking_command`): `safe_agent_task_id`, `ensure_workspace_id_bounds`, prompt bound (`MAX_AGENT_PROMPT_BYTES`), read the task's metadata from the registry (add `AgentTaskRegistry::metadata_for_workspace(task_id, workspace_id) -> Option<AgentTaskMetadata>` in S1's file if missing; coordinate through the lead), claim attachments with `resolve_agent_task_attachments` under `AgentAttachmentOwner { workspace_id, thread_id, root_keys }`, `ensure_prompt_carries_attachment_lines`, build `claude_user_frame(prompt, images)`. Phase 2: `registry.steer_for_workspace`. On any rejection release the claimed attachments with the existing release path.
+- Phase 1 (`run_blocking_command`): `safe_agent_task_id`, `ensure_workspace_id_bounds`, prompt bound (`MAX_AGENT_PROMPT_BYTES`), read the task's metadata from the registry (add `AgentTaskRegistry::metadata_for_workspace(task_id, workspace_id) -> Option<AgentTaskMetadata>` in S1's file if missing; coordinate through the lead), claim attachments with `resolve_agent_task_attachments` under `AgentAttachmentOwner { workspace_id, thread_id, root_keys }`, `ensure_prompt_carries_attachment_lines`, build `claude_user_frame(prompt, images)`. Phase 2: `registry.steer_for_workspace`. On rejection retain exact-owner claims and staged bytes for draft/deferred retry, matching start semantics; do not broadly release a mixed claim batch.
 
-- [ ] **Step 1: Tests**: request rejects unknown fields; oversized prompt rejected before touching the registry; a steer on an unknown task returns `{reason:"notRegistered"}` as JSON; attachments claimed then released on rejection (use the existing in-memory store fixtures in the file); `close_agent_task_input` on unknown task `notRegistered`.
+- [ ] **Step 1: Tests**: request rejects unknown fields; oversized prompt rejected before touching the registry; a steer on an unknown task returns `{reason:"notRegistered"}` as JSON; exact-owner attachments retained on rejection and reusable on retry (use the existing in-memory store fixtures in the file); `close_agent_task_input` on unknown task `notRegistered`.
 - [ ] **Step 2:** Implement, register in `runtime.rs`, run `cargo test --lib agent_task_commands`, clippy, fmt.
 - [ ] **Step 3: Commit** `feat(agents): expose steering over the task IPC`.
 
@@ -129,7 +129,7 @@
 - Produces:
   ```ts
   export interface SteerAgentTaskRequest { readonly taskId: string; readonly workspaceId: string; readonly threadId: string; readonly prompt: string; readonly attachments?: ReadonlyArray<StartAgentTaskAttachment>; }
-  export type AgentTaskSteerRejectionReason = "notRegistered" | "notRunning" | "stopping" | "inputClosed" | "inputUnavailable" | "limitExceeded" | "writeTimedOut" | "writeFailed";
+  export type AgentTaskSteerRejectionReason = "notRegistered" | "notRunning" | "notSteerable" | "stopping" | "inputClosed" | "inputUnavailable" | "limitExceeded" | "writeTimedOut" | "writeFailed";
   export interface AgentTaskSteerRejection { readonly reason: AgentTaskSteerRejectionReason; }
   export type AgentTaskSteerResult = { readonly kind: "accepted" } | { readonly kind: "rejected"; readonly rejection: AgentTaskSteerRejection };
   export function validateSteerAgentTaskRequest(request: SteerAgentTaskRequest): SteerAgentTaskRequest;
@@ -187,11 +187,11 @@
   export function removeDeferred(map, threadId, id): DeferredFollowUps;
   export function clearDeferred(map, threadId): DeferredFollowUps;
   // useAgentTurnDispatch return value
-  steer(request: AgentSteerRequest): Promise<void>;
+  steer(request: AgentSteerRequest): Promise<"sent" | "deferred" | "kept">;
   removeDeferredFollowUp(threadId: string, id: string): void;
   deferredFollowUps: DeferredFollowUps;
   ```
-  `steer`: `admitSteer` → capture `{threadId, turnId, ownerId}` → `gateway.steerAgentTask({taskId: turn.turnId, workspaceId: ownerId, threadId, prompt, attachments})` → after the await revalidate `runningTurn(thread)?.turnId === turnId` and owner unchanged (drop silently with a notice otherwise) → dispatch `turnSteered`. Rejections: `inputClosed | notRunning` → `enqueueDeferred` (notice when full); `stopping | limitExceeded | inputUnavailable | writeTimedOut | writeFailed` → notice, prompt stays. `onTurnTerminal` → `takeDeferredHead` → `sendFollowUp(head.request)`. `stop` → `clearDeferred` + notice. When `sawResult` flips on a stream, call `gateway.closeAgentTaskInput` once (belt and braces).
+  `steer`: `admitSteer` → capture `{threadId, turnId, ownerId}` → `gateway.steerAgentTask({taskId: turn.turnId, workspaceId: ownerId, threadId, prompt, attachments})` → after the await revalidate `runningTurn(thread)?.turnId === turnId` and owner unchanged (drop silently with a notice otherwise) → dispatch `turnSteered`. Rejections: `inputClosed | notRunning | notSteerable` → `enqueueDeferred` (notice when full); `stopping | limitExceeded | inputUnavailable | writeTimedOut | writeFailed` → notice, prompt stays. `onTurnTerminal` → `takeDeferredHead` → `sendFollowUp(head.request)`. `stop` → `clearDeferred` + notice. When `sawResult` flips on a stream, call `gateway.closeAgentTaskInput` once (belt and braces).
 - [ ] **Step 1: Tests**: admission matrix from the spec (running local Claude → admitted; Codex → null with today's notice from `admitFollowUp` untouched; server thread → null; archived → null; 32 steers already → null with notice; invalid prompt → null); dispatch success appends `turnSteered`; stale turn after await drops; `inputClosed` defers and head is sent on terminal, second one after the first settles; stop clears; deferred FIFO bounded at 8; `closeAgentTaskInput` called once per stream on result.
 - [ ] **Step 2:** Implement; `npx vitest run src/application`; `npm run lint:exhaustive-deps` must not increase the budget.
 - [ ] **Step 3: Commit** `feat(agents): steer running Claude turns and defer late messages`.
@@ -212,6 +212,38 @@
 - [ ] **Step 2:** Implement; `npx vitest run src/components/agentMode src/components/cssBorderContract.test.ts src/components/cssTokenContract.test.ts`.
 - [ ] **Step 3: Commit** `feat(agents): keep the composer open while a turn runs`.
 
+## Integration decisions (2026-09-14)
+
+- The app-server fallback is the same local bounded deferred FIFO, submitted as
+  an ordinary follow-up only after terminal settlement. No already queued server
+  turn is adopted. Stop and owner replacement cancel pending drains as well.
+- Attachment refusal preserves exact-owner references for retries. A broad
+  release is unsafe for mixed existing/new claims and differs from task start.
+- Result close prevents new writes, but cannot undo bytes from a writer already
+  in flight. The spec records this residual race; never automatically replay a
+  successfully delivered message.
+- The frame cap budgets encoded base64, not just raw images:
+  `ceil(40 MiB / 3) * 4 + 32 KiB * 6 + 64 KiB`. The raw image cap stays 40 MiB.
+- Steps remain unchecked until integrated gates and live QA are verified by the
+  lead. A focused test result is not completion of the whole plan.
+
+
+Current verification is complete as recorded below and in the handoff: all
+applicable automated gates passed, including the last fallback repair. Native
+fallback/next-turn and six-minute idle/restart checks passed. Actual provider
+update could not be exercised because the installed version was current;
+automated eligibility coverage is not a live update test.
+
 ## Completion
 
 - Independent read-only review (different model) per stream before commit; lead runs the full gates from CLAUDE.md; manual run: three-step sleeping Claude turn, one steer mid-run, confirm a single `result`, the bubble order, no leaked `claude` process (`pgrep -fl claude`), and that a steer sent after `result` appears as Queued and runs as the next turn.
+
+### Final verification record (2026-09-14)
+
+The implementation and independent reviews are complete in the uncommitted tree.
+All applicable repository gates passed after the last fallback repair; final native
+steer/resume, persistence, Stop, shutdown, read-only, project isolation, exec resume,
+host failure, idle restart, and rollout-loss follow-up checks passed as recorded in
+`2026-09-14-steering-handoff.md`. A real CLI upgrade was unavailable because the
+installed version was current. Historical commit steps above remain unchecked: no
+commit, push, or release was performed.

@@ -1,3 +1,4 @@
+import type { CodexTransport } from "../domain/agentProviderSettings";
 import type {
   AgentCliKind,
   AgentTaskIsolation,
@@ -21,12 +22,13 @@ import {
   type AgentThreadsAction,
   type AgentThreadsState,
   type AgentTurnEvent,
+  type AgentSessionFallback,
 } from "../domain/agentThread";
 import { warning } from "./agentProjectAuthority";
 import type { AgentTasksNotice } from "./agentThreadPorts";
 
 export interface AgentOutputParserPort {
-  create(kind: AgentCliKind): AgentOutputParserState;
+  create(kind: AgentCliKind, transport?: CodexTransport): AgentOutputParserState;
   feed(
     state: AgentOutputParserState,
     stream: AgentTaskOutputStream,
@@ -49,6 +51,7 @@ export interface AgentTurnOutputStream {
   readonly isolation: AgentTaskIsolation;
   readonly worktreePath: string | null;
   readonly resumed: boolean;
+  readonly resumedSessionId: string | null;
   readonly outputSubscriptionEpoch: number | null;
   parser: AgentOutputParserState;
   lastSequence: number;
@@ -56,6 +59,7 @@ export interface AgentTurnOutputStream {
   pendingEventBytes: number;
   eventRetentionStopped: boolean;
   pendingSessionId: string | null;
+  pendingSessionFallback: AgentSessionFallback | null;
   pendingTruncated: boolean;
   pendingDropped: boolean;
   pendingReceivedUtf8Bytes: number;
@@ -79,6 +83,8 @@ export function createAgentTurnOutputStream(
     readonly worktreePath: string | null;
     readonly kind: AgentCliKind;
     readonly resumed: boolean;
+    readonly resumedSessionId?: string | null;
+    readonly codexTransport?: CodexTransport;
     readonly outputSubscriptionEpoch?: number | null;
   },
 ): AgentTurnOutputStream {
@@ -90,14 +96,16 @@ export function createAgentTurnOutputStream(
     isolation: identity.isolation,
     worktreePath: identity.worktreePath,
     resumed: identity.resumed,
+    resumedSessionId: identity.resumedSessionId ?? null,
     outputSubscriptionEpoch:
       identity.outputSubscriptionEpoch === undefined ? 0 : identity.outputSubscriptionEpoch,
-    parser: parser.create(identity.kind),
+    parser: parser.create(identity.kind, identity.codexTransport ?? "exec"),
     lastSequence: 0,
     pendingEvents: [],
     pendingEventBytes: 0,
     eventRetentionStopped: false,
     pendingSessionId: null,
+    pendingSessionFallback: null,
     pendingTruncated: false,
     pendingDropped: false,
     pendingReceivedUtf8Bytes: 0,
@@ -161,6 +169,9 @@ export function drainAgentTurnOutput(
     outputSequence,
     events: stream.pendingEvents,
     sessionId: stream.pendingSessionId,
+    ...(stream.pendingSessionFallback === null
+      ? {}
+      : { sessionFallback: stream.pendingSessionFallback }),
     supervisorTruncated: stream.pendingTruncated || stream.pendingDropped,
     streamMetricsDelta: stream.pendingStreamMetricsObserved
       ? {
@@ -172,6 +183,7 @@ export function drainAgentTurnOutput(
   stream.pendingEvents = [];
   stream.pendingEventBytes = 0;
   stream.pendingSessionId = null;
+  stream.pendingSessionFallback = null;
   stream.pendingTruncated = false;
   stream.pendingDropped = false;
   stream.pendingReceivedUtf8Bytes = 0;
@@ -213,6 +225,13 @@ function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): v
     appendPendingEvent(stream, event);
   }
   if (result.sessionId === null) return;
+  if (
+    stream.resumed &&
+    result.sessionFallback !== undefined &&
+    result.sessionFallback.previousThreadId === stream.resumedSessionId
+  ) {
+    stream.pendingSessionFallback = result.sessionFallback;
+  }
   stream.sawSessionId = true;
   if (stream.pendingSessionId === null) stream.pendingSessionId = result.sessionId;
 }

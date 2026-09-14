@@ -6,8 +6,10 @@ import {
   type AgentTaskOutputEvent,
   type AgentTaskReferenceRequest,
   type AgentTaskStatusEvent,
+  type AgentTaskSteerResult,
   type StartAgentTaskRequest,
   type StartAgentTaskResult,
+  type SteerAgentTaskRequest,
   type StopAgentTasksForRootRequest,
 } from "../domain/agentTask";
 import {
@@ -16,7 +18,9 @@ import {
   decodeAgentTaskOutputEvent,
   decodeAgentTaskStatusEvent,
   invokeAcknowledgeAgentTaskStartIpc,
+  invokeCloseAgentTaskInputIpc,
   invokeStartAgentTaskIpc,
+  invokeSteerAgentTaskIpc,
   invokeStopAgentTaskIpc,
   invokeStopAgentTasksForRootIpc,
   type InvokeAgentTaskCommand,
@@ -63,6 +67,18 @@ export class TauriAgentTaskGateway implements AgentTaskGateway {
   async stopAgentTasksForRoot(request: StopAgentTasksForRootRequest): Promise<void> {
     if (!this.isRuntimeAvailable()) return;
     return invokeStopAgentTasksForRootIpc(this.invokeCommand, request);
+  }
+
+  async steerAgentTask(request: SteerAgentTaskRequest): Promise<AgentTaskSteerResult> {
+    if (!this.isRuntimeAvailable()) {
+      return { kind: "rejected", rejection: { reason: "inputUnavailable" } };
+    }
+    return invokeSteerAgentTaskIpc(this.invokeCommand, request);
+  }
+
+  async closeAgentTaskInput(request: AgentTaskReferenceRequest): Promise<void> {
+    if (!this.isRuntimeAvailable()) return;
+    return invokeCloseAgentTaskInputIpc(this.invokeCommand, request);
   }
 
   subscribeAgentTaskStatus(handler: (event: AgentTaskStatusEvent) => void): Promise<() => void> {

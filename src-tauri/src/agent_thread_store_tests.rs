@@ -49,6 +49,7 @@ const ROOT_KEY: &str = "/workspace/alpha";
 
 fn settled_turn(turn_id: &str) -> AgentTurn {
     AgentTurn {
+        codex_transport: None,
         turn_id: turn_id.to_string(),
         prompt: "do it".to_string(),
         status: AgentTurnStatus::Exited { exit_code: 0 },
@@ -101,6 +102,7 @@ fn stream_metrics_are_backward_compatible_exact_and_bounded() {
 
 fn running_turn(turn_id: &str) -> AgentTurn {
     AgentTurn {
+        codex_transport: None,
         status: AgentTurnStatus::Running,
         ended_at_epoch_ms: None,
         ..settled_turn(turn_id)
@@ -918,9 +920,14 @@ fn a_reported_usage_and_compaction_document_round_trips_the_typescript_wire_shap
     assert_eq!(
         document.thread.turns[0].events[0],
         AgentTurnEvent::Result {
+            duration_ms: None,
             text: "done".to_string(),
             is_error: false,
             usage: Some(AgentTurnUsage {
+                scope: None,
+                app_server_usage: None,
+                cached_input_tokens: None,
+                reasoning_output_tokens: None,
                 input_tokens: 1,
                 output_tokens: 2,
                 context_tokens: Some(33_000),
@@ -954,9 +961,14 @@ fn a_pre_context_usage_document_loads_and_keeps_the_absent_fields_absent() {
     assert_eq!(
         document.thread.turns[0].events[4],
         AgentTurnEvent::Result {
+            duration_ms: None,
             text: "done".to_string(),
             is_error: false,
             usage: Some(AgentTurnUsage {
+                scope: None,
+                app_server_usage: None,
+                cached_input_tokens: None,
+                reasoning_output_tokens: None,
                 input_tokens: 1,
                 output_tokens: 2,
                 context_tokens: None,
@@ -985,24 +997,40 @@ fn out_of_bounds_usage_and_compaction_tokens_are_refused() {
 
     for usage in [
         AgentTurnUsage {
+            scope: None,
+            app_server_usage: None,
+            cached_input_tokens: None,
+            reasoning_output_tokens: None,
             input_tokens: MAX_AGENT_SAFE_INTEGER + 1,
             output_tokens: 2,
             context_tokens: None,
             cost_usd: None,
         },
         AgentTurnUsage {
+            scope: None,
+            app_server_usage: None,
+            cached_input_tokens: None,
+            reasoning_output_tokens: None,
             input_tokens: 1,
             output_tokens: 2,
             context_tokens: Some(MAX_AGENT_SAFE_INTEGER + 1),
             cost_usd: None,
         },
         AgentTurnUsage {
+            scope: None,
+            app_server_usage: None,
+            cached_input_tokens: None,
+            reasoning_output_tokens: None,
             input_tokens: 1,
             output_tokens: 2,
             context_tokens: None,
             cost_usd: Some(-1.0),
         },
         AgentTurnUsage {
+            scope: None,
+            app_server_usage: None,
+            cached_input_tokens: None,
+            reasoning_output_tokens: None,
             input_tokens: 1,
             output_tokens: 2,
             context_tokens: None,
@@ -1011,6 +1039,7 @@ fn out_of_bounds_usage_and_compaction_tokens_are_refused() {
     ] {
         let mut invalid = base.clone();
         invalid.thread.turns[0].events = vec![AgentTurnEvent::Result {
+            duration_ms: None,
             text: "done".to_string(),
             is_error: false,
             usage: Some(usage),
@@ -1483,3 +1512,6 @@ fn external_origin_rejects_unknown_fields_and_invalid_provenance() {
 
 #[path = "agent_thread_store_external_history_tests.rs"]
 mod external_history_tests;
+
+#[path = "agent_thread_store_appserver_tests.rs"]
+mod appserver_tests;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_AGENT_STEERS_PER_TURN,
   defaultAgentTaskIsolation,
   inPlaceDispatchGuard,
   isTerminalAgentTaskStatus,
@@ -9,8 +10,11 @@ import {
   parseStartAgentTaskResult,
   validateAgentTaskReferenceRequest,
   validateStartAgentTaskRequest,
+  parseAgentTaskSteerRejection,
+  validateSteerAgentTaskRequest,
   validateStopAgentTasksForRootRequest,
   type AgentTaskIsolationContext,
+  type AgentTaskSteerRejectionReason,
   type AgentTaskStatus,
 } from "./agentTask";
 
@@ -396,5 +400,102 @@ describe("agent task reference requests", () => {
   it("parses the echoed start result", () => {
     expect(parseStartAgentTaskResult({ taskId: "agt-1-0a1b" })).toEqual({ taskId: "agt-1-0a1b" });
     expect(() => parseStartAgentTaskResult({ taskId: "agt-1-0a1b", extra: 1 })).toThrow(TypeError);
+  });
+});
+
+describe("steer agent task requests", () => {
+  function steerRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      taskId: "agt-1-0a1b",
+      workspaceId: "ws-1",
+      threadId: "agt-1-0a1c",
+      prompt: "also check the tests",
+      ...overrides,
+    };
+  }
+
+  it("validates a steer without attachments and keeps the key absent", () => {
+    const request = validateSteerAgentTaskRequest(steerRequest());
+    expect(request).toEqual({
+      taskId: "agt-1-0a1b",
+      workspaceId: "ws-1",
+      threadId: "agt-1-0a1c",
+      prompt: "also check the tests",
+    });
+    expect(Object.keys(request)).not.toContain("attachments");
+  });
+
+  it("validates staged and reference attachments", () => {
+    expect(
+      validateSteerAgentTaskRequest(
+        steerRequest({
+          attachments: [
+            { kind: "staged", attachmentId: "a".repeat(32) },
+            { kind: "reference", name: "notes.md", path: "/repo/notes.md" },
+          ],
+        }),
+      ).attachments,
+    ).toEqual([
+      { kind: "staged", attachmentId: "a".repeat(32) },
+      { kind: "reference", name: "notes.md", path: "/repo/notes.md" },
+    ]);
+  });
+
+  it("rejects unknown keys, bad identities, and an oversized prompt", () => {
+    const rejected = [
+      steerRequest({ extra: 1 }),
+      steerRequest({ taskId: "NO" }),
+      steerRequest({ threadId: "NO" }),
+      steerRequest({ taskId: undefined }),
+      steerRequest({ workspaceId: "" }),
+      steerRequest({ prompt: "" }),
+      steerRequest({ prompt: "x".repeat(32 * 1_024 + 1) }),
+      steerRequest({ attachments: [{ kind: "staged", attachmentId: "zz" }] }),
+      steerRequest({ attachments: null }),
+      "not an object",
+    ];
+    for (const value of rejected) {
+      expect(() => validateSteerAgentTaskRequest(value)).toThrow(TypeError);
+    }
+  });
+});
+
+describe("agent task steer rejections", () => {
+  const reasons: ReadonlyArray<AgentTaskSteerRejectionReason> = [
+    "notRegistered",
+    "notRunning",
+    "notSteerable",
+    "stopping",
+    "inputClosed",
+    "inputUnavailable",
+    "limitExceeded",
+    "writeTimedOut",
+    "writeFailed",
+  ];
+
+  it("decodes every supported reason", () => {
+    for (const reason of reasons) {
+      expect(parseAgentTaskSteerRejection({ reason })).toEqual({ reason });
+    }
+  });
+
+  it("fails closed on anything else", () => {
+    const rejected: ReadonlyArray<unknown> = [
+      { reason: "somethingElse" },
+      { reason: "inputClosed", extra: 1 },
+      { reason: 1 },
+      {},
+      [{ reason: "inputClosed" }],
+      null,
+      "inputClosed",
+      undefined,
+    ];
+    for (const value of rejected) {
+      expect(parseAgentTaskSteerRejection(value)).toBeNull();
+    }
+  });
+
+  it("pins the per-turn steer bound", () => {
+    expect(MAX_AGENT_STEERS_PER_TURN).toBe(32);
   });
 });

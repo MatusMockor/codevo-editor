@@ -1,3 +1,4 @@
+import { AgentThreadUsage } from "./AgentThreadUsage";
 import {
   memo,
   useCallback,
@@ -10,6 +11,7 @@ import {
 } from "react";
 import { ChevronDown } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import type { DeferredFollowUp } from "../../application/agentDeferredFollowUps";
 import type { AgentAttachmentImagesSurface } from "../../application/useAgentAttachmentImages";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
@@ -30,7 +32,7 @@ import { AgentWorkingDuration } from "./agentClock";
 import { AgentThreadChangesCue } from "./AgentThreadChangesCue";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { AgentImportedHistory, type AgentExternalHistoryState } from "./AgentImportedHistory";
-import { AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
+import { AgentQueuedPrompt, AgentTurnHead, AgentTurnPrompt } from "./AgentTurnParts";
 import type { AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";
 import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
 import { agentTurnAttachmentViews } from "./agentTurnAttachmentPresentation";
@@ -58,6 +60,7 @@ import { HighlightRun } from "./agentThreadHighlight";
 import { useAgentMarkdownRenderer } from "./useAgentMarkdown";
 import { createIntersectionAgentMarkdownViewport } from "../../infrastructure/viewport/intersectionAgentMarkdownViewport";
 import {
+  agentTurnCarriesAttachments,
   agentWorktreeRemovalLabel,
   agentTurnDurationLabel,
   agentTurnProjection,
@@ -71,6 +74,7 @@ import {
 } from "./agentModePresentation";
 
 const NO_FIND_HITS: ReadonlyArray<AgentThreadFindHit> = [];
+const NO_DEFERRED_FOLLOW_UPS: ReadonlyArray<DeferredFollowUp> = [];
 const NO_EXCHANGES: ReadonlyArray<ExternalSessionExchange> = [];
 
 export const AGENT_FIND_REVEAL_INSET = 34;
@@ -96,6 +100,8 @@ interface AgentTurnErrorContext {
 
 export interface AgentThreadSessionProps {
   readonly thread: AgentThreadView | null;
+  readonly deferredFollowUps?: ReadonlyArray<DeferredFollowUp>;
+  onRemoveDeferredFollowUp?(threadId: string, id: string): void;
   readonly composerRepositoryLabel: string | null;
   readonly turnRenderProbe?: (turnId: string) => void;
   readonly findQuery?: string;
@@ -131,6 +137,8 @@ type AgentThreadSessionBodyProps = AgentThreadSessionProps & {
 
 function AgentThreadSessionBody({
   attachmentImages = null,
+  deferredFollowUps = NO_DEFERRED_FOLLOW_UPS,
+  onRemoveDeferredFollowUp,
   onRevealAttachment,
   findBar = null,
   findHitIndex,
@@ -309,6 +317,13 @@ function AgentThreadSessionBody({
     entry.querySelector<HTMLElement>(".agent-prompt__bubble")?.focus({ preventScroll: true });
   }, []);
 
+  const removeQueued = useCallback(
+    (id: string): void => {
+      onRemoveDeferredFollowUp?.(threadId, id);
+    },
+    [onRemoveDeferredFollowUp, threadId],
+  );
+
   const highlightFor = (turnIdentity: string): AgentTurnHighlight | null => {
     if (query === "") return null;
     if (activeHit?.scope === "turn" && activeHit.turnId === turnIdentity) return activeHighlight;
@@ -365,9 +380,7 @@ function AgentThreadSessionBody({
           <div className="agent-turn-list">
             {record.turns.map((turn) => (
               <AgentTurnView
-                attachmentImages={
-                  (turn.attachments?.length ?? 0) === 0 ? null : attachmentImageViewer
-                }
+                attachmentImages={agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null}
                 highlight={highlightFor(turn.turnId)}
                 key={turn.turnId}
                 prose={prose}
@@ -378,6 +391,20 @@ function AgentThreadSessionBody({
               />
             ))}
           </div>
+
+          {deferredFollowUps.length > 0 && (
+            <div className="agent-queued-list">
+              {deferredFollowUps.map((entry) => (
+                <AgentQueuedPrompt
+                  attachments={entry.request.attachments}
+                  id={entry.id}
+                  key={entry.id}
+                  onRemove={removeQueued}
+                  prompt={entry.request.prompt}
+                />
+              ))}
+            </div>
+          )}
 
           {thread.worktreeMissing && (
             <p className="agent-note agent-note--warning">
@@ -450,6 +477,11 @@ const AgentTurnView = memo(function AgentTurnView({
   const rawOutput =
     rawLines.length === 0 || !rawDisclosed ? null : <AgentRawOutput lines={rawLines} />;
   const failure = turnFailure(turn.status, errorContext);
+  const threadUsage = turn.events.reduce<import("../../domain/agentThread").AgentTurnUsage | null>(
+    (latest, event) =>
+      event.kind === "result" && event.usage?.scope === "thread" ? event.usage : latest,
+    null,
+  );
 
   return (
     <article
@@ -474,6 +506,12 @@ const AgentTurnView = memo(function AgentTurnView({
           timing={agentTurnTiming(turn)}
         />
 
+        {turn.status.kind === "pending" && provider === "codex" && (
+          <p className="agent-note" role="status">
+            Starting Codex…
+          </p>
+        )}
+        <AgentThreadUsage usage={threadUsage} />
         {projection.hiddenCount > 0 && (
           <p className="agent-note">{projection.hiddenCount} earlier events hidden</p>
         )}
@@ -485,6 +523,7 @@ const AgentTurnView = memo(function AgentTurnView({
           )}
           {workFold !== null && (
             <AgentTurnWork
+              attachmentImages={attachmentImages}
               errorContext={errorContext}
               highlight={highlight}
               items={workFold.workItems}
@@ -502,6 +541,7 @@ const AgentTurnView = memo(function AgentTurnView({
             .filter((item) => !isAgentSubagentToolItem(item))
             .map((item) => (
               <AgentTurnItemView
+                attachmentImages={attachmentImages}
                 errorContext={errorContext}
                 highlight={itemHighlight(highlight, item.key)}
                 item={item}
@@ -555,6 +595,7 @@ function AgentRawOutput({ lines }: { readonly lines: ReadonlyArray<AgentRawLine>
 }
 
 function AgentTurnWork({
+  attachmentImages,
   errorContext,
   highlight,
   items,
@@ -566,6 +607,7 @@ function AgentTurnWork({
   textClipboard,
   turn,
 }: {
+  readonly attachmentImages: AgentTurnAttachmentImageViewer | null;
   readonly errorContext: AgentTurnErrorContext;
   readonly highlight: AgentTurnHighlight | null;
   readonly items: ReadonlyArray<AgentTurnItem>;
@@ -602,6 +644,7 @@ function AgentTurnWork({
           .filter((item) => !isAgentSubagentToolItem(item))
           .map((item) => (
             <AgentTurnItemView
+              attachmentImages={attachmentImages}
               errorContext={errorContext}
               highlight={itemHighlight(highlight, item.key)}
               item={item}
@@ -659,6 +702,7 @@ function AgentSubagentBanner({ summary }: { readonly summary: AgentSubagentSumma
 }
 
 interface AgentTurnItemViewProps {
+  readonly attachmentImages: AgentTurnAttachmentImageViewer | null;
   readonly errorContext: AgentTurnErrorContext;
   readonly highlight: AgentItemHighlight | null;
   readonly item: AgentTurnItem;
@@ -668,6 +712,7 @@ interface AgentTurnItemViewProps {
 }
 
 function AgentTurnItemView({
+  attachmentImages,
   errorContext,
   highlight,
   item,
@@ -675,6 +720,53 @@ function AgentTurnItemView({
   stream,
   textClipboard,
 }: AgentTurnItemViewProps) {
+  if (item.kind === "subagentGroup") {
+    const group = item.group;
+    const childProjection = agentTurnProjection(group.events);
+    const childHiddenCount = group.hiddenCount + childProjection.hiddenCount;
+    return (
+      <details className="agent-reasoning" data-agent-event={item.key}>
+        <summary className="agent-microlabel">
+          {group.path} · {group.state}
+          {group.durationMs !== null && ` · ${agentTurnDurationLabel(group.durationMs)}`}
+        </summary>
+        <AgentThreadUsage usage={group.usage} />
+        {childHiddenCount > 0 && (
+          <p className="agent-note">{childHiddenCount} earlier subagent events hidden</p>
+        )}
+        {childProjection.items.map((child) => (
+          <AgentTurnItemView
+            key={child.key}
+            item={child}
+            attachmentImages={null}
+            errorContext={errorContext}
+            highlight={null}
+            prose={prose}
+            stream={stream}
+            textClipboard={textClipboard}
+          />
+        ))}
+      </details>
+    );
+  }
+  if (item.kind === "queued")
+    return (
+      <p className="agent-note" data-agent-event={item.key}>
+        <span className="agent-prompt__chip agent-prompt__chip--queued">Queued</span> Message
+        accepted for the next turn.
+      </p>
+    );
+  if (item.kind === "userMessage") {
+    return (
+      <AgentSteeredMessage
+        attachmentImages={attachmentImages}
+        highlight={highlight}
+        item={item}
+        textClipboard={textClipboard}
+      />
+    );
+  }
+
   if (item.kind === "assistantText") {
     return (
       <AgentAssistantText
@@ -768,6 +860,33 @@ function AgentTurnItemView({
       </p>
       <AgentProviderErrorHint error={error} />
     </section>
+  );
+}
+
+function AgentSteeredMessage({
+  attachmentImages,
+  highlight,
+  item,
+  textClipboard,
+}: {
+  readonly attachmentImages: AgentTurnAttachmentImageViewer | null;
+  readonly highlight: AgentItemHighlight | null;
+  readonly item: Extract<AgentTurnItem, { kind: "userMessage" }>;
+  readonly textClipboard: TextClipboardGateway | null;
+}) {
+  const attachments = useMemo(() => agentTurnAttachmentViews(item.attachments), [item.attachments]);
+
+  return (
+    <AgentTurnPrompt
+      attachmentImages={attachments.length === 0 ? null : attachmentImages}
+      attachments={attachments}
+      current={highlight?.current ?? null}
+      eventKey={item.key}
+      prompt={item.text}
+      query={highlight?.query ?? ""}
+      role="steer"
+      textClipboard={textClipboard}
+    />
   );
 }
 

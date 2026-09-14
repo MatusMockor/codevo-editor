@@ -1,6 +1,6 @@
 # Agent turn steering: send while the agent is running
 
-Date: 2026-09-14 · Status: proposed · Base: `main` @ 512605c4
+Date: 2026-09-14 · Status: implementation under integration validation · Base: `main` @ 512605c4
 
 ## 0. Why
 
@@ -38,8 +38,9 @@ In scope, in delivery order:
    button becomes Stop.
 2. **Codex steering through app-server.** Delivered by the app-server migration
    (`2026-09-09-codex-app-server-transport.md`, section 12 added by this spec):
-   `turn/steer` first, `turn/start` as the queued fallback when the active turn
-   is not steerable.
+   `turn/steer` first. When the active turn is not steerable, retain the message
+   in the local bounded deferred FIFO and call ordinary `turn/start` only after
+   the current turn is terminal. No already queued server turn is adopted.
 3. **Remote runner.** The runner is a separate repository
    (`MatusMockor/codevo-runner`; this repo only holds the client under
    `src-tauri/src/remote_runner/`), and `continueTask` creates a child task only
@@ -54,16 +55,21 @@ none), steering `codex exec` (impossible, no stdin), changing what a turn is
 ## 2. Semantics
 
 - A steer is a user message appended to the **running turn**, not a new turn. The
-  turn keeps its `turnId`, its task id, its output sequence, and ends with the
-  single `result` the CLI emits.
-- Order is arrival order at the Rust supervisor. Each steer is written whole
-  (one frame, one write, time-boxed) or rejected; there is no partial write.
+  turn keeps its `turnId`, its task id and its output sequence. The intended
+  lifecycle ends at the CLI result; the already-writing race below is an
+  explicit limitation of that guarantee.
+- Writes serialize behind the input owner and are time-boxed. A successful
+  steer writes a complete frame. A failed write can have sent a partial frame;
+  the input is then detached and the task stopped rather than replaying bytes.
 - Attachments on a steer follow the same rules as on a start: claimed for the
   thread with the same owner authority, image bytes inlined for Claude, path
   lines injected into the prompt text, limits from the attachment spec.
-- A steer that arrives after the CLI printed `result` is **rejected**
-  (`inputClosed`) and becomes a deferred follow-up (section 6), never a second
-  turn inside the same process.
+- Once the result detector closes the input, new writes are rejected
+  (`inputClosed`) and become deferred follow-ups (section 6). A write that
+  already acquired the writer can race the result line. Closing cannot retract
+  bytes already delivered: that race can start another CLI turn in the same
+  process. A complete write is reported as delivered, never automatically
+  retried; this is a residual protocol limitation requiring live QA.
 - Stop (`stop_agent_task`) applies to the whole turn; steers already written are
   part of it and die with it. A steer never resurrects a stopping task.
 - A steer never changes launch options; the launch of the running turn is the
@@ -98,10 +104,12 @@ none), steering `codex exec` (impossible, no stdin), changing what a turn is
   state `Open`. It clones the `Arc` and releases the registry lock before the
   write. The write takes only the input mutex, never the registry mutex, and
   is bounded by `AGENT_STDIN_FRAME_DEADLINE`. `MAX_AGENT_STEERS_PER_TURN = 32`
-  and `MAX_AGENT_STEER_FRAME_BYTES = 40 MiB + 32 KiB` (image budget plus prompt
-  cap) are enforced before touching the child.
+  and the encoded `MAX_AGENT_STEER_FRAME_BYTES` cap are enforced before
+  touching the child. The cap is `ceil(40 MiB / 3) * 4 + 32 KiB * 6 + 64 KiB`: raw
+  images retain their 40 MiB cap, base64 expansion is budgeted separately, and
+  the remaining allowance covers worst-case prompt JSON escaping and framing.
 - `AgentTaskSteerRejection` is a closed enum serialized with `tag = "reason"`:
-  `notRegistered`, `notRunning`, `stopping`, `inputClosed`, `inputUnavailable`
+  `notRegistered`, `notRunning`, `notSteerable`, `stopping`, `inputClosed`, `inputUnavailable`
   (Codex exec or detached), `limitExceeded`, `writeTimedOut`, `writeFailed`.
   Only `writeTimedOut` and `writeFailed` mark the input `Detached` and request a
   stop of the task, because a half-written frame corrupts the stream.
@@ -131,8 +139,12 @@ none), steering `codex exec` (impossible, no stdin), changing what a turn is
   cwd, repository root), claims attachments with `resolve_agent_task_attachments`
   under that owner, checks `ensure_prompt_carries_attachment_lines`, builds the
   frame with `claude_user_frame`; phase 2 revalidates the owner and calls
-  `steer_for_workspace`. Attachments claimed for a rejected steer are released
-  again (existing `release_agent_attachment` path).
+  `steer_for_workspace`. Refusal retains attachments under the exact existing
+  owner, matching task start semantics, so a kept draft or deferred follow-up
+  can retry the same references. Refusal never broadly releases or deletes
+  staged bytes: a batch can mix existing thread claims with new attachments.
+  Task, workspace, thread and descriptor authority are checked before claims
+  and again before the final write.
 - `close_agent_task_input` is a thin facade over the registry.
 - Registered in `runtime.rs` next to `stop_agent_task`.
 
@@ -169,7 +181,8 @@ none), steering `codex exec` (impossible, no stdin), changing what a turn is
 
 - `agentTurnAdmission.ts`: new `admitSteer(deps, request, inFlightThreads)`.
   Conditions: thread exists, not archived, `runningTurn(thread)` is non-null
-  **and** its `launch.provider === "claudeCode"` **and** the thread is local
+  **and** it is Claude or a Codex turn with captured `codexTransport === "appServer"`
+  **and** the thread is local
   (not a server thread), prompt valid (`admitPrompt`), attachments owner matches
   the thread owner, steer count under `MAX_AGENT_STEERS_PER_TURN`. It returns
   `{ thread, turn, authority, prompt }`. `admitFollowUp` keeps its running block
@@ -178,14 +191,20 @@ none), steering `codex exec` (impossible, no stdin), changing what a turn is
 - `useAgentTurnDispatch.ts`: `steer(request)` captures authority, calls
   `gateway.steerAgentTask`, revalidates the thread still runs the same
   `turnId` after the await, then dispatches `turnSteered`. On rejection:
-  - `inputClosed` or `notRunning`: the message goes into a **deferred follow-up
+  - `inputClosed`, `notRunning` or `notSteerable`: the message goes into a **deferred follow-up
     slot** for that thread (`deferredFollowUpsRef: Map<threadId, AgentFollowUpRequest[]>`,
-    bounded 8, FIFO). When the turn settles (`onTurnTerminal`), the head is
-    dispatched through the existing `sendFollowUp`; each subsequent one goes out
+    bounded 8 per thread and 64 threads, FIFO; overflow keeps the draft rather
+    than evicting another thread). Pending turns are refused before IPC. When
+    the turn settles (`onTurnTerminal`), the head is
+    dispatched through the existing `sendFollowUp`; a late rejection received
+    after terminal settlement arms the same drain. Each subsequent one goes out
     when its predecessor settles. The composer renders deferred messages as user
     bubbles below the running turn with a small "Queued" chip and an "Remove"
     control; Stop on the thread clears the slot with a notice. This slot is not
-    persisted: an app restart drops it and says so once.
+    persisted: an app restart drops it. Stop and project release also cancel
+    an already draining follow-up across attachment preparation and launch.
+    Failed deferred submission clears the remaining FIFO with a notice; stale
+    owner replies cannot enqueue or publish into a replacement workspace.
   - `stopping`, `limitExceeded`, `inputUnavailable`: notice, message stays in the
     composer.
   - `writeTimedOut`, `writeFailed`: notice, the task is being stopped by Rust,
@@ -217,10 +236,11 @@ none), steering `codex exec` (impossible, no stdin), changing what a turn is
 
 ## 8. Failure modes and invariants
 
-- INV-ORDER: frames reach the CLI in the order the IPC calls were accepted;
-  two concurrent steers on one task serialize on the input mutex.
-- INV-ONE-RESULT: a task never receives a frame after `ClosedAfterResult`; the
-  detector and the explicit close are the only transitions into that state.
+- INV-ORDER: the initial prompt completes before a steer can write; complete
+  frames serialize on the input owner without interleaving their bytes.
+- INV-RESULT-CLOSE: no new writer is admitted after `ClosedAfterResult`. A
+  writer already in flight may have delivered bytes before close, so one
+  result per process cannot be guaranteed in that narrow race (section 2).
 - INV-OWNER: every steer revalidates `workspace_id` against the task metadata
   inside the registry lock and again after every await in the frontend
   (thread, running turn id, owner id).
@@ -258,7 +278,8 @@ Rust: frame written while running and observed by the fake child; steer after
 boundary and never matches mid-line; detector ignores `{"type":"result"` inside
 a longer line; stop closes input before signal; owner mismatch rejected; limit
 32 rejected; write timeout detaches and stops; Codex exec `inputUnavailable`;
-commands round-trip every rejection tag; attachments released on rejection.
+commands round-trip every rejection tag; exact-owner attachments survive
+refusal and retry without duplication or cross-thread claims.
 
 TS: admission matrix (running Claude local → admitted; Codex exec → today's
 notice; server thread → today's notice; archived → rejected; limit); dispatch

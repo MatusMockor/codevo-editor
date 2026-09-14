@@ -365,10 +365,11 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
 
   const releaseProjectTasks = useCallback(
     (ownerId: string): void => {
+      dispatch.clearDeferredForOwner(ownerId);
       dispatchAction({ kind: "ownerReleased", ownerId });
       void refreshOrphanedWorktrees();
     },
-    [dispatchAction, refreshOrphanedWorktrees],
+    [dispatch, dispatchAction, refreshOrphanedWorktrees],
   );
 
   const now = dependencies.now ?? Date.now;
@@ -591,6 +592,9 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     refreshIsolationStatus: isolation.refreshIsolationStatus,
     startThread: dispatch.startThread,
     sendFollowUp: dispatch.sendFollowUp,
+    deferredFollowUps: dispatch.deferredFollowUps,
+    steer: dispatch.steer,
+    removeDeferredFollowUp: dispatch.removeDeferredFollowUp,
     importExternalSession,
     externalSessions,
     externalHistory,

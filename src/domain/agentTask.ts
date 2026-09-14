@@ -19,6 +19,7 @@ export const MAX_AGENT_TASK_PROMPT_BYTES = 32 * 1_024;
 export const MAX_AGENT_TASK_OUTPUT_CHUNK_BYTES = 8 * 1_024;
 export const MAX_AGENT_TASK_FAILURE_BYTES = 4_096;
 export const MAX_AGENT_SESSION_ID_BYTES = 128;
+export const MAX_AGENT_STEERS_PER_TURN = 32;
 
 export const AGENT_TASK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{2,63}$/;
 export const AGENT_SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
@@ -89,11 +90,52 @@ export interface StopAgentTasksForRootRequest {
   readonly repositoryRoot: string;
 }
 
+export interface SteerAgentTaskRequest {
+  readonly taskId: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly prompt: string;
+  readonly attachments?: ReadonlyArray<StartAgentTaskAttachment>;
+}
+
+export type AgentTaskSteerRejectionReason =
+  | "notRegistered"
+  | "notRunning"
+  | "notSteerable"
+  | "stopping"
+  | "inputClosed"
+  | "inputUnavailable"
+  | "limitExceeded"
+  | "writeTimedOut"
+  | "writeFailed";
+
+export interface AgentTaskSteerRejection {
+  readonly reason: AgentTaskSteerRejectionReason;
+}
+
+export type AgentTaskSteerResult =
+  | { readonly kind: "accepted" }
+  | { readonly kind: "rejected"; readonly rejection: AgentTaskSteerRejection };
+
+const AGENT_TASK_STEER_REJECTION_REASONS: ReadonlyArray<AgentTaskSteerRejectionReason> = [
+  "notRegistered",
+  "notRunning",
+  "notSteerable",
+  "stopping",
+  "inputClosed",
+  "inputUnavailable",
+  "limitExceeded",
+  "writeTimedOut",
+  "writeFailed",
+];
+
 export interface AgentTaskGateway {
   startAgentTask(request: StartAgentTaskRequest): Promise<StartAgentTaskResult>;
   acknowledgeAgentTaskStart(request: AgentTaskReferenceRequest): Promise<void>;
   stopAgentTask(request: AgentTaskReferenceRequest): Promise<void>;
   stopAgentTasksForRoot(request: StopAgentTasksForRootRequest): Promise<void>;
+  steerAgentTask(request: SteerAgentTaskRequest): Promise<AgentTaskSteerResult>;
+  closeAgentTaskInput(request: AgentTaskReferenceRequest): Promise<void>;
   subscribeAgentTaskStatus(handler: (event: AgentTaskStatusEvent) => void): Promise<() => void>;
   subscribeAgentTaskOutput(handler: (event: AgentTaskOutputEvent) => void): Promise<() => void>;
 }
@@ -342,6 +384,32 @@ export function validateAgentTaskReferenceRequest(value: unknown): AgentTaskRefe
   };
 }
 
+export function validateSteerAgentTaskRequest(value: unknown): SteerAgentTaskRequest {
+  const request = record(value, "request");
+  boundedKeys(request, ["taskId", "workspaceId", "threadId", "prompt"], ["attachments"], "request");
+  const steer: SteerAgentTaskRequest = {
+    taskId: agentTaskId(request.taskId, "request.taskId"),
+    workspaceId: agentWorkspaceId(request.workspaceId, "request.workspaceId"),
+    threadId: agentTaskId(request.threadId, "request.threadId"),
+    prompt: boundedText(request.prompt, "request.prompt", MAX_AGENT_TASK_PROMPT_BYTES, false),
+  };
+  if (request.attachments === undefined) return steer;
+  return {
+    ...steer,
+    attachments: startAgentTaskAttachments(request.attachments, "request.attachments"),
+  };
+}
+
+export function parseAgentTaskSteerRejection(value: unknown): AgentTaskSteerRejection | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  const keys = Object.keys(candidate);
+  if (keys.length !== 1 || keys[0] !== "reason") return null;
+  const reason = AGENT_TASK_STEER_REJECTION_REASONS.find((known) => known === candidate.reason);
+  if (reason === undefined) return null;
+  return { reason };
+}
+
 export function validateStopAgentTasksForRootRequest(value: unknown): StopAgentTasksForRootRequest {
   const request = record(value, "request");
   exactKeys(request, ["workspaceId", "repositoryRoot"], "request");
@@ -489,6 +557,21 @@ function exactKeys(
   const actual = Object.keys(value);
   if (actual.length !== expected.length || actual.some((key) => !expected.includes(key))) {
     invalid(path, `exactly the fields ${expected.join(", ")}`);
+  }
+}
+
+function boundedKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  path: string,
+): void {
+  const actual = Object.keys(value);
+  if (
+    required.some((key) => !actual.includes(key)) ||
+    actual.some((key) => !required.includes(key) && !optional.includes(key))
+  ) {
+    invalid(path, `the fields ${required.join(", ")} and optionally ${optional.join(", ")}`);
   }
 }
 

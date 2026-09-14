@@ -43,7 +43,12 @@ describe("BrowserSettingsGateway", () => {
     const settings = await gateway.loadAppSettings();
     const expected = {
       claudeCode: { ...oldPreferences.claudeCode, checkForUpdates: true },
-      codex: { ...oldPreferences.codex, checkForUpdates: true },
+      codex: {
+        ...oldPreferences.codex,
+        checkForUpdates: true,
+        codexTransport: "appServer",
+        codexAppServerArgs: [],
+      },
     };
     expect(settings.agentProviderPreferences).toEqual(expected);
 

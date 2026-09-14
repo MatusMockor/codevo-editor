@@ -42,6 +42,86 @@ describe("AgentComposer attachments", () => {
     Reflect.deleteProperty(window, "matchMedia");
   });
 
+  it("uses selected image bytes for server attachments without exposing local paths", async () => {
+    const intake = vi.fn(async () => undefined);
+    const captureIntake = vi.fn(() => intake);
+    const attachmentPicker = vi.fn(async () => ["/private/shot.png"]);
+    render({
+      executionServerId: "server",
+      attachments: surface({ captureIntake }),
+      attachmentPicker,
+    });
+    act(() => attachButton().click());
+    const picker = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(picker, "files", {
+      configurable: true,
+      value: [file("shot.png", "image/png", 12)],
+    });
+    await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(captureIntake).toHaveBeenCalledTimes(1);
+    expect(attachmentPicker).not.toHaveBeenCalled();
+    expect(intake).toHaveBeenCalledWith([
+      expect.objectContaining({ kind: "bytes", name: "shot.png" }),
+    ]);
+  });
+
+  it("does not read a selection after its server owner changes", async () => {
+    const intake = vi.fn(async () => undefined);
+    const attachments = surface({ captureIntake: () => intake });
+    render({ executionServerId: "server-a", attachments });
+    act(() => attachButton().click());
+    render({ executionServerId: "server-b", attachments });
+    const picker = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const selected = file("shot.png", "image/png", 12);
+    const read = vi.fn(async () => new ArrayBuffer(12));
+    Object.defineProperty(selected, "arrayBuffer", { value: read });
+    Object.defineProperty(picker, "files", { configurable: true, value: [selected] });
+    await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(read).not.toHaveBeenCalled();
+    expect(intake).not.toHaveBeenCalled();
+  });
+
+  it("drops an image read completed after switching away and back", async () => {
+    const intake = vi.fn(async () => undefined);
+    const attachments = surface({ captureIntake: () => intake });
+    render({ executionServerId: "server-a", attachments });
+    act(() => attachButton().click());
+    let finish!: (bytes: ArrayBuffer) => void;
+    const selected = file("shot.png", "image/png", 12);
+    Object.defineProperty(selected, "arrayBuffer", {
+      value: () =>
+        new Promise<ArrayBuffer>((resolve) => {
+          finish = resolve;
+        }),
+    });
+    const picker = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(picker, "files", { configurable: true, value: [selected] });
+    act(() => picker.dispatchEvent(new Event("change", { bubbles: true })));
+    render({ executionServerId: "server-b", attachments });
+    render({ executionServerId: "server-a", attachments });
+    await act(async () => finish(new ArrayBuffer(12)));
+    expect(intake).not.toHaveBeenCalled();
+  });
+
+  it("cancels a server picker without staging or reporting an error", async () => {
+    const intake = vi.fn(async () => undefined);
+    const refuse = vi.fn();
+    render({
+      executionServerId: "server",
+      attachments: surface({ captureIntake: () => intake, refuse }),
+    });
+    act(() => attachButton().click());
+    const picker = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    act(() => picker.dispatchEvent(new Event("cancel", { bubbles: true })));
+    Object.defineProperty(picker, "files", {
+      configurable: true,
+      value: [file("shot.png", "image/png", 12)],
+    });
+    await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(intake).not.toHaveBeenCalled();
+    expect(refuse).not.toHaveBeenCalled();
+  });
+
   it("claims a pasted image and stages it as bytes", async () => {
     const add = vi.fn<AgentComposerAttachmentsSurface["add"]>(async () => undefined);
     const claimPaste = vi.fn(() => "claim" as const);

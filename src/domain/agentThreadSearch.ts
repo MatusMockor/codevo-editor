@@ -1,4 +1,4 @@
-import type { AgentThread, AgentTurn } from "./agentThread";
+import type { AgentThread, AgentTurn, AgentTurnEvent } from "./agentThread";
 import { agentPromptDisplayText } from "./agentPromptDisplay";
 import type { ExternalSessionExchange } from "./externalAgentSession";
 import {
@@ -335,14 +335,42 @@ function turnSegments(
   const firstVisible = Math.max(0, turn.events.length - maxEventsPerTurn);
   turn.events.forEach((event, index) => {
     if (index < firstVisible) return;
-    if (event.kind === "assistantText") {
-      segments.push(segment("assistant", turn.turnId, index, event.text));
-      return;
-    }
-    if (event.kind !== "result") return;
-    segments.push(segment("assistant", turn.turnId, index, event.text));
+    const candidate = eventSegment(event, turn.turnId, index);
+    if (candidate !== null) segments.push(candidate);
   });
   return segments;
+}
+
+function eventSegment(
+  event: AgentTurnEvent,
+  turnId: string,
+  eventIndex: number,
+): AgentThreadSearchSegment | null {
+  switch (event.kind) {
+    case "userMessage":
+      return segment("user", turnId, eventIndex, agentPromptDisplayText(event.text));
+    case "assistantText":
+    case "result":
+      return segment("assistant", turnId, eventIndex, event.text);
+    case "subagentEvent":
+      return eventSegment(event.event, turnId, eventIndex);
+    case "queued":
+    case "subagentActivity":
+    case "subagentUsage":
+    case "subagentTurnDone":
+    case "reasoning":
+    case "toolCall":
+    case "toolResult":
+    case "subagent":
+    case "contextCompaction":
+    case "error":
+    case "unknownLine":
+      return null;
+    default: {
+      const exhaustive: never = event;
+      return exhaustive;
+    }
+  }
 }
 
 function segment(

@@ -3,8 +3,14 @@
 import { act, StrictMode, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
+import type {
+  AgentSteerOutcome,
+  AgentThreadsSurface,
+  AgentThreadView,
+} from "../../application/agentThreadPorts";
 import { defaultAgentLaunchOptions, type AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentTurn } from "../../domain/agentThread";
+import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
@@ -504,6 +510,164 @@ describe("useAgentComposerState", () => {
       dangerousLaunchConfirmed: true,
     });
     expect(current().composer.composerProps.prompt).toBe("");
+  });
+
+  it("steers the running Claude turn instead of blocking the composer", async () => {
+    const steer = vi.fn(async () => "sent" as const);
+    const sendFollowUp = vi.fn(async () => true);
+    const stop = vi.fn(async () => undefined);
+    render(threadsSurfaceFixture({ threads: [steerableThreadView()], steer, sendFollowUp, stop }));
+
+    act(() => current().navigation.selectThread("agt-1"));
+    expect(current().composer.composerProps.mode).toEqual({ kind: "steer", threadId: "agt-1" });
+    expect(current().composer.composerProps.running).toBe(true);
+
+    act(() => current().composer.composerProps.onPromptChange("also run the tests"));
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
+
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+
+    expect(steer).toHaveBeenCalledWith({ threadId: "agt-1", prompt: "also run the tests" });
+    expect(sendFollowUp).not.toHaveBeenCalled();
+    expect(current().composer.composerProps.prompt).toBe("");
+
+    act(() => current().composer.composerProps.onStop?.());
+    expect(stop).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("shows the running launch even if a next-turn preference is changed", () => {
+    const thread = steerableThreadView();
+    render(threadsSurfaceFixture({ threads: [thread] }));
+    act(() => current().navigation.selectThread("agt-1"));
+    const runningLaunch = current().composer.composerProps.launch;
+    act(() =>
+      current().composer.composerProps.onLaunchChange({
+        provider: "claudeCode",
+        mode: "bypassPermissions",
+        effort: "high",
+        model: "opus",
+      }),
+    );
+    expect(current().composer.composerProps.launch).toEqual(runningLaunch);
+  });
+
+  it("keeps one steer in flight per thread and ignores the next submit until it settles", async () => {
+    let releaseSteer: ((outcome: AgentSteerOutcome) => void) | null = null;
+    const pendingSteer = new Promise<AgentSteerOutcome>((resolve) => {
+      releaseSteer = resolve;
+    });
+    const steer = vi.fn(() => pendingSteer);
+    render(threadsSurfaceFixture({ threads: [steerableThreadView()], steer }));
+
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("first"));
+    act(() => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+
+    expect(current().composer.composerProps.dispatching).toBe(true);
+    expect(current().composer.composerProps.submitBlocked).toBe(true);
+
+    act(() => current().composer.composerProps.onPromptChange("second"));
+    act(() => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+
+    expect(steer).toHaveBeenCalledTimes(1);
+    expect(current().composer.composerProps.prompt).toBe("second");
+
+    await act(async () => {
+      releaseSteer?.("sent");
+      await pendingSteer;
+    });
+
+    expect(current().composer.composerProps.dispatching).toBe(false);
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
+  });
+
+  it.each([false, true])(
+    "does not restore a refused steer after changing selection (return: %s)",
+    async (returnToOrigin) => {
+      let settle: (outcome: AgentSteerOutcome) => void = () => undefined;
+      const pending = new Promise<AgentSteerOutcome>((resolve) => {
+        settle = resolve;
+      });
+      const first = steerableThreadView();
+      const second = { ...first, thread: { ...first.thread, threadId: "agt-2" } };
+      render(threadsSurfaceFixture({ threads: [first, second], steer: vi.fn(() => pending) }));
+      act(() => current().navigation.selectThread("agt-1"));
+      act(() => current().composer.composerProps.onPromptChange("Only for A"));
+      act(() =>
+        current().composer.composerProps.onSubmit({
+          launch: defaultAgentLaunchOptions("claudeCode"),
+          dangerousLaunchConfirmed: false,
+        }),
+      );
+      act(() => current().navigation.selectThread("agt-2"));
+      if (returnToOrigin) act(() => current().navigation.selectThread("agt-1"));
+      await act(async () => {
+        settle("kept");
+        await pending;
+      });
+      expect(current().composer.composerProps.prompt).toBe("");
+    },
+  );
+
+  it("keeps the text in the composer when the steer was refused", async () => {
+    const steer = vi.fn(async () => "kept" as const);
+    render(threadsSurfaceFixture({ threads: [steerableThreadView()], steer }));
+
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("wait for me"));
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+
+    expect(steer).toHaveBeenCalledTimes(1);
+    expect(current().composer.composerProps.prompt).toBe("wait for me");
+  });
+
+  it("clears the composer when the steer was deferred to the next turn", async () => {
+    const steer = vi.fn(async () => "deferred" as const);
+    render(threadsSurfaceFixture({ threads: [steerableThreadView()], steer }));
+
+    act(() => current().navigation.selectThread("agt-1"));
+    act(() => current().composer.composerProps.onPromptChange("and then ship it"));
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+
+    expect(current().composer.composerProps.prompt).toBe("");
+  });
+
+  it("keeps the running notice and the follow-up mode for a turn that cannot be steered", () => {
+    const codex = steerableThreadView("codex");
+    render(threadsSurfaceFixture({ agentCliKind: "codex", threads: [codex] }));
+
+    act(() => current().navigation.selectThread("agt-1"));
+    expect(current().composer.composerProps.mode).toEqual({
+      kind: "followUp",
+      blockedReason: "This thread is still running. Wait for the turn to finish.",
+    });
+    expect(current().composer.composerProps.running).toBe(false);
+    expect(current().composer.composerProps.submitBlocked).toBe(true);
   });
 
   it("continues a server thread through the original composer without a local session", async () => {
@@ -1180,3 +1344,29 @@ describe("useAgentComposerState", () => {
     return null;
   }
 });
+
+function steerableThreadView(provider: AgentCliKind = "claudeCode"): AgentThreadView {
+  const base = surfaceThreadView();
+  const running: AgentTurn = {
+    turnId: "agt-1-t1",
+    prompt: "Refactor the parser",
+    status: { kind: "running" },
+    startedAtEpochMs: 1_700_000_000_000,
+    endedAtEpochMs: null,
+    events: [],
+    eventsTruncated: false,
+    lastStatusSequence: 0,
+    lastOutputSequence: 0,
+    launch: defaultAgentLaunchOptions(provider),
+    cliVersion: null,
+  };
+  return {
+    ...base,
+    lifecycle: "running",
+    thread: {
+      ...base.thread,
+      provider: { ...base.thread.provider, kind: provider },
+      turns: [running],
+    },
+  };
+}

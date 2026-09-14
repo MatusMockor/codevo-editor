@@ -1220,6 +1220,8 @@ fn turn_start_rejects_a_stale_provider_generation_after_an_a_b_a_replacement() {
         enabled: true,
         cli_path: Some(cli_path.clone()),
         check_for_updates,
+        codex_transport: Default::default(),
+        codex_app_server_args: Vec::new(),
     };
     let registry = Arc::new(AgentProviderRuntimeRegistry::new());
     let first = registry
@@ -1418,3 +1420,6 @@ fn prepare_builds_an_in_place_plan_without_a_worktree_path() {
     assert_eq!(prepared.request.worktree_path, None);
     assert_eq!(prepared.plan.cwd(), workspace.root.as_path());
 }
+
+#[path = "agent_task_commands_steering_tests.rs"]
+mod steering_tests;

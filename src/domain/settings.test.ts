@@ -190,6 +190,8 @@ describe("normalizeAppSettings", () => {
         dismissedUpdateVersion: "2.1.245",
       },
       codex: {
+        codexTransport: "appServer",
+        codexAppServerArgs: [],
         enabled: true,
         healthCheckIntervalSeconds: 86_400,
         checkForUpdates: true,

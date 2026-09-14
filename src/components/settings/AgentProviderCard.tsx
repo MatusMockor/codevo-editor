@@ -2,9 +2,13 @@ import { ArrowUp, ChevronDown, LoaderCircle, LogIn, RotateCcw } from "lucide-rea
 import { useEffect, useRef, useState } from "react";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentProviderSignInState } from "../../domain/agentProviderSignIn";
-import type { AgentProviderPreference } from "../../domain/agentProviderSettings";
+import type {
+  CodexTransportSettings,
+  AgentProviderPreference,
+} from "../../domain/agentProviderSettings";
 import { normalizeAgentCliPath, type AgentCliKind } from "../../domain/agentSettings";
 import { AgentProviderGlyph } from "../agentMode/AgentProviderGlyph";
+import { CodexTransportControls } from "./CodexTransportControls";
 import { AgentProviderCardDetails } from "./AgentProviderCardDetails";
 import { AgentProviderUpdatePopover } from "./AgentProviderUpdatePopover";
 import { SettingsButton } from "./primitives/SettingsButton";
@@ -43,6 +47,7 @@ export interface AgentProviderCardProps {
   readonly provider: AgentCliKind;
   readonly rowId: SettingsRowId;
   readonly signIn: AgentProviderSignInCardControl | null;
+  onSaveCodexTransport?(settings: CodexTransportSettings): Promise<boolean>;
   onChangeEnabled(value: boolean): void;
   onChangePath(value: string | null): void;
   onCopyInstallCommand(command: string): void;
@@ -52,6 +57,7 @@ export interface AgentProviderCardProps {
 export function AgentProviderCard({
   management,
   nowEpochMs,
+  onSaveCodexTransport,
   onChangeEnabled,
   onChangePath,
   onCopyInstallCommand,
@@ -241,6 +247,18 @@ export function AgentProviderCard({
 
       {expanded ? (
         <AgentProviderCardDetails
+          codexControls={
+            provider === "codex" ? (
+              <CodexTransportControls
+                preference={preference}
+                onSave={
+                  onSaveCodexTransport ??
+                  ((settings) =>
+                    management.save({ provider, preference: { ...preference, ...settings } }))
+                }
+              />
+            ) : null
+          }
           enabled={enabled}
           intervalSeconds={preference.healthCheckIntervalSeconds}
           invalidPath={invalidPath}

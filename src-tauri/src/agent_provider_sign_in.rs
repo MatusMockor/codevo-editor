@@ -394,6 +394,8 @@ mod tests {
                 1,
                 None,
                 AgentProviderPolicy {
+                    codex_transport: Default::default(),
+                    codex_app_server_args: Vec::new(),
                     enabled: true,
                     cli_path: Some(fixture.executable.to_string_lossy().into_owned()),
                     check_for_updates: false,

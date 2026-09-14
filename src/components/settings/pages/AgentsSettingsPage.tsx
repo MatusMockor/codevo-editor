@@ -16,6 +16,7 @@ import { providerCheckedAt, providerChecksSummaryLabel } from "../agentProviderC
 import {
   AGENT_PROVIDERS,
   agentProviderDraftWriter,
+  saveCodexTransportSettings,
   withClearedModelFavorites,
   withHealthCheckIntervalSeconds,
   withProviderEnabled,
@@ -66,18 +67,19 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
     return () => clearInterval(timer);
   }, [oldestCheckedAt]);
 
-  const writeAppSettings = agentProviderDraftWriter({
+  const providerWriterPorts = {
     draftRef: appSettingsRef,
     management: env.providerManagement,
-    persistDraft: (settings) => {
+    persistDraft: (settings: typeof draft.appSettings) => {
       appSettingsRef.current = settings;
       actions.updateAppSettings(settings);
     },
-    publishDraft: (settings) => {
+    publishDraft: (settings: typeof draft.appSettings) => {
       appSettingsRef.current = settings;
       actions.publishAppSettings(settings);
     },
-  });
+  };
+  const writeAppSettings = agentProviderDraftWriter(providerWriterPorts);
 
   const providerConfigured = (provider: AgentCliKind): boolean =>
     management.admissionAuthority(provider).disposition.kind === "ready";
@@ -145,6 +147,9 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
             }
             onChangePath={(path) =>
               writeAppSettings(withProviderPath(appSettingsRef.current, provider, path))
+            }
+            onSaveCodexTransport={(settings) =>
+              saveCodexTransportSettings(providerWriterPorts, settings)
             }
             onCopyInstallCommand={env.onCopyInstallCommand}
             onResetProvider={() =>

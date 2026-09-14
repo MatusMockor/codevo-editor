@@ -21,6 +21,7 @@ import {
   acceptAgentTurnOutput,
   createAgentTurnOutputStream,
   drainAgentTurnOutput,
+  domainAgentOutputParser,
   scheduleAgentOutputFrame,
   type AgentOutputParserPort,
   type TurnEventsAppendedAction,
@@ -389,4 +390,33 @@ describe("agent output frame scheduling", () => {
     vi.advanceTimersByTime(AGENT_OUTPUT_FLUSH_FALLBACK_MS);
     expect(callback).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("output transport snapshot", () => {
+  it.each(["appServer", "exec"] as const)(
+    "parses %s with the captured transport",
+    (codexTransport) => {
+      const stream = createAgentTurnOutputStream(domainAgentOutputParser, {
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        ownerId: "ws-1",
+        repositoryRoot: "/repo",
+        isolation: "in-place",
+        worktreePath: null,
+        kind: "codex",
+        resumed: false,
+        codexTransport,
+      });
+      expect(stream.parser.transport).toBe(codexTransport);
+      acceptAgentTurnOutput(
+        domainAgentOutputParser,
+        stream,
+        outputEvent(1, '{"v":1,"t":"text","role":"assistant","text":"hello","clipped":false}\n'),
+      );
+      if (codexTransport === "appServer")
+        expect(stream.pendingEvents).toContainEqual({ kind: "assistantText", text: "hello" });
+      if (codexTransport === "exec")
+        expect(stream.pendingEvents).not.toContainEqual({ kind: "assistantText", text: "hello" });
+    },
+  );
 });

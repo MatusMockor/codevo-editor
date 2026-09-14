@@ -1,7 +1,12 @@
 import type { AgentCliKind, AgentTaskOutputStream } from "../agentTask";
 import type { AgentAccountUsageObservation } from "../agentAccountUsage";
-import { MAX_AGENT_EVENT_TEXT_BYTES, type AgentTurnEvent } from "../agentThread";
+import {
+  MAX_AGENT_EVENT_TEXT_BYTES,
+  type AgentSessionFallback,
+  type AgentTurnEvent,
+} from "../agentThread";
 import { parseClaudeStreamJsonLine } from "./claudeStreamJson";
+import { parseCodexAppServerLine } from "./codexAppServer";
 import { parseCodexJsonlLine } from "./codexJsonl";
 import { EMPTY_PENDING_LINE, splitLines, type AgentOutputPendingLine } from "./lineSplitter";
 import { boundUtf8Text } from "./utf8Text";
@@ -16,6 +21,7 @@ export type ParsedAgentLine =
       readonly kind: "events";
       readonly events: ReadonlyArray<AgentTurnEvent>;
       readonly sessionId: string | null;
+      readonly sessionFallback?: AgentSessionFallback;
     }
   | { readonly kind: "accountUsage"; readonly observation: AgentAccountUsageObservation }
   | { readonly kind: "ignored" }
@@ -23,6 +29,7 @@ export type ParsedAgentLine =
 
 export interface AgentOutputParserState {
   readonly kind: AgentCliKind;
+  readonly transport: "exec" | "appServer";
   readonly stdout: AgentOutputPendingLine;
   readonly stderr: AgentOutputPendingLine;
   readonly emittedToolIds: ReadonlySet<string>;
@@ -34,6 +41,7 @@ export interface AgentOutputFeedResult {
   readonly events: ReadonlyArray<AgentTurnEvent>;
   readonly sessionId: string | null;
   readonly accountUsage: ReadonlyArray<AgentAccountUsageObservation>;
+  readonly sessionFallback?: AgentSessionFallback;
 }
 
 interface AgentOutputLineStrategy {
@@ -49,6 +57,7 @@ interface ParsedLines {
   readonly capturedSessionId: string | null;
   readonly reportedSessionId: string | null;
   readonly accountUsage: ReadonlyArray<AgentAccountUsageObservation>;
+  readonly sessionFallback?: AgentSessionFallback;
 }
 
 const NO_EVENTS: ReadonlyArray<AgentTurnEvent> = [];
@@ -64,9 +73,13 @@ const CODEX_STRATEGY: AgentOutputLineStrategy = {
   },
 };
 
-export function createAgentOutputParserState(kind: AgentCliKind): AgentOutputParserState {
+export function createAgentOutputParserState(
+  kind: AgentCliKind,
+  transport: "exec" | "appServer" = "exec",
+): AgentOutputParserState {
   return {
     kind,
+    transport,
     stdout: EMPTY_PENDING_LINE,
     stderr: EMPTY_PENDING_LINE,
     emittedToolIds: new Set(),
@@ -92,6 +105,7 @@ export function feedAgentOutput(
     events: [...overflowEvents, ...parsed.events],
     sessionId: parsed.reportedSessionId,
     accountUsage: parsed.accountUsage,
+    ...(parsed.sessionFallback === undefined ? {} : { sessionFallback: parsed.sessionFallback }),
   };
 }
 
@@ -117,8 +131,9 @@ function parseLines(
   let emittedToolIds = state.emittedToolIds;
   let capturedSessionId = state.sessionId;
   let reportedSessionId: string | null = null;
+  let sessionFallback: AgentSessionFallback | undefined;
   const accountUsage: AgentAccountUsageObservation[] = [];
-  const strategy = strategyFor(state.kind);
+  const strategy = strategyFor(state.kind, state.transport);
   for (const line of lines) {
     if (line.trim() === "") continue;
     if (stream === "stderr") {
@@ -136,16 +151,34 @@ function parseLines(
       accountUsage.push(parsed.result.observation);
       continue;
     }
+    if (parsed.result.sessionFallback !== undefined) {
+      // Only the adapter's initial session declaration can authorize fallback.
+      // Replayed or later declarations must not replace an established session.
+      if (capturedSessionId !== null) continue;
+      sessionFallback = parsed.result.sessionFallback;
+    }
     events.push(...parsed.result.events);
     const candidate = parsed.result.sessionId;
     if (candidate === null || candidate === capturedSessionId) continue;
     reportedSessionId = candidate;
     capturedSessionId = capturedSessionId ?? candidate;
   }
-  return { events, emittedToolIds, capturedSessionId, reportedSessionId, accountUsage };
+  return {
+    events,
+    emittedToolIds,
+    capturedSessionId,
+    reportedSessionId,
+    accountUsage,
+    ...(sessionFallback === undefined ? {} : { sessionFallback }),
+  };
 }
 
-function strategyFor(kind: AgentCliKind): AgentOutputLineStrategy {
+const CODEX_APP_SERVER_STRATEGY: AgentOutputLineStrategy = {
+  parse: (line, emittedToolIds) => ({ result: parseCodexAppServerLine(line), emittedToolIds }),
+};
+
+function strategyFor(kind: AgentCliKind, transport: "exec" | "appServer"): AgentOutputLineStrategy {
+  if (kind === "codex" && transport === "appServer") return CODEX_APP_SERVER_STRATEGY;
   if (kind === "codex") return CODEX_STRATEGY;
   return CLAUDE_STRATEGY;
 }

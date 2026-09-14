@@ -149,6 +149,8 @@ fn shared_discovery_registry_with_path(
             1,
             None,
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path,
                 check_for_updates: true,

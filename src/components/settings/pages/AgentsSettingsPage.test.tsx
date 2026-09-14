@@ -20,6 +20,7 @@ import type {
   SettingsEnvironment,
 } from "../settingsPageProps";
 import { settingsRowsForSection } from "../settingsRegistry";
+import { saveCodexTransportSettings } from "../agentProviderSettingsPersistence";
 import { AgentsSettingsPage } from "./AgentsSettingsPage";
 
 interface HarnessOptions {
@@ -49,6 +50,43 @@ describe("AgentsSettingsPage", () => {
     act(() => root.unmount());
     host.remove();
     vi.useRealTimers();
+  });
+
+  it("publishes transport draft and rolls back rejected persistence", async () => {
+    const management = providerManagement({ persisted: false, ready: true });
+    const initial = defaultAppSettings();
+    const draftRef = { current: initial };
+    const publishDraft = vi.fn();
+    const pending = saveCodexTransportSettings(
+      { draftRef, management, publishDraft, persistDraft: vi.fn() },
+      { codexTransport: "exec", codexAppServerArgs: [] },
+    );
+    expect(draftRef.current.agentProviderPreferences.codex.codexTransport).toBe("exec");
+    expect(await pending).toBe(false);
+    expect(draftRef.current.agentProviderPreferences.codex.codexTransport).toBe("appServer");
+    expect(publishDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a newer transport draft when an older save rejects", async () => {
+    const management = providerManagement({ persisted: false, ready: true });
+    const draftRef = { current: defaultAppSettings() };
+    const pending = saveCodexTransportSettings(
+      { draftRef, management, publishDraft: vi.fn(), persistDraft: vi.fn() },
+      { codexTransport: "exec" },
+    );
+    const newer = {
+      ...draftRef.current,
+      agentProviderPreferences: {
+        ...draftRef.current.agentProviderPreferences,
+        codex: {
+          ...draftRef.current.agentProviderPreferences.codex,
+          codexAppServerArgs: ["--enable", "new"],
+        },
+      },
+    };
+    draftRef.current = newer;
+    expect(await pending).toBe(false);
+    expect(draftRef.current).toBe(newer);
   });
 
   it("renders exactly the agents registry rows in their registry order", () => {

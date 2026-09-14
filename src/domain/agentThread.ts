@@ -13,6 +13,11 @@ import type { GitIntegrationMode } from "./gitIntegration";
 import type { ExternalAgentSessionHistory } from "./externalAgentSession";
 import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 
+export interface AgentSessionFallback {
+  readonly previousThreadId: string;
+  readonly threadId: string;
+}
+
 export {
   AGENT_ATTACHMENT_ID_PATTERN,
   AGENT_IMAGE_MIMES,
@@ -35,6 +40,7 @@ export { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agen
 export const MAX_AGENT_THREADS_PER_ROOT = 64;
 export const MAX_AGENT_TURNS_PER_THREAD = 64;
 export const MAX_AGENT_EVENTS_PER_TURN = 512;
+export const MAX_SUBAGENT_THREADS_PER_TURN = 32;
 export const MAX_AGENT_EVENT_BYTES_PER_TURN = 512 * 1_024;
 export const MAX_AGENT_TOOL_SUMMARY_BYTES = 512;
 export const MAX_AGENT_TOOL_ID_BYTES = 256;
@@ -67,7 +73,26 @@ export type AgentThreadAttention = "running" | "attention" | "settled" | "archiv
 
 export type AgentTurnStatus = AgentTaskStatus | { readonly kind: "interrupted" };
 
+export interface AgentAppServerTokenBreakdown {
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly cacheWriteInputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningOutputTokens: number;
+  readonly totalTokens: number;
+}
+
+export interface AgentAppServerUsage {
+  readonly last: AgentAppServerTokenBreakdown;
+  readonly total: AgentAppServerTokenBreakdown;
+  readonly contextWindow: number | null;
+}
+
 export interface AgentTurnUsage {
+  readonly scope?: "thread";
+  readonly appServerUsage?: AgentAppServerUsage;
+  readonly cachedInputTokens?: number | null;
+  readonly reasoningOutputTokens?: number | null;
   readonly inputTokens: number;
   readonly outputTokens: number;
   /** Provider-reported API-equivalent cost for the turn, when available. */
@@ -83,9 +108,46 @@ export interface AgentTurnStreamMetrics {
 
 export type AgentSubagentEventStatus = "starting" | "running" | "completed" | "failed";
 
+export type AgentSubagentContentEvent = Extract<
+  AgentTurnEvent,
+  { kind: "assistantText" | "reasoning" | "toolCall" | "toolResult" }
+>;
+
 export type AgentTurnEvent =
+  | {
+      readonly kind: "subagentActivity";
+      readonly agentThreadId: string;
+      readonly agentPath: string;
+      readonly activity: "started" | "interacted" | "interrupted" | "completed";
+    }
+  | {
+      readonly kind: "subagentEvent";
+      readonly agentThreadId: string;
+      readonly event: AgentSubagentContentEvent;
+    }
+  | {
+      readonly kind: "subagentUsage";
+      readonly agentThreadId: string;
+      readonly usage: AgentTurnUsage;
+    }
+  | {
+      readonly kind: "subagentTurnDone";
+      readonly agentThreadId: string;
+      readonly durationMs: number | null;
+      readonly isError: boolean;
+    }
+  | {
+      readonly kind: "queued";
+      readonly threadId: string;
+      readonly clientUserMessageId: string | null;
+    }
   | { readonly kind: "assistantText"; readonly text: string }
   | { readonly kind: "reasoning"; readonly text: string }
+  | {
+      readonly kind: "userMessage";
+      readonly text: string;
+      readonly attachments?: ReadonlyArray<AgentAttachment>;
+    }
   | {
       readonly kind: "toolCall";
       readonly toolId: string;
@@ -114,6 +176,7 @@ export type AgentTurnEvent =
     }
   | {
       readonly kind: "result";
+      readonly durationMs?: number | null;
       readonly text: string;
       readonly isError: boolean;
       readonly usage: AgentTurnUsage | null;
@@ -132,6 +195,7 @@ export type AgentTurnEvent =
     };
 
 export interface AgentTurn {
+  readonly codexTransport?: "appServer" | "exec";
   readonly turnId: string;
   readonly prompt: string;
   readonly status: AgentTurnStatus;
@@ -229,8 +293,15 @@ export type AgentThreadsAction =
       readonly outputSequence: number;
       readonly events: ReadonlyArray<AgentTurnEvent>;
       readonly sessionId: string | null;
+      readonly sessionFallback?: AgentSessionFallback;
       readonly supervisorTruncated: boolean;
       readonly streamMetricsDelta?: AgentTurnStreamMetrics | null;
+    }
+  | {
+      readonly kind: "turnSteered";
+      readonly threadId: string;
+      readonly turnId: string;
+      readonly event: Extract<AgentTurnEvent, { kind: "userMessage" }>;
     }
   | { readonly kind: "turnInterrupted"; readonly turnId: string; readonly nowEpochMs: number }
   | {
@@ -403,6 +474,8 @@ export function agentThreadsReducer(
       return applyTurnStatusEvent(state, action);
     case "turnEventsAppended":
       return appendTurnEvents(state, action);
+    case "turnSteered":
+      return appendSteeredMessage(state, action);
     case "turnInterrupted":
       return interruptTurn(state, action.turnId, action.nowEpochMs);
     case "integrationRecorded":
@@ -608,11 +681,53 @@ function appendTurnEvents(
       action.streamMetricsDelta ?? null,
     ),
   };
-  const provider = providerWithSession(thread.provider, action.sessionId);
+  const fallback = action.sessionFallback;
+  const provider =
+    thread.provider.kind === "codex" &&
+    turn.codexTransport === "appServer" &&
+    fallback !== undefined &&
+    fallback.previousThreadId === thread.provider.sessionId &&
+    fallback.threadId === action.sessionId &&
+    fallback.previousThreadId !== fallback.threadId &&
+    isAgentSessionId(fallback.previousThreadId) &&
+    isAgentSessionId(fallback.threadId)
+      ? { ...thread.provider, sessionId: fallback.threadId }
+      : providerWithSession(thread.provider, action.sessionId);
   const turns = thread.turns.map((candidate, position) =>
     position === index ? updatedTurn : candidate,
   );
   return replaceThread(state, { ...thread, provider, turns });
+}
+
+export function steerCount(turn: AgentTurn): number {
+  return turn.events.reduce(
+    (total, event) => (event.kind === "userMessage" ? total + 1 : total),
+    0,
+  );
+}
+
+export function agentTurnAcceptsSteerBytes(turn: AgentTurn, bytes: number): boolean {
+  if (turn.eventsTruncated) return false;
+  if (turn.events.length >= MAX_AGENT_EVENTS_PER_TURN) return false;
+  return agentTurnEventsUtf8Bytes(turn.events) + bytes <= MAX_AGENT_EVENT_BYTES_PER_TURN;
+}
+
+function appendSteeredMessage(
+  state: AgentThreadsState,
+  action: Extract<AgentThreadsAction, { kind: "turnSteered" }>,
+): AgentThreadsState {
+  const location = findTurnInThread(state, action.threadId, action.turnId);
+  if (location === null) return state;
+  const { thread, index } = location;
+  const turn = thread.turns[index];
+  if (isTerminalAgentTurnStatus(turn.status)) return state;
+  if (UTF8_ENCODER.encode(action.event.text).byteLength > MAX_AGENT_EVENT_TEXT_BYTES) return state;
+  if (!agentTurnAcceptsSteerBytes(turn, agentTurnEventUtf8Bytes(action.event))) return state;
+  const updatedTurn: AgentTurn = { ...turn, events: [...turn.events, action.event] };
+  const turns = thread.turns.map((candidate, position) =>
+    position === index ? updatedTurn : candidate,
+  );
+  return replaceThread(state, { ...thread, turns });
 }
 
 function mergeAgentTurnStreamMetrics(
@@ -655,8 +770,15 @@ function mergeTurnEvents(
   const events = [...existing];
   let retainedBytes = agentTurnEventsUtf8Bytes(events);
   let truncated = false;
+  const subagents = new Set(
+    existing.flatMap((event) => ("agentThreadId" in event ? [event.agentThreadId] : [])),
+  );
   for (const event of incoming) {
     if (truncated) continue;
+    if (!acceptSubagent(event, subagents)) {
+      truncated = true;
+      continue;
+    }
     const coalesced = coalesceAgentTextEvents(events[events.length - 1], event);
     if (coalesced !== null) {
       const previous = events[events.length - 1];
@@ -706,6 +828,15 @@ function agentTurnEventsUtf8Bytes(events: ReadonlyArray<AgentTurnEvent>): number
 
 function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
   switch (event.kind) {
+    case "subagentActivity":
+      return [event.agentThreadId, event.agentPath, event.activity];
+    case "subagentEvent":
+      return [event.agentThreadId, ...agentTurnEventStrings(event.event)];
+    case "subagentUsage":
+    case "subagentTurnDone":
+      return [event.agentThreadId];
+    case "queued":
+      return [event.threadId, event.clientUserMessageId ?? ""];
     case "toolCall":
       return definedStrings([event.toolId, event.name, event.inputSummary, event.parentToolId]);
     case "toolResult":
@@ -722,6 +853,8 @@ function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
       return [event.message];
     case "unknownLine":
       return [event.raw];
+    case "userMessage":
+      return [event.text, ...(event.attachments ?? []).flatMap(agentAttachmentStrings)];
     case "contextCompaction":
       return [];
     case "assistantText":
@@ -730,6 +863,18 @@ function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
       return [event.text];
     default:
       return unsupportedTurnEvent(event);
+  }
+}
+
+function agentAttachmentStrings(attachment: AgentAttachment): ReadonlyArray<string> {
+  switch (attachment.kind) {
+    case "image":
+    case "file":
+      return definedStrings([attachment.name, attachment.storedPath]);
+    case "reference":
+      return definedStrings([attachment.name, attachment.path]);
+    default:
+      return unsupportedAttachment(attachment);
   }
 }
 
@@ -755,7 +900,12 @@ function boundAgentTurnEvents(turn: AgentTurn): AgentTurn {
   const retained: AgentTurnEvent[] = [];
   let retainedBytes = 0;
   let truncated = turn.eventsTruncated;
+  const subagents = new Set<string>();
   for (const event of turn.events) {
+    if (!acceptSubagent(event, subagents)) {
+      truncated = true;
+      break;
+    }
     const eventBytes = agentTurnEventUtf8Bytes(event);
     if (
       retained.length >= MAX_AGENT_EVENTS_PER_TURN ||
@@ -782,11 +932,26 @@ function boundAgentTurnEvents(turn: AgentTurn): AgentTurn {
   };
 }
 
+function acceptSubagent(event: AgentTurnEvent, seen: Set<string>): boolean {
+  if (!("agentThreadId" in event)) return true;
+  if (seen.has(event.agentThreadId)) return true;
+  if (seen.size >= MAX_SUBAGENT_THREADS_PER_TURN) return false;
+  seen.add(event.agentThreadId);
+  return true;
+}
+
 export function coalesceAgentTextEvents(
   last: AgentTurnEvent | undefined,
   next: AgentTurnEvent,
 ): AgentTurnEvent | null {
   if (last === undefined) return null;
+  if (last.kind === "subagentEvent" && next.kind === "subagentEvent") {
+    if (last.agentThreadId !== next.agentThreadId) return null;
+    const event = coalesceAgentTextEvents(last.event, next.event);
+    return event !== null && (event.kind === "assistantText" || event.kind === "reasoning")
+      ? { kind: "subagentEvent", agentThreadId: next.agentThreadId, event }
+      : null;
+  }
   if (next.kind !== "assistantText" && next.kind !== "reasoning") return null;
   if (last.kind !== next.kind) return null;
   const lastState = agentTextEventByteState(last);
@@ -1022,6 +1187,10 @@ function firstNonEmptyLine(prompt: string): string {
 
 function unsupportedTurnStatus(status: never): never {
   throw new TypeError(`Unsupported agent turn status: ${JSON.stringify(status)}.`);
+}
+
+function unsupportedAttachment(attachment: never): never {
+  throw new TypeError(`Unsupported agent attachment: ${JSON.stringify(attachment)}.`);
 }
 
 function unsupportedTurnEvent(event: never): never {

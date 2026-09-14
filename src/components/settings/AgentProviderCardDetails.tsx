@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Copy, LoaderCircle } from "lucide-react";
 import type { AgentProviderManagementView } from "../../application/useAgentProviderManagement";
 import type { AgentCliExecutablePresentation, AgentCliKind } from "../../domain/agentSettings";
@@ -15,6 +16,7 @@ import {
 import { providerUpdateAvailabilityMessage } from "./agentProviderUpdatePresentation";
 
 export interface AgentProviderCardDetailsProps {
+  readonly codexControls?: ReactNode;
   readonly enabled: boolean;
   readonly intervalSeconds: number;
   readonly invalidPath: boolean;
@@ -29,6 +31,7 @@ export interface AgentProviderCardDetailsProps {
 }
 
 export function AgentProviderCardDetails({
+  codexControls,
   enabled,
   intervalSeconds,
   invalidPath,
@@ -70,6 +73,8 @@ export function AgentProviderCardDetails({
             : `Leave empty to run ${providerExecutableName(provider)} from PATH.`}
         </small>
       </label>
+
+      {codexControls}
 
       <ProviderDiscovery
         id={discoveryId}

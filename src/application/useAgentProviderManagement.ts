@@ -17,7 +17,11 @@ import {
   type AgentProviderUpdateProgressEvent,
   type AgentProviderUpdateState,
 } from "../domain/agentProviderHealth";
-import type { PersistedAgentProviderSettingsAuthority } from "../domain/agentProviderSettings";
+import {
+  parseCodexTransportSettings,
+  type CodexTransportSettings,
+  type PersistedAgentProviderSettingsAuthority,
+} from "../domain/agentProviderSettings";
 import {
   agentCliExecutablePresentation,
   type AgentCliDiscoveryGateway,
@@ -620,6 +624,7 @@ export function useAgentProviderManagement(
           enabled: fields.preference.enabled,
           cliPath: fields.cliPath,
           checkForUpdates: fields.preference.checkForUpdates,
+          ...(provider === "codex" ? parseCodexTransportSettings(fields.preference) : {}),
         });
         if (!mountedRef.current) return false;
         if (hydrationGenerationRef.current !== lifecycleGeneration) return false;
@@ -1589,13 +1594,15 @@ function policyMatches(
     readonly enabled: boolean;
     readonly cliPath: string | null;
     readonly checkForUpdates: boolean;
-  },
+  } & CodexTransportSettings,
   fields: ProviderFields,
 ): boolean {
   return (
     policy.enabled === fields.preference.enabled &&
     policy.cliPath === fields.cliPath &&
-    policy.checkForUpdates === fields.preference.checkForUpdates
+    policy.checkForUpdates === fields.preference.checkForUpdates &&
+    JSON.stringify(parseCodexTransportSettings(policy)) ===
+      JSON.stringify(parseCodexTransportSettings(fields.preference))
   );
 }
 
@@ -1708,6 +1715,9 @@ function admissionAuthorityFor(
     revision: runtime.configurationRevision,
     disposition: { kind: "ready" },
     providerGeneration: runtime.policy.providerGeneration,
+    ...(provider === "codex"
+      ? { codexTransport: parseCodexTransportSettings(persisted.preference).codexTransport }
+      : {}),
   };
 }
 

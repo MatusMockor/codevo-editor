@@ -62,6 +62,10 @@ pub(crate) struct RegisterAgentProviderPolicyRequest {
     enabled: bool,
     cli_path: Option<String>,
     check_for_updates: bool,
+    #[serde(default)]
+    codex_transport: crate::agent_task_spawner::agent_provider::runtime::CodexTransport,
+    #[serde(default)]
+    codex_app_server_args: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -98,6 +102,8 @@ pub(crate) enum AgentProviderPolicySnapshot {
         enabled: bool,
         cli_path: Option<String>,
         check_for_updates: bool,
+        codex_transport: crate::agent_task_spawner::agent_provider::runtime::CodexTransport,
+        codex_app_server_args: Vec<String>,
     },
 }
 
@@ -180,6 +186,8 @@ pub(crate) async fn register_agent_provider_policy(
                 enabled: request.enabled,
                 cli_path: request.cli_path,
                 check_for_updates: request.check_for_updates,
+                codex_transport: request.codex_transport,
+                codex_app_server_args: request.codex_app_server_args,
             },
         )?;
         Ok(wire_receipt(receipt))
@@ -200,6 +208,8 @@ pub(crate) fn get_agent_provider_policy(
         enabled: policy.enabled,
         cli_path: policy.cli_path,
         check_for_updates: policy.check_for_updates,
+        codex_transport: policy.codex_transport,
+        codex_app_server_args: policy.codex_app_server_args,
     }
 }
 
@@ -1581,3 +1591,7 @@ fn safe_installer_output_summary(stdout: &[u8], stderr: &[u8]) -> String {
 #[cfg(test)]
 #[path = "agent_provider_commands_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_provider_policy_wire_tests.rs"]
+mod policy_wire_tests;

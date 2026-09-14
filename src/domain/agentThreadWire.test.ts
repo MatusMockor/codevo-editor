@@ -523,3 +523,68 @@ describe("agentThreadWire attachments", () => {
     );
   });
 });
+
+describe("agentThreadWire steered user messages", () => {
+  const IMAGE = {
+    kind: "image",
+    attachmentId: "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+    name: "square.png",
+    mime: "image/png",
+    bytes: 204_800,
+    width: 1_280,
+    height: 720,
+    storedPath: "/data/agent-attachments/threads/agt-t1-0001/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png",
+  } as const;
+
+  function storedWithEvents(events: ReadonlyArray<unknown>): Record<string, unknown> {
+    return storedThreadWithTurn({ ...STORED_TURN, launch: null, events });
+  }
+
+  it("round-trips a user message with and without attachments", () => {
+    for (const event of [
+      { kind: "userMessage", text: "also run the tests" },
+      { kind: "userMessage", text: "look at this", attachments: [IMAGE] },
+    ]) {
+      const stored = storedWithEvents([event]);
+
+      expect(parseAgentThread(stored).turns[0].events).toEqual([event]);
+      expect(
+        (
+          serializeAgentThread(parseAgentThread(stored)).turns as ReadonlyArray<
+            Record<string, unknown>
+          >
+        )[0].events,
+      ).toEqual([event]);
+    }
+  });
+
+  it("keeps the user message in order between provider events", () => {
+    const events = [
+      { kind: "assistantText", text: "working" },
+      { kind: "userMessage", text: "also run the tests" },
+      { kind: "assistantText", text: "done" },
+    ];
+
+    expect(parseAgentThread(storedWithEvents(events)).turns[0].events).toEqual(events);
+  });
+
+  it("rejects an unknown key, an empty attachment list, and a missing text", () => {
+    const rejected = [
+      { kind: "userMessage", text: "hi", extra: 1 },
+      { kind: "userMessage", text: "hi", attachments: [] },
+      { kind: "userMessage" },
+      { kind: "userMessage", text: "hi", attachments: [{ kind: "nope" }] },
+    ];
+    for (const event of rejected) {
+      expect(() => parseAgentThread(storedWithEvents([event]))).toThrow(TypeError);
+    }
+  });
+
+  it("still parses a stored schema-1 turn that carries no user message", () => {
+    const stored = storedWithEvents([{ kind: "assistantText", text: "working" }]);
+
+    expect(parseAgentThread(stored).turns[0].events).toEqual([
+      { kind: "assistantText", text: "working" },
+    ]);
+  });
+});

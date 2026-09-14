@@ -244,6 +244,8 @@ export function providerSettingsAtDefault(
   preference: AgentProviderPreference,
 ): boolean {
   return (
+    (preference.codexTransport ?? "appServer") === "appServer" &&
+    (preference.codexAppServerArgs?.length ?? 0) === 0 &&
     path === null &&
     preference.enabled &&
     preference.dismissedUpdateVersion === null &&

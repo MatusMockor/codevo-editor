@@ -28,6 +28,8 @@ pub(crate) fn fixture(
             1,
             None,
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path: None,
                 check_for_updates: checks_enabled,

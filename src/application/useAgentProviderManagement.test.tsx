@@ -67,6 +67,85 @@ afterEach(() => {
 });
 
 describe("useAgentProviderManagement", () => {
+  it.each(["appServer", "exec"] as const)(
+    "publishes exact registered Codex transport %s",
+    async (codexTransport) => {
+      const settings = configuredSettings();
+      settings.agentProviderPreferences = {
+        ...settings.agentProviderPreferences,
+        codex: { ...settings.agentProviderPreferences.codex, codexTransport },
+      };
+      const harness = renderManagement(settings);
+      await act(async () => undefined);
+      await act(async () => {
+        for (const call of harness.healthCalls) call.resolve(currentHealth("1.0.0"));
+      });
+      expect(harness.hook().admissionAuthority("codex")).toMatchObject({
+        disposition: { kind: "ready" },
+        codexTransport,
+      });
+      // A draft has no authority to change a registered generation's parser transport.
+      settings.agentProviderPreferences = {
+        ...settings.agentProviderPreferences,
+        codex: {
+          ...settings.agentProviderPreferences.codex,
+          codexTransport: codexTransport === "exec" ? "appServer" : "exec",
+        },
+      };
+      expect(harness.hook().admissionAuthority("codex")).toMatchObject({ codexTransport });
+      expect(harness.hook().admissionAuthority("claudeCode")).not.toHaveProperty("codexTransport");
+      harness.unmount();
+    },
+  );
+
+  it.each(["transport", "args"])(
+    "bumps registration revision when Codex %s changes",
+    async (field) => {
+      const settings = configuredSettings();
+      const preference = settings.agentProviderPreferences.codex;
+      const harness = renderManagement(
+        settings,
+        () => 0,
+        true,
+        (provider) =>
+          provider === "codex"
+            ? {
+                kind: "registered",
+                receipt: { provider, settingsRevision: 40, providerGeneration: 8 },
+                enabled: preference.enabled,
+                cliPath: settings.agentCliPaths.codex,
+                checkForUpdates: true,
+                codexTransport: "appServer",
+                codexAppServerArgs: [],
+              }
+            : { kind: "unregistered" },
+      );
+      await act(async () => undefined);
+      const register = vi.mocked(harness.dependencies.policyGateway.registerAgentProviderPolicy);
+      expect(register.mock.calls.some(([request]) => request.provider === "codex")).toBe(false);
+      await act(async () => {
+        await harness.hook().save({
+          provider: "codex",
+          preference: {
+            ...preference,
+            ...(field === "transport"
+              ? { codexTransport: "exec" as const }
+              : { codexAppServerArgs: ["--enable", "feature"] }),
+          },
+        });
+      });
+      const request = [...register.mock.calls]
+        .reverse()
+        .find(([value]) => value.provider === "codex")?.[0];
+      expect(request?.settingsRevision).toBeGreaterThan(40);
+      expect(request).toMatchObject(
+        field === "transport"
+          ? { codexTransport: "exec", codexAppServerArgs: [] }
+          : { codexTransport: "appServer", codexAppServerArgs: ["--enable", "feature"] },
+      );
+      harness.unmount();
+    },
+  );
   it("checks updates without rediscovery or health probes and coalesces clicks", async () => {
     const harness = renderManagement();
     await act(async () => undefined);

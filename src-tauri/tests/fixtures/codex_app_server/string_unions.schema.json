@@ -1,0 +1,31 @@
+{
+  "CommandExecutionStatus": [
+    "inProgress",
+    "completed",
+    "failed",
+    "declined"
+  ],
+  "McpToolCallStatus": [
+    "inProgress",
+    "completed",
+    "failed"
+  ],
+  "PatchApplyStatus": [
+    "inProgress",
+    "completed",
+    "failed",
+    "declined"
+  ],
+  "SubAgentActivityKind": [
+    "started",
+    "interacted",
+    "interrupted",
+    "completed"
+  ],
+  "TurnStatus": [
+    "completed",
+    "interrupted",
+    "failed",
+    "inProgress"
+  ]
+}

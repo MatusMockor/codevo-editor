@@ -509,6 +509,13 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       }
       return target !== null && (await mutations.followUp(request, target)) !== null;
     },
+    steer: async (request) => {
+      if (isRemoteAgentIdentity(request.threadId)) {
+        report("Messaging a running server conversation is not available yet.");
+        return "kept";
+      }
+      return local.steer(request);
+    },
     importExternalSession: async (request) => {
       if (isRemoteAgentIdentity(request.projectRootKey)) {
         report("Importing server sessions is not available yet.");

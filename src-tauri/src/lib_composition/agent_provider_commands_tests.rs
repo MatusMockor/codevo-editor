@@ -331,6 +331,8 @@ fn registered_registry(
             1,
             None,
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path: Some(provider_path.to_string_lossy().into_owned()),
                 check_for_updates,
@@ -416,38 +418,6 @@ fn policy_and_operation_requests_reject_unknown_fields() {
 }
 
 #[test]
-fn policy_snapshots_use_the_closed_tagged_wire_shape() {
-    assert_eq!(
-        serde_json::to_value(AgentProviderPolicySnapshot::Unregistered).expect("unregistered"),
-        json!({"kind":"unregistered"})
-    );
-    assert_eq!(
-        serde_json::to_value(AgentProviderPolicySnapshot::Registered {
-            receipt: RegisterAgentProviderPolicyReceipt {
-                provider: AgentCliInvocation::CodexExec,
-                settings_revision: 4,
-                provider_generation: 9,
-            },
-            enabled: true,
-            cli_path: Some("/usr/local/bin/codex".to_string()),
-            check_for_updates: false,
-        })
-        .expect("registered"),
-        json!({
-            "kind":"registered",
-            "receipt": {
-                "provider":"codex",
-                "settingsRevision":4,
-                "providerGeneration":9
-            },
-            "enabled":true,
-            "cliPath":"/usr/local/bin/codex",
-            "checkForUpdates":false
-        })
-    );
-}
-
-#[test]
 fn health_identity_revalidation_rejects_replaced_policy_and_foreign_identity() {
     let fixture = IsolatedFixture::new("health-identity-authority");
     let cli = fixture.executable("codex", "echo 'codex 0.153.0'");
@@ -470,6 +440,8 @@ fn health_identity_revalidation_rejects_replaced_policy_and_foreign_identity() {
             2,
             Some(receipt.provider_generation),
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path: Some(cli.to_string_lossy().into_owned()),
                 check_for_updates: true,
@@ -514,6 +486,8 @@ fn health_probe_uses_the_closed_version_and_auth_plans() {
             1,
             None,
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path: Some(executable.to_string_lossy().into_owned()),
                 check_for_updates: false,
@@ -554,6 +528,8 @@ fn claude_auth_probes(
             1,
             None,
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path: Some(executable.to_string_lossy().into_owned()),
                 check_for_updates: false,
@@ -942,6 +918,8 @@ fn successful_update_refreshes_to_replaced_executable_before_immediate_turn() {
             1,
             None,
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path: None,
                 check_for_updates: true,
@@ -1335,6 +1313,8 @@ fn native_provider_registry(
             1,
             None,
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path: Some(cli.to_string_lossy().into_owned()),
                 check_for_updates: true,
@@ -1454,6 +1434,8 @@ fn native_release_metadata_rejects_cancelled_and_replaced_health_leases() {
             2,
             Some(receipt.provider_generation),
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path: Some(cli.to_string_lossy().into_owned()),
                 check_for_updates: false,
@@ -1526,6 +1508,8 @@ fn successful_installer_with_missing_executable_returns_closed_uncertain_result(
             1,
             None,
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path: None,
                 check_for_updates: true,

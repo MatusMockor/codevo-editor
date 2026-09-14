@@ -1,6 +1,6 @@
 # Codex provider: `codex exec --json` to the `codex app-server` session protocol
 
-Date: 2026-09-09 · Status: proposed · Base: `main` @ d4429873
+Date: 2026-09-09 · Status: implementation under integration validation · Base: `main` @ d4429873
 
 ## 0. Why
 
@@ -298,7 +298,8 @@ appear in the parent list; caps produce the truncated flag; unknown tags become
 `unknownLine`; schema-1 persisted threads still parse.
 
 Full gates before completion: `npm run check`, `npm run lint -- --max-warnings 0`,
-`npm run build`, `npm run size:hotspots`, `npm run format:check`,
+`npm run lint:exhaustive-deps`, `npm run build`, `npm run size:hotspots`,
+`npm run format:check`, `npm run format:check:changed`,
 `npm test -- --run`, then in `src-tauri` sequentially `cargo check --all-targets`,
 `cargo test --lib`, `cargo test --tests`, `cargo fmt --all -- --check`,
 `cargo clippy --all-targets -- -D warnings`, plus `git diff --check`.
@@ -312,7 +313,10 @@ Full gates before completion: `npm run check`, `npm run lint -- --max-warnings 0
    parent and each subagent.
 3. Follow-up turn resumes with no session-changed notice.
 4. Delete the rollout file, then follow up: one fresh-start notice, the turn runs.
-5. Stop a running turn: settles within about a second, no codex process remains.
+5. Stop a running turn: the input closes promptly, then terminal cleanup is
+   confirmed within a bounded deadline. No background terminals owned by that
+   turn remain. The shared app-server may stay idle for reuse; failed cleanup
+   reports a failure rather than a successful Stop.
 6. Quit the app mid-turn: no orphaned app-server process.
 7. Read-only mode: a write attempt is declined with a visible reason.
 8. Provider update during a turn is refused, allowed after it settles.
@@ -334,21 +338,59 @@ codex-cli 0.154 (`codex app-server generate-json-schema`).
   carries a `UserInput[]` payload instead of raw bytes, so `AgentTaskInput` is
   generic over a closed `AgentTaskInputFrame::{Bytes(Arc<[u8]>), CodexInput(Vec<UserInput>)}`.
   The host sends `turn/steer` with `expectedTurnId` = the id from the root
-  `turn/started`; `clientUserMessageId` is the steer event id minted by the
-  frontend, so the projection can dedupe the echoed user item.
-- On `activeTurnNotSteerable` (`/review`, `/compact`) the host sends `turn/start`
-  for the same input; app-server queues it and reports `thread/queue/changed`.
-  The projection emits `queued{clientUserMessageId}` and the frontend marks the
-  bubble "Queued". The queued turn starts as a new `turn/started` on the same
-  thread: the host adopts it as the next `AgentTurn` only after the current one
-  completes, using the existing follow-up path with the thread id; no second
-  process.
+  `turn/started`. The frontend inserts the accepted user bubble; projected
+  provider `UserMessage` items are ignored so echoed input cannot duplicate it.
+- Implemented deviation: on `activeTurnNotSteerable` (`/review`, `/compact`),
+  the adapter returns typed `notSteerable` without issuing a second request.
+  The frontend retains the message in its local deferred FIFO (8 per thread,
+  64 threads globally), displays the existing Queued bubble, and submits an
+  ordinary follow-up `turn/start` only after the current task is terminal.
+  There is no prequeued server turn, adoption handshake, or duplicate resubmit.
+  Stop/project release cancels the FIFO and any pending drain; attachment
+  references remain under their exact owner for the eventual retry.
 - Other JSON-RPC errors on `turn/steer` map to `writeFailed` with the message
   bounded.
-- `turn/interrupt` still targets the active turn id only; queued submissions are
-  left to app-server and reported once as a bounded notice when the host
-  observes them at interrupt time.
+- `turn/interrupt` targets the active turn id only. Stop then calls
+  `thread/backgroundTerminals/clean` for the exact root and attached subagent
+  threads and verifies their terminal lists are empty within a shared deadline.
+  This requires the installed protocol's `experimentalApi` capability. Cleanup
+  refusal, timeout, or worker failure propagates to a failed task. Normal
+  completion preserves background development servers; arbitrary self-daemonized
+  processes outside the provider terminal registry are not covered by this API.
+  Locally deferred messages
+  have not reached app-server and are discarded on Stop. The protocol parser
+  can decode server queue notifications, but this fallback does not use them.
 - Line references in sections 1 to 4 predate the attachment work
   (`agent_task_spawner.rs` now carries `attachment_args`, the Claude stdin frame
   builder and the retained input from the steering spec); implementers must
   re-derive them from `main`.
+
+## 13. Integration verification status (2026-09-14)
+
+The implementation is integrated and independently reviewed in the uncommitted
+worktree. Each local turn captures the registered provider transport explicitly;
+a settings change cannot switch its parser. Legacy turns retain exec behavior.
+
+Built-app QA proved Claude and Codex steering/resume, restored history, Codex
+subagent groups, actual Stop terminal cleanup, and app shutdown cleanup. Further
+live checks proved read-only write denial, A → B → A output isolation, failed
+settlement after host death, and a working exec resume before restoring the
+app-server default.
+
+Live rollout-loss QA found and verified a repair for stale session adoption.
+The adapter emits a strict transient `sessionFallback` envelope with exact old/new
+session IDs. The frontend adopts it only for the captured live owner and turn.
+The rebuilt app persisted the replacement session, and its next turn recalled
+`FALLBACK-REAL-9427` without reading files. No repeated fallback or mismatched-session
+notice appeared. The temporarily moved original QA rollout was restored.
+
+Final gates passed: 23,972 frontend tests in 1,578 files, 3,565 Rust library tests
+(two explicitly ignored), and 1,193 Rust integration tests. Type checking, lint,
+exhaustive-deps, formatting, hotspots, build, Clippy with warnings denied, and diff
+hygiene passed. Idle QA observed host retirement after six minutes and successful
+session resume on the next request.
+
+Actual provider-update QA was unavailable because the installed version was
+current; automated update-admission tests passed. Do not describe this as a live
+CLI upgrade test. This work remains uncommitted and unpublished. See the steering
+handoff for exact evidence and log paths.

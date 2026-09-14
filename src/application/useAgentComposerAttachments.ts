@@ -83,6 +83,10 @@ export interface AgentComposerAttachmentsSurface {
   readonly refusal: string | null;
   readonly promptLineBytes: number;
   add(projectRootKey: string, sources: ReadonlyArray<AgentAttachmentSource>): Promise<void>;
+  captureIntake?(
+    projectRootKey: string,
+    isCurrent?: () => boolean,
+  ): ((sources: ReadonlyArray<AgentAttachmentSource>) => Promise<void>) | null;
   claimPaste(
     files: ReadonlyArray<AgentAttachmentCandidate>,
     plainTextLength: number,
@@ -199,6 +203,28 @@ export function useAgentComposerAttachments(
     [coordinator],
   );
 
+  const captureIntake = useCallback(
+    (target: string, isCurrent: () => boolean = () => true) => {
+      const captured = coordinator();
+      const owner = captured?.deps().resolveOwner(target);
+      if (captured === null || owner === null || owner === undefined) return null;
+      const context: DraftCoordinator = {
+        ...captured,
+        ownerIsCurrent: (candidate) => isCurrent() && captured.ownerIsCurrent(candidate),
+      };
+      return async (sources: ReadonlyArray<AgentAttachmentSource>): Promise<void> => {
+        if (!context.ownerIsCurrent(owner)) return;
+        retarget(context, target);
+        for (const source of sources) {
+          if (!context.ownerIsCurrent(owner)) return;
+          const admitted = await intakeAgentAttachmentSource(context, owner, source);
+          if (admitted === "refused-count") return;
+        }
+      };
+    },
+    [coordinator],
+  );
+
   const remove = useCallback(
     (draftId: string): void => {
       const context = coordinator();
@@ -264,6 +290,7 @@ export function useAgentComposerAttachments(
     refusal,
     promptLineBytes: promptLineBytesOf(drafts),
     add,
+    captureIntake,
     claimPaste,
     remove,
     clear,
@@ -563,6 +590,11 @@ function settleStaged(
     | { readonly ok: false; readonly error: unknown },
   kind: "image" | "file",
 ): void {
+  if (!context.ownerIsCurrent(pending.owner)) {
+    if (staged.ok) void releaseDraft(context, stagedDraft(pending, staged.value, kind));
+    discardDraft(context, pending.draftId);
+    return;
+  }
   if (staged.ok) {
     const settled = stagedDraft(pending, staged.value, kind);
     const admission = admitAgentAttachmentToTurn(otherDrafts(context, settled.draftId), settled);

@@ -1,3 +1,4 @@
+import type { CodexTransport } from "../domain/agentProviderSettings";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentAttachment } from "../domain/agentAttachment";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
@@ -34,9 +35,13 @@ import {
 } from "./agentProjectAuthority";
 import type {
   AgentFollowUpRequest,
+  AgentSteerOutcome,
+  AgentSteerRequest,
   AgentThreadStartRequest,
   AgentThreadStartResult,
 } from "./agentThreadPorts";
+import type { DeferredFollowUps } from "./agentDeferredFollowUps";
+import { useAgentTurnSteer } from "./useAgentTurnSteer";
 import {
   compensateCreatedWorktree,
   createThreadWorktree,
@@ -107,6 +112,10 @@ export interface AgentTurnDispatchSurface {
   pendingTurnCount(provider: AgentCliKind): number;
   startThread(request: AgentThreadStartRequest): Promise<AgentThreadStartResult | null>;
   sendFollowUp(request: AgentFollowUpRequest): Promise<boolean>;
+  readonly deferredFollowUps: DeferredFollowUps;
+  steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
+  removeDeferredFollowUp(threadId: string, id: string): void;
+  clearDeferredForOwner(ownerId: string): void;
   stop(threadId: string): Promise<void>;
   hasLiveTasksForOwner(ownerId: string): boolean;
   stopProjectTasks(ownerId: string, repositoryRoots: ReadonlyArray<string>): Promise<void>;
@@ -123,6 +132,7 @@ type TurnAuthorityScope = "project" | "thread";
 interface TurnStart {
   readonly authority: AgentTaskLaunchAuthority;
   readonly authorityScope: TurnAuthorityScope;
+  readonly isCurrent?: () => boolean;
   readonly projectRoot: string;
   readonly threadId: string;
   readonly repositoryRoot: string;
@@ -159,7 +169,9 @@ export function useAgentTurnDispatch(
   const outputSubscriptionRef = useRef({ epoch: 0, ready: false });
   const sessionWarnedThreadsRef = useRef<Set<string>>(new Set());
   const pendingTurnCountsRef = useRef<Record<AgentCliKind, number>>({ claudeCode: 0, codex: 0 });
-
+  const sendFollowUpRef = useRef<
+    ((request: AgentFollowUpRequest, isCurrent?: () => boolean) => Promise<boolean>) | null
+  >(null);
   useLayoutEffect(() => {
     dependenciesRef.current = dependencies;
   });
@@ -197,8 +209,8 @@ export function useAgentTurnDispatch(
     for (const stream of streamsRef.current.values()) {
       const action = drainAgentTurnOutput(stream, stream.lastSequence);
       if (action === null) continue;
-      noteSessionChange(deps, stream.threadId, action.sessionId, sessionWarnedThreadsRef.current);
       deps.store.dispatchAction(action);
+      noteSessionChange(deps, stream.threadId, action.sessionId, sessionWarnedThreadsRef.current);
     }
   }, []);
 
@@ -206,6 +218,22 @@ export function useAgentTurnDispatch(
     if (frameRef.current !== null) return;
     frameRef.current = scheduleAgentOutputFrame(flushStreams);
   }, [flushStreams]);
+
+  const {
+    deferredFollowUps,
+    steer,
+    removeDeferredFollowUp,
+    onTurnSettled,
+    onThreadStopped,
+    clearDeferredForOwner,
+    noteStreamResult,
+  } = useAgentTurnSteer({
+    state: dependencies.store.state,
+    dependenciesRef,
+    mountedRef,
+    sendFollowUpRef,
+    flushStreams,
+  });
 
   const handleOutputEvent = useCallback(
     (event: AgentTaskOutputEvent): void => {
@@ -216,9 +244,10 @@ export function useAgentTurnDispatch(
       for (const observation of drainAgentAccountUsage(stream)) {
         deps.onAccountUsageObserved?.(observation);
       }
+      noteStreamResult(stream);
       scheduleFlush();
     },
-    [parser, scheduleFlush],
+    [noteStreamResult, parser, scheduleFlush],
   );
 
   const handleStatusEvent = useCallback(
@@ -250,21 +279,23 @@ export function useAgentTurnDispatch(
           deps.onAccountUsageObserved?.(observation);
         }
         if (finished !== null) {
+          deps.store.dispatchAction(finished);
           noteSessionChange(
             deps,
             stream.threadId,
             finished.sessionId,
             sessionWarnedThreadsRef.current,
           );
-          deps.store.dispatchAction(finished);
         }
         streamsRef.current.delete(event.taskId);
         if (resumeRejected(stream, event)) deps.setNotice(warning(RESUME_REJECTED_NOTICE));
       }
       deps.store.dispatchAction(action);
-      if (terminal) deps.onTurnTerminal?.(event);
+      if (!terminal) return;
+      deps.onTurnTerminal?.(event);
+      onTurnSettled(stream.threadId);
     },
-    [flushStreams, parser],
+    [flushStreams, onTurnSettled, parser],
   );
 
   useEffect(() => {
@@ -320,7 +351,12 @@ export function useAgentTurnDispatch(
   }, [agentTaskGateway, handleOutputEvent, handleStatusEvent]);
 
   const registerStream = useCallback(
-    (thread: AgentThread, turnId: string, resumed: boolean): void => {
+    (
+      thread: AgentThread,
+      turnId: string,
+      resumed: boolean,
+      codexTransport?: CodexTransport,
+    ): void => {
       const outputSubscription = outputSubscriptionRef.current;
       streamsRef.current.set(
         turnId,
@@ -332,7 +368,9 @@ export function useAgentTurnDispatch(
           isolation: thread.target.isolation,
           worktreePath: thread.target.worktreePath,
           kind: thread.provider.kind,
+          codexTransport,
           resumed,
+          resumedSessionId: resumed ? thread.provider.sessionId : null,
           outputSubscriptionEpoch: outputSubscription.ready ? outputSubscription.epoch : null,
         }),
       );
@@ -423,6 +461,7 @@ export function useAgentTurnDispatch(
         start.launch,
         cliVersion,
         start.attachments,
+        start.providerAuthority.codexTransport,
       );
       if (start.registration === "before-start") {
         start.register(turn);
@@ -688,7 +727,7 @@ export function useAgentTurnDispatch(
               viewedAtEpochMs: createdAt,
               externalOrigin: null,
             };
-            registerStream(thread, turn.turnId, false);
+            registerStream(thread, turn.turnId, false, turn.codexTransport);
             dependenciesRef.current.store.dispatchAction({ kind: "threadCreated", thread });
           },
         });
@@ -715,7 +754,10 @@ export function useAgentTurnDispatch(
   );
 
   const sendFollowUp = useCallback(
-    async (request: AgentFollowUpRequest): Promise<boolean> => {
+    async (
+      request: AgentFollowUpRequest,
+      isCurrent: () => boolean = () => true,
+    ): Promise<boolean> => {
       let deps = dependenciesRef.current;
       const candidate = deps.store.state.threads.get(request.threadId);
       if (
@@ -737,6 +779,7 @@ export function useAgentTurnDispatch(
         }
         deps = dependenciesRef.current;
       }
+      if (!isCurrent()) return false;
       const admitted = admitFollowUp(deps, request, inFlightThreadsRef.current);
       if (admitted === null) return false;
       const {
@@ -770,7 +813,16 @@ export function useAgentTurnDispatch(
       setDispatching(true);
       try {
         const prepared = await prepareTurnAttachments(
-          dependenciesRef.current,
+          {
+            ...dependenciesRef.current,
+            setNotice: (notice) => {
+              if (
+                isCurrent() &&
+                isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority)
+              )
+                dependenciesRef.current.setNotice(notice);
+            },
+          },
           request,
           turnAttachmentAuthority(authority),
           reboundThread.threadId,
@@ -778,12 +830,14 @@ export function useAgentTurnDispatch(
         );
         if (
           prepared === null ||
+          !isCurrent() ||
           !isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) ||
           !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
         ) {
           return false;
         }
         const followedUp = await runTurnStart({
+          isCurrent,
           authority,
           authorityScope: "thread",
           projectRoot,
@@ -803,7 +857,7 @@ export function useAgentTurnDispatch(
           createdWorktree: null,
           registration: "before-start",
           register: (turn) => {
-            registerStream(reboundThread, turn.turnId, true);
+            registerStream(reboundThread, turn.turnId, true, turn.codexTransport);
             dependenciesRef.current.store.dispatchAction({
               kind: "turnStarted",
               threadId: reboundThread.threadId,
@@ -824,23 +878,31 @@ export function useAgentTurnDispatch(
     [beginPendingTurn, endPendingTurn, registerStream, runTurnStart],
   );
 
-  const stop = useCallback(async (threadId: string): Promise<void> => {
-    const deps = dependenciesRef.current;
-    const thread = deps.store.state.threads.get(threadId);
-    if (thread === undefined) return;
-    const turn = runningTurn(thread);
-    if (turn === null) return;
-    const stopped = await attempt(() =>
-      deps.agentTaskGateway.stopAgentTask({
-        taskId: turn.turnId,
-        workspaceId: thread.owner.ownerId,
-      }),
-    );
-    if (stopped.ok) return;
-    dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, stopped.error);
-    if (!mountedRef.current) return;
-    dependenciesRef.current.setNotice(failure("The agent could not be stopped."));
-  }, []);
+  useLayoutEffect(() => {
+    sendFollowUpRef.current = sendFollowUp;
+  }, [sendFollowUp]);
+
+  const stop = useCallback(
+    async (threadId: string): Promise<void> => {
+      const deps = dependenciesRef.current;
+      onThreadStopped(threadId);
+      const thread = deps.store.state.threads.get(threadId);
+      if (thread === undefined) return;
+      const turn = runningTurn(thread);
+      if (turn === null) return;
+      const stopped = await attempt(() =>
+        deps.agentTaskGateway.stopAgentTask({
+          taskId: turn.turnId,
+          workspaceId: thread.owner.ownerId,
+        }),
+      );
+      if (stopped.ok) return;
+      dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, stopped.error);
+      if (!mountedRef.current) return;
+      dependenciesRef.current.setNotice(failure("The agent could not be stopped."));
+    },
+    [onThreadStopped],
+  );
 
   const hasLiveTasksForOwner = useCallback((ownerId: string): boolean => {
     for (const thread of dependenciesRef.current.store.state.threads.values()) {
@@ -852,6 +914,7 @@ export function useAgentTurnDispatch(
 
   const stopProjectTasks = useCallback(
     async (ownerId: string, repositoryRoots: ReadonlyArray<string>): Promise<void> => {
+      clearDeferredForOwner(ownerId);
       const roots = new Set(repositoryRoots);
       for (const thread of dependenciesRef.current.store.state.threads.values()) {
         if (thread.owner.ownerId !== ownerId) continue;
@@ -872,7 +935,7 @@ export function useAgentTurnDispatch(
       }
       if (incomplete) throw new Error("Agent project task drain failed.");
     },
-    [],
+    [clearDeferredForOwner],
   );
 
   return {
@@ -880,6 +943,10 @@ export function useAgentTurnDispatch(
     pendingTurnCount,
     startThread,
     sendFollowUp,
+    deferredFollowUps,
+    steer,
+    removeDeferredFollowUp,
+    clearDeferredForOwner,
     stop,
     hasLiveTasksForOwner,
     stopProjectTasks,
@@ -943,6 +1010,7 @@ function turnStartAuthorityIsCurrent(
   mountedRef: { readonly current: boolean },
   start: TurnStart,
 ): boolean {
+  if (start.isCurrent?.() === false) return false;
   const current =
     start.authorityScope === "thread"
       ? isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, start.authority)
@@ -964,7 +1032,7 @@ function noteSessionChange(
   sessionId: string | null,
   warned: Set<string>,
 ): void {
-  const notice = sessionChangeNotice(deps.store.state, threadId, sessionId);
+  const notice = sessionChangeNotice(deps.store.currentState(), threadId, sessionId);
   if (notice === null || warned.has(threadId)) return;
   warned.add(threadId);
   deps.setNotice(notice);
@@ -977,11 +1045,15 @@ function pendingTurn(
   launch: AgentLaunchOptions,
   cliVersion: string | null,
   attachments: ReadonlyArray<AgentAttachment>,
+  codexTransport?: CodexTransport,
 ): AgentTurn {
   if (attachments.length === 0) {
-    return turnRecord(turnId, prompt, startedAtEpochMs, launch, cliVersion);
+    return turnRecord(turnId, prompt, startedAtEpochMs, launch, cliVersion, codexTransport);
   }
-  return { ...turnRecord(turnId, prompt, startedAtEpochMs, launch, cliVersion), attachments };
+  return {
+    ...turnRecord(turnId, prompt, startedAtEpochMs, launch, cliVersion, codexTransport),
+    attachments,
+  };
 }
 
 function turnRecord(
@@ -990,6 +1062,7 @@ function turnRecord(
   startedAtEpochMs: number,
   launch: AgentLaunchOptions,
   cliVersion: string | null,
+  codexTransport?: CodexTransport,
 ): AgentTurn {
   return {
     turnId,
@@ -1004,6 +1077,7 @@ function turnRecord(
     streamMetrics: null,
     launch,
     cliVersion,
+    ...(launch.provider === "codex" ? { codexTransport: codexTransport ?? "exec" } : {}),
   };
 }
 

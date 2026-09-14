@@ -42,7 +42,7 @@ pub enum ThreadItem { AgentMessage{..}, Reasoning{..}, CommandExecution{..}, Fil
 pub enum CodexRpcErrorKind { ActiveTurnNotSteerable, Other }
 pub fn classify_error(error: &JsonRpcError) -> CodexRpcErrorKind;
 ```
-- [ ] Tests: every `ThreadItem` tag in the schema either decodes to a variant or to `Unrecognized`; server payloads with extra fields decode; client params reject unknown fields; envelope with a missing `jsonrpc` field is an error; `activeTurnNotSteerable` classifies; round-trip of each client params struct.
+- [ ] Tests: every `ThreadItem` tag in the schema either decodes to a variant or to `Unrecognized`; server payloads with extra fields decode; client params reject unknown fields; envelope without `jsonrpc` is accepted; an explicit unsupported version is rejected; `activeTurnNotSteerable` classifies; round-trip of each client params struct.
 - [ ] Implement; `cargo test --lib codex_app_server_protocol`; clippy; fmt; commit `feat(codex): type the app-server protocol`.
 
 ### Task B: Transport and host (`codex_app_server_transport.rs`, `codex_app_server_host.rs`)
@@ -71,8 +71,8 @@ impl CodexAppServerHost { pub fn start_thread(&self, ..) -> Result<ThreadHandle,
 
 ### Task C: Supervisor seam (`agent_task_spawner.rs`, `agent_task_supervisor.rs`, `codex_app_server_turn.rs`) — after Task B, Task D and steering Task 2
 
-**Interfaces (produced):** `pub enum AgentTaskProcessOwnership { OwnedGroup { process_group_id: i32 }, SharedSession }`; `AgentChild::ownership()` replaces `process_group_id()`; `CodexTurnChild` implements `AgentChild` (stdout = projection pipe, stderr = 4 KiB ring, `force_kill` = `turn/interrupt` then close, `take_input` = a `CodexTurnInput` that maps a frame to `turn/steer`, falling back to `turn/start` on `ActiveTurnNotSteerable` and emitting `Queued`); `AgentTaskSpawnPlan.transport: CodexTransport::{Exec, AppServer}`; `AgentTaskInput` becomes generic over `AgentTaskInputFrame::{Bytes(Arc<[u8]>), CodexInput(Vec<UserInput>)}`.
-- [ ] Tests: escalate/watchdog/reap on `SharedSession` never signals a group (fake host records); interrupt on stop; steer maps to `turn/steer`; not-steerable falls back and projects `Queued`; drop of the turn lease unregisters the route; exec transport unchanged (existing tests).
+**Interfaces (produced):** `pub enum AgentTaskProcessOwnership { OwnedGroup { process_group_id: i32 }, SharedSession }`; `AgentChild::ownership()` replaces `process_group_id()`; `CodexTurnChild` implements `AgentChild` (stdout = projection pipe, stderr = 4 KiB ring, `force_kill` = `turn/interrupt` then close, `take_input` = a `CodexTurnInput` that maps a frame to `turn/steer`, returning typed `notSteerable` on `ActiveTurnNotSteerable` for the local deferred FIFO); `AgentTaskSpawnPlan.transport: CodexTransport::{Exec, AppServer}`; `AgentTaskInput` becomes generic over `AgentTaskInputFrame::{Bytes(Arc<[u8]>), CodexInput(Vec<UserInput>)}`.
+- [ ] Tests: escalate/watchdog/reap on `SharedSession` never signals a group (fake host records); interrupt on stop; steer maps to `turn/steer`; not-steerable returns a typed refusal without prequeueing; frontend defers ordinary follow-up until terminal; drop of the turn lease unregisters the route; exec transport unchanged (existing tests).
 - [ ] Implement; `cargo test --lib agent_task_supervisor agent_task_spawner`, `cargo test --test agent_task_supervisor_tests`; commit `feat(codex): run codex turns as app-server sessions`.
 
 ### Task E: TS parser and domain
@@ -93,6 +93,37 @@ impl CodexAppServerHost { pub fn start_thread(&self, ..) -> Result<ThreadHandle,
 - [ ] Tests: subagent group rendering; queued chip; host state notices; CSS contracts.
 - [ ] Implement; commit `feat(codex): show app-server subagents and session state`.
 
+## Integration decisions (2026-09-14)
+
+The server-side prequeue/adoption proposal is replaced by a local bounded FIFO
+(8 messages per thread, 64 threads). `notSteerable` leaves the current task live;
+only its terminal settlement allows an ordinary new `turn/start`. The existing
+Queued bubble represents a local deferred request. Stop cancels pending drains,
+and exact-owner attachments remain available for retry. This avoids two task
+owners for one already started server turn and duplicate submission.
+
+Each local turn captures its registered Codex transport for parsing and steering
+admission; a later settings change cannot switch a running turn's parser. No
+plan checkbox is marked complete until combined gates and live built-app QA
+have been recorded by the lead.
+
+
+Current verification is complete as recorded below and in the handoff: all
+applicable automated gates passed, including the last fallback repair. Native
+fallback/next-turn and six-minute idle/restart checks passed. Actual provider
+update could not be exercised because the installed version was current;
+automated eligibility coverage is not a live update test.
+
 ## Ordering and completion
 
 A → (B ∥ D) → C (needs steering Task 2 first) → (E ∥ F) → G. Independent review per task; full gates per CLAUDE.md; QA checklist from spec section 11 in the built app.
+
+### Final verification record (2026-09-14)
+
+The implementation and independent reviews are complete in the uncommitted tree.
+All applicable repository gates passed after the last fallback repair; final native
+steer/resume, persistence, Stop, shutdown, read-only, project isolation, exec resume,
+host failure, idle restart, and rollout-loss follow-up checks passed as recorded in
+`2026-09-14-steering-handoff.md`. A real CLI upgrade was unavailable because the
+installed version was current. Historical commit steps above remain unchecked: no
+commit, push, or release was performed.

@@ -1,3 +1,8 @@
+import {
+  appServerGroupId,
+  appServerGroups,
+  type AgentAppServerGroup,
+} from "./agentAppServerGroups";
 import type {
   AgentProjectDescriptor,
   AgentProjectOrigin,
@@ -39,6 +44,8 @@ import type {
   AgentThreadView,
   OrphanedWorktreeView,
 } from "../../application/agentThreadPorts";
+import { agentThreadIsSteerable } from "../../application/agentTurnAdmission";
+import type { AgentAttachment } from "../../domain/agentAttachment";
 
 export const MAX_RENDERED_EVENTS_PER_TURN = 200;
 
@@ -99,6 +106,8 @@ export interface AgentSubagentSummary {
 }
 
 export type AgentTurnItem =
+  | { readonly kind: "subagentGroup"; readonly key: string; readonly group: AgentAppServerGroup }
+  | { readonly kind: "queued"; readonly key: string }
   | {
       readonly kind: "assistantText";
       readonly key: string;
@@ -106,6 +115,12 @@ export type AgentTurnItem =
       readonly paragraphs: ReadonlyArray<string>;
     }
   | { readonly kind: "reasoning"; readonly key: string; readonly text: string }
+  | {
+      readonly kind: "userMessage";
+      readonly key: string;
+      readonly text: string;
+      readonly attachments?: ReadonlyArray<AgentAttachment>;
+    }
   | {
       readonly kind: "tool";
       readonly key: string;
@@ -228,6 +243,13 @@ export function agentThreadDisplayTitle(thread: AgentThread): string {
   return title;
 }
 
+export function agentTurnCarriesAttachments(turn: AgentTurn): boolean {
+  if ((turn.attachments?.length ?? 0) > 0) return true;
+  return turn.events.some(
+    (event) => event.kind === "userMessage" && (event.attachments?.length ?? 0) > 0,
+  );
+}
+
 export function agentRunningTurnCount(thread: AgentThread): number {
   return runningTurn(thread) === null ? 0 : 1;
 }
@@ -261,6 +283,7 @@ export function agentFollowUpBlockedReason(
     return "The worktree for this thread no longer exists.";
   }
   if (view.lifecycle === "running") {
+    if (agentThreadIsSteerable(view.thread)) return null;
     return "This thread is still running. Wait for the turn to finish.";
   }
   if (view.projectOrigin === "closed-tab-live-tasks") {
@@ -306,9 +329,19 @@ function remoteFollowUpBlockedReason(
 }
 
 export function agentTurnProjection(events: ReadonlyArray<AgentTurnEvent>): AgentTurnProjection {
+  const groups = appServerGroups(events);
+  const seenGroups = new Set<string>();
+  const renderableGroups = new Set<string>();
   const renderable = events
     .map((event, offset) => ({ event, offset }))
-    .filter(({ event }) => event.kind !== "subagent");
+    .filter(({ event }) => {
+      if (event.kind === "subagent") return false;
+      const id = appServerGroupId(event);
+      if (id === null) return true;
+      if (renderableGroups.has(id)) return false;
+      renderableGroups.add(id);
+      return true;
+    });
   const hiddenCount = Math.max(0, renderable.length - MAX_RENDERED_EVENTS_PER_TURN);
   const visible = renderable.slice(hiddenCount);
   const calls = toolCallIndex(events);
@@ -334,6 +367,15 @@ export function agentTurnProjection(events: ReadonlyArray<AgentTurnEvent>): Agen
     ) {
       continue;
     }
+    const groupId = appServerGroupId(event);
+    if (groupId !== null) {
+      const group = groups.get(groupId);
+      if (group !== undefined && !seenGroups.has(groupId)) {
+        items.push({ kind: "subagentGroup", key: `e${offset}`, group });
+        seenGroups.add(groupId);
+      }
+      continue;
+    }
     appendTurnItem({ calls, event, items, key: `e${offset}`, rawLines, toolItemByToolId });
   }
 
@@ -346,13 +388,18 @@ export function agentTurnWorkFold(
 ): AgentTurnWorkFold | null {
   const hasWork = items.some((item) => item.kind === "tool" || item.kind === "reasoning");
   if (!hasWork) return null;
+  if (items.some((item) => item.kind === "userMessage" || item.kind === "subagentGroup"))
+    return null;
   if (running) {
     return { workItems: items, visibleItems: [], summary: agentWorkSummary(items) };
   }
   let finalResponseIndex = -1;
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
-    if (item?.kind === "assistantText" || (item?.kind === "result" && !item.isError)) {
+    if (
+      item?.kind === "assistantText" ||
+      (item?.kind === "result" && !item.isError && item.text.trim() !== "")
+    ) {
       finalResponseIndex = index;
       break;
     }
@@ -632,7 +679,11 @@ function appendTurnItem({
     });
     return;
   }
-  if (event.kind === "subagent") return;
+  if (event.kind === "queued") {
+    items.push({ kind: "queued", key });
+    return;
+  }
+  if (event.kind === "subagent" || appServerGroupId(event) !== null) return;
   if (event.kind === "toolResult") {
     attachToolResult({ calls, event, items, key, toolItemByToolId });
     return;
@@ -654,7 +705,16 @@ function appendTurnItem({
     items.push({ kind: "error", key, message: event.message });
     return;
   }
-  rawLines.push({ key, stream: event.stream, raw: event.raw });
+  if (event.kind === "userMessage") {
+    items.push({
+      kind: "userMessage",
+      key,
+      text: event.text,
+      ...presentField("attachments", event.attachments),
+    });
+    return;
+  }
+  if (event.kind === "unknownLine") rawLines.push({ key, stream: event.stream, raw: event.raw });
 }
 
 interface ToolResultAttach {

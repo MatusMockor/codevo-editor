@@ -1,6 +1,10 @@
 import { defaultAgentLaunchOptions } from "../domain/agentLaunch";
 import { describe, expect, it, vi } from "vitest";
-import { AgentTaskStartRejectedError, type StartAgentTaskRequest } from "../domain/agentTask";
+import {
+  AgentTaskStartRejectedError,
+  type StartAgentTaskRequest,
+  type SteerAgentTaskRequest,
+} from "../domain/agentTask";
 import {
   TauriAgentTaskGateway,
   type AgentTaskRuntimeDetector,
@@ -22,6 +26,13 @@ const START_REQUEST: StartAgentTaskRequest = {
   launch: defaultAgentLaunchOptions("claudeCode"),
   providerGeneration: 1,
   attachments: [],
+};
+
+const STEER_REQUEST: SteerAgentTaskRequest = {
+  taskId: "agt-1-0a1b",
+  workspaceId: "ws-1",
+  threadId: "agt-1-0a1c",
+  prompt: "also fix the lint",
 };
 
 const available: AgentTaskRuntimeDetector = () => true;
@@ -46,6 +57,42 @@ describe("TauriAgentTaskGateway", () => {
       "stop_agent_task",
       "stop_agent_tasks_for_root",
     ]);
+  });
+
+  it("pins the steering commands and decodes a rejection into a typed result", async () => {
+    const invokeCommand = vi
+      .fn<InvokeAgentTaskCommand>()
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce({ reason: "inputClosed" })
+      .mockRejectedValueOnce({ reason: "notRunning" });
+    const gateway = new TauriAgentTaskGateway(invokeCommand, vi.fn(), available);
+
+    await expect(gateway.steerAgentTask(STEER_REQUEST)).resolves.toEqual({ kind: "accepted" });
+    await expect(gateway.steerAgentTask(STEER_REQUEST)).resolves.toEqual({
+      kind: "rejected",
+      rejection: { reason: "inputClosed" },
+    });
+    await gateway.closeAgentTaskInput({ taskId: "agt-1-0a1b", workspaceId: "ws-1" });
+
+    expect(invokeCommand.mock.calls.map(([command]) => command)).toEqual([
+      "steer_agent_task",
+      "steer_agent_task",
+      "close_agent_task_input",
+    ]);
+  });
+
+  it("rethrows a steer transport failure and a close rejection that is not idempotent", async () => {
+    const transportFailure = new Error("the webview lost the backend");
+    const invokeCommand = vi
+      .fn<InvokeAgentTaskCommand>()
+      .mockRejectedValueOnce(transportFailure)
+      .mockRejectedValueOnce({ reason: "writeFailed" });
+    const gateway = new TauriAgentTaskGateway(invokeCommand, vi.fn(), available);
+
+    await expect(gateway.steerAgentTask(STEER_REQUEST)).rejects.toBe(transportFailure);
+    await expect(
+      gateway.closeAgentTaskInput({ taskId: "agt-1-0a1b", workspaceId: "ws-1" }),
+    ).rejects.toEqual({ reason: "writeFailed" });
   });
 
   it("classifies known backend admission and trust rejections as definite start failures", async () => {
@@ -167,6 +214,11 @@ describe("TauriAgentTaskGateway", () => {
     await gateway.acknowledgeAgentTaskStart({ taskId: "agt-1-0a1b", workspaceId: "ws-1" });
     await gateway.stopAgentTask({ taskId: "agt-1-0a1b", workspaceId: "ws-1" });
     await gateway.stopAgentTasksForRoot({ workspaceId: "ws-1", repositoryRoot: "/repo" });
+    await expect(gateway.steerAgentTask(STEER_REQUEST)).resolves.toEqual({
+      kind: "rejected",
+      rejection: { reason: "inputUnavailable" },
+    });
+    await gateway.closeAgentTaskInput({ taskId: "agt-1-0a1b", workspaceId: "ws-1" });
     const unsubscribeStatus = await gateway.subscribeAgentTaskStatus(vi.fn());
     const unsubscribeOutput = await gateway.subscribeAgentTaskOutput(vi.fn());
     unsubscribeStatus();
@@ -186,6 +238,9 @@ describe("TauriAgentTaskGateway", () => {
         env: { PATH: "/tmp/bin" },
       } as StartAgentTaskRequest),
     ).rejects.toThrow(TypeError);
+    await expect(gateway.steerAgentTask({ ...STEER_REQUEST, prompt: "" })).rejects.toThrow(
+      TypeError,
+    );
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 });

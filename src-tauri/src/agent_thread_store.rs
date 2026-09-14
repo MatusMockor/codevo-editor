@@ -10,6 +10,9 @@ use agent_attachment_paths::agent_attachment_thread_directory;
 #[path = "agent_attachment_paths.rs"]
 pub mod agent_attachment_paths;
 
+#[path = "agent_thread_store_appserver.rs"]
+mod appserver;
+pub use appserver::{AgentAppServerUsage, AgentUsageScope, CodexTransport, SubagentActivity};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -235,6 +238,12 @@ pub struct AgentProviderSession {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentTurn {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "appserver::nonnull_option"
+    )]
+    pub codex_transport: Option<CodexTransport>,
     pub turn_id: String,
     pub prompt: String,
     pub status: AgentTurnStatus,
@@ -344,6 +353,22 @@ impl AgentTurnStatus {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentTurnUsage {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "appserver::nonnull_option"
+    )]
+    pub scope: Option<AgentUsageScope>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "appserver::nonnull_option"
+    )]
+    pub app_server_usage: Option<AgentAppServerUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_output_tokens: Option<u64>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -371,6 +396,45 @@ pub enum AgentSubagentStatus {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum AgentTurnEvent {
+    #[serde(rename_all = "camelCase")]
+    UserMessage {
+        text: String,
+        #[serde(
+            default,
+            skip_serializing_if = "Vec::is_empty",
+            deserialize_with = "appserver::nonempty_attachments"
+        )]
+        attachments: Vec<AgentAttachment>,
+    },
+    #[serde(rename_all = "camelCase")]
+    SubagentActivity {
+        agent_thread_id: String,
+        agent_path: String,
+        activity: SubagentActivity,
+    },
+    #[serde(rename_all = "camelCase")]
+    SubagentEvent {
+        agent_thread_id: String,
+        event: Box<AgentTurnEvent>,
+    },
+    #[serde(rename_all = "camelCase")]
+    SubagentUsage {
+        agent_thread_id: String,
+        usage: AgentTurnUsage,
+    },
+    #[serde(rename_all = "camelCase")]
+    SubagentTurnDone {
+        agent_thread_id: String,
+        #[serde(deserialize_with = "appserver::nullable_required")]
+        duration_ms: Option<u64>,
+        is_error: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    Queued {
+        thread_id: String,
+        #[serde(deserialize_with = "appserver::nullable_required")]
+        client_user_message_id: Option<String>,
+    },
     AssistantText {
         text: String,
     },
@@ -415,8 +479,11 @@ pub enum AgentTurnEvent {
     },
     #[serde(rename_all = "camelCase")]
     Result {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
         text: String,
         is_error: bool,
+        #[serde(deserialize_with = "appserver::nullable_required")]
         usage: Option<AgentTurnUsage>,
     },
     #[serde(rename_all = "camelCase")]
@@ -829,8 +896,15 @@ fn validate_agent_turn(turn: &AgentTurn) -> Result<(), String> {
             "Agent turn exceeds the maximum of {MAX_AGENT_EVENTS_PER_TURN} events."
         ));
     }
+    let mut child_ids = HashSet::new();
     for event in &turn.events {
         validate_agent_turn_event(event)?;
+        if let Some(id) = appserver::child_id(event) {
+            child_ids.insert(id);
+        }
+    }
+    if child_ids.len() > 32 {
+        return Err("Agent turn exceeds the maximum of 32 subagents.".to_string());
     }
     if turn
         .stream_metrics
@@ -964,6 +1038,7 @@ fn validate_agent_turn_cli_version(cli_version: Option<&str>) -> Result<(), Stri
 }
 
 fn validate_agent_turn_usage(usage: &AgentTurnUsage) -> Result<(), String> {
+    appserver::validate_usage(usage)?;
     if usage.input_tokens > MAX_AGENT_SAFE_INTEGER
         || usage.output_tokens > MAX_AGENT_SAFE_INTEGER
         || usage
@@ -982,6 +1057,7 @@ fn validate_agent_turn_usage(usage: &AgentTurnUsage) -> Result<(), String> {
 }
 
 fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
+    appserver::validate_event(event)?;
     if let AgentTurnEvent::Result {
         usage: Some(usage), ..
     } = event
@@ -1019,9 +1095,9 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
         }
     }
     let (text_bytes, summary_bytes) = match event {
-        AgentTurnEvent::AssistantText { text } | AgentTurnEvent::Reasoning { text } => {
-            (text.len(), 0)
-        }
+        AgentTurnEvent::UserMessage { text, .. }
+        | AgentTurnEvent::AssistantText { text }
+        | AgentTurnEvent::Reasoning { text } => (text.len(), 0),
         AgentTurnEvent::ToolCall {
             tool_id,
             name,
@@ -1063,7 +1139,12 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
                 .unwrap_or(0),
         ),
         AgentTurnEvent::Result { text, .. } => (text.len(), 0),
-        AgentTurnEvent::ContextCompaction { .. } => (0, 0),
+        AgentTurnEvent::ContextCompaction { .. }
+        | AgentTurnEvent::SubagentActivity { .. }
+        | AgentTurnEvent::SubagentEvent { .. }
+        | AgentTurnEvent::SubagentUsage { .. }
+        | AgentTurnEvent::SubagentTurnDone { .. }
+        | AgentTurnEvent::Queued { .. } => (0, 0),
         AgentTurnEvent::Error { message } => (message.len(), 0),
         AgentTurnEvent::UnknownLine { raw, .. } => (raw.len(), 0),
     };

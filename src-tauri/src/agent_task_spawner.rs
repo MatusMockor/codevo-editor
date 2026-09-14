@@ -4,6 +4,16 @@ use crate::effective_executable_environment::EffectiveExecutablePath;
 
 #[path = "agent_provider.rs"]
 pub mod agent_provider;
+#[path = "codex_app_server_host.rs"]
+pub mod codex_app_server_host;
+#[path = "codex_app_server_protocol.rs"]
+pub mod codex_app_server_protocol;
+#[path = "codex_app_server_transport.rs"]
+pub mod codex_app_server_transport;
+#[path = "codex_app_server_turn.rs"]
+pub mod codex_app_server_turn;
+#[path = "codex_turn_event.rs"]
+pub mod codex_turn_event;
 use std::{
     fs, io,
     io::Read,
@@ -32,7 +42,11 @@ pub const AGENT_STDIN_FRAME_DEADLINE: std::time::Duration = std::time::Duration:
 #[path = "agent_launch.rs"]
 pub mod agent_launch;
 
+#[path = "agent_task_input.rs"]
+pub mod agent_task_input;
+
 use agent_launch::{AgentLaunchOptions, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR};
+use agent_task_input::{AgentTaskInput, RetainedAgentStdin, RetainedChildStdin, StdAgentTaskInput};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -65,9 +79,22 @@ pub struct AgentTaskSpawnPlan {
     env: Vec<(String, String)>,
     prompt: AgentPromptTransport,
     attachment_paths: Vec<PathBuf>,
+    app_server: Option<crate::agent_task_spawner::codex_app_server_turn::CodexAppServerTurnPlan>,
 }
 
 impl AgentTaskSpawnPlan {
+    pub fn with_codex_app_server(
+        mut self,
+        plan: crate::agent_task_spawner::codex_app_server_turn::CodexAppServerTurnPlan,
+    ) -> Self {
+        self.app_server = Some(plan);
+        self
+    }
+
+    pub fn executable_identity(&self) -> &agent_provider::process::ExecutableIdentity {
+        &self.executable_identity
+    }
+
     pub fn program(&self) -> &Path {
         &self.program
     }
@@ -140,6 +167,7 @@ impl AgentTaskSpawnPlan {
             env,
             prompt: AgentPromptTransport::Argv(String::new()),
             attachment_paths: Vec::new(),
+            app_server: None,
         }
     }
 
@@ -293,6 +321,7 @@ fn plan_agent_invocation_with_authority_and_environment(
         env: environment,
         prompt: prompt_transport,
         attachment_paths,
+        app_server: None,
     })
 }
 
@@ -520,6 +549,12 @@ pub fn agent_cli_binary_unavailable_error(invocation: AgentCliInvocation) -> Str
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentTaskProcessOwnership {
+    OwnedGroup { process_group_id: i32 },
+    SharedSession,
+}
+
 pub trait AgentChild: Send {
     fn stdout_reader(&mut self) -> Result<Box<dyn Read + Send>, String>;
     fn stderr_reader(&mut self) -> Result<Box<dyn Read + Send>, String>;
@@ -532,7 +567,15 @@ pub trait AgentChild: Send {
         self.reap().map(Some)
     }
     fn process_group_id(&self) -> i32;
+    fn ownership(&self) -> AgentTaskProcessOwnership {
+        AgentTaskProcessOwnership::OwnedGroup {
+            process_group_id: self.process_group_id(),
+        }
+    }
     fn force_kill(&mut self) -> Result<(), String>;
+    fn take_input(&mut self) -> Option<Box<dyn AgentTaskInput>> {
+        None
+    }
 }
 
 pub trait AgentProcessSpawner: Send + Sync {
@@ -543,6 +586,9 @@ pub struct StdAgentProcessSpawner;
 
 impl AgentProcessSpawner for StdAgentProcessSpawner {
     fn spawn(&self, plan: &AgentTaskSpawnPlan) -> Result<Box<dyn AgentChild>, String> {
+        if let Some(app_server) = &plan.app_server {
+            return app_server.spawn();
+        }
         let mut bound = plan
             .executable_identity
             .bound_command()
@@ -596,95 +642,34 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
             let _ = reap_child(&mut child);
             return Err("Agent process identifier is not addressable.".to_string());
         };
-        if let Some(frame) = plan.stdin_frame() {
-            write_prompt_frame_on_a_dedicated_thread(child.stdin.take(), Arc::clone(frame));
-        }
+        let input = plan.stdin_frame().and_then(|frame| {
+            let retained: RetainedChildStdin =
+                Arc::new(RetainedAgentStdin::new(child.stdin.take()?));
+            write_prompt_frame_on_a_dedicated_thread(&retained, Arc::clone(frame));
+            Some(retained)
+        });
         Ok(Box::new(StdAgentChild {
             child,
             process_group_id,
             observed_exit_code: None,
+            input,
         }))
     }
 }
 
-fn write_prompt_frame_on_a_dedicated_thread(
-    stdin: Option<std::process::ChildStdin>,
-    frame: Arc<[u8]>,
-) {
-    let Some(mut stdin) = stdin else {
-        return;
-    };
+fn write_prompt_frame_on_a_dedicated_thread(retained: &RetainedChildStdin, frame: Arc<[u8]>) {
+    let retained = Arc::clone(retained);
     std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + AGENT_STDIN_FRAME_DEADLINE;
-        let _ = write_prompt_frame_before(&mut stdin, &frame, deadline);
-        drop(stdin);
+        let _ = retained.write_first_frame(&frame, deadline);
     });
-}
-
-#[cfg(unix)]
-fn write_prompt_frame_before(
-    stdin: &mut std::process::ChildStdin,
-    frame: &[u8],
-    deadline: std::time::Instant,
-) -> io::Result<()> {
-    use std::io::Write;
-    use std::os::fd::AsRawFd;
-
-    let descriptor = stdin.as_raw_fd();
-    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
-    if flags < 0 || unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
-    {
-        return stdin.write_all(frame);
-    }
-    let mut written = 0;
-    while written < frame.len() {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "agent stdin frame"));
-        }
-        match stdin.write(&frame[written..]) {
-            Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
-            Ok(count) => written += count,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                wait_until_writable(descriptor, remaining)
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    stdin.flush()
-}
-
-#[cfg(unix)]
-fn wait_until_writable(descriptor: std::os::fd::RawFd, remaining: std::time::Duration) {
-    let mut poll_descriptor = libc::pollfd {
-        fd: descriptor,
-        events: libc::POLLOUT,
-        revents: 0,
-    };
-    let milliseconds = i32::try_from(remaining.as_millis())
-        .unwrap_or(i32::MAX)
-        .max(1);
-    unsafe {
-        libc::poll(&mut poll_descriptor, 1, milliseconds);
-    }
-}
-
-#[cfg(not(unix))]
-fn write_prompt_frame_before(
-    stdin: &mut std::process::ChildStdin,
-    frame: &[u8],
-    _deadline: std::time::Instant,
-) -> io::Result<()> {
-    use std::io::Write;
-
-    stdin.write_all(frame)
 }
 
 struct StdAgentChild {
     child: Child,
     process_group_id: i32,
     observed_exit_code: Option<i32>,
+    input: Option<RetainedChildStdin>,
 }
 
 impl AgentChild for StdAgentChild {
@@ -748,6 +733,11 @@ impl AgentChild for StdAgentChild {
         self.child
             .kill()
             .map_err(|error| format!("Unable to kill agent child: {error}"))
+    }
+
+    fn take_input(&mut self) -> Option<Box<dyn AgentTaskInput>> {
+        let retained = self.input.take()?;
+        Some(Box::new(StdAgentTaskInput::new(retained)))
     }
 }
 

@@ -104,6 +104,8 @@ impl AgentProviderReleaseMetadataSource for ReplacingReleaseMetadata<'_> {
                 2,
                 Some(self.lease.generation),
                 AgentProviderPolicy {
+                    codex_transport: Default::default(),
+                    codex_app_server_args: Vec::new(),
                     enabled: true,
                     cli_path: Some(self.lease.cli_path.clone()),
                     check_for_updates: false,
@@ -185,6 +187,8 @@ fn known_installed_version_skips_version_process_but_refreshes_authentication() 
             1,
             None,
             AgentProviderPolicy {
+                codex_transport: Default::default(),
+                codex_app_server_args: Vec::new(),
                 enabled: true,
                 cli_path: None,
                 check_for_updates: true,

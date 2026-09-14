@@ -36,6 +36,7 @@ import {
 } from "./agentTask";
 import {
   MAX_AGENT_EVENTS_PER_TURN,
+  MAX_SUBAGENT_THREADS_PER_TURN,
   MAX_AGENT_EVENT_TEXT_BYTES,
   MAX_AGENT_THREAD_TITLE_BYTES,
   MAX_AGENT_TOOL_ID_BYTES,
@@ -43,6 +44,7 @@ import {
   MAX_AGENT_TOOL_SUMMARY_BYTES,
   MAX_AGENT_TURNS_PER_THREAD,
   isTerminalAgentTurnStatus,
+  type AgentAppServerTokenBreakdown,
   type AgentProviderSession,
   type AgentSubagentEventStatus,
   type AgentThread,
@@ -144,6 +146,7 @@ function serializeTurn(turn: AgentTurn): Record<string, unknown> {
     streamMetrics: turn.streamMetrics ?? null,
     launch: turn.launch === null ? null : serializeAgentLaunchOptions(turn.launch),
     cliVersion: turn.cliVersion,
+    ...optionalField("codexTransport", turn.codexTransport),
     ...optionalField("attachments", serializeAttachments(turn.attachments)),
   };
 }
@@ -211,6 +214,12 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
     case "assistantText":
     case "reasoning":
       return { kind: event.kind, text: event.text };
+    case "userMessage":
+      return {
+        kind: event.kind,
+        text: event.text,
+        ...optionalField("attachments", serializeAttachments(event.attachments)),
+      };
     case "toolCall":
       return {
         kind: event.kind,
@@ -240,20 +249,45 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
         ...optionalField("toolUses", event.toolUses),
         ...optionalField("lastToolName", event.lastToolName),
       };
+    case "subagentActivity":
+      return {
+        kind: event.kind,
+        agentThreadId: event.agentThreadId,
+        agentPath: event.agentPath,
+        activity: event.activity,
+      };
+    case "subagentEvent":
+      return {
+        kind: event.kind,
+        agentThreadId: event.agentThreadId,
+        event: serializeTurnEvent(event.event),
+      };
+    case "subagentUsage":
+      return {
+        kind: event.kind,
+        agentThreadId: event.agentThreadId,
+        usage: serializeUsage(event.usage),
+      };
+    case "subagentTurnDone":
+      return {
+        kind: event.kind,
+        agentThreadId: event.agentThreadId,
+        durationMs: event.durationMs,
+        isError: event.isError,
+      };
+    case "queued":
+      return {
+        kind: event.kind,
+        threadId: event.threadId,
+        clientUserMessageId: event.clientUserMessageId,
+      };
     case "result":
       return {
         kind: event.kind,
         text: event.text,
         isError: event.isError,
-        usage:
-          event.usage === null
-            ? null
-            : {
-                inputTokens: event.usage.inputTokens,
-                outputTokens: event.usage.outputTokens,
-                contextTokens: event.usage.contextTokens,
-                ...(event.usage.costUsd === undefined ? {} : { costUsd: event.usage.costUsd }),
-              },
+        usage: event.usage === null ? null : serializeUsage(event.usage),
+        ...optionalField("durationMs", event.durationMs),
       };
     case "contextCompaction":
       return {
@@ -268,6 +302,19 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
     default:
       return unsupportedTurnEvent(event);
   }
+}
+
+function serializeUsage(usage: AgentTurnUsage): Record<string, unknown> {
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    contextTokens: usage.contextTokens,
+    ...optionalField("costUsd", usage.costUsd),
+    ...optionalField("scope", usage.scope),
+    ...optionalField("appServerUsage", usage.appServerUsage),
+    ...optionalField("cachedInputTokens", usage.cachedInputTokens),
+    ...optionalField("reasoningOutputTokens", usage.reasoningOutputTokens),
+  };
 }
 
 function optionalField<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
@@ -492,7 +539,7 @@ function parseTurn(value: unknown, path: string): AgentTurn {
       "lastStatusSequence",
       "lastOutputSequence",
     ],
-    ["launch", "cliVersion", "streamMetrics", "attachments"],
+    ["launch", "cliVersion", "streamMetrics", "attachments", "codexTransport"],
     path,
   );
   return {
@@ -501,15 +548,17 @@ function parseTurn(value: unknown, path: string): AgentTurn {
     status: parseTurnStatus(turn.status, `${path}.status`),
     startedAtEpochMs: unsignedSafeInteger(turn.startedAtEpochMs, `${path}.startedAtEpochMs`),
     endedAtEpochMs: optionalUnsignedSafeInteger(turn.endedAtEpochMs, `${path}.endedAtEpochMs`),
-    events: boundedArray(turn.events, `${path}.events`, MAX_AGENT_EVENTS_PER_TURN).map(
-      (event, index) => parseTurnEvent(event, `${path}.events[${index}]`),
-    ),
+    events: parseTurnEvents(turn.events, `${path}.events`),
     eventsTruncated: booleanFlag(turn.eventsTruncated, `${path}.eventsTruncated`),
     lastStatusSequence: unsignedSafeInteger(turn.lastStatusSequence, `${path}.lastStatusSequence`),
     lastOutputSequence: unsignedSafeInteger(turn.lastOutputSequence, `${path}.lastOutputSequence`),
     streamMetrics: parseStreamMetrics(turn.streamMetrics, `${path}.streamMetrics`),
     launch: parseLaunch(turn.launch, `${path}.launch`),
     cliVersion: parseCliVersion(turn.cliVersion, `${path}.cliVersion`),
+    ...optionalField(
+      "codexTransport",
+      parseCodexTransport(turn.codexTransport, `${path}.codexTransport`),
+    ),
     ...optionalField("attachments", parseAttachments(turn.attachments, `${path}.attachments`)),
   };
 }
@@ -629,6 +678,12 @@ function parseStreamMetrics(value: unknown, path: string): AgentTurnStreamMetric
   };
 }
 
+function parseCodexTransport(value: unknown, path: string): "appServer" | "exec" | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "appServer" && value !== "exec") invalid(path, "appServer or exec");
+  return value;
+}
+
 function parseCliVersion(value: unknown, path: string): string | null {
   if (value === undefined || value === null) return null;
   const version = parseAgentCliVersion(value);
@@ -665,6 +720,16 @@ function parseTurnStatus(value: unknown, path: string): AgentTurnStatus {
   }
 }
 
+function parseTurnEvents(value: unknown, path: string): ReadonlyArray<AgentTurnEvent> {
+  const seen = new Set<string>();
+  return boundedArray(value, path, MAX_AGENT_EVENTS_PER_TURN).map((raw, index) => {
+    const event = parseTurnEvent(raw, `${path}[${index}]`);
+    if ("agentThreadId" in event) seen.add(event.agentThreadId);
+    if (seen.size > MAX_SUBAGENT_THREADS_PER_TURN) invalid(path, "at most 32 subagent threads");
+    return event;
+  });
+}
+
 function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
   const event = record(value, path);
   const kind = turnEventKind(event.kind, `${path}.kind`);
@@ -673,6 +738,13 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
     case "reasoning":
       exactKeys(event, ["kind", "text"], path);
       return { kind, text: eventText(event.text, `${path}.text`) };
+    case "userMessage":
+      boundedKeys(event, ["kind", "text"], ["attachments"], path);
+      return {
+        kind,
+        text: eventText(event.text, `${path}.text`),
+        ...optionalField("attachments", parseAttachments(event.attachments, `${path}.attachments`)),
+      };
     case "toolCall":
       boundedKeys(event, ["kind", "toolId", "name", "inputSummary"], ["parentToolId"], path);
       return {
@@ -699,13 +771,124 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
       };
     case "subagent":
       return parseSubagentEvent(event, path);
+    case "subagentActivity": {
+      exactKeys(event, ["kind", "agentThreadId", "agentPath", "activity"], path);
+      const activity = event.activity;
+      if (
+        activity !== "started" &&
+        activity !== "interacted" &&
+        activity !== "interrupted" &&
+        activity !== "completed"
+      )
+        invalid(path, "a supported subagent activity");
+      return {
+        kind,
+        agentThreadId: boundedText(
+          event.agentThreadId,
+          `${path}.agentThreadId`,
+          MAX_AGENT_TOOL_ID_BYTES,
+          false,
+          true,
+        ),
+        agentPath: boundedText(
+          event.agentPath,
+          `${path}.agentPath`,
+          MAX_AGENT_TASK_PATH_BYTES,
+          true,
+          true,
+        ),
+        activity,
+      };
+    }
+    case "subagentEvent": {
+      exactKeys(event, ["kind", "agentThreadId", "event"], path);
+      const inner = record(event.event, `${path}.event`);
+      if (
+        inner.kind !== "assistantText" &&
+        inner.kind !== "reasoning" &&
+        inner.kind !== "toolCall" &&
+        inner.kind !== "toolResult"
+      )
+        invalid(`${path}.event.kind`, "a subagent content event");
+      const parsed = parseTurnEvent(inner, `${path}.event`);
+      if (
+        parsed.kind !== "assistantText" &&
+        parsed.kind !== "reasoning" &&
+        parsed.kind !== "toolCall" &&
+        parsed.kind !== "toolResult"
+      )
+        invalid(path, "a subagent content event");
+      return {
+        kind,
+        agentThreadId: boundedText(
+          event.agentThreadId,
+          `${path}.agentThreadId`,
+          MAX_AGENT_TOOL_ID_BYTES,
+          false,
+          true,
+        ),
+        event: parsed,
+      };
+    }
+    case "subagentUsage": {
+      exactKeys(event, ["kind", "agentThreadId", "usage"], path);
+      const usage = parseUsage(event.usage, `${path}.usage`);
+      if (usage === null) invalid(path, "subagent usage");
+      return {
+        kind,
+        agentThreadId: boundedText(
+          event.agentThreadId,
+          `${path}.agentThreadId`,
+          MAX_AGENT_TOOL_ID_BYTES,
+          false,
+          true,
+        ),
+        usage,
+      };
+    }
+    case "subagentTurnDone":
+      exactKeys(event, ["kind", "agentThreadId", "durationMs", "isError"], path);
+      return {
+        kind,
+        agentThreadId: boundedText(
+          event.agentThreadId,
+          `${path}.agentThreadId`,
+          MAX_AGENT_TOOL_ID_BYTES,
+          false,
+          true,
+        ),
+        durationMs: optionalUnsignedSafeInteger(event.durationMs, `${path}.durationMs`),
+        isError: booleanFlag(event.isError, `${path}.isError`),
+      };
+    case "queued":
+      exactKeys(event, ["kind", "threadId", "clientUserMessageId"], path);
+      return {
+        kind,
+        threadId: boundedText(
+          event.threadId,
+          `${path}.threadId`,
+          MAX_AGENT_TOOL_ID_BYTES,
+          false,
+          true,
+        ),
+        clientUserMessageId: optionalSessionId(
+          event.clientUserMessageId,
+          `${path}.clientUserMessageId`,
+        ),
+      };
     case "result":
-      exactKeys(event, ["kind", "text", "isError", "usage"], path);
+      boundedKeys(event, ["kind", "text", "isError", "usage"], ["durationMs"], path);
       return {
         kind,
         text: eventText(event.text, `${path}.text`),
         isError: booleanFlag(event.isError, `${path}.isError`),
         usage: parseUsage(event.usage, `${path}.usage`),
+        ...optionalField(
+          "durationMs",
+          event.durationMs === undefined
+            ? undefined
+            : optionalUnsignedSafeInteger(event.durationMs, `${path}.durationMs`),
+        ),
       };
     case "contextCompaction":
       exactKeys(event, ["kind", "beforeTokens", "afterTokens"], path);
@@ -796,8 +979,40 @@ function optionalMetric(value: unknown, path: string): number | undefined {
 function parseUsage(value: unknown, path: string): AgentTurnUsage | null {
   if (value === null) return null;
   const usage = record(value, path);
-  boundedKeys(usage, ["inputTokens", "outputTokens"], ["contextTokens", "costUsd"], path);
+  boundedKeys(
+    usage,
+    ["inputTokens", "outputTokens"],
+    [
+      "contextTokens",
+      "costUsd",
+      "cachedInputTokens",
+      "reasoningOutputTokens",
+      "scope",
+      "appServerUsage",
+    ],
+    path,
+  );
+  if (usage.scope !== undefined && usage.scope !== "thread") invalid(`${path}.scope`, "thread");
   return {
+    ...optionalField("scope", usage.scope as "thread" | undefined),
+    ...optionalField(
+      "appServerUsage",
+      usage.appServerUsage === undefined
+        ? undefined
+        : parseAppServerUsage(usage.appServerUsage, `${path}.appServerUsage`),
+    ),
+    ...optionalField(
+      "cachedInputTokens",
+      usage.cachedInputTokens === undefined
+        ? undefined
+        : optionalUnsignedSafeInteger(usage.cachedInputTokens, `${path}.cachedInputTokens`),
+    ),
+    ...optionalField(
+      "reasoningOutputTokens",
+      usage.reasoningOutputTokens === undefined
+        ? undefined
+        : optionalUnsignedSafeInteger(usage.reasoningOutputTokens, `${path}.reasoningOutputTokens`),
+    ),
     inputTokens: unsignedSafeInteger(usage.inputTokens, `${path}.inputTokens`),
     outputTokens: unsignedSafeInteger(usage.outputTokens, `${path}.outputTokens`),
     contextTokens:
@@ -807,6 +1022,46 @@ function parseUsage(value: unknown, path: string): AgentTurnUsage | null {
     ...(usage.costUsd === undefined
       ? {}
       : { costUsd: optionalNonNegativeFiniteNumber(usage.costUsd, `${path}.costUsd`) }),
+  };
+}
+
+function parseAppServerUsage(value: unknown, path: string) {
+  const usage = record(value, path);
+  exactKeys(usage, ["last", "total", "contextWindow"], path);
+  return {
+    last: parseTokenBreakdown(usage.last, `${path}.last`),
+    total: parseTokenBreakdown(usage.total, `${path}.total`),
+    contextWindow: optionalUnsignedSafeInteger(usage.contextWindow, `${path}.contextWindow`),
+  };
+}
+
+function parseTokenBreakdown(value: unknown, path: string): AgentAppServerTokenBreakdown {
+  const usage = record(value, path);
+  exactKeys(
+    usage,
+    [
+      "inputTokens",
+      "cachedInputTokens",
+      "cacheWriteInputTokens",
+      "outputTokens",
+      "reasoningOutputTokens",
+      "totalTokens",
+    ],
+    path,
+  );
+  return {
+    inputTokens: unsignedSafeInteger(usage.inputTokens, `${path}.inputTokens`),
+    cachedInputTokens: unsignedSafeInteger(usage.cachedInputTokens, `${path}.cachedInputTokens`),
+    cacheWriteInputTokens: unsignedSafeInteger(
+      usage.cacheWriteInputTokens,
+      `${path}.cacheWriteInputTokens`,
+    ),
+    outputTokens: unsignedSafeInteger(usage.outputTokens, `${path}.outputTokens`),
+    reasoningOutputTokens: unsignedSafeInteger(
+      usage.reasoningOutputTokens,
+      `${path}.reasoningOutputTokens`,
+    ),
+    totalTokens: unsignedSafeInteger(usage.totalTokens, `${path}.totalTokens`),
   };
 }
 
@@ -836,8 +1091,14 @@ function turnEventKind(value: unknown, path: string): AgentTurnEvent["kind"] {
   if (
     value !== "assistantText" &&
     value !== "reasoning" &&
+    value !== "userMessage" &&
     value !== "toolCall" &&
     value !== "toolResult" &&
+    value !== "subagentActivity" &&
+    value !== "subagentEvent" &&
+    value !== "subagentUsage" &&
+    value !== "subagentTurnDone" &&
+    value !== "queued" &&
     value !== "subagent" &&
     value !== "result" &&
     value !== "contextCompaction" &&

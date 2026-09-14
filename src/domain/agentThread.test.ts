@@ -20,6 +20,7 @@ import {
   agentThreadTitle,
   agentThreadUnread,
   agentThreadsReducer,
+  agentTurnAcceptsSteerBytes,
   agentTurnEventUtf8Bytes,
   coalesceAgentTextEvents,
   emptyAgentThreadsState,
@@ -28,6 +29,7 @@ import {
   parseAgentThread,
   runningTurn,
   serializeAgentThread,
+  steerCount,
   type AgentThread,
   type AgentThreadsAction,
   type AgentThreadsState,
@@ -1663,5 +1665,117 @@ describe("subagent turn events", () => {
         parentToolId: "toolu_parent",
       }),
     ).toBe(ENCODER.encode("t1Bashxtoolu_parent").byteLength);
+  });
+});
+
+describe("agentThreadsReducer turnSteered", () => {
+  function steerAction(
+    overrides: Partial<Extract<AgentThreadsAction, { kind: "turnSteered" }>> = {},
+  ): Extract<AgentThreadsAction, { kind: "turnSteered" }> {
+    return {
+      kind: "turnSteered",
+      threadId: "agt-t1-0001",
+      turnId: "agt-1-0a1b",
+      event: { kind: "userMessage", text: "also run the tests" },
+      ...overrides,
+    };
+  }
+
+  it("appends the user message in order and leaves the output sequence alone", () => {
+    const state = agentThreadsReducer(stateWith(thread()), appendAction([text("working")]));
+    const before = state.threads.get("agt-t1-0001")!.turns[0];
+
+    const next = agentThreadsReducer(state, steerAction());
+    const after = agentThreadsReducer(next, appendAction([text("done")], { outputSequence: 2 }));
+    const turn = after.threads.get("agt-t1-0001")!.turns[0];
+
+    expect(next.threads.get("agt-t1-0001")!.turns[0].lastOutputSequence).toBe(
+      before.lastOutputSequence,
+    );
+    expect(turn.events).toEqual([
+      { kind: "assistantText", text: "working" },
+      { kind: "userMessage", text: "also run the tests" },
+      { kind: "assistantText", text: "done" },
+    ]);
+    expect(steerCount(turn)).toBe(1);
+  });
+
+  it("ignores a stale turn id, an unknown thread, and a terminal turn", () => {
+    const running = stateWith(thread());
+    expect(agentThreadsReducer(running, steerAction({ turnId: "agt-9-9999" }))).toBe(running);
+    expect(agentThreadsReducer(running, steerAction({ threadId: "agt-t9-0009" }))).toBe(running);
+
+    const settled = stateWith(settledThread());
+    expect(agentThreadsReducer(settled, steerAction())).toBe(settled);
+  });
+
+  it("refuses a steered message once the per-turn event cap or truncation is reached", () => {
+    const filled = agentThreadsReducer(
+      stateWith(thread()),
+      appendAction(
+        Array.from({ length: MAX_AGENT_EVENTS_PER_TURN }, (_, index) => ({
+          kind: "toolCall" as const,
+          toolId: `t${index}`,
+          name: "Read",
+          inputSummary: "file",
+        })),
+      ),
+    );
+    const before = filled.threads.get("agt-t1-0001")!.turns[0];
+    expect(before.eventsTruncated).toBe(false);
+    expect(agentTurnAcceptsSteerBytes(before, 1)).toBe(false);
+
+    expect(agentThreadsReducer(filled, steerAction())).toBe(filled);
+
+    const truncated = stateWith(thread({ turns: [turn({ eventsTruncated: true })] }));
+    expect(agentTurnAcceptsSteerBytes(truncated.threads.get("agt-t1-0001")!.turns[0], 1)).toBe(
+      false,
+    );
+    expect(agentThreadsReducer(truncated, steerAction())).toBe(truncated);
+  });
+
+  it("refuses a steered message that would exceed the per-turn byte budget", () => {
+    const nearlyFull = stateWith(
+      thread({
+        turns: [turn({ events: [text("x".repeat(MAX_AGENT_EVENT_BYTES_PER_TURN - 4))] })],
+      }),
+    );
+    const before = nearlyFull.threads.get("agt-t1-0001")!.turns[0];
+
+    expect(agentTurnAcceptsSteerBytes(before, 4)).toBe(true);
+    expect(agentTurnAcceptsSteerBytes(before, 5)).toBe(false);
+    expect(agentThreadsReducer(nearlyFull, steerAction())).toBe(nearlyFull);
+  });
+
+  it("refuses a steered message past the per-event text bound", () => {
+    const state = stateWith(thread());
+    const oversized = steerAction({
+      event: { kind: "userMessage", text: "x".repeat(MAX_AGENT_EVENT_TEXT_BYTES + 1) },
+    });
+
+    expect(agentThreadsReducer(state, oversized)).toBe(state);
+  });
+
+  it("counts every steered message and attachments toward the retained event bytes", () => {
+    const state = agentThreadsReducer(
+      stateWith(thread()),
+      steerAction({
+        event: {
+          kind: "userMessage",
+          text: "look",
+          attachments: [
+            { kind: "reference", name: "clip.mp4", path: "/Movies/clip.mp4", bytes: 0 },
+          ],
+        },
+      }),
+    );
+    const turn = state.threads.get("agt-t1-0001")!.turns[0];
+
+    expect(agentTurnEventUtf8Bytes(turn.events[0])).toBe(
+      ENCODER.encode("look").byteLength +
+        ENCODER.encode("clip.mp4").byteLength +
+        ENCODER.encode("/Movies/clip.mp4").byteLength,
+    );
+    expect(steerCount(turn)).toBe(1);
   });
 });

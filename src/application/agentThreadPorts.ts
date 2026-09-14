@@ -1,4 +1,5 @@
 import type { AgentImageMime } from "../domain/agentAttachment";
+import type { DeferredFollowUps } from "./agentDeferredFollowUps";
 import type { AgentAttachmentImagesSurface } from "./useAgentAttachmentImages";
 import type { AgentComposerAttachmentsSurface } from "./useAgentComposerAttachments";
 import type { AgentProjectOrigin } from "../domain/agentProject";
@@ -283,6 +284,13 @@ export interface AgentFollowUpRequest extends AgentTurnAttachmentRequest {
   readonly dangerousLaunchConfirmed?: boolean;
 }
 
+export interface AgentSteerRequest extends AgentTurnAttachmentRequest {
+  readonly threadId: string;
+  readonly prompt: string;
+}
+
+export type AgentSteerOutcome = "sent" | "deferred" | "kept";
+
 export interface AgentThreadsSurface {
   readonly attachments: AgentComposerAttachmentsSurface;
   readonly attachmentImages: AgentAttachmentImagesSurface;
@@ -314,6 +322,9 @@ export interface AgentThreadsSurface {
   ): Promise<AgentRepositoryProbeOutcome | void>;
   startThread(request: AgentThreadStartRequest): Promise<AgentThreadStartResult | null>;
   sendFollowUp(request: AgentFollowUpRequest): Promise<boolean>;
+  readonly deferredFollowUps: DeferredFollowUps;
+  steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
+  removeDeferredFollowUp(threadId: string, id: string): void;
   importExternalSession(
     request: ExternalSessionImportRequest,
   ): Promise<ExternalSessionImportResult | null>;

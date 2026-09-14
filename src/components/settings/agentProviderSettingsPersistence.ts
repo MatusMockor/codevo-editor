@@ -4,6 +4,8 @@ import {
   defaultAgentProviderPreferences,
   normalizeAgentProviderHealthCheckIntervalSeconds,
   type AgentProviderPreference,
+  type CodexTransportSettings,
+  parseCodexTransportSettings,
 } from "../../domain/agentProviderSettings";
 import { nextAgentModelFavoritesRevision, type AgentCliKind } from "../../domain/agentSettings";
 import type { AppSettings } from "../../domain/settings";
@@ -60,7 +62,7 @@ export function persistProviderIntent(
   draftRef: MutableRefObject<AppSettings>,
   publish: (settings: AppSettings) => void,
   management: AgentProviderManagementSurface,
-): void {
+): Promise<boolean> {
   const previousPreferences = providerPreferences(previous);
   const proposedPreferences = providerPreferences(proposed);
   const preferenceChanged = previousPreferences[provider] !== proposedPreferences[provider];
@@ -70,7 +72,7 @@ export function persistProviderIntent(
       ? {}
       : { selectedProvider: proposed.agentCliKind };
 
-  void management
+  return management
     .saveWithOutcome({
       provider,
       ...selectedProvider,
@@ -80,14 +82,41 @@ export function persistProviderIntent(
     .then((outcome) => {
       switch (outcome.kind) {
         case "persisted":
-          return;
+          return true;
         case "rejected":
           rollbackProviderDraft(provider, previous, proposed, draftRef, publish);
-          return;
+          return false;
         default:
-          outcome satisfies never;
+          return outcome satisfies never;
       }
+    })
+    .catch(() => {
+      rollbackProviderDraft(provider, previous, proposed, draftRef, publish);
+      return false;
     });
+}
+
+export function saveCodexTransportSettings(
+  ports: AgentProviderDraftWriterPorts,
+  settings: CodexTransportSettings,
+): Promise<boolean> {
+  if (ports.management === null) return Promise.resolve(false);
+  const validated = parseCodexTransportSettings(settings);
+  const previous = ports.draftRef.current;
+  const proposed = withProviderPreference(previous, "codex", (preference) => ({
+    ...preference,
+    ...validated,
+  }));
+  ports.draftRef.current = proposed;
+  ports.publishDraft(proposed);
+  return persistProviderIntent(
+    "codex",
+    previous,
+    proposed,
+    ports.draftRef,
+    ports.publishDraft,
+    ports.management,
+  );
 }
 
 export function changedAgentProviders(

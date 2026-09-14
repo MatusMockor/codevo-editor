@@ -167,11 +167,23 @@ pub fn run() {
             let provider_executable_resolver: Arc<
                 dyn agent_task_spawner::agent_provider::runtime::AgentProviderExecutableResolver,
             > = agent_cli_discovery.clone();
+            let codex_hosts = Arc::new(agent_task_spawner::codex_app_server_host::CodexAppServerHostRegistry::standard());
+            let host_lifecycle = Arc::new(agent_task_commands::codex_task_composition::CodexProviderHostLifecycle(Arc::clone(&codex_hosts)));
             let agent_provider_runtime = Arc::new(
-                agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry::with_discovery(
+                agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry::with_discovery_and_host_lifecycle(
                     provider_executable_resolver,
+                    host_lifecycle,
                 ),
             );
+            let idle_hosts = Arc::downgrade(&codex_hosts);
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    let Some(hosts) = idle_hosts.upgrade() else { break; };
+                    let _ = tauri::async_runtime::spawn_blocking(move || hosts.retire_idle()).await;
+                }
+            });
+            app.manage(codex_hosts);
             app.manage(agent_cli_versions);
             app.manage(agent_cli_discovery);
             app.manage(agent_provider_runtime);
@@ -537,6 +549,8 @@ pub fn run() {
             agent_attachment_commands::read_agent_attachment,
             agent_attachment_commands::reveal_agent_attachment,
             agent_task_commands::acknowledge_agent_task_start,
+            agent_task_commands::steer_agent_task,
+            agent_task_commands::close_agent_task_input,
             agent_task_commands::stop_agent_task,
             agent_task_commands::stop_agent_tasks_for_root,
             agent_task_commands::acquire_agent_root_lease,

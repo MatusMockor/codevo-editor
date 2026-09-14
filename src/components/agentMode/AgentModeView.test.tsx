@@ -607,6 +607,80 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(true);
   });
 
+  it("steers the running thread from the composer and stops it from the Stop control", async () => {
+    const steer = vi.fn(async () => "sent" as const);
+    const sendFollowUp = vi.fn(async () => true);
+    const stop = vi.fn(async () => undefined);
+    render({
+      agents: surface({
+        sendFollowUp,
+        steer,
+        stop,
+        threads: [
+          threadView({
+            threadId: "agt-1",
+            status: { kind: "running" },
+            launch: defaultAgentComposerLaunch("claudeCode"),
+          }),
+        ],
+      }),
+    });
+
+    clickText("Refactor the parser");
+
+    expect(host.textContent).not.toContain("This thread is still running");
+    expect(promptField().placeholder).toBe("Message the running agent");
+
+    typePrompt("also run the tests");
+    await submitFormAsync();
+
+    expect(steer).toHaveBeenCalledWith({ threadId: "agt-1", prompt: "also run the tests" });
+    expect(sendFollowUp).not.toHaveBeenCalled();
+
+    click("button.agent-composer__stop");
+    expect(stop).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("renders the deferred follow-ups of the selected thread and removes one on request", () => {
+    const removeDeferredFollowUp = vi.fn();
+    render({
+      agents: surface({
+        removeDeferredFollowUp,
+        deferredFollowUps: new Map([
+          [
+            "agt-1",
+            [
+              {
+                id: "deferred-1",
+                request: {
+                  threadId: "agt-1",
+                  prompt: "and then ship it",
+                  launch: defaultAgentComposerLaunch("claudeCode"),
+                },
+                queuedAtEpochMs: NOW,
+              },
+            ],
+          ],
+        ]),
+        threads: [
+          threadView({
+            threadId: "agt-1",
+            status: { kind: "running" },
+            launch: defaultAgentComposerLaunch("claudeCode"),
+          }),
+        ],
+      }),
+    });
+
+    clickText("Refactor the parser");
+
+    expect(host.querySelector(".agent-prompt--queued")?.textContent).toContain("and then ship it");
+    expect(host.querySelector(".agent-prompt__chip--queued")?.textContent).toBe("Queued");
+
+    click('button[aria-label="Remove queued message"]');
+    expect(removeDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
+  });
+
   it("blocks a follow-up when the worktree is gone", () => {
     render({
       agents: surface({
@@ -3233,6 +3307,9 @@ function surface(overrides: Partial<AgentModeViewProps["agents"]>): AgentModeVie
     refreshIsolationStatus: async () => undefined,
     startThread: async () => ({ threadId: "agt-default" }),
     sendFollowUp: async () => true,
+    deferredFollowUps: new Map(),
+    steer: async () => "sent" as const,
+    removeDeferredFollowUp: () => undefined,
     importExternalSession: async () => null,
     stop: async () => undefined,
     togglePin: () => undefined,

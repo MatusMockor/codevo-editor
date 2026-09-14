@@ -287,6 +287,11 @@ describe("agentProviderCardPresentation", () => {
     const preference = defaultAgentProviderPreferences().claudeCode;
 
     expect(providerSettingsAtDefault(null, preference)).toBe(true);
+    expect(providerSettingsAtDefault(null, defaultAgentProviderPreferences().codex)).toBe(true);
+    expect(providerSettingsAtDefault(null, { ...preference, codexTransport: "exec" })).toBe(false);
+    expect(
+      providerSettingsAtDefault(null, { ...preference, codexAppServerArgs: ["--enable"] }),
+    ).toBe(false);
     expect(providerSettingsAtDefault("/usr/local/bin/claude", preference)).toBe(false);
     expect(providerSettingsAtDefault(null, { ...preference, healthCheckIntervalSeconds: 60 })).toBe(
       false,

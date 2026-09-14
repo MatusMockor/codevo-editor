@@ -257,6 +257,7 @@ mod tests {
                 created_at_epoch_ms: 1,
                 updated_at_epoch_ms: 2,
                 turns: vec![AgentTurn {
+                    codex_transport: None,
                     turn_id: "agt-turn-0001".to_string(),
                     prompt: "do it".to_string(),
                     status: AgentTurnStatus::Interrupted,

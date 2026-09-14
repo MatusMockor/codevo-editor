@@ -5,11 +5,21 @@ import {
   type AgentLaunchOptions,
 } from "../domain/agentLaunch";
 import {
+  MAX_AGENT_STEERS_PER_TURN,
   MAX_AGENT_TASK_PROMPT_BYTES,
   mintAgentTaskId,
   type AgentCliKind,
 } from "../domain/agentTask";
-import { runningTurn, type AgentThread, type AgentThreadsState } from "../domain/agentThread";
+import { MAX_AGENT_ATTACHMENT_PATH_BYTES } from "../domain/agentAttachment";
+import {
+  agentTurnAcceptsSteerBytes,
+  runningTurn,
+  steerCount,
+  type AgentThread,
+  type AgentThreadsState,
+  type AgentTurn,
+} from "../domain/agentThread";
+import { isRemoteAgentIdentity } from "./remoteAgentSurface";
 import { normalizeAgentCliKind, normalizeMaxConcurrentAgentTasks } from "../domain/agentSettings";
 import {
   AGENT_TASKS_SOURCE,
@@ -25,9 +35,11 @@ import {
 } from "./agentProjectAuthority";
 import type {
   AgentFollowUpRequest,
+  AgentSteerRequest,
   AgentTasksNotice,
   AgentThreadStartRequest,
   AgentThreadStoreSurface,
+  AgentTurnAttachmentIntent,
   AgentTurnAttachmentRequest,
 } from "./agentThreadPorts";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
@@ -65,6 +77,19 @@ export const LAUNCH_PROVIDER_MISMATCH_NOTICE =
   "The selected model or mode belongs to a different provider.";
 export const DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE =
   "Confirm running without permission checks before starting this agent.";
+export const AGENT_THREAD_RUNNING_NOTICE =
+  "This thread is still running. Wait for the turn to finish.";
+export const AGENT_THREAD_NOT_RUNNING_NOTICE =
+  "This turn already finished. Send the message as a new turn.";
+export const AGENT_THREAD_STEER_LIMIT_NOTICE =
+  "This turn already carries the maximum number of messages. Wait for it to finish.";
+export const AGENT_THREAD_STEER_IN_FLIGHT_NOTICE =
+  "This thread is already sending a message. Wait for it to arrive.";
+export const AGENT_THREAD_PROJECT_CLOSED_NOTICE =
+  "This thread's project is no longer open, so it cannot continue.";
+export const AGENT_THREAD_TURN_FULL_NOTICE =
+  "This turn is full. Wait for it to finish, then send your message.";
+export const AGENT_THREAD_STARTING_NOTICE = "The agent is still starting. Try again in a moment.";
 const UTF8_ENCODER = new TextEncoder();
 
 export function agentPromptByteLength(prompt: string): number {
@@ -169,7 +194,7 @@ export function admitFollowUp(
     return null;
   }
   if (runningTurn(thread) !== null || inFlightThreads.has(thread.threadId)) {
-    deps.setNotice(warning("This thread is still running. Wait for the turn to finish."));
+    deps.setNotice(warning(AGENT_THREAD_RUNNING_NOTICE));
     return null;
   }
   const project =
@@ -183,7 +208,7 @@ export function admitFollowUp(
     project.rootKey !== thread.owner.rootKey ||
     project.origin === "closed-tab-live-tasks"
   ) {
-    deps.setNotice(warning("This thread's project is no longer open, so it cannot continue."));
+    deps.setNotice(warning(AGENT_THREAD_PROJECT_CLOSED_NOTICE));
     return null;
   }
   const prompt = admitPrompt(deps, request.prompt, hasAttachments(request));
@@ -217,6 +242,103 @@ export function admitFollowUp(
     sessionId: thread.provider.sessionId,
     launch,
   };
+}
+
+export interface AdmittedSteer {
+  readonly thread: AgentThread;
+  readonly turn: AgentTurn;
+  readonly authority: AgentTaskLaunchAuthority;
+  readonly prompt: string;
+}
+
+export function agentThreadIsSteerable(thread: AgentThread): boolean {
+  if (isRemoteAgentIdentity(thread.threadId)) return false;
+  if (thread.archived) return false;
+  const turn = runningTurn(thread);
+  if (turn === null) return false;
+  return (
+    turn.launch?.provider === "claudeCode" ||
+    (turn.launch?.provider === "codex" && turn.codexTransport === "appServer")
+  );
+}
+
+export function admitSteer(
+  deps: AdmissionDependencies,
+  request: AgentSteerRequest,
+  inFlightThreads: ReadonlySet<string>,
+): AdmittedSteer | null {
+  const thread = deps.store.state.threads.get(request.threadId);
+  if (thread === undefined) {
+    deps.setNotice(warning("This thread is no longer available."));
+    return null;
+  }
+  if (thread.archived) {
+    deps.setNotice(warning("This thread is archived. Start a new thread."));
+    return null;
+  }
+  const turn = runningTurn(thread);
+  if (turn === null) {
+    deps.setNotice(warning(AGENT_THREAD_NOT_RUNNING_NOTICE));
+    return null;
+  }
+  if (!agentThreadIsSteerable(thread)) {
+    deps.setNotice(warning(AGENT_THREAD_RUNNING_NOTICE));
+    return null;
+  }
+  if (inFlightThreads.has(thread.threadId)) {
+    deps.setNotice(warning(AGENT_THREAD_STEER_IN_FLIGHT_NOTICE));
+    return null;
+  }
+  if (turn.status.kind === "pending") {
+    deps.setNotice(warning(AGENT_THREAD_STARTING_NOTICE));
+    return null;
+  }
+  if (steerCount(turn) >= MAX_AGENT_STEERS_PER_TURN) {
+    deps.setNotice(warning(AGENT_THREAD_STEER_LIMIT_NOTICE));
+    return null;
+  }
+  const authority = steerAuthority(deps, thread);
+  if (authority === null) {
+    deps.setNotice(warning(AGENT_THREAD_PROJECT_CLOSED_NOTICE));
+    return null;
+  }
+  const prompt = admitPrompt(deps, request.prompt, hasAttachments(request));
+  if (prompt === null) return null;
+  if (!agentTurnAcceptsSteerBytes(turn, steerMessageByteBudget(prompt, request))) {
+    deps.setNotice(warning(AGENT_THREAD_TURN_FULL_NOTICE));
+    return null;
+  }
+  return { thread, turn, authority, prompt };
+}
+
+function steerMessageByteBudget(prompt: string, request: AgentSteerRequest): number {
+  return (request.attachments ?? []).reduce(
+    (total, intent) => total + attachmentIntentByteBudget(intent),
+    agentPromptByteLength(prompt),
+  );
+}
+
+function attachmentIntentByteBudget(intent: AgentTurnAttachmentIntent): number {
+  if (intent.kind === "reference") {
+    return agentPromptByteLength(intent.name) + agentPromptByteLength(intent.path);
+  }
+  return agentPromptByteLength(intent.name) + MAX_AGENT_ATTACHMENT_PATH_BYTES;
+}
+
+function steerAuthority(
+  deps: AdmissionDependencies,
+  thread: AgentThread,
+): AgentTaskLaunchAuthority | null {
+  const project =
+    projectByOwnerId(deps.projects, thread.owner.ownerId) ??
+    projectByRootKey(deps.projects, thread.owner.rootKey);
+  if (project === undefined) return null;
+  if (project.rootKey !== thread.owner.rootKey) return null;
+  if (project.origin === "closed-tab-live-tasks") return null;
+  const launchIdentity = deps.launchIdentityForProject(project.rootKey);
+  if (launchIdentity === null) return null;
+  if (launchIdentity.workspaceId !== thread.owner.ownerId) return null;
+  return taskLaunchAuthority(project, launchIdentity);
 }
 
 interface LaunchRequest {
