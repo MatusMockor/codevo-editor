@@ -5,6 +5,7 @@ import {
   CODEX_EXECUTION_MODES,
   CODEX_MODEL_CHOICES,
   agentLaunchIsDangerous,
+  type AgentExecutionTarget,
   type AgentLaunchOptions,
   type ClaudeEffortChoice,
   type ClaudeContextChoice,
@@ -438,6 +439,19 @@ export function agentLaunchWithThinkingMode(
   };
 }
 
+export function agentLaunchWithChrome(
+  launch: AgentLaunchOptions,
+  chrome: boolean,
+  configuredModel: string | null,
+): AgentLaunchOptions {
+  if (launch.provider !== "claudeCode") return launch;
+  return {
+    ...launch,
+    model: explicitConfiguredClaudeModel(launch.model, configuredModel),
+    chrome,
+  };
+}
+
 export interface ClaudeLaunchTraits {
   readonly efforts: ReadonlyArray<Exclude<ClaudeEffortChoice, "default">>;
   readonly defaultEffort: ClaudeEffortChoice;
@@ -445,11 +459,13 @@ export interface ClaudeLaunchTraits {
   readonly defaultContext: ClaudeContextChoice | null;
   readonly fastMode: boolean;
   readonly thinkingMode: boolean;
+  readonly chrome: boolean;
 }
 
 export function agentClaudeLaunchTraits(
   launch: AgentLaunchOptions & { readonly provider: "claudeCode" },
   configuredModel: string | null,
+  executionTarget: AgentExecutionTarget,
 ): ClaudeLaunchTraits {
   const entry =
     manifestClaudeModel(launch.model, configuredModel) ??
@@ -462,6 +478,7 @@ export function agentClaudeLaunchTraits(
     defaultContext: entry.defaultContext,
     fastMode: entry.fastMode,
     thinkingMode: entry.thinkingMode,
+    chrome: executionTarget === "local",
   };
 }
 

@@ -18,7 +18,12 @@ import {
 } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentContextCompactionOffer } from "../../domain/agentContextCompaction";
-import { agentLaunchIsDangerous, type AgentLaunchOptions } from "../../domain/agentLaunch";
+import {
+  agentLaunchIsDangerous,
+  agentLaunchWithoutBrowser,
+  type AgentExecutionTarget,
+  type AgentLaunchOptions,
+} from "../../domain/agentLaunch";
 import {
   MAX_AGENT_TASK_PROMPT_BYTES,
   type AgentCliKind,
@@ -167,10 +172,12 @@ export function AgentComposer({
       : undefined;
   const configuredModel =
     discovery?.kind === "detected" ? (discovery.configuredModel ?? null) : null;
-  const effectiveLaunch = useMemo(
-    () => agentLaunchForDispatch(normalizedLaunch, configuredModel),
-    [normalizedLaunch, configuredModel],
-  );
+  const executionTarget: AgentExecutionTarget = executionServerId === null ? "local" : "server";
+  const effectiveLaunch = useMemo(() => {
+    const dispatched = agentLaunchForDispatch(normalizedLaunch, configuredModel);
+    if (executionTarget === "local") return dispatched;
+    return agentLaunchWithoutBrowser(dispatched);
+  }, [normalizedLaunch, configuredModel, executionTarget]);
   const dangerousLaunch = agentLaunchIsDangerous(effectiveLaunch);
   const providerReason =
     providerEnabled[effectiveLaunch.provider] === false
@@ -299,6 +306,7 @@ export function AgentComposer({
             : null
         }
         onOpenRequestHandled={() => setControlRequest(null)}
+        executionTarget={executionTarget}
         favorites={favorites}
         launch={effectiveLaunch}
         onLaunchChange={onLaunchChange}
@@ -321,6 +329,7 @@ export function AgentComposer({
       providerEnabled,
       providerManagement,
       executionServerId,
+      executionTarget,
       followUp,
     ],
   );

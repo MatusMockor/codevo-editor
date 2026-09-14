@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunner";
 import type { AgentThreadStartRequest } from "./agentThreadPorts";
+import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
 const target = { serverId: "s", runnerId: "r", projectId: "p" };
 const request: AgentThreadStartRequest = {
@@ -107,6 +108,42 @@ describe("remote agent mutations", () => {
     );
     expect(h.gw.startTask).toHaveBeenCalledWith({ serverId: "s", taskId: "t", projectId: "p" });
     expect(h.publish).toHaveBeenCalledOnce();
+  });
+  it("never puts the local browser flag on the wire for a remote runner", async () => {
+    const claudeLaunch: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "sonnet",
+      mode: "acceptEdits",
+      effort: "high",
+      context: "1m",
+      chrome: false,
+    };
+    const wireLaunch: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "sonnet",
+      mode: "acceptEdits",
+      effort: "high",
+      context: "1m",
+    };
+    const claudeTask = task({ provider: "claude", launch: wireLaunch });
+    const gw = gateway();
+    gw.createTask.mockResolvedValue({
+      task: task({ provider: "claude", launch: wireLaunch, status: "draft", projectId: undefined }),
+      created: true,
+    });
+    gw.startTask.mockResolvedValue(claudeTask);
+    const h = await render(gw);
+
+    await act(async () => {
+      expect(await h.current().start({ ...request, launch: claudeLaunch }, target)).toEqual(
+        claudeTask,
+      );
+    });
+
+    const [wire] = h.gw.createTask.mock.calls[0] as [{ readonly launch: AgentLaunchOptions }];
+    expect(wire.launch).not.toHaveProperty("chrome");
+    expect(wire.launch).toEqual(wireLaunch);
+    expect(h.report).not.toHaveBeenCalled();
   });
   it("reuses the exact request after unknown create failure and blocks changed intent", async () => {
     const h = await render();

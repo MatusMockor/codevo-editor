@@ -675,6 +675,7 @@ const CLAUDE_LAUNCH: AgentLaunchOptions = AgentLaunchOptions::ClaudeCode {
     context: ClaudeContextChoice::TwoHundredK,
     fast_mode: false,
     thinking_mode: false,
+    chrome: true,
 };
 const CODEX_LAUNCH: AgentLaunchOptions = AgentLaunchOptions::Codex {
     model: CodexModelChoice::Default,
@@ -708,6 +709,7 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "--verbose".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
+            "--chrome".to_string(),
         ]
     );
     assert_eq!(
@@ -763,6 +765,7 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "--verbose".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
+            "--chrome".to_string(),
             "--resume".to_string(),
             "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string(),
         ]

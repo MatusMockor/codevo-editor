@@ -688,6 +688,7 @@ fn prepare_builds_a_worktree_plan_with_the_closed_argv_template() {
             "--input-format".to_string(),
             "stream-json".to_string(),
             "--dangerously-skip-permissions".to_string(),
+            "--chrome".to_string(),
             "--effort".to_string(),
             "high".to_string(),
         ]
@@ -794,6 +795,7 @@ fn a_dangerous_launch_still_depends_on_the_repository_trust_gate() {
         context: ClaudeContextChoice::OneM,
         fast_mode: false,
         thinking_mode: false,
+        chrome: true,
     };
 
     let refused = ensure_agent_task_trust(false, false, request.isolation)
@@ -846,6 +848,7 @@ fn prepare_forwards_the_launch_flags_into_the_argv() {
         context: ClaudeContextChoice::TwoHundredK,
         fast_mode: false,
         thinking_mode: false,
+        chrome: true,
     };
 
     let prepared = prepare_test_request(&request).expect("prepare launch start");
@@ -863,10 +866,31 @@ fn prepare_forwards_the_launch_flags_into_the_argv() {
             "sonnet".to_string(),
             "--permission-mode".to_string(),
             "acceptEdits".to_string(),
+            "--chrome".to_string(),
             "--effort".to_string(),
             "high".to_string(),
         ]
     );
+}
+
+#[test]
+fn prepare_drops_the_chrome_flag_for_a_thread_that_turned_browser_integration_off() {
+    let workspace = TempWorkspace::create("launch-plan-chrome-off");
+    let worktree = workspace.worktree("agt-test-0001");
+    let mut request = start_request(&workspace, &worktree, AgentTaskIsolation::Worktree);
+    request.launch = AgentLaunchOptions::ClaudeCode {
+        model: ClaudeModelChoice::Sonnet,
+        mode: ClaudePermissionMode::AcceptEdits,
+        effort: ClaudeEffortChoice::High,
+        context: ClaudeContextChoice::TwoHundredK,
+        fast_mode: false,
+        thinking_mode: false,
+        chrome: false,
+    };
+
+    let prepared = prepare_test_request(&request).expect("prepare launch start");
+
+    assert!(!prepared.plan.args().iter().any(|arg| arg == "--chrome"));
 }
 
 #[test]
@@ -883,6 +907,7 @@ fn the_start_request_contract_requires_a_launch_and_rejects_unknown_fields() {
             context: ClaudeContextChoice::TwoHundredK,
             fast_mode: false,
             thinking_mode: false,
+            chrome: true,
         }
     );
 
@@ -915,6 +940,7 @@ fn prepare_forwards_a_validated_resume_session_id_to_the_argv() {
             "--input-format".to_string(),
             "stream-json".to_string(),
             "--dangerously-skip-permissions".to_string(),
+            "--chrome".to_string(),
             "--effort".to_string(),
             "high".to_string(),
             "--resume".to_string(),

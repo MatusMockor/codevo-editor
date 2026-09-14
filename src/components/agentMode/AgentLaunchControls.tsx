@@ -3,7 +3,7 @@ import { AgentComposerCompactMenu } from "./AgentComposerCompactMenu";
 import { Lock, LockOpen, PenLine, Sparkles } from "lucide-react";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
-import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentExecutionTarget, AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
   agentLaunchAccess,
@@ -36,6 +36,7 @@ export interface AgentLaunchControlsProps {
     { readonly kind: "inline" } | { readonly kind: "compact"; readonly checkout: ReactNode };
   readonly launch: AgentLaunchOptions;
   readonly disabled: boolean;
+  readonly executionTarget?: AgentExecutionTarget;
   readonly favorites: AgentModelFavorites;
   readonly providerEnabled?: Readonly<Record<AgentCliKind, boolean>> | null;
   readonly providerManagement?: AgentProviderManagementSurface | null;
@@ -48,6 +49,7 @@ export function AgentLaunchControls({
   openRequest = null,
   onOpenRequestHandled,
   presentation = { kind: "inline" },
+  executionTarget = "local",
   favorites,
   launch,
   onLaunchChange,
@@ -72,6 +74,7 @@ export function AgentLaunchControls({
             openRequest={openRequest?.kind === "reasoning" ? openRequest : null}
             configuredModel={configuredModel}
             disabled={disabled}
+            executionTarget={executionTarget}
             launch={effectiveLaunch}
             onChange={onLaunchChange}
           />

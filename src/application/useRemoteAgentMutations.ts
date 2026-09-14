@@ -11,6 +11,7 @@ import type {
   RemoteRunnerTask,
 } from "../domain/remoteRunner";
 import { isRemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
+import { agentLaunchWithoutBrowser, type AgentLaunchOptions } from "../domain/agentLaunch";
 
 export interface RemoteAgentMutationTarget {
   readonly serverId: string;
@@ -31,9 +32,8 @@ interface Options {
   ): Promise<readonly RemoteRunnerPart[]>;
 }
 type Request = AgentThreadStartRequest | AgentFollowUpRequest;
-function sameLaunch(task: RemoteRunnerTask, request: Request): boolean {
+function sameLaunch(task: RemoteRunnerTask, expected: AgentLaunchOptions): boolean {
   const actual = task.launch;
-  const expected = request.launch;
   if (!actual) return false;
   if (
     actual.provider !== expected.provider ||
@@ -107,10 +107,11 @@ export function useRemoteAgentMutations(options: Options) {
     active.current = true;
     setBusy(true);
     const targetKey = key(target);
+    const launch = agentLaunchWithoutBrowser(request.launch);
     const signature = JSON.stringify([
       continuation,
       request.prompt,
-      request.launch,
+      launch,
       request.attachments ?? [],
       request.attachmentOwner ?? null,
     ]);
@@ -121,8 +122,7 @@ export function useRemoteAgentMutations(options: Options) {
         throw new Error(
           "Retry the original message before changing it or starting another conversation.",
         );
-      const provider: RemoteRunnerProvider =
-        request.launch.provider === "claudeCode" ? "claude" : "codex";
+      const provider: RemoteRunnerProvider = launch.provider === "claudeCode" ? "claude" : "codex";
       if (!command) {
         if (
           (!request.prompt.trim() && !request.attachments?.length) ||
@@ -192,7 +192,7 @@ export function useRemoteAgentMutations(options: Options) {
           taskId: command.parentTaskId!,
           idempotencyKey: command.idempotencyKey,
           parts: command.parts,
-          launch: request.launch,
+          launch,
         };
         task = (await gateway.continueTask(wire)).task;
         if (!valid()) return null;
@@ -209,14 +209,14 @@ export function useRemoteAgentMutations(options: Options) {
           idempotencyKey: command.idempotencyKey,
           provider,
           parts: command.parts,
-          launch: request.launch,
+          launch,
         };
         task = (await gateway.createTask(wire)).task;
         if (!valid()) return null;
         if (
           task.runnerId !== target.runnerId ||
           task.provider !== provider ||
-          !sameLaunch(task, request) ||
+          !sameLaunch(task, launch) ||
           !sameParts(task.parts, command.parts) ||
           task.parentTaskId ||
           (task.conversationId !== undefined && task.conversationId !== task.id) ||
@@ -244,7 +244,7 @@ export function useRemoteAgentMutations(options: Options) {
         task.runnerId !== target.runnerId ||
         task.provider !== provider ||
         task.projectId !== target.projectId ||
-        !sameLaunch(task, request) ||
+        !sameLaunch(task, launch) ||
         !sameParts(task.parts, command.parts)
       )
         throw new Error("The runner returned a different remote task.");

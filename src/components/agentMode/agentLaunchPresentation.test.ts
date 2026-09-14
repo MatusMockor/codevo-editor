@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
-import { CLAUDE_EFFORT_CHOICES, CODEX_MODEL_CHOICES } from "../../domain/agentLaunch";
+import {
+  CLAUDE_EFFORT_CHOICES,
+  CLAUDE_MODEL_CHOICES,
+  CODEX_MODEL_CHOICES,
+} from "../../domain/agentLaunch";
 import {
   MAX_AGENT_MODEL_QUERY_LENGTH,
   agentLaunchAccess,
@@ -27,7 +31,9 @@ import {
   agentLaunchModelLabel,
   agentLaunchModelMeta,
   agentLaunchSupportsEffort,
+  agentClaudeLaunchTraits,
   agentLaunchTone,
+  agentLaunchWithChrome,
   agentLaunchWithEffort,
   agentLaunchWithMode,
   agentLaunchWithModel,
@@ -454,6 +460,36 @@ describe("agent model rows", () => {
     expect(agentModelRows("claudeCode", null, "2.1.260").map((row) => row.value)).toContain(
       "claude-fable-5-1",
     );
+  });
+
+  it("offers browser integration on every Claude model and keeps it off Codex launches", () => {
+    const claude = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "1m",
+    } as const;
+    for (const model of CLAUDE_MODEL_CHOICES) {
+      expect(agentClaudeLaunchTraits({ ...claude, model }, null, "local").chrome).toBe(true);
+      expect(agentClaudeLaunchTraits({ ...claude, model }, null, "server").chrome).toBe(false);
+    }
+    expect(agentLaunchWithChrome(claude, false, null)).toEqual({ ...claude, chrome: false });
+    expect(agentLaunchWithChrome({ ...claude, chrome: false }, true, null)).toEqual({
+      ...claude,
+      chrome: true,
+    });
+    expect(agentLaunchWithChrome({ ...claude, model: "default" }, false, "claude-opus-5")).toEqual({
+      ...claude,
+      model: "claude-opus-5",
+      chrome: false,
+    });
+    const codex: AgentLaunchOptions = {
+      provider: "codex",
+      model: "gpt-5.5",
+      mode: "workspaceWrite",
+    };
+    expect(agentLaunchWithChrome(codex, false, null)).toBe(codex);
   });
 
   it("bounds the query length and keeps only starred rows under the favorites filter", () => {

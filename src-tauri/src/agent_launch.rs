@@ -117,6 +117,8 @@ pub enum AgentLaunchOptions {
         fast_mode: bool,
         #[serde(default, skip_serializing_if = "is_false")]
         thinking_mode: bool,
+        #[serde(default = "default_true", skip_serializing_if = "is_true")]
+        chrome: bool,
     },
     #[serde(rename_all = "camelCase")]
     Codex {
@@ -134,6 +136,7 @@ impl Default for AgentLaunchOptions {
             context: ClaudeContextChoice::OneM,
             fast_mode: false,
             thinking_mode: false,
+            chrome: true,
         }
     }
 }
@@ -190,6 +193,13 @@ impl AgentLaunchOptions {
         }
     }
 
+    pub fn browser_args(&self) -> &'static [&'static str] {
+        match self {
+            Self::ClaudeCode { chrome: true, .. } => &["--chrome"],
+            _ => &[],
+        }
+    }
+
     pub fn effort_args(&self) -> &'static [&'static str] {
         match self {
             Self::ClaudeCode { effort, .. } => claude_effort_args(*effort),
@@ -238,6 +248,14 @@ impl AgentLaunchOptions {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn claude_model_supports_fast_mode(model: ClaudeModelChoice) -> bool {
@@ -482,6 +500,7 @@ mod tests {
             context: ClaudeContextChoice::TwoHundredK,
             fast_mode: false,
             thinking_mode: false,
+            chrome: true,
         }
     }
 
@@ -534,6 +553,7 @@ mod tests {
             context: ClaudeContextChoice::OneM,
             fast_mode: false,
             thinking_mode: false,
+            chrome: true,
         };
         assert_eq!(launch.model_args(), &["--model", "fable[1m]"]);
     }
@@ -600,6 +620,7 @@ mod tests {
             context: ClaudeContextChoice::OneM,
             fast_mode: true,
             thinking_mode: false,
+            chrome: true,
         };
         assert_eq!(
             launch.settings_args(),
@@ -616,6 +637,7 @@ mod tests {
             context: ClaudeContextChoice::TwoHundredK,
             fast_mode: false,
             thinking_mode: true,
+            chrome: true,
         };
         assert_eq!(
             launch.settings_args(),
@@ -664,6 +686,7 @@ mod tests {
             context: ClaudeContextChoice::OneM,
             fast_mode: true,
             thinking_mode: false,
+            chrome: true,
         };
         assert_eq!(
             unsupported_fast.validate_capabilities(),
@@ -676,6 +699,7 @@ mod tests {
             context: ClaudeContextChoice::OneM,
             fast_mode: true,
             thinking_mode: false,
+            chrome: true,
         }
         .validate_capabilities()
         .is_ok());
@@ -713,6 +737,28 @@ mod tests {
             )
         );
         assert!(decoded.effort_args().is_empty());
+    }
+
+    #[test]
+    fn claude_browser_integration_is_on_unless_the_thread_turned_it_off() {
+        let stored: AgentLaunchOptions =
+            serde_json::from_str(r#"{"provider":"claudeCode","model":"sonnet","mode":"plan"}"#)
+                .expect("schema 1 claude launch decodes");
+        assert_eq!(stored.browser_args(), &["--chrome"]);
+        assert_eq!(AgentLaunchOptions::default().browser_args(), &["--chrome"]);
+        assert!(codex(CodexModelChoice::Gpt56Sol, CodexExecutionMode::Auto)
+            .browser_args()
+            .is_empty());
+
+        let off_wire = r#"{"provider":"claudeCode","model":"sonnet","mode":"plan","effort":"default","context":"200k","chrome":false}"#;
+        let off: AgentLaunchOptions =
+            serde_json::from_str(off_wire).expect("chrome-off launch decodes");
+        assert!(off.browser_args().is_empty());
+        assert_eq!(
+            serde_json::to_string(&off).expect("chrome-off launch encodes"),
+            off_wire
+        );
+        assert_eq!(off.validate_capabilities(), Ok(()));
     }
 
     #[test]

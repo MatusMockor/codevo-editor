@@ -425,6 +425,7 @@ fn agent_invocation_args(
     };
     template.extend_from_slice(launch.model_args());
     template.extend_from_slice(launch.mode_args(resumed));
+    template.extend_from_slice(launch.browser_args());
     template.extend_from_slice(launch.effort_args());
     template.extend_from_slice(launch.settings_args());
     let mut args: Vec<String> = template.into_iter().map(str::to_string).collect();

@@ -7,6 +7,11 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Give Claude threads on this computer the Claude in Chrome browser tools, on by
+  default and switchable per thread under Browser in the model capabilities menu.
+
 ## [0.2.0-beta.39] - 2026-09-13
 
 ### Added

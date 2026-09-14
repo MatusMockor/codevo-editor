@@ -3,6 +3,7 @@ import { ChevronDown } from "lucide-react";
 import { useLayoutEffect, type ReactNode } from "react";
 import { focusFirstInPopover, trapPopoverTab } from "./agentPopoverFocus";
 import type {
+  AgentExecutionTarget,
   AgentLaunchOptions,
   ClaudeContextChoice,
   ClaudeEffortChoice,
@@ -11,6 +12,7 @@ import {
   agentClaudeLaunchTraits,
   agentLaunchContextLabel,
   agentLaunchEffortLabel,
+  agentLaunchWithChrome,
   agentLaunchWithContext,
   agentLaunchWithEffort,
   agentLaunchWithFastMode,
@@ -21,6 +23,7 @@ import { useAgentPopover } from "./agentPopover";
 interface AgentTraitsPickerProps {
   readonly launch: AgentLaunchOptions & { readonly provider: "claudeCode" };
   readonly disabled: boolean;
+  readonly executionTarget: AgentExecutionTarget;
   readonly openRequest?: object | null;
   onOpenRequestHandled?(): void;
   readonly configuredModel: string | null;
@@ -45,6 +48,7 @@ const CONTEXT_LABELS: Readonly<Record<ClaudeContextChoice, string>> = {
 export function AgentTraitsPicker({
   configuredModel,
   disabled,
+  executionTarget,
   openRequest = null,
   onOpenRequestHandled,
   launch,
@@ -57,7 +61,7 @@ export function AgentTraitsPicker({
   useLayoutEffect(() => {
     if (open) focusFirstInPopover(popoverRef.current);
   }, [open, popoverRef]);
-  const traits = agentClaudeLaunchTraits(launch, configuredModel);
+  const traits = agentClaudeLaunchTraits(launch, configuredModel, executionTarget);
   const effort =
     launch.effort !== "default" && traits.efforts.includes(launch.effort)
       ? launch.effort
@@ -72,6 +76,7 @@ export function AgentTraitsPicker({
     ...(traits.efforts.length > 0 ? [agentLaunchEffortLabel({ ...launch, effort })] : []),
     ...(context === null ? [] : [agentLaunchContextLabel(context)]),
     ...(traits.thinkingMode ? [`Thinking ${launch.thinkingMode === true ? "On" : "Off"}`] : []),
+    ...(traits.chrome && launch.chrome === false ? ["Chrome Off"] : []),
   ].join(" · ");
   return (
     <div
@@ -170,6 +175,22 @@ export function AgentTraitsPicker({
                 onSelect={() =>
                   onChange(agentLaunchWithThinkingMode(launch, false, configuredModel))
                 }
+              />
+            </TraitGroup>
+          )}
+          {traits.chrome && (
+            <TraitGroup label="Browser">
+              <TraitOption
+                checked={launch.chrome !== false}
+                description="Exposes the Claude in Chrome browser tools"
+                isDefault
+                label="Chrome"
+                onSelect={() => onChange(agentLaunchWithChrome(launch, true, configuredModel))}
+              />
+              <TraitOption
+                checked={launch.chrome === false}
+                label="Off"
+                onSelect={() => onChange(agentLaunchWithChrome(launch, false, configuredModel))}
               />
             </TraitGroup>
           )}

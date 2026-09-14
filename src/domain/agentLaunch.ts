@@ -62,6 +62,9 @@ export type ClaudeEffortChoice = (typeof CLAUDE_EFFORT_CHOICES)[number];
 export const CLAUDE_CONTEXT_CHOICES = ["200k", "1m"] as const;
 export type ClaudeContextChoice = (typeof CLAUDE_CONTEXT_CHOICES)[number];
 
+export const AGENT_EXECUTION_TARGETS = ["local", "server"] as const;
+export type AgentExecutionTarget = (typeof AGENT_EXECUTION_TARGETS)[number];
+
 export interface ClaudeLaunchOptions {
   readonly provider: "claudeCode";
   readonly model: ClaudeModelChoice;
@@ -70,6 +73,7 @@ export interface ClaudeLaunchOptions {
   readonly context?: ClaudeContextChoice;
   readonly fastMode?: boolean;
   readonly thinkingMode?: boolean;
+  readonly chrome?: boolean;
 }
 
 export interface CodexLaunchOptions {
@@ -120,9 +124,17 @@ export function serializeAgentLaunchOptions(options: AgentLaunchOptions): Record
       ...(options.context === undefined ? {} : { context: options.context }),
       ...(options.fastMode === undefined ? {} : { fastMode: options.fastMode }),
       ...(options.thinkingMode === undefined ? {} : { thinkingMode: options.thinkingMode }),
+      ...(options.chrome === undefined ? {} : { chrome: options.chrome }),
     };
   }
   return { provider: options.provider, model: options.model, mode: options.mode };
+}
+
+export function agentLaunchWithoutBrowser(options: AgentLaunchOptions): AgentLaunchOptions {
+  if (options.provider !== "claudeCode") return options;
+  if (options.chrome === undefined) return options;
+  const { chrome: _chrome, ...rest } = options;
+  return rest;
 }
 
 export function agentLaunchMatchesProvider(
@@ -152,7 +164,8 @@ export function agentLaunchOptionsEqual(a: AgentLaunchOptions, b: AgentLaunchOpt
       a.effort === b.effort &&
       (a.context ?? "1m") === (b.context ?? "1m") &&
       (a.fastMode ?? false) === (b.fastMode ?? false) &&
-      (a.thinkingMode ?? false) === (b.thinkingMode ?? false)
+      (a.thinkingMode ?? false) === (b.thinkingMode ?? false) &&
+      (a.chrome ?? true) === (b.chrome ?? true)
     );
   }
   return true;
@@ -177,6 +190,9 @@ function parseLaunchOptions(value: unknown, path: string, stored: boolean): Agen
       ...(options.thinkingMode === undefined
         ? {}
         : { thinkingMode: boolean(options.thinkingMode, `${path}.thinkingMode`) }),
+      ...(options.chrome === undefined
+        ? {}
+        : { chrome: boolean(options.chrome, `${path}.chrome`) }),
     };
   }
   exactKeys(options, ["provider", "model", "mode"], path);
@@ -196,6 +212,7 @@ function claudeLaunchKeys(
   if ("context" in options) keys.push("context");
   if ("fastMode" in options) keys.push("fastMode");
   if ("thinkingMode" in options) keys.push("thinkingMode");
+  if ("chrome" in options) keys.push("chrome");
   return keys;
 }
 

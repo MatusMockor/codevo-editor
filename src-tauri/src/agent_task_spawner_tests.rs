@@ -95,6 +95,7 @@ fn claude_default() -> AgentLaunchOptions {
         context: ClaudeContextChoice::OneM,
         fast_mode: false,
         thinking_mode: false,
+        chrome: true,
     }
 }
 
@@ -363,7 +364,15 @@ fn claude_first_turn_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
             claude_default(),
             &no_attachments()
         ),
-        CLAUDE_BASE_ARGV
+        [
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--input-format",
+            "stream-json",
+            "--chrome"
+        ]
     );
     assert_eq!(
         claude_user_frame("do it", &[]),
@@ -390,6 +399,7 @@ fn claude_follow_up_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
             "--verbose",
             "--input-format",
             "stream-json",
+            "--chrome",
             "--resume",
             SESSION_ID
         ]
@@ -446,6 +456,7 @@ fn claude_argv_places_model_then_mode_then_resume_after_the_stream_json_input_fo
                 context: ClaudeContextChoice::TwoHundredK,
                 fast_mode: false,
                 thinking_mode: false,
+                chrome: true,
             },
             &no_attachments()
         ),
@@ -460,10 +471,54 @@ fn claude_argv_places_model_then_mode_then_resume_after_the_stream_json_input_fo
             "opus",
             "--permission-mode",
             "acceptEdits",
+            "--chrome",
             "--resume",
             SESSION_ID
         ]
     );
+}
+
+#[test]
+fn claude_browser_integration_drops_the_chrome_flag_only_when_the_thread_turns_it_off() {
+    let off = AgentLaunchOptions::ClaudeCode {
+        model: ClaudeModelChoice::Opus,
+        mode: ClaudePermissionMode::AcceptEdits,
+        effort: ClaudeEffortChoice::Default,
+        context: ClaudeContextChoice::TwoHundredK,
+        fast_mode: false,
+        thinking_mode: false,
+        chrome: false,
+    };
+    assert_eq!(
+        agent_invocation_args(
+            AgentCliInvocation::ClaudeCode,
+            "do it",
+            None,
+            off,
+            &no_attachments()
+        ),
+        [
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--input-format",
+            "stream-json",
+            "--model",
+            "opus",
+            "--permission-mode",
+            "acceptEdits"
+        ]
+    );
+    assert!(!agent_invocation_args(
+        AgentCliInvocation::CodexExec,
+        "do it",
+        None,
+        codex_default(),
+        &no_attachments()
+    )
+    .iter()
+    .any(|arg| arg == "--chrome"));
 }
 
 #[test]
@@ -480,6 +535,7 @@ fn claude_ultracode_and_fast_mode_reach_the_cli_as_runtime_settings() {
                 context: ClaudeContextChoice::OneM,
                 fast_mode: true,
                 thinking_mode: false,
+                chrome: true,
             },
             &no_attachments()
         ),
@@ -493,6 +549,7 @@ fn claude_ultracode_and_fast_mode_reach_the_cli_as_runtime_settings() {
             "--model",
             "opus[1m]",
             "--dangerously-skip-permissions",
+            "--chrome",
             "--effort",
             "xhigh",
             "--settings",
@@ -510,6 +567,7 @@ fn claude_ultrathink_changes_the_dispatched_prompt_without_an_invalid_effort_fla
         context: ClaudeContextChoice::OneM,
         fast_mode: false,
         thinking_mode: false,
+        chrome: true,
     };
     let args = agent_invocation_args(
         AgentCliInvocation::ClaudeCode,
@@ -624,6 +682,7 @@ fn claude_argv_table_covers_every_model_mode_and_resume_combination() {
                     context: ClaudeContextChoice::TwoHundredK,
                     fast_mode: false,
                     thinking_mode: false,
+                    chrome: true,
                 };
                 for resume in [None, Some(SESSION_ID)] {
                     for images in [0usize, 1, 8] {
@@ -636,6 +695,7 @@ fn claude_argv_table_covers_every_model_mode_and_resume_combination() {
                                 .iter()
                                 .map(|arg| (*arg).to_string()),
                         );
+                        expected.extend(launch.browser_args().iter().map(|arg| (*arg).to_string()));
                         expected.extend(launch.effort_args().iter().map(|arg| (*arg).to_string()));
                         expected
                             .extend(launch.settings_args().iter().map(|arg| (*arg).to_string()));

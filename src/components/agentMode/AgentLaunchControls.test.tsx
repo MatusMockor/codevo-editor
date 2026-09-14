@@ -7,7 +7,7 @@ import type { AgentModelFavorites } from "../../application/useAgentModelFavorit
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
-import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentExecutionTarget, AgentLaunchOptions } from "../../domain/agentLaunch";
 import { AgentLaunchControls } from "./AgentLaunchControls";
 
 const NO_FAVORITES: AgentModelFavorites = {
@@ -280,6 +280,7 @@ describe("AgentLaunchControls", () => {
       "Reasoning",
       "Context Window",
       "Fast Mode",
+      "Browser",
     ]);
     expect(
       [...groups[0]!.querySelectorAll<HTMLElement>('[role="radio"]')].map((option) =>
@@ -294,6 +295,73 @@ describe("AgentLaunchControls", () => {
     expect(groups[1]!.textContent).toContain("1MDefault");
     expect(groups[2]!.textContent).toContain("OnOff");
     expect(groups[2]!.textContent).not.toContain("Default");
+    expect(groups[3]!.textContent).toContain("ChromeDefault");
+    expect(groups[3]!.textContent).toContain("Exposes the Claude in Chrome browser tools");
+    expect(
+      [...groups[3]!.querySelectorAll<HTMLElement>('[role="radio"]')].map((option) =>
+        option.getAttribute("aria-checked"),
+      ),
+    ).toEqual(["true", "false"]);
+  });
+
+  it("keeps browser integration on by default and reports turning it off", () => {
+    const onLaunchChange = vi.fn();
+    const launch: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "1m",
+      fastMode: false,
+    };
+    renderControls(launch, onLaunchChange);
+
+    const browserOption = (label: string) =>
+      [
+        ...([...host.querySelectorAll<HTMLElement>('[role="group"]')]
+          .find((group) => group.getAttribute("aria-label") === "Browser")
+          ?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []),
+      ].find(
+        (candidate) =>
+          candidate.querySelector(".agent-picker__label")?.childNodes[0]?.textContent?.trim() ===
+          label,
+      );
+
+    expect(trigger("agent-launch-effort").textContent).not.toContain("Chrome");
+    open("agent-launch-effort");
+    const off = browserOption("Off");
+    expect(off).not.toBeUndefined();
+    act(() => off?.click());
+    expect(onLaunchChange).toHaveBeenNthCalledWith(1, { ...launch, chrome: false });
+
+    renderControls({ ...launch, chrome: false }, onLaunchChange);
+    expect(trigger("agent-launch-effort").textContent).toContain("Chrome Off");
+    const on = browserOption("Chrome");
+    expect(on).not.toBeUndefined();
+    act(() => on?.click());
+    expect(onLaunchChange).toHaveBeenNthCalledWith(2, { ...launch, chrome: true });
+  });
+
+  it("hides browser integration for a thread running on a remote execution server", () => {
+    const launch: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "1m",
+      fastMode: false,
+      chrome: false,
+    };
+    renderControls(launch, () => undefined, false, null, "server");
+
+    expect(trigger("agent-launch-effort").textContent).not.toContain("Chrome Off");
+    open("agent-launch-effort");
+    expect(
+      [...host.querySelectorAll<HTMLElement>('[role="group"]')].map((group) =>
+        group.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Reasoning", "Context Window", "Fast Mode"]);
+    expect(host.textContent).not.toContain("Exposes the Claude in Chrome browser tools");
   });
 
   it("persists Ultracode and Fast Mode as executable launch options", () => {
@@ -417,11 +485,13 @@ describe("AgentLaunchControls", () => {
     onLaunchChange: (next: AgentLaunchOptions) => void = () => undefined,
     disabled = false,
     providerManagement: AgentProviderManagementSurface | null = null,
+    executionTarget: AgentExecutionTarget = "local",
   ): void {
     act(() =>
       root.render(
         <AgentLaunchControls
           disabled={disabled}
+          executionTarget={executionTarget}
           favorites={NO_FAVORITES}
           launch={launch}
           onLaunchChange={onLaunchChange}

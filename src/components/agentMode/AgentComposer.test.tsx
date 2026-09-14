@@ -7,6 +7,7 @@ import type { AgentProviderManagementSurface } from "../../application/useAgentP
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "../../domain/agentTask";
+import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
   AgentComposer,
   type AgentComposerProps,
@@ -719,6 +720,40 @@ describe("AgentComposer", () => {
       },
       dangerousLaunchConfirmed: false,
     });
+  });
+
+  it("keeps the browser flag off a submission bound for a remote execution server", () => {
+    const onSubmit = vi.fn();
+    const launch: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "sonnet",
+      mode: "acceptEdits",
+      effort: "max",
+      chrome: false,
+    };
+    render({
+      executionServerId: "srv-1",
+      launch,
+      mode: { kind: "followUp", blockedReason: null },
+      onSubmit,
+      prompt: "Also update the tests",
+    });
+
+    expect(host.textContent).not.toContain("Chrome Off");
+    pressAccelerator();
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      launch: {
+        provider: "claudeCode",
+        model: "sonnet",
+        mode: "acceptEdits",
+        effort: "max",
+        context: "1m",
+      },
+      dangerousLaunchConfirmed: false,
+    });
+    const [submission] = onSubmit.mock.calls[0] as [{ readonly launch: AgentLaunchOptions }];
+    expect(submission.launch).not.toHaveProperty("chrome");
   });
 
   it("shows and dismisses a context offer and submits the provider compact command", () => {

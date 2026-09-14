@@ -276,6 +276,7 @@ fn a_launch_stamped_thread_survives_a_save_and_load_round_trip() {
         context: crate::agent_task_spawner::agent_launch::ClaudeContextChoice::OneM,
         fast_mode: false,
         thinking_mode: false,
+        chrome: true,
     });
 
     store
@@ -285,6 +286,50 @@ fn a_launch_stamped_thread_survives_a_save_and_load_round_trip() {
 
     assert_eq!(loaded.threads, vec![document.thread]);
     assert!(loaded.unreadable.is_empty());
+}
+
+#[test]
+fn a_stored_thread_keeps_browser_integration_off_and_defaults_older_threads_on() {
+    let workspace = TempStore::create("launch-chrome-round-trip");
+    let store = workspace.store();
+    let mut document = thread_document(ROOT_KEY, "agt-thread-0001", 10);
+    document.thread.turns[0].launch = Some(AgentLaunchOptions::ClaudeCode {
+        model: crate::agent_task_spawner::agent_launch::ClaudeModelChoice::Sonnet,
+        mode: crate::agent_task_spawner::agent_launch::ClaudePermissionMode::AcceptEdits,
+        effort: crate::agent_task_spawner::agent_launch::ClaudeEffortChoice::Xhigh,
+        context: crate::agent_task_spawner::agent_launch::ClaudeContextChoice::OneM,
+        fast_mode: false,
+        thinking_mode: false,
+        chrome: false,
+    });
+    store.save(ROOT_KEY, &document).expect("save chrome-off");
+
+    let path = workspace.thread_path(ROOT_KEY, "agt-thread-0001");
+    let encoded: Value =
+        serde_json::from_str(&fs::read_to_string(&path).expect("read saved thread"))
+            .expect("decode saved thread");
+    assert_eq!(
+        encoded["thread"]["turns"][0]["launch"]["chrome"],
+        json!(false)
+    );
+    assert_eq!(
+        store.load(ROOT_KEY).expect("load chrome-off").threads,
+        vec![document.thread.clone()]
+    );
+
+    let mut older: Value =
+        serde_json::from_str(&fs::read_to_string(&path).expect("read saved thread"))
+            .expect("decode saved thread");
+    older["thread"]["turns"][0]["launch"]
+        .as_object_mut()
+        .expect("launch object")
+        .remove("chrome");
+    fs::write(&path, older.to_string()).expect("write pre-chrome thread");
+
+    let loaded = store.load(ROOT_KEY).expect("load pre-chrome thread");
+    assert!(loaded.unreadable.is_empty());
+    let launch = loaded.threads[0].turns[0].launch.expect("launch retained");
+    assert_eq!(launch.browser_args(), &["--chrome"]);
 }
 
 #[test]

@@ -9,6 +9,7 @@ import {
   agentLaunchIsDangerous,
   agentLaunchMatchesProvider,
   agentLaunchOptionsEqual,
+  agentLaunchWithoutBrowser,
   defaultAgentLaunchOptions,
   parseAgentLaunchOptions,
   parseStoredAgentLaunchOptions,
@@ -29,6 +30,9 @@ describe("agentLaunch", () => {
       fastMode: false,
       thinkingMode: false,
     });
+    expect(serializeAgentLaunchOptions(defaultAgentLaunchOptions("claudeCode"))).not.toHaveProperty(
+      "chrome",
+    );
     expect(defaultAgentLaunchOptions("codex")).toEqual({
       provider: "codex",
       model: "default",
@@ -170,6 +174,47 @@ describe("agentLaunch", () => {
         "launch",
       ),
     ).toThrow(/launch\.fastMode/);
+  });
+
+  it("treats an absent browser flag as the on default and round trips an explicit off", () => {
+    const stored = { provider: "claudeCode", model: "opus", mode: "plan", effort: "default" };
+    const absent = parseAgentLaunchOptions(stored, "launch") as ClaudeLaunchOptions;
+    expect(absent).toEqual(stored);
+    expect(serializeAgentLaunchOptions(absent)).toEqual(stored);
+    expect(agentLaunchOptionsEqual(absent, { ...absent, chrome: true })).toBe(true);
+    expect(agentLaunchOptionsEqual(absent, { ...absent, chrome: false })).toBe(false);
+
+    const off: ClaudeLaunchOptions = { ...absent, chrome: false };
+    expect(serializeAgentLaunchOptions(off)).toEqual({ ...stored, chrome: false });
+    expect(parseAgentLaunchOptions(serializeAgentLaunchOptions(off), "launch")).toEqual(off);
+    expect(parseStoredAgentLaunchOptions({ ...stored, chrome: false }, "launch")).toEqual(off);
+    expect(() => parseAgentLaunchOptions({ ...stored, chrome: "on" }, "launch")).toThrow(
+      /launch\.chrome/,
+    );
+  });
+
+  it("strips the browser flag from a launch bound for a remote execution server", () => {
+    const local: ClaudeLaunchOptions = {
+      provider: "claudeCode",
+      model: "opus",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "1m",
+      chrome: false,
+    };
+    const remote = agentLaunchWithoutBrowser(local);
+    expect(remote).not.toHaveProperty("chrome");
+    expect(serializeAgentLaunchOptions(remote)).not.toHaveProperty("chrome");
+    expect(agentLaunchWithoutBrowser({ ...local, chrome: true })).not.toHaveProperty("chrome");
+
+    const absent: ClaudeLaunchOptions = { ...local, chrome: undefined };
+    expect(agentLaunchWithoutBrowser(absent)).toBe(absent);
+    const codex: AgentLaunchOptions = {
+      provider: "codex",
+      model: "gpt-5.5",
+      mode: "workspaceWrite",
+    };
+    expect(agentLaunchWithoutBrowser(codex)).toBe(codex);
   });
 
   it("rejects unknown providers, models, and modes", () => {
