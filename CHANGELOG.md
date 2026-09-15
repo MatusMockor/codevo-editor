@@ -7,6 +7,29 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.41] - 2026-09-15
+
+### Improved
+
+- Receive server conversation updates through a persistent connection and avoid
+  repeatedly loading unchanged completed turns.
+- Keep unchanged conversation content stable while new server output arrives,
+  preserving the existing thread interface.
+
+### Added
+
+- Search stored user and assistant messages on connected servers, including
+  history that has not been loaded in the editor, using literal text queries.
+
+### Fixed
+
+- Load and highlight older server messages when opening a history search result.
+
+### Limitations
+
+- Searching the full server history requires a connected, updated runner.
+  A complete offline copy of server history is not available.
+
 ## [0.2.0-beta.40] - 2026-09-14
 
 ### Added
