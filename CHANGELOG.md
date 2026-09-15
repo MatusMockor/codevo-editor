@@ -7,6 +7,33 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.44] - 2026-09-15
+
+### Added
+
+- Show queued follow-up messages in the conversation and their count above the
+  composer, with a shortcut to the pending messages.
+- Queue server follow-ups durably on compatible runners, retaining attachments
+  and conversation context while the editor is disconnected.
+
+### Improved
+
+- Let the composer grow with longer drafts before scrolling, within viewport limits.
+- Allow switching providers before the first message without losing the draft or
+  its attachments.
+- Keep queued messages paused after Stop or a failed turn until explicitly resumed.
+
+### Fixed
+
+- Handle large command-output frames without terminating supported Codex
+  conversations, while retaining bounded output and strict control-frame limits.
+- Preserve screenshot attachments when queued local messages are dispatched.
+
+### Limitations
+
+- Durable server queues require an updated runner advertising pending-message
+  support. Local queued messages are retained only while the editor is running.
+
 ## [0.2.0-beta.43] - 2026-09-15
 
 ### Improved
