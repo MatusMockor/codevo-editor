@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.43] - 2026-09-15
+
+### Improved
+
+- Automatically attempt to connect saved servers once when the editor starts,
+  while keeping this computer as the default execution target.
+- Respect manually disconnected servers for the rest of the editor session.
+
 ## [0.2.0-beta.42] - 2026-09-15
 
 ### Fixed
