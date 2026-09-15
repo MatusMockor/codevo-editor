@@ -1,3 +1,4 @@
+import { RemoteRunnerStartupConnections } from "./remoteRunnerStartupConnections";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   RemoteRunnerGateway,
@@ -31,8 +32,15 @@ export function useRemoteRunnerConnections({
   const operation = useRef(0);
   const nextOperation = useCallback(() => ++operation.current, []);
   const busy = useRef(false);
+  const startup = useRef<RemoteRunnerStartupConnections | null>(null);
   const refresh = useCallback(async () => {
-    if (busy.current || owner.current !== renderOwner || !mounted.current) return;
+    if (
+      busy.current ||
+      startup.current?.isRunning ||
+      owner.current !== renderOwner ||
+      !mounted.current
+    )
+      return;
     const captured = renderOwner;
     const sequence = nextOperation();
     const current = () =>
@@ -42,8 +50,9 @@ export function useRemoteRunnerConnections({
       const result = await gateway.listServers();
       if (!current()) return;
       setServers(result);
-      setError(null);
+      setError(startup.current?.error ?? null);
       setStatus("ready");
+      startup.current?.start(result);
     } catch (failure) {
       if (!current()) return;
       setError(message(failure));
@@ -54,12 +63,21 @@ export function useRemoteRunnerConnections({
     mounted.current = true;
     busy.current = false;
     setServers([]);
+    const pass = new RemoteRunnerStartupConnections(
+      gateway,
+      () => mounted.current && owner.current === renderOwner,
+      (server) =>
+        setServers((previous) => previous.map((item) => (item.id === server.id ? server : item))),
+      (failure) => setError(failure),
+    );
+    startup.current = pass;
     void refresh();
     return () => {
+      void pass.stop();
       mounted.current = false;
       nextOperation();
     };
-  }, [refresh, nextOperation]);
+  }, [refresh, nextOperation, gateway, renderOwner]);
 
   const mutate = useCallback(
     async (action: () => Promise<readonly RemoteRunnerServer[] | RemoteRunnerServer | null>) => {
@@ -72,6 +90,9 @@ export function useRemoteRunnerConnections({
       setStatus("busy");
       setError(null);
       try {
+        // Finish the admitted auto-connect before a manual disconnect/remove can win.
+        await startup.current?.cancelQueued();
+        if (!current()) return null;
         const result = await action();
         if (!current()) return null;
         if (result !== null && !Array.isArray(result)) {

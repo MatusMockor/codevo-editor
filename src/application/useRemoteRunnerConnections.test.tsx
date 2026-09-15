@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RemoteRunnerGateway, RemoteRunnerServer } from "../domain/remoteRunner";
@@ -28,7 +28,7 @@ function deferred<T>() {
 }
 function gateway() {
   return {
-    listServers: vi.fn<RemoteRunnerGateway["listServers"]>().mockResolvedValue([saved]),
+    listServers: vi.fn<RemoteRunnerGateway["listServers"]>().mockResolvedValue([connected]),
     connectServer: vi.fn<RemoteRunnerGateway["connectServer"]>().mockResolvedValue(connected),
     disconnectServer: vi.fn<RemoteRunnerGateway["disconnectServer"]>().mockResolvedValue(),
     removeServer: vi.fn<RemoteRunnerGateway["removeServer"]>().mockResolvedValue(),
@@ -53,7 +53,7 @@ const cleanup: (() => void)[] = [];
 afterEach(() => {
   for (const dispose of cleanup.splice(0)) dispose();
 });
-async function render(initial: RemoteRunnerGateway) {
+async function render(initial: RemoteRunnerGateway, strict = false) {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -71,7 +71,17 @@ async function render(initial: RemoteRunnerGateway) {
     }
   };
   cleanup.push(unmount);
-  await act(async () => root.render(<Harness value={initial} />));
+  await act(async () =>
+    root.render(
+      strict ? (
+        <StrictMode>
+          <Harness value={initial} />
+        </StrictMode>
+      ) : (
+        <Harness value={initial} />
+      ),
+    ),
+  );
   return {
     current: () => surface,
     unmount,
@@ -85,7 +95,7 @@ describe("useRemoteRunnerConnections", () => {
   it("loads saved servers and uses the canonical persisted connect response", async () => {
     const api = gateway();
     const h = await render(api);
-    expect(h.current().servers).toEqual([saved]);
+    expect(h.current().servers).toEqual([connected]);
     expect(h.current().status).toBe("ready");
     const canonical = { ...connected, name: "Saved server name" };
     api.connectServer.mockResolvedValue(canonical);
@@ -259,5 +269,170 @@ describe("useRemoteRunnerConnections", () => {
     });
     expect(h.current().error).toBeNull();
     expect(h.current().servers).toEqual([connected]);
+  });
+});
+
+describe("startup server connections", () => {
+  it("does not publish an obsolete startup failure after manual connection intent", async () => {
+    const api = gateway();
+    api.listServers.mockResolvedValue([saved]);
+    const pending = deferred<RemoteRunnerServer>();
+    const other = { ...saved, id: "other", connected: true };
+    api.connectServer.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(other);
+    const h = await render(api);
+    let manual!: Promise<RemoteRunnerServer | null>;
+    act(() => {
+      manual = h.current().connect(other);
+    });
+    await act(async () => {
+      pending.reject(new Error("Old startup failed"));
+      await manual;
+    });
+    expect(h.current().servers).toEqual([saved, other]);
+    expect(h.current().error).toBeNull();
+    expect(h.current().status).toBe("ready");
+  });
+
+  it.each(["success", "failure"] as const)(
+    "retains an admitted startup connection when manual connection ends in %s",
+    async (outcome) => {
+      const api = gateway();
+      api.listServers.mockResolvedValue([saved]);
+      const pending = deferred<RemoteRunnerServer>();
+      api.connectServer.mockReturnValueOnce(pending.promise);
+      const other = { ...saved, id: "other", name: "Other" };
+      if (outcome === "success")
+        api.connectServer.mockResolvedValueOnce({ ...other, connected: true });
+      else api.connectServer.mockRejectedValueOnce(new Error("Manual connection failed"));
+      const h = await render(api);
+      let manual!: Promise<RemoteRunnerServer | null>;
+      act(() => {
+        manual = h.current().connect(other);
+      });
+      await act(async () => {
+        pending.resolve(connected);
+        await manual;
+      });
+      expect(h.current().servers.find((server) => server.id === saved.id)).toEqual(connected);
+      expect(api.connectServer).toHaveBeenCalledTimes(2);
+      if (outcome === "failure") expect(h.current().error).toBe("Manual connection failed");
+    },
+  );
+
+  it("starts once after a failed initial inventory is manually refreshed", async () => {
+    const api = gateway();
+    api.listServers
+      .mockRejectedValueOnce(new Error("Inventory unavailable"))
+      .mockResolvedValue([saved]);
+    const h = await render(api);
+    expect(h.current().status).toBe("error");
+    expect(api.connectServer).not.toHaveBeenCalled();
+    await act(async () => h.current().refresh());
+    expect(h.current().servers).toEqual([connected]);
+    expect(h.current().error).toBeNull();
+    await act(async () => h.current().refresh());
+    expect(api.connectServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("connects disconnected saved servers once in StrictMode without blocking controls", async () => {
+    const api = gateway();
+    api.listServers.mockResolvedValue([saved]);
+    const pending = deferred<RemoteRunnerServer>();
+    api.connectServer.mockReturnValue(pending.promise);
+    const h = await render(api, true);
+    expect(h.current().status).toBe("ready");
+    expect(api.connectServer).toHaveBeenCalledTimes(1);
+    const initialLists = api.listServers.mock.calls.length;
+    await act(async () => h.current().refresh());
+    expect(api.listServers).toHaveBeenCalledTimes(initialLists);
+    expect(api.connectServer).toHaveBeenCalledWith({
+      id: saved.id,
+      name: saved.name,
+      host: saved.host,
+      username: saved.username,
+      port: saved.port,
+    });
+    await act(async () => pending.resolve(connected));
+    expect(h.current().servers).toEqual([connected]);
+    await act(async () => h.current().refresh());
+    expect(api.connectServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues sequentially after failure and leaves a named error visible", async () => {
+    const api = gateway();
+    const other = { ...saved, id: "second", name: "Second" };
+    api.listServers.mockResolvedValue([saved, other]);
+    const first = deferred<RemoteRunnerServer>();
+    api.connectServer
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({ ...other, connected: true });
+    const h = await render(api);
+    expect(api.connectServer).toHaveBeenCalledTimes(1);
+    await act(async () => first.reject(new Error("Offline")));
+    expect(api.connectServer).toHaveBeenCalledTimes(2);
+    expect(h.current().servers).toEqual([saved, { ...other, connected: true }]);
+    expect(h.current().error).toBe("Linux: Offline");
+    expect(h.current().status).toBe("ready");
+    await act(async () => h.current().refresh());
+    expect(h.current().error).toBe("Linux: Offline");
+    expect(api.connectServer).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["disconnect", "remove"] as const)(
+    "manual %s wins over pending startup and cancels queued attempts",
+    async (action) => {
+      const api = gateway();
+      api.listServers
+        .mockResolvedValueOnce([saved, { ...saved, id: "queued" }])
+        .mockResolvedValue([]);
+      const pending = deferred<RemoteRunnerServer>();
+      api.connectServer.mockReturnValue(pending.promise);
+      const h = await render(api);
+      let manual!: Promise<void>;
+      act(() => {
+        manual = h.current()[action](saved.id);
+      });
+      expect(
+        api[action === "disconnect" ? "disconnectServer" : "removeServer"],
+      ).not.toHaveBeenCalled();
+      await act(async () => {
+        pending.resolve(connected);
+        await manual;
+      });
+      expect(api.connectServer).toHaveBeenCalledTimes(1);
+      expect(
+        api[action === "disconnect" ? "disconnectServer" : "removeServer"],
+      ).toHaveBeenCalledWith({ serverId: saved.id });
+      expect(h.current().servers).toEqual([]);
+      await act(async () => h.current().refresh());
+      expect(api.connectServer).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["unmount", "replace"] as const)("stops queued startup work after %s", async (action) => {
+    const api = gateway();
+    api.listServers.mockResolvedValue([saved, { ...saved, id: "queued" }]);
+    const pending = deferred<RemoteRunnerServer>();
+    api.connectServer.mockReturnValue(pending.promise);
+    const h = await render(api);
+    if (action === "unmount") h.unmount();
+    else {
+      const next = gateway();
+      next.listServers.mockResolvedValue([]);
+      await h.replace(next);
+    }
+    await act(async () => pending.resolve(connected));
+    expect(api.connectServer).toHaveBeenCalledTimes(1);
+    if (action === "replace") expect(h.current().servers).toEqual([]);
+  });
+
+  it("rejects an excessive inventory instead of silently skipping saved servers", async () => {
+    const api = gateway();
+    api.listServers.mockResolvedValue(
+      Array.from({ length: 33 }, (_, i) => ({ ...saved, id: String(i) })),
+    );
+    const h = await render(api);
+    expect(api.connectServer).not.toHaveBeenCalled();
+    expect(h.current().error).toContain("Too many saved servers");
   });
 });
