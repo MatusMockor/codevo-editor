@@ -36,6 +36,13 @@ export interface AgentImageShrinkRequest {
   readonly bytes: ArrayBuffer;
 }
 
+export interface AgentImageOutputPolicy {
+  readonly maxBytes: number;
+  readonly maxDimension: number;
+  readonly acceptedMimes: ReadonlyArray<AgentImageMime>;
+  readonly encodeMime: AgentImageEncodeMime;
+}
+
 export type AgentImageShrinkOutcome =
   | {
       readonly kind: "ready";
@@ -51,6 +58,7 @@ export type AgentImageShrinkOutcome =
 export async function shrinkAgentImageToFit(
   request: AgentImageShrinkRequest,
   surface: AgentImageSurfacePort,
+  policy?: AgentImageOutputPolicy,
 ): Promise<AgentImageShrinkOutcome> {
   if (request.bytes.byteLength === 0) return refused("unreadable");
   if (request.bytes.byteLength > MAX_AGENT_IMAGE_SOURCE_BYTES) return refused("too-large");
@@ -60,7 +68,14 @@ export async function shrinkAgentImageToFit(
     if (!isAgentImageDimension(decoded.width) || !isAgentImageDimension(decoded.height)) {
       return refused("unreadable");
     }
-    if (request.bytes.byteLength <= MAX_AGENT_IMAGE_BYTES && isAgentImageMime(request.mime)) {
+    if (
+      request.bytes.byteLength <= (policy?.maxBytes ?? MAX_AGENT_IMAGE_BYTES) &&
+      isAgentImageMime(request.mime) &&
+      (policy === undefined ||
+        (policy.acceptedMimes.includes(request.mime) &&
+          decoded.width <= policy.maxDimension &&
+          decoded.height <= policy.maxDimension))
+    ) {
       return {
         kind: "ready",
         name: request.name,
@@ -71,7 +86,7 @@ export async function shrinkAgentImageToFit(
         reencoded: false,
       };
     }
-    return await reencodeAgentImage(request.name, decoded, surface);
+    return await reencodeAgentImage(request.name, decoded, surface, policy);
   } finally {
     surface.release(decoded);
   }
@@ -99,10 +114,15 @@ async function reencodeAgentImage(
   name: string,
   decoded: AgentImageSource,
   surface: AgentImageSurfacePort,
+  policy?: AgentImageOutputPolicy,
 ): Promise<AgentImageShrinkOutcome> {
-  const encodeMime = await encodeMimeOrNull(surface);
+  const encodeMime = policy?.encodeMime ?? (await encodeMimeOrNull(surface));
   if (encodeMime === null) return refused("unreadable");
-  const base = agentImageFitBox(decoded.width, decoded.height, AGENT_IMAGE_MAX_EDGE);
+  const base = agentImageFitBox(
+    decoded.width,
+    decoded.height,
+    Math.min(AGENT_IMAGE_MAX_EDGE, policy?.maxDimension ?? AGENT_IMAGE_MAX_EDGE),
+  );
   let encoded = false;
   for (const scale of AGENT_IMAGE_SCALE_LADDER) {
     const width = scaledEdge(base.width, scale);
@@ -111,7 +131,8 @@ async function reencodeAgentImage(
       const bytes = await encodeOrNull(surface, decoded, width, height, encodeMime, quality);
       if (bytes === null) continue;
       encoded = true;
-      if (bytes.byteLength === 0 || bytes.byteLength > MAX_AGENT_IMAGE_BYTES) continue;
+      if (bytes.byteLength === 0 || bytes.byteLength > (policy?.maxBytes ?? MAX_AGENT_IMAGE_BYTES))
+        continue;
       return {
         kind: "ready",
         name: agentShrunkAttachmentName(name, encodeMime),

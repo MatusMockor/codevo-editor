@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentAttachment } from "../domain/agentAttachment";
-import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
+import type { AgentImageOutputPolicy, AgentImageSurfacePort } from "../domain/agentImageShrink";
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunner";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
 import { RemoteAttachmentStore } from "./remoteAttachmentStore";
@@ -22,6 +22,13 @@ export interface RemoteAgentAttachmentsDependencies {
   readonly resolveServer: (threadId: string) => string | null;
   readonly reportError: (source: string, error: unknown) => void;
 }
+
+const REMOTE_IMAGE_OUTPUT_POLICY: AgentImageOutputPolicy = {
+  maxBytes: 5 * 1024 * 1024,
+  maxDimension: 8192,
+  acceptedMimes: ["image/png", "image/jpeg"],
+  encodeMime: "image/jpeg",
+};
 
 export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDependencies) {
   const current = useRef(dependencies);
@@ -82,7 +89,11 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
     }),
     [store, ownerIsCurrent],
   );
-  const attachments = useAgentComposerAttachments({ ...dependencies, gateway: store });
+  const attachments = useAgentComposerAttachments({
+    ...dependencies,
+    gateway: store,
+    imageOutputPolicy: REMOTE_IMAGE_OUTPUT_POLICY,
+  });
   const attachmentImages = useAgentAttachmentImages({
     gateway: imagesGateway,
     reportError: dependencies.reportError,

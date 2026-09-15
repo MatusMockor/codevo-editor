@@ -19,7 +19,11 @@ import {
   type AgentAttachmentCandidate,
   type AgentPasteClaim,
 } from "../domain/agentAttachmentIntake";
-import { shrinkAgentImageToFit, type AgentImageSurfacePort } from "../domain/agentImageShrink";
+import {
+  shrinkAgentImageToFit,
+  type AgentImageOutputPolicy,
+  type AgentImageSurfacePort,
+} from "../domain/agentImageShrink";
 import type { AgentAttachmentGateway, StagedAgentAttachment } from "./agentAttachmentPorts";
 import { AGENT_TASKS_SOURCE, attempt, errorMessageOf } from "./agentProjectAuthority";
 import type { AgentTurnAttachmentIntent } from "./agentThreadPorts";
@@ -102,6 +106,7 @@ export interface AgentComposerAttachmentsSurface {
 export interface AgentComposerAttachmentsDependencies {
   readonly gateway: AgentAttachmentGateway | null;
   readonly imageSurface: AgentImageSurfacePort | null;
+  readonly imageOutputPolicy?: AgentImageOutputPolicy;
   readonly resolveOwner: (projectRootKey: string) => AgentAttachmentOwner | null;
   readonly reportError: (source: string, error: unknown) => void;
   readonly createDraftId?: () => string;
@@ -404,6 +409,7 @@ async function stageImageDraft(
   const owner = pending.owner;
   if (
     source.kind === "path" &&
+    context.deps().imageOutputPolicy === undefined &&
     candidate.bytes <= MAX_AGENT_IMAGE_BYTES &&
     isAgentImageMime(candidate.mime)
   ) {
@@ -434,6 +440,7 @@ async function stageImageDraft(
   const shrunk = await shrinkAgentImageToFit(
     { name: candidate.name, mime: candidate.mime, bytes },
     surface,
+    context.deps().imageOutputPolicy,
   );
   if (!context.ownerIsCurrent(owner)) {
     discardDraft(context, pending.draftId);

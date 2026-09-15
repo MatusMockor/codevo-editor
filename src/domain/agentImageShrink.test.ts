@@ -9,6 +9,7 @@ import {
   type AgentImageEncodeMime,
   type AgentImageSource,
   type AgentImageSurfacePort,
+  type AgentImageOutputPolicy,
 } from "./agentImageShrink";
 
 interface SurfaceOptions {
@@ -52,6 +53,54 @@ function bytes(length: number): ArrayBuffer {
 }
 
 describe("shrinkAgentImageToFit", () => {
+  const policy: AgentImageOutputPolicy = {
+    maxBytes: 5 * 1024 * 1024,
+    maxDimension: 8192,
+    acceptedMimes: ["image/png", "image/jpeg"],
+    encodeMime: "image/jpeg",
+  };
+
+  it.each([5 * 1024 * 1024 + 1, MAX_AGENT_IMAGE_BYTES + 1])(
+    "uses the target byte budget and encoder for a %i-byte image",
+    async (size) => {
+      const { calls, port } = surface();
+      const probe = vi.spyOn(port, "encodeMime");
+      const outcome = await shrinkAgentImageToFit(
+        { name: "shot.png", mime: "image/png", bytes: bytes(size) },
+        port,
+        policy,
+      );
+      expect(outcome).toMatchObject({ kind: "ready", mime: "image/jpeg", name: "shot.jpg" });
+      expect(calls[0]?.mime).toBe("image/jpeg");
+      expect(probe).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps encoding when an image fits the default budget but exceeds the target budget", async () => {
+    const { calls, port } = surface({
+      encodedBytes: (quality) => (quality > 0.85 ? policy.maxBytes + 1 : 1024),
+    });
+    const outcome = await shrinkAgentImageToFit(
+      { name: "shot.png", mime: "image/png", bytes: bytes(policy.maxBytes + 1) },
+      port,
+      policy,
+    );
+    expect(outcome.kind).toBe("ready");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("reencodes unsupported target formats and dimensions even below its byte budget", async () => {
+    for (const [mime, width] of [
+      ["image/webp", 800],
+      ["image/png", 9000],
+    ] as const) {
+      const { port } = surface({ width });
+      expect(
+        await shrinkAgentImageToFit({ name: "shot", mime, bytes: bytes(1024) }, port, policy),
+      ).toMatchObject({ kind: "ready", mime: "image/jpeg", reencoded: true });
+    }
+  });
+
   it("passes a supported image within budget through unchanged", async () => {
     const { calls, port, released } = surface({ width: 800, height: 600 });
     const source = bytes(1_024);
