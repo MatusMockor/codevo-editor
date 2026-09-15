@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.42] - 2026-09-15
+
+### Fixed
+
+- Resize and compress oversized server image attachments before uploading them,
+  respecting the runner's image size and dimension limits.
+- Use JPEG when server attachments need conversion, avoiding unsupported WebP
+  uploads while preserving the existing local attachment behavior.
+
 ## [0.2.0-beta.41] - 2026-09-15
 
 ### Improved
