@@ -44,7 +44,7 @@ import type {
   AgentThreadView,
   OrphanedWorktreeView,
 } from "../../application/agentThreadPorts";
-import { agentThreadIsSteerable } from "../../application/agentTurnAdmission";
+import { agentThreadAcceptsQueuedMessage } from "../../application/agentTurnAdmission";
 import type { AgentAttachment } from "../../domain/agentAttachment";
 
 export const MAX_RENDERED_EVENTS_PER_TURN = 200;
@@ -283,7 +283,9 @@ export function agentFollowUpBlockedReason(
     return "The worktree for this thread no longer exists.";
   }
   if (view.lifecycle === "running") {
-    if (agentThreadIsSteerable(view.thread)) return null;
+    if (view.execution?.kind === "remote" && view.execution.pendingMessages !== true)
+      return "Update this server’s runner to queue messages.";
+    if (agentThreadAcceptsQueuedMessage(view.thread)) return null;
     return "This thread is still running. Wait for the turn to finish.";
   }
   if (view.projectOrigin === "closed-tab-live-tasks") {

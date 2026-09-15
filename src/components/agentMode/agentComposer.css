@@ -4,7 +4,7 @@
   align-content: start;
   gap: var(--agent-space-2);
   overflow-y: auto;
-  max-height: min(44vh, calc(320px * var(--codevo-fs-scale)));
+  max-height: min(60vh, calc(560px * var(--codevo-fs-scale)));
   padding: 8px 24px 16px;
   border-top: 0;
   background: transparent;
@@ -93,13 +93,14 @@
 }
 
 .agent-composer__textarea {
+  box-sizing: border-box;
   border: none;
   background: transparent;
   color: var(--agent-text-strong);
   font: inherit;
   font-size: var(--codevo-fs-body);
   line-height: 1.5;
-  max-height: calc(180px * var(--codevo-fs-scale));
+  max-height: min(40vh, calc(420px * var(--codevo-fs-scale)));
   min-height: calc(64px * var(--codevo-fs-scale));
   outline: none;
   padding: 14px 16px 8px;

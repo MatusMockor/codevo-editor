@@ -87,13 +87,15 @@ export function AgentModelPicker({
   );
   const rows = useMemo(() => {
     if (filter === "favorites") {
-      return providers.flatMap((provider) =>
-        agentModelRows(
-          provider,
-          configuredProviderModel(providerManagement, provider),
-          configuredProviderVersion(providerManagement, provider),
-        ),
-      );
+      return providers
+        .filter((provider) => providerSwitchable || provider === launch.provider)
+        .flatMap((provider) =>
+          agentModelRows(
+            provider,
+            configuredProviderModel(providerManagement, provider),
+            configuredProviderVersion(providerManagement, provider),
+          ),
+        );
     }
     return providerIsEnabled(providerEnabled, displayProvider)
       ? agentModelRows(
@@ -102,7 +104,15 @@ export function AgentModelPicker({
           configuredProviderVersion(providerManagement, displayProvider),
         )
       : [];
-  }, [displayProvider, filter, providerEnabled, providerManagement, providers]);
+  }, [
+    displayProvider,
+    filter,
+    launch.provider,
+    providerEnabled,
+    providerManagement,
+    providers,
+    providerSwitchable,
+  ]);
   const filteredRows = useMemo(
     () => filterAgentModelRows(rows, filter, favorites.keys, query),
     [favorites.keys, filter, query, rows],
@@ -142,13 +152,13 @@ export function AgentModelPicker({
 
   const choose = useCallback(
     (row: AgentModelRow) => {
-      if (pickerDisabled) return;
+      if (pickerDisabled || (!providerSwitchable && row.provider !== launch.provider)) return;
       hide(true);
       if (row.provider === launch.provider && row.value === selectedModel) return;
       if (row.provider === launch.provider) onSelect(row.value);
       else onSelect(row.value, row.provider);
     },
-    [hide, launch.provider, onSelect, pickerDisabled, selectedModel],
+    [hide, launch.provider, onSelect, pickerDisabled, providerSwitchable, selectedModel],
   );
 
   useLayoutEffect(() => {
@@ -281,6 +291,7 @@ export function AgentModelPicker({
                   selectFilter("all");
                 }}
                 provider={provider}
+                currentProvider={launch.provider}
               />
             ))}
           </div>
@@ -386,8 +397,10 @@ function AgentProviderRailItem({
   disabled,
   onSelect,
   provider,
+  currentProvider,
 }: {
   readonly provider: AgentCliKind;
+  readonly currentProvider: AgentCliKind;
   readonly active: boolean;
   readonly disabled: boolean;
   onSelect(): void;
@@ -400,7 +413,7 @@ function AgentProviderRailItem({
         aria-label={`${name} models`}
         className="agent-model-picker__rail-item"
         data-provider={provider}
-        title="This provider is unavailable in this thread. Start a new thread to switch providers."
+        title={`This conversation uses ${agentModelProviderName(currentProvider)}. Start a new thread to switch providers and use ${name}.`}
         type="button"
       >
         <AgentProviderGlyph kind={provider} />

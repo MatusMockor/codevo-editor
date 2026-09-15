@@ -262,6 +262,10 @@ export function agentThreadIsSteerable(thread: AgentThread): boolean {
   );
 }
 
+export function agentThreadAcceptsQueuedMessage(thread: AgentThread): boolean {
+  return !thread.archived && runningTurn(thread)?.launch != null;
+}
+
 export function admitSteer(
   deps: AdmissionDependencies,
   request: AgentSteerRequest,
@@ -281,7 +285,7 @@ export function admitSteer(
     deps.setNotice(warning(AGENT_THREAD_NOT_RUNNING_NOTICE));
     return null;
   }
-  if (!agentThreadIsSteerable(thread)) {
+  if (request.delivery !== "queued" && !agentThreadIsSteerable(thread)) {
     deps.setNotice(warning(AGENT_THREAD_RUNNING_NOTICE));
     return null;
   }
@@ -289,11 +293,11 @@ export function admitSteer(
     deps.setNotice(warning(AGENT_THREAD_STEER_IN_FLIGHT_NOTICE));
     return null;
   }
-  if (turn.status.kind === "pending") {
+  if (request.delivery !== "queued" && turn.status.kind === "pending") {
     deps.setNotice(warning(AGENT_THREAD_STARTING_NOTICE));
     return null;
   }
-  if (steerCount(turn) >= MAX_AGENT_STEERS_PER_TURN) {
+  if (request.delivery !== "queued" && steerCount(turn) >= MAX_AGENT_STEERS_PER_TURN) {
     deps.setNotice(warning(AGENT_THREAD_STEER_LIMIT_NOTICE));
     return null;
   }
@@ -304,7 +308,10 @@ export function admitSteer(
   }
   const prompt = admitPrompt(deps, request.prompt, hasAttachments(request));
   if (prompt === null) return null;
-  if (!agentTurnAcceptsSteerBytes(turn, steerMessageByteBudget(prompt, request))) {
+  if (
+    request.delivery !== "queued" &&
+    !agentTurnAcceptsSteerBytes(turn, steerMessageByteBudget(prompt, request))
+  ) {
     deps.setNotice(warning(AGENT_THREAD_TURN_FULL_NOTICE));
     return null;
   }

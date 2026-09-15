@@ -1,4 +1,5 @@
 import { memo, useMemo } from "react";
+import { ArrowUp, Clock3, Paperclip, Pause, X } from "lucide-react";
 import type { AgentTurnAttachmentIntent } from "../../application/agentThreadPorts";
 import { MAX_AGENT_TURN_ATTACHMENTS } from "../../domain/agentAttachment";
 import { agentPromptDisplayText } from "../../domain/agentPromptDisplay";
@@ -107,44 +108,78 @@ function isoTime(epochMs: number): string | undefined {
 }
 
 export interface AgentQueuedPromptProps {
+  readonly displayAttachmentCount?: number;
   readonly attachments?: ReadonlyArray<AgentTurnAttachmentIntent>;
   readonly id: string;
   readonly prompt: string;
+  readonly state?: "queued" | "paused";
+  onSendNow?(id: string): void;
   onRemove(id: string): void;
 }
 
-export function AgentQueuedPrompt({ id, prompt, attachments, onRemove }: AgentQueuedPromptProps) {
-  const views = useMemo<ReadonlyArray<AgentTurnAttachmentView>>(
-    () =>
-      (attachments ?? []).slice(0, MAX_AGENT_TURN_ATTACHMENTS).map((attachment, index) => ({
-        kind: "chip",
-        key: String(index),
-        name: attachment.name,
-        glyph:
-          attachment.kind === "reference"
-            ? "reference"
-            : attachment.mime === null
-              ? "file"
-              : "image",
-      })),
-    [attachments],
-  );
+export function AgentQueuedPrompt({
+  id,
+  prompt,
+  attachments,
+  displayAttachmentCount,
+  state = "queued",
+  onSendNow,
+  onRemove,
+}: AgentQueuedPromptProps) {
+  const queuedAttachments = (attachments ?? []).slice(0, MAX_AGENT_TURN_ATTACHMENTS);
+  const attachmentCount = attachments?.length
+    ? attachments.length
+    : typeof displayAttachmentCount === "number" &&
+        Number.isSafeInteger(displayAttachmentCount) &&
+        displayAttachmentCount > 0
+      ? displayAttachmentCount
+      : 0;
+  const boundedAttachmentCount = Math.min(attachmentCount, MAX_AGENT_TURN_ATTACHMENTS);
+  const statusDescription =
+    state === "paused"
+      ? "Paused. Resume queued messages when you are ready."
+      : "Waiting until the current response finishes.";
   const displayText = agentPromptDisplayText(prompt);
 
   return (
     <div className="agent-prompt agent-prompt--queued" data-agent-queued={id}>
       <div className="agent-prompt__bubble" tabIndex={-1}>
         {displayText !== "" && <p className="agent-prompt__body">{displayText}</p>}
-        <AgentTurnAttachments attachments={views} images={null} />
         <div className="agent-prompt__queue">
-          <span className="agent-prompt__chip agent-prompt__chip--queued">Queued</span>
+          <span className="agent-prompt__queue-status" title={statusDescription}>
+            {state === "paused" ? <Pause aria-hidden="true" /> : <Clock3 aria-hidden="true" />}
+            {state === "paused" ? "Paused" : "Queued"}
+          </span>
+          {attachmentCount > 0 && (
+            <span
+              className="agent-prompt__queue-attachments"
+              title={queuedAttachments.map((attachment) => attachment.name).join(", ") || undefined}
+            >
+              <Paperclip aria-hidden="true" />
+              {boundedAttachmentCount}
+              {attachmentCount > MAX_AGENT_TURN_ATTACHMENTS ? "+" : ""}{" "}
+              {attachmentCount === 1 ? "attachment" : "attachments"}
+            </span>
+          )}
+          {state === "queued" && onSendNow !== undefined && (
+            <button
+              aria-label="Send queued message now"
+              className="agent-prompt__queue-action"
+              title="Send now"
+              onClick={() => onSendNow(id)}
+              type="button"
+            >
+              <ArrowUp aria-hidden="true" />
+            </button>
+          )}
           <button
             aria-label="Remove queued message"
-            className="agent-prompt__remove"
+            className="agent-prompt__queue-action"
+            title="Remove queued message"
             onClick={() => onRemove(id)}
             type="button"
           >
-            Remove
+            <X aria-hidden="true" />
           </button>
         </div>
       </div>

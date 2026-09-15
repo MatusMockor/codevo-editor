@@ -4,6 +4,7 @@ import type {
   RemoteRunnerEvent,
   RemoteRunnerGateway,
   RemoteRunnerProject,
+  RemoteRunnerPendingMessage,
   RemoteRunnerTask,
   RemoteRunnerTaskResume,
 } from "../domain/remoteRunner";
@@ -26,6 +27,7 @@ export interface RemoteAgentInventorySnapshot {
   readonly resumes: ReadonlyMap<string, RemoteRunnerTaskResume>;
   readonly replayComplete: ReadonlySet<string>;
   readonly replayTruncated: ReadonlySet<string>;
+  readonly pendingMessages?: ReadonlyMap<string, readonly RemoteRunnerPendingMessage[]>;
   readonly error: string | null;
 }
 export const emptyRemoteInventory = (
@@ -225,7 +227,23 @@ export async function loadRemoteAgentInventory(
       resumes.set(task.id, resume);
     }
   }
+  const pendingMessages = new Map<string, readonly RemoteRunnerPendingMessage[]>();
+  if (latestSelected && descriptor.capabilities.pendingMessages && gateway.listPendingMessages) {
+    const page = await gateway.listPendingMessages({ serverId, taskId: latestSelected.id });
+    check();
+    if (
+      page.items.length > 16 ||
+      page.items.some(
+        (item) =>
+          item.conversationId !== (latestSelected.conversationId ?? latestSelected.id) ||
+          (item.status !== "queued" && item.status !== "paused"),
+      )
+    )
+      throw new Error("The runner returned an invalid pending message queue.");
+    pendingMessages.set(threadId(serverId, latestSelected), page.items);
+  }
   return {
+    pendingMessages,
     serverId,
     listingCursor: after,
     detailedTaskIds,

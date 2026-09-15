@@ -126,3 +126,34 @@ it("preserves a task published while inventory refresh is pending", async () => 
   });
   expect(h.surface.snapshots[0]?.tasks.map((item) => item.id)).toEqual(["new", "task"]);
 });
+
+it("does not overwrite acknowledged queue mutations with an older inventory read", async () => {
+  const h = await setup();
+  let resolve!: (value: { items: never[]; nextCursor: null }) => void;
+  h.gateway.listTasks.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  let refreshing!: Promise<void>;
+  await act(async () => {
+    refreshing = h.surface.refresh();
+  });
+  const item = {
+    id: "pending",
+    conversationId: "task",
+    status: "queued" as const,
+    parts: [{ type: "text" as const, text: "Next" }],
+    createdAt: "2026-09-15T00:00:00Z",
+    taskId: null,
+  };
+  await act(async () => {
+    h.surface.publishPending("server", "thread", [item]);
+  });
+  await act(async () => {
+    resolve({ items: [], nextCursor: null });
+    await refreshing;
+  });
+  expect(h.surface.snapshots[0]?.pendingMessages?.get("thread")).toEqual([item]);
+});

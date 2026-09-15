@@ -2670,6 +2670,149 @@ describe("useAgentTurnDispatch steering", () => {
     harness.unmount();
   });
 
+  it.each(["claudeCode", "codex"] as const)(
+    "queues %s messages without steering and starts them in FIFO order after completion",
+    async (cliKind) => {
+      const harness = renderDispatch({ cliKind, codexTransport: "exec" });
+      const started = await act(() =>
+        harness.hook().startThread(
+          startRequest({
+            launch: defaultAgentLaunchOptions(cliKind),
+          }),
+        ),
+      );
+      const threadId = started!.threadId;
+      const turnId = harness.turnIdOf(threadId, 0);
+      await act(async () => harness.emitStatus(turnId, 1, { kind: "running" }));
+      expect(await steerOnce(harness, { threadId, prompt: "first", delivery: "queued" })).toBe(
+        "deferred",
+      );
+      expect(await steerOnce(harness, { threadId, prompt: "second", delivery: "queued" })).toBe(
+        "deferred",
+      );
+      expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+      expect(
+        harness
+          .hook()
+          .deferredFollowUps.get(threadId)
+          ?.map((entry) => entry.request.prompt),
+      ).toEqual(["first", "second"]);
+      expect(harness.notice()).toBeNull();
+      await act(async () => {
+        harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+        harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+      });
+      await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+      expect(harness.startedRequests[1].prompt).toBe("first");
+      await act(async () =>
+        harness.emitStatus(harness.turnIdOf(threadId, 1), 1, { kind: "exited", exitCode: 0 }),
+      );
+      await waitForReact(() => expect(harness.startedRequests).toHaveLength(3));
+      expect(harness.startedRequests[2].prompt).toBe("second");
+      harness.unmount();
+    },
+  );
+
+  it("sends a queued message immediately only when explicitly requested", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    expect(await steerOnce(harness, { threadId, prompt: "next", delivery: "queued" })).toBe(
+      "deferred",
+    );
+    const entry = harness.hook().deferredFollowUps.get(threadId)![0];
+    await act(() => harness.hook().sendDeferredFollowUpNow(threadId, entry.id));
+    expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    harness.unmount();
+  });
+
+  it("does not duplicate a queued message when explicit send now finds closed input", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    await steerOnce(harness, { threadId, prompt: "next", delivery: "queued" });
+    harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
+    const entry = harness.hook().deferredFollowUps.get(threadId)![0];
+    await act(() => harness.hook().sendDeferredFollowUpNow(threadId, entry.id));
+    expect(harness.hook().deferredFollowUps.get(threadId)).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("clears explicitly queued work on Stop and does not launch it on late completion", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await steerOnce(harness, { threadId, prompt: "next", delivery: "queued" });
+    await act(() => harness.hook().stop(threadId));
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).toBe("paused");
+    expect(harness.notice()?.message).toBe(DEFERRED_CLEARED_NOTICE);
+    await act(async () => harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 }));
+    expect(harness.startedRequests).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("retains the reserved queued head when Stop races a pending task start", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await steerOnce(harness, { threadId, prompt: "keep me", delivery: "queued" });
+    const gate = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(() => gate.promise);
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+    });
+    await waitForReact(() => expect(harness.thread(threadId).turns).toHaveLength(2));
+    await act(async () =>
+      harness.emitStatus(harness.turnIdOf(threadId, 1), 1, { kind: "running" }),
+    );
+    const entry = harness.hook().deferredFollowUps.get(threadId)![0];
+    await act(() => harness.hook().sendDeferredFollowUpNow(threadId, entry.id));
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    await act(() => harness.hook().stop(threadId));
+    await act(async () => gate.resolve({ taskId: harness.turnIdOf(threadId, 1) }));
+    expect(
+      harness
+        .hook()
+        .deferredFollowUps.get(threadId)
+        ?.map((item) => [item.request.prompt, item.state]),
+    ).toEqual([["keep me", "paused"]]);
+    harness.unmount();
+  });
+
+  it("pauses queued messages on a failed turn and starts only after explicit resume", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await steerOnce(harness, { threadId, prompt: "later", delivery: "queued" });
+    await act(async () => {
+      harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
+      harness.emitStatus(turnId, 2, { kind: "failed", message: "transport failed" });
+    });
+    expect(harness.startedRequests).toHaveLength(1);
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).toBe("paused");
+    await act(() => harness.hook().resumeDeferredFollowUps(threadId));
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+    harness.unmount();
+  });
+
+  it("refuses a full queue before consuming the attachment draft", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    for (let index = 0; index < 8; index++)
+      await steerOnce(harness, { threadId, prompt: `next ${index}`, delivery: "queued" });
+    expect(
+      await steerOnce(harness, {
+        threadId,
+        prompt: "image",
+        delivery: "queued",
+        attachments: [IMAGE_INTENT],
+        attachmentOwner: OWNER_INTENT,
+      }),
+    ).toBe("kept");
+    expect(harness.attachmentGateway.claimAgentAttachments).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("defers a closed-input message and sends each queued one as its predecessor settles", async () => {
     const harness = renderDispatch();
     const threadId = await harness.startRunningThread();
@@ -2774,7 +2917,9 @@ describe("useAgentTurnDispatch steering", () => {
       harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
     });
 
-    await waitForReact(() => expect(harness.notice()?.message).toBe(DEFERRED_SEND_FAILED_NOTICE));
+    await waitForReact(() =>
+      expect(harness.notice()?.message).toContain("original workspace session"),
+    );
     expect(harness.ensureProjectLaunchIdentity).not.toHaveBeenCalled();
     expect(harness.reportError).not.toHaveBeenCalled();
     expect(harness.startedRequests).toHaveLength(1);
@@ -2835,28 +2980,22 @@ describe("useAgentTurnDispatch steering", () => {
     async (settlement) => {
       const harness = renderDispatch();
       const threadId = await harness.startRunningThread();
-      const turnId = harness.turnIdOf(threadId, 0);
-      harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
-      expect(
-        await steerOnce(harness, {
-          threadId,
-          prompt: "queued image",
-          attachments: [IMAGE_INTENT],
-          attachmentOwner: OWNER_INTENT,
-        }),
-      ).toBe("deferred");
       const gate =
         createDeferred<
           Awaited<ReturnType<typeof harness.attachmentGateway.claimAgentAttachments>>
         >();
       harness.attachmentGateway.claimAgentAttachments.mockReturnValueOnce(gate.promise);
+      let pending: Promise<AgentSteerOutcome>;
       await act(async () => {
-        harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
-        harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
+        pending = harness.hook().steer({
+          threadId,
+          prompt: "queued image",
+          delivery: "queued",
+          attachments: [IMAGE_INTENT],
+          attachmentOwner: OWNER_INTENT,
+        });
       });
-      await waitForReact(() =>
-        expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(2),
-      );
+      expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(1);
       await act(() => harness.hook().stop(threadId));
       const noticeAfterStop = harness.notice();
       await act(async () => {
@@ -2869,6 +3008,7 @@ describe("useAgentTurnDispatch steering", () => {
               promptLine: "[Attached]",
             },
           ]);
+        expect(await pending!).toBe("kept");
       });
       expect(harness.notice()).toBe(noticeAfterStop);
       expect(harness.startedRequests).toHaveLength(1);
@@ -2878,7 +3018,7 @@ describe("useAgentTurnDispatch steering", () => {
     },
   );
 
-  it("clears the remaining queue when its first follow-up attachment claim fails", async () => {
+  it("reuses the claimed image recipe and never claims a queued attachment twice", async () => {
     const harness = renderDispatch();
     const threadId = await harness.startRunningThread();
     const turnId = harness.turnIdOf(threadId, 0);
@@ -2900,14 +3040,13 @@ describe("useAgentTurnDispatch steering", () => {
       harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
       harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
     });
-    await waitForReact(() => expect(harness.notice()?.message).toBe(DEFERRED_SEND_FAILED_NOTICE));
-    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(2);
-    expect(harness.reportError).toHaveBeenCalledWith(
-      AGENT_TASKS_SOURCE,
-      expect.objectContaining({ message: "claim failed" }),
-    );
-    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
-    expect(harness.startedRequests).toHaveLength(1);
+    await waitForReact(() => expect(harness.startedRequests).toHaveLength(2));
+    expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(1);
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.startedRequests[1].attachments).toEqual([
+      { kind: "staged", attachmentId: ATTACHMENT_ID },
+    ]);
+    expect(harness.hook().deferredFollowUps.get(threadId)).toHaveLength(1);
     harness.unmount();
   });
 
@@ -3054,7 +3193,7 @@ describe("useAgentTurnDispatch steering", () => {
     await waitForReact(() => expect(harness.notice()?.message).toBe(DEFERRED_SEND_FAILED_NOTICE));
     expect(harness.reportError).not.toHaveBeenCalled();
     expect(harness.startedRequests).toHaveLength(1);
-    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).toBe("paused");
     harness.unmount();
   });
 
@@ -3084,7 +3223,7 @@ describe("useAgentTurnDispatch steering", () => {
 
     await act(() => harness.hook().stop(threadId));
 
-    expect(harness.hook().deferredFollowUps.has(threadId)).toBe(false);
+    expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).toBe("paused");
     expect(harness.notice()?.message).toBe(DEFERRED_CLEARED_NOTICE);
     harness.unmount();
   });

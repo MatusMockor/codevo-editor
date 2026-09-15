@@ -549,8 +549,10 @@ fn outbound_oversized_request_does_not_leave_pending_entry() {
         json!({"padding":"x".repeat(MAX_APP_SERVER_LINE_BYTES)}),
         PROBE_TIMEOUT,
     );
-    assert!(matches!(result, Err(CodexRpcFailure::HostFailed { .. })));
+    assert!(matches!(result, Err(CodexRpcFailure::HostFailed { reason })
+        if reason == APP_SERVER_OUTBOUND_LIMIT_ERROR));
     assert_eq!(harness.transport.pending_requests(), 0);
+    assert!(harness.transport.failure().is_none());
 }
 
 #[test]
@@ -636,4 +638,165 @@ fn orphan_loss_is_scoped_to_the_affected_thread() {
     assert!(!unaffected.truncated());
     let affected = harness.transport.subscribe("overflow");
     assert!(affected.truncated());
+}
+
+fn large_command_completed(thread_id: &str) -> Value {
+    json!({"method":"item/completed","params": {
+        "threadId":thread_id,"turnId":"turn-large",
+        "item":{"type":"commandExecution","id":"exec-large","status":"completed",
+            "aggregatedOutput":"€".repeat(MAX_APP_SERVER_LINE_BYTES / 2),"exitCode":0}
+    }})
+}
+
+#[test]
+fn large_tool_output_preserves_other_turns_and_terminal_delivery() {
+    let harness = Harness::new(true);
+    let large = harness.transport.subscribe("large");
+    let other = harness.transport.subscribe("other");
+    // Original wire bytes exceed the entire queue budget. Only the projection is queued.
+    for _ in 0..8 {
+        harness.emit(&large_command_completed("large"));
+    }
+    harness.emit(&item_started("other", "other-item"));
+    harness.emit(&json!({"method":"turn/completed","params":{
+        "threadId":"large","turn":{"id":"turn-large","status":"completed"}
+    }}));
+    for _ in 0..8 {
+        let TurnFrame::Notification(notification) = large.recv_timeout(PROBE_TIMEOUT).unwrap()
+        else {
+            panic!("expected projected notification")
+        };
+        let ServerNotification::ItemCompleted(payload) = *notification else {
+            panic!("expected command completion")
+        };
+        let super::super::codex_app_server_protocol::ThreadItem::CommandExecution(item) =
+            payload.item
+        else {
+            panic!("expected command item")
+        };
+        let output = item.aggregated_output.unwrap();
+        assert_eq!(output, "€".repeat(4096 / 3));
+        assert!(
+            output.len() > 512,
+            "presenter must still mark its summary clipped"
+        );
+    }
+    assert!(matches!(large.recv_timeout(PROBE_TIMEOUT).unwrap(),
+        TurnFrame::Notification(notification) if matches!(*notification, ServerNotification::TurnCompleted(_))));
+    assert!(other.recv_timeout(PROBE_TIMEOUT).is_ok());
+    assert!(!large.truncated());
+    assert!(!other.truncated());
+    assert!(harness.transport.failure().is_none());
+}
+
+#[test]
+fn large_ignored_delta_does_not_break_following_canonical_item() {
+    let harness = Harness::new(true);
+    let frames = harness.transport.subscribe("thread-1");
+    harness.emit(
+        &json!({"method":"item/commandExecution/outputDelta","params":{
+            "threadId":"thread-1","delta":"x".repeat(MAX_APP_SERVER_LINE_BYTES + 1)
+        }}),
+    );
+    harness.emit(&item_started("thread-1", "next"));
+    assert!(frames.recv_timeout(PROBE_TIMEOUT).is_ok());
+    assert!(harness.transport.failure().is_none());
+}
+
+#[test]
+fn large_tool_metadata_is_not_allowed_by_the_display_payload_exception() {
+    let harness = Harness::new(true);
+    let mut frame = large_command_completed("thread-1");
+    frame["params"]["item"]["command"] = json!("x".repeat(MAX_APP_SERVER_LINE_BYTES));
+    harness.emit(&frame);
+    assert_eq!(
+        wait_for(|| harness.transport.failure()),
+        APP_SERVER_LINE_LIMIT_ERROR
+    );
+}
+
+#[test]
+fn large_rpc_response_fails_pending_requests_truthfully() {
+    let harness = Arc::new(Harness::new(true));
+    let requesting = Arc::clone(&harness);
+    let request = thread::spawn(move || {
+        requesting
+            .transport
+            .request(ClientMethod::Initialize, json!({}), PROBE_TIMEOUT)
+    });
+    let sent = wait_for(|| harness.client_line(0));
+    harness.emit(&json!({"id":sent["id"],"result":{
+        "output":"x".repeat(MAX_APP_SERVER_LINE_BYTES + 1)
+    }}));
+    assert!(
+        matches!(request.join().unwrap(), Err(CodexRpcFailure::HostFailed { reason })
+        if reason == APP_SERVER_LINE_LIMIT_ERROR)
+    );
+    assert_eq!(harness.transport.pending_requests(), 0);
+}
+
+#[test]
+fn ignored_method_with_request_id_is_not_silently_dropped() {
+    let frame = json!({"id":8,"method":"item/commandExecution/outputDelta","params":{
+        "delta":"x".repeat(MAX_APP_SERVER_LINE_BYTES + 1)
+    }});
+    assert!(inbound::project_large_notification(&serde_json::to_vec(&frame).unwrap()).is_err());
+}
+
+#[test]
+fn wire_limit_rejects_even_supported_output_without_unbounded_accumulation() {
+    let bytes = serde_json::to_vec(&json!({"method":"item/completed","params":{
+        "threadId":"large","item":{"type":"commandExecution","id":"exec",
+            "status":"completed","aggregatedOutput":"x".repeat(MAX_APP_SERVER_WIRE_BYTES)}
+    }}))
+    .unwrap();
+    let mut reader = BufReader::new(bytes.as_slice());
+    let mut line = Vec::new();
+    assert!(matches!(
+        read_bounded_line(&mut reader, &mut line, MAX_APP_SERVER_WIRE_BYTES).unwrap(),
+        BoundedLine::Oversized
+    ));
+    assert!(line.len() <= MAX_APP_SERVER_WIRE_BYTES);
+}
+
+#[test]
+fn malformed_large_output_is_not_repaired_or_accepted() {
+    let mut frame = serde_json::to_vec(&large_command_completed("thread-1")).unwrap();
+    frame.pop();
+    assert!(inbound::project_large_notification(&frame).is_err());
+}
+
+#[test]
+fn large_legacy_duplicate_command_output_does_not_stop_canonical_completion() {
+    let harness = Harness::new(true);
+    let frames = harness.transport.subscribe("thread-1");
+    let output = "x".repeat(1_048_606);
+    harness.emit(&json!({"method":"codex/event/item_completed","params":{
+        "conversationId":"thread-1", "msg":{"type":"item_completed","item":{
+            "type":"CommandExecution", "stdout":output, "aggregated_output":output,
+            "formatted_output":"x".repeat(40_112)
+        }}
+    }}));
+    harness.emit(&large_command_completed("thread-1"));
+    assert!(matches!(frames.recv_timeout(PROBE_TIMEOUT).unwrap(),
+        TurnFrame::Notification(notification) if matches!(*notification, ServerNotification::ItemCompleted(_))));
+    assert!(harness.transport.failure().is_none());
+    assert_eq!(harness.transport.stats().unknown_frames, 0);
+}
+
+#[test]
+fn large_projection_preserves_valid_escaped_protocol_names() {
+    let frame = serde_json::to_string(&large_command_completed("thread-1"))
+        .unwrap()
+        .replace("item/completed", r"item\/completed")
+        .replace("commandExecution", r"command\u0045xecution");
+    assert!(inbound::project_large_notification(frame.as_bytes()).is_ok());
+}
+
+#[test]
+fn null_rpc_id_still_counts_as_a_request_in_large_frames() {
+    let frame = json!({"id":null,"method":"item/commandExecution/outputDelta","params":{
+        "delta":"x".repeat(MAX_APP_SERVER_LINE_BYTES + 1)
+    }});
+    assert!(inbound::project_large_notification(&serde_json::to_vec(&frame).unwrap()).is_err());
 }

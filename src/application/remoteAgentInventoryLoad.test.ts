@@ -200,3 +200,26 @@ describe("remote inventory loading", () => {
     ).rejects.toThrow("identity changed");
   });
 });
+
+it("loads durable pending messages only when advertised, rejecting foreign conversations", async () => {
+  const gw = { ...fixture(), listPendingMessages: vi.fn().mockResolvedValue({ items: [] }) };
+  await load(gw);
+  expect(gw.listPendingMessages).not.toHaveBeenCalled();
+  gw.getRunner.mockResolvedValue({
+    runnerId: "runner",
+    capabilities: { taskExecution: true, eventReplay: true, pendingMessages: true },
+  });
+  const item = {
+    id: "pending",
+    conversationId: "root",
+    status: "paused",
+    parts: [],
+    createdAt: "2026-09-15T00:00:00Z",
+    taskId: null,
+  };
+  gw.listPendingMessages.mockResolvedValue({ items: [item] });
+  const snapshot = await load(gw);
+  expect(snapshot.pendingMessages?.get(key)).toEqual([item]);
+  gw.listPendingMessages.mockResolvedValue({ items: [{ ...item, conversationId: "other" }] });
+  await expect(load(gw)).rejects.toThrow("invalid pending message queue");
+});

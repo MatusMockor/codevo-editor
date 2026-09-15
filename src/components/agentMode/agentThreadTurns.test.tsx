@@ -18,6 +18,7 @@ import { findInThread } from "../../domain/agentThreadSearch";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 import { parseAllStyleSheets, selectorParts } from "../cssContractTestSupport";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
+import { AgentQueuedPrompt } from "./AgentTurnParts";
 import { AgentClockProvider } from "./agentClock";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
 
@@ -286,7 +287,7 @@ describe("agent thread turns", () => {
     expect(host.querySelector(".agent-prompt__chip--queued")?.textContent).toBe("Queued");
   });
 
-  it("shows the screenshot name for an attachment-only deferred follow-up", () => {
+  it("shows an attachment count with the screenshot name in its tooltip for a deferred follow-up", () => {
     render({
       thread: threadView([turn("t1", "First question", RUNNING, [])]),
       deferredFollowUps: [
@@ -317,7 +318,66 @@ describe("agent thread turns", () => {
         },
       ],
     });
-    expect(host.querySelector(".agent-prompt--queued")?.textContent).toContain("screenshot.png");
+    expect(host.querySelector(".agent-prompt--queued")?.textContent).toContain("1 attachment");
+    expect(host.querySelector(".agent-prompt__queue-attachments")?.getAttribute("title")).toBe(
+      "screenshot.png",
+    );
+  });
+
+  it.each([
+    ["Image attachment", 1],
+    ["Review screenshots", 2],
+  ] as const)(
+    "renders remote pending attachments for %s without staged attachment recipes",
+    (prompt, displayAttachmentCount) => {
+      render({
+        thread: threadView([turn("t1", "First question", RUNNING, [])]),
+        deferredFollowUps: [
+          {
+            id: "remote-image",
+            queuedAtEpochMs: NOW,
+            displayAttachmentCount,
+            request: {
+              threadId: "agt-1",
+              prompt,
+              launch: { provider: "codex", model: "default", mode: "default" },
+            },
+          },
+        ],
+      });
+      const bubble = host.querySelector(".agent-prompt--queued");
+      expect(bubble?.textContent).toContain(prompt);
+      expect(bubble?.querySelector(".agent-prompt__queue-attachments")?.textContent).toBe(
+        `${displayAttachmentCount} ${displayAttachmentCount === 1 ? "attachment" : "attachments"}`,
+      );
+    },
+  );
+
+  it.each([
+    [1, "1 attachment"],
+    [2, "2 attachments"],
+    [8, "8 attachments"],
+    [9, "8+ attachments"],
+    [Number.MAX_SAFE_INTEGER, "8+ attachments"],
+    [-1, null],
+    [1.5, null],
+    [Number.NaN, null],
+    [Number.POSITIVE_INFINITY, null],
+  ])("bounds display-only queued attachment count %s", (count, label) => {
+    act(() =>
+      root.render(
+        <AgentQueuedPrompt
+          id="remote-image"
+          prompt=""
+          displayAttachmentCount={count}
+          onRemove={vi.fn()}
+        />,
+      ),
+    );
+    expect(host.querySelector(".agent-prompt__queue-attachments")?.textContent ?? null).toBe(label);
+    expect(
+      host.querySelector(".agent-prompt__queue-attachments")?.getAttribute("title") ?? null,
+    ).toBeNull();
   });
 
   it("queues deferred follow-ups under the last turn with a chip and a remove control", () => {
@@ -345,7 +405,7 @@ describe("agent thread turns", () => {
 
     const queued = host.querySelector<HTMLElement>(".agent-prompt--queued");
     expect(queued?.querySelector(".agent-prompt__body")?.textContent).toBe("and then ship it");
-    expect(queued?.querySelector(".agent-prompt__chip--queued")?.textContent).toBe("Queued");
+    expect(queued?.querySelector(".agent-prompt__queue-status")?.textContent).toBe("Queued");
     expect(host.querySelector(".agent-turn-list")?.nextElementSibling).toBe(queued?.parentElement);
 
     const remove = host.querySelector<HTMLButtonElement>(

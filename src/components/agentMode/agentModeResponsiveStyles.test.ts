@@ -90,7 +90,7 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".agent-mode__center")).toContain("grid-template-rows: auto minmax(0, 1fr) auto");
     expect(rule(".agent-composer")).not.toMatch(/position:\s*absolute/);
     expect(rule(".agent-composer")).toContain(
-      "max-height: min(44vh, calc(320px * var(--codevo-fs-scale)))",
+      "max-height: min(60vh, calc(560px * var(--codevo-fs-scale)))",
     );
     expect(rule(".agent-session__body")).not.toMatch(/padding:[^;]*148px/);
   });

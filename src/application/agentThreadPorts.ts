@@ -201,6 +201,7 @@ export type AgentThreadCopyDetail = "path" | "branch" | "threadId";
 
 /** Display identity only; remote dispatch retains its own exact connection authority. */
 export interface RemoteAgentThreadExecution {
+  readonly pendingMessages?: boolean;
   readonly kind: "remote";
   readonly serverId: string;
   readonly runnerId: string;
@@ -293,6 +294,7 @@ export interface AgentFollowUpRequest extends AgentTurnAttachmentRequest {
 }
 
 export interface AgentSteerRequest extends AgentTurnAttachmentRequest {
+  readonly delivery?: "queued" | "immediate";
   readonly threadId: string;
   readonly prompt: string;
 }
@@ -332,6 +334,8 @@ export interface AgentThreadsSurface {
   startThread(request: AgentThreadStartRequest): Promise<AgentThreadStartResult | null>;
   sendFollowUp(request: AgentFollowUpRequest): Promise<boolean>;
   readonly deferredFollowUps: DeferredFollowUps;
+  resumeDeferredFollowUps?(threadId: string): Promise<void>;
+  sendDeferredFollowUpNow?(threadId: string, id: string): Promise<void>;
   steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
   removeDeferredFollowUp(threadId: string, id: string): void;
   importExternalSession(

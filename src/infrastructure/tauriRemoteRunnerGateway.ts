@@ -27,6 +27,10 @@ export const REMOTE_RUNNER_COMMANDS = {
   cancelTask: "remote_runner_cancel_task",
   getTaskResume: "remote_runner_get_task_resume",
   continueTask: "remote_runner_continue_task",
+  listPendingMessages: "remote_runner_list_pending_messages",
+  enqueueMessage: "remote_runner_enqueue_message",
+  cancelPendingMessage: "remote_runner_cancel_pending_message",
+  resumePendingMessages: "remote_runner_resume_pending_messages",
   listEvents: "remote_runner_list_events",
   getDiff: "remote_runner_get_diff",
   listTaskFiles: "remote_runner_list_task_files",
@@ -122,6 +126,21 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   }
   continueTask(request: R.RemoteRunnerContinueTaskRequest) {
     return this.call("continueTask", request);
+  }
+  listPendingMessages(request: R.RemoteRunnerTaskRequest) {
+    return this.call("listPendingMessages", request);
+  }
+  enqueueMessage(request: R.RemoteRunnerContinueTaskRequest) {
+    return this.call("enqueueMessage", request);
+  }
+  async cancelPendingMessage(request: R.RemoteRunnerCancelPendingRequest) {
+    const result = await this.call("cancelPendingMessage", request);
+    if (result.id !== request.pendingId)
+      throw new Error("Runner returned a different pending message.");
+    return result;
+  }
+  resumePendingMessages(request: R.RemoteRunnerTaskRequest) {
+    return this.call("resumePendingMessages", request);
   }
   cancelTask(request: R.RemoteRunnerTaskRequest) {
     return this.call("cancelTask", request);

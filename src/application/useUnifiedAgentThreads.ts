@@ -12,6 +12,7 @@ import {
 } from "./remoteAgentProjection";
 import { useRemoteHistorySearchPort } from "./useRemoteHistorySearchPort";
 import { useRemoteAgentInventory } from "./useRemoteAgentInventory";
+import { useRemotePendingMessages } from "./useRemotePendingMessages";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
 import { useRemoteAgentAttachments } from "./useRemoteAgentAttachments";
 import { useRemoteAgentMetadata, type RemoteAgentMetadataRepository } from "./remoteAgentMetadata";
@@ -243,6 +244,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         for (const view of projector.project({
           ...snapshot,
           runnerId: snapshot.descriptor.runnerId,
+          pendingMessagesSupported: snapshot.descriptor.capabilities.pendingMessages === true,
           attachmentsByTask,
         })) {
           const presented = projectMetadata(view);
@@ -272,6 +274,21 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     report,
     resolveAttachments: remoteAttachments.resolve,
   });
+  const pendingMessages = useRemotePendingMessages({
+    gateway,
+    owner,
+    valid,
+    snapshots: inventory.snapshots,
+    views: remoteById,
+    resolveAttachments: remoteAttachments.resolve,
+    publish: inventory.publishPending,
+    refresh: inventory.refresh,
+    report,
+  });
+  const deferredFollowUps = useMemo(
+    () => new Map([...local.deferredFollowUps, ...pendingMessages.deferred]),
+    [local.deferredFollowUps, pendingMessages.deferred],
+  );
   const targetForThread = (id: string) => {
     const target = remoteById.get(id)?.execution;
     if (
@@ -442,7 +459,16 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         : remoteError !== null
           ? remoteAgentNotice(remoteError)
           : local.notice,
-    dispatching: local.dispatching || mutations.busy,
+    deferredFollowUps,
+    removeDeferredFollowUp: (threadId, id) => {
+      if (isRemoteAgentIdentity(threadId)) void pendingMessages.remove(threadId, id);
+      else local.removeDeferredFollowUp(threadId, id);
+    },
+    resumeDeferredFollowUps: async (threadId) => {
+      if (isRemoteAgentIdentity(threadId)) await pendingMessages.resume(threadId);
+      else await local.resumeDeferredFollowUps?.(threadId);
+    },
+    dispatching: local.dispatching || mutations.busy || pendingMessages.busy,
     agentCliConfigured: remoteMode ? serverReady : local.agentCliConfigured,
     agentCliKind: selectedRemote?.thread.provider.kind ?? local.agentCliKind,
     agentCliVersion: remoteMode ? null : local.agentCliVersion,
@@ -515,12 +541,20 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         report("Update this server's runner to support the selected model settings.");
         return false;
       }
+      if (
+        view.lifecycle === "running" ||
+        (pendingMessages.deferred.get(request.threadId)?.length ?? 0) > 0
+      )
+        return pendingMessages.enqueue(request);
       return target !== null && (await mutations.followUp(request, target)) !== null;
     },
     steer: async (request) => {
       if (isRemoteAgentIdentity(request.threadId)) {
-        report("Messaging a running server conversation is not available yet.");
-        return "kept";
+        if (request.delivery === "immediate") {
+          report("Server messages are queued for the next turn.");
+          return "kept";
+        }
+        return (await pendingMessages.enqueue(request)) ? "deferred" : "kept";
       }
       return local.steer(request);
     },

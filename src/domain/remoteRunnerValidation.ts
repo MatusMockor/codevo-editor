@@ -168,6 +168,32 @@ const taskShape = object({
   createdAt: timestamp,
 });
 const task: Check = (v) => taskShape(v) && launchProviderMatches(v);
+const pendingMessage: Check = (value) => {
+  if (
+    !object({
+      id,
+      conversationId: id,
+      status: choice("queued", "paused", "dispatched", "cancelled"),
+      parts,
+      createdAt: (v) =>
+        timestamp(v) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(v as string),
+      launch: optional(launch),
+      taskId: (v) => v === null || id(v),
+    })(value)
+  )
+    return false;
+  const pending = value as R.RemoteRunnerPendingMessage;
+  return (pending.status === "dispatched") === (pending.taskId !== null);
+};
+const pendingMessages: Check = (value) => {
+  if (!object({ items: array(pendingMessage, 16) })(value)) return false;
+  const items = (value as R.RemoteRunnerPendingMessages).items;
+  return (
+    new Set(items.map((item) => item.id)).size === items.length &&
+    new Set(items.map((item) => item.conversationId)).size <= 1 &&
+    items.every((item) => item.status === "queued" || item.status === "paused")
+  );
+};
 const event = object({
   sequence: integer(1),
   taskId: id,
@@ -222,6 +248,7 @@ export const remoteRunnerChecks = {
         taskContinuation: optional(boolean),
         taskLaunchOptions: optional(boolean),
         taskFileDiffs: optional(boolean),
+        pendingMessages: optional(boolean),
       }),
     }),
   },
@@ -293,6 +320,17 @@ export const remoteRunnerChecks = {
   continueTask: {
     request: object({ ...taskRequest, idempotencyKey: id, parts, launch: optional(launch) }),
     response: object({ task, created: boolean }),
+  },
+  listPendingMessages: { request: object(taskRequest), response: pendingMessages },
+  resumePendingMessages: { request: object(taskRequest), response: pendingMessages },
+  enqueueMessage: {
+    request: object({ ...taskRequest, idempotencyKey: id, parts, launch: optional(launch) }),
+    response: object({ pending: pendingMessage, created: boolean }),
+  },
+  cancelPendingMessage: {
+    request: object({ ...taskRequest, pendingId: id }),
+    response: (value: unknown) =>
+      pendingMessage(value) && (value as R.RemoteRunnerPendingMessage).status === "cancelled",
   },
   cancelTask: { request: object(taskRequest), response: task },
   listEvents: { request: object({ ...taskRequest, after: integer(0) }), response: page(event) },

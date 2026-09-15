@@ -51,6 +51,21 @@
   text-align: center;
 }
 
+.agent-session__queue-summary {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  width: 100%;
+  max-width: 768px;
+  margin: var(--agent-space-2) auto 0;
+}
+
+.agent-prompt__queue-action.agent-session__queue-count {
+  gap: var(--agent-space-1);
+  font-size: var(--agent-fs-xs);
+  padding-inline: var(--agent-space-2);
+}
+
 .agent-empty__title {
   margin: 0;
   color: var(--agent-text-strong);
@@ -128,17 +143,50 @@
 
 .agent-queued-list {
   display: grid;
-  gap: var(--agent-turn-gap);
+  gap: var(--agent-space-3);
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 
-.agent-prompt__queue {
+.agent-prompt--queued .agent-prompt__bubble {
+  gap: var(--agent-space-2);
+  border: 1px dashed color-mix(in srgb, var(--agent-text-muted) 45%, transparent);
+  background: transparent;
+  box-shadow: none;
+  padding: var(--agent-space-3) var(--agent-space-4);
+}
+
+.agent-prompt__queue,
+.agent-queued-list__controls {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--agent-space-3);
+  gap: var(--agent-space-2);
   min-width: 0;
+}
+
+.agent-prompt__queue {
+  flex-wrap: wrap;
+  color: var(--agent-text-muted);
+  font-size: var(--agent-fs-xs);
+}
+
+.agent-prompt__queue-status,
+.agent-prompt__queue-attachments {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--agent-space-1);
+}
+
+.agent-prompt__queue-status {
+  margin-right: auto;
+}
+
+.agent-prompt__queue svg,
+.agent-prompt__queue-action svg {
+  flex: none;
+  width: 1em;
+  height: 1em;
 }
 
 .agent-prompt__chip {
@@ -155,25 +203,43 @@
   color: var(--agent-text-muted);
 }
 
-.agent-prompt__remove {
+.agent-prompt__queue-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
+  gap: var(--agent-space-1);
+  min-width: 24px;
+  min-height: 24px;
   border: 0;
   border-radius: var(--agent-radius-sm);
   background: transparent;
   color: var(--agent-text-muted);
   cursor: pointer;
-  font-size: var(--agent-fs-xs);
-  padding: 2px 6px;
+  font-size: var(--agent-fs-sm);
+  padding: var(--agent-space-1);
 }
 
-.agent-prompt__remove:hover {
+.agent-prompt__queue-action--resume {
+  font-size: var(--agent-fs-xs);
+  padding-inline: var(--agent-space-2);
+}
+
+.agent-prompt__queue-action:hover {
   background: var(--agent-hover);
   color: var(--agent-text-strong);
 }
 
-.agent-prompt__remove:focus-visible {
+.agent-prompt__queue-action:focus-visible {
   outline: none;
   box-shadow: var(--agent-focus-ring);
+}
+
+@media (pointer: coarse) {
+  .agent-prompt__queue-action {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 .agent-prompt .agent-message-actions {

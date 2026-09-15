@@ -792,11 +792,11 @@ describe("AgentComposer", () => {
 
     const stop = stopButton();
     expect(stop.getAttribute("aria-label")).toBe("Stop agent");
-    expect(stop.getAttribute("title")).toContain("Send message: Enter");
+    expect(stop.getAttribute("title")).toContain("Queue message: Enter");
     expect(stop.type).toBe("button");
     expect(stop.disabled).toBe(false);
     expect(host.querySelector(".agent-composer__send")).toBeNull();
-    expect(promptField().placeholder).toBe("Message the running agent");
+    expect(promptField().placeholder).toBe("Queue a message for the next turn");
     expect(host.querySelector("form")?.getAttribute("aria-label")).toBe(
       "Follow up on agent thread",
     );
@@ -880,7 +880,7 @@ describe("AgentComposer", () => {
 
     expect(host.querySelector(".agent-composer__stop")).not.toBeNull();
     const send = submitButton();
-    expect(send.getAttribute("aria-label")).toBe("Send to running agent");
+    expect(send.getAttribute("aria-label")).toBe("Queue message");
     expect(send.disabled).toBe(false);
 
     submitForm();

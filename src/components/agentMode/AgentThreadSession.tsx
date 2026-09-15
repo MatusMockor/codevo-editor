@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Clock3, Play } from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { DeferredFollowUp } from "../../application/agentDeferredFollowUps";
 import type { AgentAttachmentImagesSurface } from "../../application/useAgentAttachmentImages";
@@ -102,6 +102,8 @@ export interface AgentThreadSessionProps {
   readonly thread: AgentThreadView | null;
   readonly deferredFollowUps?: ReadonlyArray<DeferredFollowUp>;
   onRemoveDeferredFollowUp?(threadId: string, id: string): void;
+  onResumeDeferredFollowUps?(threadId: string): Promise<void>;
+  onSendDeferredFollowUpNow?(threadId: string, id: string): Promise<void>;
   readonly composerRepositoryLabel: string | null;
   readonly turnRenderProbe?: (turnId: string) => void;
   readonly findQuery?: string;
@@ -139,6 +141,8 @@ function AgentThreadSessionBody({
   attachmentImages = null,
   deferredFollowUps = NO_DEFERRED_FOLLOW_UPS,
   onRemoveDeferredFollowUp,
+  onResumeDeferredFollowUps,
+  onSendDeferredFollowUpNow,
   onRevealAttachment,
   findBar = null,
   findHitIndex,
@@ -171,6 +175,7 @@ function AgentThreadSessionBody({
   const lightbox = useAgentAttachmentLightbox(attachmentImagePort, attachmentOwner);
   const attachmentImageViewer = lightbox.images;
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const queueRef = useRef<HTMLDivElement | null>(null);
   const pinnedToLatestRef = useRef(true);
   const renderedTurnRef = useRef<{ readonly threadId: string; readonly turnId: string | null }>({
     threadId,
@@ -324,6 +329,30 @@ function AgentThreadSessionBody({
     [onRemoveDeferredFollowUp, threadId],
   );
 
+  const revealQueue = useCallback((): void => {
+    const queue = queueRef.current;
+    const container = scrollRef.current;
+    if (queue === null || container === null) return;
+    pinnedToLatestRef.current = false;
+    const inset = findOpen ? AGENT_FIND_REVEAL_INSET : 0;
+    container.scrollTop = Math.max(
+      0,
+      container.scrollTop +
+        queue.getBoundingClientRect().top -
+        container.getBoundingClientRect().top -
+        container.clientTop -
+        inset,
+    );
+    queue.focus({ preventScroll: true });
+  }, [findOpen]);
+
+  const sendQueuedNow = useCallback(
+    (id: string): void => {
+      void onSendDeferredFollowUpNow?.(threadId, id);
+    },
+    [onSendDeferredFollowUpNow, threadId],
+  );
+
   const highlightFor = (turnIdentity: string): AgentTurnHighlight | null => {
     if (query === "") return null;
     if (activeHit?.scope === "turn" && activeHit.turnId === turnIdentity) return activeHighlight;
@@ -393,13 +422,37 @@ function AgentThreadSessionBody({
           </div>
 
           {deferredFollowUps.length > 0 && (
-            <div className="agent-queued-list">
+            <div
+              className="agent-queued-list"
+              role="region"
+              aria-label="Pending messages"
+              ref={queueRef}
+              tabIndex={-1}
+            >
+              {deferredFollowUps.some((entry) => entry.state === "paused") &&
+                onResumeDeferredFollowUps !== undefined && (
+                  <div className="agent-queued-list__controls">
+                    <button
+                      aria-label="Resume queued messages"
+                      className="agent-prompt__queue-action agent-prompt__queue-action--resume"
+                      onClick={() => void onResumeDeferredFollowUps(threadId)}
+                      title="Resume queued messages"
+                      type="button"
+                    >
+                      <Play aria-hidden="true" />
+                      Resume
+                    </button>
+                  </div>
+                )}
               {deferredFollowUps.map((entry) => (
                 <AgentQueuedPrompt
                   attachments={entry.request.attachments}
+                  displayAttachmentCount={entry.displayAttachmentCount}
                   id={entry.id}
                   key={entry.id}
                   onRemove={removeQueued}
+                  onSendNow={onSendDeferredFollowUpNow === undefined ? undefined : sendQueuedNow}
+                  state={entry.state}
                   prompt={entry.request.prompt}
                 />
               ))}
@@ -423,6 +476,21 @@ function AgentThreadSessionBody({
           )}
         </div>
       </div>
+
+      {deferredFollowUps.length > 0 && (
+        <div className="agent-session__queue-summary">
+          <button
+            aria-label={`Show ${deferredFollowUps.length} queued ${deferredFollowUps.length === 1 ? "message" : "messages"}`}
+            className="agent-prompt__queue-action agent-session__queue-count"
+            onClick={revealQueue}
+            title="Show pending messages, including paused messages"
+            type="button"
+          >
+            <Clock3 aria-hidden="true" />
+            {deferredFollowUps.length} queued
+          </button>
+        </div>
+      )}
 
       <AgentAttachmentLightbox
         entry={lightbox.entry}

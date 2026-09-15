@@ -3,6 +3,7 @@ import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import { PanelLeftOpen } from "lucide-react";
 import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { useUnifiedAgentThreads } from "../../application/useUnifiedAgentThreads";
+import { agentThreadIsSteerable } from "../../application/agentTurnAdmission";
 import { deferredFollowUpsForThread } from "../../application/agentDeferredFollowUps";
 import {
   useAgentThreadScripts,
@@ -688,6 +689,12 @@ function LocalAgentModeView({
                       )
                 }
                 onRemoveDeferredFollowUp={agents.removeDeferredFollowUp}
+                onResumeDeferredFollowUps={agents.resumeDeferredFollowUps}
+                onSendDeferredFollowUpNow={
+                  sessionThread !== null && agentThreadIsSteerable(sessionThread.thread)
+                    ? agents.sendDeferredFollowUpNow
+                    : undefined
+                }
                 onReviewInDiff={reviewInDiff}
                 reveal={find.reveal}
                 textClipboard={textClipboard}

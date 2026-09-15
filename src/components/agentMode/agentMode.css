@@ -337,7 +337,7 @@
   }
 
   .agent-composer {
-    max-height: min(48vh, calc(260px * var(--codevo-fs-scale)));
+    max-height: min(60vh, calc(560px * var(--codevo-fs-scale)));
     padding-block: 10px 12px;
   }
 

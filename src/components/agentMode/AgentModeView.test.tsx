@@ -607,7 +607,7 @@ describe("AgentModeView", () => {
     expect(submitButton().disabled).toBe(true);
   });
 
-  it("steers the running thread from the composer and stops it from the Stop control", async () => {
+  it("queues for the running thread from the composer and stops it from the Stop control", async () => {
     const steer = vi.fn(async () => "sent" as const);
     const sendFollowUp = vi.fn(async () => true);
     const stop = vi.fn(async () => undefined);
@@ -629,12 +629,16 @@ describe("AgentModeView", () => {
     clickText("Refactor the parser");
 
     expect(host.textContent).not.toContain("This thread is still running");
-    expect(promptField().placeholder).toBe("Message the running agent");
+    expect(promptField().placeholder).toBe("Queue a message for the next turn");
 
     typePrompt("also run the tests");
     await submitFormAsync();
 
-    expect(steer).toHaveBeenCalledWith({ threadId: "agt-1", prompt: "also run the tests" });
+    expect(steer).toHaveBeenCalledWith({
+      delivery: "queued",
+      threadId: "agt-1",
+      prompt: "also run the tests",
+    });
     expect(sendFollowUp).not.toHaveBeenCalled();
 
     click("button.agent-composer__stop");
@@ -675,7 +679,7 @@ describe("AgentModeView", () => {
     clickText("Refactor the parser");
 
     expect(host.querySelector(".agent-prompt--queued")?.textContent).toContain("and then ship it");
-    expect(host.querySelector(".agent-prompt__chip--queued")?.textContent).toBe("Queued");
+    expect(host.querySelector(".agent-prompt__queue-status")?.textContent).toBe("Queued");
 
     click('button[aria-label="Remove queued message"]');
     expect(removeDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");

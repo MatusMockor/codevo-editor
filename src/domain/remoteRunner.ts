@@ -25,6 +25,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     taskContinuation?: boolean;
     taskLaunchOptions?: boolean;
     taskFileDiffs?: boolean;
+    pendingMessages?: boolean;
   }>;
 }>;
 export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;
@@ -71,6 +72,20 @@ export type RemoteRunnerContinueTaskRequest = RemoteRunnerTaskRequest &
     parts: readonly RemoteRunnerPart[];
     launch?: AgentLaunchOptions;
   }>;
+export type RemoteRunnerPendingMessage = Readonly<{
+  id: string;
+  conversationId: string;
+  status: "queued" | "paused" | "dispatched" | "cancelled";
+  parts: readonly RemoteRunnerPart[];
+  createdAt: string;
+  launch?: AgentLaunchOptions;
+  taskId: string | null;
+}>;
+export type RemoteRunnerPendingMessages = Readonly<{
+  items: readonly RemoteRunnerPendingMessage[];
+}>;
+export type RemoteRunnerCancelPendingRequest = RemoteRunnerTaskRequest &
+  Readonly<{ pendingId: string }>;
 export type RemoteRunnerEvent = Readonly<{
   sequence: number;
   taskId: string;
@@ -168,6 +183,14 @@ export type RemoteRunnerHistorySearchPage = Readonly<{
 }>;
 
 export interface RemoteRunnerGateway {
+  listPendingMessages?(request: RemoteRunnerTaskRequest): Promise<RemoteRunnerPendingMessages>;
+  enqueueMessage?(
+    request: RemoteRunnerContinueTaskRequest,
+  ): Promise<Readonly<{ pending: RemoteRunnerPendingMessage; created: boolean }>>;
+  cancelPendingMessage?(
+    request: RemoteRunnerCancelPendingRequest,
+  ): Promise<RemoteRunnerPendingMessage>;
+  resumePendingMessages?(request: RemoteRunnerTaskRequest): Promise<RemoteRunnerPendingMessages>;
   searchHistory?(request: RemoteRunnerHistorySearchRequest): Promise<RemoteRunnerHistorySearchPage>;
   watchInventory?(
     request: RemoteRunnerServerRequest,

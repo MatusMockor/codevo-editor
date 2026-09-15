@@ -18,7 +18,7 @@ pub struct ContinueRequest {
 }
 
 impl ContinueRequest {
-    fn body(&self) -> Result<Value, String> {
+    pub(super) fn body(&self) -> Result<Value, String> {
         id(&self.server_id)?;
         uuid(&self.task_id)?;
         uuid(&self.idempotency_key)?;

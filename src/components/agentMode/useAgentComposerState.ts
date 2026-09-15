@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { agentThreadIsSteerable } from "../../application/agentTurnAdmission";
+import { agentThreadAcceptsQueuedMessage } from "../../application/agentTurnAdmission";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { useAgentComposerRepositoryInteraction } from "./useAgentComposerRepositoryInteraction";
 import {
@@ -381,6 +381,7 @@ export function useAgentComposerControllerState({
             setSteering(true);
             try {
               const outcome = await steerThread({
+                delivery: "queued",
                 ...prepared.request,
                 threadId: authority.threadId,
                 prompt,
@@ -785,7 +786,11 @@ function useComposerMode(
   const { agentCliConfigured, liveTaskCount, maxConcurrentAgentTasks } = agents;
   return useMemo<AgentComposerMode>(() => {
     if (selectedThread === null) return { kind: "new" };
-    if (agentThreadIsSteerable(selectedThread.thread)) {
+    if (
+      agentThreadAcceptsQueuedMessage(selectedThread.thread) &&
+      (selectedThread.execution?.kind !== "remote" ||
+        selectedThread.execution.pendingMessages === true)
+    ) {
       return { kind: "steer", threadId: selectedThread.thread.threadId };
     }
     return {

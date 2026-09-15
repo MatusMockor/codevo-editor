@@ -1038,6 +1038,8 @@ const IGNORED_NOTIFICATION_METHODS: &[&str] = &[
     "account/updated",
     "app/list/updated",
     "autoApprovalReview/strictReviewRequired",
+    "codex/event/exec_command_end",
+    "codex/event/item_completed",
     "command/exec/outputDelta",
     "configWarning",
     "deprecationNotice",
@@ -1184,11 +1186,12 @@ where
     }
 }
 
+pub fn is_ignored_notification(method: &str) -> bool {
+    IGNORED_NOTIFICATION_METHODS.binary_search(&method).is_ok()
+}
+
 fn classify_unhandled_notification(method: String) -> ServerNotification {
-    match IGNORED_NOTIFICATION_METHODS
-        .binary_search(&method.as_str())
-        .is_ok()
-    {
+    match is_ignored_notification(&method) {
         true => ServerNotification::Ignored { method },
         false => ServerNotification::Unknown { method },
     }

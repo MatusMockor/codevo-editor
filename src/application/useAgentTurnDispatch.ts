@@ -78,6 +78,7 @@ import {
   prepareTurnAttachments,
   retryAttachmentThreadId,
   type AttachmentThreadReservation,
+  type ClaimedTurnAttachments,
   type AgentTurnAttachmentAuthority,
 } from "./agentTurnAttachments";
 import type { InPlacePreflight } from "./useAgentIsolationPreview";
@@ -115,6 +116,8 @@ export interface AgentTurnDispatchSurface {
   readonly deferredFollowUps: DeferredFollowUps;
   steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
   removeDeferredFollowUp(threadId: string, id: string): void;
+  sendDeferredFollowUpNow(threadId: string, id: string): Promise<void>;
+  resumeDeferredFollowUps(threadId: string): Promise<void>;
   clearDeferredForOwner(ownerId: string): void;
   stop(threadId: string): Promise<void>;
   hasLiveTasksForOwner(ownerId: string): boolean;
@@ -170,7 +173,12 @@ export function useAgentTurnDispatch(
   const sessionWarnedThreadsRef = useRef<Set<string>>(new Set());
   const pendingTurnCountsRef = useRef<Record<AgentCliKind, number>>({ claudeCode: 0, codex: 0 });
   const sendFollowUpRef = useRef<
-    ((request: AgentFollowUpRequest, isCurrent?: () => boolean) => Promise<boolean>) | null
+    | ((
+        request: AgentFollowUpRequest,
+        isCurrent?: () => boolean,
+        prepared?: ClaimedTurnAttachments,
+      ) => Promise<boolean>)
+    | null
   >(null);
   useLayoutEffect(() => {
     dependenciesRef.current = dependencies;
@@ -223,6 +231,8 @@ export function useAgentTurnDispatch(
     deferredFollowUps,
     steer,
     removeDeferredFollowUp,
+    sendDeferredFollowUpNow,
+    resumeDeferredFollowUps,
     onTurnSettled,
     onThreadStopped,
     clearDeferredForOwner,
@@ -757,6 +767,7 @@ export function useAgentTurnDispatch(
     async (
       request: AgentFollowUpRequest,
       isCurrent: () => boolean = () => true,
+      claimed?: ClaimedTurnAttachments,
     ): Promise<boolean> => {
       let deps = dependenciesRef.current;
       const candidate = deps.store.state.threads.get(request.threadId);
@@ -812,22 +823,24 @@ export function useAgentTurnDispatch(
       beginPendingTurn(reboundThread.provider.kind);
       setDispatching(true);
       try {
-        const prepared = await prepareTurnAttachments(
-          {
-            ...dependenciesRef.current,
-            setNotice: (notice) => {
-              if (
-                isCurrent() &&
-                isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority)
-              )
-                dependenciesRef.current.setNotice(notice);
+        const prepared =
+          claimed ??
+          (await prepareTurnAttachments(
+            {
+              ...dependenciesRef.current,
+              setNotice: (notice) => {
+                if (
+                  isCurrent() &&
+                  isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority)
+                )
+                  dependenciesRef.current.setNotice(notice);
+              },
             },
-          },
-          request,
-          turnAttachmentAuthority(authority),
-          reboundThread.threadId,
-          prompt,
-        );
+            request,
+            turnAttachmentAuthority(authority),
+            reboundThread.threadId,
+            prompt,
+          ));
         if (
           prepared === null ||
           !isCurrent() ||
@@ -946,6 +959,8 @@ export function useAgentTurnDispatch(
     deferredFollowUps,
     steer,
     removeDeferredFollowUp,
+    sendDeferredFollowUpNow,
+    resumeDeferredFollowUps,
     clearDeferredForOwner,
     stop,
     hasLiveTasksForOwner,

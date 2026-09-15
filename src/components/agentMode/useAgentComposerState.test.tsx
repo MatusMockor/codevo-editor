@@ -532,7 +532,11 @@ describe("useAgentComposerState", () => {
       });
     });
 
-    expect(steer).toHaveBeenCalledWith({ threadId: "agt-1", prompt: "also run the tests" });
+    expect(steer).toHaveBeenCalledWith({
+      threadId: "agt-1",
+      prompt: "also run the tests",
+      delivery: "queued",
+    });
     expect(sendFollowUp).not.toHaveBeenCalled();
     expect(current().composer.composerProps.prompt).toBe("");
 
@@ -657,17 +661,18 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.prompt).toBe("");
   });
 
-  it("keeps the running notice and the follow-up mode for a turn that cannot be steered", () => {
+  it("allows queueing for a running Codex CLI turn that cannot be steered", () => {
     const codex = steerableThreadView("codex");
     render(threadsSurfaceFixture({ agentCliKind: "codex", threads: [codex] }));
 
     act(() => current().navigation.selectThread("agt-1"));
     expect(current().composer.composerProps.mode).toEqual({
-      kind: "followUp",
-      blockedReason: "This thread is still running. Wait for the turn to finish.",
+      kind: "steer",
+      threadId: "agt-1",
     });
-    expect(current().composer.composerProps.running).toBe(false);
-    expect(current().composer.composerProps.submitBlocked).toBe(true);
+    expect(current().composer.composerProps.running).toBe(true);
+    act(() => current().composer.composerProps.onPromptChange("next task"));
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
   });
 
   it("continues a server thread through the original composer without a local session", async () => {

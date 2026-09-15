@@ -25,6 +25,8 @@ struct Capabilities {
     task_launch_options: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     task_file_diffs: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    pending_messages: Option<bool>,
 }
 
 fn optional_bool<'de, D: serde::Deserializer<'de>>(
@@ -55,6 +57,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.task_continuation,
         caps.task_launch_options,
         caps.task_file_diffs,
+        caps.pending_messages,
     );
     Ok(descriptor.runner_id)
 }
@@ -89,6 +92,18 @@ mod tests {
         let mut wrong = value;
         wrong["capabilities"]["unknown"] = true.into();
         assert!(validate(wrong).is_err());
+    }
+
+    #[test]
+    fn pending_capability_is_optional_and_strict() {
+        let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true,"pendingMessages":true}});
+        assert!(validate(value.clone()).is_ok());
+        value["capabilities"]["pendingMessages"] = false.into();
+        assert!(validate(value.clone()).is_ok());
+        for invalid in [Value::Null, "true".into(), 1.into()] {
+            value["capabilities"]["pendingMessages"] = invalid;
+            assert!(validate(value.clone()).is_err());
+        }
     }
 
     #[test]

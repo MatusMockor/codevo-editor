@@ -12,7 +12,13 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+// Outbound requests and retained inbound metadata keep their original 1 MiB budget.
 pub const MAX_APP_SERVER_LINE_BYTES: usize = 1024 * 1024;
+// A single reader per host admits at most 16 MiB temporarily, before projection.
+// This is separate from the bounded per-turn queues; large control frames still fail.
+pub const MAX_APP_SERVER_WIRE_BYTES: usize = 16 * 1024 * 1024;
+#[path = "codex_app_server_inbound.rs"]
+mod inbound;
 pub const APP_SERVER_WRITE_QUEUE_CAPACITY: usize = 64;
 pub const MAX_TURN_INBOUND_FRAMES: usize = 4096;
 pub const MAX_TURN_INBOUND_BYTES: usize = 8 * 1024 * 1024;
@@ -27,7 +33,9 @@ pub const JSON_RPC_METHOD_NOT_FOUND: i64 = -32601;
 pub const JSON_RPC_METHOD_NOT_FOUND_MESSAGE: &str = "Method not found.";
 
 pub const APP_SERVER_LINE_LIMIT_ERROR: &str =
-    "Codex app-server sent a frame over the supported size.";
+    "Codex app-server sent an unsupported oversized frame; the session was stopped and output may be incomplete.";
+pub const APP_SERVER_OUTBOUND_LIMIT_ERROR: &str =
+    "The request exceeds the Codex app-server message limit and was not sent.";
 pub const APP_SERVER_WRITE_QUEUE_ERROR: &str = "Codex app-server write queue overflowed.";
 pub const APP_SERVER_EOF_ERROR: &str = "Codex app-server closed its output stream.";
 pub const APP_SERVER_READ_ERROR: &str = "Codex app-server output stream failed.";
@@ -275,7 +283,7 @@ impl TransportShared {
     fn write_line(&self, mut line: Vec<u8>) -> Result<(), CodexRpcFailure> {
         if line.len() > MAX_APP_SERVER_LINE_BYTES {
             return Err(CodexRpcFailure::HostFailed {
-                reason: APP_SERVER_LINE_LIMIT_ERROR.to_string(),
+                reason: APP_SERVER_OUTBOUND_LIMIT_ERROR.to_string(),
             });
         }
         line.push(b'\n');
@@ -500,7 +508,7 @@ fn read_loop(output: Box<dyn Read + Send>, shared: Arc<TransportShared>) {
     let mut line: Vec<u8> = Vec::new();
     loop {
         line.clear();
-        match read_bounded_line(&mut reader, &mut line, MAX_APP_SERVER_LINE_BYTES) {
+        match read_bounded_line(&mut reader, &mut line, MAX_APP_SERVER_WIRE_BYTES) {
             Ok(BoundedLine::Eof) => {
                 shared.fail(APP_SERVER_EOF_ERROR);
                 return;
@@ -518,7 +526,19 @@ fn read_loop(output: Box<dyn Read + Send>, shared: Arc<TransportShared>) {
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        shared.dispatch(line.as_slice());
+        if line.len() > MAX_APP_SERVER_LINE_BYTES {
+            match inbound::project_large_notification(&line) {
+                Ok(projected) => shared.dispatch(&projected),
+                Err(()) => {
+                    shared.fail(APP_SERVER_LINE_LIMIT_ERROR);
+                    return;
+                }
+            }
+            // Do not retain the exceptional wire buffer for the lifetime of the host.
+            line = Vec::new();
+        } else {
+            shared.dispatch(line.as_slice());
+        }
     }
 }
 

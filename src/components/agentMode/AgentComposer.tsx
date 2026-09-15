@@ -57,6 +57,7 @@ import { agentSubmitShortcut } from "./agentSubmitShortcut";
 import { agentControlTooltip } from "./agentThreadHeaderPresentation";
 import { useCompactComposerControls } from "./useCompactComposerControls";
 import { useTouchComposerLayout } from "./useTouchComposerLayout";
+import { useAgentComposerAutosize } from "./useAgentComposerAutosize";
 import { AgentExecutionEnvironmentPicker } from "./AgentExecutionEnvironmentPicker";
 
 const NO_TARGET_REASON = "Choose a project in the rail to start a thread.";
@@ -153,6 +154,7 @@ export function AgentComposer({
   worktreeOnlyReason,
 }: AgentComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useAgentComposerAutosize(textareaRef, prompt);
   const [controlRequest, setControlRequest] = useState<
     | (AgentLaunchControlRequest & {
         readonly ownerMode: AgentComposerMode;
@@ -575,7 +577,7 @@ export function AgentComposer({
               className="agent-composer__stop"
               onClick={onStop}
               title={
-                steering ? `Stop (Esc). Send message: Enter or ${shortcut.keys}` : "Stop (Esc)"
+                steering ? `Stop (Esc). Queue message: Enter or ${shortcut.keys}` : "Stop (Esc)"
               }
               aria-busy={dispatching || undefined}
               type="button"
@@ -674,14 +676,14 @@ function AgentComposerBytes({ promptBytes }: { readonly promptBytes: number }) {
 }
 
 function submitAccessibleName(dispatching: boolean, mode: AgentComposerMode): string {
-  if (mode.kind === "steer") return "Send to running agent";
+  if (mode.kind === "steer") return "Queue message";
   if (dispatching) return "Starting…";
   if (mode.kind === "followUp") return "Send follow-up";
   return "Start agent";
 }
 
 function composerPlaceholder(mode: AgentComposerMode): string {
-  if (mode.kind === "steer") return "Message the running agent";
+  if (mode.kind === "steer") return "Queue a message for the next turn";
   if (mode.kind === "followUp") return "Reply to the agent in this thread";
   return "Ask anything or describe the change you want";
 }

@@ -230,6 +230,22 @@ describe("AgentModelPicker", () => {
     expect(onSelect).toHaveBeenCalledWith("default", "codex");
   });
 
+  it("does not expose another provider through favorites in an existing conversation", () => {
+    const onSelect = vi.fn();
+    render(CLAUDE, onSelect, false, null, { claudeCode: true, codex: true }, true);
+    open();
+    act(() => railItem("codex").click());
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Add GPT-5.5 to favorites"]')?.click(),
+    );
+    key("Escape");
+    render(CLAUDE, onSelect, false, null, { claudeCode: true, codex: true }, false);
+    open();
+    act(() => favoritesRail().click());
+    expect(optionValues()).not.toContain("gpt-5.5");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("names the CLI-configured default model and removes its duplicate row", () => {
     const configured = management({ claudeCode: true, codex: true });
     render(CLAUDE, vi.fn(), false, {

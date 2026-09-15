@@ -188,14 +188,20 @@ describe("agent thread Airy style contract", () => {
     expect(declarations(".agent-minimap--rail", "contain")).toEqual([]);
   });
 
-  it("keeps the thread, composer and usage sheets free of t3 tokens, borders and hairline rings", () => {
+  it("keeps borders limited to the intentional queued-message outline", () => {
     for (const sheet of ["agentThread.css", "agentComposer.css", "agentUsage.css"] as const) {
       const source = readStyleSheet(agentModeSheetPath(sheet)).source.replace(
         /\/\*[\s\S]*?\*\//g,
         "",
       );
       expect(source, sheet).not.toContain("--t3-");
-      expect(source, sheet).not.toMatch(/border(-(top|right|bottom|left|block|inline))?:\s*1px/);
+      const nonQueueSource = source.replace(
+        /\.agent-prompt--queued \.agent-prompt__bubble\s*\{[^}]*\}/g,
+        "",
+      );
+      expect(nonQueueSource, sheet).not.toMatch(
+        /border(-(top|right|bottom|left|block|inline))?:\s*1px/,
+      );
       expect(source, sheet).not.toMatch(/border-color:/);
       expect(source, sheet).not.toMatch(/box-shadow:\s*(inset )?0 0 0 \d/);
       expect(source, sheet).not.toMatch(/var\(--agent-hairline/);
@@ -239,12 +245,18 @@ describe("agent thread Airy style contract", () => {
     );
   });
 
-  it("dresses the steered and queued bubbles from the prompt ladder without a second bubble rule", () => {
+  it("distinguishes compact queued outlines from sent bubbles using the prompt tokens", () => {
     expect(RULES.filter((entry) => entry.selectors.includes(".agent-prompt__bubble"))).toHaveLength(
       1,
     );
-    expect(winningDeclaration(".agent-queued-list", "gap")).toBe("var(--agent-turn-gap)");
-    expect(winningDeclaration(".agent-prompt__queue", "gap")).toBe("var(--agent-space-3)");
+    expect(winningDeclaration(".agent-queued-list", "gap")).toBe("var(--agent-space-3)");
+    expect(winningDeclaration(".agent-prompt--queued .agent-prompt__bubble", "background")).toBe(
+      "transparent",
+    );
+    expect(winningDeclaration(".agent-prompt--queued .agent-prompt__bubble", "border")).toBe(
+      "1px dashed color-mix(in srgb, var(--agent-text-muted) 45%, transparent)",
+    );
+    expect(winningDeclaration(".agent-prompt__queue", "gap")).toBe("var(--agent-space-2)");
     expect(winningDeclaration(".agent-prompt__chip", "border-radius")).toBe(
       "var(--agent-radius-md)",
     );
@@ -255,13 +267,13 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-prompt__chip--queued", "color")).toBe(
       "var(--agent-text-muted)",
     );
-    expect(winningDeclaration(".agent-prompt__remove", "border-radius")).toBe(
+    expect(winningDeclaration(".agent-prompt__queue-action", "border-radius")).toBe(
       "var(--agent-radius-sm)",
     );
-    expect(winningDeclaration(".agent-prompt__remove:focus-visible", "box-shadow")).toBe(
+    expect(winningDeclaration(".agent-prompt__queue-action:focus-visible", "box-shadow")).toBe(
       "var(--agent-focus-ring)",
     );
-    expect(declarations(".agent-prompt__remove", "outline")).toEqual([]);
+    expect(declarations(".agent-prompt__queue-action", "outline")).toEqual([]);
   });
 
   it("gives the composer Stop control the send geometry on the well tone", () => {

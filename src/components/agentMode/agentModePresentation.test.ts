@@ -128,7 +128,7 @@ describe("agentModePresentation", () => {
         }),
         { agentCliKind: "codex" },
       ),
-    ).toContain("still running");
+    ).toBeNull();
   });
 
   it("resumes remote threads from server metadata without a local CLI session", () => {
@@ -149,7 +149,7 @@ describe("agentModePresentation", () => {
       "parallel thread limit",
     );
     expect(blockedReason({ ...remote, worktreeMissing: true })).toContain("no longer exists");
-    expect(blockedReason({ ...remote, lifecycle: "running" })).toContain("still running");
+    expect(blockedReason({ ...remote, lifecycle: "running" })).toContain("Update this server");
     for (const [resume, message] of [
       [null, "Checking"],
       [{ available: false, reason: "task_not_finished" }, "still running"],

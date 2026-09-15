@@ -5,6 +5,7 @@ import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
+import type { DeferredFollowUp } from "../../application/agentDeferredFollowUps";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type {
   AgentThread,
@@ -58,6 +59,151 @@ describe("AgentThreadSession", () => {
     act(() => root.unmount());
     host.remove();
     vi.useRealTimers();
+  });
+
+  it("keeps pending messages separate from sent turns and routes queue actions", () => {
+    const remove = vi.fn();
+    const sendNow = vi.fn(async () => {});
+    render({
+      thread: threadView({ status: { kind: "running" } }),
+      deferredFollowUps: [
+        {
+          id: "queued-1",
+          queuedAtEpochMs: NOW,
+          request: {
+            threadId: "agt-1",
+            prompt: "Next task",
+            attachments: [{ kind: "reference", name: "example.ts", path: "example.ts", bytes: 42 }],
+            launch: {
+              provider: "claudeCode",
+              model: "default",
+              mode: "default",
+              effort: "default",
+            },
+          },
+        },
+      ],
+      onRemoveDeferredFollowUp: remove,
+      onSendDeferredFollowUpNow: sendNow,
+    });
+
+    const queue = host.querySelector('[aria-label="Pending messages"]');
+    expect(queue?.textContent).not.toContain(
+      "Queued messages will run after the current response.",
+    );
+    expect(queue?.querySelector(".agent-prompt__queue-status")?.getAttribute("title")).toBe(
+      "Waiting until the current response finishes.",
+    );
+    expect(queue?.textContent).toContain("Next task");
+    expect(queue?.querySelector(".agent-prompt__queue-attachments")?.textContent).toBe(
+      "1 attachment",
+    );
+    expect(queue?.querySelector(".agent-prompt__queue-attachments")?.getAttribute("title")).toBe(
+      "example.ts",
+    );
+    expect(button("Send queued message now").textContent).toBe("");
+    expect(button("Remove queued message").textContent).toBe("");
+    expect(host.querySelector(".agent-turn-list")?.textContent).not.toContain("Next task");
+    act(() => button("Send queued message now").click());
+    expect(sendNow).toHaveBeenCalledWith("agt-1", "queued-1");
+    act(() => button("Remove queued message").click());
+    expect(remove).toHaveBeenCalledWith("agt-1", "queued-1");
+  });
+
+  it("requires explicit resume for paused messages and hides unsupported send-now", () => {
+    const resume = vi.fn(async () => {});
+    render({
+      thread: threadView({}),
+      deferredFollowUps: [
+        {
+          id: "paused-1",
+          state: "paused",
+          queuedAtEpochMs: NOW,
+          request: {
+            threadId: "agt-1",
+            prompt: "Wait for me",
+            launch: {
+              provider: "claudeCode",
+              model: "default",
+              mode: "default",
+              effort: "default",
+            },
+          },
+        },
+      ],
+      onResumeDeferredFollowUps: resume,
+    });
+
+    expect(host.querySelector(".agent-prompt__queue-status")?.textContent).toBe("Paused");
+    expect(host.querySelector(".agent-prompt__queue-status")?.getAttribute("title")).toBe(
+      "Paused. Resume queued messages when you are ready.",
+    );
+    expect(host.querySelector('[aria-label="Send queued message now"]')).toBeNull();
+    expect(resume).not.toHaveBeenCalled();
+    act(() => button("Resume queued messages").click());
+    expect(resume).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("keeps the live queue count outside history scrolling and includes paused messages", () => {
+    const pending = [queuedPrompt("one"), queuedPrompt("two", "paused")];
+    render({ deferredFollowUps: pending });
+    const count = button("Show 2 queued messages");
+    expect(count.textContent).toBe("2 queued");
+    expect(count.closest(".agent-session__scroll")).toBeNull();
+    expect(count.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    const scroller = host.querySelector<HTMLElement>(".agent-session__scroll")!;
+    act(() => {
+      scroller.scrollTop = 10;
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    expect(button("Show 2 queued messages")).toBe(count);
+
+    render({ deferredFollowUps: pending.slice(1) });
+    expect(button("Show 1 queued message").textContent).toBe("1 queued");
+    render({ deferredFollowUps: [] });
+    expect(host.querySelector(".agent-session__queue-summary")).toBeNull();
+  });
+
+  it.each([false, true])(
+    "reveals pending messages only inside history (find open: %s)",
+    (findOpen) => {
+      const send = vi.fn(async () => {});
+      const resume = vi.fn(async () => {});
+      render({
+        findOpen,
+        deferredFollowUps: [queuedPrompt("one", "paused")],
+        onSendDeferredFollowUpNow: send,
+        onResumeDeferredFollowUps: resume,
+      });
+      const pending = host.querySelector<HTMLElement>('[aria-label="Pending messages"]')!;
+      const scroll = vi.fn();
+      pending.scrollIntoView = scroll;
+      const scroller = host.querySelector<HTMLElement>(".agent-session__scroll")!;
+      vi.spyOn(pending, "getBoundingClientRect").mockReturnValue({ top: 500 } as DOMRect);
+      vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+      scroller.scrollTop = 20;
+      host.scrollTop = 75;
+      act(() => button("Show 1 queued message").click());
+      expect(scroll).not.toHaveBeenCalled();
+      expect(scroller.scrollTop).toBe(420 - (findOpen ? 34 : 0));
+      expect(host.scrollTop).toBe(75);
+      expect(document.activeElement).toBe(pending);
+      expect(send).not.toHaveBeenCalled();
+      expect(resume).not.toHaveBeenCalled();
+    },
+  );
+
+  it("replaces the queue count when the selected thread changes and clears it for a new thread", () => {
+    const first = threadView({});
+    const second = { ...first, thread: { ...first.thread, threadId: "agt-2" } };
+    render({ thread: first, deferredFollowUps: [queuedPrompt("one"), queuedPrompt("two")] });
+    expect(button("Show 2 queued messages")).not.toBeNull();
+    render({ thread: second, deferredFollowUps: [] });
+    expect(host.querySelector(".agent-session__queue-summary")).toBeNull();
+    render({ thread: first, deferredFollowUps: [queuedPrompt("two")] });
+    expect(button("Show 1 queued message")).not.toBeNull();
+    render({ thread: null, deferredFollowUps: [queuedPrompt("two")] });
+    expect(host.querySelector(".agent-session__queue-summary")).toBeNull();
   });
 
   it("invites a new thread when nothing is selected", () => {
@@ -1317,6 +1463,19 @@ function defaultProps(): AgentThreadSessionProps {
     thread: threadView({}),
     composerRepositoryLabel: "app",
     onReviewInDiff: () => undefined,
+  };
+}
+
+function queuedPrompt(id: string, state: "queued" | "paused" = "queued"): DeferredFollowUp {
+  return {
+    id,
+    state,
+    queuedAtEpochMs: NOW,
+    request: {
+      threadId: "agt-1",
+      prompt: id,
+      launch: { provider: "claudeCode", model: "default", mode: "default", effort: "default" },
+    },
   };
 }
 

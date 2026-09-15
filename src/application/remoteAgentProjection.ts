@@ -37,6 +37,7 @@ export function remoteAgentThreadKey(
 }
 
 export interface RemoteAgentProjectionInput {
+  readonly pendingMessagesSupported?: boolean;
   readonly serverId: string;
   readonly runnerId: string;
   readonly projects: readonly RemoteRunnerProject[];
@@ -249,6 +250,7 @@ function projectConversation(
     editorAvailability: { kind: "blocked", reason: "This working copy is on the server." },
     execution: {
       kind: "remote",
+      pendingMessages: input.pendingMessagesSupported === true,
       serverId: input.serverId,
       runnerId: input.runnerId,
       projectId,

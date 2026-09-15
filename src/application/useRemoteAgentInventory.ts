@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   RemoteRunnerGateway,
+  RemoteRunnerPendingMessage,
   RemoteRunnerServer,
   RemoteRunnerTask,
 } from "../domain/remoteRunner";
@@ -19,11 +20,15 @@ interface Options {
   readonly workspaceOwner: string | null;
   readonly selectedThreadId: string | null;
 }
+export type RemotePendingUpdate =
+  | readonly RemoteRunnerPendingMessage[]
+  | ((items: readonly RemoteRunnerPendingMessage[]) => readonly RemoteRunnerPendingMessage[]);
 export interface RemoteAgentInventorySurface {
   readonly snapshots: readonly RemoteAgentInventorySnapshot[];
   readonly loading: boolean;
   refresh(): Promise<void>;
   publishTask(serverId: string, task: RemoteRunnerTask): void;
+  publishPending(serverId: string, threadId: string, items: RemotePendingUpdate): void;
 }
 /** Read-only remote inventory. Disposal revokes UI publication, never server work. */
 export function useRemoteAgentInventory({
@@ -35,6 +40,7 @@ export function useRemoteAgentInventory({
   const configuration = JSON.stringify(servers);
   const endpoint = (server: RemoteRunnerServer) =>
     JSON.stringify([server.id, server.host, server.username, server.port]);
+  const pendingRevisions = useRef(new Map<string, number>());
   const provenance = useRef(new Map<string, string>());
   const owner = useRef({ gateway, workspaceOwner });
   if (owner.current.gateway !== gateway || owner.current.workspaceOwner !== workspaceOwner)
@@ -82,6 +88,8 @@ export function useRemoteAgentInventory({
       };
       for (const id of provenance.current.keys())
         if (!configured.has(id)) provenance.current.delete(id);
+      for (const id of pendingRevisions.current.keys())
+        if (!configured.has(id)) pendingRevisions.current.delete(id);
       setState(cache.current);
     },
     [valid, lease],
@@ -118,6 +126,7 @@ export function useRemoteAgentInventory({
             ]);
             continue;
           }
+          const pendingRevision = pendingRevisions.current.get(server.id) ?? 0;
           let result: RemoteAgentInventorySnapshot;
           try {
             result = await loadRemoteAgentInventory(gateway, previous, selectedThreadId, valid);
@@ -134,7 +143,14 @@ export function useRemoteAgentInventory({
           const latest = cache.current.snapshots.find((item) => item.serverId === server.id);
           publish([
             ...cache.current.snapshots.filter((item) => item.serverId !== server.id),
-            { ...result, tasks: mergeRemoteTasks(result.tasks, latest?.tasks ?? []) },
+            {
+              ...result,
+              tasks: mergeRemoteTasks(result.tasks, latest?.tasks ?? []),
+              pendingMessages:
+                pendingRevision === (pendingRevisions.current.get(server.id) ?? 0)
+                  ? result.pendingMessages
+                  : latest?.pendingMessages,
+            },
           ]);
         }
       } while (operation.dirty && valid());
@@ -183,7 +199,26 @@ export function useRemoteAgentInventory({
     },
     [valid, publish],
   );
+  const publishPending = useCallback(
+    (serverId: string, threadId: string, items: RemotePendingUpdate) => {
+      if (!valid()) return;
+      pendingRevisions.current.set(serverId, (pendingRevisions.current.get(serverId) ?? 0) + 1);
+      publish(
+        cache.current.snapshots.map((snapshot) => {
+          if (snapshot.serverId !== serverId) return snapshot;
+          const pendingMessages = new Map(snapshot.pendingMessages);
+          pendingMessages.set(
+            threadId,
+            typeof items === "function" ? items(pendingMessages.get(threadId) ?? []) : items,
+          );
+          return { ...snapshot, pendingMessages };
+        }),
+      );
+    },
+    [valid, publish],
+  );
   return {
+    publishPending,
     snapshots:
       state.lease === lease
         ? state.snapshots
