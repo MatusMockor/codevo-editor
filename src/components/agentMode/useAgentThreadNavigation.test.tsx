@@ -304,6 +304,99 @@ describe("useAgentThreadNavigation", () => {
     expect(current().find.query).toBe("parser");
   });
 
+  it.each([false, true])(
+    "replays a persisted search target without replacing a newer query (%s)",
+    async (editQuery) => {
+      const initial = view("agt-1");
+      const task = {
+        turnId: "old-task",
+        prompt: "unrelated",
+        events: [],
+        eventsTruncated: false,
+        status: { kind: "exited" as const, exitCode: 0 },
+        startedAtEpochMs: 1,
+        endedAtEpochMs: 2,
+        lastStatusSequence: 1,
+        lastOutputSequence: 0,
+        launch: null,
+        cliVersion: null,
+      };
+      const historySearch = {
+        search: vi.fn(async () => ({
+          query: "needle",
+          matches: [
+            {
+              threadId: "agt-1",
+              turnId: "old-task",
+              source: "assistant" as const,
+              eventIndex: null,
+              snippet: "Persisted needle response",
+              ranges: [],
+              segmentStart: 0,
+              segmentEnd: 6,
+              score: 100,
+              resolveQuery: true,
+              resolveSource: "assistant" as const,
+            },
+          ],
+          truncated: false,
+          documentsTruncated: false,
+        })),
+      };
+      render(
+        threadsSurfaceFixture({
+          historySearch,
+          threads: [{ ...initial, thread: { ...initial.thread, turns: [task] } }],
+        }),
+      );
+      act(() => current().search.setQuery("needle"));
+      await act(async () => vi.advanceTimersByTime(120));
+      expect(historySearch.search).toHaveBeenCalledTimes(1);
+      expect(current().search.result?.matches[0]?.snippet).toBe("Persisted needle response");
+      act(() =>
+        current().selectThread("agt-1", {
+          query: "needle",
+          turnId: "old-task",
+          eventIndex: null,
+          start: 0,
+          end: 6,
+          resolveQuery: true,
+          resolveSource: "assistant",
+        }),
+      );
+      expect(current().find.open).toBe(true);
+      expect(current().find.hits).toEqual([]);
+      if (editQuery) act(() => current().find.setQuery("different"));
+      render(
+        threadsSurfaceFixture({
+          threads: [
+            {
+              ...initial,
+              thread: {
+                ...initial.thread,
+                turns: [
+                  {
+                    ...task,
+                    events: [{ kind: "assistantText", text: "Persisted needle response" }],
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+      act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+      expect(current().find.open).toBe(true);
+      expect(current().find.query).toBe(editQuery ? "different" : "needle");
+      if (editQuery) expect(current().find.hits).toEqual([]);
+      else
+        expect(current().find.hits[current().find.hitIndex]).toMatchObject({
+          turnId: "old-task",
+          eventIndex: 0,
+        });
+    },
+  );
+
   it("opens find for the selected thread only and closes it when the selection changes", () => {
     render(threadsSurfaceFixture({ threads: [view("agt-1"), view("agt-2")] }));
 

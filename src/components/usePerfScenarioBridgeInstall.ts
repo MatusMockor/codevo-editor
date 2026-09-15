@@ -4,8 +4,11 @@ import type { LatencySnapshotEntry } from "../domain/latencyTracker";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { installPerfScenarioBridge, perfScenarioBridgeEnabled } from "./perfScenarioBridge";
 import { usePerfAutorunInstall } from "./usePerfAutorunInstall";
+import { perfAutorunEnabled } from "./perfAutorunGate";
+import type { AgentWorkbenchLayoutState } from "../application/useAgentWorkbenchLayout";
 
 export interface PerfScenarioBridgeHost {
+  readonly agentWorkbench?: Pick<AgentWorkbenchLayoutState, "effectiveLayout" | "dispatch">;
   readonly getLatencySnapshot: () => LatencySnapshotEntry[];
   readonly clearLatencyMetrics: () => void;
   readonly javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
@@ -41,6 +44,15 @@ export function usePerfScenarioBridgeInstall(
   });
 
   usePerfAutorunInstall();
+
+  const agentWorkbench = host.agentWorkbench;
+  useEffect(() => {
+    // The QA bridge belongs to EditorSurface. A fresh agent-only profile has
+    // never mounted it, so autorun cannot open its first fixture through it.
+    if (perfAutorunEnabled() && agentWorkbench?.effectiveLayout === "agent") {
+      agentWorkbench.dispatch({ kind: "expandEditor" });
+    }
+  }, [agentWorkbench]);
 
   useEffect(() => {
     hostRef.current = host;

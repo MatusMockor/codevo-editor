@@ -453,7 +453,9 @@ const AgentTurnView = memo(function AgentTurnView({
 }) {
   renderProbe?.(turn.turnId);
   const attachments = useMemo(() => agentTurnAttachmentViews(turn.attachments), [turn.attachments]);
-  const projection = agentTurnProjection(turn.events);
+  const revealEventIndex =
+    highlight?.current?.kind === "event" ? highlight.current.eventIndex : null;
+  const projection = agentTurnProjection(turn.events, revealEventIndex);
   const subagents = agentTurnSubagentSummary(turn.events);
   const running = turn.status.kind === "pending" || turn.status.kind === "running";
   const [streamed, setStreamed] = useState(running);
@@ -513,7 +515,7 @@ const AgentTurnView = memo(function AgentTurnView({
         )}
         <AgentThreadUsage usage={threadUsage} />
         {projection.hiddenCount > 0 && (
-          <p className="agent-note">{projection.hiddenCount} earlier events hidden</p>
+          <p className="agent-note">{projection.hiddenCount} events hidden</p>
         )}
 
         <div className="agent-turn__events">
@@ -544,6 +546,7 @@ const AgentTurnView = memo(function AgentTurnView({
                 attachmentImages={attachmentImages}
                 errorContext={errorContext}
                 highlight={itemHighlight(highlight, item.key)}
+                groupHighlight={highlight}
                 item={item}
                 key={item.key}
                 prose={prose}
@@ -647,6 +650,7 @@ function AgentTurnWork({
               attachmentImages={attachmentImages}
               errorContext={errorContext}
               highlight={itemHighlight(highlight, item.key)}
+              groupHighlight={highlight}
               item={item}
               key={item.key}
               prose={prose}
@@ -702,6 +706,7 @@ function AgentSubagentBanner({ summary }: { readonly summary: AgentSubagentSumma
 }
 
 interface AgentTurnItemViewProps {
+  readonly groupHighlight?: AgentTurnHighlight | null;
   readonly attachmentImages: AgentTurnAttachmentImageViewer | null;
   readonly errorContext: AgentTurnErrorContext;
   readonly highlight: AgentItemHighlight | null;
@@ -712,6 +717,7 @@ interface AgentTurnItemViewProps {
 }
 
 function AgentTurnItemView({
+  groupHighlight = null,
   attachmentImages,
   errorContext,
   highlight,
@@ -722,17 +728,38 @@ function AgentTurnItemView({
 }: AgentTurnItemViewProps) {
   if (item.kind === "subagentGroup") {
     const group = item.group;
-    const childProjection = agentTurnProjection(group.events);
+    const cursor = groupHighlight?.current;
+    const childIndex =
+      cursor?.kind === "event" ? group.sourceOffsets.indexOf(cursor.eventIndex) : -1;
+    const childHighlight: AgentTurnHighlight | null =
+      groupHighlight === null
+        ? null
+        : {
+            query: groupHighlight.query,
+            current:
+              childIndex < 0 || cursor?.kind !== "event"
+                ? null
+                : {
+                    kind: "event",
+                    eventIndex: childIndex,
+                    occurrence: cursor.occurrence,
+                  },
+          };
+    const childProjection = agentTurnProjection(group.events, childIndex < 0 ? null : childIndex);
     const childHiddenCount = group.hiddenCount + childProjection.hiddenCount;
     return (
-      <details className="agent-reasoning" data-agent-event={item.key}>
+      <details
+        className="agent-reasoning"
+        data-agent-event={item.key}
+        open={childIndex >= 0 || undefined}
+      >
         <summary className="agent-microlabel">
           {group.path} · {group.state}
           {group.durationMs !== null && ` · ${agentTurnDurationLabel(group.durationMs)}`}
         </summary>
         <AgentThreadUsage usage={group.usage} />
         {childHiddenCount > 0 && (
-          <p className="agent-note">{childHiddenCount} earlier subagent events hidden</p>
+          <p className="agent-note">{childHiddenCount} subagent events hidden</p>
         )}
         {childProjection.items.map((child) => (
           <AgentTurnItemView
@@ -740,7 +767,8 @@ function AgentTurnItemView({
             item={child}
             attachmentImages={null}
             errorContext={errorContext}
-            highlight={null}
+            highlight={itemHighlight(childHighlight, child.key)}
+            groupHighlight={childHighlight}
             prose={prose}
             stream={stream}
             textClipboard={textClipboard}

@@ -33,11 +33,20 @@ The editor connection requires:
   under the service account, and project tools available in the systemd service's
   explicit `PATH`.
 
-The token stays on the server. The editor invokes a fixed Python helper over SSH
-for each typed request; that helper calls the loopback runner API. There is no
-persistent SSH tunnel, agent forwarding or publicly exposed runner port. Provider
-credentials are separate from the runner token and are not copied from the
-local editor.
+The editor owns a persistent SSH tunnel for each connected server, forwarding a
+private local Unix socket to the loopback runner API. A fixed Python bootstrap
+reads the runner token once through SSH; the token is held only in the Rust
+backend's memory, never in the renderer, local settings, logs or command arguments.
+HTTP requests reuse the tunnel. Agent forwarding stays disabled and the runner
+does not need a publicly exposed port. Provider credentials remain on the server.
+
+Updated runners publish compact WebSocket change notifications through the same
+tunnel. Notifications coalesce into an inventory refresh; transcript data still
+comes from the bounded HTTP event API. Every reconnect receives a fresh snapshot
+and triggers reconciliation. When all connected servers have healthy subscriptions, inventory reconciles every
+60 seconds; unavailable streams retain two-second polling for older runners. Failed setup
+retries with bounded backoff. Disconnecting revokes the exact connection and its
+subscriptions without cancelling server tasks.
 
 ## Clone or register server projects
 
@@ -184,7 +193,7 @@ access to saved task history.
 
 ## Runner identity
 
-Connections retain the runner identity. The SSH helper checks it before requests
+Connections retain the runner identity. The Rust transport checks it before requests
 and sends the optional `X-Codevo-Runner-Id` header. The updated runner deployment
 validates that header on the actual request and rejects a mismatch, protecting
 against replacement between the preliminary check and a mutation. Older clients
@@ -193,6 +202,10 @@ replaced with a different runner identity, remove the saved server and add it
 again deliberately.
 
 ## Current scope
+
+Server verification is deferred at the user's request. Follow the
+[continuation checklist](superpowers/plans/2026-09-15-runner-stream-handoff.md)
+when the Linux server is available again.
 
 New conversations and follow-up turns use separate runner task records while each
 conversation remains one editor thread. This

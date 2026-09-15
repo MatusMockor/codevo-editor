@@ -3,6 +3,19 @@ import type { AgentTurnEvent } from "../../domain/agentThread";
 import { agentTurnProjection } from "./agentModePresentation";
 
 describe("app-server subagent presentation bounds", () => {
+  it("reserves a bounded group slot for a search target after the normal group limit", () => {
+    const events: AgentTurnEvent[] = Array.from({ length: 40 }, (_, index) => ({
+      kind: "subagentEvent",
+      agentThreadId: `child-${index}`,
+      event: { kind: "assistantText", text: `response ${index}` },
+    }));
+    const projected = agentTurnProjection(events, 39);
+    const groups = projected.items.filter((item) => item.kind === "subagentGroup");
+    expect(groups).toHaveLength(32);
+    expect(groups[groups.length - 1]?.group.agentThreadId).toBe("child-39");
+    expect(groups[groups.length - 1]?.group.sourceOffsets).toEqual([39]);
+  });
+
   it("keeps parent output visible independently of child traffic and counts hidden child events", () => {
     const events: AgentTurnEvent[] = [{ kind: "assistantText", text: "Parent response" }];
     for (let i = 0; i < 300; i += 1)

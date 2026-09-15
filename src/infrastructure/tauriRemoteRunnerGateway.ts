@@ -1,11 +1,13 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, type Channel } from "@tauri-apps/api/core";
 import type * as R from "../domain/remoteRunner";
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 import { validateRemoteRunnerValue } from "../domain/remoteRunnerValidation";
+import { watchRemoteRunnerInventory } from "./watchRemoteRunnerInventory";
+import { validateRemoteHistorySearchPage } from "../domain/remoteRunnerHistorySearch";
 
 export type InvokeRemoteRunnerCommand = (
   command: string,
-  args?: Readonly<{ request: unknown }>,
+  args?: Readonly<{ request: unknown; onEvent?: Channel<unknown> }>,
 ) => Promise<unknown>;
 export const REMOTE_RUNNER_COMMANDS = {
   listServers: "remote_runner_list_servers",
@@ -18,6 +20,7 @@ export const REMOTE_RUNNER_COMMANDS = {
   getProjectClone: "remote_runner_get_project_clone",
   cancelProjectClone: "remote_runner_cancel_project_clone",
   listTasks: "remote_runner_list_tasks",
+  searchHistory: "remote_runner_search_history",
   createTask: "remote_runner_create_task",
   startTask: "remote_runner_start_task",
   getTask: "remote_runner_get_task",
@@ -37,7 +40,7 @@ export const REMOTE_RUNNER_COMMANDS = {
 export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   constructor(private readonly invokeCommand: InvokeRemoteRunnerCommand = invoke) {}
 
-  private async call<K extends keyof R.RemoteRunnerGateway>(
+  private async call<K extends keyof typeof REMOTE_RUNNER_COMMANDS>(
     operation: K,
     request?: Parameters<NonNullable<R.RemoteRunnerGateway[K]>>[0],
   ): Promise<Awaited<ReturnType<NonNullable<R.RemoteRunnerGateway[K]>>>> {
@@ -67,6 +70,12 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   listServers() {
     return this.call("listServers");
   }
+  watchInventory(
+    request: R.RemoteRunnerServerRequest,
+    listener: (event: R.RemoteRunnerInventoryEvent) => void,
+  ) {
+    return watchRemoteRunnerInventory(this.invokeCommand, request, listener);
+  }
   connectServer(request: R.RemoteRunnerServerInput) {
     return this.call("connectServer", request);
   }
@@ -93,6 +102,11 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   }
   listTasks(request: R.RemoteRunnerServerRequest & Readonly<{ after: number }>) {
     return this.call("listTasks", request);
+  }
+  async searchHistory(request: R.RemoteRunnerHistorySearchRequest) {
+    const page = await this.call("searchHistory", request);
+    validateRemoteHistorySearchPage(request, page);
+    return page;
   }
   createTask(request: R.RemoteRunnerCreateTaskRequest) {
     return this.call("createTask", request);

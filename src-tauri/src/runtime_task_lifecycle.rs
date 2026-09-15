@@ -59,6 +59,12 @@ pub(crate) fn shutdown_runtime_processes(
     app: &AppHandle,
     js_test_batches: &js_test_run::batch::JsTestBatchRegistry,
 ) -> Result<(), String> {
+    if let Some(streams) = app.try_state::<crate::remote_runner::InventoryStreamState>() {
+        streams.shutdown();
+    }
+    if let Some(runner) = app.try_state::<crate::remote_runner::RemoteRunnerState>() {
+        runner.shutdown();
+    }
     if let Some(provider_runtime) = app.try_state::<Arc<AgentProviderRuntimeRegistry>>() {
         provider_runtime.close_operation_admission();
     }

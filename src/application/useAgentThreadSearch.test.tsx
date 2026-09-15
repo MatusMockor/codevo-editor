@@ -448,3 +448,59 @@ describe("useAgentThreadSearch", () => {
     searchSpy.mockRestore();
   });
 });
+
+describe("remote persisted search ownership", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  it("merges a persisted hit outside loaded history and rejects old A-B-A port responses", async () => {
+    const callbacks: Array<(value: agentThreadSearch.AgentThreadSearchResult) => void> = [];
+    const signals: AbortSignal[] = [];
+    const makePort = () => ({
+      search: vi.fn((_query: string, _ids: ReadonlySet<string>, signal: AbortSignal) => {
+        signals.push(signal);
+        return new Promise<agentThreadSearch.AgentThreadSearchResult>((resolve) =>
+          callbacks.push(resolve),
+        );
+      }),
+    });
+    const a = makePort();
+    const b = makePort();
+    const harness = renderSearch([view(thread("known", "Unrelated"))], { historySearch: a });
+    harness.type("needle");
+    harness.fire();
+    harness.setOptions({ historySearch: b });
+    harness.fire();
+    harness.setOptions({ historySearch: a });
+    harness.fire();
+    const response = (snippet: string): agentThreadSearch.AgentThreadSearchResult => ({
+      query: "needle",
+      matches: [
+        {
+          threadId: "known",
+          turnId: "old-task",
+          source: "assistant",
+          eventIndex: null,
+          snippet,
+          ranges: [],
+          segmentStart: 0,
+          segmentEnd: 6,
+          score: 100,
+          resolveQuery: true,
+        },
+      ],
+      truncated: false,
+      documentsTruncated: false,
+    });
+    await act(async () => {
+      callbacks[0]!(response("stale"));
+      callbacks[1]!(response("foreign"));
+    });
+    expect(signals[0]!.aborted).toBe(true);
+    expect(harness.hook().result?.matches).toEqual([]);
+    await act(async () => callbacks[2]!(response("persisted needle")));
+    expect(harness.hook().result?.matches[0]?.snippet).toBe("persisted needle");
+    expect(harness.hook().pending).toBe(false);
+    harness.unmount();
+    expect(signals[2]!.aborted).toBe(true);
+  });
+});

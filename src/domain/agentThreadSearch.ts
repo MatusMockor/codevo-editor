@@ -41,6 +41,8 @@ export interface AgentThreadSearchDocument {
 }
 
 export interface AgentThreadSearchMatch {
+  readonly resolveQuery?: boolean;
+  readonly resolveSource?: "user" | "assistant";
   readonly threadId: string;
   readonly source: AgentThreadSearchSource;
   readonly turnId: string | null;

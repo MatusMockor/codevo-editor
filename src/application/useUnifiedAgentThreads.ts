@@ -10,6 +10,7 @@ import {
   remoteAgentProjectKey,
   remoteAgentThreadKey,
 } from "./remoteAgentProjection";
+import { useRemoteHistorySearchPort } from "./useRemoteHistorySearchPort";
 import { useRemoteAgentInventory } from "./useRemoteAgentInventory";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
 import { useRemoteAgentAttachments } from "./useRemoteAgentAttachments";
@@ -390,8 +391,15 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     metadata.persistenceError ??
     inventory.snapshots.find((snapshot) => snapshot.serverId === effectiveServerId)?.error ??
     null;
+  const historySearch = useRemoteHistorySearchPort({
+    gateway,
+    servers,
+    workspaceOwner,
+    views: threads,
+  });
   const agents: AgentThreadsSurface = {
     ...local,
+    historySearch,
     ...actions,
     showChanges: async (id) => {
       if (isRemoteAgentIdentity(id)) await remoteChanges.showChanges(id);

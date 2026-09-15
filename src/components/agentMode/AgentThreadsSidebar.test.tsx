@@ -882,7 +882,7 @@ describe("AgentThreadsSidebar", () => {
     });
 
     expect(host.querySelector(".agent-search-results__note")?.textContent).toBe(
-      "Older messages not searched",
+      "Some saved history could not be searched",
     );
     expect(host.querySelector(".agent-search-results__empty")?.textContent).toBe(
       "No threads found",

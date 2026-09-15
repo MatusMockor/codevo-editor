@@ -145,7 +145,34 @@ export type RemoteRunnerTaskFileDiff = Readonly<{
 }>;
 export type RemoteRunnerTaskFileDiffRequest = RemoteRunnerTaskRequest & Readonly<{ path: string }>;
 
+export type RemoteRunnerInventoryEvent = Readonly<{
+  type: "connected" | "changed" | "disconnected";
+}>;
+
+export type RemoteRunnerHistorySearchRequest = RemoteRunnerServerRequest &
+  Readonly<{ query: string; after?: number; projectId?: string }>;
+export type RemoteRunnerHistorySearchMatch = Readonly<{
+  taskId: string;
+  conversationId: string;
+  projectId: string | null;
+  taskSequence: number;
+  role: "user" | "assistant";
+  eventSequence: number | null;
+  snippet: string;
+}>;
+export type RemoteRunnerHistorySearchPage = Readonly<{
+  items: readonly RemoteRunnerHistorySearchMatch[];
+  nextCursor: number | null;
+  scope: "retained_runner_history";
+  incomplete: boolean;
+}>;
+
 export interface RemoteRunnerGateway {
+  searchHistory?(request: RemoteRunnerHistorySearchRequest): Promise<RemoteRunnerHistorySearchPage>;
+  watchInventory?(
+    request: RemoteRunnerServerRequest,
+    listener: (event: RemoteRunnerInventoryEvent) => void,
+  ): Promise<() => void>;
   listTaskFiles?(request: RemoteRunnerTaskRequest): Promise<RemoteRunnerTaskFiles>;
   getTaskFileDiff?(request: RemoteRunnerTaskFileDiffRequest): Promise<RemoteRunnerTaskFileDiff>;
   getAttachment?(request: RemoteRunnerAttachmentRequest): Promise<RemoteRunnerAttachment>;

@@ -72,7 +72,7 @@ describe("useAgentThreadFind", () => {
     expect(current().reveal).toBeNull();
   });
 
-  it("only counts hits inside events the session can render", () => {
+  it("finds older loaded events outside the default rendered window", () => {
     const events = Array.from({ length: MAX_RENDERED_EVENTS_PER_TURN + 3 }, (): AgentTurnEvent => ({
       kind: "assistantText",
       text: "token",
@@ -83,10 +83,139 @@ describe("useAgentThreadFind", () => {
     act(() => current().setQuery("token"));
     act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
 
-    expect(current().hits).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN);
+    expect(current().hits).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN + 3);
     const first = current().hits[0];
     expect(first?.scope).toBe("turn");
-    expect(first?.scope === "turn" ? first.eventIndex : null).toBe(3);
+    expect(first?.scope === "turn" ? first.eventIndex : null).toBe(0);
+  });
+
+  it("resolves a server search target beyond the global find hit cap", () => {
+    const first = threadWith([
+      { kind: "assistantText", text: "token ".repeat(MAX_THREAD_FIND_HITS) },
+    ]);
+    const target = {
+      ...first.turns[0]!,
+      turnId: "old-target",
+      events: [{ kind: "assistantText" as const, text: "target token" }],
+    };
+    render({ ...first, turns: [...first.turns, target] });
+    act(() =>
+      current().requestReveal({
+        query: "token",
+        turnId: "old-target",
+        eventIndex: null,
+        start: 0,
+        end: 0,
+        resolveQuery: true,
+      }),
+    );
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+    expect(current().hits).toHaveLength(MAX_THREAD_FIND_HITS);
+    expect(current().hits[current().hitIndex]).toMatchObject({
+      turnId: "old-target",
+      eventIndex: 0,
+    });
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+    expect(current().hits[current().hitIndex]).toMatchObject({
+      turnId: "old-target",
+      eventIndex: 0,
+    });
+    act(() => current().setQuery("target"));
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+    expect(current().hits).toHaveLength(1);
+  });
+
+  it("keeps an assistant search reveal pending while its placeholder turn awaits replay", () => {
+    const placeholder = threadWith([]);
+    render({ ...placeholder, turns: [{ ...placeholder.turns[0]!, prompt: "token prompt" }] });
+    act(() =>
+      current().requestReveal({
+        query: "token",
+        turnId: "agt-1-t1",
+        eventIndex: null,
+        start: 0,
+        end: 0,
+        resolveQuery: true,
+        resolveSource: "assistant",
+      }),
+    );
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+    expect(current().reveal?.resolveSource).toBe("assistant");
+    render({
+      ...placeholder,
+      turns: [
+        {
+          ...placeholder.turns[0]!,
+          prompt: "token prompt",
+          events: [{ kind: "assistantText", text: "token answer" }],
+        },
+      ],
+    });
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+    expect(current().hits[current().hitIndex]).toMatchObject({ eventIndex: 0 });
+    expect(current().reveal).toBeNull();
+  });
+
+  it("finds the assistant role after a same-turn prompt exhausts the global hit cap", () => {
+    const thread = threadWith([{ kind: "assistantText", text: "token answer" }]);
+    render({
+      ...thread,
+      turns: [{ ...thread.turns[0]!, prompt: "token ".repeat(MAX_THREAD_FIND_HITS + 10) }],
+    });
+    act(() =>
+      current().requestReveal({
+        query: "token",
+        turnId: "agt-1-t1",
+        eventIndex: null,
+        start: 0,
+        end: 0,
+        resolveQuery: true,
+        resolveSource: "assistant",
+      }),
+    );
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+    expect(current().hits[current().hitIndex]).toMatchObject({ eventIndex: 0 });
+  });
+
+  it("cancels a pending server reveal when the user edits the query", () => {
+    render(threadWith([]));
+    act(() =>
+      current().requestReveal({
+        query: "token",
+        turnId: "agt-1-t1",
+        eventIndex: null,
+        start: 0,
+        end: 0,
+        resolveQuery: true,
+        resolveSource: "assistant",
+      }),
+    );
+    act(() => current().setQuery("different"));
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+    expect(current().reveal).toBeNull();
+  });
+
+  it("cancels pending reveals across owner A to B to A replacement", () => {
+    const ownerA = threadWith([]);
+    render(ownerA);
+    act(() =>
+      current().requestReveal({
+        query: "token",
+        turnId: "agt-1-t1",
+        eventIndex: null,
+        start: 0,
+        end: 0,
+        resolveQuery: true,
+        resolveSource: "assistant",
+      }),
+    );
+    render({ ...ownerA, owner: { ...ownerA.owner, ownerId: "replacement-owner" } });
+    render(threadWith([{ kind: "assistantText", text: "token old owner" }]));
+    act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
+    expect(current().open).toBe(true);
+    expect(current().query).toBe("");
+    expect(current().hits).toEqual([]);
+    expect(current().reveal).toBeNull();
   });
 
   it("reports the result as truncated once the hit cap is reached", () => {
@@ -116,12 +245,13 @@ describe("useAgentThreadFind", () => {
     return state as AgentThreadFindState;
   }
 
+  function Probe({ thread }: { readonly thread: AgentThread }) {
+    state = useAgentThreadFind(thread);
+    return null;
+  }
+
   function render(thread: AgentThread): void {
-    function Probe() {
-      state = useAgentThreadFind(thread);
-      return null;
-    }
-    act(() => root.render(<Probe />));
+    act(() => root.render(<Probe thread={thread} />));
   }
 });
 

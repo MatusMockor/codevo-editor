@@ -1,8 +1,19 @@
-use serde_json::{json, Value};
+#[cfg(unix)]
+#[path = "tunnel_socket.rs"]
+mod tunnel_socket;
+#[cfg(unix)]
+pub(super) use tunnel_socket::DeadlineStream;
+#[path = "tunnel_session.rs"]
+mod tunnel_session;
+#[cfg(test)]
 use std::io::{Read, Write};
+#[cfg(test)]
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::Instant;
+pub(super) use tunnel_session::Session;
 
 const MAX_INPUT: usize = 16 * 1024 * 1024;
 const MAX_OUTPUT: usize = 4 * 1024 * 1024;
@@ -27,61 +38,6 @@ impl Drop for RequestPermit<'_> {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
     }
-}
-
-pub(super) fn request(
-    server: &super::types::Server,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    headers: Vec<(String, String)>,
-) -> Result<Value, String> {
-    validate_destination(&server.host, &server.username)?;
-    let _permit = RequestPermit::acquire(&ACTIVE_REQUESTS)?;
-    let input = serde_json::to_vec(&json!({
-        "method": method, "path": path, "body": body, "headers": headers,
-        "expectedRunnerId": server.runner_id,
-    }))
-    .map_err(|_| "Unable to encode runner request.".to_string())?;
-    if input.len() > MAX_INPUT {
-        return Err("Runner request exceeds the upload limit.".into());
-    }
-    let mut command = Command::new("ssh");
-    command.args([
-        "-T",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=yes",
-        "-o",
-        "ForwardAgent=no",
-        "-o",
-        "ClearAllForwardings=yes",
-        "-o",
-        "ConnectTimeout=8",
-        "-o",
-        "ServerAliveInterval=5",
-        "-o",
-        "ServerAliveCountMax=2",
-        "-p",
-        &server.port.to_string(),
-        "-l",
-        &server.username,
-        "--",
-        &server.host,
-        &helper_command(),
-    ]);
-    let output = run_with_limit(&mut command, &input, TIMEOUT, response_limit(method, path))?;
-    let response: Value = serde_json::from_slice(&output)
-        .map_err(|_| "Runner returned an invalid response.".to_string())?;
-    if let Some(error) = response.get("bridgeError").and_then(Value::as_str) {
-        // Only our fixed helper writes these messages; never forward remote stderr.
-        return Err(error.chars().take(160).collect());
-    }
-    response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| "Runner returned an invalid response.".into())
 }
 
 fn response_limit(method: &str, path: &str) -> usize {
@@ -118,16 +74,10 @@ fn validate_destination(host: &str, username: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn helper_command() -> String {
-    // The shell sees fixed application code only. Request values travel via stdin.
-    format!(
-        "python3 -c '{}'",
-        include_str!("helper.py").replace('\'', "'\\''")
-    )
-}
-
+#[cfg(test)]
 struct OwnedProcess(Child);
 
+#[cfg(test)]
 impl Drop for OwnedProcess {
     fn drop(&mut self) {
         #[cfg(unix)]
@@ -139,7 +89,7 @@ impl Drop for OwnedProcess {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn nonblocking(pipe: &impl std::os::fd::AsRawFd) -> Result<(), String> {
     let fd = pipe.as_raw_fd();
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
@@ -149,6 +99,7 @@ fn nonblocking(pipe: &impl std::os::fd::AsRawFd) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn drain(
     reader: &mut impl Read,
     output: &mut Vec<u8>,
@@ -181,6 +132,7 @@ fn run(command: &mut Command, input: &[u8], timeout: Duration) -> Result<Vec<u8>
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 fn run_with_limit(
     command: &mut Command,
     input: &[u8],
@@ -248,6 +200,7 @@ fn run_with_limit(
 }
 
 #[cfg(not(unix))]
+#[cfg(test)]
 fn run_with_limit(
     _command: &mut Command,
     _input: &[u8],

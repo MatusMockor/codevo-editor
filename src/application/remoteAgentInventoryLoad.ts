@@ -56,6 +56,7 @@ export async function loadRemoteAgentInventory(
   const check = () => {
     if (!valid()) throw new RemoteInventoryRevoked();
   };
+  check();
   if (previous.inventoryTruncated)
     throw new Error("Remote task history exceeds the editor limit; history is incomplete.");
   const serverId = previous.serverId;
@@ -161,6 +162,10 @@ export async function loadRemoteAgentInventory(
   const resumes = new Map<string, RemoteRunnerTaskResume>();
   const replayComplete = new Set<string>();
   const replayTruncated = new Set<string>();
+  const latestSelected = selected.reduce<RemoteRunnerTask | undefined>(
+    (latest, task) => (!latest || task.sequence > latest.sequence ? task : latest),
+    undefined,
+  );
   let totalBytes = 0;
   let error: string | null = null;
   for (const task of selected) {
@@ -212,7 +217,9 @@ export async function loadRemoteAgentInventory(
       replayTruncated.add(task.id);
       error = "Remote output exceeds the editor display limit; displayed output is incomplete.";
     }
-    if (descriptor.capabilities.taskContinuation) {
+    // Only the latest turn owns continuation. Older output remains fully replayed;
+    // querying its resume status adds no display information or launch authority.
+    if (descriptor.capabilities.taskContinuation && task === latestSelected) {
       const resume = await gateway.getTaskResume({ serverId, taskId: task.id });
       check();
       resumes.set(task.id, resume);

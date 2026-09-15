@@ -328,8 +328,11 @@ function remoteFollowUpBlockedReason(
   return null;
 }
 
-export function agentTurnProjection(events: ReadonlyArray<AgentTurnEvent>): AgentTurnProjection {
-  const groups = appServerGroups(events);
+export function agentTurnProjection(
+  events: ReadonlyArray<AgentTurnEvent>,
+  revealEventIndex: number | null = null,
+): AgentTurnProjection {
+  const groups = appServerGroups(events, revealEventIndex);
   const seenGroups = new Set<string>();
   const renderableGroups = new Set<string>();
   const renderable = events
@@ -343,7 +346,21 @@ export function agentTurnProjection(events: ReadonlyArray<AgentTurnEvent>): Agen
       return true;
     });
   const hiddenCount = Math.max(0, renderable.length - MAX_RENDERED_EVENTS_PER_TURN);
-  const visible = renderable.slice(hiddenCount);
+  const revealEvent = revealEventIndex === null ? undefined : events[revealEventIndex];
+  const revealGroup = revealEvent === undefined ? null : appServerGroupId(revealEvent);
+  const revealPosition =
+    revealEventIndex === null
+      ? -1
+      : renderable.findIndex(
+          ({ event, offset }) =>
+            offset === revealEventIndex ||
+            (revealGroup !== null && appServerGroupId(event) === revealGroup),
+        );
+  const firstVisible =
+    revealPosition >= 0 && revealPosition < hiddenCount
+      ? Math.max(0, revealPosition - Math.floor(MAX_RENDERED_EVENTS_PER_TURN / 2))
+      : hiddenCount;
+  const visible = renderable.slice(firstVisible, firstVisible + MAX_RENDERED_EVENTS_PER_TURN);
   const calls = toolCallIndex(events);
   const visibleAssistantText = new Set(
     visible

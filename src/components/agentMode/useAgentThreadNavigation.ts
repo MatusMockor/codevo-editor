@@ -50,7 +50,7 @@ export type AgentNavigationCommandHandlers = Pick<
   Required<Pick<AgentViewCommandHandlers, "threadFindFocused">>;
 
 export interface AgentThreadNavigationOptions {
-  readonly agents: Pick<AgentThreadsSurface, "threads" | "markThreadViewed">;
+  readonly agents: Pick<AgentThreadsSurface, "threads" | "markThreadViewed" | "historySearch">;
   readonly presentationThreads: ReadonlyArray<AgentThreadView>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
@@ -197,6 +197,10 @@ export function useAgentThreadNavigation({
 
   const scopeEntries = useMemo(() => agentRailScopeEntries(groups), [groups]);
   const threadViews = agents.threads;
+  const committedThreadViews = useRef(threadViews);
+  useLayoutEffect(() => {
+    committedThreadViews.current = threadViews;
+  }, [threadViews]);
   const selectedThread =
     threadViews.find((view) => view.thread.threadId === selectedThreadId) ?? null;
   const selectedProjectRootKey = selectedThread?.thread.owner.rootKey ?? null;
@@ -243,7 +247,7 @@ export function useAgentThreadNavigation({
     () => agentThreadsInScope(presentationThreads, railScope),
     [presentationThreads, railScope],
   );
-  const search = useAgentThreadSearch(scopedViews);
+  const search = useAgentThreadSearch(scopedViews, { historySearch: agents.historySearch });
   const paletteTitles = useMemo(
     () =>
       paletteOpen
@@ -272,13 +276,22 @@ export function useAgentThreadNavigation({
     markThreadViewed(selectedThreadId);
   }, [canMarkSelectedViewed, markThreadViewed, selectedTerminalKey, selectedThreadId]);
 
+  const closeFind = find.close;
+  const requestReveal = find.requestReveal;
+  const [pendingSearchReveal, setPendingSearchReveal] = useState<{
+    readonly threadId: string;
+    readonly owner: string;
+    readonly reveal: AgentThreadRevealRequest;
+  } | null>(null);
   const selectStartedThread = useCallback((threadId: string) => {
     pendingRemoteSelection.current = null;
+    setPendingSearchReveal(null);
     setSelectedThreadId(threadId);
   }, []);
 
   const clearSelectedThread = useCallback(() => {
     pendingRemoteSelection.current = null;
+    setPendingSearchReveal(null);
     setSelectedThreadId(null);
   }, []);
 
@@ -287,19 +300,38 @@ export function useAgentThreadNavigation({
     setSelectedThreadId((current) => (current === threadId ? null : current));
   }, []);
 
-  const closeFind = find.close;
-  const requestReveal = find.requestReveal;
+  useEffect(() => {
+    if (pendingSearchReveal === null) return;
+    if (selectedThreadId !== pendingSearchReveal.threadId) {
+      setPendingSearchReveal(null);
+      return;
+    }
+    const thread = selectedThread?.thread;
+    if (!thread) return;
+    if (JSON.stringify(thread.owner) !== pendingSearchReveal.owner) {
+      setPendingSearchReveal(null);
+      return;
+    }
+    requestReveal(pendingSearchReveal.reveal);
+    setPendingSearchReveal(null);
+  }, [pendingSearchReveal, requestReveal, selectedThread, selectedThreadId]);
   const selectThread = useCallback(
     (threadId: string, reveal?: AgentThreadRevealRequest) => {
       pendingRemoteSelection.current = null;
       setSelectedThreadId(threadId);
+      setPendingSearchReveal(null);
       if (reveal !== undefined) {
-        requestReveal(reveal);
+        const target = committedThreadViews.current.find(
+          (view) => view.thread.threadId === threadId,
+        );
+        if (target)
+          setPendingSearchReveal({ threadId, owner: JSON.stringify(target.thread.owner), reveal });
+        closeFind();
         return;
       }
       if (threadId !== selectedThreadId) closeFind();
     },
-    [closeFind, requestReveal, selectedThreadId],
+    [closeFind, selectedThreadId],
   );
 
   const setRailScope = useCallback(

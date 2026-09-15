@@ -97,6 +97,7 @@ pub fn run() {
             }
         })
         .manage(Mutex::new(SmartModeService::new()))
+        .manage(crate::remote_runner::InventoryStreamState::default())
         .manage(startup_metrics)
         .manage(NativeCloseListenerState::default())
         .manage(PhpLanguageServerRegistry::new())
@@ -213,6 +214,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             crate::remote_runner::remote_runner_list_servers,
+            crate::remote_runner::remote_runner_subscribe_changes,
+            crate::remote_runner::remote_runner_unsubscribe_changes,
             crate::remote_runner::remote_runner_connect_server,
             crate::remote_runner::remote_runner_disconnect_server,
             crate::remote_runner::remote_runner_remove_server,
@@ -222,6 +225,7 @@ pub fn run() {
             crate::remote_runner::remote_runner_get_project_clone,
             crate::remote_runner::remote_runner_cancel_project_clone,
             crate::remote_runner::remote_runner_list_tasks,
+            crate::remote_runner::remote_runner_search_history,
             crate::remote_runner::remote_runner_create_task,
             crate::remote_runner::remote_runner_start_task,
             crate::remote_runner::remote_runner_get_task,

@@ -225,6 +225,14 @@ export interface AgentThreadView {
   readonly unread: boolean;
 }
 
+export interface AgentHistorySearchPort {
+  search(
+    query: string,
+    threadIds: ReadonlySet<string>,
+    signal: AbortSignal,
+  ): Promise<AgentThreadSearchResult>;
+}
+
 export interface AgentThreadSearchSurface {
   readonly query: string;
   readonly active: boolean;
@@ -292,6 +300,7 @@ export interface AgentSteerRequest extends AgentTurnAttachmentRequest {
 export type AgentSteerOutcome = "sent" | "deferred" | "kept";
 
 export interface AgentThreadsSurface {
+  readonly historySearch?: AgentHistorySearchPort;
   readonly attachments: AgentComposerAttachmentsSurface;
   readonly attachmentImages: AgentAttachmentImagesSurface;
   revealAttachment(threadId: string, attachmentId: string): Promise<void>;

@@ -80,6 +80,8 @@ export interface AgentRailSections {
 }
 
 export interface AgentThreadRevealRequest {
+  readonly resolveQuery?: boolean;
+  readonly resolveSource?: "user" | "assistant";
   readonly query: string;
   readonly turnId: string;
   readonly eventIndex: number | null;
@@ -691,6 +693,9 @@ export function agentThreadRevealForMatch(
   if (match.turnId === null) return null;
   return {
     query,
+    ...(match.resolveQuery === true
+      ? { resolveQuery: true, resolveSource: match.resolveSource }
+      : {}),
     turnId: match.turnId,
     eventIndex: match.eventIndex,
     start: match.segmentStart,

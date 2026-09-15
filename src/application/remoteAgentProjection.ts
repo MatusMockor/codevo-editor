@@ -18,6 +18,7 @@ import type {
   RemoteRunnerTaskResume,
 } from "../domain/remoteRunner";
 import type { AgentThreadView } from "./agentThreadPorts";
+import { stabilizeRemoteAgentViews } from "./remoteAgentProjectionStability";
 import type { AgentAttachment } from "../domain/agentAttachment";
 
 export function remoteAgentProjectKey(
@@ -56,6 +57,7 @@ export function projectRemoteAgentThreads(
 /** Owner-scoped cache. Retains parser state between polling snapshots, never CLI authority. */
 export class RemoteAgentProjection {
   private owner = "";
+  private views: readonly AgentThreadView[] = [];
   private readonly transcripts = new Map<string, RemoteAgentTranscript>();
   private readonly identities = new Map<
     string,
@@ -66,6 +68,7 @@ export class RemoteAgentProjection {
   fork(): RemoteAgentProjection {
     const next = new RemoteAgentProjection();
     next.owner = this.owner;
+    next.views = this.views;
     for (const [id, transcript] of this.transcripts) next.transcripts.set(id, transcript);
     for (const [id, identity] of this.identities) next.identities.set(id, identity);
     return next;
@@ -75,6 +78,7 @@ export class RemoteAgentProjection {
     const owner = `${input.serverId}\u0000${input.runnerId}`;
     if (owner !== this.owner) {
       this.owner = owner;
+      this.views = [];
       this.transcripts.clear();
       this.identities.clear();
     }
@@ -114,7 +118,15 @@ export class RemoteAgentProjection {
       )
         throw new Error("Remote task identity changed.");
       this.identities.set(task.id, { recipe: identity, projectId: task.projectId });
-      if (!input.replays.has(task.id)) this.transcripts.delete(task.id);
+      const cached = this.transcripts.get(task.id);
+      if (
+        !input.replays.has(task.id) &&
+        cached &&
+        (cached.lastRunnerSequence > 0 ||
+          cached.finished !== (input.replayComplete?.has(task.id) === true && isTerminal(task)) ||
+          cached.eventsTruncated !== (input.replayTruncated?.has(task.id) === true))
+      )
+        this.transcripts.delete(task.id);
       let transcript =
         this.transcripts.get(task.id) ?? createRemoteAgentTranscript(task.id, task.provider);
       const replay = input.replays.get(task.id) ?? [];
@@ -124,15 +136,17 @@ export class RemoteAgentProjection {
           throw new Error("Invalid remote transcript event ordering or owner.");
         previousSequence = event.sequence;
       }
-      transcript = appendRemoteAgentTranscript(
-        transcript,
-        replay.filter((event) => event.sequence > transcript.lastRunnerSequence),
-        {
+      const incoming = replay.filter((event) => event.sequence > transcript.lastRunnerSequence);
+      if (
+        incoming.length > 0 ||
+        (!transcript.finished && input.replayComplete?.has(task.id) && isTerminal(task)) ||
+        (!transcript.eventsTruncated && input.replayTruncated?.has(task.id))
+      )
+        transcript = appendRemoteAgentTranscript(transcript, incoming, {
           complete: input.replayComplete?.has(task.id) === true,
           terminal: isTerminal(task),
           truncated: input.replayTruncated?.has(task.id),
-        },
-      );
+        });
       this.transcripts.set(task.id, transcript);
     }
     for (const id of this.transcripts.keys())
@@ -140,9 +154,13 @@ export class RemoteAgentProjection {
         this.transcripts.delete(id);
         this.identities.delete(id);
       }
-    return [...groups.entries()].map(([conversationId, tasks]) =>
-      projectConversation(input, conversationId, tasks, this.transcripts),
+    this.views = stabilizeRemoteAgentViews(
+      this.views,
+      [...groups.entries()].map(([conversationId, tasks]) =>
+        projectConversation(input, conversationId, tasks, this.transcripts),
+      ),
     );
+    return this.views;
   }
 }
 

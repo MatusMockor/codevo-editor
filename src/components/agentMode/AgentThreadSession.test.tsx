@@ -647,8 +647,50 @@ describe("AgentThreadSession", () => {
     });
 
     expect(host.querySelectorAll(".agent-text")).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN);
-    expect(host.textContent).toContain("7 earlier events hidden");
+    expect(host.textContent).toContain("7 events hidden");
     expect(host.querySelector(".agent-text__paragraph")?.textContent).toBe("line 7");
+  });
+
+  it("reveals an older search hit without expanding the rendered event limit", () => {
+    const events: AgentTurnEvent[] = Array.from(
+      { length: MAX_RENDERED_EVENTS_PER_TURN + 70 },
+      (_unused, index) => ({ kind: "assistantText", text: `needle ${index}` }),
+    );
+    const thread = threadView({
+      turns: [turn("agt-1-t1", "Inspect history", { kind: "running" }, events)],
+    });
+    render({
+      thread,
+      findQuery: "needle",
+      findHits: [{ scope: "turn", turnId: "agt-1-t1", eventIndex: 0, start: 0, end: 6 }],
+      findHitIndex: 0,
+    });
+    expect(host.querySelectorAll(".agent-text")).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN);
+    expect(host.querySelector(".agent-text__paragraph")?.textContent).toBe("needle 0");
+    expect(host.querySelector(".agent-find__hit--current")?.textContent).toBe("needle");
+    render({ thread, findQuery: "", findHits: [], findHitIndex: undefined });
+    expect(host.querySelector(".agent-text__paragraph")?.textContent).toBe("needle 70");
+  });
+
+  it("reveals and highlights an old subagent event within bounded group windows", () => {
+    const events: AgentTurnEvent[] = Array.from({ length: 350 }, (_, index) => ({
+      kind: "subagentEvent",
+      agentThreadId: "child",
+      event: { kind: "assistantText", text: `nested needle ${index}` },
+    }));
+    render({
+      thread: threadView({
+        turns: [turn("agt-1-t1", "Inspect nested history", { kind: "running" }, events)],
+      }),
+      findQuery: "needle",
+      findHits: [{ scope: "turn", turnId: "agt-1-t1", eventIndex: 0, start: 7, end: 13 }],
+      findHitIndex: 0,
+    });
+    expect(host.querySelectorAll(".agent-text")).toHaveLength(MAX_RENDERED_EVENTS_PER_TURN);
+    expect(host.querySelector(".agent-text__paragraph")?.textContent).toBe("nested needle 0");
+    expect(host.querySelector(".agent-find__hit--current")?.textContent).toBe("needle");
+    expect(host.querySelector("details.agent-reasoning")?.hasAttribute("open")).toBe(true);
+    expect(host.textContent).toContain("150 subagent events hidden");
   });
 
   it("reports a bounded turn instead of pretending the output is complete", () => {

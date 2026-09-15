@@ -9,13 +9,19 @@ import {
   type AgentThreadSearchDocument,
   type AgentThreadSearchResult,
 } from "../domain/agentThreadSearch";
-import type { AgentThreadSearchSurface, AgentThreadView } from "./agentThreadPorts";
+import { useRemoteThreadSearchResults } from "./useRemoteThreadSearchResults";
+import type {
+  AgentHistorySearchPort,
+  AgentThreadSearchSurface,
+  AgentThreadView,
+} from "./agentThreadPorts";
 
 export const AGENT_THREAD_SEARCH_DEBOUNCE_MS = 120;
 export const MAX_AGENT_THREAD_SEARCH_INDEX_DOCUMENTS = 128;
 export const MAX_AGENT_THREAD_SEARCH_INDEX_BYTES = 4 * 1_024 * 1_024;
 
 export interface AgentThreadSearchOptions {
+  readonly historySearch?: AgentHistorySearchPort;
   readonly debounceMs?: number;
   readonly limit?: number;
 }
@@ -123,11 +129,39 @@ export function useAgentThreadSearch(
   useEffect(() => cancelScheduled, [cancelScheduled]);
 
   const result = useMemo(() => retainKnownThreads(published, index), [index, published]);
-  const active = normalizeThreadSearchQuery(query) !== null;
+  const normalizedQuery = normalizeThreadSearchQuery(query);
+  const active = normalizedQuery !== null;
+  const remote = useRemoteThreadSearchResults(
+    options.historySearch,
+    normalizedQuery,
+    views,
+    debounceMs,
+  );
+  const merged = useMemo(() => {
+    const localResult = result?.query === normalizedQuery ? result : null;
+    if (remote.result === null) return localResult;
+    const matches = new Map(localResult?.matches.map((match) => [match.threadId, match]) ?? []);
+    for (const match of remote.result.matches) matches.set(match.threadId, match);
+    return {
+      query: remote.result.query,
+      matches: [...matches.values()].slice(0, limit),
+      truncated:
+        matches.size > limit || remote.result.truncated || (localResult?.truncated ?? false),
+      documentsTruncated:
+        remote.result.documentsTruncated || (localResult?.documentsTruncated ?? false),
+    };
+  }, [limit, normalizedQuery, remote.result, result]);
 
   return useMemo(
-    () => ({ query, active, result: active ? result : null, pending, setQuery, clear }),
-    [active, clear, pending, query, result, setQuery],
+    () => ({
+      query,
+      active,
+      result: active ? merged : null,
+      pending: pending || remote.pending,
+      setQuery,
+      clear,
+    }),
+    [active, clear, pending, query, merged, remote.pending, setQuery],
   );
 }
 

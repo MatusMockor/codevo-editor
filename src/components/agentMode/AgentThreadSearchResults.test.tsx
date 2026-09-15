@@ -137,7 +137,7 @@ describe("AgentThreadSearchResults", () => {
 
     expect(
       [...host.querySelectorAll(".agent-search-results__note")].map((node) => node.textContent),
-    ).toEqual(["Showing first 50", "Older messages not searched"]);
+    ).toEqual(["Showing first 50", "Some saved history could not be searched"]);
   });
 
   function clickOption(index: number): void {

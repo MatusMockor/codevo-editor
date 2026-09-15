@@ -34,6 +34,69 @@ function input(tasks: readonly RemoteRunnerTask[] = [root, child]): RemoteAgentP
   };
 }
 describe("remote original thread projection", () => {
+  it("reuses all unchanged turns and views across equivalent fresh inventory objects", () => {
+    const cache = new RemoteAgentProjection();
+    const first = cache.project(input());
+    const second = cache.project(input(structuredClone([root, child])));
+    expect(second).toBe(first);
+    expect(second[0]!.thread.turns[0]).toBe(first[0]!.thread.turns[0]);
+  });
+  it("replaces only the changed turn while preserving completed history", () => {
+    const cache = new RemoteAgentProjection();
+    const first = cache.project(input());
+    const second = cache.project(input([root, { ...child, status: "running" }]));
+    expect(second[0]).not.toBe(first[0]);
+    expect(second[0]!.thread.turns[0]).toBe(first[0]!.thread.turns[0]);
+    expect(second[0]!.thread.turns[1]).not.toBe(first[0]!.thread.turns[1]);
+    expect(second[0]!.thread.turns[1]!.status.kind).toBe("running");
+  });
+  it("publishes fresh resume availability and attachment metadata without losing history", () => {
+    const cache = new RemoteAgentProjection();
+    const snapshot = {
+      ...input(),
+      resumes: new Map([["child", { available: true as const, reason: null }]]),
+    };
+    const first = cache.project(snapshot);
+    const second = cache.project({
+      ...snapshot,
+      resumes: new Map([["child", { available: false, reason: "session_unavailable" }]]),
+    });
+    expect(second[0]!.thread).toBe(first[0]!.thread);
+    expect(second[0]!.execution?.resume?.available).toBe(false);
+    const third = cache.project({
+      ...snapshot,
+      attachmentsByTask: new Map([
+        ["child", [{ kind: "reference", name: "README", path: "/README", bytes: 20 }]],
+      ]),
+    });
+    expect(third[0]!.thread.turns[0]).toBe(first[0]!.thread.turns[0]);
+    expect(third[0]!.thread.turns[1]!.attachments).toHaveLength(1);
+  });
+  it("resets empty completed replay metadata when replay authority disappears", () => {
+    const cache = new RemoteAgentProjection();
+    const first = cache.project({ ...input([root]), replayComplete: new Set(["root"]) });
+    expect(first[0]!.thread.turns[0]!.streamMetrics?.complete).toBe(true);
+    expect(cache.project(input([root]))[0]!.thread.turns[0]!.streamMetrics?.complete).toBe(false);
+  });
+  it("updates project display metadata without replacing the history", () => {
+    const cache = new RemoteAgentProjection();
+    const first = cache.project(input());
+    const second = cache.project({ ...input(), projects: [{ id: "project", name: "Renamed" }] });
+    expect(second[0]!.repositoryLabel).toBe("Renamed");
+    expect(second[0]!.thread).toBe(first[0]!.thread);
+  });
+  it("does not reuse removed or different-owner history and isolates speculative views", () => {
+    const cache = new RemoteAgentProjection();
+    const first = cache.project(input());
+    const fork = cache.fork();
+    fork.project(input([root, { ...child, status: "running" }]));
+    expect(cache.project(input())).toBe(first);
+    cache.project(input([]));
+    expect(cache.project(input())[0]).not.toBe(first[0]);
+    cache.project({ ...input(), serverId: "other" });
+    expect(cache.project(input())[0]).not.toBe(first[0]);
+  });
+
   it("forks parser cursors without advancing the committed cache", () => {
     const cache = new RemoteAgentProjection();
     const line =
@@ -131,7 +194,8 @@ describe("remote original thread projection", () => {
     };
     const first = cache.project(snapshot);
     const second = cache.project(snapshot);
-    expect(second[0]!.thread.turns[0]!.events).toEqual(first[0]!.thread.turns[0]!.events);
+    expect(second).toBe(first);
+    expect(second[0]!.thread.turns[0]!.events).toBe(first[0]!.thread.turns[0]!.events);
     expect(
       cache.project({ ...input([root]), serverId: "other" })[0]!.thread.turns[0]!.events,
     ).toEqual([]);

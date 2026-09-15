@@ -38,6 +38,8 @@ const id: Check = (v) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v);
 const identifier: Check = (v) =>
   typeof v === "string" && !/[\r\n]/.test(v) && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(v);
+const historyProject: Check = (v) =>
+  typeof v === "string" && v.length > 0 && v.length <= 128 && !/[\u0000-\u001f]/u.test(v);
 const host: Check = (v) => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/.test(v);
 const username: Check = (v) => typeof v === "string" && /^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/.test(v);
 const cloneHost = "[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?";
@@ -240,6 +242,36 @@ export const remoteRunnerChecks = {
   getProjectClone: { request: object(cloneJobRequest), response: cloneJob },
   cancelProjectClone: { request: object(cloneJobRequest), response: cloneJob },
   listTasks: { request: object({ ...serverRequest, after: integer(0) }), response: page(task) },
+  searchHistory: {
+    request: object({
+      ...serverRequest,
+      query: (v: unknown) =>
+        typeof v === "string" &&
+        v.trim().length >= 2 &&
+        v.length <= 256 &&
+        bytes(v) <= 1024 &&
+        !/[\u0000-\u001f]/u.test(v),
+      after: optional(integer(0)),
+      projectId: optional(historyProject),
+    }),
+    response: object({
+      items: array(
+        object({
+          taskId: id,
+          conversationId: id,
+          projectId: (v) => v === null || historyProject(v),
+          taskSequence: integer(1),
+          role: choice("user", "assistant"),
+          eventSequence: (v) => v === null || integer(1)(v),
+          snippet: (v) => text(1528, true)(v) && [...(v as string)].length <= 382,
+        }),
+        20,
+      ),
+      nextCursor: (v) => v === null || integer(1)(v),
+      scope: choice("retained_runner_history"),
+      incomplete: boolean,
+    }),
+  },
   createTask: {
     request: (v: unknown) =>
       object({ ...serverRequest, idempotencyKey: id, provider, parts, launch: optional(launch) })(

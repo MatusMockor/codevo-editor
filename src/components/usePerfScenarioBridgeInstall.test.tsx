@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { resolveInReactAct } from "../test/reactTestLifecycle";
+import * as autorunGate from "./perfAutorunGate";
 import {
   usePerfScenarioBridgeInstall,
   type PerfMonacoEditorApi,
@@ -150,10 +151,46 @@ afterEach(() => {
 
   host?.remove();
   delete window.__codevoPerf;
+  delete window.__codevoPerfAutorunStartedAt;
+  vi.restoreAllMocks();
   window.localStorage.removeItem("codevo.perfBridge");
 });
 
 describe("usePerfScenarioBridgeInstall", () => {
+  it("keeps the product agent layout unchanged outside autorun", () => {
+    vi.spyOn(autorunGate, "perfAutorunEnabled").mockReturnValue(false);
+    const dispatch = vi.fn();
+    mountHostProbe({
+      ...silentHost(),
+      agentWorkbench: { effectiveLayout: "agent", dispatch },
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("reveals the editor for autorun and again after a fixture workspace owner changes", () => {
+    vi.spyOn(autorunGate, "perfAutorunEnabled").mockReturnValue(true);
+    window.__codevoPerfAutorunStartedAt = "owned-by-test";
+    const firstDispatch = vi.fn();
+    const render = mountHostProbe({
+      ...silentHost(),
+      agentWorkbench: { effectiveLayout: "agent", dispatch: firstDispatch },
+    });
+    expect(firstDispatch).toHaveBeenCalledExactlyOnceWith({ kind: "expandEditor" });
+
+    render({
+      ...silentHost(),
+      agentWorkbench: { effectiveLayout: "editor-expanded", dispatch: firstDispatch },
+    });
+    expect(firstDispatch).toHaveBeenCalledTimes(1);
+
+    const nextDispatch = vi.fn();
+    render({
+      ...silentHost(),
+      agentWorkbench: { effectiveLayout: "agent", dispatch: nextDispatch },
+    });
+    expect(nextDispatch).toHaveBeenCalledExactlyOnceWith({ kind: "expandEditor" });
+  });
+
   it("installs nothing and loads no editor api while the flag is unset", () => {
     const loadEditorApi = vi.fn(() => Promise.resolve(fakeEditorApi([], 0)));
     mountBridgeHost(loadEditorApi, silentHost());

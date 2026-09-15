@@ -80,7 +80,7 @@ export function AgentThreadSearchResults({
       )}
 
       {documentsTruncated && (
-        <p className="agent-search-results__note">Older messages not searched</p>
+        <p className="agent-search-results__note">Some saved history could not be searched</p>
       )}
     </div>
   );
