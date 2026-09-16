@@ -17,6 +17,9 @@ const STORED_TURN = {
   cliVersion: null,
 } as const;
 
+const NUL = "\u0000";
+const NEWLINE = "\u000a";
+
 function storedThread(launch: unknown): Record<string, unknown> {
   return {
     threadId: "agt-t1-0001",
@@ -586,5 +589,73 @@ describe("agentThreadWire steered user messages", () => {
     expect(parseAgentThread(stored).turns[0].events).toEqual([
       { kind: "assistantText", text: "working" },
     ]);
+  });
+});
+
+describe("agentThreadWire tool call description", () => {
+  function storedWithEvents(events: ReadonlyArray<unknown>): Record<string, unknown> {
+    return storedThreadWithTurn({ ...STORED_TURN, launch: null, events });
+  }
+
+  function roundTrip(event: Record<string, unknown>): unknown {
+    const stored = storedWithEvents([event]);
+    const parsed = parseAgentThread(stored);
+    expect(parsed.turns[0].events).toEqual([event]);
+    const serialized = serializeAgentThread(parsed).turns as ReadonlyArray<Record<string, unknown>>;
+    return serialized[0]?.events;
+  }
+
+  const CALL = {
+    kind: "toolCall",
+    toolId: "toolu_1",
+    name: "Bash",
+    inputSummary: "npm run lint",
+  } as const;
+
+  it("round-trips a tool call with and without a description", () => {
+    expect(roundTrip({ ...CALL })).toEqual([{ ...CALL }]);
+    expect(roundTrip({ ...CALL, description: "Run the linter" })).toEqual([
+      { ...CALL, description: "Run the linter" },
+    ]);
+  });
+
+  it("keeps an absent description absent instead of inventing an empty one", () => {
+    const parsed = parseAgentThread(storedWithEvents([{ ...CALL }]));
+    const event = parsed.turns[0].events[0];
+
+    expect(event).not.toBeUndefined();
+    expect(Object.keys(event ?? {})).not.toContain("description");
+  });
+
+  it("carries the description through a parented subagent tool call", () => {
+    const event = {
+      kind: "subagentEvent",
+      agentThreadId: "child-1",
+      event: { ...CALL, description: "Run the linter", parentToolId: "toolu_parent" },
+    };
+
+    expect(roundTrip(event)).toEqual([event]);
+  });
+
+  it("rejects an empty, oversized, control-bearing or non-string description", () => {
+    const rejected = [
+      { ...CALL, description: "" },
+      { ...CALL, description: "a".repeat(201) },
+      { ...CALL, description: `before${NUL}after` },
+      { ...CALL, description: `line${NEWLINE}break` },
+      { ...CALL, description: 7 },
+      { ...CALL, description: null },
+    ];
+    for (const event of rejected) {
+      expect(() => parseAgentThread(storedWithEvents([event])), String(event.description)).toThrow(
+        TypeError,
+      );
+    }
+  });
+
+  it("accepts a description exactly at the byte bound", () => {
+    const description = "a".repeat(200);
+
+    expect(roundTrip({ ...CALL, description })).toEqual([{ ...CALL, description }]);
   });
 });

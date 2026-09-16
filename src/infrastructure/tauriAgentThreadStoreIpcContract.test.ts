@@ -185,6 +185,69 @@ describe("invokeSaveAgentThreadIpc", () => {
   });
 });
 
+describe("tool call description wire field", () => {
+  function threadWithToolCalls(): AgentThread {
+    return {
+      ...THREAD,
+      turns: [
+        {
+          turnId: "agt-1-0a1b-t1",
+          prompt: "Lint it",
+          status: { kind: "exited", exitCode: 0 },
+          startedAtEpochMs: 1_000,
+          endedAtEpochMs: 2_000,
+          events: [
+            {
+              kind: "toolCall",
+              toolId: "t-1",
+              name: "Bash",
+              inputSummary: "npm run lint",
+              description: "Run the linter",
+            },
+            { kind: "toolCall", toolId: "t-2", name: "Read", inputSummary: "/workspace/app/a.ts" },
+          ],
+          eventsTruncated: false,
+          lastStatusSequence: 0,
+          lastOutputSequence: 0,
+          launch: null,
+          cliVersion: null,
+        },
+      ],
+    };
+  }
+
+  it("serialises the description for the Rust store and omits it when absent", async () => {
+    const invokeCommand = vi.fn<InvokeAgentThreadStoreCommand>().mockResolvedValue(null);
+    const thread = threadWithToolCalls();
+
+    await invokeSaveAgentThreadIpc(invokeCommand, { ...OWNER_REQUEST, thread });
+
+    const payload = invokeCommand.mock.calls[0]?.[1] as {
+      readonly request: {
+        readonly thread: {
+          readonly turns: ReadonlyArray<{ readonly events: ReadonlyArray<unknown> }>;
+        };
+      };
+    };
+    const events = payload.request.thread.turns[0]?.events ?? [];
+
+    expect(events[0]).toEqual({
+      kind: "toolCall",
+      toolId: "t-1",
+      name: "Bash",
+      inputSummary: "npm run lint",
+      description: "Run the linter",
+    });
+    expect(events[1]).toEqual({
+      kind: "toolCall",
+      toolId: "t-2",
+      name: "Read",
+      inputSummary: "/workspace/app/a.ts",
+    });
+    expect(Object.keys(events[1] as Record<string, unknown>)).not.toContain("description");
+  });
+});
+
 describe("invokeDeleteAgentThreadIpc", () => {
   it("sends the validated reference", async () => {
     const invokeCommand = vi.fn<InvokeAgentThreadStoreCommand>().mockResolvedValue(null);

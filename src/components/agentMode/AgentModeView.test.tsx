@@ -4,6 +4,7 @@ import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThrea
 import { act, memo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { agentComposerDraftStore } from "../../application/agentComposerDrafts";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor, AgentProjectOrigin } from "../../domain/agentProject";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
@@ -172,6 +173,7 @@ describe("AgentModeView", () => {
 
   beforeEach(() => {
     localStorage.removeItem(COMPOSER_REPOSITORY_PREFERENCE_KEY);
+    agentComposerDraftStore.reset();
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     host = document.createElement("div");
     document.body.append(host);
@@ -683,6 +685,129 @@ describe("AgentModeView", () => {
 
     click('button[aria-label="Remove queued message"]');
     expect(removeDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
+  });
+
+  it("edits a queued message back into the composer and empties the queue", () => {
+    const queued = {
+      id: "deferred-1",
+      request: {
+        threadId: "agt-1",
+        prompt: "and then ship it",
+        launch: defaultAgentComposerLaunch("claudeCode"),
+      },
+      queuedAtEpochMs: NOW,
+    };
+    const takeDeferredFollowUp = vi.fn(() => queued.request);
+    const threads = [
+      threadView({
+        threadId: "agt-1",
+        status: { kind: "running" },
+        launch: defaultAgentComposerLaunch("claudeCode"),
+      }),
+    ];
+    render({
+      agents: surface({
+        takeDeferredFollowUp,
+        deferredFollowUps: new Map([["agt-1", [queued]]]),
+        threads,
+      }),
+    });
+
+    clickText("Refactor the parser");
+    expect(host.querySelector(".agent-prompt--queued")?.textContent).toContain("and then ship it");
+
+    click('button[aria-label="Edit queued message"]');
+    expect(takeDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
+
+    render({
+      agents: surface({ takeDeferredFollowUp, deferredFollowUps: new Map(), threads }),
+    });
+
+    expect(host.querySelector(".agent-prompt--queued")).toBeNull();
+    expect(promptField().value).toBe("and then ship it");
+    expect(document.activeElement).toBe(promptField());
+    expect(promptField().selectionStart).toBe("and then ship it".length);
+  });
+
+  it("appends an edited queued message under the unsent composer text", () => {
+    const queued = {
+      id: "deferred-1",
+      request: {
+        threadId: "agt-1",
+        prompt: "and then ship it",
+        launch: defaultAgentComposerLaunch("claudeCode"),
+      },
+      queuedAtEpochMs: NOW,
+    };
+    const takeDeferredFollowUp = vi.fn(() => queued.request);
+    const threads = [
+      threadView({
+        threadId: "agt-1",
+        status: { kind: "running" },
+        launch: defaultAgentComposerLaunch("claudeCode"),
+      }),
+    ];
+    render({
+      agents: surface({
+        takeDeferredFollowUp,
+        deferredFollowUps: new Map([["agt-1", [queued]]]),
+        threads,
+      }),
+    });
+
+    clickText("Refactor the parser");
+    typePrompt("half a thought");
+
+    click('button[aria-label="Edit queued message"]');
+    render({
+      agents: surface({ takeDeferredFollowUp, deferredFollowUps: new Map(), threads }),
+    });
+
+    const merged = "half a thought\n\nand then ship it";
+    expect(promptField().value).toBe(merged);
+    expect(document.activeElement).toBe(promptField());
+    expect(promptField().selectionStart).toBe(merged.length);
+    expect(host.querySelector(".agent-prompt--queued")).toBeNull();
+  });
+
+  it("keeps the composer untouched when the queued message can no longer be taken", () => {
+    const takeDeferredFollowUp = vi.fn(() => null);
+    render({
+      agents: surface({
+        takeDeferredFollowUp,
+        deferredFollowUps: new Map([
+          [
+            "agt-1",
+            [
+              {
+                id: "deferred-1",
+                request: {
+                  threadId: "agt-1",
+                  prompt: "and then ship it",
+                  launch: defaultAgentComposerLaunch("claudeCode"),
+                },
+                queuedAtEpochMs: NOW,
+              },
+            ],
+          ],
+        ]),
+        threads: [
+          threadView({
+            threadId: "agt-1",
+            status: { kind: "running" },
+            launch: defaultAgentComposerLaunch("claudeCode"),
+          }),
+        ],
+      }),
+    });
+
+    clickText("Refactor the parser");
+    typePrompt("");
+    click('button[aria-label="Edit queued message"]');
+
+    expect(takeDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
+    expect(promptField().value).toBe("");
+    expect(host.querySelector(".agent-prompt--queued")?.textContent).toContain("and then ship it");
   });
 
   it("blocks a follow-up when the worktree is gone", () => {
@@ -3314,6 +3439,7 @@ function surface(overrides: Partial<AgentModeViewProps["agents"]>): AgentModeVie
     deferredFollowUps: new Map(),
     steer: async () => "sent" as const,
     removeDeferredFollowUp: () => undefined,
+    takeDeferredFollowUp: () => null,
     importExternalSession: async () => null,
     stop: async () => undefined,
     togglePin: () => undefined,

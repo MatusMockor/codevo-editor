@@ -338,6 +338,7 @@ export interface AgentThreadsSurface {
   sendDeferredFollowUpNow?(threadId: string, id: string): Promise<void>;
   steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
   removeDeferredFollowUp(threadId: string, id: string): void;
+  takeDeferredFollowUp(threadId: string, id: string): AgentFollowUpRequest | null;
   importExternalSession(
     request: ExternalSessionImportRequest,
   ): Promise<ExternalSessionImportResult | null>;

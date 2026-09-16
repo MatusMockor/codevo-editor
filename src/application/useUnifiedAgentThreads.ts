@@ -464,6 +464,10 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       if (isRemoteAgentIdentity(threadId)) void pendingMessages.remove(threadId, id);
       else local.removeDeferredFollowUp(threadId, id);
     },
+    takeDeferredFollowUp: (threadId, id) => {
+      if (isRemoteAgentIdentity(threadId)) return null;
+      return local.takeDeferredFollowUp(threadId, id);
+    },
     resumeDeferredFollowUps: async (threadId) => {
       if (isRemoteAgentIdentity(threadId)) await pendingMessages.resume(threadId);
       else await local.resumeDeferredFollowUps?.(threadId);

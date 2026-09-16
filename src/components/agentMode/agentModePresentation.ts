@@ -33,6 +33,12 @@ import {
   type AgentShipIntegrationMode,
   type AgentShipState,
 } from "../../domain/agentShip";
+import {
+  toolRowKind,
+  toolRowLabel,
+  type AgentToolRowKind,
+  type AgentToolRowStatus,
+} from "../../domain/agentToolRowPresentation";
 import type { GitChangeStatus, GitChangedFile, GitFileDiff } from "../../domain/git";
 import type { GitShipStatus } from "../../domain/gitIntegration";
 import { gitRepositoryDisplayName } from "../../domain/gitRepositoryMapping";
@@ -124,10 +130,17 @@ export type AgentTurnItem =
   | {
       readonly kind: "tool";
       readonly key: string;
+      readonly toolId: string;
       readonly name: string;
       readonly inputSummary: string;
       readonly outcome: AgentToolOutcome | null;
       readonly parentToolId?: string;
+      readonly rowKind: AgentToolRowKind;
+      readonly status: AgentToolRowStatus;
+      readonly label: string;
+      readonly argument: string | null;
+      readonly command: string | null;
+      readonly output: string | null;
     }
   | {
       readonly kind: "result";
@@ -159,6 +172,99 @@ export interface AgentTurnProjection {
   readonly items: ReadonlyArray<AgentTurnItem>;
   readonly rawLines: ReadonlyArray<AgentRawLine>;
   readonly hiddenCount: number;
+}
+
+export type AgentTurnLiveActivity =
+  { readonly kind: "working" } | { readonly kind: "tool"; readonly toolId: string };
+
+export type AgentTurnSettlement = "running" | "stopped" | "settled";
+
+export function agentTurnSettlement(status: AgentTurnStatus): AgentTurnSettlement {
+  if (status.kind === "pending" || status.kind === "running") return "running";
+  if (status.kind === "stopped" || status.kind === "interrupted") return "stopped";
+  return "settled";
+}
+
+type AgentToolRowFields = Pick<
+  Extract<AgentTurnItem, { kind: "tool" }>,
+  "rowKind" | "status" | "label" | "argument" | "command" | "output"
+>;
+
+interface AgentToolRowSource {
+  readonly name: string;
+  readonly inputSummary: string;
+  readonly description?: string;
+  readonly outcome: AgentToolOutcome | null;
+  readonly settlement: AgentTurnSettlement;
+  readonly workspaceRoot: string | null;
+}
+
+function toolRowStatus(
+  outcome: AgentToolOutcome | null,
+  settlement: AgentTurnSettlement,
+): AgentToolRowStatus {
+  if (outcome !== null) return outcome.isError ? "error" : "ok";
+  if (settlement === "running") return "running";
+  if (settlement === "stopped") return "stopped";
+  return "ok";
+}
+
+function toolRowFields(source: AgentToolRowSource): AgentToolRowFields {
+  const rowKind = toolRowKind(source.name);
+  const status = toolRowStatus(source.outcome, source.settlement);
+  const label = toolRowLabel({
+    name: source.name,
+    inputSummary: source.inputSummary,
+    status,
+    workspaceRoot: source.workspaceRoot,
+    ...presentField("description", source.description),
+  });
+  const output = source.outcome?.outputSummary ?? "";
+  return {
+    rowKind,
+    status,
+    label: `${label.verb} ${label.subject}`.trim(),
+    argument: label.argument,
+    command: rowKind === "command" && source.inputSummary !== "" ? source.inputSummary : null,
+    output: output === "" ? null : output,
+  };
+}
+
+export function agentTurnLiveActivity(turn: AgentTurn): AgentTurnLiveActivity | null {
+  if (turn.status.kind !== "running" && turn.status.kind !== "pending") return null;
+  const unresolved = unresolvedAgentToolCallIds(turn.events);
+  const latest = unresolved[unresolved.length - 1];
+  if (latest === undefined) return { kind: "working" };
+  return { kind: "tool", toolId: latest };
+}
+
+function unresolvedAgentToolCallIds(events: ReadonlyArray<AgentTurnEvent>): ReadonlyArray<string> {
+  const order: string[] = [];
+  const open = new Set<string>();
+  for (const event of agentToolLifecycleEvents(events)) {
+    if (event.kind === "toolCall") {
+      if (open.has(event.toolId)) continue;
+      open.add(event.toolId);
+      order.push(event.toolId);
+      continue;
+    }
+    open.delete(event.toolId);
+  }
+  return order.filter((toolId) => open.has(toolId));
+}
+
+type AgentToolLifecycleEvent = Extract<AgentTurnEvent, { kind: "toolCall" | "toolResult" }>;
+
+function agentToolLifecycleEvents(
+  events: ReadonlyArray<AgentTurnEvent>,
+): ReadonlyArray<AgentToolLifecycleEvent> {
+  const lifecycle: AgentToolLifecycleEvent[] = [];
+  for (const event of events) {
+    if (event.kind !== "toolCall" && event.kind !== "toolResult") continue;
+    if (event.parentToolId !== undefined) continue;
+    lifecycle.push(event);
+  }
+  return lifecycle;
 }
 
 const UTF8_ENCODER = new TextEncoder();
@@ -333,6 +439,8 @@ function remoteFollowUpBlockedReason(
 export function agentTurnProjection(
   events: ReadonlyArray<AgentTurnEvent>,
   revealEventIndex: number | null = null,
+  workspaceRoot: string | null = null,
+  settlement: AgentTurnSettlement = "running",
 ): AgentTurnProjection {
   const groups = appServerGroups(events, revealEventIndex);
   const seenGroups = new Set<string>();
@@ -395,7 +503,16 @@ export function agentTurnProjection(
       }
       continue;
     }
-    appendTurnItem({ calls, event, items, key: `e${offset}`, rawLines, toolItemByToolId });
+    appendTurnItem({
+      calls,
+      event,
+      items,
+      key: `e${offset}`,
+      rawLines,
+      settlement,
+      toolItemByToolId,
+      workspaceRoot,
+    });
   }
 
   return { items, rawLines, hiddenCount };
@@ -662,7 +779,9 @@ interface TurnItemAppend {
   readonly items: AgentTurnItem[];
   readonly key: string;
   readonly rawLines: AgentRawLine[];
+  readonly settlement: AgentTurnSettlement;
   readonly toolItemByToolId: Map<string, number>;
+  readonly workspaceRoot: string | null;
 }
 
 function appendTurnItem({
@@ -671,7 +790,9 @@ function appendTurnItem({
   items,
   key,
   rawLines,
+  settlement,
   toolItemByToolId,
+  workspaceRoot,
 }: TurnItemAppend): void {
   if (event.kind === "assistantText") {
     items.push({
@@ -691,9 +812,18 @@ function appendTurnItem({
     items.push({
       kind: "tool",
       key,
+      toolId: event.toolId,
       name: event.name,
       inputSummary: event.inputSummary,
       outcome: null,
+      ...toolRowFields({
+        name: event.name,
+        inputSummary: event.inputSummary,
+        outcome: null,
+        settlement,
+        workspaceRoot,
+        ...presentField("description", event.description),
+      }),
       ...presentField("parentToolId", event.parentToolId),
     });
     return;
@@ -704,7 +834,7 @@ function appendTurnItem({
   }
   if (event.kind === "subagent" || appServerGroupId(event) !== null) return;
   if (event.kind === "toolResult") {
-    attachToolResult({ calls, event, items, key, toolItemByToolId });
+    attachToolResult({ calls, event, items, key, settlement, toolItemByToolId, workspaceRoot });
     return;
   }
   if (event.kind === "result") {
@@ -741,28 +871,60 @@ interface ToolResultAttach {
   readonly event: Extract<AgentTurnEvent, { kind: "toolResult" }>;
   readonly items: AgentTurnItem[];
   readonly key: string;
+  readonly settlement: AgentTurnSettlement;
   readonly toolItemByToolId: Map<string, number>;
+  readonly workspaceRoot: string | null;
 }
 
-function attachToolResult({ calls, event, items, key, toolItemByToolId }: ToolResultAttach): void {
+function attachToolResult({
+  calls,
+  event,
+  items,
+  key,
+  settlement,
+  toolItemByToolId,
+  workspaceRoot,
+}: ToolResultAttach): void {
   const outcome: AgentToolOutcome = {
     outputSummary: event.outputSummary,
     isError: event.isError,
   };
+  const call = calls.get(event.toolId);
   const index = toolItemByToolId.get(event.toolId);
   const pending = index === undefined ? undefined : items[index];
   if (index !== undefined && pending !== undefined && pending.kind === "tool") {
-    items[index] = { ...pending, outcome };
+    items[index] = {
+      ...pending,
+      outcome,
+      ...toolRowFields({
+        name: pending.name,
+        inputSummary: pending.inputSummary,
+        outcome,
+        settlement,
+        workspaceRoot,
+        ...presentField("description", call?.description),
+      }),
+    };
     toolItemByToolId.delete(event.toolId);
     return;
   }
-  const call = calls.get(event.toolId);
+  const name = call?.name ?? "tool";
+  const inputSummary = call?.inputSummary ?? "";
   items.push({
     kind: "tool",
     key,
-    name: call?.name ?? "tool",
-    inputSummary: call?.inputSummary ?? "",
+    toolId: event.toolId,
+    name,
+    inputSummary,
     outcome,
+    ...toolRowFields({
+      name,
+      inputSummary,
+      outcome,
+      settlement,
+      workspaceRoot,
+      ...presentField("description", call?.description),
+    }),
     ...presentField("parentToolId", call?.parentToolId ?? event.parentToolId),
   });
 }
@@ -770,6 +932,7 @@ function attachToolResult({ calls, event, items, key, toolItemByToolId }: ToolRe
 interface AgentToolCallSummary {
   readonly name: string;
   readonly inputSummary: string;
+  readonly description?: string;
   readonly parentToolId?: string;
 }
 
@@ -787,6 +950,7 @@ function toolCallIndex(
     calls.set(event.toolId, {
       name: event.name,
       inputSummary: event.inputSummary,
+      ...presentField("description", event.description),
       ...presentField("parentToolId", event.parentToolId),
     });
   }

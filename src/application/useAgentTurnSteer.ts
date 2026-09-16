@@ -23,6 +23,7 @@ import {
   emptyDeferredFollowUps,
   enqueueDeferred,
   removeDeferred,
+  takeDeferred,
   takeDeferredHead,
   type DeferredFollowUp,
   type DeferredFollowUps,
@@ -105,6 +106,7 @@ export interface AgentTurnSteerSurface {
   readonly deferredFollowUps: DeferredFollowUps;
   steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
   removeDeferredFollowUp(threadId: string, id: string): void;
+  takeDeferredFollowUp(threadId: string, id: string): AgentFollowUpRequest | null;
   sendDeferredFollowUpNow(threadId: string, id: string): Promise<void>;
   resumeDeferredFollowUps(threadId: string): Promise<void>;
   onTurnSettled(threadId: string): void;
@@ -376,6 +378,22 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
     [commitDeferred],
   );
 
+  const takeDeferredFollowUp = useCallback(
+    (threadId: string, id: string): AgentFollowUpRequest | null => {
+      const authority = deferredAuthoritiesRef.current.get(threadId);
+      if (authority === undefined) return null;
+      if (!isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority)) return null;
+      if (sendingQueuedRef.current.has(threadId)) return null;
+      if (drainLeasesRef.current.get(threadId)?.entryId === id) return null;
+      const taken = takeDeferred(deferredRef.current, threadId, id);
+      if (taken.entry === null) return null;
+      if (deferredRequestCarriesAttachments(taken.entry.request)) return null;
+      commitDeferred(taken.map);
+      return taken.entry.request;
+    },
+    [commitDeferred, dependenciesRef, mountedRef],
+  );
+
   const sendDeferredFollowUpNow = useCallback(
     async (threadId: string, id: string): Promise<void> => {
       const entry = deferredFollowUpsForThread(deferredRef.current, threadId).find(
@@ -598,6 +616,7 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
     deferredFollowUps,
     steer,
     removeDeferredFollowUp,
+    takeDeferredFollowUp,
     sendDeferredFollowUpNow,
     resumeDeferredFollowUps,
     onTurnSettled,
@@ -605,6 +624,10 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
     clearDeferredForOwner,
     noteStreamResult,
   };
+}
+
+function deferredRequestCarriesAttachments(request: AgentFollowUpRequest): boolean {
+  return (request.attachments ?? []).length > 0;
 }
 
 async function sendDeferredFollowUp(

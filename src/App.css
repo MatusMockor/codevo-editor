@@ -3,6 +3,7 @@
 @import "./components/agentMode/agentMode.css";
 @import "./components/agentMode/agentRail.css";
 @import "./components/agentMode/agentThread.css";
+@import "./components/agentMode/agentToolRows.css";
 @import "./components/agentMode/agentComposer.css";
 @import "./components/agentMode/agentSurface.css";
 @import "./components/agentMode/agentUsage.css";

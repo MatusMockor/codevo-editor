@@ -1,6 +1,7 @@
 import { isAgentSessionId } from "../agentTask";
 import {
   MAX_AGENT_EVENT_TEXT_BYTES,
+  MAX_AGENT_TOOL_DESCRIPTION_BYTES,
   MAX_AGENT_TOOL_ID_BYTES,
   MAX_AGENT_TOOL_NAME_BYTES,
   MAX_AGENT_TOOL_SUMMARY_BYTES,
@@ -197,6 +198,18 @@ function present<K extends string, V>(key: K, value: V | undefined): { [P in K]?
   return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 }
 
+function toolCallDescription(input: unknown): string | undefined {
+  const source = objectValue(input);
+  if (source === null) return undefined;
+  const description = source.description;
+  if (typeof description !== "string") return undefined;
+  const line = description.replace(/\s+/gu, " ").trim();
+  if (line === "") return undefined;
+  if (CONTROL_CHARACTER_PATTERN.test(line)) return undefined;
+  const bounded = boundedUtf8Text(line, MAX_AGENT_TOOL_DESCRIPTION_BYTES).trim();
+  return bounded === "" ? undefined : bounded;
+}
+
 function optionalIdentifier(value: unknown, maxBytes: number): string | undefined {
   return safeIdentifier(value, maxBytes) ?? undefined;
 }
@@ -242,6 +255,7 @@ function assistantBlockEvents(
       toolId,
       name,
       inputSummary: summarizeToolInput(name, block.input),
+      ...present("description", toolCallDescription(block.input)),
       ...present("parentToolId", parentToolId),
     },
   ];

@@ -18,7 +18,7 @@ import { findInThread } from "../../domain/agentThreadSearch";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 import { parseAllStyleSheets, selectorParts } from "../cssContractTestSupport";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
-import { AgentQueuedPrompt } from "./AgentTurnParts";
+import { AgentQueuedPrompt, AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE } from "./AgentTurnParts";
 import { AgentClockProvider } from "./agentClock";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
 
@@ -415,6 +415,104 @@ describe("agent thread turns", () => {
     expect(onRemoveDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
   });
 
+  it("offers a pencil on a queued bubble and reports the edit to the owner", () => {
+    const onEditDeferredFollowUp = vi.fn();
+    render({
+      thread: threadView([turn("t1", "First question", RUNNING, [text("alpha")])]),
+      deferredFollowUps: [
+        {
+          id: "deferred-1",
+          request: {
+            threadId: "agt-1",
+            prompt: "and then ship it",
+            launch: {
+              provider: "claudeCode",
+              model: "default",
+              mode: "default",
+              effort: "default",
+            },
+          },
+          queuedAtEpochMs: NOW,
+        },
+      ],
+      onEditDeferredFollowUp,
+    });
+
+    const edit = host.querySelector<HTMLButtonElement>('button[aria-label="Edit queued message"]');
+    expect(edit?.className).toBe("agent-prompt__queue-action agent-prompt__queue-action--edit");
+    expect(edit?.disabled).toBe(false);
+    act(() => edit?.click());
+    expect(onEditDeferredFollowUp).toHaveBeenCalledWith("agt-1", "deferred-1");
+  });
+
+  it("disables the pencil and explains why while a queued message carries attachments", () => {
+    const onEditDeferredFollowUp = vi.fn();
+    render({
+      thread: threadView([turn("t1", "First question", RUNNING, [text("alpha")])]),
+      deferredFollowUps: [
+        {
+          id: "deferred-image",
+          request: {
+            threadId: "agt-1",
+            prompt: "compare these",
+            launch: {
+              provider: "claudeCode",
+              model: "default",
+              mode: "default",
+              effort: "default",
+            },
+            attachments: [
+              {
+                kind: "staged",
+                attachmentId: "image-1",
+                name: "screenshot.png",
+                bytes: 42,
+                mime: "image/png",
+                width: 1,
+                height: 1,
+              },
+            ],
+          },
+          queuedAtEpochMs: NOW,
+        },
+      ],
+      onEditDeferredFollowUp,
+    });
+
+    const edit = host.querySelector<HTMLButtonElement>('button[aria-label="Edit queued message"]');
+    expect(edit?.disabled).toBe(true);
+    expect(edit?.title).toBe(AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE);
+    expect(host.querySelector(".agent-prompt__queue-note")?.textContent).toBe(
+      AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE,
+    );
+    act(() => edit?.click());
+    expect(onEditDeferredFollowUp).not.toHaveBeenCalled();
+  });
+
+  it("hides the pencil when the surface cannot edit queued messages", () => {
+    render({
+      thread: threadView([turn("t1", "First question", RUNNING, [text("alpha")])]),
+      deferredFollowUps: [
+        {
+          id: "deferred-1",
+          request: {
+            threadId: "agt-1",
+            prompt: "and then ship it",
+            launch: {
+              provider: "claudeCode",
+              model: "default",
+              mode: "default",
+              effort: "default",
+            },
+          },
+          queuedAtEpochMs: NOW,
+        },
+      ],
+    });
+
+    expect(host.querySelector('button[aria-label="Edit queued message"]')).toBeNull();
+  });
+
   it("shows the accent dot, the provider and the settled duration in the turn head", () => {
     render({ thread: threadView([turn("t1", "First question", SETTLED, [text("alpha")])]) });
 
@@ -539,10 +637,10 @@ describe("agent thread turns", () => {
     expect(overflowing).toEqual([
       "components/agentMode/agentThread.css .agent-md__table-scroll overflow-x",
     ]);
-    expect(declaration(".agent-md__table", "width")).toBeNull();
+    expect(declaration(".agent-md__table", "width")).toBe("100%");
     expect(declaration(".agent-md__table", "max-width")).toBe("100%");
-    expect(declaration(".agent-md__th", "white-space")).toBeNull();
-    expect(declaration(".agent-md__td", "overflow-wrap")).toBe("break-word");
+    expect(declaration(".agent-md__th", "white-space")).toBe("normal");
+    expect(declaration(".agent-md__td", "overflow-wrap")).toBe("anywhere");
     expect(declaration(".agent-md__td .agent-md__inline-code", "overflow-wrap")).toBe("anywhere");
   });
 
@@ -710,7 +808,7 @@ describe("agent thread turns", () => {
     expect(answer).not.toBeNull();
     for (const selector of [
       ".agent-reasoning",
-      ".agent-tool",
+      ".agent-tool-row",
       ".agent-subagents",
       ".agent-text",
       ".agent-md__table-scroll",
@@ -724,6 +822,263 @@ describe("agent thread turns", () => {
     }
     expect(host.querySelector(".agent-prompt__body")?.textContent).toBe("First question");
     expect(host.querySelector("header.agent-turn__head time")?.textContent).toContain("ago");
+  });
+
+  it("names a finished bash row by its program and shows the command in mono", () => {
+    render({
+      thread: threadView([
+        turn("t1", "Find it", SETTLED, [
+          { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "grep -rn needle src" },
+          { kind: "toolResult", toolId: "t-1", outputSummary: "3 matches", isError: false },
+          text("Found it."),
+        ]),
+      ]),
+    });
+
+    const row = host.querySelector<HTMLButtonElement>("button.agent-tool-row");
+    expect(row?.querySelector(".agent-tool-row__label")?.textContent).toBe("Ran grep");
+    expect(row?.querySelector(".agent-tool-row__argument")?.textContent).toBe(
+      "grep -rn needle src",
+    );
+    expect(row?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(row?.getAttribute("type")).toBe("button");
+    expect(row?.className).toBe("agent-tool-row");
+  });
+
+  it("shows the Claude bash description as the subject and the command as the argument", () => {
+    render({
+      thread: threadView([
+        turn("t1", "Lint it", SETTLED, [
+          {
+            kind: "toolCall",
+            toolId: "t-1",
+            name: "Bash",
+            inputSummary: "npm run lint -- --max-warnings 0",
+            description: "Run the linter",
+          },
+          { kind: "toolResult", toolId: "t-1", outputSummary: "0 problems", isError: false },
+          text("Clean."),
+        ]),
+      ]),
+    });
+
+    const row = host.querySelector<HTMLButtonElement>("button.agent-tool-row");
+    expect(row?.querySelector(".agent-tool-row__label")?.textContent).toBe("Run the linter");
+    expect(row?.querySelector(".agent-tool-row__argument")?.textContent).toBe(
+      "npm run lint -- --max-warnings 0",
+    );
+
+    act(() => row?.click());
+
+    expect(host.querySelector(".agent-tool-row__command")?.textContent).toBe(
+      "$ npm run lint -- --max-warnings 0",
+    );
+    expect(host.querySelector(".agent-tool-row__empty")).toBeNull();
+  });
+
+  it("keeps the verb on a command row that reports no description", () => {
+    render({
+      thread: threadView([
+        turn("t1", "Lint it", SETTLED, [
+          { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm run lint" },
+          { kind: "toolResult", toolId: "t-1", outputSummary: "", isError: false },
+          text("Clean."),
+        ]),
+      ]),
+    });
+
+    const row = host.querySelector<HTMLButtonElement>("button.agent-tool-row");
+    expect(row?.querySelector(".agent-tool-row__label")?.textContent).toBe("Ran npm run lint");
+
+    act(() => row?.click());
+
+    expect(host.querySelector(".agent-tool-row__empty")?.textContent).toBe("No output");
+    expect(host.querySelector(".agent-tool-row__output")).toBeNull();
+  });
+
+  it("marks a failed row with the danger modifier and the failed verb", () => {
+    render({
+      thread: threadView([
+        turn("t1", "Run it", SETTLED, [
+          { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+          { kind: "toolResult", toolId: "t-1", outputSummary: "exit 1", isError: true },
+          text("It failed."),
+        ]),
+      ]),
+    });
+
+    const row = host.querySelector<HTMLButtonElement>("button.agent-tool-row");
+    expect(row?.className).toBe("agent-tool-row agent-tool-row--failed");
+    expect(row?.querySelector(".agent-tool-row__label")?.textContent).toBe("Failed npm test");
+    expect(declaration(".agent-tool-row--failed .agent-tool-row__label", "color")).toBe(
+      "var(--agent-danger)",
+    );
+  });
+
+  it("discloses the command and the output when the row is clicked", () => {
+    render({
+      thread: threadView([
+        turn("t1", "Run it", SETTLED, [
+          { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm run lint" },
+          { kind: "toolResult", toolId: "t-1", outputSummary: "0 problems", isError: false },
+          text("Clean."),
+        ]),
+      ]),
+    });
+
+    const row = host.querySelector<HTMLButtonElement>("button.agent-tool-row");
+    const detail = host.querySelector<HTMLElement>(".agent-tool-row__detail");
+    expect(row?.getAttribute("aria-expanded")).toBe("false");
+    expect(row?.getAttribute("aria-controls")).toBe(detail?.id);
+    expect(detail?.hidden).toBe(true);
+
+    act(() => row?.click());
+
+    expect(row?.getAttribute("aria-expanded")).toBe("true");
+    expect(detail?.hidden).toBe(false);
+    expect(detail?.querySelector(".agent-tool-row__command")?.textContent).toBe("$ npm run lint");
+    expect(detail?.querySelector(".agent-tool-row__output")?.textContent).toBe("0 problems");
+
+    act(() => row?.click());
+
+    expect(host.querySelector<HTMLElement>(".agent-tool-row__detail")?.hidden).toBe(true);
+  });
+
+  it("never animates a call left unresolved by a stopped or finished turn", () => {
+    const events: ReadonlyArray<AgentTurnEvent> = [
+      { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+    ];
+    render({ thread: threadView([turn("t1", "Run it", { kind: "stopped" }, events)]) });
+
+    expect(host.querySelector("button.agent-tool-row")?.className).toBe(
+      "agent-tool-row agent-tool-row--stopped",
+    );
+    expect(host.querySelector(".agent-tool-row__label")?.textContent).toBe("Stopped npm test");
+
+    render({
+      thread: threadView([turn("t1", "Run it", { kind: "failed", message: "boom" }, events)]),
+    });
+
+    expect(host.querySelector("button.agent-tool-row")?.className).toBe("agent-tool-row");
+    expect(host.querySelector(".agent-tool-row__label")?.textContent).toBe("Ran npm test");
+    expect(host.querySelector(".agent-tool-row--running")).toBeNull();
+  });
+
+  it("keeps a row expanded when the turn settles and the work fold remounts", () => {
+    const call: AgentTurnEvent = {
+      kind: "toolCall",
+      toolId: "t-1",
+      name: "Bash",
+      inputSummary: "npm test",
+    };
+    const result: AgentTurnEvent = {
+      kind: "toolResult",
+      toolId: "t-1",
+      outputSummary: "ok",
+      isError: false,
+    };
+    render({ thread: threadView([turn("t1", "Run it", RUNNING, [call, result])]) });
+
+    const row = host.querySelector<HTMLButtonElement>("button.agent-tool-row");
+    expect(host.querySelector(".agent-tool-row__output")).toBeNull();
+
+    act(() => row?.click());
+
+    expect(host.querySelector(".agent-tool-row__output")?.textContent).toBe("ok");
+
+    render({ thread: threadView([turn("t1", "Run it", SETTLED, [call, result])]) });
+
+    expect(host.querySelector("button.agent-tool-row")?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector(".agent-tool-row__output")?.textContent).toBe("ok");
+  });
+
+  it("shows only the first Codex patch path with a count of the rest", () => {
+    render({
+      thread: threadView([
+        turn("t1", "Patch it", SETTLED, [
+          {
+            kind: "toolCall",
+            toolId: "t-1",
+            name: "apply_patch",
+            inputSummary: `${ROOT}/src/a.ts, ${ROOT}/src/b.ts`,
+          },
+          { kind: "toolResult", toolId: "t-1", outputSummary: "done", isError: false },
+          text("Patched."),
+        ]),
+      ]),
+    });
+
+    expect(host.querySelector(".agent-tool-row__label")?.textContent).toBe(
+      "Edited src/a.ts +1 more",
+    );
+  });
+
+  it("shows a shimmering working row while the turn runs and drops it once settled", () => {
+    const events: ReadonlyArray<AgentTurnEvent> = [
+      { kind: "toolCall", toolId: "t-1", name: "Read", inputSummary: `${ROOT}/src/app.ts` },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "12 lines", isError: false },
+    ];
+    render({ thread: threadView([turn("t1", "Look", RUNNING, events)]) });
+
+    const working = host.querySelector<HTMLElement>(".agent-tool-row--working");
+    expect(working?.textContent).toBe("Working\u2026");
+    expect(working?.getAttribute("role")).toBe("status");
+    expect(working?.parentElement?.className).toBe("agent-work__events");
+    expect(working?.previousElementSibling?.className).toContain("agent-tool-row__detail");
+    expect(host.querySelector("button.agent-tool-row")?.textContent).toContain("Read src/app.ts");
+
+    render({ thread: threadView([turn("t1", "Look", SETTLED, events)]) });
+
+    expect(host.querySelector(".agent-tool-row--working")).toBeNull();
+  });
+
+  it("announces the live activity through one persistent status element", () => {
+    const call: AgentTurnEvent = {
+      kind: "toolCall",
+      toolId: "t-1",
+      name: "Bash",
+      inputSummary: "npm test",
+    };
+    render({ thread: threadView([turn("t1", "Run it", RUNNING, [call])]) });
+
+    const live = host.querySelector<HTMLElement>('[role="status"][aria-live="polite"]');
+    expect(live?.textContent).toBe("Running npm test");
+    expect(live?.className).toBe("agent-tool-row-live");
+    expect(host.querySelector(".agent-tool-row--working")).toBeNull();
+
+    render({
+      thread: threadView([
+        turn("t1", "Run it", RUNNING, [
+          call,
+          { kind: "toolResult", toolId: "t-1", outputSummary: "ok", isError: false },
+        ]),
+      ]),
+    });
+
+    const after = host.querySelector<HTMLElement>('[role="status"][aria-live="polite"]');
+    expect(after).toBe(live);
+    expect(after?.textContent).toBe("Working\u2026");
+    expect(after?.className).toBe("agent-tool-row agent-tool-row--working");
+    expect(host.querySelectorAll('[role="status"][aria-live="polite"]')).toHaveLength(1);
+    expect(host.querySelector("button.agent-tool-row")?.getAttribute("aria-live")).toBe("off");
+  });
+
+  it("keeps the in-flight tool row shimmering instead of adding a working row", () => {
+    render({
+      thread: threadView([
+        turn("t1", "Look", RUNNING, [
+          { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+        ]),
+      ]),
+    });
+
+    expect(host.querySelector(".agent-tool-row--working")).toBeNull();
+    expect(host.querySelector("button.agent-tool-row")?.className).toBe(
+      "agent-tool-row agent-tool-row--running",
+    );
+    expect(declaration(".agent-tool-row--running .agent-tool-row__label", "animation")).toBe(
+      "agent-tool-row-shimmer 1800ms linear infinite",
+    );
   });
 
   function promptTexts(): ReadonlyArray<string> {

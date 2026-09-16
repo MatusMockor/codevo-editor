@@ -1,12 +1,14 @@
 import { memo } from "react";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
+import { agentComposerDraftStore } from "../../application/agentComposerDrafts";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentContextCompactionOffer } from "../../domain/agentContextCompaction";
 import { agentLaunchOptionsEqual } from "../../domain/agentLaunch";
 import { AgentComposer } from "./AgentComposer";
 import {
   useAgentComposerPromptState,
+  WITHOUT_COMPOSER_ATTACHMENTS,
   type AgentComposerControllerProps as AgentComposerPresentation,
   type AgentComposerPromptController,
 } from "./useAgentComposerState";
@@ -38,12 +40,12 @@ export const AgentComposerController = memo(function AgentComposerController({
 }: AgentComposerControllerProps) {
   const controlledProps = useAgentComposerPromptState({
     composerProps,
+    drafts: agentComposerDraftStore,
     submissionBlocked,
     submit,
   });
-  const compactContext = (submission: Parameters<typeof submit>[1]): void => {
-    void submit("/compact", submission);
-  };
+  const compactContext = (submission: Parameters<typeof submit>[1]): Promise<boolean> =>
+    submit("/compact", submission, WITHOUT_COMPOSER_ATTACHMENTS);
   return (
     <AgentComposer
       {...controlledProps}
@@ -75,6 +77,8 @@ function agentComposerControllerPropsEqual(
     left.providerEnabled === right.providerEnabled &&
     left.submissionBlocked === right.submissionBlocked &&
     left.submit === right.submit &&
+    leftProps.draftKey === rightProps.draftKey &&
+    leftProps.promptRestore === rightProps.promptRestore &&
     leftProps.attachmentTargetKey === rightProps.attachmentTargetKey &&
     sameComposerAttachments(leftProps.attachments, rightProps.attachments) &&
     leftProps.dispatching === rightProps.dispatching &&

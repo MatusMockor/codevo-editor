@@ -53,7 +53,10 @@ import {
 import { agentSurfaceScopeFor, agentThreadCheckoutRoot } from "./agentSurfacePolicy";
 import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentAddProject } from "./useAgentAddProject";
-import { useAgentComposerControllerState } from "./useAgentComposerState";
+import {
+  useAgentComposerControllerState,
+  type AgentComposerPromptRestore,
+} from "./useAgentComposerState";
 import { useAgentShipActions } from "./useAgentShipActions";
 import { useAgentSurfaceLayout } from "./useAgentSurfaceLayout";
 import { REVEAL_FAILED_NOTICE, useAgentThreadMenuCommands } from "./useAgentThreadMenuCommands";
@@ -258,9 +261,24 @@ function LocalAgentModeView({
       prefix === null ? !project.rootKey.startsWith("remote:") : project.rootKey.startsWith(prefix),
     );
   }, [projects, selectedServerId, selectedThread]);
+  const [promptRestore, setPromptRestore] = useState<AgentComposerPromptRestore | null>(null);
+  const takeQueued = useAgentLatestCallback(agents.takeDeferredFollowUp);
+  const editQueued = useCallback(
+    (threadId: string, id: string): void => {
+      const taken = takeQueued(threadId, id);
+      if (taken === null) return;
+      setPromptRestore((current) => ({
+        token: (current?.token ?? 0) + 1,
+        draftKey: threadId,
+        text: taken.prompt,
+      }));
+    },
+    [takeQueued],
+  );
   const composer = useAgentComposerControllerState({
     agents,
     groups,
+    promptRestore,
     projects: composerProjects,
     providerEnabled: effectiveProviderEnabled,
     railScope: navigation.composerScope,
@@ -689,6 +707,11 @@ function LocalAgentModeView({
                       )
                 }
                 onRemoveDeferredFollowUp={agents.removeDeferredFollowUp}
+                onEditDeferredFollowUp={
+                  sessionThread === null || sessionThread.execution?.kind === "remote"
+                    ? undefined
+                    : editQueued
+                }
                 onResumeDeferredFollowUps={agents.resumeDeferredFollowUps}
                 onSendDeferredFollowUpNow={
                   sessionThread !== null && agentThreadIsSteerable(sessionThread.thread)

@@ -30,6 +30,7 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
       sendFollowUp: (...args) => current.current.sendFollowUp(...args),
       steer: (...args) => current.current.steer(...args),
       removeDeferredFollowUp: (...args) => current.current.removeDeferredFollowUp(...args),
+      takeDeferredFollowUp: (...args) => current.current.takeDeferredFollowUp(...args),
       importExternalSession: (...args) => current.current.importExternalSession(...args),
       stop: (...args) => current.current.stop(...args),
       togglePin: (...args) => current.current.togglePin(...args),

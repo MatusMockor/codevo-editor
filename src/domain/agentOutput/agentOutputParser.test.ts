@@ -90,6 +90,7 @@ describe("agent output parser fixtures", () => {
         toolId: "toolu_01WxKtGyBLC9hZeQb8WMGqMw",
         name: "Bash",
         inputSummary: "echo 'hello' >> /repo/a.txt",
+        description: "Append hello to a.txt",
       },
       {
         kind: "toolResult",

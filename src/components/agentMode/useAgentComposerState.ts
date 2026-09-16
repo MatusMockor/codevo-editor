@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  createAgentComposerDraftStore,
+  type AgentComposerDraftStore,
+} from "../../application/agentComposerDrafts";
+import { mergeRestoredPrompt } from "../../application/agentQueuedMessageEdit";
 import { agentThreadAcceptsQueuedMessage } from "../../application/agentTurnAdmission";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { useAgentComposerRepositoryInteraction } from "./useAgentComposerRepositoryInteraction";
@@ -72,14 +77,22 @@ export type AgentComposerSurface = Pick<
   | "stop"
 >;
 
+export interface AgentComposerPromptRestore {
+  readonly token: number;
+  readonly draftKey: string;
+  readonly text: string;
+}
+
 export interface AgentComposerStateOptions {
   readonly agents: AgentComposerSurface;
+  readonly promptRestore?: AgentComposerPromptRestore | null;
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly selectedThread: AgentThreadView | null;
   readonly railScope: ComposerScope | null;
   readonly repositoryPreferenceStorage?: ComposerRepositoryPreferenceStorage;
+  readonly drafts?: AgentComposerDraftStore;
   onClearSelectedThread(): void;
   onThreadStarted(threadId: string): void;
 }
@@ -102,7 +115,10 @@ export type AgentComposerControllerProps = Omit<
   | "promptBytes"
   | "providerEnabled"
   | "submitBlocked"
->;
+> & {
+  readonly draftKey: string | null;
+  readonly promptRestore?: AgentComposerPromptRestore | null;
+};
 
 export type AgentComposerPromptProps = Omit<
   AgentComposerProps,
@@ -114,21 +130,32 @@ export interface AgentComposerControllerState {
   readonly composerLabel: string | null;
   readonly composerProps: AgentComposerControllerProps;
   readonly submissionBlocked: boolean;
-  submit(prompt: string, submission: AgentComposerSubmission): Promise<boolean>;
+  submit(
+    prompt: string,
+    submission: AgentComposerSubmission,
+    options?: AgentComposerSubmitOptions,
+  ): Promise<boolean>;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
   clearSelection(): void;
 }
 
+export interface AgentComposerSubmitOptions {
+  readonly attachments: boolean;
+}
+
+export const WITH_COMPOSER_ATTACHMENTS: AgentComposerSubmitOptions = { attachments: true };
+export const WITHOUT_COMPOSER_ATTACHMENTS: AgentComposerSubmitOptions = { attachments: false };
+
 export type AgentComposerPromptController = Pick<
   AgentComposerControllerState,
   "composerProps" | "submissionBlocked" | "submit"
->;
+> & { readonly drafts?: AgentComposerDraftStore };
 
 export function useAgentComposerState({
   ...options
 }: AgentComposerStateOptions): AgentComposerState {
   const controller = useAgentComposerControllerState(options);
-  const composerProps = useAgentComposerPromptState(controller);
+  const composerProps = useAgentComposerPromptState({ ...controller, drafts: options.drafts });
   return {
     target: controller.target,
     composerLabel: controller.composerLabel,
@@ -144,6 +171,7 @@ export function useAgentComposerControllerState({
   onClearSelectedThread,
   onThreadStarted,
   projects,
+  promptRestore = null,
   providerEnabled,
   railScope,
   repositoryPreferenceStorage,
@@ -360,11 +388,15 @@ export function useAgentComposerControllerState({
   submissionAuthorityRef.current = submissionAuthority;
 
   const submit = useCallback(
-    async (prompt: string, submission: AgentComposerSubmission) => {
+    async (
+      prompt: string,
+      submission: AgentComposerSubmission,
+      options: AgentComposerSubmitOptions = WITH_COMPOSER_ATTACHMENTS,
+    ) => {
       if (submissionBlocked) return false;
       const authority = submissionAuthority;
       if (authority === null) return false;
-      const pendingAttachments = composerHasAttachments(attachments);
+      const pendingAttachments = options.attachments && composerHasAttachments(attachments);
       const prepared = pendingAttachments
         ? await prepareComposerAttachments(attachments, attachmentTargetKey)
         : NO_PREPARED_ATTACHMENTS;
@@ -387,7 +419,7 @@ export function useAgentComposerControllerState({
                 prompt,
               });
               if (steerKeptThePrompt(outcome)) return false;
-              attachments?.markSent(prepared.draftIds);
+              if (pendingAttachments) attachments?.markSent(prepared.draftIds);
               return true;
             } finally {
               if (mountedRef.current) setSteering(false);
@@ -400,7 +432,7 @@ export function useAgentComposerControllerState({
             launch: submission.launch,
             dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
           });
-          if (sent) attachments?.markSent(prepared.draftIds);
+          if (sent && pendingAttachments) attachments?.markSent(prepared.draftIds);
           return sent;
         }
         case "new": {
@@ -415,7 +447,7 @@ export function useAgentComposerControllerState({
             dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
           });
           if (started === null) return false;
-          attachments?.markSent(prepared.draftIds);
+          if (pendingAttachments) attachments?.markSent(prepared.draftIds);
           if (!composerSubmissionAuthorityEqual(submissionAuthorityRef.current, authority)) {
             return false;
           }
@@ -489,6 +521,8 @@ export function useAgentComposerControllerState({
   const composerProps: AgentComposerControllerProps = {
     attachments,
     attachmentTargetKey,
+    draftKey: agentComposerDraftKey(selectedThread, target),
+    promptRestore,
     promptOwnerKey: JSON.stringify([
       selectedThread?.thread.threadId ?? null,
       selectedThread?.thread.owner ?? target,
@@ -628,8 +662,21 @@ export function agentComposerPromptBytes(
 export function useAgentComposerPromptState(
   controller: AgentComposerPromptController,
 ): AgentComposerPromptProps {
-  const [prompt, setPrompt] = useState("");
-  const ownerKey = controller.composerProps.promptOwnerKey;
+  const { draftKey, promptRestore = null, ...composerProps } = controller.composerProps;
+  const [ownDrafts] = useState(createAgentComposerDraftStore);
+  const drafts = controller.drafts ?? ownDrafts;
+  const [draft, setDraft] = useState(() => ({
+    key: draftKey,
+    text: readComposerDraft(drafts, draftKey),
+  }));
+  if (draft.key !== draftKey) {
+    setDraft({ key: draftKey, text: seedComposerPrompt(drafts, draft.key, draftKey, draft.text) });
+  }
+  const prompt = draft.text;
+  useEffect(() => {
+    writeComposerDraft(drafts, draft.key, draft.text);
+  }, [draft, drafts]);
+  const ownerKey = composerProps.promptOwnerKey;
   const promptOwnerRef = useRef({ key: ownerKey, generation: 0 });
   if (promptOwnerRef.current.key !== ownerKey) {
     promptOwnerRef.current = { key: ownerKey, generation: promptOwnerRef.current.generation + 1 };
@@ -637,9 +684,28 @@ export function useAgentComposerPromptState(
   const promptRevisionRef = useRef(0);
   const changePrompt = useCallback((next: string) => {
     promptRevisionRef.current += 1;
-    setPrompt(next);
+    setDraft((current) => ({ key: current.key, text: next }));
   }, []);
-  const attachments = controller.composerProps.attachments ?? null;
+  const draftRef = useRef(draft);
+  useLayoutEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+  const restoredTokenRef = useRef(promptRestore?.token ?? 0);
+  useEffect(() => {
+    if (promptRestore === null) return;
+    if (promptRestore.draftKey !== draftKey) return;
+    if (promptRestore.token === restoredTokenRef.current) return;
+    restoredTokenRef.current = promptRestore.token;
+    const current = draftRef.current;
+    const merged = mergeRestoredPrompt(
+      current.key === draftKey ? current.text : "",
+      promptRestore.text,
+    );
+    promptRevisionRef.current += 1;
+    setDraft({ key: draftKey, text: merged });
+    focusAgentComposerPrompt(merged.length);
+  }, [draftKey, promptRestore]);
+  const attachments = composerProps.attachments ?? null;
   const readyAttachments =
     attachments?.drafts.filter((draft) => draft.state === "ready").length ?? 0;
   const promptBytes = agentComposerPromptBytes(prompt, attachments);
@@ -652,27 +718,87 @@ export function useAgentComposerPromptState(
       if (submitBlocked) return;
       const submittedPrompt = prompt;
       const submittedOwner = promptOwnerRef.current;
+      const submittedDraftKey = draft.key;
       const clearedRevision = promptRevisionRef.current + 1;
       promptRevisionRef.current = clearedRevision;
-      setPrompt("");
+      setDraft({ key: submittedDraftKey, text: "" });
       void controller.submit(submittedPrompt, submission).then((submitted) => {
         if (submitted) return;
-        if (promptOwnerRef.current !== submittedOwner) return;
+        if (promptOwnerRef.current !== submittedOwner) {
+          retainForeignComposerDraft(drafts, submittedDraftKey, submittedPrompt);
+          return;
+        }
         if (promptRevisionRef.current !== clearedRevision) return;
         promptRevisionRef.current += 1;
-        setPrompt(submittedPrompt);
+        setDraft({ key: submittedDraftKey, text: submittedPrompt });
       });
     },
-    [controller, prompt, submitBlocked],
+    [controller, draft.key, drafts, prompt, submitBlocked],
   );
   return {
-    ...controller.composerProps,
+    ...composerProps,
     onPromptChange: changePrompt,
     onSubmit: submit,
     prompt,
     promptBytes,
     submitBlocked,
   };
+}
+
+export const AGENT_COMPOSER_PROMPT_ID = "agent-prompt";
+
+function focusAgentComposerPrompt(caret: number): void {
+  if (typeof document === "undefined") return;
+  const node = document.getElementById(AGENT_COMPOSER_PROMPT_ID);
+  if (!(node instanceof HTMLTextAreaElement)) return;
+  node.focus({ preventScroll: true });
+  node.setSelectionRange(caret, caret);
+}
+
+export function agentComposerDraftKey(
+  selectedThread: AgentThreadView | null,
+  target: ComposerTarget | null,
+): string | null {
+  if (selectedThread !== null) return selectedThread.thread.threadId;
+  if (target === null) return null;
+  return `new:${target.projectRootKey}`;
+}
+
+function readComposerDraft(drafts: AgentComposerDraftStore, key: string | null): string {
+  if (key === null) return "";
+  return drafts.readDraft(key);
+}
+
+function seedComposerPrompt(
+  drafts: AgentComposerDraftStore,
+  previousKey: string | null,
+  nextKey: string | null,
+  current: string,
+): string {
+  if (nextKey === null) return current;
+  const stored = drafts.readDraft(nextKey);
+  if (stored !== "") return stored;
+  if (previousKey === null) return current;
+  return "";
+}
+
+function retainForeignComposerDraft(
+  drafts: AgentComposerDraftStore,
+  key: string | null,
+  text: string,
+): void {
+  if (key === null) return;
+  if (drafts.readDraft(key) !== "") return;
+  drafts.writeDraft(key, text);
+}
+
+function writeComposerDraft(
+  drafts: AgentComposerDraftStore,
+  key: string | null,
+  text: string,
+): void {
+  if (key === null) return;
+  drafts.writeDraft(key, text);
 }
 
 type ComposerSubmissionAuthority =

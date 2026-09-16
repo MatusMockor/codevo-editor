@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
+import type {
+  AgentComposerAttachmentDraft,
+  AgentComposerAttachmentsSurface,
+} from "../../application/useAgentComposerAttachments";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "../../domain/agentTask";
 import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import {
@@ -491,8 +495,8 @@ describe("AgentComposer", () => {
 
     const button = submitButton();
     expect(button.getAttribute("aria-label")).toBe("Start agent");
-    expect(button.title).toBe("Start agent (⌘↩)");
-    expect(button.getAttribute("aria-keyshortcuts")).toBe("Meta+Enter");
+    expect(button.title).toBe("Start agent (Enter or ⌘↩)");
+    expect(button.getAttribute("aria-keyshortcuts")).toBe("Enter Meta+Enter");
     expect(button.getAttribute("aria-busy")).toBeNull();
     expect(button.querySelector("kbd")).toBeNull();
     expect(button.textContent).toBe("");
@@ -785,6 +789,224 @@ describe("AgentComposer", () => {
     expect(host.textContent).not.toContain("Resume with less context");
   });
 
+  it("compacts an older session from an empty composer", () => {
+    const onCompactContext = vi.fn();
+    render({
+      compactionOffer: { key: "agt-1:1:120000", contextTokens: 120_000 },
+      mode: { kind: "followUp", blockedReason: null },
+      prompt: "",
+      submitBlocked: true,
+      onCompactContext,
+    });
+
+    expect(submitButton().disabled).toBe(true);
+    expect(compactAction().disabled).toBe(false);
+    act(() => compactAction().click());
+    expect(onCompactContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("compacts without consuming the attachments waiting in the composer", async () => {
+    const markSent = vi.fn();
+    const prepareTurn = vi.fn(async () => null);
+    const onCompactContext = vi.fn(async () => true);
+    const onPromptChange = vi.fn();
+    render({
+      attachments: attachmentsSurface({ drafts: [readyAttachmentDraft()], markSent, prepareTurn }),
+      attachmentTargetKey: "/workspace/app",
+      compactionOffer: { key: "agt-1:1:120000", contextTokens: 120_000 },
+      mode: { kind: "followUp", blockedReason: null },
+      onCompactContext,
+      onPromptChange,
+    });
+
+    expect(compactAction().disabled).toBe(false);
+    await act(async () => compactAction().click());
+
+    expect(onCompactContext).toHaveBeenCalledTimes(1);
+    expect(markSent).not.toHaveBeenCalled();
+    expect(prepareTurn).not.toHaveBeenCalled();
+    expect(onPromptChange).not.toHaveBeenCalled();
+    expect(host.querySelector(".agent-composer-attachment")).not.toBeNull();
+  });
+
+  it("keeps Compact disabled while an attachment is still staging", () => {
+    render({
+      attachments: attachmentsSurface({
+        drafts: [stagingAttachmentDraft()],
+        staging: true,
+        blocked: true,
+      }),
+      attachmentTargetKey: "/workspace/app",
+      compactionOffer: { key: "agt-1:1:120000", contextTokens: 120_000 },
+      mode: { kind: "followUp", blockedReason: null },
+      onCompactContext: vi.fn(),
+    });
+
+    expect(compactAction().disabled).toBe(true);
+  });
+
+  it("refuses compaction for a conversation running on a remote server", () => {
+    const onCompactContext = vi.fn();
+    render({
+      compactionOffer: { key: "agt-1:1:120000", contextTokens: 120_000 },
+      executionServerId: "srv-1",
+      mode: { kind: "followUp", blockedReason: null },
+      onCompactContext,
+    });
+
+    expect(compactAction().disabled).toBe(true);
+
+    render({
+      executionServerId: "srv-1",
+      mode: { kind: "followUp", blockedReason: null },
+      prompt: "/compact",
+      onCompactContext,
+    });
+    pressEnter();
+    expect(onCompactContext).not.toHaveBeenCalled();
+  });
+
+  it("keeps the typed /compact until the turn is accepted", async () => {
+    const onPromptChange = vi.fn();
+    const refused = vi.fn(async () => false);
+    render({
+      mode: { kind: "followUp", blockedReason: null },
+      prompt: "/compact",
+      onCompactContext: refused,
+      onPromptChange,
+    });
+
+    await act(async () => {
+      pressEnter();
+    });
+    expect(refused).toHaveBeenCalledTimes(1);
+    expect(onPromptChange).not.toHaveBeenCalled();
+
+    const accepted = vi.fn(async () => true);
+    render({
+      mode: { kind: "followUp", blockedReason: null },
+      prompt: "/compact",
+      onCompactContext: accepted,
+      onPromptChange,
+    });
+
+    await act(async () => {
+      pressEnter();
+    });
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(onPromptChange).toHaveBeenLastCalledWith("");
+  });
+
+  it("keeps Compact disabled while a turn dispatches or the thread cannot resume", () => {
+    const offer = {
+      compactionOffer: { key: "agt-1:1:120000", contextTokens: 120_000 },
+      mode: { kind: "followUp", blockedReason: null },
+      onCompactContext: vi.fn(),
+    } as const;
+
+    render({ ...offer, dispatching: true, submitBlocked: true });
+    expect(compactAction().disabled).toBe(true);
+
+    render({ ...offer, providerEnabled: { claudeCode: false, codex: false } });
+    expect(compactAction().disabled).toBe(true);
+
+    render({ ...offer, mode: { kind: "followUp", blockedReason: "A turn is running." } });
+    expect(compactAction().disabled).toBe(true);
+  });
+
+  it("runs /compact from the command path while an empty prompt blocks submission", () => {
+    const onCompactContext = vi.fn();
+    const onSubmit = vi.fn();
+    render({
+      mode: { kind: "followUp", blockedReason: null },
+      prompt: "/compact",
+      submitBlocked: true,
+      onCompactContext,
+      onSubmit,
+    });
+
+    expect(pressEnter().defaultPrevented).toBe(true);
+    expect(onCompactContext).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("sends on Enter in every mode and keeps Shift+Enter and IME input multiline", () => {
+    const modes: ReadonlyArray<AgentComposerProps["mode"]> = [
+      { kind: "new" },
+      { kind: "followUp", blockedReason: null },
+      STEER_MODE,
+    ];
+    for (const mode of modes) {
+      const onSubmit = vi.fn();
+      render({ mode, prompt: "Ship it", running: mode.kind === "steer", onSubmit });
+
+      expect(pressEnter({ shiftKey: true }).defaultPrevented, mode.kind).toBe(false);
+      expect(pressEnter({ altKey: true }).defaultPrevented, mode.kind).toBe(false);
+      expect(pressEnter({ isComposing: true }).defaultPrevented, mode.kind).toBe(false);
+      expect(onSubmit, mode.kind).not.toHaveBeenCalled();
+
+      expect(pressEnter().defaultPrevented, mode.kind).toBe(true);
+      expect(onSubmit, mode.kind).toHaveBeenCalledTimes(1);
+      expect(pressEnter({ metaKey: true }).defaultPrevented, mode.kind).toBe(true);
+      expect(onSubmit, mode.kind).toHaveBeenCalledTimes(2);
+      expect(pressEnter({ ctrlKey: true }).defaultPrevented, mode.kind).toBe(true);
+      expect(onSubmit, mode.kind).toHaveBeenCalledTimes(3);
+    }
+  });
+
+  it("sends once for a held Enter and accepts the numeric keypad Enter", () => {
+    const onSubmit = vi.fn();
+    render({ prompt: "Ship it", onSubmit });
+
+    expect(pressEnter({ repeat: true }).defaultPrevented).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    expect(pressEnter({ code: "NumpadEnter" }).defaultPrevented).toBe(true);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("never dispatches a second turn from Enter while the first one is starting", () => {
+    const onSubmit = vi.fn();
+    render({ prompt: "Ship it", dispatching: true, submitBlocked: true, onSubmit });
+
+    expect(pressEnter().defaultPrevented).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("never sends a partial slash query while the command menu is open", () => {
+    const onSubmit = vi.fn();
+    const onPromptChange = vi.fn();
+    render({ prompt: "/mod", onSubmit, onPromptChange });
+    act(() => promptField().focus());
+
+    expect(commandMenu()).not.toBeNull();
+    expect(pressEnter({ altKey: true }).defaultPrevented).toBe(false);
+    expect(pressEnter({ metaKey: true }).defaultPrevented).toBe(false);
+    expect(pressEnter({ ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(commandMenu()).not.toBeNull();
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    expect(pressEnter().defaultPrevented).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onPromptChange).toHaveBeenLastCalledWith("");
+  });
+
+  it("refuses /compact while the running turn would queue it as a steer message", () => {
+    const onCompactContext = vi.fn();
+    const onSubmit = vi.fn();
+    render({
+      mode: STEER_MODE,
+      prompt: "/compact",
+      running: true,
+      onCompactContext,
+      onSubmit,
+    });
+
+    expect(pressEnter().defaultPrevented).toBe(true);
+    expect(onCompactContext).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("replaces the arrow with Stop while a steerable turn runs", () => {
     const onStop = vi.fn();
     const onSubmit = vi.fn();
@@ -806,28 +1028,6 @@ describe("AgentComposer", () => {
     act(() => stop.click());
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onSubmit).not.toHaveBeenCalled();
-  });
-
-  it("submits steering on Enter but preserves Shift+Enter and composing input", () => {
-    const onSubmit = vi.fn();
-    render({ mode: STEER_MODE, running: true, onSubmit });
-    const press = (options: KeyboardEventInit = {}): KeyboardEvent => {
-      const event = new KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        key: "Enter",
-        ...options,
-      });
-      act(() => {
-        promptField().dispatchEvent(event);
-      });
-      return event;
-    };
-    expect(press({ shiftKey: true }).defaultPrevented).toBe(false);
-    expect(press({ isComposing: true }).defaultPrevented).toBe(false);
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(press().defaultPrevented).toBe(true);
-    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
   it("shows pending steering on desktop while keeping Stop usable", () => {
@@ -887,6 +1087,53 @@ describe("AgentComposer", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onStop).not.toHaveBeenCalled();
   });
+
+  function commandMenu(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('[role="listbox"][aria-label="Composer commands"]');
+  }
+
+  function attachmentsSurface(
+    overrides: Partial<AgentComposerAttachmentsSurface>,
+  ): AgentComposerAttachmentsSurface {
+    return {
+      drafts: [],
+      projectRootKey: "/workspace/app",
+      staging: false,
+      blocked: false,
+      refusal: null,
+      promptLineBytes: 0,
+      add: async () => undefined,
+      claimPaste: () => "pass-through",
+      remove: () => undefined,
+      clear: () => undefined,
+      markSent: () => undefined,
+      refuse: () => undefined,
+      dismissRefusal: () => undefined,
+      prepareTurn: async () => null,
+      ...overrides,
+    };
+  }
+
+  function compactAction(): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>(".agent-compaction-offer__action");
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("button");
+  }
+
+  function pressEnter(options: KeyboardEventInit = {}): KeyboardEvent {
+    const field = promptField();
+    field.setSelectionRange(field.value.length, field.value.length);
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+      ...options,
+    });
+    act(() => {
+      field.dispatchEvent(event);
+    });
+    return event;
+  }
 
   function stopButton(): HTMLButtonElement {
     const element = host.querySelector<HTMLButtonElement>("button.agent-composer__stop");
@@ -1011,9 +1258,11 @@ describe("AgentComposer Airy styling contract", () => {
       "box-shadow: var(--agent-shadow-raised), var(--codevo-focus-ring)",
     );
     expect(cssRule(css, "\n.agent-composer {")).not.toMatch(/border-top: 1px/);
-    expect(cssRule(css, "\n.agent-composer__textarea {")).toContain(
-      "font-size: var(--codevo-fs-body)",
-    );
+    const textarea = cssRule(css, "\n.agent-composer__textarea {");
+    expect(textarea).toContain("font-size: var(--codevo-fs-body)");
+    expect(textarea).toContain("line-height: 1.5");
+    expect(textarea).toContain("min-height: calc(96px * var(--codevo-fs-scale))");
+    expect(textarea).toContain("max-height: min(40vh, calc(420px * var(--codevo-fs-scale)))");
     expect(css).not.toContain(".agent-composer__context");
     expect(css).not.toContain(".agent-composer__chip");
     expect(css).not.toContain(".agent-composer__new");
@@ -1077,6 +1326,19 @@ describe("AgentComposer Airy styling contract", () => {
     expect(trigger).toContain("border-radius: var(--agent-radius-sm)");
     expect(trigger).not.toContain("border:");
   });
+
+  it("rings a picker trigger on focus-visible only and marks an open menu with a fill", () => {
+    expect(cssRule(css, "\n.agent-picker__trigger:focus-visible {")).toContain(
+      "box-shadow: var(--agent-focus-ring)",
+    );
+    expect(css).not.toContain(".agent-picker--open .agent-picker__trigger,");
+    const open = cssRule(css, "\n.agent-picker--open .agent-picker__trigger {");
+    expect(open).toContain("background: var(--agent-fill)");
+    expect(open).toContain("color: var(--agent-text-strong)");
+    expect(open).not.toContain("box-shadow");
+    expect(open).not.toContain("outline");
+    expect(css).not.toContain(".agent-picker--open .agent-picker__trigger--ghost");
+  });
 });
 
 const STEER_MODE = { kind: "steer", threadId: "agt-1" } as const;
@@ -1121,6 +1383,37 @@ function stubMatchMedia(matches: boolean): void {
       dispatchEvent: () => false,
     }),
   });
+}
+
+function attachmentDraft(
+  overrides: Partial<AgentComposerAttachmentDraft>,
+): AgentComposerAttachmentDraft {
+  return {
+    draftId: "draft-1",
+    kind: "file",
+    state: "ready",
+    name: "notes.txt",
+    bytes: 1_024,
+    mime: null,
+    width: null,
+    height: null,
+    attachmentId: null,
+    path: null,
+    previewUrl: null,
+    failure: null,
+    notice: null,
+    missing: false,
+    promptLineBytesMax: 40,
+    ...overrides,
+  };
+}
+
+function readyAttachmentDraft(): AgentComposerAttachmentDraft {
+  return attachmentDraft({ draftId: "draft-ready" });
+}
+
+function stagingAttachmentDraft(): AgentComposerAttachmentDraft {
+  return attachmentDraft({ draftId: "draft-staging", state: "staging" });
 }
 
 function repo(repositoryRoot: string, label: string): AgentComposerRepositoryOption {

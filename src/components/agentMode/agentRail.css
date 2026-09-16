@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column;
   min-width: min(var(--agent-rail-min-width), 100%);
-  background: var(--codevo-side);
+  background: var(--codevo-canvas);
   min-height: 0;
   padding: 0 6px 8px;
 }
@@ -323,8 +323,10 @@
   margin: 4px 8px;
 }
 
-.agent-scope-menu__menu {
-  min-width: 236px;
+.agent-menu.agent-scope-menu__menu {
+  min-width: 220px;
+  max-width: min(400px, calc(100vw - 16px));
+  background: var(--agent-raised);
 }
 
 .agent-scope-menu__search {
@@ -333,13 +335,31 @@
   top: -6px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   height: calc(28px * var(--codevo-fs-scale));
-  border-radius: var(--codevo-r-sm);
-  background: var(--codevo-well);
-  color: var(--codevo-fg-subtle);
+  background: var(--agent-raised);
+  color: var(--agent-text-muted);
   margin: 0 0 4px;
-  padding: 0 8px;
+  padding: 0 4px;
+}
+
+.agent-scope-menu__search::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: var(--agent-hairline);
+  content: "";
+  transition: background var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-scope-menu__search:focus-within {
+  color: var(--agent-text-strong);
+}
+
+.agent-scope-menu__search:focus-within::after {
+  background: var(--agent-accent);
 }
 
 .agent-scope-menu__search input {
@@ -349,7 +369,7 @@
   border: 0;
   background: transparent;
   box-shadow: none;
-  color: var(--codevo-fg-strong);
+  color: var(--agent-text-strong);
   font: inherit;
   font-size: var(--codevo-fs-meta);
   outline: 0;
@@ -366,16 +386,11 @@
 }
 
 .agent-scope-menu__search input::placeholder {
-  color: var(--codevo-fg-subtle);
+  color: var(--agent-text-subtle);
 }
 
 .agent-scope-menu__search input::-webkit-search-cancel-button {
   display: none;
-}
-
-.agent-scope-menu__search:focus-within {
-  box-shadow: var(--codevo-focus-ring);
-  color: var(--codevo-fg-strong);
 }
 
 .agent-scope-menu__empty {
@@ -383,36 +398,101 @@
 }
 
 .agent-scope-menu__row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 2px;
-  border-radius: 7px;
+  border-radius: var(--agent-radius-sm);
 }
 
-.agent-scope-menu__row:hover {
-  background: var(--codevo-hover);
+.agent-scope-menu__row:hover,
+.agent-scope-menu__row:focus-within {
+  background: var(--agent-hover);
 }
 
-.agent-scope-menu__item {
+.agent-scope-menu__row:has(> .agent-scope-menu__item:focus-visible) {
+  background: var(--agent-fill);
+  box-shadow: var(--codevo-focus-ring);
+}
+
+.agent-scope-menu__row:has(.agent-scope-menu__gear[aria-expanded="true"]) {
+  z-index: 3;
+}
+
+.agent-scope-menu__menu .agent-scope-menu__item,
+.agent-scope-menu__menu .agent-scope-menu__item:hover:not(:disabled),
+.agent-scope-menu__menu .agent-scope-menu__item:focus-visible {
+  background: transparent;
+  box-shadow: none;
+}
+
+.agent-scope-menu__menu .agent-scope-menu__item {
+  display: flex;
+  min-width: 0;
   flex: 1;
   align-items: center;
-  min-width: 0;
+  gap: 8px;
+  min-height: calc(32px * var(--codevo-fs-scale));
+  border-radius: var(--agent-radius-sm);
+  color: var(--agent-text);
+  font-size: var(--codevo-fs-meta);
+  padding: 0 58px 0 8px;
 }
 
-.agent-scope-menu__count {
+.agent-scope-menu__menu .agent-scope-menu__item:focus-visible {
+  color: var(--agent-text-strong);
+}
+
+.agent-scope-menu__menu .agent-scope-menu__item[aria-checked="true"] {
+  color: var(--agent-text-strong);
+  font-weight: 600;
+}
+
+.agent-scope-menu__menu .agent-scope-menu__item[aria-checked="true"] .agent-menu__icon {
+  color: var(--agent-accent);
+}
+
+.agent-scope-menu__label {
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-scope-menu__meta {
+  display: inline-flex;
   flex: none;
-  color: var(--codevo-fg-subtle);
-  font-size: var(--codevo-fs-small);
+  align-items: center;
+  gap: 4px;
+  color: var(--agent-text-subtle);
+  font-size: var(--codevo-fs-label);
+}
+
+.agent-scope-menu__menu .agent-scope-menu__state {
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.agent-scope-menu__count + .agent-scope-menu__state::before {
+  content: "\00B7";
+  margin-right: 4px;
 }
 
 .agent-scope-menu__actions {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  bottom: 0;
   display: inline-flex;
-  min-width: 49px;
-  flex: none;
   align-items: center;
-  gap: 1px;
-  justify-content: flex-end;
-  padding-right: 2px;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-scope-menu__row:hover .agent-scope-menu__actions,
+.agent-scope-menu__row:focus-within .agent-scope-menu__actions,
+.agent-scope-menu__row:has(.agent-scope-menu__gear[aria-expanded="true"])
+  .agent-scope-menu__actions {
+  opacity: 1;
 }
 
 .agent-scope-menu__gear-slot {
@@ -425,36 +505,25 @@
   display: inline-flex;
   width: 24px;
   height: 24px;
+  flex: none;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--agent-radius-sm);
   background: transparent;
-  color: var(--codevo-fg-muted);
+  color: var(--agent-text-muted);
   cursor: pointer;
-  opacity: 0;
   outline: none;
   padding: 0;
   transition:
-    opacity var(--agent-motion-hover) var(--ease-standard),
     background var(--agent-motion-hover) var(--ease-standard),
     color var(--agent-motion-hover) var(--ease-standard);
 }
 
-.agent-scope-menu__row:hover .agent-scope-menu__gear,
-.agent-scope-menu__row:focus-within .agent-scope-menu__gear,
-.agent-scope-menu__gear:focus-visible,
-.agent-scope-menu__gear[data-open="true"],
-.agent-scope-menu__row:hover .agent-scope-menu__close,
-.agent-scope-menu__row:focus-within .agent-scope-menu__close,
-.agent-scope-menu__close:focus-visible {
-  opacity: 1;
-}
-
 .agent-scope-menu__gear:hover,
 .agent-scope-menu__gear[data-open="true"] {
-  background: var(--codevo-active);
-  color: var(--codevo-fg-strong);
+  background: var(--agent-fill);
+  color: var(--agent-text-strong);
 }
 
 .agent-scope-menu__close:hover,
@@ -468,9 +537,16 @@
   box-shadow: var(--codevo-focus-ring);
 }
 
+.agent-scope-menu .agent-picker__chevron {
+  transition: transform var(--agent-motion-hover) var(--ease-standard);
+}
+
+.agent-scope-menu.agent-picker--open .agent-picker__chevron {
+  transform: rotate(180deg);
+}
+
 @media (hover: none) {
-  .agent-scope-menu__gear,
-  .agent-scope-menu__close {
+  .agent-scope-menu__actions {
     opacity: 1;
   }
 }

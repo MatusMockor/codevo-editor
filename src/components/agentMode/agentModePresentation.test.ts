@@ -29,7 +29,9 @@ import {
   agentThreadLifecycleLabel,
   agentThreadTimeLabel,
   agentThreadTone,
+  agentTurnLiveActivity,
   agentTurnProjection,
+  agentTurnSettlement,
   agentTurnDurationLabel,
   agentTurnWorkFold,
   agentTurnSubagentSummary,
@@ -1559,5 +1561,281 @@ describe("subagent presentation review regressions", () => {
     expect(projection.items).toHaveLength(200);
     expect(projection.items[0]).toMatchObject({ text: "step 0" });
     expect(new Set(projection.items.map((item) => item.key)).size).toBe(200);
+  });
+});
+
+describe("agent tool row projection", () => {
+  it("labels a finished bash call and keeps the raw command for the detail panel", () => {
+    const projection = agentTurnProjection([
+      { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "grep -rn needle src" },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "3 matches", isError: false },
+    ]);
+
+    expect(projection.items[0]).toMatchObject({
+      kind: "tool",
+      rowKind: "command",
+      status: "ok",
+      label: "Ran grep",
+      argument: "grep -rn needle src",
+      command: "grep -rn needle src",
+      output: "3 matches",
+    });
+  });
+
+  it("marks an unfinished call as running and a failed call as failed", () => {
+    const running = agentTurnProjection([
+      { kind: "toolCall", toolId: "t-1", name: "Read", inputSummary: "/repo/src/a.ts" },
+    ]);
+    expect(running.items[0]).toMatchObject({
+      rowKind: "read",
+      status: "running",
+      label: "Reading src/a.ts",
+      command: null,
+      output: null,
+    });
+
+    const failed = agentTurnProjection([
+      { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "exit 1", isError: true },
+    ]);
+    expect(failed.items[0]).toMatchObject({
+      rowKind: "command",
+      status: "error",
+      label: "Failed npm test",
+      output: "exit 1",
+    });
+  });
+
+  it("shows file paths relative to the workspace root when one is supplied", () => {
+    const projection = agentTurnProjection(
+      [{ kind: "toolCall", toolId: "t-1", name: "Edit", inputSummary: `${ROOT}/src/app/main.ts` }],
+      null,
+      ROOT,
+    );
+
+    expect(projection.items[0]).toMatchObject({ label: "Editing src/app/main.ts" });
+  });
+
+  it("labels an orphaned tool result from the recorded call", () => {
+    const events: ReadonlyArray<AgentTurnEvent> = [
+      { kind: "toolCall", toolId: "t-1", name: "Glob", inputSummary: "**/*.tsx" },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "12 files", isError: false },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "12 files", isError: false },
+    ];
+    const projection = agentTurnProjection(events);
+
+    expect(projection.items).toHaveLength(2);
+    expect(projection.items[1]).toMatchObject({
+      rowKind: "search",
+      label: "Searched **/*.tsx",
+      argument: null,
+    });
+  });
+});
+
+describe("agentTurnSettlement and unresolved rows", () => {
+  it("maps every turn status to a settlement", () => {
+    expect(agentTurnSettlement({ kind: "pending" })).toBe("running");
+    expect(agentTurnSettlement({ kind: "running" })).toBe("running");
+    expect(agentTurnSettlement({ kind: "stopped" })).toBe("stopped");
+    expect(agentTurnSettlement({ kind: "interrupted" })).toBe("stopped");
+    expect(agentTurnSettlement({ kind: "exited", exitCode: 0 })).toBe("settled");
+    expect(agentTurnSettlement({ kind: "failed", message: "boom" })).toBe("settled");
+  });
+
+  it("never leaves a restored call animating once the turn has settled", () => {
+    const events: ReadonlyArray<AgentTurnEvent> = [
+      { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+    ];
+
+    expect(agentTurnProjection(events, null, null, "running").items[0]).toMatchObject({
+      status: "running",
+      label: "Running npm test",
+    });
+    expect(agentTurnProjection(events, null, null, "stopped").items[0]).toMatchObject({
+      status: "stopped",
+      label: "Stopped npm test",
+    });
+    expect(agentTurnProjection(events, null, null, "settled").items[0]).toMatchObject({
+      status: "ok",
+      label: "Ran npm test",
+    });
+  });
+});
+
+describe("agentTurnLiveActivity", () => {
+  function liveTurn(status: AgentTurnStatus, events: ReadonlyArray<AgentTurnEvent>) {
+    const view = thread({ status });
+    const base = view.thread.turns[0];
+    expect(base).toBeDefined();
+    return { ...(base as NonNullable<typeof base>), events };
+  }
+
+  it("reports the in-flight tool while the turn is running", () => {
+    expect(
+      agentTurnLiveActivity(
+        liveTurn({ kind: "running" }, [
+          { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+        ]),
+      ),
+    ).toEqual({ kind: "tool", toolId: "t-1" });
+  });
+
+  it("reports plain working when nothing is in flight", () => {
+    expect(agentTurnLiveActivity(liveTurn({ kind: "running" }, []))).toEqual({ kind: "working" });
+    expect(
+      agentTurnLiveActivity(
+        liveTurn({ kind: "running" }, [
+          { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+          { kind: "toolResult", toolId: "t-1", outputSummary: "ok", isError: false },
+        ]),
+      ),
+    ).toEqual({ kind: "working" });
+    expect(agentTurnLiveActivity(liveTurn({ kind: "pending" }, []))).toEqual({ kind: "working" });
+  });
+
+  it("keeps reporting an earlier unresolved call when a later one settles first", () => {
+    expect(
+      agentTurnLiveActivity(
+        liveTurn({ kind: "running" }, [
+          { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+          { kind: "toolCall", toolId: "t-2", name: "Read", inputSummary: "a.ts" },
+          { kind: "toolResult", toolId: "t-2", outputSummary: "ok", isError: false },
+        ]),
+      ),
+    ).toEqual({ kind: "tool", toolId: "t-1" });
+  });
+
+  it("reports the most recent of several parallel unresolved calls", () => {
+    expect(
+      agentTurnLiveActivity(
+        liveTurn({ kind: "running" }, [
+          { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+          { kind: "toolCall", toolId: "t-2", name: "Read", inputSummary: "a.ts" },
+          { kind: "toolCall", toolId: "t-3", name: "Grep", inputSummary: "needle" },
+          { kind: "toolResult", toolId: "t-2", outputSummary: "ok", isError: false },
+        ]),
+      ),
+    ).toEqual({ kind: "tool", toolId: "t-3" });
+  });
+
+  it("tracks only top-level calls and ignores parented subagent steps", () => {
+    const parent: AgentTurnEvent = {
+      kind: "toolCall",
+      toolId: "parent",
+      name: "Task",
+      inputSummary: "Audit",
+    };
+    const childCall: AgentTurnEvent = {
+      kind: "subagentEvent",
+      agentThreadId: "child",
+      event: {
+        kind: "toolCall",
+        toolId: "child-1",
+        name: "Bash",
+        inputSummary: "npm test",
+        parentToolId: "parent",
+      },
+    };
+
+    expect(agentTurnLiveActivity(liveTurn({ kind: "running" }, [parent, childCall]))).toEqual({
+      kind: "tool",
+      toolId: "parent",
+    });
+
+    expect(
+      agentTurnLiveActivity(
+        liveTurn({ kind: "running" }, [
+          parent,
+          childCall,
+          { kind: "toolResult", toolId: "parent", outputSummary: "done", isError: false },
+        ]),
+      ),
+    ).toEqual({ kind: "working" });
+  });
+
+  it("reports nothing once the turn settles", () => {
+    for (const status of [
+      { kind: "exited", exitCode: 0 },
+      { kind: "failed", message: "boom" },
+      { kind: "stopped" },
+      { kind: "interrupted" },
+    ] as ReadonlyArray<AgentTurnStatus>) {
+      expect(
+        agentTurnLiveActivity(
+          liveTurn(status, [
+            { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm test" },
+          ]),
+        ),
+        status.kind,
+      ).toBeNull();
+    }
+  });
+});
+
+describe("agent tool row descriptions", () => {
+  it("prefers the claude bash description as the subject and keeps the command as the argument", () => {
+    const projection = agentTurnProjection([
+      {
+        kind: "toolCall",
+        toolId: "t-1",
+        name: "Bash",
+        inputSummary: "npm run lint -- --max-warnings 0",
+        description: "Run the linter",
+      },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "0 problems", isError: false },
+    ]);
+
+    expect(projection.items[0]).toMatchObject({
+      rowKind: "command",
+      label: "Run the linter",
+      argument: "npm run lint -- --max-warnings 0",
+      command: "npm run lint -- --max-warnings 0",
+    });
+  });
+
+  it("keeps the description while the call is still running and after it fails", () => {
+    const call: AgentTurnEvent = {
+      kind: "toolCall",
+      toolId: "t-1",
+      name: "Bash",
+      inputSummary: "npm test",
+      description: "Run the unit tests",
+    };
+
+    expect(agentTurnProjection([call]).items[0]).toMatchObject({
+      status: "running",
+      label: "Run the unit tests",
+    });
+    expect(
+      agentTurnProjection([
+        call,
+        { kind: "toolResult", toolId: "t-1", outputSummary: "exit 1", isError: true },
+      ]).items[0],
+    ).toMatchObject({ status: "error", label: "Run the unit tests" });
+  });
+
+  it("recovers the description for a tool result that arrives after its row was flushed", () => {
+    const projection = agentTurnProjection([
+      {
+        kind: "toolCall",
+        toolId: "t-1",
+        name: "Bash",
+        inputSummary: "npm test",
+        description: "Run the unit tests",
+      },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "ok", isError: false },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "ok", isError: false },
+    ]);
+
+    expect(projection.items[1]).toMatchObject({ label: "Run the unit tests" });
+  });
+
+  it("falls back to the program when no description was reported", () => {
+    const projection = agentTurnProjection([
+      { kind: "toolCall", toolId: "t-1", name: "Bash", inputSummary: "npm run lint" },
+    ]);
+
+    expect(projection.items[0]).toMatchObject({ label: "Running npm run lint" });
   });
 });

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   MAX_AGENT_EVENT_TEXT_BYTES,
+  MAX_AGENT_TOOL_DESCRIPTION_BYTES,
   MAX_AGENT_TOOL_SUMMARY_BYTES,
   type AgentTurnEvent,
 } from "../agentThread";
@@ -82,7 +83,13 @@ describe("parseClaudeStreamJsonLine content", () => {
       events: [
         { kind: "reasoning", text: "weighing it" },
         { kind: "assistantText", text: "on it" },
-        { kind: "toolCall", toolId: "toolu_1", name: "Bash", inputSummary: "echo hi" },
+        {
+          kind: "toolCall",
+          toolId: "toolu_1",
+          name: "Bash",
+          inputSummary: "echo hi",
+          description: "greet",
+        },
       ],
       sessionId: null,
     });
@@ -361,6 +368,7 @@ describe("parseClaudeStreamJsonLine subagent telemetry", () => {
         toolId: PARENT_TOOL_ID,
         name: "Agent",
         inputSummary: "Spustiť echo alpha",
+        description: "Spustiť echo alpha",
       },
       {
         kind: "subagent",
@@ -387,6 +395,7 @@ describe("parseClaudeStreamJsonLine subagent telemetry", () => {
         toolId: "toolu_01XEYBXi9WLdjWVeAnfpx1QT",
         name: "Bash",
         inputSummary: "echo alpha",
+        description: "Echo the string alpha",
         parentToolId: PARENT_TOOL_ID,
       },
       {
@@ -444,6 +453,7 @@ describe("parseClaudeStreamJsonLine subagent telemetry", () => {
         toolId: "toolu_spawn",
         name,
         inputSummary: "Review UI",
+        description: "Review UI",
       });
     }
   });
@@ -613,5 +623,68 @@ describe("subagent telemetry review regressions", () => {
       events: [{ kind: "subagent", status: "starting", toolId: PARENT_TOOL_ID, taskId: TASK_ID }],
       sessionId: null,
     });
+  });
+});
+
+describe("parseClaudeStreamJsonLine tool call description", () => {
+  function toolCallFor(input: unknown): unknown {
+    const parsed = parseClaudeStreamJsonLine(
+      assistant([{ type: "tool_use", id: "toolu_1", name: "Bash", input }]),
+    );
+    return parsed.kind === "events" ? parsed.events[0] : null;
+  }
+
+  it("keeps a bash description beside the command summary", () => {
+    expect(toolCallFor({ command: "npm run lint", description: "Run the linter" })).toEqual({
+      kind: "toolCall",
+      toolId: "toolu_1",
+      name: "Bash",
+      inputSummary: "npm run lint",
+      description: "Run the linter",
+    });
+  });
+
+  it("collapses a multi-line description onto one line", () => {
+    const event = toolCallFor({
+      command: "npm test",
+      description: `Run   the
+  unit   tests	again`,
+    });
+
+    expect(event).toMatchObject({ description: "Run the unit tests again" });
+  });
+
+  it("bounds the description to 200 utf-8 bytes without splitting a character", () => {
+    const event = toolCallFor({ command: "echo", description: "č".repeat(400) });
+    const description = (event as { readonly description?: string }).description ?? "";
+
+    expect(utf8ByteLength(description)).toBeLessThanOrEqual(MAX_AGENT_TOOL_DESCRIPTION_BYTES);
+    expect([...description].every((character) => character === "č")).toBe(true);
+  });
+
+  it("omits an absent, blank, non-string or control-bearing description", () => {
+    for (const input of [
+      { command: "echo" },
+      { command: "echo", description: "   " },
+      { command: "echo", description: 7 },
+      { command: "echo", description: "a\u0000b" },
+    ]) {
+      const event = toolCallFor(input);
+      expect(event, JSON.stringify(input)).toEqual({
+        kind: "toolCall",
+        toolId: "toolu_1",
+        name: "Bash",
+        inputSummary: "echo",
+      });
+    }
+  });
+
+  it("keeps the description a wire round trip would accept", () => {
+    const event = toolCallFor({ command: "echo", description: "č".repeat(400) });
+    const description = (event as { readonly description?: string }).description ?? "";
+
+    expect(description.length).toBeGreaterThan(0);
+    expect(description).not.toContain("\u0000");
+    expect(/\p{Cc}/u.test(description)).toBe(false);
   });
 });

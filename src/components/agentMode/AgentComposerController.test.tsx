@@ -2,7 +2,8 @@
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { agentComposerDraftStore } from "../../application/agentComposerDrafts";
 import type { AgentComposerSubmission } from "./AgentComposer";
 import type { AgentComposerControllerProps } from "./AgentComposerController";
 
@@ -13,6 +14,7 @@ const submission: AgentComposerSubmission = {
 
 vi.mock("./useAgentComposerState", () => ({
   useAgentComposerPromptState: () => ({}),
+  WITHOUT_COMPOSER_ATTACHMENTS: { attachments: false },
 }));
 
 vi.mock("./AgentComposer", () => ({
@@ -26,7 +28,11 @@ vi.mock("./AgentComposer", () => ({
 import { AgentComposerController } from "./AgentComposerController";
 
 describe("AgentComposerController context compaction", () => {
-  it("submits Claude's compact command into the existing session", () => {
+  beforeEach(() => {
+    agentComposerDraftStore.reset();
+  });
+
+  it("submits Claude's compact command into the existing session without attachments", () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     const host = document.createElement("div");
     document.body.append(host);
@@ -47,7 +53,7 @@ describe("AgentComposerController context compaction", () => {
       host.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true })),
     );
 
-    expect(submit).toHaveBeenCalledWith("/compact", submission);
+    expect(submit).toHaveBeenCalledWith("/compact", submission, { attachments: false });
     act(() => root.unmount());
     host.remove();
   });

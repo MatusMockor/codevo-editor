@@ -19,6 +19,7 @@
         --startup-text-muted: #9aa0ab;
         --startup-danger: #ef6f6f;
         --startup-well: #0f1014;
+        --startup-thread: color-mix(in srgb, var(--startup-side) 63%, var(--startup-well));
         --startup-font:
           Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         --startup-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -159,13 +160,13 @@
       .startup-skeleton__rail {
         grid-column: 1;
         grid-row: 1;
-        background: var(--startup-side);
+        background: var(--startup-canvas);
       }
 
       .startup-skeleton__centre {
         grid-column: 2;
         grid-row: 1;
-        background: var(--startup-canvas);
+        background: var(--startup-thread);
       }
 
       .startup-skeleton__status {

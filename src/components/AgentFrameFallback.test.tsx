@@ -64,9 +64,9 @@ describe("AgentFrameFallback", () => {
     const columns = declaration(".agent-frame-fallback", "grid-template-columns");
     expect(columns).toContain("--agent-rail-track");
     expect(columns).toContain("minmax(0, 1fr)");
-    expect(declaration(".agent-frame-fallback__rail", "background")).toBe("var(--codevo-side)");
+    expect(declaration(".agent-frame-fallback__rail", "background")).toBe("var(--codevo-canvas)");
     expect(declaration(".agent-frame-fallback", "background")).toBe("var(--codevo-canvas)");
-    expect(declaration(".agent-frame-fallback__center", "background")).toBe("var(--codevo-canvas)");
+    expect(declaration(".agent-frame-fallback__center", "background")).toBe("var(--codevo-thread)");
   });
 
   it("announces the pending surface without showing loading text", () => {

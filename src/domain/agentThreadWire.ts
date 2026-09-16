@@ -39,6 +39,7 @@ import {
   MAX_SUBAGENT_THREADS_PER_TURN,
   MAX_AGENT_EVENT_TEXT_BYTES,
   MAX_AGENT_THREAD_TITLE_BYTES,
+  MAX_AGENT_TOOL_DESCRIPTION_BYTES,
   MAX_AGENT_TOOL_ID_BYTES,
   MAX_AGENT_TOOL_NAME_BYTES,
   MAX_AGENT_TOOL_SUMMARY_BYTES,
@@ -226,6 +227,7 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
         toolId: event.toolId,
         name: event.name,
         inputSummary: event.inputSummary,
+        ...optionalField("description", event.description),
         ...optionalField("parentToolId", event.parentToolId),
       };
     case "toolResult":
@@ -746,12 +748,21 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
         ...optionalField("attachments", parseAttachments(event.attachments, `${path}.attachments`)),
       };
     case "toolCall":
-      boundedKeys(event, ["kind", "toolId", "name", "inputSummary"], ["parentToolId"], path);
+      boundedKeys(
+        event,
+        ["kind", "toolId", "name", "inputSummary"],
+        ["description", "parentToolId"],
+        path,
+      );
       return {
         kind,
         toolId: boundedText(event.toolId, `${path}.toolId`, MAX_AGENT_TOOL_ID_BYTES, false, true),
         name: boundedText(event.name, `${path}.name`, MAX_AGENT_TOOL_NAME_BYTES, false, true),
         inputSummary: toolSummary(event.inputSummary, `${path}.inputSummary`),
+        ...optionalField(
+          "description",
+          optionalToolDescription(event.description, `${path}.description`),
+        ),
         ...optionalField(
           "parentToolId",
           optionalToolId(event.parentToolId, `${path}.parentToolId`),
@@ -964,6 +975,11 @@ function subagentEventStatus(value: unknown, path: string): AgentSubagentEventSt
 function optionalToolId(value: unknown, path: string): string | undefined {
   if (value === undefined) return undefined;
   return boundedText(value, path, MAX_AGENT_TOOL_ID_BYTES, false, true);
+}
+
+function optionalToolDescription(value: unknown, path: string): string | undefined {
+  if (value === undefined) return undefined;
+  return boundedText(value, path, MAX_AGENT_TOOL_DESCRIPTION_BYTES, false, true);
 }
 
 function optionalToolName(value: unknown, path: string): string | undefined {

@@ -98,7 +98,7 @@ describe("AgentThreadsSidebar", () => {
   });
 
   it("pins the Airy rail metrics: 44px chrome, two-column head and scaled 78px cards", () => {
-    expect(cssRule("\n.agent-rail {")).toContain("background: var(--codevo-side)");
+    expect(cssRule("\n.agent-rail {")).toContain("background: var(--codevo-canvas)");
     expect(cssRule("\n.agent-rail {")).toContain("padding: 0 6px 8px");
     expect(cssRule("\n.agent-rail {")).not.toContain("border");
     expect(cssRule("\n.agent-rail__chrome {")).toContain("height: 44px");
@@ -173,8 +173,8 @@ describe("AgentThreadsSidebar", () => {
     expect(separator).toContain("height: 1px");
     expect(separator).toContain("background: var(--codevo-hover)");
     expect(separator).not.toContain("border");
-    expect(cssRule(".agent-scope-menu__search {")).toContain("background: var(--codevo-well)");
-    expect(cssRule(".agent-scope-menu__search {")).not.toContain("border-bottom");
+    expect(cssRule(".agent-scope-menu__search {")).toContain("background: var(--agent-raised)");
+    expect(cssRule(".agent-scope-menu__search {")).not.toContain("border");
   });
 
   it("styles the thread search palette as a raised 14px sheet with primary marks", () => {

@@ -38,6 +38,7 @@ import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type {
+  AgentFollowUpRequest,
   AgentSteerOutcome,
   AgentSteerRequest,
   AgentTasksNotice,
@@ -3255,6 +3256,46 @@ describe("useAgentTurnDispatch steering", () => {
     expect(
       (harness.hook().deferredFollowUps.get(threadId) ?? []).map((entry) => entry.request.prompt),
     ).toEqual(["queued two"]);
+    harness.unmount();
+  });
+
+  it("takes a queued message out of the queue and returns it for editing", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    harness.agent.steerAgentTask.mockResolvedValue(rejection("inputClosed"));
+    await steerOnce(harness, { threadId, prompt: "queued one" });
+    await steerOnce(harness, { threadId, prompt: "queued two" });
+    const queued = harness.hook().deferredFollowUps.get(threadId) ?? [];
+    const taken: Array<AgentFollowUpRequest | null> = [];
+
+    act(() => {
+      taken.push(harness.hook().takeDeferredFollowUp(threadId, queued[0].id));
+    });
+
+    expect(taken[0]?.prompt).toBe("queued one");
+    expect(taken[0]?.threadId).toBe(threadId);
+    expect(
+      (harness.hook().deferredFollowUps.get(threadId) ?? []).map((entry) => entry.request.prompt),
+    ).toEqual(["queued two"]);
+    expect(harness.hook().takeDeferredFollowUp(threadId, queued[0].id)).toBeNull();
+    harness.unmount();
+  });
+
+  it("refuses to take a queued message that carries attachments", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startRunningThread();
+    harness.agent.steerAgentTask.mockResolvedValue(rejection("inputClosed"));
+    await steerOnce(harness, {
+      threadId,
+      prompt: "queued image",
+      attachments: [IMAGE_INTENT],
+      attachmentOwner: OWNER_INTENT,
+    });
+    const queued = harness.hook().deferredFollowUps.get(threadId) ?? [];
+
+    expect(harness.hook().takeDeferredFollowUp(threadId, queued[0].id)).toBeNull();
+    expect(harness.hook().deferredFollowUps.get(threadId)).toHaveLength(1);
+    expect(harness.hook().takeDeferredFollowUp("agt-missing-0000", queued[0].id)).toBeNull();
     harness.unmount();
   });
 

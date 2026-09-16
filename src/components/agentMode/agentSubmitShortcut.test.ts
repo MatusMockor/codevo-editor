@@ -1,27 +1,42 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { agentSubmitShortcut } from "./agentSubmitShortcut";
+import { agentSubmitKeyShortcuts, agentSubmitShortcut } from "./agentSubmitShortcut";
 
 describe("agentSubmitShortcut", () => {
-  it("reads the reported platform instead of a value frozen at import time", () => {
+  it("makes Enter the primary binding and the platform modifier the secondary one", () => {
     expect(withPlatform("macOS", agentSubmitShortcut)).toEqual({
-      glyphs: "⌘↩",
-      keys: "Meta+Enter",
+      primary: { glyphs: "↩", keys: "Enter" },
+      secondary: { glyphs: "⌘↩", keys: "Meta+Enter" },
     });
     expect(withPlatform("Windows", agentSubmitShortcut)).toEqual({
-      glyphs: "Ctrl↩",
-      keys: "Control+Enter",
+      primary: { glyphs: "↩", keys: "Enter" },
+      secondary: { glyphs: "Ctrl↩", keys: "Control+Enter" },
     });
-    expect(withPlatform("Linux", agentSubmitShortcut).keys).toBe("Control+Enter");
+  });
+
+  it("reads the reported platform instead of a value frozen at import time", () => {
+    expect(withPlatform("macOS", agentSubmitShortcut).secondary.keys).toBe("Meta+Enter");
+    expect(withPlatform("Windows", agentSubmitShortcut).secondary.keys).toBe("Control+Enter");
+    expect(withPlatform("Linux", agentSubmitShortcut).secondary.keys).toBe("Control+Enter");
   });
 
   it("falls back to the user agent string when the platform is not reported", () => {
     expect(
-      withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", agentSubmitShortcut),
+      withUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", agentSubmitShortcut)
+        .secondary,
     ).toEqual({ glyphs: "⌘↩", keys: "Meta+Enter" });
-    expect(withUserAgent("Mozilla/5.0 (X11; Linux x86_64)", agentSubmitShortcut).keys).toBe(
-      "Control+Enter",
+    expect(
+      withUserAgent("Mozilla/5.0 (X11; Linux x86_64)", agentSubmitShortcut).secondary.keys,
+    ).toBe("Control+Enter");
+  });
+
+  it("announces both bindings in the accessible shortcut list", () => {
+    expect(withPlatform("macOS", () => agentSubmitKeyShortcuts(agentSubmitShortcut()))).toBe(
+      "Enter Meta+Enter",
+    );
+    expect(withPlatform("Windows", () => agentSubmitKeyShortcuts(agentSubmitShortcut()))).toBe(
+      "Enter Control+Enter",
     );
   });
 });

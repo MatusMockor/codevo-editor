@@ -135,6 +135,66 @@ describe("AgentProjectScopeMenu", () => {
     expect(host.querySelector(".agent-scope-menu__count")?.textContent).toBe("2 repos");
   });
 
+  it("carries the full project name on the label and trails it with the count and state chips", () => {
+    render({
+      entries: [
+        entry(ROOT, "codevo-editor-workspace", { repositoryCount: 9, origin: "background-tab" }),
+      ],
+    });
+    openMenu();
+
+    const item = scopeRow(agentRailScopeValue(ROOT));
+    expect([...item.children].map((child) => child.className)).toEqual([
+      "agent-menu__icon",
+      "agent-menu__label agent-scope-menu__label",
+      "agent-scope-menu__meta",
+    ]);
+    expect(item.querySelector(".agent-scope-menu__label")?.getAttribute("title")).toBe(
+      "codevo-editor-workspace",
+    );
+    expect(
+      [...item.querySelectorAll(".agent-scope-menu__meta > *")].map(
+        (chip) => chip.textContent ?? "",
+      ),
+    ).toEqual(["9 repos", "Background"]);
+    expect(item.querySelector(".agent-scope-menu__meta")?.getAttribute("aria-hidden")).toBe("true");
+    expect(item.getAttribute("aria-label")).toBe("codevo-editor-workspace, 9 repos, Background");
+  });
+
+  it("names a plain project row by its label alone", () => {
+    render({ entries: [entry(ROOT, "app")] });
+    openMenu();
+
+    expect(scopeRow(agentRailScopeValue(ROOT)).getAttribute("aria-label")).toBe("app");
+  });
+
+  it("omits the chip group from a single-repository project on its active tab", () => {
+    render({ entries: [entry(ROOT, "app")] });
+    openMenu();
+
+    expect(host.querySelector(".agent-scope-menu__meta")).toBeNull();
+  });
+
+  it("keeps the row actions outside the label flow and marks the open gear on the row", () => {
+    render({ entries: [entry(ROOT, "app")] });
+    openMenu();
+
+    const row = host.querySelector(".agent-scope-menu__row");
+    expect(row).not.toBeNull();
+    expect([...(row?.children ?? [])].map((child) => child.className)).toEqual([
+      "agent-menu__item agent-scope-menu__item",
+      "agent-scope-menu__actions",
+    ]);
+    expect(
+      scopeRow(agentRailScopeValue(ROOT)).querySelector(".agent-scope-menu__actions"),
+    ).toBeNull();
+    expect(gears()[0]?.getAttribute("aria-expanded")).toBe("false");
+
+    click(gears()[0]);
+    expect(gears()[0]?.getAttribute("aria-expanded")).toBe("true");
+    expect(row?.contains(document.activeElement)).toBe(true);
+  });
+
   it("filters projects by label and repository path", () => {
     render({
       entries: [entry(ROOT, "boxes / app"), entry("/workspace/boxes/ebox-crm", "boxes / ebox-crm")],

@@ -117,7 +117,9 @@ const LIGHT_LADDER = [
   "--codevo-shadow-window",
 ] as const;
 const PROMPT_BUBBLE_TONE = "--agent-raised";
-const THREAD_COLUMN_TONE = "--agent-canvas";
+const THREAD_COLUMN_TONE = "--agent-thread-canvas";
+const THREAD_COLUMN_ROOTS = ["--color-control", "--color-sidebar"] as const;
+const THREAD_COLUMN_ROOT = "--color-sidebar";
 const PENDING_T3_SHEETS: readonly string[] = [];
 const PENDING_LITERAL_REMAP_SHEETS: readonly string[] = [];
 const SCHEME_SCALARS = new Set(["--agent-shadow-alpha"]);
@@ -348,7 +350,7 @@ describe("codevo token contract", () => {
 
     const agentTable = buildTokenTable(tokenRules);
     expect(resolveVarRoots(PROMPT_BUBBLE_TONE, agentTable)).toEqual(["--color-surface"]);
-    expect(resolveVarRoots(THREAD_COLUMN_TONE, agentTable)).toEqual(["--color-app"]);
+    expect(resolveVarRoots(THREAD_COLUMN_TONE, agentTable)).toEqual([...THREAD_COLUMN_ROOTS]);
 
     const blocks: ReadonlyArray<readonly [string, readonly CssRule[], readonly CssRule[]]> = [
       ...APP_THEME_SELECTORS.map(
@@ -374,7 +376,7 @@ describe("codevo token contract", () => {
     for (const [selector, block, shadowBlock] of blocks) {
       const table = buildTokenTable(block, "--color-");
       const bubble = lastOf(table.get("--color-surface"));
-      const column = lastOf(table.get("--color-app"));
+      const column = lastOf(table.get(THREAD_COLUMN_ROOT));
       expect(bubble, `${selector} bubble tone`).toBeDefined();
       expect(column, `${selector} column tone`).toBeDefined();
       expect(bubble, `${selector} bubble vs column`).not.toBe(column);

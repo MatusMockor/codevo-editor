@@ -7,7 +7,7 @@
   --agent-live-soft: color-mix(in srgb, var(--agent-live) 16%, var(--agent-canvas));
   --agent-rail: var(--agent-canvas);
   --agent-raised: color-mix(in srgb, var(--agent-canvas) 92%, var(--agent-ink));
-  --agent-well: color-mix(in srgb, var(--agent-canvas) 94%, var(--agent-shade));
+  --agent-well: color-mix(in srgb, var(--agent-canvas) 96%, var(--agent-ink));
   --agent-fill: color-mix(in srgb, var(--agent-canvas) 90%, var(--agent-ink));
   --agent-hover: color-mix(in srgb, var(--agent-canvas) 95%, var(--agent-ink));
   --agent-hairline: color-mix(in srgb, var(--color-border) 72%, transparent);
@@ -37,7 +37,6 @@
   --agent-live: var(--agent-accent-light);
   --agent-scanline: transparent;
   --agent-raised: #fff;
-  --agent-well: color-mix(in srgb, var(--agent-canvas) 60%, var(--agent-shade));
 }
 
 /* Variant B "Warm paper": warm neutrals, softer contrast, rounded corners, amber accent, soft drop shadows. */

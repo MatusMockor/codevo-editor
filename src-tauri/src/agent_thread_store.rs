@@ -32,6 +32,7 @@ pub const MAX_AGENT_TURNS_PER_THREAD: usize = 64;
 pub const MAX_AGENT_EVENTS_PER_TURN: usize = 512;
 pub const MAX_AGENT_EVENT_TEXT_BYTES: usize = 16 * 1024;
 pub const MAX_AGENT_TOOL_SUMMARY_BYTES: usize = 512;
+pub const MAX_AGENT_TOOL_DESCRIPTION_BYTES: usize = 200;
 pub const MAX_AGENT_THREAD_TITLE_BYTES: usize = 256;
 pub const MAX_AGENT_THREAD_FILE_BYTES: usize = 1024 * 1024;
 pub const MAX_AGENT_THREAD_ROOT_BYTES: u64 = 16 * 1024 * 1024;
@@ -446,6 +447,8 @@ pub enum AgentTurnEvent {
         tool_id: String,
         name: String,
         input_summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_tool_id: Option<String>,
     },
@@ -1102,15 +1105,19 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
             tool_id,
             name,
             input_summary,
+            description,
             parent_tool_id,
-        } => (
-            0,
-            tool_id
-                .len()
-                .max(name.len())
-                .max(input_summary.len())
-                .max(optional_len(parent_tool_id)),
-        ),
+        } => {
+            ensure_tool_description_bounds(description)?;
+            (
+                0,
+                tool_id
+                    .len()
+                    .max(name.len())
+                    .max(input_summary.len())
+                    .max(optional_len(parent_tool_id)),
+            )
+        }
         AgentTurnEvent::ToolResult {
             tool_id,
             output_summary,
@@ -1168,6 +1175,22 @@ fn remove_agent_attachment_directory(directory: &Path) -> Result<(), String> {
         ))
         }
     }
+}
+
+fn ensure_tool_description_bounds(description: &Option<String>) -> Result<(), String> {
+    let Some(description) = description.as_ref() else {
+        return Ok(());
+    };
+    if description.is_empty() {
+        return Err("Agent tool description must not be empty.".to_string());
+    }
+    if description.len() > MAX_AGENT_TOOL_DESCRIPTION_BYTES {
+        return Err("Agent tool description exceeds the supported length.".to_string());
+    }
+    if description.chars().any(char::is_control) {
+        return Err("Agent tool description must not contain control characters.".to_string());
+    }
+    Ok(())
 }
 
 fn optional_len(value: &Option<String>) -> usize {

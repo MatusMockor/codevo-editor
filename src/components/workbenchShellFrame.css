@@ -234,12 +234,12 @@
 
 .agent-frame-fallback__rail {
   min-width: 0;
-  background: var(--codevo-side);
+  background: var(--codevo-canvas);
 }
 
 .agent-frame-fallback__center {
   min-width: 0;
-  background: var(--codevo-canvas);
+  background: var(--codevo-thread);
 }
 
 /*

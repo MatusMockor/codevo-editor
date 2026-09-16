@@ -45,6 +45,7 @@ export const MAX_AGENT_EVENT_BYTES_PER_TURN = 512 * 1_024;
 export const MAX_AGENT_TOOL_SUMMARY_BYTES = 512;
 export const MAX_AGENT_TOOL_ID_BYTES = 256;
 export const MAX_AGENT_TOOL_NAME_BYTES = 256;
+export const MAX_AGENT_TOOL_DESCRIPTION_BYTES = 200;
 export const MAX_AGENT_THREAD_TITLE_CHARS = 200;
 export const AGENT_THREAD_SCHEMA_VERSION = 1;
 export const UNTITLED_AGENT_THREAD_TITLE = "Untitled thread";
@@ -153,6 +154,7 @@ export type AgentTurnEvent =
       readonly toolId: string;
       readonly name: string;
       readonly inputSummary: string;
+      readonly description?: string;
       readonly parentToolId?: string;
     }
   | {
@@ -838,7 +840,13 @@ function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
     case "queued":
       return [event.threadId, event.clientUserMessageId ?? ""];
     case "toolCall":
-      return definedStrings([event.toolId, event.name, event.inputSummary, event.parentToolId]);
+      return definedStrings([
+        event.toolId,
+        event.name,
+        event.inputSummary,
+        event.description,
+        event.parentToolId,
+      ]);
     case "toolResult":
       return definedStrings([event.toolId, event.outputSummary, event.parentToolId]);
     case "subagent":

@@ -7,6 +7,7 @@ import {
   emptyDeferredFollowUps,
   enqueueDeferred,
   removeDeferred,
+  takeDeferred,
   takeDeferredHead,
   type DeferredFollowUp,
   type DeferredFollowUps,
@@ -90,6 +91,32 @@ describe("agentDeferredFollowUps", () => {
     expect(map.has("agt-t0-0001")).toBe(true);
     expect(enqueueDeferred(map, "agt-t0-0001", entry("d1")).accepted).toBe(true);
     expect(map.size).toBe(64);
+  });
+
+  it("takes one entry by id, returns it and leaves the rest in order", () => {
+    const map = filled(3);
+    const taken = takeDeferred(map, "agt-t1-0001", "d1");
+
+    expect(taken.entry?.id).toBe("d1");
+    expect(taken.entry?.request.prompt).toBe("prompt d1");
+    expect(deferredFollowUpsForThread(taken.map, "agt-t1-0001").map((item) => item.id)).toEqual([
+      "d0",
+      "d2",
+    ]);
+    expect(deferredFollowUpsForThread(map, "agt-t1-0001")).toHaveLength(3);
+  });
+
+  it("keeps the queue intact for an unknown id, an unknown thread and the last entry", () => {
+    const map = filled(2);
+
+    expect(takeDeferred(map, "agt-t1-0001", "missing")).toEqual({ map, entry: null });
+    expect(takeDeferred(map, "agt-t1-0001", "missing").map).toBe(map);
+    expect(takeDeferred(map, "agt-t9-0009", "d0")).toEqual({ map, entry: null });
+
+    const single = filled(1);
+    const drained = takeDeferred(single, "agt-t1-0001", "d0");
+    expect(drained.entry?.id).toBe("d0");
+    expect(drained.map.has("agt-t1-0001")).toBe(false);
   });
 
   it("clears one thread's slot and reports an empty queue", () => {

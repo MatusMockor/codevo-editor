@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { ArrowUp, Clock3, Paperclip, Pause, X } from "lucide-react";
+import { ArrowUp, Clock3, Paperclip, Pause, Pencil, X } from "lucide-react";
 import type { AgentTurnAttachmentIntent } from "../../application/agentThreadPorts";
 import { MAX_AGENT_TURN_ATTACHMENTS } from "../../domain/agentAttachment";
 import { agentPromptDisplayText } from "../../domain/agentPromptDisplay";
@@ -113,9 +113,14 @@ export interface AgentQueuedPromptProps {
   readonly id: string;
   readonly prompt: string;
   readonly state?: "queued" | "paused";
+  onEdit?(id: string): void;
   onSendNow?(id: string): void;
   onRemove(id: string): void;
 }
+
+export const AGENT_QUEUED_EDIT_LABEL = "Edit queued message";
+export const AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE =
+  "Messages with attachments can't be edited; remove and re-add";
 
 export function AgentQueuedPrompt({
   id,
@@ -123,6 +128,7 @@ export function AgentQueuedPrompt({
   attachments,
   displayAttachmentCount,
   state = "queued",
+  onEdit,
   onSendNow,
   onRemove,
 }: AgentQueuedPromptProps) {
@@ -160,6 +166,23 @@ export function AgentQueuedPrompt({
               {attachmentCount > MAX_AGENT_TURN_ATTACHMENTS ? "+" : ""}{" "}
               {attachmentCount === 1 ? "attachment" : "attachments"}
             </span>
+          )}
+          {attachmentCount > 0 && onEdit !== undefined && (
+            <span className="agent-prompt__queue-note">{AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE}</span>
+          )}
+          {onEdit !== undefined && (
+            <button
+              aria-label={AGENT_QUEUED_EDIT_LABEL}
+              className="agent-prompt__queue-action agent-prompt__queue-action--edit"
+              disabled={attachmentCount > 0}
+              title={
+                attachmentCount > 0 ? AGENT_QUEUED_EDIT_ATTACHMENTS_NOTICE : AGENT_QUEUED_EDIT_LABEL
+              }
+              onClick={() => onEdit(id)}
+              type="button"
+            >
+              <Pencil aria-hidden="true" />
+            </button>
           )}
           {state === "queued" && onSendNow !== undefined && (
             <button

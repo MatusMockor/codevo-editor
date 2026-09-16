@@ -161,6 +161,7 @@ export function AgentProjectScopeMenu({
             <div className="agent-scope-menu__row" key={entry.value} role="none">
               <button
                 aria-checked={entry.value === value}
+                aria-label={scopeItemLabel(entry)}
                 className="agent-menu__item agent-scope-menu__item"
                 data-scope-item="scope"
                 data-value={entry.value}
@@ -172,11 +173,10 @@ export function AgentProjectScopeMenu({
                 <span aria-hidden="true" className="agent-menu__icon">
                   <Folder size={13} />
                 </span>
-                <span className="agent-menu__text">
-                  <span className="agent-menu__label">{entry.label}</span>
+                <span className="agent-menu__label agent-scope-menu__label" title={entry.label}>
+                  {entry.label}
                 </span>
-                {repositoryCount(entry)}
-                {stateLabel(entry)}
+                {scopeMeta(entry)}
               </button>
               <div className="agent-scope-menu__actions" role="none">
                 <AgentProjectMenu entry={entry} onCommand={onProjectCommand} />
@@ -206,16 +206,28 @@ export function AgentProjectScopeMenu({
   );
 }
 
-function repositoryCount(entry: AgentRailScopeEntry) {
+function scopeMeta(entry: AgentRailScopeEntry) {
   const count = agentProjectRepositoryCountLabel(entry);
-  if (count === null) return null;
-  return <span className="agent-scope-menu__count agent-num">{count}</span>;
+  const state = agentRailScopeState(entry);
+  if (count === null && state === null) return null;
+  return (
+    <span aria-hidden="true" className="agent-scope-menu__meta">
+      {count !== null && <span className="agent-scope-menu__count agent-num">{count}</span>}
+      {state !== null && (
+        <span className="agent-menu__detail agent-scope-menu__state">{state.label}</span>
+      )}
+    </span>
+  );
 }
 
-function stateLabel(entry: AgentRailScopeEntry) {
+function scopeItemLabel(entry: AgentRailScopeEntry): string {
   const state = agentRailScopeState(entry);
-  if (state === null) return null;
-  return <span className="agent-menu__detail">{state.label}</span>;
+  const parts = [
+    entry.label,
+    agentProjectRepositoryCountLabel(entry),
+    state === null ? null : state.label,
+  ];
+  return parts.filter((part): part is string => part !== null).join(", ");
 }
 
 function scopeMenuHeldFocus(root: HTMLElement): boolean {

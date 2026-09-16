@@ -24,6 +24,11 @@ export interface DeferredFollowUpHead {
   readonly head: DeferredFollowUp | null;
 }
 
+export interface DeferredFollowUpTake {
+  readonly map: DeferredFollowUps;
+  readonly entry: DeferredFollowUp | null;
+}
+
 const EMPTY_QUEUE: ReadonlyArray<DeferredFollowUp> = [];
 
 export function emptyDeferredFollowUps(): DeferredFollowUps {
@@ -55,6 +60,24 @@ export function takeDeferredHead(map: DeferredFollowUps, threadId: string): Defe
   const head = queue[0];
   if (head === undefined) return { map, head: null };
   return { map: withQueue(map, threadId, queue.slice(1)), head };
+}
+
+export function takeDeferred(
+  map: DeferredFollowUps,
+  threadId: string,
+  id: string,
+): DeferredFollowUpTake {
+  const queue = deferredFollowUpsForThread(map, threadId);
+  const entry = queue.find((candidate) => candidate.id === id);
+  if (entry === undefined) return { map, entry: null };
+  return {
+    map: withQueue(
+      map,
+      threadId,
+      queue.filter((candidate) => candidate.id !== id),
+    ),
+    entry,
+  };
 }
 
 export function removeDeferred(

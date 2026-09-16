@@ -32,9 +32,9 @@ then choose a checkout:
   that thread. The automatic isolation policy prefers a worktree when the repository is busy,
   dirty, or has unsaved editors.
 
-Submit with **Cmd+Enter** on macOS or **Ctrl+Enter** elsewhere. Select an existing thread to send a
-follow-up; follow-ups stay on that thread's original checkout and provider. Use **New thread** to
-leave follow-up mode.
+**Enter** sends (**Cmd/Ctrl+Enter** also sends, **Shift+Enter** inserts a newline). Select an
+existing thread to send a follow-up; follow-ups stay on that thread's original checkout and
+provider. Use **New thread** to leave follow-up mode.
 
 The rail groups pinned, active, and archived threads. A thread menu can start another thread, pin,
 rename, mark unread, copy its path/branch/ID, stop it, archive it, or delete it. Pinning protects the
@@ -55,7 +55,7 @@ suggestions without deleting your text.
 - `/settings` opens provider settings.
 - With Claude Code, `/reasoning` opens model capabilities and `/plan` selects plan mode.
 - In an existing Claude Code thread, `/compact` prepares context compaction; submit it with
-  Cmd+Enter or the send button.
+  Enter (Cmd/Ctrl+Enter also sends) or the send button.
 
 The menu lists commands implemented by Codevo. It does not discover provider-installed skills
 or implement Claude Code's temporary `/btw` side conversation. Unknown slash text and commands

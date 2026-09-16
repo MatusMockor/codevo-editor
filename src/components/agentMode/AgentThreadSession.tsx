@@ -1,15 +1,30 @@
 import { AgentThreadUsage } from "./AgentThreadUsage";
 import {
+  createContext,
   memo,
   useCallback,
+  useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { ChevronDown, Clock3, Play } from "lucide-react";
+import {
+  Bot,
+  ChevronDown,
+  Clock3,
+  FileText,
+  Globe,
+  Play,
+  Search,
+  SquarePen,
+  Terminal,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { DeferredFollowUp } from "../../application/agentDeferredFollowUps";
 import type { AgentAttachmentImagesSurface } from "../../application/useAgentAttachmentImages";
@@ -61,6 +76,8 @@ import { useAgentMarkdownRenderer } from "./useAgentMarkdown";
 import { createIntersectionAgentMarkdownViewport } from "../../infrastructure/viewport/intersectionAgentMarkdownViewport";
 import {
   agentTurnCarriesAttachments,
+  agentTurnLiveActivity,
+  agentTurnSettlement,
   agentWorktreeRemovalLabel,
   agentTurnDurationLabel,
   agentTurnProjection,
@@ -68,10 +85,18 @@ import {
   agentTurnWorkFold,
   isAgentSubagentToolItem,
   type AgentRawLine,
+  type AgentTurnLiveActivity,
   type AgentSubagentEntry,
   type AgentSubagentSummary,
   type AgentTurnItem,
 } from "./agentModePresentation";
+import {
+  unsupportedToolRowKind,
+  type AgentToolRowKind,
+  type AgentToolRowStatus,
+} from "../../domain/agentToolRowPresentation";
+
+const WORKING_LABEL = "Working\u2026";
 
 const NO_FIND_HITS: ReadonlyArray<AgentThreadFindHit> = [];
 const NO_DEFERRED_FOLLOW_UPS: ReadonlyArray<DeferredFollowUp> = [];
@@ -102,6 +127,7 @@ export interface AgentThreadSessionProps {
   readonly thread: AgentThreadView | null;
   readonly deferredFollowUps?: ReadonlyArray<DeferredFollowUp>;
   onRemoveDeferredFollowUp?(threadId: string, id: string): void;
+  onEditDeferredFollowUp?(threadId: string, id: string): void;
   onResumeDeferredFollowUps?(threadId: string): Promise<void>;
   onSendDeferredFollowUpNow?(threadId: string, id: string): Promise<void>;
   readonly composerRepositoryLabel: string | null;
@@ -141,6 +167,7 @@ function AgentThreadSessionBody({
   attachmentImages = null,
   deferredFollowUps = NO_DEFERRED_FOLLOW_UPS,
   onRemoveDeferredFollowUp,
+  onEditDeferredFollowUp,
   onResumeDeferredFollowUps,
   onSendDeferredFollowUpNow,
   onRevealAttachment,
@@ -329,6 +356,13 @@ function AgentThreadSessionBody({
     [onRemoveDeferredFollowUp, threadId],
   );
 
+  const editQueued = useCallback(
+    (id: string): void => {
+      onEditDeferredFollowUp?.(threadId, id);
+    },
+    [onEditDeferredFollowUp, threadId],
+  );
+
   const revealQueue = useCallback((): void => {
     const queue = queueRef.current;
     const container = scrollRef.current;
@@ -417,6 +451,7 @@ function AgentThreadSessionBody({
                 renderProbe={turnRenderProbe}
                 textClipboard={textClipboard}
                 turn={turn}
+                workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
               />
             ))}
           </div>
@@ -450,6 +485,7 @@ function AgentThreadSessionBody({
                   displayAttachmentCount={entry.displayAttachmentCount}
                   id={entry.id}
                   key={entry.id}
+                  onEdit={onEditDeferredFollowUp === undefined ? undefined : editQueued}
                   onRemove={removeQueued}
                   onSendNow={onSendDeferredFollowUpNow === undefined ? undefined : sendQueuedNow}
                   state={entry.state}
@@ -510,6 +546,7 @@ const AgentTurnView = memo(function AgentTurnView({
   renderProbe,
   textClipboard,
   turn,
+  workspaceRoot = null,
 }: {
   readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly highlight?: AgentTurnHighlight | null;
@@ -518,14 +555,19 @@ const AgentTurnView = memo(function AgentTurnView({
   readonly renderProbe?: (turnId: string) => void;
   readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentTurn;
+  readonly workspaceRoot?: string | null;
 }) {
   renderProbe?.(turn.turnId);
   const attachments = useMemo(() => agentTurnAttachmentViews(turn.attachments), [turn.attachments]);
   const revealEventIndex =
     highlight?.current?.kind === "event" ? highlight.current.eventIndex : null;
-  const projection = agentTurnProjection(turn.events, revealEventIndex);
-  const subagents = agentTurnSubagentSummary(turn.events);
-  const running = turn.status.kind === "pending" || turn.status.kind === "running";
+  const settlement = agentTurnSettlement(turn.status);
+  const projection = useMemo(
+    () => agentTurnProjection(turn.events, revealEventIndex, workspaceRoot, settlement),
+    [turn.events, revealEventIndex, workspaceRoot, settlement],
+  );
+  const subagents = useMemo(() => agentTurnSubagentSummary(turn.events), [turn.events]);
+  const running = settlement === "running";
   const [streamed, setStreamed] = useState(running);
 
   useEffect(() => {
@@ -541,6 +583,12 @@ const AgentTurnView = memo(function AgentTurnView({
   );
   const empty = projection.items.length === 0 && rawLines.length === 0;
   const workFold = agentTurnWorkFold(projection.items, running);
+  const liveActivity = agentTurnLiveActivity(turn);
+  const toolDisclosure = useAgentTurnToolDisclosure();
+  const liveStatus =
+    liveActivity === null || empty ? null : (
+      <AgentTurnLiveStatus activity={liveActivity} items={projection.items} />
+    );
   const cursor = highlight?.current ?? null;
   const promptCurrent = cursor !== null && cursor.kind === "prompt" ? cursor.occurrence : null;
   const rawDisclosed = rawOutputDisclosed(turn.status);
@@ -554,105 +602,109 @@ const AgentTurnView = memo(function AgentTurnView({
   );
 
   return (
-    <article
-      aria-label={`Agent turn ${turn.turnId}`}
-      className="agent-turn"
-      data-agent-column={agentThreadColumnKey({ scope: "turn", turnId: turn.turnId })}
-      data-agent-turn={turn.turnId}
-    >
-      <AgentTurnPrompt
-        attachmentImages={attachmentImages}
-        attachments={attachments}
-        current={promptCurrent}
-        prompt={turn.prompt}
-        query={highlight?.query ?? ""}
-        textClipboard={textClipboard}
-      />
-
-      <div className="agent-answer">
-        <AgentTurnHead
-          provider={provider}
-          startedAtEpochMs={turn.startedAtEpochMs}
-          timing={agentTurnTiming(turn)}
+    <AgentToolDisclosureContext.Provider value={toolDisclosure}>
+      <article
+        aria-label={`Agent turn ${turn.turnId}`}
+        className="agent-turn"
+        data-agent-column={agentThreadColumnKey({ scope: "turn", turnId: turn.turnId })}
+        data-agent-turn={turn.turnId}
+      >
+        <AgentTurnPrompt
+          attachmentImages={attachmentImages}
+          attachments={attachments}
+          current={promptCurrent}
+          prompt={turn.prompt}
+          query={highlight?.query ?? ""}
+          textClipboard={textClipboard}
         />
 
-        {turn.status.kind === "pending" && provider === "codex" && (
-          <p className="agent-note" role="status">
-            Starting Codex…
-          </p>
-        )}
-        <AgentThreadUsage usage={threadUsage} />
-        {projection.hiddenCount > 0 && (
-          <p className="agent-note">{projection.hiddenCount} events hidden</p>
-        )}
+        <div className="agent-answer">
+          <AgentTurnHead
+            provider={provider}
+            startedAtEpochMs={turn.startedAtEpochMs}
+            timing={agentTurnTiming(turn)}
+          />
 
-        <div className="agent-turn__events">
-          {subagents !== null && <AgentSubagentBanner summary={subagents} />}
-          {workFold === null && subagents !== null && (
-            <AgentSubagentList entries={subagents.entries} />
+          {turn.status.kind === "pending" && provider === "codex" && (
+            <p className="agent-note" role="status">
+              Starting Codex…
+            </p>
           )}
-          {workFold !== null && (
-            <AgentTurnWork
-              attachmentImages={attachmentImages}
-              errorContext={errorContext}
-              highlight={highlight}
-              items={workFold.workItems}
-              key={running ? "running-work" : "settled-work"}
-              prose={prose}
-              running={running}
-              stream={stream}
-              subagents={subagents}
-              summary={workFold.summary}
-              textClipboard={textClipboard}
-              turn={turn}
-            />
+          <AgentThreadUsage usage={threadUsage} />
+          {projection.hiddenCount > 0 && (
+            <p className="agent-note">{projection.hiddenCount} events hidden</p>
           )}
-          {(workFold?.visibleItems ?? projection.items)
-            .filter((item) => !isAgentSubagentToolItem(item))
-            .map((item) => (
-              <AgentTurnItemView
+
+          <div className="agent-turn__events">
+            {subagents !== null && <AgentSubagentBanner summary={subagents} />}
+            {workFold === null && subagents !== null && (
+              <AgentSubagentList entries={subagents.entries} />
+            )}
+            {workFold !== null && (
+              <AgentTurnWork
+                liveStatus={liveStatus}
                 attachmentImages={attachmentImages}
                 errorContext={errorContext}
-                highlight={itemHighlight(highlight, item.key)}
-                groupHighlight={highlight}
-                item={item}
-                key={item.key}
+                highlight={highlight}
+                items={workFold.workItems}
+                key={running ? "running-work" : "settled-work"}
                 prose={prose}
+                running={running}
                 stream={stream}
+                subagents={subagents}
+                summary={workFold.summary}
                 textClipboard={textClipboard}
+                turn={turn}
               />
-            ))}
-          {empty && running && (
-            <p className="agent-note">
-              Waiting for output…
-              <span aria-hidden="true" className="agent-well__caret" />
+            )}
+            {(workFold?.visibleItems ?? projection.items)
+              .filter((item) => !isAgentSubagentToolItem(item))
+              .map((item) => (
+                <AgentTurnItemView
+                  attachmentImages={attachmentImages}
+                  errorContext={errorContext}
+                  highlight={itemHighlight(highlight, item.key)}
+                  groupHighlight={highlight}
+                  item={item}
+                  key={item.key}
+                  prose={prose}
+                  stream={stream}
+                  textClipboard={textClipboard}
+                />
+              ))}
+            {workFold === null && liveStatus}
+            {empty && running && (
+              <p className="agent-note">
+                Waiting for output…
+                <span aria-hidden="true" className="agent-well__caret" />
+              </p>
+            )}
+          </div>
+
+          {rawOutput !== null && <div className="agent-message-actions">{rawOutput}</div>}
+
+          {turn.eventsTruncated && (
+            <p className="agent-note agent-note--warning">
+              Later output was dropped to bound memory.
             </p>
           )}
+
+          {turn.status.kind === "interrupted" && (
+            <p className="agent-note agent-note--warning">Interrupted by app restart</p>
+          )}
+
+          {failure !== null && !repeatsLastError(failure, projection.items, errorContext) && (
+            <section className="agent-finale agent-finale--bad">
+              <span className="agent-microlabel agent-microlabel--bad">run failed</span>
+              <p className="agent-finale__body">
+                {agentProviderErrorHeadline(failure, errorContext.installedVersion)}
+              </p>
+              <AgentProviderErrorHint error={failure} />
+            </section>
+          )}
         </div>
-
-        {rawOutput !== null && <div className="agent-message-actions">{rawOutput}</div>}
-
-        {turn.eventsTruncated && (
-          <p className="agent-note agent-note--warning">
-            Later output was dropped to bound memory.
-          </p>
-        )}
-
-        {turn.status.kind === "interrupted" && (
-          <p className="agent-note agent-note--warning">Interrupted by app restart</p>
-        )}
-
-        {failure !== null && !repeatsLastError(failure, projection.items, errorContext) && (
-          <section className="agent-finale agent-finale--bad">
-            <span className="agent-microlabel agent-microlabel--bad">run failed</span>
-            <p className="agent-finale__body">
-              {agentProviderErrorHeadline(failure, errorContext.installedVersion)}
-            </p>
-            <AgentProviderErrorHint error={failure} />
-          </section>
-        )}
-      </div>
-    </article>
+      </article>
+    </AgentToolDisclosureContext.Provider>
   );
 });
 
@@ -670,6 +722,7 @@ function AgentTurnWork({
   errorContext,
   highlight,
   items,
+  liveStatus,
   prose,
   running,
   stream,
@@ -682,6 +735,7 @@ function AgentTurnWork({
   readonly errorContext: AgentTurnErrorContext;
   readonly highlight: AgentTurnHighlight | null;
   readonly items: ReadonlyArray<AgentTurnItem>;
+  readonly liveStatus: ReactNode;
   readonly prose: AgentProseContext;
   readonly running: boolean;
   readonly stream: AgentProseStream;
@@ -726,6 +780,7 @@ function AgentTurnWork({
               textClipboard={textClipboard}
             />
           ))}
+        {liveStatus}
       </div>
     </details>
   );
@@ -1055,21 +1110,146 @@ function formatTokens(tokens: number): string {
   return tokens >= 1_000 ? `${Math.round(tokens / 1_000)}k` : String(tokens);
 }
 
+function toolRowIcon(kind: AgentToolRowKind): LucideIcon {
+  switch (kind) {
+    case "command":
+      return Terminal;
+    case "read":
+      return FileText;
+    case "edit":
+      return SquarePen;
+    case "search":
+      return Search;
+    case "agent":
+      return Bot;
+    case "web":
+      return Globe;
+    case "other":
+      return Wrench;
+    default:
+      return unsupportedToolRowKind(kind);
+  }
+}
+
+function toolRowClassName(status: AgentToolRowStatus): string {
+  switch (status) {
+    case "running":
+      return "agent-tool-row agent-tool-row--running";
+    case "error":
+      return "agent-tool-row agent-tool-row--failed";
+    case "stopped":
+      return "agent-tool-row agent-tool-row--stopped";
+    case "ok":
+      return "agent-tool-row";
+    default:
+      return unsupportedToolRowStatus(status);
+  }
+}
+
+function unsupportedToolRowStatus(status: never): never {
+  throw new TypeError(`Unsupported agent tool row status: ${String(status)}.`);
+}
+
+interface AgentToolDisclosure {
+  readonly expanded: ReadonlySet<string>;
+  readonly toggle: (toolId: string) => void;
+}
+
+const AgentToolDisclosureContext = createContext<AgentToolDisclosure | null>(null);
+
+function useAgentToolDisclosure(toolId: string): {
+  readonly expanded: boolean;
+  readonly toggle: () => void;
+} {
+  const shared = useContext(AgentToolDisclosureContext);
+  const [local, setLocal] = useState(false);
+  const toggleLocal = useCallback(() => setLocal((open) => !open), []);
+  const toggleShared = useCallback(() => shared?.toggle(toolId), [shared, toolId]);
+  if (shared === null) return { expanded: local, toggle: toggleLocal };
+  return { expanded: shared.expanded.has(toolId), toggle: toggleShared };
+}
+
+function useAgentTurnToolDisclosure(): AgentToolDisclosure {
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const toggle = useCallback((toolId: string) => {
+    setExpanded((open) => {
+      const next = new Set(open);
+      if (next.delete(toolId)) return next;
+      next.add(toolId);
+      return next;
+    });
+  }, []);
+  return useMemo(() => ({ expanded, toggle }), [expanded, toggle]);
+}
+
 function AgentToolRow({ item }: { readonly item: Extract<AgentTurnItem, { kind: "tool" }> }) {
-  const outcome = item.outcome;
-  const statusClassName =
-    outcome === null
-      ? "agent-tool__status"
-      : `agent-tool__status agent-tool__status--${outcome.isError ? "bad" : "ok"}`;
-  const statusLabel = outcome === null ? "running" : outcome.isError ? "error" : "ok";
+  const disclosure = useAgentToolDisclosure(item.toolId);
+  const detailId = useId();
+  const Icon = toolRowIcon(item.rowKind);
+  const expanded = disclosure.expanded;
 
   return (
-    <div className="agent-tool" title={outcome?.outputSummary ?? undefined}>
-      <span className="agent-tool__name">{item.name}</span>
-      <span className="agent-tool__input">{item.inputSummary}</span>
-      <span className={statusClassName}>{statusLabel}</span>
+    <>
+      <button
+        aria-controls={detailId}
+        aria-expanded={expanded}
+        aria-live="off"
+        className={toolRowClassName(item.status)}
+        onClick={disclosure.toggle}
+        type="button"
+      >
+        <Icon aria-hidden="true" className="agent-tool-row__icon" size={15} />
+        <span className="agent-tool-row__label">{item.label}</span>
+        {item.argument !== null && (
+          <span className="agent-tool-row__argument">{item.argument}</span>
+        )}
+      </button>
+      <div className="agent-tool-row__detail" hidden={!expanded} id={detailId}>
+        {expanded && <AgentToolRowDetail item={item} />}
+      </div>
+    </>
+  );
+}
+
+function AgentToolRowDetail({ item }: { readonly item: Extract<AgentTurnItem, { kind: "tool" }> }) {
+  return (
+    <>
+      {item.command !== null && (
+        <pre className="agent-tool-row__command">{`$ ${item.command}`}</pre>
+      )}
+      {item.output !== null && <pre className="agent-tool-row__output">{item.output}</pre>}
+      {item.output === null && <p className="agent-tool-row__empty">No output</p>}
+    </>
+  );
+}
+
+function AgentTurnLiveStatus({
+  activity,
+  items,
+}: {
+  readonly activity: AgentTurnLiveActivity;
+  readonly items: ReadonlyArray<AgentTurnItem>;
+}) {
+  const working = activity.kind === "working";
+  return (
+    <div
+      aria-live="polite"
+      className={working ? "agent-tool-row agent-tool-row--working" : "agent-tool-row-live"}
+      role="status"
+    >
+      <span className="agent-tool-row__label">{liveStatusText(activity, items)}</span>
     </div>
   );
+}
+
+function liveStatusText(
+  activity: AgentTurnLiveActivity,
+  items: ReadonlyArray<AgentTurnItem>,
+): string {
+  if (activity.kind === "working") return WORKING_LABEL;
+  const live = items.find((item) => item.kind === "tool" && item.toolId === activity.toolId);
+  if (live === undefined || live.kind !== "tool") return WORKING_LABEL;
+  return live.label;
 }
 
 function AgentThreadSessionEmpty({ repositoryLabel }: { readonly repositoryLabel: string | null }) {

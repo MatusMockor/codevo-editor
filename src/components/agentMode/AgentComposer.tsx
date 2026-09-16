@@ -53,8 +53,7 @@ import { AgentLaunchControls, type AgentLaunchControlRequest } from "./AgentLaun
 import { agentLaunchForDispatch } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 import { AgentComposerCheckout, AgentComposerLockedCheckout } from "./AgentComposerControls";
-import { agentSubmitShortcut } from "./agentSubmitShortcut";
-import { agentControlTooltip } from "./agentThreadHeaderPresentation";
+import { agentSubmitKeyShortcuts, agentSubmitShortcut } from "./agentSubmitShortcut";
 import { useCompactComposerControls } from "./useCompactComposerControls";
 import { useTouchComposerLayout } from "./useTouchComposerLayout";
 import { useAgentComposerAutosize } from "./useAgentComposerAutosize";
@@ -113,7 +112,7 @@ export interface AgentComposerProps {
   onOpenEnvironmentSettings?(): void;
   onStop?(): void;
   onSubmit(submission: AgentComposerSubmission): void;
-  onCompactContext?(submission: AgentComposerSubmission): void;
+  onCompactContext?(submission: AgentComposerSubmission): void | Promise<boolean>;
 }
 
 export function AgentComposer({
@@ -199,8 +198,18 @@ export function AgentComposer({
   const allProvidersDisabled = !providerEnabled.claudeCode && !providerEnabled.codex;
   const blocked =
     submitBlocked || providerReason !== null || blockedReason !== null || targetReason !== null;
+  const compactionBlocked =
+    dispatching ||
+    steering ||
+    running ||
+    executionServerId !== null ||
+    (attachments?.blocked ?? false) ||
+    providerReason !== null ||
+    blockedReason !== null ||
+    targetReason !== null;
   const shortcut = agentSubmitShortcut();
   const submitName = submitAccessibleName(dispatching, mode);
+  const submitHint = `${submitName} (Enter or ${shortcut.secondary.glyphs})`;
   const caption = composerCaption({
     blockedReason,
     isolationReason,
@@ -373,9 +382,15 @@ export function AgentComposer({
         onPromptChange("/compact ");
         return;
       }
-      if (blocked || dispatching || onCompactContext === undefined) return;
-      onCompactContext({ launch: effectiveLaunch, dangerousLaunchConfirmed: dangerousLaunch });
-      onPromptChange("");
+      if (compactionBlocked || onCompactContext === undefined) return;
+      const compaction = onCompactContext({
+        launch: effectiveLaunch,
+        dangerousLaunchConfirmed: dangerousLaunch,
+      });
+      void Promise.resolve(compaction).then((accepted) => {
+        if (accepted === false) return;
+        onPromptChange("");
+      });
       return;
     }
     if (command === "settings") {
@@ -439,8 +454,15 @@ export function AgentComposer({
       return;
     }
     if (event.key !== "Enter") return;
-    if (steering && event.shiftKey) return;
-    if (!steering && !event.metaKey && !event.ctrlKey) return;
+    if (event.shiftKey || event.altKey) return;
+    if (event.repeat) {
+      event.preventDefault();
+      return;
+    }
+    if (commands.open) {
+      if (commands.interceptSubmit()) event.preventDefault();
+      return;
+    }
     event.preventDefault();
     if (commands.interceptSubmit()) return;
     if (blocked) return;
@@ -477,7 +499,7 @@ export function AgentComposer({
             </div>
             <button
               className="agent-compaction-offer__action"
-              disabled={blocked}
+              disabled={compactionBlocked}
               onClick={() =>
                 onCompactContext({
                   launch: effectiveLaunch,
@@ -577,7 +599,9 @@ export function AgentComposer({
               className="agent-composer__stop"
               onClick={onStop}
               title={
-                steering ? `Stop (Esc). Queue message: Enter or ${shortcut.keys}` : "Stop (Esc)"
+                steering
+                  ? `Stop (Esc). Queue message: Enter or ${shortcut.secondary.glyphs}`
+                  : "Stop (Esc)"
               }
               aria-busy={dispatching || undefined}
               type="button"
@@ -598,7 +622,7 @@ export function AgentComposer({
           {(!running || touch) && (
             <button
               aria-busy={dispatching || undefined}
-              aria-keyshortcuts={shortcut.keys}
+              aria-keyshortcuts={agentSubmitKeyShortcuts(shortcut)}
               aria-label={submitName}
               className={
                 dispatching
@@ -606,7 +630,7 @@ export function AgentComposer({
                   : "agent-composer__send"
               }
               disabled={blocked && !localCommandAvailable}
-              title={agentControlTooltip(submitName, shortcut.keys)}
+              title={submitHint}
               type="submit"
             >
               {dispatching ? (

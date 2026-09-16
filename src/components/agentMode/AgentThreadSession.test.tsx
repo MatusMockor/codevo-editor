@@ -466,13 +466,14 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    const rows = [...host.querySelectorAll(".agent-tool")];
+    const rows = [...host.querySelectorAll("button.agent-tool-row")];
 
     expect(rows).toHaveLength(2);
+    expect(host.querySelector(".agent-tool-row--working")?.textContent).toBe("Working\u2026");
     expect(rows[0]?.textContent).toContain("Read");
     expect(rows[0]?.textContent).toContain("src/parser.ts");
-    expect(rows[0]?.querySelector(".agent-tool__status--ok")).not.toBeNull();
-    expect(rows[1]?.querySelector(".agent-tool__status--bad")).not.toBeNull();
+    expect(rows[0]?.className).toBe("agent-tool-row");
+    expect(rows[1]?.className).toBe("agent-tool-row agent-tool-row--failed");
   });
 
   it("keeps a tool call without a result visible as running", () => {
@@ -486,8 +487,10 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.querySelector(".agent-tool__status")?.textContent).toBe("running");
-    expect(host.querySelector(".agent-tool__status--ok")).toBeNull();
+    expect(host.querySelector(".agent-tool-row")?.className).toBe(
+      "agent-tool-row agent-tool-row--running",
+    );
+    expect(host.querySelector(".agent-tool-row--failed")).toBeNull();
   });
 
   it("shows how many subagents were started and their live outcomes", () => {
@@ -536,7 +539,7 @@ describe("AgentThreadSession", () => {
     expect(rows[0]?.querySelector(".agent-subagent__state")?.textContent).toBe("completed");
     expect(rows[1]?.querySelector(".agent-subagent__state--failed")?.textContent).toBe("failed");
     expect(rows[0]?.closest(".agent-work__events")).not.toBeNull();
-    expect(host.querySelectorAll(".agent-tool")).toHaveLength(0);
+    expect(host.querySelectorAll(".agent-tool-row")).toHaveLength(0);
   });
 
   it("lists the subagents beside the turn when the turn has no work fold", () => {
@@ -556,7 +559,7 @@ describe("AgentThreadSession", () => {
     expect(list?.closest(".agent-turn__events")).not.toBeNull();
     expect(list?.querySelectorAll(".agent-subagent")).toHaveLength(1);
     expect(list?.querySelector(".agent-subagent__state--running")?.textContent).toBe("working");
-    expect(host.querySelectorAll(".agent-tool")).toHaveLength(0);
+    expect(host.querySelectorAll(".agent-tool-row")).toHaveLength(0);
     expect(host.querySelectorAll('[aria-label="Subagents"]')).toHaveLength(1);
   });
 

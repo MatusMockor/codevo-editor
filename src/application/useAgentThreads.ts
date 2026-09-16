@@ -595,6 +595,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     deferredFollowUps: dispatch.deferredFollowUps,
     steer: dispatch.steer,
     removeDeferredFollowUp: dispatch.removeDeferredFollowUp,
+    takeDeferredFollowUp: dispatch.takeDeferredFollowUp,
     sendDeferredFollowUpNow: dispatch.sendDeferredFollowUpNow,
     resumeDeferredFollowUps: dispatch.resumeDeferredFollowUps,
     importExternalSession,

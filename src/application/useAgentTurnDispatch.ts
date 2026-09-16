@@ -116,6 +116,7 @@ export interface AgentTurnDispatchSurface {
   readonly deferredFollowUps: DeferredFollowUps;
   steer(request: AgentSteerRequest): Promise<AgentSteerOutcome>;
   removeDeferredFollowUp(threadId: string, id: string): void;
+  takeDeferredFollowUp(threadId: string, id: string): AgentFollowUpRequest | null;
   sendDeferredFollowUpNow(threadId: string, id: string): Promise<void>;
   resumeDeferredFollowUps(threadId: string): Promise<void>;
   clearDeferredForOwner(ownerId: string): void;
@@ -231,6 +232,7 @@ export function useAgentTurnDispatch(
     deferredFollowUps,
     steer,
     removeDeferredFollowUp,
+    takeDeferredFollowUp,
     sendDeferredFollowUpNow,
     resumeDeferredFollowUps,
     onTurnSettled,
@@ -959,6 +961,7 @@ export function useAgentTurnDispatch(
     deferredFollowUps,
     steer,
     removeDeferredFollowUp,
+    takeDeferredFollowUp,
     sendDeferredFollowUpNow,
     resumeDeferredFollowUps,
     clearDeferredForOwner,

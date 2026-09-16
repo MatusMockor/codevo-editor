@@ -461,6 +461,7 @@ fn out_of_bounds_turn_and_event_payloads_are_rejected() {
         tool_id: "t1".to_string(),
         name: "Bash".to_string(),
         input_summary: "a".repeat(MAX_AGENT_TOOL_SUMMARY_BYTES + 1),
+        description: None,
         parent_tool_id: None,
     }];
     let mut flag_like_session = thread_document(ROOT_KEY, "agt-thread-0004", 10);
@@ -1197,6 +1198,7 @@ fn a_subagent_telemetry_document_round_trips_the_typescript_wire_shape() {
             tool_id: "toolu_child".to_string(),
             name: "Bash".to_string(),
             input_summary: "echo alpha".to_string(),
+            description: None,
             parent_tool_id: Some("toolu_parent".to_string()),
         }
     );
@@ -1242,6 +1244,7 @@ fn a_legacy_tool_event_document_round_trips_byte_identically() {
             tool_id: "t1".to_string(),
             name: "Bash".to_string(),
             input_summary: "npm test".to_string(),
+            description: None,
             parent_tool_id: None,
         }
     );
@@ -1515,3 +1518,6 @@ mod external_history_tests;
 
 #[path = "agent_thread_store_appserver_tests.rs"]
 mod appserver_tests;
+
+#[path = "agent_thread_store_tool_description_tests.rs"]
+mod tool_description_tests;

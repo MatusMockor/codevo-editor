@@ -204,7 +204,12 @@ describe("agent thread Airy style contract", () => {
       );
       expect(source, sheet).not.toMatch(/border-color:/);
       expect(source, sheet).not.toMatch(/box-shadow:\s*(inset )?0 0 0 \d/);
-      expect(source, sheet).not.toMatch(/var\(--agent-hairline/);
+      for (const [, property, value] of source.matchAll(
+        /([\w-]+)\s*:\s*([^;{}]*var\(--agent-hairline[^;{}]*)/g,
+      )) {
+        expect(property, `${sheet} ${property}`).toBe("background");
+        expect(value, `${sheet} ${property}`).toContain("linear-gradient(");
+      }
     }
   });
 
@@ -274,6 +279,37 @@ describe("agent thread Airy style contract", () => {
       "var(--agent-focus-ring)",
     );
     expect(declarations(".agent-prompt__queue-action", "outline")).toEqual([]);
+  });
+
+  it("mutes a disabled queue action and keeps the hover fill off it", () => {
+    expect(winningDeclaration(".agent-prompt__queue-action:disabled", "color")).toBe(
+      "var(--agent-text-disabled)",
+    );
+    expect(winningDeclaration(".agent-prompt__queue-action:disabled", "cursor")).toBe(
+      "not-allowed",
+    );
+    expect(declarations(".agent-prompt__queue-action:disabled", "background")).toEqual([]);
+    expect(
+      RULES.filter((entry) => entry.selectors.includes(".agent-prompt__queue-action:hover")),
+    ).toEqual([]);
+    expect(
+      winningDeclaration(".agent-prompt__queue-action:hover:not(:disabled)", "background"),
+    ).toBe("var(--agent-hover)");
+    expect(winningDeclaration(".agent-prompt__queue-note", "color")).toBe(
+      "var(--agent-text-muted)",
+    );
+    expect(winningDeclaration(".agent-prompt__queue-note", "font-size")).toBe("var(--agent-fs-xs)");
+  });
+
+  it("keeps the edit pencil on the shared queue-action chip contract", () => {
+    expect(
+      RULES.filter((entry) => entry.selectors.includes(".agent-prompt__queue-action--edit"))
+        .flatMap((entry) => entry.selectors)
+        .every((selector) => selector.startsWith(".agent-prompt__queue-action")),
+    ).toBe(true);
+    expect(declarations(".agent-prompt__queue-action--edit", "border")).toEqual([]);
+    expect(declarations(".agent-prompt__queue-action--edit", "outline")).toEqual([]);
+    expect(declarations(".agent-prompt__queue-action--edit", "box-shadow")).toEqual([]);
   });
 
   it("gives the composer Stop control the send geometry on the well tone", () => {
@@ -413,7 +449,7 @@ describe("agent thread Airy style contract", () => {
   });
 
   it("keeps tool rows, subagent rows and the work fold boxless with a hover-only radius", () => {
-    for (const selector of [".agent-tool", ".agent-subagent", ".agent-subagents"]) {
+    for (const selector of [".agent-subagent", ".agent-subagents"]) {
       expect(declarations(selector, "box-shadow"), selector).toEqual([]);
       expect(winningDeclaration(selector, "background"), selector).toBe("transparent");
       expect(winningDeclaration(selector, "border-radius"), selector).toBe("7px");
@@ -422,8 +458,6 @@ describe("agent thread Airy style contract", () => {
         "var(--agent-hover)",
       );
     }
-    expect(winningDeclaration(".agent-tool__status", "display")).toBe("none");
-    expect(winningDeclaration(".agent-tool__status--bad", "display")).toBe("inline");
     expect(declarations(".agent-work", "border-bottom")).toEqual([]);
     expect(winningDeclaration(".agent-work__summary", "justify-content")).toBe("start");
     expect(winningDeclaration(".agent-work__summary", "border-radius")).toBe("7px");
@@ -461,9 +495,6 @@ describe("agent thread Airy style contract", () => {
       ".agent-turn__events",
       ".agent-work",
       ".agent-work__summary",
-      ".agent-tool",
-      ".agent-tool__name",
-      ".agent-tool__input",
       ".agent-text",
       ".agent-text__paragraph",
       ".agent-reasoning",
@@ -561,43 +592,136 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-md__table-scroll", "overflow-x")).toBe("auto");
   });
 
-  it("fits a markdown table to the reading column and wraps every cell", () => {
-    expect(declarations(".agent-md__table", "width")).toEqual([]);
+  it("sets the markdown prose rhythm from one block margin and zeroes the outer edges", () => {
+    expect(winningDeclaration(".agent-text", "display")).toBe("flow-root");
+    expect(declarations(".agent-text", "gap")).toEqual([]);
+    expect(declarations(".agent-text", "font-family")).toEqual([]);
+    for (const selector of [
+      ".agent-text__paragraph",
+      ".agent-md__list",
+      ".agent-md__quote",
+      ".agent-md__code",
+      ".agent-md__table-scroll",
+    ]) {
+      expect(winningDeclaration(selector, "margin"), selector).toBe(
+        "calc(10px * var(--codevo-fs-scale)) 0",
+      );
+    }
+    expect(winningDeclaration(".agent-text > :first-child", "margin-top")).toBe("0");
+    expect(winningDeclaration(".agent-text > :last-child", "margin-bottom")).toBe("0");
+    expect(
+      winningDeclaration(".agent-text > :has(+ .agent-message-actions)", "margin-bottom"),
+    ).toBe("0");
+    expect(winningDeclaration(".agent-md__heading", "margin")).toBe(
+      "calc(20px * var(--codevo-fs-scale)) 0 calc(8px * var(--codevo-fs-scale))",
+    );
+    expect(winningDeclaration(".agent-text > :nth-last-child(2)", "margin-bottom")).toBe("0");
+    expect(winningDeclaration(".agent-text > .agent-message-actions", "margin-top")).toBe(
+      "var(--agent-space-3)",
+    );
+    expect(winningDeclaration(".agent-md__quote > :first-child", "margin-top")).toBe("0");
+    expect(winningDeclaration(".agent-md__quote > :last-child", "margin-bottom")).toBe("0");
+    expect(winningDeclaration(".agent-md__item + .agent-md__item", "margin-top")).toBe(
+      "calc(4px * var(--codevo-fs-scale))",
+    );
+    expect(declarations(".agent-md__list", "gap")).toEqual([]);
+    expect(winningDeclaration(".agent-text__paragraph", "font-size")).toBe("var(--agent-fs-md)");
+    expect(winningDeclaration(".agent-text__paragraph", "line-height")).toBe(
+      "var(--agent-lh-prose)",
+    );
+  });
+
+  it("keeps the code block on one quiet slab and the inline code on the well", () => {
+    expect(declarations(".agent-md__code", "border-radius")).toEqual([]);
+    expect(winningDeclaration(".agent-md__code-bar", "border-radius")).toBe(
+      "var(--agent-radius-lg) var(--agent-radius-lg) 0 0",
+    );
+    expect(winningDeclaration(".agent-md__code-body", "border-radius")).toBe(
+      "0 0 var(--agent-radius-lg) var(--agent-radius-lg)",
+    );
+    expect(winningDeclaration(".agent-md__code-bar", "color")).toBe("var(--agent-text-muted)");
+    expect(winningDeclaration(".agent-md__code-body", "padding")).toBe(
+      "calc(12px * var(--codevo-fs-scale)) calc(14px * var(--codevo-fs-scale))",
+    );
+    expect(winningDeclaration(".agent-md__code-body", "font-size")).toBe("var(--agent-fs-2xs)");
+    expect(winningDeclaration(".agent-md__code-body", "margin")).toBe("0");
+    expect(winningDeclaration(".agent-md__inline-code", "font-size")).toBe("var(--agent-fs-2xs)");
+    expect(winningDeclaration(".agent-md__inline-code", "padding")).toBe("1px 5px");
+    expect(winningDeclaration(".agent-md__inline-code", "border-radius")).toBe(
+      "var(--agent-radius-sm)",
+    );
+    expect(winningDeclaration(".agent-md__inline-code", "color")).toBe("var(--agent-text-strong)");
+    expect(declarations(".agent-md__inline-code", "box-shadow")).toEqual([]);
+    expect(declarations(".agent-md__inline-code", "border")).toEqual([]);
+    expect(declarations(".agent-md__inline-code", "outline")).toEqual([]);
+  });
+
+  it("fits a markdown table to the reading column and rules it with hairlines only", () => {
+    expect(winningDeclaration(".agent-md__table", "width")).toBe("100%");
+    expect(winningDeclaration(".agent-md__table", "border-collapse")).toBe("collapse");
     expect(declarations(".agent-md__table", "min-width")).toEqual([]);
+    expect(declarations(".agent-md__table", "border-spacing")).toEqual([]);
     expect(winningDeclaration(".agent-md__table", "max-width")).toBe("100%");
-    expect(declarations(".agent-md__th", "white-space")).toEqual([]);
+    expect(winningDeclaration(".agent-md__table", "font-size")).toBe("var(--agent-fs-2xs)");
+    expect(winningDeclaration(".agent-md__th", "padding")).toBe(
+      "calc(7px * var(--codevo-fs-scale)) calc(12px * var(--codevo-fs-scale))",
+    );
+    expect(winningDeclaration(".agent-md__td", "padding")).toBe(
+      "calc(7px * var(--codevo-fs-scale)) calc(12px * var(--codevo-fs-scale))",
+    );
+    expect(winningDeclaration(".agent-md__th", "white-space")).toBe("normal");
+    expect(winningDeclaration(".agent-md__th", "overflow-wrap")).toBe("normal");
+    expect(winningDeclaration(".agent-md__th", "color")).toBe("var(--agent-text-strong)");
+    expect(winningDeclaration(".agent-md__th", "font-weight")).toBe("600");
     expect(declarations(".agent-md__td", "white-space")).toEqual([]);
-    expect(winningDeclaration(".agent-md__th", "overflow-wrap")).toBe("break-word");
-    expect(winningDeclaration(".agent-md__td", "overflow-wrap")).toBe("break-word");
+    expect(winningDeclaration(".agent-md__td", "overflow-wrap")).toBe("anywhere");
     expect(winningDeclaration(".agent-md__td .agent-md__inline-code", "overflow-wrap")).toBe(
       "anywhere",
     );
     expect(winningDeclaration(".agent-md__td .agent-md__link", "overflow-wrap")).toBe("anywhere");
     expect(winningDeclaration(".agent-md__th", "vertical-align")).toBe("bottom");
     expect(winningDeclaration(".agent-md__td", "vertical-align")).toBe("top");
+    expect(winningDeclaration(".agent-md__th", "background")).toBe(
+      "linear-gradient(var(--agent-hairline-strong), var(--agent-hairline-strong)) bottom / 100% 1px no-repeat",
+    );
+    expect(winningDeclaration(".agent-md__td", "background")).toBe(
+      "linear-gradient(var(--agent-hairline), var(--agent-hairline)) bottom / 100% 1px no-repeat",
+    );
+    expect(
+      winningDeclaration(".agent-md__table tbody tr:last-child > .agent-md__td", "background"),
+    ).toBe("none");
+    for (const selector of [".agent-md__th", ".agent-md__td"]) {
+      expect(winningDeclaration(selector, "background"), selector).toMatch(
+        /^linear-gradient\(var\(--agent-hairline(-strong)?\), var\(--agent-hairline(-strong)?\)\) bottom \/ 100% 1px no-repeat$/,
+      );
+    }
+    expect(css).not.toContain("tbody tr:nth-child(even)");
     for (const rule of RULES.filter((entry) =>
       entry.selectors.some((selector) => selector.includes(".agent-md__t")),
     )) {
-      expect(rule.body, rule.selectors.join(",")).not.toMatch(/max-content|nowrap|table-layout/);
+      expect(rule.body, rule.selectors.join(",")).not.toMatch(/max-content|table-layout|nowrap/);
+      expect(rule.body, rule.selectors.join(",")).not.toMatch(/(^|[^-])border\s*:/);
+      expect(rule.body, rule.selectors.join(",")).not.toMatch(/box-shadow|outline/);
     }
   });
 
-  it("keeps markdown chrome on the well and raised tones without side tone or z-index", () => {
+  it("keeps markdown chrome on the well tones without side tone or z-index", () => {
     const markdownRules = RULES.filter((rule) =>
       rule.selectors.some((selector) => selector.includes(".agent-md__")),
     );
     for (const rule of markdownRules) {
       expect(rule.body, rule.selectors.join(",")).not.toMatch(/z-index/);
       expect(rule.body, rule.selectors.join(",")).not.toMatch(
-        /--agent-rail|--agent-shade|--codevo-side|--agent-hairline/,
+        /--agent-rail|--agent-shade|--codevo-side/,
       );
     }
-    expect(winningDeclaration(".agent-md__code-bar", "background")).toBe("var(--agent-raised)");
+    expect(winningDeclaration(".agent-md__code-bar", "background")).toBe("var(--agent-well)");
     expect(winningDeclaration(".agent-md__code-body", "background")).toBe(
       "var(--agent-code-background)",
     );
-    expect(winningDeclaration(".agent-md__th", "background")).toBe("var(--agent-raised)");
+    expect(declarations(".agent-md__th", "background-color")).toEqual([]);
     expect(winningDeclaration(".agent-md__quote", "background")).toBe("var(--agent-well)");
+    expect(winningDeclaration(".agent-md__quote", "color")).toBe("var(--agent-text)");
     expect(winningDeclaration(".agent-md__inline-code", "background")).toBe("var(--agent-well)");
     expect(winningDeclaration(".agent-md__heading--h1", "font-size")).toBe("var(--agent-fs-xl)");
     expect(winningDeclaration(".agent-md__heading--h2", "font-size")).toBe("var(--agent-fs-lg)");
