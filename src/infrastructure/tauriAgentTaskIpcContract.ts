@@ -1,6 +1,8 @@
 import { agentCliBinaryUnavailableMessage } from "../domain/agentCliVersion";
 import {
   AgentTaskStartRejectedError,
+  validateAcknowledgeAgentTaskOutputRequest,
+  type AcknowledgeAgentTaskOutputRequest,
   parseAgentTaskOutputEvent,
   parseAgentTaskStatusEvent,
   parseAgentTaskSteerRejection,
@@ -95,6 +97,17 @@ export async function invokeAcknowledgeAgentTaskStartIpc(
     invokeCommand,
     ACKNOWLEDGE_AGENT_TASK_START_IPC_COMMAND,
     validateAgentTaskReferenceRequest(request),
+  );
+}
+
+export async function invokeAcknowledgeAgentTaskOutputIpc(
+  invokeCommand: InvokeAgentTaskCommand,
+  request: AcknowledgeAgentTaskOutputRequest,
+): Promise<void> {
+  return invokeUnit(
+    invokeCommand,
+    "acknowledge_agent_task_output",
+    validateAcknowledgeAgentTaskOutputRequest(request),
   );
 }
 

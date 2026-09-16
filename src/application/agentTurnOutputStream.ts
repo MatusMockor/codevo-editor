@@ -15,15 +15,14 @@ import {
 } from "../domain/agentOutput/agentOutputParser";
 import type { AgentTaskStatusEvent } from "../domain/agentTask";
 import {
-  MAX_AGENT_EVENTS_PER_TURN,
-  MAX_AGENT_EVENT_BYTES_PER_TURN,
   agentTurnEventUtf8Bytes,
-  coalesceAgentTextEvents,
+  mergeTurnEvents,
   type AgentThreadsAction,
   type AgentThreadsState,
   type AgentTurnEvent,
   type AgentSessionFallback,
 } from "../domain/agentThread";
+import { EMPTY_PENDING_LINE } from "../domain/agentOutput/lineSplitter";
 import { warning } from "./agentProjectAuthority";
 import type { AgentTasksNotice } from "./agentThreadPorts";
 
@@ -55,9 +54,10 @@ export interface AgentTurnOutputStream {
   readonly outputSubscriptionEpoch: number | null;
   parser: AgentOutputParserState;
   lastSequence: number;
-  pendingEvents: AgentTurnEvent[];
+  resyncStdout: boolean;
+  resyncStderr: boolean;
+  pendingEvents: ReadonlyArray<AgentTurnEvent>;
   pendingEventBytes: number;
-  eventRetentionStopped: boolean;
   pendingSessionId: string | null;
   pendingSessionFallback: AgentSessionFallback | null;
   pendingTruncated: boolean;
@@ -101,9 +101,10 @@ export function createAgentTurnOutputStream(
       identity.outputSubscriptionEpoch === undefined ? 0 : identity.outputSubscriptionEpoch,
     parser: parser.create(identity.kind, identity.codexTransport ?? "exec"),
     lastSequence: 0,
+    resyncStdout: false,
+    resyncStderr: false,
     pendingEvents: [],
     pendingEventBytes: 0,
-    eventRetentionStopped: false,
     pendingSessionId: null,
     pendingSessionFallback: null,
     pendingTruncated: false,
@@ -133,16 +134,36 @@ export function acceptAgentTurnOutput(
 ): boolean {
   if (event.taskId !== stream.turnId) return false;
   if (event.sequence <= stream.lastSequence) return false;
-  if (event.sequence !== stream.lastSequence + 1) stream.rawStreamComplete = false;
+  if (event.sequence !== stream.lastSequence + 1 || event.truncated) {
+    stream.rawStreamComplete = false;
+    stream.pendingTruncated = true;
+    stream.parser = { ...stream.parser, stdout: EMPTY_PENDING_LINE, stderr: EMPTY_PENDING_LINE };
+    stream.resyncStdout = true;
+    stream.resyncStderr = true;
+  }
   stream.lastSequence = event.sequence;
   recordRawStreamChunk(stream, event.chunk);
   stream.pendingTruncated = stream.pendingTruncated || event.truncated;
-  absorb(stream, parser.feed(stream.parser, event.stream, event.chunk));
+  absorb(stream, parser.feed(stream.parser, event.stream, resynchronizedChunk(stream, event)));
   if (event.truncated) {
-    stream.eventRetentionStopped = true;
     stream.rawStreamComplete = false;
   }
   return true;
+}
+
+/** Never join retained bytes across a lost transport segment. */
+function resynchronizedChunk(stream: AgentTurnOutputStream, event: AgentTaskOutputEvent): string {
+  const field = event.stream === "stderr" ? "resyncStderr" : "resyncStdout";
+  if (!stream[field]) return event.chunk;
+  if (event.startsAtLineBoundary === true) {
+    stream[field] = false;
+    return event.chunk;
+  }
+  // Older transports cannot attest to a boundary: discard their first partial line.
+  const newline = event.chunk.indexOf("\n");
+  if (newline < 0) return "";
+  stream[field] = false;
+  return event.chunk.slice(newline + 1);
 }
 
 export function drainAgentTurnOutput(
@@ -222,7 +243,15 @@ function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): v
   stream.pendingAccountUsage.push(...result.accountUsage);
   for (const event of result.events) {
     if (event.kind === "result") stream.sawResult = true;
-    appendPendingEvent(stream, event);
+  }
+  if (result.events.length > 0) {
+    const retained = mergeTurnEvents(stream.pendingEvents, result.events);
+    stream.pendingEvents = retained.events;
+    stream.pendingEventBytes = retained.events.reduce(
+      (total, event) => total + agentTurnEventUtf8Bytes(event),
+      0,
+    );
+    stream.pendingDropped = stream.pendingDropped || retained.truncated;
   }
   if (result.sessionId === null) return;
   if (
@@ -234,36 +263,6 @@ function absorb(stream: AgentTurnOutputStream, result: AgentOutputFeedResult): v
   }
   stream.sawSessionId = true;
   if (stream.pendingSessionId === null) stream.pendingSessionId = result.sessionId;
-}
-
-function appendPendingEvent(stream: AgentTurnOutputStream, event: AgentTurnEvent): void {
-  if (stream.eventRetentionStopped) return;
-  const last = stream.pendingEvents[stream.pendingEvents.length - 1];
-  const coalesced = coalesceAgentTextEvents(last, event);
-  if (coalesced !== null) {
-    if (last === undefined) return;
-    const nextBytes =
-      stream.pendingEventBytes - agentTurnEventUtf8Bytes(last) + agentTurnEventUtf8Bytes(coalesced);
-    if (nextBytes > MAX_AGENT_EVENT_BYTES_PER_TURN) {
-      stream.pendingDropped = true;
-      stream.eventRetentionStopped = true;
-      return;
-    }
-    stream.pendingEvents[stream.pendingEvents.length - 1] = coalesced;
-    stream.pendingEventBytes = nextBytes;
-    return;
-  }
-  const eventBytes = agentTurnEventUtf8Bytes(event);
-  if (
-    stream.pendingEvents.length >= MAX_AGENT_EVENTS_PER_TURN ||
-    stream.pendingEventBytes + eventBytes > MAX_AGENT_EVENT_BYTES_PER_TURN
-  ) {
-    stream.pendingDropped = true;
-    stream.eventRetentionStopped = true;
-    return;
-  }
-  stream.pendingEvents.push(event);
-  stream.pendingEventBytes += eventBytes;
 }
 
 const SESSION_CHANGED_NOTICE =

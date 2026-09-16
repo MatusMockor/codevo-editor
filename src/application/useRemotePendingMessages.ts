@@ -1,3 +1,5 @@
+import { collectRemoteInstructions } from "./collectRemoteInstructions";
+import type { RemoteRunnerInstructionSnapshot } from "../domain/remoteRunnerInstructions";
 import { agentLaunchWithoutBrowser } from "../domain/agentLaunch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentFollowUpRequest, AgentSteerRequest, AgentThreadView } from "./agentThreadPorts";
@@ -53,6 +55,7 @@ type Command = {
   signature: string;
   idempotencyKey: string;
   parts: readonly RemoteRunnerPart[];
+  readonly instructions?: RemoteRunnerInstructionSnapshot;
 };
 
 /** The server owns FIFO execution; the editor retains only exact uncertain enqueue commands. */
@@ -70,7 +73,10 @@ export function useRemotePendingMessages(options: Options) {
     };
   }, []);
   const valid = () =>
-    mounted.current && latest.current.owner === options.owner && options.valid(options.owner);
+    mounted.current &&
+    latest.current.owner === options.owner &&
+    latest.current.gateway === options.gateway &&
+    options.valid(options.owner);
   const entries = useMemo(() => {
     const result = new Map<string, readonly RemoteRunnerPendingMessage[]>();
     for (const snapshot of options.snapshots)
@@ -175,7 +181,15 @@ export function useRemotePendingMessages(options: Options) {
           attachments.some((part) => part.type !== "attachment")
         )
           throw new Error("The remote image upload returned invalid attachments.");
+        const instructions = await collectRemoteInstructions(
+          gateway,
+          execution,
+          valid,
+          launch.provider === "claudeCode" ? "claude" : "codex",
+        );
+        if (!valid()) return false;
         command = {
+          instructions,
           signature,
           taskId: execution.latestTaskId,
           idempotencyKey: crypto.randomUUID(),
@@ -194,6 +208,7 @@ export function useRemotePendingMessages(options: Options) {
         taskId: command.taskId,
         idempotencyKey: command.idempotencyKey,
         parts: command.parts,
+        ...(command.instructions ? { instructions: command.instructions } : {}),
         launch,
       });
       if (!valid()) return false;

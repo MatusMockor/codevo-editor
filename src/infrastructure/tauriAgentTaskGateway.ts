@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   AgentTaskStartRejectedError,
+  type AcknowledgeAgentTaskOutputRequest,
   type AgentTaskGateway,
   type AgentTaskOutputEvent,
   type AgentTaskReferenceRequest,
@@ -18,6 +19,7 @@ import {
   decodeAgentTaskOutputEvent,
   decodeAgentTaskStatusEvent,
   invokeAcknowledgeAgentTaskStartIpc,
+  invokeAcknowledgeAgentTaskOutputIpc,
   invokeCloseAgentTaskInputIpc,
   invokeStartAgentTaskIpc,
   invokeSteerAgentTaskIpc,
@@ -57,6 +59,11 @@ export class TauriAgentTaskGateway implements AgentTaskGateway {
   async acknowledgeAgentTaskStart(request: AgentTaskReferenceRequest): Promise<void> {
     if (!this.isRuntimeAvailable()) return;
     return invokeAcknowledgeAgentTaskStartIpc(this.invokeCommand, request);
+  }
+
+  async acknowledgeAgentTaskOutput(request: AcknowledgeAgentTaskOutputRequest): Promise<void> {
+    if (!this.isRuntimeAvailable()) return;
+    return invokeAcknowledgeAgentTaskOutputIpc(this.invokeCommand, request);
   }
 
   async stopAgentTask(request: AgentTaskReferenceRequest): Promise<void> {

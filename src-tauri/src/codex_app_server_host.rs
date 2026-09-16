@@ -123,6 +123,10 @@ impl CodexHostLaunchPlan {
             .map(|argument| (*argument).to_string())
             .collect();
         args.extend(validate_codex_app_server_args(extra_args)?);
+        args.extend([
+            "-c".into(),
+            "features.default_mode_request_user_input=true".into(),
+        ]);
         Ok(Self {
             identity,
             repository_root: repository_root.to_path_buf(),
@@ -417,7 +421,6 @@ impl CodexServerRequestHandler for CodexApprovalDecliner {
             "item/permissions/requestApproval" => {
                 Some(json!({ "permissions": {}, "scope": "turn" }))
             }
-            "item/tool/requestUserInput" => Some(json!({ "answers": {} })),
             "mcpServer/elicitation/request" => Some(json!({ "action": "decline" })),
             "item/tool/call" => Some(json!({
                 "success": false,

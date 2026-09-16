@@ -29,11 +29,14 @@ const task = (overrides: Partial<RemoteRunnerTask> = {}): RemoteRunnerTask => ({
 });
 function gateway() {
   return {
+    collectInstructions: vi.fn().mockResolvedValue({ version: 1, files: [] }),
     listServers: vi.fn(),
     connectServer: vi.fn(),
     disconnectServer: vi.fn(),
     removeServer: vi.fn(),
-    getRunner: vi.fn(),
+    getRunner: vi
+      .fn()
+      .mockResolvedValue({ runnerId: "r", capabilities: { instructionSync: true } }),
     listProjects: vi.fn(),
     cloneProject: vi.fn(),
     getProjectClone: vi.fn(),
@@ -140,7 +143,9 @@ describe("remote agent mutations", () => {
       );
     });
 
-    const [wire] = h.gw.createTask.mock.calls[0] as [{ readonly launch: AgentLaunchOptions }];
+    const [wire] = vi.mocked<RemoteRunnerGateway["createTask"]>(h.gw.createTask).mock.calls[0] as [
+      { readonly launch: AgentLaunchOptions },
+    ];
     expect(wire.launch).not.toHaveProperty("chrome");
     expect(wire.launch).toEqual(wireLaunch);
     expect(h.report).not.toHaveBeenCalled();
@@ -158,7 +163,9 @@ describe("remote agent mutations", () => {
     await act(async () => {
       await h.current().start(request, target);
     });
-    expect(h.gw.createTask.mock.calls[0]).toEqual(h.gw.createTask.mock.calls[1]);
+    expect(vi.mocked<RemoteRunnerGateway["createTask"]>(h.gw.createTask).mock.calls[0]).toEqual(
+      vi.mocked<RemoteRunnerGateway["createTask"]>(h.gw.createTask).mock.calls[1],
+    );
   });
   it("recovers a lost start by idempotent create without another start", async () => {
     const h = await render();
@@ -238,7 +245,9 @@ describe("remote agent mutations", () => {
       await h.current().start(imageRequest, target);
     });
     expect(upload).toHaveBeenCalledTimes(1);
-    expect(h.gw.createTask.mock.calls[0]).toEqual(h.gw.createTask.mock.calls[1]);
+    expect(vi.mocked<RemoteRunnerGateway["createTask"]>(h.gw.createTask).mock.calls[0]).toEqual(
+      vi.mocked<RemoteRunnerGateway["createTask"]>(h.gw.createTask).mock.calls[1],
+    );
   });
   it.each(["draft", "start"])("rejects foreign root lineage from %s", async (stage) => {
     const h = await render();
@@ -281,4 +290,138 @@ describe("remote agent mutations", () => {
     });
     expect(h.gw.cancelTask).not.toHaveBeenCalled();
   });
+});
+
+const instructionSnapshot = (content: string) => ({
+  version: 1 as const,
+  files: [{ scope: "global" as const, path: "CLAUDE.md", content }],
+});
+const claudeRequest: AgentThreadStartRequest = {
+  ...request,
+  launch: { provider: "claudeCode", model: "default", mode: "default", effort: "high" },
+};
+function synchronizingGateway() {
+  const gw = gateway();
+  const claudeTask = (overrides: Partial<RemoteRunnerTask> = {}) =>
+    task({ provider: "claude", launch: claudeRequest.launch, ...overrides });
+  gw.createTask.mockResolvedValue({
+    task: claudeTask({ status: "draft", projectId: undefined }),
+    created: true,
+  });
+  gw.startTask.mockResolvedValue(claudeTask());
+  gw.getTask.mockResolvedValue(claudeTask({ status: "succeeded" }));
+  gw.continueTask.mockResolvedValue({
+    task: claudeTask({ id: "child", sequence: 2, parentTaskId: "t", conversationId: "t" }),
+    created: true,
+  });
+  gw.getRunner.mockResolvedValue({ runnerId: "r", capabilities: { instructionSync: true } });
+  return { ...gw, collectInstructions: vi.fn().mockResolvedValue(instructionSnapshot("first")) };
+}
+describe("automatic instruction snapshots", () => {
+  const request = claudeRequest;
+  it("collects fresh rules on each confirmed send but pins rules across uncertain retries", async () => {
+    const gw = synchronizingGateway();
+    gw.createTask.mockRejectedValueOnce(new Error("connection lost"));
+    const h = await render(gw);
+    await act(async () => {
+      await h.current().start(request, target);
+    });
+    const first = vi.mocked<RemoteRunnerGateway["createTask"]>(gw.createTask).mock.calls[0]?.[0];
+    gw.collectInstructions.mockResolvedValue(instructionSnapshot("edited"));
+    await act(async () => {
+      await h.current().start(request, target);
+    });
+    expect(vi.mocked<RemoteRunnerGateway["createTask"]>(gw.createTask).mock.calls[1]?.[0]).toEqual(
+      first,
+    );
+    expect(gw.collectInstructions).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await h.current().start(request, target);
+    });
+    expect(gw.collectInstructions).toHaveBeenCalledTimes(2);
+    expect(
+      vi.mocked<RemoteRunnerGateway["createTask"]>(gw.createTask).mock.calls[2]?.[0],
+    ).toMatchObject({ instructions: instructionSnapshot("edited") });
+  });
+  it("does not dispatch when collecting fails or the server lacks support", async () => {
+    const gw = synchronizingGateway();
+    gw.collectInstructions.mockRejectedValue(new Error("Cannot read rules"));
+    const h = await render(gw);
+    await act(async () => {
+      await h.current().start(request, target);
+    });
+    expect(gw.createTask).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledWith("Cannot read rules");
+    gw.getRunner.mockResolvedValue({ runnerId: "r", capabilities: {} });
+    gw.collectInstructions.mockClear();
+    await act(async () => {
+      await h.current().start(request, target);
+    });
+    expect(gw.collectInstructions).not.toHaveBeenCalled();
+    expect(gw.createTask).not.toHaveBeenCalled();
+  });
+  it("revokes a collected snapshot when the workspace owner changes", async () => {
+    const gw = synchronizingGateway();
+    let resolve!: (value: ReturnType<typeof instructionSnapshot>) => void;
+    gw.collectInstructions.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const h = await render(gw);
+    let sending!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      sending = h.current().start(request, target);
+    });
+    await h.replace();
+    await act(async () => {
+      resolve(instructionSnapshot("stale"));
+      await sending;
+    });
+    expect(gw.createTask).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+  });
+  it("includes fresh instructions in a continuation", async () => {
+    const gw = synchronizingGateway();
+    const h = await render(gw);
+    await act(async () => {
+      await h
+        .current()
+        .followUp(
+          { threadId: "thread", prompt: request.prompt, launch: request.launch },
+          { ...target, latestTaskId: "t", conversationId: "t" },
+        );
+    });
+    expect(gw.continueTask).toHaveBeenCalledWith(
+      expect.objectContaining({ instructions: instructionSnapshot("first") }),
+    );
+  });
+});
+
+it("sends Codex starts and continuations without collecting rules or requiring runner support", async () => {
+  const gw = gateway();
+  gw.getRunner.mockResolvedValue({ runnerId: "r", capabilities: {} });
+  gw.collectInstructions.mockRejectedValue(new Error("must not collect"));
+  const h = await render(gw);
+  await act(async () => {
+    expect(await h.current().start(request, target)).not.toBeNull();
+  });
+  await act(async () => {
+    expect(
+      await h
+        .current()
+        .followUp(
+          { threadId: "thread", prompt: request.prompt, launch: request.launch },
+          { ...target, latestTaskId: "t", conversationId: "t" },
+        ),
+    ).not.toBeNull();
+  });
+  expect(gw.collectInstructions).not.toHaveBeenCalled();
+  expect(gw.getRunner).not.toHaveBeenCalled();
+  expect(
+    vi.mocked<RemoteRunnerGateway["createTask"]>(gw.createTask).mock.calls[0]?.[0],
+  ).not.toHaveProperty("instructions");
+  expect(
+    vi.mocked<RemoteRunnerGateway["continueTask"]>(gw.continueTask).mock.calls[0]?.[0],
+  ).not.toHaveProperty("instructions");
 });

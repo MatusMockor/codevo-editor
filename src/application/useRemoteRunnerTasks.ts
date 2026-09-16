@@ -1,3 +1,5 @@
+import { retainRemoteReplayWindow } from "./remoteAgentReplayWindow";
+import { useRemoteRunnerSubmission } from "./useRemoteRunnerSubmission";
 import { useRemoteRunnerContinuation } from "./useRemoteRunnerContinuation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -218,7 +220,7 @@ export function useRemoteRunnerTasks({
     let timer: ReturnType<typeof setTimeout> | undefined;
     let after = 0;
     let retained: readonly RemoteRunnerEvent[] = [];
-    let outputBytes = 0;
+    let caughtUp = false;
     let replayError: string | null = null;
     const valid = () => !disposed && isCurrent(captured) && selected === selection.current;
     const poll = async () => {
@@ -229,35 +231,32 @@ export function useRemoteRunnerTasks({
           throw new Error("The runner returned a different task.");
         publishTask(task);
         try {
-          for (let pageNumber = 0; replayError === null && pageNumber < 24; pageNumber++) {
+          for (let pageNumber = 0; pageNumber < 24; pageNumber++) {
             const page = await gateway.listEvents({ serverId, taskId, after });
             if (!valid()) return;
             const incoming = page.items;
             let nextAfter = after;
-            let nextOutputBytes = outputBytes;
             for (const event of incoming) {
               if (event.taskId !== taskId || event.sequence <= nextAfter)
                 throw new RemoteReplayError(
                   "The runner returned invalid event ordering; displayed output is incomplete.",
                 );
               nextAfter = event.sequence;
-              nextOutputBytes += (event.text?.length ?? 0) * 2;
             }
-            if (retained.length + incoming.length > 1100 || nextOutputBytes > 3_000_000)
-              throw new RemoteReplayError(
-                "Remote output exceeds the editor display limit; displayed output is incomplete.",
-              );
             if (
               page.nextCursor !== null &&
-              (page.nextCursor !== nextAfter || incoming.length === 0 || pageNumber === 23)
+              (page.nextCursor !== nextAfter || incoming.length === 0)
             )
               throw new RemoteReplayError(
                 "The runner returned an invalid event page; displayed output is incomplete.",
               );
             after = nextAfter;
-            outputBytes = nextOutputBytes;
-            retained = [...retained, ...incoming];
-            if (page.nextCursor === null) break;
+            const window = retainRemoteReplayWindow([...retained, ...incoming], 3_000_000);
+            retained = window.events;
+            if (window.truncated || page.outputTruncatedBeforeSequence !== undefined)
+              replayError = "Showing recent server output; earlier output is incomplete.";
+            caughtUp = page.nextCursor === null;
+            if (caughtUp) break;
           }
         } catch (failure) {
           if (!(failure instanceof RemoteReplayError)) throw failure;
@@ -271,7 +270,7 @@ export function useRemoteRunnerTasks({
           setDiff(patch);
         }
         setError(replayError);
-        if (!terminal(task)) timer = setTimeout(() => void poll(), 2000);
+        if (!terminal(task) || !caughtUp) timer = setTimeout(() => void poll(), 2000);
       } catch (failure) {
         if (!valid()) return;
         setError(message(failure));
@@ -319,91 +318,26 @@ export function useRemoteRunnerTasks({
     }
   }, [gateway, serverId, loading, descriptor, isCurrent, renderOwner]);
 
-  const submit = useCallback(
-    async (input: RemoteRunnerSubmission): Promise<RemoteRunnerTask | null> => {
-      if (
-        serverId === null ||
-        !isCurrent(renderOwner) ||
-        mutation.current ||
-        continuationRef.current.locked() ||
-        !projectRef.current.some((project) => project.id === input.projectId)
-      )
-        return null;
-      const captured = renderOwner;
-      mutation.current = true;
-      refreshSequence.current++;
-      setLoading(false);
-      setBusy(true);
-      setError(null);
-      try {
-        if (
-          (!input.prompt.trim() && input.attachments.length === 0) ||
-          input.prompt.length > 48000 ||
-          input.attachments.length > 8
-        )
-          throw new Error("Enter a prompt and use at most eight images.");
-        const parts: (
-          { type: "text"; text: string } | { type: "attachment"; attachmentId: string }
-        )[] = input.prompt.trim() ? [{ type: "text", text: input.prompt }] : [];
-        for (const attachment of input.attachments) {
-          if (!isCurrent(captured)) return null;
-          const attachmentId = crypto.randomUUID();
-          const response = await gateway.uploadAttachment({
-            serverId,
-            attachmentId,
-            ...attachment,
-          });
-          if (!isCurrent(captured)) return null;
-          if (
-            response.attachment.id !== attachmentId ||
-            response.attachment.runnerId !== descriptor?.runnerId
-          )
-            throw new Error("The runner returned a different attachment.");
-          parts.push({ type: "attachment", attachmentId: response.attachment.id });
-        }
-        if (!isCurrent(captured)) return null;
-        const created = await gateway.createTask({
-          serverId,
-          idempotencyKey: crypto.randomUUID(),
-          provider: input.provider,
-          parts,
-        });
-        if (!isCurrent(captured)) return null;
-        if (
-          created.task.runnerId !== descriptor?.runnerId ||
-          created.task.provider !== input.provider ||
-          created.task.status !== "draft"
-        )
-          throw new Error("The runner returned a different task draft.");
-        choose(created.task);
-        publishTask(created.task);
-        const started = await gateway.startTask({
-          serverId,
-          taskId: created.task.id,
-          projectId: input.projectId,
-        });
-        if (!isCurrent(captured)) return null;
-        if (
-          started.id !== created.task.id ||
-          started.runnerId !== created.task.runnerId ||
-          started.projectId !== input.projectId
-        )
-          throw new Error("The runner returned a different started task.");
-        publishTask(started);
-        setPollRevision((value) => value + 1);
-        return started;
-      } catch (failure) {
-        if (isCurrent(captured)) setError(message(failure));
-        return null;
-      } finally {
-        if (isCurrent(captured)) {
-          mutation.current = false;
-          setBusy(false);
-        }
-      }
-    },
-    [gateway, serverId, isCurrent, choose, publishTask, renderOwner, descriptor],
-  );
+  const submission = useRemoteRunnerSubmission({
+    gateway,
+    serverId,
+    owner: renderOwner,
+    descriptor,
+    valid: isCurrent,
+    mutation,
+    refreshSequence,
+    projects: projectRef,
+    locked: () => continuationRef.current.locked(),
+    setLoading,
+    setBusy,
+    setError,
+    publish: publishTask,
+    choose,
+    poll: () => setPollRevision((value) => value + 1),
+  });
+
+  const submissionRef = useRef(submission);
+  submissionRef.current = submission;
 
   const startDraft = useCallback(
     async (projectId: string): Promise<RemoteRunnerTask | null> => {
@@ -424,6 +358,10 @@ export function useRemoteRunnerTasks({
       setLoading(false);
       setBusy(true);
       try {
+        if (!submissionRef.current.canStartDraft(task.id, projectId))
+          throw new Error(
+            "This draft has no confirmed instruction snapshot. Send it as a new message.",
+          );
         const started = await gateway.startTask({ serverId, taskId: task.id, projectId });
         if (!isCurrent(captured) || selection.current !== selected) return null;
         if (
@@ -432,6 +370,7 @@ export function useRemoteRunnerTasks({
           started.projectId !== projectId
         )
           throw new Error("The runner returned a different started task.");
+        submissionRef.current.confirmStarted(started);
         publishTask(started);
         setError(null);
         setPollRevision((value) => value + 1);
@@ -507,7 +446,7 @@ export function useRemoteRunnerTasks({
     busy,
     loading,
     error,
-    submit,
+    submit: submission.submit,
     selectTask,
     refresh,
     loadMore,

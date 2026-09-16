@@ -1,3 +1,5 @@
+import { collectRemoteInstructions } from "./collectRemoteInstructions";
+import type { RemoteRunnerInstructionSnapshot } from "../domain/remoteRunnerInstructions";
 import { useEffect, useRef, useState } from "react";
 import type {
   AgentFollowUpRequest,
@@ -54,6 +56,7 @@ type Pending = {
   readonly signature: string;
   readonly idempotencyKey: string;
   readonly parts: readonly RemoteRunnerPart[];
+  readonly instructions?: RemoteRunnerInstructionSnapshot;
   readonly parentTaskId?: string;
   draftId?: string;
 };
@@ -172,7 +175,10 @@ export function useRemoteAgentMutations(options: Options) {
           )
             throw new Error("The remote image upload returned invalid attachments.");
         }
+        const instructions = await collectRemoteInstructions(gateway, target, valid, provider);
+        if (!valid()) return null;
         command = {
+          instructions,
           signature,
           parentTaskId: continuation ? target.latestTaskId : undefined,
           idempotencyKey: crypto.randomUUID(),
@@ -192,6 +198,7 @@ export function useRemoteAgentMutations(options: Options) {
           taskId: command.parentTaskId!,
           idempotencyKey: command.idempotencyKey,
           parts: command.parts,
+          ...(command.instructions ? { instructions: command.instructions } : {}),
           launch,
         };
         task = (await gateway.continueTask(wire)).task;
@@ -209,6 +216,7 @@ export function useRemoteAgentMutations(options: Options) {
           idempotencyKey: command.idempotencyKey,
           provider,
           parts: command.parts,
+          ...(command.instructions ? { instructions: command.instructions } : {}),
           launch,
         };
         task = (await gateway.createTask(wire)).task;

@@ -1,3 +1,6 @@
+import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
+import { AgentThreadQuestions } from "./AgentThreadQuestions";
+import { RemoteInstructionSourceControl } from "../remoteRunner/RemoteInstructionSourceControl";
 import type {
   AgentArtifactLoader,
   AgentArtifactPreviewPort,
@@ -24,6 +27,7 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { agentContextCompactionOffer } from "../../domain/agentContextCompaction";
+import { parseRemoteAgentThreadIdentity } from "../../domain/remoteAgentIdentity";
 import { agentContextWindow } from "../../domain/agentContextWindow";
 import type {
   AgentTasksNotice,
@@ -76,6 +80,7 @@ import {
 } from "./useAgentThreadPresentationViews";
 
 export interface AgentModeViewProps {
+  readonly questionGateway?: AgentQuestionGateway | null;
   readonly artifactLoader?: AgentArtifactLoader | null;
   readonly artifactPreview?: AgentArtifactPreviewPort | null;
   readonly imageSurface?: AgentImageSurfacePort | null;
@@ -158,6 +163,7 @@ function LocalAgentModeView({
   overflowRootPaths,
   providerEnabled,
   projects,
+  questionGateway = null,
   artifactLoader = null,
   artifactPreview = null,
   textClipboard = null,
@@ -202,6 +208,10 @@ function LocalAgentModeView({
     selectedThreadId === null
       ? null
       : (presentationThreads.find((view) => view.thread.threadId === selectedThreadId) ?? null);
+  const pendingRemoteIdentity =
+    selectedThread === null ? parseRemoteAgentThreadIdentity(selectedThreadId) : null;
+  const resolvingRemoteThread =
+    selectedThread === null && selectedThreadId?.startsWith("remote-thread:") === true;
   const effectiveProviderEnabled =
     selectedThread?.execution?.kind === "remote" ||
     (selectedThread === null && selectedServerId !== null)
@@ -308,6 +318,19 @@ function LocalAgentModeView({
   });
   const composerProps = {
     ...composer.composerProps,
+    ...(resolvingRemoteThread
+      ? {
+          mode: {
+            kind: "followUp" as const,
+            blockedReason: "Waiting for the server conversation to load.",
+          },
+          draftKey: selectedThreadId,
+          promptOwnerKey: selectedThreadId!,
+          target: null,
+          attachments: null,
+          isolation: "worktree" as const,
+        }
+      : {}),
     onIsolationChange: changeIsolation,
     onLaunchChange: changeLaunch,
     onNewThread: clearComposer,
@@ -736,11 +759,24 @@ function LocalAgentModeView({
                 textClipboard={textClipboard}
                 thread={sessionThread}
               />
+              {composerProps.launch.provider === "claudeCode" &&
+                selectedProject?.rootKey.startsWith("remote:") && (
+                  <RemoteInstructionSourceControl
+                    remoteRootKey={selectedProject.rootKey}
+                    projects={projects}
+                  />
+                )}
+              <AgentThreadQuestions gateway={questionGateway} thread={sessionThread} />
               <AgentComposerController
                 contextUsage={contextUsage}
                 executionServerId={
                   selectedThread?.execution?.serverId ??
-                  (selectedThread === null ? selectedServerId : null)
+                  pendingRemoteIdentity?.serverId ??
+                  (resolvingRemoteThread
+                    ? "unavailable"
+                    : selectedThread === null
+                      ? selectedServerId
+                      : null)
                 }
                 compactionOffer={
                   selectedThread?.execution?.kind === "remote"
@@ -753,7 +789,7 @@ function LocalAgentModeView({
                 onOpenProviderSettings={agents.configureAgentCli}
                 providerManagement={agents.providerManagement}
                 providerEnabled={effectiveProviderEnabled}
-                submissionBlocked={composer.submissionBlocked}
+                submissionBlocked={resolvingRemoteThread || composer.submissionBlocked}
                 submit={submitComposer}
               />
             </div>

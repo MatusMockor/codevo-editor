@@ -1,3 +1,4 @@
+import { RemoteRunnerExecutionPolicy } from "../../remoteRunner/RemoteRunnerExecutionPolicy";
 import { useState, type FormEvent } from "react";
 import { Check, Monitor, Plus, Server } from "lucide-react";
 import { useRemoteRunnerContext } from "../../remoteRunner/remoteRunnerContext";
@@ -161,6 +162,13 @@ export function EnvironmentsSettingsPage() {
                   {server.username}@{server.host}:{server.port} ·{" "}
                   {server.connected ? "Connected" : "Disconnected"}
                 </p>
+                {remote.gateway && (
+                  <RemoteRunnerExecutionPolicy
+                    gateway={remote.gateway}
+                    serverId={server.id}
+                    connected={server.connected}
+                  />
+                )}
               </div>
               <div className="settings-environments__actions">
                 <SettingsButton

@@ -1,3 +1,4 @@
+import { createAgentOutputAcknowledgement } from "./agentOutputAcknowledgement";
 import type { CodexTransport } from "../domain/agentProviderSettings";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentAttachment } from "../domain/agentAttachment";
@@ -247,11 +248,44 @@ export function useAgentTurnDispatch(
     flushStreams,
   });
 
+  const outputAcksRef = useRef(
+    new WeakMap<AgentTurnOutputStream, ReturnType<typeof createAgentOutputAcknowledgement>>(),
+  );
+
   const handleOutputEvent = useCallback(
     (event: AgentTaskOutputEvent): void => {
       const stream = streamsRef.current.get(event.taskId);
       if (stream === undefined) return;
       if (!acceptAgentTurnOutput(parser(), stream, event)) return;
+      const gateway = dependenciesRef.current.agentTaskGateway;
+      if (gateway.acknowledgeAgentTaskOutput !== undefined) {
+        let ack = outputAcksRef.current.get(stream);
+        if (ack === undefined) {
+          const taskId = event.taskId;
+          const outputEpoch = outputSubscriptionRef.current.epoch;
+          const acknowledge = gateway.acknowledgeAgentTaskOutput.bind(gateway);
+          const isCurrent = (): boolean =>
+            mountedRef.current &&
+            outputSubscriptionRef.current.epoch === outputEpoch &&
+            streamsRef.current.get(taskId) === stream &&
+            dependenciesRef.current.agentTaskGateway === gateway;
+          ack = createAgentOutputAcknowledgement({
+            taskId,
+            workspaceId: stream.ownerId,
+            isCurrent,
+            acknowledge,
+            onFailure: (error) => {
+              dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, error);
+              if (isCurrent())
+                dependenciesRef.current.setNotice(
+                  warning("Live output delivery was interrupted. Stop this turn and retry."),
+                );
+            },
+          });
+          outputAcksRef.current.set(stream, ack);
+        }
+        ack.consumed(event.sequence);
+      }
       const deps = dependenciesRef.current;
       for (const observation of drainAgentAccountUsage(stream)) {
         deps.onAccountUsageObserved?.(observation);
@@ -354,6 +388,7 @@ export function useAgentTurnDispatch(
       disposed = true;
       if (outputSubscriptionRef.current.epoch === outputSubscriptionEpoch) {
         outputSubscriptionRef.current = { epoch: outputSubscriptionEpoch + 1, ready: false };
+        outputAcksRef.current = new WeakMap();
         markOutputStreamsIncomplete(streams);
       }
       for (const unsubscribe of unsubscribers.splice(0)) unsubscribe();

@@ -245,6 +245,8 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
           ...snapshot,
           runnerId: snapshot.descriptor.runnerId,
           pendingMessagesSupported: snapshot.descriptor.capabilities.pendingMessages === true,
+          interactiveQuestionsSupported:
+            snapshot.descriptor.capabilities.interactiveQuestions === true,
           attachmentsByTask,
         })) {
           const presented = projectMetadata(view);

@@ -681,9 +681,7 @@ function appendTurnEvents(
   if (action.worktreePath !== thread.target.worktreePath) return state;
   if (isTerminalAgentTurnStatus(turn.status)) return state;
   if (action.outputSequence <= turn.lastOutputSequence) return state;
-  const merged = turn.eventsTruncated
-    ? { events: turn.events, truncated: false }
-    : mergeTurnEvents(turn.events, action.events);
+  const merged = mergeTurnEvents(turn.events, action.events);
   const updatedTurn: AgentTurn = {
     ...turn,
     events: merged.events,
@@ -775,7 +773,8 @@ function providerWithSession(
   return { ...provider, sessionId };
 }
 
-function mergeTurnEvents(
+/** Retain a bounded recent window while continuing to accept live output after eviction. */
+export function mergeTurnEvents(
   existing: ReadonlyArray<AgentTurnEvent>,
   incoming: ReadonlyArray<AgentTurnEvent>,
 ): { readonly events: ReadonlyArray<AgentTurnEvent>; readonly truncated: boolean } {
@@ -783,39 +782,46 @@ function mergeTurnEvents(
   const events = [...existing];
   let retainedBytes = agentTurnEventsUtf8Bytes(events);
   let truncated = false;
-  const subagents = new Set(
-    existing.flatMap((event) => ("agentThreadId" in event ? [event.agentThreadId] : [])),
-  );
+  const subagents = new Map<string, number>();
+  const countSubagent = (event: AgentTurnEvent, delta: number) => {
+    if (!("agentThreadId" in event)) return;
+    const count = (subagents.get(event.agentThreadId) ?? 0) + delta;
+    if (count > 0) subagents.set(event.agentThreadId, count);
+    else subagents.delete(event.agentThreadId);
+  };
+  events.forEach((event) => countSubagent(event, 1));
   for (const event of incoming) {
-    if (truncated) continue;
-    if (!acceptSubagent(event, subagents)) {
-      truncated = true;
-      continue;
-    }
-    const coalesced = coalesceAgentTextEvents(events[events.length - 1], event);
-    if (coalesced !== null) {
-      const previous = events[events.length - 1];
-      if (previous === undefined) continue;
-      const nextBytes =
-        retainedBytes - agentTurnEventUtf8Bytes(previous) + agentTurnEventUtf8Bytes(coalesced);
-      if (nextBytes > MAX_AGENT_EVENT_BYTES_PER_TURN) {
-        truncated = true;
-        continue;
-      }
-      events[events.length - 1] = coalesced;
-      retainedBytes = nextBytes;
-      continue;
-    }
     const eventBytes = agentTurnEventUtf8Bytes(event);
-    if (
-      events.length >= MAX_AGENT_EVENTS_PER_TURN ||
-      retainedBytes + eventBytes > MAX_AGENT_EVENT_BYTES_PER_TURN
-    ) {
+    if (eventBytes > MAX_AGENT_EVENT_BYTES_PER_TURN) {
       truncated = true;
       continue;
     }
-    events.push(event);
-    retainedBytes += eventBytes;
+    const previous = events[events.length - 1];
+    const coalesced = coalesceAgentTextEvents(previous, event);
+    if (coalesced !== null && previous !== undefined) {
+      retainedBytes -= agentTurnEventUtf8Bytes(previous);
+      events[events.length - 1] = coalesced;
+      retainedBytes += agentTurnEventUtf8Bytes(coalesced);
+    } else {
+      events.push(event);
+      retainedBytes += eventBytes;
+      countSubagent(event, 1);
+    }
+    while (
+      events.length > MAX_AGENT_EVENTS_PER_TURN ||
+      retainedBytes > MAX_AGENT_EVENT_BYTES_PER_TURN ||
+      subagents.size > MAX_SUBAGENT_THREADS_PER_TURN
+    ) {
+      // Accepted steering messages are user input and must remain visible/countable.
+      // If they consume the entire budget, reject newer output instead of losing them.
+      const oldestOutput = events.findIndex((candidate) => candidate.kind !== "userMessage");
+      const removalIndex = oldestOutput < 0 ? events.length - 1 : oldestOutput;
+      const [removed] = events.splice(removalIndex, 1);
+      if (removed === undefined) break;
+      retainedBytes -= agentTurnEventUtf8Bytes(removed);
+      countSubagent(removed, -1);
+      truncated = true;
+    }
   }
   return { events, truncated };
 }
@@ -920,28 +926,10 @@ function boundAgentThreadEvents(thread: AgentThread): AgentThread {
 }
 
 function boundAgentTurnEvents(turn: AgentTurn): AgentTurn {
-  const retained: AgentTurnEvent[] = [];
-  let retainedBytes = 0;
-  let truncated = turn.eventsTruncated;
-  const subagents = new Set<string>();
-  for (const event of turn.events) {
-    if (!acceptSubagent(event, subagents)) {
-      truncated = true;
-      break;
-    }
-    const eventBytes = agentTurnEventUtf8Bytes(event);
-    if (
-      retained.length >= MAX_AGENT_EVENTS_PER_TURN ||
-      retainedBytes + eventBytes > MAX_AGENT_EVENT_BYTES_PER_TURN
-    ) {
-      truncated = true;
-      break;
-    }
-    retained.push(event);
-    retainedBytes += eventBytes;
-  }
+  const bounded = mergeTurnEvents([], turn.events);
+  const truncated = turn.eventsTruncated || bounded.truncated;
   if (
-    retained.length === turn.events.length &&
+    bounded.events.length === turn.events.length &&
     truncated === turn.eventsTruncated &&
     turn.streamMetrics !== undefined
   ) {
@@ -949,18 +937,10 @@ function boundAgentTurnEvents(turn: AgentTurn): AgentTurn {
   }
   return {
     ...turn,
-    events: retained,
+    events: bounded.events,
     eventsTruncated: truncated,
     streamMetrics: turn.streamMetrics ?? null,
   };
-}
-
-function acceptSubagent(event: AgentTurnEvent, seen: Set<string>): boolean {
-  if (!("agentThreadId" in event)) return true;
-  if (seen.has(event.agentThreadId)) return true;
-  if (seen.size >= MAX_SUBAGENT_THREADS_PER_TURN) return false;
-  seen.add(event.agentThreadId);
-  return true;
 }
 
 export function coalesceAgentTextEvents(

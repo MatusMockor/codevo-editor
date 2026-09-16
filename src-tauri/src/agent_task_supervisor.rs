@@ -18,7 +18,9 @@ pub mod agent_task_stop_escalation;
 use agent_task_steering::{
     close_agent_task_input, close_input_after_result, result_watch, AgentTaskStopTargets,
 };
-use agent_task_stop_escalation::{escalate_group_stop, reap_bounded, wait_for_groups_reaped};
+use agent_task_stop_escalation::{
+    escalate_group_stop, reap_bounded, run_watchdog, wait_for_groups_reaped,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
@@ -34,11 +36,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const AGENT_TASK_OUTPUT_EVENT_LIMIT: u64 = 4096;
 pub const MAX_AGENT_OUTPUT_CHUNK_BYTES: usize = 8 * 1024;
 pub const AGENT_TASK_MAX_RUNTIME: Duration = Duration::from_secs(3600);
 pub const MAX_AGENT_TASK_FAILURE_BYTES: usize = 4 * 1024;
 pub const MAX_QUEUED_AGENT_TASK_EVENTS: usize = 256;
+pub const MAX_UNACKNOWLEDGED_AGENT_OUTPUT_EVENTS: usize = 64;
 
 pub const AGENT_TASK_STATUS_EVENT_CHANNEL: &str = "agent-task://status";
 pub const AGENT_TASK_OUTPUT_EVENT_CHANNEL: &str = "agent-task://output";
@@ -117,11 +119,17 @@ pub struct AgentTaskOutputEvent {
     pub stream: AgentTaskOutputStream,
     pub chunk: String,
     pub truncated: bool,
+    pub starts_at_line_boundary: bool,
 }
 
 pub trait AgentTaskEventSink: Send + Sync {
     fn status(&self, event: AgentTaskStatusEvent);
     fn output(&self, event: AgentTaskOutputEvent);
+    /// Asynchronous transports must opt into bounded consumption acknowledgement.
+    /// Synchronous sinks finish consuming an event before returning from `output`.
+    fn requires_output_acknowledgement(&self) -> bool {
+        false
+    }
 }
 
 pub trait AgentProcessGroupSignalSender: Send + Sync {
@@ -570,12 +578,16 @@ struct AgentTaskEntry {
     queued: VecDeque<QueuedAgentTaskEvent>,
     status_sequence: u64,
     output_sequence: u64,
-    output_events_published: u64,
-    output_truncation_published: bool,
+    output_incomplete_reported: bool,
+    outstanding_output: VecDeque<u64>,
+    last_acknowledged_output: u64,
+    stdout_at_line_boundary: bool,
+    stderr_at_line_boundary: bool,
     stop_requested: bool,
     watchdog_timed_out: bool,
     group: Option<Arc<AgentProcessGroup>>,
     input: Option<Arc<AgentTaskInputSlot>>,
+    questions: Option<Arc<crate::agent_questions::AgentQuestionSession>>,
     watchdog: Arc<WatchdogGate>,
 }
 
@@ -594,12 +606,16 @@ impl AgentTaskEntry {
             queued: VecDeque::new(),
             status_sequence: 0,
             output_sequence: 0,
-            output_events_published: 0,
-            output_truncation_published: false,
+            output_incomplete_reported: false,
+            outstanding_output: VecDeque::new(),
+            last_acknowledged_output: 0,
+            stdout_at_line_boundary: true,
+            stderr_at_line_boundary: true,
             stop_requested: false,
             watchdog_timed_out: false,
             group: None,
             input: None,
+            questions: None,
             watchdog,
         }
     }
@@ -851,6 +867,7 @@ impl AgentTaskRegistry {
         let child = unpublished
             .child_mut()
             .ok_or_else(|| AGENT_TASK_START_PANIC_ERROR.to_string())?;
+        let questions = child.take_questions();
         let input = child
             .take_input()
             .map(|writer| Arc::new(AgentTaskInputSlot::new(writer)));
@@ -878,6 +895,7 @@ impl AgentTaskRegistry {
             };
             entry.group = Some(Arc::clone(&group));
             entry.input = input.clone();
+            entry.questions = questions;
             entry.stop_requested
         };
         if stop_already_requested {
@@ -937,6 +955,11 @@ impl AgentTaskRegistry {
     }
 
     fn acknowledge_owned(&self, task_id: &str, workspace_id: Option<&str>) -> Result<(), String> {
+        let _order = self
+            .shared
+            .output_emission_order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(mut events) = begin_acknowledgement(&self.shared, task_id, workspace_id)? else {
             return Ok(());
         };
@@ -960,7 +983,7 @@ impl AgentTaskRegistry {
     }
 
     fn stop_owned(&self, task_id: &str, workspace_id: Option<&str>) -> Result<(), String> {
-        let (group, input) = {
+        let (group, input, questions) = {
             let mut state = self.shared.state();
             let Some(entry) = state.entries.get_mut(task_id) else {
                 return Ok(());
@@ -972,8 +995,15 @@ impl AgentTaskRegistry {
                 return Ok(());
             }
             entry.stop_requested = true;
-            (entry.group.clone(), entry.input.clone())
+            (
+                entry.group.clone(),
+                entry.input.clone(),
+                entry.questions.clone(),
+            )
         };
+        if let Some(questions) = questions {
+            questions.close();
+        }
         close_agent_task_input(input, AgentTaskInputState::ClosedByStop);
         let Some(group) = group else {
             return Ok(());
@@ -1314,38 +1344,34 @@ fn publish_output_chunk(
         if matches!(entry.phase, AgentTaskPhase::Terminal) {
             return;
         }
-        if entry.output_truncation_published {
-            return;
-        }
+        // Bound pending delivery, not the lifetime of the stream. A long-running
+        // task must still deliver its latest output and final response.
         entry.output_sequence += 1;
-        let event = if entry.output_events_published >= AGENT_TASK_OUTPUT_EVENT_LIMIT {
-            entry.output_truncation_published = true;
-            AgentTaskOutputEvent {
-                task_id: task_id.to_string(),
-                sequence: entry.output_sequence,
-                stream,
-                chunk: String::new(),
-                truncated: true,
-            }
-        } else {
-            entry.output_events_published += 1;
-            AgentTaskOutputEvent {
-                task_id: task_id.to_string(),
-                sequence: entry.output_sequence,
-                stream,
-                chunk,
-                truncated: false,
-            }
+        let boundary = match stream {
+            AgentTaskOutputStream::Stdout => &mut entry.stdout_at_line_boundary,
+            AgentTaskOutputStream::Stderr => &mut entry.stderr_at_line_boundary,
         };
+        let starts_at_line_boundary = *boundary;
+        if !chunk.is_empty() {
+            *boundary = chunk.ends_with('\n');
+        }
+        let event = AgentTaskOutputEvent {
+            task_id: task_id.to_string(),
+            sequence: entry.output_sequence,
+            stream,
+            chunk,
+            truncated: false,
+            starts_at_line_boundary,
+        };
+        push_queued(entry, QueuedAgentTaskEvent::Output(event));
         if entry.acknowledged && !entry.flushing {
-            Some(event)
+            take_ready_events(entry, shared.sink.requires_output_acknowledgement())
         } else {
-            push_queued(entry, QueuedAgentTaskEvent::Output(event));
-            None
+            Vec::new()
         }
     };
-    if let Some(event) = emit {
-        shared.sink.output(event);
+    for event in emit {
+        emit_queued_event(shared.sink.as_ref(), event);
     }
 }
 
@@ -1363,27 +1389,31 @@ fn publish_output_incomplete_marker(
         let Some(entry) = state.entries.get_mut(task_id) else {
             return;
         };
-        if matches!(entry.phase, AgentTaskPhase::Terminal) || entry.output_truncation_published {
+        if matches!(entry.phase, AgentTaskPhase::Terminal) || entry.output_incomplete_reported {
             return;
         }
         entry.output_sequence += 1;
-        entry.output_truncation_published = true;
+        entry.output_incomplete_reported = true;
         let event = AgentTaskOutputEvent {
             task_id: task_id.to_string(),
             sequence: entry.output_sequence,
             stream,
             chunk: String::new(),
             truncated: true,
+            starts_at_line_boundary: match stream {
+                AgentTaskOutputStream::Stdout => entry.stdout_at_line_boundary,
+                AgentTaskOutputStream::Stderr => entry.stderr_at_line_boundary,
+            },
         };
+        push_queued(entry, QueuedAgentTaskEvent::Output(event));
         if entry.acknowledged && !entry.flushing {
-            Some(event)
+            take_ready_events(entry, shared.sink.requires_output_acknowledgement())
         } else {
-            push_queued(entry, QueuedAgentTaskEvent::Output(event));
-            None
+            Vec::new()
         }
     };
-    if let Some(event) = emit {
-        shared.sink.output(event);
+    for event in emit {
+        emit_queued_event(shared.sink.as_ref(), event);
     }
 }
 
@@ -1411,6 +1441,7 @@ fn run_waiter(
         run_waiter_inner(shared, task_id, child.as_mut(), group, &mut pumps);
     }));
     if waiter.is_ok() {
+        wait_for_terminal_output_delivery(shared, task_id, Duration::from_secs(30));
         return;
     }
     let _ = group.force_stop();
@@ -1433,6 +1464,8 @@ fn run_waiter(
     }));
     if completion.is_err() {
         remove_shared_entry(shared, task_id);
+    } else {
+        wait_for_terminal_output_delivery(shared, task_id, Duration::from_secs(30));
     }
 }
 
@@ -1513,36 +1546,10 @@ fn remove_shared_entry(shared: &Arc<AgentTaskShared>, task_id: &str) {
         .retain(|candidate| candidate != task_id);
 }
 
-fn run_watchdog(
-    shared: &Arc<AgentTaskShared>,
-    task_id: &str,
-    group: &Arc<AgentProcessGroup>,
-    watchdog: &Arc<WatchdogGate>,
-) {
-    if watchdog.wait_finished(shared.tuning.max_runtime) {
-        return;
-    }
-    let input = {
-        let mut state = shared.state();
-        let Some(entry) = state.entries.get_mut(task_id) else {
-            return;
-        };
-        if matches!(entry.phase, AgentTaskPhase::Terminal) {
-            return;
-        }
-        entry.watchdog_timed_out = true;
-        entry.input.clone()
-    };
-    close_agent_task_input(input, AgentTaskInputState::ClosedByStop);
-    escalate_group_stop(
-        group,
-        shared.tuning.graceful_timeout,
-        shared.tuning.force_timeout,
-    );
-}
-
 fn complete(shared: &Arc<AgentTaskShared>, task_id: &str, payload: AgentTaskStatusPayload) {
     let released_input;
+    let released_questions;
+    let expired_delivery;
     let emit = {
         let mut state = shared.state();
         let emit = {
@@ -1556,10 +1563,14 @@ fn complete(shared: &Arc<AgentTaskShared>, task_id: &str, payload: AgentTaskStat
             entry.phase = AgentTaskPhase::Terminal;
             entry.admission.take();
             released_input = entry.input.take();
+            released_questions = entry.questions.clone();
             entry.watchdog.finish();
             let status =
                 resolve_terminal_status(entry.stop_requested, entry.watchdog_timed_out, payload);
-            if entry.acknowledged && !entry.flushing {
+            if entry.acknowledged
+                && !entry.flushing
+                && !shared.sink.requires_output_acknowledgement()
+            {
                 entry.status_sequence += 1;
                 Some(entry.metadata.status_event(entry.status_sequence, status))
             } else {
@@ -1576,12 +1587,26 @@ fn complete(shared: &Arc<AgentTaskShared>, task_id: &str, payload: AgentTaskStat
                 None
             }
         };
-        record_terminal_entry(&mut state, task_id);
+        expired_delivery = record_terminal_entry(&mut state, task_id);
         emit
     };
+    if let Some(questions) = released_questions {
+        questions.finish();
+    }
     close_agent_task_input(released_input, AgentTaskInputState::ClosedAfterResult);
+    for event in expired_delivery {
+        shared.sink.status(event);
+    }
     if let Some(event) = emit {
         shared.sink.status(event);
+    } else if shared.sink.requires_output_acknowledgement() {
+        let _order = shared
+            .output_emission_order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for event in drain_acknowledgement(shared, task_id) {
+            emit_queued_event(shared.sink.as_ref(), event);
+        }
     }
 }
 
@@ -1606,7 +1631,11 @@ fn resolve_terminal_status(
     payload
 }
 
-fn record_terminal_entry(state: &mut AgentTaskRegistryState, task_id: &str) {
+fn record_terminal_entry(
+    state: &mut AgentTaskRegistryState,
+    task_id: &str,
+) -> Vec<AgentTaskStatusEvent> {
+    let mut expired_delivery = Vec::new();
     if !state
         .terminal_order
         .iter()
@@ -1616,74 +1645,33 @@ fn record_terminal_entry(state: &mut AgentTaskRegistryState, task_id: &str) {
     }
     while state.terminal_order.len() > MAX_TERMINAL_AGENT_TASK_ENTRIES {
         let Some(expired) = state.terminal_order.pop_front() else {
-            return;
+            break;
         };
-        state.entries.remove(&expired);
-    }
-}
-
-fn begin_acknowledgement(
-    shared: &Arc<AgentTaskShared>,
-    task_id: &str,
-    workspace_id: Option<&str>,
-) -> Result<Option<Vec<QueuedAgentTaskEvent>>, String> {
-    let mut state = shared.state();
-    let entry = state
-        .entries
-        .get_mut(task_id)
-        .ok_or_else(|| AGENT_TASK_NOT_REGISTERED_ERROR.to_string())?;
-    if workspace_id.is_some_and(|expected| entry.metadata.workspace_id != expected) {
-        return Err(AGENT_TASK_NOT_REGISTERED_ERROR.to_string());
-    }
-    if entry.acknowledged {
-        return Ok(None);
-    }
-    entry.acknowledged = true;
-    entry.flushing = true;
-    if matches!(entry.phase, AgentTaskPhase::Pending) {
-        entry.phase = AgentTaskPhase::Running;
-        entry.status_sequence += 1;
-        let running = entry
-            .metadata
-            .status_event(entry.status_sequence, AgentTaskStatusPayload::Running);
-        entry
-            .queued
-            .push_back(QueuedAgentTaskEvent::Status(running));
-    }
-    Ok(Some(entry.queued.drain(..).collect()))
-}
-
-fn drain_acknowledgement(
-    shared: &Arc<AgentTaskShared>,
-    task_id: &str,
-) -> Vec<QueuedAgentTaskEvent> {
-    let mut state = shared.state();
-    let terminal = {
-        let Some(entry) = state.entries.get_mut(task_id) else {
-            return Vec::new();
-        };
-        let events: Vec<QueuedAgentTaskEvent> = entry.queued.drain(..).collect();
-        if !events.is_empty() {
-            return events;
+        if let Some(entry) = state.entries.remove(&expired) {
+            if entry.acknowledged
+                && (!entry.outstanding_output.is_empty() || !entry.queued.is_empty())
+            {
+                expired_delivery.push(
+                    entry.metadata.status_event(
+                        entry.status_sequence + 1,
+                        AgentTaskStatusPayload::Failed {
+                            message: "Agent output delivery expired; some output is unavailable."
+                                .to_string(),
+                        },
+                    ),
+                );
+            }
         }
-        entry.flushing = false;
-        matches!(entry.phase, AgentTaskPhase::Terminal)
-    };
-    if terminal {
-        state.entries.remove(task_id);
-        state
-            .terminal_order
-            .retain(|candidate| candidate != task_id);
     }
-    Vec::new()
+    expired_delivery
 }
 
-fn emit_queued_event(sink: &dyn AgentTaskEventSink, event: QueuedAgentTaskEvent) {
-    match event {
-        QueuedAgentTaskEvent::Status(event) => sink.status(event),
-        QueuedAgentTaskEvent::Output(event) => sink.output(event),
-    }
-}
+#[path = "agent_task_output_delivery.rs"]
+mod output_delivery;
+use output_delivery::{
+    begin_acknowledgement, drain_acknowledgement, emit_queued_event, take_ready_events,
+    wait_for_terminal_output_delivery,
+};
 
 fn clip_failure_message(message: &str) -> String {
     if message.len() <= MAX_AGENT_TASK_FAILURE_BYTES {
@@ -1703,3 +1691,6 @@ mod signal_sender_tests;
 #[cfg(test)]
 #[path = "agent_task_supervisor_session_tests.rs"]
 mod session_tests;
+
+#[path = "agent_task_questions.rs"]
+mod questions;

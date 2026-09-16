@@ -1,6 +1,9 @@
 #![cfg(unix)]
 #![allow(dead_code)]
 
+#[path = "../src/agent_questions.rs"]
+mod agent_questions;
+
 mod workspace_registry {
     #[derive(Clone, Debug, Eq, Hash, PartialEq)]
     pub struct WorkspaceId(pub String);
@@ -35,8 +38,8 @@ use agent_task_spawner::{
 use agent_task_supervisor::{
     AgentProcessGroupSignalSender, AgentTaskEventSink, AgentTaskIsolation, AgentTaskOutputEvent,
     AgentTaskOutputStream, AgentTaskRegistry, AgentTaskStartRequest, AgentTaskStartResult,
-    AgentTaskStatusEvent, AgentTaskStatusPayload, AGENT_TASK_OUTPUT_EVENT_LIMIT,
-    KILL_PROCESS_GROUP_SIGNAL, MAX_QUEUED_AGENT_TASK_EVENTS, TERMINATE_PROCESS_GROUP_SIGNAL,
+    AgentTaskStatusEvent, AgentTaskStatusPayload, KILL_PROCESS_GROUP_SIGNAL,
+    MAX_QUEUED_AGENT_TASK_EVENTS, TERMINATE_PROCESS_GROUP_SIGNAL,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -44,7 +47,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Condvar, Mutex,
     },
     thread,
@@ -83,6 +86,7 @@ fn workspace(label: &str) -> WorkspaceId {
 
 #[derive(Default)]
 struct RecordingSink {
+    requires_ack: AtomicBool,
     statuses: Mutex<Vec<AgentTaskStatusEvent>>,
     outputs: Mutex<Vec<AgentTaskOutputEvent>>,
 }
@@ -104,6 +108,9 @@ impl RecordingSink {
 }
 
 impl AgentTaskEventSink for RecordingSink {
+    fn requires_output_acknowledgement(&self) -> bool {
+        self.requires_ack.load(Ordering::SeqCst)
+    }
     fn status(&self, event: AgentTaskStatusEvent) {
         self.statuses.lock().expect("statuses lock").push(event);
     }
@@ -280,6 +287,7 @@ impl AgentTaskInput for RecordingInputHandle {
 }
 
 struct FakeChild {
+    questions: Option<Arc<agent_questions::AgentQuestionSession>>,
     process: Arc<FakeProcess>,
     process_group_id: i32,
     stdout: Option<Box<dyn Read + Send>>,
@@ -292,6 +300,9 @@ struct FakeChild {
 }
 
 impl AgentChild for FakeChild {
+    fn take_questions(&mut self) -> Option<Arc<agent_questions::AgentQuestionSession>> {
+        self.questions.clone()
+    }
     fn stdout_reader(&mut self) -> Result<Box<dyn Read + Send>, String> {
         if self.panic_stdout_reader {
             panic!("stdout reader panic injected");
@@ -433,6 +444,7 @@ impl FakeChildSpec {
             error_after_segments: false,
         };
         FakeChild {
+            questions: None,
             process: self.process,
             process_group_id: self.process_group_id,
             stdout: Some(Box::new(stdout)),
@@ -740,10 +752,11 @@ fn output_event_and_cli_enums_serialize_to_the_pinned_wire_shape() {
         stream: AgentTaskOutputStream::Stdout,
         chunk: "hello".to_string(),
         truncated: false,
+        starts_at_line_boundary: true,
     };
     assert_wire(
         &output,
-        r#"{"taskId":"agt-1","sequence":7,"stream":"stdout","chunk":"hello","truncated":false}"#,
+        r#"{"taskId":"agt-1","sequence":7,"stream":"stdout","chunk":"hello","truncated":false,"startsAtLineBoundary":true}"#,
     );
     let marker = AgentTaskOutputEvent {
         task_id: "agt-1".to_string(),
@@ -751,10 +764,11 @@ fn output_event_and_cli_enums_serialize_to_the_pinned_wire_shape() {
         stream: AgentTaskOutputStream::Stderr,
         chunk: String::new(),
         truncated: true,
+        starts_at_line_boundary: false,
     };
     assert_wire(
         &marker,
-        r#"{"taskId":"agt-1","sequence":8,"stream":"stderr","chunk":"","truncated":true}"#,
+        r#"{"taskId":"agt-1","sequence":8,"stream":"stderr","chunk":"","truncated":true,"startsAtLineBoundary":false}"#,
     );
     assert_eq!(
         serde_json::to_string(&AgentCliInvocation::ClaudeCode).expect("serialize claudeCode"),
@@ -820,6 +834,8 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--verbose".to_string(),
+            "--permission-prompt-tool".to_string(),
+            "stdio".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
             "--append-system-prompt".to_string(),
@@ -878,6 +894,8 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--verbose".to_string(),
+            "--permission-prompt-tool".to_string(),
+            "stdio".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
             "--append-system-prompt".to_string(),
@@ -1588,7 +1606,7 @@ fn failed_group_kill_cannot_strand_a_cancellable_escaped_output_reader() {
 }
 
 #[test]
-fn output_cap_publishes_one_truncation_marker_then_silence() {
+fn long_running_output_continues_beyond_the_former_lifetime_limit() {
     let fixture = fixture(Duration::from_secs(60));
     let root = unique_path("cap");
     let cwd = root.join(".worktrees/agt-cap");
@@ -1605,7 +1623,7 @@ fn output_cap_publishes_one_truncation_marker_then_silence() {
         .registry
         .acknowledge("agt-cap")
         .expect("acknowledge");
-    let total = AGENT_TASK_OUTPUT_EVENT_LIMIT + 1;
+    let total = 4097;
     for _ in 0..total {
         sender.send(vec![b'x']).expect("send chunk");
     }
@@ -1613,22 +1631,23 @@ fn output_cap_publishes_one_truncation_marker_then_silence() {
         wait_until(Duration::from_secs(20), || {
             outputs_for(&fixture.sink, "agt-cap").len() as u64 == total
         }),
-        "capped output stream did not settle"
+        "long-running output stream did not settle"
     );
     let outputs = outputs_for(&fixture.sink, "agt-cap");
-    let normal = &outputs[..outputs.len() - 1];
-    assert!(normal.iter().all(|event| !event.truncated));
-    let marker = outputs.last().expect("truncation marker");
-    assert!(marker.truncated);
-    assert_eq!(marker.chunk, "");
-    assert_eq!(marker.sequence, AGENT_TASK_OUTPUT_EVENT_LIMIT + 1);
-    sender.send(vec![b'y']).expect("send post-marker chunk");
-    thread::sleep(Duration::from_millis(100));
-    assert_eq!(
-        outputs_for(&fixture.sink, "agt-cap").len() as u64,
-        total,
-        "output arrived after the truncation marker"
-    );
+    assert!(outputs
+        .iter()
+        .all(|event| !event.truncated && event.chunk == "x"));
+    assert_eq!(outputs.last().unwrap().sequence, total);
+    sender
+        .send(b"final response".to_vec())
+        .expect("send final response");
+    assert!(wait_until(EVENT_DEADLINE, || {
+        outputs_for(&fixture.sink, "agt-cap")
+            .last()
+            .is_some_and(|event| {
+                event.sequence == total + 1 && event.chunk == "final response" && !event.truncated
+            })
+    }));
     drop(sender);
     process.set_exited(0);
     assert!(
@@ -1637,6 +1656,167 @@ fn output_cap_publishes_one_truncation_marker_then_silence() {
             .has_terminal_status("agt-cap")),
         "task did not reach a terminal status"
     );
+}
+
+#[test]
+fn incomplete_stream_does_not_suppress_later_output_from_the_other_stream() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("incomplete-then-output");
+    let cwd = root.join(".worktrees/agt-incomplete-output");
+    let process = FakeProcess::new(None, Some(0));
+    fixture.signals.track(9199, &process);
+    let (sender, receiver) = mpsc::channel::<Vec<u8>>();
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9199)
+            .with_stdout_read_error_after_segments()
+            .with_stderr_receiver(receiver)
+            .build(),
+    ));
+    dispatch(&fixture, "agt-incomplete-output", &root, &cwd).expect("start task");
+    fixture
+        .registry
+        .acknowledge("agt-incomplete-output")
+        .expect("acknowledge");
+    assert!(wait_until(EVENT_DEADLINE, || {
+        outputs_for(&fixture.sink, "agt-incomplete-output")
+            .iter()
+            .any(|event| event.truncated)
+    }));
+    sender
+        .send(b"final diagnostic".to_vec())
+        .expect("send final output");
+    assert!(wait_until(EVENT_DEADLINE, || {
+        outputs_for(&fixture.sink, "agt-incomplete-output")
+            .last()
+            .is_some_and(|event| {
+                event.sequence == 2 && event.chunk == "final diagnostic" && !event.truncated
+            })
+    }));
+    drop(sender);
+    process.set_exited(0);
+    assert!(wait_until(EVENT_DEADLINE, || fixture
+        .sink
+        .has_terminal_status("agt-incomplete-output")));
+}
+
+#[test]
+fn asynchronous_output_is_bounded_and_terminal_waits_for_consumption() {
+    let fixture = fixture(Duration::from_secs(60));
+    fixture.sink.requires_ack.store(true, Ordering::SeqCst);
+    let root = unique_path("ack-flow");
+    let cwd = root.join(".worktrees/agt-ack-flow");
+    let process = FakeProcess::new(None, Some(0));
+    fixture.signals.track(9198, &process);
+    let (sender, receiver) = mpsc::channel::<Vec<u8>>();
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9198)
+            .with_stdout_receiver(receiver)
+            .build(),
+    ));
+    dispatch(&fixture, "agt-ack-flow", &root, &cwd).expect("start task");
+    fixture.registry.acknowledge("agt-ack-flow").unwrap();
+    for _ in 0..4097 {
+        sender.send(vec![b'x']).unwrap();
+    }
+    sender.send(b"final response".to_vec()).unwrap();
+    drop(sender);
+    process.set_exited(0);
+    assert!(wait_until(EVENT_DEADLINE, || fixture
+        .registry
+        .live_worker_thread_count()
+        == 1));
+    let initial = outputs_for(&fixture.sink, "agt-ack-flow");
+    assert_eq!(
+        initial.len(),
+        agent_task_supervisor::MAX_UNACKNOWLEDGED_AGENT_OUTPUT_EVENTS
+    );
+    assert!(!fixture.sink.has_terminal_status("agt-ack-flow"));
+    assert!(fixture
+        .registry
+        .acknowledge_output_for_workspace("agt-ack-flow", "foreign", 64)
+        .is_err());
+    assert!(fixture
+        .registry
+        .acknowledge_output_for_workspace("agt-ack-flow", "ws-agent-tests", 4098)
+        .is_err());
+    let mut consumed = 0;
+    for _ in 0..8 {
+        let outputs = outputs_for(&fixture.sink, "agt-ack-flow");
+        let last = outputs.last().unwrap().sequence;
+        if last == consumed {
+            break;
+        }
+        fixture
+            .registry
+            .acknowledge_output_for_workspace("agt-ack-flow", "ws-agent-tests", last)
+            .unwrap();
+        consumed = last;
+    }
+    let outputs = outputs_for(&fixture.sink, "agt-ack-flow");
+    assert_eq!(outputs.last().unwrap().chunk, "final response");
+    assert_eq!(outputs.last().unwrap().sequence, 4098);
+    assert!(outputs
+        .windows(2)
+        .any(|pair| pair[1].sequence > pair[0].sequence + 1));
+    assert!(fixture.sink.has_terminal_status("agt-ack-flow"));
+    assert!(
+        outputs.len()
+            <= agent_task_supervisor::MAX_UNACKNOWLEDGED_AGENT_OUTPUT_EVENTS
+                + MAX_QUEUED_AGENT_TASK_EVENTS
+    );
+    assert!(wait_until(EVENT_DEADLINE, || fixture
+        .registry
+        .live_worker_thread_count()
+        == 0));
+}
+
+#[test]
+fn output_boundary_metadata_tracks_each_stream_independently() {
+    let fixture = fixture(Duration::from_secs(60));
+    let root = unique_path("line-boundary");
+    let cwd = root.join(".worktrees/agt-line-boundary");
+    let process = FakeProcess::new(None, Some(0));
+    fixture.signals.track(9197, &process);
+    let (sender, receiver) = mpsc::channel::<Vec<u8>>();
+    let (stderr_sender, stderr_receiver) = mpsc::channel::<Vec<u8>>();
+    fixture.spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&process, 9197)
+            .with_stdout_receiver(receiver)
+            .with_stderr_receiver(stderr_receiver)
+            .build(),
+    ));
+    dispatch(&fixture, "agt-line-boundary", &root, &cwd).unwrap();
+    fixture.registry.acknowledge("agt-line-boundary").unwrap();
+    for chunk in [b"first".as_slice(), b" remainder\n", b"next\n"] {
+        sender.send(chunk.to_vec()).unwrap();
+    }
+    stderr_sender.send(b"diagnostic\n".to_vec()).unwrap();
+    assert!(wait_until(EVENT_DEADLINE, || outputs_for(
+        &fixture.sink,
+        "agt-line-boundary"
+    )
+    .len()
+        == 4));
+    let outputs = outputs_for(&fixture.sink, "agt-line-boundary");
+    let stdout: Vec<bool> = outputs
+        .iter()
+        .filter(|event| event.stream == AgentTaskOutputStream::Stdout)
+        .map(|event| event.starts_at_line_boundary)
+        .collect();
+    assert_eq!(stdout, vec![true, false, true]);
+    assert!(
+        outputs
+            .iter()
+            .find(|event| event.stream == AgentTaskOutputStream::Stderr)
+            .unwrap()
+            .starts_at_line_boundary
+    );
+    drop(sender);
+    drop(stderr_sender);
+    process.set_exited(0);
+    assert!(wait_until(EVENT_DEADLINE, || fixture
+        .sink
+        .has_terminal_status("agt-line-boundary")));
 }
 
 #[test]
@@ -3525,3 +3705,6 @@ fn waiter_failure_closes_the_input_before_signalling() {
     assert!(journal.iter().any(|entry| entry == "signal"));
     assert!(input.frames().is_empty());
 }
+
+#[path = "support/agent_task_question_lifecycle_tests.rs"]
+mod question_lifecycle;

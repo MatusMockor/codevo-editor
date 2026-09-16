@@ -854,7 +854,7 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.textContent).toContain("Later output was dropped to bound memory.");
+    expect(host.textContent).toContain("Some output is not included in this view.");
   });
 
   it("says when a turn was interrupted by an app restart", () => {

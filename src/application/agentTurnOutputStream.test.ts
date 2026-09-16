@@ -22,6 +22,7 @@ import {
   createAgentTurnOutputStream,
   drainAgentTurnOutput,
   domainAgentOutputParser,
+  finishAgentTurnOutput,
   scheduleAgentOutputFrame,
   type AgentOutputParserPort,
   type TurnEventsAppendedAction,
@@ -55,7 +56,15 @@ function outputEvent(
   chunk: string,
   overrides: Partial<AgentTaskOutputEvent> = {},
 ): AgentTaskOutputEvent {
-  return { taskId: TURN_ID, sequence, stream: "stdout", chunk, truncated: false, ...overrides };
+  return {
+    taskId: TURN_ID,
+    sequence,
+    stream: "stdout",
+    chunk,
+    truncated: false,
+    startsAtLineBoundary: true,
+    ...overrides,
+  };
 }
 
 function createStream(parser: AgentOutputParserPort) {
@@ -129,6 +138,12 @@ describe("agent turn output pending bounds", () => {
 
     expect(stream.pendingEvents.length).toBe(MAX_AGENT_EVENTS_PER_TURN);
     expect(stream.pendingDropped).toBe(true);
+    expect(stream.pendingEvents[0]).toMatchObject({
+      toolId: `tool-${5_000 - MAX_AGENT_EVENTS_PER_TURN}`,
+    });
+    expect(stream.pendingEvents[stream.pendingEvents.length - 1]).toMatchObject({
+      toolId: "tool-4999",
+    });
 
     const action = drainAgentTurnOutput(stream, 1);
     expect(action).not.toBeNull();
@@ -197,7 +212,6 @@ describe("agent turn output pending bounds", () => {
     expect(retainedBytes).toBeLessThanOrEqual(MAX_AGENT_EVENT_BYTES_PER_TURN);
     expect(stream.pendingEventBytes).toBe(retainedBytes);
     expect(stream.pendingDropped).toBe(true);
-    expect(stream.eventRetentionStopped).toBe(true);
 
     const saturated = drainAgentTurnOutput(stream, 1);
     expect(saturated?.supervisorTruncated).toBe(true);
@@ -211,17 +225,18 @@ describe("agent turn output pending bounds", () => {
     expect(stream.pendingEventBytes).toBe(0);
 
     acceptAgentTurnOutput(parser, stream, outputEvent(101, "session"));
-    expect(stream.pendingEvents).toEqual([]);
-    expect(stream.pendingEventBytes).toBe(0);
+    expect(stream.pendingEvents).toEqual([{ kind: "assistantText", text: "x" }]);
+    expect(stream.pendingEventBytes).toBe(1);
     expect(drainAgentTurnOutput(stream, 2)).toMatchObject({
-      events: [],
+      events: [{ kind: "assistantText", text: "x" }],
+      supervisorTruncated: false,
       outputSequence: 2,
       sessionId: "session-0001",
       streamMetricsDelta: { receivedUtf8Bytes: 7, complete: true },
     });
   });
 
-  it("keeps capturing the session id and result sighting while dropping events", () => {
+  it("retains the final result and session metadata after evicting older events", () => {
     const parser = scriptedParser((chunk) => ({
       events: [
         chunk === "final"
@@ -241,7 +256,152 @@ describe("agent turn output pending bounds", () => {
     expect(stream.pendingSessionId).toBe("11111111-2222-3333-4444-555555555555");
     expect(stream.sawSessionId).toBe(true);
     expect(stream.sawResult).toBe(true);
+    expect(stream.pendingEvents[stream.pendingEvents.length - 1]).toMatchObject({
+      kind: "result",
+      text: "done",
+    });
     expect(drainAgentTurnOutput(stream, 1)?.sessionId).toBe("11111111-2222-3333-4444-555555555555");
+  });
+
+  it("retains a final response after a saturated buffer has been drained", () => {
+    const parser = scriptedParser((chunk) => ({
+      events:
+        chunk === "burst"
+          ? Array.from({ length: MAX_AGENT_EVENTS_PER_TURN + 1 }, (_, index) => ({
+              kind: "toolCall" as const,
+              toolId: String(index),
+              name: "Bash",
+              inputSummary: "run",
+            }))
+          : [{ kind: "result", text: "Final answer", isError: false, usage: null }],
+      sessionId: null,
+    }));
+    const stream = createStream(parser);
+    acceptAgentTurnOutput(parser, stream, outputEvent(1, "burst"));
+    const first = drainAgentTurnOutput(stream, 1);
+    expect(first?.supervisorTruncated).toBe(true);
+    acceptAgentTurnOutput(parser, stream, outputEvent(2, "final"));
+    const second = drainAgentTurnOutput(stream, 2);
+    expect(second?.events).toEqual([
+      { kind: "result", text: "Final answer", isError: false, usage: null },
+    ]);
+    expect(second?.supervisorTruncated).toBe(false);
+  });
+
+  it("continues parsed output and final parser flush after an upstream truncation marker", () => {
+    const base = scriptedParser((chunk) => ({
+      events: [{ kind: "assistantText", text: chunk }],
+      sessionId: null,
+    }));
+    const parser: AgentOutputParserPort = {
+      ...base,
+      finish: (state) => ({
+        state,
+        events: [{ kind: "result", text: "Finished", isError: false, usage: null }],
+        sessionId: null,
+        accountUsage: [],
+      }),
+    };
+    const stream = createStream(parser);
+    acceptAgentTurnOutput(parser, stream, outputEvent(1, "Before", { truncated: true }));
+    expect(drainAgentTurnOutput(stream, 1)?.supervisorTruncated).toBe(true);
+    acceptAgentTurnOutput(parser, stream, outputEvent(2, "After"));
+    const final = finishAgentTurnOutput(parser, stream);
+    expect(final?.events).toEqual([
+      { kind: "assistantText", text: "After" },
+      { kind: "result", text: "Finished", isError: false, usage: null },
+    ]);
+    expect(final?.streamMetricsDelta).toMatchObject({ complete: false });
+  });
+
+  it("resets an old partial JSON line at a gap without losing a boundary-aligned final", () => {
+    const stream = createStream(domainAgentOutputParser);
+    acceptAgentTurnOutput(
+      domainAgentOutputParser,
+      stream,
+      outputEvent(1, '{"type":"assistant","message":'),
+    );
+    acceptAgentTurnOutput(
+      domainAgentOutputParser,
+      stream,
+      outputEvent(3, '{"type":"result","subtype":"success","result":"Final answer"}\n'),
+    );
+    const action = drainAgentTurnOutput(stream, 3);
+    expect(action?.events).toContainEqual(
+      expect.objectContaining({ kind: "result", text: "Final answer" }),
+    );
+    expect(action?.supervisorTruncated).toBe(true);
+    expect(action?.streamMetricsDelta?.complete).toBe(false);
+  });
+
+  it("discards a partial retained line after a gap and resumes at its next newline", () => {
+    const stream = createStream(domainAgentOutputParser);
+    acceptAgentTurnOutput(domainAgentOutputParser, stream, outputEvent(1, '{"type":'));
+    acceptAgentTurnOutput(
+      domainAgentOutputParser,
+      stream,
+      outputEvent(3, '"result","result":"spliced"}', { startsAtLineBoundary: false }),
+    );
+    acceptAgentTurnOutput(
+      domainAgentOutputParser,
+      stream,
+      outputEvent(4, '\n{"type":"result","subtype":"success","result":"Real final"}\n', {
+        startsAtLineBoundary: false,
+      }),
+    );
+    const action = drainAgentTurnOutput(stream, 4);
+    expect(action?.events).toEqual([
+      expect.objectContaining({ kind: "result", text: "Real final" }),
+    ]);
+    expect(action?.supervisorTruncated).toBe(true);
+  });
+
+  it("fails closed for a legacy gap without boundary metadata and preserves parser identity", () => {
+    const stream = createStream(domainAgentOutputParser);
+    const tools = new Set(["existing-tool"]);
+    stream.parser = { ...stream.parser, sessionId: "original-session", emittedToolIds: tools };
+    const legacy: AgentTaskOutputEvent = {
+      taskId: TURN_ID,
+      sequence: 2,
+      stream: "stdout",
+      truncated: false,
+      chunk:
+        '{"type":"result","result":"Unattested first line"}\n' +
+        '{"type":"result","subtype":"success","result":"After boundary"}\n',
+    };
+    acceptAgentTurnOutput(domainAgentOutputParser, stream, legacy);
+    expect(stream.parser.sessionId).toBe("original-session");
+    expect(stream.parser.emittedToolIds).toBe(tools);
+    expect(drainAgentTurnOutput(stream, 2)?.events).toEqual([
+      expect.objectContaining({ kind: "result", text: "After boundary" }),
+    ]);
+  });
+
+  it("resynchronizes both streams independently after a global sequence gap", () => {
+    const stream = createStream(domainAgentOutputParser);
+    acceptAgentTurnOutput(
+      domainAgentOutputParser,
+      stream,
+      outputEvent(1, "old stderr", { stream: "stderr" }),
+    );
+    acceptAgentTurnOutput(
+      domainAgentOutputParser,
+      stream,
+      outputEvent(3, '{"type":"result","subtype":"success","result":"Final"}\n'),
+    );
+    acceptAgentTurnOutput(
+      domainAgentOutputParser,
+      stream,
+      outputEvent(4, "lost suffix\nfresh stderr\n", {
+        stream: "stderr",
+        startsAtLineBoundary: false,
+      }),
+    );
+    const action = drainAgentTurnOutput(stream, 4);
+    expect(action?.events).toEqual([
+      expect.objectContaining({ kind: "result", text: "Final" }),
+      expect.objectContaining({ kind: "unknownLine", raw: "fresh stderr", stream: "stderr" }),
+    ]);
   });
 
   it("counts accepted raw UTF-8 chunks exactly once across drains and ignores foreign order", () => {

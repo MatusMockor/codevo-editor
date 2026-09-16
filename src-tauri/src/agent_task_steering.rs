@@ -20,6 +20,7 @@ pub(super) fn result_watch(input: Option<Arc<AgentTaskInputSlot>>) -> Option<Age
 pub(super) struct AgentTaskStopTargets {
     groups: Vec<Arc<AgentProcessGroup>>,
     inputs: Vec<Arc<AgentTaskInputSlot>>,
+    questions: Vec<Arc<crate::agent_questions::AgentQuestionSession>>,
 }
 
 impl AgentTaskStopTargets {
@@ -27,16 +28,21 @@ impl AgentTaskStopTargets {
         let mut targets = Self {
             groups: Vec::new(),
             inputs: Vec::new(),
+            questions: Vec::new(),
         };
         for entry in entries {
             entry.stop_requested = true;
             targets.groups.extend(entry.group.clone());
             targets.inputs.extend(entry.input.clone());
+            targets.questions.extend(entry.questions.clone());
         }
         targets
     }
 
     pub(super) fn close_inputs(&self) {
+        for questions in &self.questions {
+            questions.close();
+        }
         for input in &self.inputs {
             input.close(AgentTaskInputState::ClosedByStop);
         }

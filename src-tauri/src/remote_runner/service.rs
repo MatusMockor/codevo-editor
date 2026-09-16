@@ -152,6 +152,7 @@ mod tests {
             idempotency_key: "test".into(),
             provider: Provider::Codex,
             launch: None,
+            instructions: None,
             parts: vec![Part::Text {
                 text: "x".repeat(48_001),
             }],
@@ -503,6 +504,11 @@ impl RemoteRunnerState {
                 return Err("Launch provider mismatch".into());
             }
             body["launch"] = serde_json::to_value(launch).map_err(|_| "Invalid launch options")?;
+        }
+        if let Some(instructions) = request.instructions {
+            instructions.validate()?;
+            body["instructions"] =
+                serde_json::to_value(instructions).map_err(|_| "Invalid instructions")?;
         }
         self.call(&request.server_id, "POST", "/v1/tasks", Some(body), vec![])
     }

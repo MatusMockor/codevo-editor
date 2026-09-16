@@ -40,6 +40,7 @@ function gatewayFixture() {
     }),
   ];
   const gateway = {
+    collectInstructions: vi.fn().mockResolvedValue({ version: 1, files: [] }),
     listServers: vi.fn().mockResolvedValue([
       {
         id: "linux",
@@ -59,6 +60,7 @@ function gatewayFixture() {
       name: "Linux server",
       capabilities: {
         taskExecution: true,
+        instructionSync: true,
         eventReplay: true,
         taskContinuation: true,
         taskLaunchOptions: true,
@@ -178,6 +180,7 @@ describe("original agent workbench with remote execution", () => {
     expect(host.textContent).toContain("First remote prompt");
     expect(host.textContent).toContain("Second remote prompt");
     expect(host.querySelector('[aria-label="Runs on server"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Local instruction source"]')).toBeNull();
     expect(host.querySelector(".agent-environment__locked")?.textContent).toBe("Linux server");
     const textarea = host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")!;
     act(() => {

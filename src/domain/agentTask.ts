@@ -54,6 +54,7 @@ export interface AgentTaskOutputEvent {
   readonly stream: AgentTaskOutputStream;
   readonly chunk: string;
   readonly truncated: boolean;
+  readonly startsAtLineBoundary?: boolean;
 }
 
 export type StartAgentTaskAttachment =
@@ -83,6 +84,10 @@ export interface StartAgentTaskResult {
 export interface AgentTaskReferenceRequest {
   readonly taskId: string;
   readonly workspaceId: string;
+}
+
+export interface AcknowledgeAgentTaskOutputRequest extends AgentTaskReferenceRequest {
+  readonly sequence: number;
 }
 
 export interface StopAgentTasksForRootRequest {
@@ -132,6 +137,8 @@ const AGENT_TASK_STEER_REJECTION_REASONS: ReadonlyArray<AgentTaskSteerRejectionR
 export interface AgentTaskGateway {
   startAgentTask(request: StartAgentTaskRequest): Promise<StartAgentTaskResult>;
   acknowledgeAgentTaskStart(request: AgentTaskReferenceRequest): Promise<void>;
+  /** Optional for non-native adapters without acknowledgement-based delivery. */
+  acknowledgeAgentTaskOutput?(request: AcknowledgeAgentTaskOutputRequest): Promise<void>;
   stopAgentTask(request: AgentTaskReferenceRequest): Promise<void>;
   stopAgentTasksForRoot(request: StopAgentTasksForRootRequest): Promise<void>;
   steerAgentTask(request: SteerAgentTaskRequest): Promise<AgentTaskSteerResult>;
@@ -256,13 +263,26 @@ export function parseAgentTaskStatusEvent(value: unknown): AgentTaskStatusEvent 
 
 export function parseAgentTaskOutputEvent(value: unknown): AgentTaskOutputEvent {
   const event = record(value, "event");
-  exactKeys(event, ["taskId", "sequence", "stream", "chunk", "truncated"], "event");
+  boundedKeys(
+    event,
+    ["taskId", "sequence", "stream", "chunk", "truncated"],
+    ["startsAtLineBoundary"],
+    "event",
+  );
   return {
     taskId: agentTaskId(event.taskId, "event.taskId"),
     sequence: unsignedSafeInteger(event.sequence, "event.sequence"),
     stream: outputStream(event.stream, "event.stream"),
     chunk: boundedText(event.chunk, "event.chunk", MAX_AGENT_TASK_OUTPUT_CHUNK_BYTES, true),
     truncated: booleanFlag(event.truncated, "event.truncated"),
+    ...(Object.prototype.hasOwnProperty.call(event, "startsAtLineBoundary")
+      ? {
+          startsAtLineBoundary: booleanFlag(
+            event.startsAtLineBoundary,
+            "event.startsAtLineBoundary",
+          ),
+        }
+      : {}),
   };
 }
 
@@ -381,6 +401,18 @@ export function validateAgentTaskReferenceRequest(value: unknown): AgentTaskRefe
   return {
     taskId: agentTaskId(request.taskId, "request.taskId"),
     workspaceId: agentWorkspaceId(request.workspaceId, "request.workspaceId"),
+  };
+}
+
+export function validateAcknowledgeAgentTaskOutputRequest(
+  value: unknown,
+): AcknowledgeAgentTaskOutputRequest {
+  const request = record(value, "request");
+  exactKeys(request, ["taskId", "workspaceId", "sequence"], "request");
+  return {
+    taskId: agentTaskId(request.taskId, "request.taskId"),
+    workspaceId: agentWorkspaceId(request.workspaceId, "request.workspaceId"),
+    sequence: positiveSafeInteger(request.sequence, "request.sequence"),
   };
 }
 

@@ -800,3 +800,41 @@ fn null_rpc_id_still_counts_as_a_request_in_large_frames() {
     }});
     assert!(inbound::project_large_notification(&serde_json::to_vec(&frame).unwrap()).is_err());
 }
+
+#[test]
+fn user_input_is_deferred_without_blocking_transport() {
+    let harness = Harness::new(true);
+    let frames = harness.transport.subscribe("thread-1");
+    harness.emit(&json!({"id":91,"method":"item/tool/requestUserInput","params":{"threadId":"thread-1","turnId":"turn-1","questions":[]}}));
+    assert!(
+        matches!(frames.recv_timeout(PROBE_TIMEOUT).unwrap(),TurnFrame::UserInputRequested{id,..} if id==json!(91))
+    );
+    assert!(harness.client_line(0).is_none());
+    harness.emit(&item_started("thread-1", "next-item"));
+    assert!(matches!(
+        frames.recv_timeout(PROBE_TIMEOUT).unwrap(),
+        TurnFrame::Notification(_)
+    ));
+    harness
+        .transport
+        .answer_server_request(
+            json!(91),
+            json!({"answers":{"q":{"answers":["Real answer"]}}}),
+        )
+        .unwrap();
+    assert_eq!(
+        wait_for(|| harness.client_line(0))["result"]["answers"]["q"]["answers"][0],
+        json!("Real answer")
+    );
+}
+#[test]
+fn orphan_question_is_rejected() {
+    let harness = Harness::new(true);
+    harness.emit(
+        &json!({"id":92,"method":"item/tool/requestUserInput","params":{"threadId":"missing"}}),
+    );
+    assert_eq!(
+        wait_for(|| harness.client_line(0))["error"]["code"],
+        json!(-32600)
+    );
+}

@@ -157,7 +157,7 @@ describe("remote inventory loading", () => {
     expect(gw.listTasks).toHaveBeenCalledWith({ serverId: "server", after: 1 });
     expect(result.tasks.map((t) => t.id)).toEqual(["published", "middle"]);
   });
-  it("marks oversized output incomplete and never flushes it as successful", async () => {
+  it("marks evicted output incomplete while independently finishing the fetch cursor", async () => {
     const gw = fixture();
     gw.listEvents.mockResolvedValue({
       items: [{ taskId: "root", sequence: 1, text: "x".repeat(1_500_001) }],
@@ -165,7 +165,7 @@ describe("remote inventory loading", () => {
     });
     const result = await load(gw);
     expect(result.replayTruncated.has("root")).toBe(true);
-    expect(result.replayComplete.has("root")).toBe(false);
+    expect(result.replayComplete.has("root")).toBe(true);
     expect(result.error).toContain("incomplete");
   });
   it("uses completed cached replay without reading output again", async () => {
@@ -222,4 +222,94 @@ it("loads durable pending messages only when advertised, rejecting foreign conve
   expect(snapshot.pendingMessages?.get(key)).toEqual([item]);
   gw.listPendingMessages.mockResolvedValue({ items: [{ ...item, conversationId: "other" }] });
   await expect(load(gw)).rejects.toThrow("invalid pending message queue");
+});
+
+it("keeps fetching across display and page limits and shows the final result on reconnect", async () => {
+  const gw = fixture();
+  const tasks = [task(), { ...task("child", 2), conversationId: "root", parentTaskId: "root" }];
+  gw.listTasks.mockResolvedValue({ items: tasks, nextCursor: null });
+  const output = Array.from({ length: 120 }, (_, index) => ({
+    sequence: index + 1,
+    type: "task.output" as const,
+    channel: "stdout" as const,
+    text: `${"x".repeat(32_000)}\n`,
+    createdAt: "2026-09-13T00:00:00Z",
+  }));
+  output.push({
+    sequence: 121,
+    type: "task.output",
+    channel: "stdout",
+    text:
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "Final visible",
+        is_error: false,
+      }) + "\n",
+    createdAt: "2026-09-13T00:00:01Z",
+  });
+  gw.listEvents.mockImplementation(async ({ taskId, after }: { taskId: string; after: number }) => {
+    const items = output
+      .filter((entry) => entry.sequence > after)
+      .slice(0, 4)
+      .map((entry) => ({ ...entry, taskId }));
+    return {
+      items,
+      nextCursor:
+        items[items.length - 1]!.sequence < 121 ? items[items.length - 1]!.sequence : null,
+    };
+  });
+  const first = await load(gw);
+  expect(first.replayComplete.size).toBe(0);
+  expect(first.replayCursors?.get("root")).toBe(96);
+  expect(first.replayTruncated.size).toBe(2);
+  gw.listTasks.mockResolvedValue({ items: [], nextCursor: null });
+  const second = await load(gw, first);
+  expect(second.replayComplete.size).toBe(2);
+  expect(second.replayCursors?.get("root")).toBe(121);
+  const retainedBytes = [...second.replays.values()]
+    .flat()
+    .reduce((sum, entry) => sum + (entry.text?.length ?? 0) * 2, 0);
+  expect(retainedBytes).toBeLessThanOrEqual(6_000_000);
+  const view = new RemoteAgentProjection().project({ ...second, runnerId: "runner" })[0]!;
+  for (const turn of view.thread.turns) {
+    expect(turn.events).toContainEqual(
+      expect.objectContaining({ kind: "result", text: "Final visible" }),
+    );
+    expect(turn.eventsTruncated).toBe(true);
+  }
+});
+
+it("propagates the runner's gap while retaining lifecycle rows preceding it", async () => {
+  const gw = fixture();
+  const text =
+    JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Recovered" }] },
+    }) + "\n";
+  gw.listEvents.mockResolvedValue({
+    items: [
+      { taskId: "root", sequence: 1, type: "task.running", createdAt: "2026-09-13T00:00:00Z" },
+      {
+        taskId: "root",
+        sequence: 7,
+        type: "task.output",
+        channel: "stdout",
+        text: "partial tail\n" + text,
+        createdAt: "2026-09-13T00:00:00Z",
+      },
+    ],
+    nextCursor: null,
+    outputTruncatedBeforeSequence: 6,
+    outputStartsAtLineBoundary: false,
+  });
+  const snapshot = await load(gw);
+  expect(snapshot.replayGaps?.get("root")).toEqual({
+    throughSequence: 6,
+    startsAtLineBoundary: false,
+  });
+  const turn = new RemoteAgentProjection().project({ ...snapshot, runnerId: "runner" })[0]!.thread
+    .turns[0]!;
+  expect(turn.events).toEqual([{ kind: "assistantText", text: "Recovered" }]);
+  expect(turn.eventsTruncated).toBe(true);
 });

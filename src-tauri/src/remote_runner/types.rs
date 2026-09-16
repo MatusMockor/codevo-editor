@@ -88,6 +88,8 @@ pub struct CreateRequest {
     #[serde(default, deserialize_with = "super::launch::optional")]
     pub(super) launch: Option<super::launch::Launch>,
     pub parts: Vec<Part>,
+    #[serde(default, deserialize_with = "super::instruction_wire::optional")]
+    pub(super) instructions: Option<super::instruction_wire::InstructionSnapshot>,
 }
 
 #[derive(Deserialize)]

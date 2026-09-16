@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 #[path = "agent_artifact_instructions.rs"]
 pub(crate) mod agent_artifact_instructions;
 
+#[path = "agent_claude_questions.rs"]
+mod agent_claude_questions;
+
 use crate::effective_executable_environment::EffectiveExecutablePath;
 
 #[path = "agent_provider.rs"]
@@ -447,6 +450,8 @@ fn agent_invocation_args(
             "--output-format",
             "stream-json",
             "--verbose",
+            "--permission-prompt-tool",
+            "stdio",
             "--input-format",
             "stream-json",
             "--append-system-prompt",
@@ -561,6 +566,9 @@ pub enum AgentTaskProcessOwnership {
 }
 
 pub trait AgentChild: Send {
+    fn take_questions(&mut self) -> Option<Arc<crate::agent_questions::AgentQuestionSession>> {
+        None
+    }
     fn stdout_reader(&mut self) -> Result<Box<dyn Read + Send>, String>;
     fn stderr_reader(&mut self) -> Result<Box<dyn Read + Send>, String>;
     fn observe_exit(&mut self) -> Result<bool, String>;
@@ -653,11 +661,17 @@ impl AgentProcessSpawner for StdAgentProcessSpawner {
             write_prompt_frame_on_a_dedicated_thread(&retained, Arc::clone(frame));
             Some(retained)
         });
+        let questions = input
+            .as_ref()
+            .map(|_| Arc::new(crate::agent_questions::AgentQuestionSession::new()));
+        let question_input = input.clone();
         Ok(Box::new(StdAgentChild {
             child,
             process_group_id,
             observed_exit_code: None,
             input,
+            questions,
+            question_input,
         }))
     }
 }
@@ -675,9 +689,14 @@ struct StdAgentChild {
     process_group_id: i32,
     observed_exit_code: Option<i32>,
     input: Option<RetainedChildStdin>,
+    questions: Option<Arc<crate::agent_questions::AgentQuestionSession>>,
+    question_input: Option<RetainedChildStdin>,
 }
 
 impl AgentChild for StdAgentChild {
+    fn take_questions(&mut self) -> Option<Arc<crate::agent_questions::AgentQuestionSession>> {
+        self.questions.clone()
+    }
     fn stdout_reader(&mut self) -> Result<Box<dyn Read + Send>, String> {
         let stdout = self
             .child
@@ -685,7 +704,16 @@ impl AgentChild for StdAgentChild {
             .take()
             .ok_or_else(|| "Agent stdout pipe is unavailable.".to_string())?;
         configure_agent_output_reader(&stdout)?;
-        Ok(Box::new(stdout))
+        match (self.questions.as_ref(), self.question_input.take()) {
+            (Some(questions), Some(input)) => {
+                Ok(Box::new(agent_claude_questions::ClaudeQuestionReader::new(
+                    stdout,
+                    Arc::clone(questions),
+                    input,
+                )))
+            }
+            _ => Ok(Box::new(stdout)),
+        }
     }
 
     fn stderr_reader(&mut self) -> Result<Box<dyn Read + Send>, String> {
@@ -700,12 +728,26 @@ impl AgentChild for StdAgentChild {
 
     #[cfg(unix)]
     fn observe_exit(&mut self) -> Result<bool, String> {
+        if let Some(error) = self
+            .questions
+            .as_ref()
+            .and_then(|questions| questions.failure())
+        {
+            return Err(error);
+        }
         observe_exit_without_reaping(&self.child)
             .map_err(|error| format!("Unable to observe agent exit: {error}"))
     }
 
     #[cfg(not(unix))]
     fn observe_exit(&mut self) -> Result<bool, String> {
+        if let Some(error) = self
+            .questions
+            .as_ref()
+            .and_then(|questions| questions.failure())
+        {
+            return Err(error);
+        }
         if self.observed_exit_code.is_some() {
             return Ok(true);
         }

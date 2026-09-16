@@ -63,6 +63,11 @@ pub(crate) use crate::agent_task_spawner::{
 #[path = "codex_task_composition.rs"]
 pub(crate) mod codex_task_composition;
 
+#[path = "agent_task_output_commands.rs"]
+pub(crate) mod output_delivery;
+#[path = "agent_question_commands.rs"]
+pub(crate) mod questions;
+
 pub(crate) const MAX_AGENT_TASK_WORKSPACE_ID_BYTES: usize = 1024;
 pub(crate) const MAX_AGENT_TASK_PATH_BYTES: usize = 4096;
 pub(crate) const MAX_AGENT_ROOT_LEASE_PATH_BYTES: usize = 4096;
@@ -152,6 +157,10 @@ impl AppHandleAgentTaskEventSink {
 }
 
 impl AgentTaskEventSink for AppHandleAgentTaskEventSink {
+    fn requires_output_acknowledgement(&self) -> bool {
+        true
+    }
+
     fn status(&self, event: AgentTaskStatusEvent) {
         let _ = self.app.emit(AGENT_TASK_STATUS_EVENT_CHANNEL, event);
     }

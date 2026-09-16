@@ -59,6 +59,7 @@ const start: AgentThreadStartRequest = {
 };
 function gateway() {
   return {
+    collectInstructions: vi.fn().mockResolvedValue({ version: 1, files: [] }),
     listServers: vi.fn(),
     connectServer: vi.fn(),
     disconnectServer: vi.fn(),
@@ -69,6 +70,7 @@ function gateway() {
       name: "Linux",
       capabilities: {
         taskExecution: true,
+        instructionSync: true,
         eventReplay: true,
         taskContinuation: true,
         taskLaunchOptions: true,

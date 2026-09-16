@@ -7,6 +7,35 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.47] - 2026-09-16
+
+### Added
+
+- Answer structured Codex and Claude Code questions inside the existing thread,
+  with choices and optional custom text, locally and on compatible Linux runners.
+- Restore pending server questions after reconnect and resume the same provider
+  invocation without submitting a duplicate prompt.
+- Synchronize supported saved Claude instruction files before remote turns, with
+  an explicit local instruction source for server projects.
+- Display the runner's execution deadline in server settings. Updated runners
+  default to twelve hours, configurable from one minute to seven days.
+
+### Fixed
+
+- Keep recent output flowing during long runs while bounding retained memory;
+  replay gaps are reported instead of silently freezing the transcript.
+- Preserve server execution identity while loading and retain model choices when
+  switching execution environments.
+- Settle questions correctly on Stop, timeout and provider completion, and clean
+  up Linux provider processes even when output pipes are paused.
+
+### Compatibility
+
+- Update the editor before upgrading the runner. The runner update requires a
+  database backup and migration; restarting it interrupts active tasks.
+- Pending local questions belong to the running local process. Server restart
+  recovery does not automatically resume an interrupted provider invocation.
+
 ## [0.2.0-beta.46] - 2026-09-16
 
 ### Added

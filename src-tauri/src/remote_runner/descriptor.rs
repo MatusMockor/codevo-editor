@@ -8,6 +8,8 @@ struct Descriptor {
     runner_id: String,
     name: String,
     capabilities: Capabilities,
+    #[serde(default, deserialize_with = "optional_timeout")]
+    execution_timeout_ms: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -29,6 +31,20 @@ struct Capabilities {
     pending_messages: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     output_artifacts: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    instruction_sync: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    interactive_questions: Option<bool>,
+}
+
+fn optional_timeout<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error> {
+    let value = u64::deserialize(deserializer)?;
+    if !(60_000..=604_800_000).contains(&value) {
+        return Err(serde::de::Error::custom("Invalid execution timeout"));
+    }
+    Ok(Some(value))
 }
 
 fn optional_bool<'de, D: serde::Deserializer<'de>>(
@@ -49,6 +65,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
     {
         return Err("Unsupported runner protocol".into());
     }
+    let _ = descriptor.execution_timeout_ms;
     let caps = descriptor.capabilities;
     let _ = (
         caps.task_execution,
@@ -61,6 +78,8 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.task_file_diffs,
         caps.pending_messages,
         caps.output_artifacts,
+        caps.instruction_sync,
+        caps.interactive_questions,
     );
     Ok(descriptor.runner_id)
 }
@@ -68,6 +87,34 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn execution_policy_and_interaction_capability_are_strict() {
+        let base = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
+        for timeout in [60_000_u64, 43_200_000, 604_800_000] {
+            let mut v = base.clone();
+            v["executionTimeoutMs"] = timeout.into();
+            assert!(validate(v).is_ok());
+        }
+        for timeout in [
+            Value::Null,
+            serde_json::json!(59999),
+            serde_json::json!(604800001),
+            serde_json::json!(60000.5),
+            serde_json::json!("60000"),
+        ] {
+            let mut v = base.clone();
+            v["executionTimeoutMs"] = timeout;
+            assert!(validate(v).is_err());
+        }
+        for cap in [true, false] {
+            let mut v = base.clone();
+            v["capabilities"]["interactiveQuestions"] = cap.into();
+            assert!(validate(v).is_ok());
+        }
+        let mut v = base;
+        v["capabilities"]["interactiveQuestions"] = Value::Null;
+        assert!(validate(v).is_err());
+    }
     #[test]
     fn output_artifacts_capability_is_optional_and_strict() {
         let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
@@ -84,6 +131,20 @@ mod tests {
             serde_json::json!([]),
         ] {
             value["capabilities"]["outputArtifacts"] = invalid;
+            assert!(validate(value.clone()).is_err());
+        }
+    }
+
+    #[test]
+    fn instruction_sync_capability_is_optional_and_strict() {
+        let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
+        assert!(validate(value.clone()).is_ok());
+        for supported in [true, false] {
+            value["capabilities"]["instructionSync"] = supported.into();
+            assert!(validate(value.clone()).is_ok());
+        }
+        for invalid in [Value::Null, "true".into(), 1.into(), serde_json::json!({})] {
+            value["capabilities"]["instructionSync"] = invalid;
             assert!(validate(value.clone()).is_err());
         }
     }

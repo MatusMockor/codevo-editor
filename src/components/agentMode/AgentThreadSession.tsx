@@ -742,7 +742,7 @@ const AgentTurnView = memo(function AgentTurnView({
 
           {turn.eventsTruncated && (
             <p className="agent-note agent-note--warning">
-              Later output was dropped to bound memory.
+              Some output is not included in this view.
             </p>
           )}
 

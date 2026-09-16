@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TauriRemoteRunnerGateway } from "../../infrastructure/tauriRemoteRunnerGateway";
+import { RemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { RemoteRunnerProvider } from "../remoteRunner/RemoteRunnerProvider";
 import {
   AgentExecutionEnvironmentPicker,
@@ -92,6 +93,42 @@ describe("AgentExecutionEnvironmentPicker", () => {
     );
     expect(trigger().textContent).toBe("This computer");
     expect(onOpenEnvironmentSettings).not.toHaveBeenCalled();
+  });
+
+  it("never presents a missing selected server as this computer", () => {
+    const selectServer = vi.fn();
+    act(() =>
+      root.render(
+        <RemoteRunnerContext.Provider
+          value={{
+            gateway: new TauriRemoteRunnerGateway(vi.fn()),
+            servers: [],
+            status: "ready",
+            error: null,
+            selectedServerId: "removed-server",
+            selectServer,
+            refresh: vi.fn(),
+            connect: vi.fn(),
+            disconnect: vi.fn(),
+            remove: vi.fn(),
+          }}
+        >
+          <AgentExecutionEnvironmentPicker
+            disabled={false}
+            locked={false}
+            onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+          />
+        </RemoteRunnerContext.Provider>,
+      ),
+    );
+    expect(trigger().textContent).toBe("Server unavailable");
+    expect(trigger().querySelector(".lucide-server")).not.toBeNull();
+    click(trigger());
+    const local = host.querySelector<HTMLButtonElement>('[role="menuitemradio"]')!;
+    expect(local.getAttribute("aria-checked")).toBe("false");
+    expect(selectServer).not.toHaveBeenCalled();
+    click(local);
+    expect(selectServer).toHaveBeenCalledExactlyOnceWith(null);
   });
 
   it("focuses the local option, skips unavailable server, and restores focus on Escape", () => {

@@ -1,3 +1,4 @@
+import { TauriAgentQuestionGateway } from "../../infrastructure/tauriAgentQuestionGateway";
 import { TauriAgentArtifactGateway } from "../../infrastructure/tauriAgentArtifactGateway";
 import { TauriAgentArtifactPreviewGateway } from "../../infrastructure/tauriAgentArtifactPreviewGateway";
 import { useAgentWorkspaceNavigationBoundary } from "./useAgentWorkspaceNavigationBoundary";
@@ -141,6 +142,7 @@ const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGatewa
 const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
   new TauriDirectoryListingGateway();
 const DEFAULT_TEXT_CLIPBOARD = new BrowserTextClipboardGateway();
+const DEFAULT_QUESTION_GATEWAY = new TauriAgentQuestionGateway();
 const DEFAULT_ARTIFACT_LOADER = new TauriAgentArtifactGateway();
 const DEFAULT_ARTIFACT_PREVIEW = new TauriAgentArtifactPreviewGateway();
 const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
@@ -514,6 +516,7 @@ export function AgentWorkbenchScreen({
 
   return (
     <AgentModeView
+      questionGateway={DEFAULT_QUESTION_GATEWAY}
       artifactLoader={DEFAULT_ARTIFACT_LOADER}
       artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
       imageSurface={DEFAULT_IMAGE_SURFACE}

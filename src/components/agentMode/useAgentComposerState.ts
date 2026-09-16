@@ -1,3 +1,4 @@
+import { useAgentComposerLaunchChoices } from "./useAgentComposerLaunchChoices";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createAgentComposerDraftStore,
@@ -35,7 +36,6 @@ import {
   resolveComposerLaunch,
   resolveLaunchScope,
   type IsolationChoice,
-  type LaunchChoice,
 } from "./agentComposerLaunch";
 import {
   composerProjectOwnsRoot,
@@ -182,7 +182,6 @@ export function useAgentComposerControllerState({
     repositoryPreferenceStorage,
   );
   const [isolationChoice, setIsolationChoice] = useState<IsolationChoice | null>(null);
-  const [launchChoice, setLaunchChoice] = useState<LaunchChoice | null>(null);
 
   const composerProjects = useMemo(
     () => composerProjectOptions(groups, projects),
@@ -292,6 +291,7 @@ export function useAgentComposerControllerState({
     () => resolveLaunchScope(selectedThread, launchProjectRootKey),
     [selectedThread, launchProjectRootKey],
   );
+  const { choice: launchChoice, change: changeLaunch } = useAgentComposerLaunchChoices(launchScope);
   const selectedLaunchProvider =
     launchChoice !== null && launchChoice.key === launchScope?.key
       ? launchChoice.launch.provider
@@ -509,13 +509,6 @@ export function useAgentComposerControllerState({
       setIsolationChoice({ repositoryRoot: composerRoot, isolation: next });
     },
     [composerRoot, worktreeAvailable],
-  );
-
-  const changeLaunch = useCallback(
-    (next: AgentComposerSubmission["launch"]) => {
-      setLaunchChoice({ key: launchScope.key, launch: next });
-    },
-    [launchScope],
   );
 
   const composerProps: AgentComposerControllerProps = {

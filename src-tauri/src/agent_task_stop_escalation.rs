@@ -1,3 +1,6 @@
+use super::{
+    close_agent_task_input, AgentTaskInputState, AgentTaskPhase, AgentTaskShared, WatchdogGate,
+};
 use super::{AgentProcessGroup, TERMINATE_PROCESS_GROUP_SIGNAL, WAIT_POLL_INTERVAL};
 use super::{AgentProcessGroupSignalSender, AgentProcessGroupState};
 use crate::agent_task_spawner::{AgentChild, AgentTaskProcessOwnership};
@@ -82,4 +85,35 @@ pub(super) fn wait_for_groups_reaped(groups: &[Arc<AgentProcessGroup>], timeout:
         }
         thread::sleep(WAIT_POLL_INTERVAL);
     }
+}
+
+pub(super) fn run_watchdog(
+    shared: &Arc<AgentTaskShared>,
+    task_id: &str,
+    group: &Arc<AgentProcessGroup>,
+    watchdog: &Arc<WatchdogGate>,
+) {
+    if watchdog.wait_finished(shared.tuning.max_runtime) {
+        return;
+    }
+    let (input, questions) = {
+        let mut state = shared.state();
+        let Some(entry) = state.entries.get_mut(task_id) else {
+            return;
+        };
+        if matches!(entry.phase, AgentTaskPhase::Terminal) {
+            return;
+        }
+        entry.watchdog_timed_out = true;
+        (entry.input.clone(), entry.questions.clone())
+    };
+    if let Some(questions) = questions {
+        questions.close();
+    }
+    close_agent_task_input(input, AgentTaskInputState::ClosedByStop);
+    escalate_group_stop(
+        group,
+        shared.tuning.graceful_timeout,
+        shared.tuning.force_timeout,
+    );
 }

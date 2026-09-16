@@ -1,3 +1,4 @@
+import type { RemoteReplayGap } from "./remoteAgentReplayWindow";
 import {
   agentThreadAttention,
   agentThreadLifecycle,
@@ -37,6 +38,7 @@ export function remoteAgentThreadKey(
 }
 
 export interface RemoteAgentProjectionInput {
+  readonly interactiveQuestionsSupported?: boolean;
   readonly pendingMessagesSupported?: boolean;
   readonly serverId: string;
   readonly runnerId: string;
@@ -44,6 +46,7 @@ export interface RemoteAgentProjectionInput {
   readonly tasks: readonly RemoteRunnerTask[];
   readonly replays: ReadonlyMap<string, readonly RemoteRunnerEvent[]>;
   readonly resumes: ReadonlyMap<string, RemoteRunnerTaskResume>;
+  readonly replayGaps?: ReadonlyMap<string, RemoteReplayGap>;
   readonly replayComplete?: ReadonlySet<string>;
   readonly replayTruncated?: ReadonlySet<string>;
   readonly attachmentsByTask?: ReadonlyMap<string, readonly AgentAttachment[]>;
@@ -147,6 +150,7 @@ export class RemoteAgentProjection {
           complete: input.replayComplete?.has(task.id) === true,
           terminal: isTerminal(task),
           truncated: input.replayTruncated?.has(task.id),
+          gap: input.replayGaps?.get(task.id),
         });
       this.transcripts.set(task.id, transcript);
     }
@@ -251,6 +255,7 @@ function projectConversation(
     execution: {
       kind: "remote",
       pendingMessages: input.pendingMessagesSupported === true,
+      interactiveQuestions: input.interactiveQuestionsSupported === true,
       serverId: input.serverId,
       runnerId: input.runnerId,
       projectId,

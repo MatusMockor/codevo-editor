@@ -19,7 +19,10 @@ export function AgentExecutionEnvironmentPicker({
 }: AgentExecutionEnvironmentPickerProps) {
   const remote = useRemoteRunnerContext();
   const selectedServer = remote?.servers.find((server) => server.id === remote.selectedServerId);
-  const selectedName = selectedServer?.name ?? "This computer";
+  const serverSelected = remote?.selectedServerId != null;
+  const selectedName = serverSelected
+    ? (selectedServer?.name ?? "Server unavailable")
+    : "This computer";
   const id = useId();
   const popover = useAgentPopover("start", disabled || locked);
   const { open, popoverRef } = popover;
@@ -94,7 +97,7 @@ export function AgentExecutionEnvironmentPicker({
           popover.show();
         }}
       >
-        {selectedServer ? (
+        {serverSelected ? (
           <Server aria-hidden="true" className="agent-picker__icon" size={14} />
         ) : (
           <Monitor aria-hidden="true" className="agent-picker__icon" size={14} />
@@ -116,7 +119,7 @@ export function AgentExecutionEnvironmentPicker({
           <button
             type="button"
             role="menuitemradio"
-            aria-checked={!selectedServer}
+            aria-checked={!serverSelected}
             className="agent-picker__option agent-environment__row"
             onClick={() => {
               remote?.selectServer(null);
@@ -128,7 +131,7 @@ export function AgentExecutionEnvironmentPicker({
               <span className="agent-picker__label">This computer</span>
               <span className="agent-picker__description">Default for new tasks</span>
             </span>
-            {!selectedServer && (
+            {!serverSelected && (
               <Check aria-hidden="true" className="agent-environment__check" size={14} />
             )}
           </button>

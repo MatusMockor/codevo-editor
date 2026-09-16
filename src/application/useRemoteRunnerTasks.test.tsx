@@ -19,6 +19,7 @@ const task = (id = "task-1", sequence = 1): RemoteRunnerTask => ({
 const patch = { patch: "+fixed", truncated: false, untrackedFiles: [] };
 function gateway() {
   return {
+    collectInstructions: vi.fn().mockResolvedValue({ version: 1, files: [] }),
     listServers: vi.fn().mockResolvedValue([]),
     connectServer: vi.fn(),
     disconnectServer: vi.fn(),
@@ -27,7 +28,7 @@ function gateway() {
       protocolVersion: 1,
       runnerId: "runner-1",
       name: "Linux",
-      capabilities: { taskExecution: true, eventReplay: true },
+      capabilities: { instructionSync: true, taskExecution: true, eventReplay: true },
     }),
     listProjects: vi.fn().mockResolvedValue({ items: [{ id: "project-1", name: "Project" }] }),
     cloneProject: vi.fn(),
@@ -327,8 +328,9 @@ describe("useRemoteRunnerTasks", () => {
     expect(view.current().selectedTask?.status).toBe("succeeded");
     expect(view.current().tasks[0]?.status).toBe("succeeded");
     expect(view.current().diff).toEqual(patch);
-    expect(view.current().events).toEqual([]);
-    expect(view.current().error).toContain("displayed output is incomplete");
+    expect(view.current().events).toHaveLength(1100);
+    expect(view.current().events[1099]?.sequence).toBe(1101);
+    expect(view.current().error).toContain("earlier output is incomplete");
   });
 
   it("does not let a refresh started before submission erase the new task", async () => {
@@ -362,7 +364,12 @@ describe("remote session continuation", () => {
       protocolVersion: 1,
       runnerId: "runner-1",
       name: "Linux",
-      capabilities: { taskExecution: true, eventReplay: true, taskContinuation: true },
+      capabilities: {
+        instructionSync: true,
+        taskExecution: true,
+        eventReplay: true,
+        taskContinuation: true,
+      },
     });
     gw.listTasks.mockResolvedValue({ items: [task()], nextCursor: null });
     gw.continueTask.mockImplementation(async ({ parts }: { parts: RemoteRunnerTask["parts"] }) => ({
@@ -582,4 +589,162 @@ describe("remote session continuation", () => {
     expect(hook.current().tasks.some((item) => item.id === "late")).toBe(false);
     expect(hook.current().busy).toBe(false);
   });
+});
+
+it("retains creation instructions and identity across an uncertain retry", async () => {
+  const gw = gateway();
+  const first = {
+    version: 1 as const,
+    files: [{ scope: "global" as const, path: "CLAUDE.md", content: "first" }],
+  };
+  gw.collectInstructions.mockResolvedValue(first);
+  gw.createTask.mockRejectedValueOnce(new Error("lost response"));
+  const h = await render(gw);
+  await act(async () => {
+    await h.current().submit(input);
+  });
+  const original = vi.mocked<RemoteRunnerGateway["createTask"]>(gw.createTask).mock.calls[0]?.[0];
+  gw.collectInstructions.mockResolvedValue({ version: 1, files: [] });
+  await act(async () => {
+    await h.current().submit(input);
+  });
+  expect(vi.mocked<RemoteRunnerGateway["createTask"]>(gw.createTask).mock.calls[1]?.[0]).toEqual(
+    original,
+  );
+  expect(gw.collectInstructions).toHaveBeenCalledTimes(1);
+  expect(gw.uploadAttachment).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await h.current().submit(input);
+  });
+  expect(gw.collectInstructions).toHaveBeenCalledTimes(2);
+});
+
+it("refuses a historical draft without a prepared instruction snapshot", async () => {
+  const gw = gateway();
+  gw.listTasks.mockResolvedValue({ items: [{ ...task(), status: "draft" }], nextCursor: null });
+  gw.getTask.mockResolvedValue({ ...task(), status: "draft" });
+  const h = await render(gw);
+  await act(async () => {
+    await h.current().startDraft("project-1");
+  });
+  expect(gw.startTask).not.toHaveBeenCalled();
+  expect(h.current().error).toContain("no confirmed instruction snapshot");
+});
+
+it("recovers a prepared draft and refreshes instructions for the next submission", async () => {
+  const gw = gateway();
+  gw.startTask.mockRejectedValueOnce(new Error("lost start"));
+  gw.getTask.mockResolvedValue({ ...task(), status: "draft" });
+  const h = await render(gw);
+  await act(async () => {
+    await h.current().submit(input);
+  });
+  expect(h.current().selectedTask?.status).toBe("draft");
+  await act(async () => {
+    await h.current().startDraft("project-1");
+  });
+  expect(gw.startTask).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    await h.current().submit({ ...input, prompt: "next" });
+  });
+  expect(gw.collectInstructions).toHaveBeenCalledTimes(2);
+});
+
+it("does not start a prepared draft in a different project", async () => {
+  const gw = gateway();
+  gw.listProjects.mockResolvedValue({
+    items: [
+      { id: "project-1", name: "Original" },
+      { id: "project-2", name: "Other" },
+    ],
+  });
+  gw.startTask.mockRejectedValueOnce(new Error("lost start"));
+  gw.getTask.mockResolvedValue({ ...task(), status: "draft" });
+  const h = await render(gw);
+  await act(async () => {
+    await h.current().submit(input);
+  });
+  expect(h.current().selectedTask?.status).toBe("draft");
+  expect(gw.startTask).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await h.current().startDraft("project-2");
+  });
+  expect(gw.startTask).toHaveBeenCalledTimes(1);
+  expect(h.current().error).toContain("no confirmed instruction snapshot");
+  await act(async () => {
+    await h.current().startDraft("project-1");
+  });
+  expect(gw.startTask).toHaveBeenCalledTimes(2);
+  expect(gw.startTask).toHaveBeenLastCalledWith({
+    serverId: "server-1",
+    taskId: "task-1",
+    projectId: "project-1",
+  });
+});
+
+it("recovers a prepared Codex draft without collecting instructions on an older runner", async () => {
+  const gw = gateway();
+  const draft = { ...task(), provider: "codex" as const, status: "draft" as const };
+  gw.getRunner.mockResolvedValue({
+    protocolVersion: 1,
+    runnerId: "runner-1",
+    name: "Linux",
+    capabilities: { taskExecution: true, eventReplay: true },
+  });
+  gw.collectInstructions.mockRejectedValue(new Error("must not collect"));
+  gw.createTask.mockResolvedValue({ task: draft, created: true });
+  gw.startTask
+    .mockRejectedValueOnce(new Error("lost start"))
+    .mockResolvedValue({ ...draft, status: "queued" });
+  gw.getTask.mockResolvedValue(draft);
+  const h = await render(gw);
+  await act(async () => {
+    await h.current().submit({ ...input, provider: "codex" });
+  });
+  expect(h.current().selectedTask?.status).toBe("draft");
+  await act(async () => {
+    await h.current().startDraft("project-1");
+  });
+  expect(gw.startTask).toHaveBeenCalledTimes(2);
+  expect(h.current().error).toBeNull();
+  expect(gw.collectInstructions).not.toHaveBeenCalled();
+  expect(
+    vi.mocked<RemoteRunnerGateway["createTask"]>(gw.createTask).mock.calls[0]?.[0],
+  ).not.toHaveProperty("instructions");
+});
+
+it("continues a Codex task without instruction sync support", async () => {
+  const gw = gateway();
+  const parent = { ...task(), provider: "codex" as const };
+  gw.getRunner.mockResolvedValue({
+    protocolVersion: 1,
+    runnerId: "runner-1",
+    name: "Linux",
+    capabilities: { taskExecution: true, eventReplay: true, taskContinuation: true },
+  });
+  gw.collectInstructions.mockRejectedValue(new Error("must not collect"));
+  gw.listTasks.mockResolvedValue({ items: [parent], nextCursor: null });
+  gw.getTask.mockResolvedValue(parent);
+  gw.continueTask.mockResolvedValue({
+    task: {
+      ...parent,
+      id: "task-2",
+      sequence: 2,
+      parentTaskId: parent.id,
+      conversationId: parent.id,
+      status: "queued",
+      parts: [{ type: "text", text: input.prompt }],
+    },
+    created: true,
+  });
+  const h = await render(gw);
+  await act(async () => {
+    expect(
+      await h.current().continueTask({ ...input, provider: "codex", attachments: [] }),
+    ).not.toBeNull();
+  });
+  expect(gw.collectInstructions).not.toHaveBeenCalled();
+  expect(
+    vi.mocked<RemoteRunnerGateway["continueTask"]>(gw.continueTask).mock.calls[0]?.[0],
+  ).not.toHaveProperty("instructions");
 });

@@ -225,7 +225,15 @@ fn launch_plan_carries_the_stdio_transport_arguments() {
     let plan = test_plan("/repo/one");
     assert_eq!(
         plan.args(),
-        ["app-server", "--listen", "stdio://", "--model", "gpt-5"]
+        [
+            "app-server",
+            "--listen",
+            "stdio://",
+            "--model",
+            "gpt-5",
+            "-c",
+            "features.default_mode_request_user_input=true"
+        ]
     );
     assert_eq!(plan.repository_root(), Path::new("/repo/one"));
 }
@@ -550,7 +558,6 @@ fn every_approval_request_is_answered_with_the_declining_variant() {
         "execCommandApproval",
         "applyPatchApproval",
         "item/permissions/requestApproval",
-        "item/tool/requestUserInput",
         "mcpServer/elicitation/request",
         "item/tool/call",
     ] {
@@ -559,6 +566,10 @@ fn every_approval_request_is_answered_with_the_declining_variant() {
             "{method} must be declined"
         );
     }
+    assert_eq!(
+        decliner.decline("item/tool/requestUserInput", &params),
+        None
+    );
     assert_eq!(decliner.decline("future/serverRequest", &params), None);
     assert_eq!(decliner.decline("attestation/generate", &params), None);
 }

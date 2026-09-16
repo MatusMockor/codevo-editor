@@ -1,3 +1,11 @@
+#[path = "codex_app_server_turn_input.rs"]
+mod input;
+pub use input::CodexTurnInput;
+#[path = "codex_turn_authority.rs"]
+mod authority;
+use authority::{belongs_to_turn, bounded_error};
+#[path = "codex_app_server_questions.rs"]
+mod questions;
 use super::codex_app_server_host::{CodexAppServerHost, ThreadHandle, TurnHandle};
 use super::codex_app_server_protocol::{
     classify_error, CodexRpcErrorKind, ServerNotification, TurnInterruptParams, TurnSteerParams,
@@ -113,7 +121,18 @@ trait CodexTurnPort: Send + Sync {
     fn steer(&self, params: TurnSteerParams, timeout: Duration) -> Result<String, CodexRpcFailure>;
     fn cleanup(&self, interrupt: bool) -> Result<(), String>;
     fn stderr(&self) -> String;
+    fn reject_question(&self, _id: serde_json::Value) -> Result<(), String> {
+        Ok(())
+    }
     fn confirm_terminal(&self) {}
+    fn answer_question(
+        &self,
+        _id: serde_json::Value,
+        _result: serde_json::Value,
+        _closed: &AtomicBool,
+    ) -> Result<(), String> {
+        Err("Question response unavailable.".into())
+    }
 }
 
 struct HostTurnPort {
@@ -285,6 +304,27 @@ impl CodexTurnPort for HostTurnPort {
     fn stderr(&self) -> String {
         self.host.stderr_tail()
     }
+    fn answer_question(
+        &self,
+        id: serde_json::Value,
+        result: serde_json::Value,
+        closed: &AtomicBool,
+    ) -> Result<(), String> {
+        let handles = self.handles.lock().unwrap_or_else(PoisonError::into_inner);
+        if handles.is_none() || closed.load(Ordering::SeqCst) {
+            return Err("Codex turn was released.".into());
+        }
+        self.host
+            .transport()
+            .answer_server_request(id, result)
+            .map_err(|e| e.message())
+    }
+    fn reject_question(&self, id: serde_json::Value) -> Result<(), String> {
+        self.host
+            .transport()
+            .reject_server_request(id)
+            .map_err(|e| e.message())
+    }
     fn confirm_terminal(&self) {
         self.terminal_seen.store(true, Ordering::SeqCst);
     }
@@ -297,6 +337,8 @@ struct CleanupState {
 }
 
 struct TurnState {
+    questions: Arc<crate::agent_questions::AgentQuestionSession>,
+    question_gate: Mutex<()>,
     port: Arc<dyn CodexTurnPort>,
     thread_id: String,
     turn_id: String,
@@ -309,6 +351,15 @@ struct TurnState {
 
 impl TurnState {
     fn settle(&self, exit: i32) {
+        let _gate = self
+            .question_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if exit == 0 {
+            self.questions.finish();
+        } else {
+            self.questions.close();
+        }
         let _ = self
             .exit
             .compare_exchange(PENDING, exit, Ordering::SeqCst, Ordering::SeqCst);
@@ -316,6 +367,11 @@ impl TurnState {
     }
 
     fn cleanup(&self, interrupt: bool) {
+        if interrupt {
+            self.questions.close();
+        } else {
+            self.questions.finish();
+        }
         let mut worker = self
             .cleanup_worker
             .lock()
@@ -368,6 +424,8 @@ impl CodexTurnChild {
     fn from_port(port: Arc<dyn CodexTurnPort>, thread_id: String, turn_id: String) -> Self {
         Self {
             state: Arc::new(TurnState {
+                questions: Arc::new(crate::agent_questions::AgentQuestionSession::new()),
+                question_gate: Mutex::new(()),
                 port,
                 thread_id,
                 turn_id,
@@ -457,6 +515,11 @@ impl CodexTurnChild {
     }
 
     pub fn force_kill(&self) {
+        let gate = self
+            .state
+            .question_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if self
             .state
             .exit
@@ -466,6 +529,7 @@ impl CodexTurnChild {
             return;
         }
         self.state.input_closed.store(true, Ordering::SeqCst);
+        drop(gate);
         self.state.cleanup(true);
     }
 
@@ -481,6 +545,9 @@ impl CodexTurnChild {
 }
 
 impl crate::agent_task_spawner::AgentChild for CodexTurnChild {
+    fn take_questions(&mut self) -> Option<Arc<crate::agent_questions::AgentQuestionSession>> {
+        Some(Arc::clone(&self.state.questions))
+    }
     fn stdout_reader(&mut self) -> Result<Box<dyn Read + Send>, String> {
         CodexTurnChild::stdout_reader(self)
     }
@@ -520,94 +587,6 @@ impl Drop for CodexTurnChild {
     }
 }
 
-pub struct CodexTurnInput {
-    state: Arc<TurnState>,
-}
-
-impl CodexTurnInput {
-    pub fn steer(
-        &mut self,
-        input: Vec<UserInput>,
-        client_user_message_id: Option<String>,
-        deadline: Instant,
-    ) -> io::Result<()> {
-        if self.state.input_closed.load(Ordering::SeqCst) {
-            return Err(io::ErrorKind::BrokenPipe.into());
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(io::ErrorKind::TimedOut.into());
-        }
-        let params = TurnSteerParams {
-            thread_id: self.state.thread_id.clone(),
-            expected_turn_id: self.state.turn_id.clone(),
-            input,
-            client_user_message_id,
-        };
-        let turn = self
-            .state
-            .port
-            .steer(params, remaining)
-            .map_err(|failure| match failure {
-                CodexRpcFailure::Timeout => io::Error::from(io::ErrorKind::TimedOut),
-                CodexRpcFailure::Rpc(ref error)
-                    if classify_error(error) == CodexRpcErrorKind::ActiveTurnNotSteerable =>
-                {
-                    io::Error::new(
-                        io::ErrorKind::WouldBlock,
-                        "Codex turn is not currently steerable.",
-                    )
-                }
-                _ => io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "Codex could not accept the steering message.",
-                ),
-            })?;
-        if turn != self.state.turn_id {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Codex returned a different turn.",
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn close(&mut self) {
-        self.state.input_closed.store(true, Ordering::SeqCst);
-    }
-    pub fn cancellation_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.state.input_closed)
-    }
-}
-
-impl crate::agent_task_spawner::agent_task_input::AgentTaskInput for CodexTurnInput {
-    fn kind(&self) -> crate::agent_task_spawner::agent_task_input::AgentTaskInputKind {
-        crate::agent_task_spawner::agent_task_input::AgentTaskInputKind::CodexInput
-    }
-    fn write_frame(&mut self, _frame: &[u8], _deadline: Instant) -> io::Result<()> {
-        Err(io::ErrorKind::InvalidInput.into())
-    }
-    fn write_input(
-        &mut self,
-        frame: &crate::agent_task_spawner::agent_task_input::AgentTaskInputFrame,
-        deadline: Instant,
-    ) -> io::Result<()> {
-        match frame {
-            crate::agent_task_spawner::agent_task_input::AgentTaskInputFrame::CodexInput {
-                input,
-                client_user_message_id,
-            } => self.steer(input.clone(), client_user_message_id.clone(), deadline),
-            _ => Err(io::ErrorKind::InvalidInput.into()),
-        }
-    }
-    fn close(&mut self) {
-        CodexTurnInput::close(self);
-    }
-    fn cancellation_flag(&self) -> Option<Arc<AtomicBool>> {
-        Some(CodexTurnInput::cancellation_flag(self))
-    }
-}
-
 struct CodexTurnReader {
     state: Arc<TurnState>,
     projection: CodexTurnProjection,
@@ -632,6 +611,18 @@ impl CodexTurnReader {
 
     fn project(&mut self, frame: TurnFrame) {
         let notification = match frame {
+            TurnFrame::UserInputRequested { id, params } => {
+                if questions::register(&self.state, id.clone(), params).is_err() {
+                    if let Err(error) = self.state.port.reject_question(id) {
+                        self.failure(&error);
+                    }
+                }
+                return;
+            }
+            TurnFrame::UserInputResolved { id } => {
+                self.state.questions.expire(&questions::request_id(&id));
+                return;
+            }
             TurnFrame::Notification(notification) => *notification,
             TurnFrame::UnknownFrame { method } => ServerNotification::Unknown { method },
             TurnFrame::ServerRequestDeclined { .. } => {
@@ -739,45 +730,6 @@ impl Read for CodexStderrReader {
             })
         });
         pending.read(buffer)
-    }
-}
-
-fn belongs_to_turn(notification: &ServerNotification, thread_id: &str, turn_id: &str) -> bool {
-    let authority = match notification {
-        ServerNotification::TurnStarted(payload) => {
-            Some((payload.thread_id.as_str(), Some(payload.turn.id.as_str())))
-        }
-        ServerNotification::TurnCompleted(payload) => {
-            Some((payload.thread_id.as_str(), Some(payload.turn.id.as_str())))
-        }
-        ServerNotification::ItemStarted(payload) | ServerNotification::ItemCompleted(payload) => {
-            Some((payload.thread_id.as_str(), payload.turn_id.as_deref()))
-        }
-        ServerNotification::ThreadTokenUsageUpdated(payload) => {
-            Some((payload.thread_id.as_str(), payload.turn_id.as_deref()))
-        }
-        ServerNotification::ThreadCompacted(payload) => {
-            Some((payload.thread_id.as_str(), payload.turn_id.as_deref()))
-        }
-        ServerNotification::Error(payload) => payload
-            .thread_id
-            .as_deref()
-            .map(|thread| (thread, payload.turn_id.as_deref())),
-        _ => None,
-    };
-    !authority.is_some_and(|(thread, turn)| {
-        thread == thread_id && turn.is_some_and(|turn| turn != turn_id)
-    })
-}
-
-fn bounded_error(reason: &str) -> CodexClippedText {
-    let mut end = reason.len().min(4096);
-    while !reason.is_char_boundary(end) {
-        end -= 1;
-    }
-    CodexClippedText {
-        text: reason[..end].to_string(),
-        clipped: end != reason.len(),
     }
 }
 

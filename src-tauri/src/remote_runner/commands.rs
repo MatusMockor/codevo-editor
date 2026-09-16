@@ -187,13 +187,14 @@ pub async fn remote_runner_list_events(
 ) -> Result<Value, String> {
     let state = state.inner().clone();
     blocking(move || {
-        state.call(
+        let page = state.call(
             &request.server_id,
             "GET",
             &cursor_path(task_path(&request.task_id, "/events")?, request.after)?,
             None,
             vec![],
-        )
+        )?;
+        super::event_page::validate(page)
     })
     .await
 }

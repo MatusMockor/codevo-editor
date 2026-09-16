@@ -40,3 +40,41 @@ describe("remote runner output artifact capability", () => {
     ).toThrow("Invalid remote runner getRunner response.");
   });
 });
+
+describe("remote runner interaction and execution policy", () => {
+  it.each([true, false])("accepts explicit interactiveQuestions %s", (interactiveQuestions) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, interactiveQuestions },
+      }),
+    ).not.toThrow();
+  });
+  it.each([null, "true", 1, {}, []])(
+    "rejects invalid interactiveQuestions %j",
+    (interactiveQuestions) => {
+      expect(() =>
+        validateRemoteRunnerValue("getRunner", "response", {
+          ...descriptor,
+          capabilities: { ...descriptor.capabilities, interactiveQuestions },
+        }),
+      ).toThrow();
+    },
+  );
+  it.each([60000, 43200000, 604800000])(
+    "accepts bounded execution policy %s",
+    (executionTimeoutMs) => {
+      expect(() =>
+        validateRemoteRunnerValue("getRunner", "response", { ...descriptor, executionTimeoutMs }),
+      ).not.toThrow();
+    },
+  );
+  it.each([null, "60000", 59999, 604800001, 60000.5, -1])(
+    "rejects invalid execution policy %j",
+    (executionTimeoutMs) => {
+      expect(() =>
+        validateRemoteRunnerValue("getRunner", "response", { ...descriptor, executionTimeoutMs }),
+      ).toThrow();
+    },
+  );
+});

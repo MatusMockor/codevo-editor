@@ -174,10 +174,10 @@ describe("app-server domain persistence", () => {
       ],
     });
     const turn = updated.threads.get("agt-thread-1")?.turns[0];
-    expect(turn?.events).toHaveLength(33);
+    expect(turn?.events).toHaveLength(32);
     expect(turn?.events[turn.events.length - 1]).toEqual({
       kind: "subagentUsage",
-      agentThreadId: "child-0",
+      agentThreadId: "child-new",
       usage,
     });
     expect(turn?.eventsTruncated).toBe(true);

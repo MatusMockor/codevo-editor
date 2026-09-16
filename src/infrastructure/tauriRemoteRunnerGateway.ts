@@ -1,3 +1,4 @@
+import type { RemoteRunnerCollectInstructionsRequest } from "../domain/remoteRunnerInstructions";
 import { invoke, type Channel } from "@tauri-apps/api/core";
 import type * as R from "../domain/remoteRunner";
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
@@ -10,6 +11,7 @@ export type InvokeRemoteRunnerCommand = (
   args?: Readonly<{ request: unknown; onEvent?: Channel<unknown> }>,
 ) => Promise<unknown>;
 export const REMOTE_RUNNER_COMMANDS = {
+  collectInstructions: "remote_runner_collect_instructions",
   listServers: "remote_runner_list_servers",
   connectServer: "remote_runner_connect_server",
   disconnectServer: "remote_runner_disconnect_server",
@@ -70,6 +72,9 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
     }
     validateRemoteRunnerValue(operation, "response", result);
     return result as Awaited<ReturnType<NonNullable<R.RemoteRunnerGateway[K]>>>;
+  }
+  collectInstructions(request: RemoteRunnerCollectInstructionsRequest) {
+    return this.call("collectInstructions", request);
   }
   listServers() {
     return this.call("listServers");

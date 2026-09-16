@@ -10,7 +10,10 @@ import {
   type AgentTaskRuntimeDetector,
   type ListenToAgentTaskEvent,
 } from "./tauriAgentTaskGateway";
-import type { InvokeAgentTaskCommand } from "./tauriAgentTaskIpcContract";
+import {
+  decodeAgentTaskOutputEvent,
+  type InvokeAgentTaskCommand,
+} from "./tauriAgentTaskIpcContract";
 
 const START_REQUEST: StartAgentTaskRequest = {
   taskId: "agt-1-0a1b",
@@ -243,4 +246,55 @@ describe("TauriAgentTaskGateway", () => {
     );
     expect(invokeCommand).not.toHaveBeenCalled();
   });
+});
+
+describe("output acknowledgement IPC", () => {
+  it("uses exact task owner and consumed sequence", async () => {
+    const invokeCommand = vi.fn().mockResolvedValue(null);
+    const gateway = new TauriAgentTaskGateway(invokeCommand, vi.fn(), available);
+    await gateway.acknowledgeAgentTaskOutput({
+      taskId: "agt-1",
+      workspaceId: "ws-1",
+      sequence: 64,
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("acknowledge_agent_task_output", {
+      request: { taskId: "agt-1", workspaceId: "ws-1", sequence: 64 },
+    });
+  });
+  it.each([0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1, NaN])(
+    "rejects invalid sequence %s before IPC",
+    async (sequence) => {
+      const invokeCommand = vi.fn();
+      const gateway = new TauriAgentTaskGateway(invokeCommand, vi.fn(), available);
+      await expect(
+        gateway.acknowledgeAgentTaskOutput({ taskId: "agt-1", workspaceId: "ws-1", sequence }),
+      ).rejects.toThrow();
+      expect(invokeCommand).not.toHaveBeenCalled();
+    },
+  );
+  it("requires a strict unit response", async () => {
+    const gateway = new TauriAgentTaskGateway(vi.fn().mockResolvedValue({}), vi.fn(), available);
+    await expect(
+      gateway.acknowledgeAgentTaskOutput({ taskId: "agt-1", workspaceId: "ws-1", sequence: 1 }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("output line boundary wire metadata", () => {
+  const output = { taskId: "agt-1", sequence: 1, stream: "stdout", chunk: "{}", truncated: false };
+  it.each([true, false])("preserves boundary %s", (startsAtLineBoundary) => {
+    expect(decodeAgentTaskOutputEvent({ ...output, startsAtLineBoundary })).toEqual({
+      ...output,
+      startsAtLineBoundary,
+    });
+  });
+  it("accepts legacy events without a guessed boundary", () => {
+    expect(decodeAgentTaskOutputEvent(output)).toEqual(output);
+  });
+  it.each([null, undefined, 1, "true"])(
+    "rejects nonboolean boundary %s",
+    (startsAtLineBoundary) => {
+      expect(() => decodeAgentTaskOutputEvent({ ...output, startsAtLineBoundary })).toThrow();
+    },
+  );
 });

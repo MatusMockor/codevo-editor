@@ -1,11 +1,8 @@
-pub mod agent_cli_discovery;
-pub mod agent_task_admission;
-pub mod agent_task_spawner;
-pub mod agent_task_supervisor;
+include!("agent_runtime_module_registration.rs");
 mod application_commands;
 mod application_menu;
-mod artisan;
 mod artifact_preview;
+mod artisan;
 mod blocking_command;
 pub mod composer;
 mod debug_adapter;

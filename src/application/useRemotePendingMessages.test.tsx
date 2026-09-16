@@ -42,11 +42,14 @@ afterEach(() => {
 function setup(items: readonly RemoteRunnerPendingMessage[] = []) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const gateway = {
+    collectInstructions: vi.fn().mockResolvedValue({ version: 1, files: [] }),
     listServers: vi.fn(),
     connectServer: vi.fn(),
     disconnectServer: vi.fn(),
     removeServer: vi.fn(),
-    getRunner: vi.fn(),
+    getRunner: vi
+      .fn()
+      .mockResolvedValue({ runnerId: "runner", capabilities: { instructionSync: true } }),
     listProjects: vi.fn(),
     cloneProject: vi.fn(),
     getProjectClone: vi.fn(),
@@ -258,7 +261,13 @@ describe("server-owned pending message orchestration", () => {
     await act(async () => {
       expect(await h.result.enqueue(request)).toBe(true);
     });
-    expect(h.gateway.enqueueMessage.mock.calls[1]).toEqual(h.gateway.enqueueMessage.mock.calls[0]);
+    expect(
+      vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
+        .calls[1],
+    ).toEqual(
+      vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
+        .calls[0],
+    );
   });
   it("accepts an uncertain retry with equivalent reordered launch settings", async () => {
     const h = setup();
@@ -274,7 +283,13 @@ describe("server-owned pending message orchestration", () => {
         }),
       ).toBe(true);
     });
-    expect(h.gateway.enqueueMessage.mock.calls[1]).toEqual(h.gateway.enqueueMessage.mock.calls[0]);
+    expect(
+      vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
+        .calls[1],
+    ).toEqual(
+      vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
+        .calls[0],
+    );
   });
   it("applies a late enqueue acknowledgement to the latest inventory without resurrecting old items", async () => {
     const old = pending({ id: "already-dispatched" });
@@ -322,8 +337,12 @@ describe("server-owned pending message orchestration", () => {
     await act(async () => {
       expect(await h.result.enqueue({ ...request, prompt: "Changed" })).toBe(true);
     });
-    expect(h.gateway.enqueueMessage.mock.calls[1]?.[0].idempotencyKey).not.toEqual(
-      h.gateway.enqueueMessage.mock.calls[0]?.[0].idempotencyKey,
+    expect(
+      vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
+        .calls[1]?.[0].idempotencyKey,
+    ).not.toEqual(
+      vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
+        .calls[0]?.[0].idempotencyKey,
     );
   });
   it("revokes submission during an attachment upload when the owner changes", async () => {
@@ -462,4 +481,107 @@ describe("server-owned pending message orchestration", () => {
     });
     expect(h.applyPublished([])).toEqual([pending()]);
   });
+});
+
+function setupClaude() {
+  const h = setup();
+  const launch = {
+    provider: "claudeCode",
+    model: "default",
+    mode: "default",
+    effort: "high",
+  } as const;
+  const view = h.options.views.get(request.threadId)!;
+  h.update({
+    views: new Map([
+      [
+        request.threadId,
+        {
+          ...view,
+          thread: {
+            ...view.thread,
+            provider: { kind: "claudeCode", sessionId: "session-abcdefgh" },
+          },
+        },
+      ],
+    ]),
+  });
+  h.gateway.enqueueMessage.mockResolvedValue({ pending: pending({ launch }), created: true });
+  return { h, request: { ...request, launch } };
+}
+
+it("pins queued instructions across uncertain delivery and refreshes the next send", async () => {
+  const { h, request } = setupClaude();
+  const first = {
+    version: 1 as const,
+    files: [{ scope: "global" as const, path: "CLAUDE.md", content: "first" }],
+  };
+  const edited = { ...first, files: [{ ...first.files[0]!, content: "edited" }] };
+  const collectInstructions = vi.fn().mockResolvedValue(first);
+  h.gateway.getRunner.mockResolvedValue({
+    runnerId: "runner",
+    capabilities: { instructionSync: true },
+  });
+  h.update({ gateway: { ...h.gateway, collectInstructions } });
+  h.gateway.enqueueMessage.mockRejectedValueOnce(new Error("connection lost"));
+  await act(async () => {
+    await h.result.enqueue(request);
+  });
+  const original = vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(
+    h.gateway.enqueueMessage,
+  ).mock.calls[0]?.[0];
+  collectInstructions.mockResolvedValue(edited);
+  await act(async () => {
+    await h.result.enqueue(request);
+  });
+  expect(
+    vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
+      .calls[1]?.[0],
+  ).toEqual(original);
+  expect(collectInstructions).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await h.result.enqueue(request);
+  });
+  expect(
+    vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
+      .calls[2]?.[0],
+  ).toMatchObject({ instructions: edited });
+});
+
+it("does not enqueue when instruction collection fails or finishes under a replaced owner", async () => {
+  const { h, request } = setupClaude();
+  const collectInstructions = vi.fn().mockRejectedValue(new Error("rule import unavailable"));
+  h.update({ gateway: { ...h.gateway, collectInstructions } });
+  await act(async () => {
+    await h.result.enqueue(request);
+  });
+  expect(h.gateway.enqueueMessage).not.toHaveBeenCalled();
+  expect(h.options.report).toHaveBeenCalledWith("rule import unavailable");
+  const collected = deferred<{ version: 1; files: [] }>();
+  collectInstructions.mockReturnValue(collected.promise);
+  let sending!: Promise<boolean>;
+  await act(async () => {
+    sending = h.result.enqueue(request);
+  });
+  h.update({ owner: {} });
+  await act(async () => {
+    collected.resolve({ version: 1, files: [] });
+    await sending;
+  });
+  expect(h.gateway.enqueueMessage).not.toHaveBeenCalled();
+});
+
+it("queues Codex without collecting rules on a runner without instruction sync", async () => {
+  const h = setup();
+  h.gateway.getRunner.mockResolvedValue({ runnerId: "runner", capabilities: {} });
+  h.gateway.collectInstructions.mockRejectedValue(new Error("must not collect"));
+  await act(async () => {
+    expect(await h.result.enqueue(request)).toBe(true);
+  });
+  expect(h.gateway.collectInstructions).not.toHaveBeenCalled();
+  expect(h.gateway.getRunner).not.toHaveBeenCalled();
+  expect(
+    vi.mocked<NonNullable<RemoteRunnerGateway["enqueueMessage"]>>(h.gateway.enqueueMessage).mock
+      .calls[0]?.[0],
+  ).not.toHaveProperty("instructions");
 });

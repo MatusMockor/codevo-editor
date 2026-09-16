@@ -1,3 +1,7 @@
+import type {
+  RemoteRunnerCollectInstructionsRequest,
+  RemoteRunnerInstructionSnapshot,
+} from "./remoteRunnerInstructions";
 import type { AgentLaunchOptions } from "./agentLaunch";
 
 /** Closed editor-facing runner protocol. Credentials and server paths stay native. */
@@ -16,6 +20,7 @@ export type RemoteRunnerDescriptor = Readonly<{
   protocolVersion: 1;
   runnerId: string;
   name: string;
+  executionTimeoutMs?: number;
   capabilities: Readonly<{
     taskExecution: boolean;
     eventReplay: boolean;
@@ -27,6 +32,8 @@ export type RemoteRunnerDescriptor = Readonly<{
     taskFileDiffs?: boolean;
     pendingMessages?: boolean;
     outputArtifacts?: boolean;
+    instructionSync?: boolean;
+    interactiveQuestions?: boolean;
   }>;
 }>;
 export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;
@@ -70,6 +77,7 @@ export type RemoteRunnerTaskResume =
 export type RemoteRunnerContinueTaskRequest = RemoteRunnerTaskRequest &
   Readonly<{
     idempotencyKey: string;
+    instructions?: RemoteRunnerInstructionSnapshot;
     parts: readonly RemoteRunnerPart[];
     launch?: AgentLaunchOptions;
   }>;
@@ -106,6 +114,12 @@ export type RemoteRunnerEvent = Readonly<{
   error?: string;
 }>;
 export type RemoteRunnerPage<T> = Readonly<{ items: readonly T[]; nextCursor: number | null }>;
+export type RemoteRunnerEventPage = RemoteRunnerPage<RemoteRunnerEvent> &
+  Readonly<{
+    /** Highest output sequence evicted by the runner; lifecycle events remain replayable. */
+    outputTruncatedBeforeSequence?: number;
+    outputStartsAtLineBoundary?: boolean;
+  }>;
 export type RemoteRunnerDiff = Readonly<{
   patch: string;
   truncated: boolean;
@@ -126,6 +140,7 @@ export type RemoteRunnerCreateTaskRequest = RemoteRunnerServerRequest &
   Readonly<{
     idempotencyKey: string;
     provider: RemoteRunnerProvider;
+    instructions?: RemoteRunnerInstructionSnapshot;
     launch?: AgentLaunchOptions;
     parts: readonly RemoteRunnerPart[];
   }>;
@@ -184,6 +199,9 @@ export type RemoteRunnerHistorySearchPage = Readonly<{
 }>;
 
 export interface RemoteRunnerGateway {
+  collectInstructions?(
+    request: RemoteRunnerCollectInstructionsRequest,
+  ): Promise<RemoteRunnerInstructionSnapshot>;
   listPendingMessages?(request: RemoteRunnerTaskRequest): Promise<RemoteRunnerPendingMessages>;
   enqueueMessage?(
     request: RemoteRunnerContinueTaskRequest,
@@ -229,7 +247,7 @@ export interface RemoteRunnerGateway {
   cancelTask(request: RemoteRunnerTaskRequest): Promise<RemoteRunnerTask>;
   listEvents(
     request: RemoteRunnerTaskRequest & Readonly<{ after: number }>,
-  ): Promise<RemoteRunnerPage<RemoteRunnerEvent>>;
+  ): Promise<RemoteRunnerEventPage>;
   getDiff(request: RemoteRunnerTaskRequest): Promise<RemoteRunnerDiff>;
   uploadAttachment(
     request: RemoteRunnerUploadRequest,

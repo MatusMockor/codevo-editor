@@ -1170,6 +1170,33 @@ describe("useAgentTurnDispatch output stream", () => {
     harness.unmount();
   });
 
+  it("acknowledges only parsed live output for its exact workspace owner", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.startThread();
+    const turnId = harness.turnIdOf(threadId, 0);
+    await act(async () => {
+      harness.emitOutput(turnId, 1, "first");
+      harness.emitOutput(turnId, 1, "duplicate");
+      harness.emitOutput("agt-foreign-0000", 1, "foreign");
+      harness.emitOutput(turnId, 2, "second");
+    });
+    expect(harness.parser.feed).toHaveBeenCalledTimes(2);
+    expect(harness.agent.acknowledgeAgentTaskOutput).toHaveBeenCalledExactlyOnceWith({
+      taskId: turnId,
+      workspaceId: OWNER_A,
+      sequence: 2,
+    });
+    expect(harness.parser.feed.mock.invocationCallOrder[1]).toBeLessThan(
+      harness.agent.acknowledgeAgentTaskOutput.mock.invocationCallOrder[0]!,
+    );
+    await act(async () => {
+      harness.emitStatus(turnId, 1, { kind: "exited", exitCode: 0 });
+      harness.emitOutput(turnId, 3, "late");
+    });
+    expect(harness.agent.acknowledgeAgentTaskOutput).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
   it("ignores late, duplicate, and foreign output once the turn is terminal", async () => {
     const harness = renderDispatch();
     const threadId = await harness.startThread();
@@ -2177,6 +2204,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       return { taskId: payload.taskId };
     }),
     acknowledgeAgentTaskStart: vi.fn(async () => undefined),
+    acknowledgeAgentTaskOutput: vi.fn(async () => undefined),
     stopAgentTask: vi.fn(async () => undefined),
     stopAgentTasksForRoot: vi.fn(async () => undefined),
     steerAgentTask: vi.fn(
@@ -2422,7 +2450,14 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
     },
     emitOutput(taskId: string, sequence: number, chunk: string): void {
       expect(outputHandler).not.toBeNull();
-      outputHandler?.({ taskId, sequence, stream: "stdout", chunk, truncated: false });
+      outputHandler?.({
+        taskId,
+        sequence,
+        stream: "stdout",
+        chunk,
+        truncated: false,
+        startsAtLineBoundary: true,
+      });
     },
     switchToProject(rootKey: string, ownerId: string): void {
       environment.activeRoot = rootKey;

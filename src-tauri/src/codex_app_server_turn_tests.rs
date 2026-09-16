@@ -14,6 +14,9 @@ struct FakePort {
     attachment_allowed: AtomicBool,
     steers: Mutex<Vec<(TurnSteerParams, Duration)>>,
     steer_result: Mutex<Result<String, CodexRpcFailure>>,
+    question_answers: Mutex<Vec<(Value, Value)>>,
+    answer_blocked: AtomicBool,
+    answer_entered: AtomicBool,
     cleanups: AtomicUsize,
     interrupted: AtomicBool,
     cleanup_blocked: AtomicBool,
@@ -31,6 +34,9 @@ impl FakePort {
             attachment_allowed: AtomicBool::new(true),
             steers: Mutex::new(Vec::new()),
             steer_result: Mutex::new(Ok(TURN.into())),
+            question_answers: Mutex::new(Vec::new()),
+            answer_blocked: AtomicBool::new(false),
+            answer_entered: AtomicBool::new(false),
             cleanups: AtomicUsize::new(0),
             interrupted: AtomicBool::new(false),
             cleanup_blocked: AtomicBool::new(false),
@@ -62,6 +68,17 @@ impl FakePort {
 }
 
 impl CodexTurnPort for FakePort {
+    fn answer_question(&self, id: Value, result: Value, closed: &AtomicBool) -> Result<(), String> {
+        self.answer_entered.store(true, Ordering::SeqCst);
+        while self.answer_blocked.load(Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
+        if closed.load(Ordering::SeqCst) {
+            return Err("Closed".into());
+        }
+        self.question_answers.lock().unwrap().push((id, result));
+        Ok(())
+    }
     fn receive(&self) -> Result<TurnFrame, TurnFrameRecvError> {
         self.frames
             .lock()
@@ -395,4 +412,125 @@ fn cleanup_worker_panic_remains_an_error_on_repeated_reap() {
     assert_eq!(child.reap(), Err("Codex turn cleanup failed.".into()));
     assert_eq!(child.reap(), Err("Codex turn cleanup failed.".into()));
     assert_eq!(port.cleanups.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn question_waits_for_answer_and_maps_exact_provider_values() {
+    use crate::agent_questions::{AgentQuestionAnswerItem, AgentQuestionResponse};
+    let port = FakePort::new();
+    let child = port.child();
+    questions::register(&child.state,json!(91),json!({"threadId":THREAD,"turnId":TURN,"questions":[{"id":"choice","header":"Choice","question":"Which?","options":[{"label":"First","description":"Recommended"}]}]})).unwrap();
+    assert!(port.question_answers.lock().unwrap().is_empty());
+    let request = child.state.questions.list("task").remove(0);
+    child
+        .state
+        .questions
+        .answer(
+            "task",
+            &request.id,
+            AgentQuestionResponse {
+                answers: vec![AgentQuestionAnswerItem {
+                    question_id: "choice".into(),
+                    option_ids: vec!["option-0".into()],
+                    text: "Extra".into(),
+                }],
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        *port.question_answers.lock().unwrap(),
+        vec![(
+            json!(91),
+            json!({"answers":{"choice":{"answers":["First","Extra"]}}})
+        )]
+    );
+    child.state.settle(0);
+}
+#[test]
+fn question_rejects_foreign_turn_and_expires_on_stop() {
+    let port = FakePort::new();
+    let child = port.child();
+    let mut params = json!({"threadId":THREAD,"turnId":"foreign","questions":[{"id":"q","header":"","question":"Text?"}]});
+    assert!(questions::register(&child.state, json!(1), params.clone()).is_err());
+    params["turnId"] = json!(TURN);
+    questions::register(&child.state, json!(2), params).unwrap();
+    child.force_kill();
+    assert_eq!(
+        child.state.questions.list("task")[0].status,
+        crate::agent_questions::AgentQuestionStatus::Expired
+    );
+    assert!(port.question_answers.lock().unwrap().is_empty());
+}
+
+#[test]
+fn stale_and_subagent_questions_do_not_abort_parent_turn() {
+    let port = FakePort::new();
+    let child = port.child();
+    let mut reader = CodexTurnReader {
+        state: Arc::clone(&child.state),
+        projection: CodexTurnProjection::new(Some(THREAD.into())),
+        pending: Cursor::new(vec![]),
+        declined_reported: false,
+    };
+    for (thread, turn) in [(THREAD, "previous"), ("child-thread", TURN)] {
+        reader.project(TurnFrame::UserInputRequested { id: json!(1), params: json!({"threadId":thread,"turnId":turn,"questions":[{"id":"q","header":"Q","question":"Choose"}]}) });
+        assert!(!child.observe_exit());
+        assert!(child.state.questions.list("task").is_empty());
+    }
+    child.state.settle(0);
+}
+
+#[test]
+fn resolved_question_expires_without_ending_turn() {
+    let port = FakePort::new();
+    let child = port.child();
+    questions::register(&child.state, json!(9), json!({"threadId":THREAD,"turnId":TURN,"questions":[{"id":"q","header":"Q","question":"Choose"}]})).unwrap();
+    let mut reader = CodexTurnReader {
+        state: Arc::clone(&child.state),
+        projection: CodexTurnProjection::new(Some(THREAD.into())),
+        pending: Cursor::new(vec![]),
+        declined_reported: false,
+    };
+    reader.project(TurnFrame::UserInputResolved { id: json!(9) });
+    assert_eq!(
+        child.state.questions.list("task")[0].status,
+        crate::agent_questions::AgentQuestionStatus::Expired
+    );
+    assert!(!child.observe_exit());
+    child.state.settle(0);
+}
+
+#[test]
+fn direct_input_cancellation_while_answer_waits_prevents_provider_write() {
+    use crate::agent_questions::{AgentQuestionAnswerItem, AgentQuestionResponse};
+    let port = FakePort::new();
+    let child = port.child();
+    questions::register(&child.state,json!(19),json!({"threadId":THREAD,"turnId":TURN,"questions":[{"id":"q","header":"Q","question":"Choose"}]})).unwrap();
+    let session = Arc::clone(&child.state.questions);
+    let request = session.list("task").remove(0);
+    port.answer_blocked.store(true, Ordering::SeqCst);
+    let worker = std::thread::spawn(move || {
+        session.answer(
+            "task",
+            &request.id,
+            AgentQuestionResponse {
+                answers: vec![AgentQuestionAnswerItem {
+                    question_id: "q".into(),
+                    option_ids: vec![],
+                    text: "Reply".into(),
+                }],
+            },
+        )
+    });
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !port.answer_entered.load(Ordering::SeqCst) && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    let entered = port.answer_entered.load(Ordering::SeqCst);
+    child.state.input_closed.store(true, Ordering::SeqCst);
+    port.answer_blocked.store(false, Ordering::SeqCst);
+    assert!(worker.join().unwrap().is_err());
+    assert!(entered);
+    assert!(port.question_answers.lock().unwrap().is_empty());
+    child.state.settle(0);
 }

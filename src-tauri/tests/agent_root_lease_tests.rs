@@ -1,6 +1,9 @@
 #![cfg(unix)]
 #![allow(dead_code)]
 
+#[path = "../src/agent_questions.rs"]
+mod agent_questions;
+
 mod workspace_registry {
     #[derive(Clone, Debug, Eq, Hash, PartialEq)]
     pub struct WorkspaceId(pub String);

@@ -1,3 +1,4 @@
+import { isRemoteRunnerInstructionSnapshot } from "./remoteRunnerInstructions";
 import { parseAgentLaunchOptions } from "./agentLaunch";
 import type * as R from "./remoteRunner";
 
@@ -213,6 +214,22 @@ const event = object({
   exitCode: optional((v) => v === null || integer(-2147483648, 2147483647)(v)),
   error: optional(text(1024)),
 });
+const eventPage: Check = (value) => {
+  if (
+    !object({
+      items: array(event, 50),
+      nextCursor: (v) => v === null || integer(0)(v),
+      outputTruncatedBeforeSequence: optional(integer(1)),
+      outputStartsAtLineBoundary: optional(boolean),
+    })(value)
+  )
+    return false;
+  const page = value as R.RemoteRunnerEventPage;
+  return (
+    (page.outputTruncatedBeforeSequence === undefined) ===
+    (page.outputStartsAtLineBoundary === undefined)
+  );
+};
 const attachment = object({
   id,
   runnerId: text(128),
@@ -229,6 +246,10 @@ const page = (item: Check) =>
 const voidResponse: Check = (v) => v === null || v === undefined;
 
 export const remoteRunnerChecks = {
+  collectInstructions: {
+    request: object({ rootPath: optional(text(4096)) }),
+    response: isRemoteRunnerInstructionSnapshot,
+  },
   listServers: { request: voidResponse, response: array(server, 32) },
   connectServer: { request: object(serverFields), response: server },
   disconnectServer: { request: object(serverRequest), response: voidResponse },
@@ -239,6 +260,7 @@ export const remoteRunnerChecks = {
       protocolVersion: choice(1),
       runnerId: text(128),
       name: text(256),
+      executionTimeoutMs: optional(integer(60_000, 604_800_000)),
       capabilities: object({
         taskExecution: boolean,
         eventReplay: boolean,
@@ -250,6 +272,8 @@ export const remoteRunnerChecks = {
         taskFileDiffs: optional(boolean),
         pendingMessages: optional(boolean),
         outputArtifacts: optional(boolean),
+        instructionSync: optional(boolean),
+        interactiveQuestions: optional(boolean),
       }),
     }),
   },
@@ -302,9 +326,14 @@ export const remoteRunnerChecks = {
   },
   createTask: {
     request: (v: unknown) =>
-      object({ ...serverRequest, idempotencyKey: id, provider, parts, launch: optional(launch) })(
-        v,
-      ) && launchProviderMatches(v),
+      object({
+        ...serverRequest,
+        idempotencyKey: id,
+        provider,
+        parts,
+        launch: optional(launch),
+        instructions: optional(isRemoteRunnerInstructionSnapshot),
+      })(v) && launchProviderMatches(v),
     response: object({ task, created: boolean }),
   },
   startTask: { request: object({ ...taskRequest, projectId: identifier }), response: task },
@@ -319,13 +348,25 @@ export const remoteRunnerChecks = {
       })(value),
   },
   continueTask: {
-    request: object({ ...taskRequest, idempotencyKey: id, parts, launch: optional(launch) }),
+    request: object({
+      ...taskRequest,
+      idempotencyKey: id,
+      parts,
+      launch: optional(launch),
+      instructions: optional(isRemoteRunnerInstructionSnapshot),
+    }),
     response: object({ task, created: boolean }),
   },
   listPendingMessages: { request: object(taskRequest), response: pendingMessages },
   resumePendingMessages: { request: object(taskRequest), response: pendingMessages },
   enqueueMessage: {
-    request: object({ ...taskRequest, idempotencyKey: id, parts, launch: optional(launch) }),
+    request: object({
+      ...taskRequest,
+      idempotencyKey: id,
+      parts,
+      launch: optional(launch),
+      instructions: optional(isRemoteRunnerInstructionSnapshot),
+    }),
     response: object({ pending: pendingMessage, created: boolean }),
   },
   cancelPendingMessage: {
@@ -334,7 +375,7 @@ export const remoteRunnerChecks = {
       pendingMessage(value) && (value as R.RemoteRunnerPendingMessage).status === "cancelled",
   },
   cancelTask: { request: object(taskRequest), response: task },
-  listEvents: { request: object({ ...taskRequest, after: integer(0) }), response: page(event) },
+  listEvents: { request: object({ ...taskRequest, after: integer(0) }), response: eventPage },
   listTaskFiles: {
     request: object(taskRequest),
     response: object({

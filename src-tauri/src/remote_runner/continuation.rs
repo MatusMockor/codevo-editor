@@ -13,6 +13,8 @@ pub struct ContinueRequest {
     pub task_id: String,
     pub idempotency_key: String,
     pub parts: Vec<Part>,
+    #[serde(default, deserialize_with = "super::instruction_wire::optional")]
+    pub(super) instructions: Option<super::instruction_wire::InstructionSnapshot>,
     #[serde(default, deserialize_with = "super::launch::optional")]
     pub(super) launch: Option<super::launch::Launch>,
 }
@@ -26,6 +28,11 @@ impl ContinueRequest {
         let mut body = json!({"idempotencyKey": self.idempotency_key, "parts": self.parts});
         if let Some(launch) = &self.launch {
             body["launch"] = serde_json::to_value(launch).map_err(|_| "Invalid launch options")?;
+        }
+        if let Some(instructions) = &self.instructions {
+            instructions.validate()?;
+            body["instructions"] =
+                serde_json::to_value(instructions).map_err(|_| "Invalid instructions")?;
         }
         Ok(body)
     }
@@ -110,6 +117,17 @@ mod tests {
         let request: ContinueRequest = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(request.body().unwrap()["launch"], launch);
         value["launch"] = Value::Null;
+        assert!(serde_json::from_value::<ContinueRequest>(value).is_err());
+    }
+
+    #[test]
+    fn continuation_and_pending_preserve_instruction_snapshot() {
+        let mut value = input();
+        let snapshot = json!({"version":1,"files":[{"scope":"project","path":"CLAUDE.local.md","content":"Local rules"}]});
+        value["instructions"] = snapshot.clone();
+        let request: ContinueRequest = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(request.body().unwrap()["instructions"], snapshot);
+        value["instructions"] = Value::Null;
         assert!(serde_json::from_value::<ContinueRequest>(value).is_err());
     }
 

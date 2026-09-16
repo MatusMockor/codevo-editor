@@ -1,3 +1,4 @@
+import { retainRemoteReplayWindow, type RemoteReplayGap } from "./remoteAgentReplayWindow";
 import { remoteAgentThreadKey } from "./remoteAgentProjection";
 import type {
   RemoteRunnerDescriptor,
@@ -25,6 +26,8 @@ export interface RemoteAgentInventorySnapshot {
   readonly tasks: readonly RemoteRunnerTask[];
   readonly replays: ReadonlyMap<string, readonly RemoteRunnerEvent[]>;
   readonly resumes: ReadonlyMap<string, RemoteRunnerTaskResume>;
+  readonly replayCursors?: ReadonlyMap<string, number>;
+  readonly replayGaps?: ReadonlyMap<string, RemoteReplayGap>;
   readonly replayComplete: ReadonlySet<string>;
   readonly replayTruncated: ReadonlySet<string>;
   readonly pendingMessages?: ReadonlyMap<string, readonly RemoteRunnerPendingMessage[]>;
@@ -168,43 +171,41 @@ export async function loadRemoteAgentInventory(
     (latest, task) => (!latest || task.sequence > latest.sequence ? task : latest),
     undefined,
   );
-  let totalBytes = 0;
+  const replayCursors = new Map<string, number>();
+  const replayGaps = new Map<string, RemoteReplayGap>();
+  const olderTurnBytes = Math.floor(3_000_000 / Math.max(1, selected.length - 1));
   let error: string | null = null;
   for (const task of selected) {
+    const perTurnBytes = task === latestSelected ? 3_000_000 : olderTurnBytes;
     let events = previous.replays.get(task.id) ?? [];
-    let bytes = events.reduce((sum, event) => sum + (event.text?.length ?? 0) * 2, 0);
-    let cursor = events[events.length - 1]?.sequence ?? 0;
+    let cursor = previous.replayCursors?.get(task.id) ?? events[events.length - 1]?.sequence ?? 0;
+    let gap = previous.replayGaps?.get(task.id);
     let truncated = previous.replayTruncated.has(task.id);
     let complete = isRemoteTaskTerminal(task) && previous.replayComplete.has(task.id);
-    if (!truncated && !complete) {
+    if (!complete) {
       for (let pageNumber = 0; pageNumber < 24; pageNumber++) {
         const page = await gateway.listEvents({ serverId, taskId: task.id, after: cursor });
         check();
         let next = cursor;
-        let incomingBytes = 0;
         for (const event of page.items) {
           if (event.taskId !== task.id || event.sequence <= next)
             throw new Error("The runner returned invalid event ordering; output is incomplete.");
           next = event.sequence;
-          incomingBytes += (event.text?.length ?? 0) * 2;
         }
-        if (
-          events.length + page.items.length > 1100 ||
-          bytes + incomingBytes > 3_000_000 ||
-          totalBytes + bytes + incomingBytes > 6_000_000
-        ) {
+        if (page.nextCursor !== null && (page.nextCursor !== next || next === cursor))
+          throw new Error("The runner returned an invalid event page cursor.");
+        const removed = page.outputTruncatedBeforeSequence;
+        if (removed !== undefined && removed > (gap?.throughSequence ?? 0)) {
+          gap = {
+            throughSequence: removed,
+            startsAtLineBoundary: page.outputStartsAtLineBoundary === true,
+          };
           truncated = true;
-          break;
         }
-        if (
-          page.nextCursor !== null &&
-          (page.nextCursor !== next || next === cursor || pageNumber === 23)
-        ) {
-          truncated = true;
-          break;
-        }
-        events = [...events, ...page.items];
-        bytes += incomingBytes;
+        const retained = retainRemoteReplayWindow([...events, ...page.items], perTurnBytes, gap);
+        events = retained.events;
+        gap = retained.gap;
+        truncated ||= retained.truncated;
         cursor = next;
         if (page.nextCursor === null) {
           complete = isRemoteTaskTerminal(task);
@@ -212,12 +213,17 @@ export async function loadRemoteAgentInventory(
         }
       }
     }
-    totalBytes += bytes;
+    const retained = retainRemoteReplayWindow(events, perTurnBytes, gap);
+    events = retained.events;
+    gap = retained.gap;
+    truncated ||= retained.truncated;
+    replayCursors.set(task.id, cursor);
+    if (gap) replayGaps.set(task.id, gap);
     replays.set(task.id, events);
     if (complete) replayComplete.add(task.id);
     if (truncated) {
       replayTruncated.add(task.id);
-      error = "Remote output exceeds the editor display limit; displayed output is incomplete.";
+      error = "Showing recent server output; earlier output is incomplete.";
     }
     // Only the latest turn owns continuation. Older output remains fully replayed;
     // querying its resume status adds no display information or launch authority.
@@ -254,6 +260,8 @@ export async function loadRemoteAgentInventory(
     replays,
     resumes,
     replayComplete,
+    replayCursors,
+    replayGaps,
     replayTruncated,
     error,
   };

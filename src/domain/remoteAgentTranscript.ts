@@ -4,13 +4,7 @@ import {
   finishAgentOutput,
   type AgentOutputParserState,
 } from "./agentOutput/agentOutputParser";
-import {
-  MAX_AGENT_EVENTS_PER_TURN,
-  MAX_AGENT_EVENT_BYTES_PER_TURN,
-  agentTurnEventUtf8Bytes,
-  coalesceAgentTextEvents,
-  type AgentTurnEvent,
-} from "./agentThread";
+import { mergeTurnEvents, type AgentTurnEvent } from "./agentThread";
 import type { RemoteRunnerEvent, RemoteRunnerProvider } from "./remoteRunner";
 
 export interface RemoteAgentTranscript {
@@ -24,6 +18,12 @@ export interface RemoteAgentTranscript {
   readonly finished: boolean;
   readonly endedAtEpochMs: number | null;
   readonly error: string | null;
+  readonly discardStdoutUntilNewline?: boolean;
+  readonly appliedGapThrough?: number;
+  readonly pendingGap?: {
+    readonly throughSequence: number;
+    readonly startsAtLineBoundary: boolean;
+  };
 }
 
 export function createRemoteAgentTranscript(
@@ -48,51 +48,64 @@ export function createRemoteAgentTranscript(
 export function appendRemoteAgentTranscript(
   previous: RemoteAgentTranscript,
   incoming: readonly RemoteRunnerEvent[],
-  options: { readonly complete: boolean; readonly terminal: boolean; readonly truncated?: boolean },
+  options: {
+    readonly complete: boolean;
+    readonly terminal: boolean;
+    readonly truncated?: boolean;
+    readonly gap?: { readonly throughSequence: number; readonly startsAtLineBoundary: boolean };
+  },
 ): RemoteAgentTranscript {
   if (previous.finished) return previous;
+  const gap = options.gap;
+  let pendingGap =
+    gap !== undefined &&
+    gap.throughSequence > previous.lastRunnerSequence &&
+    gap.throughSequence > (previous.appliedGapThrough ?? 0)
+      ? gap
+      : previous.pendingGap;
+  let appliedGapThrough = previous.appliedGapThrough;
   let parser = previous.parser;
+  let discardStdoutUntilNewline = previous.discardStdoutUntilNewline === true;
+  const resetAtGap = () => {
+    if (!pendingGap) return;
+    parser = createAgentOutputParserState(previous.parser.kind, previous.parser.transport);
+    discardStdoutUntilNewline = !pendingGap.startsAtLineBoundary;
+    appliedGapThrough = pendingGap.throughSequence;
+    pendingGap = undefined;
+  };
   let sequence = previous.lastRunnerSequence;
   let ordinal = previous.outputOrdinal;
   let bytes = previous.receivedUtf8Bytes;
   let ended = previous.endedAtEpochMs;
   let error = previous.error;
-  let truncated = previous.eventsTruncated;
-  const events = [...previous.events];
-  let retainedBytes = events.reduce((sum, event) => sum + agentTurnEventUtf8Bytes(event), 0);
-  const append = (event: AgentTurnEvent) => {
-    if (truncated) return;
-    const last = events[events.length - 1];
-    const coalesced = coalesceAgentTextEvents(last, event);
-    const size =
-      retainedBytes +
-      agentTurnEventUtf8Bytes(coalesced ?? event) -
-      (coalesced && last ? agentTurnEventUtf8Bytes(last) : 0);
-    if (
-      size > MAX_AGENT_EVENT_BYTES_PER_TURN ||
-      (!coalesced && events.length >= MAX_AGENT_EVENTS_PER_TURN)
-    ) {
-      truncated = true;
-      return;
-    }
-    if (coalesced) events[events.length - 1] = coalesced;
-    else events.push(event);
-    retainedBytes = size;
+  let truncated = previous.eventsTruncated || pendingGap !== undefined;
+  let events = previous.events;
+  const append = (incomingEvents: readonly AgentTurnEvent[]) => {
+    const merged = mergeTurnEvents(events, incomingEvents);
+    events = merged.events;
+    truncated ||= merged.truncated;
   };
   for (const event of incoming) {
     if (event.taskId !== previous.taskId || event.sequence <= sequence)
       throw new Error("Invalid remote transcript event ordering or owner.");
+    if (pendingGap && event.sequence > pendingGap.throughSequence) resetAtGap();
     sequence = event.sequence;
     if (event.type === "task.output" && event.text !== undefined) {
-      const result = feedAgentOutput(parser, event.channel ?? "stdout", event.text);
+      let text = event.text;
+      if (discardStdoutUntilNewline && event.channel !== "stderr") {
+        const newline = text.indexOf("\n");
+        text = newline < 0 ? "" : text.slice(newline + 1);
+        discardStdoutUntilNewline = newline < 0;
+      }
+      const result = feedAgentOutput(parser, event.channel ?? "stdout", text);
       parser = result.state;
-      result.events.forEach(append);
+      append(result.events);
       ordinal++;
       bytes += new TextEncoder().encode(event.text).byteLength;
     }
     if (event.error) {
       error = event.error;
-      append({ kind: "error", message: event.error });
+      append([{ kind: "error", message: event.error }]);
     }
     if (
       ["task.succeeded", "task.failed", "task.interrupted", "task.cancelled"].includes(event.type)
@@ -101,12 +114,16 @@ export function appendRemoteAgentTranscript(
   }
   const finished = options.complete && options.terminal;
   if (finished) {
+    resetAtGap();
     const result = finishAgentOutput(parser);
     parser = result.state;
-    result.events.forEach(append);
+    append(result.events);
   }
   return {
     taskId: previous.taskId,
+    discardStdoutUntilNewline,
+    appliedGapThrough,
+    pendingGap,
     parser,
     events,
     lastRunnerSequence: sequence,

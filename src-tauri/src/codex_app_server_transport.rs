@@ -1,7 +1,10 @@
+#[path = "codex_app_server_request_dispatch.rs"]
+mod request_dispatch;
 use super::codex_app_server_protocol::{
     classify_notification, ClientMethod, ClientNotificationMethod, JsonRpcClientNotification,
     JsonRpcError, JsonRpcIncoming, JsonRpcRequest, RequestId, ServerNotification, JSON_RPC_VERSION,
 };
+use request_dispatch::{server_request_error, server_request_result};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -64,6 +67,8 @@ impl CodexRpcFailure {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnFrame {
     Notification(Box<ServerNotification>),
+    UserInputRequested { id: Value, params: Value },
+    UserInputResolved { id: Value },
     UnknownFrame { method: String },
     ServerRequestDeclined { method: String },
 }
@@ -390,6 +395,16 @@ impl TransportShared {
 
     fn dispatch_notification(&self, method: String, params: Value, bytes: usize) {
         let thread_id = frame_thread_id(&params);
+        if method == "serverRequest/resolved" {
+            if let Some(id) = params.get("requestId") {
+                self.route(
+                    thread_id,
+                    TurnFrame::UserInputResolved { id: id.clone() },
+                    bytes,
+                );
+            }
+            return;
+        }
         match classify_notification(method.as_str(), params) {
             ServerNotification::Ignored { .. } => (),
             ServerNotification::Unknown { method } => {
@@ -403,44 +418,6 @@ impl TransportShared {
             ),
         }
     }
-
-    fn dispatch_server_request(&self, id: Value, method: String, params: Value, bytes: usize) {
-        let thread_id = frame_thread_id(&params);
-        let Some(result) = self.handler.decline(method.as_str(), &params) else {
-            self.unknown_frames.fetch_add(1, Ordering::Relaxed);
-            let _ = self.write_line(server_request_error(
-                &id,
-                JSON_RPC_METHOD_NOT_FOUND,
-                JSON_RPC_METHOD_NOT_FOUND_MESSAGE,
-            ));
-            self.route(thread_id, TurnFrame::UnknownFrame { method }, bytes);
-            return;
-        };
-        let _ = self.write_line(server_request_result(&id, result));
-        self.route(
-            thread_id,
-            TurnFrame::ServerRequestDeclined { method },
-            bytes,
-        );
-    }
-}
-
-fn server_request_result(id: &Value, result: Value) -> Vec<u8> {
-    serde_json::to_vec(&json!({
-        "jsonrpc": JSON_RPC_VERSION,
-        "id": id,
-        "result": result,
-    }))
-    .unwrap_or_default()
-}
-
-fn server_request_error(id: &Value, code: i64, message: &str) -> Vec<u8> {
-    serde_json::to_vec(&json!({
-        "jsonrpc": JSON_RPC_VERSION,
-        "id": id,
-        "error": { "code": code, "message": message },
-    }))
-    .unwrap_or_default()
 }
 
 fn frame_thread_id(params: &Value) -> Option<String> {
@@ -744,8 +721,15 @@ impl CodexAppServerTransport {
         }
     }
 
-    pub fn answer_server_request(&self, id: Value, result: Value) {
-        let _ = self.shared.write_line(server_request_result(&id, result));
+    pub fn reject_server_request(&self, id: Value) -> Result<(), CodexRpcFailure> {
+        self.shared.write_line(server_request_error(
+            &id,
+            -32602,
+            "Question is unavailable for this turn.",
+        ))
+    }
+    pub fn answer_server_request(&self, id: Value, result: Value) -> Result<(), CodexRpcFailure> {
+        self.shared.write_line(server_request_result(&id, result))
     }
 
     pub fn fail(&self, reason: &str) {

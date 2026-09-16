@@ -1,3 +1,5 @@
+import { RemoteInstructionSourceControl } from "./RemoteInstructionSourceControl";
+import { remoteAgentProjectKey } from "../../application/remoteAgentProjection";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Paperclip, RefreshCw, Send, X } from "lucide-react";
 import { useRemoteRunnerTasks } from "../../application/useRemoteRunnerTasks";
@@ -280,6 +282,18 @@ function RemoteTaskSession({
               </select>
             </label>
           </div>
+          {selectedProvider === "claude" && flow.descriptor && selectedProject && (
+            <RemoteInstructionSourceControl
+              readOnly
+              remoteRootKey={remoteAgentProjectKey(
+                serverId,
+                flow.descriptor.runnerId,
+                selectedProject,
+              )}
+              projects={[]}
+              disabled={busy}
+            />
+          )}
           <textarea
             aria-label={continuing ? "Continue remote conversation" : "New remote task"}
             placeholder="What would you like to work on?"

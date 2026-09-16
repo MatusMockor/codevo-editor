@@ -1,3 +1,5 @@
+import { collectRemoteInstructions } from "./collectRemoteInstructions";
+import type { RemoteRunnerInstructionSnapshot } from "../domain/remoteRunnerInstructions";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import type {
   RemoteRunnerGateway,
@@ -14,6 +16,7 @@ type Pending = {
   readonly signature: string;
   readonly idempotencyKey: string;
   readonly parts: readonly RemoteRunnerPart[];
+  readonly instructions?: RemoteRunnerInstructionSnapshot;
 };
 interface Options {
   gateway: RemoteRunnerGateway;
@@ -136,7 +139,20 @@ export function useRemoteRunnerContinuation(options: Options) {
               throw new Error("The runner returned a different attachment.");
             parts.push({ type: "attachment", attachmentId });
           }
-          command = { task, signature: signature!, idempotencyKey: crypto.randomUUID(), parts };
+          const instructions = await collectRemoteInstructions(
+            gateway,
+            { serverId, runnerId: task.runnerId, projectId: input.projectId },
+            current,
+            task.provider,
+          );
+          if (!current()) return null;
+          command = {
+            task,
+            signature: signature!,
+            idempotencyKey: crypto.randomUUID(),
+            parts,
+            instructions,
+          };
         }
         if (!current()) return null;
         pending.current = command;
@@ -145,6 +161,7 @@ export function useRemoteRunnerContinuation(options: Options) {
           taskId: task.id,
           idempotencyKey: command.idempotencyKey,
           parts: command.parts,
+          ...(command.instructions ? { instructions: command.instructions } : {}),
         });
         if (!current()) return null;
         const next = response.task;

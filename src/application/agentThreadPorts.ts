@@ -203,6 +203,7 @@ export type AgentThreadCopyDetail = "path" | "branch" | "threadId";
 
 /** Display identity only; remote dispatch retains its own exact connection authority. */
 export interface RemoteAgentThreadExecution {
+  readonly interactiveQuestions?: boolean;
   readonly pendingMessages?: boolean;
   readonly kind: "remote";
   readonly serverId: string;
