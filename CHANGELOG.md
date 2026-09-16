@@ -7,6 +7,36 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.45] - 2026-09-16
+
+### Improved
+
+- Send with Enter in every composer mode; use Shift+Enter or Alt+Enter for a new
+  line. Held keys and input composition do not send messages.
+- Start the composer at four lines and retain text drafts when switching projects
+  and threads during the editor session.
+- Show compact tool rows with command labels, available tool descriptions,
+  expandable output, running progress and interrupted states.
+- Refine thread colors, message typography, code blocks, full-width tables and
+  project selection across editor themes.
+
+### Added
+
+- Return a queued local text message to the composer for editing, preserving an
+  existing draft.
+
+### Fixed
+
+- Allow Compact from an empty local composer without consuming staged attachments.
+- Preserve tool descriptions when saving and loading conversation history.
+- Keep newer drafts intact when Compact finishes asynchronously.
+- Keep failed and stopped states visible on tools with a description.
+
+### Limitations
+
+- Compact and editing queued messages are available only for local conversations.
+  Queued messages with attachments cannot yet be edited.
+
 ## [0.2.0-beta.44] - 2026-09-15
 
 ### Added
