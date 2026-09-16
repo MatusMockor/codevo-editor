@@ -1,6 +1,7 @@
 import {
   useCallback,
   useMemo,
+  useLayoutEffect,
   useRef,
   useState,
   type ClipboardEvent,
@@ -87,6 +88,7 @@ export interface AgentComposerProps {
   readonly mode: AgentComposerMode;
   readonly target: AgentComposerTarget | null;
   readonly promptOwnerKey?: string;
+  readonly promptRevision?: number;
   readonly prompt: string;
   readonly promptBytes: number;
   readonly isolation: AgentTaskIsolation;
@@ -142,6 +144,7 @@ export function AgentComposer({
   onCompactContext,
   prompt,
   promptOwnerKey,
+  promptRevision,
   promptBytes,
   providerEnabled,
   providerManagement = null,
@@ -152,6 +155,19 @@ export function AgentComposer({
   worktreeOnly,
   worktreeOnlyReason,
 }: AgentComposerProps) {
+  // Replace the lease whenever the draft or its owner changes, including A → B → A.
+  // The application revision also catches edits batched into the same render.
+  const promptAuthorityRef = useRef<object | null>(null);
+  useLayoutEffect(() => {
+    promptAuthorityRef.current = {};
+    return () => {
+      promptAuthorityRef.current = null;
+    };
+  }, [promptOwnerKey, promptRevision, prompt, executionServerId]);
+  const changePrompt = (next: string): void => {
+    promptAuthorityRef.current = {};
+    onPromptChange(next);
+  };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useAgentComposerAutosize(textareaRef, prompt);
   const [controlRequest, setControlRequest] = useState<
@@ -379,33 +395,38 @@ export function AgentComposer({
   const chooseCommand = (command: AgentComposerCommandId, submitCommand: boolean): void => {
     if (command === "compact") {
       if (!submitCommand) {
-        onPromptChange("/compact ");
+        changePrompt("/compact ");
         return;
       }
       if (compactionBlocked || onCompactContext === undefined) return;
+      const submittedAuthority = promptAuthorityRef.current;
+      const submittedPrompt = prompt;
       const compaction = onCompactContext({
         launch: effectiveLaunch,
         dangerousLaunchConfirmed: dangerousLaunch,
       });
       void Promise.resolve(compaction).then((accepted) => {
-        if (accepted === false) return;
-        onPromptChange("");
+        if (accepted === false || submittedAuthority === null) return;
+        if (promptAuthorityRef.current !== submittedAuthority) return;
+        // A suggestion can compact while an unrelated draft is already being written.
+        if (submittedPrompt.trim() !== "/compact") return;
+        changePrompt("");
       });
       return;
     }
     if (command === "settings") {
-      onPromptChange("");
+      changePrompt("");
       onOpenProviderSettings();
       return;
     }
     if (dispatching) return;
     if (command === "new") {
-      onPromptChange("");
+      changePrompt("");
       onNewThread();
       return;
     }
     if (allProvidersDisabled) return;
-    onPromptChange("");
+    changePrompt("");
     if (command === "plan") {
       if (effectiveLaunch.provider === "claudeCode") {
         onLaunchChange({ ...effectiveLaunch, mode: "plan" });
@@ -555,7 +576,7 @@ export function AgentComposer({
           onSelect={(event) => commands.onSelect(event.currentTarget)}
           onChange={(event) => {
             commands.onEdit();
-            onPromptChange(event.target.value);
+            changePrompt(event.target.value);
           }}
           onKeyDown={onKeyDown}
           onPaste={pasteAttachments}

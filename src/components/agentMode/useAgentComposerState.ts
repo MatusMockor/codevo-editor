@@ -737,6 +737,7 @@ export function useAgentComposerPromptState(
   );
   return {
     ...composerProps,
+    promptRevision: promptRevisionRef.current,
     onPromptChange: changePrompt,
     onSubmit: submit,
     prompt,

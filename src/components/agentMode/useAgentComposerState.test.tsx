@@ -451,6 +451,17 @@ describe("useAgentComposerState", () => {
     expect(current().navigation.selectedThreadId).toBeNull();
   });
 
+  it("publishes a new draft revision even when batched edits return to the original text", () => {
+    render(threadsSurfaceFixture());
+    const initial = current().composer.composerProps.promptRevision;
+    act(() => {
+      current().composer.composerProps.onPromptChange("temporary");
+      current().composer.composerProps.onPromptChange("");
+    });
+    expect(current().composer.composerProps.prompt).toBe("");
+    expect(current().composer.composerProps.promptRevision).toBe((initial ?? 0) + 2);
+  });
+
   it("keeps prompt edits made while a submission is pending", async () => {
     let resolveStart: ((value: { threadId: string }) => void) | null = null;
     const pendingStart = new Promise<{ threadId: string }>((resolve) => {

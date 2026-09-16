@@ -202,7 +202,10 @@ export function toolRowLabel(input: AgentToolRowLabelInput): AgentToolRowLabel {
     root: input.workspaceRoot ?? null,
     summary,
   });
-  const spoken = kind === "command" && description !== "";
+  const spoken =
+    kind === "command" &&
+    description !== "" &&
+    (input.status === "running" || input.status === "ok");
   return { verb: spoken ? "" : rowVerb(kind, input.status), ...parts };
 }
 

@@ -897,6 +897,76 @@ describe("AgentComposer", () => {
     expect(onPromptChange).toHaveBeenLastCalledWith("");
   });
 
+  it.each([
+    ["new text", [{ prompt: "keep my new draft", promptRevision: 1 }]],
+    [
+      "text A to B to A",
+      [
+        { prompt: "temporary", promptRevision: 1 },
+        { prompt: "/compact", promptRevision: 2 },
+      ],
+    ],
+    ["batched edits returning to the same text", [{ prompt: "/compact", promptRevision: 2 }]],
+    ["another owner", [{ promptOwnerKey: "thread-b" }]],
+    ["owner A to B to A", [{ promptOwnerKey: "thread-b" }, { promptOwnerKey: "thread-a" }]],
+    ["another execution server", [{ executionServerId: "server-b" }]],
+  ] satisfies ReadonlyArray<readonly [string, ReadonlyArray<Partial<AgentComposerProps>>]>)(
+    "preserves the draft after pending compaction with %s",
+    async (_label, changes) => {
+      let settle!: (accepted: boolean) => void;
+      const pending = new Promise<boolean>((resolve) => {
+        settle = resolve;
+      });
+      const onPromptChange = vi.fn();
+      const prepareTurn = vi.fn(async () => null);
+      const markSent = vi.fn();
+      const props: Partial<AgentComposerProps> = {
+        mode: { kind: "followUp", blockedReason: null },
+        prompt: "/compact",
+        promptOwnerKey: "thread-a",
+        promptRevision: 0,
+        onCompactContext: vi.fn(() => pending),
+        onPromptChange,
+        attachments: attachmentsSurface({
+          drafts: [readyAttachmentDraft()],
+          prepareTurn,
+          markSent,
+        }),
+      };
+      render(props);
+      pressEnter();
+      for (const change of changes) render({ ...props, ...change });
+      await act(async () => {
+        settle(true);
+      });
+      expect(onPromptChange).not.toHaveBeenCalled();
+      expect(prepareTurn).not.toHaveBeenCalled();
+      expect(markSent).not.toHaveBeenCalled();
+      expect(host.querySelector(".agent-composer-attachment")).not.toBeNull();
+    },
+  );
+
+  it("does not clear a draft after its composer unmounts during compaction", async () => {
+    let settle!: (accepted: boolean) => void;
+    const pending = new Promise<boolean>((resolve) => {
+      settle = resolve;
+    });
+    const onPromptChange = vi.fn();
+    render({
+      mode: { kind: "followUp", blockedReason: null },
+      prompt: "/compact",
+      promptOwnerKey: "thread-a",
+      onCompactContext: () => pending,
+      onPromptChange,
+    });
+    pressEnter();
+    act(() => root.render(null));
+    await act(async () => {
+      settle(true);
+    });
+    expect(onPromptChange).not.toHaveBeenCalled();
+  });
+
   it("keeps Compact disabled while a turn dispatches or the thread cannot resume", () => {
     const offer = {
       compactionOffer: { key: "agt-1:1:120000", contextTokens: 120_000 },

@@ -208,15 +208,21 @@ describe("toolRowLabel", () => {
     expect(label("TodoWrite", "").verb).toBe("Called");
   });
 
-  it("drops the verb when a Claude bash description already reads as a sentence", () => {
-    for (const status of ["running", "ok", "error"] as ReadonlyArray<AgentToolRowStatus>) {
+  it("keeps failure and stopped status visible with a Claude bash description", () => {
+    const expectations: ReadonlyArray<readonly [AgentToolRowStatus, string]> = [
+      ["running", ""],
+      ["ok", ""],
+      ["error", "Failed"],
+      ["stopped", "Stopped"],
+    ];
+    for (const [status, verb] of expectations) {
       expect(
         label("Bash", "npm run lint -- --max-warnings 0", status, {
           description: "Run the linter",
         }),
         status,
       ).toEqual({
-        verb: "",
+        verb,
         subject: "Run the linter",
         argument: "npm run lint -- --max-warnings 0",
       });
