@@ -26,6 +26,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     taskLaunchOptions?: boolean;
     taskFileDiffs?: boolean;
     pendingMessages?: boolean;
+    outputArtifacts?: boolean;
   }>;
 }>;
 export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;

@@ -291,6 +291,15 @@ function serializeTurnEvent(event: AgentTurnEvent): Record<string, unknown> {
         usage: event.usage === null ? null : serializeUsage(event.usage),
         ...optionalField("durationMs", event.durationMs),
       };
+    case "contextUsage":
+      return {
+        kind: event.kind,
+        model: event.model,
+        inputTokens: event.inputTokens,
+        contextWindow: event.contextWindow,
+      };
+    case "contextCompactionStatus":
+      return { kind: event.kind, status: event.status, message: event.message };
     case "contextCompaction":
       return {
         kind: event.kind,
@@ -901,6 +910,31 @@ function parseTurnEvent(value: unknown, path: string): AgentTurnEvent {
             : optionalUnsignedSafeInteger(event.durationMs, `${path}.durationMs`),
         ),
       };
+    case "contextUsage": {
+      exactKeys(event, ["kind", "model", "inputTokens", "contextWindow"], path);
+      const contextWindow = optionalUnsignedSafeInteger(
+        event.contextWindow,
+        `${path}.contextWindow`,
+      );
+      if (contextWindow === 0) invalid(path, "a positive context window or null");
+      return {
+        kind,
+        model: boundedText(event.model, `${path}.model`, 256, false, true),
+        inputTokens: optionalUnsignedSafeInteger(event.inputTokens, `${path}.inputTokens`),
+        contextWindow,
+      };
+    }
+    case "contextCompactionStatus": {
+      exactKeys(event, ["kind", "status", "message"], path);
+      const status = event.status;
+      if (status !== "compacting" && status !== "idle" && status !== "failed")
+        invalid(path, "a supported compaction status");
+      return {
+        kind,
+        status,
+        message: event.message === null ? null : eventText(event.message, `${path}.message`),
+      };
+    }
     case "contextCompaction":
       exactKeys(event, ["kind", "beforeTokens", "afterTokens"], path);
       return {
@@ -1117,6 +1151,8 @@ function turnEventKind(value: unknown, path: string): AgentTurnEvent["kind"] {
     value !== "queued" &&
     value !== "subagent" &&
     value !== "result" &&
+    value !== "contextUsage" &&
+    value !== "contextCompactionStatus" &&
     value !== "contextCompaction" &&
     value !== "error" &&
     value !== "unknownLine"

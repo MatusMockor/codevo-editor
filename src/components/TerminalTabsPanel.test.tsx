@@ -10,6 +10,7 @@ import type { AgentProviderSignInSurface } from "../application/useAgentProvider
 
 interface CapturedTerminal {
   readonly isActive: boolean;
+  readonly isVisible?: boolean;
   readonly labelledBy?: string;
   readonly panelId?: string;
   readonly profileId: string | null;
@@ -130,14 +131,115 @@ describe("TerminalTabsPanel", () => {
     expect(button("New Terminal").disabled).toBe(true);
   });
 
-  it("restores focus to the MRU tab after closing the focused active tab", () => {
+  it("restores focus to the visible New Terminal action when closing hides the sidebar", () => {
     render();
     click("New Terminal");
     const close = button("Close Terminal 2");
     close.focus();
     click("Close Terminal 2");
 
-    expect(document.activeElement).toBe(tab("Terminal 1"));
+    expect(document.activeElement).toBe(button("New Terminal"));
+  });
+
+  it("shows the session sidebar only with multiple terminals and keeps actions out of it", () => {
+    render();
+    const list = host.querySelector<HTMLElement>('[aria-label="Terminal sessions"]')!;
+    expect(list.hidden).toBe(true);
+    expect(button("Close Active Terminal").disabled).toBe(true);
+    click("New Terminal");
+    expect(list.hidden).toBe(false);
+    expect(list.contains(button("New Terminal"))).toBe(false);
+    click("Close Active Terminal");
+    expect(list.hidden).toBe(true);
+    expect(mocks.mounted.size).toBe(1);
+  });
+
+  it("splits into two live sessions, routes focus to the selected pane, and retains both when collapsed", () => {
+    render();
+    click("Split Terminal");
+    expect(mocks.mounted.size).toBe(2);
+    expect([...mocks.mounted.values()].filter((pane) => pane.isVisible)).toHaveLength(2);
+    expect([...mocks.mounted.values()].filter((pane) => pane.isActive)).toHaveLength(1);
+    const [first, second] = [...mocks.mounted.values()];
+    act(() => first?.onSessionReady?.(11));
+    act(() => second?.onSessionReady?.(22));
+    const firstPane = host.querySelector<HTMLElement>(".terminal-tabs-pane")!;
+    act(() => firstPane.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(sessions).toHaveBeenLastCalledWith(11);
+    expect([...mocks.mounted.values()][0]?.isActive).toBe(true);
+    expect([...mocks.mounted.values()][1]?.isActive).toBe(false);
+    click("Split Terminal");
+    expect([...mocks.mounted.values()].filter((pane) => pane.isVisible)).toHaveLength(1);
+    expect(mocks.mounted.size).toBe(2);
+    expect(mocks.unmounted).toHaveLength(0);
+  });
+
+  it("replaces only the active split pane on sidebar selection and closes its own session", () => {
+    render();
+    click("New Terminal");
+    click("Split Terminal");
+    expect(mocks.mounted.size).toBe(3);
+    act(() => tab("Terminal 1").click());
+    expect([...mocks.mounted.values()].map((pane) => pane.isVisible)).toEqual([true, true, false]);
+    click("Close Active Terminal");
+    expect(button("Split Terminal").getAttribute("aria-pressed")).toBe("false");
+    expect([...mocks.mounted.values()].filter((pane) => pane.isVisible)).toHaveLength(1);
+    expect(mocks.unmounted).toHaveLength(1);
+  });
+
+  it("bounds split creation and supports vertical navigation without unmounting", () => {
+    render();
+    click("New Terminal");
+    act(() =>
+      tab("Terminal 2").dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }),
+      ),
+    );
+    expect(tab("Terminal 1").getAttribute("aria-selected")).toBe("true");
+    for (let index = 2; index < MAX_TERMINAL_TABS; index += 1) click("New Terminal");
+    expect(button("Split Terminal").disabled).toBe(true);
+    click("Split Terminal");
+    expect(mocks.mounted.size).toBe(MAX_TERMINAL_TABS);
+    expect(mocks.unmounted).toHaveLength(0);
+  });
+
+  it("resets split visibility when a new exact workspace owner replaces the mounted panel", () => {
+    render("workspace-a");
+    click("Split Terminal");
+    const stale = [...mocks.mounted.values()];
+    render("workspace-b");
+    expect(mocks.mounted.size).toBe(1);
+    expect(mocks.unmounted).toHaveLength(2);
+    expect(button("Split Terminal").getAttribute("aria-pressed")).toBe("false");
+    act(() => stale[0]?.onSessionReady?.(999));
+    expect(sessions).not.toHaveBeenLastCalledWith(999);
+  });
+
+  it("exposes a new provider sign-in instead of stranding it outside the split pair", () => {
+    render();
+    click("Split Terminal");
+    const intent = signInIntent("claudeCode", 1, 1);
+    render(
+      "workspace-a",
+      sessions,
+      false,
+      null,
+      undefined,
+      "zsh",
+      profiles,
+      signInSurface(intent, "starting"),
+    );
+    expect(button("Split Terminal").getAttribute("aria-pressed")).toBe("false");
+    const visible = [...mocks.mounted.values()].filter((pane) => pane.isVisible);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]?.semanticSession?.key).toBe("provider-sign-in-claudeCode-1");
+    act(() =>
+      tab("Claude sign-in").dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Delete" }),
+      ),
+    );
+    expect(mocks.mounted.size).toBe(3);
+    expect(mocks.unmounted).toHaveLength(0);
   });
 
   it("falls back to a bounded title before mutating runtime and wires tabpanel aria", () => {

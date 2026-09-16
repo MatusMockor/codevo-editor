@@ -1,3 +1,8 @@
+import {
+  claudeAssistantContext,
+  claudeCompactionStatus,
+  claudeModelCapacities,
+} from "./claudeContextTelemetry";
 import { isAgentSessionId } from "../agentTask";
 import {
   MAX_AGENT_EVENT_TEXT_BYTES,
@@ -94,12 +99,13 @@ function parseSystemLine(value: Record<string, unknown>): ParsedAgentLine {
     return { kind: "events", events: [], sessionId: value.session_id };
   }
   if (value.subtype === "compact_boundary") return parseCompactBoundaryLine(value);
-  const event = subagentTelemetryEvent(value);
+  const event = claudeCompactionStatus(value) ?? subagentTelemetryEvent(value);
   if (event === null) return IGNORED;
   return { kind: "events", events: [event], sessionId: null };
 }
 
 function parseCompactBoundaryLine(value: Record<string, unknown>): ParsedAgentLine {
+  if (value.parent_tool_use_id != null) return IGNORED;
   const metadata = objectValue(value.compact_metadata ?? value.compactMetadata);
   return {
     kind: "events",
@@ -154,7 +160,10 @@ function parseAssistantLine(value: Record<string, unknown>): ParsedAgentLine {
   const content = messageContent(value);
   if (content === null) return IGNORED;
   const parentToolId = optionalIdentifier(value.parent_tool_use_id, MAX_AGENT_TOOL_ID_BYTES);
-  const events = content.flatMap((block) => assistantBlockEvents(block, parentToolId));
+  const events = [
+    ...content.flatMap((block) => assistantBlockEvents(block, parentToolId)),
+    ...claudeAssistantContext(value),
+  ];
   if (events.length === 0) return NO_EVENTS;
   return { kind: "events", events, sessionId: null };
 }
@@ -234,7 +243,7 @@ function parseResultLine(value: Record<string, unknown>): ParsedAgentLine {
     usage: parseUsage(value.usage, value.total_cost_usd),
   };
   const sessionId = isAgentSessionId(value.session_id) ? value.session_id : null;
-  return { kind: "events", events: [event], sessionId };
+  return { kind: "events", events: [event, ...claudeModelCapacities(value)], sessionId };
 }
 
 function assistantBlockEvents(

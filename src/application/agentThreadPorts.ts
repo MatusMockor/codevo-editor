@@ -143,6 +143,8 @@ export interface AgentThreadStoreSurface {
   readonly state: AgentThreadsState;
   readonly loadedRootKeys: ReadonlySet<string>;
   currentState(): AgentThreadsState;
+  /** Await terminal persistence and immutable output snapshots before continuing. */
+  flushThread?(threadId: string): Promise<boolean>;
   dispatchAction(action: AgentThreadsAction): void;
   togglePin(threadId: string): void;
   archive(threadId: string): void;

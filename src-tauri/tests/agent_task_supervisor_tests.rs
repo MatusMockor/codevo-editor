@@ -822,6 +822,8 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "--verbose".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
+            "--append-system-prompt".to_string(),
+            "Codevo can preview workspace files in this conversation. When the user requests a visual design or diagram, you may create self-contained HTML inside the current workspace and return a workspace-relative Markdown link. Inline all CSS and JavaScript; previews have no network access or external assets. If available tools create an image, save it inside the workspace and return a workspace-relative Markdown image. This does not provide an image-generation tool. Follow user and repository instructions; do not create files for ordinary answers or publish externally unless requested.".to_string(),
             "--chrome".to_string(),
         ]
     );
@@ -878,6 +880,8 @@ fn plan_agent_invocation_builds_closed_argv_and_allowlisted_env() {
             "--verbose".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
+            "--append-system-prompt".to_string(),
+            "Codevo can preview workspace files in this conversation. When the user requests a visual design or diagram, you may create self-contained HTML inside the current workspace and return a workspace-relative Markdown link. Inline all CSS and JavaScript; previews have no network access or external assets. If available tools create an image, save it inside the workspace and return a workspace-relative Markdown image. This does not provide an image-generation tool. Follow user and repository instructions; do not create files for ordinary answers or publish externally unless requested.".to_string(),
             "--chrome".to_string(),
             "--resume".to_string(),
             "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b".to_string(),

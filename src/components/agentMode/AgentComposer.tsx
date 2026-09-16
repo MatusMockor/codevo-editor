@@ -59,6 +59,7 @@ import { useCompactComposerControls } from "./useCompactComposerControls";
 import { useTouchComposerLayout } from "./useTouchComposerLayout";
 import { useAgentComposerAutosize } from "./useAgentComposerAutosize";
 import { AgentExecutionEnvironmentPicker } from "./AgentExecutionEnvironmentPicker";
+import { AgentContextWindowMeter, type AgentContextWindowUsage } from "./AgentContextWindowMeter";
 
 const NO_TARGET_REASON = "Choose a project in the rail to start a thread.";
 
@@ -78,6 +79,7 @@ export interface AgentComposerSubmission {
 }
 
 export interface AgentComposerProps {
+  readonly contextUsage?: AgentContextWindowUsage | null;
   readonly executionServerId?: string | null;
   readonly attachments?: AgentComposerAttachmentsSurface | null;
   readonly attachmentTargetKey?: string | null;
@@ -118,6 +120,7 @@ export interface AgentComposerProps {
 }
 
 export function AgentComposer({
+  contextUsage = null,
   executionServerId = null,
   attachments = null,
   attachmentTargetKey = null,
@@ -613,6 +616,8 @@ export function AgentComposer({
           <span className="agent-composer__spacer" />
 
           <AgentComposerBytes promptBytes={promptBytes} />
+
+          <AgentContextWindowMeter ownerKey={promptOwnerKey ?? "composer"} usage={contextUsage} />
 
           {running && (
             <button

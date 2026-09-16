@@ -147,6 +147,7 @@ pub(super) async fn request(
             return Err("Runner identity changed. Reconnect the server before continuing.".into());
         }
     }
+    let artifact = super::super::super::artifacts::is_content_path(&prepared.path);
     let image = prepared.method == reqwest::Method::GET && limit > super::super::MAX_OUTPUT;
     let (output, media) = execute(
         client,
@@ -158,10 +159,21 @@ pub(super) async fn request(
     .await?;
     if image {
         let media = media
-            .filter(|m| matches!(m.as_str(), "image/png" | "image/jpeg"))
+            .filter(|m| {
+                matches!(m.as_str(), "image/png" | "image/jpeg")
+                    || (artifact
+                        && matches!(
+                            m.as_str(),
+                            "image/webp" | "text/html" | "text/html; charset=utf-8"
+                        ))
+            })
             .ok_or("Invalid runner image media type.")?;
-        if output.is_empty() {
-            return Err("Runner returned empty image.".into());
+        let media = media.split(';').next().unwrap_or_default();
+        if output.is_empty()
+            || (media == "text/html"
+                && (output.len() > 2 * 1024 * 1024 || std::str::from_utf8(&output).is_err()))
+        {
+            return Err("Runner returned invalid or oversized artifact content.".into());
         }
         return Ok(
             json!({"base64":base64::engine::general_purpose::STANDARD.encode(output),"mediaType":media}),
@@ -223,6 +235,17 @@ mod tests {
     fn test_server(
         responses: Vec<(u16, &'static str)>,
     ) -> (std::path::PathBuf, std::thread::JoinHandle<Vec<String>>) {
+        test_server_with_media(
+            responses
+                .into_iter()
+                .map(|(status, body)| (status, "application/json", body))
+                .collect(),
+        )
+    }
+    #[cfg(unix)]
+    fn test_server_with_media(
+        responses: Vec<(u16, &'static str, &'static str)>,
+    ) -> (std::path::PathBuf, std::thread::JoinHandle<Vec<String>>) {
         use std::os::unix::net::UnixListener;
         let _ = rustls::crypto::ring::default_provider().install_default();
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -235,7 +258,7 @@ mod tests {
         let saved = path.clone();
         let thread = std::thread::spawn(move || {
             let mut requests = Vec::new();
-            for (status, body) in responses {
+            for (status, media, body) in responses {
                 let (mut socket, _) = listener.accept().unwrap();
                 socket
                     .set_read_timeout(Some(std::time::Duration::from_secs(5)))
@@ -250,7 +273,7 @@ mod tests {
                     }
                 }
                 requests.push(String::from_utf8(bytes).unwrap());
-                write!(socket,"HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+                write!(socket,"HTTP/1.1 {status} Test\r\nContent-Type: {media}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
             }
             std::fs::remove_file(saved).unwrap();
             requests
@@ -350,5 +373,46 @@ mod tests {
         });
         assert!(result.unwrap_err().contains("output limit"));
         server.join().unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn generated_binary_content_is_not_parsed_as_json_and_media_is_closed() {
+        let route = "/v1/tasks/7389088c-29b8-4cec-9a15-e825e1fb2f66/artifacts/7389088c-29b8-4cec-9a15-e825e1fb2f66/content";
+        for (media, accepted) in [
+            ("text/html; charset=utf-8", true),
+            ("image/webp", true),
+            ("image/svg+xml", false),
+            ("application/json", false),
+        ] {
+            let (path, server) = test_server_with_media(vec![(200, media, "<html>preview</html>")]);
+            let result = tauri::async_runtime::block_on(async {
+                let client = reqwest::Client::builder()
+                    .unix_socket(path)
+                    .no_proxy()
+                    .build()
+                    .unwrap();
+                request(
+                    &client,
+                    "private-token",
+                    None,
+                    prepare("GET", route, None, vec![]).unwrap(),
+                    super::super::super::MAX_IMAGE_OUTPUT,
+                )
+                .await
+            });
+            if accepted {
+                let result = result.unwrap();
+                assert_eq!(result["mediaType"], media.split(';').next().unwrap());
+                assert_eq!(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(result["base64"].as_str().unwrap())
+                        .unwrap(),
+                    b"<html>preview</html>"
+                );
+            } else {
+                assert!(result.is_err());
+            }
+            assert_eq!(server.join().unwrap().len(), 1);
+        }
     }
 }

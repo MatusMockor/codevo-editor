@@ -92,6 +92,7 @@ describe("agent output parser fixtures", () => {
         inputSummary: "echo 'hello' >> /repo/a.txt",
         description: "Append hello to a.txt",
       },
+      { kind: "contextUsage", model: "claude-fable-5", inputTokens: 32_353, contextWindow: null },
       {
         kind: "toolResult",
         toolId: "toolu_01WxKtGyBLC9hZeQb8WMGqMw",
@@ -99,6 +100,7 @@ describe("agent output parser fixtures", () => {
         isError: false,
       },
       { kind: "assistantText", text: "done" },
+      { kind: "contextUsage", model: "claude-fable-5", inputTokens: 32_582, contextWindow: null },
       {
         kind: "result",
         text: "done",
@@ -110,6 +112,12 @@ describe("agent output parser fixtures", () => {
           costUsd: 0.38912100000000005,
         },
       },
+      {
+        kind: "contextUsage",
+        model: "claude-fable-5",
+        inputTokens: null,
+        contextWindow: 1_000_000,
+      },
     ]);
     expect(parsed.reportedSessionIds).toEqual([CLAUDE_SESSION_ID]);
   });
@@ -119,11 +127,18 @@ describe("agent output parser fixtures", () => {
 
     expect(parsed.events).toEqual([
       { kind: "assistantText", text: "hello" },
+      { kind: "contextUsage", model: "claude-fable-5", inputTokens: 32_591, contextWindow: null },
       {
         kind: "result",
         text: "hello",
         isError: false,
         usage: { inputTokens: 2, outputTokens: 4, contextTokens: 32_591, costUsd: 0.34952 },
+      },
+      {
+        kind: "contextUsage",
+        model: "claude-fable-5",
+        inputTokens: null,
+        contextWindow: 1_000_000,
       },
     ]);
     expect(parsed.reportedSessionIds).toEqual([CLAUDE_SESSION_ID]);

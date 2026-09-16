@@ -140,8 +140,8 @@ fn ensure_agent_attachment_workspace_id(workspace_id: &WorkspaceId) -> Result<()
 }
 
 pub(crate) struct ResolvedAgentAttachmentOwner {
-    workspace_id: WorkspaceId,
-    root_keys: Vec<String>,
+    pub(crate) workspace_id: WorkspaceId,
+    pub(crate) root_keys: Vec<String>,
 }
 
 impl ResolvedAgentAttachmentOwner {
@@ -154,7 +154,7 @@ impl ResolvedAgentAttachmentOwner {
     }
 }
 
-fn resolve_agent_attachment_owner(
+pub(crate) fn resolve_agent_attachment_owner(
     app: &AppHandle,
     owner_id: &WorkspaceId,
 ) -> Result<ResolvedAgentAttachmentOwner, String> {

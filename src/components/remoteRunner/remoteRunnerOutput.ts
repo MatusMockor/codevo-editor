@@ -28,6 +28,10 @@ export function remoteRunnerOutput(
       case "subagentUsage":
       case "subagentTurnDone":
       case "reasoning":
+      case "contextUsage":
+        break;
+      case "contextCompactionStatus":
+        if (event.status === "failed") line = event.message ?? "Context compaction failed";
         break;
       case "toolCall":
         line = `${event.name}: ${event.inputSummary}`;

@@ -60,6 +60,9 @@ fn prompt_and_images_remain_separate_typed_inputs_in_order() {
         inputs,
         vec![
             UserInput::Text {
+                text: VISUAL_OUTPUT_INSTRUCTIONS.into()
+            },
+            UserInput::Text {
                 text: prompt.into()
             },
             UserInput::LocalImage {
@@ -76,9 +79,14 @@ fn prompt_and_images_remain_separate_typed_inputs_in_order() {
 fn text_only_turn_has_no_synthetic_attachment() {
     assert_eq!(
         codex_input("hello", &[]).unwrap(),
-        vec![UserInput::Text {
-            text: "hello".into()
-        }]
+        vec![
+            UserInput::Text {
+                text: VISUAL_OUTPUT_INSTRUCTIONS.into()
+            },
+            UserInput::Text {
+                text: "hello".into()
+            }
+        ]
     );
 }
 
@@ -88,4 +96,22 @@ fn non_utf8_image_path_is_rejected() {
     use std::os::unix::ffi::OsStringExt;
     let path = PathBuf::from(std::ffi::OsString::from_vec(vec![b'/', 0xff]));
     assert!(codex_input("hello", &[path]).is_err());
+}
+
+#[test]
+fn visual_guidance_preserves_maximum_user_prompt_and_attachment_budget() {
+    let prompt = "x".repeat(crate::agent_task_spawner::MAX_AGENT_PROMPT_BYTES);
+    let images: Vec<_> = (0..8)
+        .map(|index| PathBuf::from(format!("/repo/image-{index}.png")))
+        .collect();
+    let input = codex_input(&prompt, &images).unwrap();
+    assert_eq!(input.len(), 10);
+    assert_eq!(input[1], UserInput::Text { text: prompt });
+    assert!(
+        crate::agent_task_spawner::agent_task_input::AgentTaskInputFrame::CodexInput {
+            input,
+            client_user_message_id: None,
+        }
+        .bounded()
+    );
 }

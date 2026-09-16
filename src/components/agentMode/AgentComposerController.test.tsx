@@ -20,9 +20,20 @@ vi.mock("./useAgentComposerState", () => ({
 vi.mock("./AgentComposer", () => ({
   AgentComposer: ({
     onCompactContext,
+    contextUsage,
   }: {
     readonly onCompactContext: (submission: AgentComposerSubmission) => void;
-  }) => <button onClick={() => onCompactContext(submission)}>Compact</button>,
+    readonly contextUsage?: { readonly usedTokens: number; readonly contextWindow: number } | null;
+  }) => (
+    <>
+      <button onClick={() => onCompactContext(submission)}>Compact</button>
+      <output>
+        {contextUsage === null || contextUsage === undefined
+          ? "Unknown"
+          : `${contextUsage.usedTokens}/${contextUsage.contextWindow}`}
+      </output>
+    </>
+  ),
 }));
 
 import { AgentComposerController } from "./AgentComposerController";
@@ -56,5 +67,33 @@ describe("AgentComposerController context compaction", () => {
     expect(submit).toHaveBeenCalledWith("/compact", submission, { attachments: false });
     act(() => root.unmount());
     host.remove();
+  });
+
+  it("updates and clears context telemetry through the memoized controller", () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const props = {
+      composerProps: {},
+      providerManagement: {},
+      providerEnabled: { claudeCode: true, codex: true },
+      submissionBlocked: false,
+      submit: async () => true,
+      onOpenProviderSettings: () => undefined,
+    } as unknown as AgentComposerControllerProps;
+    try {
+      for (const [contextUsage, expected] of [
+        [null, "Unknown"],
+        [{ usedTokens: 120, contextWindow: 200 }, "120/200"],
+        [{ usedTokens: 140, contextWindow: 200 }, "140/200"],
+        [{ usedTokens: 140, contextWindow: 1000 }, "140/1000"],
+        [null, "Unknown"],
+      ] as const) {
+        act(() => root.render(<AgentComposerController {...props} contextUsage={contextUsage} />));
+        expect(host.querySelector("output")?.textContent).toBe(expected);
+      }
+    } finally {
+      act(() => root.unmount());
+    }
   });
 });

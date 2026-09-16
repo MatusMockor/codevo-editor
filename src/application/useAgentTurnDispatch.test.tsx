@@ -89,6 +89,7 @@ const OWNER_B = "workspace-b";
 const SESSION_ID = "sess-0001-abcd";
 
 interface Environment {
+  flushThread?: (threadId: string) => Promise<boolean>;
   codexTransport?: CodexTransport;
   activeRoot: string;
   repositoryRoot: string;
@@ -1248,6 +1249,50 @@ describe("useAgentTurnDispatch output stream", () => {
 });
 
 describe("useAgentTurnDispatch sendFollowUp", () => {
+  it("waits for the prior turn snapshot before launching continuation", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    let finish!: (value: boolean) => void;
+    harness.environment.flushThread = () =>
+      new Promise<boolean>((resolve) => {
+        finish = resolve;
+      });
+    harness.agent.startAgentTask.mockClear();
+    let sending!: Promise<boolean>;
+    act(() => {
+      sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: defaultAgentLaunchOptions("claudeCode"),
+      });
+    });
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    await act(async () => {
+      finish(true);
+      await sending;
+    });
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("refuses continuation when its snapshot authority expires", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    harness.environment.flushThread = async () => false;
+    harness.agent.startAgentTask.mockClear();
+    expect(
+      await act(() =>
+        harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue",
+          launch: defaultAgentLaunchOptions("claudeCode"),
+        }),
+      ),
+    ).toBe(false);
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it.each([
     ["disabled", { kind: "disabled" }, AGENT_PROVIDER_DISABLED_NOTICE],
     ["updating", { kind: "updating" }, AGENT_PROVIDER_UPDATING_NOTICE],
@@ -2232,6 +2277,7 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
         state,
         loadedRootKeys: new Set([ROOT_A]),
         currentState: () => shadowState,
+        flushThread: (threadId) => environment.flushThread?.(threadId) ?? Promise.resolve(true),
         dispatchAction: (action) => {
           actions.push(action);
           shadowState = harnessReducer(shadowState, action);

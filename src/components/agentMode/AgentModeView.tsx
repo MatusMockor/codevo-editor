@@ -1,3 +1,7 @@
+import type {
+  AgentArtifactLoader,
+  AgentArtifactPreviewPort,
+} from "../../application/agentArtifactPorts";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import { PanelLeftOpen } from "lucide-react";
@@ -20,6 +24,7 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentAccountUsageLoadState } from "../../domain/agentAccountUsage";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { agentContextCompactionOffer } from "../../domain/agentContextCompaction";
+import { agentContextWindow } from "../../domain/agentContextWindow";
 import type {
   AgentTasksNotice,
   AgentThreadsSurface,
@@ -71,6 +76,8 @@ import {
 } from "./useAgentThreadPresentationViews";
 
 export interface AgentModeViewProps {
+  readonly artifactLoader?: AgentArtifactLoader | null;
+  readonly artifactPreview?: AgentArtifactPreviewPort | null;
   readonly imageSurface?: AgentImageSurfacePort | null;
   readonly navigationSession?: AgentNavigationSession;
   readonly agents: AgentThreadsSurface & {
@@ -151,6 +158,8 @@ function LocalAgentModeView({
   overflowRootPaths,
   providerEnabled,
   projects,
+  artifactLoader = null,
+  artifactPreview = null,
   textClipboard = null,
   viewCommands = null,
   workspaceRoot,
@@ -183,6 +192,8 @@ function LocalAgentModeView({
     session: navigationSession,
   });
   const { selectedThread: sessionThread, selectedThreadId, railScope, find } = navigation;
+  const contextThread = sessionThread?.thread ?? null;
+  const contextUsage = useMemo(() => agentContextWindow(contextThread), [contextThread]);
   useLayoutEffect(
     () => onSelectedThreadChange(selectedThreadId),
     [onSelectedThreadChange, selectedThreadId],
@@ -665,6 +676,8 @@ function LocalAgentModeView({
                 thread={selectedThread}
               />
               <AgentThreadSession
+                artifactLoader={artifactLoader}
+                artifactPreview={artifactPreview}
                 attachmentImages={agents.attachmentImages}
                 onRevealAttachment={revealAttachment}
                 findBar={
@@ -724,6 +737,7 @@ function LocalAgentModeView({
                 thread={sessionThread}
               />
               <AgentComposerController
+                contextUsage={contextUsage}
                 executionServerId={
                   selectedThread?.execution?.serverId ??
                   (selectedThread === null ? selectedServerId : null)

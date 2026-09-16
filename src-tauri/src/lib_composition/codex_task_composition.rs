@@ -5,6 +5,7 @@ use super::codex_app_server_protocol::{
 };
 use super::codex_app_server_turn::CodexAppServerTurnPlan;
 use super::{AgentTaskProjectAuthority, StartAgentTaskRequest};
+use crate::agent_task_spawner::agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS;
 use crate::agent_task_spawner::agent_launch::{AgentLaunchOptions, CodexExecutionMode};
 use crate::agent_task_spawner::agent_provider::runtime::{
     AgentProviderHostLifecycle, CodexTransport, ProviderTurnLease,
@@ -134,9 +135,14 @@ pub(super) fn codex_input(
     prompt: &str,
     images: &[std::path::PathBuf],
 ) -> Result<Vec<UserInput>, String> {
-    let mut input = vec![UserInput::Text {
-        text: prompt.to_string(),
-    }];
+    let mut input = vec![
+        UserInput::Text {
+            text: VISUAL_OUTPUT_INSTRUCTIONS.to_string(),
+        },
+        UserInput::Text {
+            text: prompt.to_string(),
+        },
+    ];
     for image in images {
         let path = image
             .to_str()

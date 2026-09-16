@@ -27,6 +27,8 @@ struct Capabilities {
     task_file_diffs: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     pending_messages: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    output_artifacts: Option<bool>,
 }
 
 fn optional_bool<'de, D: serde::Deserializer<'de>>(
@@ -58,6 +60,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.task_launch_options,
         caps.task_file_diffs,
         caps.pending_messages,
+        caps.output_artifacts,
     );
     Ok(descriptor.runner_id)
 }
@@ -65,6 +68,26 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn output_artifacts_capability_is_optional_and_strict() {
+        let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
+        assert!(validate(value.clone()).is_ok());
+        for supported in [true, false] {
+            value["capabilities"]["outputArtifacts"] = supported.into();
+            assert!(validate(value.clone()).is_ok());
+        }
+        for invalid in [
+            Value::Null,
+            "true".into(),
+            1.into(),
+            serde_json::json!({}),
+            serde_json::json!([]),
+        ] {
+            value["capabilities"]["outputArtifacts"] = invalid;
+            assert!(validate(value.clone()).is_err());
+        }
+    }
+
     #[test]
     fn rejects_control_characters_before_identity_can_be_saved() {
         for runner_id in [

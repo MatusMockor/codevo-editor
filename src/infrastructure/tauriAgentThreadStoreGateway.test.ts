@@ -74,3 +74,68 @@ describe("TauriAgentThreadStoreGateway", () => {
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 });
+
+it.each(["claudeCode", "codex"] as const)(
+  "snapshots %s outputs before terminal persistence settles",
+  async (provider) => {
+    let finish!: () => void;
+    const captured = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const invokeCommand = vi.fn<InvokeAgentThreadStoreCommand>(async (command) => {
+      if (command === "resolve_agent_output_artifact") {
+        await captured;
+        return {
+          id: "a".repeat(64),
+          taskId: "agt-2-0a1b",
+          name: "design.html",
+          mediaType: "text/html",
+          sizeBytes: 20,
+          sha256: "b".repeat(64),
+        };
+      }
+      return null;
+    });
+    const gateway = new TauriAgentThreadStoreGateway(invokeCommand, available);
+    const thread: AgentThread = {
+      ...THREAD,
+      provider: { kind: provider, sessionId: null },
+      turns: [
+        {
+          turnId: "agt-2-0a1b",
+          prompt: "design",
+          status: { kind: "exited", exitCode: 0 },
+          startedAtEpochMs: 1000,
+          endedAtEpochMs: 2000,
+          events: [{ kind: "assistantText", text: "[Preview](design.html)" }],
+          eventsTruncated: false,
+          lastStatusSequence: 1,
+          lastOutputSequence: 1,
+          launch: null,
+          cliVersion: null,
+        },
+      ],
+    };
+    let settled = false;
+    const saving = gateway
+      .saveAgentThread({ rootKey: ROOT_KEY, ownerId: OWNER_ID, thread })
+      .then(() => {
+        settled = true;
+      });
+    await vi.waitFor(() =>
+      expect(invokeCommand).toHaveBeenCalledWith("resolve_agent_output_artifact", {
+        request: {
+          workspaceId: OWNER_ID,
+          threadId: THREAD.threadId,
+          turnId: "agt-2-0a1b",
+          path: "design.html",
+        },
+      }),
+    );
+    expect(invokeCommand.mock.calls[0]?.[0]).toBe("save_agent_thread");
+    expect(settled).toBe(false);
+    finish();
+    await saving;
+    expect(settled).toBe(true);
+  },
+);

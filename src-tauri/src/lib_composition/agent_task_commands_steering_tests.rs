@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent_task_spawner::agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS;
 
 struct RefusingAgentProcessSpawner;
 
@@ -430,6 +431,9 @@ fn codex_steering_preserves_owned_image_paths_as_typed_input() {
     assert_eq!(
         input,
         vec![
+            UserInput::Text {
+                text: VISUAL_OUTPUT_INSTRUCTIONS.into()
+            },
             UserInput::Text {
                 text: request.prompt
             },

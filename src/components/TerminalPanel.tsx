@@ -13,6 +13,7 @@ interface TerminalPanelProps {
   labelledBy?: string;
   panelId?: string;
   isActive: boolean;
+  isVisible?: boolean;
   layoutRevision?: number;
   onCwdChange?: (cwd: string | null) => void;
   onOpenLink?: (path: string, line?: number, column?: number) => void;
@@ -37,6 +38,7 @@ interface TerminalPanelProps {
 
 export function TerminalPanel({
   isActive,
+  isVisible = isActive,
   labelledBy,
   layoutRevision = 0,
   onCwdChange,
@@ -122,7 +124,7 @@ export function TerminalPanel({
         onOpenLinkRef.current?.(resolvedPath, line, column);
       },
       onSessionReady: (sessionId) => {
-        if (generationActive) semanticSessionId = sessionId;
+        if (generationActive && mountedSemanticSession) semanticSessionId = sessionId;
         if (generationActive && rootPathRef.current === sessionRootPath) {
           onSessionReadyRef.current?.(sessionId);
         }
@@ -216,7 +218,7 @@ export function TerminalPanel({
   }, [terminalTheme]);
 
   useEffect(() => {
-    if (!isActive) {
+    if (!isVisible) {
       return;
     }
 
@@ -227,7 +229,7 @@ export function TerminalPanel({
     }
 
     session.fit();
-  }, [isActive, layoutRevision]);
+  }, [isVisible, layoutRevision]);
 
   useEffect(() => {
     if (!isActive || semanticSessionKey === null) return;
@@ -239,7 +241,8 @@ export function TerminalPanel({
       aria-label={labelledBy ? undefined : "Terminal"}
       aria-labelledby={labelledBy}
       className="terminal-panel"
-      hidden={!isActive}
+      hidden={!isVisible}
+      style={{ background: terminalTheme.background }}
       id={panelId}
       role="tabpanel"
     >

@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+#[path = "agent_artifact_instructions.rs"]
+pub(crate) mod agent_artifact_instructions;
+
 use crate::effective_executable_environment::EffectiveExecutablePath;
 
 #[path = "agent_provider.rs"]
@@ -446,6 +449,8 @@ fn agent_invocation_args(
             "--verbose",
             "--input-format",
             "stream-json",
+            "--append-system-prompt",
+            agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS,
         ],
         AgentCliInvocation::CodexExec if resumed => {
             vec!["exec", "resume", "--json", "--skip-git-repo-check"]

@@ -1120,3 +1120,54 @@ describe("useAgentThreadStore persist failure notices", () => {
     harness.unmount();
   });
 });
+
+describe("terminal artifact persistence barrier", () => {
+  it("does not block ordinary continuation on a failed save", async () => {
+    const harness = await renderLoadedStore();
+    harness.gateway.saveAgentThread.mockRejectedValue(new Error("disk unavailable"));
+    const created = thread({
+      turns: [
+        { ...turn("agt-2-0a1b"), status: { kind: "exited", exitCode: 0 }, endedAtEpochMs: 11 },
+      ],
+    });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => expect(harness.reportError).toHaveBeenCalled());
+    expect(await harness.hook().flushThread!(created.threadId)).toBe(true);
+    harness.unmount();
+  });
+  it("awaits snapshot completion and rejects replaced project authority", async () => {
+    const harness = await renderLoadedStore();
+    const created = thread({
+      turns: [
+        {
+          ...turn("agt-2-0a1b"),
+          events: [{ kind: "assistantText", text: "[Preview](design.html)" }],
+          status: { kind: "exited", exitCode: 0 },
+          endedAtEpochMs: 11,
+        },
+      ],
+    });
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: created }));
+    await waitForReact(() => expect(harness.saved).toHaveLength(1));
+    const capture = deferred<void>();
+    harness.gateway.saveAgentThread.mockImplementationOnce(() => capture.promise);
+    let flushing!: Promise<boolean>;
+    act(() => {
+      flushing = harness.hook().flushThread!(created.threadId);
+    });
+    let settled = false;
+    void flushing.then(() => {
+      settled = true;
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(settled).toBe(false);
+    harness.set({ projects: [project({ generation: 2 })] });
+    await act(async () => {
+      capture.resolve();
+      expect(await flushing).toBe(false);
+    });
+    harness.unmount();
+  });
+});

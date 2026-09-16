@@ -42,6 +42,15 @@ describe("agentContextCompactionOffer", () => {
       ),
     ).toBeNull();
   });
+
+  it("does not mistake accumulated turn usage for context occupancy", () => {
+    const thread = candidate();
+    const turns = thread.turns.map((turn) => ({
+      ...turn,
+      events: turn.events.filter((event) => event.kind !== "contextUsage"),
+    }));
+    expect(agentContextCompactionOffer({ ...thread, turns }, NOW)).toBeNull();
+  });
 });
 
 function candidate(): AgentThread {
@@ -64,6 +73,12 @@ function candidate(): AgentThread {
         startedAtEpochMs: updatedAtEpochMs - 1_000,
         endedAtEpochMs: updatedAtEpochMs,
         events: [
+          {
+            kind: "contextUsage",
+            model: "claude-test",
+            inputTokens: 120_000,
+            contextWindow: 200_000,
+          },
           {
             kind: "result",
             text: "done",

@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent_task_spawner::agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS;
 use crate::agent_task_spawner::agent_launch::{
     ClaudeContextChoice, ClaudeEffortChoice, ClaudeModelChoice, ClaudePermissionMode,
     CodexExecutionMode, CodexModelChoice,
@@ -687,6 +688,8 @@ fn prepare_builds_a_worktree_plan_with_the_closed_argv_template() {
             "--verbose".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
+            "--append-system-prompt".to_string(),
+            VISUAL_OUTPUT_INSTRUCTIONS.to_string(),
             "--dangerously-skip-permissions".to_string(),
             "--chrome".to_string(),
             "--effort".to_string(),
@@ -862,6 +865,8 @@ fn prepare_forwards_the_launch_flags_into_the_argv() {
             "--verbose".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
+            "--append-system-prompt".to_string(),
+            VISUAL_OUTPUT_INSTRUCTIONS.to_string(),
             "--model".to_string(),
             "sonnet".to_string(),
             "--permission-mode".to_string(),
@@ -939,6 +944,8 @@ fn prepare_forwards_a_validated_resume_session_id_to_the_argv() {
             "--verbose".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
+            "--append-system-prompt".to_string(),
+            VISUAL_OUTPUT_INSTRUCTIONS.to_string(),
             "--dangerously-skip-permissions".to_string(),
             "--chrome".to_string(),
             "--effort".to_string(),

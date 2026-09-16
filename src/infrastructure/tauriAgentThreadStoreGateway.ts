@@ -1,3 +1,5 @@
+import { captureLocalAgentArtifacts } from "./captureLocalAgentArtifacts";
+import { TauriAgentArtifactGateway } from "./tauriAgentArtifactGateway";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   AgentThreadStoreGateway,
@@ -37,7 +39,11 @@ export class TauriAgentThreadStoreGateway implements AgentThreadStoreGateway {
 
   async saveAgentThread(request: SaveAgentThreadRequest): Promise<void> {
     if (!this.isRuntimeAvailable()) return;
-    return invokeSaveAgentThreadIpc(this.invokeCommand, request);
+    await invokeSaveAgentThreadIpc(this.invokeCommand, request);
+    await captureLocalAgentArtifacts(
+      new TauriAgentArtifactGateway(this.invokeCommand),
+      request.thread,
+    );
   }
 
   async deleteAgentThread(request: DeleteAgentThreadRequest): Promise<void> {

@@ -364,6 +364,8 @@ function eventSegment(
     case "toolCall":
     case "toolResult":
     case "subagent":
+    case "contextUsage":
+    case "contextCompactionStatus":
     case "contextCompaction":
     case "error":
     case "unknownLine":

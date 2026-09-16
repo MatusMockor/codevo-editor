@@ -8,13 +8,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static CWD_AUTHORITY_NONCE: AtomicU64 = AtomicU64::new(0);
 
 const SESSION_ID: &str = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
-const CLAUDE_BASE_ARGV: [&str; 6] = [
+const CLAUDE_BASE_ARGV: [&str; 8] = [
     "-p",
     "--output-format",
     "stream-json",
     "--verbose",
     "--input-format",
     "stream-json",
+    "--append-system-prompt",
+    agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS,
 ];
 
 fn no_attachments() -> Vec<PathBuf> {
@@ -395,7 +397,7 @@ fn hostile_effective_path_cannot_replace_retained_script_interpreter() {
 }
 
 #[test]
-fn claude_first_turn_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
+fn claude_first_turn_default_launch_appends_visual_guidance_without_changing_user_input() {
     assert_eq!(
         agent_invocation_args(
             AgentCliInvocation::ClaudeCode,
@@ -411,6 +413,8 @@ fn claude_first_turn_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
             "--verbose",
             "--input-format",
             "stream-json",
+            "--append-system-prompt",
+            agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS,
             "--chrome"
         ]
     );
@@ -423,7 +427,7 @@ fn claude_first_turn_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
 }
 
 #[test]
-fn claude_follow_up_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
+fn claude_follow_up_default_launch_appends_visual_guidance_without_changing_user_input() {
     assert_eq!(
         agent_invocation_args(
             AgentCliInvocation::ClaudeCode,
@@ -439,6 +443,8 @@ fn claude_follow_up_default_launch_keeps_the_pre_launch_argv_byte_for_byte() {
             "--verbose",
             "--input-format",
             "stream-json",
+            "--append-system-prompt",
+            agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS,
             "--chrome",
             "--resume",
             SESSION_ID
@@ -507,6 +513,8 @@ fn claude_argv_places_model_then_mode_then_resume_after_the_stream_json_input_fo
             "--verbose",
             "--input-format",
             "stream-json",
+            "--append-system-prompt",
+            agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS,
             "--model",
             "opus",
             "--permission-mode",
@@ -544,6 +552,8 @@ fn claude_browser_integration_drops_the_chrome_flag_only_when_the_thread_turns_i
             "--verbose",
             "--input-format",
             "stream-json",
+            "--append-system-prompt",
+            agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS,
             "--model",
             "opus",
             "--permission-mode",
@@ -586,6 +596,8 @@ fn claude_ultracode_and_fast_mode_reach_the_cli_as_runtime_settings() {
             "--verbose",
             "--input-format",
             "stream-json",
+            "--append-system-prompt",
+            agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS,
             "--model",
             "opus[1m]",
             "--dangerously-skip-permissions",

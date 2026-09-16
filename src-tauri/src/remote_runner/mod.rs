@@ -1,3 +1,4 @@
+mod artifacts;
 mod attachments;
 mod commands;
 mod continuation;
@@ -22,3 +23,5 @@ pub use inventory_stream::*;
 pub use pending_messages::*;
 pub use project_clone::*;
 pub use service::RemoteRunnerState;
+
+pub use artifacts::*;

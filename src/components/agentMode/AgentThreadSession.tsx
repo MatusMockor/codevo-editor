@@ -1,3 +1,9 @@
+import { AgentArtifactPreviewScope } from "./AgentOutputArtifacts";
+import type {
+  AgentArtifactLoader,
+  AgentArtifactPreviewPort,
+} from "../../application/agentArtifactPorts";
+import { AgentTurnArtifacts, type AgentArtifactScope } from "./AgentTurnArtifacts";
 import { AgentThreadUsage } from "./AgentThreadUsage";
 import {
   createContext,
@@ -31,6 +37,7 @@ import type { AgentAttachmentImagesSurface } from "../../application/useAgentAtt
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
+import { agentCompactionState } from "../../domain/agentCompactionState";
 import {
   agentProviderErrorHeadline,
   classifyAgentProviderError,
@@ -124,6 +131,8 @@ interface AgentTurnErrorContext {
 }
 
 export interface AgentThreadSessionProps {
+  readonly artifactLoader?: AgentArtifactLoader | null;
+  readonly artifactPreview?: AgentArtifactPreviewPort | null;
   readonly thread: AgentThreadView | null;
   readonly deferredFollowUps?: ReadonlyArray<DeferredFollowUp>;
   onRemoveDeferredFollowUp?(threadId: string, id: string): void;
@@ -164,6 +173,8 @@ type AgentThreadSessionBodyProps = AgentThreadSessionProps & {
 };
 
 function AgentThreadSessionBody({
+  artifactLoader = null,
+  artifactPreview = null,
   attachmentImages = null,
   deferredFollowUps = NO_DEFERRED_FOLLOW_UPS,
   onRemoveDeferredFollowUp,
@@ -190,6 +201,22 @@ function AgentThreadSessionBody({
 }: AgentThreadSessionBodyProps) {
   const record = thread.thread;
   const threadId = record.threadId;
+  const serverId = thread.execution?.serverId;
+  const runnerId = thread.execution?.runnerId;
+  const artifactScope = useMemo<AgentArtifactScope | null>(
+    () =>
+      artifactLoader === null || artifactPreview === null
+        ? null
+        : {
+            owner: record.owner,
+            threadId,
+            serverId,
+            runnerId,
+            loader: artifactLoader,
+            preview: artifactPreview,
+          },
+    [artifactLoader, artifactPreview, record.owner, threadId, serverId, runnerId],
+  );
   const attachmentOwner = useMemo(
     () => ({ workspaceId: record.owner.ownerId, threadId }),
     [record.owner.ownerId, threadId],
@@ -440,21 +467,28 @@ function AgentThreadSessionBody({
             />
           )}
 
-          <div className="agent-turn-list">
-            {record.turns.map((turn) => (
-              <AgentTurnView
-                attachmentImages={agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null}
-                highlight={highlightFor(turn.turnId)}
-                key={turn.turnId}
-                prose={prose}
-                provider={record.provider.kind}
-                renderProbe={turnRenderProbe}
-                textClipboard={textClipboard}
-                turn={turn}
-                workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
-              />
-            ))}
-          </div>
+          <AgentArtifactPreviewScope
+            key={`${threadId}:${serverId ?? "local"}:${runnerId ?? record.owner.ownerId}`}
+          >
+            <div className="agent-turn-list">
+              {record.turns.map((turn) => (
+                <AgentTurnView
+                  attachmentImages={
+                    agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null
+                  }
+                  artifactScope={artifactScope}
+                  highlight={highlightFor(turn.turnId)}
+                  key={turn.turnId}
+                  prose={prose}
+                  provider={record.provider.kind}
+                  renderProbe={turnRenderProbe}
+                  textClipboard={textClipboard}
+                  turn={turn}
+                  workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
+                />
+              ))}
+            </div>
+          </AgentArtifactPreviewScope>
 
           {deferredFollowUps.length > 0 && (
             <div
@@ -539,6 +573,7 @@ function AgentThreadSessionBody({
 }
 
 const AgentTurnView = memo(function AgentTurnView({
+  artifactScope = null,
   attachmentImages = null,
   highlight = null,
   prose,
@@ -548,6 +583,7 @@ const AgentTurnView = memo(function AgentTurnView({
   turn,
   workspaceRoot = null,
 }: {
+  readonly artifactScope?: AgentArtifactScope | null;
   readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly highlight?: AgentTurnHighlight | null;
   readonly prose: AgentProseContext;
@@ -584,9 +620,11 @@ const AgentTurnView = memo(function AgentTurnView({
   const empty = projection.items.length === 0 && rawLines.length === 0;
   const workFold = agentTurnWorkFold(projection.items, running);
   const liveActivity = agentTurnLiveActivity(turn);
+  const compaction = agentCompactionState(provider, turn);
+  const compacting = compaction.kind === "compacting";
   const toolDisclosure = useAgentTurnToolDisclosure();
   const liveStatus =
-    liveActivity === null || empty ? null : (
+    compacting || liveActivity === null || empty ? null : (
       <AgentTurnLiveStatus activity={liveActivity} items={projection.items} />
     );
   const cursor = highlight?.current ?? null;
@@ -625,7 +663,7 @@ const AgentTurnView = memo(function AgentTurnView({
             timing={agentTurnTiming(turn)}
           />
 
-          {turn.status.kind === "pending" && provider === "codex" && (
+          {turn.status.kind === "pending" && provider === "codex" && !compacting && (
             <p className="agent-note" role="status">
               Starting Codex…
             </p>
@@ -642,6 +680,7 @@ const AgentTurnView = memo(function AgentTurnView({
             )}
             {workFold !== null && (
               <AgentTurnWork
+                compacting={compacting}
                 liveStatus={liveStatus}
                 attachmentImages={attachmentImages}
                 errorContext={errorContext}
@@ -673,13 +712,31 @@ const AgentTurnView = memo(function AgentTurnView({
                 />
               ))}
             {workFold === null && liveStatus}
-            {empty && running && (
-              <p className="agent-note">
-                Waiting for output…
+            {compaction.kind === "failed" && (
+              <p className="agent-note agent-note--warning" role="status">
+                Context compaction failed{compaction.message ? `: ${compaction.message}` : "."}
+              </p>
+            )}
+            {compacting && (
+              <p className="agent-note" role="status">
+                Compacting context…
                 <span aria-hidden="true" className="agent-well__caret" />
               </p>
             )}
+            {empty &&
+              running &&
+              compaction.kind === "idle" &&
+              !(turn.status.kind === "pending" && provider === "codex") && (
+                <p className="agent-note">
+                  Waiting for output…
+                  <span aria-hidden="true" className="agent-well__caret" />
+                </p>
+              )}
           </div>
+
+          {!running && artifactScope !== null && (
+            <AgentTurnArtifacts scope={artifactScope} turn={turn} />
+          )}
 
           {rawOutput !== null && <div className="agent-message-actions">{rawOutput}</div>}
 
@@ -718,6 +775,7 @@ function AgentRawOutput({ lines }: { readonly lines: ReadonlyArray<AgentRawLine>
 }
 
 function AgentTurnWork({
+  compacting,
   attachmentImages,
   errorContext,
   highlight,
@@ -737,6 +795,7 @@ function AgentTurnWork({
   readonly items: ReadonlyArray<AgentTurnItem>;
   readonly liveStatus: ReactNode;
   readonly prose: AgentProseContext;
+  readonly compacting: boolean;
   readonly running: boolean;
   readonly stream: AgentProseStream;
   readonly subagents: AgentSubagentSummary | null;
@@ -746,7 +805,8 @@ function AgentTurnWork({
 }) {
   const title = running ? (
     <>
-      Working for <AgentWorkingDuration startedAtEpochMs={turn.startedAtEpochMs} />
+      {compacting ? "Turn elapsed " : "Working for "}
+      <AgentWorkingDuration startedAtEpochMs={turn.startedAtEpochMs} />
     </>
   ) : (
     <>

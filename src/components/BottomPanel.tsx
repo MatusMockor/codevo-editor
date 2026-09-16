@@ -1,6 +1,6 @@
-import { PanelBottomClose, ShieldCheck, X } from "lucide-react";
+import { PanelBottomClose, ShieldCheck, Terminal, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import type { PointerEvent, ReactNode } from "react";
+import type { CSSProperties, PointerEvent, ReactNode } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 import type { WorkspacePackageDiscovery } from "../application/useWorkspacePackageGraph";
 import { bottomPanelLabel } from "../domain/bottomPanel";
@@ -355,6 +355,7 @@ export function BottomPanel({
       aria-label="Panel"
       className={`bottom-panel bottom-panel--${viewScope}`}
       data-active-view={effectiveActiveView}
+      style={{ "--terminal-surface-background": terminalTheme.background } as CSSProperties}
     >
       <div
         aria-label="Resize panel"
@@ -405,8 +406,11 @@ export function BottomPanel({
               </button>
             ))}
           </div>
-          {effectiveActiveView === "terminal" ? (
-            <div className="bottom-panel-terminal-toolbar" ref={setTerminalToolbarHost} />
+          {effectiveActiveView === "terminal" && viewScope === "agent" ? (
+            <span className="bottom-panel-terminal-title">
+              <Terminal aria-hidden="true" size={14} />
+              Terminal
+            </span>
           ) : null}
         </div>
         {effectiveActiveView === "problems" && notices.length > 0 ? (
@@ -441,6 +445,25 @@ export function BottomPanel({
             Trust
           </button>
         ) : null}
+        {effectiveActiveView === "terminal" &&
+        terminalCwd &&
+        workspaceRoot &&
+        onRevealDirectoryInTree &&
+        workspaceRelativePath(workspaceRoot, terminalCwd) !== null ? (
+          <button
+            aria-label={`Reveal ${terminalCwd} in file tree`}
+            className="bottom-panel-text-action bottom-panel-terminal-cwd"
+            onClick={() => onRevealDirectoryInTree(terminalCwd)}
+            title={terminalCwd}
+            type="button"
+          >
+            {terminalCwd}
+          </button>
+        ) : effectiveActiveView === "terminal" && terminalCwd ? (
+          <span className="bottom-panel-subtitle bottom-panel-terminal-cwd" title={terminalCwd}>
+            {terminalCwd}
+          </span>
+        ) : null}
         {effectiveActiveView === "terminal" && terminalProfiles.length > 0 ? (
           <select
             aria-label="Terminal profile"
@@ -455,24 +478,8 @@ export function BottomPanel({
             ))}
           </select>
         ) : null}
-        {effectiveActiveView === "terminal" &&
-        terminalCwd &&
-        workspaceRoot &&
-        onRevealDirectoryInTree &&
-        workspaceRelativePath(workspaceRoot, terminalCwd) !== null ? (
-          <button
-            aria-label={`Reveal ${terminalCwd} in file tree`}
-            className="bottom-panel-text-action"
-            onClick={() => onRevealDirectoryInTree(terminalCwd)}
-            title={terminalCwd}
-            type="button"
-          >
-            {terminalCwd}
-          </button>
-        ) : effectiveActiveView === "terminal" && terminalCwd ? (
-          <span className="bottom-panel-subtitle" title={terminalCwd}>
-            {terminalCwd}
-          </span>
+        {effectiveActiveView === "terminal" ? (
+          <div className="bottom-panel-terminal-toolbar" ref={setTerminalToolbarHost} />
         ) : null}
         <button className="bottom-panel-action" onClick={onClose} title="Hide panel" type="button">
           <PanelBottomClose aria-hidden="true" size={14} />

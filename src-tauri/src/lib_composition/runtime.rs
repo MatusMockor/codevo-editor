@@ -28,7 +28,10 @@ pub fn run() {
     );
     #[cfg(not(test))]
     let vscode_process_task_registry_for_setup = Arc::clone(&vscode_process_task_registry);
-    let builder = tauri::Builder::default().enable_macos_default_menu(false);
+    let builder = tauri::Builder::default()
+        .enable_macos_default_menu(false)
+        .manage(crate::artifact_preview::ArtifactPreviewState::default())
+        .register_uri_scheme_protocol("codevo-artifact-preview", crate::artifact_preview::respond);
     #[cfg(target_os = "macos")]
     let builder = builder
         .menu(application_menu)
@@ -149,6 +152,7 @@ pub fn run() {
                     app.path().app_data_dir()?,
                 ),
             ));
+            app.manage(Arc::new(agent_output_artifact_commands::store::OutputArtifactStore::new(app.path().app_data_dir()?)));
             let agent_attachment_store = Arc::new(
                 agent_attachment_commands::agent_attachment_store::AgentAttachmentStore::new(
                     app.path().app_data_dir()?,
@@ -213,6 +217,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crate::artifact_preview::artifact_preview_create,
+            crate::artifact_preview::artifact_preview_revoke,
             crate::remote_runner::remote_runner_list_servers,
             crate::remote_runner::remote_runner_subscribe_changes,
             crate::remote_runner::remote_runner_unsubscribe_changes,
@@ -241,6 +247,8 @@ pub fn run() {
             crate::remote_runner::remote_runner_upload_attachment,
             crate::remote_runner::remote_runner_get_attachment,
             crate::remote_runner::remote_runner_read_attachment,
+            crate::remote_runner::resolve_remote_agent_artifact,
+            crate::remote_runner::read_remote_agent_artifact,
             crate::remote_runner::remote_runner_list_task_files,
             crate::remote_runner::remote_runner_get_task_file_diff,
             #[cfg(feature = "perf-capture")]
@@ -554,6 +562,8 @@ pub fn run() {
             agent_attachment_commands::read_agent_attachment_candidate,
             agent_attachment_commands::claim_agent_attachments,
             agent_attachment_commands::release_agent_attachment,
+            agent_output_artifact_commands::resolve_agent_output_artifact,
+            agent_output_artifact_commands::read_agent_output_artifact,
             agent_attachment_commands::read_agent_attachment,
             agent_attachment_commands::reveal_agent_attachment,
             agent_task_commands::acknowledge_agent_task_start,

@@ -1,3 +1,4 @@
+import { agentTurnArtifactReferences } from "../domain/agentTurnArtifactReferences";
 import {
   useCallback,
   useEffect,
@@ -78,6 +79,7 @@ type PersistUrgency = "immediate" | "coalesced";
 
 interface ThreadPersistSlot {
   inFlight: boolean;
+  lastSaveSucceeded: boolean;
   settled: Promise<void> | null;
   pending: PersistUrgency | null;
   lastSaveAtMs: number;
@@ -162,6 +164,7 @@ export function useAgentThreadStore(
       slot.settled = inFlight.then(() => undefined);
       const saved = await inFlight;
       slot.inFlight = false;
+      slot.lastSaveSucceeded = saved.ok;
       slot.settled = null;
       if (!mountedRef.current) return;
       if (!saved.ok && ownsProjectRoot(dependenciesRef.current.projects, authority)) {
@@ -338,6 +341,40 @@ export function useAgentThreadStore(
     for (const project of projects) void loadProject(projectAuthority(project));
   }, [dependencies.agentModeActive, loadProject, projectsSignature]);
 
+  const flushThread = useCallback(
+    async (threadId: string): Promise<boolean> => {
+      const thread = stateRef.current.threads.get(threadId);
+      if (thread === undefined || runningTurn(thread) !== null) return false;
+      const lastTurn = thread.turns[thread.turns.length - 1];
+      if (lastTurn === undefined || agentTurnArtifactReferences(lastTurn).length === 0) return true;
+      const authority = threadAuthority(dependenciesRef.current.projects, thread);
+      if (authority === null) return false;
+      const turnId = thread.turns[thread.turns.length - 1]?.turnId;
+      const current = (): boolean => {
+        const latest = stateRef.current.threads.get(threadId);
+        return (
+          mountedRef.current &&
+          ownsProjectRoot(dependenciesRef.current.projects, authority) &&
+          latest !== undefined &&
+          latest.turns[latest.turns.length - 1]?.turnId === turnId &&
+          runningTurn(latest) === null
+        );
+      };
+      const slot = slotFor(slotsRef.current, threadId);
+      // Persistence can schedule one coalesced successor; cap retries under a mutation storm.
+      for (let attempt = 0; slot.inFlight && attempt < 8; attempt += 1) {
+        await slot.settled;
+        if (!current()) return false;
+      }
+      if (slot.inFlight || !current()) return false;
+      clearSlotTimer(slot);
+      dirtyRef.current.delete(threadId);
+      await runSave(threadId);
+      return current() && slot.lastSaveSucceeded;
+    },
+    [runSave],
+  );
+
   const currentState = useCallback((): AgentThreadsState => stateRef.current, []);
 
   return useMemo(
@@ -345,6 +382,7 @@ export function useAgentThreadStore(
       state,
       loadedRootKeys,
       currentState,
+      flushThread,
       dispatchAction,
       togglePin,
       archive,
@@ -355,6 +393,7 @@ export function useAgentThreadStore(
     [
       archive,
       currentState,
+      flushThread,
       dispatchAction,
       loadedRootKeys,
       markUnread,
@@ -580,6 +619,7 @@ function slotFor(slots: Map<string, ThreadPersistSlot>, threadId: string): Threa
   if (existing !== undefined) return existing;
   const slot: ThreadPersistSlot = {
     inFlight: false,
+    lastSaveSucceeded: false,
     settled: null,
     pending: null,
     lastSaveAtMs: Number.NEGATIVE_INFINITY,

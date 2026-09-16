@@ -41,6 +41,7 @@ interface FakeSession {
 }
 
 interface FakeSessionOptions {
+  stopSessionOnDispose?: boolean;
   onCwdChange(cwd: string | null): void;
   onOpenLink(path: string, line?: number, column?: number): void;
   onSessionReady(sessionId: number | null): void;
@@ -188,6 +189,9 @@ describe("TerminalPanel", () => {
     const terminal = terminalPanelMocks.terminals[0];
 
     expect(terminal.options.theme).toBe(darkTheme);
+    expect(host.querySelector<HTMLElement>(".terminal-panel")?.style.background).toBe(
+      "rgb(17, 20, 24)",
+    );
     expect(terminalPanelMocks.createTerminalSession).toHaveBeenCalledTimes(1);
 
     act(() => {
@@ -206,7 +210,34 @@ describe("TerminalPanel", () => {
     expect(terminalPanelMocks.terminals).toHaveLength(1);
     expect(terminalPanelMocks.createTerminalSession).toHaveBeenCalledTimes(1);
     expect(terminal.options.theme).toBe(lightTheme);
+    const expected = document.createElement("div");
+    expected.style.background = lightTheme.background;
+    expect(host.querySelector<HTMLElement>(".terminal-panel")?.style.background).toBe(
+      expected.style.background,
+    );
     expect(terminalPanelMocks.sessions[0].dispose).not.toHaveBeenCalled();
+  });
+
+  it("keeps a visible inactive split pane fitted without restarting it", () => {
+    const props = {
+      isActive: false,
+      isVisible: true,
+      layoutRevision: 1,
+      profileId: "default",
+      rootPath: "/workspace",
+      shellIntegrationEnabled: false,
+      terminalGateway: terminalGateway(),
+      terminalTheme: terminalThemeForAppTheme("dark"),
+    };
+    act(() => root.render(<TerminalPanel {...props} />));
+    expect(host.querySelector<HTMLElement>(".terminal-panel")?.hidden).toBe(false);
+    expect(terminalPanelMocks.sessions[0].fit).toHaveBeenCalledTimes(1);
+    act(() => root.render(<TerminalPanel {...props} layoutRevision={2} />));
+    expect(terminalPanelMocks.sessions[0].fit).toHaveBeenCalledTimes(2);
+    act(() => root.render(<TerminalPanel {...props} isVisible={false} />));
+    expect(host.querySelector<HTMLElement>(".terminal-panel")?.hidden).toBe(true);
+    expect(terminalPanelMocks.sessions[0].dispose).not.toHaveBeenCalled();
+    expect(terminalPanelMocks.terminals).toHaveLength(1);
   });
 
   it("refits an active session when its containing layout changes without restarting", () => {
@@ -232,6 +263,29 @@ describe("TerminalPanel", () => {
     act(() => root.render(<TerminalPanel {...props} layoutRevision={4} />));
     expect(session.fit).toHaveBeenCalledTimes(3);
     expect(session.dispose).not.toHaveBeenCalled();
+  });
+
+  it("leaves normal PTY cleanup exclusively to its owning terminal session", () => {
+    const gateway = terminalGateway();
+    act(() =>
+      root.render(
+        <TerminalPanel
+          isActive
+          profileId="default"
+          rootPath="/workspace"
+          shellIntegrationEnabled={false}
+          terminalGateway={gateway}
+          terminalTheme={terminalThemeForAppTheme("dark")}
+        />,
+      ),
+    );
+    const options = terminalPanelMocks.createTerminalSession.mock
+      .calls[0]?.[0] as FakeSessionOptions;
+    expect(options.stopSessionOnDispose).toBe(true);
+    options.onSessionReady(73);
+    act(() => root.render(null));
+    expect(terminalPanelMocks.sessions[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(gateway.stop).not.toHaveBeenCalled();
   });
 
   it("attaches an exact semantic session and forwards only its settlement", async () => {
@@ -300,7 +354,8 @@ describe("TerminalPanel", () => {
       );
     });
     await act(async () => Promise.resolve());
-    expect(gateway.stop).toHaveBeenCalledWith(72);
+    expect(replacement.stopSessionOnDispose).toBe(false);
+    expect(gateway.stop).toHaveBeenCalledExactlyOnceWith(72);
     expect(settle).toHaveBeenLastCalledWith(72, null);
   });
 

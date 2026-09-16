@@ -31,6 +31,7 @@ pub const MAX_AGENT_THREADS_PER_ROOT: usize = 64;
 pub const MAX_AGENT_TURNS_PER_THREAD: usize = 64;
 pub const MAX_AGENT_EVENTS_PER_TURN: usize = 512;
 pub const MAX_AGENT_EVENT_TEXT_BYTES: usize = 16 * 1024;
+pub const MAX_AGENT_CONTEXT_MODEL_BYTES: usize = 256;
 pub const MAX_AGENT_TOOL_SUMMARY_BYTES: usize = 512;
 pub const MAX_AGENT_TOOL_DESCRIPTION_BYTES: usize = 200;
 pub const MAX_AGENT_THREAD_TITLE_BYTES: usize = 256;
@@ -394,6 +395,14 @@ pub enum AgentSubagentStatus {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentContextCompactionStatus {
+    Compacting,
+    Idle,
+    Failed,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum AgentTurnEvent {
@@ -493,6 +502,19 @@ pub enum AgentTurnEvent {
     ContextCompaction {
         before_tokens: Option<u64>,
         after_tokens: Option<u64>,
+    },
+    ContextCompactionStatus {
+        status: AgentContextCompactionStatus,
+        #[serde(deserialize_with = "appserver::nullable_required")]
+        message: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ContextUsage {
+        model: String,
+        #[serde(deserialize_with = "appserver::nullable_required")]
+        input_tokens: Option<u64>,
+        #[serde(deserialize_with = "appserver::nullable_required")]
+        context_window: Option<u64>,
     },
     Error {
         message: String,
@@ -1061,6 +1083,24 @@ fn validate_agent_turn_usage(usage: &AgentTurnUsage) -> Result<(), String> {
 
 fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
     appserver::validate_event(event)?;
+    if let AgentTurnEvent::ContextUsage {
+        model,
+        input_tokens,
+        context_window,
+    } = event
+    {
+        if model.is_empty()
+            || model.len() > MAX_AGENT_CONTEXT_MODEL_BYTES
+            || model.chars().any(char::is_control)
+        {
+            return Err("Agent context model exceeds the supported bounds.".to_string());
+        }
+        if input_tokens.is_some_and(|tokens| tokens > MAX_AGENT_SAFE_INTEGER)
+            || context_window.is_some_and(|tokens| tokens == 0 || tokens > MAX_AGENT_SAFE_INTEGER)
+        {
+            return Err("Agent context usage exceeds the supported token count.".to_string());
+        }
+    }
     if let AgentTurnEvent::Result {
         usage: Some(usage), ..
     } = event
@@ -1146,6 +1186,13 @@ fn validate_agent_turn_event(event: &AgentTurnEvent) -> Result<(), String> {
                 .unwrap_or(0),
         ),
         AgentTurnEvent::Result { text, .. } => (text.len(), 0),
+        AgentTurnEvent::ContextCompactionStatus { message, .. } => {
+            if message.as_ref().is_some_and(|value| value.contains('\0')) {
+                return Err("Agent context compaction message contains a NUL byte.".to_string());
+            }
+            (optional_len(message), 0)
+        }
+        AgentTurnEvent::ContextUsage { model, .. } => (model.len(), 0),
         AgentTurnEvent::ContextCompaction { .. }
         | AgentTurnEvent::SubagentActivity { .. }
         | AgentTurnEvent::SubagentEvent { .. }

@@ -73,15 +73,24 @@ def main():
             return
         image_content = method == "GET" and re.fullmatch(
             r"/v1/attachments/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/content", path)
-        read_limit = MAX_IMAGE if image_content else MAX_OUTPUT
-        output_limit = MAX_IMAGE_OUTPUT if image_content else MAX_OUTPUT
+        artifact_content = method == "GET" and re.fullmatch(
+            r"/v1/tasks/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/artifacts/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/content", path)
+        binary_content = image_content or artifact_content
+        read_limit = MAX_IMAGE if binary_content else MAX_OUTPUT
+        output_limit = MAX_IMAGE_OUTPUT if binary_content else MAX_OUTPUT
         result = response.read(read_limit + 1)
         if len(result) > read_limit:
             raise ValueError("output limit")
-        if image_content:
+        if binary_content:
             media_type = response.getheader("Content-Type")
-            if media_type not in ("image/png", "image/jpeg"):
+            allowed = ("image/png", "image/jpeg", "image/webp", "text/html", "text/html; charset=utf-8") if artifact_content else ("image/png", "image/jpeg")
+            if media_type not in allowed:
                 raise ValueError("media type")
+            media_type = media_type.split(";")[0]
+            if media_type == "text/html":
+                if len(result) > 2 * 1024 * 1024:
+                    raise ValueError("HTML limit")
+                result.decode("utf-8", errors="strict")
             if not result:
                 raise ValueError("empty image")
             decoded = {"base64": base64.b64encode(result).decode("ascii"), "mediaType": media_type}

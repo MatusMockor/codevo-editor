@@ -40,6 +40,7 @@ pub(super) fn configure_terminal_environment(
     if command.get_env("SHELL").is_none() {
         command.env("SHELL", "/bin/sh");
     }
+    default_terminal_color_capability(command);
     if let Some(value) = original_zdotdir {
         command.env("EDITOR_ORIGINAL_ZDOTDIR", value);
     }
@@ -47,6 +48,15 @@ pub(super) fn configure_terminal_environment(
         command.env("ZDOTDIR", value);
     }
     command.env("PATH", effective_path.as_str());
+}
+
+fn default_terminal_color_capability(command: &mut CommandBuilder) {
+    if command
+        .get_env("COLORTERM")
+        .is_none_or(|value| value.is_empty())
+    {
+        command.env("COLORTERM", "truecolor");
+    }
 }
 
 #[cfg(test)]
@@ -58,6 +68,82 @@ mod tests {
             command_builder, spawn_prepared_command_with_child, TerminalLaunchRequest,
         },
     };
+
+    #[test]
+    fn defaults_missing_or_empty_color_capability_and_preserves_explicit_values() {
+        for (inherited, expected) in [
+            (None, "truecolor"),
+            (Some(""), "truecolor"),
+            (Some("24bit"), "24bit"),
+            (Some("truecolor"), "truecolor"),
+        ] {
+            let mut command = CommandBuilder::new("/bin/sh");
+            command.env_clear();
+            if let Some(value) = inherited {
+                command.env("COLORTERM", value);
+            }
+            default_terminal_color_capability(&mut command);
+            assert_eq!(
+                command
+                    .get_env("COLORTERM")
+                    .and_then(|value| value.to_str()),
+                Some(expected)
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_pty_preserves_ansi_and_truecolor_sequences() {
+        use std::{io::Read, sync::mpsc, time::Duration};
+
+        let mut command = CommandBuilder::new("/bin/sh");
+        // Non-interactive shell: never sources the user's interactive configuration.
+        command.args([
+            "-c",
+            "printf '%s|%s|\\033[31mred\\033[0m|\\033[38;2;40;200;150mrgb\\033[0m' \"$TERM\" \"$COLORTERM\"",
+        ]);
+        let effective_path = EffectiveExecutablePath::new("/usr/bin:/bin").unwrap();
+        configure_terminal_environment(&mut command, effective_path);
+        command.env("COLORTERM", "");
+        default_terminal_color_capability(&mut command);
+        let request = TerminalLaunchRequest {
+            cwd: std::env::temp_dir(),
+            cwd_directory: None,
+            effective_path: effective_path.as_str().to_string(),
+            profile: TerminalProfile {
+                command: Some("/bin/sh".to_string()),
+                id: "sh".to_string(),
+                label: "sh".to_string(),
+            },
+            shell_integration_base_dir: None,
+            size: TerminalSize::default(),
+        };
+        let mut spawned =
+            spawn_prepared_command_with_child(&request, command, || Ok(()), |child| child)
+                .expect("spawn ANSI fixture");
+        let expected =
+            b"xterm-256color|truecolor|\x1b[31mred\x1b[0m|\x1b[38;2;40;200;150mrgb\x1b[0m";
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let reader = std::thread::spawn(move || {
+            let mut output = vec![0; expected.len()];
+            let result = spawned.reader.read_exact(&mut output).map(|()| output);
+            let _ = sender.send(result);
+        });
+        let result = receiver.recv_timeout(Duration::from_secs(5));
+        if result.is_err() {
+            let _ = spawned.child.clone_killer().kill();
+        }
+        let status = spawned.child.wait().expect("reap ANSI fixture");
+        reader.join().expect("join ANSI reader");
+        assert_eq!(status.exit_code, Some(0));
+        assert_eq!(
+            result
+                .expect("bounded PTY output")
+                .expect("read ANSI output"),
+            expected
+        );
+    }
 
     #[test]
     fn effective_path_overrides_only_path() {

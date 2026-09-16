@@ -1,3 +1,5 @@
+import { TauriAgentArtifactGateway } from "../../infrastructure/tauriAgentArtifactGateway";
+import { TauriAgentArtifactPreviewGateway } from "../../infrastructure/tauriAgentArtifactPreviewGateway";
 import { useAgentWorkspaceNavigationBoundary } from "./useAgentWorkspaceNavigationBoundary";
 import {
   useAgentWorkbenchProjectOpening,
@@ -139,6 +141,8 @@ const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGatewa
 const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
   new TauriDirectoryListingGateway();
 const DEFAULT_TEXT_CLIPBOARD = new BrowserTextClipboardGateway();
+const DEFAULT_ARTIFACT_LOADER = new TauriAgentArtifactGateway();
+const DEFAULT_ARTIFACT_PREVIEW = new TauriAgentArtifactPreviewGateway();
 const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
 interface PersistedProviderProjection {
   readonly authorities: Readonly<
@@ -510,6 +514,8 @@ export function AgentWorkbenchScreen({
 
   return (
     <AgentModeView
+      artifactLoader={DEFAULT_ARTIFACT_LOADER}
+      artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
       imageSurface={DEFAULT_IMAGE_SURFACE}
       agents={agents}
       chrome={chrome}

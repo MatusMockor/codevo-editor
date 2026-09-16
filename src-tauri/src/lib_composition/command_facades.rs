@@ -4,6 +4,8 @@ mod agent_attachment_commands;
 mod agent_cli_discovery_commands;
 #[path = "agent_cli_version_commands.rs"]
 mod agent_cli_version_commands;
+#[path = "agent_output_artifact_commands.rs"]
+mod agent_output_artifact_commands;
 #[path = "agent_provider_commands.rs"]
 mod agent_provider_commands;
 #[path = "../agent_provider_sign_in.rs"]

@@ -1521,3 +1521,6 @@ mod appserver_tests;
 
 #[path = "agent_thread_store_tool_description_tests.rs"]
 mod tool_description_tests;
+
+#[path = "agent_thread_store_context_tests.rs"]
+mod context_tests;

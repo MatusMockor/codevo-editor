@@ -825,6 +825,14 @@ export function useAgentTurnDispatch(
       beginPendingTurn(reboundThread.provider.kind);
       setDispatching(true);
       try {
+        const flushed = await deps.store.flushThread?.(reboundThread.threadId);
+        if (
+          flushed === false ||
+          !isCurrent() ||
+          !isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) ||
+          !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
+        )
+          return false;
         const prepared =
           claimed ??
           (await prepareTurnAttachments(

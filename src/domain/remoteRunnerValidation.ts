@@ -249,6 +249,7 @@ export const remoteRunnerChecks = {
         taskLaunchOptions: optional(boolean),
         taskFileDiffs: optional(boolean),
         pendingMessages: optional(boolean),
+        outputArtifacts: optional(boolean),
       }),
     }),
   },

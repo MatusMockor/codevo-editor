@@ -1,0 +1,66 @@
+.agent-artifacts {
+  margin-block: 12px;
+  color: var(--codevo-fg);
+}
+.agent-artifacts__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.agent-artifacts button {
+  color: inherit;
+  background: var(--codevo-raised);
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.agent-artifacts button:focus-visible {
+  outline: 2px solid var(--codevo-primary);
+  outline-offset: 2px;
+}
+.agent-artifacts button[aria-pressed="true"] {
+  background: var(--codevo-primary);
+  color: var(--color-bg);
+}
+.agent-artifacts__image {
+  display: block;
+  max-width: 100%;
+  margin-top: 10px;
+}
+.agent-artifacts__image img {
+  display: block;
+  max-width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+}
+.agent-artifacts__html iframe {
+  width: 100%;
+  height: min(520px, 65vh);
+  border: 0;
+  border-radius: 8px;
+  background: white;
+}
+.agent-artifacts__html p {
+  font-size: 12px;
+  color: var(--codevo-fg-muted);
+}
+.agent-artifacts__dialog {
+  max-width: 90vw;
+  max-height: 90vh;
+  padding: 12px;
+  border: 0;
+  border-radius: 12px;
+  color: var(--codevo-fg);
+  background: var(--codevo-raised);
+}
+.agent-artifacts__dialog::backdrop {
+  background: rgb(0 0 0 / 65%);
+}
+.agent-artifacts__dialog img {
+  display: block;
+  max-width: 85vw;
+  max-height: 78vh;
+  object-fit: contain;
+  margin-top: 10px;
+}

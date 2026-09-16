@@ -98,7 +98,7 @@ export interface AgentTurnUsage {
   readonly outputTokens: number;
   /** Provider-reported API-equivalent cost for the turn, when available. */
   readonly costUsd?: number | null;
-  /** Tokens occupying the provider context window after the turn, when reported. */
+  /** Legacy provider metric: Codex occupancy; Claude cumulative processed input. */
   readonly contextTokens: number | null;
 }
 
@@ -187,6 +187,17 @@ export type AgentTurnEvent =
       readonly kind: "contextCompaction";
       readonly beforeTokens: number | null;
       readonly afterTokens: number | null;
+    }
+  | {
+      readonly kind: "contextCompactionStatus";
+      readonly status: "compacting" | "idle" | "failed";
+      readonly message: string | null;
+    }
+  | {
+      readonly kind: "contextUsage";
+      readonly model: string;
+      readonly inputTokens: number | null;
+      readonly contextWindow: number | null;
     }
   | { readonly kind: "error"; readonly message: string }
   | {
@@ -863,6 +874,10 @@ function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
       return [event.raw];
     case "userMessage":
       return [event.text, ...(event.attachments ?? []).flatMap(agentAttachmentStrings)];
+    case "contextUsage":
+      return [event.model];
+    case "contextCompactionStatus":
+      return event.message === null ? [] : [event.message];
     case "contextCompaction":
       return [];
     case "assistantText":

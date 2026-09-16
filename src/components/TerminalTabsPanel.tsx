@@ -1,4 +1,4 @@
-import { Plus, X } from "lucide-react";
+import { Columns2, Plus, Trash2, X } from "lucide-react";
 import {
   useEffect,
   useReducer,
@@ -22,6 +22,7 @@ import type {
   AgentProviderSignInTerminalIntent,
 } from "../application/useAgentProviderSignIn";
 import { TerminalPanel } from "./TerminalPanel";
+import "./terminalPanel.css";
 
 interface TerminalRuntime {
   readonly cwd: string | null;
@@ -59,6 +60,8 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
     () =>
       new Map([[tabs.activeTabId!, { cwd: null, profileId: props.profileId, sessionId: null }]]),
   );
+  const [splitIds, setSplitIds] = useState<readonly [string, string] | null>(null);
+  const newButtonRef = useRef<HTMLButtonElement>(null);
   const sequenceRef = useRef(1);
   const runtimeRef = useRef(runtime);
   const activeTabIdRef = useRef(tabs.activeTabId);
@@ -89,7 +92,8 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
     const tabId = focusAfterCloseRef.current;
     if (!tabId) return;
     focusAfterCloseRef.current = null;
-    tabButtonRefs.current.get(tabId)?.focus();
+    if (tabs.tabs.length === 1) newButtonRef.current?.focus();
+    else tabButtonRefs.current.get(tabId)?.focus();
   }, [tabs.tabs]);
 
   const publishActive = (tabId: string | null, source = runtimeRef.current) => {
@@ -114,6 +118,11 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
   };
   const activate = (tabId: string) => {
     if (!liveTabIdsRef.current.has(tabId) || activeTabIdRef.current === tabId) return;
+    if (splitIds && !splitIds.includes(tabId)) {
+      setSplitIds(
+        splitIds[0] === activeTabIdRef.current ? [tabId, splitIds[1]] : [splitIds[0], tabId],
+      );
+    }
     activeTabIdRef.current = tabId;
     publishActive(tabId);
     dispatch({ ownerKey: props.ownerKey, tabId, type: "activate" });
@@ -131,12 +140,28 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
     onActiveSessionReadyRef.current?.(null);
     onActiveCwdChangeRef.current?.(null);
     dispatch({ ownerKey: props.ownerKey, tab, type: "create" });
+    return id;
+  };
+  const toggleSplit = () => {
+    if (splitIds) {
+      setSplitIds(null);
+      return;
+    }
+    const original = tabs.activeTabId;
+    const second = create();
+    if (original && second) setSplitIds([original, second]);
   };
   const close = (tabId: string) => {
-    if (tabs.tabs.length === 1 || !liveTabIdsRef.current.has(tabId)) return;
+    if (
+      tabs.tabs.length === 1 ||
+      !liveTabIdsRef.current.has(tabId) ||
+      signInTabIsAwaitingSession(runtimeRef.current.get(tabId), props.providerSignIn)
+    )
+      return;
     const closingElement = tabButtonRefs.current.get(tabId)?.parentElement;
     const restoreFocus = closingElement?.contains(document.activeElement) ?? false;
     const closingWasActive = activeTabIdRef.current === tabId;
+    if (splitIds?.includes(tabId)) setSplitIds(null);
     liveTabIdsRef.current.delete(tabId);
     const fallback = closingWasActive
       ? (tabs.mruTabIds.find((id) => id !== tabId && liveTabIdsRef.current.has(id)) ?? null)
@@ -155,8 +180,10 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
       return;
     }
     let target = index;
-    if (event.key === "ArrowRight") target = (index + 1) % tabs.tabs.length;
-    else if (event.key === "ArrowLeft") target = (index - 1 + tabs.tabs.length) % tabs.tabs.length;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown")
+      target = (index + 1) % tabs.tabs.length;
+    else if (event.key === "ArrowLeft" || event.key === "ArrowUp")
+      target = (index - 1 + tabs.tabs.length) % tabs.tabs.length;
     else if (event.key === "Home") target = 0;
     else if (event.key === "End") target = tabs.tabs.length - 1;
     else return;
@@ -211,6 +238,7 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
         provider === "claudeCode" ? "Claude sign-in" : "Codex sign-in",
       );
       if (!tab) continue;
+      setSplitIds(null);
       liveTabIdsRef.current.add(id);
       activeTabIdRef.current = id;
       updateRuntime(id, () => ({
@@ -225,134 +253,191 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
     }
   }, [props.ownerKey, props.providerSignIn, props.providerSignIn?.terminalIntents, tabs.mruTabIds]);
 
+  const sessionList = (
+    <div
+      aria-label="Terminal sessions"
+      className="terminal-tabs-toolbar__sessions"
+      hidden={tabs.tabs.length < 2}
+      role="tablist"
+    >
+      {tabs.tabs.map((tab, index) => {
+        const selected = tab.id === tabs.activeTabId;
+        return (
+          <span className="terminal-tabs-toolbar__session" key={tab.id} role="presentation">
+            <button
+              aria-controls={`${tab.id}-panel`}
+              aria-selected={selected}
+              id={`${tab.id}-tab`}
+              onClick={() => activate(tab.id)}
+              onKeyDown={(event) => onTabKeyDown(event, index)}
+              ref={(button) => {
+                if (button) tabButtonRefs.current.set(tab.id, button);
+                else tabButtonRefs.current.delete(tab.id);
+              }}
+              className="terminal-tabs-toolbar__tab"
+              role="tab"
+              tabIndex={selected ? 0 : -1}
+              type="button"
+            >
+              {tab.title}
+            </button>
+            <button
+              aria-label={`Close ${tab.title}`}
+              disabled={
+                tabs.tabs.length === 1 ||
+                signInTabIsAwaitingSession(runtime.get(tab.id), props.providerSignIn)
+              }
+              className="terminal-tabs-toolbar__close"
+              onClick={() => close(tab.id)}
+              type="button"
+            >
+              <X aria-hidden="true" size={12} />
+            </button>
+          </span>
+        );
+      })}
+    </div>
+  );
   const toolbar = (
     <div className="terminal-tabs-toolbar">
-      <div
-        aria-label="Terminal sessions"
-        className="terminal-tabs-toolbar__sessions"
-        role="tablist"
+      <button
+        aria-label="Split Terminal"
+        aria-pressed={splitIds !== null}
+        className="terminal-tabs-toolbar__new"
+        disabled={!splitIds && tabs.tabs.length >= MAX_TERMINAL_TABS}
+        onClick={toggleSplit}
+        title="Split Terminal"
+        type="button"
       >
-        {tabs.tabs.map((tab, index) => {
-          const selected = tab.id === tabs.activeTabId;
-          return (
-            <span className="terminal-tabs-toolbar__session" key={tab.id} role="presentation">
-              <button
-                aria-controls={`${tab.id}-panel`}
-                aria-selected={selected}
-                id={`${tab.id}-tab`}
-                onClick={() => activate(tab.id)}
-                onKeyDown={(event) => onTabKeyDown(event, index)}
-                ref={(button) => {
-                  if (button) tabButtonRefs.current.set(tab.id, button);
-                  else tabButtonRefs.current.delete(tab.id);
-                }}
-                className="terminal-tabs-toolbar__tab"
-                role="tab"
-                tabIndex={selected ? 0 : -1}
-                type="button"
-              >
-                {tab.title}
-              </button>
-              <button
-                aria-label={`Close ${tab.title}`}
-                disabled={
-                  tabs.tabs.length === 1 ||
-                  signInTabIsAwaitingSession(runtime.get(tab.id), props.providerSignIn)
-                }
-                className="terminal-tabs-toolbar__close"
-                onClick={() => close(tab.id)}
-                type="button"
-              >
-                <X aria-hidden="true" size={12} />
-              </button>
-            </span>
-          );
-        })}
-      </div>
+        <Columns2 aria-hidden="true" size={14} />
+      </button>
       <button
         aria-label="New Terminal"
         className="terminal-tabs-toolbar__new"
         disabled={tabs.tabs.length >= MAX_TERMINAL_TABS}
-        onClick={create}
+        onClick={() => {
+          setSplitIds(null);
+          create();
+        }}
+        ref={newButtonRef}
+        title="New Terminal"
         type="button"
       >
         <Plus aria-hidden="true" size={14} />
+      </button>
+      <button
+        aria-label="Close Active Terminal"
+        title="Close Active Terminal"
+        className="terminal-tabs-toolbar__new"
+        disabled={
+          tabs.tabs.length === 1 ||
+          signInTabIsAwaitingSession(runtime.get(tabs.activeTabId ?? ""), props.providerSignIn)
+        }
+        onClick={() => {
+          if (tabs.activeTabId) close(tabs.activeTabId);
+        }}
+        type="button"
+      >
+        <Trash2 aria-hidden="true" size={14} />
       </button>
     </div>
   );
 
   return (
-    <section aria-label="Terminal tabs" style={styles.shell}>
+    <section
+      aria-label="Terminal tabs"
+      className="terminal-tabs-panel"
+      style={{ ...styles.shell, background: props.terminalTheme.background }}
+    >
       {props.toolbarHost === undefined
         ? toolbar
         : props.toolbarHost
           ? createPortal(toolbar, props.toolbarHost)
           : null}
-      <div style={styles.viewport}>
-        {tabs.tabs.map((tab) => {
-          const metadata = runtime.get(tab.id);
-          const active = tab.id === tabs.activeTabId;
-          return (
-            <TerminalPanel
-              isActive={props.isActive && active}
-              key={tab.id}
-              labelledBy={`${tab.id}-tab`}
-              layoutRevision={props.layoutRevision}
-              onCwdChange={(cwd) => {
-                if (!mountedRef.current || !liveTabIdsRef.current.has(tab.id)) return;
-                updateRuntime(tab.id, (previous) => (previous ? { ...previous, cwd } : undefined));
-                if (activeTabIdRef.current === tab.id) onActiveCwdChangeRef.current?.(cwd);
-              }}
-              onOpenLink={(path, line, column) => {
-                if (
-                  !mountedRef.current ||
-                  !liveTabIdsRef.current.has(tab.id) ||
-                  activeTabIdRef.current !== tab.id
-                ) {
-                  return;
-                }
-                return props.onOpenLink?.(path, line, column);
-              }}
-              onSessionReady={(sessionId) => {
-                if (!mountedRef.current || !liveTabIdsRef.current.has(tab.id)) return;
-                updateRuntime(tab.id, (previous) =>
-                  previous ? { ...previous, sessionId } : undefined,
-                );
-                if (activeTabIdRef.current === tab.id) {
-                  onActiveSessionReadyRef.current?.(
-                    metadata?.signInIntent === undefined ? sessionId : null,
-                  );
-                }
-              }}
-              panelId={`${tab.id}-panel`}
-              profileId={metadata?.profileId ?? null}
-              rootPath={props.rootPath}
-              semanticSession={
-                metadata?.signInIntent && props.providerSignIn
-                  ? {
-                      key: signInTabId(metadata.signInIntent),
-                      cancelStart: () => props.providerSignIn!.cancelStart(metadata.signInIntent!),
-                      start: async (size) => {
-                        const result = await props.providerSignIn!.start(
-                          metadata.signInIntent!,
-                          size,
-                        );
-                        if (result?.kind !== "started") {
-                          throw new Error("Provider sign-in terminal did not start.");
-                        }
-                        return { kind: "starting", sessionId: result.sessionId };
-                      },
-                      settle: (sessionId, exitCode) =>
-                        props.providerSignIn!.settle(metadata.signInIntent!, sessionId, exitCode),
+      <div className="terminal-tabs-body">
+        <div className="terminal-tabs-panes" style={styles.viewport}>
+          {tabs.tabs.map((tab) => {
+            const metadata = runtime.get(tab.id);
+            const active = tab.id === tabs.activeTabId;
+            const visible = props.isActive && (splitIds ? splitIds.includes(tab.id) : active);
+            return (
+              <div
+                className="terminal-tabs-pane"
+                hidden={!visible}
+                key={tab.id}
+                onFocusCapture={() => activate(tab.id)}
+                onPointerDown={() => activate(tab.id)}
+              >
+                <TerminalPanel
+                  isActive={props.isActive && active}
+                  isVisible={visible}
+                  labelledBy={tabs.tabs.length > 1 ? `${tab.id}-tab` : undefined}
+                  layoutRevision={props.layoutRevision}
+                  onCwdChange={(cwd) => {
+                    if (!mountedRef.current || !liveTabIdsRef.current.has(tab.id)) return;
+                    updateRuntime(tab.id, (previous) =>
+                      previous ? { ...previous, cwd } : undefined,
+                    );
+                    if (activeTabIdRef.current === tab.id) onActiveCwdChangeRef.current?.(cwd);
+                  }}
+                  onOpenLink={(path, line, column) => {
+                    if (
+                      !mountedRef.current ||
+                      !liveTabIdsRef.current.has(tab.id) ||
+                      activeTabIdRef.current !== tab.id
+                    ) {
+                      return;
                     }
-                  : undefined
-              }
-              shellIntegrationEnabled={props.shellIntegrationEnabled}
-              terminalGateway={props.terminalGateway}
-              terminalTheme={props.terminalTheme}
-            />
-          );
-        })}
+                    return props.onOpenLink?.(path, line, column);
+                  }}
+                  onSessionReady={(sessionId) => {
+                    if (!mountedRef.current || !liveTabIdsRef.current.has(tab.id)) return;
+                    updateRuntime(tab.id, (previous) =>
+                      previous ? { ...previous, sessionId } : undefined,
+                    );
+                    if (activeTabIdRef.current === tab.id) {
+                      onActiveSessionReadyRef.current?.(
+                        metadata?.signInIntent === undefined ? sessionId : null,
+                      );
+                    }
+                  }}
+                  panelId={`${tab.id}-panel`}
+                  profileId={metadata?.profileId ?? null}
+                  rootPath={props.rootPath}
+                  semanticSession={
+                    metadata?.signInIntent && props.providerSignIn
+                      ? {
+                          key: signInTabId(metadata.signInIntent),
+                          cancelStart: () =>
+                            props.providerSignIn!.cancelStart(metadata.signInIntent!),
+                          start: async (size) => {
+                            const result = await props.providerSignIn!.start(
+                              metadata.signInIntent!,
+                              size,
+                            );
+                            if (result?.kind !== "started") {
+                              throw new Error("Provider sign-in terminal did not start.");
+                            }
+                            return { kind: "starting", sessionId: result.sessionId };
+                          },
+                          settle: (sessionId, exitCode) =>
+                            props.providerSignIn!.settle(
+                              metadata.signInIntent!,
+                              sessionId,
+                              exitCode,
+                            ),
+                        }
+                      : undefined
+                  }
+                  shellIntegrationEnabled={props.shellIntegrationEnabled}
+                  terminalGateway={props.terminalGateway}
+                  terminalTheme={props.terminalTheme}
+                />
+              </div>
+            );
+          })}
+        </div>
+        {sessionList}
       </div>
     </section>
   );
