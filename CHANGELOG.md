@@ -7,6 +7,41 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.46] - 2026-09-16
+
+### Added
+
+- Preview generated PNG, JPEG, WebP and self-contained interactive HTML inside
+  existing conversations, for both Codex and Claude Code. Select a generated file
+  beneath the response to open its preview; images can be enlarged.
+- Preserve generated files before the next turn can overwrite them. Updated
+  runners also capture previews while the editor is disconnected.
+- Show current context usage when the provider supplies sufficient data, and
+  explicit compacting, completed and failed states for Claude conversations.
+
+### Improved
+
+- Integrate terminal colors and spacing with the editor theme, add two-pane
+  splitting and compact session navigation, and preserve explicit shell color
+  settings.
+- Keep generated HTML isolated from the editor and network, with bounded file
+  storage and one active preview per conversation.
+
+### Fixed
+
+- Avoid duplicate terminal cleanup and preserve input routing between split panes.
+- Reject stale artifact responses and retain immutable previews after source files
+  or worktrees are removed.
+
+### Limitations
+
+- Remote previews require an updated codevo-runner with output-artifact support;
+  releasing the editor does not update an existing server installation.
+- Previews display files created by available tools; this release does not add an
+  image-generation service. HTML must include its assets inline.
+- Manual Compact remains local-only. Automatic artifact discovery has bounded
+  output limits and reports incomplete capture when those limits are reached.
+
 ## [0.2.0-beta.45] - 2026-09-16
 
 ### Improved
