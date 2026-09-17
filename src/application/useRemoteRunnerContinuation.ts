@@ -101,7 +101,12 @@ export function useRemoteRunnerContinuation(options: Options) {
         setError("Retry the original message before changing it or starting another conversation.");
         return null;
       }
-      if (input && (input.provider !== task.provider || input.projectId !== task.projectId)) {
+      if (
+        input &&
+        (input.provider !== task.provider ||
+          input.projectId !== task.projectId ||
+          (input.isolation !== undefined && input.isolation !== (task.isolation ?? "worktree")))
+      ) {
         setError("Continue using the original provider and project.");
         return null;
       }
@@ -166,6 +171,7 @@ export function useRemoteRunnerContinuation(options: Options) {
         if (!current()) return null;
         const next = response.task;
         if (
+          (next.isolation ?? "worktree") !== (command.task.isolation ?? "worktree") ||
           next.id === task.id ||
           next.sequence <= task.sequence ||
           next.runnerId !== task.runnerId ||

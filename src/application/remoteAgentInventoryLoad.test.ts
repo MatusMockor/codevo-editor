@@ -41,6 +41,18 @@ const load = (
   valid = () => true,
 ) => loadRemoteAgentInventory(gw as unknown as RemoteRunnerGateway, previous, selected, valid);
 describe("remote inventory loading", () => {
+  it("rejects a canonical detail with changed checkout isolation", async () => {
+    const gw = fixture();
+    gw.getTask.mockResolvedValue({ ...task(), isolation: "in-place" });
+    await expect(load(gw)).rejects.toThrow("different conversation turn");
+  });
+  it("retains explicit direct checkout from listing through hydration", async () => {
+    const gw = fixture();
+    const direct = { ...task(), isolation: "in-place" as const };
+    gw.listTasks.mockResolvedValue({ items: [direct], nextCursor: null });
+    gw.getTask.mockResolvedValue(direct);
+    expect((await load(gw)).tasks[0]?.isolation).toBe("in-place");
+  });
   it("hydrates every settled ancestor from canonical detail without losing unrelated conversations", async () => {
     const gw = fixture();
     const firstPrompt = "Root instructions. ".repeat(90) + "Exact root ending.";

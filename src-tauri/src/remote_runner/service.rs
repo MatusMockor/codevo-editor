@@ -151,6 +151,7 @@ mod tests {
             server_id: "test".into(),
             idempotency_key: "test".into(),
             provider: Provider::Codex,
+            isolation: None,
             launch: None,
             instructions: None,
             parts: vec![Part::Text {
@@ -496,20 +497,7 @@ impl RemoteRunnerState {
     }
 
     pub(super) fn create(&self, request: CreateRequest) -> Result<Value, String> {
-        id(&request.idempotency_key)?;
-        validate_parts(&request.parts)?;
-        let mut body = json!({"idempotencyKey":request.idempotency_key,"provider":request.provider,"parts":request.parts});
-        if let Some(launch) = request.launch {
-            if !launch.matches(&request.provider) {
-                return Err("Launch provider mismatch".into());
-            }
-            body["launch"] = serde_json::to_value(launch).map_err(|_| "Invalid launch options")?;
-        }
-        if let Some(instructions) = request.instructions {
-            instructions.validate()?;
-            body["instructions"] =
-                serde_json::to_value(instructions).map_err(|_| "Invalid instructions")?;
-        }
+        let body = request.body()?;
         self.call(&request.server_id, "POST", "/v1/tasks", Some(body), vec![])
     }
 

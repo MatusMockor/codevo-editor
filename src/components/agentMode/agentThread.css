@@ -705,7 +705,16 @@
   color: var(--agent-text-muted);
 }
 
+.agent-md__code-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
 .agent-md__code-lang {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--agent-mono);
   font-size: var(--agent-fs-2xs);
   letter-spacing: 0.02em;
@@ -722,11 +731,20 @@
   line-height: var(--agent-lh-prose);
   overflow-x: auto;
   tab-size: 2;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-md__code-body[data-wrap="false"] {
   white-space: pre;
+  overflow-wrap: normal;
 }
 
 .agent-md__code-body code {
   font: inherit;
+  white-space: inherit;
+  overflow-wrap: inherit;
 }
 
 .agent-md__table-scroll {

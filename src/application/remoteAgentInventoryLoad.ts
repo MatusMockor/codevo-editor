@@ -146,6 +146,7 @@ export async function loadRemoteAgentInventory(
       detail.id !== listed.id ||
       detail.runnerId !== listed.runnerId ||
       detail.provider !== listed.provider ||
+      (detail.isolation ?? "worktree") !== (listed.isolation ?? "worktree") ||
       detail.sequence !== listed.sequence ||
       detail.createdAt !== listed.createdAt ||
       detail.projectId !== listed.projectId ||

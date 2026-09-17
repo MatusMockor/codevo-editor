@@ -1,5 +1,3 @@
-import { RemoteInstructionSourceControl } from "./RemoteInstructionSourceControl";
-import { remoteAgentProjectKey } from "../../application/remoteAgentProjection";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Paperclip, RefreshCw, Send, X } from "lucide-react";
 import { useRemoteRunnerTasks } from "../../application/useRemoteRunnerTasks";
@@ -31,6 +29,7 @@ function RemoteTaskSession({
 }: RemoteRunnerTaskPanelProps) {
   const flow = useRemoteRunnerTasks({ gateway, serverId, workspaceOwner });
   const [projectId, setProjectId] = useState("");
+  const [isolationChoice, setIsolationChoice] = useState<"in-place" | "worktree" | null>(null);
   const [clonedProjectId, setClonedProjectId] = useState<string | null>(null);
   const { busy: taskBusy, refresh } = flow;
   useEffect(() => {
@@ -66,6 +65,12 @@ function RemoteTaskSession({
     !!selected?.projectId;
   const selectedProject = selected?.projectId ?? (projectId || flow.projects[0]?.id || "");
   const selectedProvider = selected?.provider ?? provider;
+  const supportsIsolation = flow.descriptor?.capabilities.taskIsolation === true;
+  const isolation = selected
+    ? (selected.isolation ?? "worktree")
+    : supportsIsolation
+      ? (isolationChoice ?? "in-place")
+      : "worktree";
   function clearDraft() {
     setPrompt("");
     setImages([]);
@@ -133,6 +138,7 @@ function RemoteTaskSession({
     const task = await (continuing ? flow.continueTask : flow.submit)({
       projectId: selectedProject,
       provider: selectedProvider,
+      ...(!continuing && supportsIsolation ? { isolation } : {}),
       prompt,
       attachments: images,
     });
@@ -281,19 +287,23 @@ function RemoteTaskSession({
                 <option value="claude">Claude</option>
               </select>
             </label>
+            <label>
+              Checkout
+              <select
+                aria-label="Remote checkout"
+                value={isolation}
+                disabled={busy || selected !== null || !supportsIsolation}
+                onChange={(event) =>
+                  setIsolationChoice(event.target.value === "in-place" ? "in-place" : "worktree")
+                }
+              >
+                {(supportsIsolation || isolation === "in-place") && (
+                  <option value="in-place">Server checkout</option>
+                )}
+                <option value="worktree">Isolated worktree</option>
+              </select>
+            </label>
           </div>
-          {selectedProvider === "claude" && flow.descriptor && selectedProject && (
-            <RemoteInstructionSourceControl
-              readOnly
-              remoteRootKey={remoteAgentProjectKey(
-                serverId,
-                flow.descriptor.runnerId,
-                selectedProject,
-              )}
-              projects={[]}
-              disabled={busy}
-            />
-          )}
           <textarea
             aria-label={continuing ? "Continue remote conversation" : "New remote task"}
             placeholder="What would you like to work on?"

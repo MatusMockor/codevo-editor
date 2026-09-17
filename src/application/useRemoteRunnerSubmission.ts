@@ -71,6 +71,14 @@ export function useRemoteRunnerSubmission(options: Options) {
         )
           throw new Error("Enter a prompt and use at most eight images.");
         if (!descriptor) throw new Error("Reconnect to the server before sending a message.");
+        const currentDescriptor = await gateway.getRunner({ serverId });
+        if (!valid()) return null;
+        if (currentDescriptor.runnerId !== descriptor.runnerId)
+          throw new Error("The remote runner changed. Reconnect before starting.");
+        const isolation = input.isolation ?? "worktree";
+        const sendIsolation = currentDescriptor.capabilities.taskIsolation === true;
+        if (isolation === "in-place" && !sendIsolation)
+          throw new Error("Update the server runner to use the server checkout.");
         const parts: RemoteRunnerPart[] = input.prompt.trim()
           ? [{ type: "text", text: input.prompt }]
           : [];
@@ -104,6 +112,7 @@ export function useRemoteRunnerSubmission(options: Options) {
             serverId,
             idempotencyKey: crypto.randomUUID(),
             provider: input.provider,
+            ...(sendIsolation ? { isolation } : {}),
             parts,
             ...(instructions ? { instructions } : {}),
           },
@@ -114,6 +123,7 @@ export function useRemoteRunnerSubmission(options: Options) {
       const created = await gateway.createTask(command.request);
       if (!valid()) return null;
       if (
+        (created.task.isolation ?? "worktree") !== (command.request.isolation ?? "worktree") ||
         created.task.parentTaskId !== undefined ||
         (created.task.conversationId !== undefined &&
           created.task.conversationId !== created.task.id) ||
@@ -135,6 +145,7 @@ export function useRemoteRunnerSubmission(options: Options) {
           : created.task;
       if (!valid()) return null;
       if (
+        (started.isolation ?? "worktree") !== (command.request.isolation ?? "worktree") ||
         started.provider !== input.provider ||
         started.id !== created.task.id ||
         started.runnerId !== created.task.runnerId ||
@@ -164,11 +175,12 @@ export function useRemoteRunnerSubmission(options: Options) {
   };
   return {
     submit,
-    canStartDraft(taskId: string, projectId: string): boolean {
+    canStartDraft(taskId: string, projectId: string, isolation: "worktree" | "in-place"): boolean {
       return (
         pending.current?.owner === options.owner &&
         pending.current.draftId === taskId &&
         pending.current.projectId === projectId &&
+        (pending.current.request.isolation ?? "worktree") === isolation &&
         (pending.current.request.provider === "codex" ||
           pending.current.request.instructions !== undefined)
       );
@@ -179,7 +191,8 @@ export function useRemoteRunnerSubmission(options: Options) {
         pending.current?.owner === options.owner &&
         pending.current.draftId === task.id &&
         pending.current.projectId === task.projectId &&
-        task.status !== "draft"
+        task.status !== "draft" &&
+        (task.isolation ?? "worktree") === (pending.current.request.isolation ?? "worktree")
       )
         pending.current = null;
     },

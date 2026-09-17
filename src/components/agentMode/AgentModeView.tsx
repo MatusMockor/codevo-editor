@@ -1,6 +1,5 @@
 import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
 import { AgentThreadQuestions } from "./AgentThreadQuestions";
-import { RemoteInstructionSourceControl } from "../remoteRunner/RemoteInstructionSourceControl";
 import type {
   AgentArtifactLoader,
   AgentArtifactPreviewPort,
@@ -161,6 +160,7 @@ export function AgentModeView(props: AgentModeViewProps) {
       onSelectedProjectChange={remote === null ? NOOP_SELECTED_PROJECT : setSelectedProjectRootKey}
       onSelectProjectEnvironment={selectProjectEnvironment}
       selectedServerId={remote?.selectedServerId ?? null}
+      authoritativeRemoteProjectKeys={unified.authoritativeRemoteProjectKeys}
     />
   );
 }
@@ -189,11 +189,13 @@ function LocalAgentModeView({
   onSelectedProjectChange,
   onSelectProjectEnvironment,
   selectedServerId,
+  authoritativeRemoteProjectKeys,
 }: AgentModeViewProps & {
   onSelectedThreadChange(threadId: string | null): void;
   onSelectedProjectChange(rootKey: string | null): void;
   onSelectProjectEnvironment(rootKey: string): void;
   selectedServerId: string | null;
+  authoritativeRemoteProjectKeys: ReadonlySet<string>;
 }) {
   const surfaceEnterClass = useSurfaceEnterClass();
   usePreloadAgentMarkdownRenderer();
@@ -215,6 +217,7 @@ function LocalAgentModeView({
     presentationThreads,
     projects,
     session: navigationSession,
+    authoritativeRemoteProjectKeys,
   });
   const { selectedThread: sessionThread, selectedThreadId, railScope, find } = navigation;
   const contextThread = sessionThread?.thread ?? null;
@@ -477,10 +480,7 @@ function LocalAgentModeView({
     setProjectSelectionIntent((current) => current + 1);
     if (!navigation.setProjectScope(scope.projectRootKey)) return;
     onSelectProjectEnvironment(scope.projectRootKey);
-    if (sessionThread !== null && sessionThread.thread.owner.rootKey !== scope.projectRootKey) {
-      navigation.clearSelectedThread();
-    }
-    composer.clearSelection();
+    composer.clearDraftTarget();
   });
   const newProjectThread = useAgentLatestCallback(() => {
     chrome.addProject?.cancelSelection?.();
@@ -787,13 +787,6 @@ function LocalAgentModeView({
                 textClipboard={textClipboard}
                 thread={sessionThread}
               />
-              {composerProps.launch.provider === "claudeCode" &&
-                selectedProject?.rootKey.startsWith("remote:") && (
-                  <RemoteInstructionSourceControl
-                    remoteRootKey={selectedProject.rootKey}
-                    projects={projects}
-                  />
-                )}
               {notice && (
                 <div className="agent-thread-notice">
                   <AgentNoticeBar

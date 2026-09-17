@@ -17,6 +17,15 @@ const task = (
 });
 
 describe("mergeRemoteTasks", () => {
+  it.each(["running", "succeeded"] as const)("rejects mode mutation for %s tasks", (status) => {
+    const original = task("one", 1, status);
+    expect(() => mergeRemoteTasks([original], [{ ...original, isolation: "in-place" }])).toThrow(
+      "isolation",
+    );
+    expect(() =>
+      mergeRemoteTasks([original], [{ ...original, isolation: "worktree" }]),
+    ).not.toThrow();
+  });
   it("accepts refresh progress for unselected tasks and retains tasks missing from older pages", () => {
     expect(
       mergeRemoteTasks(

@@ -78,3 +78,22 @@ describe("remote runner interaction and execution policy", () => {
     },
   );
 });
+
+describe("remote runner isolation capability", () => {
+  it.each([true, false, undefined])("accepts supported optional flag %s", (taskIsolation) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, taskIsolation },
+      }),
+    ).not.toThrow();
+  });
+  it.each([null, "true", 1, {}])("rejects malformed isolation flag %j", (taskIsolation) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, taskIsolation },
+      }),
+    ).toThrow();
+  });
+});

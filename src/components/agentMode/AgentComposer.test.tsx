@@ -79,6 +79,24 @@ describe("AgentComposer", () => {
     expect(pickerGroupHeadings(CHECKOUT_ID)).toEqual([]);
   });
 
+  it("offers both server checkout modes and labels the server checkout truthfully", () => {
+    const onIsolationChange = vi.fn();
+    render({
+      executionServerId: "srv-1",
+      target: { ...target(), repositoryOptions: [] },
+      onIsolationChange,
+    });
+    expect(pickerOptionLabels(CHECKOUT_ID)).toEqual(["Server checkout", "Isolated worktree"]);
+    pickOption(CHECKOUT_ID, "worktree");
+    expect(onIsolationChange).toHaveBeenCalledWith("worktree");
+    render({
+      executionServerId: "srv-1",
+      mode: { kind: "followUp", blockedReason: null },
+      isolation: "in-place",
+    });
+    expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Server checkout");
+  });
+
   it("changes the repository of the next thread from the checkout menu and names it", () => {
     const onSelectRepository = vi.fn();
     const onIsolationChange = vi.fn();

@@ -34,6 +34,24 @@ function input(tasks: readonly RemoteRunnerTask[] = [root, child]): RemoteAgentP
   };
 }
 describe("remote original thread projection", () => {
+  it.each([undefined, "worktree", "in-place"] as const)(
+    "projects actual isolation %s",
+    (isolation) => {
+      const view = projectRemoteAgentThreads(input([{ ...root, isolation }]))[0]!;
+      expect(view.thread.target.isolation).toBe(isolation ?? "worktree");
+    },
+  );
+  it("rejects changed task isolation and mixed conversation modes", () => {
+    const cache = new RemoteAgentProjection();
+    cache.project(input([root]));
+    expect(() => cache.project(input([{ ...root, isolation: "in-place" }]))).toThrow("identity");
+    expect(() =>
+      projectRemoteAgentThreads(input([root, { ...child, isolation: "in-place" }])),
+    ).toThrow();
+    expect(() =>
+      projectRemoteAgentThreads(input([{ ...root, isolation: "worktree" }, child])),
+    ).not.toThrow();
+  });
   it("reuses all unchanged turns and views across equivalent fresh inventory objects", () => {
     const cache = new RemoteAgentProjection();
     const first = cache.project(input());

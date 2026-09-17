@@ -743,6 +743,109 @@ describe("AgentThreadSession", () => {
     );
   });
 
+  it("targets server upgrades and hides the runner wrapper after a provider failure", () => {
+    const message = "The 'gpt-6-astra' model requires a newer version of Codex.";
+    render({
+      thread: threadView({
+        provider: "codex",
+        remote: true,
+        turns: [
+          turn("agt-1-t1", "Hello", { kind: "failed", message: "provider_reported_failure" }, [
+            { kind: "result", text: message, isError: true, usage: null },
+            { kind: "error", message: "provider_reported_failure" },
+          ]),
+        ],
+      }),
+    });
+    expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(1);
+    expect(host.textContent).toContain(
+      "Update the CLI on the server running this thread, then try again.",
+    );
+    expect(host.textContent).not.toContain("Open Settings > Agents");
+    expect(host.textContent).not.toContain("provider_reported_failure");
+  });
+
+  it.each([
+    { events: [] },
+    {
+      events: [
+        {
+          kind: "error",
+          message:
+            "`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.",
+        },
+      ],
+    },
+  ] satisfies ReadonlyArray<{ events: ReadonlyArray<AgentTurnEvent> }>)(
+    "preserves a generic remote failure without substantive provider details (%j)",
+    ({ events }) => {
+      render({
+        thread: threadView({
+          provider: "codex",
+          remote: true,
+          turns: [
+            turn(
+              "agt-1-t1",
+              "Hello",
+              { kind: "failed", message: "provider_reported_failure" },
+              events,
+            ),
+          ],
+        }),
+      });
+      expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(1);
+      expect(host.textContent).toContain("provider_reported_failure");
+    },
+  );
+
+  it("preserves the generic event when it is the only provider failure", () => {
+    render({
+      thread: threadView({
+        provider: "codex",
+        remote: true,
+        turns: [
+          turn("agt-1-t1", "Hello", { kind: "failed", message: "provider_reported_failure" }, [
+            { kind: "error", message: "provider_reported_failure" },
+          ]),
+        ],
+      }),
+    });
+    expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(1);
+    expect(host.textContent).toContain("provider_reported_failure");
+  });
+
+  it("preserves unrelated local failure messages", () => {
+    render({
+      thread: threadView({
+        provider: "codex",
+        turns: [
+          turn("agt-1-t1", "Hello", { kind: "failed", message: "provider_reported_failure" }, [
+            { kind: "error", message: "Local provider detail" },
+          ]),
+        ],
+      }),
+    });
+    expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(2);
+    expect(host.textContent).toContain("provider_reported_failure");
+  });
+
+  it("does not hide a later turn failure using an earlier turn's provider error", () => {
+    render({
+      thread: threadView({
+        provider: "codex",
+        remote: true,
+        turns: [
+          turn("agt-1-t1", "First", { kind: "exited", exitCode: 1 }, [
+            { kind: "error", message: "Provider failed previously" },
+          ]),
+          turn("agt-1-t2", "Again", { kind: "failed", message: "provider_reported_failure" }, []),
+        ],
+      }),
+    });
+    expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(2);
+    expect(host.textContent).toContain("provider_reported_failure");
+  });
+
   it("keeps the Codex hook-trust notice a quiet note inside the work fold", () => {
     const notice =
       "`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.";
@@ -1503,6 +1606,7 @@ function importedOrigin(exchangesTruncated = false): NonNullable<AgentThread["ex
 }
 
 interface ThreadViewOptions {
+  readonly remote?: boolean;
   readonly provider?: AgentCliKind;
   readonly status?: AgentTurnStatus;
   readonly turns?: ReadonlyArray<AgentTurn>;
@@ -1546,6 +1650,19 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
   };
 
   return {
+    ...(overrides.remote
+      ? {
+          execution: {
+            kind: "remote" as const,
+            serverId: "linux",
+            runnerId: "runner",
+            projectId: "project",
+            conversationId: "conversation",
+            latestTaskId: "task",
+            resume: null,
+          },
+        }
+      : {}),
     ship:
       overrides.branchDeleted === true
         ? { kind: "worktreeRemoved", branchDeleted: true }

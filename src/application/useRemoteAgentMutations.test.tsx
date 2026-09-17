@@ -417,11 +417,80 @@ it("sends Codex starts and continuations without collecting rules or requiring r
     ).not.toBeNull();
   });
   expect(gw.collectInstructions).not.toHaveBeenCalled();
-  expect(gw.getRunner).not.toHaveBeenCalled();
+  expect(gw.getRunner).toHaveBeenCalledTimes(1);
   expect(
     vi.mocked<RemoteRunnerGateway["createTask"]>(gw.createTask).mock.calls[0]?.[0],
   ).not.toHaveProperty("instructions");
   expect(
     vi.mocked<RemoteRunnerGateway["continueTask"]>(gw.continueTask).mock.calls[0]?.[0],
   ).not.toHaveProperty("instructions");
+});
+
+describe("remote checkout isolation", () => {
+  it("rejects in-place on legacy runners before creating a task", async () => {
+    const h = await render();
+    await act(async () => {
+      expect(await h.current().start({ ...request, isolation: "in-place" }, target)).toBeNull();
+    });
+    expect(h.gw.createTask).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledWith(expect.stringContaining("Update the server runner"));
+  });
+  it("sends the selected mode to capable runners and rejects mismatched drafts", async () => {
+    const gw = gateway();
+    gw.getRunner.mockResolvedValue({
+      runnerId: "r",
+      capabilities: { instructionSync: true, taskIsolation: true },
+    });
+    const h = await render(gw);
+    await act(async () => {
+      expect(await h.current().start({ ...request, isolation: "in-place" }, target)).toBeNull();
+    });
+    expect(gw.createTask).toHaveBeenCalledWith(expect.objectContaining({ isolation: "in-place" }));
+    expect(gw.startTask).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+  });
+  it("starts in-place and freezes the mode during an uncertain retry", async () => {
+    const gw = gateway();
+    gw.getRunner.mockResolvedValue({
+      runnerId: "r",
+      capabilities: { instructionSync: true, taskIsolation: true },
+    });
+    gw.createTask.mockRejectedValueOnce(new Error("timeout"));
+    gw.createTask.mockResolvedValue({
+      task: task({ isolation: "in-place", status: "draft" }),
+      created: true,
+    });
+    gw.startTask.mockResolvedValue(task({ isolation: "in-place" }));
+    const h = await render(gw);
+    await act(async () => {
+      await h.current().start({ ...request, isolation: "in-place" }, target);
+    });
+    await act(async () => {
+      await h.current().start(request, target);
+    });
+    expect(gw.createTask).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      expect(await h.current().start({ ...request, isolation: "in-place" }, target)).toEqual(
+        task({ isolation: "in-place" }),
+      );
+    });
+    expect(gw.getRunner).toHaveBeenCalledTimes(1);
+    expect(gw.createTask.mock.calls[0]).toEqual(gw.createTask.mock.calls[1]);
+  });
+  it("rejects continuation responses changing the parent isolation", async () => {
+    const gw = gateway();
+    gw.getTask.mockResolvedValue(task({ isolation: "in-place", status: "succeeded" }));
+    const h = await render(gw);
+    await act(async () => {
+      expect(
+        await h
+          .current()
+          .followUp(
+            { ...request, threadId: "thread" },
+            { ...target, latestTaskId: "t", conversationId: "t" },
+          ),
+      ).toBeNull();
+    });
+    expect(h.publish).not.toHaveBeenCalled();
+  });
 });

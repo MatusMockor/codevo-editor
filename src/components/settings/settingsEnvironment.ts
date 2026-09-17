@@ -19,6 +19,7 @@ export function settingsEnvironment({
   workbench,
 }: SettingsEnvironmentInput): SettingsEnvironment {
   return {
+    agentProjects: workbench.agents?.agentProjects?.projects ?? [],
     appUpdater,
     gitDetectedRepositoryMappings: workbench.gitRepositoryMappings
       .map((mapping) => mapping.rootRelativePath)

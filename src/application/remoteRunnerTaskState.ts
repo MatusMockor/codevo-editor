@@ -10,7 +10,11 @@ export function acceptsRemoteTaskUpdate(
 ): boolean {
   const rank = (task: RemoteRunnerTask): number =>
     task.status === "draft" ? 0 : task.status === "queued" ? 1 : task.status === "running" ? 2 : 3;
-  return !isRemoteTaskTerminal(previous) && rank(incoming) >= rank(previous);
+  return (
+    (previous.isolation ?? "worktree") === (incoming.isolation ?? "worktree") &&
+    !isRemoteTaskTerminal(previous) &&
+    rank(incoming) >= rank(previous)
+  );
 }
 
 export function mergeRemoteTasks(
@@ -20,6 +24,8 @@ export function mergeRemoteTasks(
   const merged = new Map(previous.map((task) => [task.id, task]));
   for (const task of incoming) {
     const existing = merged.get(task.id);
+    if (existing && (existing.isolation ?? "worktree") !== (task.isolation ?? "worktree"))
+      throw new Error("Remote task isolation changed.");
     if (existing === undefined || acceptsRemoteTaskUpdate(existing, task))
       merged.set(task.id, task);
   }

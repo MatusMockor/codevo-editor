@@ -390,7 +390,9 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
                     mapping: { rootRelativePath: "" },
                   },
                 ],
-                isolationPolicy: "worktree",
+                isolationPolicy: snapshot.descriptor!.capabilities.taskIsolation
+                  ? "in-place"
+                  : "worktree",
                 leaseToken: null,
               };
             }),
@@ -504,9 +506,17 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         ? {
             repositoryRoot: root,
             repositoryStatus: { kind: "ready" },
-            recommended: { kind: "worktree", reason: "policy" },
+            recommended: projects.some(
+              (project) =>
+                project.rootKey === (key ?? root) && project.isolationPolicy === "in-place",
+            )
+              ? { kind: "in-place" }
+              : { kind: "worktree", reason: "policy" },
             inPlaceGuard: { kind: "safe" },
-            inPlaceAllowed: false,
+            inPlaceAllowed: projects.some(
+              (project) =>
+                project.rootKey === (key ?? root) && project.isolationPolicy === "in-place",
+            ),
             confirmationKey: null,
           }
         : local.isolationPreview(root, key),
@@ -590,10 +600,28 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       if (!remoteMode) local.dismissNotice();
     },
   };
+  const authoritativeRemoteProjectKeys = useMemo(
+    () =>
+      new Set(
+        inventory.snapshots.flatMap((snapshot) =>
+          snapshot.connected &&
+          snapshot.descriptor !== null &&
+          !snapshot.inventoryTruncated &&
+          snapshot.error === null &&
+          !projected.errors.has(snapshot.serverId)
+            ? snapshot.projects.map((project) =>
+                remoteAgentProjectKey(snapshot.serverId, snapshot.descriptor!.runnerId, project.id),
+              )
+            : [],
+        ),
+      ),
+    [inventory.snapshots, projected.errors],
+  );
   const stableAgents = useRemoteAgentStableSurface(agents);
   return {
     agents: stableAgents,
     projects,
+    authoritativeRemoteProjectKeys,
     remoteLoading: inventory.loading,
     refreshRemote: inventory.refresh,
   };

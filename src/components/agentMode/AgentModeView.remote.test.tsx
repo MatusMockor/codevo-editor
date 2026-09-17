@@ -175,7 +175,9 @@ describe("original agent workbench with remote execution", () => {
     );
     chooseProject("Server app");
     await waitForReact(() =>
-      expect(host.querySelector('[aria-label="Run on: Linux server"]')).not.toBeNull(),
+      expect(
+        host.querySelector(`section[aria-label="Agent thread ${remoteThreadId}"]`),
+      ).not.toBeNull(),
     );
     expect(host.querySelector("button#agent-rail-scope")?.textContent).toContain("Server app");
     expect(gateway.createTask).not.toHaveBeenCalled();

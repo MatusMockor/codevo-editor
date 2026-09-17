@@ -13,6 +13,7 @@ const CHECKOUT_ID = "agent-checkout";
 
 export const AgentComposerCheckout = memo(function AgentComposerCheckout({
   disabled,
+  remote = false,
   isolation,
   onIsolationChange,
   onRefreshIsolation,
@@ -21,6 +22,7 @@ export const AgentComposerCheckout = memo(function AgentComposerCheckout({
   worktreeAvailable,
   worktreeOnly,
 }: {
+  readonly remote?: boolean;
   readonly isolation: AgentTaskIsolation;
   readonly disabled: boolean;
   readonly target: AgentComposerTarget | null;
@@ -50,8 +52,8 @@ export const AgentComposerCheckout = memo(function AgentComposerCheckout({
     () =>
       worktreeOnly
         ? lockedWorktreeOptions(searchIdentity.target)
-        : agentComposerCheckoutOptions(searchIdentity.target, worktreeAvailable),
-    [searchIdentity, worktreeOnly, worktreeAvailable],
+        : agentComposerCheckoutOptions(searchIdentity.target, worktreeAvailable, remote),
+    [searchIdentity, worktreeOnly, worktreeAvailable, remote],
   );
   const lockedWithoutChoice =
     worktreeOnly && options.length < 2 && onRefreshIsolation === undefined;
@@ -95,8 +97,10 @@ function lockedWorktreeOptions(
 
 export function AgentComposerLockedCheckout({
   isolation,
+  remote = false,
 }: {
   readonly isolation: AgentTaskIsolation;
+  readonly remote?: boolean;
 }) {
   return (
     <span className="agent-composer__lock">
@@ -104,7 +108,7 @@ export function AgentComposerLockedCheckout({
         {isolationGlyph(isolation)}
       </span>
       <span className="agent-visually-hidden">Checkout:</span>
-      {isolationLabel(isolation)}
+      {isolationLabel(isolation, remote)}
     </span>
   );
 }
@@ -114,7 +118,7 @@ function isolationGlyph(isolation: AgentTaskIsolation): ReactNode {
   return <Folder size={12} />;
 }
 
-function isolationLabel(isolation: AgentTaskIsolation): string {
+function isolationLabel(isolation: AgentTaskIsolation, remote: boolean): string {
   if (isolation === "worktree") return "Isolated worktree";
-  return "Local checkout";
+  return remote ? "Server checkout" : "Local checkout";
 }

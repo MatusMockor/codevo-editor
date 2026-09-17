@@ -103,6 +103,7 @@ export interface AgentComposerState {
   readonly composerProps: AgentComposerPromptProps;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
   clearSelection(): void;
+  clearDraftTarget(): void;
 }
 
 export type AgentComposerControllerProps = Omit<
@@ -137,6 +138,7 @@ export interface AgentComposerControllerState {
   ): Promise<boolean>;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
   clearSelection(): void;
+  clearDraftTarget(): void;
 }
 
 export interface AgentComposerSubmitOptions {
@@ -162,6 +164,7 @@ export function useAgentComposerState({
     composerProps,
     startNewThread: controller.startNewThread,
     clearSelection: controller.clearSelection,
+    clearDraftTarget: controller.clearDraftTarget,
   };
 }
 
@@ -232,11 +235,11 @@ export function useAgentComposerControllerState({
   const remoteExecution =
     selectedThread?.execution?.kind === "remote" ||
     composerProject?.rootKey.startsWith("remote:") === true;
-  const worktreeOnly =
-    remoteExecution ||
-    (composerProject !== null && agentProjectWorktreeOnly(composerProject.origin));
+  const worktreeOnly = remoteExecution
+    ? composerProject?.isolationPolicy !== "in-place"
+    : composerProject !== null && agentProjectWorktreeOnly(composerProject.origin);
   const worktreeOnlyReason = remoteExecution
-    ? "Server threads run in an isolated worktree."
+    ? null
     : composerProject === null
       ? null
       : agentProjectWorktreeOnlyReason(composerProject.origin);
@@ -272,11 +275,14 @@ export function useAgentComposerControllerState({
   const probeSettled =
     probeState === null || probeState.kind === "ready" || probeState.kind === "notRepository";
   const worktreeAvailable = !notRepository;
-  const isolation: AgentTaskIsolation = worktreeOnly
-    ? "worktree"
-    : worktreeAvailable
-      ? chosen
-      : "in-place";
+  const isolation: AgentTaskIsolation =
+    selectedThread !== null
+      ? selectedThread.thread.target.isolation
+      : worktreeOnly
+        ? "worktree"
+        : worktreeAvailable
+          ? chosen
+          : "in-place";
   const guard = probeSettled ? (preview?.inPlaceGuard ?? { kind: "safe" as const }) : SAFE_GUARD;
   const confirmationKey = preview?.confirmationKey ?? null;
   const unsafeInPlaceConfirmationKey =
@@ -361,6 +367,7 @@ export function useAgentComposerControllerState({
     [composerProjects, onClearSelectedThread],
   );
 
+  const clearDraftTarget = useCallback(() => setSelection(null), []);
   const clearSelection = useCallback(() => {
     onClearSelectedThread();
     setSelection(null);
@@ -548,6 +555,7 @@ export function useAgentComposerControllerState({
     submit,
     startNewThread,
     clearSelection,
+    clearDraftTarget,
   };
 }
 

@@ -7,6 +7,34 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.49] - 2026-09-17
+
+### Added
+
+- Choose Server checkout or Isolated worktree on compatible runners. New server
+  threads default to the registered checkout; existing threads keep their mode.
+- Remember the last selected thread for each project while the app is open,
+  including server projects. Returning to a project restores its selection.
+- Wrap long lines in response code and text blocks by default, with a per-block
+  toggle to preserve unwrapped layouts. Copying keeps the original text.
+
+### Fixed
+
+- Show Astra before Sol in the model picker while preserving saved selections
+  and favorites.
+- Move Claude instruction-source settings out of the composer and into
+  Settings > Environments > Advanced, preserving existing project mappings.
+- Direct server provider upgrade errors to the server and avoid duplicate
+  generic failure messages when the provider already explains the failure.
+- Respect explicit New thread selections and avoid restoring deleted, archived,
+  or foreign project threads while handling delayed server history loading.
+
+### Compatibility
+
+- Server checkout requires a runner advertising task-isolation support. Older
+  runners continue to use isolated worktrees.
+- Project thread selections are remembered for the current app session only.
+
 ## [0.2.0-beta.48] - 2026-09-17
 
 ### Added

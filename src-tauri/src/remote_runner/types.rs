@@ -79,17 +79,56 @@ pub enum Part {
     },
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum Isolation {
+    InPlace,
+    Worktree,
+}
+
+fn optional_isolation<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Isolation>, D::Error> {
+    Isolation::deserialize(deserializer).map(Some)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateRequest {
     pub server_id: String,
     pub idempotency_key: String,
     pub provider: Provider,
+    #[serde(default, deserialize_with = "optional_isolation")]
+    pub(super) isolation: Option<Isolation>,
     #[serde(default, deserialize_with = "super::launch::optional")]
     pub(super) launch: Option<super::launch::Launch>,
     pub parts: Vec<Part>,
     #[serde(default, deserialize_with = "super::instruction_wire::optional")]
     pub(super) instructions: Option<super::instruction_wire::InstructionSnapshot>,
+}
+
+impl CreateRequest {
+    pub(super) fn body(&self) -> Result<serde_json::Value, String> {
+        id(&self.idempotency_key)?;
+        validate_parts(&self.parts)?;
+        let mut body = serde_json::json!({"idempotencyKey":self.idempotency_key,"provider":self.provider,"parts":self.parts});
+        if let Some(isolation) = self.isolation {
+            body["isolation"] =
+                serde_json::to_value(isolation).map_err(|_| "Invalid task isolation")?;
+        }
+        if let Some(launch) = &self.launch {
+            if !launch.matches(&self.provider) {
+                return Err("Launch provider mismatch".into());
+            }
+            body["launch"] = serde_json::to_value(launch).map_err(|_| "Invalid launch options")?;
+        }
+        if let Some(instructions) = &self.instructions {
+            instructions.validate()?;
+            body["instructions"] =
+                serde_json::to_value(instructions).map_err(|_| "Invalid instructions")?;
+        }
+        Ok(body)
+    }
 }
 
 #[derive(Deserialize)]
@@ -212,6 +251,31 @@ impl ConnectRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn create_isolation_is_optional_strict_and_preserved_on_wire() {
+        let base = serde_json::json!({"serverId":"test","idempotencyKey":"key","provider":"claude","parts":[{"type":"text","text":"hello"}]});
+        let legacy: CreateRequest = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(legacy.isolation, None);
+        assert!(legacy.body().unwrap().get("isolation").is_none());
+        for mode in ["in-place", "worktree"] {
+            let mut value = base.clone();
+            value["isolation"] = mode.into();
+            let request: CreateRequest = serde_json::from_value(value).unwrap();
+            assert_eq!(request.body().unwrap()["isolation"], mode);
+        }
+        for invalid in [
+            serde_json::Value::Null,
+            "local".into(),
+            "inPlace".into(),
+            true.into(),
+            serde_json::json!({}),
+        ] {
+            let mut value = base.clone();
+            value["isolation"] = invalid;
+            assert!(serde_json::from_value::<CreateRequest>(value).is_err());
+        }
+    }
+
     #[test]
     fn rejects_shell_and_option_injection_and_unknown_fields() {
         for host in [

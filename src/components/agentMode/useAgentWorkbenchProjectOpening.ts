@@ -66,6 +66,7 @@ export function useAgentWorkbenchProjectOpening({
         const epoch = ++addSelectionEpoch.current;
         addProjectPending.current = { epoch, rootPath: path };
         navigationSession.current = {
+          projectSelections: navigationSession.current.projectSelections,
           selectedThreadId: null,
           selectedThreadOwnerKey: null,
           scopeState: NO_SCOPE_STATE,

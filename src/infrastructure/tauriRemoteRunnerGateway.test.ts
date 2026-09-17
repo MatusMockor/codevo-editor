@@ -22,6 +22,38 @@ const task = {
 };
 
 describe("TauriRemoteRunnerGateway", () => {
+  it.each(["in-place", "worktree"] as const)(
+    "preserves task isolation %s across IPC",
+    async (isolation) => {
+      const returned = { ...task, isolation };
+      const invoke = vi.fn().mockResolvedValue({ task: returned, created: true });
+      const request = {
+        serverId: "linux",
+        idempotencyKey: id,
+        provider: "codex" as const,
+        isolation,
+        parts: [{ type: "text" as const, text: "Fix" }],
+      };
+      expect((await new TauriRemoteRunnerGateway(invoke).createTask(request)).task.isolation).toBe(
+        isolation,
+      );
+      expect(invoke).toHaveBeenCalledWith("remote_runner_create_task", { request });
+    },
+  );
+  it.each([null, "local", "docker", true, {}])("rejects unsupported isolation %j", (isolation) => {
+    expect(() =>
+      validateRemoteRunnerValue("createTask", "request", {
+        serverId: "linux",
+        idempotencyKey: id,
+        provider: "codex",
+        isolation,
+        parts: task.parts,
+      }),
+    ).toThrow();
+    expect(() =>
+      validateRemoteRunnerValue("getTask", "response", { ...task, isolation }),
+    ).toThrow();
+  });
   it("lists safe summaries and sends an exact typed SSH connection", async () => {
     const invoke = vi.fn().mockResolvedValueOnce([server]).mockResolvedValueOnce(server);
     const gateway = new TauriRemoteRunnerGateway(invoke);

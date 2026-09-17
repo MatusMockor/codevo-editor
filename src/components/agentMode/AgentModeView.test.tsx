@@ -1408,6 +1408,30 @@ describe("AgentModeView", () => {
     ).toEqual(["Background"]);
   });
 
+  it("restores each project thread from the project chooser and respects New thread", () => {
+    render({
+      agents: surface({
+        threads: [
+          threadView({ threadId: "a", title: "Thread A" }),
+          threadView({ threadId: "b", title: "Thread B", rootKey: OTHER_ROOT }),
+        ],
+      }),
+      projects: [activeProject(), backgroundProject()],
+    });
+    clickText("Thread A");
+    expect(host.querySelector(".agent-session")).not.toBeNull();
+    chooseScope(OTHER_ROOT);
+    clickText("Thread B");
+    chooseScope(ROOT);
+    expect(selectedSessionId()).toBe("a");
+    chooseScope(OTHER_ROOT);
+    expect(selectedSessionId()).toBe("b");
+    click('button[aria-label="New thread in api-service"]');
+    chooseScope(ROOT);
+    chooseScope(OTHER_ROOT);
+    expect(selectedSessionId()).toBeNull();
+  });
+
   it("starts in the project chosen in the composer and forces its worktree rule", async () => {
     const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
     render({ agents: surface({ startThread }), projects: [activeProject(), backgroundProject()] });
@@ -2689,7 +2713,7 @@ describe("AgentModeView", () => {
       expect(pickerTrigger("agent-rail-scope").textContent).toContain(
         manualNavigation ? "app" : "api-service",
       );
-      expect(selectedSessionId()).toBeNull();
+      expect(selectedSessionId()).toBe(manualNavigation ? "agt-1" : null);
     },
   );
 

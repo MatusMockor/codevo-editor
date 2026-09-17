@@ -748,3 +748,42 @@ it("continues a Codex task without instruction sync support", async () => {
     vi.mocked<RemoteRunnerGateway["continueTask"]>(gw.continueTask).mock.calls[0]?.[0],
   ).not.toHaveProperty("instructions");
 });
+
+it("rejects legacy in-place before uploading and preserves legacy worktree requests", async () => {
+  const gw = gateway();
+  const view = await render(gw);
+  await act(async () => {
+    expect(await view.current().submit({ ...input, isolation: "in-place" })).toBeNull();
+  });
+  expect(gw.uploadAttachment).not.toHaveBeenCalled();
+  expect(gw.createTask).not.toHaveBeenCalled();
+  await act(async () => {
+    await view.current().submit(input);
+  });
+  expect(gw.createTask.mock.calls[0]?.[0]).not.toHaveProperty("isolation");
+});
+
+it("sends capable in-place requests and rejects an isolation-changing start", async () => {
+  const gw = gateway();
+  gw.getRunner.mockResolvedValue({
+    protocolVersion: 1,
+    runnerId: "runner-1",
+    name: "Linux",
+    capabilities: {
+      instructionSync: true,
+      taskExecution: true,
+      eventReplay: true,
+      taskIsolation: true,
+    },
+  });
+  gw.createTask.mockResolvedValue({
+    task: { ...task(), isolation: "in-place", status: "draft" },
+    created: true,
+  });
+  const view = await render(gw);
+  await act(async () => {
+    expect(await view.current().submit({ ...input, isolation: "in-place" })).toBeNull();
+  });
+  expect(gw.createTask).toHaveBeenCalledWith(expect.objectContaining({ isolation: "in-place" }));
+  expect(gw.startTask).toHaveBeenCalledTimes(1);
+});

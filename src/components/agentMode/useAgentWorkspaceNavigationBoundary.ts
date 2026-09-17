@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { recalledProjectSelection } from "./agentProjectSelectionMemory";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { NO_SCOPE_STATE, type AgentNavigationSession } from "./useAgentThreadNavigation";
 import type { AgentProjectWorkspaceActivation } from "./useAgentProjectWorkspaceSync";
@@ -25,6 +26,7 @@ export function useAgentWorkspaceNavigationBoundary(
       current.externalRoot = workspaceRoot;
       current.revision += 1;
       session.current = {
+        projectSelections: session.current.projectSelections,
         selectedThreadId: null,
         selectedThreadOwnerKey: null,
         scopeState: NO_SCOPE_STATE,
@@ -37,9 +39,11 @@ export function useAgentWorkspaceNavigationBoundary(
         candidate.rootPath === current.externalRoot && candidate.origin !== "closed-tab-live-tasks",
     );
     if (project !== undefined) {
+      const retained = recalledProjectSelection(session.current.projectSelections, project);
       session.current = {
-        selectedThreadId: null,
-        selectedThreadOwnerKey: null,
+        projectSelections: session.current.projectSelections,
+        selectedThreadId: retained?.threadId ?? null,
+        selectedThreadOwnerKey: retained?.threadOwnerKey ?? null,
         scopeState: {
           intent: "automatic",
           railScope: { projectRootKey: project.rootKey, repositoryRoot: project.rootPath },

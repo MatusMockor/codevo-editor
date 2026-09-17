@@ -37,6 +37,13 @@ import {
   type AgentThreadRevealRequest,
 } from "./agentSidebarPresentation";
 import { useAgentThreadFind, type AgentThreadFindState } from "./useAgentThreadFind";
+import {
+  recalledProjectSelection,
+  projectOwnsRememberedThread,
+  rememberProjectSelection,
+  restorableProjectThread,
+  type AgentProjectSelectionMemory,
+} from "./agentProjectSelectionMemory";
 
 export type AgentNavigationCommandHandlers = Pick<
   AgentViewCommandHandlers,
@@ -56,6 +63,7 @@ export interface AgentThreadNavigationOptions {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly externalSessions?: Pick<ExternalSessionsSurface, "close"> | null;
   readonly session?: AgentNavigationSession;
+  readonly authoritativeRemoteProjectKeys?: ReadonlySet<string>;
 }
 
 export interface AgentThreadPaletteState {
@@ -125,6 +133,7 @@ export const NO_SCOPE_STATE: AgentNavigationScopeState = {
 
 export interface AgentNavigationSession {
   current: {
+    readonly projectSelections?: AgentProjectSelectionMemory;
     readonly selectedThreadId: string | null;
     readonly selectedThreadOwnerKey: string | null;
     readonly scopeState: AgentNavigationScopeState;
@@ -138,7 +147,11 @@ export function useAgentThreadNavigation({
   presentationThreads,
   projects,
   session,
+  authoritativeRemoteProjectKeys,
 }: AgentThreadNavigationOptions): AgentThreadNavigation {
+  const projectSelections = useRef<AgentProjectSelectionMemory>(
+    session?.current.projectSelections ?? new Map(),
+  );
   const pendingRemoteSelection = useRef(
     session?.current.selectedThreadId?.startsWith("remote-thread:") === true
       ? { id: session.current.selectedThreadId, ownerKey: session.current.selectedThreadOwnerKey }
@@ -153,6 +166,7 @@ export function useAgentThreadNavigation({
     if (thread === undefined && pendingRemoteSelection.current !== null)
       return retained.selectedThreadId;
     return thread !== undefined &&
+      !thread.thread.archived &&
       JSON.stringify(thread.thread.owner) === retained.selectedThreadOwnerKey
       ? retained.selectedThreadId
       : null;
@@ -165,16 +179,29 @@ export function useAgentThreadNavigation({
     pendingSelection !== null &&
     retainedCandidate !== undefined &&
     retainedCandidate.thread.threadId === pendingSelection.id &&
-    JSON.stringify(retainedCandidate.thread.owner) !== pendingSelection.ownerKey;
-  const selectedThreadId = retainedOwnerMismatch ? null : storedSelectedThreadId;
+    (retainedCandidate.thread.archived ||
+      JSON.stringify(retainedCandidate.thread.owner) !== pendingSelection.ownerKey);
+  const pendingProjectKey =
+    session?.current.selectedThreadId === pendingSelection?.id
+      ? session?.current.scopeState.railScope?.projectRootKey
+      : undefined;
+  const pendingSelectionMissing =
+    pendingSelection !== null &&
+    retainedCandidate === undefined &&
+    [...(authoritativeRemoteProjectKeys ?? [])].some((rootKey) => {
+      const retained = projectSelections.current.get(rootKey);
+      return retained?.threadId === pendingSelection.id || rootKey === pendingProjectKey;
+    });
+  const selectedThreadId =
+    retainedOwnerMismatch || pendingSelectionMissing ? null : storedSelectedThreadId;
   const canMarkSelectedViewed =
     pendingSelection === null || (retainedCandidate !== undefined && !retainedOwnerMismatch);
   useLayoutEffect(() => {
-    if (retainedOwnerMismatch) {
+    if (retainedOwnerMismatch || pendingSelectionMissing) {
       pendingRemoteSelection.current = null;
       setSelectedThreadId(null);
     }
-  }, [retainedOwnerMismatch]);
+  }, [retainedOwnerMismatch, pendingSelectionMissing]);
   const currentProjectsRef = useRef(projects);
   currentProjectsRef.current = projects;
   const [storedScopeState, setScopeState] = useState<AgentNavigationScopeState>(
@@ -223,8 +250,26 @@ export function useAgentThreadNavigation({
   );
   if (scopeState !== storedScopeState) setScopeState(scopeState);
   useLayoutEffect(() => {
+    const selectedProject = projects.find(
+      (project) =>
+        project.rootKey ===
+        (selectedThread?.thread.owner.rootKey ?? scopeState.railScope?.projectRootKey),
+    );
+    if (selectedProject !== undefined && (selectedThread !== null || selectedThreadId === null)) {
+      rememberProjectSelection(
+        projectSelections.current,
+        selectedProject,
+        selectedThread !== null &&
+          (selectedThread.thread.archived ||
+            !projectOwnsRememberedThread(selectedProject, selectedThread))
+          ? null
+          : selectedThreadId,
+        selectedThread === null ? null : JSON.stringify(selectedThread.thread.owner),
+      );
+    }
     if (session === undefined) return;
     session.current = {
+      projectSelections: projectSelections.current,
       selectedThreadId,
       selectedThreadOwnerKey:
         selectedThread === null
@@ -232,7 +277,7 @@ export function useAgentThreadNavigation({
           : JSON.stringify(selectedThread.thread.owner),
       scopeState,
     };
-  }, [scopeState, selectedThreadId, selectedThread, session]);
+  }, [projects, scopeState, selectedThreadId, selectedThread, session]);
   const railScope = scopeState.railScope;
   const composerScope = useMemo(
     () => resolveComposerScope(scopeState, projects),
@@ -296,6 +341,9 @@ export function useAgentThreadNavigation({
   }, []);
 
   const forgetThread = useCallback((threadId: string) => {
+    for (const [key, selection] of projectSelections.current) {
+      if (selection.threadId === threadId) projectSelections.current.delete(key);
+    }
     if (pendingRemoteSelection.current?.id === threadId) pendingRemoteSelection.current = null;
     setSelectedThreadId((current) => (current === threadId ? null : current));
   }, []);
@@ -356,6 +404,19 @@ export function useAgentThreadNavigation({
       const railScope = { projectRootKey: live.rootKey, repositoryRoot: live.rootPath };
       const authority = captureScopeAuthority(railScope, currentProjectsRef.current);
       if (authority === null) return false;
+      if (storedScopeState.railScope?.projectRootKey !== projectRootKey) {
+        const retained = restorableProjectThread(
+          recalledProjectSelection(projectSelections.current, live),
+          live,
+          committedThreadViews.current,
+          authoritativeRemoteProjectKeys?.has(projectRootKey) ?? false,
+        );
+        pendingRemoteSelection.current = retained?.threadId?.startsWith("remote-thread:")
+          ? { id: retained.threadId, ownerKey: retained.threadOwnerKey }
+          : null;
+        setPendingSearchReveal(null);
+        setSelectedThreadId(retained?.threadId ?? null);
+      }
       setScopeState((current) => ({
         intent: "automatic",
         railScope,
@@ -364,7 +425,7 @@ export function useAgentThreadNavigation({
       }));
       return true;
     },
-    [projects],
+    [authoritativeRemoteProjectKeys, projects, storedScopeState.railScope?.projectRootKey],
   );
 
   const closePalette = useCallback(() => {

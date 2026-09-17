@@ -135,8 +135,8 @@ is a new-thread action, not a transfer of the current provider conversation.
 
 Remote instruction synchronization currently applies only to Claude turns; Codex
 turns do not collect or send local instruction files or require instruction-sync support.
-The desktop is the source of truth for Claude rules. Select
-a trusted, open local project as the instruction source for a server project to
+The desktop is the source of truth for Claude rules. In **Settings → Environments**,
+expand **Advanced · Claude rules** for the server and select a trusted, open local project as the instruction source for a server project to
 include its project rules. Keep that local project open while sending remote turns. The
 association belongs to the exact server, runner identity and remote project; equal
 project names do not establish an association. Without a local source, only global
@@ -263,7 +263,6 @@ applying remote changes to the local checkout. Reviewing a remote diff does not 
 This document describes behavior and setup, not release availability or a test
 report. Validation and release outcomes must be recorded separately for the
 specific build being delivered.
-
 
 ## Interactive questions and long runs
 

@@ -26,6 +26,7 @@ export interface AgentModelRow {
   readonly provider: AgentCliKind;
   readonly providerName: string;
   readonly favoriteKey: string;
+  readonly legacyFavoriteKey?: string;
   readonly isLegacy?: boolean;
 }
 
@@ -301,11 +302,14 @@ export function agentModelRows(
       isLegacy: entry.status === "legacy",
     }));
   }
-  const resolvedConfigured =
+  return modelRows(
+    provider,
+    CODEX_MODEL_CHOICES,
+    CODEX_MODEL_TEXT,
     configured ??
-    (modelManifest.codex as ReadonlyArray<ManifestModel>).find((entry) => entry.isDefault) ??
-    null;
-  return modelRows(provider, CODEX_MODEL_CHOICES, CODEX_MODEL_TEXT, resolvedConfigured);
+      (modelManifest.codex as ReadonlyArray<ManifestModel>).find((entry) => entry.isDefault) ??
+      null,
+  );
 }
 
 export function agentModelFavoriteKey(provider: AgentCliKind, model: AgentModelChoice): string {
@@ -337,9 +341,17 @@ export function filterAgentModelRows(
   query: string,
 ): ReadonlyArray<AgentModelRow> {
   return rows.filter((row) => {
-    if (filter === "favorites" && !favorites.has(row.favoriteKey)) return false;
+    if (filter === "favorites" && !agentModelRowIsFavorite(row, favorites)) return false;
     return agentModelRowMatches(row, query);
   });
+}
+
+/** Preserve the old configured-default favorite until the user removes it. */
+export function agentModelRowIsFavorite(row: AgentModelRow, keys: ReadonlySet<string>): boolean {
+  return (
+    keys.has(row.favoriteKey) ||
+    (row.legacyFavoriteKey !== undefined && keys.has(row.legacyFavoriteKey))
+  );
 }
 
 export function agentLaunchModeChoices(provider: AgentCliKind): ReadonlyArray<AgentLaunchChoice> {
@@ -667,17 +679,20 @@ function modelRows<Value extends AgentModelChoice>(
 ): ReadonlyArray<AgentModelRow> {
   const providerName = agentModelProviderName(provider);
   return values
-    .filter((value) => value === "default" || value !== configured?.choice)
+    .filter((value) => value !== "default")
     .map((value) => ({
       value,
-      label: value === "default" && configured !== null ? configured.label : text[value].label,
+      label: text[value].label,
       hint:
-        value === "default" && configured !== null
+        value === configured?.choice
           ? `${configured.description} Selected by your ${providerName} configuration.`
           : text[value].hint,
       provider,
       providerName,
       favoriteKey: agentModelFavoriteKey(provider, value),
+      ...(value === configured?.choice
+        ? { legacyFavoriteKey: agentModelFavoriteKey(provider, "default") }
+        : {}),
     }));
 }
 

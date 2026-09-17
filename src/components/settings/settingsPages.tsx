@@ -22,7 +22,7 @@ export function SettingsPageHost({ section, ...props }: SettingsPageHostProps) {
     case "agents":
       return <AgentsSettingsPage {...props} />;
     case "environments":
-      return <EnvironmentsSettingsPage />;
+      return <EnvironmentsSettingsPage projects={props.env.agentProjects} />;
     case "keymap":
       return <KeybindingsSettingsPage {...props} />;
     case "index":

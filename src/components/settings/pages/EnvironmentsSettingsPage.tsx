@@ -1,3 +1,5 @@
+import type { AgentProjectDescriptor } from "../../../domain/agentProject";
+import { RemoteInstructionSettings } from "../../remoteRunner/RemoteInstructionSettings";
 import { RemoteRunnerExecutionPolicy } from "../../remoteRunner/RemoteRunnerExecutionPolicy";
 import { useState, type FormEvent } from "react";
 import { Check, Monitor, Plus, Server } from "lucide-react";
@@ -7,7 +9,11 @@ import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
 import "./environmentsSettings.css";
 
-export function EnvironmentsSettingsPage() {
+export function EnvironmentsSettingsPage({
+  projects = [],
+}: {
+  readonly projects?: readonly AgentProjectDescriptor[];
+}) {
   const remote = useRemoteRunnerContext();
   const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState("");
@@ -162,6 +168,15 @@ export function EnvironmentsSettingsPage() {
                   {server.username}@{server.host}:{server.port} ·{" "}
                   {server.connected ? "Connected" : "Disconnected"}
                 </p>
+                {remote.gateway && (
+                  <RemoteInstructionSettings
+                    key={`${server.id}:${server.connected}`}
+                    gateway={remote.gateway}
+                    serverId={server.id}
+                    connected={server.connected}
+                    projects={projects}
+                  />
+                )}
                 {remote.gateway && (
                   <RemoteRunnerExecutionPolicy
                     gateway={remote.gateway}

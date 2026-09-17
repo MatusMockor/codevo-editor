@@ -41,9 +41,15 @@ import { agentCompactionState } from "../../domain/agentCompactionState";
 import {
   agentProviderErrorHeadline,
   classifyAgentProviderError,
-  sameAgentProviderError,
   type AgentProviderError,
 } from "../../domain/agentOutput/agentProviderError";
+import {
+  createTurnErrorContext,
+  repeatsLastError,
+  suppressGenericFailure,
+  turnFailure,
+  type AgentTurnErrorContext,
+} from "./agentTurnErrorPresentation";
 import { isAgentRawOutputNoise } from "../../domain/agentOutput/agentRawOutput";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import type { ExternalSessionExchange } from "../../domain/externalAgentSession";
@@ -123,11 +129,6 @@ interface AgentTurnHighlight {
 interface AgentRevealTarget {
   readonly element: HTMLElement;
   readonly block: "start" | "center";
-}
-
-interface AgentTurnErrorContext {
-  readonly provider: AgentCliKind;
-  readonly installedVersion: string | null;
 }
 
 export interface AgentThreadSessionProps {
@@ -481,6 +482,7 @@ function AgentThreadSessionBody({
                   key={turn.turnId}
                   prose={prose}
                   provider={record.provider.kind}
+                  executionTarget={thread.execution?.kind ?? "local"}
                   renderProbe={turnRenderProbe}
                   textClipboard={textClipboard}
                   turn={turn}
@@ -576,6 +578,7 @@ const AgentTurnView = memo(function AgentTurnView({
   artifactScope = null,
   attachmentImages = null,
   highlight = null,
+  executionTarget,
   prose,
   provider,
   renderProbe,
@@ -588,6 +591,7 @@ const AgentTurnView = memo(function AgentTurnView({
   readonly highlight?: AgentTurnHighlight | null;
   readonly prose: AgentProseContext;
   readonly provider: AgentCliKind;
+  readonly executionTarget: "local" | "remote";
   readonly renderProbe?: (turnId: string) => void;
   readonly textClipboard: TextClipboardGateway | null;
   readonly turn: AgentTurn;
@@ -613,7 +617,12 @@ const AgentTurnView = memo(function AgentTurnView({
   }, [running, streamed]);
 
   const stream = proseStream(running, streamed);
-  const errorContext: AgentTurnErrorContext = { provider, installedVersion: turn.cliVersion };
+  const errorContext = createTurnErrorContext(
+    provider,
+    turn.cliVersion,
+    executionTarget,
+    projection.items,
+  );
   const rawLines = projection.rawLines.filter(
     (line) => !isAgentRawOutputNoise(provider, line.stream, line.raw),
   );
@@ -756,7 +765,7 @@ const AgentTurnView = memo(function AgentTurnView({
               <p className="agent-finale__body">
                 {agentProviderErrorHeadline(failure, errorContext.installedVersion)}
               </p>
-              <AgentProviderErrorHint error={failure} />
+              <AgentProviderErrorHint error={failure} context={errorContext} />
             </section>
           )}
         </div>
@@ -1009,6 +1018,7 @@ function AgentTurnItemView({
     const error = item.isError
       ? classifyAgentProviderError(item.text, errorContext.provider)
       : null;
+    if (error !== null && suppressGenericFailure(error, errorContext)) return null;
     const text =
       error === null ? item.text : agentProviderErrorHeadline(error, errorContext.installedVersion);
     return (
@@ -1030,7 +1040,7 @@ function AgentTurnItemView({
             />
           </p>
         )}
-        {error !== null && <AgentProviderErrorHint error={error} />}
+        {error !== null && <AgentProviderErrorHint error={error} context={errorContext} />}
         {text !== "" && (
           <div className="agent-message-actions">
             <AgentMessageCopyButton clipboard={textClipboard} label="AI response" text={text} />
@@ -1055,6 +1065,7 @@ function AgentTurnItemView({
 
   const error = classifyAgentProviderError(item.message, errorContext.provider);
 
+  if (suppressGenericFailure(error, errorContext)) return null;
   if (error.detail.kind === "advisory") {
     return (
       <p className="agent-note" data-agent-event={item.key}>
@@ -1069,7 +1080,7 @@ function AgentTurnItemView({
       <p className="agent-finale__body">
         {agentProviderErrorHeadline(error, errorContext.installedVersion)}
       </p>
-      <AgentProviderErrorHint error={error} />
+      <AgentProviderErrorHint error={error} context={errorContext} />
     </section>
   );
 }
@@ -1107,12 +1118,22 @@ function proseStream(running: boolean, streamed: boolean): AgentProseStream {
   return "settled";
 }
 
-function AgentProviderErrorHint({ error }: { readonly error: AgentProviderError }): ReactNode {
+function AgentProviderErrorHint({
+  error,
+  context,
+}: {
+  readonly error: AgentProviderError;
+  readonly context: AgentTurnErrorContext;
+}): ReactNode {
   if (error.detail.kind !== "unsupportedModelForCliVersion") return null;
 
   return (
     <>
-      <p className="agent-note">Open Settings &gt; Agents to update it.</p>
+      <p className="agent-note">
+        {context.executionTarget === "remote"
+          ? "Update the CLI on the server running this thread, then try again."
+          : "Open Settings > Agents to update it."}
+      </p>
       <details className="agent-raw">
         <summary className="agent-raw__toggle">Provider message</summary>
         <pre className="agent-raw__lines">{error.raw}</pre>
@@ -1126,44 +1147,6 @@ function rawOutputDisclosed(status: AgentTurnStatus): boolean {
   if (status.kind === "interrupted") return true;
 
   return status.kind === "exited" && status.exitCode !== 0;
-}
-
-function turnFailure(
-  status: AgentTurnStatus,
-  context: AgentTurnErrorContext,
-): AgentProviderError | null {
-  if (status.kind !== "failed") return null;
-
-  return classifyAgentProviderError(status.message, context.provider);
-}
-
-function repeatsLastError(
-  failure: AgentProviderError,
-  items: ReadonlyArray<AgentTurnItem>,
-  context: AgentTurnErrorContext,
-): boolean {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const reported = reportedError(items[index], context);
-    if (reported === null) continue;
-    if (reported.detail.kind === "advisory") continue;
-
-    return sameAgentProviderError(failure, reported);
-  }
-
-  return false;
-}
-
-function reportedError(
-  item: AgentTurnItem | undefined,
-  context: AgentTurnErrorContext,
-): AgentProviderError | null {
-  if (item === undefined) return null;
-  if (item.kind === "error") return classifyAgentProviderError(item.message, context.provider);
-  if (item.kind === "result" && item.isError) {
-    return classifyAgentProviderError(item.text, context.provider);
-  }
-
-  return null;
 }
 
 function formatTokens(tokens: number): string {

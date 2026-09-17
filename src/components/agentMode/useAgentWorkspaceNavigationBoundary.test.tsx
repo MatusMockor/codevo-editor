@@ -100,6 +100,52 @@ describe("workspace navigation precedence", () => {
     expect(session.current.scopeState.railScope?.projectRootKey).toBe("/a");
   });
 
+  it("restores the remembered selection when returning to the original project", () => {
+    session.current = {
+      ...session.current,
+      projectSelections: new Map([
+        [
+          a.rootKey,
+          {
+            projectOwnerId: a.ownerId,
+            threadId: "thread-a",
+            threadOwnerKey: "exact-owner-a",
+          },
+        ],
+      ]),
+    };
+    workspaceRoot = "/b";
+    render();
+    activation = { kind: "ready", rootPath: "/b" };
+    workspaceRoot = "/a";
+    render();
+    expect(session.current.selectedThreadId).toBe("thread-a");
+    expect(session.current.selectedThreadOwnerKey).toBe("exact-owner-a");
+  });
+
+  it("does not restore remembered selection into a replacement project owner", () => {
+    session.current = {
+      ...session.current,
+      projectSelections: new Map([
+        [
+          a.rootKey,
+          {
+            projectOwnerId: a.ownerId,
+            threadId: "thread-a",
+            threadOwnerKey: "exact-owner-a",
+          },
+        ],
+      ]),
+    };
+    workspaceRoot = "/b";
+    render();
+    activation = { kind: "ready", rootPath: "/b" };
+    projects = [{ ...a, ownerId: "replacement" }, b];
+    workspaceRoot = "/a";
+    render();
+    expect(session.current.selectedThreadId).toBeNull();
+  });
+
   it("waits for the external project's descriptor rather than falling back to the old project", () => {
     projects = [a];
     workspaceRoot = "/b";

@@ -320,6 +320,7 @@ export function AgentComposer({
       followUp ? null : (
         <>
           <AgentComposerCheckout
+            remote={executionTarget === "server"}
             disabled={dispatching || allProvidersDisabled}
             isolation={isolation}
             onIsolationChange={onIsolationChange}
@@ -349,6 +350,7 @@ export function AgentComposer({
       worktreeAvailable,
       worktreeOnly,
       nestedTargetLabel,
+      executionTarget,
     ],
   );
 
@@ -393,7 +395,11 @@ export function AgentComposer({
     ],
   );
 
-  const footer = followUp ? <AgentComposerLockedCheckout isolation={isolation} /> : targetControls;
+  const footer = followUp ? (
+    <AgentComposerLockedCheckout isolation={isolation} remote={executionTarget === "server"} />
+  ) : (
+    targetControls
+  );
 
   const chooseCommand = (command: AgentComposerCommandId, submitCommand: boolean): void => {
     if (command === "compact") {

@@ -8,7 +8,7 @@ import {
   type AgentMarkdownNode,
 } from "../../domain/agentMarkdown/agentMarkdownTree";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
-import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
+import { AgentMarkdownCodeBlock } from "./AgentMarkdownCodeBlock";
 import { HighlightRun } from "./agentThreadHighlight";
 
 interface BlockRenderContext {
@@ -211,26 +211,19 @@ function renderCodeBlock(
   const indexOffset = context.nextHitIndex;
   context.nextHitIndex += agentMarkdownNodeHighlights(node, context.query);
   return (
-    <div className="agent-md__code" data-language={node.language ?? undefined} key={key}>
-      <div className="agent-md__code-bar">
-        <span className="agent-md__code-lang">{node.language ?? ""}</span>
-        <AgentMessageCopyButton
-          clipboard={context.textClipboard}
-          label={node.language === null ? "code block" : `${node.language} code block`}
-          text={code}
-        />
-      </div>
-      <pre className="agent-md__code-body">
-        <code>
-          <HighlightRun
-            current={context.current}
-            indexOffset={indexOffset}
-            query={context.query}
-            text={code}
-          />
-        </code>
-      </pre>
-    </div>
+    <AgentMarkdownCodeBlock
+      clipboard={context.textClipboard}
+      code={code}
+      key={key}
+      language={node.language}
+    >
+      <HighlightRun
+        current={context.current}
+        indexOffset={indexOffset}
+        query={context.query}
+        text={code}
+      />
+    </AgentMarkdownCodeBlock>
   );
 }
 

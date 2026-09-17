@@ -5,6 +5,7 @@ import type {
 import type { AgentLaunchOptions } from "./agentLaunch";
 
 /** Closed editor-facing runner protocol. Credentials and server paths stay native. */
+export type RemoteRunnerIsolation = "in-place" | "worktree";
 export type RemoteRunnerProvider = "claude" | "codex";
 export type RemoteRunnerServerInput = Readonly<{
   id: string;
@@ -29,6 +30,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     projectCloning?: boolean;
     taskContinuation?: boolean;
     taskLaunchOptions?: boolean;
+    taskIsolation?: boolean;
     taskFileDiffs?: boolean;
     pendingMessages?: boolean;
     outputArtifacts?: boolean;
@@ -61,6 +63,7 @@ export type RemoteRunnerTask = Readonly<{
   runnerId: string;
   provider: RemoteRunnerProvider;
   status: RemoteRunnerTaskStatus;
+  isolation?: RemoteRunnerIsolation;
   projectId?: string;
   conversationId?: string;
   parentTaskId?: string;
@@ -140,6 +143,7 @@ export type RemoteRunnerCreateTaskRequest = RemoteRunnerServerRequest &
   Readonly<{
     idempotencyKey: string;
     provider: RemoteRunnerProvider;
+    isolation?: RemoteRunnerIsolation;
     instructions?: RemoteRunnerInstructionSnapshot;
     launch?: AgentLaunchOptions;
     parts: readonly RemoteRunnerPart[];

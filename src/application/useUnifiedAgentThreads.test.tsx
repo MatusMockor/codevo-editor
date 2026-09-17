@@ -118,8 +118,13 @@ const disposers: (() => void)[] = [];
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
 });
-async function setup() {
+async function setup(taskIsolation = false) {
   const gw = gateway();
+  const descriptor = await gw.getRunner();
+  gw.getRunner.mockResolvedValue({
+    ...descriptor,
+    capabilities: { ...descriptor.capabilities, ...(taskIsolation ? { taskIsolation: true } : {}) },
+  });
   const local = threadsSurfaceFixture({
     threads: [surfaceThreadView()],
     startThread: vi.fn().mockResolvedValue({ threadId: "local-new" }),
@@ -163,6 +168,26 @@ async function setup() {
   };
 }
 describe("unified original agent surface", () => {
+  it.each([false, true])(
+    "derives server checkout support from capability %s without local probes",
+    async (supported) => {
+      const h = await setup(supported);
+      const refreshIsolationStatus = vi.fn();
+      await h.render({
+        selectedServerId: server.id,
+        local: { ...h.local, refreshIsolationStatus },
+      });
+      expect(
+        h.current.projects.find((project) => project.rootKey === projectKey)?.isolationPolicy,
+      ).toBe(supported ? "in-place" : "worktree");
+      expect(h.current.agents.isolationPreview(projectKey, projectKey)?.inPlaceAllowed).toBe(
+        supported,
+      );
+      await h.current.agents.refreshIsolationStatus(projectKey, projectKey);
+      expect(refreshIsolationStatus).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps local warnings out of a server conversation", async () => {
     const h = await setup();
     const local = {

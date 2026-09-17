@@ -751,9 +751,7 @@ describe("useAgentComposerState", () => {
     render(threadsSurfaceFixture({ startThread }), [remoteProject]);
     act(() => current().composer.startNewThread(remoteRoot, remoteProject.rootPath));
     expect(current().composer.composerProps.worktreeOnly).toBe(true);
-    expect(current().composer.composerProps.worktreeOnlyReason).toBe(
-      "Server threads run in an isolated worktree.",
-    );
+    expect(current().composer.composerProps.worktreeOnlyReason).toBeNull();
     act(() => current().composer.composerProps.onIsolationChange("in-place"));
     expect(current().composer.composerProps.isolation).toBe("worktree");
     act(() => current().composer.composerProps.onPromptChange("Run remotely"));
@@ -766,6 +764,26 @@ describe("useAgentComposerState", () => {
     expect(startThread).toHaveBeenCalledWith(
       expect.objectContaining({ isolation: "worktree", projectRootKey: remoteRoot }),
     );
+  });
+
+  it("defaults capable server projects to their checkout and allows choosing a worktree", async () => {
+    const remoteRoot = "remote:server:runner:project";
+    const remoteProject = projectFixture({ rootKey: remoteRoot, isolationPolicy: "in-place" });
+    const startThread = vi.fn(async () => ({ threadId: "remote-thread" }));
+    render(threadsSurfaceFixture({ startThread }), [remoteProject]);
+    act(() => current().composer.startNewThread(remoteRoot, remoteProject.rootPath));
+    expect(current().composer.composerProps.worktreeOnly).toBe(false);
+    expect(current().composer.composerProps.isolation).toBe("in-place");
+    act(() => current().composer.composerProps.onIsolationChange("worktree"));
+    expect(current().composer.composerProps.isolation).toBe("worktree");
+    act(() => current().composer.composerProps.onPromptChange("Run remotely"));
+    await act(async () =>
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      }),
+    );
+    expect(startThread).toHaveBeenCalledWith(expect.objectContaining({ isolation: "worktree" }));
   });
 
   it("keeps a selected follow-up blocked until its provider is ready", async () => {

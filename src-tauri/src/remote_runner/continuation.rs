@@ -102,7 +102,14 @@ mod tests {
             json!({"idempotencyKey":UUID,
             "parts":[{"type":"text","text":"Continue"}]})
         );
-        for field in ["sessionId", "provider", "projectId", "cwd", "command"] {
+        for field in [
+            "sessionId",
+            "provider",
+            "projectId",
+            "cwd",
+            "command",
+            "isolation",
+        ] {
             let mut invalid = input();
             invalid[field] = "foreign".into();
             assert!(serde_json::from_value::<ContinueRequest>(invalid).is_err());

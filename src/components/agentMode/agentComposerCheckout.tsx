@@ -24,12 +24,13 @@ export type AgentComposerCheckoutChoice =
 export function agentComposerCheckoutOptions(
   target: AgentComposerTarget | null,
   worktreeAvailable: boolean,
+  remote = false,
 ): ReadonlyArray<AgentPickerOption> {
   const selectedLabel = agentComposerSelectedLabel(target);
   const options: AgentPickerOption[] = [
     agentPickerOption(
       "in-place",
-      "Local checkout",
+      remote ? "Server checkout" : "Local checkout",
       selectedLabel === null ? "Runs in the project's own checkout." : `Runs in ${selectedLabel}.`,
       null,
       null,

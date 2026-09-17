@@ -560,6 +560,140 @@ describe("useAgentThreadNavigation", () => {
     },
   );
 
+  it("remembers each project's selected thread across rail A to B to A", () => {
+    const a = view("a");
+    const b = viewInProject("b", OTHER_ROOT);
+    render(threadsSurfaceFixture({ threads: [a, b] }), [
+      projectFixture(),
+      project(OTHER_ROOT, "api"),
+    ]);
+    act(() => current().selectThread("a"));
+    act(() => current().setProjectScope(OTHER_ROOT));
+    expect(current().selectedThreadId).toBeNull();
+    act(() => current().selectThread("b"));
+    act(() => current().setProjectScope(SURFACE_FIXTURE_ROOT));
+    expect(current().selectedThreadId).toBe("a");
+    act(() => current().setProjectScope(OTHER_ROOT));
+    expect(current().selectedThreadId).toBe("b");
+  });
+
+  it("remembers an explicit New thread instead of reopening an older selection", () => {
+    render(threadsSurfaceFixture({ threads: [view("a")] }), [
+      projectFixture(),
+      project(OTHER_ROOT, "api"),
+    ]);
+    act(() => current().selectThread("a"));
+    act(() => current().clearSelectedThread());
+    act(() => current().setProjectScope(OTHER_ROOT));
+    act(() => current().setProjectScope(SURFACE_FIXTURE_ROOT));
+    expect(current().selectedThreadId).toBeNull();
+  });
+
+  it.each(["archived", "deleted", "owner", "project"])(
+    "does not restore a %s selection",
+    (change) => {
+      const a = view("a");
+      const projects = [projectFixture(), project(OTHER_ROOT, "api")];
+      render(threadsSurfaceFixture({ threads: [a] }), projects);
+      act(() => current().selectThread("a"));
+      act(() => current().setProjectScope(OTHER_ROOT));
+      const changed =
+        change === "archived"
+          ? { ...a, thread: { ...a.thread, archived: true } }
+          : change === "owner"
+            ? { ...a, thread: { ...a.thread, owner: { ...a.thread.owner, ownerId: "foreign" } } }
+            : a;
+      render(
+        threadsSurfaceFixture({ threads: change === "deleted" ? [] : [changed] }),
+        change === "project"
+          ? [projectFixture({ ownerId: "replacement" }), projects[1]!]
+          : projects,
+      );
+      act(() => current().setProjectScope(SURFACE_FIXTURE_ROOT));
+      expect(current().selectedThreadId).toBeNull();
+    },
+  );
+
+  it("restores a registered original owner when local activation advances the project owner", () => {
+    const a = view("a");
+    const initial = projectFixture();
+    const b = project(OTHER_ROOT, "api");
+    render(threadsSurfaceFixture({ threads: [a] }), [initial, b]);
+    act(() => current().selectThread("a"));
+    act(() => current().setProjectScope(OTHER_ROOT));
+    render(threadsSurfaceFixture({ threads: [a] }), [
+      {
+        ...initial,
+        ownerId: "new-active-owner",
+        generation: initial.generation + 1,
+        runtimeOwnerIds: [initial.ownerId],
+      },
+      b,
+    ]);
+    act(() => current().setProjectScope(SURFACE_FIXTURE_ROOT));
+    expect(current().selectedThreadId).toBe("a");
+  });
+
+  it("retains a pending remote project selection without selecting another server's thread", () => {
+    const remoteRoot = "remote:server:runner:project";
+    const remote = viewInProject("remote-thread:server:runner:conversation", remoteRoot);
+    const projects = [projectFixture(), project(remoteRoot, "remote")];
+    render(threadsSurfaceFixture({ threads: [remote] }), projects);
+    act(() => current().setProjectScope(remoteRoot));
+    act(() => current().selectThread(remote.thread.threadId));
+    act(() => current().setProjectScope(SURFACE_FIXTURE_ROOT));
+    render(threadsSurfaceFixture(), projects);
+    act(() => current().setProjectScope(remoteRoot));
+    expect(current().selectedThreadId).toBe(remote.thread.threadId);
+    expect(current().selectedThread).toBeNull();
+    act(() => current().setProjectScope(SURFACE_FIXTURE_ROOT));
+    render(threadsSurfaceFixture({ threads: [remote] }), projects);
+    expect(current().selectedThreadId).toBeNull();
+    act(() => current().setProjectScope(remoteRoot));
+    expect(current().selectedThreadId).toBe(remote.thread.threadId);
+  });
+
+  it("does not rebind a stale selected thread to a replacement project owner", () => {
+    const a = view("a");
+    const b = project(OTHER_ROOT, "api");
+    render(threadsSurfaceFixture({ threads: [a] }), [projectFixture(), b]);
+    act(() => current().selectThread("a"));
+    render(threadsSurfaceFixture({ threads: [a] }), [
+      projectFixture({ ownerId: "replacement" }),
+      b,
+    ]);
+    act(() => current().setProjectScope(OTHER_ROOT));
+    act(() => current().setProjectScope(SURFACE_FIXTURE_ROOT));
+    expect(current().selectedThreadId).toBeNull();
+  });
+
+  it("retains remote A while B is authoritative and expires A only after its own inventory completes", () => {
+    const remoteRoot = "remote:server:runner:project";
+    const otherRemoteRoot = "remote:other:runner:project";
+    const remote = viewInProject("remote-thread:server:runner:conversation", remoteRoot);
+    const projects = [project(remoteRoot, "remote"), project(otherRemoteRoot, "other")];
+    const session: AgentNavigationSession = {
+      current: { selectedThreadId: null, selectedThreadOwnerKey: null, scopeState: NO_SCOPE_STATE },
+    };
+    render(threadsSurfaceFixture({ threads: [remote] }), projects, null, session);
+    act(() => current().selectThread(remote.thread.threadId));
+    act(() => current().setProjectScope(otherRemoteRoot));
+    render(threadsSurfaceFixture(), projects, null, session, new Set([otherRemoteRoot]));
+    act(() => current().setProjectScope(remoteRoot));
+    expect(current().selectedThreadId).toBe(remote.thread.threadId);
+    render(
+      threadsSurfaceFixture(),
+      projects,
+      null,
+      session,
+      new Set([otherRemoteRoot, remoteRoot]),
+    );
+    expect(current().selectedThreadId).toBeNull();
+    act(() => current().setProjectScope(otherRemoteRoot));
+    act(() => current().setProjectScope(remoteRoot));
+    expect(current().selectedThreadId).toBeNull();
+  });
+
   function view(threadId: string, repositoryRoot: string = SURFACE_FIXTURE_ROOT): AgentThreadView {
     const base = surfaceThreadView().thread;
     return surfaceThreadView({
@@ -607,6 +741,7 @@ describe("useAgentThreadNavigation", () => {
     projects: ReadonlyArray<AgentProjectDescriptor> = [projectFixture()],
     externalSessions: Pick<ExternalSessionsSurface, "close"> | null = null,
     session?: AgentNavigationSession,
+    authoritativeRemoteProjectKeys?: ReadonlySet<string>,
   ): void {
     act(() => {
       root.render(
@@ -615,6 +750,7 @@ describe("useAgentThreadNavigation", () => {
           externalSessions={externalSessions}
           projects={projects}
           session={session}
+          authoritativeRemoteProjectKeys={authoritativeRemoteProjectKeys}
         />,
       );
     });
@@ -630,9 +766,11 @@ describe("useAgentThreadNavigation", () => {
     externalSessions,
     projects,
     session,
+    authoritativeRemoteProjectKeys,
   }: {
     readonly agents: AgentThreadsSurface;
     readonly session?: AgentNavigationSession;
+    readonly authoritativeRemoteProjectKeys?: ReadonlySet<string>;
     readonly externalSessions: Pick<ExternalSessionsSurface, "close"> | null;
     readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   }) {
@@ -647,6 +785,7 @@ describe("useAgentThreadNavigation", () => {
       presentationThreads: agents.threads,
       projects,
       session,
+      authoritativeRemoteProjectKeys,
     });
     return (
       <>

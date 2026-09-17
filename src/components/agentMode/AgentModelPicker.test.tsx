@@ -84,8 +84,8 @@ describe("AgentModelPicker", () => {
 
     act(() => claude.click());
     expect(optionValues()).toEqual([
-      "default",
       "gpt-6-astra",
+      "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
@@ -225,9 +225,9 @@ describe("AgentModelPicker", () => {
     render(CLAUDE, onSelect, false, null, { claudeCode: true, codex: true }, true);
     open();
     act(() => railItem("codex").click());
-    expect(optionValues()).toContain("default");
-    act(() => option("default").click());
-    expect(onSelect).toHaveBeenCalledWith("default", "codex");
+    expect(optionValues()).toContain("gpt-6-astra");
+    act(() => option("gpt-6-astra").click());
+    expect(onSelect).toHaveBeenCalledWith("gpt-6-astra", "codex");
   });
 
   it("does not expose another provider through favorites in an existing conversation", () => {
@@ -265,6 +265,48 @@ describe("AgentModelPicker", () => {
     expect(optionValues()).toEqual(["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"]);
     expect(selectedOption()?.dataset.value).toBe("claude-fable-5-1");
   });
+
+  it("keeps Astra first while resolving a saved Codex default to the explicit selected Sol row", () => {
+    render({ ...CODEX, model: "default" });
+    open();
+    expect(optionValues().slice(0, 2)).toEqual(["gpt-6-astra", "gpt-5.6-sol"]);
+    expect(selectedOption()?.dataset.value).toBe("gpt-5.6-sol");
+    expect(host.querySelector('[aria-label="Add GPT-5.6 Sol to favorites"]')).not.toBeNull();
+  });
+
+  it.each([["codex/default"], ["codex/default", "codex/gpt-5.6-sol"]])(
+    "preserves and removes old configured-default favorites %j",
+    (...initialKeys) => {
+      function SavedFavorites() {
+        const favorites = useAgentModelFavorites({
+          keys: initialKeys,
+          revision: 0,
+          save: async () => undefined,
+        });
+        return (
+          <AgentModelPicker
+            id={ID}
+            label="Agent model"
+            describedBy={null}
+            disabled={false}
+            launch={CODEX}
+            favorites={favorites}
+            onSelect={() => undefined}
+          />
+        );
+      }
+      act(() => root.render(<SavedFavorites />));
+      open();
+      act(() => favoritesRail().click());
+      expect(optionValues()).toEqual(["gpt-5.6-sol"]);
+      act(() =>
+        host
+          .querySelector<HTMLButtonElement>('[aria-label="Remove GPT-5.6 Sol from favorites"]')!
+          .click(),
+      );
+      expect(optionValues()).toEqual([]);
+    },
+  );
 
   it("reveals the seven legacy Claude models without presenting a fake default row", () => {
     render(CLAUDE);

@@ -103,11 +103,13 @@ export class RemoteAgentProjection {
         parent !== undefined &&
         ((parent.conversationId ?? parent.id) !== id ||
           parent.provider !== task.provider ||
+          (parent.isolation ?? "worktree") !== (task.isolation ?? "worktree") ||
           parent.projectId !== task.projectId)
       )
         throw new Error("Remote continuation parent belongs to another conversation.");
       const identity = JSON.stringify([
         task.provider,
+        task.isolation ?? "worktree",
         id,
         task.parentTaskId,
         task.sequence,
@@ -178,8 +180,15 @@ function projectConversation(
   const all = [...unsorted].sort((a, b) => a.sequence - b.sequence);
   const first = all[0]!;
   const latest = all[all.length - 1]!;
-  if (all.some((task) => task.provider !== first.provider || task.projectId !== first.projectId))
-    throw new Error("Remote conversation changed provider or project.");
+  if (
+    all.some(
+      (task) =>
+        task.provider !== first.provider ||
+        task.projectId !== first.projectId ||
+        (task.isolation ?? "worktree") !== (first.isolation ?? "worktree"),
+    )
+  )
+    throw new Error("Remote conversation changed provider, project or isolation.");
   const known = new Map(all.map((task) => [task.id, task]));
   const children = new Set<string>();
   const sequences = new Set<number>();
@@ -203,7 +212,7 @@ function projectConversation(
   const thread: AgentThread = {
     threadId: remoteAgentThreadKey(input.serverId, input.runnerId, conversationId),
     owner: { rootKey: projectKey, ownerId: projectKey, repositoryRoot: projectKey },
-    target: { isolation: "worktree", worktreePath: null },
+    target: { isolation: first.isolation ?? "worktree", worktreePath: null },
     provider: { kind: first.provider === "claude" ? "claudeCode" : "codex", sessionId: null },
     title: agentThreadTitle(prompt(first)),
     pinned: false,

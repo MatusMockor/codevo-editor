@@ -165,6 +165,7 @@ const taskShape = object({
   conversationId: optional(id),
   parentTaskId: optional(id),
   launch: optional(launch),
+  isolation: optional(choice("in-place", "worktree")),
   parts,
   createdAt: timestamp,
 });
@@ -269,6 +270,7 @@ export const remoteRunnerChecks = {
         projectCloning: optional(boolean),
         taskContinuation: optional(boolean),
         taskLaunchOptions: optional(boolean),
+        taskIsolation: optional(boolean),
         taskFileDiffs: optional(boolean),
         pendingMessages: optional(boolean),
         outputArtifacts: optional(boolean),
@@ -330,6 +332,7 @@ export const remoteRunnerChecks = {
         ...serverRequest,
         idempotencyKey: id,
         provider,
+        isolation: optional(choice("in-place", "worktree")),
         parts,
         launch: optional(launch),
         instructions: optional(isRemoteRunnerInstructionSnapshot),

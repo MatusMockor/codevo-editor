@@ -58,6 +58,8 @@ type Pending = {
   readonly parts: readonly RemoteRunnerPart[];
   readonly instructions?: RemoteRunnerInstructionSnapshot;
   readonly parentTaskId?: string;
+  readonly isolation: "worktree" | "in-place";
+  readonly sendIsolation: boolean;
   draftId?: string;
 };
 function key(target: RemoteAgentMutationTarget): string {
@@ -113,6 +115,7 @@ export function useRemoteAgentMutations(options: Options) {
     const launch = agentLaunchWithoutBrowser(request.launch);
     const signature = JSON.stringify([
       continuation,
+      "isolation" in request ? request.isolation : null,
       request.prompt,
       launch,
       request.attachments ?? [],
@@ -136,6 +139,18 @@ export function useRemoteAgentMutations(options: Options) {
           throw new Error("Enter a prompt and use at most eight images.");
         if (pending.current.size >= 32)
           throw new Error("Resolve pending remote messages before starting another conversation.");
+        let isolation: "worktree" | "in-place" =
+          "isolation" in request ? request.isolation : "worktree";
+        let sendIsolation = false;
+        if (!continuation) {
+          const descriptor = await gateway.getRunner({ serverId: target.serverId });
+          if (!valid()) return null;
+          if (descriptor.runnerId !== target.runnerId)
+            throw new Error("The remote runner changed. Reconnect before starting.");
+          sendIsolation = descriptor.capabilities.taskIsolation === true;
+          if (isolation === "in-place" && !sendIsolation)
+            throw new Error("Update the server runner to use the server checkout.");
+        }
         if (continuation) {
           if (!target.latestTaskId || !target.conversationId)
             throw new Error("Select a remote conversation to continue.");
@@ -152,6 +167,7 @@ export function useRemoteAgentMutations(options: Options) {
             (parent.conversationId ?? parent.id) !== target.conversationId
           )
             throw new Error("The remote conversation changed. Refresh before continuing.");
+          isolation = parent.isolation ?? "worktree";
           const resume = await gateway.getTaskResume({
             serverId: target.serverId,
             taskId: target.latestTaskId,
@@ -179,6 +195,8 @@ export function useRemoteAgentMutations(options: Options) {
         if (!valid()) return null;
         command = {
           instructions,
+          isolation,
+          sendIsolation,
           signature,
           parentTaskId: continuation ? target.latestTaskId : undefined,
           idempotencyKey: crypto.randomUUID(),
@@ -215,6 +233,7 @@ export function useRemoteAgentMutations(options: Options) {
           serverId: target.serverId,
           idempotencyKey: command.idempotencyKey,
           provider,
+          ...(command.sendIsolation ? { isolation: command.isolation } : {}),
           parts: command.parts,
           ...(command.instructions ? { instructions: command.instructions } : {}),
           launch,
@@ -222,6 +241,7 @@ export function useRemoteAgentMutations(options: Options) {
         task = (await gateway.createTask(wire)).task;
         if (!valid()) return null;
         if (
+          (task.isolation ?? "worktree") !== command.isolation ||
           task.runnerId !== target.runnerId ||
           task.provider !== provider ||
           !sameLaunch(task, launch) ||
@@ -249,6 +269,7 @@ export function useRemoteAgentMutations(options: Options) {
           throw new Error("The runner did not confirm the task start.");
       }
       if (
+        (task.isolation ?? "worktree") !== command.isolation ||
         task.runnerId !== target.runnerId ||
         task.provider !== provider ||
         task.projectId !== target.projectId ||
@@ -302,6 +323,7 @@ export function useRemoteAgentMutations(options: Options) {
         stopped.runnerId !== task.runnerId ||
         stopped.projectId !== task.projectId ||
         stopped.provider !== task.provider ||
+        (stopped.isolation ?? "worktree") !== (task.isolation ?? "worktree") ||
         stopped.conversationId !== task.conversationId ||
         stopped.parentTaskId !== task.parentTaskId
       )

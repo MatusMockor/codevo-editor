@@ -20,6 +20,7 @@ import {
   agentLaunchEffectiveModel,
   agentModelProviderName,
   agentModelRows,
+  agentModelRowIsFavorite,
   boundAgentModelQuery,
   filterAgentModelRows,
   MAX_AGENT_MODEL_QUERY_LENGTH,
@@ -360,10 +361,17 @@ export function AgentModelPicker({
                       )}
                     </div>
                     <button
-                      aria-label={favoriteLabel(row, favorites.isFavorite(row.favoriteKey))}
-                      aria-pressed={favorites.isFavorite(row.favoriteKey)}
+                      aria-label={favoriteLabel(row, agentModelRowIsFavorite(row, favorites.keys))}
+                      aria-pressed={agentModelRowIsFavorite(row, favorites.keys)}
                       className="agent-model-picker__star"
-                      onClick={() => favorites.toggle(row.favoriteKey)}
+                      onClick={() => {
+                        const legacy = row.legacyFavoriteKey;
+                        if (legacy !== undefined && favorites.keys.has(legacy)) {
+                          favorites.toggle(legacy);
+                          if (favorites.keys.has(row.favoriteKey))
+                            favorites.toggle(row.favoriteKey);
+                        } else favorites.toggle(row.favoriteKey);
+                      }}
                       tabIndex={-1}
                       type="button"
                     >

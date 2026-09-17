@@ -92,7 +92,7 @@ describe("AgentWorkbenchScreen", () => {
     host.remove();
   });
 
-  it("does not restore a reused thread ID belonging to a different workspace", () => {
+  it("isolates a reused thread ID in another workspace and restores the original project selection", async () => {
     render(createWorkbench(ROOT_A));
 
     click('[data-thread-id="agt-1"]');
@@ -102,7 +102,8 @@ describe("AgentWorkbenchScreen", () => {
     expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).toBeNull();
 
     render(createWorkbench(ROOT_A));
-    expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).toBeNull();
+    await act(async () => {});
+    expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).not.toBeNull();
     expect(host.querySelector('[data-thread-id="agt-1"]')).not.toBeNull();
   });
 

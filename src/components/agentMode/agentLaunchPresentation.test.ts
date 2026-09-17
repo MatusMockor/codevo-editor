@@ -424,8 +424,8 @@ describe("agent model rows", () => {
       "claude-haiku-4-5",
     ]);
     expect(agentModelRows("codex").map((row) => row.value)).toEqual([
-      "default",
       "gpt-6-astra",
+      "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
@@ -437,6 +437,37 @@ describe("agent model rows", () => {
     expect(agentModelRows("claudeCode")[3]?.isLegacy).toBe(true);
     expect(agentModelRows("codex")[0]?.providerName).toBe("Codex");
   });
+
+  it.each(["gpt-6-astra", "gpt-5.6-sol", "gpt-5.5"])(
+    "keeps model order and favorite identity stable with configured %s",
+    (configured) => {
+      const rows = agentModelRows("codex", configured);
+      expect(rows.map((row) => row.value)).toEqual([
+        "gpt-6-astra",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "gpt-5.4",
+      ]);
+      expect(rows.find((row) => row.value === configured)?.favoriteKey).toBe(`codex/${configured}`);
+      expect(
+        agentLaunchForDispatch(
+          { provider: "codex", model: "default", mode: "workspaceWrite" },
+          configured,
+        ).model,
+      ).toBe(configured);
+    },
+  );
+
+  it.each([null, "gpt-6-astra", "gpt-5.5"])(
+    "retains a persisted default favorite for configured %s",
+    (configured) => {
+      const rows = agentModelRows("codex", configured);
+      const favorites = filterAgentModelRows(rows, "favorites", new Set(["codex/default"]), "");
+      expect(favorites.map((row) => row.value)).toEqual([configured ?? "gpt-5.6-sol"]);
+    },
+  );
 
   it("matches a literal case-folded query against the label and provider name only", () => {
     const rows = agentModelRows("claudeCode");

@@ -1,3 +1,4 @@
+import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentProviderSignInSurface } from "../../application/useAgentProviderSignIn";
 import type { AppSettings, SettingsSection, WorkspaceSettings } from "../../domain/settings";
 import type { WorkspaceTrustState } from "../../domain/trust";
@@ -25,5 +26,8 @@ export interface WorkbenchSettingsModel {
   readonly workspaceRoot: string | null;
   readonly workspaceSettings: WorkspaceSettings;
   readonly workspaceTrust: WorkspaceTrustState | null;
-  readonly agents?: { readonly providerSignIn: AgentProviderSignInSurface };
+  readonly agents?: {
+    readonly providerSignIn: AgentProviderSignInSurface;
+    readonly agentProjects?: { readonly projects: readonly AgentProjectDescriptor[] };
+  };
 }

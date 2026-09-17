@@ -19,6 +19,7 @@ import type {
 } from "../domain/remoteRunner";
 
 export interface RemoteRunnerSubmission {
+  readonly isolation?: "worktree" | "in-place";
   readonly projectId: string;
   readonly provider: RemoteRunnerProvider;
   readonly prompt: string;
@@ -358,13 +359,14 @@ export function useRemoteRunnerTasks({
       setLoading(false);
       setBusy(true);
       try {
-        if (!submissionRef.current.canStartDraft(task.id, projectId))
+        if (!submissionRef.current.canStartDraft(task.id, projectId, task.isolation ?? "worktree"))
           throw new Error(
             "This draft has no confirmed instruction snapshot. Send it as a new message.",
           );
         const started = await gateway.startTask({ serverId, taskId: task.id, projectId });
         if (!isCurrent(captured) || selection.current !== selected) return null;
         if (
+          (started.isolation ?? "worktree") !== (task.isolation ?? "worktree") ||
           started.id !== task.id ||
           started.runnerId !== task.runnerId ||
           started.projectId !== projectId

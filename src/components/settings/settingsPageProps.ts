@@ -1,3 +1,4 @@
+import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AppUpdaterSurface } from "../../application/useAppUpdater";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AgentProviderSignInSurface } from "../../application/useAgentProviderSignIn";
@@ -25,6 +26,7 @@ export interface SettingsDraftActions {
 }
 
 export interface SettingsEnvironment {
+  readonly agentProjects?: readonly AgentProjectDescriptor[];
   readonly appUpdater: AppUpdaterSurface | null;
   readonly gitDetectedRepositoryMappings: ReadonlyArray<string>;
   readonly hasWorkspace: boolean;

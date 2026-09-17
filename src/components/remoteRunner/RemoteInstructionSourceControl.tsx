@@ -51,7 +51,7 @@ function SourceSelection({
             (root
               ? `Global and project rules use local source: ${root}.`
               : "Only global rules sync.")}{" "}
-          Manage the local instruction source in the main agent view.
+          Manage the local instruction source in Settings → Environments.
         </small>
       </div>
     );

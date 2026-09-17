@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Codevo · Otázka v threade</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: transparent; }
+#codevo-question-demo { --cv-bg:#0c0d10; --cv-panel:#181b20; --cv-hover:#22262d; --cv-text:#e7e9ec; --cv-muted:#9aa1ac; --cv-accent:#72d8c9; --cv-accent-ink:#082c26; --cv-wait:#e4c088; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--cv-text); }
+#codevo-question-demo button,#codevo-question-demo textarea,#codevo-question-demo input { font:inherit; }
+#codevo-question-demo button { cursor:pointer; }
+#codevo-question-demo button:disabled { cursor:default; opacity:.4; }
+#codevo-question-demo [hidden] { display:none!important; }
+.preview-bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding:12px 4px; color:var(--cv-muted); }
+.preview-label { font-size:12px; letter-spacing:.03em; }
+.reset { color:var(--cv-text); border:0; background:var(--cv-panel); border-radius:8px; padding:7px 12px; }
+.window { background:var(--cv-bg); border-radius:14px; overflow:hidden; }
+.chrome { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:16px 20px; }
+.brand { display:flex; gap:12px; align-items:center; font-weight:500; }
+.lights { display:flex; gap:6px; }
+.lights i { width:9px; height:9px; border-radius:50%; background:#454a53; }
+.project { color:var(--cv-muted); font-size:12px; }
+.workspace { display:grid; grid-template-columns:218px minmax(0,1fr); }
+.sidebar { padding:26px 12px 20px; }
+.sidebar-title { padding:0 12px 14px; color:var(--cv-muted); font-size:12px; }
+.sidebar-item { padding:11px 12px; color:var(--cv-muted); border-radius:9px; margin-bottom:4px; }
+.sidebar-item.current { background:var(--cv-panel); color:var(--cv-text); }
+.sidebar-item small { display:block; color:var(--cv-wait); margin-top:4px; font-size:11px; }
+.thread { min-width:0; padding:16px clamp(18px,4vw,46px) 24px; }
+.thread-head { display:flex; justify-content:space-between; flex-wrap:wrap; align-items:center; gap:8px; padding-bottom:26px; }
+.thread-title { font-weight:500; }
+.location { color:var(--cv-muted); font-size:12px; }
+.message-user { margin:0 0 24px auto; width:fit-content; max-width:90%; padding:12px 16px; background:var(--cv-panel); border-radius:14px 14px 4px 14px; }
+.assistant-label { color:var(--cv-muted); font-size:12px; margin-bottom:8px; }
+.assistant-intro { margin:0 0 20px; }
+.question { background:var(--cv-panel); border-radius:14px; padding:22px; }
+.question-top { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px; color:var(--cv-wait); font-size:12px; }
+.status-dot { width:6px; height:6px; background:currentColor; border-radius:50%; }
+.question h1 { font-size:19px; line-height:1.4; font-weight:500; margin:0 0 7px; }
+.question-description { color:var(--cv-muted); font-size:13px; margin:0 0 19px; }
+.choices { border:0; padding:0; margin:0; min-width:0; display:grid; gap:8px; }
+.option { display:flex; align-items:flex-start; gap:11px; padding:13px; border-radius:10px; background:var(--cv-bg); cursor:pointer; }
+.option:hover { background:var(--cv-hover); }
+.option:has(input:checked) { background:#1e3533; }
+.option input { accent-color:var(--cv-accent); width:16px; height:16px; margin:3px 0 0; flex:none; }
+.option-copy { min-width:0; flex:1; }
+.option-title { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.option-description { display:block; font-size:12px; margin-top:4px; color:var(--cv-muted); }
+.recommended { color:var(--cv-accent); font-size:11px; }
+.freeform-label { display:block; font-size:12px; color:var(--cv-muted); margin:20px 0 8px; }
+.freeform { display:block; resize:vertical; min-height:76px; max-height:240px; width:100%; border:0; border-radius:9px; padding:12px; background:var(--cv-bg); color:var(--cv-text); }
+.freeform::placeholder { color:#89919e; }
+.question-actions { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:16px; }
+.clear { border:0; padding:5px 0; color:var(--cv-muted); background:transparent; font-size:12px!important; }
+.confirm { background:var(--cv-accent); color:var(--cv-accent-ink); border:0; border-radius:9px; padding:10px 16px; font-weight:500!important; margin-left:auto; }
+.hint { color:var(--cv-muted); font-size:11px; margin:14px 0 0; }
+.composer { margin-top:24px; padding:15px 16px 12px; background:var(--cv-panel); border-radius:14px; }
+.composer textarea { border:0; background:transparent; width:100%; resize:vertical; color:var(--cv-text); min-height:40px; }
+.composer textarea::placeholder { color:#89919e; opacity:1; }
+.composer-bottom { display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--cv-muted); font-size:12px; margin-top:10px; }
+.composer-status { font-size:11px; }
+.submitted { padding:17px 20px; background:var(--cv-panel); border-radius:12px; }
+.submitted-top { display:flex; align-items:center; gap:8px; color:var(--cv-accent); font-size:12px; margin-bottom:8px; }
+.submitted strong { font-weight:500; }
+.submitted p { margin:6px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.after-answer { margin:22px 0 0; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+@media(max-width:760px) { .workspace { grid-template-columns:minmax(0,1fr); } .sidebar { display:none; } .thread { padding:10px 20px 24px; } .question { padding:18px; } }
+@media(max-width:400px) { .chrome { padding:14px; } .thread { padding:8px 12px 18px; } .question { padding:15px; } .question h1 { font-size:17px; } .confirm { width:100%; } .question-actions { gap:8px; } .location { font-size:11px; } .freeform { font-size:16px!important; } }
+</style>
+</head>
+<body>
+<main id="codevo-question-demo">
+  <div class="preview-bar">
+    <span class="preview-label">Interaktívny návrh · nič sa neodosiela agentovi</span>
+    <button type="button" class="reset" id="reset-demo">Vyskúšať znova</button>
+  </div>
+  <section class="window" aria-label="Návrh otázky v editore Codevo">
+    <header class="chrome"><div class="brand"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span> Codevo</div><span class="project">editor / Synchronizácia pravidiel</span></header>
+    <div class="workspace">
+      <aside class="sidebar" aria-label="Konverzácie">
+        <div class="sidebar-title">editor</div>
+        <div class="sidebar-item current">Synchronizácia pravidiel<small id="sidebar-status">Čaká na tvoju odpoveď</small></div>
+        <div class="sidebar-item">Výber modelov</div>
+        <div class="sidebar-item">Vzhľad sidebaru</div>
+      </aside>
+      <section class="thread" aria-label="Konverzácia">
+        <header class="thread-head"><span class="thread-title">Synchronizácia pravidiel</span><span class="location">Server · Linux</span></header>
+        <div class="message-user">Chcem, aby sa moje pravidlá z Macu používali automaticky aj na serveri.</div>
+        <div class="assistant-label">GPT-6 Astra</div>
+        <p class="assistant-intro">Pred pokračovaním potrebujem upresniť rozsah synchronizácie.</p>
+        <form class="question" id="question-form">
+          <div class="question-top"><span class="status-dot" aria-hidden="true"></span> Čakám na tvoju odpoveď</div>
+          <h1 id="question-title">Pre ktoré modely synchronizovať pravidlá?</h1>
+          <p class="question-description">Vyber možnosť alebo napíš vlastnú odpoveď.</p>
+          <fieldset class="choices" aria-labelledby="question-title">
+            <legend class="sr-only">Rozsah synchronizácie</legend>
+            <label class="option"><input type="radio" name="scope" value="Iba Claude"><span class="option-copy"><span class="option-title">Iba Claude <span class="recommended">Odporúčané</span></span><span class="option-description">Globálne aj projektové pravidlá sa použijú pri Claude.</span></span></label>
+            <label class="option"><input type="radio" name="scope" value="Claude aj GPT/Codex"><span class="option-copy"><span class="option-title">Claude aj GPT/Codex</span><span class="option-description">Pravidlá sa prispôsobia aj konverzáciám s Codexom.</span></span></label>
+          </fieldset>
+          <label class="freeform-label" for="custom-answer">Vlastná odpoveď alebo doplnenie <span aria-hidden="true">· voliteľné</span></label>
+          <textarea class="freeform" id="custom-answer" rows="2" maxlength="2000" placeholder="Napríklad: zatiaľ iba Claude na serveri…"></textarea>
+          <div class="question-actions"><button type="button" class="clear" id="clear-selection" hidden>Zrušiť výber</button><button class="confirm" type="submit" id="confirm-answer" disabled>Potvrdiť odpoveď</button></div>
+          <p class="hint">Odpoveď sa odošle až po potvrdení. ⌘ / Ctrl + Enter</p>
+        </form>
+        <section id="answer-summary" class="submitted" aria-label="Potvrdená odpoveď" hidden>
+          <div class="submitted-top"><span aria-hidden="true">✓</span> Odpoveď potvrdená</div>
+          <strong>Pre ktoré modely synchronizovať pravidlá?</strong>
+          <p id="summary-choice"></p><p id="summary-text"></p>
+        </section>
+        <div id="after-answer" class="after-answer" hidden><div class="assistant-label">GPT-6 Astra</div><p id="agent-reply"></p></div>
+        <div class="composer">
+          <textarea id="composer-input" aria-label="Ďalšia správa" placeholder="Najprv odpovedz na otázku vyššie…" disabled></textarea>
+          <div class="composer-bottom"><span>GPT-6 Astra <span aria-hidden="true">⌄</span> &nbsp; · &nbsp; Full access</span><span class="composer-status" id="composer-status">Čaká na odpoveď</span></div>
+        </div>
+        <div class="sr-only" id="live-status" role="status" aria-live="polite"></div>
+      </section>
+    </div>
+  </section>
+</main>
+<script>
+(() => {
+  const root = document.getElementById('codevo-question-demo');
+  const query = selector => root.querySelector(selector);
+  const form = query('#question-form');
+  const text = query('#custom-answer');
+  const confirm = query('#confirm-answer');
+  const clear = query('#clear-selection');
+  const summary = query('#answer-summary');
+  const chosen = () => query('input[name="scope"]:checked');
+  let submitted = false;
+  const refresh = () => {
+    confirm.disabled = !chosen() && !text.value.trim();
+    clear.hidden = !chosen();
+  };
+  form.addEventListener('change', refresh);
+  text.addEventListener('input', refresh);
+  clear.addEventListener('click', () => {
+    root.querySelectorAll('input[name="scope"]').forEach(input => { input.checked = false; });
+    refresh();
+    text.focus();
+  });
+  form.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      if (!confirm.disabled) form.requestSubmit();
+    }
+  });
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (submitted || confirm.disabled) return;
+    submitted = true;
+    const selection = chosen()?.value || '';
+    const detail = text.value.trim();
+    query('#summary-choice').textContent = selection;
+    query('#summary-choice').hidden = !selection;
+    query('#summary-text').textContent = detail;
+    query('#summary-text').hidden = !detail;
+    form.hidden = true;
+    summary.hidden = false;
+    query('#after-answer').hidden = false;
+    query('#agent-reply').textContent = selection === 'Iba Claude' && !detail
+      ? 'Rozumiem. Synchronizáciu pravidiel obmedzím na Claude.'
+      : 'Ďakujem za upresnenie. Pri ďalšom kroku zohľadním tvoju odpoveď.';
+    query('#sidebar-status').textContent = 'Odpoveď potvrdená';
+    query('#sidebar-status').style.color = 'var(--cv-accent)';
+    const composer = query('#composer-input');
+    composer.disabled = false;
+    composer.placeholder = 'Napíš ďalšiu správu…';
+    query('#composer-status').textContent = 'Ukážka pokračovania';
+    query('#live-status').textContent = 'Odpoveď potvrdená v ukážke. Karta sa zbalila do potvrdenej odpovede. Nič sa neodoslalo agentovi.';
+    composer.focus();
+  });
+  query('#reset-demo').addEventListener('click', () => {
+    submitted = false;
+    form.reset();
+    form.hidden = false;
+    summary.hidden = true;
+    query('#after-answer').hidden = true;
+    query('#composer-input').value = '';
+    query('#composer-input').disabled = true;
+    query('#composer-input').placeholder = 'Najprv odpovedz na otázku vyššie…';
+    query('#composer-status').textContent = 'Čaká na odpoveď';
+    query('#sidebar-status').textContent = 'Čaká na tvoju odpoveď';
+    query('#sidebar-status').style.removeProperty('color');
+    query('#live-status').textContent = 'Ukážka je pripravená na novú odpoveď.';
+    refresh();
+    query('input[name="scope"]').focus();
+  });
+})();
+</script>
+</body>
+</html>

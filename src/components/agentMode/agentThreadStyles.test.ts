@@ -592,6 +592,20 @@ describe("agent thread Airy style contract", () => {
     expect(winningDeclaration(".agent-md__table-scroll", "overflow-x")).toBe("auto");
   });
 
+  it("wraps code and unbroken tokens without a nested vertical viewport", () => {
+    expect(winningDeclaration(".agent-md__code-body", "white-space")).toBe("pre-wrap");
+    expect(winningDeclaration(".agent-md__code-body", "overflow-wrap")).toBe("anywhere");
+    expect(winningDeclaration(".agent-md__code-body", "min-width")).toBe("0");
+    expect(winningDeclaration('.agent-md__code-body[data-wrap="false"]', "white-space")).toBe(
+      "pre",
+    );
+    for (const selector of [".agent-md__code", ".agent-md__code-body"]) {
+      expect(declarations(selector, "max-height")).toEqual([]);
+      expect(declarations(selector, "height")).toEqual([]);
+      expect(declarations(selector, "overflow-y")).toEqual([]);
+    }
+  });
+
   it("sets the markdown prose rhythm from one block margin and zeroes the outer edges", () => {
     expect(winningDeclaration(".agent-text", "display")).toBe("flow-root");
     expect(declarations(".agent-text", "gap")).toEqual([]);

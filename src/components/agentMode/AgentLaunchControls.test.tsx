@@ -190,8 +190,8 @@ describe("AgentLaunchControls", () => {
 
     open("agent-launch-model");
     expect(options("agent-launch-model").map((option) => optionLabel(option))).toEqual([
-      "GPT-5.6 Sol",
       "GPT-6 Astra",
+      "GPT-5.6 Sol",
       "GPT-5.6 Terra",
       "GPT-5.6 Luna",
       "GPT-5.5",
